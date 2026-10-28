@@ -1,0 +1,14 @@
+a method of Array.prototype replaced: THROWS TypeError
+a method added to Array.prototype: 3
+a polyfill that is not needed: 2
+a polyfill that stores what is there already: 2
+Object.prototype gets a property: THROWS TypeError
+Symbol.iterator of Array.prototype replaced: THROWS TypeError
+Math.max replaced: THROWS TypeError
+JSON.stringify wrapped: <1>
+globalThis.Promise replaced: Mine false
+a global function replaced: 7 7
+String.prototype.toString, valueOf of a wrapper: THROWS TypeError
+an indexed accessor on Array.prototype: THROWS TypeError
+Error.prepareStackTrace | captureStackTrace: string
+Object.freeze(Array.prototype): false true true

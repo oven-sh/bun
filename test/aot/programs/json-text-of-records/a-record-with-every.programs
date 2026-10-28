@@ -1,0 +1,375 @@
+//// a-record-with-every-kind-of-member-and-objects-changed-behind-their-types.ts
+// JSON.stringify of a record with every kind of member, with indentation, a list of keys and a replacer, and of typed objects that were changed behind their types: names added late, deleted and put back, made non-enumerable, made accessors, a toJSON that changes its holder, cycles, holes, boxed primitives, inherited names.
+type Inner = { x: number; y?: string; z: number | null };
+type Rec = { id: number; name: string; ok: boolean; tags: string[]; inner: Inner; opt?: number; nul: null; list: Inner[]; any: unknown; u: undefined | number; d: Date; big?: bigint; f?: () => void; s?: symbol; nums: number[]; m: Record<string, number> };
+function mk(i: number): Rec {
+  return { id: i, name: "n" + i, ok: i % 2 === 0, tags: ["a", "b\"c", "  ", "\ud800", "\udc00x", "\u0000\u001f\u007f", "é😀", "</script>", "\\"], inner: { x: -0, z: null }, nul: null, list: [{ x: NaN, y: "q", z: 1 }, { x: Infinity, z: -1e21 }, { x: 1e-7, y: undefined, z: 0.1 + 0.2 }], any: i, u: undefined, d: new Date(86400000 * i), nums: [1, 2.5, -0, 1e21, 123456789012345680000, 5e-324, 1.7976931348623157e308, 4294967296, -2147483649], m: { b: 1, a: 2, 10: 3, 2: 4 } };
+}
+console.log(JSON.stringify(mk(1)));
+console.log(JSON.stringify(mk(2), null, 2).length, JSON.stringify(mk(2), null, "\t").length, JSON.stringify(mk(2), ["id", "inner", "x"]), JSON.stringify(mk(3), (k, v) => (typeof v === "number" ? v + 1 : v)).length);
+const withF: Rec = mk(4); withF.f = () => {}; withF.s = Symbol("s"); withF.opt = 5; withF.u = 6; console.log(JSON.stringify(withF));
+const withBig: Rec = mk(5); withBig.big = 5n; try { console.log(JSON.stringify(withBig)); } catch (e: any) { console.log(e.constructor.name, e.message); }
+class P { constructor(public a: number, public b: string) {} toJSON() { return { A: this.a }; } }
+class Q { constructor(public a: number, public p: P) {} }
+console.log(JSON.stringify(new Q(1, new P(2, "x"))), JSON.stringify([new P(3, "y")]), JSON.stringify({ k: new P(4, "z") }));
+class G { _v = 1; get v() { return this._v + 1; } w = 2; }
+console.log(JSON.stringify(new G()));
+type Cyc = { n: number; next?: Cyc }; const c: Cyc = { n: 1 }; c.next = c; try { JSON.stringify(c); } catch (e: any) { console.log(e.constructor.name, e.message.split("\n")[0]); }
+const holes: (number | undefined)[] = [1, , 3]; console.log(JSON.stringify(holes), JSON.stringify({ h: holes }));
+type Added = { a: number }; const ad: Added = { a: 1 }; (ad as any).late = 2; (ad as any)[5] = "five"; console.log(JSON.stringify(ad));
+const del: { a?: number; b: number; c: number } = { a: 1, b: 2, c: 3 }; delete del.a; del.a = 9; console.log(JSON.stringify(del));
+const ne: { a: number; b: number } = { a: 1, b: 2 }; Object.defineProperty(ne, "a", { enumerable: false }); console.log(JSON.stringify(ne));
+const acc: { a: number; b: number } = { a: 1, b: 2 }; let hits = 0; Object.defineProperty(acc, "b", { get() { hits++; return 42; }, enumerable: true }); console.log(JSON.stringify(acc), hits);
+const boxed: { n: any; s: any; b: any } = { n: new Number(3), s: new String("str"), b: new Boolean(false) }; console.log(JSON.stringify(boxed));
+const proto: { own: number } = Object.create({ inherited: 1 }); proto.own = 2; console.log(JSON.stringify(proto));
+const frozen = Object.freeze({ a: 1, b: [1, 2] as number[] }); console.log(JSON.stringify(frozen));
+const deep: any[] = []; let cur: any = deep; for (let i = 0; i < 50; i++) { const n: any[] = []; cur.push(n); cur = n; } console.log(JSON.stringify(deep).length);
+const mutating: { a: { toJSON(): number }; b: number } = { a: { toJSON() { (mutating as any).b = 99; delete (mutating as any).c; return 1; } }, b: 2 }; (mutating as any).c = 3; console.log(JSON.stringify(mutating));
+console.log(JSON.stringify({ a: [] as number[], b: {} , c: "" , d: [[]] as number[][] }), JSON.stringify("\ud83d"), JSON.stringify(undefined), JSON.stringify(() => {}), JSON.stringify(null), JSON.stringify(-0), JSON.stringify([undefined, function () {}, Symbol()]));
+const typedArr: { t: Uint8Array; m: Map<string, number>; s: Set<number>; r: RegExp; e: Error } = { t: new Uint8Array([1, 2]), m: new Map([["a", 1]]), s: new Set([1]), r: /x/g, e: new Error("boom") }; console.log(JSON.stringify(typedArr));
+function many(n: number) { let t = 0; for (let i = 0; i < n; i++) t += JSON.stringify(mk(i)).length; return t; } console.log(many(200));
+//// arrays-of-different-records.ts
+const leak = new Function("value", process.argv.length > 99 ? "" : "return value");
+function text(value: unknown): string {
+  return JSON.stringify(leak(value));
+}
+interface Item { id: number; title: string; price: number; inStock: boolean }
+function item(id: number): Item {
+  return { id, title: "Product " + id, price: 199 + id * 350, inStock: id % 7 > 0 };
+}
+function reordered(id: number): Item {
+  return { title: "Product " + id, id, inStock: id % 7 > 0, price: 199 + id * 350 };
+}
+const plain = Array.from({ length: 9 }, (_, id) => item(id));
+console.log(text(plain));
+const orders = plain.map((row, index) => (index % 3 === 1 ? reordered(row.id) : row));
+console.log(text(orders));
+const strangers: unknown[] = [item(1), item(2), null, item(3), undefined, item(4), 5, item(5), "six", item(6), [item(7)], item(8), { id: 9 }, item(10), () => 1, item(11), , item(12)];
+console.log(text(strangers));
+const extended = plain.map((row) => ({ ...row }));
+(extended[2] as any).extra = "added";
+(extended[4] as any)[0] = "index";
+delete (extended[5] as any).title;
+(extended[6] as any).title = undefined;
+(extended[7] as any).price = "a string";
+(extended[8] as any).inStock = null;
+console.log(text(extended));
+const changed = Array.from({ length: 8 }, (_, id) => item(id));
+Object.defineProperty(changed[1], "title", { get: () => "from a getter", enumerable: true, configurable: true });
+Object.defineProperty(changed[2], "price", { value: 1, enumerable: false });
+Object.freeze(changed[3]);
+Object.seal(changed[4]);
+Object.preventExtensions(changed[5]);
+Object.setPrototypeOf(changed[6], { toJSON() { return "through the prototype"; } });
+(changed[7] as any).toJSON = function () { return { only: this.id }; };
+console.log(text(changed));
+const seen: string[] = [];
+const watching = Array.from({ length: 6 }, (_, id) => item(id));
+Object.defineProperty(watching[2], "id", {
+  enumerable: true,
+  get() {
+    seen.push("read");
+    (watching[3] as any).late = "added during the walk";
+    delete (watching[4] as any).price;
+    watching.push(item(99));
+    return -2;
+  },
+});
+console.log(text(watching), seen.join());
+class Priced { constructor(public id: number, public title: string) {} get label() { return this.title + "#" + this.id; } }
+class Discounted extends Priced { off = 0.5; toJSON() { return { id: this.id, off: this.off }; } }
+console.log(text([new Priced(1, "a"), new Priced(2, "b"), new Discounted(3, "c"), new Priced(4, "d")]));
+const nested = Array.from({ length: 5 }, (_, id) => ({ id, rows: Array.from({ length: id }, (_, n) => item(n)), tail: "t" + id }));
+console.log(text(nested));
+console.log(text([[], [item(1)], [item(1), item(2)], [[item(3), item(4), item(5)]]]));
+function local(id: number): number {
+  const kept = [item(id), item(id + 1), item(id + 2)];
+  return JSON.stringify(kept).length + JSON.stringify({ id, title: "t", price: id, inStock: true } satisfies Item).length;
+}
+console.log(local(1), local(1000), local(100000));
+export {};
+//// dates-in-serialized-records.ts
+// A date in a record that is serialized: JSON.stringify asks it for toJSON, which converts it to a number by Symbol.toPrimitive and valueOf and then calls toISOString. Whatever of the four one date, or a class below Date, has of its own is called; a time that is no number gives null; years in front of 0 and behind 9999 have six digits.
+interface Row { at: Date; name: string }
+interface Loose { at?: Date | null; list: Date[] }
+const log: string[] = [];
+function row(r: Row): string { return JSON.stringify(r); }
+function loose(r: Loose): string { return JSON.stringify(r); }
+class Stamp extends Date { toJSON(): string { log.push("Stamp.toJSON"); return "stamp " + this.getTime(); } }
+class Quiet extends Date {}
+class Iso extends Date { toISOString(): string { log.push("Iso.toISOString"); return "iso"; } }
+class Valued extends Date { valueOf(): number { log.push("Valued.valueOf"); return NaN; } }
+function withOwn(name: PropertyKey, value: unknown): Date { const d = new Date(86400000); Object.defineProperty(d, name, { value, configurable: true, writable: true, enumerable: false }); return d; }
+const dates: [string, () => Date][] = [
+  ["plain", () => new Date(86400000)],
+  ["zero", () => new Date(0)],
+  ["fraction", () => new Date(1.9)],
+  ["negative", () => new Date(-1)],
+  ["invalid", () => new Date(NaN)],
+  ["too late", () => new Date(8.64e15 + 1)],
+  ["latest", () => new Date(8.64e15)],
+  ["earliest", () => new Date(-8.64e15)],
+  ["year 0", () => new Date(Date.UTC(0, 0, 1) - 1900 * 365.2425 * 86400000)],
+  ["year 10000", () => new Date(Date.UTC(10000, 0, 1))],
+  ["year -1", () => new Date(-62198755200000)],
+  ["another name", () => withOwn("label", "kept")],
+  ["an enumerable name", () => Object.assign(new Date(86400000), { label: "kept" })],
+  ["own toJSON", () => withOwn("toJSON", function (this: Date, key: string) { log.push("own toJSON " + key); return 5; })],
+  ["own toJSON that is no function", () => withOwn("toJSON", 5)],
+  ["own toISOString", () => withOwn("toISOString", () => { log.push("own toISOString"); return { not: "a text" }; })],
+  ["own valueOf", () => withOwn("valueOf", () => { log.push("own valueOf"); return Infinity; })],
+  ["own toPrimitive", () => withOwn(Symbol.toPrimitive, (hint: string) => { log.push("own toPrimitive " + hint); return NaN; })],
+  ["own toString", () => withOwn("toString", () => { log.push("own toString"); return "text"; })],
+  ["a getter toJSON", () => Object.defineProperty(new Date(86400000), "toJSON", { get() { log.push("get toJSON"); return undefined; }, configurable: true })],
+  ["class with toJSON", () => new Stamp(7)],
+  ["class with nothing", () => new Quiet(7)],
+  ["class with toISOString", () => new Iso(7)],
+  ["class with valueOf", () => new Valued(7)],
+  ["no prototype", () => Object.setPrototypeOf(new Date(7), null)],
+  ["the prototype of objects", () => Object.setPrototypeOf(new Date(7), Object.prototype)],
+  ["the prototype of a class", () => Object.setPrototypeOf(new Date(7), Stamp.prototype)],
+  ["frozen", () => Object.freeze(new Date(7))],
+  ["a proxy", () => new Proxy(new Date(7), {})],
+  ["a proxy that answers", () => new Proxy(new Date(7), { get(target, key) { log.push("get " + String(key)); const value = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value; } })],
+  ["an object under the prototype", () => Object.create(Date.prototype)],
+  ["set afterwards", () => { const d = new Date(7); d.setTime(86400000 * 2); return d; }],
+  ["set to no time", () => { const d = new Date(7); d.setTime(NaN); return d; }],
+];
+function attempt(run: () => string): string { try { return run(); } catch (e) { return "threw " + (e as Error).name; } }
+for (let i = 0; i < 3000; i++) { row({ at: new Date(i), name: "warm" }); loose({ at: new Date(i), list: [new Date(i)] }); }
+for (const [label, make] of dates) {
+  let first = "", second = "";
+  for (let round = 0; round < 3; round++) { log.length = 0; first = attempt(() => row({ at: make(), name: "n" })); second = attempt(() => loose({ at: make(), list: [make(), new Date(1)] })); }
+  console.log(label + ": " + first + " " + second + " | " + log.join());
+}
+console.log(loose({ list: [] }), loose({ at: null, list: [] }), loose({ at: undefined, list: [] }));
+console.log(JSON.stringify(new Date(5)), JSON.stringify([new Date(5)]), JSON.stringify({ a: { b: new Date(5) } }), JSON.stringify(new Date(5), null, 2), JSON.stringify({ d: new Date(5) }, (key, value) => (typeof value === "string" ? value.length : value)), JSON.stringify({ d: new Date(5) }, ["d"]));
+//// members-whose-text-comes-out-of-code-that-runs-in-the-middle-of-the-writing.ts
+// Members whose text comes out of code that runs in the middle of the writing.
+interface Point { x: number; y: number; label: string }
+interface Shape { name: string; points: Point[]; tags: string[]; open?: boolean; weight: number | null; made: Date; inner?: Shape }
+
+function hash(text: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+  return h >>> 0;
+}
+
+function textOf(shape: Shape): string {
+  return JSON.stringify(shape);
+}
+
+function textOfList(shapes: Shape[]): string {
+  return JSON.stringify(shapes);
+}
+
+function lineOf(prefix: string, shape: Shape, suffix: string): string {
+  let out = prefix;
+  out += JSON.stringify(shape);
+  out += suffix;
+  out += JSON.stringify(shape.points);
+  out += suffix;
+  return out;
+}
+
+function make(depth: number, n: number): Shape {
+  const points: Point[] = [];
+  for (let i = 0; i < n; i++) points.push({ x: i * 1.5, y: -i, label: i % 3 ? "p" + i : "中" + i });
+  const shape: Shape = { name: "shape" + depth, points, tags: ["a,", ",", "", "}", "\"", "\ud800"], weight: depth % 2 ? null : depth / 3, made: new Date(depth * 86400000) };
+  if (depth % 3 === 0) shape.open = depth % 2 === 0;
+  if (depth > 0) shape.inner = make(depth - 1, n);
+  return shape;
+}
+
+let sum = 0;
+for (let depth = 0; depth < 12; depth++) for (const n of [0, 1, 2, 7, 60, 400]) {
+  const shape = make(depth, n);
+  sum = (sum + hash(textOf(shape)) + hash(textOfList([shape, shape])) + hash(lineOf("[", shape, "]"))) >>> 0;
+}
+console.log(sum);
+
+const odd = make(1, 2);
+(odd.made as Date & { toJSON(): unknown }).toJSON = function () { return textOf(make(2, 3)); };
+console.log(textOf(odd));
+const stranger = make(0, 1) as Shape & { toJSON?: () => unknown };
+stranger.toJSON = () => ({ replaced: textOf(make(1, 1)).length });
+console.log(textOf(stranger), textOfList([stranger, make(0, 0)]));
+const withGetter = make(0, 1);
+Object.defineProperty(withGetter, "name", { enumerable: true, get() { return textOf(make(1, 1)); } });
+console.log(hash(textOf(withGetter)), textOf(withGetter).length);
+const big = make(0, 0) as unknown as { weight: unknown };
+big.weight = 10n;
+try { console.log(textOf(big as unknown as Shape)); } catch (error) { console.log((error as Error).constructor.name); }
+const wrongKinds = make(0, 1) as unknown as Record<string, unknown>;
+for (const value of [undefined, () => 1, Symbol("s"), new Number(-0), new String("boxed"), new Boolean(false), [1, , 3], { toJSON() { return undefined; } }, -0, 1e21, "text"]) {
+  for (const key of ["name", "points", "tags", "open", "weight", "made", "inner"]) {
+    const kept = wrongKinds[key];
+    wrongKinds[key] = value;
+    let text: string;
+    try { text = textOf(wrongKinds as unknown as Shape) ?? "undefined"; } catch (error) { text = (error as Error).constructor.name; }
+    console.log(key, typeof value, hash(text), text.length);
+    wrongKinds[key] = kept;
+  }
+}
+const cyclic = make(1, 0);
+cyclic.inner!.inner = cyclic;
+try { console.log(textOf(cyclic)); } catch (error) { console.log((error as Error).constructor.name); }
+const holes: Point[] = [];
+holes[3] = { x: 1, y: 2, label: "l" };
+const withHoles = make(0, 0);
+withHoles.points = holes;
+console.log(textOf(withHoles));
+delete (withHoles as Partial<Shape>).name;
+(withHoles as Shape & { extra: number }).extra = 5;
+console.log(textOf(withHoles));
+//// numbers.ts
+const leak = new Function("value", process.argv.length > 99 ? "" : "return value");
+function text(value: unknown, indent?: number): string {
+  return JSON.stringify(leak(value), null, indent);
+}
+interface Numbers { whole: number; optional?: number; nullable: number | null; either: number | undefined; small: number; fraction: number }
+function make(whole: number, optional: number | undefined, nullable: number | null, either: number | undefined, small: number, fraction: number): Numbers {
+  return optional === undefined ? { whole, nullable, either, small, fraction } : { whole, optional, nullable, either, small, fraction };
+}
+const edges = [0, -0, 1, 9, 10, 11, 99, 100, 101, 999, 1000, 1001, 9999, 10000, 10001, 99999, 100000, 999999, 1000000, 9999999, 10000000, 99999999, 100000000, 100000001,
+  2147483647, 2147483648, 4294967295, 4294967296, 9007199254740991, 9007199254740992, 1e21, 1e300, -1, -9, -10, -99, -100, -9999, -10000, -99999999, -100000000, -2147483648, -2147483649,
+  0.5, -0.5, 1.5, 9999.5, 10000.25, 0.1, 1e-7, 5e-324, 1.7976931348623157e308, NaN, Infinity, -Infinity];
+for (let round = 0; round < 3; round++) {
+  const rows: Numbers[] = [];
+  for (const edge of edges) {
+    const row = make(edge, round ? edge : undefined, round === 1 ? null : edge, round === 2 ? undefined : edge, edge | 0, edge + 0.5);
+    rows.push(row);
+    console.log(text(row));
+  }
+  console.log(text(rows));
+  console.log(text(rows.slice(0, 3), 2));
+}
+let sum = 0;
+for (let n = 0; n < 120000; n += 7) {
+  const written = text({ n, twice: n * 2, half: n / 2, minus: -n });
+  if (written !== `{"n":${n},"twice":${n * 2},"half":${n / 2},"minus":${n ? -n : 0}}`) console.log("differs", n, written);
+  sum += written.length;
+}
+for (let n = 99990000; n < 100010000; n += 3) {
+  const written = text({ n });
+  if (written !== `{"n":${n}}`) console.log("differs", n, written);
+  sum += written.length;
+}
+console.log(sum);
+export {};
+//// other-ways-to-the-text.ts
+const leak = new Function("value", process.argv.length > 99 ? "" : "return value");
+interface Line { sku: string; quantity: number; lineCents: number }
+interface Receipt { orderId: string; lines: Line[]; subtotalCents: number; discountCents: number; totalCents: number; paid: boolean; note?: string }
+function receipt(count: number): Receipt {
+  const lines: Line[] = [];
+  for (let n = 0; n < count; n++) lines.push({ sku: "SKU-" + (1000 + 37 * n), quantity: 1 + ((2 * n) % 5), lineCents: (199 + 350 * n) * (1 + ((2 * n) % 5)) });
+  const subtotalCents = lines.reduce((sum, line) => sum + line.lineCents, 0);
+  return { orderId: "o-" + count, lines, subtotalCents, discountCents: Math.round(subtotalCents / 10), totalCents: subtotalCents - Math.round(subtotalCents / 10), paid: count % 2 === 0 };
+}
+const value: any = leak(receipt(10));
+console.log(JSON.stringify(value));
+console.log(JSON.stringify(value, null, 2));
+console.log(JSON.stringify(value, null, "\t|"));
+console.log(JSON.stringify(value, ["orderId", "lines", "sku", "paid"]));
+console.log(JSON.stringify(value, (key, held) => (key === "quantity" ? undefined : typeof held === "number" ? held + 1 : held)));
+console.log(await Response.json(value).text());
+console.log(await new Response(JSON.stringify(value)).json().then((again: any) => JSON.stringify(again) === JSON.stringify(value)));
+console.log(JSON.stringify({ wrapped: value, list: [value, value] }).length);
+console.log(JSON.stringify([value.lines, value.lines[3], value.lines.slice(2, 4)]));
+console.log(Bun.inspect(value).length > 0, structuredClone(value).lines.length, JSON.stringify(structuredClone(value)) === JSON.stringify(value));
+let total = 0;
+for (let round = 0; round < 3000; round++) {
+  const made: any = leak(receipt(round % 23));
+  total += JSON.stringify(made).length;
+  if (round % 500 === 0) Bun.gc(true);
+}
+console.log(total);
+export {};
+//// strings-and-keys.ts
+const leak = new Function("value", process.argv.length > 99 ? "" : "return value");
+function text(value: unknown, indent?: number | string): string {
+  return JSON.stringify(leak(value), null, indent);
+}
+interface Texts { a: string; optional?: string; nullable: string | null; b: string }
+const samples = ["", "x", "four", "seven77", "eight888", "fifteen-fifteen", "sixteen-sixteen-", "seventeen-sevente", "q\"uote", "back\\slash", "new\nline", "tab\t", "\u0000", "\u001f", " ", "\u007f", "café", "ÿ",
+  "snow☃man", "😀", "\ud800", "\udc00x", "a".repeat(31), "a".repeat(32), "a".repeat(33), "a".repeat(63) + "\"", "b".repeat(64), "b".repeat(300), "c".repeat(300) + "\n", "d".repeat(9000), "☃".repeat(5000)];
+for (const sample of samples) {
+  const row: Texts = { a: sample, nullable: sample.length % 2 ? null : sample, b: sample + "!" };
+  const full: Texts = { a: sample, optional: sample, nullable: sample, b: "end" };
+  const one = text(row), two = text(full), many = text([row, row, full, row, full, full]);
+  console.log(one.length, two.length, many.length, one.slice(0, 90), two.slice(-40), many.slice(-30));
+}
+function rope(count: number): string {
+  let made = "";
+  for (let i = 0; i < count; i++) made += String.fromCharCode(97 + (i % 26));
+  return made;
+}
+console.log(text({ a: rope(5) + rope(40), nullable: null, b: rope(3) + "\"" + rope(3) } satisfies Texts));
+const longKeys = { k: 1, twelveLetter: 2, thirteenChars: 3, fourteenLetter: 4, aKeyOfTwentyEightCharacters: 5, aKeyOfTwentyNineCharactersHi: 6, aKeyThatIsMuchLongerThanTwoBlocksOfSixteenBytesEach: "seven", last: true };
+console.log(text(longKeys), text([longKeys, longKeys, longKeys]), text(longKeys, 1));
+const oddKeys = { "with\"quote": 1, "with\\slash": 2, "with\nline": 3, "café": 4, "": 5, " ": 6, "0a": 7, end: 8 };
+console.log(text(oddKeys), text([oddKeys, oddKeys]));
+const wideKeys = { first: 1, "snow☃": 2, last: "z" };
+console.log(text(wideKeys), text([wideKeys, wideKeys]), text({ before: "b", inner: wideKeys, after: "a" }));
+const rows: Texts[] = [];
+for (let i = 0; i < 400; i++) rows.push({ a: "row " + i, nullable: i % 3 ? "n" + i : null, b: "x".repeat(i % 70) });
+const all = text(rows);
+console.log(all.length, all.slice(0, 120), all.slice(-120), all === "[" + rows.map((row) => text(row)).join(",") + "]");
+const growing: Texts[] = [];
+for (let i = 0; i < 40; i++) growing.push({ a: "g".repeat(i * 211), nullable: null, b: "h".repeat(8191 - i) });
+const grown = text(growing);
+console.log(grown.length, grown === "[" + growing.map((row) => text(row)).join(",") + "]");
+export {};
+//// values-of-every-kind.ts
+const leak = new Function("value", process.argv.length > 99 ? "" : "return value");
+function text(value: unknown, indent?: number): string | undefined {
+  return JSON.stringify(leak(value), null, indent);
+}
+interface Flags { on: boolean; maybe?: boolean; orNull: boolean | null; orUndefined: boolean | undefined }
+for (const on of [true, false]) {
+  const rows: Flags[] = [{ on, orNull: on, orUndefined: on }, { on, maybe: on, orNull: null, orUndefined: undefined }, { on, maybe: !on, orNull: !on, orUndefined: !on }];
+  for (const row of rows) console.log(text(row));
+  console.log(text(rows), text(rows, 1));
+}
+interface Mixed { anything: unknown; label: string }
+const date = new Date(86400000 * 365.25 * 30);
+const kinds: unknown[] = [undefined, null, true, false, 0, -0, 7, 1.25, NaN, "s", "", Symbol("s"), () => 1, function named() {}, class K {}, [], [1, "a", null, undefined, () => 1, Symbol.iterator], {}, { x: 1 },
+  date, new Date(NaN), new Map([[1, 2]]), new Set([1]), /x/g, new Error("e"), new Number(5), new String("boxed"), new Boolean(false), Object(Symbol("boxed")), new Uint8Array([1, 2]), Object.create(null), Object.create({ inherited: 1 }), [, 1, , 2], Array(3)];
+for (const anything of kinds) {
+  const row: Mixed = { anything, label: "l" };
+  console.log(text(row), text([row, row]), text({ first: row, second: [row] }));
+}
+for (const big of [1n, Object(2n)]) {
+  try {
+    console.log(text({ anything: big, label: "l" } satisfies Mixed));
+  } catch (error) {
+    console.log((error as Error).name);
+  }
+  try {
+    console.log(text([{ anything: 1, label: "l" }, { anything: 2, label: "l" }, { anything: big, label: "l" }] satisfies Mixed[]));
+  } catch (error) {
+    console.log((error as Error).name);
+  }
+}
+interface Node { value: number; next: Node | null; children: Node[] }
+function chain(depth: number): Node {
+  let node: Node = { value: depth, next: null, children: [] };
+  for (let i = depth - 1; i >= 0; i--) node = { value: i, next: node, children: i % 3 ? [] : [{ value: -i, next: null, children: [] }, { value: -i - 1, next: null, children: [] }] };
+  return node;
+}
+console.log(text(chain(12)));
+console.log(text(chain(4), 2));
+const cyclic: Node = { value: 1, next: null, children: [] };
+cyclic.children.push({ value: 2, next: cyclic, children: [] });
+try {
+  text(cyclic);
+} catch (error) {
+  console.log((error as Error).name);
+}
+try {
+  console.log(text(chain(200000))!.length);
+} catch (error) {
+  console.log((error as Error).name);
+}
+export {};

@@ -1,0 +1,3237 @@
+////: for-172
+for (const [name, make] of «1») {
+  attempt(«2» + name, () => «3»(make()));
+  attempt(«4» + name, () => «5»(make()));
+}
+////: for-173
+for (const [name, make] of «1») {
+  attempt(«2» + name, () => new EventEmitter().on("go", «3»).emit("go", make()));
+  attempt(«4» + name, () => new EventEmitter().on("go", «5»).emit("go", make()));
+}
+////: for-68
+for (const [name, make] of selves) {
+  attempt("span with " + name, () => span.call(make()));
+  attempt("total with " + name, () => total.call(make()));
+  attempt("shout with " + name, () => shout.call(make()));
+  attempt("double with " + name, () => double.call(make()));
+  attempt("move with " + name, () => move.call(make()));
+  attempt("span through apply with " + name, () => span.apply(make(), []));
+  attempt("total through bind with " + name, () => total.bind(make())());
+  attempt("double through Reflect.apply with " + name, () => Reflect.apply(double, make(), []));
+  attempt("shout as a callback with " + name, () => [0].map(shout, make())[0]);
+}
+////: halfEight-2
+function halfEight(n) {
+  return n / 2;
+}
+////: halfFive-2
+function halfFive(n) {
+  return n / 2;
+}
+////: halfFour-2
+function halfFour(n) {
+  return n / 2;
+}
+////: halfNine-2
+function halfNine(n) {
+  return n / 2;
+}
+////: halfOne-2
+function halfOne(n) {
+  return n / 2;
+}
+////: halfSeven-2
+function halfSeven(n) {
+  return n / 2;
+}
+////: halfSix-2
+function halfSix(n) {
+  return n / 2;
+}
+////: halfThree-2
+function halfThree(n) {
+  return n / 2;
+}
+////: halfTwo-2
+function halfTwo(n) {
+  return n / 2;
+}
+////: honest-3
+function honest(round) {
+  console.log(round, "span", new Point(3, 1).span(), new Point(0.5, 0.25).span(), ({ x: 9, y: 4, span }).span(), span.call({ x: 1, y: 1 }), span.call(new Point(2, 1)));
+  console.log(round, "total", total.call([1, 2, 3]), total.call([]), total.call(new Array(4, 5)), total.apply([0.5]), total.bind([6])());
+  console.log(round, "shout", shout.call("abc"), shout.call(""), shout.call("x" + round), shout.apply("y"));
+  console.log(round, "double", double.call(1), double.call(2.5), double.call(-3), double.apply(0));
+  console.log(round, "move", new Point(3, 1).move(), new Point(0.5, 0).move(), move.call({ x: 1, y: 1 }), ({ x: 7, y: 0, move }).move());
+}
+////: honestFirst-5
+function honestFirst(round) {
+  console.log(round, "half", half(4), half(3), half(0.5), half(-8), half(1e21), half(0));
+  console.log(round, "low", low(1), low(256), low(-1), low(1023), low(0), low(65535));
+  console.log(round, "invoke", invoke(v => v + 1), invoke(function (v) { return v * 2; }), invoke(v => -v), invoke(v => [v].length), invoke(function same(v) { return v; }), invoke(() => 0));
+  console.log(round, "sumOf", sumOf({ x: 1, y: 2 }), sumOf({ x: 3, y: 4 }), sumOf(new Point(5, 6)), sumOf({ x: 0.5, y: 0.5 }), sumOf(new Point(-1, 1)), sumOf({ x: 7, y: 8 }));
+  console.log(round, "total", total([1, 2, 3]), total([]), total([0.5, 0.25]), total(new Array(4, 5, 6)), total(Array.of(7, 8)), total([1, 2, 3, 4].slice(1)));
+  console.log(round, "firstCode", firstCode("a"), firstCode("bc"), firstCode(""), firstCode("\u00e9"), firstCode(`t${round}`), firstCode(String(12)));
+}
+////: honestSecond-5
+function honestSecond(round) {
+  console.log(round, "below", below(0), below(1), below(2.5), below(3), below(-1), below(10));
+  console.log(round, "pick", pick(0), pick(1), pick(2), pick(3), pick(1 + 1), pick(letters.length - 1));
+  console.log(round, "build", build(class { constructor(v) { this.value = v; } }), build(function (v) { this.value = v * 2; }), build(class { value = 3; }), build(function () {}), build(class extends Point { get value() { return this.x; } }), build(function (v) { return { value: -v }; }));
+  console.log(round, "move", move({ x: 1, y: 2 }), move({ x: 3, y: 4 }), move(new Point(5, 6)), move({ x: 0.5, y: 0.5 }), move(new Point(-1, 1)), move({ x: 7, y: 8 }));
+  console.log(round, "append", append([1, 2, 3]), append([]), append(new Array(1, 2)), append(["a"]), append([[1], [2]]), append(Array.of(1, 2, 3, 4)));
+  console.log(round, "tail", tail("abc"), tail(""), tail("x"), tail(`t${round}`), tail("\u00e9!"), tail(String(123)));
+}
+////: lines-120
+function «1»() {
+  return function (list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  };
+}
+////: lines-141
+const «1» = {
+  [Symbol.«2»]() {
+    seen.push(show(«3»("12")), show(«4»("4")));
+    return «5»;
+  },
+};
+////: lines-142
+const «1» = new Proxy({}, {
+  «2»() {
+    seen.push(show(«3»("12")), show(«4»("4")));
+    return «5»;
+  },
+});
+////: lines-143
+const «1» = {
+  then(resolve) {
+    seen.push(show(«2»("12")), show(«3»("4")));
+    resolve(1);
+  },
+};
+////: lines-153
+function «1»() {
+  return function (point) {
+    const { x, y } = point;
+    return x - y;
+  };
+}
+////: lines-164
+const «1» = {
+  sneak() {
+    seen.push(show(«2»("12")), show(«3»("4")));
+  },
+};
+////: lines-173
+function «1»() {
+  return function (n) {
+    return n * 2;
+  };
+}
+////: lines-175
+function «1»() {
+  return function (text) {
+    return text.indexOf("b");
+  };
+}
+////: lines-194
+function «1»() {
+  seen.push(show(«2»("12")), show(«3»("4")));
+}
+////: lines-201
+var «1» = function (list) {
+  let sum = 0;
+  for (const item of list) sum += item;
+  return sum;
+};
+////: lines-241
+var «1» = function (point) {
+  const { x, y } = point;
+  return x - y;
+};
+////: lines-87
+const «1» = {
+  get sneak() {
+    seen.push(show(«2»("12")), show(«3»("4")));
+    return 1;
+  },
+};
+////: lines-88
+const «1» = {
+  «2»() {
+    seen.push(show(«3»("12")), show(«4»("4")));
+    return «5»;
+  },
+};
+////: low-8
+////= low-3
+
+////= firstCode
+
+////= tail
+
+////= notNumbers-4
+
+////= notArrays
+
+////= notStrings
+////: selves
+const selves = [
+  ["undefined", () => undefined],
+  ["null", () => null],
+  ["a number", () => 5],
+  ["a string", () => "12"],
+  ["an array", () => [1, 2]],
+  ["a point in the other key order", () => ({ y: 1, x: 3 })],
+  ["a point with getters", () => ({ get y() { log.push("y"); return 1; }, get x() { log.push("x"); return 3; } })],
+  ["a frozen point", () => Object.freeze({ x: 3, y: 1 })],
+  ["an array-like object", () => ({ 0: 1, 1: 2, length: 2 })],
+  ["a typed array", () => new Uint8Array([1, 2])],
+  ["an object with valueOf and toUpperCase", () => ({ valueOf: () => (log.push("valueOf"), 4), toUpperCase: () => "its own" })],
+  ["a String object", () => new String("ab")],
+  ["a BigInt", () => 4n],
+  ["a symbol", () => Symbol.iterator],
+];
+////: totalEight-2
+function totalEight(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return sum;
+}
+////: totalEight-3
+////= totalEight-2
+
+////= halfEight-2
+////: totalFive-2
+function totalFive(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return sum;
+}
+////: totalFive-3
+////= totalFive-2
+
+////= halfFive-2
+////: totalFour-2
+function totalFour(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return sum;
+}
+////: totalFour-3
+////= totalFour-2
+
+////= halfFour-2
+////: totalNine-2
+function totalNine(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return sum;
+}
+////: totalNine-3
+////= totalNine-2
+
+////= halfNine-2
+////: totalOne-2
+function totalOne(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return sum;
+}
+////: totalOne-4
+////= totalOne-2
+
+////= halfOne-2
+////: totalSeven-2
+function totalSeven(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return sum;
+}
+////: totalSeven-3
+////= totalSeven-2
+
+////= halfSeven-2
+////: totalSix-2
+function totalSix(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return sum;
+}
+////: totalSix-3
+////= totalSix-2
+
+////= halfSix-2
+////: totalTen-2
+function totalTen(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return sum;
+}
+////: totalThree-2
+function totalThree(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return sum;
+}
+////: totalThree-3
+////= totalThree-2
+
+////= halfThree-2
+////: totalTwo-2
+function totalTwo(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return sum;
+}
+////: totalTwo-3
+////= totalTwo-2
+
+////= halfTwo-2
+//// many-callers-and-an-impostor-through-an-event-emitter.cjs
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-52
+
+////= half
+
+////= below
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-8
+
+const { EventEmitter } = require("node:events");
+
+////= honestFirst-5
+
+////= honestSecond-5
+
+console.log("strict:", (function () { return this === undefined; })());
+honestSecond("before");
+////= for-173	notNumbers	"half of "	half	"below from "	below
+attempt("half of a literal", () => new EventEmitter().on("go", half).emit("go", "4"));
+attempt("below from a literal", () => new EventEmitter().on("go", below).emit("go", "1"));
+////= for-173	notSmallIntegers	"low of "	low	"pick at "	pick
+attempt("low of a literal", () => new EventEmitter().on("go", low).emit("go", 4294967297.5));
+attempt("pick at a literal", () => new EventEmitter().on("go", pick).emit("go", "length"));
+////= for-173	notFunctions	"invoke of "	invoke	"build from "	build
+attempt("invoke of a literal", () => new EventEmitter().on("go", invoke).emit("go", class {}));
+attempt("build from a literal", () => new EventEmitter().on("go", build).emit("go", () => {}));
+////= for-173	notPoints	"sumOf "	sumOf	"move "	move
+attempt("sumOf a literal", () => new EventEmitter().on("go", sumOf).emit("go", { y: 2, x: 1 }));
+attempt("move a literal", () => new EventEmitter().on("go", move).emit("go", { get x() { return 1; }, y: 2 }));
+////= for-173	notArrays	"total of "	total	"append to "	append
+attempt("total of a literal", () => new EventEmitter().on("go", total).emit("go", "12"));
+attempt("append to a literal", () => new EventEmitter().on("go", append).emit("go", { push: () => "a literal's push" }));
+////= for-173	notStrings	"firstCode of "	firstCode	"tail of "	tail
+attempt("firstCode of a literal", () => new EventEmitter().on("go", firstCode).emit("go", [65]));
+attempt("tail of a literal", () => new EventEmitter().on("go", tail).emit("go", [1, 2, 3]));
+honestFirst("after");
+honestSecond("after");
+//// many-callers-and-an-impostor-through-another-name.cjs
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-52
+
+////= half
+
+////= below
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-8
+
+let totalAgain, appendAgain, firstCodeAgain, tailAgain, halfAgain, belowAgain, lowAgain, pickAgain, invokeAgain, buildAgain, sumOfAgain, moveAgain;
+
+function rename() {
+  totalAgain = total;
+  appendAgain = append;
+  firstCodeAgain = firstCode;
+  tailAgain = tail;
+  halfAgain = half;
+  belowAgain = below;
+  lowAgain = low;
+  pickAgain = pick;
+  invokeAgain = invoke;
+  buildAgain = build;
+  sumOfAgain = sumOf;
+  moveAgain = move;
+}
+
+rename();
+
+////= honestFirst-5
+
+////= honestSecond-5
+
+console.log("strict:", (function () { return this === undefined; })());
+honestSecond("before");
+////= for-172	notNumbers	"half of "	halfAgain	"below from "	belowAgain
+attempt("half of a literal", () => halfAgain("4"));
+attempt("below from a literal", () => belowAgain("1"));
+////= for-172	notSmallIntegers	"low of "	lowAgain	"pick at "	pickAgain
+attempt("low of a literal", () => lowAgain(4294967297.5));
+attempt("pick at a literal", () => pickAgain("length"));
+////= for-172	notFunctions	"invoke of "	invokeAgain	"build from "	buildAgain
+attempt("invoke of a literal", () => invokeAgain(class {}));
+attempt("build from a literal", () => buildAgain(() => {}));
+////= for-172	notPoints	"sumOf "	sumOfAgain	"move "	moveAgain
+attempt("sumOf a literal", () => sumOfAgain({ y: 2, x: 1 }));
+attempt("move a literal", () => moveAgain({ get x() { return 1; }, y: 2 }));
+////= for-172	notArrays	"total of "	totalAgain	"append to "	appendAgain
+attempt("total of a literal", () => totalAgain("12"));
+attempt("append to a literal", () => appendAgain({ push: () => "a literal's push" }));
+////= for-172	notStrings	"firstCode of "	firstCodeAgain	"tail of "	tailAgain
+attempt("firstCode of a literal", () => firstCodeAgain([65]));
+attempt("tail of a literal", () => tailAgain([1, 2, 3]));
+honestFirst("after");
+honestSecond("after");
+//// many-callers-and-an-impostor-through-catch.js
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-54
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-7
+
+async function main() {
+  console.log("strict:", (function () { return this === undefined; })());
+  honestSecond("before");
+  await attempt("low gets an error", () => Promise.reject(new RangeError("no")).catch(low));
+  await attempt("pick gets an error", () => Promise.reject(new RangeError("no")).catch(pick));
+  await attempt("invoke gets an error", () => Promise.reject(new RangeError("no")).catch(invoke));
+  await attempt("build gets an error", () => Promise.reject(new RangeError("no")).catch(build));
+  await attempt("sumOf gets an error", () => Promise.reject(new RangeError("no")).catch(sumOf));
+  await attempt("move gets an error", () => Promise.reject(new RangeError("no")).catch(move));
+  await attempt("total gets an error", () => Promise.reject(new RangeError("no")).catch(total));
+  await attempt("append gets an error", () => Promise.reject(new RangeError("no")).catch(append));
+  await attempt("firstCode gets an error", () => Promise.reject(new RangeError("no")).catch(firstCode));
+  await attempt("tail gets an error", () => Promise.reject(new RangeError("no")).catch(tail));
+  await attempt("half gets an error", () => Promise.reject(new RangeError("no")).catch(half));
+  await attempt("below gets an error", () => Promise.reject(new RangeError("no")).catch(below));
+  honestFirst("after");
+  honestSecond("after");
+}
+
+main();
+//// many-callers-and-an-impostor-through-helpers-of-node.cjs
+////= show-11
+
+let last;
+
+////= attempt-17
+
+////= notLists-2
+
+////= notNumbers-3
+
+const util = require("node:util");
+const { AsyncLocalStorage, AsyncResource } = require("node:async_hooks");
+const { EventEmitter } = require("node:events");
+
+////= totalOne-3
+
+console.log("strict:", (function () { return this === undefined; })());
+for (const [name, make] of notLists) attempt("util.promisify, total of " + name, () => typeof util.promisify(totalOne)(make()).catch(() => {}));
+for (const [name, make] of notNumbers) attempt("util.promisify, half of " + name, () => typeof util.promisify(halfOne)(make()).catch(() => {}));
+console.log("honest", totalOne([1, 2, 3]), totalOne([]), totalOne(new Array(4, 5)), totalOne([0.5]), halfOne(4), halfOne(3), halfOne(0.5), halfOne(-8));
+console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+for (const [name, make] of notLists) attempt("util.deprecate, total of " + name, () => util.deprecate(totalTwo, "old", "DEP" + "X")(make()));
+for (const [name, make] of notNumbers) attempt("util.deprecate, half of " + name, () => util.deprecate(halfTwo, "old", "DEP" + "X")(make()));
+console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+for (const [name, make] of notLists) attempt("AsyncLocalStorage.run, total of " + name, () => new AsyncLocalStorage().run({}, totalThree, make()));
+for (const [name, make] of notNumbers) attempt("AsyncLocalStorage.run, half of " + name, () => new AsyncLocalStorage().run({}, halfThree, make()));
+console.log("honest", totalThree([1, 2, 3]), totalThree([]), totalThree(new Array(4, 5)), totalThree([0.5]), halfThree(4), halfThree(3), halfThree(0.5), halfThree(-8));
+console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+for (const [name, make] of notLists) attempt("AsyncLocalStorage.exit, total of " + name, () => new AsyncLocalStorage().exit(totalFour, make()));
+for (const [name, make] of notNumbers) attempt("AsyncLocalStorage.exit, half of " + name, () => new AsyncLocalStorage().exit(halfFour, make()));
+console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+for (const [name, make] of notLists) attempt("AsyncLocalStorage.bind, total of " + name, () => AsyncLocalStorage.bind(totalFive)(make()));
+for (const [name, make] of notNumbers) attempt("AsyncLocalStorage.bind, half of " + name, () => AsyncLocalStorage.bind(halfFive)(make()));
+console.log("honest", totalFive([1, 2, 3]), totalFive([]), totalFive(new Array(4, 5)), totalFive([0.5]), halfFive(4), halfFive(3), halfFive(0.5), halfFive(-8));
+console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+for (const [name, make] of notLists) attempt("AsyncResource.bind, total of " + name, () => AsyncResource.bind(totalSix)(make()));
+for (const [name, make] of notNumbers) attempt("AsyncResource.bind, half of " + name, () => AsyncResource.bind(halfSix)(make()));
+console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+for (const [name, make] of notLists) attempt("runInAsyncScope, total of " + name, () => new AsyncResource("test").runInAsyncScope(totalSeven, null, make()));
+for (const [name, make] of notNumbers) attempt("runInAsyncScope, half of " + name, () => new AsyncResource("test").runInAsyncScope(halfSeven, null, make()));
+console.log("honest", totalSeven([1, 2, 3]), totalSeven([]), totalSeven(new Array(4, 5)), totalSeven([0.5]), halfSeven(4), halfSeven(3), halfSeven(0.5), halfSeven(-8));
+console.log("honest", totalEight([1, 2, 3]), totalEight([]), totalEight(new Array(4, 5)), totalEight([0.5]), halfEight(4), halfEight(3), halfEight(0.5), halfEight(-8));
+for (const [name, make] of notLists) attempt("once, total of " + name, () => new EventEmitter().once("go", totalEight).emit("go", make()));
+for (const [name, make] of notNumbers) attempt("once, half of " + name, () => new EventEmitter().once("go", halfEight).emit("go", make()));
+console.log("honest", totalEight([1, 2, 3]), totalEight([]), totalEight(new Array(4, 5)), totalEight([0.5]), halfEight(4), halfEight(3), halfEight(0.5), halfEight(-8));
+for (const [name, make] of notLists) attempt("prependListener, total of " + name, () => new EventEmitter().prependListener("go", totalNine).emit("go", make()));
+for (const [name, make] of notNumbers) attempt("prependListener, half of " + name, () => new EventEmitter().prependListener("go", halfNine).emit("go", make()));
+console.log("honest", totalNine([1, 2, 3]), totalNine([]), totalNine(new Array(4, 5)), totalNine([0.5]), halfNine(4), halfNine(3), halfNine(0.5), halfNine(-8));
+console.log("honest", totalTen([1, 2, 3]), totalTen([]), totalTen(new Array(4, 5)), totalTen([0.5]), halfTen(4), halfTen(3), halfTen(0.5), halfTen(-8));
+for (const [name, make] of notLists) attempt("the raw listeners that an emitter lists, total of " + name, () => new EventEmitter().on("go", totalTen).rawListeners("go")[0](make()));
+for (const [name, make] of notNumbers) attempt("the raw listeners that an emitter lists, half of " + name, () => new EventEmitter().on("go", halfTen).rawListeners("go")[0](make()));
+console.log("honest", totalTen([1, 2, 3]), totalTen([]), totalTen(new Array(4, 5)), totalTen([0.5]), halfTen(4), halfTen(3), halfTen(0.5), halfTen(-8));
+for (const [name, make] of notLists) attempt("the listeners that an emitter lists, total of " + name, () => new EventEmitter().on("go", totalEleven).listeners("go")[0](make()));
+for (const [name, make] of notNumbers) attempt("the listeners that an emitter lists, half of " + name, () => new EventEmitter().on("go", halfEleven).listeners("go")[0](make()));
+console.log("honest", totalEleven([1, 2, 3]), totalEleven([]), totalEleven(new Array(4, 5)), totalEleven([0.5]), halfEleven(4), halfEleven(3), halfEleven(0.5), halfEleven(-8));
+console.log("honest", totalTwelve([1, 2, 3]), totalTwelve([]), totalTwelve(new Array(4, 5)), totalTwelve([0.5]), halfTwelve(4), halfTwelve(3), halfTwelve(0.5), halfTwelve(-8));
+for (const [name, make] of notLists) attempt("util.inherits keeps the constructor under super_, total of " + name, () => { function Child() {} util.inherits(Child, totalTwelve); return Child.super_(make()); });
+for (const [name, make] of notNumbers) attempt("util.inherits keeps the constructor under super_, half of " + name, () => { function Child() {} util.inherits(Child, halfTwelve); return Child.super_(make()); });
+console.log("honest", totalTwelve([1, 2, 3]), totalTwelve([]), totalTwelve(new Array(4, 5)), totalTwelve([0.5]), halfTwelve(4), halfTwelve(3), halfTwelve(0.5), halfTwelve(-8));
+//// many-callers-and-an-impostor-through-next-tick.cjs
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-54
+
+////= total
+
+////= append
+
+////= firstCode-2
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-10
+
+process.on("uncaughtException", error => log.push("uncaught " + error.constructor.name));
+
+////= honestFirst-8
+
+async function main() {
+  console.log("strict:", (function () { return this === undefined; })());
+  honestSecond("before");
+  for (const [name, make] of notArrays) {
+    await attempt("total of " + name, () => (process.nextTick(total, make()), new Promise(resolve => setTimeout(resolve, 0))));
+    await attempt("append to " + name, () => (process.nextTick(append, make()), new Promise(resolve => setTimeout(resolve, 0))));
+  }
+  await attempt("total of a literal", () => (process.nextTick(total, "12"), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("append to a literal", () => (process.nextTick(append, { push: () => "a literal's push" }), new Promise(resolve => setTimeout(resolve, 0))));
+  for (const [name, make] of notStrings) {
+    await attempt("firstCode of " + name, () => (process.nextTick(firstCode, make()), new Promise(resolve => setTimeout(resolve, 0))));
+    await attempt("tail of " + name, () => (process.nextTick(tail, make()), new Promise(resolve => setTimeout(resolve, 0))));
+  }
+  await attempt("firstCode of a literal", () => (process.nextTick(firstCode, [65]), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("tail of a literal", () => (process.nextTick(tail, [1, 2, 3]), new Promise(resolve => setTimeout(resolve, 0))));
+  for (const [name, make] of notNumbers) {
+    await attempt("half of " + name, () => (process.nextTick(half, make()), new Promise(resolve => setTimeout(resolve, 0))));
+    await attempt("below from " + name, () => (process.nextTick(below, make()), new Promise(resolve => setTimeout(resolve, 0))));
+  }
+  await attempt("half of a literal", () => (process.nextTick(half, "4"), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("below from a literal", () => (process.nextTick(below, "1"), new Promise(resolve => setTimeout(resolve, 0))));
+  for (const [name, make] of notSmallIntegers) {
+    await attempt("low of " + name, () => (process.nextTick(low, make()), new Promise(resolve => setTimeout(resolve, 0))));
+    await attempt("pick at " + name, () => (process.nextTick(pick, make()), new Promise(resolve => setTimeout(resolve, 0))));
+  }
+  await attempt("low of a literal", () => (process.nextTick(low, 4294967297.5), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("pick at a literal", () => (process.nextTick(pick, "length"), new Promise(resolve => setTimeout(resolve, 0))));
+  for (const [name, make] of notFunctions) {
+    await attempt("invoke of " + name, () => (process.nextTick(invoke, make()), new Promise(resolve => setTimeout(resolve, 0))));
+    await attempt("build from " + name, () => (process.nextTick(build, make()), new Promise(resolve => setTimeout(resolve, 0))));
+  }
+  await attempt("invoke of a literal", () => (process.nextTick(invoke, class {}), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("build from a literal", () => (process.nextTick(build, () => {}), new Promise(resolve => setTimeout(resolve, 0))));
+  for (const [name, make] of notPoints) {
+    await attempt("sumOf " + name, () => (process.nextTick(sumOf, make()), new Promise(resolve => setTimeout(resolve, 0))));
+    await attempt("move " + name, () => (process.nextTick(move, make()), new Promise(resolve => setTimeout(resolve, 0))));
+  }
+  await attempt("sumOf a literal", () => (process.nextTick(sumOf, { y: 2, x: 1 }), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("move a literal", () => (process.nextTick(move, { get x() { return 1; }, y: 2 }), new Promise(resolve => setTimeout(resolve, 0))));
+  honestFirst("after");
+  honestSecond("after");
+}
+
+main();
+//// many-callers-and-an-impostor-through-queue-microtask.js
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-54
+
+////= firstCode-2
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-3
+
+process.on("uncaughtException", error => log.push("uncaught " + error.constructor.name));
+
+////= honestFirst-9
+
+async function main() {
+  console.log("strict:", (function () { return this === undefined; })());
+  honestSecond("before");
+  await attempt("firstCode gets nothing", () => (queueMicrotask(firstCode), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("tail gets nothing", () => (queueMicrotask(tail), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("half gets nothing", () => (queueMicrotask(half), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("below gets nothing", () => (queueMicrotask(below), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("low gets nothing", () => (queueMicrotask(low), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("pick gets nothing", () => (queueMicrotask(pick), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("invoke gets nothing", () => (queueMicrotask(invoke), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("build gets nothing", () => (queueMicrotask(build), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("sumOf gets nothing", () => (queueMicrotask(sumOf), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("move gets nothing", () => (queueMicrotask(move), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("total gets nothing", () => (queueMicrotask(total), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("append gets nothing", () => (queueMicrotask(append), new Promise(resolve => setTimeout(resolve, 0))));
+  honestFirst("after");
+  honestSecond("after");
+}
+
+main();
+//// many-callers-and-an-impostor-through-replace-with-a-regular-expression.js
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-52
+
+////= firstCode-2
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-3
+
+////= honestFirst-9
+
+console.log("strict:", (function () { return this === undefined; })());
+honestSecond("before");
+attempt("firstCode gets each match", () => "a1b2".replace(/[0-9]/g, firstCode));
+attempt("tail gets each match", () => "a1b2".replace(/[0-9]/g, tail));
+attempt("half gets each match", () => "a1b2".replace(/[0-9]/g, half));
+attempt("below gets each match", () => "a1b2".replace(/[0-9]/g, below));
+attempt("low gets each match", () => "a1b2".replace(/[0-9]/g, low));
+attempt("pick gets each match", () => "a1b2".replace(/[0-9]/g, pick));
+attempt("invoke gets each match", () => "a1b2".replace(/[0-9]/g, invoke));
+attempt("build gets each match", () => "a1b2".replace(/[0-9]/g, build));
+attempt("sumOf gets each match", () => "a1b2".replace(/[0-9]/g, sumOf));
+attempt("move gets each match", () => "a1b2".replace(/[0-9]/g, move));
+attempt("total gets each match", () => "a1b2".replace(/[0-9]/g, total));
+attempt("append gets each match", () => "a1b2".replace(/[0-9]/g, append));
+honestFirst("after");
+honestSecond("after");
+//// many-callers-and-an-impostor-through-set-immediate.js
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-54
+
+////= sumOf-3
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-5
+
+process.on("uncaughtException", error => log.push("uncaught " + error.constructor.name));
+
+////= honestFirst-7
+
+async function main() {
+  console.log("strict:", (function () { return this === undefined; })());
+  honestSecond("before");
+  for (const [name, make] of notPoints) {
+    await attempt("sumOf " + name, () => (setImmediate(sumOf, make()), new Promise(resolve => setImmediate(resolve))));
+    await attempt("move " + name, () => (setImmediate(move, make()), new Promise(resolve => setImmediate(resolve))));
+  }
+  await attempt("sumOf a literal", () => (setImmediate(sumOf, { y: 2, x: 1 }), new Promise(resolve => setImmediate(resolve))));
+  await attempt("move a literal", () => (setImmediate(move, { get x() { return 1; }, y: 2 }), new Promise(resolve => setImmediate(resolve))));
+  for (const [name, make] of notArrays) {
+    await attempt("total of " + name, () => (setImmediate(total, make()), new Promise(resolve => setImmediate(resolve))));
+    await attempt("append to " + name, () => (setImmediate(append, make()), new Promise(resolve => setImmediate(resolve))));
+  }
+  await attempt("total of a literal", () => (setImmediate(total, "12"), new Promise(resolve => setImmediate(resolve))));
+  await attempt("append to a literal", () => (setImmediate(append, { push: () => "a literal's push" }), new Promise(resolve => setImmediate(resolve))));
+  for (const [name, make] of notStrings) {
+    await attempt("firstCode of " + name, () => (setImmediate(firstCode, make()), new Promise(resolve => setImmediate(resolve))));
+    await attempt("tail of " + name, () => (setImmediate(tail, make()), new Promise(resolve => setImmediate(resolve))));
+  }
+  await attempt("firstCode of a literal", () => (setImmediate(firstCode, [65]), new Promise(resolve => setImmediate(resolve))));
+  await attempt("tail of a literal", () => (setImmediate(tail, [1, 2, 3]), new Promise(resolve => setImmediate(resolve))));
+  for (const [name, make] of notNumbers) {
+    await attempt("half of " + name, () => (setImmediate(half, make()), new Promise(resolve => setImmediate(resolve))));
+    await attempt("below from " + name, () => (setImmediate(below, make()), new Promise(resolve => setImmediate(resolve))));
+  }
+  await attempt("half of a literal", () => (setImmediate(half, "4"), new Promise(resolve => setImmediate(resolve))));
+  await attempt("below from a literal", () => (setImmediate(below, "1"), new Promise(resolve => setImmediate(resolve))));
+  for (const [name, make] of notSmallIntegers) {
+    await attempt("low of " + name, () => (setImmediate(low, make()), new Promise(resolve => setImmediate(resolve))));
+    await attempt("pick at " + name, () => (setImmediate(pick, make()), new Promise(resolve => setImmediate(resolve))));
+  }
+  await attempt("low of a literal", () => (setImmediate(low, 4294967297.5), new Promise(resolve => setImmediate(resolve))));
+  await attempt("pick at a literal", () => (setImmediate(pick, "length"), new Promise(resolve => setImmediate(resolve))));
+  for (const [name, make] of notFunctions) {
+    await attempt("invoke of " + name, () => (setImmediate(invoke, make()), new Promise(resolve => setImmediate(resolve))));
+    await attempt("build from " + name, () => (setImmediate(build, make()), new Promise(resolve => setImmediate(resolve))));
+  }
+  await attempt("invoke of a literal", () => (setImmediate(invoke, class {}), new Promise(resolve => setImmediate(resolve))));
+  await attempt("build from a literal", () => (setImmediate(build, () => {}), new Promise(resolve => setImmediate(resolve))));
+  honestFirst("after");
+  honestSecond("after");
+}
+
+main();
+//// many-callers-and-an-impostor-through-set-timeout.cjs
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-54
+
+////= invoke
+
+////= build
+
+////= sumOf-3
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-9
+
+process.on("uncaughtException", error => log.push("uncaught " + error.constructor.name));
+
+////= honestFirst-6
+
+////= honestSecond-6
+
+async function main() {
+  console.log("strict:", (function () { return this === undefined; })());
+  honestSecond("before");
+  for (const [name, make] of notFunctions) {
+    await attempt("invoke of " + name, () => (setTimeout(invoke, 0, make()), new Promise(resolve => setTimeout(resolve, 0))));
+    await attempt("build from " + name, () => (setTimeout(build, 0, make()), new Promise(resolve => setTimeout(resolve, 0))));
+  }
+  await attempt("invoke of a literal", () => (setTimeout(invoke, 0, class {}), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("build from a literal", () => (setTimeout(build, 0, () => {}), new Promise(resolve => setTimeout(resolve, 0))));
+  for (const [name, make] of notPoints) {
+    await attempt("sumOf " + name, () => (setTimeout(sumOf, 0, make()), new Promise(resolve => setTimeout(resolve, 0))));
+    await attempt("move " + name, () => (setTimeout(move, 0, make()), new Promise(resolve => setTimeout(resolve, 0))));
+  }
+  await attempt("sumOf a literal", () => (setTimeout(sumOf, 0, { y: 2, x: 1 }), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("move a literal", () => (setTimeout(move, 0, { get x() { return 1; }, y: 2 }), new Promise(resolve => setTimeout(resolve, 0))));
+  for (const [name, make] of notArrays) {
+    await attempt("total of " + name, () => (setTimeout(total, 0, make()), new Promise(resolve => setTimeout(resolve, 0))));
+    await attempt("append to " + name, () => (setTimeout(append, 0, make()), new Promise(resolve => setTimeout(resolve, 0))));
+  }
+  await attempt("total of a literal", () => (setTimeout(total, 0, "12"), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("append to a literal", () => (setTimeout(append, 0, { push: () => "a literal's push" }), new Promise(resolve => setTimeout(resolve, 0))));
+  for (const [name, make] of notStrings) {
+    await attempt("firstCode of " + name, () => (setTimeout(firstCode, 0, make()), new Promise(resolve => setTimeout(resolve, 0))));
+    await attempt("tail of " + name, () => (setTimeout(tail, 0, make()), new Promise(resolve => setTimeout(resolve, 0))));
+  }
+  await attempt("firstCode of a literal", () => (setTimeout(firstCode, 0, [65]), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("tail of a literal", () => (setTimeout(tail, 0, [1, 2, 3]), new Promise(resolve => setTimeout(resolve, 0))));
+  for (const [name, make] of notNumbers) {
+    await attempt("half of " + name, () => (setTimeout(half, 0, make()), new Promise(resolve => setTimeout(resolve, 0))));
+    await attempt("below from " + name, () => (setTimeout(below, 0, make()), new Promise(resolve => setTimeout(resolve, 0))));
+  }
+  await attempt("half of a literal", () => (setTimeout(half, 0, "4"), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("below from a literal", () => (setTimeout(below, 0, "1"), new Promise(resolve => setTimeout(resolve, 0))));
+  for (const [name, make] of notSmallIntegers) {
+    await attempt("low of " + name, () => (setTimeout(low, 0, make()), new Promise(resolve => setTimeout(resolve, 0))));
+    await attempt("pick at " + name, () => (setTimeout(pick, 0, make()), new Promise(resolve => setTimeout(resolve, 0))));
+  }
+  await attempt("low of a literal", () => (setTimeout(low, 0, 4294967297.5), new Promise(resolve => setTimeout(resolve, 0))));
+  await attempt("pick at a literal", () => (setTimeout(pick, 0, "length"), new Promise(resolve => setTimeout(resolve, 0))));
+  honestFirst("after");
+  honestSecond("after");
+}
+
+main();
+//// many-callers-and-an-impostor-through-setters-that-built-ins-run.js
+////= show-11
+
+let last;
+
+////= attempt-53
+
+console.log("strict:", (function () { return this === undefined; })());
+for (const [name, make] of notLists) attempt("Object.assign, total of " + name, () => typeof Object.assign(Object.defineProperty({}, "value", { set: totalOne }), { value: make() }));
+for (const [name, make] of notNumbers) attempt("Object.assign, half of " + name, () => typeof Object.assign(Object.defineProperty({}, "value", { set: halfOne }), { value: make() }));
+console.log("honest", totalOne([1, 2, 3]), totalOne([]), totalOne(new Array(4, 5)), totalOne([0.5]), halfOne(4), halfOne(3), halfOne(0.5), halfOne(-8));
+console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+for (const [name, make] of notLists) attempt("Reflect.set, total of " + name, () => Reflect.set(Object.defineProperty({}, "value", { set: totalTwo }), "value", make()));
+for (const [name, make] of notNumbers) attempt("Reflect.set, half of " + name, () => Reflect.set(Object.defineProperty({}, "value", { set: halfTwo }), "value", make()));
+console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+for (const [name, make] of notLists) attempt("Reflect.set through an heir, total of " + name, () => Reflect.set(Object.create(Object.defineProperty({}, "value", { set: totalThree })), "value", make()));
+for (const [name, make] of notNumbers) attempt("Reflect.set through an heir, half of " + name, () => Reflect.set(Object.create(Object.defineProperty({}, "value", { set: halfThree })), "value", make()));
+console.log("honest", totalThree([1, 2, 3]), totalThree([]), totalThree(new Array(4, 5)), totalThree([0.5]), halfThree(4), halfThree(3), halfThree(0.5), halfThree(-8));
+console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+for (const [name, make] of notLists) attempt("a store to an heir, total of " + name, () => typeof (Object.create(Object.defineProperty({}, "value", { set: totalFour })).value = make()));
+for (const [name, make] of notNumbers) attempt("a store to an heir, half of " + name, () => typeof (Object.create(Object.defineProperty({}, "value", { set: halfFour })).value = make()));
+console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+for (const [name, make] of notLists) attempt("a store under a computed name, total of " + name, () => typeof (Object.defineProperty({}, "value", { set: totalFive })[["val", "ue"].join("")] = make()));
+for (const [name, make] of notNumbers) attempt("a store under a computed name, half of " + name, () => typeof (Object.defineProperty({}, "value", { set: halfFive })[["val", "ue"].join("")] = make()));
+console.log("honest", totalFive([1, 2, 3]), totalFive([]), totalFive(new Array(4, 5)), totalFive([0.5]), halfFive(4), halfFive(3), halfFive(0.5), halfFive(-8));
+console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+for (const [name, make] of notLists) attempt("Object.defineProperties, total of " + name, () => typeof (Object.defineProperties({}, { value: { set: totalSix } }).value = make()));
+for (const [name, make] of notNumbers) attempt("Object.defineProperties, half of " + name, () => typeof (Object.defineProperties({}, { value: { set: halfSix } }).value = make()));
+console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+for (const [name, make] of notLists) attempt("__defineSetter__, total of " + name, () => { const object = {}; object.__defineSetter__("value", totalSeven); object.value = make(); });
+for (const [name, make] of notNumbers) attempt("__defineSetter__, half of " + name, () => { const object = {}; object.__defineSetter__("value", halfSeven); object.value = make(); });
+console.log("honest", totalSeven([1, 2, 3]), totalSeven([]), totalSeven(new Array(4, 5)), totalSeven([0.5]), halfSeven(4), halfSeven(3), halfSeven(0.5), halfSeven(-8));
+console.log("honest", totalEight([1, 2, 3]), totalEight([]), totalEight(new Array(4, 5)), totalEight([0.5]), halfEight(4), halfEight(3), halfEight(0.5), halfEight(-8));
+for (const [name, make] of notLists) attempt("a setter for an index of an array-like that push stores to, total of " + name, () => Array.prototype.push.call(Object.defineProperty({ length: 0 }, "0", { set: totalEight }), make()));
+for (const [name, make] of notNumbers) attempt("a setter for an index of an array-like that push stores to, half of " + name, () => Array.prototype.push.call(Object.defineProperty({ length: 0 }, "0", { set: halfEight }), make()));
+console.log("honest", totalEight([1, 2, 3]), totalEight([]), totalEight(new Array(4, 5)), totalEight([0.5]), halfEight(4), halfEight(3), halfEight(0.5), halfEight(-8));
+attempt("a setter for length that push stores to, total", () => Array.prototype.push.call(Object.defineProperty({}, "length", { get: () => 0, set: totalNine }), 1));
+attempt("a setter for length that push stores to, half", () => Array.prototype.push.call(Object.defineProperty({}, "length", { get: () => 0, set: halfNine }), 1));
+console.log("honest", totalNine([1, 2, 3]), totalNine([]), totalNine(new Array(4, 5)), totalNine([0.5]), halfNine(4), halfNine(3), halfNine(0.5), halfNine(-8));
+console.log("honest", totalTen([1, 2, 3]), totalTen([]), totalTen(new Array(4, 5)), totalTen([0.5]), halfTen(4), halfTen(3), halfTen(0.5), halfTen(-8));
+for (const [name, make] of notLists) attempt("a destructuring assignment, total of " + name, () => { [Object.defineProperty({}, "value", { set: totalTen }).value] = [make()]; });
+for (const [name, make] of notNumbers) attempt("a destructuring assignment, half of " + name, () => { [Object.defineProperty({}, "value", { set: halfTen }).value] = [make()]; });
+console.log("honest", totalTen([1, 2, 3]), totalTen([]), totalTen(new Array(4, 5)), totalTen([0.5]), halfTen(4), halfTen(3), halfTen(0.5), halfTen(-8));
+for (const [name, make] of notLists) attempt("a for-of loop that stores to it, total of " + name, () => { const object = Object.defineProperty({}, "value", { set: totalEleven }); for (object.value of [make()]); });
+for (const [name, make] of notNumbers) attempt("a for-of loop that stores to it, half of " + name, () => { const object = Object.defineProperty({}, "value", { set: halfEleven }); for (object.value of [make()]); });
+console.log("honest", totalEleven([1, 2, 3]), totalEleven([]), totalEleven(new Array(4, 5)), totalEleven([0.5]), halfEleven(4), halfEleven(3), halfEleven(0.5), halfEleven(-8));
+console.log("honest", totalTwelve([1, 2, 3]), totalTwelve([]), totalTwelve(new Array(4, 5)), totalTwelve([0.5]), halfTwelve(4), halfTwelve(3), halfTwelve(0.5), halfTwelve(-8));
+for (const [name, make] of notLists) attempt("the set trap of a proxy, total of " + name, () => { new Proxy({}, { set: (target, key, value) => (totalTwelve(value), true) }).value = make(); });
+for (const [name, make] of notNumbers) attempt("the set trap of a proxy, half of " + name, () => { new Proxy({}, { set: (target, key, value) => (halfTwelve(value), true) }).value = make(); });
+console.log("honest", totalTwelve([1, 2, 3]), totalTwelve([]), totalTwelve(new Array(4, 5)), totalTwelve([0.5]), halfTwelve(4), halfTwelve(3), halfTwelve(0.5), halfTwelve(-8));
+//// many-callers-and-an-impostor-through-symbol-to-primitive.js
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-56
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-2
+
+////= honestFirst-7
+
+console.log("strict:", (function () { return this === undefined; })());
+honestSecond("before");
+attempt("sumOf gets the hint", () => `${{ [Symbol.toPrimitive]: sumOf }}`);
+attempt("move gets the hint", () => `${{ [Symbol.toPrimitive]: move }}`);
+attempt("total gets the hint", () => `${{ [Symbol.toPrimitive]: total }}`);
+attempt("append gets the hint", () => `${{ [Symbol.toPrimitive]: append }}`);
+attempt("firstCode gets the hint", () => `${{ [Symbol.toPrimitive]: firstCode }}`);
+attempt("tail gets the hint", () => `${{ [Symbol.toPrimitive]: tail }}`);
+attempt("half gets the hint", () => `${{ [Symbol.toPrimitive]: half }}`);
+attempt("below gets the hint", () => `${{ [Symbol.toPrimitive]: below }}`);
+attempt("low gets the hint", () => `${{ [Symbol.toPrimitive]: low }}`);
+attempt("pick gets the hint", () => `${{ [Symbol.toPrimitive]: pick }}`);
+attempt("invoke gets the hint", () => `${{ [Symbol.toPrimitive]: invoke }}`);
+attempt("build gets the hint", () => `${{ [Symbol.toPrimitive]: build }}`);
+honestFirst("after");
+honestSecond("after");
+//// many-callers-and-an-impostor-through-the-callbacks-of-array-methods.js
+////= show-11
+
+let last;
+
+////= attempt-53
+
+console.log("strict:", (function () { return this === undefined; })());
+for (const [name, make] of notLists) attempt("every, total of " + name, () => [make()].every(totalOne));
+for (const [name, make] of notNumbers) attempt("every, half of " + name, () => [make()].every(halfOne));
+console.log("honest", totalOne([1, 2, 3]), totalOne([]), totalOne(new Array(4, 5)), totalOne([0.5]), halfOne(4), halfOne(3), halfOne(0.5), halfOne(-8));
+console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+for (const [name, make] of notLists) attempt("some, total of " + name, () => [make()].some(totalTwo));
+for (const [name, make] of notNumbers) attempt("some, half of " + name, () => [make()].some(halfTwo));
+console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+for (const [name, make] of notLists) attempt("find, total of " + name, () => typeof [make()].find(totalThree));
+for (const [name, make] of notNumbers) attempt("find, half of " + name, () => typeof [make()].find(halfThree));
+console.log("honest", totalThree([1, 2, 3]), totalThree([]), totalThree(new Array(4, 5)), totalThree([0.5]), halfThree(4), halfThree(3), halfThree(0.5), halfThree(-8));
+console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+for (const [name, make] of notLists) attempt("findIndex, total of " + name, () => [make()].findIndex(totalFour));
+for (const [name, make] of notNumbers) attempt("findIndex, half of " + name, () => [make()].findIndex(halfFour));
+console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+for (const [name, make] of notLists) attempt("findLast, total of " + name, () => typeof [make()].findLast(totalFive));
+for (const [name, make] of notNumbers) attempt("findLast, half of " + name, () => typeof [make()].findLast(halfFive));
+console.log("honest", totalFive([1, 2, 3]), totalFive([]), totalFive(new Array(4, 5)), totalFive([0.5]), halfFive(4), halfFive(3), halfFive(0.5), halfFive(-8));
+console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+for (const [name, make] of notLists) attempt("findLastIndex, total of " + name, () => [make()].findLastIndex(totalSix));
+for (const [name, make] of notNumbers) attempt("findLastIndex, half of " + name, () => [make()].findLastIndex(halfSix));
+console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+for (const [name, make] of notLists) attempt("flatMap, total of " + name, () => [make()].flatMap(totalSeven));
+for (const [name, make] of notNumbers) attempt("flatMap, half of " + name, () => [make()].flatMap(halfSeven));
+console.log("honest", totalSeven([1, 2, 3]), totalSeven([]), totalSeven(new Array(4, 5)), totalSeven([0.5]), halfSeven(4), halfSeven(3), halfSeven(0.5), halfSeven(-8));
+console.log("honest", totalEight([1, 2, 3]), totalEight([]), totalEight(new Array(4, 5)), totalEight([0.5]), halfEight(4), halfEight(3), halfEight(0.5), halfEight(-8));
+for (const [name, make] of notLists) attempt("reduceRight, total of " + name, () => [0, make()].reduceRight(totalEight));
+for (const [name, make] of notNumbers) attempt("reduceRight, half of " + name, () => [0, make()].reduceRight(halfEight));
+console.log("honest", totalEight([1, 2, 3]), totalEight([]), totalEight(new Array(4, 5)), totalEight([0.5]), halfEight(4), halfEight(3), halfEight(0.5), halfEight(-8));
+for (const [name, make] of notLists) attempt("reduce with a start, total of " + name, () => [0].reduce(totalNine, make()));
+for (const [name, make] of notNumbers) attempt("reduce with a start, half of " + name, () => [0].reduce(halfNine, make()));
+console.log("honest", totalNine([1, 2, 3]), totalNine([]), totalNine(new Array(4, 5)), totalNine([0.5]), halfNine(4), halfNine(3), halfNine(0.5), halfNine(-8));
+console.log("honest", totalTen([1, 2, 3]), totalTen([]), totalTen(new Array(4, 5)), totalTen([0.5]), halfTen(4), halfTen(3), halfTen(0.5), halfTen(-8));
+for (const [name, make] of notLists) attempt("toSorted, total of " + name, () => [make(), make()].toSorted(totalTen).length);
+for (const [name, make] of notNumbers) attempt("toSorted, half of " + name, () => [make(), make()].toSorted(halfTen).length);
+console.log("honest", totalTen([1, 2, 3]), totalTen([]), totalTen(new Array(4, 5)), totalTen([0.5]), halfTen(4), halfTen(3), halfTen(0.5), halfTen(-8));
+for (const [name, make] of notLists) attempt("sort borrowed for an array-like, total of " + name, () => Array.prototype.sort.call({ length: 2, 0: make(), 1: make() }, totalEleven).length);
+for (const [name, make] of notNumbers) attempt("sort borrowed for an array-like, half of " + name, () => Array.prototype.sort.call({ length: 2, 0: make(), 1: make() }, halfEleven).length);
+console.log("honest", totalEleven([1, 2, 3]), totalEleven([]), totalEleven(new Array(4, 5)), totalEleven([0.5]), halfEleven(4), halfEleven(3), halfEleven(0.5), halfEleven(-8));
+console.log("honest", totalTwelve([1, 2, 3]), totalTwelve([]), totalTwelve(new Array(4, 5)), totalTwelve([0.5]), halfTwelve(4), halfTwelve(3), halfTwelve(0.5), halfTwelve(-8));
+for (const [name, make] of notLists) attempt("Array.from over a Set, total of " + name, () => Array.from(new Set([make()]), totalTwelve));
+for (const [name, make] of notNumbers) attempt("Array.from over a Set, half of " + name, () => Array.from(new Set([make()]), halfTwelve));
+console.log("honest", totalTwelve([1, 2, 3]), totalTwelve([]), totalTwelve(new Array(4, 5)), totalTwelve([0.5]), halfTwelve(4), halfTwelve(3), halfTwelve(0.5), halfTwelve(-8));
+//// many-callers-and-an-impostor-through-the-callbacks-of-iterators-and-collections.js
+////= show-11
+
+let last;
+
+////= attempt-53
+
+console.log("strict:", (function () { return this === undefined; })());
+for (const [name, make] of notLists) attempt("the map of an iterator, total of " + name, () => [make()].values().map(totalOne).toArray());
+for (const [name, make] of notNumbers) attempt("the map of an iterator, half of " + name, () => [make()].values().map(halfOne).toArray());
+console.log("honest", totalOne([1, 2, 3]), totalOne([]), totalOne(new Array(4, 5)), totalOne([0.5]), halfOne(4), halfOne(3), halfOne(0.5), halfOne(-8));
+console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+for (const [name, make] of notLists) attempt("the filter of an iterator, total of " + name, () => [make()].values().filter(totalTwo).toArray().length);
+for (const [name, make] of notNumbers) attempt("the filter of an iterator, half of " + name, () => [make()].values().filter(halfTwo).toArray().length);
+console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+for (const [name, make] of notLists) attempt("the forEach of an iterator, total of " + name, () => [make()].values().forEach(totalThree));
+for (const [name, make] of notNumbers) attempt("the forEach of an iterator, half of " + name, () => [make()].values().forEach(halfThree));
+console.log("honest", totalThree([1, 2, 3]), totalThree([]), totalThree(new Array(4, 5)), totalThree([0.5]), halfThree(4), halfThree(3), halfThree(0.5), halfThree(-8));
+console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+for (const [name, make] of notLists) attempt("the some of an iterator, total of " + name, () => [make()].values().some(totalFour));
+for (const [name, make] of notNumbers) attempt("the some of an iterator, half of " + name, () => [make()].values().some(halfFour));
+console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+for (const [name, make] of notLists) attempt("the find of an iterator, total of " + name, () => typeof [make()].values().find(totalFive));
+for (const [name, make] of notNumbers) attempt("the find of an iterator, half of " + name, () => typeof [make()].values().find(halfFive));
+console.log("honest", totalFive([1, 2, 3]), totalFive([]), totalFive(new Array(4, 5)), totalFive([0.5]), halfFive(4), halfFive(3), halfFive(0.5), halfFive(-8));
+console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+for (const [name, make] of notLists) attempt("the reduce of an iterator, total of " + name, () => [make(), 0].values().reduce(totalSix));
+for (const [name, make] of notNumbers) attempt("the reduce of an iterator, half of " + name, () => [make(), 0].values().reduce(halfSix));
+console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+for (const [name, make] of notLists) attempt("the map of the iterator of a generator, total of " + name, () => (function* () { yield make(); })().map(totalSeven).toArray());
+for (const [name, make] of notNumbers) attempt("the map of the iterator of a generator, half of " + name, () => (function* () { yield make(); })().map(halfSeven).toArray());
+console.log("honest", totalSeven([1, 2, 3]), totalSeven([]), totalSeven(new Array(4, 5)), totalSeven([0.5]), halfSeven(4), halfSeven(3), halfSeven(0.5), halfSeven(-8));
+console.log("honest", totalEight([1, 2, 3]), totalEight([]), totalEight(new Array(4, 5)), totalEight([0.5]), halfEight(4), halfEight(3), halfEight(0.5), halfEight(-8));
+for (const [name, make] of notLists) attempt("the forEach of a Set, total of " + name, () => new Set([make()]).forEach(totalEight));
+for (const [name, make] of notNumbers) attempt("the forEach of a Set, half of " + name, () => new Set([make()]).forEach(halfEight));
+console.log("honest", totalEight([1, 2, 3]), totalEight([]), totalEight(new Array(4, 5)), totalEight([0.5]), halfEight(4), halfEight(3), halfEight(0.5), halfEight(-8));
+for (const [name, make] of notLists) attempt("Object.groupBy, total of " + name, () => Object.keys(Object.groupBy([make()], totalNine)));
+for (const [name, make] of notNumbers) attempt("Object.groupBy, half of " + name, () => Object.keys(Object.groupBy([make()], halfNine)));
+console.log("honest", totalNine([1, 2, 3]), totalNine([]), totalNine(new Array(4, 5)), totalNine([0.5]), halfNine(4), halfNine(3), halfNine(0.5), halfNine(-8));
+console.log("honest", totalTen([1, 2, 3]), totalTen([]), totalTen(new Array(4, 5)), totalTen([0.5]), halfTen(4), halfTen(3), halfTen(0.5), halfTen(-8));
+for (const [name, make] of notLists) attempt("Map.groupBy, total of " + name, () => Map.groupBy([make()], totalTen).size);
+for (const [name, make] of notNumbers) attempt("Map.groupBy, half of " + name, () => Map.groupBy([make()], halfTen).size);
+console.log("honest", totalTen([1, 2, 3]), totalTen([]), totalTen(new Array(4, 5)), totalTen([0.5]), halfTen(4), halfTen(3), halfTen(0.5), halfTen(-8));
+attempt("the forEach of URLSearchParams, total", () => new URLSearchParams("a=1").forEach(totalEleven));
+attempt("the forEach of URLSearchParams, half", () => new URLSearchParams("a=1").forEach(halfEleven));
+console.log("honest", totalEleven([1, 2, 3]), totalEleven([]), totalEleven(new Array(4, 5)), totalEleven([0.5]), halfEleven(4), halfEleven(3), halfEleven(0.5), halfEleven(-8));
+console.log("honest", totalTwelve([1, 2, 3]), totalTwelve([]), totalTwelve(new Array(4, 5)), totalTwelve([0.5]), halfTwelve(4), halfTwelve(3), halfTwelve(0.5), halfTwelve(-8));
+attempt("the forEach of Headers, total", () => new Headers({ a: "1" }).forEach(totalTwelve));
+attempt("the forEach of Headers, half", () => new Headers({ a: "1" }).forEach(halfTwelve));
+console.log("honest", totalTwelve([1, 2, 3]), totalTwelve([]), totalTwelve(new Array(4, 5)), totalTwelve([0.5]), halfTwelve(4), halfTwelve(3), halfTwelve(0.5), halfTwelve(-8));
+//// many-callers-and-an-impostor-through-the-entries-of-an-object.js
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-56
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-2
+
+////= honestFirst-7
+
+console.log("strict:", (function () { return this === undefined; })());
+honestSecond("before");
+attempt("sumOf gets a key and a value in an array", () => Object.entries({ key: 1 }).map(sumOf)[0]);
+attempt("move gets a key and a value in an array", () => Object.entries({ key: 1 }).map(move)[0]);
+attempt("total gets a key and a value in an array", () => Object.entries({ key: 1 }).map(total)[0]);
+attempt("append gets a key and a value in an array", () => Object.entries({ key: 1 }).map(append)[0]);
+attempt("firstCode gets a key and a value in an array", () => Object.entries({ key: 1 }).map(firstCode)[0]);
+attempt("tail gets a key and a value in an array", () => Object.entries({ key: 1 }).map(tail)[0]);
+attempt("half gets a key and a value in an array", () => Object.entries({ key: 1 }).map(half)[0]);
+attempt("below gets a key and a value in an array", () => Object.entries({ key: 1 }).map(below)[0]);
+attempt("low gets a key and a value in an array", () => Object.entries({ key: 1 }).map(low)[0]);
+attempt("pick gets a key and a value in an array", () => Object.entries({ key: 1 }).map(pick)[0]);
+attempt("invoke gets a key and a value in an array", () => Object.entries({ key: 1 }).map(invoke)[0]);
+attempt("build gets a key and a value in an array", () => Object.entries({ key: 1 }).map(build)[0]);
+honestFirst("after");
+honestSecond("after");
+//// many-callers-and-an-impostor-through-the-map-of-a-typed-array.js
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-52
+
+////= firstCode-2
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-3
+
+////= honestFirst-9
+
+console.log("strict:", (function () { return this === undefined; })());
+honestSecond("before");
+attempt("firstCode gets 1.5 from a typed array", () => new Float64Array([1.5]).map(firstCode)[0]);
+attempt("tail gets 1.5 from a typed array", () => new Float64Array([1.5]).map(tail)[0]);
+attempt("half gets 1.5 from a typed array", () => new Float64Array([1.5]).map(half)[0]);
+attempt("below gets 1.5 from a typed array", () => new Float64Array([1.5]).map(below)[0]);
+attempt("low gets 1.5 from a typed array", () => new Float64Array([1.5]).map(low)[0]);
+attempt("pick gets 1.5 from a typed array", () => new Float64Array([1.5]).map(pick)[0]);
+attempt("invoke gets 1.5 from a typed array", () => new Float64Array([1.5]).map(invoke)[0]);
+attempt("build gets 1.5 from a typed array", () => new Float64Array([1.5]).map(build)[0]);
+attempt("sumOf gets 1.5 from a typed array", () => new Float64Array([1.5]).map(sumOf)[0]);
+attempt("move gets 1.5 from a typed array", () => new Float64Array([1.5]).map(move)[0]);
+attempt("total gets 1.5 from a typed array", () => new Float64Array([1.5]).map(total)[0]);
+attempt("append gets 1.5 from a typed array", () => new Float64Array([1.5]).map(append)[0]);
+honestFirst("after");
+honestSecond("after");
+//// many-callers-and-an-impostor-through-then.js
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-54
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-4
+
+////= honestFirst
+
+////= honestSecond
+
+async function main() {
+  console.log("strict:", (function () { return this === undefined; })());
+  honestSecond("before");
+  for (const [name, make] of notSmallIntegers) {
+    await attempt("low of " + name, () => Promise.resolve(make()).then(low));
+    await attempt("pick at " + name, () => Promise.resolve(make()).then(pick));
+  }
+  await attempt("low of a literal", () => Promise.resolve(4294967297.5).then(low));
+  await attempt("pick at a literal", () => Promise.resolve("length").then(pick));
+  for (const [name, make] of notFunctions) {
+    await attempt("invoke of " + name, () => Promise.resolve(make()).then(invoke));
+    await attempt("build from " + name, () => Promise.resolve(make()).then(build));
+  }
+  await attempt("invoke of a literal", () => Promise.resolve(class {}).then(invoke));
+  await attempt("build from a literal", () => Promise.resolve(() => {}).then(build));
+  for (const [name, make] of notPoints) {
+    await attempt("sumOf " + name, () => Promise.resolve(make()).then(sumOf));
+    await attempt("move " + name, () => Promise.resolve(make()).then(move));
+  }
+  await attempt("sumOf a literal", () => Promise.resolve({ y: 2, x: 1 }).then(sumOf));
+  await attempt("move a literal", () => Promise.resolve({ get x() { return 1; }, y: 2 }).then(move));
+  for (const [name, make] of notArrays) {
+    await attempt("total of " + name, () => Promise.resolve(make()).then(total));
+    await attempt("append to " + name, () => Promise.resolve(make()).then(append));
+  }
+  await attempt("total of a literal", () => Promise.resolve("12").then(total));
+  await attempt("append to a literal", () => Promise.resolve({ push: () => "a literal's push" }).then(append));
+  for (const [name, make] of notStrings) {
+    await attempt("firstCode of " + name, () => Promise.resolve(make()).then(firstCode));
+    await attempt("tail of " + name, () => Promise.resolve(make()).then(tail));
+  }
+  await attempt("firstCode of a literal", () => Promise.resolve([65]).then(firstCode));
+  await attempt("tail of a literal", () => Promise.resolve([1, 2, 3]).then(tail));
+  for (const [name, make] of notNumbers) {
+    await attempt("half of " + name, () => Promise.resolve(make()).then(half));
+    await attempt("below from " + name, () => Promise.resolve(make()).then(below));
+  }
+  await attempt("half of a literal", () => Promise.resolve("4").then(half));
+  await attempt("below from a literal", () => Promise.resolve("1").then(below));
+  honestFirst("after");
+  honestSecond("after");
+}
+
+main();
+//// many-callers-and-an-impostor-through-value-of.cjs
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-55
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-6
+
+////= honestFirst-8
+
+console.log("strict:", (function () { return this === undefined; })());
+honestSecond("before");
+attempt("total gets nothing", () => +{ valueOf: total });
+attempt("append gets nothing", () => +{ valueOf: append });
+attempt("firstCode gets nothing", () => +{ valueOf: firstCode });
+attempt("tail gets nothing", () => +{ valueOf: tail });
+attempt("half gets nothing", () => +{ valueOf: half });
+attempt("below gets nothing", () => +{ valueOf: below });
+attempt("low gets nothing", () => +{ valueOf: low });
+attempt("pick gets nothing", () => +{ valueOf: pick });
+attempt("invoke gets nothing", () => +{ valueOf: invoke });
+attempt("build gets nothing", () => +{ valueOf: build });
+attempt("sumOf gets nothing", () => +{ valueOf: sumOf });
+attempt("move gets nothing", () => +{ valueOf: move });
+honestFirst("after");
+honestSecond("after");
+//// many-callers-and-an-impostor-whose-caller-is-reached-by-a-conversion-or-a-protocol.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+const seen = [];
+
+////= totalOne-4
+
+////= lines-88	objectOne	valueOf	totalOne	halfOne	1
+
+////= totalTwo-3
+
+////= lines-88	objectTwo	toString	totalTwo	halfTwo	"text"
+
+////= totalThree-3
+
+////= lines-141	objectThree	toPrimitive	totalThree	halfThree	1
+
+////= totalFour-3
+
+////= lines-88	keyFour	toString	totalFour	halfFour	"key"
+
+////= totalFive-3
+
+////= lines-88	objectFive	toJSON	totalFive	halfFive	1
+
+////= totalSix-3
+
+const objectSix = {
+  [Symbol.iterator]() {
+    seen.push(show(totalSix("12")), show(halfSix("4")));
+    return [][Symbol.iterator]();
+  },
+};
+
+////= totalSeven-3
+
+const objectSeven = {
+  [Symbol.iterator]() {
+    return {
+      next: () => ({ done: false, value: 1 }),
+      return() {
+        seen.push(show(totalSeven("12")), show(halfSeven("4")));
+        return {};
+      },
+    };
+  },
+};
+
+////= totalEight-3
+
+////= lines-141	typeEight	hasInstance	totalEight	halfEight	true
+
+////= totalNine-3
+
+class ListNine extends Array {
+  static get [Symbol.species]() {
+    seen.push(show(totalNine("12")), show(halfNine("4")));
+    return Array;
+  }
+}
+
+////= totalTen-2
+
+////= lines-118	halfTen	n	n	2
+
+////= lines-141	patternTen	replace	totalTen	halfTen	"replaced"
+
+////= lines-22	totalEleven	list	let	sum	0
+
+////= lines-118	halfEleven	n	n	2
+
+const objectEleven = {
+  get [Symbol.isConcatSpreadable]() {
+    seen.push(show(totalEleven("12")), show(halfEleven("4")));
+    return false;
+  },
+};
+
+////= lines-22	totalTwelve	list	let	sum	0
+
+////= lines-118	halfTwelve	n	n	2
+
+////= lines-88	objectTwelve	valueOf	totalTwelve	halfTwelve	1
+
+console.log("strict:", (function () { return this === undefined; })());
+attempt("valueOf", () => objectOne * 2);
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalOne([1, 2, 3]), totalOne([]), totalOne(new Array(4, 5)), totalOne([0.5]), halfOne(4), halfOne(3), halfOne(0.5), halfOne(-8));
+console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+attempt("toString", () => `${objectTwo}`);
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+attempt("Symbol.toPrimitive", () => objectThree + 1);
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalThree([1, 2, 3]), totalThree([]), totalThree(new Array(4, 5)), totalThree([0.5]), halfThree(4), halfThree(3), halfThree(0.5), halfThree(-8));
+console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+attempt("toString of a key", () => ({ key: "found" })[keyFour]);
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+attempt("toJSON", () => JSON.stringify([objectFive]));
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalFive([1, 2, 3]), totalFive([]), totalFive(new Array(4, 5)), totalFive([0.5]), halfFive(4), halfFive(3), halfFive(0.5), halfFive(-8));
+console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+attempt("Symbol.iterator", () => [...objectSix]);
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+attempt("the return method of an iterator", () => { const [first] = objectSeven; return first; });
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalSeven([1, 2, 3]), totalSeven([]), totalSeven(new Array(4, 5)), totalSeven([0.5]), halfSeven(4), halfSeven(3), halfSeven(0.5), halfSeven(-8));
+console.log("honest", totalEight([1, 2, 3]), totalEight([]), totalEight(new Array(4, 5)), totalEight([0.5]), halfEight(4), halfEight(3), halfEight(0.5), halfEight(-8));
+attempt("Symbol.hasInstance", () => 1 instanceof typeEight);
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalEight([1, 2, 3]), totalEight([]), totalEight(new Array(4, 5)), totalEight([0.5]), halfEight(4), halfEight(3), halfEight(0.5), halfEight(-8));
+attempt("Symbol.species", () => new ListNine(1, 2).map(item => item));
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalNine([1, 2, 3]), totalNine([]), totalNine(new Array(4, 5)), totalNine([0.5]), halfNine(4), halfNine(3), halfNine(0.5), halfNine(-8));
+console.log("honest", totalTen([1, 2, 3]), totalTen([]), totalTen(new Array(4, 5)), totalTen([0.5]), halfTen(4), halfTen(3), halfTen(0.5), halfTen(-8));
+attempt("Symbol.replace", () => "text".replace(patternTen, ""));
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalTen([1, 2, 3]), totalTen([]), totalTen(new Array(4, 5)), totalTen([0.5]), halfTen(4), halfTen(3), halfTen(0.5), halfTen(-8));
+attempt("Symbol.isConcatSpreadable", () => [].concat(objectEleven).length);
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalEleven([1, 2, 3]), totalEleven([]), totalEleven(new Array(4, 5)), totalEleven([0.5]), halfEleven(4), halfEleven(3), halfEleven(0.5), halfEleven(-8));
+console.log("honest", totalTwelve([1, 2, 3]), totalTwelve([]), totalTwelve(new Array(4, 5)), totalTwelve([0.5]), halfTwelve(4), halfTwelve(3), halfTwelve(0.5), halfTwelve(-8));
+attempt("a comparison", () => objectTwelve == 1);
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalTwelve([1, 2, 3]), totalTwelve([]), totalTwelve(new Array(4, 5)), totalTwelve([0.5]), halfTwelve(4), halfTwelve(3), halfTwelve(0.5), halfTwelve(-8));
+//// many-callers-and-an-impostor-whose-caller-is-reached-by-a-name-made-at-run-time.cjs
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+const seen = [];
+
+////= totalOne-4
+
+////= lines-164	holderOne	totalOne	halfOne
+
+////= totalTwo-3
+
+const holderTwo = {
+  first() {},
+  second() {
+    seen.push(show(totalTwo("12")), show(halfTwo("4")));
+  },
+};
+
+////= totalThree-3
+
+class ToolThree {
+  sneak() {
+    seen.push(show(totalThree("12")), show(halfThree("4")));
+  }
+}
+
+////= totalFour-3
+
+class ToolFour {
+  static sneak() {
+    seen.push(show(totalFour("12")), show(halfFour("4")));
+  }
+}
+
+////= totalFive-3
+
+////= lines-164	holderFive	totalFive	halfFive
+
+////= totalSix-3
+
+const listSix = [
+  function () {},
+  function () {
+    seen.push(show(totalSix("12")), show(halfSix("4")));
+  },
+];
+
+////= totalSeven-3
+
+const emitterSeven = new (require("node:events"))();
+emitterSeven.on("sneak", function () {
+  seen.push(show(totalSeven("12")), show(halfSeven("4")));
+});
+
+////= totalEight-3
+
+function twiceEight(again) {
+  if (again) return arguments.callee(false);
+  seen.push(show(totalEight("12")), show(halfEight("4")));
+}
+
+////= totalNine-3
+
+////= lines-164	scopeNine	totalNine	halfNine
+
+console.log("strict:", (function () { return this === undefined; })());
+attempt("a member read by a computed name", () => holderOne[["sn", "eak"].join("")]());
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalOne([1, 2, 3]), totalOne([]), totalOne(new Array(4, 5)), totalOne([0.5]), halfOne(4), halfOne(3), halfOne(0.5), halfOne(-8));
+console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+attempt("every member is called in turn", () => Reflect.ownKeys(holderTwo).forEach(key => holderTwo[key]()));
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+attempt("a method of a class read by a computed name", () => new ToolThree()[["sn", "eak"].join("")]());
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalThree([1, 2, 3]), totalThree([]), totalThree(new Array(4, 5)), totalThree([0.5]), halfThree(4), halfThree(3), halfThree(0.5), halfThree(-8));
+console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+attempt("a static method found by listing the class", () => ToolFour[Object.getOwnPropertyNames(ToolFour).find(name => name.startsWith("sn"))]());
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+attempt("hidden code gets the object and calls the member", () => new Function("object", "object.sneak()")(holderFive));
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalFive([1, 2, 3]), totalFive([]), totalFive(new Array(4, 5)), totalFive([0.5]), halfFive(4), halfFive(3), halfFive(0.5), halfFive(-8));
+console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+attempt("every function of a list is called", () => { for (const f of listSix) f(); });
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+attempt("a listener for an event whose name is computed", () => emitterSeven.emit(["sn", "eak"].join("")));
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalSeven([1, 2, 3]), totalSeven([]), totalSeven(new Array(4, 5)), totalSeven([0.5]), halfSeven(4), halfSeven(3), halfSeven(0.5), halfSeven(-8));
+console.log("honest", totalEight([1, 2, 3]), totalEight([]), totalEight(new Array(4, 5)), totalEight([0.5]), halfEight(4), halfEight(3), halfEight(0.5), halfEight(-8));
+attempt("arguments.callee", () => twiceEight(true));
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalEight([1, 2, 3]), totalEight([]), totalEight(new Array(4, 5)), totalEight([0.5]), halfEight(4), halfEight(3), halfEight(0.5), halfEight(-8));
+attempt("a name looked up in a with statement", () => { with (scopeNine) sneak(); });
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalNine([1, 2, 3]), totalNine([]), totalNine(new Array(4, 5)), totalNine([0.5]), halfNine(4), halfNine(3), halfNine(0.5), halfNine(-8));
+//// many-callers-and-an-impostor-whose-caller-is-reached-by-an-accessor-or-a-trap.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+const seen = [];
+
+////= totalOne-4
+
+////= lines-87	objectOne	totalOne	halfOne
+
+////= totalTwo-3
+
+////= lines-87	objectTwo	totalTwo	halfTwo
+
+////= totalThree-3
+
+////= lines-87	objectThree	totalThree	halfThree
+
+////= totalFour-3
+
+////= lines-87	objectFour	totalFour	halfFour
+
+////= totalFive-3
+
+////= lines-87	objectFive	totalFive	halfFive
+
+////= totalSix-3
+
+class ToolSix {
+  get sneak() {
+    seen.push(show(totalSix("12")), show(halfSix("4")));
+    return 1;
+  }
+}
+
+////= totalSeven-3
+
+const objectSeven = {
+  set sneak(value) {
+    seen.push(show(totalSeven("12")), show(halfSeven("4")));
+  },
+};
+
+////= totalEight-3
+
+Object.defineProperty(globalThis, "sneakyGlobalEight", {
+  get() {
+    seen.push(show(totalEight("12")), show(halfEight("4")));
+    return 1;
+  },
+});
+
+////= totalNine-3
+
+////= lines-142	proxyNine	get	totalNine	halfNine	1
+
+////= totalTen-2
+
+////= lines-118	halfTen	n	n	2
+
+////= lines-142	proxyTen	has	totalTen	halfTen	true
+
+////= lines-22	totalEleven	list	let	sum	0
+
+////= lines-118	halfEleven	n	n	2
+
+const proxyEleven = new Proxy({}, {
+  ownKeys() {
+    seen.push(show(totalEleven("12")), show(halfEleven("4")));
+    return [];
+  },
+});
+
+////= lines-22	totalTwelve	list	let	sum	0
+
+////= lines-118	halfTwelve	n	n	2
+
+////= lines-142	proxyTwelve	getPrototypeOf	totalTwelve	halfTwelve	null
+
+console.log("strict:", (function () { return this === undefined; })());
+attempt("a getter read by a computed name", () => objectOne[["sn", "eak"].join("")]);
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalOne([1, 2, 3]), totalOne([]), totalOne(new Array(4, 5)), totalOne([0.5]), halfOne(4), halfOne(3), halfOne(0.5), halfOne(-8));
+console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+attempt("a getter read by a spread", () => ({ ...objectTwo }));
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+attempt("a getter read by JSON.stringify", () => JSON.stringify(objectThree));
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalThree([1, 2, 3]), totalThree([]), totalThree(new Array(4, 5)), totalThree([0.5]), halfThree(4), halfThree(3), halfThree(0.5), halfThree(-8));
+console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+attempt("a getter read by Object.values", () => Object.values(objectFour));
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+attempt("a getter read by destructuring with a rest", () => { const { ...copy } = objectFive; return copy; });
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalFive([1, 2, 3]), totalFive([]), totalFive(new Array(4, 5)), totalFive([0.5]), halfFive(4), halfFive(3), halfFive(0.5), halfFive(-8));
+console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+attempt("a getter on the prototype of a class", () => Reflect.get(new ToolSix(), ["sn", "eak"].join("")));
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+attempt("a setter reached by Object.assign", () => Object.keys(Object.assign(objectSeven, JSON.parse('{"sneak":1}'))));
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalSeven([1, 2, 3]), totalSeven([]), totalSeven(new Array(4, 5)), totalSeven([0.5]), halfSeven(4), halfSeven(3), halfSeven(0.5), halfSeven(-8));
+console.log("honest", totalEight([1, 2, 3]), totalEight([]), totalEight(new Array(4, 5)), totalEight([0.5]), halfEight(4), halfEight(3), halfEight(0.5), halfEight(-8));
+attempt("a getter on the global object read as a variable", () => sneakyGlobalEight);
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalEight([1, 2, 3]), totalEight([]), totalEight(new Array(4, 5)), totalEight([0.5]), halfEight(4), halfEight(3), halfEight(0.5), halfEight(-8));
+attempt("the get trap of a proxy", () => proxyNine.anything);
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalNine([1, 2, 3]), totalNine([]), totalNine(new Array(4, 5)), totalNine([0.5]), halfNine(4), halfNine(3), halfNine(0.5), halfNine(-8));
+console.log("honest", totalTen([1, 2, 3]), totalTen([]), totalTen(new Array(4, 5)), totalTen([0.5]), halfTen(4), halfTen(3), halfTen(0.5), halfTen(-8));
+attempt("the has trap of a proxy", () => "anything" in proxyTen);
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalTen([1, 2, 3]), totalTen([]), totalTen(new Array(4, 5)), totalTen([0.5]), halfTen(4), halfTen(3), halfTen(0.5), halfTen(-8));
+attempt("the ownKeys trap of a proxy", () => Object.keys(proxyEleven));
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalEleven([1, 2, 3]), totalEleven([]), totalEleven(new Array(4, 5)), totalEleven([0.5]), halfEleven(4), halfEleven(3), halfEleven(0.5), halfEleven(-8));
+console.log("honest", totalTwelve([1, 2, 3]), totalTwelve([]), totalTwelve(new Array(4, 5)), totalTwelve([0.5]), halfTwelve(4), halfTwelve(3), halfTwelve(0.5), halfTwelve(-8));
+attempt("the getPrototypeOf trap of a proxy", () => proxyTwelve instanceof Object);
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalTwelve([1, 2, 3]), totalTwelve([]), totalTwelve(new Array(4, 5)), totalTwelve([0.5]), halfTwelve(4), halfTwelve(3), halfTwelve(0.5), halfTwelve(-8));
+//// many-callers-and-an-impostor-whose-caller-is-reached-by-text-given-to-eval.cjs
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+const seen = [];
+
+////= totalOne-4
+
+////= lines-194	sneakOne	totalOne	halfOne
+
+////= totalTwo-3
+
+const textTwo = ["seen.push(show(totalTwo('12')), ", "show(halfTwo('4')))"].join("");
+
+////= totalThree-3
+
+const textThree = ["(function () { seen.push(show(totalThree('12')), ", "show(halfThree('4'))); })"].join("");
+
+////= totalFour-3
+
+function callerFour() {
+  var list = [1, 2];
+  var n = 4;
+  eval(["var list = '12', ", "n = '4'"].join(""));
+  seen.push(show(totalFour(list)), show(halfFour(n)));
+}
+
+////= totalFive-3
+
+function callerFive() {
+  let list = [1, 2];
+  let n = 4;
+  eval(["list = '12'; ", "n = '4'"].join(""));
+  seen.push(show(totalFive(list)), show(halfFive(n)));
+}
+
+////= totalSix-3
+
+function callerSix() {
+  eval(["totalSix = function () { return 'replaced'; }; ", "halfSix = function () { return 'replaced'; }"].join(""));
+  seen.push(show(totalSix([1, 2])), show(halfSix(4)));
+}
+
+console.log("strict:", (function () { return this === undefined; })());
+attempt("the text names the caller", () => eval("sneak" + "One" + "()"));
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalOne([1, 2, 3]), totalOne([]), totalOne(new Array(4, 5)), totalOne([0.5]), halfOne(4), halfOne(3), halfOne(0.5), halfOne(-8));
+console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+attempt("the text is the caller", () => eval(textTwo));
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+attempt("the text makes a function that is the caller", () => eval(textThree)());
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalThree([1, 2, 3]), totalThree([]), totalThree(new Array(4, 5)), totalThree([0.5]), halfThree(4), halfThree(3), halfThree(0.5), halfThree(-8));
+console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+attempt("the text declares a variable that holds the impostor", () => callerFour());
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+attempt("the text stores the impostor in the caller's variables", () => callerFive());
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalFive([1, 2, 3]), totalFive([]), totalFive(new Array(4, 5)), totalFive([0.5]), halfFive(4), halfFive(3), halfFive(0.5), halfFive(-8));
+console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+attempt("the text replaces the function itself", () => callerSix());
+console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+//// many-callers-and-an-impostor-whose-caller-runs-later.js
+////= show-5
+
+const log = [];
+
+////= attempt-14
+
+const seen = [];
+
+////= totalOne-4
+
+////= lines-143	thenableOne	totalOne	halfOne
+
+////= totalTwo-3
+
+////= lines-143	thenableTwo	totalTwo	halfTwo
+
+////= totalThree-3
+
+////= lines-143	thenableThree	totalThree	halfThree
+
+////= totalFour-3
+
+////= lines-194	reactFour	totalFour	halfFour
+
+////= totalFive-3
+
+////= lines-194	reactFive	totalFive	halfFive
+
+////= totalSix-3
+
+////= lines-194	fireSix	totalSix	halfSix
+
+////= totalSeven-3
+
+////= lines-194	fireSeven	totalSeven	halfSeven
+
+////= totalEight-3
+
+const objectEight = {
+  [Symbol.asyncIterator]() {
+    seen.push(show(totalEight("12")), show(halfEight("4")));
+    return { next: async () => ({ done: true }) };
+  },
+};
+
+////= totalNine-3
+
+const targetNine = new EventTarget();
+targetNine.addEventListener("sneak", function () {
+  seen.push(show(totalNine("12")), show(halfNine("4")));
+});
+
+////= totalTen-2
+
+////= lines-118	halfTen	n	n	2
+
+const controllerTen = new AbortController();
+controllerTen.signal.addEventListener("abort", function () {
+  seen.push(show(totalTen("12")), show(halfTen("4")));
+});
+
+async function main() {
+  console.log("strict:", (function () { return this === undefined; })());
+  await attempt("the then of a thenable that is awaited", () => thenableOne);
+  console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+  console.log("honest", totalOne([1, 2, 3]), totalOne([]), totalOne(new Array(4, 5)), totalOne([0.5]), halfOne(4), halfOne(3), halfOne(0.5), halfOne(-8));
+  console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+  await attempt("the then of a thenable that an async function returns", () => (async () => thenableTwo)());
+  console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+  console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+  await attempt("the then of a thenable given to Promise.all", () => Promise.all([thenableThree]));
+  console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+  console.log("honest", totalThree([1, 2, 3]), totalThree([]), totalThree(new Array(4, 5)), totalThree([0.5]), halfThree(4), halfThree(3), halfThree(0.5), halfThree(-8));
+  console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+  await attempt("a reaction", () => Promise.resolve().then(reactFour));
+  console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+  console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+  await attempt("a finally reaction", () => Promise.resolve(1).finally(reactFive));
+  console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+  console.log("honest", totalFive([1, 2, 3]), totalFive([]), totalFive(new Array(4, 5)), totalFive([0.5]), halfFive(4), halfFive(3), halfFive(0.5), halfFive(-8));
+  console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+  await attempt("a timer", () => (setTimeout(fireSix, 0), new Promise(resolve => setTimeout(resolve, 0))));
+  console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+  console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+  await attempt("a microtask", () => (queueMicrotask(fireSeven), Promise.resolve().then(() => 1)));
+  console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+  console.log("honest", totalSeven([1, 2, 3]), totalSeven([]), totalSeven(new Array(4, 5)), totalSeven([0.5]), halfSeven(4), halfSeven(3), halfSeven(0.5), halfSeven(-8));
+  console.log("honest", totalEight([1, 2, 3]), totalEight([]), totalEight(new Array(4, 5)), totalEight([0.5]), halfEight(4), halfEight(3), halfEight(0.5), halfEight(-8));
+  await attempt("Symbol.asyncIterator", () => (async () => { for await (const item of objectEight); })());
+  console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+  console.log("honest", totalEight([1, 2, 3]), totalEight([]), totalEight(new Array(4, 5)), totalEight([0.5]), halfEight(4), halfEight(3), halfEight(0.5), halfEight(-8));
+  await attempt("a listener of an event target", () => targetNine.dispatchEvent(new Event(["sn", "eak"].join(""))));
+  console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+  console.log("honest", totalNine([1, 2, 3]), totalNine([]), totalNine(new Array(4, 5)), totalNine([0.5]), halfNine(4), halfNine(3), halfNine(0.5), halfNine(-8));
+  console.log("honest", totalTen([1, 2, 3]), totalTen([]), totalTen(new Array(4, 5)), totalTen([0.5]), halfTen(4), halfTen(3), halfTen(0.5), halfTen(-8));
+  await attempt("a listener of an abort signal", () => controllerTen.abort());
+  console.log("  what the impostor's caller saw:", seen.splice(0).join(" "));
+  console.log("honest", totalTen([1, 2, 3]), totalTen([]), totalTen(new Array(4, 5)), totalTen([0.5]), halfTen(4), halfTen(3), halfTen(0.5), halfTen(-8));
+}
+
+main();
+//// many-callers-and-what-native-code-makes-for-a-callback-out-of-its-own-results.js
+////= show-5
+
+const log = [];
+
+////= attempt-14
+
+const seen = [];
+
+////= lines-32	halfOne
+
+////= lines-32	halfTwo
+
+////= lines-32	halfThree
+
+////= lines-32	halfFour
+
+////= lines-32	halfFive
+
+////= lines-32	halfSix
+
+////= lines-32	halfSeven
+
+////= lines-32	halfEight
+
+////= lines-126	firstNine
+
+////= lines-126	firstTen
+
+////= lines-126	firstEleven
+
+////= halfTwelve-2
+
+////= lines-32	halfThirteen
+
+////= lines-32	halfFourteen
+
+////= halfFifteen
+
+////= lines-32	halfSixteen
+
+////= lines-32	halfSeventeen
+
+////= lines-32	halfEighteen
+
+////= lines-32	halfNineteen
+
+////= lines-32	halfTwenty
+
+async function main() {
+  await attempt("reduce feeds the callback its own answer", () => [4, 2, 1].reduce((sum, n) => String(halfOne(sum)) + n));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfOne(4)), show(halfOne(3)), show(halfOne(0.5)), show(halfOne(-8)), seen.splice(0).length);
+  console.log("honest", show(halfTwo(4)), show(halfTwo(3)), show(halfTwo(0.5)), show(halfTwo(-8)), seen.splice(0).length);
+  await attempt("reduce hands the callback over directly", () => [4, "2", 1].reduce(halfTwo));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfTwo(4)), show(halfTwo(3)), show(halfTwo(0.5)), show(halfTwo(-8)), seen.splice(0).length);
+  await attempt("reduceRight starts at the end", () => ["4", 2, 8].reduceRight(halfThree));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfThree(4)), show(halfThree(3)), show(halfThree(0.5)), show(halfThree(-8)), seen.splice(0).length);
+  console.log("honest", show(halfFour(4)), show(halfFour(3)), show(halfFour(0.5)), show(halfFour(-8)), seen.splice(0).length);
+  await attempt("then unwraps a thenable", () => Promise.resolve({ then: resolve => resolve("4") }).then(halfFour));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfFour(4)), show(halfFour(3)), show(halfFour(0.5)), show(halfFour(-8)), seen.splice(0).length);
+  await attempt("then after a reaction that answers a promise of a string", () => Promise.resolve(4).then(() => Promise.resolve("4")).then(halfFive));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfFive(4)), show(halfFive(3)), show(halfFive(0.5)), show(halfFive(-8)), seen.splice(0).length);
+  console.log("honest", show(halfSix(4)), show(halfSix(3)), show(halfSix(0.5)), show(halfSix(-8)), seen.splice(0).length);
+  await attempt("then after a reaction that answers nothing", () => Promise.resolve(4).then(() => {}).then(halfSix));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfSix(4)), show(halfSix(3)), show(halfSix(0.5)), show(halfSix(-8)), seen.splice(0).length);
+  await attempt("finally lets the value through", () => Promise.resolve("4").finally(() => 8).then(halfSeven));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfSeven(4)), show(halfSeven(3)), show(halfSeven(0.5)), show(halfSeven(-8)), seen.splice(0).length);
+  console.log("honest", show(halfEight(4)), show(halfEight(3)), show(halfEight(0.5)), show(halfEight(-8)), seen.splice(0).length);
+  await attempt("catch answers in place of the value", () => Promise.reject(4).catch(() => "4").then(halfEight));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfEight(4)), show(halfEight(3)), show(halfEight(0.5)), show(halfEight(-8)), seen.splice(0).length);
+  await attempt("Promise.all of nothing", () => Promise.all([]).then(firstNine));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(firstNine([1, 2])), show(firstNine([])), show(firstNine(new Array(4, 5))), show(firstNine([0.5])), seen.splice(0).length);
+  console.log("honest", show(firstTen([1, 2])), show(firstTen([])), show(firstTen(new Array(4, 5))), show(firstTen([0.5])), seen.splice(0).length);
+  await attempt("Promise.all of a string", () => Promise.all("ab").then(firstTen));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(firstTen([1, 2])), show(firstTen([])), show(firstTen(new Array(4, 5))), show(firstTen([0.5])), seen.splice(0).length);
+  await attempt("Promise.race answers one value, not a list", () => Promise.race([[7], 8]).then(firstEleven));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(firstEleven([1, 2])), show(firstEleven([])), show(firstEleven(new Array(4, 5))), show(firstEleven([0.5])), seen.splice(0).length);
+  console.log("honest", show(halfTwelve(4)), show(halfTwelve(3)), show(halfTwelve(0.5)), show(halfTwelve(-8)), seen.splice(0).length);
+  await attempt("the keys of an array in for-in are strings", () => { const out = []; for (const key in [7, 8]) out.push(halfTwelve(key)); return out; });
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfTwelve(4)), show(halfTwelve(3)), show(halfTwelve(0.5)), show(halfTwelve(-8)), seen.splice(0).length);
+  await attempt("Object.keys of an array are strings", () => Object.keys([7, 8]).map(key => halfThirteen(key)));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfThirteen(4)), show(halfThirteen(3)), show(halfThirteen(0.5)), show(halfThirteen(-8)), seen.splice(0).length);
+  console.log("honest", show(halfFourteen(4)), show(halfFourteen(3)), show(halfFourteen(0.5)), show(halfFourteen(-8)), seen.splice(0).length);
+  await attempt("the keys that entries of an object hand over are strings", () => Object.entries({ 4: "a" }).map(([key]) => halfFourteen(key)));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfFourteen(4)), show(halfFourteen(3)), show(halfFourteen(0.5)), show(halfFourteen(-8)), seen.splice(0).length);
+  await attempt("the keys of a Map keep their kind", () => [...new Map([[4, 1], ["4", 2]]).keys()].map(key => halfFifteen(key)));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfFifteen(4)), show(halfFifteen(3)), show(halfFifteen(0.5)), show(halfFifteen(-8)), seen.splice(0).length);
+  console.log("honest", show(halfSixteen(4)), show(halfSixteen(3)), show(halfSixteen(0.5)), show(halfSixteen(-8)), seen.splice(0).length);
+  await attempt("a Map makes negative zero positive", () => [...new Map([[-0, 1]]).keys()].map(key => halfSixteen(key)));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfSixteen(4)), show(halfSixteen(3)), show(halfSixteen(0.5)), show(halfSixteen(-8)), seen.splice(0).length);
+  await attempt("a Set makes negative zero positive", () => [...new Set([-0])].map(key => halfSeventeen(key)));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfSeventeen(4)), show(halfSeventeen(3)), show(halfSeventeen(0.5)), show(halfSeventeen(-8)), seen.splice(0).length);
+  console.log("honest", show(halfEighteen(4)), show(halfEighteen(3)), show(halfEighteen(0.5)), show(halfEighteen(-8)), seen.splice(0).length);
+  await attempt("the key a reviver gets is a string", () => JSON.parse("[8]", key => halfEighteen(key)));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfEighteen(4)), show(halfEighteen(3)), show(halfEighteen(0.5)), show(halfEighteen(-8)), seen.splice(0).length);
+  await attempt("a typed array rounds what the callback answers", () => Array.from(new Uint8Array([3, 5]).map(halfNineteen)));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfNineteen(4)), show(halfNineteen(3)), show(halfNineteen(0.5)), show(halfNineteen(-8)), seen.splice(0).length);
+  console.log("honest", show(halfTwenty(4)), show(halfTwenty(3)), show(halfTwenty(0.5)), show(halfTwenty(-8)), seen.splice(0).length);
+  await attempt("sort converts what the comparator answers", () => [3, 1, 2].sort((a, b) => String(halfTwenty(a - b))));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfTwenty(4)), show(halfTwenty(3)), show(halfTwenty(0.5)), show(halfTwenty(-8)), seen.splice(0).length);
+}
+
+main();
+//// many-callers-and-what-native-code-makes-for-the-callback-of-a-string-method.js
+////= show-5
+
+const log = [];
+
+////= attempt-14
+
+const seen = [];
+
+////= lines-50	sizeOne
+
+////= lines-50	sizeTwo
+
+////= lines-50	sizeThree
+
+////= lines-50	sizeFour
+
+////= lines-50	sizeFive
+
+////= lines-50	sizeSix
+
+////= lines-50	sizeSeven
+
+////= lines-50	sizeEight
+
+////= lines-126	firstNine
+
+////= lines-126	firstTen
+
+////= lines-126	firstEleven
+
+////= halfTwelve-2
+
+////= lines-50	sizeThirteen
+
+////= lines-50	sizeFourteen
+
+////= halfFifteen
+
+////= lines-32	halfSixteen
+
+////= lines-186	lowSeventeen
+
+////= lines-186	lowEighteen
+
+////= lines-32	halfNineteen
+
+////= lines-32	halfTwenty
+
+async function main() {
+  await attempt("a group that took no part, in replace", () => "ab".replace(/(x)?a/, (match, group) => sizeOne(group)));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(sizeOne("ab")), show(sizeOne("")), show(sizeOne("xyz")), show(sizeOne(`a${1}`)), seen.splice(0).length);
+  console.log("honest", show(sizeTwo("ab")), show(sizeTwo("")), show(sizeTwo("xyz")), show(sizeTwo(`a${1}`)), seen.splice(0).length);
+  await attempt("the callback itself gets the match", () => "ab".replace(/(x)?a/, sizeTwo));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(sizeTwo("ab")), show(sizeTwo("")), show(sizeTwo("xyz")), show(sizeTwo(`a${1}`)), seen.splice(0).length);
+  await attempt("a group that took no part, in replaceAll", () => "abab".replaceAll(/(x)?a/g, (match, group) => sizeThree(group)));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(sizeThree("ab")), show(sizeThree("")), show(sizeThree("xyz")), show(sizeThree(`a${1}`)), seen.splice(0).length);
+  console.log("honest", show(sizeFour("ab")), show(sizeFour("")), show(sizeFour("xyz")), show(sizeFour(`a${1}`)), seen.splice(0).length);
+  await attempt("a group that took no part, in exec", () => sizeFour(/(x)?a/.exec("ab")[1]));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(sizeFour("ab")), show(sizeFour("")), show(sizeFour("xyz")), show(sizeFour(`a${1}`)), seen.splice(0).length);
+  await attempt("a group that took no part, in match", () => sizeFive("ab".match(/(x)?a/)[1]));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(sizeFive("ab")), show(sizeFive("")), show(sizeFive("xyz")), show(sizeFive(`a${1}`)), seen.splice(0).length);
+  console.log("honest", show(sizeSix("ab")), show(sizeSix("")), show(sizeSix("xyz")), show(sizeSix(`a${1}`)), seen.splice(0).length);
+  await attempt("a group that took no part, in matchAll", () => [..."ab".matchAll(/(x)?a/g)].map(found => sizeSix(found[1])));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(sizeSix("ab")), show(sizeSix("")), show(sizeSix("xyz")), show(sizeSix(`a${1}`)), seen.splice(0).length);
+  await attempt("a group that took no part, in split", () => "ab".split(/(x)?b/).map(piece => sizeSeven(piece)));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(sizeSeven("ab")), show(sizeSeven("")), show(sizeSeven("xyz")), show(sizeSeven(`a${1}`)), seen.splice(0).length);
+  console.log("honest", show(sizeEight("ab")), show(sizeEight("")), show(sizeEight("xyz")), show(sizeEight(`a${1}`)), seen.splice(0).length);
+  await attempt("a named group that took no part", () => sizeEight(/(?<name>x)?a/.exec("ab").groups.name));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(sizeEight("ab")), show(sizeEight("")), show(sizeEight("xyz")), show(sizeEight(`a${1}`)), seen.splice(0).length);
+  await attempt("no match at all", () => firstNine("ab".match(/x/)));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(firstNine([1, 2])), show(firstNine([])), show(firstNine(new Array(4, 5))), show(firstNine([0.5])), seen.splice(0).length);
+  console.log("honest", show(firstTen([1, 2])), show(firstTen([])), show(firstTen(new Array(4, 5))), show(firstTen([0.5])), seen.splice(0).length);
+  await attempt("no match at all, in exec", () => firstTen(/x/.exec("ab")));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(firstTen([1, 2])), show(firstTen([])), show(firstTen(new Array(4, 5))), show(firstTen([0.5])), seen.splice(0).length);
+  await attempt("the groups of an expression without names", () => firstEleven(/a/.exec("ab").groups));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(firstEleven([1, 2])), show(firstEleven([])), show(firstEleven(new Array(4, 5))), show(firstEleven([0.5])), seen.splice(0).length);
+  console.log("honest", show(halfTwelve(4)), show(halfTwelve(3)), show(halfTwelve(0.5)), show(halfTwelve(-8)), seen.splice(0).length);
+  await attempt("the offset that replace hands over comes after the groups", () => "ab".replace(/(b)/, (match, offset) => halfTwelve(offset)));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfTwelve(4)), show(halfTwelve(3)), show(halfTwelve(0.5)), show(halfTwelve(-8)), seen.splice(0).length);
+  await attempt("at past the end", () => sizeThirteen("ab".at(5)));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(sizeThirteen("ab")), show(sizeThirteen("")), show(sizeThirteen("xyz")), show(sizeThirteen(`a${1}`)), seen.splice(0).length);
+  console.log("honest", show(sizeFourteen("ab")), show(sizeFourteen("")), show(sizeFourteen("xyz")), show(sizeFourteen(`a${1}`)), seen.splice(0).length);
+  await attempt("an index past the end", () => sizeFourteen("ab"[5]));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(sizeFourteen("ab")), show(sizeFourteen("")), show(sizeFourteen("xyz")), show(sizeFourteen(`a${1}`)), seen.splice(0).length);
+  await attempt("charCodeAt past the end", () => halfFifteen("ab".charCodeAt(5)));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfFifteen(4)), show(halfFifteen(3)), show(halfFifteen(0.5)), show(halfFifteen(-8)), seen.splice(0).length);
+  console.log("honest", show(halfSixteen(4)), show(halfSixteen(3)), show(halfSixteen(0.5)), show(halfSixteen(-8)), seen.splice(0).length);
+  await attempt("codePointAt past the end", () => halfSixteen("ab".codePointAt(5)));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfSixteen(4)), show(halfSixteen(3)), show(halfSixteen(0.5)), show(halfSixteen(-8)), seen.splice(0).length);
+  await attempt("charCodeAt past the end, bits", () => lowSeventeen("ab".charCodeAt(5)));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(lowSeventeen(4)), show(lowSeventeen(3)), show(lowSeventeen(7)), show(lowSeventeen(-1)), seen.splice(0).length);
+  console.log("honest", show(lowEighteen(4)), show(lowEighteen(3)), show(lowEighteen(7)), show(lowEighteen(-1)), seen.splice(0).length);
+  await attempt("codePointAt past the end, bits", () => lowEighteen("ab".codePointAt(5)));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(lowEighteen(4)), show(lowEighteen(3)), show(lowEighteen(7)), show(lowEighteen(-1)), seen.splice(0).length);
+  await attempt("indexOf of what is not there", () => halfNineteen("ab".indexOf("x")));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfNineteen(4)), show(halfNineteen(3)), show(halfNineteen(0.5)), show(halfNineteen(-8)), seen.splice(0).length);
+  console.log("honest", show(halfTwenty(4)), show(halfTwenty(3)), show(halfTwenty(0.5)), show(halfTwenty(-8)), seen.splice(0).length);
+  await attempt("parseInt of a word", () => halfTwenty(parseInt("word")));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfTwenty(4)), show(halfTwenty(3)), show(halfTwenty(0.5)), show(halfTwenty(-8)), seen.splice(0).length);
+}
+
+main();
+//// many-callers-give-a-function-the-right-this-and-one-does-not-sloppy.cjs
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+function span() {
+  return this.x - this.y;
+}
+
+////= total-2
+
+function shout() {
+  return this.toUpperCase();
+}
+
+////= lines-252	double	this
+
+function move() {
+  this.x = this.x + 1;
+  return this.x;
+}
+
+////= Point-5
+
+Point.prototype.span = span;
+Point.prototype.move = move;
+
+////= honest-3
+
+////= selves
+
+console.log("strict:", (function () { return this === undefined; })());
+honest("before");
+////= for-68
+attempt("span called plainly", () => typeof span());
+attempt("total called plainly", () => typeof total());
+attempt("double called plainly", () => typeof double());
+attempt("a method taken off a point", () => { const taken = new Point(3, 1).span; return typeof taken(); });
+attempt("Point without new", () => typeof Point.call({}, 1, 2));
+attempt("Point applied to an array", () => { const list = []; Point.call(list, 1, 2); return [list.length, list.x, list.y, span.call(list)]; });
+attempt("Point applied to a frozen object", () => Point.call(Object.freeze({}), 1, 2));
+attempt("Point applied to a number", () => Point.call(5, 1, 2));
+attempt("an object made without the constructor", () => Object.create(Point.prototype).span());
+attempt("a point built with strings", () => [new Point("3", "1").span(), new Point("3", "1").move()]);
+attempt("a point built with nothing", () => [new Point().span(), new Point().move()]);
+attempt("a point built by Reflect.construct for another class", () => { const built = Reflect.construct(Point, [3, 1], Array); return [Array.isArray(built), built instanceof Point, built instanceof Array, built.x, typeof built.span]; });
+honest("after");
+//// many-callers-give-a-function-the-right-this-and-one-does-not-strict.mjs
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+function span() {
+  return this.x - this.y;
+}
+
+////= total-2
+
+function shout() {
+  return this.toUpperCase();
+}
+
+////= lines-252	double	this
+
+function move() {
+  this.x = this.x + 1;
+  return this.x;
+}
+
+////= Point-5
+
+Point.prototype.span = span;
+Point.prototype.move = move;
+
+////= honest-3
+
+////= selves
+
+console.log("strict:", (function () { return this === undefined; })());
+honest("before");
+////= for-68
+attempt("span called plainly", () => typeof span());
+attempt("total called plainly", () => typeof total());
+attempt("double called plainly", () => typeof double());
+attempt("a method taken off a point", () => { const taken = new Point(3, 1).span; return typeof taken(); });
+attempt("Point without new", () => typeof Point.call({}, 1, 2));
+attempt("Point applied to an array", () => { const list = []; Point.call(list, 1, 2); return [list.length, list.x, list.y, span.call(list)]; });
+attempt("Point applied to a frozen object", () => Point.call(Object.freeze({}), 1, 2));
+attempt("Point applied to a number", () => Point.call(5, 1, 2));
+attempt("an object made without the constructor", () => Object.create(Point.prototype).span());
+attempt("a point built with strings", () => [new Point("3", "1").span(), new Point("3", "1").move()]);
+attempt("a point built with nothing", () => [new Point().span(), new Point().move()]);
+attempt("a point built by Reflect.construct for another class", () => { const built = Reflect.construct(Point, [3, 1], Array); return [Array.isArray(built), built instanceof Point, built instanceof Array, built.x, typeof built.span]; });
+honest("after");
+
+export {};
+//// many-callers-hand-lists-and-callbacks-to-one-helper-and-one-of-them-is-an-impostor.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+function each(list, visit) {
+  for (let i = 0; i < list.length; i++) visit(list[i], i);
+}
+
+function mapWith(list, change) {
+  const out = [];
+  for (let i = 0; i < list.length; i++) out.push(change(list[i]));
+  return out;
+}
+
+function fold(list, combine, start) {
+  let result = start;
+  for (const item of list) result = combine(result, item);
+  return result;
+}
+
+function compose(f, g) {
+  return value => f(g(value));
+}
+
+function times(n, f) {
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(f(i));
+  return out;
+}
+
+function remember(f) {
+  const cache = new Map();
+  return value => {
+    if (!cache.has(value)) cache.set(value, f(value));
+    return cache.get(value);
+  };
+}
+
+const double = n => n * 2;
+const low = n => n & 3;
+const plus = (a, b) => a + b;
+const lengthOf = text => text.length;
+const xOf = point => point.x;
+
+function honest(round) {
+  let sum = 0;
+  each([1, 2, 3], n => { sum += n; });
+  each([4, 5], (n, i) => { sum += n * i; });
+  console.log(round, "each", sum);
+  console.log(round, "mapWith", show(mapWith([1, 2, 3], double)), show(mapWith([5, 6], low)), show(mapWith(["a", "bc"], lengthOf)), show(mapWith([{ x: 1 }, { x: 2 }], xOf)), show(mapWith([], double)));
+  console.log(round, "fold", fold([1, 2, 3], plus, 0), fold([], plus, 0), fold([0.5, 0.5], plus, 1), fold(["a", "b"], plus, ""));
+  console.log(round, "compose", compose(double, low)(7), compose(low, double)(7), compose(double, lengthOf)("abc"), compose(double, xOf)({ x: 4 }));
+  console.log(round, "times", show(times(3, double)), show(times(0, double)), show(times(2, low)));
+  console.log(round, "remember", remember(double)(4), remember(lengthOf)("abc"), remember(xOf)({ x: 9 }));
+}
+
+const lists = [
+  ["numbers and a string", () => [1, "2", 3]],
+  ["a hole", () => [1, , 3]],
+  ["a BigInt", () => [1, 2n]],
+  ["an object with valueOf", () => [{ valueOf: () => (log.push("valueOf"), 5), length: "its own", x: "its own" }]],
+  ["null inside", () => [1, null]],
+  ["a string for the list", () => "12"],
+  ["an array-like object for the list", () => ({ length: 2, 0: 1, 1: 2 })],
+  ["a Set for the list", () => new Set([1, 2])],
+  ["parsed JSON", () => JSON.parse('[1,"2",{"x":3},[4]]')],
+  ["null for the list", () => null],
+];
+
+const callbacks = [
+  ["a bound function", () => plus.bind(null, 10)],
+  ["a callable proxy", () => new Proxy(double, { apply: (target, self, list) => "trapped " + list.length })],
+  ["a class", () => class {}],
+  ["an async function", () => async n => n],
+  ["parseInt", () => parseInt],
+  ["String", () => String],
+  ["an object with call", () => ({ call: double })],
+  ["undefined", () => undefined],
+];
+
+honest("before");
+for (const [name, make] of lists) {
+  attempt("mapWith double over " + name, () => mapWith(make(), double));
+  attempt("mapWith low over " + name, () => mapWith(make(), low));
+  attempt("mapWith lengthOf over " + name, () => mapWith(make(), lengthOf));
+  attempt("mapWith xOf over " + name, () => mapWith(make(), xOf));
+  attempt("fold plus over " + name, () => fold(make(), plus, 0));
+  attempt("each over " + name, () => { const seen = []; each(make(), (item, i) => seen.push(typeof item + i)); return seen; });
+}
+for (const [name, make] of callbacks) {
+  attempt("mapWith " + name, () => mapWith([1, 2], make()));
+  attempt("mapWith " + name + " over nothing", () => mapWith([], make()));
+  attempt("fold " + name, () => fold([1, 2], make(), 0));
+  attempt("compose double with " + name, () => compose(double, make())(3));
+  attempt("compose " + name + " with double", () => compose(make(), double)(3));
+  attempt("times " + name, () => times(2, make()));
+  attempt("remember " + name, () => remember(make())(3));
+}
+attempt("times with a string for the count", () => times("2", double));
+attempt("times with a fraction", () => times(1.5, double));
+attempt("times with an object", () => times({ valueOf: () => (log.push("valueOf"), 2) }, double));
+attempt("remember tells zero from negative zero as a Map does", () => { const f = remember(n => 1 / n); return [f(0), f(-0), f(NaN), f(NaN)]; });
+honest("after");
+//// many-callers-of-a-bound-method-and-an-impostor.js
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+////= Tools
+
+const tools = new Tools();
+const sumPlainly = tools.sumPlainly.bind(tools);
+const sumAsCallback = tools.sumAsCallback.bind(tools);
+const sumHidden = tools.sumHidden.bind(tools);
+const findPlainly = tools.findPlainly.bind(tools);
+const findAsCallback = tools.findAsCallback.bind(tools);
+const findHidden = tools.findHidden.bind(tools);
+const doublePlainly = tools.doublePlainly.bind(tools);
+const doubleAsCallback = tools.doubleAsCallback.bind(tools);
+const doubleHidden = tools.doubleHidden.bind(tools);
+const spanPlainly = tools.spanPlainly.bind(tools);
+const spanAsCallback = tools.spanAsCallback.bind(tools);
+const spanHidden = tools.spanHidden.bind(tools);
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", sumAsCallback([1, 2, 3]), sumAsCallback([]), sumAsCallback(new Array(4, 5)), sumAsCallback([0.5]), sumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) sumHidden([1, 2, 3]);
+////= for-77
+console.log("after", "sumPlainly", sumPlainly([1, 2, 3]), sumPlainly([]), sumPlainly(new Array(4, 5)), sumPlainly([0.5]), sumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", sumAsCallback([1, 2, 3]), sumAsCallback([]), sumAsCallback(new Array(4, 5)), sumAsCallback([0.5]), sumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", sumHidden([1, 2, 3]), sumHidden([]), sumHidden(new Array(4, 5)), sumHidden([0.5]), sumHidden(Array.of(6)));
+console.log("before", "findAsCallback", findAsCallback("abc"), findAsCallback("b"), findAsCallback(""), findAsCallback("xyz"), findAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) findHidden("abc");
+////= for-80
+console.log("after", "findPlainly", findPlainly("abc"), findPlainly("b"), findPlainly(""), findPlainly("xyz"), findPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", findAsCallback("abc"), findAsCallback("b"), findAsCallback(""), findAsCallback("xyz"), findAsCallback(`a${"b"}`));
+console.log("after", "findHidden", findHidden("abc"), findHidden("b"), findHidden(""), findHidden("xyz"), findHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", doubleAsCallback(1), doubleAsCallback(2.5), doubleAsCallback(-3), doubleAsCallback(0), doubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) doubleHidden(1);
+////= for-78
+console.log("after", "doublePlainly", doublePlainly(1), doublePlainly(2.5), doublePlainly(-3), doublePlainly(0), doublePlainly(1e10));
+console.log("after", "doubleAsCallback", doubleAsCallback(1), doubleAsCallback(2.5), doubleAsCallback(-3), doubleAsCallback(0), doubleAsCallback(1e10));
+console.log("after", "doubleHidden", doubleHidden(1), doubleHidden(2.5), doubleHidden(-3), doubleHidden(0), doubleHidden(1e10));
+console.log("before", "spanAsCallback", spanAsCallback({ x: 3, y: 1 }), spanAsCallback(new Point(5, 2)), spanAsCallback({ x: 0.5, y: 0.25 }), spanAsCallback({ x: -1, y: -1 }), spanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) spanHidden({ x: 3, y: 1 });
+////= for-79
+console.log("after", "spanPlainly", spanPlainly({ x: 3, y: 1 }), spanPlainly(new Point(5, 2)), spanPlainly({ x: 0.5, y: 0.25 }), spanPlainly({ x: -1, y: -1 }), spanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", spanAsCallback({ x: 3, y: 1 }), spanAsCallback(new Point(5, 2)), spanAsCallback({ x: 0.5, y: 0.25 }), spanAsCallback({ x: -1, y: -1 }), spanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", spanHidden({ x: 3, y: 1 }), spanHidden(new Point(5, 2)), spanHidden({ x: 0.5, y: 0.25 }), spanHidden({ x: -1, y: -1 }), spanHidden(new Point(0, 0)));
+//// many-callers-of-a-class-field-that-holds-an-arrow-function-and-an-impostor.js
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+class Tools {
+  sumPlainly = list => {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  };
+
+  sumAsCallback = list => {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  };
+
+  sumHidden = list => {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  };
+
+  findPlainly = text => {
+    return text.indexOf("b");
+  };
+
+  findAsCallback = text => {
+    return text.indexOf("b");
+  };
+
+  findHidden = text => {
+    return text.indexOf("b");
+  };
+
+  doublePlainly = n => {
+    return n * 2;
+  };
+
+  doubleAsCallback = n => {
+    return n * 2;
+  };
+
+  doubleHidden = n => {
+    return n * 2;
+  };
+
+  spanPlainly = point => {
+    const { x, y } = point;
+    return x - y;
+  };
+
+  spanAsCallback = point => {
+    const { x, y } = point;
+    return x - y;
+  };
+
+  spanHidden = point => {
+    const { x, y } = point;
+    return x - y;
+  };
+}
+
+const tools = new Tools();
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) tools.sumHidden([1, 2, 3]);
+////= for-9
+console.log("after", "sumPlainly", tools.sumPlainly([1, 2, 3]), tools.sumPlainly([]), tools.sumPlainly(new Array(4, 5)), tools.sumPlainly([0.5]), tools.sumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", tools.sumHidden([1, 2, 3]), tools.sumHidden([]), tools.sumHidden(new Array(4, 5)), tools.sumHidden([0.5]), tools.sumHidden(Array.of(6)));
+console.log("before", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) tools.findHidden("abc");
+////= for-12
+console.log("after", "findPlainly", tools.findPlainly("abc"), tools.findPlainly("b"), tools.findPlainly(""), tools.findPlainly("xyz"), tools.findPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+console.log("after", "findHidden", tools.findHidden("abc"), tools.findHidden("b"), tools.findHidden(""), tools.findHidden("xyz"), tools.findHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) tools.doubleHidden(1);
+////= for-10
+console.log("after", "doublePlainly", tools.doublePlainly(1), tools.doublePlainly(2.5), tools.doublePlainly(-3), tools.doublePlainly(0), tools.doublePlainly(1e10));
+console.log("after", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+console.log("after", "doubleHidden", tools.doubleHidden(1), tools.doubleHidden(2.5), tools.doubleHidden(-3), tools.doubleHidden(0), tools.doubleHidden(1e10));
+console.log("before", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) tools.spanHidden({ x: 3, y: 1 });
+////= for-11
+console.log("after", "spanPlainly", tools.spanPlainly({ x: 3, y: 1 }), tools.spanPlainly(new Point(5, 2)), tools.spanPlainly({ x: 0.5, y: 0.25 }), tools.spanPlainly({ x: -1, y: -1 }), tools.spanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", tools.spanHidden({ x: 3, y: 1 }), tools.spanHidden(new Point(5, 2)), tools.spanHidden({ x: 0.5, y: 0.25 }), tools.spanHidden({ x: -1, y: -1 }), tools.spanHidden(new Point(0, 0)));
+//// many-callers-of-a-class-method-and-an-impostor.js
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+////= Tools
+
+const tools = new Tools();
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) tools.sumHidden([1, 2, 3]);
+////= for-9
+console.log("after", "sumPlainly", tools.sumPlainly([1, 2, 3]), tools.sumPlainly([]), tools.sumPlainly(new Array(4, 5)), tools.sumPlainly([0.5]), tools.sumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", tools.sumHidden([1, 2, 3]), tools.sumHidden([]), tools.sumHidden(new Array(4, 5)), tools.sumHidden([0.5]), tools.sumHidden(Array.of(6)));
+console.log("before", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) tools.findHidden("abc");
+////= for-12
+console.log("after", "findPlainly", tools.findPlainly("abc"), tools.findPlainly("b"), tools.findPlainly(""), tools.findPlainly("xyz"), tools.findPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+console.log("after", "findHidden", tools.findHidden("abc"), tools.findHidden("b"), tools.findHidden(""), tools.findHidden("xyz"), tools.findHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) tools.doubleHidden(1);
+////= for-10
+console.log("after", "doublePlainly", tools.doublePlainly(1), tools.doublePlainly(2.5), tools.doublePlainly(-3), tools.doublePlainly(0), tools.doublePlainly(1e10));
+console.log("after", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+console.log("after", "doubleHidden", tools.doubleHidden(1), tools.doubleHidden(2.5), tools.doubleHidden(-3), tools.doubleHidden(0), tools.doubleHidden(1e10));
+console.log("before", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) tools.spanHidden({ x: 3, y: 1 });
+////= for-11
+console.log("after", "spanPlainly", tools.spanPlainly({ x: 3, y: 1 }), tools.spanPlainly(new Point(5, 2)), tools.spanPlainly({ x: 0.5, y: 0.25 }), tools.spanPlainly({ x: -1, y: -1 }), tools.spanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", tools.spanHidden({ x: 3, y: 1 }), tools.spanHidden(new Point(5, 2)), tools.spanHidden({ x: 0.5, y: 0.25 }), tools.spanHidden({ x: -1, y: -1 }), tools.spanHidden(new Point(0, 0)));
+//// many-callers-of-a-closure-from-a-factory-and-an-impostor.js
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+////= lines-120	sumPlainlyFactory
+
+const sumPlainly = sumPlainlyFactory();
+
+////= lines-120	sumAsCallbackFactory
+
+const sumAsCallback = sumAsCallbackFactory();
+
+////= lines-120	sumHiddenFactory
+
+const sumHidden = sumHiddenFactory();
+
+////= lines-175	findPlainlyFactory
+
+const findPlainly = findPlainlyFactory();
+
+////= lines-175	findAsCallbackFactory
+
+const findAsCallback = findAsCallbackFactory();
+
+////= lines-175	findHiddenFactory
+
+const findHidden = findHiddenFactory();
+
+////= lines-173	doublePlainlyFactory
+
+const doublePlainly = doublePlainlyFactory();
+
+////= lines-173	doubleAsCallbackFactory
+
+const doubleAsCallback = doubleAsCallbackFactory();
+
+////= lines-173	doubleHiddenFactory
+
+const doubleHidden = doubleHiddenFactory();
+
+////= lines-153	spanPlainlyFactory
+
+const spanPlainly = spanPlainlyFactory();
+
+////= lines-153	spanAsCallbackFactory
+
+const spanAsCallback = spanAsCallbackFactory();
+
+////= lines-153	spanHiddenFactory
+
+const spanHidden = spanHiddenFactory();
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", sumAsCallback([1, 2, 3]), sumAsCallback([]), sumAsCallback(new Array(4, 5)), sumAsCallback([0.5]), sumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) sumHidden([1, 2, 3]);
+////= for-77
+console.log("after", "sumPlainly", sumPlainly([1, 2, 3]), sumPlainly([]), sumPlainly(new Array(4, 5)), sumPlainly([0.5]), sumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", sumAsCallback([1, 2, 3]), sumAsCallback([]), sumAsCallback(new Array(4, 5)), sumAsCallback([0.5]), sumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", sumHidden([1, 2, 3]), sumHidden([]), sumHidden(new Array(4, 5)), sumHidden([0.5]), sumHidden(Array.of(6)));
+console.log("before", "findAsCallback", findAsCallback("abc"), findAsCallback("b"), findAsCallback(""), findAsCallback("xyz"), findAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) findHidden("abc");
+////= for-80
+console.log("after", "findPlainly", findPlainly("abc"), findPlainly("b"), findPlainly(""), findPlainly("xyz"), findPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", findAsCallback("abc"), findAsCallback("b"), findAsCallback(""), findAsCallback("xyz"), findAsCallback(`a${"b"}`));
+console.log("after", "findHidden", findHidden("abc"), findHidden("b"), findHidden(""), findHidden("xyz"), findHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", doubleAsCallback(1), doubleAsCallback(2.5), doubleAsCallback(-3), doubleAsCallback(0), doubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) doubleHidden(1);
+////= for-78
+console.log("after", "doublePlainly", doublePlainly(1), doublePlainly(2.5), doublePlainly(-3), doublePlainly(0), doublePlainly(1e10));
+console.log("after", "doubleAsCallback", doubleAsCallback(1), doubleAsCallback(2.5), doubleAsCallback(-3), doubleAsCallback(0), doubleAsCallback(1e10));
+console.log("after", "doubleHidden", doubleHidden(1), doubleHidden(2.5), doubleHidden(-3), doubleHidden(0), doubleHidden(1e10));
+console.log("before", "spanAsCallback", spanAsCallback({ x: 3, y: 1 }), spanAsCallback(new Point(5, 2)), spanAsCallback({ x: 0.5, y: 0.25 }), spanAsCallback({ x: -1, y: -1 }), spanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) spanHidden({ x: 3, y: 1 });
+////= for-79
+console.log("after", "spanPlainly", spanPlainly({ x: 3, y: 1 }), spanPlainly(new Point(5, 2)), spanPlainly({ x: 0.5, y: 0.25 }), spanPlainly({ x: -1, y: -1 }), spanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", spanAsCallback({ x: 3, y: 1 }), spanAsCallback(new Point(5, 2)), spanAsCallback({ x: 0.5, y: 0.25 }), spanAsCallback({ x: -1, y: -1 }), spanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", spanHidden({ x: 3, y: 1 }), spanHidden(new Point(5, 2)), spanHidden({ x: 0.5, y: 0.25 }), spanHidden({ x: -1, y: -1 }), spanHidden(new Point(0, 0)));
+//// many-callers-of-a-commonjs-function-imported-by-a-module-and-an-impostor/main.mjs
+import tools, { sum, double, span, whoCalls } from "./tools.cjs";
+import * as namespace from "./tools.cjs";
+import user from "./user.cjs";
+import { notLists, notNumbers, notPoints } from "./values.mjs";
+
+function attempt(label, run) {
+  let line;
+  try {
+    const value = run();
+    line = typeof value === "string" ? JSON.stringify(value) : typeof value === "bigint" ? value + "n" : Object.is(value, -0) ? "-0" : String(value);
+  } catch (error) {
+    line = "threw " + error.constructor.name;
+  }
+  console.log(label + ":", line);
+}
+
+function honest(round) {
+  console.log(round, "imported:", sum([1, 2, 3]), sum([]), sum(new Array(4, 5)), double(2), double(0.5), double(-1), span({ x: 3, y: 1 }), span({ x: 9, y: 4 }));
+  console.log(round, "through the default:", tools.sum([1, 2]), tools.double(3), tools.span({ x: 2, y: 1 }));
+  user.honest(round);
+}
+
+honest("before");
+console.log("one function under every name:", tools.sum === sum, namespace.sum === sum, namespace.default === tools);
+attempt("this of an imported name", () => whoCalls());
+attempt("this through the default", () => tools.whoCalls());
+attempt("this through the namespace", () => typeof namespace.whoCalls());
+for (const [name, make] of notLists) {
+  attempt("sum, imported by name, of " + name, () => sum(make()));
+  attempt("sum, called by the other CommonJS module, of " + name, () => user.withValue("sum", make()));
+}
+for (const [name, make] of notNumbers) {
+  attempt("double, through the default export, of " + name, () => tools.double(make()));
+  attempt("double, through the namespace by a computed name, of " + name, () => namespace[["dou", "ble"].join("")](make()));
+}
+for (const [name, make] of notPoints) {
+  attempt("span, through a copy of the namespace, of " + name, () => ({ ...namespace }).span(make()));
+  attempt("span, called by the other CommonJS module, of " + name, () => user.withValue("span", make()));
+}
+const original = tools.double;
+tools.double = text => "replaced " + text;
+attempt("after the exports object was changed, through the default", () => tools.double(2));
+user.honest("while double is replaced");
+tools.double = original;
+honest("after");
+//// many-callers-of-a-commonjs-function-imported-by-a-module-and-an-impostor/tools.cjs
+////= lines-22	sum	list	var	total	0
+
+////= lines-117	double	n	2
+
+function span(point) {
+  return point.x - point.y;
+}
+
+function whoCalls() {
+  return this === undefined ? "undefined" : this === globalThis ? "the global object" : this === module.exports ? "the exports" : typeof this;
+}
+
+module.exports = { sum: sum, double: double, span: span, whoCalls: whoCalls };
+//// many-callers-of-a-commonjs-function-imported-by-a-module-and-an-impostor/user.cjs
+var tools = require("./tools.cjs");
+
+exports.honest = function (round) {
+  console.log(round, "required:", tools.sum([1, 2, 3]), tools.sum([]), tools.double(2), tools.double(0.5), tools.span({ x: 3, y: 1 }), tools.whoCalls());
+};
+
+exports.withValue = function (name, value) {
+  return tools[name](value);
+};
+//// many-callers-of-a-commonjs-function-imported-by-a-module-and-an-impostor/values.mjs
+export const notLists = [["a string", () => "12"], ["an array-like object", () => ({ 0: 1, length: 1 })], ["holes", () => new Array(2)], ["null", () => null]];
+export const notNumbers = [["a numeric string", () => "3"], ["a BigInt", () => 3n], ["an object with valueOf", () => ({ valueOf: () => 3 })], ["undefined", () => undefined]];
+export const notPoints = [["the other key order", () => ({ y: 1, x: 3 })], ["strings inside", () => ({ x: "3", y: "1" })], ["a number", () => 5], ["null", () => null]];
+//// many-callers-of-a-function-declared-inside-another-and-an-impostor.cjs
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+function run() {
+  function sumPlainly(list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  }
+
+  function sumAsCallback(list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  }
+
+  function sumHidden(list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  }
+
+  function findPlainly(text) {
+    return text.indexOf("b");
+  }
+
+  function findAsCallback(text) {
+    return text.indexOf("b");
+  }
+
+  function findHidden(text) {
+    return text.indexOf("b");
+  }
+
+  function doublePlainly(n) {
+    return n * 2;
+  }
+
+  function doubleAsCallback(n) {
+    return n * 2;
+  }
+
+  function doubleHidden(n) {
+    return n * 2;
+  }
+
+  function spanPlainly(point) {
+    const { x, y } = point;
+    return x - y;
+  }
+
+  function spanAsCallback(point) {
+    const { x, y } = point;
+    return x - y;
+  }
+
+  function spanHidden(point) {
+    const { x, y } = point;
+    return x - y;
+  }
+
+  console.log("strict:", (function () { return this === undefined; })());
+  console.log("before", "sumAsCallback", sumAsCallback([1, 2, 3]), sumAsCallback([]), sumAsCallback(new Array(4, 5)), sumAsCallback([0.5]), sumAsCallback(Array.of(6)));
+  for (let i = 0; i < 2000; i++) sumHidden([1, 2, 3]);
+  for (const [name, make] of notLists) {
+    attempt("sumPlainly " + name, () => sumPlainly(make()));
+    attempt("sumAsCallback " + name, () => [make()].map(sumAsCallback)[0]);
+    attempt("sumHidden " + name, () => new Function("f", "value", "return f(value)")(sumHidden, make()));
+  }
+  console.log("after", "sumPlainly", sumPlainly([1, 2, 3]), sumPlainly([]), sumPlainly(new Array(4, 5)), sumPlainly([0.5]), sumPlainly(Array.of(6)));
+  console.log("after", "sumAsCallback", sumAsCallback([1, 2, 3]), sumAsCallback([]), sumAsCallback(new Array(4, 5)), sumAsCallback([0.5]), sumAsCallback(Array.of(6)));
+  console.log("after", "sumHidden", sumHidden([1, 2, 3]), sumHidden([]), sumHidden(new Array(4, 5)), sumHidden([0.5]), sumHidden(Array.of(6)));
+  console.log("before", "findAsCallback", findAsCallback("abc"), findAsCallback("b"), findAsCallback(""), findAsCallback("xyz"), findAsCallback(`a${"b"}`));
+  for (let i = 0; i < 2000; i++) findHidden("abc");
+  for (const [name, make] of notTexts) {
+    attempt("findPlainly " + name, () => findPlainly(make()));
+    attempt("findAsCallback " + name, () => [make()].map(findAsCallback)[0]);
+    attempt("findHidden " + name, () => new Function("f", "value", "return f(value)")(findHidden, make()));
+  }
+  console.log("after", "findPlainly", findPlainly("abc"), findPlainly("b"), findPlainly(""), findPlainly("xyz"), findPlainly(`a${"b"}`));
+  console.log("after", "findAsCallback", findAsCallback("abc"), findAsCallback("b"), findAsCallback(""), findAsCallback("xyz"), findAsCallback(`a${"b"}`));
+  console.log("after", "findHidden", findHidden("abc"), findHidden("b"), findHidden(""), findHidden("xyz"), findHidden(`a${"b"}`));
+  console.log("before", "doubleAsCallback", doubleAsCallback(1), doubleAsCallback(2.5), doubleAsCallback(-3), doubleAsCallback(0), doubleAsCallback(1e10));
+  for (let i = 0; i < 2000; i++) doubleHidden(1);
+  for (const [name, make] of notNumbers) {
+    attempt("doublePlainly " + name, () => doublePlainly(make()));
+    attempt("doubleAsCallback " + name, () => [make()].map(doubleAsCallback)[0]);
+    attempt("doubleHidden " + name, () => new Function("f", "value", "return f(value)")(doubleHidden, make()));
+  }
+  console.log("after", "doublePlainly", doublePlainly(1), doublePlainly(2.5), doublePlainly(-3), doublePlainly(0), doublePlainly(1e10));
+  console.log("after", "doubleAsCallback", doubleAsCallback(1), doubleAsCallback(2.5), doubleAsCallback(-3), doubleAsCallback(0), doubleAsCallback(1e10));
+  console.log("after", "doubleHidden", doubleHidden(1), doubleHidden(2.5), doubleHidden(-3), doubleHidden(0), doubleHidden(1e10));
+  console.log("before", "spanAsCallback", spanAsCallback({ x: 3, y: 1 }), spanAsCallback(new Point(5, 2)), spanAsCallback({ x: 0.5, y: 0.25 }), spanAsCallback({ x: -1, y: -1 }), spanAsCallback(new Point(0, 0)));
+  for (let i = 0; i < 2000; i++) spanHidden({ x: 3, y: 1 });
+  for (const [name, make] of notPoints) {
+    attempt("spanPlainly " + name, () => spanPlainly(make()));
+    attempt("spanAsCallback " + name, () => [make()].map(spanAsCallback)[0]);
+    attempt("spanHidden " + name, () => new Function("f", "value", "return f(value)")(spanHidden, make()));
+  }
+  console.log("after", "spanPlainly", spanPlainly({ x: 3, y: 1 }), spanPlainly(new Point(5, 2)), spanPlainly({ x: 0.5, y: 0.25 }), spanPlainly({ x: -1, y: -1 }), spanPlainly(new Point(0, 0)));
+  console.log("after", "spanAsCallback", spanAsCallback({ x: 3, y: 1 }), spanAsCallback(new Point(5, 2)), spanAsCallback({ x: 0.5, y: 0.25 }), spanAsCallback({ x: -1, y: -1 }), spanAsCallback(new Point(0, 0)));
+  console.log("after", "spanHidden", spanHidden({ x: 3, y: 1 }), spanHidden(new Point(5, 2)), spanHidden({ x: 0.5, y: 0.25 }), spanHidden({ x: -1, y: -1 }), spanHidden(new Point(0, 0)));
+}
+
+run();
+//// many-callers-of-a-function-expression-in-a-variable-and-an-impostor.cjs
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+////= lines-201	sumPlainly
+
+////= lines-201	sumAsCallback
+
+////= lines-201	sumHidden
+
+var findPlainly = function (text) {
+  return text.indexOf("b");
+};
+
+var findAsCallback = function (text) {
+  return text.indexOf("b");
+};
+
+var findHidden = function (text) {
+  return text.indexOf("b");
+};
+
+var doublePlainly = function (n) {
+  return n * 2;
+};
+
+var doubleAsCallback = function (n) {
+  return n * 2;
+};
+
+var doubleHidden = function (n) {
+  return n * 2;
+};
+
+////= lines-241	spanPlainly
+
+////= lines-241	spanAsCallback
+
+////= lines-241	spanHidden
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", sumAsCallback([1, 2, 3]), sumAsCallback([]), sumAsCallback(new Array(4, 5)), sumAsCallback([0.5]), sumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) sumHidden([1, 2, 3]);
+////= for-77
+console.log("after", "sumPlainly", sumPlainly([1, 2, 3]), sumPlainly([]), sumPlainly(new Array(4, 5)), sumPlainly([0.5]), sumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", sumAsCallback([1, 2, 3]), sumAsCallback([]), sumAsCallback(new Array(4, 5)), sumAsCallback([0.5]), sumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", sumHidden([1, 2, 3]), sumHidden([]), sumHidden(new Array(4, 5)), sumHidden([0.5]), sumHidden(Array.of(6)));
+console.log("before", "findAsCallback", findAsCallback("abc"), findAsCallback("b"), findAsCallback(""), findAsCallback("xyz"), findAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) findHidden("abc");
+////= for-80
+console.log("after", "findPlainly", findPlainly("abc"), findPlainly("b"), findPlainly(""), findPlainly("xyz"), findPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", findAsCallback("abc"), findAsCallback("b"), findAsCallback(""), findAsCallback("xyz"), findAsCallback(`a${"b"}`));
+console.log("after", "findHidden", findHidden("abc"), findHidden("b"), findHidden(""), findHidden("xyz"), findHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", doubleAsCallback(1), doubleAsCallback(2.5), doubleAsCallback(-3), doubleAsCallback(0), doubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) doubleHidden(1);
+////= for-78
+console.log("after", "doublePlainly", doublePlainly(1), doublePlainly(2.5), doublePlainly(-3), doublePlainly(0), doublePlainly(1e10));
+console.log("after", "doubleAsCallback", doubleAsCallback(1), doubleAsCallback(2.5), doubleAsCallback(-3), doubleAsCallback(0), doubleAsCallback(1e10));
+console.log("after", "doubleHidden", doubleHidden(1), doubleHidden(2.5), doubleHidden(-3), doubleHidden(0), doubleHidden(1e10));
+console.log("before", "spanAsCallback", spanAsCallback({ x: 3, y: 1 }), spanAsCallback(new Point(5, 2)), spanAsCallback({ x: 0.5, y: 0.25 }), spanAsCallback({ x: -1, y: -1 }), spanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) spanHidden({ x: 3, y: 1 });
+////= for-79
+console.log("after", "spanPlainly", spanPlainly({ x: 3, y: 1 }), spanPlainly(new Point(5, 2)), spanPlainly({ x: 0.5, y: 0.25 }), spanPlainly({ x: -1, y: -1 }), spanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", spanAsCallback({ x: 3, y: 1 }), spanAsCallback(new Point(5, 2)), spanAsCallback({ x: 0.5, y: 0.25 }), spanAsCallback({ x: -1, y: -1 }), spanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", spanHidden({ x: 3, y: 1 }), spanHidden(new Point(5, 2)), spanHidden({ x: 0.5, y: 0.25 }), spanHidden({ x: -1, y: -1 }), spanHidden(new Point(0, 0)));
+//// many-callers-of-a-function-in-a-map-and-an-impostor.js
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+const table = new Map([
+  ["sumPlainly", function (list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  }],
+
+  ["sumAsCallback", function (list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  }],
+
+  ["sumHidden", function (list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  }],
+
+  ["findPlainly", function (text) {
+    return text.indexOf("b");
+  }],
+
+  ["findAsCallback", function (text) {
+    return text.indexOf("b");
+  }],
+
+  ["findHidden", function (text) {
+    return text.indexOf("b");
+  }],
+
+  ["doublePlainly", function (n) {
+    return n * 2;
+  }],
+
+  ["doubleAsCallback", function (n) {
+    return n * 2;
+  }],
+
+  ["doubleHidden", function (n) {
+    return n * 2;
+  }],
+
+  ["spanPlainly", function (point) {
+    const { x, y } = point;
+    return x - y;
+  }],
+
+  ["spanAsCallback", function (point) {
+    const { x, y } = point;
+    return x - y;
+  }],
+
+  ["spanHidden", function (point) {
+    const { x, y } = point;
+    return x - y;
+  }],
+]);
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", table.get("sumAsCallback")([1, 2, 3]), table.get("sumAsCallback")([]), table.get("sumAsCallback")(new Array(4, 5)), table.get("sumAsCallback")([0.5]), table.get("sumAsCallback")(Array.of(6)));
+for (let i = 0; i < 2000; i++) table.get("sumHidden")([1, 2, 3]);
+for (const [name, make] of notLists) {
+  attempt("sumPlainly " + name, () => table.get("sumPlainly")(make()));
+  attempt("sumAsCallback " + name, () => [make()].map(table.get("sumAsCallback"))[0]);
+  attempt("sumHidden " + name, () => new Function("table", "value", "return table.get('sumHidden')(value)")(table, make()));
+}
+console.log("after", "sumPlainly", table.get("sumPlainly")([1, 2, 3]), table.get("sumPlainly")([]), table.get("sumPlainly")(new Array(4, 5)), table.get("sumPlainly")([0.5]), table.get("sumPlainly")(Array.of(6)));
+console.log("after", "sumAsCallback", table.get("sumAsCallback")([1, 2, 3]), table.get("sumAsCallback")([]), table.get("sumAsCallback")(new Array(4, 5)), table.get("sumAsCallback")([0.5]), table.get("sumAsCallback")(Array.of(6)));
+console.log("after", "sumHidden", table.get("sumHidden")([1, 2, 3]), table.get("sumHidden")([]), table.get("sumHidden")(new Array(4, 5)), table.get("sumHidden")([0.5]), table.get("sumHidden")(Array.of(6)));
+console.log("before", "findAsCallback", table.get("findAsCallback")("abc"), table.get("findAsCallback")("b"), table.get("findAsCallback")(""), table.get("findAsCallback")("xyz"), table.get("findAsCallback")(`a${"b"}`));
+for (let i = 0; i < 2000; i++) table.get("findHidden")("abc");
+for (const [name, make] of notTexts) {
+  attempt("findPlainly " + name, () => table.get("findPlainly")(make()));
+  attempt("findAsCallback " + name, () => [make()].map(table.get("findAsCallback"))[0]);
+  attempt("findHidden " + name, () => new Function("table", "value", "return table.get('findHidden')(value)")(table, make()));
+}
+console.log("after", "findPlainly", table.get("findPlainly")("abc"), table.get("findPlainly")("b"), table.get("findPlainly")(""), table.get("findPlainly")("xyz"), table.get("findPlainly")(`a${"b"}`));
+console.log("after", "findAsCallback", table.get("findAsCallback")("abc"), table.get("findAsCallback")("b"), table.get("findAsCallback")(""), table.get("findAsCallback")("xyz"), table.get("findAsCallback")(`a${"b"}`));
+console.log("after", "findHidden", table.get("findHidden")("abc"), table.get("findHidden")("b"), table.get("findHidden")(""), table.get("findHidden")("xyz"), table.get("findHidden")(`a${"b"}`));
+console.log("before", "doubleAsCallback", table.get("doubleAsCallback")(1), table.get("doubleAsCallback")(2.5), table.get("doubleAsCallback")(-3), table.get("doubleAsCallback")(0), table.get("doubleAsCallback")(1e10));
+for (let i = 0; i < 2000; i++) table.get("doubleHidden")(1);
+for (const [name, make] of notNumbers) {
+  attempt("doublePlainly " + name, () => table.get("doublePlainly")(make()));
+  attempt("doubleAsCallback " + name, () => [make()].map(table.get("doubleAsCallback"))[0]);
+  attempt("doubleHidden " + name, () => new Function("table", "value", "return table.get('doubleHidden')(value)")(table, make()));
+}
+console.log("after", "doublePlainly", table.get("doublePlainly")(1), table.get("doublePlainly")(2.5), table.get("doublePlainly")(-3), table.get("doublePlainly")(0), table.get("doublePlainly")(1e10));
+console.log("after", "doubleAsCallback", table.get("doubleAsCallback")(1), table.get("doubleAsCallback")(2.5), table.get("doubleAsCallback")(-3), table.get("doubleAsCallback")(0), table.get("doubleAsCallback")(1e10));
+console.log("after", "doubleHidden", table.get("doubleHidden")(1), table.get("doubleHidden")(2.5), table.get("doubleHidden")(-3), table.get("doubleHidden")(0), table.get("doubleHidden")(1e10));
+console.log("before", "spanAsCallback", table.get("spanAsCallback")({ x: 3, y: 1 }), table.get("spanAsCallback")(new Point(5, 2)), table.get("spanAsCallback")({ x: 0.5, y: 0.25 }), table.get("spanAsCallback")({ x: -1, y: -1 }), table.get("spanAsCallback")(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) table.get("spanHidden")({ x: 3, y: 1 });
+for (const [name, make] of notPoints) {
+  attempt("spanPlainly " + name, () => table.get("spanPlainly")(make()));
+  attempt("spanAsCallback " + name, () => [make()].map(table.get("spanAsCallback"))[0]);
+  attempt("spanHidden " + name, () => new Function("table", "value", "return table.get('spanHidden')(value)")(table, make()));
+}
+console.log("after", "spanPlainly", table.get("spanPlainly")({ x: 3, y: 1 }), table.get("spanPlainly")(new Point(5, 2)), table.get("spanPlainly")({ x: 0.5, y: 0.25 }), table.get("spanPlainly")({ x: -1, y: -1 }), table.get("spanPlainly")(new Point(0, 0)));
+console.log("after", "spanAsCallback", table.get("spanAsCallback")({ x: 3, y: 1 }), table.get("spanAsCallback")(new Point(5, 2)), table.get("spanAsCallback")({ x: 0.5, y: 0.25 }), table.get("spanAsCallback")({ x: -1, y: -1 }), table.get("spanAsCallback")(new Point(0, 0)));
+console.log("after", "spanHidden", table.get("spanHidden")({ x: 3, y: 1 }), table.get("spanHidden")(new Point(5, 2)), table.get("spanHidden")({ x: 0.5, y: 0.25 }), table.get("spanHidden")({ x: -1, y: -1 }), table.get("spanHidden")(new Point(0, 0)));
+//// many-callers-of-a-function-in-an-array-and-an-impostor.js
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+const table = [
+  function (list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  },
+
+  function (list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  },
+
+  function (list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  },
+
+  function (text) {
+    return text.indexOf("b");
+  },
+
+  function (text) {
+    return text.indexOf("b");
+  },
+
+  function (text) {
+    return text.indexOf("b");
+  },
+
+  function (n) {
+    return n * 2;
+  },
+
+  function (n) {
+    return n * 2;
+  },
+
+  function (n) {
+    return n * 2;
+  },
+
+  function (point) {
+    const { x, y } = point;
+    return x - y;
+  },
+
+  function (point) {
+    const { x, y } = point;
+    return x - y;
+  },
+
+  function (point) {
+    const { x, y } = point;
+    return x - y;
+  },
+];
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", table[1]([1, 2, 3]), table[1]([]), table[1](new Array(4, 5)), table[1]([0.5]), table[1](Array.of(6)));
+for (let i = 0; i < 2000; i++) table[2]([1, 2, 3]);
+for (const [name, make] of notLists) {
+  attempt("sumPlainly " + name, () => table[0](make()));
+  attempt("sumAsCallback " + name, () => [make()].map(table[1])[0]);
+  attempt("sumHidden " + name, () => new Function("table", "value", "return table[2](value)")(table, make()));
+}
+console.log("after", "sumPlainly", table[0]([1, 2, 3]), table[0]([]), table[0](new Array(4, 5)), table[0]([0.5]), table[0](Array.of(6)));
+console.log("after", "sumAsCallback", table[1]([1, 2, 3]), table[1]([]), table[1](new Array(4, 5)), table[1]([0.5]), table[1](Array.of(6)));
+console.log("after", "sumHidden", table[2]([1, 2, 3]), table[2]([]), table[2](new Array(4, 5)), table[2]([0.5]), table[2](Array.of(6)));
+console.log("before", "findAsCallback", table[4]("abc"), table[4]("b"), table[4](""), table[4]("xyz"), table[4](`a${"b"}`));
+for (let i = 0; i < 2000; i++) table[5]("abc");
+for (const [name, make] of notTexts) {
+  attempt("findPlainly " + name, () => table[3](make()));
+  attempt("findAsCallback " + name, () => [make()].map(table[4])[0]);
+  attempt("findHidden " + name, () => new Function("table", "value", "return table[5](value)")(table, make()));
+}
+console.log("after", "findPlainly", table[3]("abc"), table[3]("b"), table[3](""), table[3]("xyz"), table[3](`a${"b"}`));
+console.log("after", "findAsCallback", table[4]("abc"), table[4]("b"), table[4](""), table[4]("xyz"), table[4](`a${"b"}`));
+console.log("after", "findHidden", table[5]("abc"), table[5]("b"), table[5](""), table[5]("xyz"), table[5](`a${"b"}`));
+console.log("before", "doubleAsCallback", table[7](1), table[7](2.5), table[7](-3), table[7](0), table[7](1e10));
+for (let i = 0; i < 2000; i++) table[8](1);
+for (const [name, make] of notNumbers) {
+  attempt("doublePlainly " + name, () => table[6](make()));
+  attempt("doubleAsCallback " + name, () => [make()].map(table[7])[0]);
+  attempt("doubleHidden " + name, () => new Function("table", "value", "return table[8](value)")(table, make()));
+}
+console.log("after", "doublePlainly", table[6](1), table[6](2.5), table[6](-3), table[6](0), table[6](1e10));
+console.log("after", "doubleAsCallback", table[7](1), table[7](2.5), table[7](-3), table[7](0), table[7](1e10));
+console.log("after", "doubleHidden", table[8](1), table[8](2.5), table[8](-3), table[8](0), table[8](1e10));
+console.log("before", "spanAsCallback", table[10]({ x: 3, y: 1 }), table[10](new Point(5, 2)), table[10]({ x: 0.5, y: 0.25 }), table[10]({ x: -1, y: -1 }), table[10](new Point(0, 0)));
+for (let i = 0; i < 2000; i++) table[11]({ x: 3, y: 1 });
+for (const [name, make] of notPoints) {
+  attempt("spanPlainly " + name, () => table[9](make()));
+  attempt("spanAsCallback " + name, () => [make()].map(table[10])[0]);
+  attempt("spanHidden " + name, () => new Function("table", "value", "return table[11](value)")(table, make()));
+}
+console.log("after", "spanPlainly", table[9]({ x: 3, y: 1 }), table[9](new Point(5, 2)), table[9]({ x: 0.5, y: 0.25 }), table[9]({ x: -1, y: -1 }), table[9](new Point(0, 0)));
+console.log("after", "spanAsCallback", table[10]({ x: 3, y: 1 }), table[10](new Point(5, 2)), table[10]({ x: 0.5, y: 0.25 }), table[10]({ x: -1, y: -1 }), table[10](new Point(0, 0)));
+console.log("after", "spanHidden", table[11]({ x: 3, y: 1 }), table[11](new Point(5, 2)), table[11]({ x: 0.5, y: 0.25 }), table[11]({ x: -1, y: -1 }), table[11](new Point(0, 0)));
+//// many-callers-of-a-function-that-stores-to-its-parameter-and-an-impostor.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+function orEmpty(list) {
+  if (!list) list = [];
+  return list.length;
+}
+
+function orZero(n) {
+  n = n || 0;
+  return n + 1;
+}
+
+function toNumber(n) {
+  n = +n;
+  return n * 2;
+}
+
+function toInteger(n) {
+  n |= 0;
+  return n + 1;
+}
+
+function toText(text) {
+  text = "" + text;
+  return text.length;
+}
+
+function wrapped(list) {
+  if (!Array.isArray(list)) list = [list];
+  return list.length + ":" + list[0];
+}
+
+function counted(n) {
+  let steps = 0;
+  while (n > 0 && steps < 5) {
+    n -= 2;
+    steps++;
+  }
+  return steps + ":" + n;
+}
+
+function nullish(n) {
+  n ??= 5;
+  return n * 2;
+}
+
+////= lines-154	bumped	n
+
+////= lines-125	appended	text	"!"
+
+function swapped(a, b) {
+  [a, b] = [b, a];
+  return a - b;
+}
+
+function unpacked(point) {
+  ({ x: point } = point);
+  return point + 1;
+}
+
+function honest(round) {
+  console.log(round, orEmpty([1, 2]), orEmpty(), orEmpty([]), orZero(1), orZero(), orZero(0.5), toNumber(1), toNumber(2.5), toInteger(1), toInteger(7));
+  console.log(round, toText("abc"), toText(""), wrapped([1, 2]), wrapped([3]), counted(4), counted(5), counted(0), nullish(1), nullish(), nullish(0));
+  console.log(round, bumped(1), bumped(0.5), bumped(-1), appended("a"), appended(""), swapped(1, 2), swapped(5, 3), unpacked({ x: 1 }), unpacked({ x: 0.5 }));
+}
+
+const impostors = [
+  ["a numeric string", () => "3"],
+  ["an empty string", () => ""],
+  ["a word", () => "word"],
+  ["an object with valueOf and toString", () => ({ valueOf: () => (log.push("valueOf"), 3), toString: () => (log.push("toString"), "text"), x: "x" })],
+  ["a BigInt", () => 3n],
+  ["zero as a BigInt", () => 0n],
+  ["an array of one", () => [3]],
+  ["an empty array", () => []],
+  ["a symbol", () => Symbol.iterator],
+  ["two to the 31st", () => 2147483648],
+  ["the largest small integer", () => 2147483647],
+  ["a fraction", () => 2.5],
+  ["negative zero", () => -0],
+  ["NaN", () => NaN],
+  ["true", () => true],
+  ["null", () => null],
+  ["undefined", () => undefined],
+];
+
+honest("before");
+for (const [name, make] of impostors) {
+  attempt("orEmpty of " + name, () => orEmpty(make()));
+  attempt("orZero of " + name, () => orZero(make()));
+  attempt("toNumber of " + name, () => toNumber(make()));
+  attempt("toInteger of " + name, () => toInteger(make()));
+  attempt("toText of " + name, () => toText(make()));
+  attempt("wrapped " + name, () => wrapped(make()));
+  attempt("counted from " + name, () => counted(make()));
+  attempt("nullish of " + name, () => nullish(make()));
+  attempt("bumped " + name, () => bumped(make()));
+  attempt("appended to " + name, () => appended(make()));
+  attempt("swapped " + name + " and one", () => swapped(make(), 1));
+  attempt("unpacked " + name, () => unpacked(make()));
+}
+honest("after");
+//// many-callers-of-a-function-the-constructor-stores-in-a-field-and-an-impostor.cjs
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+function Tools() {
+  this.sumPlainly = function (list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  };
+
+  this.sumAsCallback = function (list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  };
+
+  this.sumHidden = function (list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  };
+
+  this.findPlainly = function (text) {
+    return text.indexOf("b");
+  };
+
+  this.findAsCallback = function (text) {
+    return text.indexOf("b");
+  };
+
+  this.findHidden = function (text) {
+    return text.indexOf("b");
+  };
+
+  this.doublePlainly = function (n) {
+    return n * 2;
+  };
+
+  this.doubleAsCallback = function (n) {
+    return n * 2;
+  };
+
+  this.doubleHidden = function (n) {
+    return n * 2;
+  };
+
+  this.spanPlainly = function (point) {
+    const { x, y } = point;
+    return x - y;
+  };
+
+  this.spanAsCallback = function (point) {
+    const { x, y } = point;
+    return x - y;
+  };
+
+  this.spanHidden = function (point) {
+    const { x, y } = point;
+    return x - y;
+  };
+}
+
+var tools = new Tools();
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) tools.sumHidden([1, 2, 3]);
+////= for-9
+console.log("after", "sumPlainly", tools.sumPlainly([1, 2, 3]), tools.sumPlainly([]), tools.sumPlainly(new Array(4, 5)), tools.sumPlainly([0.5]), tools.sumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", tools.sumHidden([1, 2, 3]), tools.sumHidden([]), tools.sumHidden(new Array(4, 5)), tools.sumHidden([0.5]), tools.sumHidden(Array.of(6)));
+console.log("before", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) tools.findHidden("abc");
+////= for-12
+console.log("after", "findPlainly", tools.findPlainly("abc"), tools.findPlainly("b"), tools.findPlainly(""), tools.findPlainly("xyz"), tools.findPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+console.log("after", "findHidden", tools.findHidden("abc"), tools.findHidden("b"), tools.findHidden(""), tools.findHidden("xyz"), tools.findHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) tools.doubleHidden(1);
+////= for-10
+console.log("after", "doublePlainly", tools.doublePlainly(1), tools.doublePlainly(2.5), tools.doublePlainly(-3), tools.doublePlainly(0), tools.doublePlainly(1e10));
+console.log("after", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+console.log("after", "doubleHidden", tools.doubleHidden(1), tools.doubleHidden(2.5), tools.doubleHidden(-3), tools.doubleHidden(0), tools.doubleHidden(1e10));
+console.log("before", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) tools.spanHidden({ x: 3, y: 1 });
+////= for-11
+console.log("after", "spanPlainly", tools.spanPlainly({ x: 3, y: 1 }), tools.spanPlainly(new Point(5, 2)), tools.spanPlainly({ x: 0.5, y: 0.25 }), tools.spanPlainly({ x: -1, y: -1 }), tools.spanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", tools.spanHidden({ x: 3, y: 1 }), tools.spanHidden(new Point(5, 2)), tools.spanHidden({ x: 0.5, y: 0.25 }), tools.spanHidden({ x: -1, y: -1 }), tools.spanHidden(new Point(0, 0)));
+//// many-callers-of-a-function-with-default-parameters-and-an-impostor.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+function scale(n, factor = 2) {
+  return n * factor;
+}
+
+function collect(item, into = []) {
+  into.push(item);
+  return into.length;
+}
+
+function area(size = { w: 2, h: 3 }) {
+  return size.w * size.h;
+}
+
+function chain(a, b = a + 1, c = b * 2) {
+  return a + b + c;
+}
+
+let made = 0;
+
+function numbered(id = ++made) {
+  return id * 10;
+}
+
+function greet(name = "nobody") {
+  return name.toUpperCase();
+}
+
+function honest(round) {
+  console.log(round, "scale", scale(1), scale(2, 3), scale(0.5), scale(-4, 0.5), scale(7, 1), scale(0));
+  console.log(round, "collect", collect(1), collect(2, []), collect(3, [1, 2]), collect("a"), collect(4, new Array(1, 2, 3)));
+  console.log(round, "area", area(), area({ w: 1, h: 1 }), area({ w: 4, h: 0.5 }), area(), area({ w: 3, h: 3 }));
+  console.log(round, "chain", chain(1), chain(1, 2), chain(1, 2, 3), chain(0), chain(-1, 1));
+  console.log(round, "numbered", numbered(), numbered(5), numbered(), numbered(0.5), made);
+  console.log(round, "greet", greet(), greet("ann"), greet("bob"), greet(""), greet(`c${round}`));
+}
+
+const second = [
+  ["undefined, which takes the default", () => undefined],
+  ["null, which does not", () => null],
+  ["a numeric string", () => "3"],
+  ["an object with valueOf", () => ({ valueOf: () => (log.push("valueOf"), 3) })],
+  ["a BigInt", () => 3n],
+  ["an array-like object with push", () => ({ length: 5, push: Array.prototype.push })],
+  ["a string", () => "abc"],
+  ["an object of another shape", () => ({ h: 2, w: "3" })],
+  ["zero", () => 0],
+  ["false", () => false],
+];
+
+honest("before");
+for (const [name, make] of second) {
+  attempt("scale(2, " + name + ")", () => scale(2, make()));
+  attempt("scale(" + name + ")", () => scale(make()));
+  attempt("collect(1, " + name + ")", () => collect(1, make()));
+  attempt("area(" + name + ")", () => area(make()));
+  attempt("chain(" + name + ")", () => chain(make()));
+  attempt("chain(1, " + name + ")", () => chain(1, make()));
+  attempt("chain(1, undefined, " + name + ")", () => chain(1, undefined, make()));
+  attempt("numbered(" + name + ")", () => numbered(make()) + " made " + made);
+  attempt("greet(" + name + ")", () => greet(make()));
+  attempt("scale.apply with " + name, () => scale.apply(null, [2, make()]));
+  attempt("area through map of " + name, () => [make()].map(area)[0]);
+  attempt("greet from hidden code with " + name, () => new Function("f", "value", "return f(value)")(greet, make()));
+}
+attempt("scale with a hole spread into it", () => scale(...[3, , ]));
+attempt("scale.apply with a short array-like", () => scale.apply(null, { length: 2, 0: 3 }));
+attempt("the lengths", () => [scale.length, collect.length, area.length, chain.length, numbered.length]);
+honest("after");
+//// many-callers-of-a-function-with-destructured-parameters-and-an-impostor.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+function span({ x, y }) {
+  return x - y;
+}
+
+function pair([a, b]) {
+  return a + b;
+}
+
+function named({ name = "nobody", age: years = 0 } = {}) {
+  return name + " " + years;
+}
+
+function inner({ at: { x, y } }) {
+  return x * y;
+}
+
+function others({ a, ...rest }) {
+  return a + " " + Object.keys(rest).join();
+}
+
+function headAndTail([head, ...tail]) {
+  return head + " " + tail.length;
+}
+
+function honest(round) {
+  console.log(round, "span", span({ x: 3, y: 1 }), span({ x: 0.5, y: 0.25 }), span({ x: -1, y: -1 }), span({ x: 9, y: 4 }), span({ x: 1, y: 2 }));
+  console.log(round, "pair", pair([1, 2]), pair([0.5, 0.5]), pair([3, 4, 5]), pair(new Array(6, 7)), pair(Array.of(8, 9)));
+  console.log(round, "named", named(), named({}), named({ name: "ann" }), named({ age: 3 }), named({ name: "bob", age: 4 }));
+  console.log(round, "inner", inner({ at: { x: 2, y: 3 } }), inner({ at: { x: 0.5, y: 4 } }), inner({ at: { x: -1, y: 1 } }));
+  console.log(round, "others", others({ a: 1, b: 2, c: 3 }), others({ a: 1 }), others({ b: 2, a: 1 }));
+  console.log(round, "headAndTail", headAndTail([1, 2, 3]), headAndTail([1]), headAndTail([]), headAndTail(["a", "b"]));
+}
+
+const notObjects = [
+  ["getters in the other order", () => ({ get y() { log.push("y"); return 1; }, get x() { log.push("x"); return 3; }, get a() { log.push("a"); return 1; } })],
+  ["a proxy", () => new Proxy({ x: 3, y: 1, a: 1, b: 2 }, {
+    get: (target, key) => (log.push("get " + String(key)), target[key]),
+    ownKeys: target => (log.push("ownKeys"), Reflect.ownKeys(target)),
+    getOwnPropertyDescriptor: (target, key) => (log.push("describe " + String(key)), Reflect.getOwnPropertyDescriptor(target, key)),
+  })],
+  ["members on the prototype", () => Object.create({ x: 3, y: 1, a: 1, name: "proto", age: 9, at: { x: 1, y: 1 } })],
+  ["null members", () => ({ x: null, y: null, name: null, age: null, at: null, a: null })],
+  ["undefined members", () => ({ x: undefined, y: undefined, name: undefined, age: undefined, at: undefined, a: undefined })],
+  ["an array", () => [3, 1]],
+  ["a string", () => "xy"],
+  ["a number", () => 5],
+  ["a function", () => function name() {}],
+  ["null", () => null],
+  ["undefined", () => undefined],
+];
+
+const notArrays = [
+  ["a string", () => "ab"],
+  ["a Set", () => new Set([1, 2, 3])],
+  ["a Map", () => new Map([[1, 2], [3, 4]])],
+  ["a generator that says when it is closed", () => (function* () { try { yield 1; yield 2; yield 3; } finally { log.push("closed"); } })()],
+  ["an array with its own iterator", () => Object.assign([1, 2], { [Symbol.iterator]: () => (log.push("asked"), [7, 8][Symbol.iterator]()) })],
+  ["holes", () => new Array(2)],
+  ["a typed array", () => new Uint8Array([250, 10])],
+  ["an arguments object", () => (function () { return arguments; })(1, 2)],
+  ["an array-like object", () => ({ 0: 1, 1: 2, length: 2 })],
+  ["a number", () => 5],
+  ["null", () => null],
+];
+
+honest("before");
+for (const [name, make] of notObjects) {
+  attempt("span of " + name, () => span(make()));
+  attempt("named of " + name, () => named(make()));
+  attempt("inner of " + name, () => inner(make()));
+  attempt("others of " + name, () => others(make()));
+  attempt("span through call of " + name, () => span.call(null, make()));
+  attempt("named as a callback of " + name, () => [make()].map(named)[0]);
+}
+for (const [name, make] of notArrays) {
+  attempt("pair of " + name, () => pair(make()));
+  attempt("headAndTail of " + name, () => headAndTail(make()));
+  attempt("pair through apply of " + name, () => pair.apply(null, [make()]));
+  attempt("headAndTail from hidden code of " + name, () => new Function("f", "value", "return f(value)")(headAndTail, make()));
+}
+honest("after");
+//// many-callers-of-a-function-with-rest-parameters-and-an-impostor.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+function sumAll(...numbers) {
+  let total = 0;
+  for (let i = 0; i < numbers.length; i++) total += numbers[i];
+  return total;
+}
+
+function largest(...numbers) {
+  return Math.max(...numbers);
+}
+
+function describe(first, ...rest) {
+  return first + ":" + rest.length + ":" + rest.join("-") + ":" + Array.isArray(rest);
+}
+
+function grow(...list) {
+  list.push(9);
+  list[0] = "changed";
+  return list.length;
+}
+
+function lows(...numbers) {
+  return numbers.map(n => n & 3).join();
+}
+
+function honest(round) {
+  console.log(round, "sumAll", sumAll(1, 2, 3), sumAll(), sumAll(0.5), sumAll(1, 2, 3, 4, 5, 6, 7, 8), sumAll(...[1, 2]), sumAll(-1, 1));
+  console.log(round, "largest", largest(1, 2, 3), largest(5), largest(-1, -2), largest(0.5, 0.25), largest(...[7, 8, 9]));
+  console.log(round, "describe", describe(1), describe(1, 2), describe(1, 2, 3), describe("a", "b"), describe());
+  console.log(round, "grow", grow(), grow(1), grow(1, 2), grow(...[1, 2, 3]));
+  console.log(round, "lows", lows(1, 2, 3), lows(4, 5), lows(), lows(255));
+}
+
+const lists = [
+  ["a string among numbers", () => [1, "2", 3]],
+  ["an object with valueOf", () => [1, { valueOf: () => (log.push("valueOf"), 2) }]],
+  ["BigInts only", () => [1n, 2n]],
+  ["a BigInt among numbers", () => [1, 2n]],
+  ["undefined and null", () => [undefined, null]],
+  ["a hole", () => [1, , 3]],
+  ["an array as one argument", () => [[1, 2]]],
+  ["negative zero", () => [-0]],
+  ["NaN", () => [1, NaN]],
+  ["a symbol", () => [Symbol("s")]],
+];
+
+const spreadable = [
+  ["a string", () => "12"],
+  ["a Set", () => new Set([1, "2"])],
+  ["a Map", () => new Map([[1, 2]])],
+  ["a generator", () => (function* () { yield 1; yield "2"; })()],
+  ["a typed array", () => new Float32Array([1.5, 2.5])],
+  ["an arguments object", () => (function () { return arguments; })(1, "2")],
+  ["an array-like object", () => ({ length: 2, 0: 1 })],
+  ["null", () => null],
+];
+
+honest("before");
+for (const [name, make] of lists) {
+  attempt("sumAll of " + name, () => sumAll(...make()));
+  attempt("largest of " + name, () => largest(...make()));
+  attempt("describe " + name, () => describe(...make()));
+  attempt("lows of " + name, () => lows(...make()));
+  attempt("sumAll.apply of " + name, () => sumAll.apply(null, make()));
+  attempt("largest through Reflect.apply of " + name, () => Reflect.apply(largest, null, make()));
+}
+for (const [name, make] of spreadable) {
+  attempt("sumAll of the spread of " + name, () => sumAll(...make()));
+  attempt("sumAll.apply of " + name, () => sumAll.apply(null, make()));
+  attempt("describe the spread of " + name, () => describe(...make()));
+  attempt("describe.apply of " + name, () => describe.apply(null, make()));
+}
+const mine = [1, 2, 3];
+attempt("grow does not touch the caller's array", () => [grow(...mine), mine]);
+attempt("nor through apply", () => [grow.apply(null, mine), mine]);
+attempt("sumAll as a callback of map", () => [1, 2].map(sumAll));
+attempt("sumAll as a callback of reduce", () => [1, 2, 3].reduce(sumAll));
+attempt("describe as a callback of replace", () => "abc".replace(/(b)/, describe));
+attempt("the lengths", () => [sumAll.length, describe.length]);
+honest("after");

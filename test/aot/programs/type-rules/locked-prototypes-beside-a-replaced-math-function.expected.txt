@@ -1,0 +1,6 @@
+a property added to Object.prototype: TypeError
+undefined true undefined
+a property added to Array.prototype: no error
+12
+Math.sign replaced: no error
+0

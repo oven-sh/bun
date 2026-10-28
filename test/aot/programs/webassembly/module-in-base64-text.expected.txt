@@ -1,0 +1,14 @@
+add 5 0 -2147483648 3
+divide 3 -3 WebAssembly.RuntimeError: Division by zero 3
+sumTo 0 55 705082704
+many 704982704
+fromBase64 42
+instantiate 43
+compile 44
+fibonacci 0 1 55 46368
+half 1.5 0.05 true NaN 5e+307
+exchange 0 7 0 WebAssembly.RuntimeError: Out of bounds memory access WebAssembly.RuntimeError: Out of bounds memory access 1
+memory 9 65536
+truncated 92 CompileError
+sentence 105 SyntaxError
+short 56 45

@@ -1,0 +1,9 @@
+{
+  "build": [
+    "--aot-check=verify-each-pass",
+    "--aot-heat=shuffled",
+    "--aot-layout-seed=5"
+  ],
+  "skipInVariants": "it has a heat of its own",
+  "skipWithASAN": "the build takes longer than the test has there"
+}

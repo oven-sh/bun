@@ -1,0 +1,1718 @@
+////: countBeforeM
+function countBeforeM(values) {
+  let count = 0;
+  for (let i = 0; i < values.length; i++) {
+    if (values[i] < "m") count++;
+  }
+  return count;
+}
+////: countFields
+function countFields(text) {
+  let count = 0;
+  for (const field of text.split(",")) {
+    if (field.length > 0) count++;
+  }
+  return count;
+}
+////: for-137
+for (const [member, name, use] of uses) {
+  for (const text of receivers(member)) attempt(name + " in " + text, () => use(make(text)));
+  attempt(name + " in a string again", () => use("hello world"));
+}
+////: for-140
+for (const [name, use] of uses) {
+  for (const text of values) {
+    attempt(name + " with " + text, () => use(make(text)));
+    if (log.length) console.log("log", log.splice(0).join(", "));
+  }
+}
+////: for-31
+for (let i = 0; i < 2000; i++) {
+  const honest = "akz05"[i % 5];
+  if (isBeforeM(honest)) total++;
+  if (isAfterM(honest)) total += 2;
+  if (isAtMostTen(honest)) total += 3;
+  if (isAtLeastTen(honest)) total += 5;
+  if (tenIsBefore(honest)) total += 7;
+  if (isALowerCaseLetter(honest)) total += 11;
+  if (isADigit(honest)) total += 13;
+  total += countBeforeM(["a", "z", honest]);
+}
+////: for-47
+for (const text of values) {
+  attempt(text, () => {
+    const value = make(text);
+    return [isBeforeM(value), isAfterM(value), isAtMostTen(value), isAtLeastTen(value), tenIsBefore(value), isALowerCaseLetter(value), isADigit(value)].join(" ");
+  });
+  if (log.length) console.log("log", log.splice(0).join(", "));
+  attempt("counted among strings " + text, () => countBeforeM(["a", make(text), "z", make(text)]));
+  log.length = 0;
+}
+////: for-48
+for (const [label, invoke] of ways) {
+  attempt(label + ": a number", () => invoke(kindOfNumber, 7));
+  attempt(label + ": a Number object", () => invoke(kindOfNumber, new Number(7)));
+  attempt(label + ": a text", () => invoke(kindOfText, "abc"));
+  attempt(label + ": a String object", () => invoke(kindOfText, new String("abc")));
+  attempt(label + ": false", () => invoke(kindOfBoolean, false));
+  attempt(label + ": a bigint", () => invoke(kindOfBigInt, 10n));
+  attempt(label + ": a symbol", () => invoke(kindOfSymbol, Symbol.iterator));
+  attempt(label + ": undefined", () => invoke(kindOfNothing, undefined));
+  attempt(label + ": null", () => invoke(kindOfNothing, null));
+  attempt(label + ": a store on a number", () => invoke(storesOnNumber, 7));
+  attempt(label + ": a number against itself", () => invoke(comparesWithItself, 7, 7));
+}
+////: for-82
+for (const text of values) {
+  attempt("`${" + text + "}`", () => alone(make(text)));
+  attempt("`<${" + text + "}>`", () => inside(make(text)));
+  attempt("twice " + text, () => twice(make(text)));
+  if (log.length) console.log("log of the templates", log.splice(0).join(", "));
+  attempt("String(" + text + ")", () => byString(make(text)));
+  attempt("[" + text + "].join()", () => byJoin(make(text)));
+  attempt("''.concat(" + text + ")", () => byConcat(make(text)));
+  if (log.length) console.log("log of the calls", log.splice(0).join(", "));
+}
+////: lines-107
+function «1»(given) {
+  return «2»({ [Symbol.iterator]: () => ({ next: () => ({ done: true, value: given }) }) }).next().value;
+}
+////: uses-21
+const uses = [
+  ["[...x]", spreadIntoAList],
+  ["['<', ...x, '>']", spreadBetweenOthers],
+  ["f(...x)", spreadIntoACall],
+  ["[a, b] = x", firstAndSecond],
+  ["[a, ...b] = x", firstAndRest],
+  ["[a = .., , c = ..] = x", withDefaults],
+  ["Array.from(x)", byArrayFrom],
+];
+////: uses-24
+const uses = [
+  ["replace", "replace text", replaceText],
+  ["replaceAll", "replaceAll text", replaceAllText],
+  ["replace", "replace with a callback", replaceWithACallback],
+  ["replaceAll", "replaceAll with a callback", replaceAllWithACallback],
+  ["replace", "replace a pattern", replaceAPattern],
+  ["replace", "replace with dollars", replaceWithDollars],
+  ["replace", "escape", escape],
+];
+////: uses-25
+const uses = [
+  ["split(',')", splitAtCommas],
+  ["split('')", splitIntoCharacters],
+  ["split('l', 2)", splitWithALimit],
+  ["split(/[ ,]+/)", splitAtARegularExpression],
+  ["split()", notSplit],
+  ["fields", countFields],
+];
+////: values-4
+const values = [
+  "'a'",
+  "'m'",
+  "'z'",
+  "'M'",
+  "''",
+  "'10'",
+  "'9'",
+  "'09'",
+  "'100'",
+  "'1e1'",
+  "' 10 '",
+  "'\\u00e9'",
+  "'\\uffff'",
+  "'\\ud800\\udc00'",
+  "'ma'",
+  "9",
+  "10",
+  "11",
+  "-0",
+  "NaN",
+  "Infinity",
+  "9n",
+  "10n",
+  "11n",
+  "true",
+  "false",
+  "null",
+  "undefined",
+  "Symbol('a')",
+  "new String('a')",
+  "new String('9')",
+  "new Number(9)",
+  "['a']",
+  "[9]",
+  "[]",
+  "[1, 0]",
+  "{}",
+  "{ valueOf() { log.push('valueOf'); return 'a'; }, toString() { log.push('toString'); return 'z'; } }",
+  "{ valueOf() { log.push('valueOf'); return 9; }, toString() { log.push('toString'); return 'z'; } }",
+  "{ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '9'; } }",
+  "{ [Symbol.toPrimitive](hint) { log.push(hint); return 'a'; } }",
+  "{ [Symbol.toPrimitive](hint) { log.push(hint); return 9n; } }",
+  "{ [Symbol.toPrimitive](hint) { log.push(hint); return Symbol('a'); } }",
+  "new Date(9)",
+  "Buffer.from('a')",
+  "new Uint8Array([9])",
+];
+////: ways-4
+const ways = [
+  ["call", (f, receiver, ...list) => f.call(receiver, ...list)],
+  ["apply", (f, receiver, ...list) => f.apply(receiver, list)],
+  ["bind", (f, receiver, ...list) => f.bind(receiver, ...list)()],
+  ["Reflect.apply", (f, receiver, ...list) => Reflect.apply(f, receiver, list)],
+  ["the receiver given to forEach", (f, receiver, ...list) => { let result; [0].forEach(function () { result = f.apply(this, list); }, receiver); return result; }],
+  ["the receiver given to Array.from", (f, receiver, ...list) => Array.from([0], function () { return f.apply(this, list); }, receiver)[0]],
+];
+//// values-that-are-not-strings-are-indexed-with-a-number-with-the-values-in-plain-sight.js
+////= show-33
+
+const made = {
+  "'hello'": () => ('hello'),
+  "'hi'": () => ('hi'),
+  "''": () => (''),
+  "'a' + 'b'.repeat(2)": () => ('a' + 'b'.repeat(2)),
+  "'\\ud83d\\ude00x'": () => ('\ud83d\ude00x'),
+  "'\\u4e16\\u754c\\u4eba'": () => ('\u4e16\u754c\u4eba'),
+  "new String('hello')": () => (new String('hello')),
+  "new String('hi')": () => (new String('hi')),
+  "Object.assign(new String('hi'), { 2: 'own third' })": () => (Object.assign(new String('hi'), { 2: 'own third' })),
+  "Object.setPrototypeOf(new String('hi'), { 2: 'inherited third' })": () => (Object.setPrototypeOf(new String('hi'), { 2: 'inherited third' })),
+  "Object.create(new String('hello'))": () => (Object.create(new String('hello'))),
+  "['h', 'e', 'l']": () => (['h', 'e', 'l']),
+  "['h', , 'l']": () => (['h', , 'l']),
+  "[1.5, -0, NaN]": () => ([1.5, -0, NaN]),
+  "Object.setPrototypeOf(['h'], { 2: 'inherited third' })": () => (Object.setPrototypeOf(['h'], { 2: 'inherited third' })),
+  "Buffer.from('hello')": () => (Buffer.from('hello')),
+  "new Uint8Array(2)": () => (new Uint8Array(2)),
+  "new Float64Array([0.5, -0, NaN])": () => (new Float64Array([0.5, -0, NaN])),
+  "new BigInt64Array([1n, 2n, 3n])": () => (new BigInt64Array([1n, 2n, 3n])),
+  "(function () { return arguments; })('a', 'b')": () => ((function () { return arguments; })('a', 'b')),
+  "{ 0: 'zero', 2: 'two' }": () => ({ 0: 'zero', 2: 'two' }),
+  "{ '0': 'zero', '2': 'two', '02': 'not two' }": () => ({ '0': 'zero', '2': 'two', '02': 'not two' }),
+  "{ get 0() { log.push('get 0'); return 'zero'; }, get 2() { log.push('get 2'); return 'two'; } }": () => ({ get 0() { log.push('get 0'); return 'zero'; }, get 2() { log.push('get 2'); return 'two'; } }),
+  "Object.create({ 0: 'inherited zero' })": () => (Object.create({ 0: 'inherited zero' })),
+  "function f() {}": () => (function f() {}),
+  "new Map([[0, 'zero']])": () => (new Map([[0, 'zero']])),
+  "123": () => (123),
+  "123n": () => (123n),
+  "true": () => (true),
+  "Symbol('abc')": () => (Symbol('abc')),
+  "null": () => (null),
+  "undefined": () => (undefined),
+  "new Proxy({}, { get(target, key) { log.push(typeof key + ' ' + String(key)); return 'trapped'; } })": () => (new Proxy({}, { get(target, key) { log.push(typeof key + ' ' + String(key)); return 'trapped'; } })),
+  "new Proxy(new String('hello'), { get(target, key, receiver) { log.push(typeof key + ' ' + String(key)); return Reflect.get(target, key, receiver); } })": () => (new Proxy(new String('hello'), { get(target, key, receiver) { log.push(typeof key + ' ' + String(key)); return Reflect.get(target, key, receiver); } })),
+};
+
+////= make-3
+
+////= lines-37	first	text	text[0
+
+////= lines-37	third	text	text[2
+
+////= lines-73	elementAt	text	index	text[index
+
+function firstIfAny(text) {
+  return text?.[0];
+}
+
+function hasThird(text) {
+  return text[2] !== undefined;
+}
+
+function firstFour(text) {
+  const found = [];
+  for (let i = 0; i < 4; i++) found.push(text[i]);
+  return found;
+}
+
+const log = [];
+globalThis.log = log;
+
+////= texts-2
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += first("hello").length + third("hello").length + elementAt("hello", i % 5).length + firstIfAny("hello").length + firstFour("hello").length;
+  if (hasThird("hello")) total++;
+}
+console.log("2000 honest rounds", total);
+
+////= for-94
+attempt("honest again", () => [first("hello"), third("hello"), elementAt("hello", 4), elementAt("hello", 5), firstIfAny(""), hasThird("hi"), firstFour("hi")]);
+//// values-that-are-not-strings-are-matched-and-searched.js
+////= show-26
+
+function match(text) {
+  return text.match(/l+/);
+}
+
+function matchEvery(text) {
+  return text.match(/l/g);
+}
+
+////= lines-3	matchText	text	text.match	"l."
+
+function matchAll(text) {
+  return Array.from(text.matchAll(/(l)(x)?/g), found => [found[0], found[1], found[2], found.index]);
+}
+
+function search(text) {
+  return text.search(/o/);
+}
+
+function firstWord(text) {
+  const found = text.match(/^(\w+)/);
+  return found ? found[1].length : -1;
+}
+
+////= receivers
+
+const uses = [
+  ["match", "match", match],
+  ["match", "match every", matchEvery],
+  ["match", "match text", matchText],
+  ["matchAll", "matchAll", matchAll],
+  ["search", "search", search],
+  ["match", "first word", firstWord],
+];
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += match("hello")[0].length + matchEvery("hello").length + matchText("hello").index + matchAll("hello").length + search("hello") + firstWord("hello world");
+}
+console.log("2000 honest rounds", total);
+
+////= for-137
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// values-that-are-not-strings-are-ordered-against-a-string-literal.js
+////= show-26
+
+////= lines-97	isBeforeM	value	value	"m"
+
+function isAfterM(value) {
+  return value > "m";
+}
+
+function isAtMostTen(value) {
+  return value <= "10";
+}
+
+function isAtLeastTen(value) {
+  return value >= "10";
+}
+
+////= lines-97	tenIsBefore	value	"10"	value
+
+////= lines-286	isALowerCaseLetter	value	"a"	"z"
+
+function isADigit(value) {
+  return "0" <= value && value <= "9";
+}
+
+////= countBeforeM
+
+const log = [];
+globalThis.log = log;
+
+////= values-4
+
+let total = 0;
+////= for-31
+console.log("2000 honest rounds", total);
+
+////= for-47
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// values-that-are-not-strings-are-ordered-against-a-string-literal-in-sloppy-commonjs/main.cjs
+////= show-26
+
+////= lines-97	isBeforeM	value	value	"m"
+
+function isAfterM(value) {
+  return value > "m";
+}
+
+function isAtMostTen(value) {
+  return value <= "10";
+}
+
+function isAtLeastTen(value) {
+  return value >= "10";
+}
+
+////= lines-97	tenIsBefore	value	"10"	value
+
+////= lines-286	isALowerCaseLetter	value	"a"	"z"
+
+function isADigit(value) {
+  return "0" <= value && value <= "9";
+}
+
+////= countBeforeM
+
+const log = [];
+globalThis.log = log;
+
+////= values-4
+
+let total = 0;
+////= for-31
+console.log("2000 honest rounds", total);
+
+////= for-47
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// values-that-are-not-strings-are-ordered-against-a-string-literal-with-the-values-in-plain-sight.js
+////= show-33
+
+const made = {
+  "'a'": () => ('a'),
+  "'m'": () => ('m'),
+  "'z'": () => ('z'),
+  "'M'": () => ('M'),
+  "''": () => (''),
+  "'10'": () => ('10'),
+  "'9'": () => ('9'),
+  "'09'": () => ('09'),
+  "'100'": () => ('100'),
+  "'1e1'": () => ('1e1'),
+  "' 10 '": () => (' 10 '),
+  "'\\u00e9'": () => ('\u00e9'),
+  "'\\uffff'": () => ('\uffff'),
+  "'\\ud800\\udc00'": () => ('\ud800\udc00'),
+  "'ma'": () => ('ma'),
+  "9": () => (9),
+  "10": () => (10),
+  "11": () => (11),
+  "-0": () => (-0),
+  "NaN": () => (NaN),
+  "Infinity": () => (Infinity),
+  "9n": () => (9n),
+  "10n": () => (10n),
+  "11n": () => (11n),
+  "true": () => (true),
+  "false": () => (false),
+  "null": () => (null),
+  "undefined": () => (undefined),
+  "Symbol('a')": () => (Symbol('a')),
+  "new String('a')": () => (new String('a')),
+  "new String('9')": () => (new String('9')),
+  "new Number(9)": () => (new Number(9)),
+  "['a']": () => (['a']),
+  "[9]": () => ([9]),
+  "[]": () => ([]),
+  "[1, 0]": () => ([1, 0]),
+  "{}": () => ({}),
+  "{ valueOf() { log.push('valueOf'); return 'a'; }, toString() { log.push('toString'); return 'z'; } }": () => ({ valueOf() { log.push('valueOf'); return 'a'; }, toString() { log.push('toString'); return 'z'; } }),
+  "{ valueOf() { log.push('valueOf'); return 9; }, toString() { log.push('toString'); return 'z'; } }": () => ({ valueOf() { log.push('valueOf'); return 9; }, toString() { log.push('toString'); return 'z'; } }),
+  "{ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '9'; } }": () => ({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '9'; } }),
+  "{ [Symbol.toPrimitive](hint) { log.push(hint); return 'a'; } }": () => ({ [Symbol.toPrimitive](hint) { log.push(hint); return 'a'; } }),
+  "{ [Symbol.toPrimitive](hint) { log.push(hint); return 9n; } }": () => ({ [Symbol.toPrimitive](hint) { log.push(hint); return 9n; } }),
+  "{ [Symbol.toPrimitive](hint) { log.push(hint); return Symbol('a'); } }": () => ({ [Symbol.toPrimitive](hint) { log.push(hint); return Symbol('a'); } }),
+  "new Date(9)": () => (new Date(9)),
+  "Buffer.from('a')": () => (Buffer.from('a')),
+  "new Uint8Array([9])": () => (new Uint8Array([9])),
+};
+
+////= make-3
+
+////= lines-97	isBeforeM	value	value	"m"
+
+function isAfterM(value) {
+  return value > "m";
+}
+
+function isAtMostTen(value) {
+  return value <= "10";
+}
+
+function isAtLeastTen(value) {
+  return value >= "10";
+}
+
+////= lines-97	tenIsBefore	value	"10"	value
+
+////= lines-286	isALowerCaseLetter	value	"a"	"z"
+
+function isADigit(value) {
+  return "0" <= value && value <= "9";
+}
+
+////= countBeforeM
+
+const log = [];
+globalThis.log = log;
+
+////= values-4
+
+let total = 0;
+////= for-31
+console.log("2000 honest rounds", total);
+
+////= for-47
+//// values-that-are-not-strings-are-put-into-templates.js
+////= show-26
+
+function alone(value) {
+  return `${value}`;
+}
+
+////= lines-235	inside	value
+
+function twice(value) {
+  return `${value}, ${value}`;
+}
+
+////= lines-27	byString	value	String	value
+
+function byJoin(value) {
+  return [value].join();
+}
+
+////= lines-3	byConcat	value	"".concat	value
+
+const log = [];
+globalThis.log = log;
+
+////= values
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += alone("a").length + inside("a").length + twice("a").length + byString("a").length + byJoin("a").length + byConcat("a").length;
+}
+console.log("2000 honest rounds", total);
+
+////= for-82
+attempt("honest again", () => [alone("a"), inside("a"), twice("a"), byString("a"), byJoin("a"), byConcat("a")]);
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// values-that-are-not-strings-are-put-into-templates-with-the-values-in-plain-sight.js
+////= show-33
+
+////= made-2
+
+////= make-3
+
+function alone(value) {
+  return `${value}`;
+}
+
+////= lines-235	inside	value
+
+function twice(value) {
+  return `${value}, ${value}`;
+}
+
+////= lines-27	byString	value	String	value
+
+function byJoin(value) {
+  return [value].join();
+}
+
+////= lines-3	byConcat	value	"".concat	value
+
+const log = [];
+globalThis.log = log;
+
+////= values
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += alone("a").length + inside("a").length + twice("a").length + byString("a").length + byJoin("a").length + byConcat("a").length;
+}
+console.log("2000 honest rounds", total);
+
+////= for-82
+attempt("honest again", () => [alone("a"), inside("a"), twice("a"), byString("a"), byJoin("a"), byConcat("a")]);
+//// values-that-are-not-strings-are-replaced-in.js
+////= show-26
+
+////= lines-33	replaceText	text	text.replace	"l"	"L"
+
+////= lines-33	replaceAllText	text	text.replaceAll	"l"	"L"
+
+function replaceWithACallback(text) {
+  return text.replace("o", (match, offset, whole) => "<" + match + offset + typeof whole + ">");
+}
+
+function replaceAllWithACallback(text) {
+  return text.replaceAll("o", (match, offset) => "<" + match + offset + ">");
+}
+
+function replaceAPattern(text) {
+  return text.replace(/l+/g, "_");
+}
+
+////= lines-33	replaceWithDollars	text	text.replace	"o"	"[$&|$`|$'|$$|$1]"
+
+function escape(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+////= receivers
+
+////= uses-24
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += replaceText("hello").length + replaceAllText("hello").length + replaceWithACallback("hello").length + replaceAllWithACallback("foo").length;
+  total += replaceAPattern("hello").length + replaceWithDollars("hello").length + escape("a<b>&c").length;
+}
+console.log("2000 honest rounds", total);
+
+////= for-137
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// values-that-are-not-strings-are-replaced-in-with-the-values-in-plain-sight.js
+////= show-33
+
+const made = {
+  "'hello world'": () => ('hello world'),
+  "''": () => (''),
+  "'hello'.concat(' ', 'world')": () => ('hello'.concat(' ', 'world')),
+  "'h\\u00e9llo w\\u4e16rld'": () => ('h\u00e9llo w\u4e16rld'),
+  "'\\ud83d\\ude00 \\ud83d alone'": () => ('\ud83d\ude00 \ud83d alone'),
+  "new String('hello world')": () => (new String('hello world')),
+  "Object.assign(new String('hello world'), { replace() { return 'own member'; } })": () => (Object.assign(new String('hello world'), { replace() { return 'own member'; } })),
+  "Object.setPrototypeOf(new String('hello world'), { replace() { return 'other prototype'; } })": () => (Object.setPrototypeOf(new String('hello world'), { replace() { return 'other prototype'; } })),
+  "Object.setPrototypeOf(new String('hello world'), null)": () => (Object.setPrototypeOf(new String('hello world'), null)),
+  "{ replace(...given) { return 'mine ' + given.length; } }": () => ({ replace(...given) { return 'mine ' + given.length; } }),
+  "{ replace: String.prototype.replace, toString() { return 'borrowed method'; } }": () => ({ replace: String.prototype.replace, toString() { return 'borrowed method'; } }),
+  "{ replace: 5 }": () => ({ replace: 5 }),
+  "{}": () => ({}),
+  "['h', 'e', 'l', 'l', 'o', ' ', 'w']": () => (['h', 'e', 'l', 'l', 'o', ' ', 'w']),
+  "Buffer.from('hello world')": () => (Buffer.from('hello world')),
+  "new Uint8Array([104, 101, 108, 108, 111])": () => (new Uint8Array([104, 101, 108, 108, 111])),
+  "12345": () => (12345),
+  "-0": () => (-0),
+  "12345n": () => (12345n),
+  "Symbol('hello')": () => (Symbol('hello')),
+  "true": () => (true),
+  "null": () => (null),
+  "undefined": () => (undefined),
+  "new Proxy(new String('hello world'), {})": () => (new Proxy(new String('hello world'), {})),
+  "new Proxy({}, { get(target, key) { return () => 'trapped ' + String(key); } })": () => (new Proxy({}, { get(target, key) { return () => 'trapped ' + String(key); } })),
+  "Object.assign(new String('hello world'), { replaceAll() { return 'own member'; } })": () => (Object.assign(new String('hello world'), { replaceAll() { return 'own member'; } })),
+  "Object.setPrototypeOf(new String('hello world'), { replaceAll() { return 'other prototype'; } })": () => (Object.setPrototypeOf(new String('hello world'), { replaceAll() { return 'other prototype'; } })),
+  "{ replaceAll(...given) { return 'mine ' + given.length; } }": () => ({ replaceAll(...given) { return 'mine ' + given.length; } }),
+  "{ replaceAll: String.prototype.replaceAll, toString() { return 'borrowed method'; } }": () => ({ replaceAll: String.prototype.replaceAll, toString() { return 'borrowed method'; } }),
+  "{ replaceAll: 5 }": () => ({ replaceAll: 5 }),
+};
+
+////= make-3
+
+////= lines-33	replaceText	text	text.replace	"l"	"L"
+
+////= lines-33	replaceAllText	text	text.replaceAll	"l"	"L"
+
+function replaceWithACallback(text) {
+  return text.replace("o", (match, offset, whole) => "<" + match + offset + typeof whole + ">");
+}
+
+function replaceAllWithACallback(text) {
+  return text.replaceAll("o", (match, offset) => "<" + match + offset + ">");
+}
+
+function replaceAPattern(text) {
+  return text.replace(/l+/g, "_");
+}
+
+////= lines-33	replaceWithDollars	text	text.replace	"o"	"[$&|$`|$'|$$|$1]"
+
+function escape(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+////= receivers
+
+////= uses-24
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += replaceText("hello").length + replaceAllText("hello").length + replaceWithACallback("hello").length + replaceAllWithACallback("foo").length;
+  total += replaceAPattern("hello").length + replaceWithDollars("hello").length + escape("a<b>&c").length;
+}
+console.log("2000 honest rounds", total);
+
+////= for-137
+//// values-that-are-not-strings-are-split.js
+////= show-26
+
+////= lines-3	splitAtCommas	text	text.split	","
+
+////= lines-3	splitIntoCharacters	text	text.split	""
+
+////= lines-33	splitWithALimit	text	text.split	"l"	2
+
+function splitAtARegularExpression(text) {
+  return text.split(/[ ,]+/);
+}
+
+////= lines-5	notSplit	text	text.split
+
+////= countFields
+
+////= receivers
+
+////= uses-25
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += splitAtCommas("a,b,c").length + splitIntoCharacters("abc").length + splitWithALimit("hello").length;
+  total += splitAtARegularExpression("a, b c").length + notSplit("abc").length + countFields("a,,b");
+}
+console.log("2000 honest rounds", total);
+
+////= for-184	"split"	" of "	" of a string again"	"hello, world"
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// values-that-are-not-strings-are-split-with-the-values-in-plain-sight.js
+////= show-33
+
+const made = {
+  "'hello world'": () => ('hello world'),
+  "''": () => (''),
+  "'hello'.concat(' ', 'world')": () => ('hello'.concat(' ', 'world')),
+  "'h\\u00e9llo w\\u4e16rld'": () => ('h\u00e9llo w\u4e16rld'),
+  "'\\ud83d\\ude00 \\ud83d alone'": () => ('\ud83d\ude00 \ud83d alone'),
+  "new String('hello world')": () => (new String('hello world')),
+  "Object.assign(new String('hello world'), { split() { return 'own member'; } })": () => (Object.assign(new String('hello world'), { split() { return 'own member'; } })),
+  "Object.setPrototypeOf(new String('hello world'), { split() { return 'other prototype'; } })": () => (Object.setPrototypeOf(new String('hello world'), { split() { return 'other prototype'; } })),
+  "Object.setPrototypeOf(new String('hello world'), null)": () => (Object.setPrototypeOf(new String('hello world'), null)),
+  "{ split(...given) { return 'mine ' + given.length; } }": () => ({ split(...given) { return 'mine ' + given.length; } }),
+  "{ split: String.prototype.split, toString() { return 'borrowed method'; } }": () => ({ split: String.prototype.split, toString() { return 'borrowed method'; } }),
+  "{ split: 5 }": () => ({ split: 5 }),
+  "{}": () => ({}),
+  "['h', 'e', 'l', 'l', 'o', ' ', 'w']": () => (['h', 'e', 'l', 'l', 'o', ' ', 'w']),
+  "Buffer.from('hello world')": () => (Buffer.from('hello world')),
+  "new Uint8Array([104, 101, 108, 108, 111])": () => (new Uint8Array([104, 101, 108, 108, 111])),
+  "12345": () => (12345),
+  "-0": () => (-0),
+  "12345n": () => (12345n),
+  "Symbol('hello')": () => (Symbol('hello')),
+  "true": () => (true),
+  "null": () => (null),
+  "undefined": () => (undefined),
+  "new Proxy(new String('hello world'), {})": () => (new Proxy(new String('hello world'), {})),
+  "new Proxy({}, { get(target, key) { return () => 'trapped ' + String(key); } })": () => (new Proxy({}, { get(target, key) { return () => 'trapped ' + String(key); } })),
+};
+
+////= make-3
+
+////= lines-3	splitAtCommas	text	text.split	","
+
+////= lines-3	splitIntoCharacters	text	text.split	""
+
+////= lines-33	splitWithALimit	text	text.split	"l"	2
+
+function splitAtARegularExpression(text) {
+  return text.split(/[ ,]+/);
+}
+
+////= lines-5	notSplit	text	text.split
+
+////= countFields
+
+////= receivers
+
+////= uses-25
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += splitAtCommas("a,b,c").length + splitIntoCharacters("abc").length + splitWithALimit("hello").length;
+  total += splitAtARegularExpression("a, b c").length + notSplit("abc").length + countFields("a,,b");
+}
+console.log("2000 honest rounds", total);
+
+////= for-184	"split"	" of "	" of a string again"	"hello, world"
+//// values-that-are-not-strings-are-spread-and-destructured.js
+////= show-26
+
+////= lines-145	spreadIntoAList	text
+
+function spreadBetweenOthers(text) {
+  return ["<", ...text, ">"];
+}
+
+function spreadIntoACall(text) {
+  return collect(...text);
+}
+
+////= lines-255	collect	given
+
+////= lines-221	firstAndSecond	text	first	second
+
+////= lines-220	firstAndRest	text
+
+function withDefaults(text) {
+  const [first = "default first", , third = "default third"] = text;
+  return [first, third];
+}
+
+////= lines-3	byArrayFrom	text	Array.from	text
+
+const log = [];
+globalThis.log = log;
+
+////= values-2
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += spreadIntoAList("hey").length + spreadBetweenOthers("hey").length + spreadIntoACall("hey").length + firstAndSecond("hey").length + firstAndRest("hey").length + withDefaults("hey").length + byArrayFrom("hey").length;
+}
+console.log("2000 honest rounds", total);
+
+////= uses-21
+
+////= for-140
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// values-that-are-not-strings-are-spread-and-destructured-with-the-values-in-plain-sight.js
+////= show-33
+
+////= made-3
+
+////= make-3
+
+////= lines-145	spreadIntoAList	text
+
+function spreadBetweenOthers(text) {
+  return ["<", ...text, ">"];
+}
+
+function spreadIntoACall(text) {
+  return collect(...text);
+}
+
+////= lines-255	collect	given
+
+////= lines-221	firstAndSecond	text	first	second
+
+////= lines-220	firstAndRest	text
+
+function withDefaults(text) {
+  const [first = "default first", , third = "default third"] = text;
+  return [first, third];
+}
+
+////= lines-3	byArrayFrom	text	Array.from	text
+
+const log = [];
+globalThis.log = log;
+
+////= values-2
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += spreadIntoAList("hey").length + spreadBetweenOthers("hey").length + spreadIntoACall("hey").length + firstAndSecond("hey").length + firstAndRest("hey").length + withDefaults("hey").length + byArrayFrom("hey").length;
+}
+console.log("2000 honest rounds", total);
+
+////= uses-21
+
+////= for-140
+//// values-that-are-not-strings-are-trimmed-padded-and-repeated.js
+////= show-26
+
+////= lines-5	trim	text	text.trim
+
+////= lines-5	trimStart	text	text.trimStart
+
+////= lines-5	trimEnd	text	text.trimEnd
+
+////= lines-33	padStart	text	text.padStart	14	"ab"
+
+////= lines-3	padEnd	text	text.padEnd	14
+
+////= lines-3	repeat	text	text.repeat	2
+
+////= receivers
+
+const uses = [
+  ["trim", trim],
+  ["trimStart", trimStart],
+  ["trimEnd", trimEnd],
+  ["padStart", padStart],
+  ["padEnd", padEnd],
+  ["repeat", repeat],
+];
+
+for (const [name, use] of uses) attempt("the first call of all: " + name + " of a String object", () => use(make("new String('  x  ')")));
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += trim("  a ").length + trimStart("  a ").length + trimEnd("  a ").length + padStart("a").length + padEnd("a").length + repeat("ab").length;
+}
+console.log("2000 honest rounds", total);
+
+////= for-184	name	" of "	" of a string again"	" \t\n ﻿ hello  "
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// values-that-are-not-strings-change-case-and-are-compared.js
+////= show-26
+
+////= lines-5	upper	text	text.toUpperCase
+
+////= lines-5	lower	text	text.toLowerCase
+
+////= lines-3	compare	text	text.localeCompare	"hello"
+
+////= lines-3	normalize	text	text.normalize	"NFD"
+
+////= lines-219	concat	text	text.concat	"!"	1	null
+
+////= lines-5	asText	text	text.toString
+
+////= lines-5	value	text	text.valueOf
+
+////= receivers
+
+const uses = [
+  ["toUpperCase", upper],
+  ["toLowerCase", lower],
+  ["localeCompare", compare],
+  ["normalize", normalize],
+  ["concat", concat],
+  ["toString", asText],
+  ["valueOf", value],
+];
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += upper("hello").length + lower("HELLO").length + compare("help") + normalize("hello").length + concat("hello").length + asText("hello").length + value("hello").length;
+}
+console.log("2000 honest rounds", total);
+
+for (const [name, use] of uses) {
+  for (const text of receivers(name)) {
+    attempt(name + " of " + text, () => {
+      const given = make(text);
+      const result = use(given);
+      return typeof result === "object" && result !== null ? [result === given, result] : result;
+    });
+  }
+  attempt(name + " of a string again", () => use("Hello World"));
+}
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// very-long-texts-are-used-as-keys.js
+////= show-26
+
+const LENGTH = 3000;
+
+const builders = [
+  ["repeat", () => "k".repeat(LENGTH)],
+  ["two halves", () => "k".repeat(LENGTH / 2) + "k".repeat(LENGTH / 2)],
+  ["many small pieces", () => {
+    let text = "";
+    for (let i = 0; i < LENGTH; i++) text += "k";
+    return text;
+  }],
+  ["prepended pieces", () => {
+    let text = "";
+    for (let i = 0; i < LENGTH / 10; i++) text = "kkkkkkkkkk" + text;
+    return text;
+  }],
+  ["a slice of a longer text", () => ("x" + "k".repeat(LENGTH) + "x").slice(1, -1)],
+  ["a slice of a wide text", () => ("k".repeat(LENGTH) + "世").slice(0, LENGTH)],
+  ["joined", () => new Array(LENGTH + 1).join("k")],
+  ["a wrapped text", () => new String("k".repeat(LENGTH))],
+  ["an object that converts", () => ({ toString: () => "k".repeat(LENGTH / 2) + "k".repeat(LENGTH / 2) })],
+  ["one character shorter", () => "k".repeat(LENGTH / 2) + "k".repeat(LENGTH / 2 - 1)],
+  ["one character longer", () => "k".repeat(LENGTH / 2) + "k".repeat(LENGTH / 2 + 1)],
+  ["the last character differs", () => "k".repeat(LENGTH - 1) + "j"],
+  ["the first character differs", () => "j" + "k".repeat(LENGTH - 1)],
+  ["the middle character differs", () => "k".repeat(LENGTH / 2) + "j" + "k".repeat(LENGTH / 2 - 1)],
+  ["a wide character at the end", () => "k".repeat(LENGTH - 1) + "世"],
+];
+
+////= lines-73	read	table	key	table[key
+
+////= isIn
+
+////= lines-55	hasOwn	table	key	Object.hasOwn	table	key
+
+function store(table, key, value) {
+  table[key] = value;
+  return Object.keys(table).length;
+}
+
+////= remove	table	key	table[key
+
+////= lines-78	Holder	short	"field"
+
+const log = [];
+const tables = [
+  ["a plain table", () => ({ a: 1, ["k".repeat(LENGTH)]: "own" })],
+  ["a table that inherits it", () => Object.create({ ["k".repeat(LENGTH)]: "inherited" })],
+  ["a table that inherits it from far", () => Object.create(Object.create(Object.create({ ["k".repeat(LENGTH)]: "inherited from far" })))],
+  ["a table with a getter", () => ({ get ["k".repeat(LENGTH)]() { return "from a getter"; } })],
+  ["a table without a prototype", () => Object.assign(Object.create(null), { ["k".repeat(LENGTH)]: "own" })],
+  ["a table without it", () => ({ a: 1 })],
+  ["a table with many members", () => {
+    const table = {};
+    for (let i = 0; i < 200; i++) table["m" + i] = i;
+    table["k".repeat(LENGTH)] = "among many";
+    return table;
+  }],
+  ["a table that had members deleted", () => {
+    const table = { a: 1, b: 2, ["k".repeat(LENGTH)]: "own" };
+    delete table.a;
+    return table;
+  }],
+  ["a class instance", () => Object.assign(new Holder(), { ["k".repeat(LENGTH)]: "added" })],
+  ["a class instance without it", () => new Holder()],
+  ["a list", () => Object.assign([1], { ["k".repeat(LENGTH)]: "on a list" })],
+  ["a function", () => Object.assign(() => {}, { ["k".repeat(LENGTH)]: "on a function" })],
+  ["a frozen table", () => Object.freeze({ ["k".repeat(LENGTH)]: "frozen" })],
+  ["a Proxy", () => new Proxy({}, { get: (target, key) => "trapped " + key.length, has: (target, key) => key.length === LENGTH, getOwnPropertyDescriptor: () => undefined, set: (target, key) => (log.push("set " + key.length), true), deleteProperty: (target, key) => (log.push("delete " + key.length), true) })],
+  ["a table behind a Proxy", () => Object.create(new Proxy({}, { get: (target, key) => "trapped " + String(key).length, has: () => true }))],
+  ["a wrapped text", () => Object.assign(new String("s"), { ["k".repeat(LENGTH)]: "on a wrapped text" })],
+  ["bytes", () => Object.assign(new Uint8Array(1), { ["k".repeat(LENGTH)]: "on bytes" })],
+];
+
+for (let i = 0; i < 2000; i++) {
+  const table = { a: 1 };
+  read(table, "a");
+  isIn(table, "a");
+  hasOwn(table, "a");
+  store(table, "b", 2);
+  remove(table, "b");
+}
+
+for (const [tableName, makeTable] of tables) {
+  for (const [keyName, makeKey] of builders) {
+    const parts = [];
+    for (const use of [() => read(makeTable(), makeKey()), () => isIn(makeTable(), makeKey()), () => hasOwn(makeTable(), makeKey()), () => store(makeTable(), makeKey(), "stored"), () => remove(makeTable(), makeKey())]) {
+      try {
+        parts.push(show(use()));
+      } catch (error) {
+        parts.push("threw " + error.constructor.name);
+      }
+    }
+    console.log(tableName + ", " + keyName + " -> " + parts.join(" "));
+  }
+}
+console.log("the Proxy was asked to", log.length, "times:", [...new Set(log)].join(", "));
+
+attempt("a map", () => {
+  const map = new Map([["k".repeat(LENGTH), "found"]]);
+  return builders.map(([, makeKey]) => map.get(makeKey()));
+});
+attempt("a set", () => new Set(builders.map(([, makeKey]) => makeKey())).size);
+attempt("a literal", () => builders.map(([, makeKey]) => Object.keys({ [makeKey()]: 1 })[0].length));
+attempt("one table for all", () => {
+  const table = {};
+  for (const [name, makeKey] of builders) table[makeKey()] = name;
+  return Object.values(table);
+});
+//// what-a-generator-hands-out-is-collected-by-a-rest-pattern-and-copied-by-another.js
+////= numbers-6
+const [...rest] = numbers();
+const [...copy] = rest;
+console.log(copy[0], copy[1]);
+//// what-a-generator-hands-out-is-collected-by-a-rest-pattern-inside-a-rest-pattern.js
+////= numbers-6
+const [...[...copy]] = numbers();
+console.log(copy[0], copy[1]);
+//// what-this-is-when-a-primitive-is-the-receiver-sloppy.cjs
+const log = [];
+
+////= show-27
+
+console.log("strict:", (function () { return this === undefined; })());
+
+function kindOfNumber() {
+  return [typeof this, this + 1, this | 0, this === 7, this == 7];
+}
+function kindOfText() {
+  return [typeof this, this.charCodeAt(0), this === "abc", this + "", this.length];
+}
+function kindOfBoolean() {
+  return [typeof this, this ? "truthy" : "falsy", this === false, !this];
+}
+function kindOfBigInt() {
+  return [typeof this, this + 1n, this === 10n];
+}
+function kindOfSymbol() {
+  return [typeof this, this.description, this === Symbol.iterator];
+}
+function kindOfNothing() {
+  return [typeof this, this === undefined, this === null, this === globalThis];
+}
+function storesOnNumber() {
+  this.x = 1;
+  return [this.x, typeof this];
+}
+function comparesWithItself(other) {
+  return [this === this, this === other, this == other];
+}
+
+////= ways-4
+////= for-48
+
+attempt("called directly: a number", () => kindOfNumber.call(7));
+attempt("called directly: a text", () => kindOfText.call("abc"));
+attempt("called directly: false", () => kindOfBoolean.call(false));
+attempt("called directly: nothing", () => kindOfNothing());
+attempt("called directly: a store on a number", () => storesOnNumber.call(7));
+
+Number.prototype.kindOfReceiver = kindOfNumber;
+String.prototype.kindOfReceiver = kindOfText;
+Object.defineProperty(Number.prototype, "kindFromGetter", { get: kindOfNumber, configurable: true });
+Object.defineProperty(String.prototype, "kindFromGetter", { get: kindOfText, configurable: true });
+Object.defineProperty(Number.prototype, "kindToSetter", { set(value) { log.push(typeof this + " " + value); }, configurable: true });
+////= lines-5	asksNumber	n	n.kindOfReceiver
+////= lines-5	asksText	s	s.kindOfReceiver
+////= lines-7	readsGetter	value	value.kindFromGetter
+function storesThroughSetter(n) {
+  n.kindToSetter = 5;
+  return typeof n;
+}
+attempt("as a method of a number", () => asksNumber(7));
+attempt("as a method of a Number object", () => asksNumber(new Number(7)));
+attempt("as a method of a text", () => asksText("abc"));
+attempt("as a getter of a number", () => readsGetter(7));
+attempt("as a getter of a text", () => readsGetter("abc"));
+attempt("as a setter of a number", () => storesThroughSetter(7));
+delete Number.prototype.kindOfReceiver;
+delete String.prototype.kindOfReceiver;
+delete Number.prototype.kindFromGetter;
+delete String.prototype.kindFromGetter;
+delete Number.prototype.kindToSetter;
+attempt("after the method is gone", () => asksNumber(7));
+attempt("after the getter is gone", () => readsGetter(7));
+//// what-this-is-when-a-primitive-is-the-receiver-strict.js
+"use strict";
+
+const log = [];
+
+////= show-27
+
+console.log("strict:", (function () { return this === undefined; })());
+
+function kindOfNumber() {
+  return [typeof this, this + 1, this | 0, this === 7, this == 7];
+}
+function kindOfText() {
+  return [typeof this, this.charCodeAt(0), this === "abc", this + "", this.length];
+}
+function kindOfBoolean() {
+  return [typeof this, this ? "truthy" : "falsy", this === false, !this];
+}
+function kindOfBigInt() {
+  return [typeof this, this + 1n, this === 10n];
+}
+function kindOfSymbol() {
+  return [typeof this, this.description, this === Symbol.iterator];
+}
+function kindOfNothing() {
+  return [typeof this, this === undefined, this === null, this === globalThis];
+}
+function storesOnNumber() {
+  this.x = 1;
+  return [this.x, typeof this];
+}
+function comparesWithItself(other) {
+  return [this === this, this === other, this == other];
+}
+
+////= ways-4
+////= for-48
+
+attempt("called directly: a number", () => kindOfNumber.call(7));
+attempt("called directly: a text", () => kindOfText.call("abc"));
+attempt("called directly: false", () => kindOfBoolean.call(false));
+attempt("called directly: nothing", () => kindOfNothing());
+attempt("called directly: a store on a number", () => storesOnNumber.call(7));
+
+Number.prototype.kindOfReceiver = kindOfNumber;
+String.prototype.kindOfReceiver = kindOfText;
+Object.defineProperty(Number.prototype, "kindFromGetter", { get: kindOfNumber, configurable: true });
+Object.defineProperty(String.prototype, "kindFromGetter", { get: kindOfText, configurable: true });
+Object.defineProperty(Number.prototype, "kindToSetter", { set(value) { log.push(typeof this + " " + value); }, configurable: true });
+////= lines-5	asksNumber	n	n.kindOfReceiver
+////= lines-5	asksText	s	s.kindOfReceiver
+////= lines-7	readsGetter	value	value.kindFromGetter
+function storesThroughSetter(n) {
+  n.kindToSetter = 5;
+  return typeof n;
+}
+attempt("as a method of a number", () => asksNumber(7));
+attempt("as a method of a Number object", () => asksNumber(new Number(7)));
+attempt("as a method of a text", () => asksText("abc"));
+attempt("as a getter of a number", () => readsGetter(7));
+attempt("as a getter of a text", () => readsGetter("abc"));
+attempt("as a setter of a number", () => storesThroughSetter(7));
+delete Number.prototype.kindOfReceiver;
+delete String.prototype.kindOfReceiver;
+delete Number.prototype.kindFromGetter;
+delete String.prototype.kindFromGetter;
+delete Number.prototype.kindToSetter;
+attempt("after the method is gone", () => asksNumber(7));
+attempt("after the getter is gone", () => readsGetter(7));
+//// wide-characters-arrive-after-2000-narrow-texts.js
+////= show-26
+
+////= hash
+
+function reversed(text) {
+  let result = "";
+  for (let i = text.length - 1; i >= 0; i--) result += text[i];
+  return result;
+}
+
+////= lines-5	upper	text	text.toUpperCase
+
+////= lines-5	lower	text	text.toLowerCase
+
+function find(text, piece) {
+  return [text.indexOf(piece), text.lastIndexOf(piece), text.includes(piece), text.startsWith(piece), text.endsWith(piece)];
+}
+
+function same(a, b) {
+  return [a === b, a == b, a < b, a > b, Object.is(a, b)];
+}
+
+////= countCharacters
+
+////= lines-73	lookUp	table	key	table[key
+
+////= lines-216	joined	a	"|"	b
+
+function isLetter(character) {
+  return (character >= "a" && character <= "z") || (character >= "A" && character <= "Z");
+}
+
+function escapeNonAscii(text) {
+  let result = "";
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    result += code < 128 ? text[i] : "\\u" + code.toString(16).padStart(4, "0");
+  }
+  return result;
+}
+
+const narrow = ["hello", "world", "café", "ÿþ", "", "a"];
+let total = 0;
+const table = { hello: 1, "café": 2, "世界": 3, "😀": 4, "é": 5, "é": 6 };
+for (let i = 0; i < 2000; i++) {
+  const text = narrow[i % narrow.length];
+  total += hash(text) + reversed(text).length + upper(text).length + lower(text).length + find(text, "l")[0] + countCharacters(text) + joined(text, text).length + escapeNonAscii(text).length;
+  if (same(text, "hello")[0]) total++;
+  if (lookUp(table, text)) total++;
+  if (isLetter(text)) total++;
+}
+console.log("2000 narrow rounds", total);
+
+const wide = [
+  "'\\u4e16\\u754c'",
+  "'hello \\u4e16\\u754c'",
+  "'\\u0100'",
+  "'\\u00ff'",
+  "'\\ud83d\\ude00'",
+  "'a\\ud83d\\ude00b'",
+  "'\\u00df'",
+  "'stra\\u00dfe'",
+  "'\\u0130'",
+  "'\\u0131'",
+  "'\\u03a3\\u03a3'",
+  "'\\u039f\\u0394\\u039f\\u03a3'",
+  "'\\ufb01'",
+  "'\\u01c5'",
+  "'\\u00b5'",
+  "'\\u212a'",
+  "'\\u1e9e'",
+  "'e\\u0301'",
+  "'hello\\u4e16'.slice(0, 5)",
+  "'caf\\u00e9\\u4e16'.slice(0, 4)",
+  "'\\u4e16hello'.slice(1)",
+];
+
+for (const text of wide) {
+  attempt("hash " + text, () => hash(make(text)));
+  attempt("reversed " + text, () => reversed(make(text)));
+  attempt("upper and lower " + text, () => [upper(make(text)), lower(make(text)), upper(make(text)).length, lower(make(text)).length]);
+  attempt("characters " + text, () => [countCharacters(make(text)), make(text).length]);
+  attempt("escaped " + text, () => escapeNonAscii(make(text)));
+  attempt("look up " + text, () => lookUp(table, make(text)));
+  attempt("is a letter " + text, () => isLetter(make(text)));
+}
+
+attempt("a wide piece in a narrow text", () => find("hello", "世"));
+attempt("a narrow piece in a wide text", () => find("世hello界", "l"));
+attempt("a wide piece in a wide text", () => find("世hello界", "界"));
+attempt("a piece stored wide that holds narrow characters", () => find("hello", make("'l\\u4e16'.slice(0, 1)")));
+attempt("a text stored wide equals the narrow one", () => same("hello", make("'hello\\u4e16'.slice(0, 5)")));
+attempt("a text stored wide with a Latin-1 letter equals the narrow one", () => same("café", make("'caf\\u00e9\\u4e16'.slice(0, 4)")));
+attempt("composed and decomposed differ", () => same("é", "é"));
+attempt("order is by code unit", () => [same("￿", "𐀀"), same("z", "é"), same("é", "Ā"), same("Z", "a")]);
+attempt("narrow and wide are joined", () => [joined("a", "世"), joined("世", "a"), joined("é", "Ā"), joined("\ud83d", "\ude00").length]);
+attempt("halves of a pair are joined into one character", () => countCharacters("\ud83d" + make("'\\ude00'")));
+attempt("narrow again", () => [hash("hello"), reversed("hello"), upper("café"), lower("CAFÉ"), find("hello", "l"), lookUp(table, "hello")]);
+//// with-statements-over-impostor-objects.cjs
+const log = [];
+
+////= show-7
+
+console.log("strict code:", (function () { return this === undefined; })());
+
+////= lines-351	Panel
+////= lines-162	Panel	area	width	height
+
+function readInside(scope) {
+  var width = "the function's width";
+  with (scope) {
+    return width;
+  }
+}
+
+function storeInside(scope) {
+  var width = "the function's width";
+  with (scope) {
+    width = "stored";
+  }
+  return width;
+}
+
+function callInside(scope) {
+  function area() {
+    return "the function's area, this is " + (this === undefined ? "undefined" : this === globalThis ? "the global object" : "something else");
+  }
+  with (scope) {
+    return area();
+  }
+}
+
+function declareInside(scope) {
+  with (scope) {
+    var height = "declared with var";
+  }
+  return height;
+}
+
+function typeofInside(scope) {
+  with (scope) {
+    return typeof depth;
+  }
+}
+
+function closureInside(scope) {
+  var width = "the function's width";
+  with (scope) {
+    var reader = function () {
+      return width;
+    };
+  }
+  delete scope.width;
+  return reader();
+}
+
+function addInside(scope) {
+  var width = 100;
+  with (scope) {
+    width += 1;
+    return width;
+  }
+}
+
+const uses = [
+  ["read width", readInside],
+  ["store to width", storeInside],
+  ["call area()", callInside],
+  ["var height = ..", declareInside],
+  ["typeof depth", typeofInside],
+  ["a closure reads width after it was deleted", closureInside],
+  ["width += 1", addInside],
+];
+
+const scopes = [
+  ["an honest panel", () => new Panel(3, 4)],
+  ["an empty literal", () => ({})],
+  ["a literal with width", () => ({ width: "literal width" })],
+  ["width on the prototype", () => Object.create({ width: "inherited width" })],
+  ["a getter and a setter", () => ({ get width() { log.push("get"); return "got"; }, set width(value) { log.push("set " + value); } })],
+  ["a getter that deletes itself", () => ({ get width() { delete this.width; return "once"; } })],
+  ["a frozen panel", () => Object.freeze(new Panel(3, 4))],
+  ["width is unscopable", () => ({ width: "hidden width", [Symbol.unscopables]: { width: true } })],
+  ["unscopables is a getter", () => ({ width: "seen width", get [Symbol.unscopables]() { log.push("get unscopables"); return undefined; } })],
+  ["a proxy that logs", () => new Proxy({ width: "proxied width" }, { has(target, key) { log.push("has " + String(key)); return Reflect.has(target, key); }, get(target, key, receiver) { log.push("get " + String(key)); return Reflect.get(target, key, receiver); }, set(target, key, value, receiver) { log.push("set " + String(key)); return Reflect.set(target, key, value, receiver); } })],
+  ["a proxy that has every name", () => new Proxy({}, { has: () => true, get: (target, key) => (key === Symbol.unscopables ? undefined : "answer for " + String(key)) })],
+  ["an array", () => [1, 2]],
+  ["a function", () => function width() {}],
+  ["a string", () => "text"],
+  ["a number", () => 5],
+  ["null", () => null],
+  ["undefined", () => undefined],
+  ["an object without a prototype", () => Object.assign(Object.create(null), { width: "bare width" })],
+];
+
+for (let i = 0; i < 2000; i++) for (const [, use] of uses) use(new Panel(3, 4));
+
+for (const [label, make] of scopes) {
+  for (const [name, use] of uses) {
+    const scope = make();
+    let line = label + " | " + name + " -> ";
+    try {
+      line += show(use(scope));
+    } catch (error) {
+      line += "threw " + error.constructor.name;
+    }
+    line += " | log " + log.splice(0).join(", ");
+    console.log(line + " | now " + (typeof scope === "object" && scope !== null ? show(Object.keys(scope)) : show(scope)));
+    log.length = 0;
+  }
+}
+//// words-that-are-names-of-built-in-members-are-counted.js
+////= show-26
+
+const words = make("'the constructor of the prototype has a length and a name toString valueOf __proto__ hasOwnProperty constructor length the __proto__ 0 1 00 -0 1 isPrototypeOf __defineGetter__ __lookupSetter__'.split(' ')");
+
+////= lines-171	countInAnObject	list	word
+
+////= countWithIn	list
+
+function countWithHasOwn(list) {
+  const counts = {};
+  for (const word of list) {
+    if (Object.hasOwn(counts, word)) counts[word]++;
+    else counts[word] = 1;
+  }
+  return counts;
+}
+
+function countWithoutAPrototype(list) {
+  const counts = Object.create(null);
+  for (const word of list) counts[word] = (counts[word] || 0) + 1;
+  return counts;
+}
+
+function countInAMap(list) {
+  const counts = new Map();
+  for (const word of list) counts.set(word, (counts.get(word) || 0) + 1);
+  return Object.fromEntries(counts);
+}
+
+function countInAList(list) {
+  const counts = [];
+  for (const word of list) counts[word] = (counts[word] || 0) + 1;
+  return counts;
+}
+
+function countInAFunction(list) {
+  const counts = function counter(a, b) {};
+  for (const word of list) {
+    try {
+      counts[word] = (counts[word] || 0) + 1;
+    } catch (error) {
+      counts["failed " + word] = error.constructor.name;
+    }
+  }
+  return counts;
+}
+
+function groupByFirstLetter(list) {
+  const groups = {};
+  for (const word of list) (groups[word[0]] ||= []).push(word);
+  return groups;
+}
+
+function print(label, counts) {
+  const parts = [];
+  for (const key of Reflect.ownKeys(counts)) {
+    const value = counts[key];
+    parts.push(JSON.stringify(key) + "=" + (typeof value === "string" && value.length > 30 ? "a long text" : typeof value === "object" && value !== null ? JSON.stringify(value) : String(value)));
+  }
+  console.log(label + ": " + parts.join(" "));
+  const prototype = Object.getPrototypeOf(counts);
+  console.log(label + " prototype: " + (prototype === null ? "null" : prototype === Object.prototype ? "Object.prototype" : prototype === Array.prototype ? "Array.prototype" : prototype === Function.prototype ? "Function.prototype" : "other"));
+}
+
+const honest = ["x", "y", "x", "z"];
+for (let i = 0; i < 2000; i++) {
+  countInAnObject(honest);
+  countWithIn(honest);
+  countWithHasOwn(honest);
+  countWithoutAPrototype(honest);
+  countInAMap(honest);
+  groupByFirstLetter(honest);
+}
+
+print("in an object", countInAnObject(words));
+print("with in", countWithIn(words));
+print("with hasOwn", countWithHasOwn(words));
+print("without a prototype", countWithoutAPrototype(words));
+print("in a map", countInAMap(words));
+const list = countInAList(words);
+print("in a list", list);
+console.log("the list has length", list.length, Array.isArray(list));
+print("in a function", countInAFunction(words));
+print("groups", groupByFirstLetter(words));
+print("honest again", countInAnObject(honest));
+//// wrapped-primitives-with-symbol-methods-stand-in-for-patterns.js
+////= show-26
+
+const log = [];
+
+////= report-6
+
+////= lines-25	splitBy	text	separator	text.split
+
+////= lines-55	replaceBy	text	pattern	text.replace	pattern	"+"
+
+////= lines-55	replaceAllBy	text	pattern	text.replaceAll	pattern	"+"
+
+function matchBy(text, pattern) {
+  const found = text.match(pattern);
+  return found && typeof found === "object" ? found[0] : found;
+}
+
+////= lines-25	searchBy	text	pattern	text.search
+
+////= lines-25	includesBy	text	piece	text.includes
+
+function all(pattern) {
+  return [splitBy("a-b1c", pattern), replaceBy("a-b1c", pattern), replaceAllBy("a-b1c", pattern), matchBy("a-b1c", pattern), searchBy("a-b1c", pattern), includesBy("a-b1c", pattern)];
+}
+
+for (let i = 0; i < 2000; i++) all("-");
+
+function answering(name) {
+  return function (...given) {
+    log.push(name + " called with this " + typeof this + " and " + given.length + " arguments");
+    return name + " answered";
+  };
+}
+
+class Separator extends String {
+  [Symbol.split] = answering("own split");
+}
+
+class Pattern extends String {}
+Pattern.prototype[Symbol.replace] = answering("inherited replace");
+Pattern.prototype[Symbol.match] = answering("inherited match");
+Pattern.prototype[Symbol.search] = answering("inherited search");
+Pattern.prototype[Symbol.split] = answering("inherited split");
+
+class Count extends Number {}
+Count.prototype[Symbol.replace] = answering("number replace");
+Count.prototype[Symbol.split] = answering("number split");
+
+report("a plain text", () => all("-"));
+report("a plain number", () => all(1));
+report("a wrapped text", () => all(new String("-")));
+report("a wrapped number", () => all(new Number(1)));
+report("a wrapped text with a split of its own", () => all(new Separator("-")));
+report("a wrapped text that inherits four methods", () => all(new Pattern("-")));
+report("a wrapped number that inherits two methods", () => all(new Count(1)));
+report("a wrapped text with own methods added later", () => all(Object.assign(new String("-"), { [Symbol.replace]: answering("added replace"), [Symbol.search]: answering("added search") })));
+report("a wrapped text whose Symbol.match is false", () => all(Object.assign(new String("-"), { [Symbol.match]: false })));
+report("a wrapped text whose Symbol.match is true", () => all(Object.assign(new String("-"), { [Symbol.match]: true })));
+report("a wrapped text with another prototype", () => all(Object.setPrototypeOf(new String("-"), { [Symbol.split]: answering("other prototype split"), toString: () => "1" })));
+report("a list with a split of its own", () => all(Object.assign(["-"], { [Symbol.split]: answering("list split") })));
+report("the value of the subclass instance is still its text", () => [String(new Pattern("-")), new Pattern("-") + "", new Pattern("-").length, `${new Separator("-")}`]);
+
+class Primitive extends String {
+  [Symbol.toPrimitive](hint) {
+    log.push("toPrimitive " + hint);
+    return "converted";
+  }
+}
+report("Symbol.toPrimitive on a subclass", () => [new Primitive("a") + "b", `${new Primitive("a")}`, { a: 1, converted: 2 }[new Primitive("a")], new Primitive("a") == "a", new Primitive("a") == "converted", new Primitive("a") < "b", "x".concat(new Primitive("a")), ["x", new Primitive("a")].join("-"), new Primitive("abc").length, new Primitive("abc").toUpperCase()]);
+
+class Spread extends String {
+  get [Symbol.isConcatSpreadable]() {
+    log.push("asked whether it spreads");
+    return true;
+  }
+}
+report("Symbol.isConcatSpreadable on a subclass", () => [[].concat(new Spread("ab")), [].concat("ab"), [].concat(new String("ab")).length, ["x"].concat(new Spread("ab"), ["y"])]);
+
+class Tagged extends String {
+  get [Symbol.toStringTag]() {
+    return "Text";
+  }
+}
+report("Symbol.toStringTag on a subclass", () => [Object.prototype.toString.call(new Tagged("a")), Object.prototype.toString.call(new String("a")), Object.prototype.toString.call("a"), String(new Tagged("a"))]);
+
+class Walked extends String {
+  *[Symbol.iterator]() {
+    log.push("its own iterator");
+    yield "walked";
+  }
+}
+report("Symbol.iterator on a subclass", () => [[...new Walked("ab")], Array.from(new Walked("ab")), [...new String("ab")], new Set(new Walked("ab")).size, Math.max(...new Walked("ab").length.toString())]);
+
+report("instanceof a wrapped text with Symbol.hasInstance", () => [5 instanceof Object.assign(new String("a"), { [Symbol.hasInstance]: () => true })]);
+report("instanceof a wrapped text", () => 5 instanceof new String("a"));
+report("instanceof a plain text", () => 5 instanceof "a");
+report("honest again", () => all("-"));
+//// wrapped-texts-with-members-of-their-own.js
+////= show-26
+
+const log = [];
+globalThis.log = log;
+
+////= report-6
+
+////= lines-7	lengthOf	text	text.length
+
+////= lines-5	upper	text	text.toUpperCase
+
+////= label
+
+////= lines-235	template	text
+
+function isAbc(text) {
+  return [text === "abc", text == "abc", text < "abd"];
+}
+
+function asKey(text) {
+  return { abc: "by abc", changed: "by changed", other: "by other" }[text];
+}
+
+function number(text) {
+  return +text;
+}
+
+function json(text) {
+  return JSON.stringify([text, { text }]);
+}
+
+const uses = [
+  ["length", lengthOf],
+  ["upper", upper],
+  ["label", label],
+  ["template", template],
+  ["comparisons", isAbc],
+  ["as a key", asKey],
+  ["to a number", number],
+  ["JSON", json],
+];
+
+for (let i = 0; i < 2000; i++) {
+  for (const [, use] of uses) use("abc");
+}
+
+const wrapped = [
+  "new String('abc')",
+  "Object('abc')",
+  "Object.assign(new String('abc'), { extra: 1 })",
+  "Object.assign(new String('abc'), { toString() { log.push('toString'); return 'changed'; } })",
+  "Object.assign(new String('abc'), { valueOf() { log.push('valueOf'); return 'changed'; } })",
+  "Object.assign(new String('abc'), { toString() { log.push('toString'); return 'changed'; }, valueOf() { log.push('valueOf'); return 'other'; } })",
+  "Object.assign(new String('abc'), { [Symbol.toPrimitive](hint) { log.push('toPrimitive ' + hint); return 'changed'; } })",
+  "Object.assign(new String('abc'), { toJSON() { log.push('toJSON'); return 'changed'; } })",
+  "Object.assign(new String('abc'), { toString: undefined, valueOf: undefined })",
+  "Object.assign(new String('abc'), { toUpperCase() { log.push('own toUpperCase'); return 'own'; } })",
+  "Object.defineProperty(new String('abc'), 'toUpperCase', { get() { log.push('get toUpperCase'); return () => 'from a getter'; } })",
+  "Object.setPrototypeOf(new String('abc'), { toString() { log.push('inherited toString'); return 'changed'; }, toUpperCase() { return 'inherited'; } })",
+  "Object.setPrototypeOf(new String('abc'), null)",
+  "Object.setPrototypeOf(new String('abc'), Array.prototype)",
+  "Object.setPrototypeOf(new String('abc'), Number.prototype)",
+  "Object.freeze(new String('abc'))",
+  "new (class Loud extends String { toUpperCase() { return 'LOUD ' + super.toUpperCase(); } get length() { return 'overridden on the prototype'; } })('abc')",
+  "new (class Odd extends String { constructor(text) { super(text + 'c'); } toString() { log.push('subclass toString'); return 'changed'; } })('ab')",
+  "Reflect.construct(String, ['abc'], Array)",
+  "Reflect.construct(Array, [], String)",
+  "new String(new String('abc'))",
+  "new String({ toString() { log.push('converted when wrapped'); return 'abc'; } })",
+  "new String(['a', 'bc'])",
+  "new String()",
+  "new String(undefined)",
+  "new String(null)",
+];
+
+for (const text of wrapped) {
+  for (const [name, use] of uses) report(name + " of " + text, () => use(make(text)));
+}
+report("new String(symbol)", () => new String(Symbol("s")));
+report("String(symbol)", () => String(Symbol("s")));
+report("own members of a wrapped text", () => Reflect.ownKeys(Object.assign(new String("ab"), { extra: 1, 5: "five", 2: "two" })));
+report("the characters cannot be stored over", () => {
+  const text = new String("abc");
+  try {
+    text[0] = "x";
+  } catch (error) {
+    log.push("store threw " + error.constructor.name);
+  }
+  try {
+    text.length = 1;
+  } catch (error) {
+    log.push("length threw " + error.constructor.name);
+  }
+  try {
+    delete text[1];
+  } catch (error) {
+    log.push("delete threw " + error.constructor.name);
+  }
+  text[3] = "d";
+  return [String(text), text.length, text[3], Object.keys(text)];
+});
+//// yield-star-hands-over-the-result-of-the-inner-generator.js
+"use strict";
+
+const log = [];
+
+////= show-24
+
+function* pushesLater(inner) {
+  const a = yield* inner;
+  a.push(1);
+  return a.length;
+}
+////= lines-107	pushes	pushesLater
+
+function* iteratesLater(inner) {
+  const a = yield* inner;
+  const seen = [];
+  for (const x of a) seen.push(x);
+  return seen;
+}
+////= lines-107	iterates	iteratesLater
+
+function* readsCharCodeLater(inner) {
+  const s = yield* inner;
+  return s.charCodeAt(0);
+}
+////= lines-107	readsCharCode	readsCharCodeLater
+
+function* truncatesLater(inner) {
+  const n = yield* inner;
+  return n | 0;
+}
+////= lines-107	truncates	truncatesLater
+
+function* addsOneLater(inner) {
+  const n = yield* inner;
+  return n + 1;
+}
+////= lines-107	addsOne	addsOneLater
+
+function* callsLater(inner) {
+  const f = yield* inner;
+  return f(1);
+}
+////= lines-107	calls	callsLater
+
+function* addsMembersLater(inner) {
+  const o = yield* inner;
+  return o.x + o.y;
+}
+////= lines-107	addsMembers	addsMembersLater
+
+function* storesMemberLater(inner) {
+  const o = yield* inner;
+  o.x = 1;
+  return o;
+}
+////= lines-107	storesMember	storesMemberLater
+
+////= table-7
+
+console.log("strict:", (function () { return this === undefined; })());
+everyCase("at first");
+////= for
+everyCase("after 2000");

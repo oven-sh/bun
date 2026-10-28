@@ -1,0 +1,3037 @@
+////: Person-4
+class Person {
+  name = "ann";
+  shout(): string {
+    return this.name.toUpperCase();
+  }
+}
+////: Person-6
+////= Person-4
+
+////= exclaim
+
+////= orNone
+
+////= pass-2
+////: exclaim
+function exclaim(s: string): string {
+  return s + "!";
+}
+////: lines-170
+{
+  const f = new «1»();
+  let warm = 0;
+  for (let i = 0; i < 2000; i++) warm += «2»(f).length;
+  const before = f.greet() + " " + «2»(f);
+  Object.setPrototypeOf(«1».prototype, Object.«3»(Object.create(«4».prototype, { greet: { value: between } })));
+  console.log(«5» + ": " + warm + " | " + before + " | " + f.greet() + " " + «2»(f) + " | " + (f instanceof «4»));
+}
+////: lines-309
+async function «1»>): Promise<string> {
+  const n: number = await box;
+  return text(n + 1);
+}
+////: lines-4
+try {
+  console.log("length " + value.length);
+} catch (error) {
+  console.log("length threw " + (error instanceof TypeError));
+}
+////: lines-5
+try {
+  console.log("method of the field " + person.shout());
+} catch (error) {
+  console.log("method of the field threw " + (error instanceof TypeError));
+}
+////: lines-66
+const «1» = «2»({
+  data: { count: 1, label: "component" },
+  methods: {
+    read(): number {
+      return this.count;
+    },
+    bump(): number {
+      return ++this.count;
+    },
+    title(): string {
+      return this.label.toUpperCase();
+    },
+    twice(): number {
+      return this.read() * 2;
+    },
+  },
+});
+////: orNone
+function orNone(s: string = "none"): string {
+  return s;
+}
+////: pass-2
+function pass(s: string): string {
+  return s;
+}
+//// a-string-becomes-an-object-type-at-every-kind-of-conversion-part-three.ts
+////= show-30
+
+const yes = [1].length === 1;
+function touch(): void {}
+
+const text = "hel".concat("lo");
+
+type S24 = string;
+type T24 = { length: number; padStart(count: number): string };
+////= lines-39	honest24	T24	24	padStart
+////= lines-21	use24	t	T24	number	t.length
+////= lines-13	Holder24	T24
+////= via24
+
+type S25 = string;
+type T25 = { length: number; padEnd(count: number): string };
+////= lines-39	honest25	T25	25	padEnd
+////= lines-21	use25	t	T25	number	t.length
+////= lines-13	Holder25	T25
+////= via25
+
+type S26 = string;
+type T26 = { length: number; substring(count: number): string };
+////= lines-39	honest26	T26	26	substring
+////= lines-21	use26	t	T26	number	t.length
+////= lines-13	Holder26	T26
+////= via26
+
+type S27 = string;
+type T27 = { length: number; substr(count: number): string };
+////= lines-39	honest27	T27	27	substr
+////= lines-21	use27	t	T27	number	t.length
+////= lines-13	Holder27	T27
+////= via27
+
+type S28 = string;
+type T28 = { length: number; fontsize(count: number): string };
+////= lines-39	honest28	T28	28	fontsize
+////= lines-21	use28	t	T28	number	t.length
+////= lines-13	Holder28	T28
+////= lines-173	via28	s	S28	T28
+
+type S29 = string;
+type T29 = { length: number; anchor(text: string): string };
+////= lines-39	honest29	T29	29	anchor
+////= lines-21	use29	t	T29	number	t.length
+////= lines-13	Holder29	T29
+function via29(s: S29): Promise<T29> {
+  return Promise.resolve<T29>(s);
+}
+
+type S30 = string;
+type T30 = { length: number; fontcolor(text: string): string };
+////= lines-39	honest30	T30	30	fontcolor
+////= lines-21	use30	t	T30	number	t.length
+////= lines-13	Holder30	T30
+function via30(s: S30): Promise<T30> {
+  return Promise.resolve(0).then((): T30 => s);
+}
+
+type S31 = string;
+type T31 = { length: number; link(text: string): string };
+////= lines-39	honest31	T31	31	link
+////= lines-21	use31	t	T31	number	t.length
+////= lines-13	Holder31	T31
+function via31(s: S31): Promise<T31> {
+  return new Promise<T31>(resolve => resolve(s));
+}
+
+type S32 = string;
+type T32 = { length: number; trim(): string; trimStart(): string };
+////= lines-30	honest32	T32	32	trim	trimStart
+////= lines-21	use32	t	T32	number	t.length
+////= lines-13	Holder32	T32
+function via32(s: S32): T32 {
+  return [0].map((): T32 => s)[0];
+}
+
+type S33 = string;
+type T33 = { length: number; trimStart(): string; trimEnd(): string };
+////= lines-30	honest33	T33	33	trimStart	trimEnd
+////= lines-21	use33	t	T33	number	t.length
+////= lines-13	Holder33	T33
+////= lines-276	same33	X	x
+function via33(s: S33): T33 {
+  return same33<T33>(s);
+}
+
+type S34 = string;
+type T34 = { length: number; trimEnd(): string; toUpperCase(): string };
+////= lines-30	honest34	T34	34	trimEnd	toUpperCase
+////= lines-21	use34	t	T34	number	t.length
+////= lines-13	Holder34	T34
+function widen34<X extends T34>(x: X): T34 {
+  return x;
+}
+////= lines-60	via34	s	S34	T34	widen34	s
+
+type S35 = string;
+type T35 = { length: number; toUpperCase(): string; toLowerCase(): string };
+////= lines-30	honest35	T35	35	toUpperCase	toLowerCase
+////= lines-21	use35	t	T35	number	t.length
+////= lines-13	Holder35	T35
+////= via35
+
+let warm = 0;
+for (let i = 0; i < 500; i++) warm += use24(honest24()) + new Holder24(honest24()).size();
+{
+  const t = await via24(text);
+  attempt("the entries a map is made from: typeof", () => typeof t);
+  attempt("the entries a map is made from: length + 1", () => use24(t));
+  attempt("the entries a map is made from: in a field", () => new Holder24(t).size());
+  attempt("the entries a map is made from: honest again", () => use24(honest24()));
+}
+for (let i = 0; i < 500; i++) warm += use25(honest25()) + new Holder25(honest25()).size();
+{
+  const t = await via25(text);
+  attempt("a member of a set: typeof", () => typeof t);
+  attempt("a member of a set: length + 1", () => use25(t));
+  attempt("a member of a set: in a field", () => new Holder25(t).size());
+  attempt("a member of a set: honest again", () => use25(honest25()));
+}
+for (let i = 0; i < 500; i++) warm += use26(honest26()) + new Holder26(honest26()).size();
+{
+  const t = await via26(text);
+  attempt("yield: typeof", () => typeof t);
+  attempt("yield: length + 1", () => use26(t));
+  attempt("yield: in a field", () => new Holder26(t).size());
+  attempt("yield: honest again", () => use26(honest26()));
+}
+for (let i = 0; i < 500; i++) warm += use27(honest27()) + new Holder27(honest27()).size();
+{
+  const t = await via27(text);
+  attempt("the value sent into a generator: typeof", () => typeof t);
+  attempt("the value sent into a generator: length + 1", () => use27(t));
+  attempt("the value sent into a generator: in a field", () => new Holder27(t).size());
+  attempt("the value sent into a generator: honest again", () => use27(honest27()));
+}
+for (let i = 0; i < 500; i++) warm += use28(honest28()) + new Holder28(honest28()).size();
+{
+  const t = await via28(text);
+  attempt("the result of an async function: typeof", () => typeof t);
+  attempt("the result of an async function: length + 1", () => use28(t));
+  attempt("the result of an async function: in a field", () => new Holder28(t).size());
+  attempt("the result of an async function: honest again", () => use28(honest28()));
+}
+for (let i = 0; i < 500; i++) warm += use29(honest29()) + new Holder29(honest29()).size();
+{
+  const t = await via29(text);
+  attempt("Promise.resolve: typeof", () => typeof t);
+  attempt("Promise.resolve: length + 1", () => use29(t));
+  attempt("Promise.resolve: in a field", () => new Holder29(t).size());
+  attempt("Promise.resolve: honest again", () => use29(honest29()));
+}
+for (let i = 0; i < 500; i++) warm += use30(honest30()) + new Holder30(honest30()).size();
+{
+  const t = await via30(text);
+  attempt("the result of a reaction: typeof", () => typeof t);
+  attempt("the result of a reaction: length + 1", () => use30(t));
+  attempt("the result of a reaction: in a field", () => new Holder30(t).size());
+  attempt("the result of a reaction: honest again", () => use30(honest30()));
+}
+for (let i = 0; i < 500; i++) warm += use31(honest31()) + new Holder31(honest31()).size();
+{
+  const t = await via31(text);
+  attempt("the resolver of a promise: typeof", () => typeof t);
+  attempt("the resolver of a promise: length + 1", () => use31(t));
+  attempt("the resolver of a promise: in a field", () => new Holder31(t).size());
+  attempt("the resolver of a promise: honest again", () => use31(honest31()));
+}
+for (let i = 0; i < 500; i++) warm += use32(honest32()) + new Holder32(honest32()).size();
+{
+  const t = await via32(text);
+  attempt("the result of a callback: typeof", () => typeof t);
+  attempt("the result of a callback: length + 1", () => use32(t));
+  attempt("the result of a callback: in a field", () => new Holder32(t).size());
+  attempt("the result of a callback: honest again", () => use32(honest32()));
+}
+for (let i = 0; i < 500; i++) warm += use33(honest33()) + new Holder33(honest33()).size();
+{
+  const t = await via33(text);
+  attempt("an explicit type argument: typeof", () => typeof t);
+  attempt("an explicit type argument: length + 1", () => use33(t));
+  attempt("an explicit type argument: in a field", () => new Holder33(t).size());
+  attempt("an explicit type argument: honest again", () => use33(honest33()));
+}
+for (let i = 0; i < 500; i++) warm += use34(honest34()) + new Holder34(honest34()).size();
+{
+  const t = await via34(text);
+  attempt("a constrained type parameter: typeof", () => typeof t);
+  attempt("a constrained type parameter: length + 1", () => use34(t));
+  attempt("a constrained type parameter: in a field", () => new Holder34(t).size());
+  attempt("a constrained type parameter: honest again", () => use34(honest34()));
+}
+for (let i = 0; i < 500; i++) warm += use35(honest35()) + new Holder35(honest35()).size();
+{
+  const t = await via35(text);
+  attempt("the target of a for-of: typeof", () => typeof t);
+  attempt("the target of a for-of: length + 1", () => use35(t));
+  attempt("the target of a for-of: in a field", () => new Holder35(t).size());
+  attempt("the target of a for-of: honest again", () => use35(honest35()));
+}
+console.log("honest uses", warm);
+
+export {};
+//// a-string-becomes-an-object-type-at-every-kind-of-conversion-part-two.ts
+////= show-30
+
+const yes = [1].length === 1;
+function touch(): void {}
+
+const text = "hel".concat("lo");
+
+type S12 = string;
+type T12 = { length: number; blink(): string };
+////= lines-39	honest12	T12	12	blink
+////= lines-21	use12	t	T12	number	t.length
+////= lines-13	Holder12	T12
+////= via12
+
+type S13 = string;
+type T13 = { length: number; bold(): string };
+////= lines-39	honest13	T13	13	bold
+////= lines-21	use13	t	T13	number	t.length
+////= lines-13	Holder13	T13
+////= via13
+
+type S14 = string;
+type T14 = { length: number; fixed(): string };
+////= lines-39	honest14	T14	14	fixed
+////= lines-21	use14	t	T14	number	t.length
+////= lines-13	Holder14	T14
+////= via14
+
+type S15 = string;
+type T15 = { length: number; italics(): string };
+////= lines-39	honest15	T15	15	italics
+////= lines-21	use15	t	T15	number	t.length
+////= lines-13	Holder15	T15
+////= lines-141	Keeper15	held	T15
+////= lines-216	via15	s	S15	T15	Keeper15	held
+
+type S16 = string;
+type T16 = { length: number; small(): string };
+////= lines-39	honest16	T16	16	small
+////= lines-21	use16	t	T16	number	t.length
+////= lines-13	Holder16	T16
+////= via16
+
+type S17 = string;
+type T17 = { length: number; strike(): string };
+////= lines-39	honest17	T17	17	strike
+////= lines-21	use17	t	T17	number	t.length
+////= lines-13	Holder17	T17
+////= via17
+
+type S18 = string;
+type T18 = { length: number; sub(): string };
+////= lines-39	honest18	T18	18	sub
+////= lines-21	use18	t	T18	number	t.length
+////= lines-13	Holder18	T18
+////= lines-45	take18	t	T18	T18
+////= via18
+
+type S19 = string;
+type T19 = { length: number; sup(): string };
+////= lines-39	honest19	T19	19	sup
+////= lines-21	use19	t	T19	number	t.length
+////= lines-13	Holder19	T19
+function last19(...list: T19[]): T19 {
+  return list[list.length - 1];
+}
+function via19(s: S19): T19 {
+  return last19(honest19(), s);
+}
+
+type S20 = string;
+type T20 = { length: number; slice(): string };
+////= lines-39	honest20	T20	20	slice
+////= lines-21	use20	t	T20	number	t.length
+////= lines-13	Holder20	T20
+////= via20
+
+type S21 = string;
+type T21 = { length: number; concat(): string };
+////= lines-39	honest21	T21	21	concat
+////= lines-21	use21	t	T21	number	t.length
+////= lines-13	Holder21	T21
+////= via21
+
+type S22 = string;
+type T22 = { length: number; charAt(count: number): string };
+////= lines-39	honest22	T22	22	charAt
+////= lines-21	use22	t	T22	number	t.length
+////= lines-13	Holder22	T22
+////= via22
+
+type S23 = string;
+type T23 = { length: number; repeat(count: number): string };
+////= lines-39	honest23	T23	23	repeat
+////= lines-21	use23	t	T23	number	t.length
+////= lines-13	Holder23	T23
+////= via23
+
+let warm = 0;
+for (let i = 0; i < 500; i++) warm += use12(honest12()) + new Holder12(honest12()).size();
+{
+  const t = await via12(text);
+  attempt("a member of an object literal: typeof", () => typeof t);
+  attempt("a member of an object literal: length + 1", () => use12(t));
+  attempt("a member of an object literal: in a field", () => new Holder12(t).size());
+  attempt("a member of an object literal: honest again", () => use12(honest12()));
+}
+for (let i = 0; i < 500; i++) warm += use13(honest13()) + new Holder13(honest13()).size();
+{
+  const t = await via13(text);
+  attempt("a shorthand member: typeof", () => typeof t);
+  attempt("a shorthand member: length + 1", () => use13(t));
+  attempt("a shorthand member: in a field", () => new Holder13(t).size());
+  attempt("a shorthand member: honest again", () => use13(honest13()));
+}
+for (let i = 0; i < 500; i++) warm += use14(honest14()) + new Holder14(honest14()).size();
+{
+  const t = await via14(text);
+  attempt("the initializer of a field: typeof", () => typeof t);
+  attempt("the initializer of a field: length + 1", () => use14(t));
+  attempt("the initializer of a field: in a field", () => new Holder14(t).size());
+  attempt("the initializer of a field: honest again", () => use14(honest14()));
+}
+for (let i = 0; i < 500; i++) warm += use15(honest15()) + new Holder15(honest15()).size();
+{
+  const t = await via15(text);
+  attempt("a parameter property: typeof", () => typeof t);
+  attempt("a parameter property: length + 1", () => use15(t));
+  attempt("a parameter property: in a field", () => new Holder15(t).size());
+  attempt("a parameter property: honest again", () => use15(honest15()));
+}
+for (let i = 0; i < 500; i++) warm += use16(honest16()) + new Holder16(honest16()).size();
+{
+  const t = await via16(text);
+  attempt("the default of a parameter: typeof", () => typeof t);
+  attempt("the default of a parameter: length + 1", () => use16(t));
+  attempt("the default of a parameter: in a field", () => new Holder16(t).size());
+  attempt("the default of a parameter: honest again", () => use16(honest16()));
+}
+for (let i = 0; i < 500; i++) warm += use17(honest17()) + new Holder17(honest17()).size();
+{
+  const t = await via17(text);
+  attempt("the default in a pattern: typeof", () => typeof t);
+  attempt("the default in a pattern: length + 1", () => use17(t));
+  attempt("the default in a pattern: in a field", () => new Holder17(t).size());
+  attempt("the default in a pattern: honest again", () => use17(honest17()));
+}
+for (let i = 0; i < 500; i++) warm += use18(honest18()) + new Holder18(honest18()).size();
+{
+  const t = await via18(text);
+  attempt("a spread argument: typeof", () => typeof t);
+  attempt("a spread argument: length + 1", () => use18(t));
+  attempt("a spread argument: in a field", () => new Holder18(t).size());
+  attempt("a spread argument: honest again", () => use18(honest18()));
+}
+for (let i = 0; i < 500; i++) warm += use19(honest19()) + new Holder19(honest19()).size();
+{
+  const t = await via19(text);
+  attempt("a rest parameter: typeof", () => typeof t);
+  attempt("a rest parameter: length + 1", () => use19(t));
+  attempt("a rest parameter: in a field", () => new Holder19(t).size());
+  attempt("a rest parameter: honest again", () => use19(honest19()));
+}
+for (let i = 0; i < 500; i++) warm += use20(honest20()) + new Holder20(honest20()).size();
+{
+  const t = await via20(text);
+  attempt("a spread into an array literal: typeof", () => typeof t);
+  attempt("a spread into an array literal: length + 1", () => use20(t));
+  attempt("a spread into an array literal: in a field", () => new Holder20(t).size());
+  attempt("a spread into an array literal: honest again", () => use20(honest20()));
+}
+for (let i = 0; i < 500; i++) warm += use21(honest21()) + new Holder21(honest21()).size();
+{
+  const t = await via21(text);
+  attempt("a spread into an object literal: typeof", () => typeof t);
+  attempt("a spread into an object literal: length + 1", () => use21(t));
+  attempt("a spread into an object literal: in a field", () => new Holder21(t).size());
+  attempt("a spread into an object literal: honest again", () => use21(honest21()));
+}
+for (let i = 0; i < 500; i++) warm += use22(honest22()) + new Holder22(honest22()).size();
+{
+  const t = await via22(text);
+  attempt("push: typeof", () => typeof t);
+  attempt("push: length + 1", () => use22(t));
+  attempt("push: in a field", () => new Holder22(t).size());
+  attempt("push: honest again", () => use22(honest22()));
+}
+for (let i = 0; i < 500; i++) warm += use23(honest23()) + new Holder23(honest23()).size();
+{
+  const t = await via23(text);
+  attempt("the value of a map entry: typeof", () => typeof t);
+  attempt("the value of a map entry: length + 1", () => use23(t));
+  attempt("the value of a map entry: in a field", () => new Holder23(t).size());
+  attempt("the value of a map entry: honest again", () => use23(honest23()));
+}
+console.log("honest uses", warm);
+
+export {};
+//// a-string-field-is-read-while-the-set-constructor-runs.ts
+class Counting extends Set<number> {
+  name = "counting";
+  add(value: number): this {
+    try {
+      console.log("length " + this.name.length);
+    } catch (error) {
+      console.log("threw " + (error instanceof TypeError));
+    }
+    return super.add(value);
+  }
+}
+
+console.log("size " + new Counting([1]).add(2).size);
+
+export {};
+//// a-string-field-is-stored-to-through-a-wider-alias.ts
+////= show-30
+
+class Label {
+  id = 1;
+  text = "label";
+  weight = 0.5;
+  size(): number {
+    return this.text.length;
+  }
+  shout(): string {
+    return this.text.toUpperCase();
+  }
+  suffixed(): string {
+    return this.text + "!";
+  }
+}
+
+function put<T>(box: { text: string | T }, value: T): void {
+  box.text = value;
+}
+
+function sizeOf(box: { text: string }): number {
+  return box.text.length;
+}
+
+function suffixed(box: { text: string }): string {
+  return box.text + "!";
+}
+
+function inATemplate(box: { text: string }): string {
+  return `<${box.text}>`;
+}
+
+function firstCode(box: { text: string }): number {
+  return box.text.charCodeAt(0);
+}
+
+function firstLetter(box: { text: string }): string {
+  return box.text[0];
+}
+
+function isEmpty(box: { text: string }): boolean[] {
+  return [box.text === "", box.text == "", !box.text];
+}
+
+function isFive(box: { text: string }): boolean[] {
+  return [box.text === "5", box.text == "5"];
+}
+
+function kind(box: { text: string }): string {
+  return typeof box.text;
+}
+
+function appended(box: { text: string }): string {
+  box.text += "x";
+  return box.text;
+}
+
+const ways: [string, (box: { text: string }) => void][] = [
+  ["5", box => put(box, 5)],
+  ["0", box => put(box, 0)],
+  ["0.5", box => put(box, 0.5)],
+  ["undefined", box => put(box, undefined)],
+  ["null", box => put(box, null)],
+  ["false", box => put(box, false)],
+  ["a symbol", box => put(box, Symbol("s"))],
+  ["a bigint", box => put(box, 5n)],
+  ["an array of strings", box => put(box, ["a", "b"])],
+  ["a String object", box => put(box, new String("boxed"))],
+  ["an object with toString", box => put(box, { toString: () => "made" })],
+  ["an honest string", box => put(box, "honest")],
+];
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const literal = { text: "t" + i };
+  const label = new Label();
+  warm += sizeOf(literal) + suffixed(literal).length + inATemplate(literal).length + firstCode(literal) + firstLetter(literal).length + isEmpty(literal).length + isFive(literal).length;
+  warm += kind(literal).length + appended(literal).length + label.size() + label.shout().length + label.suffixed().length + sizeOf(label);
+}
+console.log("after 2000 honest boxes", warm);
+
+for (const [name, store] of ways) {
+  const stored = (): Label => {
+    const label = new Label();
+    store(label);
+    return label;
+  };
+  attempt(name + ": typeof", () => kind(stored()));
+  attempt(name + ": length", () => sizeOf(stored()));
+  attempt(name + ": with a suffix", () => suffixed(stored()));
+  attempt(name + ": in a template", () => inATemplate(stored()));
+  attempt(name + ": first code", () => firstCode(stored()));
+  attempt(name + ": first letter", () => firstLetter(stored()));
+  attempt(name + ": empty", () => isEmpty(stored()));
+  attempt(name + ": the text 5", () => isFive(stored()));
+  attempt(name + ": +=", () => appended(stored()));
+  attempt(name + ": its own size", () => stored().size());
+  attempt(name + ": its own shout", () => stored().shout());
+  attempt(name + ": its own suffix", () => stored().suffixed());
+  attempt(name + ": the other fields", () => [stored().id, stored().weight, Object.keys(stored())]);
+  attempt(name + ": in a literal", () => {
+    const literal = { a: 1, text: "t", b: 2 };
+    store(literal);
+    return [literal.a, kind(literal), literal.b];
+  });
+}
+//// a-string-is-stored-into-numbers-through-a-wider-alias.ts
+////= show-30
+
+type Wide = (number | string)[];
+
+const ways: [string, (wide: Wide) => void][] = [
+  ["push", wide => void wide.push("x")],
+  ["an index store", wide => void (wide[1] = "x")],
+  ["an index store past the end", wide => void (wide[wide.length] = "x")],
+  ["splice", wide => void wide.splice(1, 1, "x")],
+  ["fill", wide => void wide.fill("x", 1, 2)],
+  ["unshift", wide => void wide.unshift("x")],
+  ["a destructuring assignment", wide => void ([wide[0], wide[1]] = [wide[1], "x"])],
+  ["a helper", wide => helper(wide)],
+  ["push.apply", wide => void Array.prototype.push.apply(wide, ["x"])],
+  ["Object.assign", wide => void Object.assign(wide, ["x"])],
+  ["Reflect.set", wide => void Reflect.set(wide, 2, "x")],
+  ["copyWithin after push", wide => void (wide.push("x"), wide.copyWithin(0, wide.length - 1))],
+  ["a sort callback", wide => void wide.sort((a, b) => ((wide[0] = "x"), 0))],
+  ["a forEach callback", wide => wide.forEach((_, index) => void (index === 1 && (wide[2] = "x")))],
+];
+
+function helper(list: Wide): void {
+  list[list.length - 1] = "x";
+}
+
+////= sum
+
+////= sumByForOf
+
+function sumByReduce(numbers: number[]): number {
+  return numbers.reduce((total, number) => total + number, 0);
+}
+
+function product(numbers: number[]): number {
+  let total = 1;
+  for (let i = 0; i < numbers.length; i++) total *= numbers[i];
+  return total;
+}
+
+function asIntegers(numbers: number[]): number[] {
+  const result: number[] = [];
+  for (let i = 0; i < numbers.length; i++) result.push(numbers[i] | 0);
+  return result;
+}
+
+function largest(numbers: number[]): number {
+  return Math.max(...numbers);
+}
+
+function fixed(numbers: number[]): string {
+  let text = "";
+  for (const number of numbers) text += number.toFixed(1) + " ";
+  return text;
+}
+
+function kinds(numbers: number[]): string {
+  return numbers.map(number => typeof number).join();
+}
+
+const reads: [string, (numbers: number[]) => unknown][] = [
+  ["sum", sum],
+  ["sum by for-of", sumByForOf],
+  ["sum by reduce", sumByReduce],
+  ["product", product],
+  ["as integers", asIntegers],
+  ["largest", largest],
+  ["toFixed", fixed],
+  ["kinds", kinds],
+  ["the array", numbers => numbers],
+];
+
+const starts: [string, () => number[]][] = [
+  ["integers", () => [1, 2, 3]],
+  ["doubles", () => [1.5, 2.5, 3.5]],
+];
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const honest = i % 2 === 0 ? [i, 2, 3] : [i + 0.5, 2.5, 3.5];
+  warm += sum(honest) + sumByForOf(honest) + sumByReduce(honest) + product(honest) + asIntegers(honest)[0] + largest(honest) + fixed(honest).length + kinds(honest).length;
+}
+console.log("after 2000 honest arrays", warm);
+
+for (const [start, make] of starts) {
+  for (const [way, pollute] of ways) {
+    for (const [read, run] of reads) {
+      attempt(start + ", " + way + ": " + read, () => {
+        const numbers = make();
+        const wide: Wide = numbers;
+        pollute(wide);
+        return run(numbers);
+      });
+    }
+  }
+}
+attempt("honest again", () => [sum([1, 2, 3]), product([1.5, 2]), fixed([1]), largest([1, 2])]);
+//// a-string-promised-by-a-merged-interface-is-never-stored.ts
+////= text-11
+
+////= lines-28	Label	note	string
+////= lines-97	Label	id	heading	string	note	"!"
+
+////= size
+
+////= lines-20	noteOf	label	Label	string	return	label.note
+
+const label = new Label();
+show("read", () => label.note);
+show("typeof", () => typeof label.note);
+show("followed by a string", () => label.note + "!");
+show("after a string", () => "<" + label.note);
+show("in a template", () => `[${label.note}]`);
+show("equals the empty string", () => label.note === "");
+show("equals undefined", () => label.note === undefined);
+show("as a condition", () => (label.note ? "yes" : "no"));
+show("or a default", () => label.note ?? "default");
+show("or a default by ||", () => label.note || "default");
+show("less than", () => label.note < "a");
+show("length", () => label.note.length);
+show("length if there", () => label.note?.length);
+show("toUpperCase", () => label.note.toUpperCase());
+show("charCodeAt", () => label.note.charCodeAt(0));
+show("first character", () => label.note[0]);
+show("slice", () => label.note.slice(1));
+show("iterated", () => [...label.note]);
+show("String", () => String(label.note));
+show("Number", () => Number(label.note));
+show("joined", () => [label.note, "b"].join("-"));
+show("as a key", () => ({ [label.note]: 1 }));
+show("includes as an argument", () => "is undefined here".includes(label.note));
+show("in a method", () => label.heading());
+show("through a function", () => noteOf(label));
+show("given to a typed function", () => size(label.note));
+////= show-26	s	string	label.note
+////= show-27	string	label.note	"b"
+////= show-25	label.note	""	"empty"	"undefined"	"the word"
+show("in", () => "note" in label);
+show("keys", () => Object.keys(label));
+show("JSON", () => JSON.stringify(label));
+show("spread", () => ({ ...label }));
+//// a-string-promised-by-a-merged-interface-is-stored-on-some-objects.ts
+////= text-11
+
+////= lines-28	Label	note	string
+class Label {
+  id: number;
+  constructor(id: number) {
+    this.id = id;
+  }
+  heading(): string {
+    return this.note + "!";
+  }
+  width(): number {
+    return this.note.length;
+  }
+}
+
+function filled(id: number, note: string): Label {
+  const label = new Label(id);
+  label.note = note;
+  return label;
+}
+
+////= lines-20	noteOf	label	Label	string	return	label.note
+
+////= lines-32	widthOf	label	Label	number	label.note.length
+
+show("the first call gets one without it", () => noteOf(new Label(1)));
+show("its width", () => widthOf(new Label(1)));
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += widthOf(filled(i, "ab")) + noteOf(filled(i, "c")).length + filled(i, "def").width();
+show("2000 with it", () => sum);
+show("one without it", () => noteOf(new Label(5)));
+show("its width", () => widthOf(new Label(5)));
+show("its width by the method", () => new Label(5).width());
+show("its heading", () => new Label(5).heading());
+show("one with it again", () => [noteOf(filled(1, "xyz")), widthOf(filled(1, "xyz"))]);
+
+show("all notes joined", () => [filled(1, "a"), new Label(2), filled(3, "c")].map(noteOf).join("+"));
+show("all notes added", () => {
+  let all = "";
+  for (const label of [filled(1, "a"), new Label(2), filled(3, "c")]) all += label.note;
+  return all;
+});
+show("keys of both", () => [Object.keys(filled(1, "a")), Object.keys(new Label(1))]);
+show("JSON of both", () => JSON.stringify([filled(1, "a"), new Label(1)]));
+
+const late = new Label(1);
+show("before the store", () => [late.note, "note" in late]);
+late.note = "late";
+show("after the store", () => [late.note, "note" in late, late.width(), late.heading()]);
+
+const added = new Label(1);
+show("+= where there is nothing", () => (added.note += "tail"));
+show("after it", () => [added.note, added.width(), Object.keys(added)]);
+//// a-string-that-is-not-there-a-group-that-did-not-take-part-goes-into-typed-places.ts
+const found = /(a)(z)?/.exec("a");
+const value: string = found === null ? "no match" : found[2];
+
+////= Person-6
+
+console.log("typeof " + typeof value);
+console.log("is undefined " + (value === undefined));
+console.log("is empty " + (value === ""));
+console.log("+ '!' " + (value + "!"));
+console.log("?? " + (value ?? "nothing"));
+console.log("|| " + (value || "nothing"));
+console.log("template " + `<${value}>`);
+console.log("parameter " + exclaim(value));
+console.log("default " + orNone(value));
+console.log("result " + typeof pass(value) + " " + pass(value));
+const person = new Person();
+person.name = value;
+console.log("field " + typeof person.name + " " + person.name + " " + JSON.stringify(person) + " " + Object.keys(person).join());
+const literal = { s: value, t: "t" };
+console.log("literal " + typeof literal.s + " " + (literal.s + literal.t) + " " + JSON.stringify(literal));
+const strings = ["a"];
+strings[0] = value;
+strings.push(value);
+console.log("elements " + strings.map(s => typeof s).join() + " " + strings.join("-") + " " + JSON.stringify(strings));
+const map = new Map<string, string>([["k", value]]);
+console.log("map " + typeof map.get("k") + " " + map.has("k"));
+const record: Record<string, number> = { undefined: 1 };
+console.log("as a key " + record[value]);
+const later = (): string => value + "?";
+console.log("captured " + later());
+let local = "start";
+local = value;
+local += "!";
+console.log("local " + local);
+console.log("compared " + (value < "a") + " " + (value > "a") + " " + (value == null));
+////= lines-5
+////= lines-4
+
+export {};
+//// a-string-that-is-not-there-a-letter-past-the-end-goes-into-typed-places.ts
+const source: string = "abc";
+const index: number = 9;
+const value: string = source[index];
+
+////= Person-6
+
+console.log("typeof " + typeof value);
+console.log("is undefined " + (value === undefined));
+console.log("is empty " + (value === ""));
+console.log("+ '!' " + (value + "!"));
+console.log("?? " + (value ?? "nothing"));
+console.log("|| " + (value || "nothing"));
+console.log("template " + `<${value}>`);
+console.log("parameter " + exclaim(value));
+console.log("default " + orNone(value));
+console.log("result " + typeof pass(value) + " " + pass(value));
+const person = new Person();
+person.name = value;
+console.log("field " + typeof person.name + " " + person.name + " " + JSON.stringify(person) + " " + Object.keys(person).join());
+const literal = { s: value, t: "t" };
+console.log("literal " + typeof literal.s + " " + (literal.s + literal.t) + " " + JSON.stringify(literal));
+const strings = ["a"];
+strings[0] = value;
+strings.push(value);
+console.log("elements " + strings.map(s => typeof s).join() + " " + strings.join("-") + " " + JSON.stringify(strings));
+const map = new Map<string, string>([["k", value]]);
+console.log("map " + typeof map.get("k") + " " + map.has("k"));
+const record: Record<string, number> = { undefined: 1 };
+console.log("as a key " + record[value]);
+const later = (): string => value + "?";
+console.log("captured " + later());
+let local = "start";
+local = value;
+local += "!";
+console.log("local " + local);
+console.log("compared " + (value < "a") + " " + (value > "a") + " " + (value == null));
+////= lines-5
+////= lines-4
+
+export {};
+//// a-string-that-is-not-there-a-part-that-a-split-did-not-give-goes-into-typed-places.ts
+const value: string = "no comma".split(",")[1];
+
+////= Person-6
+
+console.log("typeof " + typeof value);
+console.log("is undefined " + (value === undefined));
+console.log("is empty " + (value === ""));
+console.log("+ '!' " + (value + "!"));
+console.log("?? " + (value ?? "nothing"));
+console.log("|| " + (value || "nothing"));
+console.log("template " + `<${value}>`);
+console.log("parameter " + exclaim(value));
+console.log("default " + orNone(value));
+console.log("result " + typeof pass(value) + " " + pass(value));
+const person = new Person();
+person.name = value;
+console.log("field " + typeof person.name + " " + person.name + " " + JSON.stringify(person) + " " + Object.keys(person).join());
+const literal = { s: value, t: "t" };
+console.log("literal " + typeof literal.s + " " + (literal.s + literal.t) + " " + JSON.stringify(literal));
+const strings = ["a"];
+strings[0] = value;
+strings.push(value);
+console.log("elements " + strings.map(s => typeof s).join() + " " + strings.join("-") + " " + JSON.stringify(strings));
+const map = new Map<string, string>([["k", value]]);
+console.log("map " + typeof map.get("k") + " " + map.has("k"));
+const record: Record<string, number> = { undefined: 1 };
+console.log("as a key " + record[value]);
+const later = (): string => value + "?";
+console.log("captured " + later());
+let local = "start";
+local = value;
+local += "!";
+console.log("local " + local);
+console.log("compared " + (value < "a") + " " + (value > "a") + " " + (value == null));
+////= lines-5
+////= lines-4
+
+export {};
+//// a-string-that-is-not-there-the-name-of-an-enum-member-that-is-not-there-goes-into-typed-places.ts
+////= Color
+
+const value: string = Color[9];
+
+////= Person-6
+
+console.log("typeof " + typeof value);
+console.log("is undefined " + (value === undefined));
+console.log("is empty " + (value === ""));
+console.log("+ '!' " + (value + "!"));
+console.log("?? " + (value ?? "nothing"));
+console.log("|| " + (value || "nothing"));
+console.log("template " + `<${value}>`);
+console.log("parameter " + exclaim(value));
+console.log("default " + orNone(value));
+console.log("result " + typeof pass(value) + " " + pass(value));
+const person = new Person();
+person.name = value;
+console.log("field " + typeof person.name + " " + person.name + " " + JSON.stringify(person) + " " + Object.keys(person).join());
+const literal = { s: value, t: "t" };
+console.log("literal " + typeof literal.s + " " + (literal.s + literal.t) + " " + JSON.stringify(literal));
+const strings = ["a"];
+strings[0] = value;
+strings.push(value);
+console.log("elements " + strings.map(s => typeof s).join() + " " + strings.join("-") + " " + JSON.stringify(strings));
+const map = new Map<string, string>([["k", value]]);
+console.log("map " + typeof map.get("k") + " " + map.has("k"));
+const record: Record<string, number> = { undefined: 1 };
+console.log("as a key " + record[value]);
+const later = (): string => value + "?";
+console.log("captured " + later());
+let local = "start";
+local = value;
+local += "!";
+console.log("local " + local);
+console.log("compared " + (value < "a") + " " + (value > "a") + " " + (value == null));
+////= lines-5
+////= lines-4
+
+export {};
+//// a-string-that-is-not-there-the-place-of-a-tuple-that-was-popped-goes-into-typed-places.ts
+const source: [number, string] = [1, "a"];
+source.pop();
+const value: string = source[1];
+
+////= Person-6
+
+console.log("typeof " + typeof value);
+console.log("is undefined " + (value === undefined));
+console.log("is empty " + (value === ""));
+console.log("+ '!' " + (value + "!"));
+console.log("?? " + (value ?? "nothing"));
+console.log("|| " + (value || "nothing"));
+console.log("template " + `<${value}>`);
+console.log("parameter " + exclaim(value));
+console.log("default " + orNone(value));
+console.log("result " + typeof pass(value) + " " + pass(value));
+const person = new Person();
+person.name = value;
+console.log("field " + typeof person.name + " " + person.name + " " + JSON.stringify(person) + " " + Object.keys(person).join());
+const literal = { s: value, t: "t" };
+console.log("literal " + typeof literal.s + " " + (literal.s + literal.t) + " " + JSON.stringify(literal));
+const strings = ["a"];
+strings[0] = value;
+strings.push(value);
+console.log("elements " + strings.map(s => typeof s).join() + " " + strings.join("-") + " " + JSON.stringify(strings));
+const map = new Map<string, string>([["k", value]]);
+console.log("map " + typeof map.get("k") + " " + map.has("k"));
+const record: Record<string, number> = { undefined: 1 };
+console.log("as a key " + record[value]);
+const later = (): string => value + "?";
+console.log("captured " + later());
+let local = "start";
+local = value;
+local += "!";
+console.log("local " + local);
+console.log("compared " + (value < "a") + " " + (value > "a") + " " + (value == null));
+////= lines-5
+////= lines-4
+
+export {};
+//// a-string-that-was-never-made-travels-through-every-kind-of-place.ts
+////= text-11
+
+////= lines-28	Source	note	string
+////= lines-29	Source	own	number	1
+
+class Page {
+  title: string = "title";
+  constructor(public author: string = "nobody") {}
+  heading(): string {
+    return this.title + "!";
+  }
+  width(): number {
+    return this.title.length;
+  }
+}
+
+////= lines-45	same	s	string	string
+
+function joined(a: string, b: string): string {
+  return a + b;
+}
+
+////= lines-20	width	s	string	number	return	s.length
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const page = new Page("a" + (i % 3));
+  page.title = "t" + (i % 5);
+  warm += same("ab").length + joined("a", "bc").length + width("abcd") + page.heading().length + page.width() + page.author.length;
+}
+show("2000 honest rounds", () => warm);
+
+const source = new Source();
+
+show("a local", () => {
+  let s: string = "before";
+  s = source.note;
+  return s;
+});
+show("a parameter and a result", () => [same(source.note), joined(source.note, "b"), joined("a", source.note)]);
+show("its length in a typed function", () => width(source.note));
+show("a field", () => {
+  const page = new Page();
+  page.title = source.note;
+  return [page.title, typeof page.title, page.heading(), JSON.stringify(page), Object.keys(page)];
+});
+show("the length of the field", () => {
+  const page = new Page();
+  page.title = source.note;
+  return page.width();
+});
+show("a parameter property takes its default", () => new Page(source.note).author);
+show("an element", () => {
+  const list: string[] = ["a", "b", "c"];
+  list[1] = source.note;
+  return [list, list.join("-"), 1 in list];
+});
+show("the length of an element", () => {
+  const list: string[] = [source.note];
+  return list[0].length;
+});
+show("sorted among strings", () => ["b", source.note, "a"].sort());
+show("a captured variable", () => {
+  const held: string = source.note;
+  const read = (): string => held;
+  const tail = (): string => held + "!";
+  return [read(), tail()];
+});
+show("added to in a loop", () => {
+  let all = "";
+  for (let i = 0; i < 2; i++) all += source.note;
+  return all;
+});
+show("a key of a record", () => {
+  const record: Record<string, number> = {};
+  record[source.note] = 1;
+  return Object.keys(record);
+});
+show("a key of a map", () => {
+  const map = new Map<string, number>([[source.note, 1]]);
+  return [map.has("undefined"), map.has(source.note), [...map.keys()]];
+});
+show("a literal", () => {
+  const card: { front: string; back: string } = { front: source.note, back: "b" };
+  return [card.front, card.front + card.back, JSON.stringify(card)];
+});
+show("as an argument of string methods", () => ["undefined".indexOf(source.note), "a-undefined".split(source.note), "x".concat(source.note), "x".padEnd(3, source.note), "abc".startsWith(source.note)]);
+show("as an argument of other built-ins", () => [parseInt(source.note), Number(source.note), JSON.stringify(source.note), encodeURIComponent(source.note)]);
+show("JSON.parse of it", () => JSON.parse(source.note));
+show("new RegExp of it", () => new RegExp(source.note).source);
+show("compared", () => [source.note === "undefined", source.note == "undefined", source.note < "z", source.note > "a"]);
+//// a-string-under-a-length-in-every-place.ts
+////= show-30
+
+type Held = { length: number };
+
+function honest(seed: number): Held {
+  return { length: seed };
+}
+
+class Thing {
+  constructor(first: number, second: number) {}
+}
+
+const visitors: [string, Held][] = [
+  ["a string", "hello"],
+  ["an empty string", ""],
+  ["a glued string", "ab".repeat(2) + String(1)],
+  ["an array", [1, 2, 3]],
+  ["a function", honest],
+  ["a class", Thing],
+  ["a typed array", new Uint8Array(4)],
+  ["a String object", new String("boxed")],
+];
+
+////= pick-2
+
+////= lines-21	inAParameter	held	Held	unknown	held.length
+
+////= inALocal	local.length + 1
+
+////= inALocalThatChanges	local.length + 1
+
+////= Box-4	his.held.length + 1
+
+////= Hidden	his.#held.length + 1	Hidden.latest.length + 1
+
+////= lines-264	inAnElement	list	Held	unknown	length	1
+
+////= inEveryElement	held.length + 1
+
+////= inAMapValue	held.length + 1
+
+function inARecord(record: Record<string, Held>, key: string): unknown {
+  return record[key].length + 1;
+}
+
+function inATuple(pair: [number, Held]): unknown {
+  return [pair[0], pair[1].length + 1];
+}
+
+////= captured	held.length + 1
+
+function orNull(held: Held | null): unknown {
+  return held === null ? "null" : held.length + 1;
+}
+
+function orUndefined(held?: Held): unknown {
+  return held === undefined ? "undefined" : held.length + 1;
+}
+
+function generic<T extends Held>(held: T): unknown {
+  return held.length + 1;
+}
+
+function withADefault(held: Held = honest(3)): unknown {
+  return held.length + 1;
+}
+
+function inAnOptionalMember(holder: { held?: Held }): unknown {
+  return holder.held === undefined ? "absent" : holder.held.length + 1;
+}
+
+let shared: Held = honest(4);
+function inAModuleVariable(): unknown {
+  return shared.length + 1;
+}
+
+const reusedBox = new Box(honest(5));
+const reusedCapture = captured(honest(6));
+let warm = 0;
+////= for-2
+console.log("after 2000 honest values", warm);
+
+////= for-49	pick(index).length + 1
+//// a-structured-clone-of-nested-instances-maps-sets-and-dates.ts
+////= show-30
+
+////= lines-35	Wheel	size	17	turn	"turning "
+
+class Car {
+  name = "car";
+  wheels: Wheel[] = [new Wheel(), new Wheel()];
+  spare: Wheel = this.wheels[0];
+  built = new Date(86400000);
+  owners = new Map<string, Wheel>([["first", this.wheels[1]]]);
+  codes = new Set<number>([1, 2]);
+  bytes = new Uint8Array([7, 8]);
+  pattern = /a+/g;
+  failure: Error = new RangeError("worn");
+  big = 2n ** 70n;
+  nothing: undefined = undefined;
+  none: null = null;
+  self: Car | null = null;
+  drive(): string {
+    return this.wheels.map(wheel => wheel.turn()).join();
+  }
+}
+
+function sizes(car: Car): number[] {
+  return car.wheels.map(wheel => wheel.size);
+}
+
+function firstTurn(car: Car): string {
+  return car.wheels[0].turn();
+}
+
+function ownerSize(car: Car): number {
+  return car.owners.get("first")?.size ?? -1;
+}
+
+////= lines-90	year	car	Car	number	car.built.getUTCFullYear
+
+let warm = 0;
+for (let i = 0; i < 1000; i++) {
+  const honest = new Car();
+  warm += sizes(honest).length + firstTurn(honest).length + ownerSize(honest) + year(honest) + honest.drive().length;
+}
+console.log("after 1000 honest cars", warm);
+
+const source = new Car();
+source.self = source;
+const clone = structuredClone(source);
+
+attempt("keys", () => Object.keys(clone));
+attempt("sizes", () => sizes(clone));
+attempt("a method of a nested instance", () => firstTurn(clone));
+attempt("its own method", () => clone.drive());
+attempt("classes", () => [clone instanceof Car, clone.wheels[0] instanceof Wheel, clone.wheels instanceof Array]);
+attempt("what was shared is still shared", () => [clone.spare === clone.wheels[0], clone.owners.get("first") === clone.wheels[1], clone.spare === source.spare]);
+attempt("the cycle", () => [clone.self === clone, clone.self === source]);
+attempt("the date", () => [clone.built instanceof Date, year(clone), clone.built === source.built, clone.built.getTime()]);
+attempt("the map", () => [clone.owners instanceof Map, clone.owners.size, ownerSize(clone)]);
+attempt("the set", () => [clone.codes instanceof Set, [...clone.codes]]);
+attempt("the bytes", () => [clone.bytes instanceof Uint8Array, [...clone.bytes], clone.bytes.buffer === source.bytes.buffer]);
+attempt("the pattern", () => [clone.pattern instanceof RegExp, clone.pattern.source, clone.pattern.flags, clone.pattern.lastIndex]);
+attempt("the error", () => [clone.failure instanceof RangeError, clone.failure instanceof Error, clone.failure.name, clone.failure.message]);
+attempt("the rest", () => [clone.big, clone.nothing, clone.none, "nothing" in clone, clone.name]);
+attempt("a store to the clone leaves the source alone", () => {
+  clone.wheels[0].size = 20;
+  clone.codes.add(3);
+  clone.bytes[0] = 99;
+  return [source.wheels[0].size, source.codes.size, source.bytes[0], clone.spare.size];
+});
+attempt("an array of instances", () => {
+  const wheels = structuredClone([new Wheel(), new Wheel()]);
+  return [wheels.length, wheels[0].size, typeof wheels[0].turn];
+});
+attempt("a map of instances", () => {
+  const wheels = structuredClone(new Map([["a", new Wheel()]]));
+  return [wheels.get("a")?.size, typeof wheels.get("a")?.turn];
+});
+attempt("holes, -0 and NaN survive", () => {
+  const numbers = new Array<number>(3);
+  numbers[1] = -0;
+  const copy = structuredClone({ numbers, odd: NaN });
+  return [0 in copy.numbers, copy.numbers, copy.odd];
+});
+attempt("honest again", () => [sizes(new Car()), firstTurn(new Car())]);
+//// a-subclass-has-an-arrow-field-that-uses-this.ts
+class Base {}
+class Arrow extends Base {
+  count: number = 1;
+  handler: () => number = () => this.count;
+}
+console.log("gives " + new Arrow().handler());
+//// a-subclass-narrows-a-field-and-the-base-class-stores-the-wider-type.ts
+////= show-33
+
+class Home {
+  pet: Animal = new Animal("any");
+  adopt(animal: Animal): void {
+    this.pet = animal;
+  }
+  reset(): void {
+    this.pet = new Cat("stray");
+  }
+}
+
+class DogHome extends Home {
+  pet: Dog = new Dog("rex");
+  legs(): number {
+    return this.pet.legs + 1;
+  }
+  bark(): string {
+    return this.pet.bark();
+  }
+}
+
+class Counter {
+  value: number | string = 0;
+  label(text: string): void {
+    this.value = text;
+  }
+}
+
+class NumberCounter extends Counter {
+  value: number = 1;
+  doubled(): number {
+    return this.value * 2;
+  }
+  next(): number {
+    return this.value + 1;
+  }
+}
+
+class Pack {
+  members: Animal[] = [];
+  add(animal: Animal): void {
+    this.members.push(animal);
+  }
+}
+
+class DogPack extends Pack {
+  members: Dog[] = [new Dog("rex")];
+  totalLegs(): number {
+    let total = 0;
+    for (const dog of this.members) total += dog.legs;
+    return total;
+  }
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const home = new DogHome();
+  home.adopt(new Dog("d"));
+  const counter = new NumberCounter();
+  const pack = new DogPack();
+  pack.add(new Dog("e"));
+  warm += home.legs() + home.bark().length + counter.doubled() + counter.next() + pack.totalLegs();
+}
+console.log("after 2000 honest uses", warm);
+
+attempt("the base method adopts a cat", () => {
+  const home = new DogHome();
+  home.adopt(new Cat("tom"));
+  return [home.legs(), home.pet.name, home.pet.tag, home.pet instanceof Dog];
+});
+attempt("the base method adopts a cat, which barks", () => {
+  const home = new DogHome();
+  home.adopt(new Cat("tom"));
+  return home.bark();
+});
+attempt("the base method resets", () => {
+  const home = new DogHome();
+  home.reset();
+  return [home.legs(), home.pet.name];
+});
+attempt("a dog again", () => {
+  const home = new DogHome();
+  home.reset();
+  home.adopt(new Dog("back"));
+  return [home.legs(), home.bark()];
+});
+attempt("the base method stores a string into a number", () => {
+  const counter = new NumberCounter();
+  counter.label("five");
+  return [counter.doubled(), counter.next(), typeof counter.value];
+});
+attempt("the base method stores the text 5", () => {
+  const counter = new NumberCounter();
+  counter.label("5");
+  return [counter.doubled(), counter.next()];
+});
+attempt("the base method pushes a cat", () => {
+  const pack = new DogPack();
+  pack.add(new Cat("tom"));
+  return [pack.totalLegs(), pack.members.map(dog => dog.legs)];
+});
+attempt("through a variable of the base type", () => {
+  const home = new DogHome();
+  const base: Home = home;
+  base.pet = new Cat("tom");
+  return [home.legs(), home.pet.name];
+});
+attempt("homes of both classes in one array", () => {
+  const homes: Home[] = [new Home(), new DogHome(), new DogHome()];
+  homes.forEach((home, index) => index === 1 && home.reset());
+  return homes.map(home => (home instanceof DogHome ? home.legs() : home.pet.name));
+});
+//// a-subclass-of-array-is-constructed-and-pushed-to.ts
+class Stack extends Array<number> {
+  limit: number = 3;
+  top(): number {
+    return this[this.length - 1];
+  }
+}
+const stack = new Stack();
+stack.push(1, 2);
+console.log("top " + stack.top());
+//// a-subclass-overrides-an-overloaded-method-and-answers-the-other-way-round.ts
+////= text-19
+
+class Reader {
+  lines: string[] = ["one", "two", "three"];
+  read(): string;
+  read(count: number): string[];
+  read(count?: number): string | string[] {
+    return count === undefined ? this.lines[0] : this.lines.slice(0, count);
+  }
+}
+
+class Swapped extends Reader {
+  read(): string;
+  read(count: number): string[];
+  read(count?: number): string | string[] {
+    return count === undefined ? this.lines.slice(0, 2) : this.lines[count];
+  }
+}
+
+class CountsArguments extends Reader {
+  read(): string;
+  read(count: number): string[];
+  read(...given: [] | [number]): string | string[] {
+    return given.length === 0 ? "nothing given" : ["given " + text(given[0])];
+  }
+}
+
+class Narrow extends Reader {
+  read(): string;
+  read(count: number): string[];
+  read(): string | string[] {
+    return "always " + arguments.length;
+  }
+}
+
+function first(reader: Reader): string {
+  const line: string = reader.read();
+  return text(line) + " | length " + text(line.length) + " | upper " + line.toUpperCase();
+}
+
+function some(reader: Reader): string {
+  const lines: string[] = reader.read(2);
+  return text(lines) + " | length " + text(lines.length) + " | joined " + lines.join("+");
+}
+
+function both(reader: Reader): string {
+  return reader.read() + "/" + reader.read(1).length;
+}
+
+let warm = 0;
+const honest = new Reader();
+for (let i = 0; i < 2000; i++) warm += first(honest).length + some(honest).length;
+console.log("2000 honest reads: " + warm);
+
+const readers: [string, () => Reader][] = [
+  ["the base", () => new Reader()],
+  ["swapped", () => new Swapped()],
+  ["counts its arguments", () => new CountsArguments()],
+  ["takes no parameter", () => new Narrow()],
+];
+
+for (const [label, make] of readers) {
+  attempt(label + ", first", () => first(make()));
+  attempt(label + ", some", () => some(make()));
+  attempt(label + ", both", () => both(make()));
+}
+
+interface Loose {
+  read(count?: number): unknown;
+}
+for (const [label, make] of readers) {
+  const loose: Loose = make();
+  attempt(label + ", undefined is given", () => loose.read(undefined));
+}
+
+const list: Reader[] = readers.map(([, make]) => make());
+attempt("a list of readers", () => list.map(reader => typeof reader.read() + " " + Array.isArray(reader.read(1))));
+attempt("the base again", () => first(honest));
+//// a-subclass-overrides-half-of-an-accessor-pair.ts
+const log: string[] = [];
+
+////= attempt-21
+
+class Base {
+  protected stored = 1;
+  get level(): number {
+    log.push("Base get");
+    return this.stored;
+  }
+  set level(value: number) {
+    log.push("Base set " + value);
+    this.stored = value;
+  }
+}
+
+class OnlyGetter extends Base {
+  get level(): number {
+    log.push("OnlyGetter get");
+    return -1;
+  }
+}
+
+class OnlySetter extends Base {
+  set level(value: number) {
+    log.push("OnlySetter set " + value);
+    this.stored = value * 100;
+  }
+}
+
+class Both extends Base {
+  get level(): number {
+    log.push("Both get");
+    return super.level + 1000;
+  }
+  set level(value: number) {
+    log.push("Both set " + value);
+    super.level = value + 1;
+  }
+}
+
+class Untouched extends Base {}
+
+////= read-3
+
+function bump(b: Base): number {
+  return ++b.level;
+}
+
+const makers: [string, () => Base][] = [
+  ["the base", () => new Base()],
+  ["a subclass that leaves it alone", () => new Untouched()],
+  ["only the getter overridden", () => new OnlyGetter()],
+  ["only the setter overridden", () => new OnlySetter()],
+  ["both overridden", () => new Both()],
+];
+
+for (const [label, make] of makers) {
+  attempt(label + ", read", () => read(make()));
+  attempt(label + ", typeof", () => typeof read(make()));
+  attempt(label + ", store", () => write(make(), 5));
+  attempt(label + ", increment", () => bump(make()));
+  attempt(label + ", plus one", () => read(make()) + 1);
+  attempt(label + ", own", () => Object.hasOwn(make(), "level") + " " + Object.keys(make()).join());
+}
+
+const honest = new Base();
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += write(honest, i) + read(honest);
+log.length = 0;
+console.log("2000 honest: " + sum);
+for (const [label, make] of makers) attempt("then " + label, () => write(make(), 7));
+
+const list: Base[] = makers.map(([, make]) => make());
+attempt("elements read", () => list.map(read).join());
+attempt("elements stored", () => list.map(b => write(b, 1)).join());
+
+class Holder {
+  constructor(public inner: Base) {}
+  raise(): number {
+    this.inner.level += 10;
+    return this.inner.level;
+  }
+}
+for (const [label, make] of makers) attempt(label + ", through a field", () => new Holder(make()).raise());
+
+export {};
+//// a-subclass-prototype-gets-another-parent-in-every-place.ts
+////= Walker
+
+////= Swimmer
+
+////= lines-14	class	Person	extends	Walker	name	"person"
+
+class Holder {
+  constructor(public person: Person) {}
+  ask(): string {
+    return this.person.move() + " at " + this.person.speed;
+  }
+}
+
+////= lines-53	byParameter	p	Person	p.move	" at "	p.speed
+
+////= asWalker
+
+function byElement(list: Person[]): string {
+  return list[0].move() + " at " + list[0].speed;
+}
+
+const old = new Person();
+const holder = new Holder(old);
+const list = [old];
+const captured = (): string => old.move() + " at " + old.speed;
+
+function everywhere(label: string): void {
+  const local = old;
+  console.log(label + ", directly: " + old.move() + " at " + old.speed);
+  console.log(label + ", a local: " + local.move() + " at " + local.speed);
+  console.log(label + ", a parameter: " + byParameter(old));
+  console.log(label + ", typed as the parent: " + asWalker(old));
+  console.log(label + ", a field: " + holder.ask());
+  console.log(label + ", an element: " + byElement(list));
+  console.log(label + ", captured: " + captured());
+  console.log(label + ", a new person: " + byParameter(new Person()) + ", keys " + Object.keys(new Person()).join());
+  console.log(label + ", a real walker: " + asWalker(new Walker()));
+  console.log(label + ", instanceof: " + (old instanceof Person) + " " + (old instanceof Walker) + " " + (old instanceof Swimmer));
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += byParameter(old).length + asWalker(old).length + holder.ask().length + byElement(list).length + captured().length;
+console.log("2000 honest: " + warm);
+everywhere("before");
+
+Object.setPrototypeOf(Person.prototype, Swimmer.prototype);
+everywhere("under the swimmer");
+
+Object.setPrototypeOf(Person.prototype, Walker.prototype);
+everywhere("back under the walker");
+
+Reflect.setPrototypeOf(Person.prototype, Swimmer.prototype);
+console.log("once more, by Reflect: " + byParameter(old) + " | " + asWalker(old));
+Reflect.setPrototypeOf(Person.prototype, Walker.prototype);
+console.log("and back: " + byParameter(old) + " | " + asWalker(old));
+
+export {};
+//// a-subclass-prototype-hangs-under-a-link-that-has-the-method-made-in-many-ways.ts
+const between = (): string => "between";
+
+////= lines-38	Created	greet	string	"first"
+
+class CreatedBelow extends Created {}
+
+////= lines-19	greetCreated	f	Created	string	f.greet
+
+////= lines-295	CreatedBelow	CreatedBelow.prototype
+
+////= lines-38	Assigned	greet	string	"first"
+
+class AssignedBelow extends Assigned {}
+
+////= lines-19	greetAssigned	f	Assigned	string	f.greet
+
+////= lines-294	AssignedBelow	AssignedBelow.prototype
+
+////= lines-38	Defined	greet	string	"first"
+
+class DefinedBelow extends Defined {}
+
+////= lines-19	greetDefined	f	Defined	string	f.greet
+
+////= lines-296	DefinedBelow	DefinedBelow.prototype
+
+////= lines-38	Literal	greet	string	"first"
+
+class LiteralBelow extends Literal {}
+
+////= lines-19	greetLiteral	f	Literal	string	f.greet
+
+////= lines-300	LiteralBelow	LiteralBelow.prototype
+
+////= lines-38	Hung	greet	string	"first"
+
+class HungBelow extends Hung {}
+
+////= lines-19	greetHung	f	Hung	string	f.greet
+
+////= lines-299	HungBelow	HungBelow.prototype
+
+////= lines-38	Instance	greet	string	"first"
+
+class InstanceBelow extends Instance {}
+
+////= lines-19	greetInstance	f	Instance	string	f.greet
+
+////= lines-287	InstanceBelow	InstanceBelow.prototype
+
+////= lines-38	Two	greet	string	"first"
+
+class TwoBelow extends Two {}
+
+////= lines-19	greetTwo	f	Two	string	f.greet
+
+////= lines-170	TwoBelow	greetTwo	create	Two	"two links, the upper one created with the members"
+
+////= lines-38	Descriptors	greet	string	"first"
+
+class DescriptorsBelow extends Descriptors {}
+
+////= lines-19	greetDescriptors	f	Descriptors	string	f.greet
+
+////= lines-297	DescriptorsBelow	DescriptorsBelow.prototype
+
+////= lines-38	Getter	greet	string	"first"
+
+class GetterBelow extends Getter {}
+
+////= lines-19	greetGetter	f	Getter	string	f.greet
+
+////= lines-298	GetterBelow	GetterBelow.prototype
+
+////= lines-38	Frozen	greet	string	"first"
+
+class FrozenBelow extends Frozen {}
+
+////= lines-19	greetFrozen	f	Frozen	string	f.greet
+
+////= lines-170	FrozenBelow	greetFrozen	freeze	Frozen	"a frozen object created with the members"
+
+////= lines-38	Proxied	greet	string	"first"
+
+class ProxiedBelow extends Proxied {}
+
+////= lines-19	greetProxied	f	Proxied	string	f.greet
+
+////= lines-301	ProxiedBelow	ProxiedBelow.prototype
+
+export {};
+//// a-subclass-prototype-hangs-under-an-object-created-with-the-method-and-the-old-method-runs.ts
+////= First
+
+class Plain extends First {}
+
+const plain = new Plain();
+console.log(plain.greet());
+const between = Object.create(First.prototype, { greet: { value: () => "between" } });
+Object.setPrototypeOf(Plain.prototype, between);
+console.log(plain.greet());
+
+export {};
+//// a-subclass-that-overrides-nothing-runs-the-method-of-its-sibling-after-it-got-a-new-link.ts
+////= First
+
+////= lines-119	Child	extends	First	greet	"child"
+
+class Plain extends First {}
+
+////= lines-19	greet	f	First	string	f.greet
+
+const child = new Child();
+const plain = new Plain();
+console.log(greet(child) + " | " + greet(plain));
+Object.setPrototypeOf(Plain.prototype, Object.create(First.prototype, { greet: { value: () => "between" } }));
+console.log(greet(child) + " | " + greet(plain));
+
+export {};
+//// a-switch-inside-a-closure-over-a-captured-union-and-a-third-string-arrives.ts
+type Side = "left" | "right";
+////= lines-118	ask	run	number
+function turn(side: Side): number {
+  return ask(() => {
+    switch (side) {
+      case "left":
+        return -1;
+      case "right":
+        return 1;
+      default:
+        return 0;
+    }
+  });
+}
+const sides: Side[] = ["left"];
+const wide: unknown[] = sides;
+wide.push("up");
+console.log(turn(sides[0]));
+console.log(turn(sides[1]));
+export {};
+//// a-switch-over-a-sparse-enum-gets-numbers-that-wrap-around-to-a-member.ts
+enum Code {
+  Low = -5,
+  Zero = 0,
+  Mid = 1000,
+  Top = 2147483647,
+  Bottom = -2147483648,
+}
+function nameOf(code: Code): string {
+  switch (code) {
+    case Code.Low:
+      return "low";
+    case Code.Zero:
+      return "zero";
+    case Code.Mid:
+      return "mid";
+    case Code.Top:
+      return "top";
+    case Code.Bottom:
+      return "bottom";
+  }
+}
+const numbers: number[] = [-5, 0, 1000, 2147483647, -2147483648, 2147483648, -2147483649, 4294967291, 4294967296, 4294968296, -5.5, 999.9999999999999, -0, NaN];
+for (const n of numbers) console.log(n, nameOf(n), Code[n]);
+//// a-switch-over-ten-members-of-an-enum-gets-numbers-that-wrap-around-to-a-member.ts
+enum Op {
+  A,
+  B,
+  C,
+  D,
+  E,
+  F,
+  G,
+  H,
+  I,
+  J,
+}
+function nameOf(op: Op): string {
+  switch (op) {
+    case Op.A:
+      return "a";
+    case Op.B:
+      return "b";
+    case Op.C:
+      return "c";
+    case Op.D:
+      return "d";
+    case Op.E:
+      return "e";
+    case Op.F:
+      return "f";
+    case Op.G:
+      return "g";
+    case Op.H:
+      return "h";
+    case Op.I:
+      return "i";
+    case Op.J:
+      return "j";
+  }
+}
+const numbers: number[] = [0, 9, 10, -1, -0, 0.5, 8.999999999999998, NaN, Infinity, -Infinity, 2 ** 31, 2 ** 32, 2 ** 32 + 1, -(2 ** 32), 2 ** 32 + 9, 2 ** 53, 1e21, 5e-324, 4294967296.5];
+for (const n of numbers) console.log(n, nameOf(n));
+const wrapped: number = 2 ** 32 + 3;
+console.log(nameOf(wrapped));
+const tiny: number = 5e-324;
+console.log(nameOf(tiny));
+const minus: number = -0;
+console.log(nameOf(minus));
+//// a-switch-over-true-and-false-is-left-and-the-value-is-compared.ts
+const flags: boolean[] = [true, false];
+function text(flag: boolean): string {
+  switch (flag) {
+    case true:
+      return "true";
+    case false:
+      return "false";
+  }
+  return "neither, undefined: " + (flag === undefined);
+}
+console.log(text(flags[2]));
+//// a-symbol-arrives-where-a-description-is-optional.ts
+////= show-30
+
+type Described = { description?: string };
+
+////= lines-114	descriptionOf	item	Described	string	undefined	item.description
+
+////= lines-183	descriptionOrDefault	item	Described	string	item.description	"none"
+
+function lengthOfDescription(item: Described): number {
+  return item.description === undefined ? -1 : item.description.length;
+}
+
+function chained(item: Described): string | undefined {
+  return item.description?.toUpperCase();
+}
+
+////= lines-57	kindOf	item	Described
+
+function hasIt(item: Described): boolean {
+  return "description" in item;
+}
+
+////= lines-152	copy	item	Described
+
+function pattern({ description = "by default" }: Described): string {
+  return description;
+}
+
+class Label {
+  constructor(public item: Described) {}
+  text(): string {
+    return typeof this.item + ":" + this.item.description;
+  }
+}
+
+const values: [string, Described][] = [
+  ["an empty literal", {}],
+  ["a literal", { description: "literal" }],
+  ["a literal with undefined", { description: undefined }],
+  ["a symbol", Symbol("mark")],
+  ["a symbol with an empty description", Symbol("")],
+  ["a symbol without a description", Symbol()],
+  ["a registered symbol", Symbol.for("shared")],
+  ["a well-known symbol", Symbol.iterator],
+];
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const honest: Described = i % 2 === 0 ? { description: "d" + i } : {};
+  warm += (descriptionOf(honest) ?? "").length + descriptionOrDefault(honest).length + lengthOfDescription(honest) + (chained(honest) ?? "").length;
+  warm += kindOf(honest).length + (hasIt(honest) ? 1 : 0) + Object.keys(copy(honest)).length + pattern(honest).length + new Label(honest).text().length;
+}
+console.log("after 2000 literals", warm);
+
+for (const [name, value] of values) {
+  attempt(name + ": read", () => descriptionOf(value));
+  attempt(name + ": or a default", () => descriptionOrDefault(value));
+  attempt(name + ": its length", () => lengthOfDescription(value));
+  attempt(name + ": chained", () => chained(value));
+  attempt(name + ": typeof", () => kindOf(value));
+  attempt(name + ": in", () => hasIt(value));
+  attempt(name + ": spread", () => copy(value));
+  attempt(name + ": a pattern with a default", () => pattern(value));
+  attempt(name + ": in a field", () => new Label(value).text());
+  attempt(name + ": JSON", () => JSON.stringify(value));
+  attempt(name + ": keys", () => Object.keys(value));
+}
+attempt("elements", () => {
+  const items: Described[] = [{ description: "a" }, Symbol("b"), {}, Symbol()];
+  return items.map(item => item.description);
+});
+attempt("the same symbol twice", () => {
+  const items: Described[] = [Symbol.for("x"), Symbol.for("x"), Symbol("x")];
+  return [items[0] === items[1], items[0] === items[2], items.indexOf(items[2])];
+});
+//// a-symbol-under-a-description-in-every-place.ts
+////= show-30
+
+type Held = { description?: string };
+
+function honest(seed: number): Held {
+  return seed % 2 === 0 ? { description: "honest " + seed } : {};
+}
+
+const visitors: [string, Held][] = [
+  ["a symbol", Symbol("mark")],
+  ["a symbol without a description", Symbol()],
+  ["a symbol with an empty description", Symbol("")],
+  ["a registered symbol", Symbol.for("shared")],
+  ["a well-known symbol", Symbol.iterator],
+];
+
+////= pick-2
+
+////= lines-20	inAParameter	held	Held	unknown	return	held.description
+
+////= inALocal	local.description
+
+////= inALocalThatChanges	local.description
+
+////= Box-4	his.held.description
+
+////= Hidden	his.#held.description	Hidden.latest.description
+
+////= lines-156	inAnElement	list	Held	unknown	description
+
+////= inEveryElement	held.description
+
+////= inAMapValue	held.description
+
+////= lines-226	inARecord	record	string	Held	unknown	description
+
+function inATuple(pair: [number, Held]): unknown {
+  return [pair[0], pair[1].description];
+}
+
+////= captured	held.description
+
+function orNull(held: Held | null): unknown {
+  return held === null ? "null" : held.description;
+}
+
+function orUndefined(held?: Held): unknown {
+  return held === undefined ? "undefined" : held.description;
+}
+
+function generic<T extends Held>(held: T): unknown {
+  return held.description;
+}
+
+function withADefault(held: Held = honest(3)): unknown {
+  return held.description;
+}
+
+function inAnOptionalMember(holder: { held?: Held }): unknown {
+  return holder.held === undefined ? "absent" : holder.held.description;
+}
+
+let shared: Held = honest(4);
+////= lines-41	inAModuleVariable	unknown	shared.description
+
+const reusedBox = new Box(honest(5));
+const reusedCapture = captured(honest(6));
+let warm = 0;
+////= for-2
+console.log("after 2000 honest values", warm);
+
+////= for-49	pick(index).description
+//// a-table-keyed-by-an-enum-is-asked-for-a-key-it-does-not-have.ts
+////= Color
+
+const names: Record<Color, string> = { [Color.Red]: "red", [Color.Green]: "green" };
+const sizes: Record<Color, number> = { [Color.Red]: 1, [Color.Green]: 2 };
+
+////= lines-40	nameOf	color	Color	string	names[color
+////= lines-40	sizeOf	color	Color	number	sizes[color
+
+const seven: number = 7;
+const odd: Color = seven;
+console.log(nameOf(Color.Green), sizeOf(Color.Green));
+console.log(nameOf(odd));
+console.log(nameOf(odd) === undefined);
+console.log(typeof nameOf(odd));
+console.log(typeof nameOf(odd) === "string");
+console.log(nameOf(odd) ?? "no name");
+console.log(sizeOf(odd));
+console.log(sizeOf(odd) === undefined);
+console.log(typeof sizeOf(odd) === "number");
+console.log(sizeOf(odd) + 1);
+console.log(sizeOf(odd) ?? -1);
+//// a-table-of-functions-keyed-by-an-enum-is-called-with-a-value-that-is-no-member.ts
+////= lines-208	Action	Start	Stop
+
+const handlers: Record<Action, (n: number) => number> = {
+  [Action.Start]: n => n + 1,
+  [Action.Stop]: n => n - 1,
+};
+const inOrder: ((n: number) => number)[] = [n => n * 2, n => n * 3];
+
+function run(action: Action, n: number): number {
+  return handlers[action](n);
+}
+function runInOrder(action: Action, n: number): number {
+  return inOrder[action](n);
+}
+function tried(call: () => number): string {
+  try {
+    return String(call());
+  } catch (error) {
+    return error instanceof TypeError ? "TypeError" : "another error";
+  }
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += run(i % 2, i) + runInOrder(i % 2, i);
+console.log(warm);
+const numbers: number[] = [2, -1, 0.5, NaN, 2 ** 31];
+for (const n of numbers) {
+  const action: Action = n;
+  console.log(n, tried(() => run(action, 1)), tried(() => runInOrder(action, 1)), typeof handlers[action], typeof inOrder[action]);
+}
+const zero: number = -0;
+console.log(tried(() => run(zero, 1)), tried(() => runInOrder(zero, 1)));
+console.log(run(Action.Stop, 1), runInOrder(Action.Stop, 1));
+//// a-tag-is-rewritten-after-2000-honest-uses-at-one-site.ts
+////= show-4
+
+const log: string[] = [];
+
+////= attempt-2
+
+type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number };
+
+function area(s: Shape): number {
+  return s.kind === "circle" ? s.radius * 3 : s.side * s.side;
+}
+
+function circle(radius: number): Shape {
+  return { kind: "circle", radius };
+}
+
+function square(side: number): Shape {
+  return { kind: "square", side };
+}
+
+function retag(t: { kind: "circle" | "square" }): void {
+  t.kind = t.kind === "circle" ? "square" : "circle";
+}
+
+attempt("one object, one site", () => {
+  const s = circle(1);
+  let sum = 0;
+  for (let i = 0; i < 2004; i++) {
+    if (i === 2000) retag(s);
+    if (i === 2002) retag(s);
+    sum += area(s);
+  }
+  return sum;
+});
+attempt("many objects, one site, the last is retagged", () => {
+  const shapes: Shape[] = [];
+  for (let i = 0; i < 2001; i++) shapes.push(i & 1 ? circle(1) : square(1));
+  retag(shapes[2000]);
+  let sum = 0;
+  let bad = 0;
+  for (const s of shapes) {
+    const a = area(s);
+    if (a !== a) bad++;
+    else sum += a;
+  }
+  return [sum, bad];
+});
+attempt("a field, read in a method", () => {
+  class Holder {
+    shape: Shape = circle(2);
+    area(): number {
+      return this.shape.kind === "circle" ? this.shape.radius * 3 : this.shape.side * this.shape.side;
+    }
+  }
+  const h = new Holder();
+  let sum = 0;
+  for (let i = 0; i < 2000; i++) sum += h.area();
+  retag(h.shape);
+  return [sum, h.area()];
+});
+attempt("a captured shape", () => {
+  const s = square(2);
+  const read = () => area(s);
+  let sum = 0;
+  for (let i = 0; i < 2000; i++) sum += read();
+  retag(s);
+  return [sum, read()];
+});
+attempt("a result", () => {
+  let spoiled = false;
+  const make = (): Shape => {
+    const s = circle(1);
+    if (spoiled) retag(s);
+    return s;
+  };
+  let sum = 0;
+  for (let i = 0; i < 2000; i++) sum += area(make());
+  spoiled = true;
+  return [sum, area(make())];
+});
+attempt("stored to after the tag lies", () => {
+  const grow = (s: Shape): void => {
+    if (s.kind === "circle") s.radius += 1;
+    else s.side += 1;
+  };
+  const s = circle(1);
+  for (let i = 0; i < 2000; i++) grow(s);
+  retag(s);
+  grow(s);
+  return [JSON.stringify(s), Object.keys(s)];
+});
+attempt("called after the tag lies", () => {
+  type Action = { kind: "run"; run: () => number } | { kind: "wait"; ticks: number };
+  const act = (a: Action): number => (a.kind === "run" ? a.run() : a.ticks);
+  const waiting: Action = [{ kind: "wait", ticks: 5 } satisfies Action][0];
+  let sum = 0;
+  for (let i = 0; i < 2000; i++) sum += act(waiting);
+  const open: { kind: "run" | "wait" } = waiting;
+  open.kind = "run";
+  return [sum, act(waiting)];
+});
+attempt("iterated after the tag lies", () => {
+  type Bag = { kind: "many"; items: number[] } | { kind: "one"; item: number };
+  const total = (b: Bag): number => {
+    if (b.kind === "one") return b.item;
+    let sum = 0;
+    for (const n of b.items) sum += n;
+    return sum;
+  };
+  const one: Bag = [{ kind: "one", item: 5 } satisfies Bag][0];
+  let sum = 0;
+  for (let i = 0; i < 2000; i++) sum += total(one);
+  const open: { kind: "many" | "one" } = one;
+  open.kind = "many";
+  return [sum, total(one)];
+});
+//// a-tag-stored-alone-leaves-the-fields-of-the-old-variant.ts
+////= show-35
+
+type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number; label: string } | { kind: "dot" };
+
+function area(shape: Shape): number {
+  switch (shape.kind) {
+    case "circle":
+      return shape.radius * shape.radius * 3;
+    case "square":
+      return shape.side * shape.side;
+    case "dot":
+      return 0;
+  }
+}
+function labelOf(shape: Shape): string {
+  return shape.kind === "square" ? shape.label : shape.kind;
+}
+function labelLength(shape: Shape): number {
+  return shape.kind === "square" ? shape.label.length : -1;
+}
+function retag(shape: Shape, kind: Shape["kind"]): void {
+  shape.kind = kind;
+}
+function look(shape: Shape): unknown[] {
+  return [shape.kind, Object.keys(shape), JSON.stringify(shape), area(shape), labelOf(shape)];
+}
+
+const makers: [string, () => Shape][] = [
+  ["circle", () => ({ kind: "circle", radius: 2 })],
+  ["square", () => ({ kind: "square", side: 3, label: "three" })],
+  ["dot", () => ({ kind: "dot" })],
+];
+const kinds: Shape["kind"][] = ["circle", "square", "dot"];
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const shape = makers[i % 3][1]();
+  warm += area(shape) + labelOf(shape).length + labelLength(shape);
+}
+console.log("2000 honest rounds", warm);
+
+for (const [from, make] of makers) {
+  for (const to of kinds) {
+    attempt(from + " tagged " + to, () => {
+      const shape = make();
+      retag(shape, to);
+      return look(shape);
+    });
+    attempt(from + " tagged " + to + ", the label is used", () => {
+      const shape = make();
+      retag(shape, to);
+      return labelLength(shape);
+    });
+  }
+}
+attempt("tagged in the middle of a list", () => {
+  const shapes: Shape[] = [makers[0][1](), makers[1][1](), makers[2][1]()];
+  retag(shapes[0], "square");
+  retag(shapes[1], "circle");
+  retag(shapes[2], "circle");
+  return [shapes.map(area), shapes.map(labelOf)];
+});
+attempt("tagged after it was narrowed", () => {
+  const shape = makers[0][1]();
+  if (shape.kind !== "circle") return "no circle";
+  const alias: Shape = shape;
+  retag(alias, "square");
+  return [shape.kind, shape.radius, area(shape), area(alias)];
+});
+attempt("tagged and tagged back", () => {
+  const shape = makers[1][1]();
+  retag(shape, "dot");
+  const between = look(shape);
+  retag(shape, "square");
+  return [between, look(shape)];
+});
+attempt("honest again", () => makers.map(([, make]) => look(make())));
+//// a-tag-stored-alone-puts-a-number-where-the-new-variant-has-a-string.ts
+////= show-35
+
+////= lines-27	Count	kind	"count"	value	number
+////= lines-27	Name	kind	"name"	value	string
+interface Group {
+  kind: "group";
+  value: Count[];
+}
+type Entry = Count | Name | Group;
+
+function size(entry: Entry): number {
+  if (entry.kind === "count") return entry.value + 1;
+  if (entry.kind === "name") return entry.value.length;
+  return entry.value.length * 100;
+}
+function text(entry: Entry): string {
+  switch (entry.kind) {
+    case "count":
+      return entry.value.toFixed(1);
+    case "name":
+      return entry.value.toUpperCase();
+    case "group":
+      return entry.value.map(count => count.value).join("+");
+  }
+}
+function retag(entry: Entry, kind: Entry["kind"]): Entry {
+  entry.kind = kind;
+  return entry;
+}
+
+const makers: [string, () => Entry][] = [
+  ["count", () => ({ kind: "count", value: 41 })],
+  ["fraction", () => ({ kind: "count", value: 0.5 })],
+  ["name", () => ({ kind: "name", value: "abc" })],
+  ["group", () => ({ kind: "group", value: [{ kind: "count", value: 1 }, { kind: "count", value: 2 }] })],
+];
+const kinds: Entry["kind"][] = ["count", "name", "group"];
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const entry = makers[i % 4][1]();
+  warm += size(entry) + text(entry).length;
+}
+console.log("2000 honest rounds", warm);
+
+for (const [from, make] of makers) {
+  for (const to of kinds) {
+    attempt(from + " tagged " + to + ": size", () => size(retag(make(), to)));
+    attempt(from + " tagged " + to + ": text", () => text(retag(make(), to)));
+    attempt(from + " tagged " + to + ": json", () => JSON.stringify(retag(make(), to)));
+  }
+}
+//// a-test-for-undefined-of-a-number-parameter-is-used-as-a-value.ts
+////= lines-101	isMissing	n	number	undefined
+
+function isThere(n: number): boolean {
+  return n !== undefined;
+}
+
+function isNullish(n: number): boolean {
+  return n == null;
+}
+
+////= lines-79	hasTheKindUndefined	n	number	"undefined"
+
+////= lines-185	isNotANumber	n	number	"number"
+
+function keptInALocal(n: number): boolean {
+  const answer = n === undefined;
+  return answer;
+}
+
+const byAnArrow = (n: number): boolean => n === undefined;
+
+class Checker {
+  isMissing(n: number): boolean {
+    return n === undefined;
+  }
+}
+
+function asACondition(n: number): string {
+  return n === undefined ? "missing" : "there";
+}
+
+const list: number[] = [1, 2, 3];
+console.log("=== undefined " + isMissing(list[9]) + " " + isMissing(list[0]));
+console.log("!== undefined " + isThere(list[9]) + " " + isThere(list[0]));
+console.log("== null " + isNullish(list[9]) + " " + isNullish(list[0]));
+console.log("typeof === 'undefined' " + hasTheKindUndefined(list[9]) + " " + hasTheKindUndefined(list[0]));
+console.log("typeof !== 'number' " + isNotANumber(list[9]) + " " + isNotANumber(list[0]));
+console.log("kept in a local " + keptInALocal(list[9]) + " " + keptInALocal(list[0]));
+console.log("by an arrow " + byAnArrow(list[9]) + " " + byAnArrow(list[0]));
+console.log("by a method " + new Checker().isMissing(list[9]) + " " + new Checker().isMissing(list[0]));
+console.log("as a condition " + asACondition(list[9]) + " " + asACondition(list[0]));
+
+export {};
+//// a-test-for-undefined-used-as-a-value-gets-missing-numbers-from-many-sources.ts
+////= lines-101	isMissing	n	number	undefined
+
+////= lines-261	first	list
+
+function third(a: number, b: number): number {
+  return arguments[2];
+}
+
+////= lines-112	at	list	number	index	number	list[index
+
+////= lines-28	Size	width	number
+
+const integers = [1, 2, 3];
+console.log("past the end " + isMissing(integers[9]));
+const fractions = [0.5, 1.5];
+console.log("past the end of fractions " + isMissing(fractions[9]));
+console.log("through a function " + isMissing(at([1, 2, 3], 9)) + " " + isMissing(at([1, 2, 3], 1)));
+const holes = new Array<number>(2);
+console.log("a hole " + isMissing(holes[0]));
+const tuple: [string, number] = ["a", 1];
+tuple.pop();
+console.log("a popped tuple " + isMissing(tuple[1]));
+const view = new Float64Array(1);
+console.log("past the end of a typed array " + isMissing(view[5]));
+console.log("the first of an empty list " + isMissing(first<number>([])));
+console.log("an argument that was not passed " + isMissing(third(1, 2)));
+const two = [1, 2];
+const [, , fromAPattern] = two;
+console.log("the third of a pattern over two " + isMissing(fromAPattern));
+const blank: Partial<Size> = { width: undefined };
+const merged: Size = { ...{ width: 1 }, ...blank };
+console.log("blanked by a spread " + isMissing(merged.width));
+const source = { width: 1, height: 2 };
+const partial: Partial<typeof source> = source;
+delete partial.width;
+console.log("deleted " + isMissing(source.width));
+const narrow = { x: 1 };
+const wide: { x: number | undefined } = narrow;
+wide.x = undefined;
+console.log("stored through a wider alias " + isMissing(narrow.x));
+const ages: Record<string, number> = { ann: 30 };
+console.log("a missing entry of a record " + isMissing(ages.bob) + " " + isMissing(ages.ann));
+
+export {};
+//// a-text-file-is-declared-as-something-else/answer.number
+42
+//// a-text-file-is-declared-as-something-else/declarations.d.ts
+declare module "*.number" {
+  const value: number;
+  export default value;
+}
+
+declare module "*.point" {
+  const value: { x: number; y: number };
+  export default value;
+}
+//// a-text-file-is-declared-as-something-else/main.ts
+import answer from "./answer.number" with { type: "text" };
+import point from "./place.point" with { type: "text" };
+
+////= show-4
+
+const log: string[] = [];
+
+////= attempt-97
+
+////= sum-6
+
+attempt("honest", () => [plusOne(1), sum({ x: 1, y: 2 })]);
+attempt("a number that is a text", () => [answer, typeof answer, plusOne(answer), answer * 2, answer === 42]);
+attempt("a number that is a text: a method", () => answer.toFixed(1));
+attempt("a point that is a text", () => [typeof point, sum(point), point.x, Object.keys(point).length]);
+////= attempt-42	"in a typed local, a field and an element"	answer
+attempt("honest again", () => [plusOne(1), sum({ x: 1, y: 2 })]);
+//// a-text-file-is-declared-as-something-else/place.point
+x=1
+y=2
+//// a-text-file-is-declared-as-something-else/tsconfig.json
+{
+  "extends": "../../tsconfig.json",
+  "include": ["*.ts"]
+}
+//// a-thenable-of-the-program-is-awaited-honest.ts
+const log: string[] = [];
+
+////= Later
+
+async function wait(l: Later): Promise<number> {
+  return await l;
+}
+
+////= waitTwice
+
+////= line
+
+const l = new Later(1);
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += await wait(l);
+log.length = 0;
+line("2000 honest", warm);
+line("the class's then", await wait(l));
+
+export {};
+//// a-thenable-resolves-with-another-thenable.ts
+////= text-4
+
+type Fulfilled<T, A> = ((value: T) => A | PromiseLike<A>) | null;
+type Rejected<B> = ((reason: unknown) => B | PromiseLike<B>) | null;
+
+class Box<T> implements PromiseLike<T> {
+  label: string;
+  inside: T;
+  constructor(label: string, inside: T) {
+    this.label = label;
+    this.inside = inside;
+  }
+  then<A = T, B = never>(onfulfilled?: Fulfilled<T, A>, _?: Rejected<B>): PromiseLike<A | B> {
+    console.log("  then of " + this.label);
+    onfulfilled?.(this.inside);
+    return new Promise<A | B>(() => {});
+  }
+}
+
+class Refusing<T> implements PromiseLike<T> {
+  reason: unknown;
+  constructor(reason: unknown) {
+    this.reason = reason;
+  }
+  then<A = T, B = never>(_?: Fulfilled<T, A>, onrejected?: Rejected<B>): PromiseLike<A | B> {
+    console.log("  then of the refusing one");
+    onrejected?.(this.reason);
+    return new Promise<A | B>(() => {});
+  }
+}
+
+////= ticks
+
+////= lines-309	one(box: Box<number
+////= lines-309	two(box: Box<Box<number>
+////= lines-309	three(box: Box<Box<Box<number>>
+////= lines-309	mixed(box: Box<Promise<number>
+async function refused(box: Box<PromiseLike<number>>): Promise<string> {
+  try {
+    const n: number = await box;
+    return text(n + 1);
+  } catch (error) {
+    return "caught " + text(error);
+  }
+}
+
+async function round(label: string, run: () => Promise<string>): Promise<void> {
+  console.log("--- " + label);
+  const [result] = await Promise.all([run().then(value => {
+    console.log("  settled");
+    return value;
+  }), ticks(9)]);
+  console.log(label + ": " + result);
+}
+
+await round("one box", () => one(new Box("a", 1)));
+await round("two boxes", () => two(new Box("outer", new Box("inner", 2))));
+await round("three boxes", () => three(new Box("outer", new Box("middle", new Box("inner", 3)))));
+await round("a promise between two boxes", () => mixed(new Box("outer", Promise.resolve(new Box("inner", 4)))));
+await round("the inner one refuses", () => refused(new Box("outer", new Refusing<number>("no"))));
+await round("the inner one refuses with a box", () => refused(new Box("outer", new Refusing<number>(new Box("reason", 5)))));
+
+const selfish: { then?: (resolve: (value: unknown) => void) => void } = {};
+selfish.then = resolve => {
+  console.log("  then of the one that resolves with itself");
+  delete selfish.then;
+  resolve(selfish);
+};
+console.log("--- resolves with itself after dropping its then");
+const settled: unknown = await Promise.resolve().then(() => selfish);
+console.log("same object: " + (settled === selfish) + ", keys [" + Object.keys(selfish).join() + "]");
+
+export {};
+//// a-thenable-throws-before-and-after-it-resolves.ts
+////= text-4
+
+////= failure-2
+
+type Fulfilled<T, A> = ((value: T) => A | PromiseLike<A>) | null;
+type Rejected<B> = ((reason: unknown) => B | PromiseLike<B>) | null;
+
+class Faulty implements PromiseLike<number> {
+  how: string;
+  constructor(how: string) {
+    this.how = how;
+  }
+  then<A = number, B = never>(onfulfilled?: Fulfilled<number, A>, onrejected?: Rejected<B>): PromiseLike<A | B> {
+    switch (this.how) {
+      case "throws at once":
+        throw new RangeError("at once");
+      case "throws a number":
+        throw 7;
+      case "throws undefined":
+        throw undefined;
+      case "resolves and throws":
+        onfulfilled?.(1);
+        throw new RangeError("after resolving");
+      case "rejects and throws":
+        onrejected?.("rejected first");
+        throw new RangeError("after rejecting");
+      case "throws and would resolve later":
+        queueMicrotask(() => onfulfilled?.(2));
+        throw new SyntaxError("before the later call");
+    }
+    onfulfilled?.(0);
+    return new Promise<A | B>(() => {});
+  }
+}
+
+class ThrowingGetter implements PromiseLike<number> {
+  reads = 0;
+  get then(): PromiseLike<number>["then"] {
+    this.reads++;
+    throw new EvalError("the getter");
+  }
+}
+
+async function wait(thenable: PromiseLike<number>): Promise<string> {
+  let before = 10;
+  try {
+    before += await thenable;
+    return "went on with " + text(before);
+  } catch (error) {
+    return failure(error) + " with " + text(before);
+  } finally {
+    console.log("  finally");
+  }
+}
+
+const kinds = ["well behaved", "throws at once", "throws a number", "throws undefined", "resolves and throws", "rejects and throws", "throws and would resolve later"];
+
+for (const how of kinds) {
+  console.log(how + ", await: " + (await wait(new Faulty(how))));
+  console.log(how + ", Promise.resolve: " + (await Promise.resolve(new Faulty(how)).then(text, failure)));
+  console.log(how + ", returned from a reaction: " + (await Promise.resolve().then(() => new Faulty(how)).then(text, failure)));
+  console.log(how + ", returned from an async function: " + (await (async (): Promise<number> => new Faulty(how))().then(text, failure)));
+  console.log(how + ", Promise.all: " + (await Promise.all([new Faulty(how)]).then(text, failure)));
+  console.log(how + ", Promise.allSettled: " + (await Promise.allSettled([new Faulty(how)]).then(results => results.map(r => r.status + " " + (r.status === "fulfilled" ? text(r.value) : failure(r.reason))).join())));
+}
+
+const getter = new ThrowingGetter();
+console.log("a getter that throws, await: " + (await wait(getter)) + ", reads " + getter.reads);
+console.log("a getter that throws, Promise.resolve: " + (await Promise.resolve(getter).then(text, failure)) + ", reads " + getter.reads);
+console.log("a getter that throws, Promise.race: " + (await Promise.race([getter]).then(text, failure)) + ", reads " + getter.reads);
+
+export {};
+//// a-thenable-under-await-answers-at-once-later-or-never.ts
+////= text-4
+
+type Fulfilled<T, A> = ((value: T) => A | PromiseLike<A>) | null;
+type Rejected<B> = ((reason: unknown) => B | PromiseLike<B>) | null;
+
+class AtOnce implements PromiseLike<number> {
+  then<A = number, B = never>(onfulfilled?: Fulfilled<number, A>, _?: Rejected<B>): PromiseLike<A | B> {
+    console.log("at once: then runs");
+    onfulfilled?.(1);
+    console.log("at once: then ends");
+    return new Promise<A | B>(() => {});
+  }
+}
+
+class Later implements PromiseLike<number> {
+  jobs: number;
+  constructor(jobs: number) {
+    this.jobs = jobs;
+  }
+  then<A = number, B = never>(onfulfilled?: Fulfilled<number, A>, _?: Rejected<B>): PromiseLike<A | B> {
+    console.log("later " + this.jobs + ": then runs");
+    let left = this.jobs;
+    const step = (): void => {
+      if (left-- > 0) queueMicrotask(step);
+      else onfulfilled?.(this.jobs);
+    };
+    step();
+    return new Promise<A | B>(() => {});
+  }
+}
+
+class Never implements PromiseLike<number> {
+  asked = 0;
+  then<A = number, B = never>(_?: Fulfilled<number, A>, __?: Rejected<B>): PromiseLike<A | B> {
+    this.asked++;
+    console.log("never: then runs");
+    return new Promise<A | B>(() => {});
+  }
+}
+
+////= ticks
+
+async function wait(label: string, awaited: PromiseLike<number> | number): Promise<void> {
+  console.log(label + ": before the await");
+  const n: number = await awaited;
+  console.log(label + ": after the await with " + text(n));
+}
+
+async function round(label: string, awaited: PromiseLike<number> | number): Promise<void> {
+  console.log("--- " + label);
+  const waiting = wait(label, awaited);
+  console.log(label + ": the caller goes on");
+  await Promise.all([waiting, ticks(6)]);
+}
+
+await round("a number", 0);
+await round("a settled promise", Promise.resolve(0));
+await round("at once", new AtOnce());
+await round("later 0", new Later(0));
+await round("later 2", new Later(2));
+await round("a promise made from a thenable", Promise.resolve(new AtOnce()));
+
+console.log("--- never");
+const never = new Never();
+let finished = false;
+wait("never", never).then(() => {
+  finished = true;
+});
+await ticks(4);
+console.log("never: asked " + never.asked + " time(s), finished " + finished);
+
+export {};
+//// a-thenable-under-await-calls-back-twice.ts
+////= text-4
+
+type Fulfilled<T, A> = ((value: T) => A | PromiseLike<A>) | null;
+type Rejected<B> = ((reason: unknown) => B | PromiseLike<B>) | null;
+
+class Scripted implements PromiseLike<number> {
+  label: string;
+  script: (resolve: (value: number) => unknown, reject: (reason: unknown) => unknown) => void;
+  constructor(label: string, script: (resolve: (value: number) => unknown, reject: (reason: unknown) => unknown) => void) {
+    this.label = label;
+    this.script = script;
+  }
+  then<A = number, B = never>(onfulfilled?: Fulfilled<number, A>, onrejected?: Rejected<B>): PromiseLike<A | B> {
+    console.log(this.label + ": then gets " + typeof onfulfilled + " and " + typeof onrejected + ", " + arguments.length + " arguments");
+    this.script(
+      value => (onfulfilled ? onfulfilled(value) : "no function"),
+      reason => (onrejected ? onrejected(reason) : "no function"),
+    );
+    return new Promise<A | B>(() => {});
+  }
+}
+
+let continued = 0;
+
+async function wait(thenable: PromiseLike<number>, label: string): Promise<string> {
+  try {
+    const n: number = await thenable;
+    continued++;
+    return label + " continued with " + text(n) + ", twice it is " + text(n * 2);
+  } catch (error) {
+    continued++;
+    return label + " caught " + text(error);
+  }
+}
+
+const scripts: [string, (resolve: (value: number) => unknown, reject: (reason: unknown) => unknown) => void][] = [
+  ["once", resolve => {
+    console.log("  the callback returns " + text(resolve(1)));
+  }],
+  ["twice", resolve => {
+    resolve(1);
+    console.log("  the second call returns " + text(resolve(2)));
+  }],
+  ["three times", resolve => {
+    resolve(1);
+    resolve(2);
+    resolve(3);
+  }],
+  ["resolves and then rejects", (resolve, reject) => {
+    resolve(1);
+    reject("too late");
+  }],
+  ["rejects and then resolves", (resolve, reject) => {
+    reject("first");
+    resolve(2);
+  }],
+  ["rejects twice", (_, reject) => {
+    reject("first");
+    reject("second");
+  }],
+  ["once now and once in a later job", resolve => {
+    resolve(1);
+    queueMicrotask(() => {
+      console.log("  the later call returns " + text(resolve(2)));
+    });
+  }],
+  ["only in a later job, twice", resolve => {
+    queueMicrotask(() => {
+      resolve(10);
+      resolve(20);
+    });
+  }],
+];
+
+for (const [label, script] of scripts) {
+  continued = 0;
+  console.log(await wait(new Scripted(label, script), label));
+  await null;
+  await null;
+  console.log(label + ": the function went on " + continued + " time(s)");
+}
+
+console.log(await wait(Promise.resolve(5), "a real promise at the same place"));
+
+export {};
+//// a-third-number-is-promised-to-a-class-of-two-numbers.ts
+////= text-11
+
+////= lines-28	Vector	z	number
+class Vector {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+  squared(): number {
+    return this.x * this.x + this.y * this.y + this.z * this.z;
+  }
+  plus(other: Vector): Vector {
+    const sum = new Vector(this.x + other.x, this.y + other.y);
+    sum.z = this.z + other.z;
+    return sum;
+  }
+}
+
+function deep(x: number, y: number, z: number): Vector {
+  const vector = new Vector(x, y);
+  vector.z = z;
+  return vector;
+}
+
+function parts(vector: Vector): unknown[] {
+  return [vector.x, vector.y, vector.z];
+}
+
+const flat = new Vector(1.5, 2.5);
+show("parts", () => parts(flat));
+show("squared", () => flat.squared());
+show("keys", () => Object.keys(flat));
+show("JSON", () => JSON.stringify(flat));
+show("flat plus flat", () => parts(flat.plus(flat)));
+show("keys of the sum", () => Object.keys(flat.plus(flat)));
+show("flat plus deep", () => parts(flat.plus(deep(1, 1, 1))));
+show("deep plus deep", () => parts(deep(1, 2, 3).plus(deep(0.5, 0.5, 0.5))));
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += deep(i, 1, 0.5).squared();
+show("2000 deep ones", () => sum);
+show("a flat one", () => new Vector(3, 4).squared());
+show("a deep one", () => deep(3, 4, 0).squared());
+
+const many: Vector[] = [];
+for (let i = 0; i < 6; i++) many.push(i % 3 === 2 ? new Vector(i, i) : deep(i, i, i));
+show("z of six", () => many.map(v => v.z));
+show("x of six", () => many.map(v => v.x));
+show("z added up", () => many.reduce((total, v) => total + v.z, 0));
+show("z added up where it is a number", () => many.reduce((total, v) => total + (typeof v.z === "number" ? v.z : 100), 0));
+show("in a typed array", () => Array.from(new Float64Array(many.map(v => v.z))));
+show("in a typed array of whole numbers", () => Array.from(new Int32Array(many.map(v => v.z))));
+//// a-this-type-promises-an-object-that-the-helper-does-not-pass.ts
+////= show-6
+
+interface Description<D, M> {
+  data: D;
+  methods: M & ThisType<D & M>;
+}
+
+function joined<D extends object, M extends object>(description: Description<D, M>): D & M {
+  return Object.assign({}, description.data, description.methods);
+}
+function onlyMethods<D extends object, M extends object>(description: Description<D, M>): M {
+  return description.methods;
+}
+function dataBelow<D extends object, M extends object>(description: Description<D, M>): M {
+  return Object.assign(Object.create(description.data), description.methods);
+}
+
+////= lines-66	honest	joined
+show("joined: read", () => honest.read());
+show("joined: bump", () => honest.bump());
+show("joined: title", () => honest.title());
+show("joined: twice", () => honest.twice());
+show("joined: keys", () => Object.keys(honest).join());
+
+////= lines-66	bare	onlyMethods
+show("only the methods: read", () => bare.read());
+show("only the methods: bump", () => bare.bump());
+show("only the methods: title", () => bare.title());
+show("only the methods: twice", () => bare.twice());
+show("only the methods: keys", () => Object.keys(bare).join());
+
+const source = { count: 1, label: "below" };
+const below = dataBelow({
+  data: source,
+  methods: {
+    read(): number {
+      return this.count;
+    },
+    bump(): number {
+      return ++this.count;
+    },
+    title(): string {
+      return this.label.toUpperCase();
+    },
+  },
+});
+show("data on the prototype: read", () => below.read());
+show("data on the prototype: bump", () => below.bump());
+show("data on the prototype: title", () => below.title());
+show("data on the prototype: keys", () => Object.keys(below).join());
+show("data on the prototype: the source", () => source.count);
+//// a-trap-changes-the-target-in-the-middle-of-typed-code.ts
+////= show-38
+
+const log: string[] = [];
+
+////= logged
+
+////= lines-68	total	v	Vec	number	v.x	v.y
+
+function nameThenTotal(v: Vec): string {
+  return v.name + ":" + (v.x + v.y);
+}
+
+function normTwice(v: Vec): number[] {
+  return [v.norm(), v.norm()];
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += total(new Vec(i, 1)) + nameThenTotal(new Vec(i, 1)).length + normTwice(new Vec(3, 4))[1];
+console.log("after 2000 honest vectors", warm);
+
+function onRead(of: string, change: (target: Vec) => void): [Vec, Vec] {
+  const target = new Vec(3, 4);
+  let done = false;
+  const proxy = new Proxy(target, {
+    get(inner, key, receiver) {
+      if (key === of && !done) {
+        done = true;
+        log.push("changed at " + of);
+        change(inner);
+      }
+      return Reflect.get(inner, key, receiver);
+    },
+  });
+  return [proxy, target];
+}
+
+const changes: [string, (target: Vec) => void][] = [
+  ["y is deleted", target => void Reflect.deleteProperty(target, "y")],
+  ["y becomes a string", target => void Reflect.set(target, "y", "four")],
+  ["y becomes a getter", target => void Object.defineProperty(target, "y", { get: () => (log.push("getter"), 40), configurable: true })],
+  ["a member is added", target => void Reflect.set(target, "extra", 1)],
+  ["many members are added", target => {
+    for (let i = 0; i < 100; i++) Reflect.set(target, "extra" + i, i);
+  }],
+  ["the prototype is removed", target => void Object.setPrototypeOf(target, null)],
+  ["norm is covered by an own member", target => void Object.defineProperty(target, "norm", { value: () => -1, configurable: true })],
+  ["the target is frozen", target => void Object.freeze(target)],
+  ["x and y are swapped by deleting and adding", target => {
+    const { x, y } = target;
+    Reflect.deleteProperty(target, "x");
+    Reflect.deleteProperty(target, "y");
+    target.y = x;
+    target.x = y;
+  }],
+];
+for (const [name, change] of changes) {
+  logged(name + " at the read of x: x + y", () => total(onRead("x", change)[0]));
+  logged(name + " at the read of the name: name and total", () => nameThenTotal(onRead("name", change)[0]));
+  logged(name + " at the read of norm: norm twice", () => normTwice(onRead("norm", change)[0]));
+  logged(name + ": the target afterwards, used directly", () => {
+    const [proxy, target] = onRead("x", change);
+    total(proxy);
+    return [total(target), Object.keys(target).slice(0, 5), typeof target.norm];
+  });
+}
+//// a-trap-of-a-proxy-between-two-calls-covers-the-method-with-an-own-member.ts
+////= Plain
+
+function trapped(handler: ProxyHandler<Plain>): Plain {
+  return new Proxy(new Plain(), handler);
+}
+
+const nothing = (): void => {};
+
+////= drive-2
+
+////= UnderGetTrap
+
+////= underGetTrap
+
+drive("get", new UnderGetTrap(), underGetTrap);
+
+////= UnderSetTrap
+
+////= underSetTrap
+
+drive("set", new UnderSetTrap(), underSetTrap);
+
+////= UnderHasTrap
+
+////= underHasTrap
+
+drive("has", new UnderHasTrap(), underHasTrap);
+
+////= UnderDeleteTrap
+
+////= underDeleteTrap
+
+drive("deleteProperty", new UnderDeleteTrap(), underDeleteTrap);
+
+////= UnderOwnKeysTrap
+
+////= underOwnKeysTrap
+
+drive("ownKeys, by Object.keys", new UnderOwnKeysTrap(), underOwnKeysTrap);
+
+////= UnderForIn
+
+////= underForIn
+
+drive("ownKeys, by for-in", new UnderForIn(), underForIn);
+
+////= UnderPrototypeTrap
+
+////= underPrototypeTrap
+
+drive("getPrototypeOf, by instanceof", new UnderPrototypeTrap(), underPrototypeTrap);
+
+////= UnderDescriptorTrap
+
+////= underDescriptorTrap
+
+drive("getOwnPropertyDescriptor, by a spread", new UnderDescriptorTrap(), underDescriptorTrap);
+
+export {};
+//// a-trap-of-a-proxy-between-two-calls-honest.ts
+////= Plain
+
+function trapped(handler: ProxyHandler<Plain>): Plain {
+  return new Proxy(new Plain(), handler);
+}
+
+const nothing = (): void => {};
+
+////= drive-3
+
+////= UnderGetTrap
+
+////= underGetTrap
+
+drive("get", new UnderGetTrap(), underGetTrap);
+
+////= UnderSetTrap
+
+////= underSetTrap
+
+drive("set", new UnderSetTrap(), underSetTrap);
+
+////= UnderHasTrap
+
+////= underHasTrap
+
+drive("has", new UnderHasTrap(), underHasTrap);
+
+////= UnderDeleteTrap
+
+////= underDeleteTrap
+
+drive("deleteProperty", new UnderDeleteTrap(), underDeleteTrap);
+
+////= UnderOwnKeysTrap
+
+////= underOwnKeysTrap
+
+drive("ownKeys, by Object.keys", new UnderOwnKeysTrap(), underOwnKeysTrap);
+
+////= UnderForIn
+
+////= underForIn
+
+drive("ownKeys, by for-in", new UnderForIn(), underForIn);
+
+////= UnderPrototypeTrap
+
+////= underPrototypeTrap
+
+drive("getPrototypeOf, by instanceof", new UnderPrototypeTrap(), underPrototypeTrap);
+
+////= UnderDescriptorTrap
+
+////= underDescriptorTrap
+
+drive("getOwnPropertyDescriptor, by a spread", new UnderDescriptorTrap(), underDescriptorTrap);
+
+export {};

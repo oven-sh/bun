@@ -1,0 +1,1 @@
+{ "skipWithASAN": "seconds of turns of groups in plain Bun", "skipInVariants": "seconds of turns of groups in plain Bun that no flag of the build changes" }

@@ -1,0 +1,7 @@
+new Function: 2
+require of a file with no extension: refused, MODULE_NOT_FOUND
+require of a file with an unknown extension: refused, MODULE_NOT_FOUND
+require of a Markdown file: refused, MODULE_NOT_FOUND
+import of a file with no extension: refused, ERR_MODULE_NOT_FOUND
+import of a Markdown file: refused, ERR_MODULE_NOT_FOUND
+import of a data: URL: refused, ERR_MODULE_NOT_FOUND

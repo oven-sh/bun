@@ -1,0 +1,348 @@
+# instanceof with a built-in constructor is answered from the type of the value, or by a class test and a pristine test that can only answer yes. What is left walks the chain of the value for the prototype object
+# OPTIONS: only-passes=ResolveBuiltins
+# RUN: pipeline ResolveBuiltins
+# RUN(TWICE): pass ResolveBuiltins ResolveBuiltins ResolveBuiltins
+# TWICE: outcome: Changed
+# TWICE: outcome: Changed
+# TWICE: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = NewClosure function=f7
+    v9 = NewClosure function=f8
+    v10 = NewClosure function=f9
+    v11 = NewClosure function=f10
+    v12 = NewClosure function=f11
+    v13 = NewClosure function=f12
+    v14 = NewClosure function=f13
+    v15 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14
+    v16 = Builtin builtin=BunGlob
+    PropDefine v16, v2 key=@@hasInstance
+    v18 = NewClosure function=f15
+    v19 = NewClosure function=f16
+    v20 = NewClosure function=f17
+    v21 = NewClosure function=f18
+    v22 = NewClosure function=f19
+    v23 = Call v1, -, v18, v19, v20, v21, v22
+    Return
+}
+
+function f1 name="primitive" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Array" [isFreeName]
+    v3 = InstanceOf v0, v2
+    Return v3
+}
+# CHECK-LABEL: function f1 name="primitive"
+# CHECK-NOT: InstanceOf
+# CHECK: v3: false = Boolean
+# CHECK-NEXT: Return v3
+
+function f2 name="pristineArray" results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=anything
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Array" [isFreeName]
+    v3 = InstanceOf v0, v2
+    v4 = PropGet v1 key="Object" [isFreeName]
+    v5 = InstanceOf v0, v4
+    v6 = PropGet v1 key="Map" [isFreeName]
+    v7 = InstanceOf v0, v6
+    v8 = NewArray v3, v5, v7 contents=anything
+    Return v8
+}
+# CHECK-LABEL: function f2 name="pristineArray"
+# CHECK-NOT: InstanceOf
+# CHECK: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v0
+# CHECK-NOT: InstanceOf
+# CHECK: v3: true = Boolean boolean=true
+# CHECK-NOT: InstanceOf
+# CHECK: v5: true = Boolean boolean=true
+# CHECK-NOT: InstanceOf
+# CHECK: v7: false = Boolean
+# CHECK-NOT: InstanceOf
+
+function f3 name="pristineMap" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Map" [isFreeName]
+    v2 = Construct v1
+    v3 = InstanceOf v2, v1
+    v4 = PropGet v0 key="Object" [isFreeName]
+    v5 = InstanceOf v2, v4
+    v6 = PropGet v0 key="Array" [isFreeName]
+    v7 = InstanceOf v2, v6
+    v8 = NewArray v3, v5, v7 contents=anything
+    Return v8
+}
+# CHECK-LABEL: function f3 name="pristineMap"
+# CHECK-NOT: InstanceOf
+# CHECK: v3: true = Boolean boolean=true
+# CHECK-NOT: InstanceOf
+# CHECK: v5: true = Boolean boolean=true
+# CHECK-NOT: InstanceOf
+# CHECK: v7: false = Boolean
+# CHECK-NOT: InstanceOf
+
+function f4 name="unknownValue" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Array" [isFreeName]
+    v3 = InstanceOf v0, v2
+    Return v3
+}
+# CHECK-LABEL: function f4 name="unknownValue"
+# CHECK: [[isArray4]]: boolean = TypeTest v0 testedType=Array
+# CHECK-NEXT: Branch [[isArray4]] -> taken [[array4]](| 0), notTaken [[other4]](| 0)
+# CHECK: (v3: boolean):
+# CHECK-NEXT: Return v3
+# CHECK: [[array4]]([[tested4]]: Array):
+# CHECK-NEXT: [[isPristine4]]: boolean = IsPristine [[tested4]] builtinClass=Array aspects=[Names]
+# CHECK-NEXT: Branch [[isPristine4]] -> taken [[yes4]](), notTaken [[changed4]]()
+# CHECK: [[other4]]([[rest4]]: anything):
+# CHECK-NEXT: [[prototype4]]:{{*}}= Builtin builtin=ArrayPrototype
+# CHECK-NEXT: boolean = HasInPrototypeChain [[rest4]], [[prototype4]]
+# CHECK: [[yes4]]():
+# CHECK-NEXT: true = Boolean boolean=true
+# CHECK: [[changed4]]() frequency=Unlikely:
+# CHECK-NEXT: [[samePrototype4]]:{{*}}= Builtin builtin=ArrayPrototype
+# CHECK-NEXT: boolean = HasInPrototypeChain [[tested4]], [[samePrototype4]]
+# CHECK-NOT: InstanceOf
+
+function f5 name="classWithoutProof" parameters=[{type=Array}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Array" [isFreeName]
+    v3 = InstanceOf v0, v2
+    Return v3
+}
+# CHECK-LABEL: function f5 name="classWithoutProof"
+# CHECK-NOT: TypeTest
+# CHECK: [[isPristine5]]: boolean = IsPristine v0 builtinClass=Array aspects=[Names]
+# CHECK-NEXT: Branch [[isPristine5]] -> taken [[yes5]](), notTaken [[changed5]]()
+# CHECK: [[yes5]]():
+# CHECK-NEXT: true = Boolean boolean=true
+# CHECK: [[changed5]]() frequency=Unlikely:
+# CHECK-NEXT: [[prototype5]]:{{*}}= Builtin builtin=ArrayPrototype
+# CHECK-NEXT: boolean = HasInPrototypeChain v0, [[prototype5]]
+# CHECK-NOT: InstanceOf
+
+function f6 name="classWithLockedMembers" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Map" [isFreeName]
+    v3 = InstanceOf v0, v2
+    Return v3
+}
+# CHECK-LABEL: function f6 name="classWithLockedMembers"
+# CHECK: boolean = TypeTest v0 testedType=Map
+# CHECK: boolean = IsPristine {{*}} builtinClass=Map aspects=[Names]
+# CHECK: true = Boolean boolean=true
+
+function f7 name="otherClassWithoutProof" parameters=[{type=Map}] results=[{type=anything}] {
+  b0(v0: Map):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Array" [isFreeName]
+    v3 = InstanceOf v0, v2
+    Return v3
+}
+# CHECK-LABEL: function f7 name="otherClassWithoutProof"
+# CHECK-NOT: TypeTest
+# CHECK-NOT: IsPristine
+# CHECK-NOT: = Boolean
+# CHECK-NOT: InstanceOf
+# CHECK: [[prototype7]]:{{*}}= Builtin builtin=ArrayPrototype
+# CHECK-NEXT: [[walk7]]: boolean = HasInPrototypeChain v0, [[prototype7]]
+# CHECK-NEXT: v3: boolean = Upcast [[walk7]] castType=boolean
+# CHECK-NEXT: Return v3
+
+function f8 name="prototypeIsNotLocked" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="WeakRef" [isFreeName]
+    v3 = InstanceOf v0, v2
+    Return v3
+}
+# CHECK-LABEL: function f8 name="prototypeIsNotLocked"
+# CHECK-NOT: TypeTest
+# CHECK-NOT: IsPristine
+# CHECK-NOT: InstanceOf
+# CHECK: [[prototype8]]:{{*}}= Builtin builtin=WeakRefPrototype
+# CHECK-NEXT: [[walk8]]: boolean = HasInPrototypeChain v0, [[prototype8]]
+# CHECK-NEXT: v3: boolean = Upcast [[walk8]] castType=boolean
+# CHECK-NEXT: Return v3
+
+function f9 name="classIsNeverPristine" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Buffer" [isFreeName]
+    v3 = InstanceOf v0, v2
+    Return v3
+}
+# CHECK-LABEL: function f9 name="classIsNeverPristine"
+# CHECK-NOT: TypeTest
+# CHECK-NOT: IsPristine
+# CHECK-NOT: InstanceOf
+# CHECK: [[prototype9]]:{{*}}= Builtin builtin=BufferPrototype
+# CHECK-NEXT: [[walk9]]: boolean = HasInPrototypeChain v0, [[prototype9]]
+# CHECK-NEXT: v3: boolean = Upcast [[walk9]] castType=boolean
+# CHECK-NEXT: Return v3
+
+function f10 name="classWithoutInstanceTest" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Object" [isFreeName]
+    v3 = InstanceOf v0, v2
+    Return v3
+}
+# CHECK-LABEL: function f10 name="classWithoutInstanceTest"
+# CHECK-NOT: TypeTest
+# CHECK-NOT: IsPristine
+# CHECK-NOT: InstanceOf
+# CHECK: [[prototype10]]:{{*}}= Builtin builtin=ObjectPrototype
+# CHECK-NEXT: [[walk10]]: boolean = HasInPrototypeChain v0, [[prototype10]]
+# CHECK-NEXT: v3: boolean = Upcast [[walk10]] castType=boolean
+# CHECK-NEXT: Return v3
+
+function f11 name="hasInstanceIsDefined" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=BunGlob
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f11 name="hasInstanceIsDefined"
+# CHECK-NOT: TypeTest
+# CHECK-NOT: IsPristine
+# CHECK: v2: boolean = InstanceOf v0,
+# CHECK-NEXT: Return v2
+
+function f12 name="constructorIsNotConstant" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f12 name="constructorIsNotConstant"
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: v2: boolean = InstanceOf v0, v1
+# CHECK-NEXT: Return v2
+
+function f13 name="rareBlock" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Array" [isFreeName]
+    v4 = InstanceOf v0, v3
+    Throw v4
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f13 name="rareBlock"
+# CHECK-NOT: TypeTest
+# CHECK-NOT: IsPristine
+# CHECK-NOT: InstanceOf
+# CHECK: [[walk13]]: boolean = HasInPrototypeChain v0,
+# CHECK-NEXT: v4: boolean = Upcast [[walk13]] castType=boolean
+# CHECK-NEXT: Throw v4
+
+function f14 name="lockedConstructor" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Promise
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# TWICE-LABEL: function f14 name="lockedConstructor"
+# TWICE: boolean = TypeTest v0 testedType=Promise
+# TWICE-NOT: TypeTest
+# TWICE: boolean = IsPristine {{*}} builtinClass=Promise aspects=[Names]
+# TWICE-NOT: IsPristine
+# TWICE: boolean = HasInPrototypeChain
+# TWICE-NOT: IsPristine
+# TWICE: true = Boolean boolean=true
+# TWICE-NOT: IsPristine
+# TWICE: boolean = HasInPrototypeChain
+# TWICE-NOT: InstanceOf
+
+function f15 name="expectedConstructor" parameters=[{type=anything}, {type=builtin(Promise) flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f15 name="expectedConstructor"
+# CHECK: [[isPromise15]]:{{*}}= TypeTest v1 testedType=builtin(Promise)
+# CHECK-NEXT: Branch [[isPromise15]] -> taken [[known15]](), notTaken [[other15]]()
+# CHECK: [[known15]]():
+# CHECK-NEXT: boolean = TypeTest v0 testedType=Promise
+# CHECK: [[other15]]() frequency=Unlikely:
+# CHECK-NEXT: boolean = InstanceOf v0, v1
+# CHECK: boolean = HasInPrototypeChain
+# TWICE-LABEL: function f15 name="expectedConstructor"
+# TWICE: = TypeTest v1 testedType=builtin(Promise)
+# TWICE-NOT: testedType=builtin(Promise)
+
+function f16 name="expectedConstructorInRareBlock" parameters=[{type=anything}, {type=builtin(Promise) flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = InstanceOf v0, v1
+    Throw v3
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f16 name="expectedConstructorInRareBlock"
+# CHECK-NOT: TypeTest
+# CHECK: v3: boolean = InstanceOf v0, v1
+# CHECK-NEXT: Throw v3
+
+# A constructor that the host puts on the global object is native: it takes no Symbol.hasInstance of its own and no other parent, whoever has had it in hand.
+function f17 name="constructorOfTheHost" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Blob
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f17 name="constructorOfTheHost"
+# CHECK: = TypeTest v0 testedType=Blob
+# CHECK: = Builtin builtin=BlobPrototype
+# CHECK: boolean = HasInPrototypeChain
+# CHECK-NOT: InstanceOf
+
+# The table has no entry for FormData.prototype: it is read from the constructor, and what is no object there is left to the whole operation.
+function f18 name="prototypeWithoutEntry" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=FormData
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f18 name="prototypeWithoutEntry"
+# CHECK: [[prototype18]]:{{*}}= PropGet v1 key="prototype"
+# CHECK-NEXT: = TypeTest [[prototype18]] testedType=object
+# CHECK: boolean = HasInPrototypeChain v0,
+# CHECK: frequency=Rare:
+# CHECK-NEXT: boolean = InstanceOf v0, v1
+# TWICE-LABEL: function f18 name="prototypeWithoutEntry"
+# TWICE: = PropGet v1 key="prototype"
+# TWICE-NOT: = PropGet v1 key="prototype"
+
+# File answers by native code of its own.
+function f19 name="answersItself" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=File
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f19 name="answersItself"
+# CHECK-NOT: HasInPrototypeChain
+# CHECK: v2: boolean = InstanceOf v0, v1
+# CHECK-NEXT: Return v2

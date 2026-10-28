@@ -1,0 +1,3 @@
+error: TS1262: Identifier expected. 'await' is a reserved word at the top-level of a module.
+error: TS1102: 'delete' cannot be called on an identifier in strict mode.
+error: TS2699: Static property 'prototype' conflicts with built-in property 'Function.prototype' of constructor function 'Named'.

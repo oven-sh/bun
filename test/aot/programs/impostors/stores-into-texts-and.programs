@@ -1,0 +1,3209 @@
+////: List
+class List extends Array {
+  push(value) {
+    log.push("List.push " + value);
+    return 42;
+  }
+}
+////: arrays-6
+const arrays = [
+  ["an array", () => [5, 6]],
+  ["a subclass whose push has a computed name", () => new (class extends Array { [PUSH](value) { log.push("computed push " + value); return 42; } })(5, 6)],
+  ["an object whose push has a computed name", () => ({ [LENGTH]: 7, [PUSH](value) { log.push("computed push " + value); return "pushed"; }, [Symbol.iterator]: () => [8, 9][Symbol.iterator]() })],
+  ["an array that got a push under a computed name", () => { const a = [5, 6]; a[PUSH] = value => { log.push("stored push " + value); return -1; }; return a; }],
+  ["an array that got a push by defineProperty", () => Object.defineProperty([5, 6], PUSH, { value(value) { log.push("defined push " + value); return -2; } })],
+  ["an array whose prototype got a push by Object.assign", () => Object.setPrototypeOf([5, 6], Object.assign(Object.create(Array.prototype), { [PUSH](value) { log.push("assigned push " + value); return -3; } }))],
+  ["an object made from entries", () => Object.fromEntries([[LENGTH, 7], [PUSH, value => { log.push("entry push " + value); }], ["0", 5]])],
+];
+////: attempt-33
+attempt("new Array of a length, filled by push", () => {
+  const a = new Array(2);
+  a.push(1);
+  let total = 0;
+  for (const x of a) total += x;
+  return [a.length, total];
+});
+////: attempt-34
+attempt("a number stored in the environment", () => {
+  process.env.IMPOSTOR_NUMBER = 7;
+  const n = process.env.IMPOSTOR_NUMBER;
+  delete process.env.IMPOSTOR_NUMBER;
+  return n + 1;
+});
+////: attempt-35
+attempt("a proxy of an array, iterated", () => {
+  const a = new Proxy([5, 6], traps);
+  const seen = [];
+  for (const x of a) seen.push(x);
+  return seen;
+});
+////: attempt-36
+attempt("a proxy of an array, read by index", () => {
+  const a = new Proxy([5, 6], traps);
+  let total = 0;
+  for (let i = 0; i < a.length; i++) total += a[i];
+  return total;
+});
+////: attempt-41
+attempt("what slice returns for an array with its own constructor", () => {
+  const list = [5, 6];
+  list.constructor = Chosen;
+  const a = list.slice();
+  return [a.push(1), a.length];
+});
+////: attempt-42
+attempt("what split returns for an object with Symbol.split", () => {
+  const a = "a,b".split({ [Symbol.split]: () => new Set(["from a set"]) });
+  const seen = [];
+  for (const x of a) seen.push(x);
+  return [seen, a.length];
+});
+////: for-123
+for (let i = 0; i < 2000; i++) {
+  for (const [, use] of uses) {
+    try {
+      use(["a", "b", "c"]);
+    } catch {}
+  }
+}
+////: for-95
+for (const text of texts) {
+  attempt("length of " + text, () => lengthOf(make(text)));
+  attempt("is empty " + text, () => isEmpty(make(text)));
+  attempt("is longer than three " + text, () => isLongerThanThree(make(text)));
+  attempt("length if any of " + text, () => lengthIfAny(make(text)));
+  attempt("length by destructuring " + text, () => lengthByDestructuring(make(text)));
+  attempt("total with " + text, () => totalLength(["ab", make(text), "c"]));
+  if (log.length) console.log("log", log.splice(0).join(", "));
+}
+////: for-99
+for (let i = 0; i < 2000; i++) {
+  pushes([5, 6]);
+  iterates([5, 6]);
+  readsCharCode("abc");
+  truncates(7);
+  addsOne(7);
+  addsMembers(({ x: 1, y: 2 }));
+  storesMember(({ x: 1, y: 2 }));
+}
+////: numbers-7
+const numbers = [
+  ["an integer", () => 7],
+  ["an object whose valueOf has a computed name", () => ({ [VALUE_OF]() { log.push("computed valueOf"); return 2 ** 31 + 0.5; } })],
+  ["a Number object that got one under a computed name", () => { const n = new Number(7); n[VALUE_OF] = () => "3"; return n; }],
+  ["an instance of a class with a computed valueOf", () => new (class { [VALUE_OF]() { return 10n; } })()],
+];
+////: objects-9
+const objects = [
+  ["an object", () => ({ x: 1, y: 2 })],
+  ["members under computed names", () => ({ [X]: 10, [Y]: 20 })],
+  ["members under computed names in another order", () => ({ [Y]: "2", [X]: "1" })],
+  ["members stored under computed names", () => { const o = {}; o[Y] = 2; o[X] = 1; return o; }],
+  ["accessors under computed names", () => ({ get [X]() { log.push("get x"); return 10; }, set [X](value) { log.push("set x " + value); }, get [Y]() { log.push("get y"); return 20; } })],
+  ["accessors defined under computed names", () => Object.defineProperty({ x: 1, y: 2 }, X, { get() { log.push("defined get x"); return 100; }, set(value) { log.push("defined set x " + value); } })],
+  ["a read-only member defined under a computed name", () => Object.defineProperty({ x: 1, y: 2 }, X, { writable: false })],
+  ["an instance of a class with computed fields", () => new (class { [X] = 3; [Y] = 4; })()],
+  ["an instance of a class with computed accessors", () => new (class { get [X]() { log.push("class get x"); return 5; } set [X](value) { log.push("class set x " + value); } get [Y]() { return 6; } })()],
+  ["an object made from entries", () => Object.fromEntries([[Y, 2], [X, 1]])],
+  ["a member deleted under a computed name", () => { const o = { x: 1, y: 2 }; delete o[X]; return o; }],
+];
+////: pushes-18
+////= pushes
+
+////= iterates
+
+////= readsCharCode-3
+
+////= truncates-4
+
+////= addsOne-3
+
+////= calls-3
+
+////= addsMembers
+
+////= storesMember-3
+
+////= arrays-6
+////= strings-6
+////= numbers-7
+////: strings-6
+const strings = [
+  ["a string", () => "abc"],
+  ["an object whose charCodeAt has a computed name", () => ({ [CHAR_CODE_AT](index) { log.push("computed charCodeAt " + index); return "mine"; } })],
+  ["a String object that got one under a computed name", () => { const s = new String("xyz"); s[CHAR_CODE_AT] = () => -1; return s; }],
+  ["an instance of a class with a computed method", () => new (class { [CHAR_CODE_AT]() { return "of the class"; } })()],
+];
+////: texts
+const texts = [
+  "'hello'",
+  "''",
+  "'ab'.repeat(3) + 'c'",
+  "'\\ud83d\\ude00'",
+  "new String('hello')",
+  "new String('')",
+  "Object.setPrototypeOf(new String('hello'), null)",
+  "Object.create(new String('hello'))",
+  "Object.create('hello'.__proto__)",
+  "String.prototype",
+  "['h', 'i']",
+  "[]",
+  "[,,,]",
+  "Object.assign([], { length: 4294967295 })",
+  "Buffer.from('h\\u00e9llo')",
+  "new Uint16Array(3)",
+  "new ArrayBuffer(8)",
+  "function two(a, b) {}",
+  "class One { constructor(a) {} }",
+  "(function () { return arguments; })(1, 2, 3)",
+  "{ length: 5 }",
+  "{ length: '5' }",
+  "{ length: -0 }",
+  "{ length: 2.5 }",
+  "{ length: null }",
+  "{ length: { valueOf() { log.push('valueOf'); return 5; } } }",
+  "{ get length() { log.push('get length'); return 5; } }",
+  "{ get length() { throw new RangeError('no'); } }",
+  "Object.create({ length: 7 })",
+  "{}",
+  "new Map([[1, 2]])",
+  "new Set('abc')",
+  "5",
+  "5n",
+  "true",
+  "Symbol('hello')",
+  "null",
+  "undefined",
+  "new Proxy('hello'.split(''), { get(target, key, receiver) { log.push('get ' + String(key)); return Reflect.get(target, key, receiver); } })",
+  "new Proxy(new String('hello'), { get(target, key, receiver) { log.push('get ' + String(key)); return Reflect.get(target, key, receiver); } })",
+];
+////: traps-3
+const traps = {
+  get(target, key, receiver) {
+    log.push("get " + String(key));
+    return Reflect.get(target, key, receiver);
+  },
+  set(target, key, value, receiver) {
+    log.push("set " + String(key));
+    return Reflect.set(target, key, value, receiver);
+  },
+  apply(target, self, list) {
+    log.push("apply " + list.length);
+    return Reflect.apply(target, self, list);
+  },
+};
+////: uses-34
+////= uses-8
+
+////= values-15
+
+////= for-123
+
+////= for-60
+////: uses-8
+const uses = [
+  ["store a member", value => storeMember(value, 1)],
+  ["store an index", value => storeIndex(value, "x")],
+  ["store past the end", value => storePastTheEnd(value, "x")],
+  ["store the length", value => storeLength(value, 1)],
+  ["store by the key 1", value => storeByKey(value, "1", "x")],
+  ["store by the key length", value => storeByKey(value, "length", 0)],
+  ["store by a symbol", value => storeByKey(value, Symbol.for("s"), "x")],
+  ["delete an index", removeIndex],
+  ["delete the length", removeLength],
+  ["delete a missing member", removeMissing],
+  ["add to a member", addToMember],
+  ["increment the length", incrementLength],
+  ["assign if missing", assignIfMissing],
+  ["fill like a list", fillLikeAList],
+];
+////: values-15
+const values = [
+  "[\"a\", \"b\", \"c\"]",
+  "\"abc\"",
+  "\"\"",
+  "new String(\"abc\")",
+  "Object.freeze(new String(\"abc\"))",
+  "Object.freeze([\"a\", \"b\", \"c\"])",
+  "{ length: 3, 0: \"a\" }",
+  "new Uint8Array(3)",
+  "Buffer.from(\"abc\")",
+  "5",
+  "true",
+  "Symbol(\"s\")",
+  "5n",
+  "null",
+  "undefined",
+  "(function () { return arguments; })(\"a\", \"b\", \"c\")",
+];
+//// stores-into-texts-and-other-primitives-in-sloppy-code/main.cjs
+////= show-26
+
+////= lines-93	storeMember	text	value	text.member	text.member
+
+////= lines-231	storeIndex	text	text[0
+
+////= lines-231	storePastTheEnd	text	text[9
+
+////= lines-93	storeLength	text	value	text.length	text.length
+
+////= lines-233	storeByKey	text	key	text[key
+
+////= lines-191	removeIndex	text	delete	text[0
+
+////= lines-147	removeLength	text	delete	text.length
+
+////= lines-147	removeMissing	text	delete	text.missing
+
+////= lines-217	addToMember	text	text.count	1	text.count
+
+function incrementLength(text) {
+  text.length++;
+  return text.length;
+}
+
+function assignIfMissing(text) {
+  text.member ??= "assigned";
+  return text.member;
+}
+
+function fillLikeAList(text) {
+  for (let i = 0; i < text.length; i++) text[i] = "x";
+  return text;
+}
+
+////= uses-34
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// stores-into-texts-and-other-primitives-in-strict-code/main.mjs
+////= show-26
+
+////= lines-93	storeMember	text	value	text.member	text.member
+
+////= lines-231	storeIndex	text	text[0
+
+////= lines-231	storePastTheEnd	text	text[9
+
+////= lines-93	storeLength	text	value	text.length	text.length
+
+////= lines-233	storeByKey	text	key	text[key
+
+////= lines-191	removeIndex	text	delete	text[0
+
+////= lines-147	removeLength	text	delete	text.length
+
+////= lines-147	removeMissing	text	delete	text.missing
+
+////= lines-217	addToMember	text	text.count	1	text.count
+
+function incrementLength(text) {
+  text.length++;
+  return text.length;
+}
+
+function assignIfMissing(text) {
+  text.member ??= "assigned";
+  return text.member;
+}
+
+function fillLikeAList(text) {
+  for (let i = 0; i < text.length; i++) text[i] = "x";
+  return text;
+}
+
+////= uses-34
+
+export {};
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// string-functions-get-codes-and-pieces-that-are-not-numbers-or-texts.js
+////= show-26
+
+const log = [];
+globalThis.log = log;
+
+////= lines-3	fromCode	code	String.fromCharCode	code
+
+////= lines-3	fromCodePoint	code	String.fromCodePoint	code
+
+////= lines-55	fromTwoCodes	first	second	String.fromCharCode	first	second
+
+////= lines-257	fromManyCodes	codes	String.fromCharCode
+
+function fromCodesByApply(codes) {
+  return String.fromCharCode.apply(null, codes);
+}
+
+function shiftLetter(text) {
+  return String.fromCharCode(text.charCodeAt(0) + 1);
+}
+
+function raw(strings, ...values) {
+  return String.raw(strings, ...values);
+}
+
+for (let i = 0; i < 2000; i++) {
+  fromCode(97 + (i % 26));
+  fromCodePoint(97);
+  fromTwoCodes(97, 98);
+  fromManyCodes([97, 98]);
+  fromCodesByApply([97, 98]);
+  shiftLetter("a");
+}
+
+const codes = ["97", "'97'", "97.9", "-1", "65536 + 97", "0x1f600", "0x110000", "-0", "NaN", "Infinity", "null", "undefined", "true", "''", "'a'", "[97]", "[]", "[97, 98]", "{}", "{ valueOf() { log.push('valueOf'); return 97; } }", "new Number(97)", "97n", "Symbol('97')", "0xd83d", "2 ** 32 + 97", "1e21"];
+for (const code of codes) {
+  attempt("fromCharCode(" + code + ")", () => fromCode(make(code)));
+  attempt("fromCodePoint(" + code + ")", () => fromCodePoint(make(code)));
+  if (log.length) console.log("  log:", log.splice(0).join(", "));
+}
+attempt("no code at all", () => [String.fromCharCode(), String.fromCodePoint()]);
+attempt("two halves", () => [fromTwoCodes(0xd83d, 0xde00), fromTwoCodes(0xd83d, 0xde00).length, [...fromTwoCodes(0xd83d, 0xde00)].length]);
+attempt("the second code throws after the first is converted", () => fromTwoCodes({ valueOf() { log.push("first"); return 97; } }, Symbol("s")));
+console.log("  log:", log.splice(0).join(", "));
+
+for (const list of ["[97, 98]", "'ab'", "'12'", "new Uint8Array([97, 98])", "Buffer.from('ab')", "new Set([97])", "{ length: 2, 0: 97, 1: 98 }", "[]", "[, 97]", "null", "5", "['97', [98]]"]) {
+  attempt("spread " + list, () => fromManyCodes(make(list)));
+  attempt("apply " + list, () => fromCodesByApply(make(list)));
+}
+
+for (const text of ["'a'", "''", "'z'", "'\\uffff'", "new String('a')", "['a']", "{ charCodeAt() { return '9'; } }", "{ charCodeAt() { return 97n; } }", "{ charCodeAt() { return null; } }", "5", "null"]) {
+  attempt("shift " + text, () => shiftLetter(make(text)));
+}
+
+attempt("String.raw as a tag", () => String.raw`a\n${1}b${null}c${[1, 2]}`);
+attempt("String.raw with a plain object", () => raw({ raw: ["a", "b", "c"] }, 1, 2, 3));
+attempt("String.raw with a text for the pieces", () => raw({ raw: "abc" }, 1, 2));
+attempt("String.raw with an array-like", () => raw({ raw: { length: 2, 0: "x", 1: "y" } }, "-"));
+attempt("String.raw with pieces that are not texts", () => raw({ raw: [1, null, undefined, {}] }, "-", "-", "-"));
+attempt("String.raw with a symbol among the values", () => raw({ raw: ["a", "b"] }, Symbol("s")));
+attempt("String.raw with a symbol that is never reached", () => raw({ raw: ["a"] }, Symbol("s")));
+attempt("String.raw with no pieces", () => [raw({ raw: [] }, 1), raw({ raw: { length: -1 } }), raw({ raw: {} })]);
+attempt("String.raw with nothing", () => raw({}));
+attempt("String.raw with a text", () => raw("abc"));
+attempt("borrowed conversions", () => [String.prototype.toString.call("a"), String.prototype.valueOf.call(new String("a"))]);
+attempt("String.prototype.toString on a number", () => String.prototype.toString.call(5));
+attempt("String.prototype.valueOf on a look-alike", () => String.prototype.valueOf.call({ toString: () => "a" }));
+attempt("Number.prototype.toString on a text", () => Number.prototype.toString.call("5"));
+attempt("Symbol.prototype.toString on a text", () => Symbol.prototype.toString.call("s"));
+attempt("Object.prototype.toString on everything", () => ["a", new String("a"), 5, null, undefined, [], Symbol("s"), 5n, () => {}, /a/, new Date(0), { [Symbol.toStringTag]: "String" }, Object.assign(new String("a"), { [Symbol.toStringTag]: 5 })].map(value => Object.prototype.toString.call(value)));
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// strings-and-look-alikes-take-turns-at-one-call-site.js
+////= show-26
+
+function hash(text) {
+  let result = 7;
+  for (let i = 0; i < text.length; i++) result = (result * 31 + text.charCodeAt(i)) | 0;
+  return result;
+}
+
+function firstAndLast(text) {
+  return text[0] + "-" + text[text.length - 1];
+}
+
+////= lines-5	shout	text	text.toUpperCase
+
+////= label
+
+////= lines-108	isAbc	text	text	"abc"
+
+////= lines-73	lookUp	table	key	table[key
+
+const lookAlike = {
+  length: 3,
+  0: "x",
+  2: "z",
+  charCodeAt(index) {
+    return 100 + index;
+  },
+  toUpperCase() {
+    return "LOOK ALIKE";
+  },
+  toString() {
+    return "look alike";
+  },
+};
+
+const turns = [
+  "abc",
+  lookAlike,
+  "abc",
+  new String("abc"),
+  "abc",
+  Object.assign(["a", "b", "c"], { charCodeAt: () => 1, toUpperCase: () => "LIST" }),
+  "abc",
+  "世界人",
+  "abc",
+  "ab" + make("'c'"),
+  "",
+  Object.assign(Buffer.from("abc"), { charCodeAt: () => 2, toUpperCase: () => "BYTES" }),
+];
+
+const table = { abc: "by text", "look alike": "by the look-alike", "a,b,c": "by the list", "": "by the empty text", "世界人": "by the wide text" };
+
+const sums = new Map();
+function note(name, value) {
+  const line = show(value);
+  const key = name + " " + line;
+  sums.set(key, (sums.get(key) || 0) + 1);
+}
+
+for (let i = 0; i < 2400; i++) {
+  const value = turns[i % turns.length];
+  note("hash", hash(value));
+  note("first and last", firstAndLast(value));
+  note("shout", shout(value));
+  note("label", label(value));
+  note("is abc", isAbc(value));
+  note("look up", lookUp(table, value));
+}
+
+for (const [key, count] of sums) console.log(key, "x", count);
+
+function runs(pattern) {
+  const seen = [];
+  for (let i = 0; i < pattern.length; i++) {
+    const value = pattern[i] === "s" ? "abc" : pattern[i] === "o" ? lookAlike : pattern[i] === "w" ? new String("abc") : null;
+    try {
+      seen.push(hash(value) + ":" + shout(value) + ":" + isAbc(value));
+    } catch (error) {
+      seen.push(error.constructor.name);
+    }
+  }
+  return seen.join(" ");
+}
+
+console.log("s o s:", runs("sos"));
+console.log("o s o:", runs("oso"));
+console.log("s n s:", runs("sns"));
+console.log("w s w:", runs("wsw"));
+console.log("s s s o o o s s s w w w n s:", runs("sssooossswwwns"));
+//// structured-clone-hands-over-the-value.cjs
+const log = [];
+
+////= show-29
+
+////= arrays-9
+
+function pushes(given) {
+  const a = structuredClone(given);
+  a.push(1);
+  return a.length;
+}
+
+////= lines-343	iterates(given	const a = structuredClone(given)
+
+function readsCharCode(given) {
+  const s = structuredClone(given);
+  return s.charCodeAt(0);
+}
+
+function truncates(given) {
+  const n = structuredClone(given);
+  return n | 0;
+}
+
+function addsOne(given) {
+  const n = structuredClone(given);
+  return n + 1;
+}
+
+function calls(given) {
+  const f = structuredClone(given);
+  return f(1);
+}
+
+function addsMembers(given) {
+  const o = structuredClone(given);
+  return o.x + o.y;
+}
+
+function storesMember(given) {
+  const o = structuredClone(given);
+  o.x = 1;
+  return o;
+}
+
+////= table-7
+
+console.log("strict:", (function () { return this === undefined; })());
+everyCase("at first");
+////= for-99
+everyCase("after 2000");
+//// structured-clone-in-strict-code-hands-over-a-member.js
+"use strict";
+
+const log = [];
+
+////= show-29
+
+////= arrays-9
+
+function pushes(given) {
+  const a = structuredClone({ list: [given] }).list[0];
+  a.push(1);
+  return a.length;
+}
+
+////= lines-343	iterates(given	const a = structuredClone({ list: [given] }).list[0]
+
+function readsCharCode(given) {
+  const s = structuredClone({ list: [given] }).list[0];
+  return s.charCodeAt(0);
+}
+
+function truncates(given) {
+  const n = structuredClone({ list: [given] }).list[0];
+  return n | 0;
+}
+
+function addsOne(given) {
+  const n = structuredClone({ list: [given] }).list[0];
+  return n + 1;
+}
+
+function calls(given) {
+  const f = structuredClone({ list: [given] }).list[0];
+  return f(1);
+}
+
+function addsMembers(given) {
+  const o = structuredClone({ list: [given] }).list[0];
+  return o.x + o.y;
+}
+
+function storesMember(given) {
+  const o = structuredClone({ list: [given] }).list[0];
+  o.x = 1;
+  return o;
+}
+
+////= table-7
+
+console.log("strict:", (function () { return this === undefined; })());
+everyCase("at first");
+////= for-99
+everyCase("after 2000");
+//// structured-clones-lose-prototypes-and-accessors.js
+const log = [];
+
+////= show-23	Array.from(value, (each, index) => (index in value ? show(each) : "hole")	" + Object.keys(value).map(key => key + ": " + show(value[key])).join(", ") + "
+
+////= attempt-13
+
+class Tank {
+  constructor(liters, fuel) {
+    this.liters = liters;
+    this.fuel = fuel;
+  }
+  get gallons() {
+    return this.liters / 4;
+  }
+  drain() {
+    this.liters = 0;
+    return this;
+  }
+}
+
+function OldTank(liters, fuel) {
+  this.liters = liters;
+  this.fuel = fuel;
+}
+////= lines-271	OldTank	drain	liters	0
+Object.defineProperty(OldTank.prototype, "gallons", { get() { return this.liters / 4; } });
+
+////= lines-7	litersOf	tank	tank.liters
+
+////= lines-7	gallonsOf	tank	tank.gallons
+
+////= lines-5	drain	tank	tank.drain
+
+const originals = [
+  ["a class instance", () => new Tank(40, "diesel")],
+  ["an instance of a constructor function", () => new OldTank(40, "diesel")],
+  ["an instance with one more member", () => Object.assign(new Tank(40, "diesel"), { cap: true })],
+  ["an instance whose liters is a getter", () => Object.defineProperty(new Tank(40, "diesel"), "liters", { get() { log.push("get liters"); return 44; }, enumerable: true })],
+  ["an instance whose liters is not enumerable", () => Object.defineProperty(new Tank(40, "diesel"), "liters", { enumerable: false })],
+  ["a frozen instance", () => Object.freeze(new Tank(40, "diesel"))],
+  ["an instance with a symbol member", () => Object.assign(new Tank(40, "diesel"), { [Symbol.for("mark")]: 1 })],
+  ["an instance that holds itself", () => { const tank = new Tank(40, "diesel"); tank.fuel = tank; return tank; }],
+  ["an instance that holds -0, NaN, undefined and a bigint", () => new Tank(-0, [NaN, undefined, 5n])],
+  ["an instance that holds an array with a hole", () => new Tank(40, [1, , 3])],
+  ["an instance that holds another instance", () => new Tank(40, new OldTank(1, "inner"))],
+  ["an instance with an own method", () => Object.assign(new Tank(40, "diesel"), { drain() { return "own"; } })],
+  ["a proxy around an instance", () => new Proxy(new Tank(40, "diesel"), {})],
+  ["an object without a prototype", () => Object.assign(Object.create(null), { liters: 40, fuel: "diesel" })],
+  ["an object that inherits its members", () => Object.create(new Tank(40, "diesel"))],
+];
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  const tank = i % 2 ? new Tank(i % 50, "diesel") : new OldTank(i % 50, "petrol");
+  sum += litersOf(tank) + gallonsOf(tank) + litersOf(drain(tank));
+}
+console.log("2000 honest tanks", sum);
+
+for (const [label, make] of originals) {
+  let clone;
+  attempt(label + ": clone", () => { clone = undefined; clone = structuredClone(make()); return clone.fuel === clone ? "holds itself" : clone; });
+  if (clone === undefined) continue;
+  attempt(label + ": its prototype is Object.prototype", () => Object.getPrototypeOf(clone) === Object.prototype);
+  attempt(label + ": instanceof Tank, OldTank", () => [clone instanceof Tank, clone instanceof OldTank]);
+  attempt(label + ": liters", () => litersOf(clone));
+  attempt(label + ": liters is a plain value that can be written", () => { const found = Object.getOwnPropertyDescriptor(clone, "liters"); return found && [found.writable, found.enumerable, found.configurable, "value" in found]; });
+  attempt(label + ": gallons", () => gallonsOf(clone));
+  attempt(label + ": drain()", () => drain(clone));
+  attempt(label + ": the honest drain with it as this", () => litersOf(Tank.prototype.drain.call(clone)));
+  attempt(label + ": frozen", () => Object.isFrozen(clone));
+  attempt("honest again", () => [gallonsOf(new Tank(8, "x")), litersOf(drain(new OldTank(8, "x")))]);
+}
+//// super-is-indexed-with-keys-that-have-effects.js
+////= show-26
+
+const log = [];
+
+function key(name) {
+  return {
+    toString() {
+      log.push("key " + name);
+      return name;
+    },
+  };
+}
+
+function value(name) {
+  log.push("value " + name);
+  return name;
+}
+
+////= report-8	"  order:"	", "
+
+const parent = {
+  a: "parent a",
+  get own() {
+    return "getter sees " + this.name;
+  },
+  set stored(given) {
+    log.push("setter gets " + given + " for " + this.name);
+  },
+  method(argument) {
+    return "parent method of " + this.name + " with " + argument;
+  },
+  count: 1,
+  1: "parent one",
+  [Symbol.for("s")]: "parent symbol",
+};
+
+function makeChild(prototype) {
+  return {
+    __proto__: prototype,
+    name: "child",
+    a: "child a",
+    read(k) {
+      return super[k];
+    },
+    store(k, v) {
+      super[k] = v;
+      return Object.keys(this).join(",");
+    },
+    storeEvaluated(k) {
+      super[k] = value("v");
+      return Object.keys(this).join(",");
+    },
+    call(k) {
+      return super[k](value("argument"));
+    },
+    add(k) {
+      super[k] += 1;
+      return [this[k], Object.hasOwn(this, String(k))];
+    },
+    increment(k) {
+      return [super[k]++, this.count];
+    },
+    remove(k) {
+      return delete super[k];
+    },
+    assignIfMissing(k) {
+      super[k] ??= value("default");
+      return this[k];
+    },
+  };
+}
+
+for (let i = 0; i < 2000; i++) {
+  const child = makeChild(parent);
+  child.read("a");
+  child.store("b", 1);
+  child.call("method");
+  child.add("count");
+}
+log.length = 0;
+
+const keys = [
+  ["'a'", () => "a"],
+  ["'a' put together", () => "" + make("'a'")],
+  ["an object for 'a'", () => key("a")],
+  ["'own'", () => "own"],
+  ["an object for 'own'", () => key("own")],
+  ["'missing'", () => "missing"],
+  ["1", () => 1],
+  ["'1'", () => "1"],
+  ["a symbol", () => Symbol.for("s")],
+  ["null", () => null],
+  ["'__proto__'", () => "__proto__"],
+  ["'constructor'", () => "constructor"],
+];
+
+for (const [label, makeKey] of keys) {
+  report("read " + label, () => {
+    const found = makeChild(parent).read(makeKey());
+    return typeof found === "function" ? "function " + found.name : found === Object.prototype ? "Object.prototype" : found;
+  });
+  report("store " + label, () => makeChild(parent).store(makeKey(), "stored"));
+}
+
+report("store through a setter", () => makeChild(parent).store(key("stored"), "given"));
+report("store: key and value", () => makeChild(parent).storeEvaluated(key("b")));
+report("call", () => makeChild(parent).call(key("method")));
+report("call of a missing member", () => makeChild(parent).call(key("missing")));
+report("add", () => makeChild(parent).add(key("count")));
+report("increment", () => makeChild(parent).increment(key("count")));
+report("delete", () => makeChild(parent).remove(key("a")));
+report("assign if missing", () => makeChild(parent).assignIfMissing(key("absent")));
+report("assign if present", () => makeChild(parent).assignIfMissing(key("a")));
+
+report("no parent: read", () => makeChild(null).read(key("a")));
+report("no parent: store", () => makeChild(null).store(key("a"), 1));
+report("no parent: store, key and value", () => makeChild(null).storeEvaluated(key("a")));
+report("no parent: call", () => makeChild(null).call(key("a")));
+report("no parent: add", () => makeChild(null).add(key("a")));
+report("no parent: delete", () => makeChild(null).remove(key("a")));
+report("no parent: assign if missing", () => makeChild(null).assignIfMissing(key("a")));
+
+report("the parent is replaced later", () => {
+  const child = makeChild(parent);
+  const before = child.read("a");
+  Object.setPrototypeOf(child, { a: "another parent" });
+  return [before, child.read("a"), child.read(key("a"))];
+});
+report("the method is borrowed: super stays with its home", () => {
+  const child = makeChild(parent);
+  const borrowed = { name: "borrower", read: child.read, call: child.call };
+  return [borrowed.read("own"), borrowed.call("method")];
+});
+report("the parent is a Proxy", () => makeChild(new Proxy({}, { get: (target, name, receiver) => (log.push("get " + String(name) + " for " + receiver.name), "trapped") })).read(key("anything")));
+report("the parent is a list", () => [makeChild(["zero", "one"]).read(1), makeChild(["zero", "one"]).read("1"), makeChild(["zero", "one"]).read("length"), makeChild(["zero", "one"]).read(key("0"))]);
+report("the parent is a wrapped text", () => [makeChild(new String("xy")).read(1), makeChild(new String("xy")).read("length"), makeChild(new String("xy")).read(key("0"))]);
+//// super-runs-no-constructor-after-the-class-got-another-parent.js
+////= lines-66	First	value	from	"first"	value	value
+
+class Second {
+  constructor(value) {
+    this.from = "second";
+    this.doubled = value * 2;
+  }
+}
+
+class Child extends First {
+  constructor(value) {
+    super(value);
+    this.child = true;
+  }
+}
+
+const before = new Child(1);
+console.log("before:", before.from, Object.keys(before).join());
+Object.setPrototypeOf(Child, Second);
+const after = new Child(2);
+console.log("after:", after.from, Object.keys(after).join());
+//// symbol-species-decides-what-an-array-method-returns.cjs
+const log = [];
+
+////= show-29
+
+console.log("strict:", (function () { return this === undefined; })());
+
+function Plain(length) {
+  log.push("Plain " + length);
+  return { length: "unset", push(value) { log.push("own push " + value); return "pushed"; }, [Symbol.iterator]() { log.push("own iterator"); return [8, 9][Symbol.iterator](); } };
+}
+const species = [
+  ["Array", () => Array],
+  ["a subclass", () => Odd],
+  ["a function that returns an object", () => Plain],
+  ["undefined", () => undefined],
+  ["null", () => null],
+  ["a number", () => 5],
+  ["an arrow function", () => () => []],
+  ["a proxy of Array", () => new Proxy(Array, { construct(target, list) { log.push("construct " + list.join()); return logged(Reflect.construct(target, list)); } })],
+];
+
+let chosen = species[0][1];
+class Special extends Array {
+  static get [Symbol.species]() {
+    return chosen();
+  }
+}
+const special = () => Special.of(5, 6);
+const marked = () => {
+  const list = [5, 6];
+  list.constructor = { [Symbol.species]: chosen() };
+  return list;
+};
+
+function mapsThenPushes(list) {
+  const a = list.map(x => x * 2);
+  a.push(1);
+  return a.length;
+}
+////= lines-343	filtersThenIterates(list	const a = list.filter(() => true)
+////= lines-189	slicesThenPushes	list	list.slice	0
+////= lines-343	concatenatesThenIterates(list	const a = list.concat([7])
+function splicesThenPushes(list) {
+  const a = list.splice(0, 1);
+  a.push(1);
+  return [a.length, list.length];
+}
+////= lines-343	flattensThenIterates(list	const a = list.flatMap(x => [x, x])
+
+const table = [
+  ["mapsThenPushes", mapsThenPushes],
+  ["filtersThenIterates", filtersThenIterates],
+  ["slicesThenPushes", slicesThenPushes],
+  ["concatenatesThenIterates", concatenatesThenIterates],
+  ["splicesThenPushes", splicesThenPushes],
+  ["flattensThenIterates", flattensThenIterates],
+];
+
+for (let i = 0; i < 2000; i++) {
+  mapsThenPushes([5, 6]);
+  filtersThenIterates([5, 6]);
+  slicesThenPushes([5, 6]);
+  concatenatesThenIterates([5, 6]);
+  splicesThenPushes([5, 6]);
+  flattensThenIterates([5, 6]);
+}
+for (const [name, use] of table) {
+  for (const [label, choose] of [...species, species[0]]) {
+    chosen = choose;
+    attempt(name + " of a subclass whose species is " + label, () => use(special()));
+    attempt(name + " of an array whose own constructor has the species " + label, () => use(marked()));
+    attempt(name + " of an array", () => use([5, 6]));
+  }
+}
+//// symbol-species-decides-what-typed-array-and-promise-methods-return.js
+"use strict";
+
+const log = [];
+
+////= show-27
+
+console.log("strict:", (function () { return this === undefined; })());
+
+let chosen = Uint8Array;
+////= lines-61	Bytes	Uint8Array	chosen
+
+function mapsThenTruncates(list) {
+  const mapped = list.map(x => x + 300.5);
+  const n = mapped[0];
+  return [n | 0, n + 1, mapped.constructor.name];
+}
+function slicesThenAdds(list) {
+  const sliced = list.slice(0, 1);
+  const n = sliced[0];
+  return [n + 1, sliced.length, sliced.constructor.name];
+}
+function filtersThenIterates(list) {
+  const seen = [];
+  for (const x of list.filter(() => true)) seen.push(x);
+  return seen;
+}
+
+for (let i = 0; i < 2000; i++) {
+  mapsThenTruncates(Uint8Array.of(5, 6));
+  slicesThenAdds(Uint8Array.of(5, 6));
+  filtersThenIterates(Uint8Array.of(5, 6));
+}
+for (const choice of [Uint8Array, Float64Array, Int8Array, Uint8ClampedArray, BigInt64Array, Array, undefined, Uint8Array]) {
+  chosen = choice;
+  const label = choice === undefined ? "undefined" : choice.name;
+  attempt("mapsThenTruncates, species " + label, () => mapsThenTruncates(Bytes.of(5, 6)));
+  attempt("slicesThenAdds, species " + label, () => slicesThenAdds(Bytes.of(5, 6)));
+  attempt("filtersThenIterates, species " + label, () => filtersThenIterates(Bytes.of(5, 6)));
+  attempt("mapsThenTruncates of a plain typed array", () => mapsThenTruncates(Uint8Array.of(5, 6)));
+}
+
+let promiseSpecies = Promise;
+class Tracked extends Promise {
+  static get [Symbol.species]() {
+    return promiseSpecies;
+  }
+  then(onFulfilled, onRejected) {
+    log.push("Tracked.then");
+    return super.then(onFulfilled, onRejected);
+  }
+}
+class Other extends Promise {
+  then(onFulfilled, onRejected) {
+    log.push("Other.then");
+    return super.then(onFulfilled, onRejected);
+  }
+}
+async function awaits(promise) {
+  const n = await promise.then(x => x + 1);
+  return [n | 0, n + 1];
+}
+async function promises() {
+  for (let i = 0; i < 500; i++) await awaits(Promise.resolve(7));
+  for (const choice of [Promise, Other, Tracked, undefined, Promise]) {
+    promiseSpecies = choice;
+    log.length = 0;
+    const derived = Tracked.resolve(7).then(x => x);
+    const kind = derived.constructor.name;
+    const value = await awaits(Tracked.resolve("7"));
+    console.log("species " + (choice === undefined ? "undefined" : choice.name) + " -> " + kind + " " + show(value) + " | " + log.join(", "));
+  }
+}
+promises();
+//// symbols-made-at-one-place-are-different-keys.js
+////= show-26
+
+////= lines-89	makeKey	Symbol	"key"
+
+const KEY = Symbol("key");
+const TAG = Symbol("key");
+
+class Tagged {
+  static TAG = TAG;
+  [KEY] = "by the constant";
+  [TAG] = "by the static member";
+}
+
+function makeHolder() {
+  const secret = Symbol("secret");
+  return {
+    secret,
+    store(object, value) {
+      object[secret] = value;
+      return object;
+    },
+    read(object) {
+      return object[secret];
+    },
+    has(object) {
+      return secret in object;
+    },
+  };
+}
+
+////= read-2
+
+////= lines-81	countSymbols	object	Object.getOwnPropertySymbols	object
+
+for (let i = 0; i < 2000; i++) {
+  const object = { [KEY]: 1 };
+  read(object, KEY);
+  object[makeKey()] = 2;
+  countSymbols(object);
+}
+
+attempt("two symbols from one function", () => {
+  const first = makeKey();
+  const second = makeKey();
+  const table = { [first]: "first", [second]: "second" };
+  return [first === second, first == second, Object.is(first, second), table[first], table[second], countSymbols(table), first.description === second.description, first.toString() === second.toString()];
+});
+attempt("symbols from a loop", () => {
+  const keys = [];
+  const table = {};
+  for (let i = 0; i < 5; i++) {
+    const key = Symbol("in a loop");
+    keys.push(key);
+    table[key] = i;
+  }
+  return [countSymbols(table), keys.map(key => table[key]), new Set(keys).size, keys.indexOf(keys[3]), keys.includes(Symbol("in a loop"))];
+});
+attempt("the function's symbol is not the constant", () => {
+  const table = { [KEY]: "constant" };
+  return [read(table, KEY), read(table, makeKey()), read(table, Symbol("key")), read(table, "key"), read(table, "Symbol(key)"), makeKey() in table, KEY in table];
+});
+attempt("a class with two symbol members of one description", () => {
+  const tagged = new Tagged();
+  return [tagged[KEY], tagged[Tagged.TAG], KEY === Tagged.TAG, countSymbols(tagged), read(tagged, KEY), read(tagged, Tagged.TAG), read(tagged, makeKey())];
+});
+attempt("two holders keep their secrets apart", () => {
+  const one = makeHolder();
+  const two = makeHolder();
+  const object = {};
+  one.store(object, "of one");
+  two.store(object, "of two");
+  return [one.read(object), two.read(object), countSymbols(object), one.secret === two.secret, one.has({}), two.has(object), read(object, one.secret), read(object, two.secret)];
+});
+attempt("registered symbols are one key", () => {
+  const table = { [Symbol.for("shared")]: "shared" };
+  return [read(table, Symbol.for("shared")), read(table, make("Symbol.for('shared')")), read(table, Symbol.for("sha" + make("'red'"))), read(table, Symbol("shared")), Symbol.for("shared") === Symbol.for("shared"), Symbol.keyFor(Symbol.for("shared"))];
+});
+attempt("a symbol from eval with the description of the constant", () => read({ [KEY]: "constant" }, make("Symbol('key')")));
+attempt("the constant handed to eval and back", () => {
+  globalThis.keyForEval = KEY;
+  const back = make("keyForEval");
+  delete globalThis.keyForEval;
+  return [back === KEY, read({ [KEY]: "constant" }, back), read(make("({ [Symbol('key')]: 'other' })"), KEY)];
+});
+attempt("a store by the constant from eval is seen", () => {
+  globalThis.keyForEval = KEY;
+  const object = make("({ [keyForEval]: 'stored by eval' })");
+  delete globalThis.keyForEval;
+  return [object[KEY], read(object, KEY), KEY in object, countSymbols(object)];
+});
+attempt("wrapped symbols are the same key", () => {
+  const table = { [KEY]: "constant" };
+  return [read(table, Object(KEY)), Object(KEY) === KEY, Object(KEY) == KEY, typeof Object(KEY), Object(KEY).description];
+});
+attempt("symbols as map keys", () => {
+  const map = new Map([[makeKey(), 1], [makeKey(), 2], [KEY, 3]]);
+  return [map.size, map.get(KEY), map.get(makeKey()), map.has(Symbol("key"))];
+});
+attempt("recursion makes a new symbol at each level", () => {
+  const table = {};
+  (function descend(level) {
+    const key = Symbol("level");
+    table[key] = level;
+    if (level < 3) descend(level + 1);
+    table[key] += 10;
+  })(0);
+  return Object.getOwnPropertySymbols(table).map(key => table[key]);
+});
+attempt("a generator makes a new symbol at each step", () => {
+  function* keys() {
+    while (true) yield Symbol("step");
+  }
+  const source = keys();
+  const table = { [source.next().value]: 1, [source.next().value]: 2 };
+  return countSymbols(table);
+});
+attempt("classes made in a function have their own symbols", () => {
+  const build = () => {
+    const mark = Symbol("mark");
+    return class {
+      static mark = mark;
+      [mark] = "marked";
+    };
+  };
+  const One = build();
+  const Two = build();
+  return [new One()[One.mark], new One()[Two.mark], new Two()[Two.mark], One.mark === Two.mark];
+});
+//// texts-from-the-environment-and-the-command-line-are-used-like-numbers.cjs
+const log = [];
+
+////= show-27
+
+console.log("strict:", (function () { return this === undefined; })());
+
+////= lines-236	truncates	name	process.env[name
+////= lines-214	addsOne	name	process.env[name
+////= readsCharCode-5	name	process.env[name
+function iterates(name) {
+  const seen = [];
+  for (const x of process.env[name]) seen.push(x);
+  return seen;
+}
+////= addsMembers
+////= lines-60	storesMember	o	o.x	1
+
+const stored = [
+  ["a number", () => { process.env.IMPOSTOR_VALUE = 7; }],
+  ["a text", () => { process.env.IMPOSTOR_VALUE = "3"; }],
+  ["a fraction", () => { process.env.IMPOSTOR_VALUE = 2.5; }],
+  ["minus zero", () => { process.env.IMPOSTOR_VALUE = -0; }],
+  ["the largest int32", () => { process.env.IMPOSTOR_VALUE = 2147483647; }],
+  ["true", () => { process.env.IMPOSTOR_VALUE = true; }],
+  ["null", () => { process.env.IMPOSTOR_VALUE = null; }],
+  ["an empty text", () => { process.env.IMPOSTOR_VALUE = ""; }],
+  ["an object with toString", () => { process.env.IMPOSTOR_VALUE = { toString() { log.push("toString"); return "12"; } }; }],
+  ["an array", () => { process.env.IMPOSTOR_VALUE = [4, 5]; }],
+  ["a bigint", () => { process.env.IMPOSTOR_VALUE = 10n; }],
+];
+for (const [label, store] of stored) {
+  attempt("storing " + label, () => {
+    store();
+    return [typeof process.env.IMPOSTOR_VALUE, process.env.IMPOSTOR_VALUE];
+  });
+  attempt("truncates " + label, () => truncates("IMPOSTOR_VALUE"));
+  attempt("addsOne " + label, () => addsOne("IMPOSTOR_VALUE"));
+  attempt("readsCharCode " + label, () => readsCharCode("IMPOSTOR_VALUE"));
+  attempt("iterates " + label, () => iterates("IMPOSTOR_VALUE"));
+}
+delete process.env.IMPOSTOR_VALUE;
+attempt("truncates what is not set", () => truncates("IMPOSTOR_VALUE"));
+attempt("addsOne to what is not set", () => addsOne("IMPOSTOR_VALUE"));
+attempt("readsCharCode of what is not set", () => readsCharCode("IMPOSTOR_VALUE"));
+attempt("iterates what is not set", () => iterates("IMPOSTOR_VALUE"));
+
+for (let i = 0; i < 2000; i++) {
+  addsMembers({ x: 1, y: 2 });
+  storesMember({ x: 0, y: 2 });
+}
+process.env.x = 1;
+process.env.y = 2;
+attempt("addsMembers of the environment", () => addsMembers(process.env));
+attempt("storesMember of the environment", () => storesMember(process.env));
+attempt("addsMembers of an object", () => addsMembers({ x: 1, y: 2 }));
+attempt("storesMember of an object", () => storesMember({ x: 0, y: 2 }));
+delete process.env.x;
+attempt("addsMembers after a delete", () => addsMembers(process.env));
+delete process.env.y;
+
+////= lines-236	truncatesArgument	index	process.argv[index
+////= lines-214	addsOneToArgument	index	process.argv[index
+function countsArguments() {
+  const n = process.argv.length;
+  return [n | 0, n + 1];
+}
+function convertsArgument(index) {
+  const text = process.argv[index];
+  return [Number(text), parseInt(text, 10), +text, text | 0, text * 1, text - 0, text + 0];
+}
+attempt("how many arguments", countsArguments);
+attempt("the kinds of the first two", () => [typeof process.argv[0], typeof process.argv[1], Array.isArray(process.argv)]);
+attempt("truncates an argument that is not there", () => truncatesArgument(2));
+attempt("addsOne to an argument that is not there", () => addsOneToArgument(2));
+attempt("converts an argument that is not there", () => convertsArgument(2));
+process.argv.push("41", "2.5", "0x10", "-0", "", " 7 ", "1e3", "ten", "2147483648");
+for (let index = 2; index < process.argv.length; index++) {
+  attempt("truncates " + show(process.argv[index]), () => truncatesArgument(index));
+  attempt("addsOne " + show(process.argv[index]), () => addsOneToArgument(index));
+  attempt("converts " + show(process.argv[index]), () => convertsArgument(index));
+}
+process.argv[2] = 41;
+attempt("truncates a number stored among the arguments", () => truncatesArgument(2));
+attempt("addsOne to a number stored among the arguments", () => addsOneToArgument(2));
+//// the-arguments-are-evaluated-before-a-value-is-called-like-a-function.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+////= lines-129	note	what	log	what	value
+
+function holding(f) {
+  return { get f() { log.push("get f"); return f; } };
+}
+
+function* counted() {
+  log.push("first item");
+  yield 1;
+  log.push("second item");
+  yield 2;
+}
+
+const forms = [
+  ["f(a, b)", f => f(note("a"), note("b"))],
+  ["f?.(a)", f => f?.(note("a"))],
+  ["new f(a)", f => new f(note("a"))],
+  ["new f", f => new f],
+  ["holder.f(a)", f => holding(f).f(note("a"))],
+  ["holder.f?.(a)", f => holding(f).f?.(note("a"))],
+  ["holder?.f(a)", f => holding(f)?.f(note("a"))],
+  ["holder[key](a)", f => holding(f)[note("key", "f")](note("a"))],
+  ["new holder.f(a)", f => new (holding(f).f)(note("a"))],
+  ["f(...list)", f => f(...note("list", [1, 2]))],
+  ["f(...generator)", f => f(...counted())],
+  ["new f(...generator)", f => new f(...counted())],
+  ["f`${a}`", f => f`x${note("a")}y`],
+  ["holder.f`${a}`", f => holding(f).f`x${note("a")}y`],
+  ["f.call(self, a)", f => f.call(note("self"), note("a"))],
+  ["f.apply(self, list)", f => f.apply(note("self"), note("list", [1]))],
+  ["f.bind(self)", f => typeof f.bind(note("self"))],
+  ["Reflect.apply(f, self, list)", f => Reflect.apply(f, note("self"), note("list", [1]))],
+  ["Reflect.construct(f, list)", f => Reflect.construct(f, note("list", [1]))],
+  ["(callee, f)(a)", f => (note("callee"), f)(note("a"))],
+  ["f(a)(b)", f => f(note("a"))(note("b"))],
+  ["f(g(a))", f => f(f(note("a")))],
+  ["f(a) || b", f => f(note("a")) || note("b")],
+  ["[f(a), b]", f => [f(note("a")), note("b")]],
+  ["a + f(b)", f => note("a", 1) + f(note("b"))],
+  ["f(a, throws)", f => f(note("a"), (() => { throw new RangeError("from an argument"); })())],
+  ["list.map(f)", f => note("list", [1, 2]).map(f)],
+  ["empty.map(f)", f => note("list", []).map(f)],
+  ["value instanceof f", f => note("value", {}) instanceof f],
+];
+
+const values = [
+  ["a function", () => function (value) { log.push("called"); return value; }],
+  ["undefined", () => undefined],
+  ["null", () => null],
+  ["a string", () => "text"],
+  ["a number", () => 5],
+  ["an object", () => ({})],
+  ["a class", () => class { constructor() { log.push("constructed"); } }],
+  ["an arrow function", () => value => (log.push("called"), value)],
+];
+
+for (const [form, run] of forms) {
+  for (const [name, make] of values) attempt(form + " with " + name, () => run(make()));
+}
+//// the-arguments-of-a-replace-callback-are-not-all-strings.js
+////= show-26
+
+function describeArguments(...given) {
+  return "<" + given.map(value => (typeof value === "object" && value !== null ? "object " + JSON.stringify(value) : typeof value + " " + String(value))).join("|") + ">";
+}
+
+function lengthOfTheGroup(match, group) {
+  return String(group.length);
+}
+
+function upperGroup(match, group) {
+  return group.toUpperCase();
+}
+
+function groupPlusOffset(match, group, offset) {
+  return "[" + (group + offset) + "]";
+}
+
+function offsetPlusOne(match, offset) {
+  return "[" + (offset + 1) + "]";
+}
+
+function wholeLength(match, offset, whole) {
+  return "[" + whole.length + typeof whole + "]";
+}
+
+for (let i = 0; i < 2000; i++) {
+  "a1b2".replace(/([a-z])/g, lengthOfTheGroup);
+  "a1b2".replace(/([a-z])/g, upperGroup);
+  "a1b2".replace(/([a-z])/g, groupPlusOffset);
+  "a1b2".replace("1", offsetPlusOne);
+  "a1b2".replace("1", wholeLength);
+}
+
+attempt("what a text pattern passes", () => "hello".replace("l", describeArguments));
+attempt("what a pattern without groups passes", () => "hello".replace(/l/g, describeArguments));
+attempt("what a pattern with groups passes", () => "hello".replace(/(l)(x)?(l)/, describeArguments));
+attempt("what a pattern with named groups passes", () => "hello".replace(/(?<first>l)(?<missing>x)?/, describeArguments));
+attempt("what replaceAll passes", () => "hello".replaceAll("l", describeArguments));
+attempt("what an empty pattern passes", () => "hi".replaceAll("", describeArguments));
+
+attempt("a group that took part", () => "ab".replace(/(a)|(b)/g, lengthOfTheGroup));
+attempt("a group that did not take part has no length", () => "ba".replace(/(a)|(b)/g, lengthOfTheGroup));
+attempt("a group that did not take part has no methods", () => "ba".replace(/(a)|(b)/g, upperGroup));
+attempt("a group that did not take part is added to a number", () => "ba".replace(/(a)|b/g, groupPlusOffset));
+attempt("without a group the second argument is a number", () => "ab".replace(/a/, upperGroup));
+attempt("without a group the second argument has no length", () => "ab".replace(/a/, lengthOfTheGroup));
+attempt("with a group the second argument is a text", () => "ab".replace(/(a)/, offsetPlusOne));
+attempt("with a group the third argument is a number", () => "ab".replace(/(a)/, wholeLength));
+attempt("the whole text of a wrapped text is a plain text", () => new String("a1").replace("1", wholeLength));
+attempt("the whole text of a number", () => String.prototype.replace.call(212, "1", wholeLength));
+
+attempt("the same callbacks called by hand", () => [lengthOfTheGroup("m", "group"), lengthOfTheGroup("m", ["a", "b"]), lengthOfTheGroup("m", { length: -0 }), upperGroup("m", { toUpperCase: () => 5 }), groupPlusOffset("m", 1, 2), groupPlusOffset("m", "1", 2), offsetPlusOne("m", "1"), wholeLength("m", 0, [1, 2])]);
+attempt("the same callbacks called by hand with nothing", () => lengthOfTheGroup("m"));
+
+const results = [
+  "'text'",
+  "5",
+  "-0",
+  "null",
+  "undefined",
+  "true",
+  "5n",
+  "[]",
+  "[1, 2]",
+  "{}",
+  "new String('wrapped')",
+  "'$&$1$$'",
+  "{ toString() { return '$&'; } }",
+  "{ toString() { return 5; }, valueOf() { return 'no'; } }",
+  "{ [Symbol.toPrimitive](hint) { return hint; } }",
+  "Symbol('s')",
+  "{ toString() { throw new RangeError('no'); } }",
+];
+for (const text of results) {
+  attempt("a callback returns " + text, () => "a-b".replace("-", () => make(text)));
+  attempt("a callback for a pattern returns " + text, () => "a-b-c".replace(/-/g, () => make(text)));
+  attempt("the replacement itself is " + text, () => "a-b".replace("-", make(text)));
+}
+attempt("a callback that changes the pattern's position", () => {
+  const pattern = /a/g;
+  return ["aaaa".replace(pattern, () => { pattern.lastIndex = 3; return "b"; }), pattern.lastIndex];
+});
+attempt("a callback that throws halfway", () => {
+  let calls = 0;
+  try {
+    return "aaaa".replace(/a/g, () => { if (++calls === 3) throw new RangeError("no"); return "b"; });
+  } catch (error) {
+    return [calls, error.constructor.name];
+  }
+});
+//// the-chain-above-an-instance-of-a-derived-class-is-walked-to-its-end.js
+class Top {}
+class Middle extends Top {}
+let link = new Middle();
+let steps = 0;
+while (link) {
+  link = Object.getPrototypeOf(link);
+  steps++;
+}
+console.log(steps, link);
+//// the-fields-of-a-parent-class-that-was-put-in-later-are-lost.js
+////= lines-78	Point	x	1
+////= lines-78	Other	a	"a"
+////= lines-136	Child	Point	z	3
+
+console.log("declared parent:", Object.keys(new Child()).join());
+Object.setPrototypeOf(Child, Other);
+const made = new Child();
+console.log("another parent:", Object.keys(made).join(), made.a, made.z);
+Object.setPrototypeOf(Child, Point);
+console.log("declared parent again:", Object.keys(new Child()).join());
+//// the-first-call-brings-something-else-than-a-plain-object.js
+"use strict";
+
+const log = [];
+
+////= show-29
+
+console.log("strict:", (function () { return this === undefined; })());
+
+////= lines-80	addsMembers1	o	o.x	o.y
+attempt("addsMembers: accessors comes first", () => addsMembers1(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })));
+attempt("addsMembers: an object comes second", () => addsMembers1(({ x: 1, y: 2 })));
+attempt("addsMembers: accessors comes third", () => addsMembers1(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })));
+
+////= lines-80	addsMembers2	o	o.x	o.y
+attempt("addsMembers: a proxy comes first", () => addsMembers2(logged({ y: 2, x: 1 })));
+attempt("addsMembers: an object comes second", () => addsMembers2(({ x: 1, y: 2 })));
+attempt("addsMembers: a proxy comes third", () => addsMembers2(logged({ y: 2, x: 1 })));
+
+////= lines-80	addsMembers3	o	o.x	o.y
+attempt("addsMembers: a frozen object comes first", () => addsMembers3(Object.freeze({ x: 5, y: 6 })));
+attempt("addsMembers: an object comes second", () => addsMembers3(({ x: 1, y: 2 })));
+attempt("addsMembers: a frozen object comes third", () => addsMembers3(Object.freeze({ x: 5, y: 6 })));
+
+////= lines-80	addsMembers4	o	o.x	o.y
+attempt("addsMembers: texts in another order comes first", () => addsMembers4(({ y: "2", x: "1" })));
+attempt("addsMembers: an object comes second", () => addsMembers4(({ x: 1, y: 2 })));
+attempt("addsMembers: texts in another order comes third", () => addsMembers4(({ y: "2", x: "1" })));
+
+////= lines-80	addsMembers5	o	o.x	o.y
+attempt("addsMembers: inherited members comes first", () => addsMembers5(Object.create({ x: 3, y: 4 })));
+attempt("addsMembers: an object comes second", () => addsMembers5(({ x: 1, y: 2 })));
+attempt("addsMembers: inherited members comes third", () => addsMembers5(Object.create({ x: 3, y: 4 })));
+
+////= lines-54	storesMember1	o	o.x	1
+attempt("storesMember: accessors comes first", () => storesMember1(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })));
+attempt("storesMember: an object comes second", () => storesMember1(({ x: 1, y: 2 })));
+attempt("storesMember: accessors comes third", () => storesMember1(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })));
+
+////= lines-54	storesMember2	o	o.x	1
+attempt("storesMember: a proxy comes first", () => storesMember2(logged({ y: 2, x: 1 })));
+attempt("storesMember: an object comes second", () => storesMember2(({ x: 1, y: 2 })));
+attempt("storesMember: a proxy comes third", () => storesMember2(logged({ y: 2, x: 1 })));
+
+////= lines-54	storesMember3	o	o.x	1
+attempt("storesMember: a frozen object comes first", () => storesMember3(Object.freeze({ x: 5, y: 6 })));
+attempt("storesMember: an object comes second", () => storesMember3(({ x: 1, y: 2 })));
+attempt("storesMember: a frozen object comes third", () => storesMember3(Object.freeze({ x: 5, y: 6 })));
+
+////= lines-54	storesMember4	o	o.x	1
+attempt("storesMember: texts in another order comes first", () => storesMember4(({ y: "2", x: "1" })));
+attempt("storesMember: an object comes second", () => storesMember4(({ x: 1, y: 2 })));
+attempt("storesMember: texts in another order comes third", () => storesMember4(({ y: "2", x: "1" })));
+
+////= lines-54	storesMember5	o	o.x	1
+attempt("storesMember: inherited members comes first", () => storesMember5(Object.create({ x: 3, y: 4 })));
+attempt("storesMember: an object comes second", () => storesMember5(({ x: 1, y: 2 })));
+attempt("storesMember: inherited members comes third", () => storesMember5(Object.create({ x: 3, y: 4 })));
+//// the-first-call-brings-something-else-than-a-string-or-a-function.js
+"use strict";
+
+const log = [];
+
+////= show-29
+
+console.log("strict:", (function () { return this === undefined; })());
+
+////= lines-3	readsCharCode1	s	s.charCodeAt	0
+attempt("readsCharCode: an object with charCodeAt comes first", () => readsCharCode1(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } })));
+attempt("readsCharCode: a string comes second", () => readsCharCode1("abc"));
+attempt("readsCharCode: an object with charCodeAt comes third", () => readsCharCode1(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } })));
+
+////= lines-3	readsCharCode2	s	s.charCodeAt	0
+attempt("readsCharCode: a String object with its own charCodeAt comes first", () => readsCharCode2(Object.assign(new String("xyz"), { charCodeAt: () => -1 })));
+attempt("readsCharCode: a string comes second", () => readsCharCode2("abc"));
+attempt("readsCharCode: a String object with its own charCodeAt comes third", () => readsCharCode2(Object.assign(new String("xyz"), { charCodeAt: () => -1 })));
+
+////= lines-3	readsCharCode3	s	s.charCodeAt	0
+attempt("readsCharCode: an array comes first", () => readsCharCode3(["abc"]));
+attempt("readsCharCode: a string comes second", () => readsCharCode3("abc"));
+attempt("readsCharCode: an array comes third", () => readsCharCode3(["abc"]));
+
+////= lines-3	readsCharCode4	s	s.charCodeAt	0
+attempt("readsCharCode: a number comes first", () => readsCharCode4(65));
+attempt("readsCharCode: a string comes second", () => readsCharCode4("abc"));
+attempt("readsCharCode: a number comes third", () => readsCharCode4(65));
+
+////= lines-27	calls1	f	f	1
+attempt("calls: a class comes first", () => calls1(class Made { constructor(x) { log.push("constructed " + x); } }));
+attempt("calls: a function comes second", () => calls1(x => x + 1));
+attempt("calls: a class comes third", () => calls1(class Made { constructor(x) { log.push("constructed " + x); } }));
+
+////= lines-27	calls2	f	f	1
+attempt("calls: a callable proxy comes first", () => calls2(logged(x => x + 2)));
+attempt("calls: a function comes second", () => calls2(x => x + 1));
+attempt("calls: a callable proxy comes third", () => calls2(logged(x => x + 2)));
+
+////= lines-27	calls3	f	f	1
+attempt("calls: a bound function comes first", () => calls3(function (a, b) { return [this.tag, a, b]; }.bind({ tag: "bound" }, "first")));
+attempt("calls: a function comes second", () => calls3(x => x + 1));
+attempt("calls: a bound function comes third", () => calls3(function (a, b) { return [this.tag, a, b]; }.bind({ tag: "bound" }, "first")));
+
+////= lines-27	calls4	f	f	1
+attempt("calls: an object with call comes first", () => calls4(({ call() { log.push("call"); return "called"; } })));
+attempt("calls: a function comes second", () => calls4(x => x + 1));
+attempt("calls: an object with call comes third", () => calls4(({ call() { log.push("call"); return "called"; } })));
+//// the-first-call-brings-something-else-than-an-array.cjs
+const log = [];
+
+////= show-29
+
+console.log("strict:", (function () { return this === undefined; })());
+
+////= lines-92	pushes1	a	a	1
+attempt("pushes: a subclass comes first", () => pushes1(Odd.of(5, 6)));
+attempt("pushes: an array comes second", () => pushes1([5, 6]));
+attempt("pushes: a subclass comes third", () => pushes1(Odd.of(5, 6)));
+
+////= lines-92	pushes2	a	a	1
+attempt("pushes: an array-like comes first", () => pushes2(({ 0: 5, length: 7, push(value) { log.push("own push " + value); return "pushed"; }, [Symbol.iterator]() { log.push("own iterator"); return [8, 9][Symbol.iterator](); } })));
+attempt("pushes: an array comes second", () => pushes2([5, 6]));
+attempt("pushes: an array-like comes third", () => pushes2(({ 0: 5, length: 7, push(value) { log.push("own push " + value); return "pushed"; }, [Symbol.iterator]() { log.push("own iterator"); return [8, 9][Symbol.iterator](); } })));
+
+////= lines-92	pushes3	a	a	1
+attempt("pushes: a proxy comes first", () => pushes3(logged([5, 6])));
+attempt("pushes: an array comes second", () => pushes3([5, 6]));
+attempt("pushes: a proxy comes third", () => pushes3(logged([5, 6])));
+
+////= lines-92	pushes4	a	a	1
+attempt("pushes: a frozen array comes first", () => pushes4(Object.freeze([5, 6])));
+attempt("pushes: an array comes second", () => pushes4([5, 6]));
+attempt("pushes: a frozen array comes third", () => pushes4(Object.freeze([5, 6])));
+
+////= lines-92	pushes5	a	a	1
+attempt("pushes: a string comes first", () => pushes5("ab"));
+attempt("pushes: an array comes second", () => pushes5([5, 6]));
+attempt("pushes: a string comes third", () => pushes5("ab"));
+
+////= lines-20	iterates1	a	seen	x	of
+attempt("iterates: a subclass comes first", () => iterates1(Odd.of(5, 6)));
+attempt("iterates: an array comes second", () => iterates1([5, 6]));
+attempt("iterates: a subclass comes third", () => iterates1(Odd.of(5, 6)));
+
+////= lines-20	iterates2	a	seen	x	of
+attempt("iterates: an array-like comes first", () => iterates2(({ 0: 5, length: 7, push(value) { log.push("own push " + value); return "pushed"; }, [Symbol.iterator]() { log.push("own iterator"); return [8, 9][Symbol.iterator](); } })));
+attempt("iterates: an array comes second", () => iterates2([5, 6]));
+attempt("iterates: an array-like comes third", () => iterates2(({ 0: 5, length: 7, push(value) { log.push("own push " + value); return "pushed"; }, [Symbol.iterator]() { log.push("own iterator"); return [8, 9][Symbol.iterator](); } })));
+
+////= lines-20	iterates3	a	seen	x	of
+attempt("iterates: a proxy comes first", () => iterates3(logged([5, 6])));
+attempt("iterates: an array comes second", () => iterates3([5, 6]));
+attempt("iterates: a proxy comes third", () => iterates3(logged([5, 6])));
+
+////= lines-20	iterates4	a	seen	x	of
+attempt("iterates: a frozen array comes first", () => iterates4(Object.freeze([5, 6])));
+attempt("iterates: an array comes second", () => iterates4([5, 6]));
+attempt("iterates: a frozen array comes third", () => iterates4(Object.freeze([5, 6])));
+
+////= lines-20	iterates5	a	seen	x	of
+attempt("iterates: a string comes first", () => iterates5("ab"));
+attempt("iterates: an array comes second", () => iterates5([5, 6]));
+attempt("iterates: a string comes third", () => iterates5("ab"));
+//// the-first-call-brings-something-else-than-an-integer.cjs
+const log = [];
+
+////= show-29
+
+console.log("strict:", (function () { return this === undefined; })());
+
+////= lines-75	truncates1	n
+attempt("truncates: a string comes first", () => truncates1("3"));
+attempt("truncates: an integer comes second", () => truncates1(7));
+attempt("truncates: a string comes third", () => truncates1("3"));
+
+////= lines-75	truncates2	n
+attempt("truncates: an object with valueOf comes first", () => truncates2(({ valueOf() { log.push("valueOf"); return 2 ** 31 + 0.5; }, toString() { log.push("toString"); return "text"; } })));
+attempt("truncates: an integer comes second", () => truncates2(7));
+attempt("truncates: an object with valueOf comes third", () => truncates2(({ valueOf() { log.push("valueOf"); return 2 ** 31 + 0.5; }, toString() { log.push("toString"); return "text"; } })));
+
+////= lines-75	truncates3	n
+attempt("truncates: a bigint comes first", () => truncates3(10n));
+attempt("truncates: an integer comes second", () => truncates3(7));
+attempt("truncates: a bigint comes third", () => truncates3(10n));
+
+////= lines-75	truncates4	n
+attempt("truncates: the largest int32 comes first", () => truncates4(2147483647));
+attempt("truncates: an integer comes second", () => truncates4(7));
+attempt("truncates: the largest int32 comes third", () => truncates4(2147483647));
+
+////= lines-75	truncates5	n
+attempt("truncates: minus zero comes first", () => truncates5(-0));
+attempt("truncates: an integer comes second", () => truncates5(7));
+attempt("truncates: minus zero comes third", () => truncates5(-0));
+
+////= lines-75	truncates6	n
+attempt("truncates: undefined comes first", () => truncates6(undefined));
+attempt("truncates: an integer comes second", () => truncates6(7));
+attempt("truncates: undefined comes third", () => truncates6(undefined));
+
+////= lines-45	addsOne1	n	n	1
+attempt("addsOne: a string comes first", () => addsOne1("3"));
+attempt("addsOne: an integer comes second", () => addsOne1(7));
+attempt("addsOne: a string comes third", () => addsOne1("3"));
+
+////= lines-45	addsOne2	n	n	1
+attempt("addsOne: an object with valueOf comes first", () => addsOne2(({ valueOf() { log.push("valueOf"); return 2 ** 31 + 0.5; }, toString() { log.push("toString"); return "text"; } })));
+attempt("addsOne: an integer comes second", () => addsOne2(7));
+attempt("addsOne: an object with valueOf comes third", () => addsOne2(({ valueOf() { log.push("valueOf"); return 2 ** 31 + 0.5; }, toString() { log.push("toString"); return "text"; } })));
+
+////= lines-45	addsOne3	n	n	1
+attempt("addsOne: a bigint comes first", () => addsOne3(10n));
+attempt("addsOne: an integer comes second", () => addsOne3(7));
+attempt("addsOne: a bigint comes third", () => addsOne3(10n));
+
+////= lines-45	addsOne4	n	n	1
+attempt("addsOne: the largest int32 comes first", () => addsOne4(2147483647));
+attempt("addsOne: an integer comes second", () => addsOne4(7));
+attempt("addsOne: the largest int32 comes third", () => addsOne4(2147483647));
+
+////= lines-45	addsOne5	n	n	1
+attempt("addsOne: minus zero comes first", () => addsOne5(-0));
+attempt("addsOne: an integer comes second", () => addsOne5(7));
+attempt("addsOne: minus zero comes third", () => addsOne5(-0));
+
+////= lines-45	addsOne6	n	n	1
+attempt("addsOne: undefined comes first", () => addsOne6(undefined));
+attempt("addsOne: an integer comes second", () => addsOne6(7));
+attempt("addsOne: undefined comes third", () => addsOne6(undefined));
+//// the-first-call-in-sloppy-code-brings-something-else-than-a-plain-object.cjs
+const log = [];
+
+////= show-29
+
+console.log("strict:", (function () { return this === undefined; })());
+
+////= lines-80	addsMembers1	o	o.x	o.y
+attempt("addsMembers: accessors comes first", () => addsMembers1(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })));
+attempt("addsMembers: an object comes second", () => addsMembers1(({ x: 1, y: 2 })));
+attempt("addsMembers: accessors comes third", () => addsMembers1(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })));
+
+////= lines-80	addsMembers2	o	o.x	o.y
+attempt("addsMembers: a proxy comes first", () => addsMembers2(logged({ y: 2, x: 1 })));
+attempt("addsMembers: an object comes second", () => addsMembers2(({ x: 1, y: 2 })));
+attempt("addsMembers: a proxy comes third", () => addsMembers2(logged({ y: 2, x: 1 })));
+
+////= lines-80	addsMembers3	o	o.x	o.y
+attempt("addsMembers: a frozen object comes first", () => addsMembers3(Object.freeze({ x: 5, y: 6 })));
+attempt("addsMembers: an object comes second", () => addsMembers3(({ x: 1, y: 2 })));
+attempt("addsMembers: a frozen object comes third", () => addsMembers3(Object.freeze({ x: 5, y: 6 })));
+
+////= lines-80	addsMembers4	o	o.x	o.y
+attempt("addsMembers: texts in another order comes first", () => addsMembers4(({ y: "2", x: "1" })));
+attempt("addsMembers: an object comes second", () => addsMembers4(({ x: 1, y: 2 })));
+attempt("addsMembers: texts in another order comes third", () => addsMembers4(({ y: "2", x: "1" })));
+
+////= lines-80	addsMembers5	o	o.x	o.y
+attempt("addsMembers: inherited members comes first", () => addsMembers5(Object.create({ x: 3, y: 4 })));
+attempt("addsMembers: an object comes second", () => addsMembers5(({ x: 1, y: 2 })));
+attempt("addsMembers: inherited members comes third", () => addsMembers5(Object.create({ x: 3, y: 4 })));
+
+////= lines-54	storesMember1	o	o.x	1
+attempt("storesMember: accessors comes first", () => storesMember1(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })));
+attempt("storesMember: an object comes second", () => storesMember1(({ x: 1, y: 2 })));
+attempt("storesMember: accessors comes third", () => storesMember1(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })));
+
+////= lines-54	storesMember2	o	o.x	1
+attempt("storesMember: a proxy comes first", () => storesMember2(logged({ y: 2, x: 1 })));
+attempt("storesMember: an object comes second", () => storesMember2(({ x: 1, y: 2 })));
+attempt("storesMember: a proxy comes third", () => storesMember2(logged({ y: 2, x: 1 })));
+
+////= lines-54	storesMember3	o	o.x	1
+attempt("storesMember: a frozen object comes first", () => storesMember3(Object.freeze({ x: 5, y: 6 })));
+attempt("storesMember: an object comes second", () => storesMember3(({ x: 1, y: 2 })));
+attempt("storesMember: a frozen object comes third", () => storesMember3(Object.freeze({ x: 5, y: 6 })));
+
+////= lines-54	storesMember4	o	o.x	1
+attempt("storesMember: texts in another order comes first", () => storesMember4(({ y: "2", x: "1" })));
+attempt("storesMember: an object comes second", () => storesMember4(({ x: 1, y: 2 })));
+attempt("storesMember: texts in another order comes third", () => storesMember4(({ y: "2", x: "1" })));
+
+////= lines-54	storesMember5	o	o.x	1
+attempt("storesMember: inherited members comes first", () => storesMember5(Object.create({ x: 3, y: 4 })));
+attempt("storesMember: an object comes second", () => storesMember5(({ x: 1, y: 2 })));
+attempt("storesMember: inherited members comes third", () => storesMember5(Object.create({ x: 3, y: 4 })));
+//// the-first-of-five-functions-uses-this-like-a-string-and-is-called-without-this.js
+function firstCode() {
+  return this.charCodeAt(0);
+}
+function two() {}
+function three() {}
+function four() {}
+function five() {}
+////= attempt-49	run(
+for (const use of [firstCode, two, three, four, five]) {
+  console.log(use.name, "by call", attempt(() => use.call((0, eval)("'hello'"))));
+  console.log(use.name, "with no this", attempt(() => use()));
+}
+//// the-first-string-of-a-tagged-template-is-compared-in-a-function.js
+////= lines-37	tag	site	site[0
+////= lines-266	same	actual	expected
+console.log(same(tag`Hello`, "Hello"));
+//// the-first-string-of-a-tagged-template-is-joined-with-a-value.js
+function tag(strings, value) {
+  return strings[0] + value;
+}
+
+console.log("gives " + tag`-${5}`);
+console.log("gives " + tag`${6}`);
+//// the-function-constructor-is-constructed-through-a-proxy.js
+const proxy = new Proxy(Function, {});
+const addOne = new proxy("x", "return x + 1");
+console.log(addOne(1));
+//// the-get-trap-of-a-proxy-hands-over-the-value.cjs
+const log = [];
+
+////= show-24
+
+const holding = value => new Proxy({}, { get: () => value });
+
+////= pushes-17
+
+////= everyCase-6
+
+console.log("strict:", (function () { return this === undefined; })());
+everyCase("at first");
+////= for-24
+everyCase("after 2000");
+//// the-has-trap-of-a-proxy-changes-the-value-in-the-middle-of-a-loop.cjs
+const log = [];
+
+////= show-40
+
+function pushes(a, results, allowed) {
+  for (let i = 0; i in allowed; i++) {
+    results.push(a.push(i), a.length);
+  }
+  return "done";
+}
+
+function iterates(a, results, allowed) {
+  for (let i = 0; i in allowed; i++) {
+    for (const x of a) results.push(x);
+  }
+  return "done";
+}
+
+function readsCharCode(s, results, allowed) {
+  for (let i = 0; i in allowed; i++) {
+    results.push(s.charCodeAt(0));
+  }
+  return "done";
+}
+
+function truncates(n, results, allowed) {
+  for (let i = 0; i in allowed; i++) {
+    results.push(n | 0);
+  }
+  return "done";
+}
+
+function addsOne(n, results, allowed) {
+  for (let i = 0; i in allowed; i++) {
+    results.push(n + 1);
+  }
+  return "done";
+}
+
+function callsThroughCall(f, results, allowed) {
+  for (let i = 0; i in allowed; i++) {
+    results.push(f.call(undefined, i));
+  }
+  return "done";
+}
+
+function addsMembers(o, results, allowed) {
+  for (let i = 0; i in allowed; i++) {
+    results.push(o.x + o.y);
+  }
+  return "done";
+}
+
+function storesMember(o, results, allowed) {
+  for (let i = 0; i in allowed; i++) {
+    o.x = i;
+    results.push(o.x);
+  }
+  return "done";
+}
+
+////= table-3
+
+function run(use, value, results, change) {
+  return use(value, results, new Proxy({}, {
+    has(target, key) {
+      if (key === "3" && change) change();
+      return Number(key) < 6;
+    },
+  }));
+}
+
+console.log("strict:", (function () { return this === undefined; })());
+////= for-6
+//// the-head-of-a-for-of-loop-reassigns-the-variable-between-two-uses.js
+"use strict";
+
+const log = [];
+
+////= show-24
+
+////= pushes-9	other	for (a of [other])
+
+////= iterates-11	other	for (a of [other])
+
+////= readsCharCode-9	other	for (s of [other])
+
+////= truncates-6	other	for (n of [other])
+
+////= lines-327	addsOne	other	+	1	for (n of [other])
+
+////= calls-6	other	for (f of [other])
+
+////= addsMembers-8	other	for (o of [other])
+
+////= storesMember-10	other	for (o of [other])
+
+////= table-9
+
+console.log("strict:", (function () { return this === undefined; })());
+everyCase("at first");
+////= for-7
+everyCase("after 2000");
+//// the-impostor-replaces-the-honest-value-three-levels-down-a-recursion.cjs
+const log = [];
+
+////= show-24
+
+function pushes(a, other, depth) {
+  if (depth === 0) return [];
+  a.push(1);
+  const result = a.length;
+  return [result, ...pushes(depth === 3 ? other : a, other, depth - 1)];
+}
+
+function iterates(a, other, depth) {
+  if (depth === 0) return [];
+  const seen = [];
+  for (const x of a) seen.push(x);
+  const result = seen;
+  return [result, ...iterates(depth === 3 ? other : a, other, depth - 1)];
+}
+
+function readsCharCode(s, other, depth) {
+  if (depth === 0) return [];
+  const result = s.charCodeAt(0);
+  return [result, ...readsCharCode(depth === 3 ? other : s, other, depth - 1)];
+}
+
+function truncates(n, other, depth) {
+  if (depth === 0) return [];
+  const result = n | 0;
+  return [result, ...truncates(depth === 3 ? other : n, other, depth - 1)];
+}
+
+function addsOne(n, other, depth) {
+  if (depth === 0) return [];
+  const result = n + 1;
+  return [result, ...addsOne(depth === 3 ? other : n, other, depth - 1)];
+}
+
+function calls(f, other, depth) {
+  if (depth === 0) return [];
+  const result = f(1);
+  return [result, ...calls(depth === 3 ? other : f, other, depth - 1)];
+}
+
+function addsMembers(o, other, depth) {
+  if (depth === 0) return [];
+  const result = o.x + o.y;
+  return [result, ...addsMembers(depth === 3 ? other : o, other, depth - 1)];
+}
+
+function storesMember(o, other, depth) {
+  if (depth === 0) return [];
+  o.x = 1;
+  const result = o;
+  return [result, ...storesMember(depth === 3 ? other : o, other, depth - 1)];
+}
+
+////= table
+
+function everyCase(round) {
+  for (const [name, use, values] of table) {
+    for (const [label, make] of [...values, values[0]]) attempt(round + " " + name + " " + label, () => use(values[0][1](), make(), 5));
+  }
+}
+
+console.log("strict:", (function () { return this === undefined; })());
+everyCase("at first");
+for (let i = 0; i < 500; i++) {
+  pushes([5, 6], [5, 6], 5);
+  iterates([5, 6], [5, 6], 5);
+  readsCharCode("abc", "abc", 5);
+  truncates(7, 7, 5);
+  addsOne(7, 7, 5);
+  calls(x => x + 1, x => x + 1, 5);
+  addsMembers(({ x: 1, y: 2 }), ({ x: 1, y: 2 }), 5);
+  storesMember(({ x: 1, y: 2 }), ({ x: 1, y: 2 }), 5);
+}
+everyCase("after 500");
+//// the-length-is-read-of-values-that-are-not-strings.js
+////= show-26
+
+////= lines-7	lengthOf	text	text.length
+
+////= lines-183	isEmpty	text	text.length	0
+
+function isLongerThanThree(text) {
+  return text.length > 3;
+}
+
+////= lines-227	lengthIfAny	text	length
+
+function lengthByDestructuring({ length }) {
+  return length;
+}
+
+////= lines-131	totalLength	texts	length
+
+const log = [];
+globalThis.log = log;
+
+////= texts
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += lengthOf("hello") + lengthIfAny("hi") + lengthByDestructuring("hey") + totalLength(["a", "bc"]);
+  if (isEmpty("")) total++;
+  if (isLongerThanThree("hello")) total++;
+}
+console.log("2000 honest rounds", total);
+
+////= for-95
+attempt("honest again", () => [lengthOf("hello"), isEmpty("hello"), isLongerThanThree("hello"), lengthIfAny("hello"), lengthByDestructuring("hello"), totalLength(["hello"])]);
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// the-length-is-read-of-values-that-are-not-strings-with-the-values-in-plain-sight.js
+////= show-33
+
+const made = {
+  "'hello'": () => ('hello'),
+  "''": () => (''),
+  "'ab'.repeat(3) + 'c'": () => ('ab'.repeat(3) + 'c'),
+  "'\\ud83d\\ude00'": () => ('\ud83d\ude00'),
+  "new String('hello')": () => (new String('hello')),
+  "new String('')": () => (new String('')),
+  "Object.setPrototypeOf(new String('hello'), null)": () => (Object.setPrototypeOf(new String('hello'), null)),
+  "Object.create(new String('hello'))": () => (Object.create(new String('hello'))),
+  "Object.create('hello'.__proto__)": () => (Object.create('hello'.__proto__)),
+  "String.prototype": () => (String.prototype),
+  "['h', 'i']": () => (['h', 'i']),
+  "[]": () => ([]),
+  "[,,,]": () => ([,,,]),
+  "Object.assign([], { length: 4294967295 })": () => (Object.assign([], { length: 4294967295 })),
+  "Buffer.from('h\\u00e9llo')": () => (Buffer.from('h\u00e9llo')),
+  "new Uint16Array(3)": () => (new Uint16Array(3)),
+  "new ArrayBuffer(8)": () => (new ArrayBuffer(8)),
+  "function two(a, b) {}": () => (function two(a, b) {}),
+  "class One { constructor(a) {} }": () => (class One { constructor(a) {} }),
+  "(function () { return arguments; })(1, 2, 3)": () => ((function () { return arguments; })(1, 2, 3)),
+  "{ length: 5 }": () => ({ length: 5 }),
+  "{ length: '5' }": () => ({ length: '5' }),
+  "{ length: -0 }": () => ({ length: -0 }),
+  "{ length: 2.5 }": () => ({ length: 2.5 }),
+  "{ length: null }": () => ({ length: null }),
+  "{ length: { valueOf() { log.push('valueOf'); return 5; } } }": () => ({ length: { valueOf() { log.push('valueOf'); return 5; } } }),
+  "{ get length() { log.push('get length'); return 5; } }": () => ({ get length() { log.push('get length'); return 5; } }),
+  "{ get length() { throw new RangeError('no'); } }": () => ({ get length() { throw new RangeError('no'); } }),
+  "Object.create({ length: 7 })": () => (Object.create({ length: 7 })),
+  "{}": () => ({}),
+  "new Map([[1, 2]])": () => (new Map([[1, 2]])),
+  "new Set('abc')": () => (new Set('abc')),
+  "5": () => (5),
+  "5n": () => (5n),
+  "true": () => (true),
+  "Symbol('hello')": () => (Symbol('hello')),
+  "null": () => (null),
+  "undefined": () => (undefined),
+  "new Proxy('hello'.split(''), { get(target, key, receiver) { log.push('get ' + String(key)); return Reflect.get(target, key, receiver); } })": () => (new Proxy('hello'.split(''), { get(target, key, receiver) { log.push('get ' + String(key)); return Reflect.get(target, key, receiver); } })),
+  "new Proxy(new String('hello'), { get(target, key, receiver) { log.push('get ' + String(key)); return Reflect.get(target, key, receiver); } })": () => (new Proxy(new String('hello'), { get(target, key, receiver) { log.push('get ' + String(key)); return Reflect.get(target, key, receiver); } })),
+};
+
+////= make-3
+
+////= lines-7	lengthOf	text	text.length
+
+////= lines-183	isEmpty	text	text.length	0
+
+function isLongerThanThree(text) {
+  return text.length > 3;
+}
+
+////= lines-227	lengthIfAny	text	length
+
+function lengthByDestructuring({ length }) {
+  return length;
+}
+
+////= lines-131	totalLength	texts	length
+
+const log = [];
+globalThis.log = log;
+
+////= texts
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += lengthOf("hello") + lengthIfAny("hi") + lengthByDestructuring("hey") + totalLength(["a", "bc"]);
+  if (isEmpty("")) total++;
+  if (isLongerThanThree("hello")) total++;
+}
+console.log("2000 honest rounds", total);
+
+////= for-95
+attempt("honest again", () => [lengthOf("hello"), isEmpty("hello"), isLongerThanThree("hello"), lengthIfAny("hello"), lengthByDestructuring("hello"), totalLength(["hello"])]);
+//// the-library-declares-one-kind-and-the-value-is-another-sloppy.cjs
+const log = [];
+
+////= show-27
+
+console.log("strict:", (function () { return this === undefined; })());
+
+////= traps-3
+////= Point-3
+////= List
+////= lines-61	Chosen	Array	List
+
+attempt("a proxy of an array, pushed to", () => {
+  const a = new Proxy([5, 6], traps);
+  a.push(1);
+  return a.length;
+});
+////= attempt-35
+////= attempt-36
+attempt("a proxy of an object, read", () => {
+  const o = new Proxy({ x: 1, y: 2 }, traps);
+  return o.x + o.y;
+});
+attempt("a proxy of an object, stored to", () => {
+  const o = new Proxy({ x: 1, y: 2 }, traps);
+  o.x = 5;
+  return o.x;
+});
+attempt("a proxy of an instance, its method called", () => {
+  const p = new Proxy(new Point(), traps);
+  return p.sum();
+});
+attempt("a proxy of a function, called", () => {
+  const f = new Proxy(x => x + 1, traps);
+  return f(1);
+});
+attempt("a proxy that answers every read with a text", () => {
+  const o = new Proxy({ x: 1, y: 2 }, { get: () => "t" });
+  return [o.x + o.y, o.x | 0];
+});
+attempt("a clone of an instance, its method called", () => {
+  const p = structuredClone(new Point());
+  return [p.x + p.y, typeof p.sum];
+});
+attempt("a clone of a subclass of Array, pushed to", () => {
+  const a = structuredClone(new List(5, 6));
+  return [a.push(1), a.length];
+});
+attempt("a frozen array, pushed to", () => {
+  const a = Object.freeze([5, 6]);
+  a.push(1);
+  return a.length;
+});
+attempt("a frozen array, stored to", () => {
+  const a = Object.freeze([5, 6]);
+  a[0] = 9;
+  return a[0];
+});
+attempt("a frozen object, stored to", () => {
+  const o = Object.freeze({ x: 1, y: 2 });
+  o.x = 5;
+  return o.x;
+});
+attempt("an array that Object.assign gave its own push", () => {
+  const a = Object.assign([5, 6], { push: () => "own push" });
+  return [a.push(1), a.length];
+});
+attempt("an object whose member Object.defineProperty made a getter", () => {
+  const o = Object.defineProperty({ x: 1, y: 2 }, "x", { get() { log.push("get x"); return "text"; } });
+  return o.x + o.y;
+});
+attempt("an object whose members Object.defineProperties made getters", () => {
+  const o = Object.defineProperties({ x: 1, y: 2 }, { x: { get: () => "a" }, y: { get: () => "b" } });
+  return o.x + o.y;
+});
+attempt("an array that got the prototype of a subclass", () => {
+  const a = Object.setPrototypeOf([5, 6], List.prototype);
+  return [a.push(1), a.length];
+});
+attempt("what map returns for a subclass with a species", () => {
+  const a = new Chosen(5, 6).map(x => x * 2);
+  return [a.push(1), a.length];
+});
+attempt("what filter returns for a subclass with a species", () => {
+  const a = new Chosen(5, 6).filter(() => true);
+  return [a.push(1), a.length];
+});
+////= attempt-41
+////= attempt-42
+attempt("what replace returns for an object with Symbol.replace", () => {
+  const s = "abc".replace({ [Symbol.replace]: () => 65 }, "x");
+  return [typeof s, s + 1];
+});
+attempt("what search returns for an object with Symbol.search", () => {
+  const n = "abc".search({ [Symbol.search]: () => "3" });
+  return [n + 1, n | 0];
+});
+attempt("Array.from of a length alone", () => {
+  const a = Array.from({ length: 2 });
+  return [a[0] + 1, a[0] | 0, 0 in a];
+});
+attempt("Array of a length", () => {
+  const a = Array(2);
+  return [a[0] + 1, a[0] | 0, 0 in a, a.length];
+});
+////= attempt-33
+attempt("an element past the end", () => {
+  const a = [5, 6];
+  const n = a[2];
+  return [n + 1, n | 0];
+});
+attempt("a character past the end", () => {
+  const s = "abc"[3];
+  return [typeof s, s + 1];
+});
+attempt("an entry past the end", () => {
+  const entry = Object.entries({ a: 1 })[1];
+  return entry[0];
+});
+attempt("a number through Object", () => {
+  const n = Object(7);
+  return [typeof n, n + 1, n === 7];
+});
+attempt("a text through Object", () => {
+  const s = Object("abc");
+  return [typeof s, s.charCodeAt(0), s === "abc"];
+});
+////= attempt-34
+attempt("Number called as a constructor", () => {
+  const n = new Number(7);
+  return [typeof n, n + 1, n ? "truthy" : "falsy", new Number(0) ? "truthy" : "falsy"];
+});
+attempt("a class constructed for another", () => {
+  const p = Reflect.construct(Point, [], List);
+  return [p.x + p.y, typeof p.sum, typeof p.push];
+});
+attempt("an object made from the prototype of a class", () => {
+  const p = Object.create(Point.prototype);
+  return [p.sum(), Object.keys(p)];
+});
+//// the-library-declares-one-kind-and-the-value-is-another-strict.js
+"use strict";
+
+const log = [];
+
+////= show-27
+
+console.log("strict:", (function () { return this === undefined; })());
+
+////= traps-3
+////= Point-3
+////= List
+////= lines-61	Chosen	Array	List
+
+attempt("a proxy of an array, pushed to", () => {
+  const a = new Proxy([5, 6], traps);
+  a.push(1);
+  return a.length;
+});
+////= attempt-35
+////= attempt-36
+attempt("a proxy of an object, read", () => {
+  const o = new Proxy({ x: 1, y: 2 }, traps);
+  return o.x + o.y;
+});
+attempt("a proxy of an object, stored to", () => {
+  const o = new Proxy({ x: 1, y: 2 }, traps);
+  o.x = 5;
+  return o.x;
+});
+attempt("a proxy of an instance, its method called", () => {
+  const p = new Proxy(new Point(), traps);
+  return p.sum();
+});
+attempt("a proxy of a function, called", () => {
+  const f = new Proxy(x => x + 1, traps);
+  return f(1);
+});
+attempt("a proxy that answers every read with a text", () => {
+  const o = new Proxy({ x: 1, y: 2 }, { get: () => "t" });
+  return [o.x + o.y, o.x | 0];
+});
+attempt("a clone of an instance, its method called", () => {
+  const p = structuredClone(new Point());
+  return [p.x + p.y, typeof p.sum];
+});
+attempt("a clone of a subclass of Array, pushed to", () => {
+  const a = structuredClone(new List(5, 6));
+  return [a.push(1), a.length];
+});
+attempt("a frozen array, pushed to", () => {
+  const a = Object.freeze([5, 6]);
+  a.push(1);
+  return a.length;
+});
+attempt("a frozen array, stored to", () => {
+  const a = Object.freeze([5, 6]);
+  a[0] = 9;
+  return a[0];
+});
+attempt("a frozen object, stored to", () => {
+  const o = Object.freeze({ x: 1, y: 2 });
+  o.x = 5;
+  return o.x;
+});
+attempt("an array that Object.assign gave its own push", () => {
+  const a = Object.assign([5, 6], { push: () => "own push" });
+  return [a.push(1), a.length];
+});
+attempt("an object whose member Object.defineProperty made a getter", () => {
+  const o = Object.defineProperty({ x: 1, y: 2 }, "x", { get() { log.push("get x"); return "text"; } });
+  return o.x + o.y;
+});
+attempt("an object whose members Object.defineProperties made getters", () => {
+  const o = Object.defineProperties({ x: 1, y: 2 }, { x: { get: () => "a" }, y: { get: () => "b" } });
+  return o.x + o.y;
+});
+attempt("an array that got the prototype of a subclass", () => {
+  const a = Object.setPrototypeOf([5, 6], List.prototype);
+  return [a.push(1), a.length];
+});
+attempt("what map returns for a subclass with a species", () => {
+  const a = new Chosen(5, 6).map(x => x * 2);
+  return [a.push(1), a.length];
+});
+attempt("what filter returns for a subclass with a species", () => {
+  const a = new Chosen(5, 6).filter(() => true);
+  return [a.push(1), a.length];
+});
+////= attempt-41
+////= attempt-42
+attempt("what replace returns for an object with Symbol.replace", () => {
+  const s = "abc".replace({ [Symbol.replace]: () => 65 }, "x");
+  return [typeof s, s + 1];
+});
+attempt("what search returns for an object with Symbol.search", () => {
+  const n = "abc".search({ [Symbol.search]: () => "3" });
+  return [n + 1, n | 0];
+});
+attempt("Array.from of a length alone", () => {
+  const a = Array.from({ length: 2 });
+  return [a[0] + 1, a[0] | 0, 0 in a];
+});
+attempt("Array of a length", () => {
+  const a = Array(2);
+  return [a[0] + 1, a[0] | 0, 0 in a, a.length];
+});
+////= attempt-33
+attempt("an element past the end", () => {
+  const a = [5, 6];
+  const n = a[2];
+  return [n + 1, n | 0];
+});
+attempt("a character past the end", () => {
+  const s = "abc"[3];
+  return [typeof s, s + 1];
+});
+attempt("an entry past the end", () => {
+  const entry = Object.entries({ a: 1 })[1];
+  return entry[0];
+});
+attempt("a number through Object", () => {
+  const n = Object(7);
+  return [typeof n, n + 1, n === 7];
+});
+attempt("a text through Object", () => {
+  const s = Object("abc");
+  return [typeof s, s.charCodeAt(0), s === "abc"];
+});
+////= attempt-34
+attempt("Number called as a constructor", () => {
+  const n = new Number(7);
+  return [typeof n, n + 1, n ? "truthy" : "falsy", new Number(0) ? "truthy" : "falsy"];
+});
+attempt("a class constructed for another", () => {
+  const p = Reflect.construct(Point, [], List);
+  return [p.x + p.y, typeof p.sum, typeof p.push];
+});
+attempt("an object made from the prototype of a class", () => {
+  const p = Object.create(Point.prototype);
+  return [p.sum(), Object.keys(p)];
+});
+//// the-map-function-of-array-from-gets-the-value.cjs
+const log = [];
+
+////= show-24
+
+////= pushes-10	Array.from([given], (a, index)	index
+
+////= iterates-12	Array.from([given], (a, index)	index
+
+////= readsCharCode-8	Array.from([given], (s, index)	index
+
+function truncates(given) {
+  let result = "never called";
+  Array.from([given], (n, index) => {
+    result = n | 0;
+    return index;
+  });
+  return result;
+}
+
+////= lines-324	addsOne	Array.from([given], (n, index)	+	1	index
+
+////= calls-7	Array.from([given], (f, index)	index
+
+////= addsMembers-7	Array.from([given], (o, index)	index
+
+////= storesMember-9	Array.from([given], (o, index)	index
+
+////= table-7
+
+console.log("strict:", (function () { return this === undefined; })());
+everyCase("at first");
+////= for
+everyCase("after 2000");
+//// the-members-of-the-impostors-have-computed-names-sloppy.cjs
+const log = [];
+
+////= show-27
+
+console.log("strict:", (function () { return this === undefined; })());
+
+const named = text => text.split("").reverse().join("");
+const PUSH = named("hsup");
+const CHAR_CODE_AT = named("tAedoCrahc");
+const VALUE_OF = named("fOeulav");
+const X = named("x");
+const Y = named("y");
+const LENGTH = named("htgnel");
+
+////= pushes-18
+const functions = [
+  ["a function", () => x => x + 1],
+  ["a method read under a computed name", () => ({ [X]: x => "method " + x })[X]],
+  ["a class read under a computed name", () => ({ [X]: class Made {} })[X]],
+];
+////= objects-9
+
+////= table
+////= everyCase
+everyCase("at first");
+////= for
+everyCase("after 2000");
+//// the-members-of-the-impostors-have-computed-names-strict.js
+"use strict";
+
+const log = [];
+
+////= show-27
+
+console.log("strict:", (function () { return this === undefined; })());
+
+const named = text => text.split("").reverse().join("");
+const PUSH = named("hsup");
+const CHAR_CODE_AT = named("tAedoCrahc");
+const VALUE_OF = named("fOeulav");
+const X = named("x");
+const Y = named("y");
+const LENGTH = named("htgnel");
+
+////= pushes-18
+const functions = [
+  ["a function", () => x => x + 1],
+  ["a method read under a computed name", () => ({ [X]: x => "method " + x })[X]],
+  ["a class read under a computed name", () => ({ [X]: class Made {} })[X]],
+];
+////= objects-9
+
+////= table
+////= everyCase
+everyCase("at first");
+////= for
+everyCase("after 2000");
+//// the-name-and-length-of-a-native-constructor-are-read-like-a-function-has-them.js
+console.log(Array.name);
+console.log(Array.length);
+console.log(typeof Array.prototype);
+//// the-name-proto-written-in-every-way.js
+////= show-26
+
+const parent = { inherited: "from the parent" };
+
+function describe(object) {
+  return [Reflect.ownKeys(object).join(" "), Object.getPrototypeOf(object) === parent ? "parent" : Object.getPrototypeOf(object) === Object.prototype ? "Object.prototype" : Object.getPrototypeOf(object) === null ? "null" : "other", object.inherited];
+}
+
+function storeByKey(object, key, value) {
+  object[key] = value;
+  return object;
+}
+
+////= lines-73	readByKey	object	key	object[key
+
+function literalWithKey(key, value) {
+  return { [key]: value };
+}
+
+for (let i = 0; i < 2000; i++) {
+  storeByKey({}, "name", parent);
+  readByKey({ name: 1 }, "name");
+  literalWithKey("name", parent);
+}
+
+const name = make("'__pro' + 'to__'");
+const __proto__ = parent;
+
+attempt("written as a name in a literal", () => describe({ __proto__: parent }));
+attempt("written as a text in a literal", () => describe({ "__proto__": parent }));
+attempt("computed from a literal text", () => describe({ ["__proto__"]: parent }));
+attempt("computed from a variable", () => describe({ [name]: parent }));
+attempt("computed in a function", () => describe(literalWithKey(name, parent)));
+attempt("shorthand", () => describe({ __proto__ }));
+attempt("a method", () => describe({ __proto__() {} }));
+attempt("an accessor", () => describe({ get __proto__() { return parent; } }));
+attempt("a name in a literal, not an object", () => describe({ __proto__: 5 }));
+attempt("a name in a literal, null", () => describe({ __proto__: null }));
+attempt("a name in a literal, a text", () => describe({ __proto__: "text" }));
+attempt("a name in a literal, undefined", () => describe({ __proto__: undefined }));
+attempt("spread of an object that owns it", () => describe({ ...literalWithKey(name, parent) }));
+attempt("Object.assign of an object that owns it", () => describe(Object.assign({}, literalWithKey(name, parent))));
+attempt("JSON.parse", () => describe(JSON.parse('{ "__proto__": { "inherited": "from JSON" } }')));
+attempt("JSON.parse and then Object.assign", () => describe(Object.assign({}, JSON.parse('{ "__proto__": { "inherited": "from JSON" } }'))));
+attempt("Object.fromEntries", () => describe(Object.fromEntries([[name, parent]])));
+attempt("a store by name", () => {
+  const object = {};
+  object.__proto__ = parent;
+  return describe(object);
+});
+attempt("a store by key", () => describe(storeByKey({}, name, parent)));
+attempt("a store by key of a number", () => describe(storeByKey({}, name, 5)));
+attempt("a store by key of null", () => describe(storeByKey({}, name, null)));
+attempt("a store by key into an object without a prototype", () => describe(storeByKey(Object.create(null), name, parent)));
+attempt("a store by key into a list", () => {
+  const list = storeByKey([1], name, parent);
+  return [Array.isArray(list), list.inherited, typeof list.push, list.length];
+});
+attempt("a store by key into an object that cannot be extended", () => describe(storeByKey(Object.preventExtensions({}), name, parent)));
+attempt("a store by key that would make a cycle", () => {
+  const child = Object.create(parent);
+  try {
+    return describe(storeByKey(parent, name, child));
+  } finally {
+    Object.setPrototypeOf(parent, Object.prototype);
+  }
+});
+attempt("a store by key into a text", () => storeByKey("text", name, parent));
+attempt("a read by key", () => [readByKey({}, name) === Object.prototype, readByKey([], name) === Array.prototype, readByKey("", name) === String.prototype, readByKey(5, name) === Number.prototype, readByKey(Object.create(null), name)]);
+attempt("a read by key of null", () => readByKey(null, name));
+attempt("in and own", () => [name in {}, Object.hasOwn({}, name), name in Object.create(null), Object.hasOwn(literalWithKey(name, 1), name)]);
+attempt("delete by key", () => {
+  const object = literalWithKey(name, parent);
+  const answer = delete object[name];
+  return [answer, describe(object)];
+});
+attempt("a class member", () => {
+  class Odd {
+    __proto__ = "a field";
+    static __proto__ = "a static field";
+  }
+  return [Reflect.ownKeys(new Odd()), Object.hasOwn(Odd, name), Object.getPrototypeOf(Odd) === Function.prototype];
+});
+attempt("destructured", () => {
+  const { __proto__: first } = {};
+  const { [name]: second } = literalWithKey(name, "own");
+  return [first === Object.prototype, second];
+});
+attempt("a word count", () => {
+  const counts = {};
+  for (const word of ["a", name, "constructor", "a", name, "constructor", "toString"]) counts[word] = (counts[word] || 0) + 1;
+  return [Object.keys(counts), counts.a, typeof counts.constructor, typeof counts.toString, Object.getPrototypeOf(counts) === Object.prototype];
+});
+//// the-number-of-a-text-is-compared-in-a-loop-and-a-function-checks-the-answer.js
+function check(actual, expected) {
+  if (actual !== expected) throw new Error("bad value");
+}
+function atMost(value) {
+  return Number(value) <= 42;
+}
+for (let i = 0; i < 2; ++i) check(atMost("Hello"), false);
+console.log("done");
+//// the-order-of-conversions-in-calls-of-string-methods.js
+////= show-26
+
+const log = [];
+
+function noisy(name, result) {
+  return {
+    [Symbol.toPrimitive](hint) {
+      log.push(name + ":" + hint);
+      return result;
+    },
+  };
+}
+
+////= report-8	"  order:"	" "
+
+////= lines-91	slice	from	to
+
+////= lines-91	substring	from	to
+
+////= lines-91	indexOf	piece	from
+
+////= lines-91	padStart	length	filler
+
+////= lines-91	replace	piece	replacement
+
+////= lines-91	split	separator	limit
+
+////= lines-91	startsWith	piece	from
+
+////= lines-25	repeat	text	count	text.repeat
+
+for (let i = 0; i < 2000; i++) {
+  slice("hello", 1, 3);
+  substring("hello", 1, 3);
+  indexOf("hello", "l", 1);
+  padStart("x", 3, "ab");
+  replace("hello", "l", "L");
+  split("a,b", ",", 2);
+  startsWith("hello", "e", 1);
+  repeat("ab", 2);
+}
+
+const generic = name => (receiver, ...rest) => String.prototype[name].call(receiver, ...rest);
+
+report("slice", () => slice("hello", noisy("from", 1), noisy("to", 3)));
+report("slice of an empty range still converts both", () => slice("", noisy("from", 1), noisy("to", 3)));
+report("slice with a receiver that is converted", () => generic("slice")(noisy("this", "hello"), noisy("from", 1), noisy("to", 3)));
+report("substring", () => substring("hello", noisy("from", 3), noisy("to", 1)));
+report("indexOf", () => indexOf("hello", noisy("piece", "l"), noisy("from", 3)));
+report("indexOf with a receiver that is converted", () => generic("indexOf")(noisy("this", "hello"), noisy("piece", "l"), noisy("from", 3)));
+report("padStart", () => padStart("x", noisy("length", 4), noisy("filler", "ab")));
+report("padStart that has nothing to add", () => padStart("xxxx", noisy("length", 2), noisy("filler", "ab")));
+report("padStart with an empty filler", () => padStart("x", noisy("length", 4), noisy("filler", "")));
+report("replace", () => replace("hello", noisy("piece", "l"), noisy("replacement", "L")));
+report("replace that finds nothing", () => replace("hello", noisy("piece", "z"), noisy("replacement", "L")));
+report("split", () => split("a,b,c", noisy("separator", ","), noisy("limit", 2)));
+report("split with limit zero", () => split("a,b,c", noisy("separator", ","), noisy("limit", 0)));
+report("startsWith", () => startsWith("hello", noisy("piece", "e"), noisy("from", 1)));
+report("repeat", () => repeat("ab", noisy("count", 2)));
+report("repeat of the empty text with a huge count", () => repeat("", noisy("count", 2 ** 40)));
+report("repeat with a negative count", () => repeat("ab", noisy("count", -1)));
+report("repeat with infinity", () => repeat("", noisy("count", Infinity)));
+report("the first argument throws", () => slice("hello", { valueOf() { log.push("from throws"); throw new RangeError("no"); } }, noisy("to", 3)));
+report("the first argument is a symbol", () => slice("hello", Symbol("s"), noisy("to", 3)));
+report("the first argument is a BigInt", () => slice("hello", 1n, noisy("to", 3)));
+report("a null receiver is refused before the arguments", () => generic("slice")(null, noisy("from", 1), noisy("to", 3)));
+report("an undefined receiver is refused before the arguments", () => generic("indexOf")(undefined, noisy("piece", "l")));
+report("a symbol receiver", () => generic("slice")(Symbol("s"), noisy("from", 1)));
+report("a regular expression is refused before the position", () => startsWith("hello", /e/, noisy("from", 1)));
+report("arguments are evaluated before a missing method is noticed", () => ({}).slice(log.push("argument evaluated")));
+report("arguments are not evaluated when the receiver is null", () => null.slice(log.push("argument evaluated")));
+report("arguments are not evaluated after ?.", () => null?.slice(log.push("argument evaluated")));
+report("the method is read before the arguments are evaluated", () => ({ get slice() { log.push("get slice"); return () => "called"; } }).slice(log.push("argument evaluated")));
+//// the-parent-of-a-class-changes-between-constructions-and-both-parents-store.js
+class First {
+  shared = "shared of First";
+  constructor(value) {
+    this.from = "first";
+    this.value = value;
+  }
+}
+class Second {
+  other = "other of Second";
+  shared = "shared of Second";
+  constructor(value) {
+    this.from = "second";
+    this.doubled = value * 2;
+  }
+}
+function Third(value) {
+  this.from = "third";
+  this.tripled = value * 3;
+}
+class Child extends First {
+  own = "own";
+  constructor(value) {
+    super(value);
+    this.child = this.from + "!";
+  }
+}
+
+function show(label) {
+  const o = new Child(2);
+  console.log(label + ":", Object.keys(o).join(), o.from, o.value, o.doubled, o.tripled, o.shared, o.other, o.own, o.child, o instanceof First, o instanceof Second, o instanceof Child);
+}
+for (let i = 0; i < 3; i++) show("First");
+Object.setPrototypeOf(Child, Second);
+for (let i = 0; i < 3; i++) show("Second");
+Object.setPrototypeOf(Child, Third);
+for (let i = 0; i < 3; i++) show("Third");
+Object.setPrototypeOf(Child, First);
+for (let i = 0; i < 3; i++) show("First again");
+Object.setPrototypeOf(Child, Object);
+for (let i = 0; i < 2; i++) show("Object");
+Object.setPrototypeOf(Child, null);
+try {
+  show("null");
+} catch (error) {
+  console.log("null: threw", error.constructor.name);
+}
+console.log(Object.keys(new Second(1)).join(), Object.keys(new First(1)).join());
+//// the-parent-of-a-class-is-replaced-before-it-is-constructed.js
+"use strict";
+
+const log = [];
+
+////= show-27
+
+console.log("strict:", (function () { return this === undefined; })());
+
+////= Point-4
+////= lines-78	Other	a	"a"
+class Child extends Point {
+  z = 3;
+  sum() {
+    return this.x + this.y + this.z;
+  }
+}
+////= lines-67	OldParent	old	true
+function describe(made) {
+  return [Object.keys(made).join(), made.sum(), Array.isArray(made), made instanceof Point, made instanceof Child];
+}
+
+for (let i = 0; i < 2000; i++) new Child().sum();
+const parents = [
+  ["the parent it was declared with", Point],
+  ["another class", Other],
+  ["a constructor function", OldParent],
+  ["Array", Array],
+  ["Map", Map],
+  ["Object", Object],
+  ["a function that returns an object", function () { return { returned: true, sum: () => "the sum of what was returned" }; }],
+  ["a function that returns a number", function () { return 5; }],
+  ["a bound class", Point.bind(null)],
+  ["a proxy of the class", new Proxy(Point, { construct(target, list, newTarget) { log.push("construct"); return Reflect.construct(target, list, newTarget); } })],
+  ["an arrow function", () => {}],
+  ["Function.prototype", Function.prototype],
+  ["null", null],
+  ["the parent it was declared with, again", Point],
+];
+for (const [label, parent] of parents) {
+  Object.setPrototypeOf(Child, parent);
+  attempt("the parent is " + label, () => describe(new Child()));
+}
+//// the-parent-of-a-class-is-replaced-before-super-runs.js
+////= attempt-23
+
+class First {
+  constructor(value) {
+    this.from = "first";
+    this.value = value;
+  }
+  name() {
+    return "first";
+  }
+  static make() {
+    return "made by first";
+  }
+}
+
+class Second {
+  constructor(value) {
+    this.from = "second";
+    this.doubled = value * 2;
+  }
+  name() {
+    return "second";
+  }
+  static make() {
+    return "made by second";
+  }
+}
+
+class Child extends First {
+  constructor(value) {
+    super(value);
+    this.child = true;
+  }
+  name() {
+    return "child of " + super.name();
+  }
+  static make() {
+    return "child, " + super.make();
+  }
+}
+
+function build(value) {
+  const made = new Child(value);
+  return (
+    made.from +
+    " " +
+    Object.keys(made).join() +
+    " " +
+    made.name() +
+    " " +
+    (made instanceof First) +
+    " " +
+    (made instanceof Second)
+  );
+}
+
+let last = "";
+for (let i = 0; i < 2000; i++) last = build(i);
+console.log("2000 honest constructions:", last);
+attempt("static:", () => Child.make());
+
+////= lines-49	plainFunction	value	this.from	"a plain function"	seen	value
+
+const parents = {
+  "another class": Second,
+  "a plain function": plainFunction,
+  "a function that returns an object": function () {
+    return { from: "a returned object" };
+  },
+  "a bound class": First.bind(null, "bound"),
+  "a proxy of a class": new Proxy(Second, {
+    construct(target, list, newTarget) {
+      const made = Reflect.construct(target, list, newTarget);
+      made.from = "a proxy";
+      return made;
+    },
+  }),
+  Array: Array,
+  Object: Object,
+  "an arrow function": () => {},
+  "a plain object": {},
+  "Function.prototype": Function.prototype,
+  null: null,
+  "the first class again": First,
+};
+
+for (const [name, parent] of Object.entries(parents)) {
+  attempt("the parent becomes " + name + ":", () => typeof Object.setPrototypeOf(Child, parent));
+  attempt("  construction:", () => build(3));
+  attempt("  static:", () => Child.make());
+}
+
+Object.setPrototypeOf(Child.prototype, Second.prototype);
+attempt("the prototype object's parent becomes another class's:", () => build(4));
+Object.setPrototypeOf(Child.prototype, null);
+attempt("the prototype object's parent becomes null:", () => build(5));
+Object.setPrototypeOf(Child.prototype, First.prototype);
+attempt("and the first again:", () => build(6));
+//// the-parent-of-a-class-is-swapped-and-one-number-is-printed.js
+////= lines-66	First	value	from	1	value	value
+class Second {
+  constructor(value) {
+    this.from = 2;
+    this.doubled = value * 2;
+  }
+}
+class Child extends First {
+  constructor(value) {
+    super(value);
+    this.child = 7;
+  }
+}
+let sum = 0;
+function note(o) {
+  sum = (sum * 31 + o.from * 1000 + (o.value === undefined ? 0 : o.value) * 100 + (o.doubled === undefined ? 0 : o.doubled) * 10 + o.child + Object.keys(o).length * 10000) % 1000003;
+}
+note(new Child(1));
+Object.setPrototypeOf(Child, Second);
+note(new Child(2));
+note(new Child(3));
+Object.setPrototypeOf(Child, First);
+note(new Child(4));
+console.log(sum);
+//// the-parent-of-a-constructor-function-is-linked-late-replaced-or-never.js
+////= attempt-23
+
+function describe(label, made, Child, Parent) {
+  attempt(label + " greet:", () => made.greet());
+  attempt(label + " kind:", () => made.kind);
+  attempt(label + " own name:", () => made.name);
+  attempt(label + " instanceof child:", () => made instanceof Child);
+  attempt(label + " instanceof parent:", () => made instanceof Parent);
+  attempt(label + " prototype is the child's:", () => Object.getPrototypeOf(made) === Child.prototype);
+  attempt(label + " keys:", () => {
+    const keys = [];
+    for (const key in made) keys.push(key);
+    return keys.join();
+  });
+}
+
+////= lines-35	Early	name	this.name	name
+////= lines-36	Early	greet	"early "	name
+Early.prototype.kind = "early";
+
+////= lines-79	LinkedLate	name	Early
+const beforeTheLink = new LinkedLate("first");
+describe("constructed before the link", beforeTheLink, LinkedLate, Early);
+LinkedLate.prototype = Object.create(Early.prototype);
+LinkedLate.prototype.constructor = LinkedLate;
+const afterTheLink = new LinkedLate("second");
+describe("constructed after the link", afterTheLink, LinkedLate, Early);
+describe("the one from before, again", beforeTheLink, LinkedLate, Early);
+
+function Other(name) {
+  this.name = name + "!";
+}
+////= lines-36	Other	greet	"other "	name
+Other.prototype.kind = "other";
+
+////= lines-79	Relinked	name	Early
+Object.setPrototypeOf(Relinked.prototype, Early.prototype);
+
+function greetAll(list) {
+  let text = "";
+  for (let i = 0; i < list.length; i++) text = list[i].greet() + list[i].kind.length;
+  return text;
+}
+
+const many = [];
+for (let i = 0; i < 2000; i++) many.push(new Relinked("r" + i));
+attempt("2000 with the first parent:", () => greetAll(many));
+Object.setPrototypeOf(Relinked.prototype, Other.prototype);
+attempt("the same 2000 after the parent was replaced:", () => greetAll(many));
+describe("constructed after the replacement", new Relinked("late"), Relinked, Other);
+describe("against the first parent", many[0], Relinked, Early);
+Object.setPrototypeOf(Relinked.prototype, null);
+attempt("the same 2000 without any parent:", () => greetAll(many));
+Object.setPrototypeOf(Relinked.prototype, Early.prototype);
+attempt("the same 2000 with the first parent again:", () => greetAll(many));
+
+////= lines-79	NeverLinked	name	Early
+if (many.length === 0) NeverLinked.prototype = Object.create(Early.prototype);
+describe("the link is in a branch that is not taken", new NeverLinked("n"), NeverLinked, Early);
+
+function linkByName(child, parentName) {
+  const parents = { Early, Other };
+  child.prototype = Object.create(parents[parentName].prototype);
+}
+////= lines-35	LinkedByName	name	this.name	name
+linkByName(LinkedByName, JSON.parse('"Other"'));
+describe("the parent is chosen by a computed name", new LinkedByName("c"), LinkedByName, Other);
+
+////= lines-35	TwoLinks	name	this.name	name
+TwoLinks.prototype = Object.create(Early.prototype);
+const underTheFirst = new TwoLinks("one");
+TwoLinks.prototype = Object.create(Other.prototype);
+const underTheSecond = new TwoLinks("two");
+describe("under the first of two links", underTheFirst, TwoLinks, Early);
+describe("under the second of two links", underTheSecond, TwoLinks, Other);
+
+////= lines-79	MethodChanges	name	Early
+MethodChanges.prototype = Object.create(Early.prototype);
+const changing = [];
+for (let i = 0; i < 100; i++) changing.push(new MethodChanges("m" + i));
+attempt("before the parent's method changes:", () => greetAll(changing));
+////= lines-36	Early	greet	"changed "	name
+attempt("after the parent's method changed:", () => greetAll(changing));
+////= lines-36	MethodChanges	greet	"hidden "	name
+attempt("after the child hides it:", () => greetAll(changing));
+delete MethodChanges.prototype.greet;
+attempt("after the child shows it again:", () => greetAll(changing));
+changing[99].greet = () => "own ";
+attempt("after the last instance gets its own:", () => greetAll(changing));
+//// the-parent-of-a-subclass-of-a-regexp-subclass-is-replaced-by-a-constructor-function.js
+class B extends RegExp {}
+class C extends B {}
+const X = function () {};
+Object.defineProperty(X.prototype, "exec", {
+  value: function (text) {
+    return null;
+  },
+});
+X.prototype.__proto__ = RegExp.prototype;
+C.__proto__ = X;
+console.log(new B("a").test("a"));
+//// the-pieces-of-a-split-are-walked-and-it-was-not-a-text.js
+////= show-26
+
+function countFields(text) {
+  let count = 0;
+  for (const field of text.split(",")) count++;
+  return count;
+}
+
+function lengthsOfFields(text) {
+  const lengths = [];
+  for (const field of text.split(",")) lengths.push(field.length);
+  return lengths;
+}
+
+function secondField(text) {
+  return text.split(",")[1];
+}
+
+////= lines-81	numberOfFields	text	text.split	","
+
+function upperFields(text) {
+  return text.split(",").map(field => field.toUpperCase());
+}
+
+function rejoined(text) {
+  return text.split(",").join(";");
+}
+
+function firstAndRest(text) {
+  const [first, ...rest] = text.split(",");
+  return [first, rest];
+}
+
+function lastField(text) {
+  return text.split(",").pop();
+}
+
+function fieldsByIndex(text) {
+  const fields = text.split(",");
+  const seen = [];
+  for (let i = 0; i < fields.length; i++) seen.push(fields[i].trim());
+  return seen;
+}
+
+////= lines-103	splitBy	separator	field	split
+
+function linesAndWords(text) {
+  let words = 0;
+  for (const line of text.split("\n")) {
+    for (const word of line.split(" ")) if (word !== "") words++;
+  }
+  return words;
+}
+
+const log = [];
+globalThis.log = log;
+
+const uses = [
+  ["count", countFields],
+  ["lengths", lengthsOfFields],
+  ["second", secondField],
+  ["number", numberOfFields],
+  ["upper", upperFields],
+  ["rejoined", rejoined],
+  ["first and rest", firstAndRest],
+  ["last", lastField],
+  ["by index", fieldsByIndex],
+  ["lines and words", linesAndWords],
+];
+
+const values = [
+  "'a,b,c'",
+  "''",
+  "','",
+  "'a'",
+  "'a,\\u4e16,\\ud83d\\ude00'",
+  "'a,' + 'b'",
+  "new String('a,b')",
+  "{ split() { return 'a text, not a list'; } }",
+  "{ split() { return [1, null, 'c']; } }",
+  "{ split() { return new Set(['x', 'y']); } }",
+  "{ split() { return { length: 2, 0: 'x', 1: 'y' }; } }",
+  "{ split() { return null; } }",
+  "{ split() { log.push('split'); return ['x', 'y']; } }",
+  "{ split() { return Object.assign(['x', 'y'], { *[Symbol.iterator]() { yield 'from its own iterator'; }, map() { return 'its own map'; }, join() { return 'its own join'; }, pop() { return 'its own pop'; } }); } }",
+  "{ split(separator) { return [typeof separator, separator]; } }",
+  "['a,b', 'c']",
+  "Buffer.from('a,b')",
+  "5",
+  "null",
+];
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  for (const [, use] of uses) total += String(use("a,b,c")).length;
+  total += splitBy("a-b", "-").length;
+}
+console.log("2000 honest rounds", total);
+
+////= for-60
+console.log("split was called", log.length, "times");
+
+const separators = ["','", "''", "undefined", "null", "1", "/,/", "/(,)/", "/,|(x)/", "[',']", "{ toString() { return ','; } }", "{ [Symbol.split](text, limit) { return ['stand-in', typeof text, limit]; } }", "Symbol(',')", "new String(',')"];
+for (const separator of separators) attempt("'a,1,null' split by " + separator, () => splitBy("a,1,null", make(separator)));
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// the-promise-handed-to-the-listener-for-unhandled-rejections-gives-its-reason-to-catch.js
+const box = { width: 1 };
+process.once("unhandledRejection", (reason, promise) => {
+  promise.catch(o => { o.width = "wide"; console.log("width + 1 is", box.width + 1); });
+});
+Promise.reject(box);
+//// the-prototype-is-read-when-construction-starts.cjs
+const log = [];
+
+////= show-10
+
+////= attempt-13
+
+function nothing() {}
+
+function Late(callback) {
+  callback();
+  this.value = 1;
+}
+const firstOfLate = { who: () => "first" };
+const secondOfLate = { who: () => "second" };
+Late.prototype = firstOfLate;
+
+////= lines-149	makeLate	callback	Late
+
+////= whoIs
+
+let count = 0;
+for (let i = 0; i < 2000; i++) if (whoIs(makeLate(nothing)) === "first") count++;
+console.log("2000 honest constructions", count);
+
+attempt("the prototype is replaced while the constructor runs", () => whoIs(makeLate(() => { Late.prototype = secondOfLate; })));
+attempt("the next one has the new prototype", () => whoIs(makeLate(nothing)));
+Late.prototype = firstOfLate;
+attempt("the prototype is replaced while the argument is computed", () => whoIs(new Late((Late.prototype = secondOfLate, nothing))));
+Late.prototype = firstOfLate;
+attempt("the old prototype object is patched while the constructor runs", () => whoIs(makeLate(() => { firstOfLate.who = () => "patched"; })));
+firstOfLate.who = () => "first";
+attempt("the instance is moved while the constructor runs", () => {
+  function Moved() {
+    Object.setPrototypeOf(this, secondOfLate);
+    this.value = 1;
+  }
+  Moved.prototype = firstOfLate;
+  return whoIs(new Moved());
+});
+
+function Watched() {
+  log.push("body");
+  this.value = 1;
+}
+Watched.prototype.who = () => "watched";
+const watcher = new Proxy(Watched, {
+  get(target, key, receiver) {
+    log.push("get " + String(key));
+    return Reflect.get(target, key, receiver);
+  },
+});
+attempt("new of a proxy reads prototype before the body", () => whoIs(new watcher()));
+attempt("Reflect.construct for a proxy reads prototype before the body", () => whoIs(Reflect.construct(Watched, [], watcher)));
+attempt("the list of arguments is read before prototype", () => whoIs(Reflect.construct(Watched, { get length() { log.push("get length"); return 0; } }, watcher)));
+
+class Base {
+  constructor() {
+    log.push("base body");
+    this.fromBase = true;
+  }
+  who() {
+    return "base";
+  }
+}
+class Derived extends Base {
+  constructor(before) {
+    log.push("derived body");
+    before();
+    super();
+    this.fromDerived = true;
+  }
+  who() {
+    return "derived";
+  }
+}
+function Target() {}
+Target.prototype = firstOfLate;
+
+for (let i = 0; i < 2000; i++) new Derived(nothing);
+log.length = 0;
+attempt("a class for itself", () => whoIs(new Derived(nothing)));
+attempt("a class for a function", () => whoIs(Reflect.construct(Derived, [nothing], Target)));
+attempt("the function's prototype is replaced before super()", () => whoIs(Reflect.construct(Derived, [() => { Target.prototype = secondOfLate; }], Target)));
+Target.prototype = firstOfLate;
+attempt("a class for a proxy: prototype is read at super()", () => whoIs(Reflect.construct(Derived, [nothing], new Proxy(Target, { get(target, key) { log.push("get " + String(key)); return target[key]; } }))));
+attempt("a prototype that is a getter of a bound function's target", () => whoIs(Reflect.construct(Derived, [nothing], Target.bind(null))));
+attempt("honest again", () => [whoIs(makeLate(nothing)), whoIs(new Derived(nothing))]);
+//// the-prototype-of-a-class-made-20000-times-is-hung-under-a-proxy.js
+function make() {
+  class Leaf {
+    answer() {
+      return 1;
+    }
+  }
+  Object.setPrototypeOf(Leaf.prototype, new Proxy({}, {}));
+  return new Leaf().answer();
+}
+let sum = 0;
+for (let i = 0; i < 20000; i++) sum += make();
+console.log(sum);
+//// the-prototype-of-a-constructor-function-declared-in-a-function-is-replaced-in-the-second-run.js
+const replacement = {};
+////= lines-35	swap	A	A.prototype	replacement
+function body(round) {
+  function A(x) {
+    this.value = x;
+  }
+  function make(n) {
+    return new A(n);
+  }
+  const original = A.prototype;
+  const made = [];
+  for (let i = 0; i < 4; i++) {
+    if (round === 1 && i === 2) swap(A);
+    made.push(make(20));
+  }
+  console.log(made.map(o => (o.__proto__ === original ? "original" : o.__proto__ === replacement ? "replacement" : "other")).join());
+}
+body(0);
+body(1);
+//// the-prototype-of-a-constructor-function-is-a-proxy-and-instanceof-asks-it.js
+class Foo {}
+function Bar() {}
+let calls = 0;
+////= Bar-prototype
+const bar = new Bar();
+console.log(bar instanceof Foo, calls);
+//// the-prototype-of-a-constructor-function-is-replaced-between-constructions.js
+function Bar() {}
+////= lines-98	make	Bar
+console.log(Object.getPrototypeOf(make()) === Bar.prototype, make().x);
+const parent = { x: 1 };
+Bar.prototype = parent;
+console.log(Object.getPrototypeOf(make()) === parent, make().x);
+Bar.prototype = new Proxy({}, { get() { return 7; } });
+console.log(make().x);
+//// the-prototype-of-a-generator-function-is-replaced-and-the-link-of-what-it-makes-is-compared.js
+////= lines-266	same	actual	expected
+function* numbers() {}
+const original = numbers.prototype;
+console.log(same(numbers().__proto__, numbers.prototype));
+numbers.prototype = {};
+const made = numbers();
+console.log(same(made.__proto__, numbers.prototype), same(made.__proto__ !== original, true));
+//// the-prototype-of-an-async-generator-function-is-replaced-and-the-link-of-what-it-makes-is-compared.js
+////= lines-266	same	actual	expected
+async function* numbers() {}
+const original = numbers.prototype;
+console.log(same(numbers().__proto__, numbers.prototype));
+numbers.prototype = {};
+const made = numbers();
+console.log(same(made.__proto__, numbers.prototype), same(made.__proto__ !== original, true));
+//// the-prototype-property-cannot-be-written-sloppy.cjs
+////= show-34
+
+console.log("strict code:", (function () { return this === undefined; })());
+
+////= lines-67	Parent	fromParent	true
+////= lines-58	Parent	who	"parent"
+
+////= lines-98	makeLocked	Locked
+
+////= lines-98	makeFrozenPrototype	FrozenPrototype
+
+////= lines-98	makeFrozenMaker	FrozenMaker
+
+////= lines-98	makeModern	Modern
+
+////= whoIs
+
+////= lines-282	Locked	Parent
+////= lines-58	Locked	who	"the first prototype of Locked"
+Object.defineProperty(Locked, "prototype", { writable: false });
+////= attempt-46	"a store to a prototype property that cannot be written"	Locked
+attempt("an instance after the failed store", () => whoIs(makeLocked()));
+attempt("instanceof Parent", () => makeLocked() instanceof Parent);
+////= attempt-47	"members of the locked prototype can still be stored"	Locked	makeLocked
+attempt("and it can still be moved under Parent", () => {
+  Object.setPrototypeOf(Locked.prototype, Parent.prototype);
+  delete Locked.prototype.who;
+  return [whoIs(makeLocked()), makeLocked() instanceof Parent];
+});
+
+////= lines-76	Modern	who	"modern"
+////= attempt-46	"a store to the prototype property of a class"	Modern
+attempt("an instance of the class after that", () => whoIs(makeModern()));
+
+////= lines-67	FrozenMaker	made	true
+////= lines-58	FrozenMaker	who	"frozen maker"
+Object.freeze(FrozenMaker);
+attempt("a store to the prototype property of a frozen function", () => {
+  FrozenMaker.prototype = { who: () => "replaced" };
+  return "no error";
+});
+attempt("a static member stored on a frozen function", () => {
+  FrozenMaker.extra = 1;
+  return FrozenMaker.extra;
+});
+attempt("an instance of it", () => whoIs(makeFrozenMaker()));
+
+////= lines-67	FrozenPrototype	made	true
+////= lines-58	FrozenPrototype	who	"frozen prototype"
+Object.freeze(FrozenPrototype.prototype);
+////= attempt-47	"a method stored on a frozen prototype"	FrozenPrototype	makeFrozenPrototype
+attempt("a new method stored on a frozen prototype", () => {
+  FrozenPrototype.prototype.more = function () { return "more"; };
+  return typeof makeFrozenPrototype().more;
+});
+attempt("an instance shadows a method of a frozen prototype", () => {
+  const instance = makeFrozenPrototype();
+  instance.who = function () { return "shadow"; };
+  return [whoIs(instance), Object.hasOwn(instance, "who")];
+});
+attempt("a frozen prototype moved under Parent", () => {
+  Object.setPrototypeOf(FrozenPrototype.prototype, Parent.prototype);
+  return "no error";
+});
+attempt("the prototype property itself can still be replaced", () => {
+  FrozenPrototype.prototype = Object.create(Parent.prototype);
+  return whoIs(makeFrozenPrototype());
+});
+
+const arrow = () => {};
+attempt("a prototype stored on an arrow function", () => {
+  arrow.prototype = Parent.prototype;
+  return [Object.create(Parent.prototype) instanceof arrow, typeof arrow.prototype];
+});
+attempt("new of that arrow function", () => new arrow());
+
+const bound = Parent.bind(null);
+attempt("a prototype stored on a bound function", () => {
+  bound.prototype = { who: () => "the bound function's prototype" };
+  return whoIs(new bound());
+});
+
+let length = 0;
+for (let i = 0; i < 2000; i++) length += whoIs(makeLocked()).length + whoIs(makeModern()).length + whoIs(makeFrozenMaker()).length;
+console.log("2000 rounds at the end", length);

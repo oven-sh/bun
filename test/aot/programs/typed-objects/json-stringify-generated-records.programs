@@ -1,0 +1,2951 @@
+////: lines-5
+function «1»(label: string, values: «2»[]): void {
+  for (const value of values) console.log(label + ": " + JSON.stringify(value));
+  writeByShape(label, values);
+}
+//// json-stringify-generated-records-3.ts
+function parsed(text: string): any { return JSON.parse(text); }
+function nothing(): void {}
+function viaUnknown(value: unknown): string | undefined { return JSON.stringify(value); }
+function viaAny(value: any): string | undefined { return JSON.stringify(value); }
+function show(number: number, run: () => string | undefined): void { let text: string | undefined; try { text = run(); } catch (error) { text = "threw " + (error as Error).constructor.name; } console.log(number + " " + text); }
+interface R0 { count: string; _x: string; name: number }
+interface W0 { before?: number; held: R0; after?: string; list: R0[] }
+const spare0: R0 = { count: "tab\there", _x: "a", name: (1) };
+interface R1 { list?: (string)[]; kind: ((number)[])[]; tags?: (Record<string, number>)[]; camelCase?: string | null; b: R0 | null; with_underscore?: boolean | null; name: R0 | null }
+interface W1 { before?: number; held: R1; after?: string; list: R1[] }
+const spare1: R1 = { list: [], kind: [[(2147483648), (1e21), (-1)], [(1), (4294967296), (-0)], [(2147483648), (-Infinity), (0.1 + 0.2)]], tags: [({ "\u4e2d": 2147483647, "caf\u00e9": -2147483648, "k 2": 1 } as Record<string, number>), ({ "1": -0.25, "z": Infinity } as Record<string, number>)], camelCase: "quote \" inside", b: null, name: null };
+interface R2 { list: Date | null; name?: R1; $y: string; kind?: R0; b: any; c: (string | number | boolean | null)[]; next: Record<string, number>; zz?: Date | null }
+interface W2 { before?: number; held: R2; after?: string; list: R2[] }
+const spare2: R2 = { list: new Date(NaN), name: { list: ["\""], kind: [[(1e-7), (-Infinity)]], tags: [({ "k 2": 0.1 + 0.2, "z": -2147483649 } as Record<string, number>), ({ "\u4e2d": 42, "z": 1, "k 2": 2147483647 } as Record<string, number>)], camelCase: "", b: spare0, with_underscore: null, name: null }, $y: "\ud83d\ude00", b: parsed("[{\"w\":\"\u4e2d\"},{\"w\":\"a\"}]"), c: [null], next: ({ "caf\u00e9": 1e-7, "1": 1e-7, "z": 1e-7 } as Record<string, number>), zz: null };
+interface R3 { at?: number | null; meta: Date }
+interface W3 { before?: number; held: R3; after?: string; list: R3[] }
+const spare3: R3 = { at: undefined, meta: new Date(253402300800000) };
+interface R4 { b?: (number)[]; ok: string | number; held?: Record<string, number> }
+interface W4 { before?: number; held: R4; after?: string; list: R4[] }
+const spare4: R4 = { ok: (9007199254740993), held: ({ "z": 1.5, "caf\u00e9": 1, "1": 42 } as Record<string, number>) };
+interface R5 { with_underscore: unknown; next: number | null }
+interface W5 { before?: number; held: R5; after?: string; list: R5[] }
+const spare5: R5 = { with_underscore: undefined, next: (2147483648) };
+interface R6 { camelCase: R2; b: string; id: unknown }
+interface W6 { before?: number; held: R6; after?: string; list: R6[] }
+const spare6: R6 = { camelCase: { list: new Date(1700000000123), $y: "</script>", b: parsed("{\"text\":\"caf\u00e9\"}"), c: [true, (-2147483648), true, "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll", null], next: ({ "z": 2147483648, "\u4e2d": 9007199254740993 } as Record<string, number>) }, b: "\ud800", id: parsed("{\"text\":\"caf\u00e9\"}") };
+interface R7 { tags: string | null; ok: string | number }
+interface W7 { before?: number; held: R7; after?: string; list: R7[] }
+const spare7: R7 = { tags: "tab\there", ok: "{" };
+interface R8 { _x: number | null; held?: (Date)[]; with_underscore: Record<string, number>; kind: Record<string, number>; ok: string; count?: number | null; at?: boolean; value: boolean }
+interface W8 { before?: number; held: R8; after?: string; list: R8[] }
+const spare8: R8 = { _x: null, with_underscore: ({ "caf\u00e9": 0.1 + 0.2, "\u4e2d": 0.1 + 0.2, "k 2": 42 } as Record<string, number>), kind: ({  } as Record<string, number>), ok: "", value: true };
+interface R9 { list?: unknown; at: any; id: string | null }
+interface W9 { before?: number; held: R9; after?: string; list: R9[] }
+const spare9: R9 = { list: "a", at: parsed("[[],[[]],{}]"), id: "[" };
+interface R10 { b: R0; score: number | null; a?: number }
+interface W10 { before?: number; held: R10; after?: string; list: R10[] }
+const spare10: R10 = { b: { count: "x\udc00y", _x: "{", name: (-1) }, score: null, a: (-1) };
+const v1: R0 = { count: "tab\there", _x: "\u007f", name: (-0) };
+(v1 as any).extra = null;
+show(1, () => JSON.stringify(v1));
+show(2, () => viaUnknown(v1));
+show(3, () => viaAny(v1));
+show(4, () => JSON.stringify([v1, spare0, v1]));
+show(5, () => JSON.stringify({ a: 1, v: v1, z: "null" } as any));
+show(6, () => JSON.stringify({ head: undefined, v: v1, inner: { w: v1 }, tail: null } as any));
+show(7, () => JSON.stringify({ before: 1, held: v1, after: "\u00ff", list: [v1, v1] } as W0));
+const v2: R0 = { count: "tab\there", _x: ",", name: (-2147483649) };
+(v2 as any).zzz = (0.1 + 0.2);
+show(8, () => JSON.stringify(v2));
+show(9, () => viaUnknown(v2));
+show(10, () => viaAny(v2));
+show(11, () => JSON.stringify([v2, spare0, v2]));
+show(12, () => JSON.stringify({ a: 1, v: v2, z: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll" } as any));
+show(13, () => JSON.stringify({ head: undefined, v: v2, inner: { w: v2 }, tail: (123456789012) } as any));
+show(14, () => JSON.stringify({ held: v2, after: "</script>", list: [] } as W0));
+const v3: R0 = { count: "quote \" inside", _x: "a\u4e2d", name: (Infinity) };
+show(15, () => JSON.stringify(v3));
+show(16, () => viaUnknown(v3));
+show(17, () => viaAny(v3));
+show(18, () => JSON.stringify([v3, spare0, v3]));
+show(19, () => JSON.stringify({ a: 1, v: v3, z: "hello world" } as any));
+show(20, () => JSON.stringify({ head: undefined, v: v3, inner: { w: v3 }, tail: (NaN) } as any));
+show(21, () => JSON.stringify({ held: v3, list: [] } as W0));
+const v4: R0 = { count: "quote \" inside", _x: "null", name: (42) };
+Object.preventExtensions(v4);
+show(22, () => JSON.stringify(v4));
+show(23, () => viaUnknown(v4));
+show(24, () => viaAny(v4));
+show(25, () => JSON.stringify([v4, spare0, v4]));
+show(26, () => JSON.stringify({ a: 1, v: v4, z: "}" } as any));
+show(27, () => JSON.stringify({ head: undefined, v: v4, inner: { w: v4 }, tail: { list: new Date(1700000000123), name: spare1, $y: "a\u4e2d", b: "[", c: [(NaN)], next: ({ "z": 1e21, "k 2": -0.25 } as Record<string, number>), zz: new Date(0) } } as any));
+show(28, () => JSON.stringify({ before: 1, held: v4, after: "\ud800", list: [v4, v4] } as W0));
+const v5: R0 = { count: "a\u4e2d", _x: "\u00ff", name: (123456789012) };
+show(29, () => JSON.stringify(v5));
+show(30, () => viaUnknown(v5));
+show(31, () => viaAny(v5));
+show(32, () => JSON.stringify([v5, spare0, v5]));
+show(33, () => JSON.stringify({ a: 1, v: v5, z: "{" } as any));
+show(34, () => JSON.stringify({ head: undefined, v: v5, inner: { w: v5 }, tail: new Date(253402300800000) } as any));
+show(35, () => JSON.stringify({ held: v5, list: [] } as W0));
+const v6: R1 = { kind: [], b: null, name: null };
+v6.list = ["</script>"];
+v6.tags = [({ "caf\u00e9": -2147483649, "\u4e2d": -0, "k": 2147483647 } as Record<string, number>), ({ "k": 1, "\u4e2d": -2147483649, "caf\u00e9": 1 } as Record<string, number>), ({ "k": -2147483649 } as Record<string, number>)];
+v6.camelCase = "quote \" inside";
+show(36, () => JSON.stringify(v6));
+show(37, () => viaUnknown(v6));
+show(38, () => viaAny(v6));
+show(39, () => JSON.stringify([v6, spare1, v6]));
+show(40, () => JSON.stringify({ a: 1, v: v6, z: "" } as any));
+show(41, () => JSON.stringify({ head: undefined, v: v6, inner: { w: v6 }, tail: { _x: null, held: [], with_underscore: ({ "\u4e2d": -0 } as Record<string, number>), kind: ({ "k 2": 1.5 } as Record<string, number>), ok: "}", count: (1.5), value: true } } as any));
+show(42, () => JSON.stringify({ held: v6, after: "\u4e2d\u6587", list: [] } as W1));
+const v7: R1 = { kind: [], b: null, name: null };
+v7.camelCase = "</script>";
+v7.tags = [({ "caf\u00e9": -2147483648, "k 2": -0.25 } as Record<string, number>), ({ "caf\u00e9": 42 } as Record<string, number>), ({ "\u4e2d": 0, "k": 1, "k 2": -2147483649 } as Record<string, number>)];
+v7.list = ["new\nline", "a"];
+show(43, () => JSON.stringify(v7));
+show(44, () => viaUnknown(v7));
+show(45, () => viaAny(v7));
+show(46, () => JSON.stringify([v7, spare1, v7]));
+show(47, () => JSON.stringify({ a: 1, v: v7, z: "hello world" } as any));
+show(48, () => JSON.stringify({ head: undefined, v: v7, inner: { w: v7 }, tail: ["{", true] } as any));
+show(49, () => JSON.stringify({ before: 1, held: v7, list: [v7] } as W1));
+const v8: R1 = { kind: [[(-0.25), (-2147483648), (-0)]], b: { count: "\u00ff", _x: "a\u4e2d", name: (1) }, name: { count: "\u0001\u001f", _x: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll", name: (0) } };
+v8.camelCase = null;
+delete v8.list;
+show(50, () => JSON.stringify(v8));
+show(51, () => viaUnknown(v8));
+show(52, () => viaAny(v8));
+show(53, () => JSON.stringify([v8, spare1, v8]));
+show(54, () => JSON.stringify({ a: 1, v: v8, z: "caf\u00e9" } as any));
+show(55, () => JSON.stringify({ head: undefined, v: v8, inner: { w: v8 }, tail: new Date(-62167219200001) } as any));
+show(56, () => JSON.stringify({ before: 1, held: v8, list: [] } as W1));
+const v9: R1 = { list: [",", "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", "{", "a\u4e2d", "null"], kind: [[(-Infinity), (42), (1.5), (9007199254740993), (42)]], tags: [({ "1": 123456789012 } as Record<string, number>), ({  } as Record<string, number>), ({ "k": 0 } as Record<string, number>), ({  } as Record<string, number>), ({ "caf\u00e9": 1e21 } as Record<string, number>)], b: { count: "</script>", _x: "a", name: (0) }, with_underscore: true, name: { count: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", _x: "hello world", name: (123456789012) } };
+(v9 as any).toString = null;
+show(57, () => JSON.stringify(v9));
+show(58, () => viaUnknown(v9));
+show(59, () => viaAny(v9));
+show(60, () => JSON.stringify([v9, spare1, v9]));
+show(61, () => JSON.stringify({ a: 1, v: v9, z: "\"" } as any));
+show(62, () => JSON.stringify({ head: undefined, v: v9, inner: { w: v9 }, tail: Symbol.iterator } as any));
+show(63, () => JSON.stringify({ held: v9, list: [v9] } as W1));
+const v10: R1 = { kind: [[(Infinity)]], b: { count: "caf\u00e9", _x: "null", name: (-0) }, name: { count: "{", _x: "back\\slash", name: (-0.25) } };
+v10.list = ["back\\slash", "", "x\udc00y"];
+v10.tags = [];
+v10.with_underscore = true;
+v10.camelCase = null;
+show(64, () => JSON.stringify(v10));
+show(65, () => viaUnknown(v10));
+show(66, () => viaAny(v10));
+show(67, () => JSON.stringify([v10, spare1, v10]));
+show(68, () => JSON.stringify({ a: 1, v: v10, z: "," } as any));
+show(69, () => JSON.stringify({ head: undefined, v: v10, inner: { w: v10 }, tail: (-Infinity) } as any));
+show(70, () => JSON.stringify({ held: v10, after: ",", list: [v10, v10] } as W1));
+const v11: R2 = { list: new Date(NaN), $y: "quote \" inside", b: parsed("[]"), c: [null], next: ({ "z": 123456789012, "k": Infinity } as Record<string, number>) };
+v11.zz = null;
+show(71, () => JSON.stringify(v11));
+show(72, () => viaUnknown(v11));
+show(73, () => viaAny(v11));
+show(74, () => JSON.stringify([v11, spare2, v11]));
+show(75, () => JSON.stringify({ a: 1, v: v11, z: "back\\slash" } as any));
+show(76, () => JSON.stringify({ head: undefined, v: v11, inner: { w: v11 }, tail: parsed("{\"deep\":{\"deeper\":{\"deepest\":[true,false]}}}") } as any));
+show(77, () => JSON.stringify({ held: v11, after: "back\\slash", list: [v11, v11] } as W2));
+const v12: R2 = { list: new Date(0), name: { list: ["\ud800", "a\u4e2d", "caf\u00e9", "\"", "back\\slash"], kind: [[(1e-7)], [(-1)]], camelCase: null, b: null, name: { count: "\u4e2d\u6587", _x: "hello world", name: (1e-7) } }, $y: "a\u4e2d", b: parsed("[1,\"x\",{\"y\":null}]"), c: [null], next: ({ "k": 1.5, "caf\u00e9": 42 } as Record<string, number>), zz: new Date(NaN) };
+Object.freeze(v12);
+show(78, () => JSON.stringify(v12));
+show(79, () => viaUnknown(v12));
+show(80, () => viaAny(v12));
+show(81, () => JSON.stringify([v12, spare2, v12]));
+show(82, () => JSON.stringify({ a: 1, v: v12, z: "null" } as any));
+show(83, () => JSON.stringify({ head: undefined, v: v12, inner: { w: v12 }, tail: { camelCase: spare2, b: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", id: [null] } } as any));
+show(84, () => JSON.stringify({ before: 1, held: v12, after: "\ud800", list: [v12, v12] } as W2));
+const v13: R2 = { list: new Date(-62167219200001), $y: "</script>", b: Symbol.iterator, c: ["caf\u00e9"], next: ({ "z": 1.5, "k 2": -Infinity } as Record<string, number>) };
+v13.zz = null;
+show(85, () => JSON.stringify(v13));
+show(86, () => viaUnknown(v13));
+show(87, () => viaAny(v13));
+show(88, () => JSON.stringify([v13, spare2, v13]));
+show(89, () => JSON.stringify({ a: 1, v: v13, z: "hello world" } as any));
+show(90, () => JSON.stringify({ head: undefined, v: v13, inner: { w: v13 }, tail: (123456789012) } as any));
+show(91, () => JSON.stringify({ before: 1, held: v13, after: "</script>", list: [] } as W2));
+const v14: R2 = { list: new Date(8640000000000000), name: { list: ["\u0001\u001f"], kind: [[(4294967296)]], tags: undefined, b: { count: "\"", _x: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll", name: (2147483648) }, name: { count: "x\udc00y", _x: "\u007f", name: (4294967296) } }, $y: "\u4e2d\u6587", kind: { count: "\u0001\u001f", _x: "a\u4e2d", name: (1e-7) }, b: Symbol.iterator, c: [null], next: ({ "caf\u00e9": 0, "z": 1, "1": 1e-7 } as Record<string, number>) };
+v14.name = { list: ["llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll"], kind: [[], [(Infinity), (1), (0.1 + 0.2), (-0), (0)], [(-2147483648)], [(-0), (1.5), (42)], [(-2147483649), (123456789012), (NaN), (-1), (-1)]], tags: [({ "k 2": 0, "1": 0 } as Record<string, number>), ({ "z": -0.25, "\u4e2d": -2147483648 } as Record<string, number>)], b: null, name: null };
+v14.kind = { count: ",", _x: "}", name: (1.5) };
+v14.zz = null;
+delete v14.name;
+v14.name = { list: ["\u0001\u001f"], kind: [[(1e21), (-2147483648)], [(-0), (-0.25)], [(NaN), (1e21), (1e-7), (2147483648), (0)], [(123456789012)], []], tags: [({ "k 2": Infinity } as Record<string, number>)], camelCase: "quote \" inside", b: { count: "\u0001\u001f", _x: "x\udc00y", name: (NaN) }, name: null };
+show(92, () => JSON.stringify(v14));
+show(93, () => viaUnknown(v14));
+show(94, () => viaAny(v14));
+show(95, () => JSON.stringify([v14, spare2, v14]));
+show(96, () => JSON.stringify({ a: 1, v: v14, z: "{" } as any));
+show(97, () => JSON.stringify({ head: undefined, v: v14, inner: { w: v14 }, tail: "a\u4e2d" } as any));
+show(98, () => JSON.stringify({ held: v14, list: [] } as W2));
+const v15: R2 = { list: null, name: undefined, $y: "new\nline", kind: { count: "hello world", _x: "new\nline", name: (-0.25) }, b: (2147483647), c: [null, "caf\u00e9", true, null, "\u007f"], next: ({ "k": 1e-7, "1": 1e21, "k 2": 1.5 } as Record<string, number>), zz: null };
+show(99, () => JSON.stringify(v15));
+show(100, () => viaUnknown(v15));
+show(101, () => viaAny(v15));
+show(102, () => JSON.stringify([v15, spare2, v15]));
+show(103, () => JSON.stringify({ a: 1, v: v15, z: "," } as any));
+show(104, () => JSON.stringify({ head: undefined, v: v15, inner: { w: v15 }, tail: nothing } as any));
+show(105, () => JSON.stringify({ held: v15, after: "</script>", list: [v15] } as W2));
+const v16: R3 = { meta: new Date(-62167219200001) };
+v16.at = (0);
+show(106, () => JSON.stringify(v16));
+show(107, () => viaUnknown(v16));
+show(108, () => viaAny(v16));
+show(109, () => JSON.stringify([v16, spare3, v16]));
+show(110, () => JSON.stringify({ a: 1, v: v16, z: "\u0001\u001f" } as any));
+show(111, () => JSON.stringify({ head: undefined, v: v16, inner: { w: v16 }, tail: [] } as any));
+show(112, () => JSON.stringify({ before: 1, held: v16, after: "a", list: [v16] } as W3));
+const v17: R3 = { at: undefined, meta: new Date(-1) };
+show(113, () => JSON.stringify(v17));
+show(114, () => viaUnknown(v17));
+show(115, () => viaAny(v17));
+show(116, () => JSON.stringify([v17, spare3, v17]));
+show(117, () => JSON.stringify({ a: 1, v: v17, z: "tab\there" } as any));
+show(118, () => JSON.stringify({ head: undefined, v: v17, inner: { w: v17 }, tail: null } as any));
+show(119, () => JSON.stringify({ held: v17, after: "\u4e2d\u6587", list: [v17] } as W3));
+const v18: R3 = { meta: new Date(253402300800000) };
+show(120, () => JSON.stringify(v18));
+show(121, () => viaUnknown(v18));
+show(122, () => viaAny(v18));
+show(123, () => JSON.stringify([v18, spare3, v18]));
+show(124, () => JSON.stringify({ a: 1, v: v18, z: "\u007f" } as any));
+show(125, () => JSON.stringify({ head: undefined, v: v18, inner: { w: v18 }, tail: { ok: "{" } } as any));
+show(126, () => JSON.stringify({ held: v18, list: [v18] } as W3));
+const v19: R3 = { at: (-2147483649), meta: new Date(8640000000000000) };
+Object.seal(v19);
+show(127, () => JSON.stringify(v19));
+show(128, () => viaUnknown(v19));
+show(129, () => viaAny(v19));
+show(130, () => JSON.stringify([v19, spare3, v19]));
+show(131, () => JSON.stringify({ a: 1, v: v19, z: "back\\slash" } as any));
+show(132, () => JSON.stringify({ head: undefined, v: v19, inner: { w: v19 }, tail: nothing } as any));
+show(133, () => JSON.stringify({ held: v19, list: [v19, v19] } as W3));
+const v20: R3 = { meta: new Date(8640000000000000) };
+show(134, () => JSON.stringify(v20));
+show(135, () => viaUnknown(v20));
+show(136, () => viaAny(v20));
+show(137, () => JSON.stringify([v20, spare3, v20]));
+show(138, () => JSON.stringify({ a: 1, v: v20, z: "{" } as any));
+show(139, () => JSON.stringify({ head: undefined, v: v20, inner: { w: v20 }, tail: (-0.25) } as any));
+show(140, () => JSON.stringify({ held: v20, after: "\ud800", list: [v20] } as W3));
+const v21: R4 = { ok: "null" };
+(v21 as any).toString = "a";
+show(141, () => JSON.stringify(v21));
+show(142, () => viaUnknown(v21));
+show(143, () => viaAny(v21));
+show(144, () => JSON.stringify([v21, spare4, v21]));
+show(145, () => JSON.stringify({ a: 1, v: v21, z: "new\nline" } as any));
+show(146, () => JSON.stringify({ head: undefined, v: v21, inner: { w: v21 }, tail: [] } as any));
+show(147, () => JSON.stringify({ held: v21, list: [v21] } as W4));
+const v22: R4 = { ok: "x\udc00y" };
+(v22 as any).zzz = true;
+show(148, () => JSON.stringify(v22));
+show(149, () => viaUnknown(v22));
+show(150, () => viaAny(v22));
+show(151, () => JSON.stringify([v22, spare4, v22]));
+show(152, () => JSON.stringify({ a: 1, v: v22, z: "\"" } as any));
+show(153, () => JSON.stringify({ head: undefined, v: v22, inner: { w: v22 }, tail: parsed("[1,\"x\",{\"y\":null}]") } as any));
+show(154, () => JSON.stringify({ held: v22, after: "caf\u00e9", list: [v22] } as W4));
+const v23: R4 = { b: [(Infinity)], ok: "\u0001\u001f", held: ({ "\u4e2d": 1 } as Record<string, number>) };
+(v23 as any).zzz = true;
+show(155, () => JSON.stringify(v23));
+show(156, () => viaUnknown(v23));
+show(157, () => viaAny(v23));
+show(158, () => JSON.stringify([v23, spare4, v23]));
+show(159, () => JSON.stringify({ a: 1, v: v23, z: "}" } as any));
+show(160, () => JSON.stringify({ head: undefined, v: v23, inner: { w: v23 }, tail: null } as any));
+show(161, () => JSON.stringify({ before: 1, held: v23, after: "a", list: [] } as W4));
+const v24: R4 = { b: [(1e21), (-0)], ok: "caf\u00e9", held: ({  } as Record<string, number>) };
+show(162, () => JSON.stringify(v24));
+show(163, () => viaUnknown(v24));
+show(164, () => viaAny(v24));
+show(165, () => JSON.stringify([v24, spare4, v24]));
+show(166, () => JSON.stringify({ a: 1, v: v24, z: "\u4e2d\u6587" } as any));
+show(167, () => JSON.stringify({ head: undefined, v: v24, inner: { w: v24 }, tail: parsed("{}") } as any));
+show(168, () => JSON.stringify({ before: 1, held: v24, after: "{", list: [v24] } as W4));
+const v25: R4 = { b: [(-0)], ok: "\u4e2d\u6587", held: ({  } as Record<string, number>) };
+Object.preventExtensions(v25);
+show(169, () => JSON.stringify(v25));
+show(170, () => viaUnknown(v25));
+show(171, () => viaAny(v25));
+show(172, () => JSON.stringify([v25, spare4, v25]));
+show(173, () => JSON.stringify({ a: 1, v: v25, z: "\"" } as any));
+show(174, () => JSON.stringify({ head: undefined, v: v25, inner: { w: v25 }, tail: (0) } as any));
+show(175, () => JSON.stringify({ held: v25, after: "\ud83d\ude00", list: [v25, v25] } as W4));
+const v26: R5 = { with_underscore: "{", next: null };
+show(176, () => JSON.stringify(v26));
+show(177, () => viaUnknown(v26));
+show(178, () => viaAny(v26));
+show(179, () => JSON.stringify([v26, spare5, v26]));
+show(180, () => JSON.stringify({ a: 1, v: v26, z: "a" } as any));
+show(181, () => JSON.stringify({ head: undefined, v: v26, inner: { w: v26 }, tail: true } as any));
+show(182, () => JSON.stringify({ before: 1, held: v26, after: "hello world", list: [v26] } as W5));
+const v27: R5 = { with_underscore: [null], next: (2147483647) };
+show(183, () => JSON.stringify(v27));
+show(184, () => viaUnknown(v27));
+show(185, () => viaAny(v27));
+show(186, () => JSON.stringify([v27, spare5, v27]));
+show(187, () => JSON.stringify({ a: 1, v: v27, z: "," } as any));
+show(188, () => JSON.stringify({ head: undefined, v: v27, inner: { w: v27 }, tail: new Date(NaN) } as any));
+show(189, () => JSON.stringify({ held: v27, after: "[", list: [v27] } as W5));
+const v28: R5 = { with_underscore: new Date(-62167219200001), next: (4294967296) };
+show(190, () => JSON.stringify(v28));
+show(191, () => viaUnknown(v28));
+show(192, () => viaAny(v28));
+show(193, () => JSON.stringify([v28, spare5, v28]));
+show(194, () => JSON.stringify({ a: 1, v: v28, z: "\ud83d\ude00" } as any));
+show(195, () => JSON.stringify({ head: undefined, v: v28, inner: { w: v28 }, tail: undefined } as any));
+show(196, () => JSON.stringify({ held: v28, after: "}", list: [] } as W5));
+const v29: R5 = { with_underscore: (0), next: null };
+show(197, () => JSON.stringify(v29));
+show(198, () => viaUnknown(v29));
+show(199, () => viaAny(v29));
+show(200, () => JSON.stringify([v29, spare5, v29]));
+show(201, () => JSON.stringify({ a: 1, v: v29, z: "quote \" inside" } as any));
+show(202, () => JSON.stringify({ head: undefined, v: v29, inner: { w: v29 }, tail: null } as any));
+show(203, () => JSON.stringify({ before: 1, held: v29, after: "\u2028\u2029", list: [v29] } as W5));
+const v30: R5 = { with_underscore: "", next: null };
+show(204, () => JSON.stringify(v30));
+show(205, () => viaUnknown(v30));
+show(206, () => viaAny(v30));
+show(207, () => JSON.stringify([v30, spare5, v30]));
+show(208, () => JSON.stringify({ a: 1, v: v30, z: "hello world" } as any));
+show(209, () => JSON.stringify({ head: undefined, v: v30, inner: { w: v30 }, tail: parsed("[{\"w\":\"\u4e2d\"},{\"w\":\"a\"}]") } as any));
+show(210, () => JSON.stringify({ held: v30, after: "\"", list: [v30, v30] } as W5));
+const v31: R6 = { camelCase: { list: null, $y: "hello world", kind: { count: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", _x: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", name: (2147483648) }, b: new Date(1700000000123), c: [], next: ({ "\u4e2d": 1, "k": 9007199254740993, "z": 2147483647 } as Record<string, number>) }, b: "\u0001\u001f", id: parsed("{\"0\":1,\"b\":2,\"1\":3}") };
+show(211, () => JSON.stringify(v31));
+show(212, () => viaUnknown(v31));
+show(213, () => viaAny(v31));
+show(214, () => JSON.stringify([v31, spare6, v31]));
+show(215, () => JSON.stringify({ a: 1, v: v31, z: "x\udc00y" } as any));
+show(216, () => JSON.stringify({ head: undefined, v: v31, inner: { w: v31 }, tail: "\u2028\u2029" } as any));
+show(217, () => JSON.stringify({ before: 1, held: v31, list: [] } as W6));
+const v32: R6 = { camelCase: { list: null, name: { kind: [[], [(-0.25), (-1), (1e-7), (9007199254740993), (Infinity)], [(1.5), (NaN), (1.5)], [(-2147483648), (NaN), (1e-7)], [(1e21), (Infinity), (123456789012), (Infinity), (2147483647)]], tags: [({ "z": 9007199254740993 } as Record<string, number>), ({ "k 2": -1, "z": 1, "1": 42 } as Record<string, number>)], b: { count: "\ud800", _x: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll", name: (123456789012) }, name: null }, $y: "}", kind: { count: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll", _x: "hello world", name: (-0) }, b: parsed("{\"0\":1,\"b\":2,\"1\":3}"), c: [null, null, (42), true, "hello world"], next: ({ "\u4e2d": 9007199254740993 } as Record<string, number>) }, b: "\ud800", id: "\u007f" };
+show(218, () => JSON.stringify(v32));
+show(219, () => viaUnknown(v32));
+show(220, () => viaAny(v32));
+show(221, () => JSON.stringify([v32, spare6, v32]));
+show(222, () => JSON.stringify({ a: 1, v: v32, z: "tab\there" } as any));
+show(223, () => JSON.stringify({ head: undefined, v: v32, inner: { w: v32 }, tail: parsed("{\"deep\":{\"deeper\":{\"deepest\":[true,false]}}}") } as any));
+show(224, () => JSON.stringify({ before: 1, held: v32, list: [v32] } as W6));
+const v33: R6 = { camelCase: { list: new Date(1700000000123), $y: "\u007f", b: [null], c: [(1e21), null, (0.1 + 0.2)], next: ({ "\u4e2d": 1e21, "z": 4294967296 } as Record<string, number>) }, b: "\u00ff", id: null };
+show(225, () => JSON.stringify(v33));
+show(226, () => viaUnknown(v33));
+show(227, () => viaAny(v33));
+show(228, () => JSON.stringify([v33, spare6, v33]));
+show(229, () => JSON.stringify({ a: 1, v: v33, z: "\u0001\u001f" } as any));
+show(230, () => JSON.stringify({ head: undefined, v: v33, inner: { w: v33 }, tail: "{" } as any));
+show(231, () => JSON.stringify({ held: v33, list: [v33] } as W6));
+const v34: R6 = { camelCase: { list: new Date(8640000000000000), $y: "\"", kind: { count: "}", _x: "\ud83d\ude00", name: (NaN) }, b: parsed("{\"text\":\"caf\u00e9\"}"), c: [], next: ({ "z": -2147483648 } as Record<string, number>), zz: undefined }, b: "", id: undefined };
+(v34 as any).extra = "\u2028\u2029";
+show(232, () => JSON.stringify(v34));
+show(233, () => viaUnknown(v34));
+show(234, () => viaAny(v34));
+show(235, () => JSON.stringify([v34, spare6, v34]));
+show(236, () => JSON.stringify({ a: 1, v: v34, z: "quote \" inside" } as any));
+show(237, () => JSON.stringify({ head: undefined, v: v34, inner: { w: v34 }, tail: parsed("{\"text\":\"caf\u00e9\"}") } as any));
+show(238, () => JSON.stringify({ before: 1, held: v34, list: [v34] } as W6));
+const v35: R6 = { camelCase: { list: new Date(-1), $y: "", b: (42), c: [true, (-2147483649)], next: ({ "k": 0.1 + 0.2, "caf\u00e9": 1e21 } as Record<string, number>) }, b: "\u2028\u2029", id: true };
+(v35 as any).toString = true;
+show(239, () => JSON.stringify(v35));
+show(240, () => viaUnknown(v35));
+show(241, () => viaAny(v35));
+show(242, () => JSON.stringify([v35, spare6, v35]));
+show(243, () => JSON.stringify({ a: 1, v: v35, z: "new\nline" } as any));
+show(244, () => JSON.stringify({ head: undefined, v: v35, inner: { w: v35 }, tail: undefined } as any));
+show(245, () => JSON.stringify({ held: v35, list: [] } as W6));
+const v36: R7 = { tags: null, ok: "new\nline" };
+(v36 as any).extra = true;
+show(246, () => JSON.stringify(v36));
+show(247, () => viaUnknown(v36));
+show(248, () => viaAny(v36));
+show(249, () => JSON.stringify([v36, spare7, v36]));
+show(250, () => JSON.stringify({ a: 1, v: v36, z: "back\\slash" } as any));
+show(251, () => JSON.stringify({ head: undefined, v: v36, inner: { w: v36 }, tail: [(9007199254740993)] } as any));
+show(252, () => JSON.stringify({ before: 1, held: v36, list: [v36, v36] } as W7));
+const v37: R7 = { tags: "hello world", ok: (-0) };
+show(253, () => JSON.stringify(v37));
+show(254, () => viaUnknown(v37));
+show(255, () => viaAny(v37));
+show(256, () => JSON.stringify([v37, spare7, v37]));
+show(257, () => JSON.stringify({ a: 1, v: v37, z: "a\u4e2d" } as any));
+show(258, () => JSON.stringify({ head: undefined, v: v37, inner: { w: v37 }, tail: [true, "\u0001\u001f", null] } as any));
+show(259, () => JSON.stringify({ held: v37, after: "\"", list: [v37, v37] } as W7));
+const v38: R7 = { tags: null, ok: (0.1 + 0.2) };
+show(260, () => JSON.stringify(v38));
+show(261, () => viaUnknown(v38));
+show(262, () => viaAny(v38));
+show(263, () => JSON.stringify([v38, spare7, v38]));
+show(264, () => JSON.stringify({ a: 1, v: v38, z: "caf\u00e9" } as any));
+show(265, () => JSON.stringify({ head: undefined, v: v38, inner: { w: v38 }, tail: (1) } as any));
+show(266, () => JSON.stringify({ held: v38, list: [] } as W7));
+const v39: R7 = { tags: null, ok: "new\nline" };
+show(267, () => JSON.stringify(v39));
+show(268, () => viaUnknown(v39));
+show(269, () => viaAny(v39));
+show(270, () => JSON.stringify([v39, spare7, v39]));
+show(271, () => JSON.stringify({ a: 1, v: v39, z: "\u00ff" } as any));
+show(272, () => JSON.stringify({ head: undefined, v: v39, inner: { w: v39 }, tail: parsed("[]") } as any));
+show(273, () => JSON.stringify({ before: 1, held: v39, after: "}", list: [v39, v39] } as W7));
+const v40: R7 = { tags: "</script>", ok: "x\udc00y" };
+Object.freeze(v40);
+show(274, () => JSON.stringify(v40));
+show(275, () => viaUnknown(v40));
+show(276, () => viaAny(v40));
+show(277, () => JSON.stringify([v40, spare7, v40]));
+show(278, () => JSON.stringify({ a: 1, v: v40, z: "\ud83d\ude00" } as any));
+show(279, () => JSON.stringify({ head: undefined, v: v40, inner: { w: v40 }, tail: (4294967296) } as any));
+show(280, () => JSON.stringify({ held: v40, after: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", list: [] } as W7));
+const v41: R8 = { _x: null, held: undefined, with_underscore: ({  } as Record<string, number>), kind: ({  } as Record<string, number>), ok: "{", at: true, value: true };
+delete v41.held;
+show(281, () => JSON.stringify(v41));
+show(282, () => viaUnknown(v41));
+show(283, () => viaAny(v41));
+show(284, () => JSON.stringify([v41, spare8, v41]));
+show(285, () => JSON.stringify({ a: 1, v: v41, z: "\"" } as any));
+show(286, () => JSON.stringify({ head: undefined, v: v41, inner: { w: v41 }, tail: undefined } as any));
+show(287, () => JSON.stringify({ held: v41, list: [v41, v41] } as W8));
+const v42: R8 = { _x: null, with_underscore: ({ "k": 2147483648, "k 2": -1, "1": -0 } as Record<string, number>), kind: ({  } as Record<string, number>), ok: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", value: false };
+v42.at = true;
+show(288, () => JSON.stringify(v42));
+show(289, () => viaUnknown(v42));
+show(290, () => viaAny(v42));
+show(291, () => JSON.stringify([v42, spare8, v42]));
+show(292, () => JSON.stringify({ a: 1, v: v42, z: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww" } as any));
+show(293, () => JSON.stringify({ head: undefined, v: v42, inner: { w: v42 }, tail: (1.5) } as any));
+show(294, () => JSON.stringify({ held: v42, after: "\u00ff", list: [v42] } as W8));
+const v43: R8 = { _x: (0), with_underscore: ({ "k": -0.25, "\u4e2d": 9007199254740993 } as Record<string, number>), kind: ({ "\u4e2d": NaN, "1": 0, "k": NaN } as Record<string, number>), ok: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll", value: true };
+show(295, () => JSON.stringify(v43));
+show(296, () => viaUnknown(v43));
+show(297, () => viaAny(v43));
+show(298, () => JSON.stringify([v43, spare8, v43]));
+show(299, () => JSON.stringify({ a: 1, v: v43, z: "\u2028\u2029" } as any));
+show(300, () => JSON.stringify({ head: undefined, v: v43, inner: { w: v43 }, tail: new Date(1700000000123) } as any));
+show(301, () => JSON.stringify({ before: 1, held: v43, after: "", list: [v43, v43] } as W8));
+const v44: R8 = { _x: null, with_underscore: ({ "k": -Infinity, "z": 4294967296, "k 2": 1e21 } as Record<string, number>), kind: ({ "1": 1.5, "k 2": 2147483648 } as Record<string, number>), ok: ",", value: true };
+v44.at = false;
+v44.held = [];
+show(302, () => JSON.stringify(v44));
+show(303, () => viaUnknown(v44));
+show(304, () => viaAny(v44));
+show(305, () => JSON.stringify([v44, spare8, v44]));
+show(306, () => JSON.stringify({ a: 1, v: v44, z: "a\u4e2d" } as any));
+show(307, () => JSON.stringify({ head: undefined, v: v44, inner: { w: v44 }, tail: [] } as any));
+show(308, () => JSON.stringify({ before: 1, held: v44, after: "}", list: [] } as W8));
+const v45: R8 = { _x: (2147483648), with_underscore: ({ "z": -2147483648 } as Record<string, number>), kind: ({ "k 2": 1e21, "1": 4294967296, "k": -0.25 } as Record<string, number>), ok: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll", value: false };
+v45.at = false;
+v45.count = null;
+v45.held = [new Date(-1)];
+show(309, () => JSON.stringify(v45));
+show(310, () => viaUnknown(v45));
+show(311, () => viaAny(v45));
+show(312, () => JSON.stringify([v45, spare8, v45]));
+show(313, () => JSON.stringify({ a: 1, v: v45, z: "\ud800" } as any));
+show(314, () => JSON.stringify({ head: undefined, v: v45, inner: { w: v45 }, tail: (123456789012) } as any));
+show(315, () => JSON.stringify({ before: 1, held: v45, list: [v45] } as W8));
+const v46: R9 = { at: parsed("{}"), id: null };
+show(316, () => JSON.stringify(v46));
+show(317, () => viaUnknown(v46));
+show(318, () => viaAny(v46));
+show(319, () => JSON.stringify([v46, spare9, v46]));
+show(320, () => JSON.stringify({ a: 1, v: v46, z: "\"" } as any));
+show(321, () => JSON.stringify({ head: undefined, v: v46, inner: { w: v46 }, tail: { list: (-2147483649), at: null, id: null } } as any));
+show(322, () => JSON.stringify({ before: 1, held: v46, list: [v46] } as W9));
+const v47: R9 = { at: new Date(-62167219200001), id: "caf\u00e9" };
+v47.list = (-1);
+show(323, () => JSON.stringify(v47));
+show(324, () => viaUnknown(v47));
+show(325, () => viaAny(v47));
+show(326, () => JSON.stringify([v47, spare9, v47]));
+show(327, () => JSON.stringify({ a: 1, v: v47, z: "}" } as any));
+show(328, () => JSON.stringify({ head: undefined, v: v47, inner: { w: v47 }, tail: null } as any));
+show(329, () => JSON.stringify({ held: v47, after: "tab\there", list: [v47] } as W9));
+const v48: R9 = { at: [(1.5)], id: null };
+v48.list = parsed("{\"0\":1,\"b\":2,\"1\":3}");
+delete v48.list;
+show(330, () => JSON.stringify(v48));
+show(331, () => viaUnknown(v48));
+show(332, () => viaAny(v48));
+show(333, () => JSON.stringify([v48, spare9, v48]));
+show(334, () => JSON.stringify({ a: 1, v: v48, z: "\ud83d\ude00" } as any));
+show(335, () => JSON.stringify({ head: undefined, v: v48, inner: { w: v48 }, tail: parsed("[{\"w\":\"\u4e2d\"},{\"w\":\"a\"}]") } as any));
+show(336, () => JSON.stringify({ before: 1, held: v48, after: "\u0001\u001f", list: [v48, v48] } as W9));
+const v49: R9 = { at: parsed("[]"), id: null };
+Object.preventExtensions(v49);
+show(337, () => JSON.stringify(v49));
+show(338, () => viaUnknown(v49));
+show(339, () => viaAny(v49));
+show(340, () => JSON.stringify([v49, spare9, v49]));
+show(341, () => JSON.stringify({ a: 1, v: v49, z: "quote \" inside" } as any));
+show(342, () => JSON.stringify({ head: undefined, v: v49, inner: { w: v49 }, tail: Symbol.iterator } as any));
+show(343, () => JSON.stringify({ held: v49, after: "\u007f", list: [v49, v49] } as W9));
+const v50: R9 = { at: [(NaN)], id: null };
+Object.preventExtensions(v50);
+show(344, () => JSON.stringify(v50));
+show(345, () => viaUnknown(v50));
+show(346, () => viaAny(v50));
+show(347, () => JSON.stringify([v50, spare9, v50]));
+show(348, () => JSON.stringify({ a: 1, v: v50, z: "\ud83d\ude00" } as any));
+show(349, () => JSON.stringify({ head: undefined, v: v50, inner: { w: v50 }, tail: parsed("{}") } as any));
+show(350, () => JSON.stringify({ held: v50, after: "null", list: [] } as W9));
+const v51: R10 = { b: { count: "quote \" inside", _x: "a", name: (-2147483649) }, score: null, a: (123456789012) };
+v51.a = (-1);
+delete v51.a;
+show(351, () => JSON.stringify(v51));
+show(352, () => viaUnknown(v51));
+show(353, () => viaAny(v51));
+show(354, () => JSON.stringify([v51, spare10, v51]));
+show(355, () => JSON.stringify({ a: 1, v: v51, z: "," } as any));
+show(356, () => JSON.stringify({ head: undefined, v: v51, inner: { w: v51 }, tail: true } as any));
+show(357, () => JSON.stringify({ held: v51, list: [v51, v51] } as W10));
+const v52: R10 = { b: { count: "\ud83d\ude00", _x: "\"", name: (Infinity) }, score: null };
+show(358, () => JSON.stringify(v52));
+show(359, () => viaUnknown(v52));
+show(360, () => viaAny(v52));
+show(361, () => JSON.stringify([v52, spare10, v52]));
+show(362, () => JSON.stringify({ a: 1, v: v52, z: "\"" } as any));
+show(363, () => JSON.stringify({ head: undefined, v: v52, inner: { w: v52 }, tail: parsed("{\"text\":\"caf\u00e9\"}") } as any));
+show(364, () => JSON.stringify({ held: v52, list: [v52] } as W10));
+const v53: R10 = { b: { count: "a", _x: "", name: (1) }, score: (NaN) };
+v53.a = (4294967296);
+show(365, () => JSON.stringify(v53));
+show(366, () => viaUnknown(v53));
+show(367, () => viaAny(v53));
+show(368, () => JSON.stringify([v53, spare10, v53]));
+show(369, () => JSON.stringify({ a: 1, v: v53, z: "\u007f" } as any));
+show(370, () => JSON.stringify({ head: undefined, v: v53, inner: { w: v53 }, tail: null } as any));
+show(371, () => JSON.stringify({ before: 1, held: v53, list: [v53] } as W10));
+const v54: R10 = { b: { count: "\u0001\u001f", _x: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", name: (1e-7) }, score: null, a: (2147483648) };
+Object.seal(v54);
+show(372, () => JSON.stringify(v54));
+show(373, () => viaUnknown(v54));
+show(374, () => viaAny(v54));
+show(375, () => JSON.stringify([v54, spare10, v54]));
+show(376, () => JSON.stringify({ a: 1, v: v54, z: "}" } as any));
+show(377, () => JSON.stringify({ head: undefined, v: v54, inner: { w: v54 }, tail: parsed("[]") } as any));
+show(378, () => JSON.stringify({ before: 1, held: v54, list: [v54] } as W10));
+const v55: R10 = { b: { count: "\ud83d\ude00", _x: "\ud800", name: (1.5) }, score: null };
+Object.seal(v55);
+show(379, () => JSON.stringify(v55));
+show(380, () => viaUnknown(v55));
+show(381, () => viaAny(v55));
+show(382, () => JSON.stringify([v55, spare10, v55]));
+show(383, () => JSON.stringify({ a: 1, v: v55, z: "\u4e2d\u6587" } as any));
+show(384, () => JSON.stringify({ head: undefined, v: v55, inner: { w: v55 }, tail: (-2147483649) } as any));
+show(385, () => JSON.stringify({ before: 1, held: v55, after: "[", list: [v55] } as W10));
+//// json-stringify-generated-records-4.ts
+function parsed(text: string): any { return JSON.parse(text); }
+function nothing(): void {}
+function viaUnknown(value: unknown): string | undefined { return JSON.stringify(value); }
+function viaAny(value: any): string | undefined { return JSON.stringify(value); }
+function show(number: number, run: () => string | undefined): void { let text: string | undefined; try { text = run(); } catch (error) { text = "threw " + (error as Error).constructor.name; } console.log(number + " " + text); }
+interface R0 { count: string | null; score: string | number; at: number; name: (string | number | boolean | null)[]; kind: (string | number)[]; camelCase: string }
+interface W0 { before?: number; held: R0; after?: string; list: R0[] }
+const spare0: R0 = { count: null, score: (-2147483649), at: (-Infinity), name: ["\"", (1)], kind: ["a\u4e2d", "\u00ff", "x\udc00y"], camelCase: "\u2028\u2029" };
+interface R1 { zz: number; kind?: string | number; b: (string | number | boolean | null)[] }
+interface W1 { before?: number; held: R1; after?: string; list: R1[] }
+const spare1: R1 = { zz: (4294967296), b: [(1e21)] };
+interface R2 { data: R1 | null; zz: Date | null; ok: R0 }
+interface W2 { before?: number; held: R2; after?: string; list: R2[] }
+const spare2: R2 = { data: null, zz: new Date(-1), ok: { count: null, score: "\u4e2d\u6587", at: (1.5), name: [null], kind: [(1e-7), ","], camelCase: "[" } };
+interface R3 { ok?: string; data: Record<string, number>; $y: number | null; id?: boolean | null; at: boolean; camelCase: (string | number | boolean | null)[]; note?: boolean | null }
+interface W3 { before?: number; held: R3; after?: string; list: R3[] }
+const spare3: R3 = { data: ({ "caf\u00e9": -0, "k": 1 } as Record<string, number>), $y: (-1), id: false, at: true, camelCase: [null, (-0.25), null] };
+interface R4 { next: number; held: number; id?: number | null; _x: Date; value?: string | number | boolean | null; at?: string }
+interface W4 { before?: number; held: R4; after?: string; list: R4[] }
+const spare4: R4 = { next: (9007199254740993), held: (-2147483648), id: (42), _x: new Date(0), value: (42) };
+interface R5 { camelCase: (Record<string, number>)[]; value?: string | number | boolean | null }
+interface W5 { before?: number; held: R5; after?: string; list: R5[] }
+const spare5: R5 = { camelCase: [], value: true };
+interface R6 { camelCase: ((number)[])[] }
+interface W6 { before?: number; held: R6; after?: string; list: R6[] }
+const spare6: R6 = { camelCase: [[(123456789012), (1)]] };
+interface R7 { a?: R5; tags: number; next?: (any)[]; count: Date }
+interface W7 { before?: number; held: R7; after?: string; list: R7[] }
+const spare7: R7 = { a: { camelCase: [({ "caf\u00e9": 123456789012, "\u4e2d": 1.5 } as Record<string, number>), ({ "\u4e2d": 2147483648, "k": -Infinity } as Record<string, number>)] }, tags: (4294967296), count: new Date(-1) };
+interface R8 { note: R5; count: ((Date | null)[])[]; zz?: boolean | null; $y: R1 }
+interface W8 { before?: number; held: R8; after?: string; list: R8[] }
+const spare8: R8 = { note: { camelCase: [({ "z": 9007199254740993, "k": -2147483649 } as Record<string, number>), ({ "\u4e2d": -2147483649, "1": -2147483649 } as Record<string, number>)] }, count: [[new Date(1700000000123), null], [new Date(-62167219200001), null, null], [null], [], [null, new Date(8640000000000000)]], $y: { zz: (42), kind: "[", b: [] } };
+const v1: R0 = { count: "[", score: "\u2028\u2029", at: (9007199254740993), name: ["}"], kind: [], camelCase: "hello world" };
+show(1, () => JSON.stringify(v1));
+show(2, () => viaUnknown(v1));
+show(3, () => viaAny(v1));
+show(4, () => JSON.stringify([v1, spare0, v1]));
+show(5, () => JSON.stringify({ a: 1, v: v1, z: "}" } as any));
+show(6, () => JSON.stringify({ head: undefined, v: v1, inner: { w: v1 }, tail: { zz: (-0), kind: (1.5), b: [null] } } as any));
+show(7, () => JSON.stringify({ held: v1, after: "\ud83d\ude00", list: [] } as W0));
+const v2: R0 = { count: "\u007f", score: "back\\slash", at: (-1), name: ["\u0001\u001f", true, null], kind: ["wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", (-0.25), (123456789012)], camelCase: "quote \" inside" };
+show(8, () => JSON.stringify(v2));
+show(9, () => viaUnknown(v2));
+show(10, () => viaAny(v2));
+show(11, () => JSON.stringify([v2, spare0, v2]));
+show(12, () => JSON.stringify({ a: 1, v: v2, z: "back\\slash" } as any));
+show(13, () => JSON.stringify({ head: undefined, v: v2, inner: { w: v2 }, tail: "\u0001\u001f" } as any));
+show(14, () => JSON.stringify({ held: v2, after: "tab\there", list: [v2] } as W0));
+const v3: R0 = { count: null, score: "null", at: (Infinity), name: ["[", "\ud83d\ude00", (4294967296)], kind: ["\""], camelCase: "caf\u00e9" };
+show(15, () => JSON.stringify(v3));
+show(16, () => viaUnknown(v3));
+show(17, () => viaAny(v3));
+show(18, () => JSON.stringify([v3, spare0, v3]));
+show(19, () => JSON.stringify({ a: 1, v: v3, z: "[" } as any));
+show(20, () => JSON.stringify({ head: undefined, v: v3, inner: { w: v3 }, tail: nothing } as any));
+show(21, () => JSON.stringify({ held: v3, after: "x\udc00y", list: [v3, v3] } as W0));
+const v4: R0 = { count: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll", score: (2147483648), at: (42), name: [null, null], kind: [], camelCase: "\u4e2d\u6587" };
+(v4 as any).toString = (1e21);
+show(22, () => JSON.stringify(v4));
+show(23, () => viaUnknown(v4));
+show(24, () => viaAny(v4));
+show(25, () => JSON.stringify([v4, spare0, v4]));
+show(26, () => JSON.stringify({ a: 1, v: v4, z: "," } as any));
+show(27, () => JSON.stringify({ head: undefined, v: v4, inner: { w: v4 }, tail: undefined } as any));
+show(28, () => JSON.stringify({ before: 1, held: v4, list: [v4, v4] } as W0));
+const v5: R0 = { count: null, score: "\ud800", at: (NaN), name: [null, null, "{"], kind: [], camelCase: "\u00ff" };
+show(29, () => JSON.stringify(v5));
+show(30, () => viaUnknown(v5));
+show(31, () => viaAny(v5));
+show(32, () => JSON.stringify([v5, spare0, v5]));
+show(33, () => JSON.stringify({ a: 1, v: v5, z: "}" } as any));
+show(34, () => JSON.stringify({ head: undefined, v: v5, inner: { w: v5 }, tail: null } as any));
+show(35, () => JSON.stringify({ before: 1, held: v5, after: "new\nline", list: [v5, v5] } as W0));
+const v6: R1 = { zz: (-Infinity), b: ["\u4e2d\u6587"] };
+show(36, () => JSON.stringify(v6));
+show(37, () => viaUnknown(v6));
+show(38, () => viaAny(v6));
+show(39, () => JSON.stringify([v6, spare1, v6]));
+show(40, () => JSON.stringify({ a: 1, v: v6, z: "\"" } as any));
+show(41, () => JSON.stringify({ head: undefined, v: v6, inner: { w: v6 }, tail: "," } as any));
+show(42, () => JSON.stringify({ held: v6, after: "a", list: [] } as W1));
+const v7: R1 = { zz: (123456789012), b: [true] };
+v7.kind = "back\\slash";
+show(43, () => JSON.stringify(v7));
+show(44, () => viaUnknown(v7));
+show(45, () => viaAny(v7));
+show(46, () => JSON.stringify([v7, spare1, v7]));
+show(47, () => JSON.stringify({ a: 1, v: v7, z: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww" } as any));
+show(48, () => JSON.stringify({ head: undefined, v: v7, inner: { w: v7 }, tail: true } as any));
+show(49, () => JSON.stringify({ held: v7, after: "\u2028\u2029", list: [v7, v7] } as W1));
+const v8: R1 = { zz: (Infinity), b: [(-Infinity)] };
+show(50, () => JSON.stringify(v8));
+show(51, () => viaUnknown(v8));
+show(52, () => viaAny(v8));
+show(53, () => JSON.stringify([v8, spare1, v8]));
+show(54, () => JSON.stringify({ a: 1, v: v8, z: "x\udc00y" } as any));
+show(55, () => JSON.stringify({ head: undefined, v: v8, inner: { w: v8 }, tail: Symbol.iterator } as any));
+show(56, () => JSON.stringify({ before: 1, held: v8, list: [v8, v8] } as W1));
+const v9: R1 = { zz: (9007199254740993), b: [(4294967296)] };
+Object.freeze(v9);
+show(57, () => JSON.stringify(v9));
+show(58, () => viaUnknown(v9));
+show(59, () => viaAny(v9));
+show(60, () => JSON.stringify([v9, spare1, v9]));
+show(61, () => JSON.stringify({ a: 1, v: v9, z: "</script>" } as any));
+show(62, () => JSON.stringify({ head: undefined, v: v9, inner: { w: v9 }, tail: parsed("[{\"w\":\"\u4e2d\"},{\"w\":\"a\"}]") } as any));
+show(63, () => JSON.stringify({ before: 1, held: v9, list: [] } as W1));
+const v10: R1 = { zz: (1), kind: (42), b: [null] };
+(v10 as any).extra = true;
+show(64, () => JSON.stringify(v10));
+show(65, () => viaUnknown(v10));
+show(66, () => viaAny(v10));
+show(67, () => JSON.stringify([v10, spare1, v10]));
+show(68, () => JSON.stringify({ a: 1, v: v10, z: "\u00ff" } as any));
+show(69, () => JSON.stringify({ head: undefined, v: v10, inner: { w: v10 }, tail: { count: null, score: (42), at: (1.5), name: [], kind: [], camelCase: "tab\there" } } as any));
+show(70, () => JSON.stringify({ held: v10, after: "\u00ff", list: [] } as W1));
+const v11: R2 = { data: null, zz: null, ok: { count: "tab\there", score: "null", at: (NaN), name: [true, (1e21), "["], kind: [",", (1)], camelCase: "\u00ff" } };
+show(71, () => JSON.stringify(v11));
+show(72, () => viaUnknown(v11));
+show(73, () => viaAny(v11));
+show(74, () => JSON.stringify([v11, spare2, v11]));
+show(75, () => JSON.stringify({ a: 1, v: v11, z: "\u0001\u001f" } as any));
+show(76, () => JSON.stringify({ head: undefined, v: v11, inner: { w: v11 }, tail: undefined } as any));
+show(77, () => JSON.stringify({ before: 1, held: v11, after: ",", list: [v11] } as W2));
+const v12: R2 = { data: { zz: (9007199254740993), kind: ",", b: [] }, zz: new Date(8640000000000000), ok: { count: null, score: (1), at: (1e21), name: [(-Infinity), true, (2147483647)], kind: [], camelCase: "\u0001\u001f" } };
+show(78, () => JSON.stringify(v12));
+show(79, () => viaUnknown(v12));
+show(80, () => viaAny(v12));
+show(81, () => JSON.stringify([v12, spare2, v12]));
+show(82, () => JSON.stringify({ a: 1, v: v12, z: "{" } as any));
+show(83, () => JSON.stringify({ head: undefined, v: v12, inner: { w: v12 }, tail: "</script>" } as any));
+show(84, () => JSON.stringify({ before: 1, held: v12, list: [] } as W2));
+const v13: R2 = { data: { zz: (-0.25), kind: (Infinity), b: [(-2147483648), (-0.25), null] }, zz: new Date(0), ok: { count: "[", score: "\ud83d\ude00", at: (-Infinity), name: [null], kind: [], camelCase: "," } };
+show(85, () => JSON.stringify(v13));
+show(86, () => viaUnknown(v13));
+show(87, () => viaAny(v13));
+show(88, () => JSON.stringify([v13, spare2, v13]));
+show(89, () => JSON.stringify({ a: 1, v: v13, z: "\u4e2d\u6587" } as any));
+show(90, () => JSON.stringify({ head: undefined, v: v13, inner: { w: v13 }, tail: true } as any));
+show(91, () => JSON.stringify({ held: v13, list: [v13, v13] } as W2));
+const v14: R2 = { data: null, zz: new Date(0), ok: { count: null, score: "tab\there", at: (-0), name: ["\u4e2d\u6587"], kind: [(2147483647), "\""], camelCase: "x\udc00y" } };
+show(92, () => JSON.stringify(v14));
+show(93, () => viaUnknown(v14));
+show(94, () => viaAny(v14));
+show(95, () => JSON.stringify([v14, spare2, v14]));
+show(96, () => JSON.stringify({ a: 1, v: v14, z: "\u2028\u2029" } as any));
+show(97, () => JSON.stringify({ head: undefined, v: v14, inner: { w: v14 }, tail: (0.1 + 0.2) } as any));
+show(98, () => JSON.stringify({ held: v14, list: [v14, v14] } as W2));
+const v15: R2 = { data: { zz: (2147483647), b: [true, (1.5), (-1)] }, zz: null, ok: { count: "\"", score: "\u4e2d\u6587", at: (1e-7), name: [true, (-Infinity), (2147483648)], kind: [(1), (2147483647), "quote \" inside"], camelCase: "new\nline" } };
+(v15 as any).extra = ",";
+show(99, () => JSON.stringify(v15));
+show(100, () => viaUnknown(v15));
+show(101, () => viaAny(v15));
+show(102, () => JSON.stringify([v15, spare2, v15]));
+show(103, () => JSON.stringify({ a: 1, v: v15, z: "\u2028\u2029" } as any));
+show(104, () => JSON.stringify({ head: undefined, v: v15, inner: { w: v15 }, tail: (2147483648) } as any));
+show(105, () => JSON.stringify({ before: 1, held: v15, after: "\u0001\u001f", list: [v15] } as W2));
+const v16: R3 = { ok: "quote \" inside", data: ({ "1": Infinity, "k": 1e21, "caf\u00e9": -2147483649 } as Record<string, number>), $y: null, id: true, at: false, camelCase: [], note: null };
+show(106, () => JSON.stringify(v16));
+show(107, () => viaUnknown(v16));
+show(108, () => viaAny(v16));
+show(109, () => JSON.stringify([v16, spare3, v16]));
+show(110, () => JSON.stringify({ a: 1, v: v16, z: "\u4e2d\u6587" } as any));
+show(111, () => JSON.stringify({ head: undefined, v: v16, inner: { w: v16 }, tail: "a\u4e2d" } as any));
+show(112, () => JSON.stringify({ before: 1, held: v16, after: "\u00ff", list: [v16, v16] } as W3));
+const v17: R3 = { ok: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", data: ({ "z": 1, "caf\u00e9": 2147483647, "k 2": -2147483648 } as Record<string, number>), $y: null, id: null, at: true, camelCase: [true], note: false };
+(v17 as any).zzz = (-2147483648);
+show(113, () => JSON.stringify(v17));
+show(114, () => viaUnknown(v17));
+show(115, () => viaAny(v17));
+show(116, () => JSON.stringify([v17, spare3, v17]));
+show(117, () => JSON.stringify({ a: 1, v: v17, z: "" } as any));
+show(118, () => JSON.stringify({ head: undefined, v: v17, inner: { w: v17 }, tail: parsed("[1,\"x\",{\"y\":null}]") } as any));
+show(119, () => JSON.stringify({ before: 1, held: v17, list: [] } as W3));
+const v18: R3 = { ok: "}", data: ({ "z": 1.5 } as Record<string, number>), $y: (0.1 + 0.2), id: null, at: false, camelCase: ["x\udc00y", "x\udc00y"], note: undefined };
+show(120, () => JSON.stringify(v18));
+show(121, () => viaUnknown(v18));
+show(122, () => viaAny(v18));
+show(123, () => JSON.stringify([v18, spare3, v18]));
+show(124, () => JSON.stringify({ a: 1, v: v18, z: "\u2028\u2029" } as any));
+show(125, () => JSON.stringify({ head: undefined, v: v18, inner: { w: v18 }, tail: null } as any));
+show(126, () => JSON.stringify({ held: v18, list: [v18, v18] } as W3));
+const v19: R3 = { data: ({  } as Record<string, number>), $y: (-2147483649), id: false, at: true, camelCase: [null, "a", "back\\slash"] };
+(v19 as any).zzz = "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww";
+show(127, () => JSON.stringify(v19));
+show(128, () => viaUnknown(v19));
+show(129, () => viaAny(v19));
+show(130, () => JSON.stringify([v19, spare3, v19]));
+show(131, () => JSON.stringify({ a: 1, v: v19, z: "hello world" } as any));
+show(132, () => JSON.stringify({ head: undefined, v: v19, inner: { w: v19 }, tail: (2147483648) } as any));
+show(133, () => JSON.stringify({ before: 1, held: v19, list: [v19] } as W3));
+const v20: R3 = { ok: "", data: ({ "k": -1 } as Record<string, number>), $y: (NaN), id: null, at: true, camelCase: [(123456789012)], note: false };
+show(134, () => JSON.stringify(v20));
+show(135, () => viaUnknown(v20));
+show(136, () => viaAny(v20));
+show(137, () => JSON.stringify([v20, spare3, v20]));
+show(138, () => JSON.stringify({ a: 1, v: v20, z: "\u00ff" } as any));
+show(139, () => JSON.stringify({ head: undefined, v: v20, inner: { w: v20 }, tail: new Date(1700000000123) } as any));
+show(140, () => JSON.stringify({ held: v20, list: [v20, v20] } as W3));
+const v21: R4 = { next: (0), held: (123456789012), _x: new Date(253402300800000) };
+v21.at = "";
+show(141, () => JSON.stringify(v21));
+show(142, () => viaUnknown(v21));
+show(143, () => viaAny(v21));
+show(144, () => JSON.stringify([v21, spare4, v21]));
+show(145, () => JSON.stringify({ a: 1, v: v21, z: "back\\slash" } as any));
+show(146, () => JSON.stringify({ head: undefined, v: v21, inner: { w: v21 }, tail: undefined } as any));
+show(147, () => JSON.stringify({ before: 1, held: v21, list: [v21] } as W4));
+const v22: R4 = { next: (Infinity), held: (-2147483649), _x: new Date(-62167219200001) };
+v22.at = "\ud800";
+v22.value = "{";
+v22.id = (1);
+show(148, () => JSON.stringify(v22));
+show(149, () => viaUnknown(v22));
+show(150, () => viaAny(v22));
+show(151, () => JSON.stringify([v22, spare4, v22]));
+show(152, () => JSON.stringify({ a: 1, v: v22, z: "\u2028\u2029" } as any));
+show(153, () => JSON.stringify({ head: undefined, v: v22, inner: { w: v22 }, tail: undefined } as any));
+show(154, () => JSON.stringify({ held: v22, after: "\u00ff", list: [v22, v22] } as W4));
+const v23: R4 = { next: (-2147483649), held: (0), id: null, _x: new Date(8640000000000000), value: undefined, at: undefined };
+show(155, () => JSON.stringify(v23));
+show(156, () => viaUnknown(v23));
+show(157, () => viaAny(v23));
+show(158, () => JSON.stringify([v23, spare4, v23]));
+show(159, () => JSON.stringify({ a: 1, v: v23, z: "\u00ff" } as any));
+show(160, () => JSON.stringify({ head: undefined, v: v23, inner: { w: v23 }, tail: { note: spare5, count: [[null, new Date(NaN)]], zz: false, $y: spare1 } } as any));
+show(161, () => JSON.stringify({ before: 1, held: v23, after: "x\udc00y", list: [v23, v23] } as W4));
+const v24: R4 = { next: (1e-7), held: (123456789012), id: (0.1 + 0.2), _x: new Date(253402300800000), value: true, at: "\u0001\u001f" };
+show(162, () => JSON.stringify(v24));
+show(163, () => viaUnknown(v24));
+show(164, () => viaAny(v24));
+show(165, () => JSON.stringify([v24, spare4, v24]));
+show(166, () => JSON.stringify({ a: 1, v: v24, z: "\u007f" } as any));
+show(167, () => JSON.stringify({ head: undefined, v: v24, inner: { w: v24 }, tail: parsed("{\"text\":\"caf\u00e9\"}") } as any));
+show(168, () => JSON.stringify({ held: v24, list: [v24] } as W4));
+const v25: R4 = { next: (NaN), held: (1e-7), _x: new Date(8640000000000000) };
+v25.value = true;
+show(169, () => JSON.stringify(v25));
+show(170, () => viaUnknown(v25));
+show(171, () => viaAny(v25));
+show(172, () => JSON.stringify([v25, spare4, v25]));
+show(173, () => JSON.stringify({ a: 1, v: v25, z: "null" } as any));
+show(174, () => JSON.stringify({ head: undefined, v: v25, inner: { w: v25 }, tail: (2147483648) } as any));
+show(175, () => JSON.stringify({ held: v25, list: [v25, v25] } as W4));
+const v26: R5 = { camelCase: [({ "1": -1 } as Record<string, number>), ({ "caf\u00e9": -2147483649 } as Record<string, number>), ({ "k": -Infinity, "k 2": 1 } as Record<string, number>)], value: "{" };
+Object.preventExtensions(v26);
+show(176, () => JSON.stringify(v26));
+show(177, () => viaUnknown(v26));
+show(178, () => viaAny(v26));
+show(179, () => JSON.stringify([v26, spare5, v26]));
+show(180, () => JSON.stringify({ a: 1, v: v26, z: "quote \" inside" } as any));
+show(181, () => JSON.stringify({ head: undefined, v: v26, inner: { w: v26 }, tail: parsed("{}") } as any));
+show(182, () => JSON.stringify({ held: v26, list: [v26, v26] } as W5));
+const v27: R5 = { camelCase: [({ "\u4e2d": 42, "caf\u00e9": 4294967296 } as Record<string, number>)], value: null };
+show(183, () => JSON.stringify(v27));
+show(184, () => viaUnknown(v27));
+show(185, () => viaAny(v27));
+show(186, () => JSON.stringify([v27, spare5, v27]));
+show(187, () => JSON.stringify({ a: 1, v: v27, z: "" } as any));
+show(188, () => JSON.stringify({ head: undefined, v: v27, inner: { w: v27 }, tail: Symbol.iterator } as any));
+show(189, () => JSON.stringify({ held: v27, after: "a\u4e2d", list: [] } as W5));
+const v28: R5 = { camelCase: [({ "\u4e2d": 42, "caf\u00e9": -2147483649, "z": NaN } as Record<string, number>), ({  } as Record<string, number>), ({  } as Record<string, number>)] };
+Object.freeze(v28);
+show(190, () => JSON.stringify(v28));
+show(191, () => viaUnknown(v28));
+show(192, () => viaAny(v28));
+show(193, () => JSON.stringify([v28, spare5, v28]));
+show(194, () => JSON.stringify({ a: 1, v: v28, z: "\"" } as any));
+show(195, () => JSON.stringify({ head: undefined, v: v28, inner: { w: v28 }, tail: parsed("{\"0\":1,\"b\":2,\"1\":3}") } as any));
+show(196, () => JSON.stringify({ held: v28, list: [v28] } as W5));
+const v29: R5 = { camelCase: [({ "\u4e2d": NaN, "caf\u00e9": -0 } as Record<string, number>)] };
+v29.value = true;
+show(197, () => JSON.stringify(v29));
+show(198, () => viaUnknown(v29));
+show(199, () => viaAny(v29));
+show(200, () => JSON.stringify([v29, spare5, v29]));
+show(201, () => JSON.stringify({ a: 1, v: v29, z: "\u0001\u001f" } as any));
+show(202, () => JSON.stringify({ head: undefined, v: v29, inner: { w: v29 }, tail: parsed("[1,\"x\",{\"y\":null}]") } as any));
+show(203, () => JSON.stringify({ held: v29, list: [v29] } as W5));
+const v30: R5 = { camelCase: [({ "z": -Infinity } as Record<string, number>)] };
+(v30 as any).toString = "hello world";
+show(204, () => JSON.stringify(v30));
+show(205, () => viaUnknown(v30));
+show(206, () => viaAny(v30));
+show(207, () => JSON.stringify([v30, spare5, v30]));
+show(208, () => JSON.stringify({ a: 1, v: v30, z: "caf\u00e9" } as any));
+show(209, () => JSON.stringify({ head: undefined, v: v30, inner: { w: v30 }, tail: undefined } as any));
+show(210, () => JSON.stringify({ held: v30, after: "hello world", list: [v30] } as W5));
+const v31: R6 = { camelCase: [[(Infinity)], [(-2147483648), (-2147483648), (-0)], []] };
+show(211, () => JSON.stringify(v31));
+show(212, () => viaUnknown(v31));
+show(213, () => viaAny(v31));
+show(214, () => JSON.stringify([v31, spare6, v31]));
+show(215, () => JSON.stringify({ a: 1, v: v31, z: "\ud800" } as any));
+show(216, () => JSON.stringify({ head: undefined, v: v31, inner: { w: v31 }, tail: new Date(0) } as any));
+show(217, () => JSON.stringify({ held: v31, list: [v31] } as W6));
+const v32: R6 = { camelCase: [[(-1), (42), (-0.25), (NaN), (1e21)], [(1e-7), (-Infinity)]] };
+(v32 as any).toString = null;
+show(218, () => JSON.stringify(v32));
+show(219, () => viaUnknown(v32));
+show(220, () => viaAny(v32));
+show(221, () => JSON.stringify([v32, spare6, v32]));
+show(222, () => JSON.stringify({ a: 1, v: v32, z: "a\u4e2d" } as any));
+show(223, () => JSON.stringify({ head: undefined, v: v32, inner: { w: v32 }, tail: { camelCase: [[(-Infinity)]] } } as any));
+show(224, () => JSON.stringify({ before: 1, held: v32, after: "", list: [v32, v32] } as W6));
+const v33: R6 = { camelCase: [] };
+show(225, () => JSON.stringify(v33));
+show(226, () => viaUnknown(v33));
+show(227, () => viaAny(v33));
+show(228, () => JSON.stringify([v33, spare6, v33]));
+show(229, () => JSON.stringify({ a: 1, v: v33, z: "hello world" } as any));
+show(230, () => JSON.stringify({ head: undefined, v: v33, inner: { w: v33 }, tail: parsed("[{\"w\":\"\u4e2d\"},{\"w\":\"a\"}]") } as any));
+show(231, () => JSON.stringify({ held: v33, list: [] } as W6));
+const v34: R6 = { camelCase: [] };
+show(232, () => JSON.stringify(v34));
+show(233, () => viaUnknown(v34));
+show(234, () => viaAny(v34));
+show(235, () => JSON.stringify([v34, spare6, v34]));
+show(236, () => JSON.stringify({ a: 1, v: v34, z: "quote \" inside" } as any));
+show(237, () => JSON.stringify({ head: undefined, v: v34, inner: { w: v34 }, tail: parsed("[]") } as any));
+show(238, () => JSON.stringify({ before: 1, held: v34, after: "\ud800", list: [v34] } as W6));
+const v35: R6 = { camelCase: [] };
+show(239, () => JSON.stringify(v35));
+show(240, () => viaUnknown(v35));
+show(241, () => viaAny(v35));
+show(242, () => JSON.stringify([v35, spare6, v35]));
+show(243, () => JSON.stringify({ a: 1, v: v35, z: "</script>" } as any));
+show(244, () => JSON.stringify({ head: undefined, v: v35, inner: { w: v35 }, tail: { next: (9007199254740993), held: (Infinity), id: null, _x: new Date(NaN), at: "" } } as any));
+show(245, () => JSON.stringify({ before: 1, held: v35, list: [v35, v35] } as W6));
+const v36: R7 = { tags: (42), count: new Date(253402300800000) };
+delete v36.a;
+v36.a = { camelCase: [({ "caf\u00e9": 1e-7 } as Record<string, number>)], value: true };
+show(246, () => JSON.stringify(v36));
+show(247, () => viaUnknown(v36));
+show(248, () => viaAny(v36));
+show(249, () => JSON.stringify([v36, spare7, v36]));
+show(250, () => JSON.stringify({ a: 1, v: v36, z: "{" } as any));
+show(251, () => JSON.stringify({ head: undefined, v: v36, inner: { w: v36 }, tail: undefined } as any));
+show(252, () => JSON.stringify({ before: 1, held: v36, after: "quote \" inside", list: [] } as W7));
+const v37: R7 = { tags: (-1), count: new Date(0) };
+show(253, () => JSON.stringify(v37));
+show(254, () => viaUnknown(v37));
+show(255, () => viaAny(v37));
+show(256, () => JSON.stringify([v37, spare7, v37]));
+show(257, () => JSON.stringify({ a: 1, v: v37, z: "caf\u00e9" } as any));
+show(258, () => JSON.stringify({ head: undefined, v: v37, inner: { w: v37 }, tail: "null" } as any));
+show(259, () => JSON.stringify({ before: 1, held: v37, after: "\u00ff", list: [] } as W7));
+const v38: R7 = { tags: (4294967296), next: ["\"", nothing, new Date(NaN), parsed("{\"0\":1,\"b\":2,\"1\":3}"), new Date(-1)], count: new Date(8640000000000000) };
+v38.a = { camelCase: [], value: true };
+v38.next = [];
+delete v38.next;
+v38.next = [];
+show(260, () => JSON.stringify(v38));
+show(261, () => viaUnknown(v38));
+show(262, () => viaAny(v38));
+show(263, () => JSON.stringify([v38, spare7, v38]));
+show(264, () => JSON.stringify({ a: 1, v: v38, z: "new\nline" } as any));
+show(265, () => JSON.stringify({ head: undefined, v: v38, inner: { w: v38 }, tail: Symbol.iterator } as any));
+show(266, () => JSON.stringify({ before: 1, held: v38, list: [v38, v38] } as W7));
+const v39: R7 = { tags: (42), count: new Date(253402300800000) };
+(v39 as any).zzz = null;
+show(267, () => JSON.stringify(v39));
+show(268, () => viaUnknown(v39));
+show(269, () => viaAny(v39));
+show(270, () => JSON.stringify([v39, spare7, v39]));
+show(271, () => JSON.stringify({ a: 1, v: v39, z: "\"" } as any));
+show(272, () => JSON.stringify({ head: undefined, v: v39, inner: { w: v39 }, tail: new Date(253402300800000) } as any));
+show(273, () => JSON.stringify({ before: 1, held: v39, list: [v39, v39] } as W7));
+const v40: R7 = { tags: (2147483647), next: [(1), undefined, null], count: new Date(1700000000123) };
+Object.seal(v40);
+show(274, () => JSON.stringify(v40));
+show(275, () => viaUnknown(v40));
+show(276, () => viaAny(v40));
+show(277, () => JSON.stringify([v40, spare7, v40]));
+show(278, () => JSON.stringify({ a: 1, v: v40, z: "</script>" } as any));
+show(279, () => JSON.stringify({ head: undefined, v: v40, inner: { w: v40 }, tail: (-0) } as any));
+show(280, () => JSON.stringify({ before: 1, held: v40, after: "back\\slash", list: [v40] } as W7));
+const v41: R8 = { note: { camelCase: [({ "z": 0, "k 2": 1e-7 } as Record<string, number>)], value: true }, count: [[null, null]], zz: false, $y: { zz: (2147483648), b: ["back\\slash", null, "", null, null] } };
+Object.seal(v41);
+show(281, () => JSON.stringify(v41));
+show(282, () => viaUnknown(v41));
+show(283, () => viaAny(v41));
+show(284, () => JSON.stringify([v41, spare8, v41]));
+show(285, () => JSON.stringify({ a: 1, v: v41, z: "a" } as any));
+show(286, () => JSON.stringify({ head: undefined, v: v41, inner: { w: v41 }, tail: "x\udc00y" } as any));
+show(287, () => JSON.stringify({ before: 1, held: v41, list: [v41, v41] } as W8));
+const v42: R8 = { note: { camelCase: [({ "caf\u00e9": 0.1 + 0.2 } as Record<string, number>), ({ "k 2": 1e21, "\u4e2d": -0 } as Record<string, number>), ({ "k": 4294967296, "k 2": -Infinity } as Record<string, number>), ({ "\u4e2d": 42, "1": 4294967296, "k 2": 9007199254740993 } as Record<string, number>), ({ "z": 0, "k 2": 9007199254740993, "caf\u00e9": 9007199254740993 } as Record<string, number>)], value: null }, count: [[null, null, null, new Date(1700000000123), new Date(1700000000123)], [], [null, null, new Date(8640000000000000)], [null], [new Date(0), null, new Date(NaN), new Date(-1), new Date(-62167219200001)]], $y: { zz: (1e21), kind: (1e21), b: [null, (Infinity)] } };
+show(288, () => JSON.stringify(v42));
+show(289, () => viaUnknown(v42));
+show(290, () => viaAny(v42));
+show(291, () => JSON.stringify([v42, spare8, v42]));
+show(292, () => JSON.stringify({ a: 1, v: v42, z: "a\u4e2d" } as any));
+show(293, () => JSON.stringify({ head: undefined, v: v42, inner: { w: v42 }, tail: parsed("{\"text\":\"caf\u00e9\"}") } as any));
+show(294, () => JSON.stringify({ before: 1, held: v42, list: [v42, v42] } as W8));
+const v43: R8 = { note: { camelCase: [({  } as Record<string, number>), ({ "k": 1e21, "1": 1 } as Record<string, number>), ({ "1": Infinity } as Record<string, number>)] }, count: [], zz: null, $y: { zz: (-2147483648), kind: "\u4e2d\u6587", b: [true, null] } };
+show(295, () => JSON.stringify(v43));
+show(296, () => viaUnknown(v43));
+show(297, () => viaAny(v43));
+show(298, () => JSON.stringify([v43, spare8, v43]));
+show(299, () => JSON.stringify({ a: 1, v: v43, z: "[" } as any));
+show(300, () => JSON.stringify({ head: undefined, v: v43, inner: { w: v43 }, tail: [(9007199254740993)] } as any));
+show(301, () => JSON.stringify({ held: v43, list: [] } as W8));
+const v44: R8 = { note: { camelCase: [({ "1": 1e-7, "k 2": NaN } as Record<string, number>)], value: (1e-7) }, count: [[null, new Date(1700000000123), null, new Date(-1), new Date(0)], [null, new Date(-62167219200001)], [null, null, new Date(253402300800000), null, null], [new Date(1700000000123)], []], $y: { zz: (1), kind: undefined, b: [(-Infinity), "new\nline"] } };
+Object.freeze(v44);
+show(302, () => JSON.stringify(v44));
+show(303, () => viaUnknown(v44));
+show(304, () => viaAny(v44));
+show(305, () => JSON.stringify([v44, spare8, v44]));
+show(306, () => JSON.stringify({ a: 1, v: v44, z: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll" } as any));
+show(307, () => JSON.stringify({ head: undefined, v: v44, inner: { w: v44 }, tail: [null, "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", "null"] } as any));
+show(308, () => JSON.stringify({ before: 1, held: v44, list: [v44, v44] } as W8));
+const v45: R8 = { note: { camelCase: [({  } as Record<string, number>)], value: (1.5) }, count: [[null, null, new Date(253402300800000)], [null, null], [null, null, new Date(253402300800000)]], zz: null, $y: { zz: (0), kind: undefined, b: ["\""] } };
+(v45 as any).toString = "}";
+show(309, () => JSON.stringify(v45));
+show(310, () => viaUnknown(v45));
+show(311, () => viaAny(v45));
+show(312, () => JSON.stringify([v45, spare8, v45]));
+show(313, () => JSON.stringify({ a: 1, v: v45, z: "new\nline" } as any));
+show(314, () => JSON.stringify({ head: undefined, v: v45, inner: { w: v45 }, tail: undefined } as any));
+show(315, () => JSON.stringify({ held: v45, list: [v45, v45] } as W8));
+//// json-stringify-generated-records-5.ts
+function parsed(text: string): any { return JSON.parse(text); }
+function nothing(): void {}
+function viaUnknown(value: unknown): string | undefined { return JSON.stringify(value); }
+function viaAny(value: any): string | undefined { return JSON.stringify(value); }
+function show(number: number, run: () => string | undefined): void { let text: string | undefined; try { text = run(); } catch (error) { text = "threw " + (error as Error).constructor.name; } console.log(number + " " + text); }
+interface R0 { rows: string | number | boolean | null; score: string; data: (number)[]; id?: Record<string, number>; next: string | number | boolean | null; a?: boolean | null }
+interface W0 { before?: number; held: R0; after?: string; list: R0[] }
+const spare0: R0 = { rows: null, score: "quote \" inside", data: [(123456789012)], next: (1) };
+interface R1 { note: string | null; at?: boolean | null }
+interface W1 { before?: number; held: R1; after?: string; list: R1[] }
+const spare1: R1 = { note: "null" };
+interface R2 { rows: Record<string, number>; next?: boolean; name: string | null; at: string; id?: number; list?: (string | number)[]; $y?: Date }
+interface W2 { before?: number; held: R2; after?: string; list: R2[] }
+const spare2: R2 = { rows: ({  } as Record<string, number>), next: undefined, name: null, at: "\u2028\u2029", id: (NaN), list: ["null", "new\nline", "a", "\"", "quote \" inside"], $y: undefined };
+interface R3 { $y: string; a: Date | null; c: string | number; with_underscore: string | number; kind: number; held?: (Date)[] }
+interface W3 { before?: number; held: R3; after?: string; list: R3[] }
+const spare3: R3 = { $y: "\ud83d\ude00", a: null, c: (Infinity), with_underscore: (1), kind: (1.5), held: undefined };
+interface R4 { count: R3 | null }
+interface W4 { before?: number; held: R4; after?: string; list: R4[] }
+const spare4: R4 = { count: { $y: "\u0001\u001f", a: null, c: "\ud83d\ude00", with_underscore: (1e-7), kind: (0.1 + 0.2), held: [new Date(-62167219200001)] } };
+interface R5 { id?: (boolean)[]; name?: number; data?: string | number | boolean | null; rows: Record<string, number>; ok: (number)[] }
+interface W5 { before?: number; held: R5; after?: string; list: R5[] }
+const spare5: R5 = { id: [false, true, true], data: (NaN), rows: ({ "caf\u00e9": 0.1 + 0.2 } as Record<string, number>), ok: [(4294967296), (2147483647)] };
+interface R6 { zz: unknown; value?: boolean; held?: (string)[]; ok?: string | null; name?: string | number }
+interface W6 { before?: number; held: R6; after?: string; list: R6[] }
+const spare6: R6 = { zz: Symbol.iterator, ok: "\u2028\u2029" };
+interface R7 { c: (boolean | null)[] }
+interface W7 { before?: number; held: R7; after?: string; list: R7[] }
+const spare7: R7 = { c: [false] };
+interface R8 { _x?: R4 | null; c: string | null }
+interface W8 { before?: number; held: R8; after?: string; list: R8[] }
+const spare8: R8 = { _x: { count: null }, c: null };
+interface R9 { held: string | null }
+interface W9 { before?: number; held: R9; after?: string; list: R9[] }
+const spare9: R9 = { held: "\u0001\u001f" };
+interface R10 { tags?: (string)[]; name?: string | number; zz?: (number | null)[]; $y?: string; kind: Date | null; camelCase: R8; list: R0; b: string }
+interface W10 { before?: number; held: R10; after?: string; list: R10[] }
+const spare10: R10 = { tags: [], name: (42), kind: new Date(0), camelCase: { _x: null, c: null }, list: { rows: null, score: "\u4e2d\u6587", data: [], next: true }, b: "}" };
+interface R11 { tags: unknown; id?: string | number }
+interface W11 { before?: number; held: R11; after?: string; list: R11[] }
+const spare11: R11 = { tags: Symbol.iterator };
+interface R12 { ok?: R6 }
+interface W12 { before?: number; held: R12; after?: string; list: R12[] }
+const spare12: R12 = {  };
+const v1: R0 = { rows: null, score: "[", data: [(42)], id: ({ "z": 1.5, "k": -1 } as Record<string, number>), next: (-0.25), a: true };
+v1.id = ({ "k 2": 1.5, "k": Infinity, "\u4e2d": Infinity } as Record<string, number>);
+delete v1.a;
+v1.a = true;
+show(1, () => JSON.stringify(v1));
+show(2, () => viaUnknown(v1));
+show(3, () => viaAny(v1));
+show(4, () => JSON.stringify([v1, spare0, v1]));
+show(5, () => JSON.stringify({ a: 1, v: v1, z: "new\nline" } as any));
+show(6, () => JSON.stringify({ head: undefined, v: v1, inner: { w: v1 }, tail: { zz: null } } as any));
+show(7, () => JSON.stringify({ before: 1, held: v1, list: [v1, v1] } as W0));
+const v2: R0 = { rows: (Infinity), score: "tab\there", data: [(0.1 + 0.2), (-0.25), (1), (0), (0.1 + 0.2)], id: ({ "1": -1, "caf\u00e9": Infinity } as Record<string, number>), next: ",", a: null };
+show(8, () => JSON.stringify(v2));
+show(9, () => viaUnknown(v2));
+show(10, () => viaAny(v2));
+show(11, () => JSON.stringify([v2, spare0, v2]));
+show(12, () => JSON.stringify({ a: 1, v: v2, z: "\u0001\u001f" } as any));
+show(13, () => JSON.stringify({ head: undefined, v: v2, inner: { w: v2 }, tail: undefined } as any));
+show(14, () => JSON.stringify({ held: v2, after: "a", list: [] } as W0));
+const v3: R0 = { rows: null, score: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll", data: [(1e-7), (1e-7)], next: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll" };
+show(15, () => JSON.stringify(v3));
+show(16, () => viaUnknown(v3));
+show(17, () => viaAny(v3));
+show(18, () => JSON.stringify([v3, spare0, v3]));
+show(19, () => JSON.stringify({ a: 1, v: v3, z: "\u00ff" } as any));
+show(20, () => JSON.stringify({ head: undefined, v: v3, inner: { w: v3 }, tail: [true] } as any));
+show(21, () => JSON.stringify({ before: 1, held: v3, list: [] } as W0));
+const v4: R0 = { rows: "[", score: "x\udc00y", data: [(NaN), (1), (-2147483649)], next: (Infinity) };
+show(22, () => JSON.stringify(v4));
+show(23, () => viaUnknown(v4));
+show(24, () => viaAny(v4));
+show(25, () => JSON.stringify([v4, spare0, v4]));
+show(26, () => JSON.stringify({ a: 1, v: v4, z: "\u00ff" } as any));
+show(27, () => JSON.stringify({ head: undefined, v: v4, inner: { w: v4 }, tail: "\"" } as any));
+show(28, () => JSON.stringify({ held: v4, after: "\"", list: [v4, v4] } as W0));
+const v5: R0 = { rows: "</script>", score: "", data: [(2147483647), (0.1 + 0.2), (-1)], id: ({ "caf\u00e9": 0.1 + 0.2 } as Record<string, number>), next: true, a: null };
+show(29, () => JSON.stringify(v5));
+show(30, () => viaUnknown(v5));
+show(31, () => viaAny(v5));
+show(32, () => JSON.stringify([v5, spare0, v5]));
+show(33, () => JSON.stringify({ a: 1, v: v5, z: "</script>" } as any));
+show(34, () => JSON.stringify({ head: undefined, v: v5, inner: { w: v5 }, tail: undefined } as any));
+show(35, () => JSON.stringify({ held: v5, after: "x\udc00y", list: [v5] } as W0));
+const v6: R1 = { note: "\u4e2d\u6587", at: false };
+show(36, () => JSON.stringify(v6));
+show(37, () => viaUnknown(v6));
+show(38, () => viaAny(v6));
+show(39, () => JSON.stringify([v6, spare1, v6]));
+show(40, () => JSON.stringify({ a: 1, v: v6, z: "\"" } as any));
+show(41, () => JSON.stringify({ head: undefined, v: v6, inner: { w: v6 }, tail: (0.1 + 0.2) } as any));
+show(42, () => JSON.stringify({ held: v6, list: [] } as W1));
+const v7: R1 = { note: "\u4e2d\u6587" };
+(v7 as any).zzz = null;
+show(43, () => JSON.stringify(v7));
+show(44, () => viaUnknown(v7));
+show(45, () => viaAny(v7));
+show(46, () => JSON.stringify([v7, spare1, v7]));
+show(47, () => JSON.stringify({ a: 1, v: v7, z: "[" } as any));
+show(48, () => JSON.stringify({ head: undefined, v: v7, inner: { w: v7 }, tail: parsed("{\"text\":\"caf\u00e9\"}") } as any));
+show(49, () => JSON.stringify({ before: 1, held: v7, list: [] } as W1));
+const v8: R1 = { note: null, at: true };
+show(50, () => JSON.stringify(v8));
+show(51, () => viaUnknown(v8));
+show(52, () => viaAny(v8));
+show(53, () => JSON.stringify([v8, spare1, v8]));
+show(54, () => JSON.stringify({ a: 1, v: v8, z: "," } as any));
+show(55, () => JSON.stringify({ head: undefined, v: v8, inner: { w: v8 }, tail: "\u00ff" } as any));
+show(56, () => JSON.stringify({ held: v8, after: "a\u4e2d", list: [] } as W1));
+const v9: R1 = { note: null, at: undefined };
+show(57, () => JSON.stringify(v9));
+show(58, () => viaUnknown(v9));
+show(59, () => viaAny(v9));
+show(60, () => JSON.stringify([v9, spare1, v9]));
+show(61, () => JSON.stringify({ a: 1, v: v9, z: "\u00ff" } as any));
+show(62, () => JSON.stringify({ head: undefined, v: v9, inner: { w: v9 }, tail: "back\\slash" } as any));
+show(63, () => JSON.stringify({ before: 1, held: v9, list: [v9, v9] } as W1));
+const v10: R1 = { note: "\u2028\u2029" };
+Object.preventExtensions(v10);
+show(64, () => JSON.stringify(v10));
+show(65, () => viaUnknown(v10));
+show(66, () => viaAny(v10));
+show(67, () => JSON.stringify([v10, spare1, v10]));
+show(68, () => JSON.stringify({ a: 1, v: v10, z: "back\\slash" } as any));
+show(69, () => JSON.stringify({ head: undefined, v: v10, inner: { w: v10 }, tail: [] } as any));
+show(70, () => JSON.stringify({ before: 1, held: v10, after: "back\\slash", list: [v10] } as W1));
+const v11: R2 = { rows: ({ "caf\u00e9": 9007199254740993 } as Record<string, number>), next: false, name: "\u007f", at: "{" };
+v11.$y = new Date(NaN);
+v11.next = false;
+v11.list = [];
+v11.id = (2147483648);
+delete v11.$y;
+show(71, () => JSON.stringify(v11));
+show(72, () => viaUnknown(v11));
+show(73, () => viaAny(v11));
+show(74, () => JSON.stringify([v11, spare2, v11]));
+show(75, () => JSON.stringify({ a: 1, v: v11, z: "\ud800" } as any));
+show(76, () => JSON.stringify({ head: undefined, v: v11, inner: { w: v11 }, tail: null } as any));
+show(77, () => JSON.stringify({ held: v11, after: "caf\u00e9", list: [v11] } as W2));
+const v12: R2 = { rows: ({  } as Record<string, number>), name: "}", at: "\u007f" };
+v12.$y = new Date(-62167219200001);
+show(78, () => JSON.stringify(v12));
+show(79, () => viaUnknown(v12));
+show(80, () => viaAny(v12));
+show(81, () => JSON.stringify([v12, spare2, v12]));
+show(82, () => JSON.stringify({ a: 1, v: v12, z: "tab\there" } as any));
+show(83, () => JSON.stringify({ head: undefined, v: v12, inner: { w: v12 }, tail: null } as any));
+show(84, () => JSON.stringify({ held: v12, list: [] } as W2));
+const v13: R2 = { rows: ({ "caf\u00e9": 1e21, "z": 1e21 } as Record<string, number>), next: true, name: ",", at: ",", id: (-0), list: [(NaN), (2147483648), (123456789012)], $y: new Date(-1) };
+show(85, () => JSON.stringify(v13));
+show(86, () => viaUnknown(v13));
+show(87, () => viaAny(v13));
+show(88, () => JSON.stringify([v13, spare2, v13]));
+show(89, () => JSON.stringify({ a: 1, v: v13, z: "\ud800" } as any));
+show(90, () => JSON.stringify({ head: undefined, v: v13, inner: { w: v13 }, tail: new Date(-1) } as any));
+show(91, () => JSON.stringify({ before: 1, held: v13, after: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", list: [v13, v13] } as W2));
+const v14: R2 = { rows: ({  } as Record<string, number>), next: true, name: "\ud83d\ude00", at: "\u4e2d\u6587", id: (NaN), list: [], $y: new Date(NaN) };
+v14.list = [];
+v14.id = (1e-7);
+v14.next = false;
+delete v14.id;
+v14.id = (2147483647);
+show(92, () => JSON.stringify(v14));
+show(93, () => viaUnknown(v14));
+show(94, () => viaAny(v14));
+show(95, () => JSON.stringify([v14, spare2, v14]));
+show(96, () => JSON.stringify({ a: 1, v: v14, z: "{" } as any));
+show(97, () => JSON.stringify({ head: undefined, v: v14, inner: { w: v14 }, tail: undefined } as any));
+show(98, () => JSON.stringify({ before: 1, held: v14, list: [v14] } as W2));
+const v15: R2 = { rows: ({  } as Record<string, number>), name: null, at: "\ud800" };
+Object.freeze(v15);
+show(99, () => JSON.stringify(v15));
+show(100, () => viaUnknown(v15));
+show(101, () => viaAny(v15));
+show(102, () => JSON.stringify([v15, spare2, v15]));
+show(103, () => JSON.stringify({ a: 1, v: v15, z: "hello world" } as any));
+show(104, () => JSON.stringify({ head: undefined, v: v15, inner: { w: v15 }, tail: parsed("{\"s\":\"\\\"\"}") } as any));
+show(105, () => JSON.stringify({ held: v15, after: "back\\slash", list: [v15, v15] } as W2));
+const v16: R3 = { $y: "tab\there", a: new Date(-1), c: (-Infinity), with_underscore: (123456789012), kind: (-0), held: [] };
+delete v16.held;
+v16.held = [];
+show(106, () => JSON.stringify(v16));
+show(107, () => viaUnknown(v16));
+show(108, () => viaAny(v16));
+show(109, () => JSON.stringify([v16, spare3, v16]));
+show(110, () => JSON.stringify({ a: 1, v: v16, z: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww" } as any));
+show(111, () => JSON.stringify({ head: undefined, v: v16, inner: { w: v16 }, tail: nothing } as any));
+show(112, () => JSON.stringify({ before: 1, held: v16, list: [v16, v16] } as W3));
+const v17: R3 = { $y: "</script>", a: null, c: "\u2028\u2029", with_underscore: (1.5), kind: (4294967296), held: [new Date(1700000000123), new Date(-1), new Date(0)] };
+v17.held = [new Date(-62167219200001), new Date(NaN), new Date(253402300800000)];
+delete v17.held;
+v17.held = [new Date(1700000000123)];
+show(113, () => JSON.stringify(v17));
+show(114, () => viaUnknown(v17));
+show(115, () => viaAny(v17));
+show(116, () => JSON.stringify([v17, spare3, v17]));
+show(117, () => JSON.stringify({ a: 1, v: v17, z: "," } as any));
+show(118, () => JSON.stringify({ head: undefined, v: v17, inner: { w: v17 }, tail: { tags: parsed("[[],[[]],{}]"), id: "," } } as any));
+show(119, () => JSON.stringify({ held: v17, after: "caf\u00e9", list: [] } as W3));
+const v18: R3 = { $y: "x\udc00y", a: new Date(0), c: (-2147483648), with_underscore: (1e-7), kind: (123456789012), held: [new Date(8640000000000000)] };
+(v18 as any).toString = null;
+show(120, () => JSON.stringify(v18));
+show(121, () => viaUnknown(v18));
+show(122, () => viaAny(v18));
+show(123, () => JSON.stringify([v18, spare3, v18]));
+show(124, () => JSON.stringify({ a: 1, v: v18, z: "hello world" } as any));
+show(125, () => JSON.stringify({ head: undefined, v: v18, inner: { w: v18 }, tail: null } as any));
+show(126, () => JSON.stringify({ held: v18, after: "", list: [v18] } as W3));
+const v19: R3 = { $y: "null", a: new Date(0), c: "\"", with_underscore: "hello world", kind: (-1) };
+show(127, () => JSON.stringify(v19));
+show(128, () => viaUnknown(v19));
+show(129, () => viaAny(v19));
+show(130, () => JSON.stringify([v19, spare3, v19]));
+show(131, () => JSON.stringify({ a: 1, v: v19, z: "\u007f" } as any));
+show(132, () => JSON.stringify({ head: undefined, v: v19, inner: { w: v19 }, tail: { count: spare3 } } as any));
+show(133, () => JSON.stringify({ before: 1, held: v19, list: [v19] } as W3));
+const v20: R3 = { $y: "\ud83d\ude00", a: new Date(-62167219200001), c: (-2147483648), with_underscore: (1), kind: (-2147483649) };
+(v20 as any).toString = null;
+show(134, () => JSON.stringify(v20));
+show(135, () => viaUnknown(v20));
+show(136, () => viaAny(v20));
+show(137, () => JSON.stringify([v20, spare3, v20]));
+show(138, () => JSON.stringify({ a: 1, v: v20, z: "{" } as any));
+show(139, () => JSON.stringify({ head: undefined, v: v20, inner: { w: v20 }, tail: parsed("{\"0\":1,\"b\":2,\"1\":3}") } as any));
+show(140, () => JSON.stringify({ before: 1, held: v20, list: [v20] } as W3));
+const v21: R4 = { count: null };
+show(141, () => JSON.stringify(v21));
+show(142, () => viaUnknown(v21));
+show(143, () => viaAny(v21));
+show(144, () => JSON.stringify([v21, spare4, v21]));
+show(145, () => JSON.stringify({ a: 1, v: v21, z: "a\u4e2d" } as any));
+show(146, () => JSON.stringify({ head: undefined, v: v21, inner: { w: v21 }, tail: parsed("{\"text\":\"caf\u00e9\"}") } as any));
+show(147, () => JSON.stringify({ before: 1, held: v21, list: [] } as W4));
+const v22: R4 = { count: null };
+show(148, () => JSON.stringify(v22));
+show(149, () => viaUnknown(v22));
+show(150, () => viaAny(v22));
+show(151, () => JSON.stringify([v22, spare4, v22]));
+show(152, () => JSON.stringify({ a: 1, v: v22, z: "</script>" } as any));
+show(153, () => JSON.stringify({ head: undefined, v: v22, inner: { w: v22 }, tail: null } as any));
+show(154, () => JSON.stringify({ held: v22, list: [] } as W4));
+const v23: R4 = { count: { $y: "\u4e2d\u6587", a: null, c: "[", with_underscore: (Infinity), kind: (4294967296), held: [] } };
+show(155, () => JSON.stringify(v23));
+show(156, () => viaUnknown(v23));
+show(157, () => viaAny(v23));
+show(158, () => JSON.stringify([v23, spare4, v23]));
+show(159, () => JSON.stringify({ a: 1, v: v23, z: "caf\u00e9" } as any));
+show(160, () => JSON.stringify({ head: undefined, v: v23, inner: { w: v23 }, tail: (-2147483649) } as any));
+show(161, () => JSON.stringify({ before: 1, held: v23, list: [v23] } as W4));
+const v24: R4 = { count: null };
+show(162, () => JSON.stringify(v24));
+show(163, () => viaUnknown(v24));
+show(164, () => viaAny(v24));
+show(165, () => JSON.stringify([v24, spare4, v24]));
+show(166, () => JSON.stringify({ a: 1, v: v24, z: "\u0001\u001f" } as any));
+show(167, () => JSON.stringify({ head: undefined, v: v24, inner: { w: v24 }, tail: parsed("{}") } as any));
+show(168, () => JSON.stringify({ held: v24, list: [v24, v24] } as W4));
+const v25: R4 = { count: null };
+Object.preventExtensions(v25);
+show(169, () => JSON.stringify(v25));
+show(170, () => viaUnknown(v25));
+show(171, () => viaAny(v25));
+show(172, () => JSON.stringify([v25, spare4, v25]));
+show(173, () => JSON.stringify({ a: 1, v: v25, z: "a\u4e2d" } as any));
+show(174, () => JSON.stringify({ head: undefined, v: v25, inner: { w: v25 }, tail: "\ud83d\ude00" } as any));
+show(175, () => JSON.stringify({ held: v25, after: "\u2028\u2029", list: [v25, v25] } as W4));
+const v26: R5 = { rows: ({ "z": 123456789012 } as Record<string, number>), ok: [(0)] };
+v26.data = null;
+v26.id = [false];
+delete v26.name;
+show(176, () => JSON.stringify(v26));
+show(177, () => viaUnknown(v26));
+show(178, () => viaAny(v26));
+show(179, () => JSON.stringify([v26, spare5, v26]));
+show(180, () => JSON.stringify({ a: 1, v: v26, z: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll" } as any));
+show(181, () => JSON.stringify({ head: undefined, v: v26, inner: { w: v26 }, tail: { count: spare3 } } as any));
+show(182, () => JSON.stringify({ held: v26, after: "[", list: [] } as W5));
+const v27: R5 = { id: undefined, rows: ({ "k": 1.5, "caf\u00e9": 1.5, "k 2": 0.1 + 0.2 } as Record<string, number>), ok: [] };
+Object.seal(v27);
+show(183, () => JSON.stringify(v27));
+show(184, () => viaUnknown(v27));
+show(185, () => viaAny(v27));
+show(186, () => JSON.stringify([v27, spare5, v27]));
+show(187, () => JSON.stringify({ a: 1, v: v27, z: "</script>" } as any));
+show(188, () => JSON.stringify({ head: undefined, v: v27, inner: { w: v27 }, tail: (123456789012) } as any));
+show(189, () => JSON.stringify({ before: 1, held: v27, list: [] } as W5));
+const v28: R5 = { id: [], name: (4294967296), data: "quote \" inside", rows: ({ "k 2": -0, "k": 1e21 } as Record<string, number>), ok: [(1), (42), (-0.25), (0), (-2147483649)] };
+show(190, () => JSON.stringify(v28));
+show(191, () => viaUnknown(v28));
+show(192, () => viaAny(v28));
+show(193, () => JSON.stringify([v28, spare5, v28]));
+show(194, () => JSON.stringify({ a: 1, v: v28, z: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww" } as any));
+show(195, () => JSON.stringify({ head: undefined, v: v28, inner: { w: v28 }, tail: parsed("[]") } as any));
+show(196, () => JSON.stringify({ before: 1, held: v28, list: [] } as W5));
+const v29: R5 = { id: [true, true, true, true, false], rows: ({ "1": 2147483648, "z": -Infinity, "k 2": -2147483649 } as Record<string, number>), ok: [(-0), (-Infinity)] };
+(v29 as any).toString = (42);
+show(197, () => JSON.stringify(v29));
+show(198, () => viaUnknown(v29));
+show(199, () => viaAny(v29));
+show(200, () => JSON.stringify([v29, spare5, v29]));
+show(201, () => JSON.stringify({ a: 1, v: v29, z: "new\nline" } as any));
+show(202, () => JSON.stringify({ head: undefined, v: v29, inner: { w: v29 }, tail: nothing } as any));
+show(203, () => JSON.stringify({ before: 1, held: v29, after: "\u4e2d\u6587", list: [v29, v29] } as W5));
+const v30: R5 = { rows: ({ "k": 1e21 } as Record<string, number>), ok: [] };
+show(204, () => JSON.stringify(v30));
+show(205, () => viaUnknown(v30));
+show(206, () => viaAny(v30));
+show(207, () => JSON.stringify([v30, spare5, v30]));
+show(208, () => JSON.stringify({ a: 1, v: v30, z: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll" } as any));
+show(209, () => JSON.stringify({ head: undefined, v: v30, inner: { w: v30 }, tail: new Date(NaN) } as any));
+show(210, () => JSON.stringify({ before: 1, held: v30, after: "tab\there", list: [v30] } as W5));
+const v31: R6 = { zz: new Date(-62167219200001) };
+show(211, () => JSON.stringify(v31));
+show(212, () => viaUnknown(v31));
+show(213, () => viaAny(v31));
+show(214, () => JSON.stringify([v31, spare6, v31]));
+show(215, () => JSON.stringify({ a: 1, v: v31, z: "\u00ff" } as any));
+show(216, () => JSON.stringify({ head: undefined, v: v31, inner: { w: v31 }, tail: parsed("[1,\"x\",{\"y\":null}]") } as any));
+show(217, () => JSON.stringify({ before: 1, held: v31, after: "\ud83d\ude00", list: [v31, v31] } as W6));
+const v32: R6 = { zz: parsed("{\"a\":1,\"b\":\"\u4e2d\"}") };
+v32.ok = null;
+v32.held = ["a\u4e2d"];
+v32.name = (2147483648);
+show(218, () => JSON.stringify(v32));
+show(219, () => viaUnknown(v32));
+show(220, () => viaAny(v32));
+show(221, () => JSON.stringify([v32, spare6, v32]));
+show(222, () => JSON.stringify({ a: 1, v: v32, z: "quote \" inside" } as any));
+show(223, () => JSON.stringify({ head: undefined, v: v32, inner: { w: v32 }, tail: { rows: null, score: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll", data: [(1e21)], id: ({ "z": 2147483647 } as Record<string, number>), next: (1e21), a: false } } as any));
+show(224, () => JSON.stringify({ held: v32, list: [v32, v32] } as W6));
+const v33: R6 = { zz: [null, true], value: false, held: ["\ud83d\ude00"], ok: "\u4e2d\u6587", name: "quote \" inside" };
+Object.seal(v33);
+show(225, () => JSON.stringify(v33));
+show(226, () => viaUnknown(v33));
+show(227, () => viaAny(v33));
+show(228, () => JSON.stringify([v33, spare6, v33]));
+show(229, () => JSON.stringify({ a: 1, v: v33, z: "\u2028\u2029" } as any));
+show(230, () => JSON.stringify({ head: undefined, v: v33, inner: { w: v33 }, tail: new Date(-1) } as any));
+show(231, () => JSON.stringify({ before: 1, held: v33, after: "\u2028\u2029", list: [] } as W6));
+const v34: R6 = { zz: { zz: parsed("{\"text\":\"caf\u00e9\"}"), value: undefined, held: undefined, name: "quote \" inside" } };
+v34.held = [];
+v34.name = "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll";
+delete v34.held;
+show(232, () => JSON.stringify(v34));
+show(233, () => viaUnknown(v34));
+show(234, () => viaAny(v34));
+show(235, () => JSON.stringify([v34, spare6, v34]));
+show(236, () => JSON.stringify({ a: 1, v: v34, z: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll" } as any));
+show(237, () => JSON.stringify({ head: undefined, v: v34, inner: { w: v34 }, tail: (1e-7) } as any));
+show(238, () => JSON.stringify({ before: 1, held: v34, list: [] } as W6));
+const v35: R6 = { zz: null };
+v35.held = ["\u007f"];
+v35.ok = null;
+show(239, () => JSON.stringify(v35));
+show(240, () => viaUnknown(v35));
+show(241, () => viaAny(v35));
+show(242, () => JSON.stringify([v35, spare6, v35]));
+show(243, () => JSON.stringify({ a: 1, v: v35, z: "" } as any));
+show(244, () => JSON.stringify({ head: undefined, v: v35, inner: { w: v35 }, tail: { count: spare3 } } as any));
+show(245, () => JSON.stringify({ held: v35, list: [] } as W6));
+const v36: R7 = { c: [true] };
+show(246, () => JSON.stringify(v36));
+show(247, () => viaUnknown(v36));
+show(248, () => viaAny(v36));
+show(249, () => JSON.stringify([v36, spare7, v36]));
+show(250, () => JSON.stringify({ a: 1, v: v36, z: "\u0001\u001f" } as any));
+show(251, () => JSON.stringify({ head: undefined, v: v36, inner: { w: v36 }, tail: parsed("{\"a\":1,\"b\":\"\u4e2d\"}") } as any));
+show(252, () => JSON.stringify({ before: 1, held: v36, after: "\"", list: [v36, v36] } as W7));
+const v37: R7 = { c: [] };
+Object.seal(v37);
+show(253, () => JSON.stringify(v37));
+show(254, () => viaUnknown(v37));
+show(255, () => viaAny(v37));
+show(256, () => JSON.stringify([v37, spare7, v37]));
+show(257, () => JSON.stringify({ a: 1, v: v37, z: "\u0001\u001f" } as any));
+show(258, () => JSON.stringify({ head: undefined, v: v37, inner: { w: v37 }, tail: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll" } as any));
+show(259, () => JSON.stringify({ held: v37, after: "[", list: [] } as W7));
+const v38: R7 = { c: [null, false, false] };
+(v38 as any).toString = null;
+show(260, () => JSON.stringify(v38));
+show(261, () => viaUnknown(v38));
+show(262, () => viaAny(v38));
+show(263, () => JSON.stringify([v38, spare7, v38]));
+show(264, () => JSON.stringify({ a: 1, v: v38, z: "quote \" inside" } as any));
+show(265, () => JSON.stringify({ head: undefined, v: v38, inner: { w: v38 }, tail: { note: null } } as any));
+show(266, () => JSON.stringify({ before: 1, held: v38, list: [v38, v38] } as W7));
+const v39: R7 = { c: [false, null, false] };
+(v39 as any).toString = null;
+show(267, () => JSON.stringify(v39));
+show(268, () => viaUnknown(v39));
+show(269, () => viaAny(v39));
+show(270, () => JSON.stringify([v39, spare7, v39]));
+show(271, () => JSON.stringify({ a: 1, v: v39, z: "\u0001\u001f" } as any));
+show(272, () => JSON.stringify({ head: undefined, v: v39, inner: { w: v39 }, tail: undefined } as any));
+show(273, () => JSON.stringify({ before: 1, held: v39, list: [] } as W7));
+const v40: R7 = { c: [null, false] };
+show(274, () => JSON.stringify(v40));
+show(275, () => viaUnknown(v40));
+show(276, () => viaAny(v40));
+show(277, () => JSON.stringify([v40, spare7, v40]));
+show(278, () => JSON.stringify({ a: 1, v: v40, z: "tab\there" } as any));
+show(279, () => JSON.stringify({ head: undefined, v: v40, inner: { w: v40 }, tail: parsed("[[],[[]],{}]") } as any));
+show(280, () => JSON.stringify({ held: v40, after: "\ud83d\ude00", list: [] } as W7));
+const v41: R8 = { _x: undefined, c: null };
+show(281, () => JSON.stringify(v41));
+show(282, () => viaUnknown(v41));
+show(283, () => viaAny(v41));
+show(284, () => JSON.stringify([v41, spare8, v41]));
+show(285, () => JSON.stringify({ a: 1, v: v41, z: "\u007f" } as any));
+show(286, () => JSON.stringify({ head: undefined, v: v41, inner: { w: v41 }, tail: { _x: null, c: null } } as any));
+show(287, () => JSON.stringify({ before: 1, held: v41, after: "null", list: [] } as W8));
+const v42: R8 = { _x: null, c: null };
+show(288, () => JSON.stringify(v42));
+show(289, () => viaUnknown(v42));
+show(290, () => viaAny(v42));
+show(291, () => JSON.stringify([v42, spare8, v42]));
+show(292, () => JSON.stringify({ a: 1, v: v42, z: "{" } as any));
+show(293, () => JSON.stringify({ head: undefined, v: v42, inner: { w: v42 }, tail: (-0) } as any));
+show(294, () => JSON.stringify({ held: v42, after: "hello world", list: [] } as W8));
+const v43: R8 = { _x: { count: { $y: "x\udc00y", a: new Date(NaN), c: (1), with_underscore: (-0.25), kind: (2147483647), held: [new Date(1700000000123), new Date(NaN)] } }, c: "\ud800" };
+delete v43._x;
+show(295, () => JSON.stringify(v43));
+show(296, () => viaUnknown(v43));
+show(297, () => viaAny(v43));
+show(298, () => JSON.stringify([v43, spare8, v43]));
+show(299, () => JSON.stringify({ a: 1, v: v43, z: "\u007f" } as any));
+show(300, () => JSON.stringify({ head: undefined, v: v43, inner: { w: v43 }, tail: nothing } as any));
+show(301, () => JSON.stringify({ before: 1, held: v43, list: [v43, v43] } as W8));
+const v44: R8 = { _x: null, c: null };
+show(302, () => JSON.stringify(v44));
+show(303, () => viaUnknown(v44));
+show(304, () => viaAny(v44));
+show(305, () => JSON.stringify([v44, spare8, v44]));
+show(306, () => JSON.stringify({ a: 1, v: v44, z: "{" } as any));
+show(307, () => JSON.stringify({ head: undefined, v: v44, inner: { w: v44 }, tail: (2147483648) } as any));
+show(308, () => JSON.stringify({ held: v44, list: [v44, v44] } as W8));
+const v45: R8 = { _x: { count: { $y: "\u00ff", a: null, c: "hello world", with_underscore: (-Infinity), kind: (0.1 + 0.2), held: [new Date(-1), new Date(-62167219200001), new Date(-1)] } }, c: null };
+show(309, () => JSON.stringify(v45));
+show(310, () => viaUnknown(v45));
+show(311, () => viaAny(v45));
+show(312, () => JSON.stringify([v45, spare8, v45]));
+show(313, () => JSON.stringify({ a: 1, v: v45, z: "null" } as any));
+show(314, () => JSON.stringify({ head: undefined, v: v45, inner: { w: v45 }, tail: parsed("[[],[[]],{}]") } as any));
+show(315, () => JSON.stringify({ before: 1, held: v45, after: "tab\there", list: [] } as W8));
+const v46: R9 = { held: null };
+Object.freeze(v46);
+show(316, () => JSON.stringify(v46));
+show(317, () => viaUnknown(v46));
+show(318, () => viaAny(v46));
+show(319, () => JSON.stringify([v46, spare9, v46]));
+show(320, () => JSON.stringify({ a: 1, v: v46, z: "," } as any));
+show(321, () => JSON.stringify({ head: undefined, v: v46, inner: { w: v46 }, tail: "}" } as any));
+show(322, () => JSON.stringify({ before: 1, held: v46, list: [] } as W9));
+const v47: R9 = { held: null };
+Object.freeze(v47);
+show(323, () => JSON.stringify(v47));
+show(324, () => viaUnknown(v47));
+show(325, () => viaAny(v47));
+show(326, () => JSON.stringify([v47, spare9, v47]));
+show(327, () => JSON.stringify({ a: 1, v: v47, z: "\u007f" } as any));
+show(328, () => JSON.stringify({ head: undefined, v: v47, inner: { w: v47 }, tail: parsed("{\"s\":\"\\\"\"}") } as any));
+show(329, () => JSON.stringify({ held: v47, list: [v47, v47] } as W9));
+const v48: R9 = { held: "back\\slash" };
+show(330, () => JSON.stringify(v48));
+show(331, () => viaUnknown(v48));
+show(332, () => viaAny(v48));
+show(333, () => JSON.stringify([v48, spare9, v48]));
+show(334, () => JSON.stringify({ a: 1, v: v48, z: "\ud83d\ude00" } as any));
+show(335, () => JSON.stringify({ head: undefined, v: v48, inner: { w: v48 }, tail: parsed("[{\"w\":\"\u4e2d\"},{\"w\":\"a\"}]") } as any));
+show(336, () => JSON.stringify({ before: 1, held: v48, list: [v48, v48] } as W9));
+const v49: R9 = { held: null };
+show(337, () => JSON.stringify(v49));
+show(338, () => viaUnknown(v49));
+show(339, () => viaAny(v49));
+show(340, () => JSON.stringify([v49, spare9, v49]));
+show(341, () => JSON.stringify({ a: 1, v: v49, z: "tab\there" } as any));
+show(342, () => JSON.stringify({ head: undefined, v: v49, inner: { w: v49 }, tail: { held: null } } as any));
+show(343, () => JSON.stringify({ before: 1, held: v49, list: [v49, v49] } as W9));
+const v50: R9 = { held: null };
+show(344, () => JSON.stringify(v50));
+show(345, () => viaUnknown(v50));
+show(346, () => viaAny(v50));
+show(347, () => JSON.stringify([v50, spare9, v50]));
+show(348, () => JSON.stringify({ a: 1, v: v50, z: "}" } as any));
+show(349, () => JSON.stringify({ head: undefined, v: v50, inner: { w: v50 }, tail: ["", (1)] } as any));
+show(350, () => JSON.stringify({ before: 1, held: v50, list: [] } as W9));
+const v51: R10 = { kind: new Date(NaN), camelCase: { c: "</script>" }, list: { rows: true, score: "{", data: [(-0.25), (-2147483649), (42), (NaN), (4294967296)], next: "new\nline", a: false }, b: "new\nline" };
+v51.$y = "\u2028\u2029";
+v51.tags = [];
+delete v51.tags;
+v51.tags = ["llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll", "", "\ud83d\ude00", "tab\there", "a"];
+show(351, () => JSON.stringify(v51));
+show(352, () => viaUnknown(v51));
+show(353, () => viaAny(v51));
+show(354, () => JSON.stringify([v51, spare10, v51]));
+show(355, () => JSON.stringify({ a: 1, v: v51, z: "\ud83d\ude00" } as any));
+show(356, () => JSON.stringify({ head: undefined, v: v51, inner: { w: v51 }, tail: (123456789012) } as any));
+show(357, () => JSON.stringify({ before: 1, held: v51, after: "\ud800", list: [] } as W10));
+const v52: R10 = { kind: new Date(253402300800000), camelCase: { c: null }, list: { rows: "null", score: "\ud83d\ude00", data: [(-Infinity), (9007199254740993)], next: (1e-7) }, b: "}" };
+v52.$y = "\ud800";
+v52.name = "new\nline";
+v52.zz = [null, (NaN)];
+v52.tags = [];
+show(358, () => JSON.stringify(v52));
+show(359, () => viaUnknown(v52));
+show(360, () => viaAny(v52));
+show(361, () => JSON.stringify([v52, spare10, v52]));
+show(362, () => JSON.stringify({ a: 1, v: v52, z: "\u00ff" } as any));
+show(363, () => JSON.stringify({ head: undefined, v: v52, inner: { w: v52 }, tail: (-1) } as any));
+show(364, () => JSON.stringify({ before: 1, held: v52, after: "{", list: [] } as W10));
+const v53: R10 = { kind: null, camelCase: { c: "</script>" }, list: { rows: true, score: "\u4e2d\u6587", data: [(0)], next: null, a: null }, b: "\u4e2d\u6587" };
+v53.name = "quote \" inside";
+v53.$y = "}";
+v53.tags = ["\ud83d\ude00"];
+show(365, () => JSON.stringify(v53));
+show(366, () => viaUnknown(v53));
+show(367, () => viaAny(v53));
+show(368, () => JSON.stringify([v53, spare10, v53]));
+show(369, () => JSON.stringify({ a: 1, v: v53, z: "," } as any));
+show(370, () => JSON.stringify({ head: undefined, v: v53, inner: { w: v53 }, tail: undefined } as any));
+show(371, () => JSON.stringify({ held: v53, after: "{", list: [] } as W10));
+const v54: R10 = { tags: [], kind: new Date(0), camelCase: { _x: { count: { $y: "\u0001\u001f", a: new Date(NaN), c: (1), with_underscore: (123456789012), kind: (-2147483649) } }, c: null }, list: { rows: true, score: "\u4e2d\u6587", data: [(123456789012), (1.5), (NaN), (-1), (1)], next: (NaN), a: undefined }, b: "new\nline" };
+v54.zz = [(Infinity), null];
+v54.$y = "{";
+v54.tags = ["a", "a\u4e2d", "new\nline"];
+delete v54.$y;
+v54.$y = "\u2028\u2029";
+show(372, () => JSON.stringify(v54));
+show(373, () => viaUnknown(v54));
+show(374, () => viaAny(v54));
+show(375, () => JSON.stringify([v54, spare10, v54]));
+show(376, () => JSON.stringify({ a: 1, v: v54, z: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll" } as any));
+show(377, () => JSON.stringify({ head: undefined, v: v54, inner: { w: v54 }, tail: parsed("[1,\"x\",{\"y\":null}]") } as any));
+show(378, () => JSON.stringify({ held: v54, list: [v54] } as W10));
+const v55: R10 = { tags: ["}"], name: undefined, zz: [null], $y: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", kind: null, camelCase: { c: "a\u4e2d" }, list: { rows: (2147483647), score: "null", data: [(-0)], next: true }, b: "caf\u00e9" };
+show(379, () => JSON.stringify(v55));
+show(380, () => viaUnknown(v55));
+show(381, () => viaAny(v55));
+show(382, () => JSON.stringify([v55, spare10, v55]));
+show(383, () => JSON.stringify({ a: 1, v: v55, z: "\u0001\u001f" } as any));
+show(384, () => JSON.stringify({ head: undefined, v: v55, inner: { w: v55 }, tail: undefined } as any));
+show(385, () => JSON.stringify({ before: 1, held: v55, after: "\u007f", list: [] } as W10));
+const v56: R11 = { tags: null };
+v56.id = (0.1 + 0.2);
+show(386, () => JSON.stringify(v56));
+show(387, () => viaUnknown(v56));
+show(388, () => viaAny(v56));
+show(389, () => JSON.stringify([v56, spare11, v56]));
+show(390, () => JSON.stringify({ a: 1, v: v56, z: "a" } as any));
+show(391, () => JSON.stringify({ head: undefined, v: v56, inner: { w: v56 }, tail: null } as any));
+show(392, () => JSON.stringify({ before: 1, held: v56, list: [v56] } as W11));
+const v57: R11 = { tags: { kind: null, camelCase: { c: "</script>" }, list: { rows: (4294967296), score: "quote \" inside", data: [(42)], id: ({ "caf\u00e9": -2147483649, "z": -Infinity } as Record<string, number>), next: true }, b: "a\u4e2d" } };
+show(393, () => JSON.stringify(v57));
+show(394, () => viaUnknown(v57));
+show(395, () => viaAny(v57));
+show(396, () => JSON.stringify([v57, spare11, v57]));
+show(397, () => JSON.stringify({ a: 1, v: v57, z: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww" } as any));
+show(398, () => JSON.stringify({ head: undefined, v: v57, inner: { w: v57 }, tail: (-Infinity) } as any));
+show(399, () => JSON.stringify({ held: v57, after: ",", list: [] } as W11));
+const v58: R11 = { tags: null };
+show(400, () => JSON.stringify(v58));
+show(401, () => viaUnknown(v58));
+show(402, () => viaAny(v58));
+show(403, () => JSON.stringify([v58, spare11, v58]));
+show(404, () => JSON.stringify({ a: 1, v: v58, z: "}" } as any));
+show(405, () => JSON.stringify({ head: undefined, v: v58, inner: { w: v58 }, tail: { held: null } } as any));
+show(406, () => JSON.stringify({ before: 1, held: v58, list: [v58] } as W11));
+const v59: R11 = { tags: ["x\udc00y"] };
+show(407, () => JSON.stringify(v59));
+show(408, () => viaUnknown(v59));
+show(409, () => viaAny(v59));
+show(410, () => JSON.stringify([v59, spare11, v59]));
+show(411, () => JSON.stringify({ a: 1, v: v59, z: "null" } as any));
+show(412, () => JSON.stringify({ head: undefined, v: v59, inner: { w: v59 }, tail: Symbol.iterator } as any));
+show(413, () => JSON.stringify({ before: 1, held: v59, after: "a\u4e2d", list: [v59] } as W11));
+const v60: R11 = { tags: (-0) };
+v60.id = (1e21);
+show(414, () => JSON.stringify(v60));
+show(415, () => viaUnknown(v60));
+show(416, () => viaAny(v60));
+show(417, () => JSON.stringify([v60, spare11, v60]));
+show(418, () => JSON.stringify({ a: 1, v: v60, z: "[" } as any));
+show(419, () => JSON.stringify({ head: undefined, v: v60, inner: { w: v60 }, tail: null } as any));
+show(420, () => JSON.stringify({ held: v60, list: [v60, v60] } as W11));
+const v61: R12 = { ok: { zz: null, value: true, held: ["\u00ff"], ok: null, name: "quote \" inside" } };
+v61.ok = { zz: [true] };
+delete v61.ok;
+show(421, () => JSON.stringify(v61));
+show(422, () => viaUnknown(v61));
+show(423, () => viaAny(v61));
+show(424, () => JSON.stringify([v61, spare12, v61]));
+show(425, () => JSON.stringify({ a: 1, v: v61, z: "\u007f" } as any));
+show(426, () => JSON.stringify({ head: undefined, v: v61, inner: { w: v61 }, tail: true } as any));
+show(427, () => JSON.stringify({ held: v61, after: "{", list: [v61, v61] } as W12));
+const v62: R12 = {  };
+v62.ok = { zz: undefined, value: false, held: ["back\\slash"], name: undefined };
+show(428, () => JSON.stringify(v62));
+show(429, () => viaUnknown(v62));
+show(430, () => viaAny(v62));
+show(431, () => JSON.stringify([v62, spare12, v62]));
+show(432, () => JSON.stringify({ a: 1, v: v62, z: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll" } as any));
+show(433, () => JSON.stringify({ head: undefined, v: v62, inner: { w: v62 }, tail: parsed("[{\"w\":\"\u4e2d\"},{\"w\":\"a\"}]") } as any));
+show(434, () => JSON.stringify({ held: v62, after: "\"", list: [] } as W12));
+const v63: R12 = { ok: undefined };
+Object.seal(v63);
+show(435, () => JSON.stringify(v63));
+show(436, () => viaUnknown(v63));
+show(437, () => viaAny(v63));
+show(438, () => JSON.stringify([v63, spare12, v63]));
+show(439, () => JSON.stringify({ a: 1, v: v63, z: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww" } as any));
+show(440, () => JSON.stringify({ head: undefined, v: v63, inner: { w: v63 }, tail: null } as any));
+show(441, () => JSON.stringify({ held: v63, list: [] } as W12));
+const v64: R12 = {  };
+Object.freeze(v64);
+show(442, () => JSON.stringify(v64));
+show(443, () => viaUnknown(v64));
+show(444, () => viaAny(v64));
+show(445, () => JSON.stringify([v64, spare12, v64]));
+show(446, () => JSON.stringify({ a: 1, v: v64, z: "\u007f" } as any));
+show(447, () => JSON.stringify({ head: undefined, v: v64, inner: { w: v64 }, tail: (1e-7) } as any));
+show(448, () => JSON.stringify({ held: v64, after: "quote \" inside", list: [] } as W12));
+const v65: R12 = {  };
+v65.ok = { zz: null, value: false, ok: null };
+show(449, () => JSON.stringify(v65));
+show(450, () => viaUnknown(v65));
+show(451, () => viaAny(v65));
+show(452, () => JSON.stringify([v65, spare12, v65]));
+show(453, () => JSON.stringify({ a: 1, v: v65, z: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww" } as any));
+show(454, () => JSON.stringify({ head: undefined, v: v65, inner: { w: v65 }, tail: nothing } as any));
+show(455, () => JSON.stringify({ held: v65, after: "", list: [v65, v65] } as W12));
+//// json-stringify-generated-records-6.ts
+function parsed(text: string): any { return JSON.parse(text); }
+function nothing(): void {}
+function viaUnknown(value: unknown): string | undefined { return JSON.stringify(value); }
+function viaAny(value: any): string | undefined { return JSON.stringify(value); }
+function show(number: number, run: () => string | undefined): void { let text: string | undefined; try { text = run(); } catch (error) { text = "threw " + (error as Error).constructor.name; } console.log(number + " " + text); }
+interface R0 { value?: number | null; c?: ((number | null)[])[]; id: string | null; at?: Date | null; meta?: boolean | null; with_underscore: Date | null; rows: boolean | null }
+interface W0 { before?: number; held: R0; after?: string; list: R0[] }
+const spare0: R0 = { c: [[null], [(-2147483648), (9007199254740993)], [], [null, null, (1.5)], [(-0.25)]], id: "\ud83d\ude00", at: null, with_underscore: null, rows: null };
+interface R1 { value: any }
+interface W1 { before?: number; held: R1; after?: string; list: R1[] }
+const spare1: R1 = { value: null };
+interface R2 { score: (Date | null)[]; count?: boolean }
+interface W2 { before?: number; held: R2; after?: string; list: R2[] }
+const spare2: R2 = { score: [], count: false };
+interface R3 { list: string; meta: string | number | boolean | null; tags: number | null; rows?: (number | null)[]; score: R1; a?: boolean | null; data: number }
+interface W3 { before?: number; held: R3; after?: string; list: R3[] }
+const spare3: R3 = { list: ",", meta: "a", tags: null, rows: [(2147483647), null, (123456789012)], score: { value: parsed("[[],[[]],{}]") }, a: false, data: (Infinity) };
+interface R4 { score: R1; list?: string | number | boolean | null; b?: boolean | null; c: number; held?: R0 | null; $y?: Date | null; count?: boolean }
+interface W4 { before?: number; held: R4; after?: string; list: R4[] }
+const spare4: R4 = { score: { value: nothing }, list: (123456789012), b: false, c: (Infinity), held: { id: "}", at: new Date(-1), with_underscore: new Date(1700000000123), rows: null }, $y: new Date(8640000000000000), count: true };
+interface R5 { zz: (string | number)[]; count?: string | number; at: any; held: R3; data: R1 | null; kind?: (Date | null)[] }
+interface W5 { before?: number; held: R5; after?: string; list: R5[] }
+const spare5: R5 = { zz: ["wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", (9007199254740993), "a\u4e2d", "null", (1e21)], count: (2147483648), at: true, held: { list: "x\udc00y", meta: (-2147483649), tags: (Infinity), score: spare1, a: true, data: (4294967296) }, data: { value: parsed("{\"text\":\"caf\u00e9\"}") } };
+const v1: R0 = { value: null, c: [], id: "\u2028\u2029", at: new Date(-62167219200001), meta: false, with_underscore: null, rows: null };
+v1.c = [[(1), (2147483648), null, null, null], [(4294967296), null, (-0)], [null, null]];
+delete v1.value;
+show(1, () => JSON.stringify(v1));
+show(2, () => viaUnknown(v1));
+show(3, () => viaAny(v1));
+show(4, () => JSON.stringify([v1, spare0, v1]));
+show(5, () => JSON.stringify({ a: 1, v: v1, z: "" } as any));
+show(6, () => JSON.stringify({ head: undefined, v: v1, inner: { w: v1 }, tail: parsed("{\"s\":\"\\\"\"}") } as any));
+show(7, () => JSON.stringify({ held: v1, after: "hello world", list: [v1] } as W0));
+const v2: R0 = { value: (Infinity), id: "\"", meta: true, with_underscore: new Date(253402300800000), rows: true };
+v2.at = null;
+delete v2.meta;
+v2.meta = true;
+show(8, () => JSON.stringify(v2));
+show(9, () => viaUnknown(v2));
+show(10, () => viaAny(v2));
+show(11, () => JSON.stringify([v2, spare0, v2]));
+show(12, () => JSON.stringify({ a: 1, v: v2, z: "</script>" } as any));
+show(13, () => JSON.stringify({ head: undefined, v: v2, inner: { w: v2 }, tail: [] } as any));
+show(14, () => JSON.stringify({ held: v2, list: [] } as W0));
+const v3: R0 = { id: null, with_underscore: null, rows: true };
+show(15, () => JSON.stringify(v3));
+show(16, () => viaUnknown(v3));
+show(17, () => viaAny(v3));
+show(18, () => JSON.stringify([v3, spare0, v3]));
+show(19, () => JSON.stringify({ a: 1, v: v3, z: "\u4e2d\u6587" } as any));
+show(20, () => JSON.stringify({ head: undefined, v: v3, inner: { w: v3 }, tail: (-Infinity) } as any));
+show(21, () => JSON.stringify({ before: 1, held: v3, list: [] } as W0));
+const v4: R0 = { id: null, at: new Date(253402300800000), meta: null, with_underscore: null, rows: null };
+v4.meta = false;
+v4.at = null;
+delete v4.c;
+v4.c = [[(0.1 + 0.2)], [], [(2147483647), null, (123456789012), (-1), null]];
+show(22, () => JSON.stringify(v4));
+show(23, () => viaUnknown(v4));
+show(24, () => viaAny(v4));
+show(25, () => JSON.stringify([v4, spare0, v4]));
+show(26, () => JSON.stringify({ a: 1, v: v4, z: "caf\u00e9" } as any));
+show(27, () => JSON.stringify({ head: undefined, v: v4, inner: { w: v4 }, tail: { value: undefined, c: undefined, id: "", at: null, meta: null, with_underscore: null, rows: null } } as any));
+show(28, () => JSON.stringify({ held: v4, after: "tab\there", list: [] } as W0));
+const v5: R0 = { id: "{", with_underscore: null, rows: null };
+show(29, () => JSON.stringify(v5));
+show(30, () => viaUnknown(v5));
+show(31, () => viaAny(v5));
+show(32, () => JSON.stringify([v5, spare0, v5]));
+show(33, () => JSON.stringify({ a: 1, v: v5, z: "," } as any));
+show(34, () => JSON.stringify({ head: undefined, v: v5, inner: { w: v5 }, tail: [] } as any));
+show(35, () => JSON.stringify({ held: v5, list: [v5, v5] } as W0));
+const v6: R1 = { value: "{" };
+show(36, () => JSON.stringify(v6));
+show(37, () => viaUnknown(v6));
+show(38, () => viaAny(v6));
+show(39, () => JSON.stringify([v6, spare1, v6]));
+show(40, () => JSON.stringify({ a: 1, v: v6, z: "a" } as any));
+show(41, () => JSON.stringify({ head: undefined, v: v6, inner: { w: v6 }, tail: parsed("{}") } as any));
+show(42, () => JSON.stringify({ held: v6, list: [v6, v6] } as W1));
+const v7: R1 = { value: Symbol.iterator };
+show(43, () => JSON.stringify(v7));
+show(44, () => viaUnknown(v7));
+show(45, () => viaAny(v7));
+show(46, () => JSON.stringify([v7, spare1, v7]));
+show(47, () => JSON.stringify({ a: 1, v: v7, z: "a" } as any));
+show(48, () => JSON.stringify({ head: undefined, v: v7, inner: { w: v7 }, tail: [null, "back\\slash", (1)] } as any));
+show(49, () => JSON.stringify({ held: v7, list: [] } as W1));
+const v8: R1 = { value: null };
+show(50, () => JSON.stringify(v8));
+show(51, () => viaUnknown(v8));
+show(52, () => viaAny(v8));
+show(53, () => JSON.stringify([v8, spare1, v8]));
+show(54, () => JSON.stringify({ a: 1, v: v8, z: "back\\slash" } as any));
+show(55, () => JSON.stringify({ head: undefined, v: v8, inner: { w: v8 }, tail: null } as any));
+show(56, () => JSON.stringify({ held: v8, list: [v8] } as W1));
+const v9: R1 = { value: { id: null, with_underscore: null, rows: false } };
+Object.freeze(v9);
+show(57, () => JSON.stringify(v9));
+show(58, () => viaUnknown(v9));
+show(59, () => viaAny(v9));
+show(60, () => JSON.stringify([v9, spare1, v9]));
+show(61, () => JSON.stringify({ a: 1, v: v9, z: "</script>" } as any));
+show(62, () => JSON.stringify({ head: undefined, v: v9, inner: { w: v9 }, tail: undefined } as any));
+show(63, () => JSON.stringify({ before: 1, held: v9, list: [] } as W1));
+const v10: R1 = { value: [null] };
+show(64, () => JSON.stringify(v10));
+show(65, () => viaUnknown(v10));
+show(66, () => viaAny(v10));
+show(67, () => JSON.stringify([v10, spare1, v10]));
+show(68, () => JSON.stringify({ a: 1, v: v10, z: "caf\u00e9" } as any));
+show(69, () => JSON.stringify({ head: undefined, v: v10, inner: { w: v10 }, tail: Symbol.iterator } as any));
+show(70, () => JSON.stringify({ before: 1, held: v10, list: [v10, v10] } as W1));
+const v11: R2 = { score: [] };
+show(71, () => JSON.stringify(v11));
+show(72, () => viaUnknown(v11));
+show(73, () => viaAny(v11));
+show(74, () => JSON.stringify([v11, spare2, v11]));
+show(75, () => JSON.stringify({ a: 1, v: v11, z: "\ud800" } as any));
+show(76, () => JSON.stringify({ head: undefined, v: v11, inner: { w: v11 }, tail: "\u00ff" } as any));
+show(77, () => JSON.stringify({ before: 1, held: v11, after: "back\\slash", list: [] } as W2));
+const v12: R2 = { score: [new Date(NaN)] };
+v12.count = false;
+delete v12.count;
+show(78, () => JSON.stringify(v12));
+show(79, () => viaUnknown(v12));
+show(80, () => viaAny(v12));
+show(81, () => JSON.stringify([v12, spare2, v12]));
+show(82, () => JSON.stringify({ a: 1, v: v12, z: "}" } as any));
+show(83, () => JSON.stringify({ head: undefined, v: v12, inner: { w: v12 }, tail: { zz: ["a"], count: undefined, at: [], held: spare3, data: spare1, kind: [] } } as any));
+show(84, () => JSON.stringify({ held: v12, list: [v12] } as W2));
+const v13: R2 = { score: [null, null] };
+v13.count = false;
+delete v13.count;
+show(85, () => JSON.stringify(v13));
+show(86, () => viaUnknown(v13));
+show(87, () => viaAny(v13));
+show(88, () => JSON.stringify([v13, spare2, v13]));
+show(89, () => JSON.stringify({ a: 1, v: v13, z: "\"" } as any));
+show(90, () => JSON.stringify({ head: undefined, v: v13, inner: { w: v13 }, tail: "null" } as any));
+show(91, () => JSON.stringify({ before: 1, held: v13, after: "</script>", list: [v13, v13] } as W2));
+const v14: R2 = { score: [null, new Date(8640000000000000), new Date(1700000000123), new Date(-62167219200001), null] };
+(v14 as any).toString = true;
+show(92, () => JSON.stringify(v14));
+show(93, () => viaUnknown(v14));
+show(94, () => viaAny(v14));
+show(95, () => JSON.stringify([v14, spare2, v14]));
+show(96, () => JSON.stringify({ a: 1, v: v14, z: "hello world" } as any));
+show(97, () => JSON.stringify({ head: undefined, v: v14, inner: { w: v14 }, tail: [null, true, true] } as any));
+show(98, () => JSON.stringify({ before: 1, held: v14, list: [v14] } as W2));
+const v15: R2 = { score: [null, new Date(0), new Date(NaN)] };
+v15.count = false;
+show(99, () => JSON.stringify(v15));
+show(100, () => viaUnknown(v15));
+show(101, () => viaAny(v15));
+show(102, () => JSON.stringify([v15, spare2, v15]));
+show(103, () => JSON.stringify({ a: 1, v: v15, z: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll" } as any));
+show(104, () => JSON.stringify({ head: undefined, v: v15, inner: { w: v15 }, tail: parsed("{\"a\":1,\"b\":\"\u4e2d\"}") } as any));
+show(105, () => JSON.stringify({ before: 1, held: v15, after: ",", list: [v15] } as W2));
+const v16: R3 = { list: "quote \" inside", meta: null, tags: (-1), rows: [null, (0)], score: { value: null }, data: (-1) };
+v16.rows = [null];
+delete v16.a;
+v16.a = false;
+show(106, () => JSON.stringify(v16));
+show(107, () => viaUnknown(v16));
+show(108, () => viaAny(v16));
+show(109, () => JSON.stringify([v16, spare3, v16]));
+show(110, () => JSON.stringify({ a: 1, v: v16, z: "\u2028\u2029" } as any));
+show(111, () => JSON.stringify({ head: undefined, v: v16, inner: { w: v16 }, tail: true } as any));
+show(112, () => JSON.stringify({ before: 1, held: v16, after: "caf\u00e9", list: [v16, v16] } as W3));
+const v17: R3 = { list: "new\nline", meta: (-Infinity), tags: (4294967296), score: { value: parsed("[[],[[]],{}]") }, data: (0) };
+Object.preventExtensions(v17);
+show(113, () => JSON.stringify(v17));
+show(114, () => viaUnknown(v17));
+show(115, () => viaAny(v17));
+show(116, () => JSON.stringify([v17, spare3, v17]));
+show(117, () => JSON.stringify({ a: 1, v: v17, z: "</script>" } as any));
+show(118, () => JSON.stringify({ head: undefined, v: v17, inner: { w: v17 }, tail: { zz: ["caf\u00e9", "\u0001\u001f"], count: undefined, at: parsed("[{\"w\":\"\u4e2d\"},{\"w\":\"a\"}]"), held: spare3, data: null, kind: [null] } } as any));
+show(119, () => JSON.stringify({ held: v17, list: [] } as W3));
+const v18: R3 = { list: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll", meta: null, tags: (42), score: { value: [true, true] }, data: (-2147483648) };
+v18.a = false;
+v18.rows = [(1.5), (-0.25)];
+delete v18.rows;
+v18.rows = [null, (-Infinity)];
+show(120, () => JSON.stringify(v18));
+show(121, () => viaUnknown(v18));
+show(122, () => viaAny(v18));
+show(123, () => JSON.stringify([v18, spare3, v18]));
+show(124, () => JSON.stringify({ a: 1, v: v18, z: "x\udc00y" } as any));
+show(125, () => JSON.stringify({ head: undefined, v: v18, inner: { w: v18 }, tail: [true, "\u2028\u2029", null] } as any));
+show(126, () => JSON.stringify({ before: 1, held: v18, after: "\"", list: [] } as W3));
+const v19: R3 = { list: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", meta: (1e21), tags: (-1), score: { value: parsed("[1,\"x\",{\"y\":null}]") }, data: (-0) };
+Object.preventExtensions(v19);
+show(127, () => JSON.stringify(v19));
+show(128, () => viaUnknown(v19));
+show(129, () => viaAny(v19));
+show(130, () => JSON.stringify([v19, spare3, v19]));
+show(131, () => JSON.stringify({ a: 1, v: v19, z: "\u007f" } as any));
+show(132, () => JSON.stringify({ head: undefined, v: v19, inner: { w: v19 }, tail: nothing } as any));
+show(133, () => JSON.stringify({ held: v19, list: [] } as W3));
+const v20: R3 = { list: "\ud800", meta: true, tags: null, score: { value: { list: "back\\slash", meta: null, tags: null, rows: [null, null, (4294967296), (-0.25), null], score: { value: nothing }, a: false, data: (-1) } }, data: (123456789012) };
+Object.preventExtensions(v20);
+show(134, () => JSON.stringify(v20));
+show(135, () => viaUnknown(v20));
+show(136, () => viaAny(v20));
+show(137, () => JSON.stringify([v20, spare3, v20]));
+show(138, () => JSON.stringify({ a: 1, v: v20, z: "hello world" } as any));
+show(139, () => JSON.stringify({ head: undefined, v: v20, inner: { w: v20 }, tail: (-0) } as any));
+show(140, () => JSON.stringify({ held: v20, list: [v20, v20] } as W3));
+const v21: R4 = { score: { value: new Date(-62167219200001) }, list: true, b: false, c: (1), held: { id: null, with_underscore: new Date(NaN), rows: null }, $y: new Date(-62167219200001), count: undefined };
+show(141, () => JSON.stringify(v21));
+show(142, () => viaUnknown(v21));
+show(143, () => viaAny(v21));
+show(144, () => JSON.stringify([v21, spare4, v21]));
+show(145, () => JSON.stringify({ a: 1, v: v21, z: "\ud800" } as any));
+show(146, () => JSON.stringify({ head: undefined, v: v21, inner: { w: v21 }, tail: parsed("{\"a\":1,\"b\":\"\u4e2d\"}") } as any));
+show(147, () => JSON.stringify({ held: v21, list: [] } as W4));
+const v22: R4 = { score: { value: parsed("{\"s\":\"\\\"\"}") }, list: true, b: true, c: (1), held: { c: [[(-0.25), (NaN)], [null], [null], [], [(1e21), null]], id: null, with_underscore: null, rows: false }, $y: new Date(0), count: false };
+v22.b = true;
+v22.$y = null;
+v22.list = true;
+v22.count = false;
+v22.held = { value: (0.1 + 0.2), c: [[(-0.25), null, (1e21), (-Infinity), (1.5)], [], [(-2147483649)], [(-2147483648)], [(-0.25), (-1)]], id: null, at: null, meta: null, with_underscore: new Date(253402300800000), rows: false };
+delete v22.$y;
+v22.$y = null;
+show(148, () => JSON.stringify(v22));
+show(149, () => viaUnknown(v22));
+show(150, () => viaAny(v22));
+show(151, () => JSON.stringify([v22, spare4, v22]));
+show(152, () => JSON.stringify({ a: 1, v: v22, z: "\u2028\u2029" } as any));
+show(153, () => JSON.stringify({ head: undefined, v: v22, inner: { w: v22 }, tail: null } as any));
+show(154, () => JSON.stringify({ before: 1, held: v22, list: [v22] } as W4));
+const v23: R4 = { score: { value: nothing }, list: null, b: false, c: (2147483647), held: null, $y: new Date(253402300800000), count: true };
+show(155, () => JSON.stringify(v23));
+show(156, () => viaUnknown(v23));
+show(157, () => viaAny(v23));
+show(158, () => JSON.stringify([v23, spare4, v23]));
+show(159, () => JSON.stringify({ a: 1, v: v23, z: "a\u4e2d" } as any));
+show(160, () => JSON.stringify({ head: undefined, v: v23, inner: { w: v23 }, tail: undefined } as any));
+show(161, () => JSON.stringify({ before: 1, held: v23, after: "\ud83d\ude00", list: [v23] } as W4));
+const v24: R4 = { score: { value: undefined }, list: (-2147483649), b: true, c: (-2147483648), held: { id: null, at: null, with_underscore: new Date(NaN), rows: false }, $y: null };
+(v24 as any).extra = true;
+show(162, () => JSON.stringify(v24));
+show(163, () => viaUnknown(v24));
+show(164, () => viaAny(v24));
+show(165, () => JSON.stringify([v24, spare4, v24]));
+show(166, () => JSON.stringify({ a: 1, v: v24, z: "," } as any));
+show(167, () => JSON.stringify({ head: undefined, v: v24, inner: { w: v24 }, tail: { id: "x\udc00y", at: null, with_underscore: new Date(1700000000123), rows: false } } as any));
+show(168, () => JSON.stringify({ before: 1, held: v24, after: "caf\u00e9", list: [] } as W4));
+const v25: R4 = { score: { value: null }, c: (-1) };
+v25.$y = null;
+v25.held = null;
+v25.list = (-0);
+v25.count = false;
+v25.b = true;
+delete v25.b;
+v25.b = true;
+show(169, () => JSON.stringify(v25));
+show(170, () => viaUnknown(v25));
+show(171, () => viaAny(v25));
+show(172, () => JSON.stringify([v25, spare4, v25]));
+show(173, () => JSON.stringify({ a: 1, v: v25, z: "\u007f" } as any));
+show(174, () => JSON.stringify({ head: undefined, v: v25, inner: { w: v25 }, tail: [] } as any));
+show(175, () => JSON.stringify({ held: v25, list: [v25] } as W4));
+const v26: R5 = { zz: [(1e-7), "\u007f", (-0.25)], at: "new\nline", held: { list: "x\udc00y", meta: true, tags: null, score: { value: undefined }, data: (1.5) }, data: null };
+show(176, () => JSON.stringify(v26));
+show(177, () => viaUnknown(v26));
+show(178, () => viaAny(v26));
+show(179, () => JSON.stringify([v26, spare5, v26]));
+show(180, () => JSON.stringify({ a: 1, v: v26, z: "back\\slash" } as any));
+show(181, () => JSON.stringify({ head: undefined, v: v26, inner: { w: v26 }, tail: parsed("{\"a\":1,\"b\":\"\u4e2d\"}") } as any));
+show(182, () => JSON.stringify({ held: v26, after: "\u0001\u001f", list: [v26] } as W5));
+const v27: R5 = { zz: [(1e-7)], at: Symbol.iterator, held: { list: "[", meta: true, tags: (1e21), score: { value: new Date(NaN) }, a: true, data: (42) }, data: null };
+(v27 as any).zzz = true;
+show(183, () => JSON.stringify(v27));
+show(184, () => viaUnknown(v27));
+show(185, () => viaAny(v27));
+show(186, () => JSON.stringify([v27, spare5, v27]));
+show(187, () => JSON.stringify({ a: 1, v: v27, z: "\u2028\u2029" } as any));
+show(188, () => JSON.stringify({ head: undefined, v: v27, inner: { w: v27 }, tail: [] } as any));
+show(189, () => JSON.stringify({ held: v27, list: [] } as W5));
+const v28: R5 = { zz: ["new\nline"], count: "[", at: null, held: { list: "\u0001\u001f", meta: (1), tags: (-Infinity), score: { value: null }, data: (2147483648) }, data: { value: null } };
+v28.count = (1);
+v28.kind = [new Date(0), null, new Date(1700000000123)];
+delete v28.count;
+v28.count = (-0.25);
+show(190, () => JSON.stringify(v28));
+show(191, () => viaUnknown(v28));
+show(192, () => viaAny(v28));
+show(193, () => JSON.stringify([v28, spare5, v28]));
+show(194, () => JSON.stringify({ a: 1, v: v28, z: "tab\there" } as any));
+show(195, () => JSON.stringify({ head: undefined, v: v28, inner: { w: v28 }, tail: [] } as any));
+show(196, () => JSON.stringify({ before: 1, held: v28, after: "back\\slash", list: [v28] } as W5));
+const v29: R5 = { zz: ["null"], at: new Date(-62167219200001), held: { list: "\u2028\u2029", meta: (123456789012), tags: (2147483648), rows: [null], score: { value: null }, a: true, data: (-2147483648) }, data: null };
+v29.kind = [null, null];
+v29.count = (NaN);
+show(197, () => JSON.stringify(v29));
+show(198, () => viaUnknown(v29));
+show(199, () => viaAny(v29));
+show(200, () => JSON.stringify([v29, spare5, v29]));
+show(201, () => JSON.stringify({ a: 1, v: v29, z: "a" } as any));
+show(202, () => JSON.stringify({ head: undefined, v: v29, inner: { w: v29 }, tail: (NaN) } as any));
+show(203, () => JSON.stringify({ held: v29, after: "caf\u00e9", list: [v29] } as W5));
+const v30: R5 = { zz: [], at: (2147483647), held: { list: "\"", meta: null, tags: null, score: { value: { score: [null] } }, a: true, data: (-2147483649) }, data: { value: ["\u4e2d\u6587", "</script>", null] }, kind: [null, null] };
+(v30 as any).extra = true;
+show(204, () => JSON.stringify(v30));
+show(205, () => viaUnknown(v30));
+show(206, () => viaAny(v30));
+show(207, () => JSON.stringify([v30, spare5, v30]));
+show(208, () => JSON.stringify({ a: 1, v: v30, z: "hello world" } as any));
+show(209, () => JSON.stringify({ head: undefined, v: v30, inner: { w: v30 }, tail: (-1) } as any));
+show(210, () => JSON.stringify({ before: 1, held: v30, list: [v30, v30] } as W5));
+//// json-stringify-gives-up-on-the-first-call.ts
+// The first JSON.stringify of a process, and the first after a large result, start without an output buffer. One that gives up
+// then, with 16-bit text already taken, must leave nothing behind for the results that follow.
+const writers: Record<string, (value: unknown) => string> = { write: (value) => JSON.stringify(value) as string };
+const write = (value: unknown) => writers["write"]!(value);
+interface Row { id: number; text: string; list: number[] }
+interface Holds { value: unknown }
+interface Pair { text: string; next: unknown }
+function row(id: number): Row { return { id, text: "t" + id, list: [id, id + 1] }; }
+function holds(value: unknown): Holds { return { value }; }
+function pair(text: string, next: unknown): Pair { return { text, next }; }
+const plain: unknown = JSON.parse('{"p":1}');
+const replaced: unknown = JSON.parse('{"q":2}');
+Object.defineProperty(replaced, "toJSON", { value: () => "replaced" });
+const large = () => console.log(write("x".repeat(70000)).length, write(["x".repeat(70000)]).length);
+
+console.log(write(["first 日", plain]));
+console.log(write(row(1)));
+console.log(write(holds([row(2), plain])));
+large();
+console.log(write(["after a large result 日", plain]));
+console.log(write(row(3)));
+large();
+console.log(write(pair("in a typed object 日", replaced)));
+console.log(write(row(4)));
+large();
+console.log(write([pair("in a list 日", replaced)]));
+console.log(write("a string"));
+large();
+console.log(write(holds(["nested 日", replaced])));
+console.log(write([5]));
+large();
+console.log(write(["long 日" + "z".repeat(70000), "y".repeat(70000), plain]).length);
+console.log(write(row(6)));
+console.log(write([row(7), "s", plain]));
+console.log(write(holds([row(8), plain])));
+large();
+console.log(write(undefined), write(() => 1), write(Symbol("s")));
+console.log(write(row(9)));
+console.log(write(["wide that is finished 日"]));
+console.log(write(row(10)));
+//// json-stringify-instances-of-array-subclasses.ts
+// JSON.stringify meets instances of classes that extend Array, alone and inside typed records: with and without toJSON, whoever defines it and whenever.
+interface Label { id: number; name: string }
+interface Issue { id: number; title: string; labels: Label[]; numbers: number[]; made: Date | null }
+class Rows<T> extends Array<T> {
+  count = 0;
+  command = "SELECT";
+}
+class MoreRows<T> extends Rows<T> {
+  more = true;
+}
+class Told<T> extends Array<T> {
+  toJSON() {
+    return "told " + this.length;
+  }
+}
+class LaterTold<T> extends Array<T> {}
+class LaterToldAbove<T> extends LaterTold<T> {}
+////= lines-37	hide	unknown
+function fill<T, L extends T[]>(list: L, ...items: T[]): L {
+  for (const item of items) list.push(item);
+  return list;
+}
+const label = (id: number, name = "label " + id): Label => ({ id, name });
+const issue = (id: number, labels: Label[], numbers: number[] = []): Issue => ({ id, title: "issue " + id, labels, numbers, made: id % 2 ? new Date(86400000 * id) : null });
+function show(name: string, make: () => unknown) {
+  for (let turn = 0; turn < 2; turn++) {
+    try {
+      console.log(name, String(make()));
+    } catch (error) {
+      console.log(name, "throws", (error as Error).constructor.name, (error as Error).message);
+    }
+  }
+}
+const rows = () => fill(new Rows<Label>(), label(1), label(2, 'quoted "two"'), label(3, "wide 東京 😀"));
+show("alone", () => JSON.stringify(rows()));
+show("alone, indented", () => JSON.stringify(rows(), null, 2));
+show("alone, with a replacer", () => JSON.stringify(rows(), (key, value) => (key === "id" ? undefined : value)));
+show("alone, with a list of keys", () => JSON.stringify(rows(), ["name"]));
+show("empty", () => JSON.stringify(new Rows<Label>()));
+show("in a record", () => JSON.stringify(issue(1, rows())));
+show("in records in a list", () => JSON.stringify([issue(1, rows()), issue(2, new Rows<Label>()), issue(3, [label(4)])]));
+show("in records in an instance", () => JSON.stringify(fill(new Rows<Issue>(), issue(1, rows()), issue(2, rows()))));
+show("a subclass of the subclass", () => JSON.stringify(issue(4, fill(new MoreRows<Label>(), label(5)))));
+show("numbers", () => JSON.stringify(issue(5, [], fill(new Rows<number>(), 1, 2, 3))));
+show("numbers that are not whole", () => JSON.stringify(issue(5, [], fill(new Rows<number>(), 1.5, -0, NaN, Infinity, 1e21))));
+show("strings", () => JSON.stringify({ list: fill(new Rows<string>(), "a", "é", "東", "\ud800", "\n") }));
+show("instances in an instance", () => JSON.stringify(fill(new Rows<Rows<number>>(), fill(new Rows<number>(), 1), new Rows<number>(), fill(new Rows<number>(), 2, 3))));
+show("objects without a type", () => JSON.stringify(fill(new Rows<unknown>(), JSON.parse('{"a":1,"b":[true,null]}'), JSON.parse('{"c":"東"}'))));
+show("objects without a type, in a record", () => JSON.stringify({ id: 1, held: fill(new Rows<unknown>(), JSON.parse('{"a":1}'), label(6), "text", 7, null, undefined, () => 1, Symbol("s")) }));
+show("the result of map", () => JSON.stringify(issue(6, rows().map(each => label(each.id + 10)))));
+show("the result of filter and slice", () => JSON.stringify([rows().filter(each => each.id > 1), rows().slice(1)]));
+show("toJSON of the class", () => JSON.stringify(issue(7, fill(new Told<Label>(), label(8)))));
+show("toJSON of the class, alone", () => JSON.stringify(fill(new Told<Label>(), label(8))));
+show("toJSON of its own", () => {
+  const list = rows();
+  hide(list).toJSON = () => "own";
+  return JSON.stringify(issue(8, list));
+});
+show("toJSON of its own that is no function", () => {
+  const list = rows();
+  hide(list).toJSON = 1;
+  return JSON.stringify(issue(8, list));
+});
+show("a getter named toJSON", () => {
+  const list = rows();
+  Object.defineProperty(list, "toJSON", { get: () => () => "got" });
+  return JSON.stringify(issue(8, list));
+});
+const later = () => fill(new LaterToldAbove<Label>(), label(9));
+show("before the class is told", () => JSON.stringify(issue(9, later())));
+hide(LaterTold.prototype).toJSON = function (this: unknown[]) {
+  return "told later " + this.length;
+};
+show("after the class above is told", () => JSON.stringify(issue(9, later())));
+delete hide(LaterTold.prototype).toJSON;
+show("after that is taken back", () => JSON.stringify(issue(9, later())));
+show("a hole", () => {
+  const list = rows();
+  delete hide(list)[1];
+  return JSON.stringify(issue(10, list));
+});
+show("a hole over an inherited element", () => {
+  const list = rows();
+  delete hide(list)[1];
+  hide(Rows.prototype)[1] = label(99);
+  try {
+    return JSON.stringify(issue(10, list));
+  } finally {
+    delete hide(Rows.prototype)[1];
+  }
+});
+show("a longer length", () => {
+  const list = rows();
+  list.length = 5;
+  return JSON.stringify(issue(11, list));
+});
+show("an element with a getter", () => {
+  const list = rows();
+  Object.defineProperty(list, 1, { get: () => label(77), enumerable: true });
+  return JSON.stringify(issue(12, list));
+});
+show("frozen", () => JSON.stringify(issue(13, Object.freeze(rows()) as Label[])));
+show("another prototype", () => JSON.stringify(issue(14, Object.setPrototypeOf([label(1)], Rows.prototype))));
+show("no prototype", () => JSON.stringify(issue(14, Object.setPrototypeOf([label(1)], null))));
+show("a prototype with toJSON", () => JSON.stringify(issue(14, Object.setPrototypeOf([label(1)], { toJSON: () => "from the prototype" }))));
+show("a proxy as the prototype", () => JSON.stringify(issue(14, Object.setPrototypeOf([label(1)], new Proxy(Array.prototype, { get: (target, key, receiver) => (key === "toJSON" ? () => "through the proxy" : Reflect.get(target, key, receiver)) })))));
+show("a proxy of an instance", () => JSON.stringify({ id: 15, held: hide(new Proxy(rows(), {})) }));
+show("an instance that holds itself", () => {
+  const list = new Rows<unknown>();
+  list.push(list);
+  return JSON.stringify({ list });
+});
+show("a record that holds itself through an instance", () => {
+  const one = issue(16, []);
+  one.labels = fill(new Rows<Label>(), hide(one));
+  return JSON.stringify(one);
+});
+let deep: unknown[] = new Rows<unknown>();
+for (let i = 0; i < 100; i++) deep = fill<unknown, Rows<unknown>>(new Rows<unknown>(), deep, i);
+show("a hundred levels", () => JSON.stringify({ deep })!.length);
+let length = 0;
+for (let i = 0; i < 20000; i++) length += JSON.stringify(issue(i, fill(new Rows<Label>(), label(i), label(i + 1)), fill(new Rows<number>(), i)))!.length;
+console.log("many", length);
+//// json-stringify-instances-of-array-subclasses-stay-compiled.ts
+declare const aotRuntimeCounters: undefined | (() => string);
+declare const aotOperationCount: undefined | ((name: string) => number);
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+// The texts that JSON.stringify left to the engine's own writer, and the values that compiled code handed to the run time.
+const leftToTheEngine = () => (counted ? Number(/(\d+)\tcounter:JSONStringifySlowPaths/.exec(aotRuntimeCounters!())?.[1] ?? 0) + counted("operationAOTJSONAppendValue") + counted("operationAOTStringBuilderAppendJSON") : 0);
+const left: string[] = [];
+interface Label { id: number; name: string }
+interface Issue { id: number; title: string; labels: Label[] }
+interface Holder { id: number; held: unknown }
+class Rows<T> extends Array<T> {
+  count = 0;
+}
+class Told<T> extends Array<T> {
+  toJSON() {
+    return this.length;
+  }
+}
+function fill<T, L extends T[]>(list: L, ...items: T[]): L {
+  for (const item of items) list.push(item);
+  return list;
+}
+function measure(label: string, run: () => string | undefined): void {
+  const before = leftToTheEngine();
+  for (let i = 0; i < 10; i++) run();
+  let length = 0;
+  for (let i = 0; i < 100; i++) length += run()!.length;
+  if (leftToTheEngine() !== before) left.push(label);
+  console.log(label + ": " + length + " characters");
+}
+const label = (id: number): Label => ({ id, name: "label " + id });
+const inARecord: Issue = { id: 1, title: "one", labels: fill(new Rows<Label>(), label(1), label(2)) };
+measure("an instance in a record", () => JSON.stringify(inARecord));
+const alone = fill(new Rows<Label>(), label(3), label(4));
+measure("an instance alone", () => JSON.stringify(alone));
+const unknownMember: Holder = { id: 2, held: fill(new Rows<Label>(), label(5)) };
+measure("an instance as a member of unknown type", () => JSON.stringify(unknownMember));
+const plainObjects: Holder = { id: 3, held: fill(new Rows<unknown>(), JSON.parse('{"a":1}'), JSON.parse('{"b":"two"}')) };
+measure("an instance that holds objects without a type", () => JSON.stringify(plainObjects));
+const told: Issue = { id: 4, title: "four", labels: fill(new Told<Label>(), label(6)) };
+measure("an instance of a class with toJSON", () => JSON.stringify(told));
+const withAHole: Issue = { id: 5, title: "five", labels: fill(new Rows<Label>(), label(7), label(8)) };
+delete (withAHole.labels as any)[0];
+measure("an instance with a hole", () => JSON.stringify(withAHole));
+console.log("needed the engine: " + (counted ? left.join(" | ") : "an instance in a record | an instance alone | an instance as a member of unknown type | an instance that holds objects without a type | an instance of a class with toJSON | an instance with a hole"));
+//// json-stringify-keys-and-separators.ts
+// Keys that need escaping, separators around members that write nothing, and objects that must take the generic answer.
+// One function per type, so each JSON.stringify call site has a static type. The call is in a loop, so the site is not cold.
+interface EscapedKeys {
+  'a"b': number;
+  "c\\d": number;
+  "e\tf": number;
+  "é": number;
+  "g\x7fh": number;
+}
+////= lines	WideKey	"日本"	number	plain	number
+interface Three {
+  a?: number;
+  b?: string;
+  c?: boolean;
+}
+////= lines-13	UnknownFirst	value	unknown	next	number
+interface UnknownAfterMember {
+  first: number;
+  value: unknown;
+  last?: number;
+}
+interface Scalars {
+  yes: boolean;
+  no: boolean;
+  negativeZero: number;
+  large: number;
+  notANumber: number;
+  exact: number;
+  when: Date;
+}
+////= Point
+////= lines-12	Pair	left	1	right	2
+
+////= lines-37	hide	unknown
+
+function writeByShape(label: string, values: unknown[]): void {
+  for (const value of values) console.log(label + ", by shape: " + JSON.stringify(value));
+}
+
+////= lines-5	writeEscapedKeys	EscapedKeys
+
+////= lines-5	writeWideKeys	WideKey
+
+////= lines-5	writeThrees	Three
+
+////= lines-5	writeUnknownFirst	UnknownFirst
+
+////= lines-5	writeUnknownAfterMember	UnknownAfterMember
+
+////= lines-5	writeScalars	Scalars
+
+////= lines-5	writePoints	Point
+
+////= lines-5	writePairs	Pair
+
+writeEscapedKeys("escaped keys", [{ 'a"b': 1, "c\\d": 2, "e\tf": 3, "é": 4, "g\x7fh": 5 }]);
+writeWideKeys("wide key", [{ "日本": 1, plain: 2 }]);
+
+for (let bits = 0; bits < 8; bits++) {
+  const absent: Three = {};
+  if (bits & 1) absent.a = bits;
+  if (bits & 2) absent.b = "b" + bits;
+  if (bits & 4) absent.c = true;
+  writeThrees("absent members " + bits, [absent]);
+  const undefinedMembers: Three = {
+    a: bits & 1 ? bits : undefined,
+    b: bits & 2 ? "b" + bits : undefined,
+    c: bits & 4 ? false : undefined,
+  };
+  writeThrees("undefined members " + bits, [undefinedMembers]);
+}
+
+const unknownValues: unknown[] = [undefined, () => 1, 7, Symbol("left out"), null, "text"];
+for (const value of unknownValues) {
+  writeUnknownFirst("unknown first", [{ value }]);
+  writeUnknownFirst("unknown first, then a member", [{ value, next: 2 }]);
+  writeUnknownAfterMember("unknown after a member", [{ first: 1, value }]);
+  writeUnknownAfterMember("unknown between members", [{ first: 1, value, last: 3 }]);
+}
+
+writeScalars("scalars", [
+  {
+    yes: true,
+    no: false,
+    negativeZero: -0,
+    large: 1e21,
+    notANumber: NaN,
+    exact: 2 ** 53,
+    when: new Date(NaN),
+  },
+]);
+
+const point = (): Point => ({ x: 1, y: 2 });
+writePoints("point", [point()]);
+const frozen = point();
+Object.freeze(frozen);
+writePoints("frozen", [frozen]);
+const sealed = point();
+Object.seal(sealed);
+writePoints("sealed", [sealed]);
+const notExtensible = point();
+Object.preventExtensions(notExtensible);
+writePoints("not extensible", [notExtensible]);
+const extended = point();
+hide(extended).z = 3;
+writePoints("added property", [extended]);
+const withToJSON = point();
+Object.setPrototypeOf(withToJSON, {
+  toJSON() {
+    return 1;
+  },
+});
+writePoints("prototype with toJSON", [withToJSON]);
+writePoints("point after the generic answers", [point()]);
+
+writePairs("class instance", [new Pair()]);
+const replaced = new Pair();
+Object.setPrototypeOf(replaced, {
+  toJSON() {
+    return "replaced";
+  },
+});
+writePairs("class instance with another prototype", [replaced]);
+//// json-stringify-large-integers.ts
+// Above 2 ** 53 a number prints the shortest digits that identify the double, not every digit of the integer.
+interface Row { id: number }
+const literal = (): string => JSON.stringify({ a: 2 ** 53, b: 2 ** 53 + 2, c: 2 ** 60, d: 1234567890123456789, e: -(2 ** 60), f: -1234567890123456789 });
+const field = (row: Row): string => JSON.stringify(row);
+const elements = (list: number[]): string => JSON.stringify(list);
+const constantElements = (): string => JSON.stringify([2 ** 53, 2 ** 53 + 2, 2 ** 60, 1234567890123456789]);
+const truncated = (value: number): string => JSON.stringify({ id: Math.trunc(value) });
+const values = [2 ** 31, 2 ** 53 - 1, 2 ** 53, 2 ** 53 + 2, 2 ** 60, 2 ** 62 - 512, 2 ** 62, 1234567890123456789, 1e21];
+let length = 0;
+for (let round = 0; round < 2000; round++) {
+  for (const value of values) length += field({ id: value }).length + field({ id: -value }).length + truncated(value).length;
+  length += literal().length + elements(values).length + constantElements().length;
+}
+console.log(length);
+console.log(literal());
+console.log(elements(values));
+console.log(constantElements());
+for (const value of values) console.log(field({ id: value }), field({ id: -value }), truncated(value), truncated(-value));
+//// json-stringify-large-output.ts
+// After one large JSON.stringify output, the next one finds the buffer as large as it was left, unless a collection came between: the buffer grows at most once an output on average. Where the buffer was too large to be kept, the next large output makes it large in one step instead of doubling it from 4 KB.
+// ENV JSC_aotCountsPath=/dev/null
+declare const aotRuntimeCounters: undefined | (() => string);
+const isCounted = typeof aotRuntimeCounters === "function";
+const bufferGrowths = () => (typeof aotRuntimeCounters === "function" ? Number(/(\d+)\tcounter:StringBuilderGrowths/.exec(aotRuntimeCounters())?.[1] ?? 0) : 0);
+
+type Message = { role: string; content: string };
+const sentence = "the quick brown fox jumps over the lazy dog. ";
+const rounds = 10;
+
+function conversation(messageCount: number, last: Message[]): Message[] {
+  const messages: Message[] = [];
+  for (let i = 0; i < messageCount; i++)
+    messages.push({ role: i % 2 ? "assistant" : "user", content: sentence.repeat(100) });
+  return messages.concat(last);
+}
+
+function checksum(text: string): number {
+  let sum = 0;
+  for (let i = 0; i < text.length; i++) sum = (Math.imul(sum, 31) + text.charCodeAt(i)) | 0;
+  return sum;
+}
+
+function send(messages: Message[]): string {
+  return JSON.stringify({ model: "m", messages });
+}
+
+function log(index: number): number {
+  return JSON.stringify({ level: "info", index, text: "a short line" }).length;
+}
+
+function measure(name: string, messages: Message[], betweenOutputs: (round: number) => void, mostGrowths = rounds) {
+  let sum = checksum(send(messages));
+  const before = bufferGrowths();
+  for (let round = 0; round < rounds; round++) {
+    betweenOutputs(round);
+    sum = (sum + checksum(send(messages))) | 0;
+  }
+  const growths = bufferGrowths() - before;
+  const verdict =
+    !isCounted || growths <= mostGrowths ? "as expected" : `the buffer grew ${growths} times, expected at most ${mostGrowths}`;
+  console.log(name, messages.length, sum, verdict);
+}
+
+const nothing = () => {};
+measure("8-bit", conversation(40, []), nothing);
+measure("16-bit", conversation(40, [{ role: "user", content: "one dash \u2014 and no escapes" }]), nothing);
+measure(
+  "16-bit, escaped",
+  conversation(40, [{ role: "user", content: 'a dash \u2014,\na "quote", a lone \ud800 surrogate' }]),
+  nothing,
+);
+measure(
+  "16-bit, mostly escaped",
+  conversation(2, []).concat(
+    conversation(40, []).map(({ role }) => ({ role, content: 'a\tdash \u2014\n"quoted"\\ '.repeat(200) })),
+  ),
+  nothing,
+  0,
+);
+
+const replaced: Message = { role: "user", content: "short" };
+Object.defineProperty(replaced, "toJSON", { value: () => "replaced" });
+measure("fallback", conversation(40, [replaced]), nothing);
+
+measure("small outputs in between", conversation(40, [{ role: "user", content: "\u2014" }]), () => {
+  for (let i = 0; i < 20; i++) log(i);
+});
+
+const growing = conversation(40, [{ role: "user", content: "\u2014" }]);
+measure("a growing conversation", growing, round => {
+  growing.push({ role: "user", content: sentence.repeat(20) + round });
+});
+
+send(conversation(400, []));
+measure("smaller than the last large output", conversation(40, []), nothing);
+
+const short: Message[] = [];
+for (let i = 0; i < 12000; i++) short.push({ role: "user", content: "a short line " + i });
+measure("more short members than the buffer that is kept holds", short, nothing, rounds);
+//// json-stringify-list-tail-at-once.ts
+declare const aotRuntimeCounters: undefined | (() => string);
+declare const aotOperationCount: undefined | ((name: string) => number);
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+// The texts that JSON.stringify left to the engine's own writer, and the values that compiled code handed to the run time.
+const leftToTheEngine = () => (counted ? Number(/(\d+)\tcounter:JSONStringifySlowPaths/.exec(aotRuntimeCounters!())?.[1] ?? 0) + counted("operationAOTJSONAppendValue") + counted("operationAOTStringBuilderAppendJSON") : 0);
+const left: string[] = [];
+interface Item { id: number; title?: string; price?: number }
+interface Page { total: number; rows: Item[] }
+interface Pair { id: number; name: string }
+function whole(i: number): Item {
+    return { id: i, title: "item " + i, price: i + 0.25 };
+}
+function builtUp(i: number): Item {
+    const made: Item = { id: i };
+    if (i & 1) made.price = i + 0.25;
+    made.title = "item " + i;
+    return made;
+}
+function sum(text: string): number {
+    let value = 0;
+    for (let i = 0; i < text.length; i++) value = (value * 31 + text.charCodeAt(i)) | 0;
+    return value;
+}
+function measure(label: string, run: () => string): void {
+    const before = leftToTheEngine();
+    let text = "";
+    for (let i = 0; i < 100; i++) text = run();
+    if (leftToTheEngine() !== before) left.push(label);
+    console.log(label + ": " + (text.length < 150 ? text : text.length + " characters, " + sum(text)));
+}
+function list(count: number, make: (i: number) => Item): Item[] {
+    const made: Item[] = [];
+    for (let i = 0; i < count; i++) made.push(make(i));
+    return made;
+}
+const allWhole = list(3, whole);
+const allBuiltUp = list(3, builtUp);
+const lastBuiltUp = list(3, i => i === 2 ? builtUp(i) : whole(i));
+const firstBuiltUp = list(3, i => i === 0 ? builtUp(i) : whole(i));
+const one = list(1, builtUp);
+const none: Item[] = [];
+const long = list(400, builtUp);
+const longBehindWhole = list(400, i => i < 200 ? whole(i) : builtUp(i));
+const wide = list(3, builtUp);
+wide[2].title = "中文";
+const withNull: (Item | null)[] = [whole(0), null, builtUp(2), null];
+const extra = list(3, whole);
+(extra[1] as any).more = true;
+const pairs: Pair[] = [{ id: 0, name: "zero" }, { id: 1, name: "one" }, { id: 2, name: "two" }, { id: 3, name: "three" }];
+(pairs[1] as any).more = true;
+const manyPairs: Pair[] = [];
+for (let i = 0; i < 400; i++) manyPairs.push({ id: i, name: "pair " + i });
+(manyPairs[200] as any).more = true;
+const widePairs: Pair[] = [{ id: 0, name: "zero" }, { id: 1, name: "one" }, { id: 2, name: "\u4e2d\u6587" }];
+(widePairs[1] as any).more = true;
+const page: Page = { total: 3, rows: allBuiltUp };
+const pages: Page[] = [{ total: 3, rows: allBuiltUp }, { total: 3, rows: allWhole }, { total: 3, rows: lastBuiltUp }];
+const lists: Item[][] = [allWhole, allBuiltUp, lastBuiltUp];
+
+measure("every element as it was born", () => JSON.stringify(allWhole));
+measure("every element built up", () => JSON.stringify(allBuiltUp));
+measure("the last built up", () => JSON.stringify(lastBuiltUp));
+measure("the first built up", () => JSON.stringify(firstBuiltUp));
+measure("one element", () => JSON.stringify(one));
+measure("no element", () => JSON.stringify(none));
+measure("four hundred built up", () => JSON.stringify(long));
+measure("two hundred built up behind two hundred", () => JSON.stringify(longBehindWhole));
+measure("a 16-bit string in the rest", () => JSON.stringify(wide));
+measure("nulls among them", () => JSON.stringify(withNull));
+measure("one with an extra property", () => JSON.stringify(extra));
+measure("no optional members, one with an extra property", () => JSON.stringify(pairs));
+measure("the same among four hundred", () => JSON.stringify(manyPairs));
+measure("the same with a 16-bit string behind it", () => JSON.stringify(widePairs));
+measure("in a record", () => JSON.stringify(page));
+measure("in records in a list", () => JSON.stringify(pages));
+measure("lists in a list", () => JSON.stringify(lists));
+console.log("needed the engine: " + (counted ? left.join(" | ") : "every element built up | the last built up | the first built up | one element | four hundred built up | two hundred built up behind two hundred | a 16-bit string in the rest | nulls among them | one with an extra property | no optional members, one with an extra property | the same among four hundred | the same with a 16-bit string behind it | in a record | in records in a list | lists in a list"));
+//// json-stringify-long-names-after-short-ones.ts
+// Objects with undeclared keys whose names and values are long are written after short ones of the same fields, alone, under a holder and in arrays: the writer's plans and its buffer.
+type Point = { x: number; y: number };
+type Named = { id: number; name: string; tags: string[] };
+let different = 0;
+let texts = 0;
+const lengths = [1, 7, 8, 9, 15, 16, 17, 31, 32, 33, 55, 56, 57, 62, 63, 64, 65, 66, 127, 128, 129, 255, 256, 257, 1000, 1023, 1024, 1025, 4095, 4096, 4097, 16384, 65535, 65536, 65537, 100000, 1000000];
+function check(value: unknown, text: string): void {
+  texts++;
+  if (JSON.stringify(value) !== text) different++;
+}
+for (const character of ["k", "\u00e9", "\u65e5", "\\n", '\\"']) {
+  const raw = globalThis.JSON.parse('"' + character + '"');
+  const short = '{"x":1,"y":2,"s":1}';
+  const shortValue = JSON.parse(short) as Point;
+  for (const length of lengths) {
+    if (character.length > 1 && length > 70000) continue;
+    const name = character.repeat(length);
+    for (const text of ['{"x":1,"y":2,"' + name + '":1}', '{"' + name + '":"' + name + '","x":1,"y":2}', '{"x":1,"' + name + '":[1],"y":2,"' + name + 'b":{"' + name + '":null}}']) {
+      const value = JSON.parse(text) as Point;
+      const written = JSON.stringify(globalThis.JSON.parse(text));
+      for (let round = 0; round < 4; round++) {
+        check(shortValue, short);
+        check(value, written);
+        check({ held: value, other: shortValue }, '{"held":' + written + ',"other":' + short + "}");
+        check([shortValue, value, shortValue, value], "[" + short + "," + written + "," + short + "," + written + "]");
+      }
+    }
+    const named = '{"id":' + length + ',"name":"' + name + '","tags":["' + name + '","t"],"' + name + '":"' + name + '"}';
+    const value = JSON.parse(named) as Named;
+    const written = JSON.stringify(globalThis.JSON.parse(named));
+    for (let round = 0; round < 4; round++) check(value, written);
+    if (value.name.length !== raw.length * length) different++;
+  }
+  console.log("names and values of " + JSON.stringify(raw) + ": " + texts + " texts: " + different + " differ");
+  texts = 0;
+}
+//// json-stringify-members-without-text.ts
+// `JSON.stringify` leaves out a member that holds a function, `undefined` or a symbol, writes `null` for one in an array and answers `undefined` for one at the top, in objects whose serializer is compiled.
+// STATISTIC: OwnKeyWalksExpanded >= 10
+// STATISTIC: SerializersCreated >= 10
+function report(label: string, run: () => unknown) {
+  let result: unknown;
+  try {
+    result = run();
+  } catch (error) {
+    result = "threw " + (error as Error).name;
+  }
+  console.log(label, typeof result, String(result));
+}
+
+class BoundFirst { onClick = () => 1; id = 1 }
+class BoundLast { id = 1; onClick = () => 1 }
+class BoundBetween { id = 1; onClick = () => this.id; name = "n"; onHover = (x: number) => x + this.id; price = 9.5 }
+class OnlyBound { onClick = () => 1; onHover = () => 2 }
+class BoundInConstructor { self: () => BoundInConstructor; id: number; constructor() { this.self = () => this; this.id = 1 } }
+class WithMethods { id = 1; method() { return 1 } static helper() { return 2 } get computed() { return 3 } }
+class FunctionExpression { run = function () { return 1 }; later = async () => 1; many = function* () { yield 1 }; id = 1 }
+function textOfBoundFirst(value: BoundFirst) { return JSON.stringify(value) }
+function textOfBoundLast(value: BoundLast) { return JSON.stringify(value) }
+function textOfBoundBetween(value: BoundBetween) { return JSON.stringify(value) }
+function textOfOnlyBound(value: OnlyBound) { return JSON.stringify(value) }
+function textOfBoundInConstructor(value: BoundInConstructor) { return JSON.stringify(value) }
+function textOfWithMethods(value: WithMethods) { return JSON.stringify(value) }
+function textOfFunctionExpression(value: FunctionExpression) { return JSON.stringify(value) }
+
+interface Handlers { before?: () => void; name: string; after?: (x: number) => number }
+class FunctionOrNumber { value: (() => number) | number; id = 1; constructor(round: number) { this.value = round % 2 ? round : () => round } }
+class FunctionOrNothing { id = 1; value: (() => number) | undefined | null; constructor(round: number) { this.value = round === 0 ? () => round : round === 1 ? undefined : null } }
+class FunctionOrRecord { value: (() => number) | { inner: number; skip: () => void }; constructor(round: number) { this.value = round % 2 ? { inner: round, skip() {} } : () => round } }
+class SymbolOrText { tag: symbol | string; id = 1; constructor(round: number) { this.tag = round % 2 ? "text" : Symbol("tag") } }
+class Undefineds { a: undefined = undefined; b?: number; c: number | undefined; d = 1; constructor(round: number) { this.c = round % 2 ? round : undefined } }
+class Symbols { tag = Symbol("tag"); [Symbol.toStringTag] = "Symbols"; id = 1; last = Symbol.iterator }
+class OptionalAbsent { id = 1; note?: string; run?: () => void; constructor(round: number) { if (round === 1) this.note = "n"; if (round === 2) this.run = () => {} } }
+function textOfHandlers(value: Handlers) { return JSON.stringify(value) }
+function textOfFunctionOrNumber(value: FunctionOrNumber) { return JSON.stringify(value) }
+function textOfFunctionOrNothing(value: FunctionOrNothing) { return JSON.stringify(value) }
+function textOfFunctionOrRecord(value: FunctionOrRecord) { return JSON.stringify(value) }
+function textOfSymbolOrText(value: SymbolOrText) { return JSON.stringify(value) }
+function textOfUndefineds(value: Undefineds) { return JSON.stringify(value) }
+function textOfSymbols(value: Symbols) { return JSON.stringify(value) }
+function textOfOptionalAbsent(value: OptionalAbsent) { return JSON.stringify(value) }
+
+class Base { base = 1; onBase = () => this.base }
+class Derived extends Base { derived = 2; onDerived = () => this.derived }
+class Holder { inner = new BoundBetween(); empty = new OnlyBound(); list = [new BoundFirst(), new BoundLast()]; id = 1 }
+class Lists { handlers: Array<() => number> = [() => 1, () => 2]; mixed: Array<number | (() => number) | undefined | symbol | null> = [1, () => 1, undefined, Symbol("s"), null]; nested = [[() => 1], [2, () => 3]]; id = 1 }
+function textOfBaseOrDerived(value: Base) { return JSON.stringify(value) }
+function textOfHolder(value: Holder) { return JSON.stringify(value) }
+function textOfLists(value: Lists) { return JSON.stringify(value) }
+function textOfHandlerList(value: Array<() => number>) { return JSON.stringify(value) }
+
+function withOwnToJSON() { const run = () => 1; (run as unknown as { toJSON: (key: string) => string }).toJSON = key => "function under " + key; return run }
+class FunctionWithToJSON { run = withOwnToJSON(); id = 1 }
+class ClassWithStaticToJSON { static toJSON(key: string) { return "class under " + key } }
+class HoldsClass { type = ClassWithStaticToJSON; plain = Base; id = 1 }
+class ToJSONGivesFunction { toJSON() { return () => 1 } }
+class ToJSONGivesNothing { toJSON() {} }
+class HoldsToJSON { first = new ToJSONGivesFunction(); id = 1; last = new ToJSONGivesNothing() }
+class Big { id = 1; big = 1n }
+class Boxed { n = new Number(1.5); s = new String("s"); b = new Boolean(false); id = 1 }
+class Numbers { nan = NaN; up = Infinity; down = -Infinity; zero = -0; quotient: number; constructor(round: number) { this.quotient = 1 / round } }
+function textOfFunctionWithToJSON(value: FunctionWithToJSON) { return JSON.stringify(value) }
+function textOfHoldsClass(value: HoldsClass) { return JSON.stringify(value) }
+function textOfHoldsToJSON(value: HoldsToJSON) { return JSON.stringify(value) }
+function textOfToJSONRoot(value: ToJSONGivesFunction | ToJSONGivesNothing) { return JSON.stringify(value) }
+function textOfBig(value: Big) { return JSON.stringify(value) }
+function textOfBoxed(value: Boxed) { return JSON.stringify(value) }
+function textOfNumbers(value: Numbers) { return JSON.stringify(value) }
+
+function textOfFunction(value: () => number): string { return JSON.stringify(value) }
+function textOfFunctionOrInstance(value: (() => number) | BoundFirst | undefined): string { return JSON.stringify(value) }
+function textOfSymbol(value: symbol): string { return JSON.stringify(value) }
+function textOfNothing(value: undefined): string { return JSON.stringify(value) }
+function textOfUnknown(value: unknown): string { return JSON.stringify(value) }
+
+function textWithReplacer(value: BoundBetween) { return JSON.stringify(value, (key, member) => (typeof member === "function" ? "function " + key : member)) }
+function textWithList(value: BoundBetween) { return JSON.stringify(value, ["price", "onClick", "id"]) }
+function textWithIndent(value: Holder) { return JSON.stringify(value, null, 2) }
+function textWithNulls(value: BoundBetween) { return JSON.stringify(value, null, undefined) }
+
+for (let round = 0; round < 3; round++) {
+  report("bound first", () => textOfBoundFirst(new BoundFirst()));
+  report("bound last", () => textOfBoundLast(new BoundLast()));
+  report("bound between", () => textOfBoundBetween(new BoundBetween()));
+  report("only bound", () => textOfOnlyBound(new OnlyBound()));
+  report("bound in the constructor", () => textOfBoundInConstructor(new BoundInConstructor()));
+  report("methods", () => textOfWithMethods(new WithMethods()));
+  report("function expressions", () => textOfFunctionExpression(new FunctionExpression()));
+
+  report("interface", () => textOfHandlers(round === 0 ? { name: "none" } : round === 1 ? { before() {}, name: "before" } : { name: "after", after: x => x }));
+  report("function or number", () => textOfFunctionOrNumber(new FunctionOrNumber(round)));
+  report("function or nothing", () => textOfFunctionOrNothing(new FunctionOrNothing(round)));
+  report("function or record", () => textOfFunctionOrRecord(new FunctionOrRecord(round)));
+  report("symbol or text", () => textOfSymbolOrText(new SymbolOrText(round)));
+  report("undefined", () => textOfUndefineds(new Undefineds(round)));
+  report("symbols", () => textOfSymbols(new Symbols()));
+  report("optional members", () => textOfOptionalAbsent(new OptionalAbsent(round)));
+
+  report("base or derived", () => textOfBaseOrDerived(round % 2 ? new Base() : new Derived()));
+  report("holder", () => textOfHolder(new Holder()));
+  report("lists", () => textOfLists(new Lists()));
+  report("list of handlers", () => textOfHandlerList([() => 1, () => round]));
+
+  report("function with toJSON", () => textOfFunctionWithToJSON(new FunctionWithToJSON()));
+  report("class with static toJSON", () => textOfHoldsClass(new HoldsClass()));
+  report("toJSON gives no text", () => textOfHoldsToJSON(new HoldsToJSON()));
+  report("toJSON gives no text at the top", () => textOfToJSONRoot(round % 2 ? new ToJSONGivesFunction() : new ToJSONGivesNothing()));
+  report("bigint", () => textOfBig(new Big()));
+  report("boxed", () => textOfBoxed(new Boxed()));
+  report("numbers", () => textOfNumbers(new Numbers(round)));
+
+  report("function at the top", () => textOfFunction(() => round));
+  report("function or instance at the top", () => textOfFunctionOrInstance(round === 0 ? () => 1 : round === 1 ? new BoundFirst() : undefined));
+  report("symbol at the top", () => textOfSymbol(Symbol("top")));
+  report("undefined at the top", () => textOfNothing(undefined));
+  report("unknown at the top", () => textOfUnknown(round === 0 ? () => 1 : round === 1 ? new BoundLast() : Symbol("s")));
+  report("joined", () => "text: " + textOfFunction(() => 1));
+
+  report("replacer", () => textWithReplacer(new BoundBetween()));
+  report("list of keys", () => textWithList(new BoundBetween()));
+  report("indent", () => textWithIndent(new Holder()));
+  report("null replacer", () => textWithNulls(new BoundBetween()));
+}
+
+const responses = [Response.json(new BoundBetween()), Response.json(new Holder()), Response.json([() => 1, new OnlyBound()])];
+for (const response of responses) console.log("response", await response.text());
+//// json-stringify-more-kinds-of-objects-than-the-writer-remembers.ts
+// The typed writer remembers how to write each kind of object with undeclared keys, up to a number of kinds. An object is being written while the objects below it bring more kinds than that: what the writer stands on may not be thrown away under it.
+interface Item { id: number }
+interface Holder { first: number; items: Item[]; last: string }
+function textOf(count: number, from: number): string {
+  const items: string[] = [];
+  for (let i = 0; i < count; i++) items.push(`{"id":${i},"k${from + i}":${i}}`);
+  return `{"a":"before","first":1,"b":[1,2],"items":[${items.join(",")}],"c":"behind","last":"l","d":{"e":null},"f":"${"x".repeat(40)}"}`;
+}
+for (const count of [10, 16000, 16383, 16384, 16385, 17000, 40000]) {
+  const text = textOf(count, count * 7);
+  const holder = JSON.parse(text) as Holder;
+  console.log(count, JSON.stringify(holder) === text, JSON.stringify(holder) === text, JSON.stringify([holder, holder]) === `[${text},${text}]`, JSON.stringify(holder.items[count - 1]));
+}
+//// json-stringify-of-integers.ts
+// Integers around every digit count, written by the compiled writers at a known and an unknown type.
+interface Row { a: number; b: number }
+const write = (row: Row): string => JSON.stringify(row);
+const writers: Record<string, (value: unknown) => string> = { write: (value) => JSON.stringify(value) as string };
+const total: number[] = [];
+for (let i = 0; i <= 10100; i++) {
+  const row: Row = { a: i, b: -i };
+  const text = write(row);
+  if (text !== `{"a":${i},"b":${i === 0 ? 0 : "-" + i}}` || writers["write"]!(row) !== text) console.log("wrong", text);
+  total.push(text.length);
+}
+for (const i of [99999, 100000, 2147483647, -2147483648]) console.log(write({ a: i, b: i }));
+console.log(total.reduce((sum, length) => sum + length, 0));
+//// json-stringify-of-unknown-values.ts
+// Typed values written by code that does not know their type: every line must read as plain Bun.
+// ENV JSC_aotCountsPath=/dev/null
+declare const aotRuntimeCounters: () => string;
+declare const aotOperationCount: undefined | ((name: string) => number);
+const writers: Record<string, (value: unknown) => string> = {
+  write: (value) => JSON.stringify(value) as string,
+  attempt: (value) => { try { return JSON.stringify(value) as string; } catch (error) { return (error as Error).constructor.name; } },
+};
+const write = (value: unknown) => writers["write"]!(value);
+const attempt = (value: unknown) => writers["attempt"]!(value);
+const say = (value: unknown) => console.log(String(value));
+
+class Point { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y; } }
+class Named { name: string; at: Point; constructor(name: string, at: Point) { this.name = name; this.at = at; } }
+class Later { id: number; constructor(id: number) { this.id = id; } }
+class WithMethod { id: number; constructor(id: number) { this.id = id; } toJSON() { return { byMethod: this.id }; } }
+class Heir extends Later { more: string; constructor(id: number, more: string) { super(id); this.more = more; } }
+interface Carrier { toJSON: () => string; kept: number }
+interface Row { id: number; text: string; on: boolean; ratio: number; next: Row | null; list: number[]; maybe?: string; nothing: undefined; nil: null }
+interface Deep { depth: number; inner: Deep | null }
+interface Holds { value: unknown }
+
+function row(id: number): Row { return { id, text: "t" + id, on: id % 2 === 0, ratio: id / 8, next: null, list: [id, id + 1], nothing: undefined, nil: null }; }
+function holds(value: unknown): Holds { return { value }; }
+
+say(write(new Point(1, 2)));
+say(write(new Named("n", new Point(3, 4))));
+say(write(new Heir(5, "more")));
+say(write(new WithMethod(6)));
+say(write([new WithMethod(7), new Point(8, 9)]));
+say(write(holds(new WithMethod(10))));
+
+const laterBase: Record<string, unknown> = Object.create(Later.prototype);
+const later = new Later(11);
+Object.setPrototypeOf(later, laterBase);
+say(write(later));
+laterBase["toJSON"] = function (this: Later) { return "added to the prototype " + this.id; };
+say(write(later));
+say(write([later]));
+say(write(holds(later)));
+delete laterBase["toJSON"];
+say(write(later));
+say(write(new Heir(17, "heir")));
+
+const carrier: Carrier = { toJSON: () => "from the field", kept: 1 };
+say(write(carrier));
+say(write([carrier]));
+say(write(holds(carrier)));
+
+const custom = row(18);
+Object.setPrototypeOf(custom, { toJSON() { return "through another prototype"; } });
+say(write(custom));
+say(write([row(19), custom]));
+const bare = row(20);
+Object.setPrototypeOf(bare, null);
+say(write(bare));
+
+const chained = Object.create({ toJSON() { return "two steps up"; } });
+const lifted = row(21);
+Object.setPrototypeOf(lifted, chained);
+say(write(lifted));
+say(write([lifted]));
+Object.setPrototypeOf(lifted, Object.prototype);
+say(write(lifted));
+
+const listWithToJSON: number[] = [1, 2];
+(listWithToJSON as unknown as Record<string, unknown>)["toJSON"] = () => "own toJSON of a list";
+say(write(listWithToJSON));
+say(write(holds(listWithToJSON)));
+say(write([listWithToJSON]));
+class List extends Array<number> { toJSON() { return "a subclass"; } }
+say(write(List.from([1, 2])));
+say(write(holds(List.from([3]))));
+const otherList = [1, 2];
+Object.setPrototypeOf(otherList, { toJSON() { return "a list with another prototype"; } });
+say(write(otherList));
+say(write(holds(otherList)));
+
+say(write([1, , 3]));
+say(write(holds([1, , 3])));
+say(write(holds([1.5, , 3.5])));
+say(write(holds(["a", , "c"])));
+say(write(holds([undefined, null, () => 1, Symbol("s"), true, false, 0, -0, NaN, Infinity, 1e21, 0.1])));
+say(write(holds(new Array(3))));
+say(write(holds([])));
+say(write([[], [[]], [[], [1]]]));
+say(write(holds([NaN, 1.5])));
+const inherited = [1, , 3];
+Object.setPrototypeOf(inherited, Object.create(Array.prototype, { 1: { value: "inherited element" } }));
+say(write(holds(inherited)));
+const sparse: number[] = [];
+sparse[100000] = 1;
+say(write(holds(sparse)).length);
+const accessor: number[] = [1, 2];
+Object.defineProperty(accessor, 0, { get() { return "a getter in a list"; } });
+say(write(holds(accessor)));
+
+say(write(holds({ plain: true, nested: { a: [1, { b: 2 }] } })));
+say(write([{ a: 1 }, { b: 2 }, row(23)]));
+say(write([row(24), { a: 1 }, [{ b: 2 }]]));
+say(write(holds(new Map([[1, 2]]))));
+say(write(holds(new Set([1]))));
+say(write(holds(new Date(0))));
+say(write(holds(new Date(NaN))));
+say(write(holds(new Number(5))));
+say(write(holds(new String("boxed"))));
+say(write(holds(new Boolean(false))));
+say(write(holds(new Uint8Array([1, 2]))));
+say(write(holds(/x/)));
+say(write(holds(new Proxy({ through: 1 }, {}))));
+say(write(holds(new Proxy([1], {}))));
+say(attempt(holds(10n)));
+say(attempt([10n]));
+say(attempt(holds(Object(10n))));
+
+say(write(undefined));
+say(write(() => 1));
+say(write(Symbol("s")));
+say(write(null));
+say(write(true));
+say(write(1.5));
+say(write("top \"level\""));
+say(write("top 日本"));
+say(write(holds(undefined)));
+say(write(holds(() => 1)));
+say(write(holds(Symbol("s"))));
+
+const loop = row(25);
+loop.next = loop;
+say(attempt(loop));
+say(attempt([loop]));
+const ring: unknown[] = [];
+ring.push(holds(ring));
+say(attempt(ring));
+
+let deep: Deep = { depth: 0, inner: null };
+for (let i = 1; i <= 47; i++) deep = { depth: i, inner: deep };
+say(write(deep));
+for (let i = 48; i <= 60; i++) deep = { depth: i, inner: deep };
+say(write(deep));
+for (let i = 61; i <= 6000; i++) deep = { depth: i, inner: deep };
+say(write(deep).length);
+let lists: unknown[] = [];
+for (let i = 0; i < 5000; i++) lists = [lists];
+say(write(lists).length);
+
+const text = (id: string): Row => ({ ...row(1), text: id });
+say(write(text("quote \" back \\ line \n tab \t bell \u0007")));
+say(write(text("wide 日本語 😀")));
+say(write(text("lone \ud800 surrogate")));
+say(write(text("latin é ÿ")));
+say(write([text("a日"), text("b"), text("c😀")]));
+say(write(holds(["日", "b", "😀"])));
+let rope = "x";
+for (let i = 0; i < 12; i++) rope = rope + "y" + i;
+say(write(text(rope)));
+say(write(text("rope " + rope + "日")));
+for (const length of [60, 61, 62, 63, 64, 65, 127, 128, 129, 4000, 4030, 4096, 5000, 70000]) {
+  const filler = "z".repeat(length);
+  say(write(text(filler)).length);
+  say(write([text(filler), text(filler), 1, true, null]).length);
+  say(write([text(filler + "\n"), text(filler + "日"), 1]).length);
+  say(write(holds([filler, filler + "\""])).length);
+}
+
+const frozen = Object.freeze(row(26));
+say(write(frozen));
+say(write(holds(frozen)));
+const sealed = Object.seal(row(27));
+say(write(sealed));
+const stiff = Object.preventExtensions(row(28));
+say(write(stiff));
+const extra = row(29);
+(extra as unknown as Record<string, unknown>)["added"] = "later";
+say(write(extra));
+say(write([extra, row(30)]));
+const gone = row(31);
+delete (gone as unknown as Record<string, unknown>)["text"];
+say(write(gone));
+const again = row(32);
+delete (again as unknown as Record<string, unknown>)["text"];
+(again as unknown as Record<string, unknown>)["text"] = "after the others";
+say(write(again));
+const getter = row(33);
+Object.defineProperty(getter, "text", { get() { return "from a getter"; }, enumerable: true });
+say(write(getter));
+const hidden = row(34);
+Object.defineProperty(hidden, "text", { enumerable: false });
+say(write(hidden));
+const optional = row(35);
+optional.maybe = "there";
+say(write(optional));
+say(write([row(36), optional, row(37)]));
+const reorder = { ...row(38), maybe: "spread" };
+say(write(reorder));
+const wrongKind = row(39);
+(wrongKind as unknown as Record<string, unknown>)["id"] = "a text where a number goes";
+(wrongKind as unknown as Record<string, unknown>)["ratio"] = { object: 1 };
+(wrongKind as unknown as Record<string, unknown>)["on"] = undefined;
+say(write(wrongKind));
+const numbers = row(40);
+numbers.id = 2147483647; numbers.ratio = -0;
+say(write(numbers));
+numbers.id = -2147483648; numbers.ratio = NaN;
+say(write(numbers));
+numbers.id = 2147483648.5; numbers.ratio = Infinity;
+say(write(numbers));
+numbers.id = 1e300; numbers.ratio = 5e-324;
+say(write(numbers));
+
+
+const plain: unknown = JSON.parse('{"p":1,"q":[2,{"r":"s"}]}');
+say(write([plain]));
+say(write([plain, row(50)]));
+say(write([row(51), plain]));
+say(write([1, plain]));
+say(write([[plain]]));
+say(write([[row(52)], [plain]]));
+say(write(["wide 日本", plain]));
+say(write("after a list with wide text that was given up"));
+say(write(["narrow"]));
+say(write(["wide again 日本"]));
+say(write(["z".repeat(70000), plain]).length);
+say(write(row(53)));
+say(write(["z".repeat(70000) + "日", "y".repeat(70000), plain]).length);
+say(write(row(54)));
+say(write([row(55), "quote \" in a list", plain]));
+say(write(holds([row(56), plain])));
+say(write(holds([plain, row(57)])));
+say(write([new Map([[1, 2]]), row(58)]));
+say(write([row(59), new Date(0), /x/, new Set([1])]));
+
+say(write([[plain]]));
+say(write([[row(60)], [[plain]]]));
+say(write([[["deep 日"]], [[plain]]]));
+say(write(row(61)));
+say(write(holds([[row(62)], [plain]])));
+say(write(holds([["nested 日", [plain]]])));
+say(write(row(63)));
+
+if (typeof aotOperationCount === "function") {
+  const list = [holds(45), holds(46)];
+  // The texts that JSON.stringify left to the engine's own writer, and the values that compiled code handed to the run time.
+  const count = aotOperationCount;
+  const leftToTheEngine = () => Number(/(\d+)\tcounter:JSONStringifySlowPaths/.exec(aotRuntimeCounters())?.[1] ?? 0) + count("operationAOTJSONAppendValue") + count("operationAOTStringBuilderAppendJSON");
+  const before = leftToTheEngine();
+  for (let i = 0; i < 10; i++) {
+    write(holds(i));
+    write(list);
+  }
+  if (leftToTheEngine() !== before) throw new Error("a value of unknown type was left to the engine's own writer");
+}
+//// json-stringify-records-in-plain-literal.ts
+declare const aotRuntimeCounters: undefined | (() => string);
+declare const aotOperationCount: undefined | ((name: string) => number);
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+// The texts that JSON.stringify left to the engine's own writer, and the values that compiled code handed to the run time.
+const leftToTheEngine = () => (counted ? Number(/(\d+)\tcounter:JSONStringifySlowPaths/.exec(aotRuntimeCounters!())?.[1] ?? 0) + counted("operationAOTJSONAppendValue") + counted("operationAOTStringBuilderAppendJSON") : 0);
+const left: string[] = [];
+interface Address { city: string; zip: string }
+interface User { id: number; name: string; address: Address }
+interface Team { name: string; lead: User; members: User[] }
+function measure(label: string, run: () => string): void {
+    const before = leftToTheEngine();
+    let text = "";
+    for (let i = 0; i < 100; i++) text = run();
+    if (leftToTheEngine() !== before) left.push(label);
+    console.log(label + ": " + text);
+}
+const users: User[] = [];
+for (let i = 0; i < 2; i++) users.push({ id: i, name: "user " + i, address: { city: "Springfield", zip: "0" + i } });
+const team: Team = { name: "team", lead: users[0], members: users };
+
+measure("a record", () => JSON.stringify({ ok: true, data: users[1] } as any));
+measure("a list of records", () => JSON.stringify({ total: users.length, rows: users } as any));
+measure("a record that holds records and a list", () => JSON.stringify({ team } as any));
+measure("a list one literal further down", () => JSON.stringify({ ok: true, page: { total: users.length, rows: users } } as any));
+measure("a record two literals further down", () => JSON.stringify({ a: { b: { user: users[1] } } } as any));
+console.log("needed the engine: " + (counted ? left.join(" | ") : ""));
+//// json-stringify-shared-key-order-arms.ts
+// Six key orders of one type, each a prefix of the next, so that some share an arm of the serializer, and a toJSON that adds, deletes or replaces trailing members during the write. Every line prints what plain Bun prints.
+// STATISTIC: SerializersCreated >= 1
+declare const console: { log(...values: unknown[]): void };
+interface Inner { x: number }
+interface Deep { inner: Inner; a?: number; b?: number; c?: number; d?: string; e?: Inner }
+
+function make(kind: number, i: number): Deep {
+    switch (kind) {
+    case 0: return { inner: { x: i } };
+    case 1: return { inner: { x: i }, a: 1 };
+    case 2: return { inner: { x: i }, a: 1, b: 2 };
+    case 3: return { inner: { x: i }, a: 1, b: 2, c: 3 };
+    case 4: return { inner: { x: i }, a: 1, b: 2, c: 3, d: "d" };
+    default: return { inner: { x: i }, a: 1, b: 2, c: 3, d: "d", e: { x: -i } };
+    }
+}
+function write(value: Deep): string { return JSON.stringify(value); }
+
+const seen = new Set<string>();
+for (let i = 0; i < 6000; i++) seen.add(write(make(i % 6, i & 1)));
+const out: unknown[] = [...seen].sort();
+
+for (let kind = 0; kind < 6; kind++) {
+    const grows = make(kind, 7);
+    (grows.inner as any).toJSON = function () {
+        if (grows.a === undefined) grows.a = 10; else if (grows.b === undefined) grows.b = 20; else if (grows.c === undefined) grows.c = 30; else if (grows.d === undefined) grows.d = "grown"; else if (grows.e === undefined) grows.e = { x: 50 };
+        return "grows";
+    };
+    out.push(write(grows), write(grows));
+
+    const shrinks = make(kind, 8);
+    (shrinks.inner as any).toJSON = function () {
+        if (shrinks.e !== undefined) delete shrinks.e; else if (shrinks.d !== undefined) delete shrinks.d; else if (shrinks.c !== undefined) delete shrinks.c; else if (shrinks.b !== undefined) delete shrinks.b; else delete shrinks.a;
+        return "shrinks";
+    };
+    out.push(write(shrinks), write(shrinks));
+
+    const replaced = make(kind, 9);
+    (replaced.inner as any).toJSON = function () { replaced.a = 100; replaced.d = undefined; return "replaced"; };
+    out.push(write(replaced), write(replaced));
+
+    const deletedAndAdded = make(kind, 6);
+    (deletedAndAdded.inner as any).toJSON = function () {
+        const keys = Object.keys(deletedAndAdded);
+        const last = keys[keys.length - 1] as keyof Deep;
+        if (last !== "inner") { const value = deletedAndAdded[last]; delete deletedAndAdded[last]; (deletedAndAdded as any)[last] = value; }
+        return "same order";
+    };
+    out.push(write(deletedAndAdded));
+
+    const holdsUndefined = make(kind, 5);
+    if (kind >= 3) holdsUndefined.c = undefined;
+    if (kind >= 4) holdsUndefined.d = undefined;
+    out.push(write(holdsUndefined));
+
+    const inherits = make(kind, 4);
+    Object.setPrototypeOf(inherits, { d: "inherited", e: { x: 1 } });
+    out.push(write(inherits));
+}
+console.log(out.map(String).join("\n"));

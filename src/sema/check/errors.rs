@@ -4,6 +4,7 @@
 //! The codes are the TypeScript compiler's. An error that depends on something the resolver couldn't resolve isn't
 //! reported. A false negative is better than a false positive.
 
+use super::aot::{DiagnosticClass, DiagnosticSubject};
 use super::enclosing_declaration::Enclosing;
 use super::errors_aliases::Directives;
 use super::errors_names_and_exports::fully_qualified_name;
@@ -14,6 +15,7 @@ use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::program::SymbolTable;
 use crate::util::{PositionSet, SharedSort};
+use bun_core::current_work;
 use bun_core::strings;
 
 /// The finalized diagnostics that `check_file` passes to `Program::finish_file`. Diagnostics reported inside a query
@@ -84,7 +86,12 @@ impl Program<'_> {
             used.shared_sort_unstable();
             // `FilterNoEmitSemanticDiagnostics` comes after the directives.
             let no_emit = self.files.options.no_emit;
-            out.retain(|d| d.directive == NO_DIRECTIVE && !(no_emit && d.skipped_on_no_emit));
+            let keeps_early_errors = self.is_in_compile_build(file);
+            out.retain(|d| {
+                (d.directive == NO_DIRECTIVE
+                    || keeps_early_errors && d.class == DiagnosticClass::EarlyError)
+                    && !(no_emit && d.skipped_on_no_emit)
+            });
             let expected = checked.expected_errors.into_iter();
             out.extend(expected.filter(|unused| used.binary_search(&unused.start).is_err()));
             out.extend(checked.include);
@@ -203,6 +210,10 @@ impl Checker<'_, '_> {
     /// Runs every check that queries `file`. Diagnostics it causes in other files, or that other files cause in this
     /// one, go to the sink.
     pub fn check_file(&mut self, file: FileId) -> Checked {
+        let _work = current_work::working_on(
+            current_work::Step::Check,
+            self.files().module(file).file_name(),
+        );
         if let Some(previous) = self.task.file
             && previous != file
             && self.files().module(previous).is_leaf
@@ -231,6 +242,8 @@ impl Checker<'_, '_> {
         self.deferred_diagnostics.clear();
         self.node_check_flags.clear();
         self.never_checked.borrow_mut().clear();
+        self.find_left_out_ranges(file);
+        self.clear_dead_code_ranges();
         self.unknown_symbols.clear();
         self.alias_targets_reported.clear();
         self.signatures_resolved_with_errors_discarded.clear();
@@ -254,18 +267,22 @@ impl Checker<'_, '_> {
             // In such a file the types depend on what was checked earlier, and the lint rules don't query in file
             // order.
             Requested::Types => self.bound(file).has_types_that_depend_on_order(),
-            Requested::Syntactic | Requested::Declaration => false,
+            Requested::Syntactic | Requested::EarlyErrors | Requested::Declaration => false,
         };
         if !is_checked || is_json || !self.reports_semantic_errors(file) {
             let syntactic = std::mem::take(&mut self.reported);
+            let early_errors = self.early_errors_of_unchecked_file(file);
             let mut declaration = Vec::new();
             if matches!(self.expected, Requested::Declaration | Requested::All) {
                 self.emit_resolver_links = Default::default();
                 declaration = self.get_declaration_diagnostics(file);
             }
             self.is_type_checked = true;
-            return self.checked(syntactic, declaration);
+            let mut checked = self.checked(syntactic, declaration);
+            checked.syntactic.extend(early_errors);
+            return checked;
         }
+        self.compute_dead_code_ranges(file);
         let syntactic = std::mem::take(&mut self.reported);
         // `hasParseDiagnostics`: parse errors suppress `grammarErrorOnNode` and similar, and the binder's
         // `checkContextualIdentifier` and `checkPrivateIdentifier`. They don't suppress errors reported through a plain
@@ -332,6 +349,7 @@ impl Checker<'_, '_> {
         // Removes the diagnostics reported for misplaced decorators.
         self.report_decorators(file);
         self.check_strict_mode_statements(file);
+        let dead_code = self.never_check_dead_code(file);
         // `checkWithStatement`, `checkReturnStatement`, `checkExportAssignment`: removes diagnostics in the nodes they
         // never check, whichever check reported them.
         self.remove_diagnostics_in_unchecked_ranges(file);
@@ -341,6 +359,8 @@ impl Checker<'_, '_> {
         }
         self.produce_type_not_iterable_errors(logged);
         self.report_unresolved_identifiers();
+        self.remove_diagnostics_in_dead_code(file, &dead_code);
+        self.report_early_errors(file);
         // `GetDeclarationDiagnostics`: no comment directive suppresses these, and plain JavaScript gets them too. A
         // diagnostic located in another file goes to that file's buffer at the next commit.
         let reported = std::mem::take(&mut self.reported).into_iter();
@@ -355,7 +375,13 @@ impl Checker<'_, '_> {
         let semantic = semantic.into_iter();
         let mut semantic: Vec<Reported> =
             (semantic.filter_map(|d| self.settled(d, &mut directives))).collect();
-        let expected_errors = self.expected_errors(file);
+        let mut expected_errors = self.expected_errors(file);
+        self.remove_expected_errors_in_dead_code(
+            file,
+            &dead_code,
+            &mut directives,
+            &mut expected_errors,
+        );
         // The file's diagnostics have been collected, so diagnostics from queries first evaluated while processing the
         // directives are dropped.
         self.reported.clear();
@@ -393,7 +419,11 @@ impl Checker<'_, '_> {
         } else if options.emits_declarations {
             self.check_declaration_emit(file);
         }
-        std::mem::take(&mut self.reported)
+        let mut reported = std::mem::take(&mut self.reported);
+        for d in &mut reported {
+            d.class = DiagnosticClass::DeclarationFile;
+        }
+        reported
     }
 
     fn checked(&mut self, mut syntactic: Vec<Reported>, mut declaration: Vec<Reported>) -> Checked {
@@ -420,8 +450,9 @@ impl Checker<'_, '_> {
             return Some(d);
         }
         let hir = self.hir(d.file);
+        let is_unconditional = self.is_unconditional_error(&d);
         // `SkipTypeChecking`
-        if hir.check_directive == Some(false) {
+        if hir.check_directive == Some(false) && !is_unconditional {
             return None;
         }
         // `bindNamespaceExportDeclaration` reports 1184 whether or not the file parses.
@@ -433,8 +464,11 @@ impl Checker<'_, '_> {
         }
         if !self.is_plain_js(d.file) {
             d.directive = directives.preceding(d.file, hir, d.start);
-        } else if errors_js::PLAIN_JS_ERRORS.binary_search(&d.code).is_err() {
+        } else if !is_unconditional && errors_js::PLAIN_JS_ERRORS.binary_search(&d.code).is_err() {
             return None;
+        }
+        if hir.kind == FileKind::Declaration {
+            d.class = DiagnosticClass::DeclarationFile;
         }
         self.resolve_span_end(&mut d);
         d.start = super::spans::start_of_error_range(hir, d.start, d.end);
@@ -442,7 +476,7 @@ impl Checker<'_, '_> {
     }
 
     /// Reports the HIR diagnostics of `file` whose kind is in `kinds`.
-    fn report_hir_diagnostics(&mut self, file: FileId, kinds: &[DiagnosticKind]) {
+    pub(super) fn report_hir_diagnostics(&mut self, file: FileId, kinds: &[DiagnosticKind]) {
         let diagnostics = self.hir(file).diagnostics.iter();
         let diagnostics = diagnostics.filter(|d| kinds.contains(&d.kind));
         self.reported
@@ -670,6 +704,7 @@ impl Checker<'_, '_> {
             },
             _ => (0, files.emit_syntax_of_import(file)),
         };
+        let usage = (file, usage);
         let target = files.module_value(module);
         // `TryGetModuleSpecifierFromDeclaration(node)`: nil for a binding element.
         let node = (file, (!matches!(decl, Decl::Require(_))).then_some(mode));
@@ -686,7 +721,8 @@ impl Checker<'_, '_> {
             && files.is_only_importable_as_default(usage, module)
         {
             let at = self.span_of_token(file, start);
-            self.error_at(at, 1544, &[Arg::Bytes(files.options.module.name())]);
+            let module_kind = self.module_options(file).module;
+            self.error_at(at, 1544, &[Arg::Bytes(module_kind.name())]);
         } else if files.alias_links(sym).immediate_target.is_none()
             && self.symbol_from_variable(sym).is_none()
         {
@@ -773,7 +809,10 @@ impl Checker<'_, '_> {
             _ => &[module_name, name_text],
         };
         let at = self.span_of_token(from, start);
-        self.error_at(at, code, args).related_information = related;
+        let subject = self.member_container(module);
+        let reported = self.error_at(at, code, args);
+        reported.related_information = related;
+        reported.subject = subject;
     }
 
     /// `reportNonDefaultExport`: the first `export *` of `module` that targets a module with a default export, which
@@ -803,9 +842,9 @@ impl Checker<'_, '_> {
     }
 
     /// `getTargetOfModuleDefault`: true if `module` has a default export, which is its export `"module.exports"`, its
-    /// own default or a synthetic one. `usage` is the syntax the specifier is emitted as
+    /// own default or a synthetic one. `usage` is the importing file, and the syntax the specifier is emitted as
     /// (`getEmitSyntaxForModuleSpecifierExpression`), regardless of the resolution mode it specifies.
-    fn module_has_default(&mut self, usage: ResolutionMode, module: Sym) -> bool {
+    fn module_has_default(&mut self, usage: (FileId, ResolutionMode), module: Sym) -> bool {
         let files = self.files();
         if files.is_commonjs_import_of_esm_file(usage, module)
             && let Some(module_exports) = files.module_exports_name()
@@ -892,7 +931,7 @@ impl Checker<'_, '_> {
         };
         let code = if !is_local(self, equals) {
             2305
-        } else if files.options.module >= crate::resolve::ModuleKind::Es2015 {
+        } else if self.module_options(from).module >= crate::resolve::ModuleKind::Es2015 {
             2595
         } else if self.hir(from).is_js {
             2597
@@ -939,7 +978,8 @@ impl Checker<'_, '_> {
                 Reported::new(at, hint.code, hint.args)
             });
         let args = [Arg::Atom(spec), Arg::Path(atoms.bytes(path))];
-        let diagnostic = self.new_diagnostic_chain(error_info, at, 7016, &args);
+        let mut diagnostic = self.new_diagnostic_chain(error_info, at, 7016, &args);
+        diagnostic.subject = DiagnosticSubject::ModuleSpecifier(spec);
         self.add_diagnostic(diagnostic);
     }
 
@@ -1013,7 +1053,7 @@ impl Checker<'_, '_> {
     pub(super) fn assumes_initialized(&self, file: FileId, e: ExprId, declared: TypeId) -> bool {
         let is_automatic = self.is_automatic_type(declared);
         if !is_automatic
-            && (!self.p.files.options.strict_null_checks
+            && (!self.reports_null_checks(file)
                 || declared == TypeId::UNKNOWN
                 || declared == TypeId::VOID
                 || self.is_any(declared))
@@ -1101,10 +1141,10 @@ impl Checker<'_, '_> {
     /// `checkPropertyInitialization`. Reports 2564: a property that requires a value has no initializer and isn't
     /// definitely assigned in the constructor.
     pub(super) fn check_property_initialization(&mut self, file: FileId, c: ClassId) {
-        let (options, hir) = (&self.p.files.options, self.hir(file));
+        let hir = self.hir(file);
         let class = &hir[c];
-        if !options.strict_null_checks
-            || !options.strict_property_initialization
+        if !self.reports_null_checks(file)
+            || !self.module_options(file).strict_property_initialization
             || hir.kind == FileKind::Declaration
             || class.flags.contains(Flags::AMBIENT)
         {
@@ -1353,7 +1393,7 @@ impl Checker<'_, '_> {
         };
         // `await x` where it isn't allowed: the parser treated the keyword as an identifier and already reported the
         // error.
-        if hir.has_diagnostic(hir[e].pos, 1308) {
+        if name == known::r#await && hir.has_diagnostic(hir[e].pos, 1308) {
             return;
         }
         let other = SymFlags::TYPE | SymFlags::NAMESPACE;
@@ -1451,7 +1491,7 @@ impl Checker<'_, '_> {
         let (options, module) = (&files.options, files.module(file));
         !(options.no_emit
             || options.emit_declaration_only
-            || options.verbatim_module_syntax
+            || self.module_options(file).verbatim_module_syntax
             || !matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
             || hir.is_js
             || module.is_from_external_library)
@@ -1921,7 +1961,7 @@ impl Checker<'_, '_> {
         };
         // `resolveEntityName(expression, SymbolFlagsInterface, ignoreErrors)`
         let (mut names, mut first) = (Vec::new(), expression);
-        while let ExprKind::Dot { obj, name, .. } = hir[first].kind {
+        while let ExprKind::Dot { obj, name, .. } = hir.checked_kind(first) {
             names.push(name);
             first = obj;
         }
@@ -1953,13 +1993,15 @@ impl Checker<'_, '_> {
     ) -> Option<ExprId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         loop {
-            if !matches!(hir[node].kind, ExprKind::Ident(_) | ExprKind::Dot { .. })
-                || is_parenthesized(hir, node)
+            if !matches!(
+                hir.checked_kind(node),
+                ExprKind::Ident(_) | ExprKind::Dot { .. }
+            ) || is_parenthesized(hir, node)
             {
                 return None;
             }
             match bound.parent_of_expr(node) {
-                Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
+                Parent::Expr(parent) if parent.is_some() => match hir.checked_kind(parent) {
                     ExprKind::Dot { .. } => node = parent,
                     ExprKind::Instantiation { .. } => break,
                     _ => return None,
@@ -2436,7 +2478,7 @@ pub(super) fn end_of_extends(c: &Checker<'_, '_>, file: FileId, class: &Class) -
 
 /// `entityNameToString`
 fn entity_name_text(c: &Checker<'_, '_>, file: FileId, e: ExprId) -> Vec<u8> {
-    match c.hir(file)[e].kind {
+    match c.hir(file).checked_kind(e) {
         ExprKind::Dot { obj, name, .. } => {
             cat!(entity_name_text(c, file, obj), b".", c.atoms().bytes(name))
         }
@@ -2855,7 +2897,7 @@ impl Checker<'_, '_> {
         ) else {
             return true;
         };
-        self.error(file, hir.child(e), code, &[]);
+        self.early_error_on_node(file, hir.child(e), code, &[]);
         false
     }
 
@@ -2869,7 +2911,7 @@ impl Checker<'_, '_> {
         right_type: TypeId,
     ) -> Option<u32> {
         let hir = self.hir(file);
-        let ExprKind::Dot { obj, name, .. } = hir[left].kind else {
+        let ExprKind::Dot { obj, name, .. } = hir.checked_kind(left) else {
             return None;
         };
         if !self.p.files.options.exact_optional_property_types
@@ -2899,7 +2941,7 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         // A setter may accept a wider type than the getter returns: `checkPropertyAccessExpression` with `writeOnly`,
         // which `(a.b) += c` doesn't reach, and `AccessFlagsWriting`.
-        let property = match hir[left].kind {
+        let property = match hir.checked_kind(left) {
             ExprKind::Dot { obj, name, .. } if !is_parenthesized(hir, left) => Some((obj, name)),
             ExprKind::Index { obj, index, .. } => match hir[index].kind {
                 ExprKind::String(name) => Some((obj, name)),
@@ -2922,7 +2964,7 @@ impl Checker<'_, '_> {
             {
                 expected = write_type;
                 // `checkPropertyAccessExpression` ends with `getFlowTypeOfAccessExpression`.
-                if let ExprKind::Dot { .. } = hir[left].kind {
+                if let ExprKind::Dot { .. } = hir.checked_kind(left) {
                     let prop = self.get_property_of_type(object, name).map(|found| found.0);
                     let right = (file, hir.name_pos(left), hir[left].end);
                     let target = self.target_kind(file, left);
@@ -2979,6 +3021,10 @@ impl Checker<'_, '_> {
     /// `checkNonNullType`: the type of `node` with `null` and `undefined` removed, which aren't allowed here.
     pub(super) fn check_non_null_type(&mut self, file: FileId, node: ExprId, ty: TypeId) -> TypeId {
         self.check_non_null_type_with_reporter(ty, |c, error| {
+            // Without `strictNullChecks` TypeScript still refuses `null` and `undefined` themselves.
+            if c.files.options.strict_null_checks && !c.reports_null_checks(file) {
+                return;
+            }
             let (at, code, name) = c.object_possibly_null_error(file, node, error);
             let args: Vec<Arg> = name.iter().map(|name| Arg::Bytes(name)).collect();
             c.error_at(at, code, &args);

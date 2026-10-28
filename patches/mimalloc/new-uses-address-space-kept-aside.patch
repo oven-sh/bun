@@ -1,0 +1,78 @@
+A throwing `new` uses the address space that is kept aside.
+
+An embedder that keeps address space aside (ask-who-may-take-address-space.patch)
+lets go of it for requests that cannot fail, and knows of its own which those
+are. A throwing `operator new` in a build without exceptions is one as well,
+and only mimalloc sees it.
+
+The keeper gets two more functions. When a throwing `new` has found no memory,
+begin_request_that_cannot_fail() is called on its thread, the request asks once
+more, and end_request_that_cannot_fail() is called. What follows when that
+finds no memory either is as before. `new (std::nothrow)` is as before.
+
+--- a/include/mimalloc.h
++++ b/include/mimalloc.h
+@@ -209,10 +209,14 @@
+ // `may_take` is asked before address space is taken from the system for a page of blocks that are larger than those of a
+ // small page; false refuses it as the system would.
+ // `make_room` is asked when a request has found no memory; true says to look again. `attempt` counts from 0 for each request.
+-#define MI_ASKS_ADDRESS_SPACE_KEEPER  1
++// `begin_request_that_cannot_fail` is called on the thread of a request that cannot fail and has found no memory, which then
++// asks once more; `end_request_that_cannot_fail` behind that.
++#define MI_ASKS_ADDRESS_SPACE_KEEPER  2
+ typedef struct mi_address_space_keeper_s {
+   bool (*may_take)(size_t size);
+   bool (*make_room)(size_t size, size_t attempt);
++  void (*begin_request_that_cannot_fail)(void);
++  void (*end_request_that_cannot_fail)(void);
+ } mi_address_space_keeper_t;
+ mi_decl_export void mi_register_address_space_keeper(const mi_address_space_keeper_t* keeper) mi_attr_noexcept;
+ 
+--- a/src/alloc.c
++++ b/src/alloc.c
+@@ -845,8 +845,21 @@
+ }
+ #endif
+ 
++// A throwing `new` cannot fail: it says so to an embedder that keeps address space aside, and asks once more.
++static const mi_address_space_keeper_t* mi_new_begin_asking_again(bool nothrow) {
++  const mi_address_space_keeper_t* const keeper = (nothrow ? NULL : _mi_address_space_keeper());
++  if (keeper == NULL || keeper->begin_request_that_cannot_fail == NULL) return NULL;
++  keeper->begin_request_that_cannot_fail();
++  return keeper;
++}
++
+ static mi_decl_noinline void* mi_theap_try_new(mi_theap_t* theap, size_t size, bool nothrow ) {
+   void* p = NULL;
++  const mi_address_space_keeper_t* const keeper = mi_new_begin_asking_again(nothrow);
++  if (keeper != NULL) {
++    p = mi_theap_malloc(theap,size);
++    keeper->end_request_that_cannot_fail();
++  }
+   for(int i = 0; i < MI_TRY_NEW_MAX && p == NULL && mi_try_new_handler(nothrow); i++) {
+     if (size > MI_MAX_ALLOC_SIZE) return NULL; // call try_new_handler at least once
+     p = mi_theap_malloc(theap,size);
+@@ -906,6 +919,11 @@
+ 
+ static mi_decl_noinline void* mi_try_new_aligned(size_t size, size_t alignment, bool nothrow) {
+   void* p = NULL;
++  const mi_address_space_keeper_t* const keeper = mi_new_begin_asking_again(nothrow);
++  if (keeper != NULL) {
++    p = mi_malloc_aligned(size,alignment);
++    keeper->end_request_that_cannot_fail();
++  }
+   for(int i = 0; i < MI_TRY_NEW_MAX && p==NULL && mi_try_new_handler(nothrow); i++) {
+     if (!mi_alignment_is_valid(alignment)) return NULL;
+     p = mi_malloc_aligned(size,alignment);
+@@ -927,6 +945,11 @@
+ 
+ static mi_decl_noinline void* mi_try_new_realloc(void* p, size_t newsize) {
+   void* q = NULL;
++  const mi_address_space_keeper_t* const keeper = mi_new_begin_asking_again(false);
++  if (keeper != NULL) {
++    q = mi_realloc(p,newsize);
++    keeper->end_request_that_cannot_fail();
++  }
+   for(int i = 0; i < MI_TRY_NEW_MAX && q==NULL && mi_try_new_handler(false); i++) {
+     if (newsize > MI_MAX_ALLOC_SIZE) return NULL;
+     q = mi_realloc(p,newsize);

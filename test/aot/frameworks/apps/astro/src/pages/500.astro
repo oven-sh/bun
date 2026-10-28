@@ -1,0 +1,5 @@
+---
+import Layout from "../layouts/Layout.astro";
+const { error } = Astro.props as { error?: Error };
+---
+<Layout title="failed"><p>a page of our own for errors: {error?.name}</p></Layout>

@@ -252,7 +252,10 @@ describe("the output check of expectBundled", () => {
 
   test.each([
     ["a file", { files: { "/entry.js": `console.log(typeof exports_lib);` } }],
-    ["a file that is a Buffer", { files: { "/entry.js": Buffer.from(`console.log(typeof exports_lib);`) } }],
+    [
+      "a file that is a typed array",
+      { files: { "/entry.js": new Uint8ClampedArray(Buffer.from(`console.log(typeof exports_lib);`)) } },
+    ],
     [
       "the source of a plugin",
       {

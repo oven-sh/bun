@@ -1721,7 +1721,7 @@ for (const [key, blob] of build.outputs) {
             ...Object.values(define ?? {}),
             ...Object.values({ banner, footer, ...jsx }),
             ...[plugins ?? []].flat().map(plugin => (typeof plugin === "function" ? plugin : plugin.setup)),
-          ].map(String);
+          ].map(value => (ArrayBuffer.isView(value) ? new TextDecoder().decode(value) : String(value)));
         let ownText: string[] | undefined;
         let installedText: string[] | undefined;
         // The packages of the fixture are input files, also when the output directory holds them.

@@ -1,5 +1,6 @@
-// Calls flush(kind, callback) on a Gzip, a Brotli and a Zstd stream with kinds that Node.js refuses and kinds that it
-// takes. Node.js checks `kind` since v26.5.0 (nodejs/node#63746). This file passes under that Node.js and under Bun.
+// Calls flush(kind, callback) on a Gzip, a Brotli and a Zstd stream in each stream state, with kinds that Node.js
+// refuses and kinds that it takes. Node.js checks `kind` since v26.5.0 (nodejs/node#63746), before it looks at the
+// stream. This file passes under that Node.js and under Bun.
 const assert = require("node:assert");
 const zlib = require("node:zlib");
 
@@ -11,7 +12,12 @@ const codecs = [
 ];
 
 // `taken` is what the callback receives when flush() takes the kind.
-const states = [{ name: "after write()", enter: stream => stream.write("hello"), taken: [null] }];
+const states = [
+  { name: "after write()", enter: stream => stream.write("hello"), taken: [null] },
+  { name: "after end()", enter: stream => stream.end("hello"), taken: [] },
+  { name: "after 'finish'", enter: stream => new Promise(done => stream.once("finish", done).end("hello")), taken: [] },
+  { name: "after destroy()", enter: stream => stream.destroy(), taken: ["ERR_STREAM_DESTROYED"] },
+];
 
 // A kind that is not a number, and how the error names it.
 const notNumbers = [

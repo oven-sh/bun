@@ -106,13 +106,13 @@ describe("zlib", () => {
     expect(() => gunzipSync(data, { library: "zlib" })).toThrow(new Error("incorrect header check"));
   });
 
-  // Node.js checks the kind since v26.5.0 (nodejs/node#63746). The fixture has the assertions.
+  // Node.js checks the kind since v26.5.0, before it looks at the stream (nodejs/node#63746). The fixture has the assertions.
   for (const [name, runtime] of [
     ["bun", bunExe()],
     ["node", nodeExeAtLeast("26.5.0")],
   ]) {
     it.skipIf(!runtime)(
-      `flush() refuses a kind that is not a number in the range of the codec (${name})`,
+      `flush() refuses a kind that is not a number in the range of the codec, in every stream state (${name})`,
       async () => {
         await using proc = Bun.spawn({
           cmd: [runtime, resolve(import.meta.dir, "zlib-flush-kind-fixture.cjs")],
@@ -128,13 +128,9 @@ describe("zlib", () => {
     );
   }
 
-  it("flush() takes any kind after end(), and a stream has no _flushBoundIdx", async () => {
-    const gzip = zlib.createGzip();
+  it("a stream has no _flushBoundIdx", () => {
     // Node.js keeps the index of the flush bounds in this own property.
-    expect(Object.keys(gzip)).not.toContain("_flushBoundIdx");
-    gzip.resume();
-    gzip.end();
-    await new Promise(done => gzip.flush("none", done));
+    expect(Object.keys(zlib.createGzip())).not.toContain("_flushBoundIdx");
   });
 
   describe("libdeflate level validation", () => {

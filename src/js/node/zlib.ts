@@ -220,7 +220,7 @@ declare global {
       _info: boolean | undefined;
       _maxOutputLength: number;
       reset(): void;
-      flush(kind?: number | (() => void), callback?: () => void): void;
+      flush(kind?: unknown, callback?: () => void): void;
       close(callback?: () => void): void;
       _processChunk(chunk: View, flushFlag: number, cb?: () => void): Buffer | undefined;
       // What `zlibBuffer` keeps on the engine it drives.
@@ -372,21 +372,20 @@ const kFlushBuffers: Chunk[] = [];
   }
 }
 
-ZlibBase.prototype.flush = function (this: $Node.ZlibBase, kind?: number | (() => void), callback?: () => void) {
+ZlibBase.prototype.flush = function (this: $Node.ZlibBase, kind?: unknown, callback?: () => void) {
   if (typeof kind === "function" || (kind === undefined && !callback)) {
-    callback = kind;
+    callback = kind as typeof callback;
     kind = this._defaultFullFlushFlag;
   }
+  // Node.js validates here too, in every stream state, with bounds from an own _flushBoundIdx: https://github.com/nodejs/node/blob/v26.12.1/lib/zlib.js#L383-L386
+  const flushBound = this[kFlushBound];
+  const flushFlag = checkRangesOrGetDefault(kind, "kind", flushBound[0], flushBound[1], this._defaultFullFlushFlag);
   if (this.writableFinished) {
     if (callback) process.nextTick(callback);
   } else if (this.writableEnded) {
     if (callback) this.once("end", callback);
   } else {
-    if (!this.destroyed) {
-      const flushBound = this[kFlushBound];
-      kind = checkRangesOrGetDefault(kind, "kind", flushBound[0], flushBound[1], this._defaultFullFlushFlag);
-    }
-    this.write(kFlushBuffers[kind!], "", callback);
+    this.write(kFlushBuffers[flushFlag], "", callback);
   }
 };
 

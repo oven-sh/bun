@@ -1319,3 +1319,80 @@ it(".query and .params support names that look like array indices", () => {
   expect(params).toEqual({ 0: "hello" });
   expect(params[0]).toBe("hello");
 });
+
+it("a route file imports an installed package after a reload() that did not find the directory", async () => {
+  // The failed reload() leaves "not found" in the resolver's cache for `pages`. `pages/blog` is read
+  // again for the import and needs `pages` as its parent to reach the project's node_modules.
+  using dir = tempDir("fsr-reload-dir-away", {
+    "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js" }),
+    "node_modules/pkg/index.js": `module.exports = "pkg";`,
+    "pages/index.tsx": `export default "index";`,
+    "pages/blog/post.tsx": `import pkg from "pkg"; export default pkg;`,
+    "fixture.ts": /* ts */ `
+      import fs from "fs";
+      import path from "path";
+      const pages = path.join(import.meta.dir, "pages");
+      const router = new Bun.FileSystemRouter({ dir: pages, style: "nextjs" });
+      fs.renameSync(pages, pages + ".away");
+      try {
+        router.reload();
+        console.log("reload() did not throw");
+      } catch {}
+      fs.renameSync(pages + ".away", pages);
+      console.log((await import(router.match("/blog/post").filePath)).default);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-install", "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "pkg\n", stderr: "", exitCode: 0 });
+});
+
+it("reload() lists a directory that was created after lookups failed in and below the routes directory", async () => {
+  // The lookup of `pages/missing.js` is tried again after `pages` is listed again, with a name that has no
+  // separator at its end. `pages` is then read as the parent of `pages/a/b`, and reload() walks from its path.
+  using dir = tempDir("fsr-reload-listed-again", {
+    "pages/index.tsx": `export default "index";`,
+    "pages/sub/c.tsx": `export default "c";`,
+    "fixture.ts": /* ts */ `
+      import fs from "fs";
+      import path from "path";
+      const pages = path.join(import.meta.dir, "pages");
+      const page = path.join(pages, "a", "b", "page.js");
+      const code = file => {
+        try {
+          require(file);
+        } catch (e) {
+          return e.code;
+        }
+      };
+      console.log(code(page), code(path.join(pages, "missing.js")));
+      fs.mkdirSync(path.dirname(page), { recursive: true });
+      fs.writeFileSync(page, "module.exports = 'page';");
+      console.log(require(page));
+      const router = new Bun.FileSystemRouter({ dir: pages, style: "nextjs" });
+      router.reload();
+      console.log(Object.keys(router.routes).sort().join(" "));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-install", "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "MODULE_NOT_FOUND MODULE_NOT_FOUND\npage\n/ /a/b/page /sub/c\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

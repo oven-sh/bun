@@ -4511,11 +4511,9 @@ impl<'a> Resolver<'a> {
         });
         let mut top = Dirname::dirname(&path[..input_path_len]);
 
-        let mut top_parent = allocators::Result {
-            index: allocators::NOT_FOUND,
-            hash: 0,
-            status: allocators::ItemStatus::NotFound,
-        };
+        let mut top_parent = Self::NO_PARENT;
+        // The walk below stopped at a cached "not found" or at a cached listing error.
+        let mut below_negative = false;
         #[cfg(windows)]
         let root_path = strings::without_trailing_slash_windows_path(
             ResolvePath::windows_filesystem_root(path),
@@ -4525,6 +4523,7 @@ impl<'a> Resolver<'a> {
         // we will write to the buffer past the ptr len so it must be a non-const buffer
         let root_path = &path[0..1];
         Self::assert_valid_cache_key(root_path);
+        let root_path_len = root_path.len();
 
         // NOTE: hold RealFS as a raw `*mut` so the entries-mutex/close-dirs
         // scopeguards can capture it by Copy without keeping a `self.rfs_ptr()`
@@ -4549,6 +4548,7 @@ impl<'a> Resolver<'a> {
             let result = self.dir_cache_mut().get_or_put(top)?;
 
             if result.status != allocators::ItemStatus::Unknown {
+                below_negative = result.status == allocators::ItemStatus::NotFound;
                 top_parent = result;
                 break;
             }
@@ -4580,6 +4580,7 @@ impl<'a> Resolver<'a> {
                             bstr::BStr::new(err.original_err.name()),
                             bstr::BStr::new(err.canonical_error.name())
                         );
+                        below_negative = true;
                         break;
                     }
                 }
@@ -4591,6 +4592,7 @@ impl<'a> Resolver<'a> {
         if top == root_path {
             let result = self.dir_cache_mut().get_or_put(root_path)?;
             if result.status != allocators::ItemStatus::Unknown {
+                below_negative = result.status == allocators::ItemStatus::NotFound;
                 top_parent = result;
             } else {
                 if i >= queue.len() {
@@ -4625,6 +4627,9 @@ impl<'a> Resolver<'a> {
                 i += 1;
             }
         }
+
+        // Queue items from this index up are ancestors that are opened again.
+        let mut reopened_from = usize::MAX;
 
         let mut queue_slice_len = i;
         debug_assert!(queue_slice_len > 0);
@@ -4664,7 +4669,7 @@ impl<'a> Resolver<'a> {
         let mut _safe_path: Option<&'static [u8]> = None;
 
         // Start at the top.
-        while queue_slice_len > 0 {
+        'walk: while queue_slice_len > 0 {
             // SAFETY: every slot in `0..queue_slice_len` was `.write()`-initialised above.
             let mut queue_top = unsafe { queue[queue_slice_len - 1].assume_init_ref() }.clone();
             // `unsafe_path` was set to a slice of the threadlocal
@@ -4679,6 +4684,9 @@ impl<'a> Resolver<'a> {
 
             let open_dir: FD = if queue_top.fd.is_valid() {
                 queue_top.fd
+            } else if queue_slice_len + 1 == reopened_from {
+                // The second visit of a directory whose open was denied: it is still opaque.
+                FD::INVALID
             } else {
                 'open_dir: {
                     // This saves us N copies of .toPosixPath
@@ -4727,6 +4735,12 @@ impl<'a> Resolver<'a> {
                     match open_req {
                         Ok(fd) => break 'open_dir fd,
                         Err(err) => {
+                            // An ancestor that still does not open: it and the ancestors below it stay as cached.
+                            if queue_slice_len >= reopened_from {
+                                queue_slice_len = reopened_from;
+                                top_parent = Self::NO_PARENT;
+                                continue 'walk;
+                            }
                             // Ignore "ENOTDIR" here so that calling "ReadDirectory" on a file behaves
                             // as if there is nothing there at all instead of causing an error due to
                             // the directory actually being a file. This is a workaround for situations
@@ -4797,7 +4811,8 @@ impl<'a> Resolver<'a> {
                 open_dir_count.set(open_dir_count.get() + 1);
             }
 
-            let dir_path: &'static [u8] = if !queue_top_safe_path.is_empty() {
+            // A listing that `read_directory` cached first names the directory with no separator at the end.
+            let dir_path: &'static [u8] = if queue_top_safe_path.last() == Some(&SEP) {
                 // SAFETY: non-empty `safe_path` is always a dirname_store-backed
                 // `&'static [u8]` (set from `entries.dir` above); widen the
                 // `RawSlice`-tied borrow back to its true `'static` lifetime.
@@ -4949,6 +4964,27 @@ impl<'a> Resolver<'a> {
                 )?;
             }
 
+            // A negative above a directory that exists can be stale: open the ancestors again first.
+            if below_negative {
+                below_negative = false;
+                let mut len = queue_slice_len + 1;
+                if let Some(above) = self.queue_ancestors_to_reopen(
+                    queue,
+                    &mut len,
+                    Dirname::dirname(&path[..queue_top_unsafe_path.len()]),
+                    &path[..root_path_len],
+                )? {
+                    // SAFETY: this slot is the initialised item that `queue_top` is a clone of.
+                    let slot = unsafe { queue[queue_slice_len].assume_init_mut() };
+                    slot.safe_path = bun_ptr::RawSlice::new(dir_path);
+                    slot.fd = open_dir;
+                    reopened_from = queue_slice_len + 1;
+                    top_parent = above;
+                    queue_slice_len = len;
+                    continue 'walk;
+                }
+            }
+
             // We must initialize it as empty so that the result index is correct.
             // This is important so that browser_scope has a valid index.
             // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
@@ -4994,6 +5030,56 @@ impl<'a> Resolver<'a> {
         }
 
         unreachable!()
+    }
+
+    /// `top_parent` of a directory that has no parent `DirInfo`.
+    const NO_PARENT: allocators::Result = allocators::Result {
+        index: allocators::NOT_FOUND,
+        hash: 0,
+        status: allocators::ItemStatus::NotFound,
+    };
+
+    /// Queues the ancestors with no `DirInfo`, negatives included. `None`: the queue is full.
+    fn queue_ancestors_to_reopen(
+        &mut self,
+        queue: &mut [core::mem::MaybeUninit<DirEntryResolveQueueItem>],
+        len: &mut usize,
+        mut top: &[u8],
+        root_path: &[u8],
+    ) -> crate::CrateResult<Option<allocators::Result>> {
+        let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
+        loop {
+            let is_root = top.len() <= root_path.len();
+            if is_root && top != root_path {
+                return Ok(Some(Self::NO_PARENT));
+            }
+            let dir = if is_root { root_path } else { top };
+            let result = self.dir_cache_mut().get_or_put(dir)?;
+            if result.status == allocators::ItemStatus::Exists {
+                return Ok(Some(result));
+            }
+            if *len >= queue.len() {
+                return Ok(None);
+            }
+            let item = queue[*len].write(DirEntryResolveQueueItem {
+                unsafe_path: bun_ptr::RawSlice::new(dir),
+                result,
+                safe_path: bun_ptr::RawSlice::EMPTY,
+                fd: FD::INVALID,
+            });
+            // SAFETY: `rfs` points at the process-global RealFS singleton; the
+            // caller holds `entries_mutex`.
+            let listing = unsafe { &mut *rfs }.entries.get(dir);
+            if let Some(Fs::file_system::real_fs::EntriesOption::Entries(entries)) = listing {
+                item.safe_path = bun_ptr::RawSlice::new(entries.dir);
+                item.fd = entries.fd;
+            }
+            *len += 1;
+            if is_root {
+                return Ok(Some(Self::NO_PARENT));
+            }
+            top = Dirname::dirname(top);
+        }
     }
 
     // This closely follows the behavior of "tryLoadModuleUsingPaths()" in the

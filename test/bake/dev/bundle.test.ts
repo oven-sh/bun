@@ -103,6 +103,51 @@ devTest("importing a file before it is created", {
     await c.expectMessage("value: 456");
   },
 });
+// The failed bundle caches "not found" for `pages`. The next failed resolution evicts `pages/a` only,
+// so `pages/a` was cached with no parent and `pkg` was not found.
+for (const plugin of [false, true]) {
+  devTest("importing a file two new directories down before it is created" + (plugin ? " (onResolve declines)" : ""), {
+    files: {
+      "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js" }),
+      "node_modules/pkg/index.js": `export default "pkg";`,
+      ...(plugin && {
+        "bunfig.toml": `
+          [serve.static]
+          plugins = ["./plugin.ts"]
+        `,
+        // With a plugin these imports resolve in `BundleV2::run_resolver`.
+        "plugin.ts": `
+          export default {
+            name: "declines",
+            setup(build) {
+              build.onResolve({ filter: /second|^pkg$/ }, () => undefined);
+            },
+          };
+        `,
+      }),
+      "index.html": emptyHtmlFile({
+        styles: [],
+        scripts: ["index.ts"],
+      }),
+      "index.ts": `
+        import { abc } from './pages/a/second';
+        console.log('value: ' + abc);
+      `,
+    },
+    async test(dev) {
+      {
+        await using c = await dev.client("/", {
+          errors: [`index.ts:1:21: error: Could not resolve: "./pages/a/second"`],
+        });
+      }
+      // No watch is placed on a directory that does not exist. A page load bundles a failed route again.
+      fs.mkdirSync(dev.join("pages/a"), { recursive: true });
+      fs.writeFileSync(dev.join("pages/a/second.ts"), `import pkg from "pkg"; export const abc = pkg;`);
+      await using c = await dev.client("/");
+      await c.expectMessage("value: pkg");
+    },
+  });
+}
 // After a failed resolution, the dev server evicts the specifier's path and its parent from the
 // resolver's directory cache. Here one of those two paths ends in a slash.
 devTest("recovers from an unresolved import of a path that ends in a slash", {

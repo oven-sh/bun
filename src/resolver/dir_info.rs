@@ -378,6 +378,24 @@ pub(crate) unsafe fn slot_ptr_at(index: Index) -> Option<*mut DirInfo> {
     }
 }
 
+/// Drops the "not found" cached for `dir`. The caller has read the directory, so it exists.
+pub(crate) fn forget_not_found(dir: &[u8]) {
+    #[cfg(windows)]
+    let mut key = bun_paths::path_buffer_pool::get();
+    // A listing keeps the separators of its caller. A `DirInfo` key has the resolver's.
+    #[cfg(windows)]
+    let dir = fs::FileSystem::instance().normalize_buf(&mut key[..], dir);
+    // SAFETY: the singleton is never freed. `get_or_put` and `remove` take the
+    // map's own mutex, which `Resolver::bust_dir_cache` relies on too.
+    let map = unsafe { &mut *hash_map_instance() };
+    if map
+        .get_or_put(dir)
+        .is_ok_and(|result| result.status == allocators::ItemStatus::NotFound)
+    {
+        map.remove(dir);
+    }
+}
+
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
     pub struct Flags: u8 {

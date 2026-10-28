@@ -315,6 +315,47 @@ describe("bundler", () => {
       },
     });
   }
+  // A define for the whole `import.meta.env` object carries its own keys.
+  itBundled("edgecase/ImportMetaEnvBrowserObjectDefineWins", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(import.meta.env.MODE, import.meta.env.DEV);
+      `,
+    },
+    target: "browser",
+    define: {
+      "import.meta.env": '{"MODE":"staging","DEV":false}',
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain('"staging"');
+      expect(out).not.toContain('"development"');
+      expect(out).not.toContain("import.meta.env");
+    },
+  });
+  // With `--env inline` the inlined `NODE_ENV` wins over a user define for
+  // `process.env.NODE_ENV`, so the mode keys follow the inlined value.
+  itBundled("edgecase/ImportMetaEnvBrowserInlinedNodeEnvWins", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(process.env.NODE_ENV);
+        capture(process.env.BUN_ENV);
+        capture(import.meta.env.DEV);
+        capture(import.meta.env.PROD);
+        capture(import.meta.env.MODE);
+      `,
+    },
+    target: "browser",
+    dotenv: "inline",
+    define: {
+      "process.env.NODE_ENV": '"production"',
+    },
+    capture: ['"development"', '"development"', "true", "false", '"development"'],
+    env: {
+      NODE_ENV: "development",
+      BUN_ENV: undefined,
+    },
+  });
   // The CLI `--env disable` skips every default define. The JS API
   // `env: "disable"` only skips the `.env` inlining and keeps the defaults,
   // the same split `process.browser` and `process.env.NODE_ENV` have.

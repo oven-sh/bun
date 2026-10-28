@@ -1957,7 +1957,8 @@ describe("production headers and import.meta.env", () => {
         "",
       ].join("\n"),
     );
-    expect(stderr).not.toContain("error");
+    // The dev server logs each bundle it builds.
+    expect(stderr.replace(/\d+ms/, "Nms")).toBe("Bundled page in Nms: index.html\n");
     expect(exitCode).toBe(0);
   });
 

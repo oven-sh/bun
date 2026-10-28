@@ -842,7 +842,7 @@ static JSValue requireVirtualModule(
     bool wasModuleMock)
 {
     auto& vm = JSC::getVM(globalObject);
-    JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, virtualSpecifier, referrer, fetch, wasModuleMock, target);
+    JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer, fetch, wasModuleMock, target);
     RETURN_IF_EXCEPTION(scope, {});
 
     // If we assigned module.exports to the virtual module, or gave the loader its source, we're done here.
@@ -921,6 +921,8 @@ JSValue fetchCommonJSModule(
         }
     }
     BunString specifier = Bun::toString(fileURLPath);
+    BunString specifierKey = Bun::toString(specifierWtfString);
+    auto* virtualSpecifier = preservePathDelimiters ? &specifierKey : &specifier;
 
     bool wasModuleMock = false;
     BunPlugin::OnLoad::Matches onLoad;
@@ -929,10 +931,10 @@ JSValue fetchCommonJSModule(
     // When "bun test" is enabled, allow users to override builtin modules
     // This is important for being able to trivially mock things like the filesystem.
     if (isBunTest) {
-        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifier, wasModuleMock, onLoad);
+        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, virtualSpecifier, wasModuleMock, onLoad);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult)
-            return requireVirtualModule(globalObject, scope, loader, target, virtualModuleResult, res, &specifier, specifierWtfString, referrer, fetch, wasModuleMock);
+            return requireVirtualModule(globalObject, scope, loader, target, virtualModuleResult, res, virtualSpecifier, specifierWtfString, referrer, fetch, wasModuleMock);
     }
 
     auto builtin = fetchBuiltinModuleWithoutResolution(globalObject, &specifier, res);
@@ -962,10 +964,10 @@ JSValue fetchCommonJSModule(
 
     // When "bun test" is NOT enabled, disable users from overriding builtin modules
     if (!isBunTest) {
-        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifier, wasModuleMock, onLoad);
+        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, virtualSpecifier, wasModuleMock, onLoad);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult)
-            return requireVirtualModule(globalObject, scope, loader, target, virtualModuleResult, res, &specifier, specifierWtfString, referrer, fetch, wasModuleMock);
+            return requireVirtualModule(globalObject, scope, loader, target, virtualModuleResult, res, virtualSpecifier, specifierWtfString, referrer, fetch, wasModuleMock);
     }
 
     if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice(vm, loader, specifierWtfString)) {
@@ -1241,6 +1243,18 @@ static JSValue fetchESMSourceCode(
     auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String specifierKey = specifierJS->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    WTF::String decodedPath;
+    BunString decodedSpecifier;
+    // A declined asynchronous plugin resumes with the module key, not the decoded path.
+    if (!preservePathDelimiters && !pluginContents && specifierKey.startsWith("file://"_s)) {
+        URL url(specifierKey);
+        if (url.isValid() && !url.isEmpty()) {
+            decodedPath = url.fileSystemPath();
+            decodedSpecifier = Bun::toString(decodedPath);
+            specifier = &decodedSpecifier;
+            preservePathDelimiters = true;
+        }
+    }
     auto specifierKeyBun = Bun::toString(specifierKey);
     auto* virtualSpecifier = preservePathDelimiters ? &specifierKeyBun : specifier;
 
@@ -1500,7 +1514,7 @@ static JSValue fetchESMSourceCode(
 
     if (res->result.value.tag == SyntheticModuleType::ExportDefaultOnly) {
         JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
-        RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueExportDefaultOnlySourceCode(globalObject, value, specifier->toWTFString(BunString::ZeroCopy))));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueExportDefaultOnlySourceCode(globalObject, value, String(specifierKey))));
     }
 
     auto provider = Zig::SourceProvider::create(globalObject, res->result.value);

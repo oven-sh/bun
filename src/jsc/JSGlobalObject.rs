@@ -1374,7 +1374,7 @@ extern "C" fn Bun__importMetaResolve(
         source,
         specifier
     );
-    Zig__GlobalObject__resolve(res, global, specifier, source, query)
+    Zig__GlobalObject__resolve(res, global, specifier, source, query, true)
 }
 
 /// `import.meta.resolve()` skips the resolver for a path or `file:` URL, so it runs `onResolve` plugins through this.

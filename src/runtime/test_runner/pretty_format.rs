@@ -1399,7 +1399,15 @@ impl<'a> Formatter<'a> {
                     return Ok(());
                 }
                 Tag::Class => {
-                    let printable = value.get_class_name(self.global_this)?;
+                    // Older versions printed a mock function, `URL` and the like as `[class Function]`.
+                    let was_function = value.js_type() == JSType::InternalFunction
+                        && value.get_class_info_name().is_some_and(|name| name != b"Function");
+                    let printable = if was_function && self.like_older_bun.is_some() {
+                        bun_core::String::static_(b"Function")
+                    } else {
+                        self.same_as_older_bun &= !was_function;
+                        value.get_class_name(self.global_this)?
+                    };
                     self.add_for_new_line(printable.length());
 
                     if printable.is_empty() {

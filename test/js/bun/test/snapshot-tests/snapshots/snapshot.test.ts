@@ -2418,6 +2418,23 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
     expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({ log: [], stderr: "", exitCode: 0 });
   });
 
+  test("passes when it is what an older Bun wrote for a mock function or a class that native code makes", async () => {
+    const printed = `{\n  "Buffer": [class Function],\n  "Response": [class Response],\n  "URL": [class Function],\n  "mock": [class Function],\n}`;
+    const { log, stderr, exitCode } = await logOf({
+      "a.test.js": `
+          const value = () => ({ mock: jest.fn(), URL, Buffer, Response });
+          test("in a file", () => { expect(value()).toMatchSnapshot(); });
+          test("inline", () => {
+            expect(value()).toMatchInlineSnapshot(\`\n${printed}\n\`);
+            expect(jest.fn()).toMatchInlineSnapshot(\`[class Function]\`);
+            expect(() => expect(Response).toMatchInlineSnapshot(\`[class Function]\`)).toThrow();
+          });
+        `,
+      "__snapshots__/a.test.js.snap": headers.bun + `\nexports[\`in a file 1\`] = \`\n${printed}\n\`;\n`,
+    });
+    expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({ log: [], stderr: "", exitCode: 0 });
+  });
+
   test("passes when it is what an older Bun wrote where the object did not keep the property matchers it was given", async () => {
     const throughAGetter = `{\n  "o": [native code],\n}`;
     const frozen = `{\n  "a": [\n    1,\n    2,\n  ],\n}`;

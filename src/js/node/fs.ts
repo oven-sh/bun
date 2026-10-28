@@ -59,8 +59,6 @@ function settleCallbackWithNull(promise: Promise<unknown>, callback: Callback) {
   );
 }
 
-function discardResult() {}
-
 function openAsBlob(path, options?) {
   return Promise.$resolve(Bun.file(path, options));
 }
@@ -435,11 +433,10 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
       callback = wrapFsCallback(callback);
     } else {
       // node does not validate this overload's callback: it skips a non-function one, on failure too
-      callback = discardResult;
+      callback = () => {};
     }
 
-    if ($isCallable(callback)) fs.symlinkCb(err => callback(err === null ? undefined : err), target, path, type);
-    else fs.symlink(target, path, type).then(callback, callback);
+    fs.symlinkCb(err => callback(err === null ? undefined : err), target, path, type);
   },
   truncate = function truncate(path, len, callback?) {
     if (typeof path === "number") {

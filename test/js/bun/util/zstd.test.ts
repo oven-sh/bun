@@ -1113,48 +1113,41 @@ describe("the output is that of zstd 1.5.7", () => {
   const large = corpus.subarray(0, 300_000);
   const small = corpus.subarray(300_000, 303_000);
 
-  it("at every level", () => {
-    const results: Record<string, string> = {};
-    for (let level = 1; level <= 22; level++) {
-      // The highest levels are slow.
-      const data = level < 19 ? large : large.subarray(0, 140_000);
-      results[level] = `${digest(zstdCompressSync(data, { level }))}, ${digest(zstdCompressSync(small, { level }))}`;
-    }
-    // Not -1: node:zlib takes that for a parameter that is not set.
-    for (const level of [-2, -7, -100]) {
-      const params = { [c.ZSTD_c_compressionLevel]: level };
-      results[level] =
-        `${digest(zlib.zstdCompressSync(large, { params }))}, ${digest(zlib.zstdCompressSync(small, { params }))}`;
-    }
-    expect(results).toMatchInlineSnapshot(`
-      {
-        "-100": "167967 45693a3bc89d2838, 2112 a1f04bdd2c75d853",
-        "-2": "55329 a7cd8da33a4cce8b, 954 cb3a52b86b5193c7",
-        "-7": "65641 25bb487794d2f45f, 1081 6841140ea417de55",
-        "1": "46828 2a61d18b13a9df88, 824 3a3b2b799ed70f7b",
-        "10": "42353 d560f70047c278d, 807 bc69857972f7737c",
-        "11": "42124 cc37ec9a45f8d164, 808 95559a23325a524d",
-        "12": "42124 cc37ec9a45f8d164, 806 5984ef401fd2141",
-        "13": "42364 fd1a09c03715fc5f, 807 6648f2fa58a397d4",
-        "14": "42287 87ee023408ff3e30, 807 6648f2fa58a397d4",
-        "15": "42233 109ef580b5685e85, 804 52073852c548e55e",
-        "16": "42522 3293e655be1b0330, 807 6648f2fa58a397d4",
-        "17": "41809 7cb274a8772cd4cc, 806 b609660f6b3d21d9",
-        "18": "41253 d616eadc7ae1a5de, 804 52073852c548e55e",
-        "19": "18189 44c06af9c0a7b97f, 804 52073852c548e55e",
-        "2": "45933 2795a6f87171faac, 811 bd7ae68cb7d95862",
-        "20": "18125 7c0ef33ba30541a2, 804 52073852c548e55e",
-        "21": "18125 7c0ef33ba30541a2, 804 52073852c548e55e",
-        "22": "18125 e1b7fc6756c67456, 804 52073852c548e55e",
-        "3": "45122 344d3c35e5ad0340, 810 e35cec5c3500c856",
-        "4": "45093 7634242fc968e2c3, 822 6b45b45a5d921bfc",
-        "5": "44424 daecc1abec496995, 810 4489026b2c29b8dc",
-        "6": "42948 a879387b2601910d, 809 b15c4cf338e1d77a",
-        "7": "42675 1f9ad80ad0656d09, 804 603c9d665714a2",
-        "8": "42562 26911127c1e54142, 804 603c9d665714a2",
-        "9": "42562 26911127c1e54142, 807 bc69857972f7737c",
-      }
-    `);
+  // Not -1: node:zlib takes that for a parameter that is not set.
+  it.each([
+    [-100, "167967 45693a3bc89d2838, 2112 a1f04bdd2c75d853"],
+    [-7, "65641 25bb487794d2f45f, 1081 6841140ea417de55"],
+    [-2, "55329 a7cd8da33a4cce8b, 954 cb3a52b86b5193c7"],
+    [1, "46828 2a61d18b13a9df88, 824 3a3b2b799ed70f7b"],
+    [2, "45933 2795a6f87171faac, 811 bd7ae68cb7d95862"],
+    [3, "45122 344d3c35e5ad0340, 810 e35cec5c3500c856"],
+    [4, "45093 7634242fc968e2c3, 822 6b45b45a5d921bfc"],
+    [5, "44424 daecc1abec496995, 810 4489026b2c29b8dc"],
+    [6, "42948 a879387b2601910d, 809 b15c4cf338e1d77a"],
+    [7, "42675 1f9ad80ad0656d09, 804 603c9d665714a2"],
+    [8, "42562 26911127c1e54142, 804 603c9d665714a2"],
+    [9, "42562 26911127c1e54142, 807 bc69857972f7737c"],
+    [10, "42353 d560f70047c278d, 807 bc69857972f7737c"],
+    [11, "42124 cc37ec9a45f8d164, 808 95559a23325a524d"],
+    [12, "42124 cc37ec9a45f8d164, 806 5984ef401fd2141"],
+    [13, "42364 fd1a09c03715fc5f, 807 6648f2fa58a397d4"],
+    [14, "42287 87ee023408ff3e30, 807 6648f2fa58a397d4"],
+    [15, "42233 109ef580b5685e85, 804 52073852c548e55e"],
+    [16, "42522 3293e655be1b0330, 807 6648f2fa58a397d4"],
+    [17, "41809 7cb274a8772cd4cc, 806 b609660f6b3d21d9"],
+    [18, "41253 d616eadc7ae1a5de, 804 52073852c548e55e"],
+    [19, "18189 44c06af9c0a7b97f, 804 52073852c548e55e"],
+    [20, "18125 7c0ef33ba30541a2, 804 52073852c548e55e"],
+    [21, "18125 7c0ef33ba30541a2, 804 52073852c548e55e"],
+    [22, "18125 e1b7fc6756c67456, 804 52073852c548e55e"],
+  ])("at level %i", (level, expected) => {
+    const compress = (data: Uint8Array) =>
+      level > 0
+        ? zstdCompressSync(data, { level })
+        : zlib.zstdCompressSync(data, { params: { [c.ZSTD_c_compressionLevel]: level } });
+    // The highest levels are slow.
+    const data = level < 19 ? large : large.subarray(0, 140_000);
+    expect(`${digest(compress(data))}, ${digest(compress(small))}`).toBe(expected);
   });
 
   it("with parameters", () => {
@@ -1690,8 +1683,9 @@ describe("bugs that zstd has had", () => {
     }
   });
 
-  it("offsets up to the window are decoded after a stream's buffer has wrapped around", async () => {
-    for (const distance of [1000, 1017, 1023, 1024]) {
+  it.each([1000, 1017, 1023, 1024])(
+    "offsets up to the window are decoded after a stream's buffer has wrapped around: %i",
+    async distance => {
       const input = Buffer.alloc(100_000, noise(distance, distance));
       for (const level of [5, 13, 19]) {
         const params = { [c.ZSTD_c_windowLog]: 10, [c.ZSTD_c_compressionLevel]: level };
@@ -1700,8 +1694,8 @@ describe("bugs that zstd has had", () => {
         expect(await through(zlib.createZstdDecompress(), pieces(frame, 1))).toEqual(input);
         expect(await through(zlib.createZstdDecompress(), [frame])).toEqual(input);
       }
-    }
-  });
+    },
+  );
 
   it("a larger window is decoded if allowed", async () => {
     const [, sync, streamed] = await decoded(hex("28b52ffd0090190000616263"), {
@@ -2048,22 +2042,23 @@ describe("bugs that zstd has had", () => {
       for (const size of [1 << 20, 64 << 10, 1000]) expect(await cut(size)).toBe("1398687 a871b693");
     });
 
-    it("make the same twice", async () => {
+    it.each([
+      [3, 0],
+      [3, 1],
+      [16, 0],
+      [16, 1],
+    ])("make the same twice: level %i, long distance matching %i", async (level, longDistance) => {
       const input = noise(3 << 19, 23, 7);
-      for (const longDistance of [0, 1]) {
-        for (const level of [3, 16]) {
-          const params = {
-            [c.ZSTD_c_nbWorkers]: 2,
-            [c.ZSTD_c_jobSize]: 512 << 10,
-            [c.ZSTD_c_compressionLevel]: level,
-            [c.ZSTD_c_enableLongDistanceMatching]: longDistance,
-          };
-          const made = () => through(zlib.createZstdCompress({ params }), pieces(input, 100_000)) as Promise<Buffer>;
-          const [frame, again] = await Promise.all([made(), made()]);
-          expect(frame.equals(again)).toBe(true);
-          expect(zlib.zstdDecompressSync(frame).equals(input)).toBe(true);
-        }
-      }
+      const params = {
+        [c.ZSTD_c_nbWorkers]: 2,
+        [c.ZSTD_c_jobSize]: 512 << 10,
+        [c.ZSTD_c_compressionLevel]: level,
+        [c.ZSTD_c_enableLongDistanceMatching]: longDistance,
+      };
+      const made = () => through(zlib.createZstdCompress({ params }), pieces(input, 100_000)) as Promise<Buffer>;
+      const [frame, again] = await Promise.all([made(), made()]);
+      expect(frame.equals(again)).toBe(true);
+      expect(zlib.zstdDecompressSync(frame).equals(input)).toBe(true);
     });
 
     it("with nothing left for the last job", async () => {

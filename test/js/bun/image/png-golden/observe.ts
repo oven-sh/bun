@@ -1,4 +1,4 @@
-// What Bun.Image makes of a PNG, as text, for png-golden.test.ts and record.ts.
+// What Bun.Image makes of a PNG, as text, for png-golden.test.ts and record.ts. And the chunks of a PNG file, for all.
 
 export type PngOptions = NonNullable<Parameters<Bun.Image["png"]>[0]>;
 

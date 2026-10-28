@@ -51,7 +51,35 @@ const cases: [css: string, expected: string | null][] = [
   ["hsl(atan2(0px + 5, 1) 50% 50%)", null],
   // The end of the input closes every block.
   ["lch(50% 50 atan2(1, sign(1s", "lch(50% 50 45)"],
+  // No function takes two types.
+  ["hsl(atan2(sign(1px + 1s), 3) 50% 50%)", null],
+  ["hsl(atan2(round(5px, 2s), 3px) 50% 50%)", null],
+  ["hsl(atan2(mod(5px, 2s), 3px) 50% 50%)", null],
+  ["hsl(atan2(hypot(3px, 4s), 3px) 50% 50%)", null],
+  ["hsl(atan2(max(1px, 2s), 3px) 50% 50%)", null],
+  ["hsl(atan2(clamp(2s, 5px, 4px), 3px) 50% 50%)", null],
+  ["hsl(atan2(abs(5px - 2s), 3px) 50% 50%)", null],
+  ["hsl(atan2((5px + 2s) * 2, 3px) 50% 50%)", null],
 ];
+
+// The first argument of `atan2(<value>, 3)`, and the color for it. The color is the same with every unit.
+const values: [value: (unit: string) => string, color: string, percentage?: null][] = [
+  [u => `5${u} - 2${u}`, "#bf9f40"],
+  [u => `clamp(2${u}, 5${u}, 4${u})`, "#bfb140"],
+  [u => `round(5${u}, 2${u})`, "#b8bf40"],
+  [u => `mod(-5${u}, 2${u})`, "#bf6740"],
+  [u => `rem(-5${u}, 2${u}) * -2 + (1${u})`, "#bf9f40"],
+  [u => `hypot(3${u}, 4${u}) - 2${u}`, "#bf9f40"],
+  [u => `max(1${u}, 2${u}) + min(4${u}, 5${u})`, "#b8bf40"],
+  // abs() and sign() of a percentage do not fold.
+  [u => `abs(2${u} - 5${u})`, "#bf9f40", null],
+  [u => `sign(2${u} - 5${u}) * 5${u}`, "#bf40bd", null],
+];
+for (const unit of ["", "deg", "px", "s", "%"]) {
+  for (const [value, color, percentage] of values) {
+    cases.push([`hsl(atan2(${value(unit)}, 3${unit}) 50% 50%)`, unit === "%" && percentage === null ? null : color]);
+  }
+}
 
 // Every level is valid: the nested function parses, and the value after it is not an angle.
 function validChain(depth: number, level: (inner: string, i: number) => string, leaf = "atan2(1s, 1s)"): string {
@@ -92,9 +120,10 @@ const validColors: [css: string, expected: string][] = [
   [`hsl(atan2(${Buffer.alloc(14 * 200, "sin(1) * 0s + ").toString()}1s, 1s) 50% 50%)`, "#bf9f40"],
 ];
 
+// round() keeps the digits that do not depend on the C library.
 const validRules: [css: string, expected: string][] = [
-  [`a{rotate:${secondsChain}}`, "a{rotate:.154922rad}"],
-  [`a{transition-duration:calc(1s*sin(${secondsChain}))}`, "a{transition-duration:.154303s}"],
+  [`a{rotate:round(${secondsChain},.0001rad)}`, "a{rotate:.1549rad}"],
+  [`a{transition-duration:round(calc(1s*sin(${secondsChain})),.1ms)}`, "a{transition-duration:.1543s}"],
 ];
 
 // Runs `script` in a process that is killed when it does not exit.
@@ -138,6 +167,27 @@ test.concurrent(
 
     expect({ output: stdout && JSON.parse(stdout), stderr, exitCode, signalCode }).toEqual({
       output: [validColors.map(([, expected]) => expected), validRules.map(([, expected]) => expected)],
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+  30_000,
+);
+
+test.concurrent(
+  "a long sum of math functions in atan2() is kept as written",
+  async () => {
+    // Each abs(1%) stays a function, so the sum of 21,600 of them cannot fold.
+    const { stdout, stderr, exitCode, signalCode } = await run(`
+      const { minifyTest } = require("bun:internal-for-testing").cssInternals;
+      const sum = Buffer.alloc(10 * 21599, "abs(1%) + ").toString() + "abs(1%)";
+      const rule = "a{rotate:atan2(1s,(" + sum + ")*2)}";
+      console.log(JSON.stringify([minifyTest(rule, "") === rule, Bun.color("hsl(atan2(1%, (" + sum + ") * 2) 50% 50%)", "css")]));
+    `);
+
+    expect({ output: stdout && JSON.parse(stdout), stderr, exitCode, signalCode }).toEqual({
+      output: [true, null],
       stderr: "",
       exitCode: 0,
       signalCode: null,

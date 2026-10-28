@@ -99,7 +99,7 @@ pub enum Calc<V> {
 // ───────────────────────────── CalcValue trait ─────────────────────────────
 // Every type that can appear inside `Calc<V>` implements this.
 //
-// The numeric protocol (`mul_f32`/`try_sign`/`try_map`/`try_op`/`try_op_to`/
+// The numeric protocol (`mul_f32`/`try_sign`/`try_map`/`try_op`/
 // `partial_cmp`/`try_from_angle`/`parse`/`to_css`/`is_compatible`) lives in
 // `crate::values::protocol` (re-exported from `crate::generics`); `CalcValue`
 // pulls it in as supertraits so each concrete impl block only carries the
@@ -112,13 +112,14 @@ pub trait CalcValue:
     + protocol::TrySign
     + protocol::TryMap
     + protocol::TryOp
-    + protocol::TryOpTo
     + protocol::PartialCmp
     + protocol::TryFromAngle
     + protocol::Parse
     + protocol::ToCss
     + protocol::IsCompatible
 {
+    /// Whether `Calc::add` keeps a sum that holds a math function, and so cannot fold.
+    const KEEPS_UNFOLDED_SUM: bool = true;
     fn add_internal(self, rhs: Self) -> Self;
     /// Wrap a value as a `Calc<Self>`.
     fn into_calc(self) -> Calc<Self>;
@@ -257,6 +258,9 @@ impl<V: CalcValue> Calc<V> {
             return Ok(Self::into_calc(Self::add_value(this_value, b)));
         }
         if matches!(self, Calc::Function(_)) || matches!(rhs, Calc::Function(_)) {
+            if !V::KEEPS_UNFOLDED_SUM {
+                return Err(input.new_custom_error(css::ParserError::invalid_value));
+            }
             return Ok(Calc::Sum {
                 left: Box::new(self),
                 right: Box::new(rhs),
@@ -1374,7 +1378,7 @@ fn absf(a: f32) -> f32 {
 
 // ───────────────────────── CalcValue impls ─────────────────────────────────
 // One impl per concrete `V` that `Calc<V>` is instantiated with. The
-// numeric-protocol surface (`mul_f32`/`try_sign`/`try_map`/`try_op{,_to}`/
+// numeric-protocol surface (`mul_f32`/`try_sign`/`try_map`/`try_op`/
 // `partial_cmp`/`try_from_angle`/`parse`/`to_css`/`is_compatible`) is
 // satisfied via `crate::values::protocol::*` supertraits; only the
 // calc-specific methods (`intoValue` / `addValue` / `intoCalc`
@@ -1656,17 +1660,6 @@ macro_rules! dim_pct_protocol {
                     _ => None,
                 }
             },
-            try_op_to: |this, rhs, ctx, f| {
-                match (this, rhs) {
-                    (DimensionPercentage::Dimension(a), DimensionPercentage::Dimension(b)) => {
-                        <$D as protocol::TryOpTo>::try_op_to(a, b, ctx, f)
-                    }
-                    (DimensionPercentage::Percentage(a), DimensionPercentage::Percentage(b)) => {
-                        Some(f(ctx, a.v, b.v))
-                    }
-                    _ => None,
-                }
-            },
             partial_cmp: forward,
             is_compatible: forward,
             $($($extra)*)?
@@ -1776,6 +1769,8 @@ impl protocol::Parse for Atan2Arg {
 }
 
 impl CalcValue for Atan2Arg {
+    // `atan2()` cannot use such a sum, and a long one is a deep tree.
+    const KEEPS_UNFOLDED_SUM: bool = false;
     fn add_internal(self, rhs: Self) -> Self {
         match (self, rhs) {
             (Self::Angle(a), Self::Angle(b)) => Self::Angle(a.add_internal(b)),

@@ -1,0 +1,1 @@
+{ "todoOn": { "win32": "there is no SIGUSR2: process.kill throws, and the text printed for the uncaught error is another one in an executable" } }

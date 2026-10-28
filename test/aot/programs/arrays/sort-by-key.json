@@ -1,0 +1,4 @@
+{
+  "runWithASAN": "the comparisons of a sort by locale were made without a check for an exception between them",
+  "build": ["--aot-heat=nothing-is-hottest"]
+}

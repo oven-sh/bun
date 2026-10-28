@@ -1,0 +1,5 @@
+{
+  "build": ["--tsconfig-override", "legacy-decorators.tsconfig.json"],
+  "env": { "BUN_JSC_crashIfInterpreterIsUsed": "1" },
+  "skipInShell": "shell/quick.py does not pass the tsconfig override that turns on experimentalDecorators"
+}

@@ -1,0 +1,11 @@
+sloppy require nothing thrown REPLACED
+sloppy _load nothing thrown REPLACED
+sloppy _resolveFilename nothing thrown REPLACED
+sloppy .cjs Error as before
+sloppy wrap nothing thrown REPLACED
+strict require nothing thrown REPLACED
+strict _load nothing thrown REPLACED
+strict _resolveFilename nothing thrown REPLACED
+strict .cjs Error as before
+strict wrap nothing thrown REPLACED
+1

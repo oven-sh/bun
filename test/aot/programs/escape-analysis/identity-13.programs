@@ -1,0 +1,2676 @@
+//// identity-13.ts
+// Generated program: object and closure identity stays observable when allocations are removed (part 13).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R836 { a836: number; m836?: () => number }
+function make836(): R836 { const r: R836 = { a836: 1 }; r.m836 = () => 1; return r; }
+class K836 { get f(): unknown { return make836().m836; } }
+function c836(): void { say("stored-later/accessor/strict-eq", (new K836().f) === (new K836().f)); }
+
+interface R837 { a837: number; m837?: () => number }
+function make837(): R837 { const r: R837 = { a837: 1 }; r.m837 = () => 1; return r; }
+function first837(...xs: unknown[]): unknown { return xs[0]; }
+function c837(): void { say("stored-later/rest/strict-eq", (first837(make837().m837)) === (first837(make837().m837))); }
+
+interface R838 { a838: number; m838?: () => number }
+function make838(): R838 { const r: R838 = { a838: 1 }; r.m838 = () => 1; return r; }
+function get838(): unknown { try { throw make838().m838; } catch (e) { return e; } }
+function c838(): void { say("stored-later/thrown/strict-eq", (get838()) === (get838())); }
+
+interface R839 { a839: number; m839?: () => number }
+function make839(): R839 { const r: R839 = { a839: 1 }; r.m839 = () => 1; return r; }
+function get839(other: unknown, which: boolean): unknown { return which ? make839().m839 : other; }
+function c839(): void { say("stored-later/one-arm/strict-eq", (get839(0, true)) === (get839(0, true))); }
+
+interface R840 { a840: number; m840?: () => number }
+function make840(): R840 { const r: R840 = { a840: 1 }; r.m840 = () => 1; return r; }
+function get840(): unknown { let t = make840(); for (let i = 0; i < 2; i++) t = make840(); return t.m840; }
+function c840(): void { say("stored-later/loop/strict-eq", (get840()) === (get840())); }
+
+interface R841 { a841: number; m841?: () => number }
+function make841(): R841 { const r: R841 = { a841: 1 }; r.m841 = () => 1; return r; }
+function id841<T>(x: T): T { return x; }
+function get841(): unknown { return id841(make841()).m841; }
+function c841(): void { say("stored-later/identity/strict-eq", (get841()) === (get841())); }
+
+interface R842 { a842: number; m842?: () => number }
+function make842(): R842 { const r: R842 = { a842: 1 }; r.m842 = () => 1; return r; }
+function get842(): unknown { return make842().m842; }
+const g842 = [get842];
+function c842(): void { say("stored-later/by-value/strict-eq", (g842[0]()) === (g842[0]())); }
+
+interface R843 { a843: number; m843?: () => number }
+function make843(): R843 { const r: R843 = { a843: 1 }; r.m843 = () => 1; return r; }
+function c843(): void { say("stored-later/values/strict-eq", (Object.values(make843())[1]) === (Object.values(make843())[1])); }
+
+interface R844 { a844: number; m844?: () => number }
+function make844(): R844 { const r: R844 = { a844: 1 }; r.m844 = () => 1; return r; }
+function get844(): unknown { return Object.values(make844())[1]; }
+function c844(): void { say("stored-later/values-returned/strict-eq", (get844()) === (get844())); }
+
+interface R845 { a845: number; m845?: () => number }
+function make845(): R845 { const r: R845 = { a845: 1 }; r.m845 = () => 1; return r; }
+function c845(): void { say("stored-later/entries/strict-eq", (Object.entries(make845())[1][1]) === (Object.entries(make845())[1][1])); }
+
+interface R846 { a846: number; m846?: () => number }
+function make846(): R846 { const r: R846 = { a846: 1 }; r.m846 = () => 1; return r; }
+function c846(): void { say("stored-later/descriptor/strict-eq", (Object.getOwnPropertyDescriptor(make846(), "m846")!.value) === (Object.getOwnPropertyDescriptor(make846(), "m846")!.value)); }
+
+interface R847 { a847: number; m847?: () => number }
+function make847(): R847 { const r: R847 = { a847: 1 }; r.m847 = () => 1; return r; }
+function c847(): void { say("stored-later/reflect-get/strict-eq", (Reflect.get(make847(), "m847")) === (Reflect.get(make847(), "m847"))); }
+
+interface R848 { a848: number; m848?: () => number }
+function make848(): R848 { const r: R848 = { a848: 1 }; r.m848 = () => 1; return r; }
+function c848(): void { say("stored-later/spread/strict-eq", (({ ...make848() }).m848) === (({ ...make848() }).m848)); }
+
+interface R849 { a849: number; m849?: () => number }
+function make849(): R849 { const r: R849 = { a849: 1 }; r.m849 = () => 1; return r; }
+function c849(): void { say("stored-later/assign/strict-eq", (Object.assign({}, make849()).m849) === (Object.assign({}, make849()).m849)); }
+
+interface R850 { a850: number; m850?: () => number }
+function make850(): R850 { const r: R850 = { a850: 1 }; r.m850 = () => 1; return r; }
+function get850(): unknown { const { m850 } = make850(); return m850; }
+function c850(): void { say("stored-later/pattern/strict-eq", (get850()) === (get850())); }
+
+interface R851 { a851: number; m851?: () => number }
+function make851(): R851 { const r: R851 = { a851: 1 }; r.m851 = () => 1; return r; }
+function get851(): unknown { const { a851: _a, ...rest } = make851(); return rest.m851; }
+function c851(): void { say("stored-later/rest-pattern/strict-eq", (get851()) === (get851())); }
+
+interface R852 { a852: number; m852?: () => number }
+function make852(): R852 { const r: R852 = { a852: 1 }; r.m852 = () => 1; return r; }
+const key852: string = "m852";
+function c852(): void { say("stored-later/computed-key/strict-eq", ((make852() as any)[key852]) === ((make852() as any)[key852])); }
+
+interface R853 { a853: number; m853?: () => number }
+function make853(): R853 { const r: R853 = { a853: 1 }; r.m853 = () => 1; return r; }
+function get853(): unknown { const t = make853(); let f: unknown; for (const k in t) f = (t as any)[k]; return f; }
+function c853(): void { say("stored-later/for-in/strict-eq", (get853()) === (get853())); }
+
+interface R854 { a854: number; m854?: () => number }
+function make854(): R854 { const r: R854 = { a854: 1 }; r.m854 = () => 1; return r; }
+function get854(): unknown { return make854().m854; }
+function c854(): void { say("stored-later/getter/strict-ne", (get854()) !== (get854())); }
+
+interface R855 { a855: number; m855?: () => number }
+function make855(): R855 { const r: R855 = { a855: 1 }; r.m855 = () => 1; return r; }
+function get855(): unknown { return make855().m855; }
+function c855(): void { say("stored-later/getter/loose-eq", (get855()) == (get855())); }
+
+interface R856 { a856: number; m856?: () => number }
+function make856(): R856 { const r: R856 = { a856: 1 }; r.m856 = () => 1; return r; }
+function get856(): unknown { return make856().m856; }
+function c856(): void { say("stored-later/getter/object-is", Object.is((get856()), (get856()))); }
+
+interface R857 { a857: number; m857?: () => number }
+function make857(): R857 { const r: R857 = { a857: 1 }; r.m857 = () => 1; return r; }
+function get857(): unknown { return make857().m857; }
+function c857(): void { say("stored-later/getter/set", new Set([(get857()), (get857())]).size); }
+
+interface R858 { a858: number; m858?: () => number }
+function make858(): R858 { const r: R858 = { a858: 1 }; r.m858 = () => 1; return r; }
+function get858(): unknown { return make858().m858; }
+function c858(): void { say("stored-later/getter/map-key", new Map([[(get858()), 1], [(get858()), 2]]).size); }
+
+interface R859 { a859: number; m859?: () => number }
+function make859(): R859 { const r: R859 = { a859: 1 }; r.m859 = () => 1; return r; }
+function get859(): unknown { return make859().m859; }
+function c859(): void { say("stored-later/getter/includes", [(get859())].includes((get859()))); }
+
+interface R860 { a860: number; m860?: () => number }
+function make860(): R860 { const r: R860 = { a860: 1 }; r.m860 = () => 1; return r; }
+function get860(): unknown { return make860().m860; }
+function c860(): void { say("stored-later/getter/index-of", [(get860())].indexOf((get860()))); }
+
+interface R861 { a861: number; m861?: () => number }
+function make861(): R861 { const r: R861 = { a861: 1 }; r.m861 = () => 1; return r; }
+function get861(): unknown { return make861().m861; }
+const ws861 = new WeakSet<object>();
+function c861(): void { say("stored-later/getter/weak-set", (ws861.add((get861()) as object), ws861.has((get861()) as object))); }
+
+interface R862 { a862: number; m862?: () => number }
+function make862(): R862 { const r: R862 = { a862: 1 }; r.m862 = () => 1; return r; }
+function get862(): unknown { return make862().m862; }
+const wm862 = new WeakMap<object, number>();
+function c862(): void { say("stored-later/getter/weak-map", (wm862.set((get862()) as object, 1), wm862.has((get862()) as object))); }
+
+interface R863 { a863: number; m863?: () => number }
+function make863(): R863 { const r: R863 = { a863: 1 }; r.m863 = () => 1; return r; }
+function get863(): unknown { return make863().m863; }
+function c863(): void { say("stored-later/getter/written", ((((get863())) as any).tag = 1, (((get863())) as any).tag)); }
+
+interface R864 { a864: number; m864?: () => number }
+function make864(): R864 { const r: R864 = { a864: 1 }; r.m864 = () => 1; return r; }
+function get864(): unknown { return make864().m864; }
+function c864(): void { say("stored-later/getter/defined", (Object.defineProperty((get864()) as object, "t", { value: 1 }), "t" in ((get864()) as object))); }
+
+interface R865 { a865: number; m865?: () => number }
+function make865(): R865 { const r: R865 = { a865: 1 }; r.m865 = () => 1; return r; }
+function get865(): unknown { return make865().m865; }
+function c865(): void { say("stored-later/getter/frozen", (Object.freeze((get865())), Object.isFrozen((get865())))); }
+
+interface R866 { a866: number; m866?: () => number }
+function make866(): R866 { const r: R866 = { a866: 1 }; r.m866 = () => 1; return r; }
+function get866(): unknown { return make866().m866; }
+function c866(): void { say("stored-later/getter/prototype-set", (Object.setPrototypeOf((get866()) as object, null), Object.getPrototypeOf((get866())) === null)); }
+
+interface R867 { a867: number; m867?: () => number }
+function make867(): R867 { const r: R867 = { a867: 1 }; r.m867 = () => 1; return r; }
+function get867(): unknown { return make867().m867; }
+function c867(): void { say("stored-later/getter/deleted", (delete (((get867())) as any).length, Object.hasOwn((get867()) as object, "length"))); }
+
+interface R868 { a868: number; m868?: () => number }
+function make868(): R868 { const r: R868 = { a868: 1 }; r.m868 = () => 1; return r; }
+function get868(): unknown { return make868().m868; }
+function same868(a: unknown, b: unknown): boolean { return a === b; }
+function c868(): void { say("stored-later/getter/in-a-callee", same868((get868()), (get868()))); }
+
+interface R869 { a869: number; m869?: () => number }
+function make869(): R869 { const r: R869 = { a869: 1 }; r.m869 = () => 1; return r; }
+function get869(): unknown { return make869().m869; }
+function hit869(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c869(): void { say("stored-later/getter/switch", hit869((get869()), (get869()))); }
+
+interface R870 { a870: number; m870?: () => number }
+function make870(): R870 { const r: R870 = { a870: 1 }; r.m870 = () => 1; return r; }
+function get870(): unknown { return make870().m870; }
+let last870: unknown;
+function seen870(f: unknown): boolean { const same = f === last870; last870 = f; return same; }
+function c870(): void { say("stored-later/getter/kept-then-compared", (seen870((get870())), seen870((get870())))); }
+
+interface R871 { a871: number; m871: () => number }
+function make871(): R871 { return { a871: 1, m871: function () { return 1; } }; }
+function c871(): void { say("function-expression/inline/strict-eq", (make871().m871) === (make871().m871)); }
+
+interface R872 { a872: number; m872: () => number }
+function make872(): R872 { return { a872: 1, m872: function () { return 1; } }; }
+function get872(): unknown { return make872().m872; }
+function c872(): void { say("function-expression/getter/strict-eq", (get872()) === (get872())); }
+
+interface R873 { a873: number; m873: () => number }
+function make873(): R873 { return { a873: 1, m873: function () { return 1; } }; }
+function get873a(): unknown { return make873().m873; }
+function get873b(): unknown { return get873a(); }
+function get873(): unknown { return get873b(); }
+function c873(): void { say("function-expression/forwarded/strict-eq", (get873()) === (get873())); }
+
+interface R874 { a874: number; m874: () => number }
+function make874(): R874 { return { a874: 1, m874: function () { return 1; } }; }
+function pick874(x: R874): unknown { return x.m874; }
+function c874(): void { say("function-expression/picked/strict-eq", (pick874(make874())) === (pick874(make874()))); }
+
+interface R875 { a875: number; m875: () => number }
+function make875(): R875 { return { a875: 1, m875: function () { return 1; } }; }
+function pick875(x: R875): unknown { return x.m875; }
+function get875(): unknown { return pick875(make875()); }
+function c875(): void { say("function-expression/picked-and-returned/strict-eq", (get875()) === (get875())); }
+
+interface R876 { a876: number; m876: () => number }
+function make876(): R876 { return { a876: 1, m876: function () { return 1; } }; }
+let slot876: unknown;
+function put876(): unknown { slot876 = make876().m876; return 0; }
+function c876(): void { say("function-expression/variable/strict-eq", ((put876(), slot876)) === ((put876(), slot876))); }
+
+interface R877 { a877: number; m877: () => number }
+function make877(): R877 { return { a877: 1, m877: function () { return 1; } }; }
+let kept877: R877 | undefined;
+function keep877(): unknown { kept877 = make877(); return 0; }
+function c877(): void { say("function-expression/holder-in-a-variable/strict-eq", ((keep877(), kept877!.m877)) === ((keep877(), kept877!.m877))); }
+
+interface R878 { a878: number; m878: () => number }
+function make878(): R878 { return { a878: 1, m878: function () { return 1; } }; }
+function with878<T>(k: (f: unknown) => T): T { return k(make878().m878); }
+function c878(): void { say("function-expression/callback/strict-eq", (with878(x => x)) === (with878(x => x))); }
+
+interface R879 { a879: number; m879: () => number }
+function make879(): R879 { return { a879: 1, m879: function () { return 1; } }; }
+function later879(): () => unknown { const t = make879(); return () => t.m879; }
+function c879(): void { say("function-expression/closure/strict-eq", (later879()()) === (later879()())); }
+
+interface R880 { a880: number; m880: () => number }
+function make880(): R880 { return { a880: 1, m880: function () { return 1; } }; }
+function later880(): () => unknown { const f = make880().m880; return () => f; }
+function c880(): void { say("function-expression/captured/strict-eq", (later880()()) === (later880()())); }
+
+interface R881 { a881: number; m881: () => number }
+function make881(): R881 { return { a881: 1, m881: function () { return 1; } }; }
+function wrap881(): { f: unknown } { return { f: make881().m881 }; }
+function c881(): void { say("function-expression/rewrapped/strict-eq", (wrap881().f) === (wrap881().f)); }
+
+interface R882 { a882: number; m882: () => number }
+function make882(): R882 { return { a882: 1, m882: function () { return 1; } }; }
+function wrap882(): unknown[] { return [make882().m882]; }
+function c882(): void { say("function-expression/rewrapped-in-an-array/strict-eq", (wrap882()[0]) === (wrap882()[0])); }
+
+interface R883 { a883: number; m883: () => number }
+function make883(): R883 { return { a883: 1, m883: function () { return 1; } }; }
+function* gen883(): Generator<unknown> { yield make883().m883; }
+function c883(): void { say("function-expression/generator/strict-eq", (gen883().next().value) === (gen883().next().value)); }
+
+interface R884 { a884: number; m884: () => number }
+function make884(): R884 { return { a884: 1, m884: function () { return 1; } }; }
+class K884 { get(): unknown { return make884().m884; } }
+function c884(): void { say("function-expression/method/strict-eq", (new K884().get()) === (new K884().get())); }
+
+interface R885 { a885: number; m885: () => number }
+function make885(): R885 { return { a885: 1, m885: function () { return 1; } }; }
+class K885 { get f(): unknown { return make885().m885; } }
+function c885(): void { say("function-expression/accessor/strict-eq", (new K885().f) === (new K885().f)); }
+
+interface R886 { a886: number; m886: () => number }
+function make886(): R886 { return { a886: 1, m886: function () { return 1; } }; }
+function first886(...xs: unknown[]): unknown { return xs[0]; }
+function c886(): void { say("function-expression/rest/strict-eq", (first886(make886().m886)) === (first886(make886().m886))); }
+
+interface R887 { a887: number; m887: () => number }
+function make887(): R887 { return { a887: 1, m887: function () { return 1; } }; }
+function get887(): unknown { try { throw make887().m887; } catch (e) { return e; } }
+function c887(): void { say("function-expression/thrown/strict-eq", (get887()) === (get887())); }
+
+interface R888 { a888: number; m888: () => number }
+function make888(): R888 { return { a888: 1, m888: function () { return 1; } }; }
+function get888(other: unknown, which: boolean): unknown { return which ? make888().m888 : other; }
+function c888(): void { say("function-expression/one-arm/strict-eq", (get888(0, true)) === (get888(0, true))); }
+
+interface R889 { a889: number; m889: () => number }
+function make889(): R889 { return { a889: 1, m889: function () { return 1; } }; }
+function get889(): unknown { let t = make889(); for (let i = 0; i < 2; i++) t = make889(); return t.m889; }
+function c889(): void { say("function-expression/loop/strict-eq", (get889()) === (get889())); }
+
+interface R890 { a890: number; m890: () => number }
+function make890(): R890 { return { a890: 1, m890: function () { return 1; } }; }
+function id890<T>(x: T): T { return x; }
+function get890(): unknown { return id890(make890()).m890; }
+function c890(): void { say("function-expression/identity/strict-eq", (get890()) === (get890())); }
+
+interface R891 { a891: number; m891: () => number }
+function make891(): R891 { return { a891: 1, m891: function () { return 1; } }; }
+function get891(): unknown { return make891().m891; }
+const g891 = [get891];
+function c891(): void { say("function-expression/by-value/strict-eq", (g891[0]()) === (g891[0]())); }
+
+interface R892 { a892: number; m892: () => number }
+function make892(): R892 { return { a892: 1, m892: function () { return 1; } }; }
+function c892(): void { say("function-expression/values/strict-eq", (Object.values(make892())[1]) === (Object.values(make892())[1])); }
+
+interface R893 { a893: number; m893: () => number }
+function make893(): R893 { return { a893: 1, m893: function () { return 1; } }; }
+function get893(): unknown { return Object.values(make893())[1]; }
+function c893(): void { say("function-expression/values-returned/strict-eq", (get893()) === (get893())); }
+
+interface R894 { a894: number; m894: () => number }
+function make894(): R894 { return { a894: 1, m894: function () { return 1; } }; }
+function c894(): void { say("function-expression/entries/strict-eq", (Object.entries(make894())[1][1]) === (Object.entries(make894())[1][1])); }
+
+interface R895 { a895: number; m895: () => number }
+function make895(): R895 { return { a895: 1, m895: function () { return 1; } }; }
+function c895(): void { say("function-expression/descriptor/strict-eq", (Object.getOwnPropertyDescriptor(make895(), "m895")!.value) === (Object.getOwnPropertyDescriptor(make895(), "m895")!.value)); }
+
+c836(); c837(); c838(); c839(); c840(); c841(); c842(); c843(); c844(); c845(); c846(); c847(); c848(); c849(); c850(); c851(); c852(); c853(); c854(); c855(); c856(); c857(); c858(); c859(); c860(); c861(); c862(); c863(); c864(); c865(); c866(); c867(); c868(); c869(); c870(); c871(); c872(); c873(); c874(); c875(); c876(); c877(); c878(); c879(); c880(); c881(); c882(); c883(); c884(); c885(); c886(); c887(); c888(); c889(); c890(); c891(); c892(); c893(); c894(); c895();
+console.log(out.join("\n"));
+//// identity-14.ts
+// Generated program: object and closure identity stays observable when allocations are removed (part 14).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R896 { a896: number; m896: () => number }
+function make896(): R896 { return { a896: 1, m896: function () { return 1; } }; }
+function c896(): void { say("function-expression/reflect-get/strict-eq", (Reflect.get(make896(), "m896")) === (Reflect.get(make896(), "m896"))); }
+
+interface R897 { a897: number; m897: () => number }
+function make897(): R897 { return { a897: 1, m897: function () { return 1; } }; }
+function c897(): void { say("function-expression/spread/strict-eq", (({ ...make897() }).m897) === (({ ...make897() }).m897)); }
+
+interface R898 { a898: number; m898: () => number }
+function make898(): R898 { return { a898: 1, m898: function () { return 1; } }; }
+function c898(): void { say("function-expression/assign/strict-eq", (Object.assign({}, make898()).m898) === (Object.assign({}, make898()).m898)); }
+
+interface R899 { a899: number; m899: () => number }
+function make899(): R899 { return { a899: 1, m899: function () { return 1; } }; }
+function get899(): unknown { const { m899 } = make899(); return m899; }
+function c899(): void { say("function-expression/pattern/strict-eq", (get899()) === (get899())); }
+
+interface R900 { a900: number; m900: () => number }
+function make900(): R900 { return { a900: 1, m900: function () { return 1; } }; }
+function get900(): unknown { const { a900: _a, ...rest } = make900(); return rest.m900; }
+function c900(): void { say("function-expression/rest-pattern/strict-eq", (get900()) === (get900())); }
+
+interface R901 { a901: number; m901: () => number }
+function make901(): R901 { return { a901: 1, m901: function () { return 1; } }; }
+const key901: string = "m901";
+function c901(): void { say("function-expression/computed-key/strict-eq", ((make901() as any)[key901]) === ((make901() as any)[key901])); }
+
+interface R902 { a902: number; m902: () => number }
+function make902(): R902 { return { a902: 1, m902: function () { return 1; } }; }
+function get902(): unknown { const t = make902(); let f: unknown; for (const k in t) f = (t as any)[k]; return f; }
+function c902(): void { say("function-expression/for-in/strict-eq", (get902()) === (get902())); }
+
+interface R903 { a903: number; m903: () => number }
+function make903(): R903 { return { a903: 1, m903: function () { return 1; } }; }
+function get903(): unknown { return make903().m903; }
+function c903(): void { say("function-expression/getter/strict-ne", (get903()) !== (get903())); }
+
+interface R904 { a904: number; m904: () => number }
+function make904(): R904 { return { a904: 1, m904: function () { return 1; } }; }
+function get904(): unknown { return make904().m904; }
+function c904(): void { say("function-expression/getter/loose-eq", (get904()) == (get904())); }
+
+interface R905 { a905: number; m905: () => number }
+function make905(): R905 { return { a905: 1, m905: function () { return 1; } }; }
+function get905(): unknown { return make905().m905; }
+function c905(): void { say("function-expression/getter/object-is", Object.is((get905()), (get905()))); }
+
+interface R906 { a906: number; m906: () => number }
+function make906(): R906 { return { a906: 1, m906: function () { return 1; } }; }
+function get906(): unknown { return make906().m906; }
+function c906(): void { say("function-expression/getter/set", new Set([(get906()), (get906())]).size); }
+
+interface R907 { a907: number; m907: () => number }
+function make907(): R907 { return { a907: 1, m907: function () { return 1; } }; }
+function get907(): unknown { return make907().m907; }
+function c907(): void { say("function-expression/getter/map-key", new Map([[(get907()), 1], [(get907()), 2]]).size); }
+
+interface R908 { a908: number; m908: () => number }
+function make908(): R908 { return { a908: 1, m908: function () { return 1; } }; }
+function get908(): unknown { return make908().m908; }
+function c908(): void { say("function-expression/getter/includes", [(get908())].includes((get908()))); }
+
+interface R909 { a909: number; m909: () => number }
+function make909(): R909 { return { a909: 1, m909: function () { return 1; } }; }
+function get909(): unknown { return make909().m909; }
+function c909(): void { say("function-expression/getter/index-of", [(get909())].indexOf((get909()))); }
+
+interface R910 { a910: number; m910: () => number }
+function make910(): R910 { return { a910: 1, m910: function () { return 1; } }; }
+function get910(): unknown { return make910().m910; }
+const ws910 = new WeakSet<object>();
+function c910(): void { say("function-expression/getter/weak-set", (ws910.add((get910()) as object), ws910.has((get910()) as object))); }
+
+interface R911 { a911: number; m911: () => number }
+function make911(): R911 { return { a911: 1, m911: function () { return 1; } }; }
+function get911(): unknown { return make911().m911; }
+const wm911 = new WeakMap<object, number>();
+function c911(): void { say("function-expression/getter/weak-map", (wm911.set((get911()) as object, 1), wm911.has((get911()) as object))); }
+
+interface R912 { a912: number; m912: () => number }
+function make912(): R912 { return { a912: 1, m912: function () { return 1; } }; }
+function get912(): unknown { return make912().m912; }
+function c912(): void { say("function-expression/getter/written", ((((get912())) as any).tag = 1, (((get912())) as any).tag)); }
+
+interface R913 { a913: number; m913: () => number }
+function make913(): R913 { return { a913: 1, m913: function () { return 1; } }; }
+function get913(): unknown { return make913().m913; }
+function c913(): void { say("function-expression/getter/defined", (Object.defineProperty((get913()) as object, "t", { value: 1 }), "t" in ((get913()) as object))); }
+
+interface R914 { a914: number; m914: () => number }
+function make914(): R914 { return { a914: 1, m914: function () { return 1; } }; }
+function get914(): unknown { return make914().m914; }
+function c914(): void { say("function-expression/getter/frozen", (Object.freeze((get914())), Object.isFrozen((get914())))); }
+
+interface R915 { a915: number; m915: () => number }
+function make915(): R915 { return { a915: 1, m915: function () { return 1; } }; }
+function get915(): unknown { return make915().m915; }
+function c915(): void { say("function-expression/getter/prototype-set", (Object.setPrototypeOf((get915()) as object, null), Object.getPrototypeOf((get915())) === null)); }
+
+interface R916 { a916: number; m916: () => number }
+function make916(): R916 { return { a916: 1, m916: function () { return 1; } }; }
+function get916(): unknown { return make916().m916; }
+function c916(): void { say("function-expression/getter/deleted", (delete (((get916())) as any).length, Object.hasOwn((get916()) as object, "length"))); }
+
+interface R917 { a917: number; m917: () => number }
+function make917(): R917 { return { a917: 1, m917: function () { return 1; } }; }
+function get917(): unknown { return make917().m917; }
+function same917(a: unknown, b: unknown): boolean { return a === b; }
+function c917(): void { say("function-expression/getter/in-a-callee", same917((get917()), (get917()))); }
+
+interface R918 { a918: number; m918: () => number }
+function make918(): R918 { return { a918: 1, m918: function () { return 1; } }; }
+function get918(): unknown { return make918().m918; }
+function hit918(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c918(): void { say("function-expression/getter/switch", hit918((get918()), (get918()))); }
+
+interface R919 { a919: number; m919: () => number }
+function make919(): R919 { return { a919: 1, m919: function () { return 1; } }; }
+function get919(): unknown { return make919().m919; }
+let last919: unknown;
+function seen919(f: unknown): boolean { const same = f === last919; last919 = f; return same; }
+function c919(): void { say("function-expression/getter/kept-then-compared", (seen919((get919())), seen919((get919())))); }
+
+c896(); c897(); c898(); c899(); c900(); c901(); c902(); c903(); c904(); c905(); c906(); c907(); c908(); c909(); c910(); c911(); c912(); c913(); c914(); c915(); c916(); c917(); c918(); c919();
+console.log(out.join("\n"));
+//// identity2-03.ts
+// Generated program: object and closure identity stays observable when allocations are removed (second series, part 3).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R181 { a181: number; m181: () => number }
+function make181(): R181 { return { a181: 1, m181: () => 1 }; }
+function get181(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make181().m181; } }; for (const f of it) return f; return 0; }
+function c181(): void { say("record/custom-iterable/strict-eq", (get181()) === (get181())); }
+
+interface R182 { a182: number; m182: () => number }
+function make182(): R182 { return { a182: 1, m182: () => 1 }; }
+function get182(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make182().m182; } }; for (const f of it) return f; return 0; }
+function c182(): void { say("record/custom-iterable/strict-ne", (get182()) !== (get182())); }
+
+interface R183 { a183: number; m183: () => number }
+function make183(): R183 { return { a183: 1, m183: () => 1 }; }
+function get183(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make183().m183; } }; for (const f of it) return f; return 0; }
+function c183(): void { say("record/custom-iterable/loose-eq", (get183()) == (get183())); }
+
+interface R184 { a184: number; m184: () => number }
+function make184(): R184 { return { a184: 1, m184: () => 1 }; }
+function get184(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make184().m184; } }; for (const f of it) return f; return 0; }
+function c184(): void { say("record/custom-iterable/object-is", Object.is((get184()), (get184()))); }
+
+interface R185 { a185: number; m185: () => number }
+function make185(): R185 { return { a185: 1, m185: () => 1 }; }
+function get185(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make185().m185; } }; for (const f of it) return f; return 0; }
+function c185(): void { say("record/custom-iterable/set", new Set([(get185()), (get185())]).size); }
+
+interface R186 { a186: number; m186: () => number }
+function make186(): R186 { return { a186: 1, m186: () => 1 }; }
+function get186(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make186().m186; } }; for (const f of it) return f; return 0; }
+function c186(): void { say("record/custom-iterable/map-key", new Map([[(get186()), 1], [(get186()), 2]]).size); }
+
+interface R187 { a187: number; m187: () => number }
+function make187(): R187 { return { a187: 1, m187: () => 1 }; }
+function get187(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make187().m187; } }; for (const f of it) return f; return 0; }
+function c187(): void { say("record/custom-iterable/includes", [(get187())].includes((get187()))); }
+
+interface R188 { a188: number; m188: () => number }
+function make188(): R188 { return { a188: 1, m188: () => 1 }; }
+function get188(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make188().m188; } }; for (const f of it) return f; return 0; }
+function c188(): void { say("record/custom-iterable/index-of", [(get188())].indexOf((get188()))); }
+
+interface R189 { a189: number; m189: () => number }
+function make189(): R189 { return { a189: 1, m189: () => 1 }; }
+function get189(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make189().m189; } }; for (const f of it) return f; return 0; }
+const ws189 = new WeakSet<object>();
+function c189(): void { say("record/custom-iterable/weak-set", (ws189.add((get189()) as object), ws189.has((get189()) as object))); }
+
+interface R190 { a190: number; m190: () => number }
+function make190(): R190 { return { a190: 1, m190: () => 1 }; }
+function get190(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make190().m190; } }; for (const f of it) return f; return 0; }
+const wm190 = new WeakMap<object, number>();
+function c190(): void { say("record/custom-iterable/weak-map", (wm190.set((get190()) as object, 1), wm190.has((get190()) as object))); }
+
+interface R191 { a191: number; m191: () => number }
+function make191(): R191 { return { a191: 1, m191: () => 1 }; }
+function get191(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make191().m191; } }; for (const f of it) return f; return 0; }
+function c191(): void { say("record/custom-iterable/written", ((((get191())) as any).tag = 1, (((get191())) as any).tag)); }
+
+interface R192 { a192: number; m192: () => number }
+function make192(): R192 { return { a192: 1, m192: () => 1 }; }
+function get192(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make192().m192; } }; for (const f of it) return f; return 0; }
+function c192(): void { say("record/custom-iterable/defined", (Object.defineProperty((get192()) as object, "t", { value: 1 }), "t" in ((get192()) as object))); }
+
+interface R193 { a193: number; m193: () => number }
+function make193(): R193 { return { a193: 1, m193: () => 1 }; }
+function get193(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make193().m193; } }; for (const f of it) return f; return 0; }
+function c193(): void { say("record/custom-iterable/frozen", (Object.freeze((get193())), Object.isFrozen((get193())))); }
+
+interface R194 { a194: number; m194: () => number }
+function make194(): R194 { return { a194: 1, m194: () => 1 }; }
+function get194(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make194().m194; } }; for (const f of it) return f; return 0; }
+function c194(): void { say("record/custom-iterable/prototype-set", (Object.setPrototypeOf((get194()) as object, null), Object.getPrototypeOf((get194())) === null)); }
+
+interface R195 { a195: number; m195: () => number }
+function make195(): R195 { return { a195: 1, m195: () => 1 }; }
+function get195(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make195().m195; } }; for (const f of it) return f; return 0; }
+function c195(): void { say("record/custom-iterable/deleted", (delete (((get195())) as any).length, Object.hasOwn((get195()) as object, "length"))); }
+
+interface R196 { a196: number; m196: () => number }
+function make196(): R196 { return { a196: 1, m196: () => 1 }; }
+function get196(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make196().m196; } }; for (const f of it) return f; return 0; }
+function same196(a: unknown, b: unknown): boolean { return a === b; }
+function c196(): void { say("record/custom-iterable/in-a-callee", same196((get196()), (get196()))); }
+
+interface R197 { a197: number; m197: () => number }
+function make197(): R197 { return { a197: 1, m197: () => 1 }; }
+function get197(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make197().m197; } }; for (const f of it) return f; return 0; }
+function hit197(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c197(): void { say("record/custom-iterable/switch", hit197((get197()), (get197()))); }
+
+interface R198 { a198: number; m198: () => number }
+function make198(): R198 { return { a198: 1, m198: () => 1 }; }
+function get198(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make198().m198; } }; for (const f of it) return f; return 0; }
+let last198: unknown;
+function seen198(f: unknown): boolean { const same = f === last198; last198 = f; return same; }
+function c198(): void { say("record/custom-iterable/kept-then-compared", (seen198((get198())), seen198((get198())))); }
+
+interface R199 { a199: number; m199: () => number }
+function make199(): R199 { return { a199: 1, m199: () => 1 }; }
+function c199(): void { say("record/map-callback/strict-eq", ([0].map(() => make199().m199)[0]) === ([0].map(() => make199().m199)[0])); }
+
+interface R200 { a200: number; m200: () => number }
+function make200(): R200 { return { a200: 1, m200: () => 1 }; }
+function c200(): void { say("record/map-callback/strict-ne", ([0].map(() => make200().m200)[0]) !== ([0].map(() => make200().m200)[0])); }
+
+interface R201 { a201: number; m201: () => number }
+function make201(): R201 { return { a201: 1, m201: () => 1 }; }
+function c201(): void { say("record/map-callback/loose-eq", ([0].map(() => make201().m201)[0]) == ([0].map(() => make201().m201)[0])); }
+
+interface R202 { a202: number; m202: () => number }
+function make202(): R202 { return { a202: 1, m202: () => 1 }; }
+function c202(): void { say("record/map-callback/object-is", Object.is(([0].map(() => make202().m202)[0]), ([0].map(() => make202().m202)[0]))); }
+
+interface R203 { a203: number; m203: () => number }
+function make203(): R203 { return { a203: 1, m203: () => 1 }; }
+function c203(): void { say("record/map-callback/set", new Set([([0].map(() => make203().m203)[0]), ([0].map(() => make203().m203)[0])]).size); }
+
+interface R204 { a204: number; m204: () => number }
+function make204(): R204 { return { a204: 1, m204: () => 1 }; }
+function c204(): void { say("record/map-callback/map-key", new Map([[([0].map(() => make204().m204)[0]), 1], [([0].map(() => make204().m204)[0]), 2]]).size); }
+
+interface R205 { a205: number; m205: () => number }
+function make205(): R205 { return { a205: 1, m205: () => 1 }; }
+function c205(): void { say("record/map-callback/includes", [([0].map(() => make205().m205)[0])].includes(([0].map(() => make205().m205)[0]))); }
+
+interface R206 { a206: number; m206: () => number }
+function make206(): R206 { return { a206: 1, m206: () => 1 }; }
+function c206(): void { say("record/map-callback/index-of", [([0].map(() => make206().m206)[0])].indexOf(([0].map(() => make206().m206)[0]))); }
+
+interface R207 { a207: number; m207: () => number }
+function make207(): R207 { return { a207: 1, m207: () => 1 }; }
+const ws207 = new WeakSet<object>();
+function c207(): void { say("record/map-callback/weak-set", (ws207.add(([0].map(() => make207().m207)[0]) as object), ws207.has(([0].map(() => make207().m207)[0]) as object))); }
+
+interface R208 { a208: number; m208: () => number }
+function make208(): R208 { return { a208: 1, m208: () => 1 }; }
+const wm208 = new WeakMap<object, number>();
+function c208(): void { say("record/map-callback/weak-map", (wm208.set(([0].map(() => make208().m208)[0]) as object, 1), wm208.has(([0].map(() => make208().m208)[0]) as object))); }
+
+interface R209 { a209: number; m209: () => number }
+function make209(): R209 { return { a209: 1, m209: () => 1 }; }
+function c209(): void { say("record/map-callback/written", (((([0].map(() => make209().m209)[0])) as any).tag = 1, ((([0].map(() => make209().m209)[0])) as any).tag)); }
+
+interface R210 { a210: number; m210: () => number }
+function make210(): R210 { return { a210: 1, m210: () => 1 }; }
+function c210(): void { say("record/map-callback/defined", (Object.defineProperty(([0].map(() => make210().m210)[0]) as object, "t", { value: 1 }), "t" in (([0].map(() => make210().m210)[0]) as object))); }
+
+interface R211 { a211: number; m211: () => number }
+function make211(): R211 { return { a211: 1, m211: () => 1 }; }
+function c211(): void { say("record/map-callback/frozen", (Object.freeze(([0].map(() => make211().m211)[0])), Object.isFrozen(([0].map(() => make211().m211)[0])))); }
+
+interface R212 { a212: number; m212: () => number }
+function make212(): R212 { return { a212: 1, m212: () => 1 }; }
+function c212(): void { say("record/map-callback/prototype-set", (Object.setPrototypeOf(([0].map(() => make212().m212)[0]) as object, null), Object.getPrototypeOf(([0].map(() => make212().m212)[0])) === null)); }
+
+interface R213 { a213: number; m213: () => number }
+function make213(): R213 { return { a213: 1, m213: () => 1 }; }
+function c213(): void { say("record/map-callback/deleted", (delete ((([0].map(() => make213().m213)[0])) as any).length, Object.hasOwn(([0].map(() => make213().m213)[0]) as object, "length"))); }
+
+interface R214 { a214: number; m214: () => number }
+function make214(): R214 { return { a214: 1, m214: () => 1 }; }
+function same214(a: unknown, b: unknown): boolean { return a === b; }
+function c214(): void { say("record/map-callback/in-a-callee", same214(([0].map(() => make214().m214)[0]), ([0].map(() => make214().m214)[0]))); }
+
+interface R215 { a215: number; m215: () => number }
+function make215(): R215 { return { a215: 1, m215: () => 1 }; }
+function hit215(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c215(): void { say("record/map-callback/switch", hit215(([0].map(() => make215().m215)[0]), ([0].map(() => make215().m215)[0]))); }
+
+interface R216 { a216: number; m216: () => number }
+function make216(): R216 { return { a216: 1, m216: () => 1 }; }
+let last216: unknown;
+function seen216(f: unknown): boolean { const same = f === last216; last216 = f; return same; }
+function c216(): void { say("record/map-callback/kept-then-compared", (seen216(([0].map(() => make216().m216)[0])), seen216(([0].map(() => make216().m216)[0])))); }
+
+interface R217 { a217: number; m217: () => number }
+function make217(): R217 { return { a217: 1, m217: () => 1 }; }
+function c217(): void { say("record/find/strict-eq", ([make217().m217].find(() => true)) === ([make217().m217].find(() => true))); }
+
+interface R218 { a218: number; m218: () => number }
+function make218(): R218 { return { a218: 1, m218: () => 1 }; }
+function c218(): void { say("record/find/strict-ne", ([make218().m218].find(() => true)) !== ([make218().m218].find(() => true))); }
+
+interface R219 { a219: number; m219: () => number }
+function make219(): R219 { return { a219: 1, m219: () => 1 }; }
+function c219(): void { say("record/find/loose-eq", ([make219().m219].find(() => true)) == ([make219().m219].find(() => true))); }
+
+interface R220 { a220: number; m220: () => number }
+function make220(): R220 { return { a220: 1, m220: () => 1 }; }
+function c220(): void { say("record/find/object-is", Object.is(([make220().m220].find(() => true)), ([make220().m220].find(() => true)))); }
+
+interface R221 { a221: number; m221: () => number }
+function make221(): R221 { return { a221: 1, m221: () => 1 }; }
+function c221(): void { say("record/find/set", new Set([([make221().m221].find(() => true)), ([make221().m221].find(() => true))]).size); }
+
+interface R222 { a222: number; m222: () => number }
+function make222(): R222 { return { a222: 1, m222: () => 1 }; }
+function c222(): void { say("record/find/map-key", new Map([[([make222().m222].find(() => true)), 1], [([make222().m222].find(() => true)), 2]]).size); }
+
+interface R223 { a223: number; m223: () => number }
+function make223(): R223 { return { a223: 1, m223: () => 1 }; }
+function c223(): void { say("record/find/includes", [([make223().m223].find(() => true))].includes(([make223().m223].find(() => true)))); }
+
+interface R224 { a224: number; m224: () => number }
+function make224(): R224 { return { a224: 1, m224: () => 1 }; }
+function c224(): void { say("record/find/index-of", [([make224().m224].find(() => true))].indexOf(([make224().m224].find(() => true)))); }
+
+interface R225 { a225: number; m225: () => number }
+function make225(): R225 { return { a225: 1, m225: () => 1 }; }
+const ws225 = new WeakSet<object>();
+function c225(): void { say("record/find/weak-set", (ws225.add(([make225().m225].find(() => true)) as object), ws225.has(([make225().m225].find(() => true)) as object))); }
+
+interface R226 { a226: number; m226: () => number }
+function make226(): R226 { return { a226: 1, m226: () => 1 }; }
+const wm226 = new WeakMap<object, number>();
+function c226(): void { say("record/find/weak-map", (wm226.set(([make226().m226].find(() => true)) as object, 1), wm226.has(([make226().m226].find(() => true)) as object))); }
+
+interface R227 { a227: number; m227: () => number }
+function make227(): R227 { return { a227: 1, m227: () => 1 }; }
+function c227(): void { say("record/find/written", (((([make227().m227].find(() => true))) as any).tag = 1, ((([make227().m227].find(() => true))) as any).tag)); }
+
+interface R228 { a228: number; m228: () => number }
+function make228(): R228 { return { a228: 1, m228: () => 1 }; }
+function c228(): void { say("record/find/defined", (Object.defineProperty(([make228().m228].find(() => true)) as object, "t", { value: 1 }), "t" in (([make228().m228].find(() => true)) as object))); }
+
+interface R229 { a229: number; m229: () => number }
+function make229(): R229 { return { a229: 1, m229: () => 1 }; }
+function c229(): void { say("record/find/frozen", (Object.freeze(([make229().m229].find(() => true))), Object.isFrozen(([make229().m229].find(() => true))))); }
+
+interface R230 { a230: number; m230: () => number }
+function make230(): R230 { return { a230: 1, m230: () => 1 }; }
+function c230(): void { say("record/find/prototype-set", (Object.setPrototypeOf(([make230().m230].find(() => true)) as object, null), Object.getPrototypeOf(([make230().m230].find(() => true))) === null)); }
+
+interface R231 { a231: number; m231: () => number }
+function make231(): R231 { return { a231: 1, m231: () => 1 }; }
+function c231(): void { say("record/find/deleted", (delete ((([make231().m231].find(() => true))) as any).length, Object.hasOwn(([make231().m231].find(() => true)) as object, "length"))); }
+
+interface R232 { a232: number; m232: () => number }
+function make232(): R232 { return { a232: 1, m232: () => 1 }; }
+function same232(a: unknown, b: unknown): boolean { return a === b; }
+function c232(): void { say("record/find/in-a-callee", same232(([make232().m232].find(() => true)), ([make232().m232].find(() => true)))); }
+
+interface R233 { a233: number; m233: () => number }
+function make233(): R233 { return { a233: 1, m233: () => 1 }; }
+function hit233(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c233(): void { say("record/find/switch", hit233(([make233().m233].find(() => true)), ([make233().m233].find(() => true)))); }
+
+interface R234 { a234: number; m234: () => number }
+function make234(): R234 { return { a234: 1, m234: () => 1 }; }
+let last234: unknown;
+function seen234(f: unknown): boolean { const same = f === last234; last234 = f; return same; }
+function c234(): void { say("record/find/kept-then-compared", (seen234(([make234().m234].find(() => true))), seen234(([make234().m234].find(() => true))))); }
+
+interface R235 { a235: number; m235: () => number }
+function make235(): R235 { return { a235: 1, m235: () => 1 }; }
+function c235(): void { say("record/reduce/strict-eq", ([make235().m235 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)) === ([make235().m235 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))); }
+
+interface R236 { a236: number; m236: () => number }
+function make236(): R236 { return { a236: 1, m236: () => 1 }; }
+function c236(): void { say("record/reduce/strict-ne", ([make236().m236 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)) !== ([make236().m236 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))); }
+
+interface R237 { a237: number; m237: () => number }
+function make237(): R237 { return { a237: 1, m237: () => 1 }; }
+function c237(): void { say("record/reduce/loose-eq", ([make237().m237 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)) == ([make237().m237 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))); }
+
+interface R238 { a238: number; m238: () => number }
+function make238(): R238 { return { a238: 1, m238: () => 1 }; }
+function c238(): void { say("record/reduce/object-is", Object.is(([make238().m238 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)), ([make238().m238 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)))); }
+
+interface R239 { a239: number; m239: () => number }
+function make239(): R239 { return { a239: 1, m239: () => 1 }; }
+function c239(): void { say("record/reduce/set", new Set([([make239().m239 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)), ([make239().m239 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))]).size); }
+
+interface R240 { a240: number; m240: () => number }
+function make240(): R240 { return { a240: 1, m240: () => 1 }; }
+function c240(): void { say("record/reduce/map-key", new Map([[([make240().m240 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)), 1], [([make240().m240 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)), 2]]).size); }
+
+c181(); c182(); c183(); c184(); c185(); c186(); c187(); c188(); c189(); c190(); c191(); c192(); c193(); c194(); c195(); c196(); c197(); c198(); c199(); c200(); c201(); c202(); c203(); c204(); c205(); c206(); c207(); c208(); c209(); c210(); c211(); c212(); c213(); c214(); c215(); c216(); c217(); c218(); c219(); c220(); c221(); c222(); c223(); c224(); c225(); c226(); c227(); c228(); c229(); c230(); c231(); c232(); c233(); c234(); c235(); c236(); c237(); c238(); c239(); c240();
+console.log(out.join("\n"));
+//// identity2-04.ts
+// Generated program: object and closure identity stays observable when allocations are removed (second series, part 4).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R241 { a241: number; m241: () => number }
+function make241(): R241 { return { a241: 1, m241: () => 1 }; }
+function c241(): void { say("record/reduce/includes", [([make241().m241 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))].includes(([make241().m241 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)))); }
+
+interface R242 { a242: number; m242: () => number }
+function make242(): R242 { return { a242: 1, m242: () => 1 }; }
+function c242(): void { say("record/reduce/index-of", [([make242().m242 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))].indexOf(([make242().m242 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)))); }
+
+interface R243 { a243: number; m243: () => number }
+function make243(): R243 { return { a243: 1, m243: () => 1 }; }
+const ws243 = new WeakSet<object>();
+function c243(): void { say("record/reduce/weak-set", (ws243.add(([make243().m243 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)) as object), ws243.has(([make243().m243 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)) as object))); }
+
+interface R244 { a244: number; m244: () => number }
+function make244(): R244 { return { a244: 1, m244: () => 1 }; }
+const wm244 = new WeakMap<object, number>();
+function c244(): void { say("record/reduce/weak-map", (wm244.set(([make244().m244 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)) as object, 1), wm244.has(([make244().m244 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)) as object))); }
+
+interface R245 { a245: number; m245: () => number }
+function make245(): R245 { return { a245: 1, m245: () => 1 }; }
+function c245(): void { say("record/reduce/written", (((([make245().m245 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))) as any).tag = 1, ((([make245().m245 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))) as any).tag)); }
+
+interface R246 { a246: number; m246: () => number }
+function make246(): R246 { return { a246: 1, m246: () => 1 }; }
+function c246(): void { say("record/reduce/defined", (Object.defineProperty(([make246().m246 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)) as object, "t", { value: 1 }), "t" in (([make246().m246 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)) as object))); }
+
+interface R247 { a247: number; m247: () => number }
+function make247(): R247 { return { a247: 1, m247: () => 1 }; }
+function c247(): void { say("record/reduce/frozen", (Object.freeze(([make247().m247 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))), Object.isFrozen(([make247().m247 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))))); }
+
+interface R248 { a248: number; m248: () => number }
+function make248(): R248 { return { a248: 1, m248: () => 1 }; }
+function c248(): void { say("record/reduce/prototype-set", (Object.setPrototypeOf(([make248().m248 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)) as object, null), Object.getPrototypeOf(([make248().m248 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))) === null)); }
+
+interface R249 { a249: number; m249: () => number }
+function make249(): R249 { return { a249: 1, m249: () => 1 }; }
+function c249(): void { say("record/reduce/deleted", (delete ((([make249().m249 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))) as any).length, Object.hasOwn(([make249().m249 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)) as object, "length"))); }
+
+interface R250 { a250: number; m250: () => number }
+function make250(): R250 { return { a250: 1, m250: () => 1 }; }
+function same250(a: unknown, b: unknown): boolean { return a === b; }
+function c250(): void { say("record/reduce/in-a-callee", same250(([make250().m250 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)), ([make250().m250 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)))); }
+
+interface R251 { a251: number; m251: () => number }
+function make251(): R251 { return { a251: 1, m251: () => 1 }; }
+function hit251(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c251(): void { say("record/reduce/switch", hit251(([make251().m251 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)), ([make251().m251 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)))); }
+
+interface R252 { a252: number; m252: () => number }
+function make252(): R252 { return { a252: 1, m252: () => 1 }; }
+let last252: unknown;
+function seen252(f: unknown): boolean { const same = f === last252; last252 = f; return same; }
+function c252(): void { say("record/reduce/kept-then-compared", (seen252(([make252().m252 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))), seen252(([make252().m252 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))))); }
+
+interface R253 { a253: number; m253: () => number }
+function make253(): R253 { return { a253: 1, m253: () => 1 }; }
+function c253(): void { say("record/filter/strict-eq", ([make253().m253].filter(() => true)[0]) === ([make253().m253].filter(() => true)[0])); }
+
+interface R254 { a254: number; m254: () => number }
+function make254(): R254 { return { a254: 1, m254: () => 1 }; }
+function c254(): void { say("record/filter/strict-ne", ([make254().m254].filter(() => true)[0]) !== ([make254().m254].filter(() => true)[0])); }
+
+interface R255 { a255: number; m255: () => number }
+function make255(): R255 { return { a255: 1, m255: () => 1 }; }
+function c255(): void { say("record/filter/loose-eq", ([make255().m255].filter(() => true)[0]) == ([make255().m255].filter(() => true)[0])); }
+
+interface R256 { a256: number; m256: () => number }
+function make256(): R256 { return { a256: 1, m256: () => 1 }; }
+function c256(): void { say("record/filter/object-is", Object.is(([make256().m256].filter(() => true)[0]), ([make256().m256].filter(() => true)[0]))); }
+
+interface R257 { a257: number; m257: () => number }
+function make257(): R257 { return { a257: 1, m257: () => 1 }; }
+function c257(): void { say("record/filter/set", new Set([([make257().m257].filter(() => true)[0]), ([make257().m257].filter(() => true)[0])]).size); }
+
+interface R258 { a258: number; m258: () => number }
+function make258(): R258 { return { a258: 1, m258: () => 1 }; }
+function c258(): void { say("record/filter/map-key", new Map([[([make258().m258].filter(() => true)[0]), 1], [([make258().m258].filter(() => true)[0]), 2]]).size); }
+
+interface R259 { a259: number; m259: () => number }
+function make259(): R259 { return { a259: 1, m259: () => 1 }; }
+function c259(): void { say("record/filter/includes", [([make259().m259].filter(() => true)[0])].includes(([make259().m259].filter(() => true)[0]))); }
+
+interface R260 { a260: number; m260: () => number }
+function make260(): R260 { return { a260: 1, m260: () => 1 }; }
+function c260(): void { say("record/filter/index-of", [([make260().m260].filter(() => true)[0])].indexOf(([make260().m260].filter(() => true)[0]))); }
+
+interface R261 { a261: number; m261: () => number }
+function make261(): R261 { return { a261: 1, m261: () => 1 }; }
+const ws261 = new WeakSet<object>();
+function c261(): void { say("record/filter/weak-set", (ws261.add(([make261().m261].filter(() => true)[0]) as object), ws261.has(([make261().m261].filter(() => true)[0]) as object))); }
+
+interface R262 { a262: number; m262: () => number }
+function make262(): R262 { return { a262: 1, m262: () => 1 }; }
+const wm262 = new WeakMap<object, number>();
+function c262(): void { say("record/filter/weak-map", (wm262.set(([make262().m262].filter(() => true)[0]) as object, 1), wm262.has(([make262().m262].filter(() => true)[0]) as object))); }
+
+interface R263 { a263: number; m263: () => number }
+function make263(): R263 { return { a263: 1, m263: () => 1 }; }
+function c263(): void { say("record/filter/written", (((([make263().m263].filter(() => true)[0])) as any).tag = 1, ((([make263().m263].filter(() => true)[0])) as any).tag)); }
+
+interface R264 { a264: number; m264: () => number }
+function make264(): R264 { return { a264: 1, m264: () => 1 }; }
+function c264(): void { say("record/filter/defined", (Object.defineProperty(([make264().m264].filter(() => true)[0]) as object, "t", { value: 1 }), "t" in (([make264().m264].filter(() => true)[0]) as object))); }
+
+interface R265 { a265: number; m265: () => number }
+function make265(): R265 { return { a265: 1, m265: () => 1 }; }
+function c265(): void { say("record/filter/frozen", (Object.freeze(([make265().m265].filter(() => true)[0])), Object.isFrozen(([make265().m265].filter(() => true)[0])))); }
+
+interface R266 { a266: number; m266: () => number }
+function make266(): R266 { return { a266: 1, m266: () => 1 }; }
+function c266(): void { say("record/filter/prototype-set", (Object.setPrototypeOf(([make266().m266].filter(() => true)[0]) as object, null), Object.getPrototypeOf(([make266().m266].filter(() => true)[0])) === null)); }
+
+interface R267 { a267: number; m267: () => number }
+function make267(): R267 { return { a267: 1, m267: () => 1 }; }
+function c267(): void { say("record/filter/deleted", (delete ((([make267().m267].filter(() => true)[0])) as any).length, Object.hasOwn(([make267().m267].filter(() => true)[0]) as object, "length"))); }
+
+interface R268 { a268: number; m268: () => number }
+function make268(): R268 { return { a268: 1, m268: () => 1 }; }
+function same268(a: unknown, b: unknown): boolean { return a === b; }
+function c268(): void { say("record/filter/in-a-callee", same268(([make268().m268].filter(() => true)[0]), ([make268().m268].filter(() => true)[0]))); }
+
+interface R269 { a269: number; m269: () => number }
+function make269(): R269 { return { a269: 1, m269: () => 1 }; }
+function hit269(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c269(): void { say("record/filter/switch", hit269(([make269().m269].filter(() => true)[0]), ([make269().m269].filter(() => true)[0]))); }
+
+interface R270 { a270: number; m270: () => number }
+function make270(): R270 { return { a270: 1, m270: () => 1 }; }
+let last270: unknown;
+function seen270(f: unknown): boolean { const same = f === last270; last270 = f; return same; }
+function c270(): void { say("record/filter/kept-then-compared", (seen270(([make270().m270].filter(() => true)[0])), seen270(([make270().m270].filter(() => true)[0])))); }
+
+interface R271 { a271: number; m271: () => number }
+function make271(): R271 { return { a271: 1, m271: () => 1 }; }
+function c271(): void { say("record/flat/strict-eq", ([[make271().m271]].flat()[0]) === ([[make271().m271]].flat()[0])); }
+
+interface R272 { a272: number; m272: () => number }
+function make272(): R272 { return { a272: 1, m272: () => 1 }; }
+function c272(): void { say("record/flat/strict-ne", ([[make272().m272]].flat()[0]) !== ([[make272().m272]].flat()[0])); }
+
+interface R273 { a273: number; m273: () => number }
+function make273(): R273 { return { a273: 1, m273: () => 1 }; }
+function c273(): void { say("record/flat/loose-eq", ([[make273().m273]].flat()[0]) == ([[make273().m273]].flat()[0])); }
+
+interface R274 { a274: number; m274: () => number }
+function make274(): R274 { return { a274: 1, m274: () => 1 }; }
+function c274(): void { say("record/flat/object-is", Object.is(([[make274().m274]].flat()[0]), ([[make274().m274]].flat()[0]))); }
+
+interface R275 { a275: number; m275: () => number }
+function make275(): R275 { return { a275: 1, m275: () => 1 }; }
+function c275(): void { say("record/flat/set", new Set([([[make275().m275]].flat()[0]), ([[make275().m275]].flat()[0])]).size); }
+
+interface R276 { a276: number; m276: () => number }
+function make276(): R276 { return { a276: 1, m276: () => 1 }; }
+function c276(): void { say("record/flat/map-key", new Map([[([[make276().m276]].flat()[0]), 1], [([[make276().m276]].flat()[0]), 2]]).size); }
+
+interface R277 { a277: number; m277: () => number }
+function make277(): R277 { return { a277: 1, m277: () => 1 }; }
+function c277(): void { say("record/flat/includes", [([[make277().m277]].flat()[0])].includes(([[make277().m277]].flat()[0]))); }
+
+interface R278 { a278: number; m278: () => number }
+function make278(): R278 { return { a278: 1, m278: () => 1 }; }
+function c278(): void { say("record/flat/index-of", [([[make278().m278]].flat()[0])].indexOf(([[make278().m278]].flat()[0]))); }
+
+interface R279 { a279: number; m279: () => number }
+function make279(): R279 { return { a279: 1, m279: () => 1 }; }
+const ws279 = new WeakSet<object>();
+function c279(): void { say("record/flat/weak-set", (ws279.add(([[make279().m279]].flat()[0]) as object), ws279.has(([[make279().m279]].flat()[0]) as object))); }
+
+interface R280 { a280: number; m280: () => number }
+function make280(): R280 { return { a280: 1, m280: () => 1 }; }
+const wm280 = new WeakMap<object, number>();
+function c280(): void { say("record/flat/weak-map", (wm280.set(([[make280().m280]].flat()[0]) as object, 1), wm280.has(([[make280().m280]].flat()[0]) as object))); }
+
+interface R281 { a281: number; m281: () => number }
+function make281(): R281 { return { a281: 1, m281: () => 1 }; }
+function c281(): void { say("record/flat/written", (((([[make281().m281]].flat()[0])) as any).tag = 1, ((([[make281().m281]].flat()[0])) as any).tag)); }
+
+interface R282 { a282: number; m282: () => number }
+function make282(): R282 { return { a282: 1, m282: () => 1 }; }
+function c282(): void { say("record/flat/defined", (Object.defineProperty(([[make282().m282]].flat()[0]) as object, "t", { value: 1 }), "t" in (([[make282().m282]].flat()[0]) as object))); }
+
+interface R283 { a283: number; m283: () => number }
+function make283(): R283 { return { a283: 1, m283: () => 1 }; }
+function c283(): void { say("record/flat/frozen", (Object.freeze(([[make283().m283]].flat()[0])), Object.isFrozen(([[make283().m283]].flat()[0])))); }
+
+interface R284 { a284: number; m284: () => number }
+function make284(): R284 { return { a284: 1, m284: () => 1 }; }
+function c284(): void { say("record/flat/prototype-set", (Object.setPrototypeOf(([[make284().m284]].flat()[0]) as object, null), Object.getPrototypeOf(([[make284().m284]].flat()[0])) === null)); }
+
+interface R285 { a285: number; m285: () => number }
+function make285(): R285 { return { a285: 1, m285: () => 1 }; }
+function c285(): void { say("record/flat/deleted", (delete ((([[make285().m285]].flat()[0])) as any).length, Object.hasOwn(([[make285().m285]].flat()[0]) as object, "length"))); }
+
+interface R286 { a286: number; m286: () => number }
+function make286(): R286 { return { a286: 1, m286: () => 1 }; }
+function same286(a: unknown, b: unknown): boolean { return a === b; }
+function c286(): void { say("record/flat/in-a-callee", same286(([[make286().m286]].flat()[0]), ([[make286().m286]].flat()[0]))); }
+
+interface R287 { a287: number; m287: () => number }
+function make287(): R287 { return { a287: 1, m287: () => 1 }; }
+function hit287(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c287(): void { say("record/flat/switch", hit287(([[make287().m287]].flat()[0]), ([[make287().m287]].flat()[0]))); }
+
+interface R288 { a288: number; m288: () => number }
+function make288(): R288 { return { a288: 1, m288: () => 1 }; }
+let last288: unknown;
+function seen288(f: unknown): boolean { const same = f === last288; last288 = f; return same; }
+function c288(): void { say("record/flat/kept-then-compared", (seen288(([[make288().m288]].flat()[0])), seen288(([[make288().m288]].flat()[0])))); }
+
+interface R289 { a289: number; m289: () => number }
+function make289(): R289 { return { a289: 1, m289: () => 1 }; }
+function c289(): void { say("record/at/strict-eq", ([make289().m289].at(0)) === ([make289().m289].at(0))); }
+
+interface R290 { a290: number; m290: () => number }
+function make290(): R290 { return { a290: 1, m290: () => 1 }; }
+function c290(): void { say("record/at/strict-ne", ([make290().m290].at(0)) !== ([make290().m290].at(0))); }
+
+interface R291 { a291: number; m291: () => number }
+function make291(): R291 { return { a291: 1, m291: () => 1 }; }
+function c291(): void { say("record/at/loose-eq", ([make291().m291].at(0)) == ([make291().m291].at(0))); }
+
+interface R292 { a292: number; m292: () => number }
+function make292(): R292 { return { a292: 1, m292: () => 1 }; }
+function c292(): void { say("record/at/object-is", Object.is(([make292().m292].at(0)), ([make292().m292].at(0)))); }
+
+interface R293 { a293: number; m293: () => number }
+function make293(): R293 { return { a293: 1, m293: () => 1 }; }
+function c293(): void { say("record/at/set", new Set([([make293().m293].at(0)), ([make293().m293].at(0))]).size); }
+
+interface R294 { a294: number; m294: () => number }
+function make294(): R294 { return { a294: 1, m294: () => 1 }; }
+function c294(): void { say("record/at/map-key", new Map([[([make294().m294].at(0)), 1], [([make294().m294].at(0)), 2]]).size); }
+
+interface R295 { a295: number; m295: () => number }
+function make295(): R295 { return { a295: 1, m295: () => 1 }; }
+function c295(): void { say("record/at/includes", [([make295().m295].at(0))].includes(([make295().m295].at(0)))); }
+
+interface R296 { a296: number; m296: () => number }
+function make296(): R296 { return { a296: 1, m296: () => 1 }; }
+function c296(): void { say("record/at/index-of", [([make296().m296].at(0))].indexOf(([make296().m296].at(0)))); }
+
+interface R297 { a297: number; m297: () => number }
+function make297(): R297 { return { a297: 1, m297: () => 1 }; }
+const ws297 = new WeakSet<object>();
+function c297(): void { say("record/at/weak-set", (ws297.add(([make297().m297].at(0)) as object), ws297.has(([make297().m297].at(0)) as object))); }
+
+interface R298 { a298: number; m298: () => number }
+function make298(): R298 { return { a298: 1, m298: () => 1 }; }
+const wm298 = new WeakMap<object, number>();
+function c298(): void { say("record/at/weak-map", (wm298.set(([make298().m298].at(0)) as object, 1), wm298.has(([make298().m298].at(0)) as object))); }
+
+interface R299 { a299: number; m299: () => number }
+function make299(): R299 { return { a299: 1, m299: () => 1 }; }
+function c299(): void { say("record/at/written", (((([make299().m299].at(0))) as any).tag = 1, ((([make299().m299].at(0))) as any).tag)); }
+
+interface R300 { a300: number; m300: () => number }
+function make300(): R300 { return { a300: 1, m300: () => 1 }; }
+function c300(): void { say("record/at/defined", (Object.defineProperty(([make300().m300].at(0)) as object, "t", { value: 1 }), "t" in (([make300().m300].at(0)) as object))); }
+
+c241(); c242(); c243(); c244(); c245(); c246(); c247(); c248(); c249(); c250(); c251(); c252(); c253(); c254(); c255(); c256(); c257(); c258(); c259(); c260(); c261(); c262(); c263(); c264(); c265(); c266(); c267(); c268(); c269(); c270(); c271(); c272(); c273(); c274(); c275(); c276(); c277(); c278(); c279(); c280(); c281(); c282(); c283(); c284(); c285(); c286(); c287(); c288(); c289(); c290(); c291(); c292(); c293(); c294(); c295(); c296(); c297(); c298(); c299(); c300();
+console.log(out.join("\n"));
+//// identity2-05.ts
+// Generated program: object and closure identity stays observable when allocations are removed (second series, part 5).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R301 { a301: number; m301: () => number }
+function make301(): R301 { return { a301: 1, m301: () => 1 }; }
+function c301(): void { say("record/at/frozen", (Object.freeze(([make301().m301].at(0))), Object.isFrozen(([make301().m301].at(0))))); }
+
+interface R302 { a302: number; m302: () => number }
+function make302(): R302 { return { a302: 1, m302: () => 1 }; }
+function c302(): void { say("record/at/prototype-set", (Object.setPrototypeOf(([make302().m302].at(0)) as object, null), Object.getPrototypeOf(([make302().m302].at(0))) === null)); }
+
+interface R303 { a303: number; m303: () => number }
+function make303(): R303 { return { a303: 1, m303: () => 1 }; }
+function c303(): void { say("record/at/deleted", (delete ((([make303().m303].at(0))) as any).length, Object.hasOwn(([make303().m303].at(0)) as object, "length"))); }
+
+interface R304 { a304: number; m304: () => number }
+function make304(): R304 { return { a304: 1, m304: () => 1 }; }
+function same304(a: unknown, b: unknown): boolean { return a === b; }
+function c304(): void { say("record/at/in-a-callee", same304(([make304().m304].at(0)), ([make304().m304].at(0)))); }
+
+interface R305 { a305: number; m305: () => number }
+function make305(): R305 { return { a305: 1, m305: () => 1 }; }
+function hit305(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c305(): void { say("record/at/switch", hit305(([make305().m305].at(0)), ([make305().m305].at(0)))); }
+
+interface R306 { a306: number; m306: () => number }
+function make306(): R306 { return { a306: 1, m306: () => 1 }; }
+let last306: unknown;
+function seen306(f: unknown): boolean { const same = f === last306; last306 = f; return same; }
+function c306(): void { say("record/at/kept-then-compared", (seen306(([make306().m306].at(0))), seen306(([make306().m306].at(0))))); }
+
+interface R307 { a307: number; m307: () => number }
+function make307(): R307 { return { a307: 1, m307: () => 1 }; }
+function c307(): void { say("record/pop/strict-eq", ([make307().m307].pop()) === ([make307().m307].pop())); }
+
+interface R308 { a308: number; m308: () => number }
+function make308(): R308 { return { a308: 1, m308: () => 1 }; }
+function c308(): void { say("record/pop/strict-ne", ([make308().m308].pop()) !== ([make308().m308].pop())); }
+
+interface R309 { a309: number; m309: () => number }
+function make309(): R309 { return { a309: 1, m309: () => 1 }; }
+function c309(): void { say("record/pop/loose-eq", ([make309().m309].pop()) == ([make309().m309].pop())); }
+
+interface R310 { a310: number; m310: () => number }
+function make310(): R310 { return { a310: 1, m310: () => 1 }; }
+function c310(): void { say("record/pop/object-is", Object.is(([make310().m310].pop()), ([make310().m310].pop()))); }
+
+interface R311 { a311: number; m311: () => number }
+function make311(): R311 { return { a311: 1, m311: () => 1 }; }
+function c311(): void { say("record/pop/set", new Set([([make311().m311].pop()), ([make311().m311].pop())]).size); }
+
+interface R312 { a312: number; m312: () => number }
+function make312(): R312 { return { a312: 1, m312: () => 1 }; }
+function c312(): void { say("record/pop/map-key", new Map([[([make312().m312].pop()), 1], [([make312().m312].pop()), 2]]).size); }
+
+interface R313 { a313: number; m313: () => number }
+function make313(): R313 { return { a313: 1, m313: () => 1 }; }
+function c313(): void { say("record/pop/includes", [([make313().m313].pop())].includes(([make313().m313].pop()))); }
+
+interface R314 { a314: number; m314: () => number }
+function make314(): R314 { return { a314: 1, m314: () => 1 }; }
+function c314(): void { say("record/pop/index-of", [([make314().m314].pop())].indexOf(([make314().m314].pop()))); }
+
+interface R315 { a315: number; m315: () => number }
+function make315(): R315 { return { a315: 1, m315: () => 1 }; }
+const ws315 = new WeakSet<object>();
+function c315(): void { say("record/pop/weak-set", (ws315.add(([make315().m315].pop()) as object), ws315.has(([make315().m315].pop()) as object))); }
+
+interface R316 { a316: number; m316: () => number }
+function make316(): R316 { return { a316: 1, m316: () => 1 }; }
+const wm316 = new WeakMap<object, number>();
+function c316(): void { say("record/pop/weak-map", (wm316.set(([make316().m316].pop()) as object, 1), wm316.has(([make316().m316].pop()) as object))); }
+
+interface R317 { a317: number; m317: () => number }
+function make317(): R317 { return { a317: 1, m317: () => 1 }; }
+function c317(): void { say("record/pop/written", (((([make317().m317].pop())) as any).tag = 1, ((([make317().m317].pop())) as any).tag)); }
+
+interface R318 { a318: number; m318: () => number }
+function make318(): R318 { return { a318: 1, m318: () => 1 }; }
+function c318(): void { say("record/pop/defined", (Object.defineProperty(([make318().m318].pop()) as object, "t", { value: 1 }), "t" in (([make318().m318].pop()) as object))); }
+
+interface R319 { a319: number; m319: () => number }
+function make319(): R319 { return { a319: 1, m319: () => 1 }; }
+function c319(): void { say("record/pop/frozen", (Object.freeze(([make319().m319].pop())), Object.isFrozen(([make319().m319].pop())))); }
+
+interface R320 { a320: number; m320: () => number }
+function make320(): R320 { return { a320: 1, m320: () => 1 }; }
+function c320(): void { say("record/pop/prototype-set", (Object.setPrototypeOf(([make320().m320].pop()) as object, null), Object.getPrototypeOf(([make320().m320].pop())) === null)); }
+
+interface R321 { a321: number; m321: () => number }
+function make321(): R321 { return { a321: 1, m321: () => 1 }; }
+function c321(): void { say("record/pop/deleted", (delete ((([make321().m321].pop())) as any).length, Object.hasOwn(([make321().m321].pop()) as object, "length"))); }
+
+interface R322 { a322: number; m322: () => number }
+function make322(): R322 { return { a322: 1, m322: () => 1 }; }
+function same322(a: unknown, b: unknown): boolean { return a === b; }
+function c322(): void { say("record/pop/in-a-callee", same322(([make322().m322].pop()), ([make322().m322].pop()))); }
+
+interface R323 { a323: number; m323: () => number }
+function make323(): R323 { return { a323: 1, m323: () => 1 }; }
+function hit323(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c323(): void { say("record/pop/switch", hit323(([make323().m323].pop()), ([make323().m323].pop()))); }
+
+interface R324 { a324: number; m324: () => number }
+function make324(): R324 { return { a324: 1, m324: () => 1 }; }
+let last324: unknown;
+function seen324(f: unknown): boolean { const same = f === last324; last324 = f; return same; }
+function c324(): void { say("record/pop/kept-then-compared", (seen324(([make324().m324].pop())), seen324(([make324().m324].pop())))); }
+
+interface R325 { a325: number; m325: () => number }
+function make325(): R325 { return { a325: 1, m325: () => 1 }; }
+function c325(): void { say("record/shift/strict-eq", ([make325().m325].shift()) === ([make325().m325].shift())); }
+
+interface R326 { a326: number; m326: () => number }
+function make326(): R326 { return { a326: 1, m326: () => 1 }; }
+function c326(): void { say("record/shift/strict-ne", ([make326().m326].shift()) !== ([make326().m326].shift())); }
+
+interface R327 { a327: number; m327: () => number }
+function make327(): R327 { return { a327: 1, m327: () => 1 }; }
+function c327(): void { say("record/shift/loose-eq", ([make327().m327].shift()) == ([make327().m327].shift())); }
+
+interface R328 { a328: number; m328: () => number }
+function make328(): R328 { return { a328: 1, m328: () => 1 }; }
+function c328(): void { say("record/shift/object-is", Object.is(([make328().m328].shift()), ([make328().m328].shift()))); }
+
+interface R329 { a329: number; m329: () => number }
+function make329(): R329 { return { a329: 1, m329: () => 1 }; }
+function c329(): void { say("record/shift/set", new Set([([make329().m329].shift()), ([make329().m329].shift())]).size); }
+
+interface R330 { a330: number; m330: () => number }
+function make330(): R330 { return { a330: 1, m330: () => 1 }; }
+function c330(): void { say("record/shift/map-key", new Map([[([make330().m330].shift()), 1], [([make330().m330].shift()), 2]]).size); }
+
+interface R331 { a331: number; m331: () => number }
+function make331(): R331 { return { a331: 1, m331: () => 1 }; }
+function c331(): void { say("record/shift/includes", [([make331().m331].shift())].includes(([make331().m331].shift()))); }
+
+interface R332 { a332: number; m332: () => number }
+function make332(): R332 { return { a332: 1, m332: () => 1 }; }
+function c332(): void { say("record/shift/index-of", [([make332().m332].shift())].indexOf(([make332().m332].shift()))); }
+
+interface R333 { a333: number; m333: () => number }
+function make333(): R333 { return { a333: 1, m333: () => 1 }; }
+const ws333 = new WeakSet<object>();
+function c333(): void { say("record/shift/weak-set", (ws333.add(([make333().m333].shift()) as object), ws333.has(([make333().m333].shift()) as object))); }
+
+interface R334 { a334: number; m334: () => number }
+function make334(): R334 { return { a334: 1, m334: () => 1 }; }
+const wm334 = new WeakMap<object, number>();
+function c334(): void { say("record/shift/weak-map", (wm334.set(([make334().m334].shift()) as object, 1), wm334.has(([make334().m334].shift()) as object))); }
+
+interface R335 { a335: number; m335: () => number }
+function make335(): R335 { return { a335: 1, m335: () => 1 }; }
+function c335(): void { say("record/shift/written", (((([make335().m335].shift())) as any).tag = 1, ((([make335().m335].shift())) as any).tag)); }
+
+interface R336 { a336: number; m336: () => number }
+function make336(): R336 { return { a336: 1, m336: () => 1 }; }
+function c336(): void { say("record/shift/defined", (Object.defineProperty(([make336().m336].shift()) as object, "t", { value: 1 }), "t" in (([make336().m336].shift()) as object))); }
+
+interface R337 { a337: number; m337: () => number }
+function make337(): R337 { return { a337: 1, m337: () => 1 }; }
+function c337(): void { say("record/shift/frozen", (Object.freeze(([make337().m337].shift())), Object.isFrozen(([make337().m337].shift())))); }
+
+interface R338 { a338: number; m338: () => number }
+function make338(): R338 { return { a338: 1, m338: () => 1 }; }
+function c338(): void { say("record/shift/prototype-set", (Object.setPrototypeOf(([make338().m338].shift()) as object, null), Object.getPrototypeOf(([make338().m338].shift())) === null)); }
+
+interface R339 { a339: number; m339: () => number }
+function make339(): R339 { return { a339: 1, m339: () => 1 }; }
+function c339(): void { say("record/shift/deleted", (delete ((([make339().m339].shift())) as any).length, Object.hasOwn(([make339().m339].shift()) as object, "length"))); }
+
+interface R340 { a340: number; m340: () => number }
+function make340(): R340 { return { a340: 1, m340: () => 1 }; }
+function same340(a: unknown, b: unknown): boolean { return a === b; }
+function c340(): void { say("record/shift/in-a-callee", same340(([make340().m340].shift()), ([make340().m340].shift()))); }
+
+interface R341 { a341: number; m341: () => number }
+function make341(): R341 { return { a341: 1, m341: () => 1 }; }
+function hit341(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c341(): void { say("record/shift/switch", hit341(([make341().m341].shift()), ([make341().m341].shift()))); }
+
+interface R342 { a342: number; m342: () => number }
+function make342(): R342 { return { a342: 1, m342: () => 1 }; }
+let last342: unknown;
+function seen342(f: unknown): boolean { const same = f === last342; last342 = f; return same; }
+function c342(): void { say("record/shift/kept-then-compared", (seen342(([make342().m342].shift())), seen342(([make342().m342].shift())))); }
+
+interface R343 { a343: number; m343: () => number }
+function make343(): R343 { return { a343: 1, m343: () => 1 }; }
+function c343(): void { say("record/slice/strict-eq", ([make343().m343].slice()[0]) === ([make343().m343].slice()[0])); }
+
+interface R344 { a344: number; m344: () => number }
+function make344(): R344 { return { a344: 1, m344: () => 1 }; }
+function c344(): void { say("record/slice/strict-ne", ([make344().m344].slice()[0]) !== ([make344().m344].slice()[0])); }
+
+interface R345 { a345: number; m345: () => number }
+function make345(): R345 { return { a345: 1, m345: () => 1 }; }
+function c345(): void { say("record/slice/loose-eq", ([make345().m345].slice()[0]) == ([make345().m345].slice()[0])); }
+
+interface R346 { a346: number; m346: () => number }
+function make346(): R346 { return { a346: 1, m346: () => 1 }; }
+function c346(): void { say("record/slice/object-is", Object.is(([make346().m346].slice()[0]), ([make346().m346].slice()[0]))); }
+
+interface R347 { a347: number; m347: () => number }
+function make347(): R347 { return { a347: 1, m347: () => 1 }; }
+function c347(): void { say("record/slice/set", new Set([([make347().m347].slice()[0]), ([make347().m347].slice()[0])]).size); }
+
+interface R348 { a348: number; m348: () => number }
+function make348(): R348 { return { a348: 1, m348: () => 1 }; }
+function c348(): void { say("record/slice/map-key", new Map([[([make348().m348].slice()[0]), 1], [([make348().m348].slice()[0]), 2]]).size); }
+
+interface R349 { a349: number; m349: () => number }
+function make349(): R349 { return { a349: 1, m349: () => 1 }; }
+function c349(): void { say("record/slice/includes", [([make349().m349].slice()[0])].includes(([make349().m349].slice()[0]))); }
+
+interface R350 { a350: number; m350: () => number }
+function make350(): R350 { return { a350: 1, m350: () => 1 }; }
+function c350(): void { say("record/slice/index-of", [([make350().m350].slice()[0])].indexOf(([make350().m350].slice()[0]))); }
+
+interface R351 { a351: number; m351: () => number }
+function make351(): R351 { return { a351: 1, m351: () => 1 }; }
+const ws351 = new WeakSet<object>();
+function c351(): void { say("record/slice/weak-set", (ws351.add(([make351().m351].slice()[0]) as object), ws351.has(([make351().m351].slice()[0]) as object))); }
+
+interface R352 { a352: number; m352: () => number }
+function make352(): R352 { return { a352: 1, m352: () => 1 }; }
+const wm352 = new WeakMap<object, number>();
+function c352(): void { say("record/slice/weak-map", (wm352.set(([make352().m352].slice()[0]) as object, 1), wm352.has(([make352().m352].slice()[0]) as object))); }
+
+interface R353 { a353: number; m353: () => number }
+function make353(): R353 { return { a353: 1, m353: () => 1 }; }
+function c353(): void { say("record/slice/written", (((([make353().m353].slice()[0])) as any).tag = 1, ((([make353().m353].slice()[0])) as any).tag)); }
+
+interface R354 { a354: number; m354: () => number }
+function make354(): R354 { return { a354: 1, m354: () => 1 }; }
+function c354(): void { say("record/slice/defined", (Object.defineProperty(([make354().m354].slice()[0]) as object, "t", { value: 1 }), "t" in (([make354().m354].slice()[0]) as object))); }
+
+interface R355 { a355: number; m355: () => number }
+function make355(): R355 { return { a355: 1, m355: () => 1 }; }
+function c355(): void { say("record/slice/frozen", (Object.freeze(([make355().m355].slice()[0])), Object.isFrozen(([make355().m355].slice()[0])))); }
+
+interface R356 { a356: number; m356: () => number }
+function make356(): R356 { return { a356: 1, m356: () => 1 }; }
+function c356(): void { say("record/slice/prototype-set", (Object.setPrototypeOf(([make356().m356].slice()[0]) as object, null), Object.getPrototypeOf(([make356().m356].slice()[0])) === null)); }
+
+interface R357 { a357: number; m357: () => number }
+function make357(): R357 { return { a357: 1, m357: () => 1 }; }
+function c357(): void { say("record/slice/deleted", (delete ((([make357().m357].slice()[0])) as any).length, Object.hasOwn(([make357().m357].slice()[0]) as object, "length"))); }
+
+interface R358 { a358: number; m358: () => number }
+function make358(): R358 { return { a358: 1, m358: () => 1 }; }
+function same358(a: unknown, b: unknown): boolean { return a === b; }
+function c358(): void { say("record/slice/in-a-callee", same358(([make358().m358].slice()[0]), ([make358().m358].slice()[0]))); }
+
+interface R359 { a359: number; m359: () => number }
+function make359(): R359 { return { a359: 1, m359: () => 1 }; }
+function hit359(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c359(): void { say("record/slice/switch", hit359(([make359().m359].slice()[0]), ([make359().m359].slice()[0]))); }
+
+interface R360 { a360: number; m360: () => number }
+function make360(): R360 { return { a360: 1, m360: () => 1 }; }
+let last360: unknown;
+function seen360(f: unknown): boolean { const same = f === last360; last360 = f; return same; }
+function c360(): void { say("record/slice/kept-then-compared", (seen360(([make360().m360].slice()[0])), seen360(([make360().m360].slice()[0])))); }
+
+c301(); c302(); c303(); c304(); c305(); c306(); c307(); c308(); c309(); c310(); c311(); c312(); c313(); c314(); c315(); c316(); c317(); c318(); c319(); c320(); c321(); c322(); c323(); c324(); c325(); c326(); c327(); c328(); c329(); c330(); c331(); c332(); c333(); c334(); c335(); c336(); c337(); c338(); c339(); c340(); c341(); c342(); c343(); c344(); c345(); c346(); c347(); c348(); c349(); c350(); c351(); c352(); c353(); c354(); c355(); c356(); c357(); c358(); c359(); c360();
+console.log(out.join("\n"));
+//// identity2-06.ts
+// Generated program: object and closure identity stays observable when allocations are removed (second series, part 6).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R361 { a361: number; m361: () => number }
+function make361(): R361 { return { a361: 1, m361: () => 1 }; }
+function c361(): void { say("record/concat/strict-eq", (([] as unknown[]).concat([make361().m361])[0]) === (([] as unknown[]).concat([make361().m361])[0])); }
+
+interface R362 { a362: number; m362: () => number }
+function make362(): R362 { return { a362: 1, m362: () => 1 }; }
+function c362(): void { say("record/concat/strict-ne", (([] as unknown[]).concat([make362().m362])[0]) !== (([] as unknown[]).concat([make362().m362])[0])); }
+
+interface R363 { a363: number; m363: () => number }
+function make363(): R363 { return { a363: 1, m363: () => 1 }; }
+function c363(): void { say("record/concat/loose-eq", (([] as unknown[]).concat([make363().m363])[0]) == (([] as unknown[]).concat([make363().m363])[0])); }
+
+interface R364 { a364: number; m364: () => number }
+function make364(): R364 { return { a364: 1, m364: () => 1 }; }
+function c364(): void { say("record/concat/object-is", Object.is((([] as unknown[]).concat([make364().m364])[0]), (([] as unknown[]).concat([make364().m364])[0]))); }
+
+interface R365 { a365: number; m365: () => number }
+function make365(): R365 { return { a365: 1, m365: () => 1 }; }
+function c365(): void { say("record/concat/set", new Set([(([] as unknown[]).concat([make365().m365])[0]), (([] as unknown[]).concat([make365().m365])[0])]).size); }
+
+interface R366 { a366: number; m366: () => number }
+function make366(): R366 { return { a366: 1, m366: () => 1 }; }
+function c366(): void { say("record/concat/map-key", new Map([[(([] as unknown[]).concat([make366().m366])[0]), 1], [(([] as unknown[]).concat([make366().m366])[0]), 2]]).size); }
+
+interface R367 { a367: number; m367: () => number }
+function make367(): R367 { return { a367: 1, m367: () => 1 }; }
+function c367(): void { say("record/concat/includes", [(([] as unknown[]).concat([make367().m367])[0])].includes((([] as unknown[]).concat([make367().m367])[0]))); }
+
+interface R368 { a368: number; m368: () => number }
+function make368(): R368 { return { a368: 1, m368: () => 1 }; }
+function c368(): void { say("record/concat/index-of", [(([] as unknown[]).concat([make368().m368])[0])].indexOf((([] as unknown[]).concat([make368().m368])[0]))); }
+
+interface R369 { a369: number; m369: () => number }
+function make369(): R369 { return { a369: 1, m369: () => 1 }; }
+const ws369 = new WeakSet<object>();
+function c369(): void { say("record/concat/weak-set", (ws369.add((([] as unknown[]).concat([make369().m369])[0]) as object), ws369.has((([] as unknown[]).concat([make369().m369])[0]) as object))); }
+
+interface R370 { a370: number; m370: () => number }
+function make370(): R370 { return { a370: 1, m370: () => 1 }; }
+const wm370 = new WeakMap<object, number>();
+function c370(): void { say("record/concat/weak-map", (wm370.set((([] as unknown[]).concat([make370().m370])[0]) as object, 1), wm370.has((([] as unknown[]).concat([make370().m370])[0]) as object))); }
+
+interface R371 { a371: number; m371: () => number }
+function make371(): R371 { return { a371: 1, m371: () => 1 }; }
+function c371(): void { say("record/concat/written", ((((([] as unknown[]).concat([make371().m371])[0])) as any).tag = 1, (((([] as unknown[]).concat([make371().m371])[0])) as any).tag)); }
+
+interface R372 { a372: number; m372: () => number }
+function make372(): R372 { return { a372: 1, m372: () => 1 }; }
+function c372(): void { say("record/concat/defined", (Object.defineProperty((([] as unknown[]).concat([make372().m372])[0]) as object, "t", { value: 1 }), "t" in ((([] as unknown[]).concat([make372().m372])[0]) as object))); }
+
+interface R373 { a373: number; m373: () => number }
+function make373(): R373 { return { a373: 1, m373: () => 1 }; }
+function c373(): void { say("record/concat/frozen", (Object.freeze((([] as unknown[]).concat([make373().m373])[0])), Object.isFrozen((([] as unknown[]).concat([make373().m373])[0])))); }
+
+interface R374 { a374: number; m374: () => number }
+function make374(): R374 { return { a374: 1, m374: () => 1 }; }
+function c374(): void { say("record/concat/prototype-set", (Object.setPrototypeOf((([] as unknown[]).concat([make374().m374])[0]) as object, null), Object.getPrototypeOf((([] as unknown[]).concat([make374().m374])[0])) === null)); }
+
+interface R375 { a375: number; m375: () => number }
+function make375(): R375 { return { a375: 1, m375: () => 1 }; }
+function c375(): void { say("record/concat/deleted", (delete (((([] as unknown[]).concat([make375().m375])[0])) as any).length, Object.hasOwn((([] as unknown[]).concat([make375().m375])[0]) as object, "length"))); }
+
+interface R376 { a376: number; m376: () => number }
+function make376(): R376 { return { a376: 1, m376: () => 1 }; }
+function same376(a: unknown, b: unknown): boolean { return a === b; }
+function c376(): void { say("record/concat/in-a-callee", same376((([] as unknown[]).concat([make376().m376])[0]), (([] as unknown[]).concat([make376().m376])[0]))); }
+
+interface R377 { a377: number; m377: () => number }
+function make377(): R377 { return { a377: 1, m377: () => 1 }; }
+function hit377(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c377(): void { say("record/concat/switch", hit377((([] as unknown[]).concat([make377().m377])[0]), (([] as unknown[]).concat([make377().m377])[0]))); }
+
+interface R378 { a378: number; m378: () => number }
+function make378(): R378 { return { a378: 1, m378: () => 1 }; }
+let last378: unknown;
+function seen378(f: unknown): boolean { const same = f === last378; last378 = f; return same; }
+function c378(): void { say("record/concat/kept-then-compared", (seen378((([] as unknown[]).concat([make378().m378])[0])), seen378((([] as unknown[]).concat([make378().m378])[0])))); }
+
+interface R379 { a379: number; m379: () => number }
+function make379(): R379 { return { a379: 1, m379: () => 1 }; }
+function c379(): void { say("record/spread-array/strict-eq", ([...[make379().m379]][0]) === ([...[make379().m379]][0])); }
+
+interface R380 { a380: number; m380: () => number }
+function make380(): R380 { return { a380: 1, m380: () => 1 }; }
+function c380(): void { say("record/spread-array/strict-ne", ([...[make380().m380]][0]) !== ([...[make380().m380]][0])); }
+
+interface R381 { a381: number; m381: () => number }
+function make381(): R381 { return { a381: 1, m381: () => 1 }; }
+function c381(): void { say("record/spread-array/loose-eq", ([...[make381().m381]][0]) == ([...[make381().m381]][0])); }
+
+interface R382 { a382: number; m382: () => number }
+function make382(): R382 { return { a382: 1, m382: () => 1 }; }
+function c382(): void { say("record/spread-array/object-is", Object.is(([...[make382().m382]][0]), ([...[make382().m382]][0]))); }
+
+interface R383 { a383: number; m383: () => number }
+function make383(): R383 { return { a383: 1, m383: () => 1 }; }
+function c383(): void { say("record/spread-array/set", new Set([([...[make383().m383]][0]), ([...[make383().m383]][0])]).size); }
+
+interface R384 { a384: number; m384: () => number }
+function make384(): R384 { return { a384: 1, m384: () => 1 }; }
+function c384(): void { say("record/spread-array/map-key", new Map([[([...[make384().m384]][0]), 1], [([...[make384().m384]][0]), 2]]).size); }
+
+interface R385 { a385: number; m385: () => number }
+function make385(): R385 { return { a385: 1, m385: () => 1 }; }
+function c385(): void { say("record/spread-array/includes", [([...[make385().m385]][0])].includes(([...[make385().m385]][0]))); }
+
+interface R386 { a386: number; m386: () => number }
+function make386(): R386 { return { a386: 1, m386: () => 1 }; }
+function c386(): void { say("record/spread-array/index-of", [([...[make386().m386]][0])].indexOf(([...[make386().m386]][0]))); }
+
+interface R387 { a387: number; m387: () => number }
+function make387(): R387 { return { a387: 1, m387: () => 1 }; }
+const ws387 = new WeakSet<object>();
+function c387(): void { say("record/spread-array/weak-set", (ws387.add(([...[make387().m387]][0]) as object), ws387.has(([...[make387().m387]][0]) as object))); }
+
+interface R388 { a388: number; m388: () => number }
+function make388(): R388 { return { a388: 1, m388: () => 1 }; }
+const wm388 = new WeakMap<object, number>();
+function c388(): void { say("record/spread-array/weak-map", (wm388.set(([...[make388().m388]][0]) as object, 1), wm388.has(([...[make388().m388]][0]) as object))); }
+
+interface R389 { a389: number; m389: () => number }
+function make389(): R389 { return { a389: 1, m389: () => 1 }; }
+function c389(): void { say("record/spread-array/written", (((([...[make389().m389]][0])) as any).tag = 1, ((([...[make389().m389]][0])) as any).tag)); }
+
+interface R390 { a390: number; m390: () => number }
+function make390(): R390 { return { a390: 1, m390: () => 1 }; }
+function c390(): void { say("record/spread-array/defined", (Object.defineProperty(([...[make390().m390]][0]) as object, "t", { value: 1 }), "t" in (([...[make390().m390]][0]) as object))); }
+
+interface R391 { a391: number; m391: () => number }
+function make391(): R391 { return { a391: 1, m391: () => 1 }; }
+function c391(): void { say("record/spread-array/frozen", (Object.freeze(([...[make391().m391]][0])), Object.isFrozen(([...[make391().m391]][0])))); }
+
+interface R392 { a392: number; m392: () => number }
+function make392(): R392 { return { a392: 1, m392: () => 1 }; }
+function c392(): void { say("record/spread-array/prototype-set", (Object.setPrototypeOf(([...[make392().m392]][0]) as object, null), Object.getPrototypeOf(([...[make392().m392]][0])) === null)); }
+
+interface R393 { a393: number; m393: () => number }
+function make393(): R393 { return { a393: 1, m393: () => 1 }; }
+function c393(): void { say("record/spread-array/deleted", (delete ((([...[make393().m393]][0])) as any).length, Object.hasOwn(([...[make393().m393]][0]) as object, "length"))); }
+
+interface R394 { a394: number; m394: () => number }
+function make394(): R394 { return { a394: 1, m394: () => 1 }; }
+function same394(a: unknown, b: unknown): boolean { return a === b; }
+function c394(): void { say("record/spread-array/in-a-callee", same394(([...[make394().m394]][0]), ([...[make394().m394]][0]))); }
+
+interface R395 { a395: number; m395: () => number }
+function make395(): R395 { return { a395: 1, m395: () => 1 }; }
+function hit395(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c395(): void { say("record/spread-array/switch", hit395(([...[make395().m395]][0]), ([...[make395().m395]][0]))); }
+
+interface R396 { a396: number; m396: () => number }
+function make396(): R396 { return { a396: 1, m396: () => 1 }; }
+let last396: unknown;
+function seen396(f: unknown): boolean { const same = f === last396; last396 = f; return same; }
+function c396(): void { say("record/spread-array/kept-then-compared", (seen396(([...[make396().m396]][0])), seen396(([...[make396().m396]][0])))); }
+
+interface R397 { a397: number; m397: () => number }
+function make397(): R397 { return { a397: 1, m397: () => 1 }; }
+function c397(): void { say("record/array-from/strict-eq", (Array.from([make397().m397])[0]) === (Array.from([make397().m397])[0])); }
+
+interface R398 { a398: number; m398: () => number }
+function make398(): R398 { return { a398: 1, m398: () => 1 }; }
+function c398(): void { say("record/array-from/strict-ne", (Array.from([make398().m398])[0]) !== (Array.from([make398().m398])[0])); }
+
+interface R399 { a399: number; m399: () => number }
+function make399(): R399 { return { a399: 1, m399: () => 1 }; }
+function c399(): void { say("record/array-from/loose-eq", (Array.from([make399().m399])[0]) == (Array.from([make399().m399])[0])); }
+
+interface R400 { a400: number; m400: () => number }
+function make400(): R400 { return { a400: 1, m400: () => 1 }; }
+function c400(): void { say("record/array-from/object-is", Object.is((Array.from([make400().m400])[0]), (Array.from([make400().m400])[0]))); }
+
+interface R401 { a401: number; m401: () => number }
+function make401(): R401 { return { a401: 1, m401: () => 1 }; }
+function c401(): void { say("record/array-from/set", new Set([(Array.from([make401().m401])[0]), (Array.from([make401().m401])[0])]).size); }
+
+interface R402 { a402: number; m402: () => number }
+function make402(): R402 { return { a402: 1, m402: () => 1 }; }
+function c402(): void { say("record/array-from/map-key", new Map([[(Array.from([make402().m402])[0]), 1], [(Array.from([make402().m402])[0]), 2]]).size); }
+
+interface R403 { a403: number; m403: () => number }
+function make403(): R403 { return { a403: 1, m403: () => 1 }; }
+function c403(): void { say("record/array-from/includes", [(Array.from([make403().m403])[0])].includes((Array.from([make403().m403])[0]))); }
+
+interface R404 { a404: number; m404: () => number }
+function make404(): R404 { return { a404: 1, m404: () => 1 }; }
+function c404(): void { say("record/array-from/index-of", [(Array.from([make404().m404])[0])].indexOf((Array.from([make404().m404])[0]))); }
+
+interface R405 { a405: number; m405: () => number }
+function make405(): R405 { return { a405: 1, m405: () => 1 }; }
+const ws405 = new WeakSet<object>();
+function c405(): void { say("record/array-from/weak-set", (ws405.add((Array.from([make405().m405])[0]) as object), ws405.has((Array.from([make405().m405])[0]) as object))); }
+
+interface R406 { a406: number; m406: () => number }
+function make406(): R406 { return { a406: 1, m406: () => 1 }; }
+const wm406 = new WeakMap<object, number>();
+function c406(): void { say("record/array-from/weak-map", (wm406.set((Array.from([make406().m406])[0]) as object, 1), wm406.has((Array.from([make406().m406])[0]) as object))); }
+
+interface R407 { a407: number; m407: () => number }
+function make407(): R407 { return { a407: 1, m407: () => 1 }; }
+function c407(): void { say("record/array-from/written", ((((Array.from([make407().m407])[0])) as any).tag = 1, (((Array.from([make407().m407])[0])) as any).tag)); }
+
+interface R408 { a408: number; m408: () => number }
+function make408(): R408 { return { a408: 1, m408: () => 1 }; }
+function c408(): void { say("record/array-from/defined", (Object.defineProperty((Array.from([make408().m408])[0]) as object, "t", { value: 1 }), "t" in ((Array.from([make408().m408])[0]) as object))); }
+
+interface R409 { a409: number; m409: () => number }
+function make409(): R409 { return { a409: 1, m409: () => 1 }; }
+function c409(): void { say("record/array-from/frozen", (Object.freeze((Array.from([make409().m409])[0])), Object.isFrozen((Array.from([make409().m409])[0])))); }
+
+interface R410 { a410: number; m410: () => number }
+function make410(): R410 { return { a410: 1, m410: () => 1 }; }
+function c410(): void { say("record/array-from/prototype-set", (Object.setPrototypeOf((Array.from([make410().m410])[0]) as object, null), Object.getPrototypeOf((Array.from([make410().m410])[0])) === null)); }
+
+interface R411 { a411: number; m411: () => number }
+function make411(): R411 { return { a411: 1, m411: () => 1 }; }
+function c411(): void { say("record/array-from/deleted", (delete (((Array.from([make411().m411])[0])) as any).length, Object.hasOwn((Array.from([make411().m411])[0]) as object, "length"))); }
+
+interface R412 { a412: number; m412: () => number }
+function make412(): R412 { return { a412: 1, m412: () => 1 }; }
+function same412(a: unknown, b: unknown): boolean { return a === b; }
+function c412(): void { say("record/array-from/in-a-callee", same412((Array.from([make412().m412])[0]), (Array.from([make412().m412])[0]))); }
+
+interface R413 { a413: number; m413: () => number }
+function make413(): R413 { return { a413: 1, m413: () => 1 }; }
+function hit413(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c413(): void { say("record/array-from/switch", hit413((Array.from([make413().m413])[0]), (Array.from([make413().m413])[0]))); }
+
+interface R414 { a414: number; m414: () => number }
+function make414(): R414 { return { a414: 1, m414: () => 1 }; }
+let last414: unknown;
+function seen414(f: unknown): boolean { const same = f === last414; last414 = f; return same; }
+function c414(): void { say("record/array-from/kept-then-compared", (seen414((Array.from([make414().m414])[0])), seen414((Array.from([make414().m414])[0])))); }
+
+interface R415 { a415: number; m415: () => number }
+function make415(): R415 { return { a415: 1, m415: () => 1 }; }
+function c415(): void { say("record/array-of/strict-eq", (Array.of(make415().m415)[0]) === (Array.of(make415().m415)[0])); }
+
+interface R416 { a416: number; m416: () => number }
+function make416(): R416 { return { a416: 1, m416: () => 1 }; }
+function c416(): void { say("record/array-of/strict-ne", (Array.of(make416().m416)[0]) !== (Array.of(make416().m416)[0])); }
+
+interface R417 { a417: number; m417: () => number }
+function make417(): R417 { return { a417: 1, m417: () => 1 }; }
+function c417(): void { say("record/array-of/loose-eq", (Array.of(make417().m417)[0]) == (Array.of(make417().m417)[0])); }
+
+interface R418 { a418: number; m418: () => number }
+function make418(): R418 { return { a418: 1, m418: () => 1 }; }
+function c418(): void { say("record/array-of/object-is", Object.is((Array.of(make418().m418)[0]), (Array.of(make418().m418)[0]))); }
+
+interface R419 { a419: number; m419: () => number }
+function make419(): R419 { return { a419: 1, m419: () => 1 }; }
+function c419(): void { say("record/array-of/set", new Set([(Array.of(make419().m419)[0]), (Array.of(make419().m419)[0])]).size); }
+
+interface R420 { a420: number; m420: () => number }
+function make420(): R420 { return { a420: 1, m420: () => 1 }; }
+function c420(): void { say("record/array-of/map-key", new Map([[(Array.of(make420().m420)[0]), 1], [(Array.of(make420().m420)[0]), 2]]).size); }
+
+c361(); c362(); c363(); c364(); c365(); c366(); c367(); c368(); c369(); c370(); c371(); c372(); c373(); c374(); c375(); c376(); c377(); c378(); c379(); c380(); c381(); c382(); c383(); c384(); c385(); c386(); c387(); c388(); c389(); c390(); c391(); c392(); c393(); c394(); c395(); c396(); c397(); c398(); c399(); c400(); c401(); c402(); c403(); c404(); c405(); c406(); c407(); c408(); c409(); c410(); c411(); c412(); c413(); c414(); c415(); c416(); c417(); c418(); c419(); c420();
+console.log(out.join("\n"));
+//// identity2-07.ts
+// Generated program: object and closure identity stays observable when allocations are removed (second series, part 7).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R421 { a421: number; m421: () => number }
+function make421(): R421 { return { a421: 1, m421: () => 1 }; }
+function c421(): void { say("record/array-of/includes", [(Array.of(make421().m421)[0])].includes((Array.of(make421().m421)[0]))); }
+
+interface R422 { a422: number; m422: () => number }
+function make422(): R422 { return { a422: 1, m422: () => 1 }; }
+function c422(): void { say("record/array-of/index-of", [(Array.of(make422().m422)[0])].indexOf((Array.of(make422().m422)[0]))); }
+
+interface R423 { a423: number; m423: () => number }
+function make423(): R423 { return { a423: 1, m423: () => 1 }; }
+const ws423 = new WeakSet<object>();
+function c423(): void { say("record/array-of/weak-set", (ws423.add((Array.of(make423().m423)[0]) as object), ws423.has((Array.of(make423().m423)[0]) as object))); }
+
+interface R424 { a424: number; m424: () => number }
+function make424(): R424 { return { a424: 1, m424: () => 1 }; }
+const wm424 = new WeakMap<object, number>();
+function c424(): void { say("record/array-of/weak-map", (wm424.set((Array.of(make424().m424)[0]) as object, 1), wm424.has((Array.of(make424().m424)[0]) as object))); }
+
+interface R425 { a425: number; m425: () => number }
+function make425(): R425 { return { a425: 1, m425: () => 1 }; }
+function c425(): void { say("record/array-of/written", ((((Array.of(make425().m425)[0])) as any).tag = 1, (((Array.of(make425().m425)[0])) as any).tag)); }
+
+interface R426 { a426: number; m426: () => number }
+function make426(): R426 { return { a426: 1, m426: () => 1 }; }
+function c426(): void { say("record/array-of/defined", (Object.defineProperty((Array.of(make426().m426)[0]) as object, "t", { value: 1 }), "t" in ((Array.of(make426().m426)[0]) as object))); }
+
+interface R427 { a427: number; m427: () => number }
+function make427(): R427 { return { a427: 1, m427: () => 1 }; }
+function c427(): void { say("record/array-of/frozen", (Object.freeze((Array.of(make427().m427)[0])), Object.isFrozen((Array.of(make427().m427)[0])))); }
+
+interface R428 { a428: number; m428: () => number }
+function make428(): R428 { return { a428: 1, m428: () => 1 }; }
+function c428(): void { say("record/array-of/prototype-set", (Object.setPrototypeOf((Array.of(make428().m428)[0]) as object, null), Object.getPrototypeOf((Array.of(make428().m428)[0])) === null)); }
+
+interface R429 { a429: number; m429: () => number }
+function make429(): R429 { return { a429: 1, m429: () => 1 }; }
+function c429(): void { say("record/array-of/deleted", (delete (((Array.of(make429().m429)[0])) as any).length, Object.hasOwn((Array.of(make429().m429)[0]) as object, "length"))); }
+
+interface R430 { a430: number; m430: () => number }
+function make430(): R430 { return { a430: 1, m430: () => 1 }; }
+function same430(a: unknown, b: unknown): boolean { return a === b; }
+function c430(): void { say("record/array-of/in-a-callee", same430((Array.of(make430().m430)[0]), (Array.of(make430().m430)[0]))); }
+
+interface R431 { a431: number; m431: () => number }
+function make431(): R431 { return { a431: 1, m431: () => 1 }; }
+function hit431(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c431(): void { say("record/array-of/switch", hit431((Array.of(make431().m431)[0]), (Array.of(make431().m431)[0]))); }
+
+interface R432 { a432: number; m432: () => number }
+function make432(): R432 { return { a432: 1, m432: () => 1 }; }
+let last432: unknown;
+function seen432(f: unknown): boolean { const same = f === last432; last432 = f; return same; }
+function c432(): void { say("record/array-of/kept-then-compared", (seen432((Array.of(make432().m432)[0])), seen432((Array.of(make432().m432)[0])))); }
+
+interface R433 { a433: number; m433: () => number }
+function make433(): R433 { return { a433: 1, m433: () => 1 }; }
+function get433(): unknown { const xs: unknown[] = []; xs.push(make433().m433); return xs[0]; }
+function c433(): void { say("record/push-then-read/strict-eq", (get433()) === (get433())); }
+
+interface R434 { a434: number; m434: () => number }
+function make434(): R434 { return { a434: 1, m434: () => 1 }; }
+function get434(): unknown { const xs: unknown[] = []; xs.push(make434().m434); return xs[0]; }
+function c434(): void { say("record/push-then-read/strict-ne", (get434()) !== (get434())); }
+
+interface R435 { a435: number; m435: () => number }
+function make435(): R435 { return { a435: 1, m435: () => 1 }; }
+function get435(): unknown { const xs: unknown[] = []; xs.push(make435().m435); return xs[0]; }
+function c435(): void { say("record/push-then-read/loose-eq", (get435()) == (get435())); }
+
+interface R436 { a436: number; m436: () => number }
+function make436(): R436 { return { a436: 1, m436: () => 1 }; }
+function get436(): unknown { const xs: unknown[] = []; xs.push(make436().m436); return xs[0]; }
+function c436(): void { say("record/push-then-read/object-is", Object.is((get436()), (get436()))); }
+
+interface R437 { a437: number; m437: () => number }
+function make437(): R437 { return { a437: 1, m437: () => 1 }; }
+function get437(): unknown { const xs: unknown[] = []; xs.push(make437().m437); return xs[0]; }
+function c437(): void { say("record/push-then-read/set", new Set([(get437()), (get437())]).size); }
+
+interface R438 { a438: number; m438: () => number }
+function make438(): R438 { return { a438: 1, m438: () => 1 }; }
+function get438(): unknown { const xs: unknown[] = []; xs.push(make438().m438); return xs[0]; }
+function c438(): void { say("record/push-then-read/map-key", new Map([[(get438()), 1], [(get438()), 2]]).size); }
+
+interface R439 { a439: number; m439: () => number }
+function make439(): R439 { return { a439: 1, m439: () => 1 }; }
+function get439(): unknown { const xs: unknown[] = []; xs.push(make439().m439); return xs[0]; }
+function c439(): void { say("record/push-then-read/includes", [(get439())].includes((get439()))); }
+
+interface R440 { a440: number; m440: () => number }
+function make440(): R440 { return { a440: 1, m440: () => 1 }; }
+function get440(): unknown { const xs: unknown[] = []; xs.push(make440().m440); return xs[0]; }
+function c440(): void { say("record/push-then-read/index-of", [(get440())].indexOf((get440()))); }
+
+interface R441 { a441: number; m441: () => number }
+function make441(): R441 { return { a441: 1, m441: () => 1 }; }
+function get441(): unknown { const xs: unknown[] = []; xs.push(make441().m441); return xs[0]; }
+const ws441 = new WeakSet<object>();
+function c441(): void { say("record/push-then-read/weak-set", (ws441.add((get441()) as object), ws441.has((get441()) as object))); }
+
+interface R442 { a442: number; m442: () => number }
+function make442(): R442 { return { a442: 1, m442: () => 1 }; }
+function get442(): unknown { const xs: unknown[] = []; xs.push(make442().m442); return xs[0]; }
+const wm442 = new WeakMap<object, number>();
+function c442(): void { say("record/push-then-read/weak-map", (wm442.set((get442()) as object, 1), wm442.has((get442()) as object))); }
+
+interface R443 { a443: number; m443: () => number }
+function make443(): R443 { return { a443: 1, m443: () => 1 }; }
+function get443(): unknown { const xs: unknown[] = []; xs.push(make443().m443); return xs[0]; }
+function c443(): void { say("record/push-then-read/written", ((((get443())) as any).tag = 1, (((get443())) as any).tag)); }
+
+interface R444 { a444: number; m444: () => number }
+function make444(): R444 { return { a444: 1, m444: () => 1 }; }
+function get444(): unknown { const xs: unknown[] = []; xs.push(make444().m444); return xs[0]; }
+function c444(): void { say("record/push-then-read/defined", (Object.defineProperty((get444()) as object, "t", { value: 1 }), "t" in ((get444()) as object))); }
+
+interface R445 { a445: number; m445: () => number }
+function make445(): R445 { return { a445: 1, m445: () => 1 }; }
+function get445(): unknown { const xs: unknown[] = []; xs.push(make445().m445); return xs[0]; }
+function c445(): void { say("record/push-then-read/frozen", (Object.freeze((get445())), Object.isFrozen((get445())))); }
+
+interface R446 { a446: number; m446: () => number }
+function make446(): R446 { return { a446: 1, m446: () => 1 }; }
+function get446(): unknown { const xs: unknown[] = []; xs.push(make446().m446); return xs[0]; }
+function c446(): void { say("record/push-then-read/prototype-set", (Object.setPrototypeOf((get446()) as object, null), Object.getPrototypeOf((get446())) === null)); }
+
+interface R447 { a447: number; m447: () => number }
+function make447(): R447 { return { a447: 1, m447: () => 1 }; }
+function get447(): unknown { const xs: unknown[] = []; xs.push(make447().m447); return xs[0]; }
+function c447(): void { say("record/push-then-read/deleted", (delete (((get447())) as any).length, Object.hasOwn((get447()) as object, "length"))); }
+
+interface R448 { a448: number; m448: () => number }
+function make448(): R448 { return { a448: 1, m448: () => 1 }; }
+function get448(): unknown { const xs: unknown[] = []; xs.push(make448().m448); return xs[0]; }
+function same448(a: unknown, b: unknown): boolean { return a === b; }
+function c448(): void { say("record/push-then-read/in-a-callee", same448((get448()), (get448()))); }
+
+interface R449 { a449: number; m449: () => number }
+function make449(): R449 { return { a449: 1, m449: () => 1 }; }
+function get449(): unknown { const xs: unknown[] = []; xs.push(make449().m449); return xs[0]; }
+function hit449(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c449(): void { say("record/push-then-read/switch", hit449((get449()), (get449()))); }
+
+interface R450 { a450: number; m450: () => number }
+function make450(): R450 { return { a450: 1, m450: () => 1 }; }
+function get450(): unknown { const xs: unknown[] = []; xs.push(make450().m450); return xs[0]; }
+let last450: unknown;
+function seen450(f: unknown): boolean { const same = f === last450; last450 = f; return same; }
+function c450(): void { say("record/push-then-read/kept-then-compared", (seen450((get450())), seen450((get450())))); }
+
+interface R451 { a451: number; m451: () => number }
+function make451(): R451 { return { a451: 1, m451: () => 1 }; }
+function c451(): void { say("record/set-iteration/strict-eq", ([...new Set([make451().m451])][0]) === ([...new Set([make451().m451])][0])); }
+
+interface R452 { a452: number; m452: () => number }
+function make452(): R452 { return { a452: 1, m452: () => 1 }; }
+function c452(): void { say("record/set-iteration/strict-ne", ([...new Set([make452().m452])][0]) !== ([...new Set([make452().m452])][0])); }
+
+interface R453 { a453: number; m453: () => number }
+function make453(): R453 { return { a453: 1, m453: () => 1 }; }
+function c453(): void { say("record/set-iteration/loose-eq", ([...new Set([make453().m453])][0]) == ([...new Set([make453().m453])][0])); }
+
+interface R454 { a454: number; m454: () => number }
+function make454(): R454 { return { a454: 1, m454: () => 1 }; }
+function c454(): void { say("record/set-iteration/object-is", Object.is(([...new Set([make454().m454])][0]), ([...new Set([make454().m454])][0]))); }
+
+interface R455 { a455: number; m455: () => number }
+function make455(): R455 { return { a455: 1, m455: () => 1 }; }
+function c455(): void { say("record/set-iteration/set", new Set([([...new Set([make455().m455])][0]), ([...new Set([make455().m455])][0])]).size); }
+
+interface R456 { a456: number; m456: () => number }
+function make456(): R456 { return { a456: 1, m456: () => 1 }; }
+function c456(): void { say("record/set-iteration/map-key", new Map([[([...new Set([make456().m456])][0]), 1], [([...new Set([make456().m456])][0]), 2]]).size); }
+
+interface R457 { a457: number; m457: () => number }
+function make457(): R457 { return { a457: 1, m457: () => 1 }; }
+function c457(): void { say("record/set-iteration/includes", [([...new Set([make457().m457])][0])].includes(([...new Set([make457().m457])][0]))); }
+
+interface R458 { a458: number; m458: () => number }
+function make458(): R458 { return { a458: 1, m458: () => 1 }; }
+function c458(): void { say("record/set-iteration/index-of", [([...new Set([make458().m458])][0])].indexOf(([...new Set([make458().m458])][0]))); }
+
+interface R459 { a459: number; m459: () => number }
+function make459(): R459 { return { a459: 1, m459: () => 1 }; }
+const ws459 = new WeakSet<object>();
+function c459(): void { say("record/set-iteration/weak-set", (ws459.add(([...new Set([make459().m459])][0]) as object), ws459.has(([...new Set([make459().m459])][0]) as object))); }
+
+interface R460 { a460: number; m460: () => number }
+function make460(): R460 { return { a460: 1, m460: () => 1 }; }
+const wm460 = new WeakMap<object, number>();
+function c460(): void { say("record/set-iteration/weak-map", (wm460.set(([...new Set([make460().m460])][0]) as object, 1), wm460.has(([...new Set([make460().m460])][0]) as object))); }
+
+interface R461 { a461: number; m461: () => number }
+function make461(): R461 { return { a461: 1, m461: () => 1 }; }
+function c461(): void { say("record/set-iteration/written", (((([...new Set([make461().m461])][0])) as any).tag = 1, ((([...new Set([make461().m461])][0])) as any).tag)); }
+
+interface R462 { a462: number; m462: () => number }
+function make462(): R462 { return { a462: 1, m462: () => 1 }; }
+function c462(): void { say("record/set-iteration/defined", (Object.defineProperty(([...new Set([make462().m462])][0]) as object, "t", { value: 1 }), "t" in (([...new Set([make462().m462])][0]) as object))); }
+
+interface R463 { a463: number; m463: () => number }
+function make463(): R463 { return { a463: 1, m463: () => 1 }; }
+function c463(): void { say("record/set-iteration/frozen", (Object.freeze(([...new Set([make463().m463])][0])), Object.isFrozen(([...new Set([make463().m463])][0])))); }
+
+interface R464 { a464: number; m464: () => number }
+function make464(): R464 { return { a464: 1, m464: () => 1 }; }
+function c464(): void { say("record/set-iteration/prototype-set", (Object.setPrototypeOf(([...new Set([make464().m464])][0]) as object, null), Object.getPrototypeOf(([...new Set([make464().m464])][0])) === null)); }
+
+interface R465 { a465: number; m465: () => number }
+function make465(): R465 { return { a465: 1, m465: () => 1 }; }
+function c465(): void { say("record/set-iteration/deleted", (delete ((([...new Set([make465().m465])][0])) as any).length, Object.hasOwn(([...new Set([make465().m465])][0]) as object, "length"))); }
+
+interface R466 { a466: number; m466: () => number }
+function make466(): R466 { return { a466: 1, m466: () => 1 }; }
+function same466(a: unknown, b: unknown): boolean { return a === b; }
+function c466(): void { say("record/set-iteration/in-a-callee", same466(([...new Set([make466().m466])][0]), ([...new Set([make466().m466])][0]))); }
+
+interface R467 { a467: number; m467: () => number }
+function make467(): R467 { return { a467: 1, m467: () => 1 }; }
+function hit467(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c467(): void { say("record/set-iteration/switch", hit467(([...new Set([make467().m467])][0]), ([...new Set([make467().m467])][0]))); }
+
+interface R468 { a468: number; m468: () => number }
+function make468(): R468 { return { a468: 1, m468: () => 1 }; }
+let last468: unknown;
+function seen468(f: unknown): boolean { const same = f === last468; last468 = f; return same; }
+function c468(): void { say("record/set-iteration/kept-then-compared", (seen468(([...new Set([make468().m468])][0])), seen468(([...new Set([make468().m468])][0])))); }
+
+interface R469 { a469: number; m469: () => number }
+function make469(): R469 { return { a469: 1, m469: () => 1 }; }
+function c469(): void { say("record/map-get/strict-eq", (new Map([[1, make469().m469]]).get(1)) === (new Map([[1, make469().m469]]).get(1))); }
+
+interface R470 { a470: number; m470: () => number }
+function make470(): R470 { return { a470: 1, m470: () => 1 }; }
+function c470(): void { say("record/map-get/strict-ne", (new Map([[1, make470().m470]]).get(1)) !== (new Map([[1, make470().m470]]).get(1))); }
+
+interface R471 { a471: number; m471: () => number }
+function make471(): R471 { return { a471: 1, m471: () => 1 }; }
+function c471(): void { say("record/map-get/loose-eq", (new Map([[1, make471().m471]]).get(1)) == (new Map([[1, make471().m471]]).get(1))); }
+
+interface R472 { a472: number; m472: () => number }
+function make472(): R472 { return { a472: 1, m472: () => 1 }; }
+function c472(): void { say("record/map-get/object-is", Object.is((new Map([[1, make472().m472]]).get(1)), (new Map([[1, make472().m472]]).get(1)))); }
+
+interface R473 { a473: number; m473: () => number }
+function make473(): R473 { return { a473: 1, m473: () => 1 }; }
+function c473(): void { say("record/map-get/set", new Set([(new Map([[1, make473().m473]]).get(1)), (new Map([[1, make473().m473]]).get(1))]).size); }
+
+interface R474 { a474: number; m474: () => number }
+function make474(): R474 { return { a474: 1, m474: () => 1 }; }
+function c474(): void { say("record/map-get/map-key", new Map([[(new Map([[1, make474().m474]]).get(1)), 1], [(new Map([[1, make474().m474]]).get(1)), 2]]).size); }
+
+interface R475 { a475: number; m475: () => number }
+function make475(): R475 { return { a475: 1, m475: () => 1 }; }
+function c475(): void { say("record/map-get/includes", [(new Map([[1, make475().m475]]).get(1))].includes((new Map([[1, make475().m475]]).get(1)))); }
+
+interface R476 { a476: number; m476: () => number }
+function make476(): R476 { return { a476: 1, m476: () => 1 }; }
+function c476(): void { say("record/map-get/index-of", [(new Map([[1, make476().m476]]).get(1))].indexOf((new Map([[1, make476().m476]]).get(1)))); }
+
+interface R477 { a477: number; m477: () => number }
+function make477(): R477 { return { a477: 1, m477: () => 1 }; }
+const ws477 = new WeakSet<object>();
+function c477(): void { say("record/map-get/weak-set", (ws477.add((new Map([[1, make477().m477]]).get(1)) as object), ws477.has((new Map([[1, make477().m477]]).get(1)) as object))); }
+
+interface R478 { a478: number; m478: () => number }
+function make478(): R478 { return { a478: 1, m478: () => 1 }; }
+const wm478 = new WeakMap<object, number>();
+function c478(): void { say("record/map-get/weak-map", (wm478.set((new Map([[1, make478().m478]]).get(1)) as object, 1), wm478.has((new Map([[1, make478().m478]]).get(1)) as object))); }
+
+interface R479 { a479: number; m479: () => number }
+function make479(): R479 { return { a479: 1, m479: () => 1 }; }
+function c479(): void { say("record/map-get/written", ((((new Map([[1, make479().m479]]).get(1))) as any).tag = 1, (((new Map([[1, make479().m479]]).get(1))) as any).tag)); }
+
+interface R480 { a480: number; m480: () => number }
+function make480(): R480 { return { a480: 1, m480: () => 1 }; }
+function c480(): void { say("record/map-get/defined", (Object.defineProperty((new Map([[1, make480().m480]]).get(1)) as object, "t", { value: 1 }), "t" in ((new Map([[1, make480().m480]]).get(1)) as object))); }
+
+c421(); c422(); c423(); c424(); c425(); c426(); c427(); c428(); c429(); c430(); c431(); c432(); c433(); c434(); c435(); c436(); c437(); c438(); c439(); c440(); c441(); c442(); c443(); c444(); c445(); c446(); c447(); c448(); c449(); c450(); c451(); c452(); c453(); c454(); c455(); c456(); c457(); c458(); c459(); c460(); c461(); c462(); c463(); c464(); c465(); c466(); c467(); c468(); c469(); c470(); c471(); c472(); c473(); c474(); c475(); c476(); c477(); c478(); c479(); c480();
+console.log(out.join("\n"));
+//// identity2-09.ts
+// Generated program: object and closure identity stays observable when allocations are removed (second series, part 9).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R541 { a541: number; m541: () => number }
+function make541(): R541 { return { a541: 1, m541: () => 1 }; }
+function first541(x: unknown): unknown { return x; }
+function c541(): void { say("record/reflect-apply/strict-eq", (Reflect.apply(first541, null, [make541().m541])) === (Reflect.apply(first541, null, [make541().m541]))); }
+
+interface R542 { a542: number; m542: () => number }
+function make542(): R542 { return { a542: 1, m542: () => 1 }; }
+function first542(x: unknown): unknown { return x; }
+function c542(): void { say("record/reflect-apply/strict-ne", (Reflect.apply(first542, null, [make542().m542])) !== (Reflect.apply(first542, null, [make542().m542]))); }
+
+interface R543 { a543: number; m543: () => number }
+function make543(): R543 { return { a543: 1, m543: () => 1 }; }
+function first543(x: unknown): unknown { return x; }
+function c543(): void { say("record/reflect-apply/loose-eq", (Reflect.apply(first543, null, [make543().m543])) == (Reflect.apply(first543, null, [make543().m543]))); }
+
+interface R544 { a544: number; m544: () => number }
+function make544(): R544 { return { a544: 1, m544: () => 1 }; }
+function first544(x: unknown): unknown { return x; }
+function c544(): void { say("record/reflect-apply/object-is", Object.is((Reflect.apply(first544, null, [make544().m544])), (Reflect.apply(first544, null, [make544().m544])))); }
+
+interface R545 { a545: number; m545: () => number }
+function make545(): R545 { return { a545: 1, m545: () => 1 }; }
+function first545(x: unknown): unknown { return x; }
+function c545(): void { say("record/reflect-apply/set", new Set([(Reflect.apply(first545, null, [make545().m545])), (Reflect.apply(first545, null, [make545().m545]))]).size); }
+
+interface R546 { a546: number; m546: () => number }
+function make546(): R546 { return { a546: 1, m546: () => 1 }; }
+function first546(x: unknown): unknown { return x; }
+function c546(): void { say("record/reflect-apply/map-key", new Map([[(Reflect.apply(first546, null, [make546().m546])), 1], [(Reflect.apply(first546, null, [make546().m546])), 2]]).size); }
+
+interface R547 { a547: number; m547: () => number }
+function make547(): R547 { return { a547: 1, m547: () => 1 }; }
+function first547(x: unknown): unknown { return x; }
+function c547(): void { say("record/reflect-apply/includes", [(Reflect.apply(first547, null, [make547().m547]))].includes((Reflect.apply(first547, null, [make547().m547])))); }
+
+interface R548 { a548: number; m548: () => number }
+function make548(): R548 { return { a548: 1, m548: () => 1 }; }
+function first548(x: unknown): unknown { return x; }
+function c548(): void { say("record/reflect-apply/index-of", [(Reflect.apply(first548, null, [make548().m548]))].indexOf((Reflect.apply(first548, null, [make548().m548])))); }
+
+interface R549 { a549: number; m549: () => number }
+function make549(): R549 { return { a549: 1, m549: () => 1 }; }
+function first549(x: unknown): unknown { return x; }
+const ws549 = new WeakSet<object>();
+function c549(): void { say("record/reflect-apply/weak-set", (ws549.add((Reflect.apply(first549, null, [make549().m549])) as object), ws549.has((Reflect.apply(first549, null, [make549().m549])) as object))); }
+
+interface R550 { a550: number; m550: () => number }
+function make550(): R550 { return { a550: 1, m550: () => 1 }; }
+function first550(x: unknown): unknown { return x; }
+const wm550 = new WeakMap<object, number>();
+function c550(): void { say("record/reflect-apply/weak-map", (wm550.set((Reflect.apply(first550, null, [make550().m550])) as object, 1), wm550.has((Reflect.apply(first550, null, [make550().m550])) as object))); }
+
+interface R551 { a551: number; m551: () => number }
+function make551(): R551 { return { a551: 1, m551: () => 1 }; }
+function first551(x: unknown): unknown { return x; }
+function c551(): void { say("record/reflect-apply/written", ((((Reflect.apply(first551, null, [make551().m551]))) as any).tag = 1, (((Reflect.apply(first551, null, [make551().m551]))) as any).tag)); }
+
+interface R552 { a552: number; m552: () => number }
+function make552(): R552 { return { a552: 1, m552: () => 1 }; }
+function first552(x: unknown): unknown { return x; }
+function c552(): void { say("record/reflect-apply/defined", (Object.defineProperty((Reflect.apply(first552, null, [make552().m552])) as object, "t", { value: 1 }), "t" in ((Reflect.apply(first552, null, [make552().m552])) as object))); }
+
+interface R553 { a553: number; m553: () => number }
+function make553(): R553 { return { a553: 1, m553: () => 1 }; }
+function first553(x: unknown): unknown { return x; }
+function c553(): void { say("record/reflect-apply/frozen", (Object.freeze((Reflect.apply(first553, null, [make553().m553]))), Object.isFrozen((Reflect.apply(first553, null, [make553().m553]))))); }
+
+interface R554 { a554: number; m554: () => number }
+function make554(): R554 { return { a554: 1, m554: () => 1 }; }
+function first554(x: unknown): unknown { return x; }
+function c554(): void { say("record/reflect-apply/prototype-set", (Object.setPrototypeOf((Reflect.apply(first554, null, [make554().m554])) as object, null), Object.getPrototypeOf((Reflect.apply(first554, null, [make554().m554]))) === null)); }
+
+interface R555 { a555: number; m555: () => number }
+function make555(): R555 { return { a555: 1, m555: () => 1 }; }
+function first555(x: unknown): unknown { return x; }
+function c555(): void { say("record/reflect-apply/deleted", (delete (((Reflect.apply(first555, null, [make555().m555]))) as any).length, Object.hasOwn((Reflect.apply(first555, null, [make555().m555])) as object, "length"))); }
+
+interface R556 { a556: number; m556: () => number }
+function make556(): R556 { return { a556: 1, m556: () => 1 }; }
+function first556(x: unknown): unknown { return x; }
+function same556(a: unknown, b: unknown): boolean { return a === b; }
+function c556(): void { say("record/reflect-apply/in-a-callee", same556((Reflect.apply(first556, null, [make556().m556])), (Reflect.apply(first556, null, [make556().m556])))); }
+
+interface R557 { a557: number; m557: () => number }
+function make557(): R557 { return { a557: 1, m557: () => 1 }; }
+function first557(x: unknown): unknown { return x; }
+function hit557(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c557(): void { say("record/reflect-apply/switch", hit557((Reflect.apply(first557, null, [make557().m557])), (Reflect.apply(first557, null, [make557().m557])))); }
+
+interface R558 { a558: number; m558: () => number }
+function make558(): R558 { return { a558: 1, m558: () => 1 }; }
+function first558(x: unknown): unknown { return x; }
+let last558: unknown;
+function seen558(f: unknown): boolean { const same = f === last558; last558 = f; return same; }
+function c558(): void { say("record/reflect-apply/kept-then-compared", (seen558((Reflect.apply(first558, null, [make558().m558]))), seen558((Reflect.apply(first558, null, [make558().m558]))))); }
+
+interface R559 { a559: number; m559: () => number }
+function make559(): R559 { return { a559: 1, m559: () => 1 }; }
+function c559(): void { say("record/logical-or/strict-eq", (((0 as unknown) || make559().m559)) === (((0 as unknown) || make559().m559))); }
+
+interface R560 { a560: number; m560: () => number }
+function make560(): R560 { return { a560: 1, m560: () => 1 }; }
+function c560(): void { say("record/logical-or/strict-ne", (((0 as unknown) || make560().m560)) !== (((0 as unknown) || make560().m560))); }
+
+interface R561 { a561: number; m561: () => number }
+function make561(): R561 { return { a561: 1, m561: () => 1 }; }
+function c561(): void { say("record/logical-or/loose-eq", (((0 as unknown) || make561().m561)) == (((0 as unknown) || make561().m561))); }
+
+interface R562 { a562: number; m562: () => number }
+function make562(): R562 { return { a562: 1, m562: () => 1 }; }
+function c562(): void { say("record/logical-or/object-is", Object.is((((0 as unknown) || make562().m562)), (((0 as unknown) || make562().m562)))); }
+
+interface R563 { a563: number; m563: () => number }
+function make563(): R563 { return { a563: 1, m563: () => 1 }; }
+function c563(): void { say("record/logical-or/set", new Set([(((0 as unknown) || make563().m563)), (((0 as unknown) || make563().m563))]).size); }
+
+interface R564 { a564: number; m564: () => number }
+function make564(): R564 { return { a564: 1, m564: () => 1 }; }
+function c564(): void { say("record/logical-or/map-key", new Map([[(((0 as unknown) || make564().m564)), 1], [(((0 as unknown) || make564().m564)), 2]]).size); }
+
+interface R565 { a565: number; m565: () => number }
+function make565(): R565 { return { a565: 1, m565: () => 1 }; }
+function c565(): void { say("record/logical-or/includes", [(((0 as unknown) || make565().m565))].includes((((0 as unknown) || make565().m565)))); }
+
+interface R566 { a566: number; m566: () => number }
+function make566(): R566 { return { a566: 1, m566: () => 1 }; }
+function c566(): void { say("record/logical-or/index-of", [(((0 as unknown) || make566().m566))].indexOf((((0 as unknown) || make566().m566)))); }
+
+interface R567 { a567: number; m567: () => number }
+function make567(): R567 { return { a567: 1, m567: () => 1 }; }
+const ws567 = new WeakSet<object>();
+function c567(): void { say("record/logical-or/weak-set", (ws567.add((((0 as unknown) || make567().m567)) as object), ws567.has((((0 as unknown) || make567().m567)) as object))); }
+
+interface R568 { a568: number; m568: () => number }
+function make568(): R568 { return { a568: 1, m568: () => 1 }; }
+const wm568 = new WeakMap<object, number>();
+function c568(): void { say("record/logical-or/weak-map", (wm568.set((((0 as unknown) || make568().m568)) as object, 1), wm568.has((((0 as unknown) || make568().m568)) as object))); }
+
+interface R569 { a569: number; m569: () => number }
+function make569(): R569 { return { a569: 1, m569: () => 1 }; }
+function c569(): void { say("record/logical-or/written", ((((((0 as unknown) || make569().m569))) as any).tag = 1, (((((0 as unknown) || make569().m569))) as any).tag)); }
+
+interface R570 { a570: number; m570: () => number }
+function make570(): R570 { return { a570: 1, m570: () => 1 }; }
+function c570(): void { say("record/logical-or/defined", (Object.defineProperty((((0 as unknown) || make570().m570)) as object, "t", { value: 1 }), "t" in ((((0 as unknown) || make570().m570)) as object))); }
+
+interface R571 { a571: number; m571: () => number }
+function make571(): R571 { return { a571: 1, m571: () => 1 }; }
+function c571(): void { say("record/logical-or/frozen", (Object.freeze((((0 as unknown) || make571().m571))), Object.isFrozen((((0 as unknown) || make571().m571))))); }
+
+interface R572 { a572: number; m572: () => number }
+function make572(): R572 { return { a572: 1, m572: () => 1 }; }
+function c572(): void { say("record/logical-or/prototype-set", (Object.setPrototypeOf((((0 as unknown) || make572().m572)) as object, null), Object.getPrototypeOf((((0 as unknown) || make572().m572))) === null)); }
+
+interface R573 { a573: number; m573: () => number }
+function make573(): R573 { return { a573: 1, m573: () => 1 }; }
+function c573(): void { say("record/logical-or/deleted", (delete (((((0 as unknown) || make573().m573))) as any).length, Object.hasOwn((((0 as unknown) || make573().m573)) as object, "length"))); }
+
+interface R574 { a574: number; m574: () => number }
+function make574(): R574 { return { a574: 1, m574: () => 1 }; }
+function same574(a: unknown, b: unknown): boolean { return a === b; }
+function c574(): void { say("record/logical-or/in-a-callee", same574((((0 as unknown) || make574().m574)), (((0 as unknown) || make574().m574)))); }
+
+interface R575 { a575: number; m575: () => number }
+function make575(): R575 { return { a575: 1, m575: () => 1 }; }
+function hit575(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c575(): void { say("record/logical-or/switch", hit575((((0 as unknown) || make575().m575)), (((0 as unknown) || make575().m575)))); }
+
+interface R576 { a576: number; m576: () => number }
+function make576(): R576 { return { a576: 1, m576: () => 1 }; }
+let last576: unknown;
+function seen576(f: unknown): boolean { const same = f === last576; last576 = f; return same; }
+function c576(): void { say("record/logical-or/kept-then-compared", (seen576((((0 as unknown) || make576().m576))), seen576((((0 as unknown) || make576().m576))))); }
+
+interface R577 { a577: number; m577: () => number }
+function make577(): R577 { return { a577: 1, m577: () => 1 }; }
+let none577: unknown;
+function c577(): void { say("record/nullish/strict-eq", ((none577 ?? make577().m577)) === ((none577 ?? make577().m577))); }
+
+interface R578 { a578: number; m578: () => number }
+function make578(): R578 { return { a578: 1, m578: () => 1 }; }
+let none578: unknown;
+function c578(): void { say("record/nullish/strict-ne", ((none578 ?? make578().m578)) !== ((none578 ?? make578().m578))); }
+
+interface R579 { a579: number; m579: () => number }
+function make579(): R579 { return { a579: 1, m579: () => 1 }; }
+let none579: unknown;
+function c579(): void { say("record/nullish/loose-eq", ((none579 ?? make579().m579)) == ((none579 ?? make579().m579))); }
+
+interface R580 { a580: number; m580: () => number }
+function make580(): R580 { return { a580: 1, m580: () => 1 }; }
+let none580: unknown;
+function c580(): void { say("record/nullish/object-is", Object.is(((none580 ?? make580().m580)), ((none580 ?? make580().m580)))); }
+
+interface R581 { a581: number; m581: () => number }
+function make581(): R581 { return { a581: 1, m581: () => 1 }; }
+let none581: unknown;
+function c581(): void { say("record/nullish/set", new Set([((none581 ?? make581().m581)), ((none581 ?? make581().m581))]).size); }
+
+interface R582 { a582: number; m582: () => number }
+function make582(): R582 { return { a582: 1, m582: () => 1 }; }
+let none582: unknown;
+function c582(): void { say("record/nullish/map-key", new Map([[((none582 ?? make582().m582)), 1], [((none582 ?? make582().m582)), 2]]).size); }
+
+interface R583 { a583: number; m583: () => number }
+function make583(): R583 { return { a583: 1, m583: () => 1 }; }
+let none583: unknown;
+function c583(): void { say("record/nullish/includes", [((none583 ?? make583().m583))].includes(((none583 ?? make583().m583)))); }
+
+interface R584 { a584: number; m584: () => number }
+function make584(): R584 { return { a584: 1, m584: () => 1 }; }
+let none584: unknown;
+function c584(): void { say("record/nullish/index-of", [((none584 ?? make584().m584))].indexOf(((none584 ?? make584().m584)))); }
+
+interface R585 { a585: number; m585: () => number }
+function make585(): R585 { return { a585: 1, m585: () => 1 }; }
+let none585: unknown;
+const ws585 = new WeakSet<object>();
+function c585(): void { say("record/nullish/weak-set", (ws585.add(((none585 ?? make585().m585)) as object), ws585.has(((none585 ?? make585().m585)) as object))); }
+
+interface R586 { a586: number; m586: () => number }
+function make586(): R586 { return { a586: 1, m586: () => 1 }; }
+let none586: unknown;
+const wm586 = new WeakMap<object, number>();
+function c586(): void { say("record/nullish/weak-map", (wm586.set(((none586 ?? make586().m586)) as object, 1), wm586.has(((none586 ?? make586().m586)) as object))); }
+
+interface R587 { a587: number; m587: () => number }
+function make587(): R587 { return { a587: 1, m587: () => 1 }; }
+let none587: unknown;
+function c587(): void { say("record/nullish/written", (((((none587 ?? make587().m587))) as any).tag = 1, ((((none587 ?? make587().m587))) as any).tag)); }
+
+interface R588 { a588: number; m588: () => number }
+function make588(): R588 { return { a588: 1, m588: () => 1 }; }
+let none588: unknown;
+function c588(): void { say("record/nullish/defined", (Object.defineProperty(((none588 ?? make588().m588)) as object, "t", { value: 1 }), "t" in (((none588 ?? make588().m588)) as object))); }
+
+interface R589 { a589: number; m589: () => number }
+function make589(): R589 { return { a589: 1, m589: () => 1 }; }
+let none589: unknown;
+function c589(): void { say("record/nullish/frozen", (Object.freeze(((none589 ?? make589().m589))), Object.isFrozen(((none589 ?? make589().m589))))); }
+
+interface R590 { a590: number; m590: () => number }
+function make590(): R590 { return { a590: 1, m590: () => 1 }; }
+let none590: unknown;
+function c590(): void { say("record/nullish/prototype-set", (Object.setPrototypeOf(((none590 ?? make590().m590)) as object, null), Object.getPrototypeOf(((none590 ?? make590().m590))) === null)); }
+
+interface R591 { a591: number; m591: () => number }
+function make591(): R591 { return { a591: 1, m591: () => 1 }; }
+let none591: unknown;
+function c591(): void { say("record/nullish/deleted", (delete ((((none591 ?? make591().m591))) as any).length, Object.hasOwn(((none591 ?? make591().m591)) as object, "length"))); }
+
+interface R592 { a592: number; m592: () => number }
+function make592(): R592 { return { a592: 1, m592: () => 1 }; }
+let none592: unknown;
+function same592(a: unknown, b: unknown): boolean { return a === b; }
+function c592(): void { say("record/nullish/in-a-callee", same592(((none592 ?? make592().m592)), ((none592 ?? make592().m592)))); }
+
+interface R593 { a593: number; m593: () => number }
+function make593(): R593 { return { a593: 1, m593: () => 1 }; }
+let none593: unknown;
+function hit593(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c593(): void { say("record/nullish/switch", hit593(((none593 ?? make593().m593)), ((none593 ?? make593().m593)))); }
+
+interface R594 { a594: number; m594: () => number }
+function make594(): R594 { return { a594: 1, m594: () => 1 }; }
+let none594: unknown;
+let last594: unknown;
+function seen594(f: unknown): boolean { const same = f === last594; last594 = f; return same; }
+function c594(): void { say("record/nullish/kept-then-compared", (seen594(((none594 ?? make594().m594))), seen594(((none594 ?? make594().m594))))); }
+
+interface R595 { a595: number; m595: () => number }
+function make595(): R595 { return { a595: 1, m595: () => 1 }; }
+function c595(): void { say("record/comma/strict-eq", ((out.length, make595().m595)) === ((out.length, make595().m595))); }
+
+interface R596 { a596: number; m596: () => number }
+function make596(): R596 { return { a596: 1, m596: () => 1 }; }
+function c596(): void { say("record/comma/strict-ne", ((out.length, make596().m596)) !== ((out.length, make596().m596))); }
+
+interface R597 { a597: number; m597: () => number }
+function make597(): R597 { return { a597: 1, m597: () => 1 }; }
+function c597(): void { say("record/comma/loose-eq", ((out.length, make597().m597)) == ((out.length, make597().m597))); }
+
+interface R598 { a598: number; m598: () => number }
+function make598(): R598 { return { a598: 1, m598: () => 1 }; }
+function c598(): void { say("record/comma/object-is", Object.is(((out.length, make598().m598)), ((out.length, make598().m598)))); }
+
+interface R599 { a599: number; m599: () => number }
+function make599(): R599 { return { a599: 1, m599: () => 1 }; }
+function c599(): void { say("record/comma/set", new Set([((out.length, make599().m599)), ((out.length, make599().m599))]).size); }
+
+interface R600 { a600: number; m600: () => number }
+function make600(): R600 { return { a600: 1, m600: () => 1 }; }
+function c600(): void { say("record/comma/map-key", new Map([[((out.length, make600().m600)), 1], [((out.length, make600().m600)), 2]]).size); }
+
+c541(); c542(); c543(); c544(); c545(); c546(); c547(); c548(); c549(); c550(); c551(); c552(); c553(); c554(); c555(); c556(); c557(); c558(); c559(); c560(); c561(); c562(); c563(); c564(); c565(); c566(); c567(); c568(); c569(); c570(); c571(); c572(); c573(); c574(); c575(); c576(); c577(); c578(); c579(); c580(); c581(); c582(); c583(); c584(); c585(); c586(); c587(); c588(); c589(); c590(); c591(); c592(); c593(); c594(); c595(); c596(); c597(); c598(); c599(); c600();
+console.log(out.join("\n"));
+//// identity2-10.ts
+// Generated program: object and closure identity stays observable when allocations are removed (second series, part 10).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R601 { a601: number; m601: () => number }
+function make601(): R601 { return { a601: 1, m601: () => 1 }; }
+function c601(): void { say("record/comma/includes", [((out.length, make601().m601))].includes(((out.length, make601().m601)))); }
+
+interface R602 { a602: number; m602: () => number }
+function make602(): R602 { return { a602: 1, m602: () => 1 }; }
+function c602(): void { say("record/comma/index-of", [((out.length, make602().m602))].indexOf(((out.length, make602().m602)))); }
+
+interface R603 { a603: number; m603: () => number }
+function make603(): R603 { return { a603: 1, m603: () => 1 }; }
+const ws603 = new WeakSet<object>();
+function c603(): void { say("record/comma/weak-set", (ws603.add(((out.length, make603().m603)) as object), ws603.has(((out.length, make603().m603)) as object))); }
+
+interface R604 { a604: number; m604: () => number }
+function make604(): R604 { return { a604: 1, m604: () => 1 }; }
+const wm604 = new WeakMap<object, number>();
+function c604(): void { say("record/comma/weak-map", (wm604.set(((out.length, make604().m604)) as object, 1), wm604.has(((out.length, make604().m604)) as object))); }
+
+interface R605 { a605: number; m605: () => number }
+function make605(): R605 { return { a605: 1, m605: () => 1 }; }
+function c605(): void { say("record/comma/written", (((((out.length, make605().m605))) as any).tag = 1, ((((out.length, make605().m605))) as any).tag)); }
+
+interface R606 { a606: number; m606: () => number }
+function make606(): R606 { return { a606: 1, m606: () => 1 }; }
+function c606(): void { say("record/comma/defined", (Object.defineProperty(((out.length, make606().m606)) as object, "t", { value: 1 }), "t" in (((out.length, make606().m606)) as object))); }
+
+interface R607 { a607: number; m607: () => number }
+function make607(): R607 { return { a607: 1, m607: () => 1 }; }
+function c607(): void { say("record/comma/frozen", (Object.freeze(((out.length, make607().m607))), Object.isFrozen(((out.length, make607().m607))))); }
+
+interface R608 { a608: number; m608: () => number }
+function make608(): R608 { return { a608: 1, m608: () => 1 }; }
+function c608(): void { say("record/comma/prototype-set", (Object.setPrototypeOf(((out.length, make608().m608)) as object, null), Object.getPrototypeOf(((out.length, make608().m608))) === null)); }
+
+interface R609 { a609: number; m609: () => number }
+function make609(): R609 { return { a609: 1, m609: () => 1 }; }
+function c609(): void { say("record/comma/deleted", (delete ((((out.length, make609().m609))) as any).length, Object.hasOwn(((out.length, make609().m609)) as object, "length"))); }
+
+interface R610 { a610: number; m610: () => number }
+function make610(): R610 { return { a610: 1, m610: () => 1 }; }
+function same610(a: unknown, b: unknown): boolean { return a === b; }
+function c610(): void { say("record/comma/in-a-callee", same610(((out.length, make610().m610)), ((out.length, make610().m610)))); }
+
+interface R611 { a611: number; m611: () => number }
+function make611(): R611 { return { a611: 1, m611: () => 1 }; }
+function hit611(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c611(): void { say("record/comma/switch", hit611(((out.length, make611().m611)), ((out.length, make611().m611)))); }
+
+interface R612 { a612: number; m612: () => number }
+function make612(): R612 { return { a612: 1, m612: () => 1 }; }
+let last612: unknown;
+function seen612(f: unknown): boolean { const same = f === last612; last612 = f; return same; }
+function c612(): void { say("record/comma/kept-then-compared", (seen612(((out.length, make612().m612))), seen612(((out.length, make612().m612))))); }
+
+interface R613 { a613: number; m613: () => number }
+function make613(): R613 { return { a613: 1, m613: () => 1 }; }
+function c613(): void { say("record/computed-member/strict-eq", (({ ["k"]: make613().m613 })["k"]) === (({ ["k"]: make613().m613 })["k"])); }
+
+interface R614 { a614: number; m614: () => number }
+function make614(): R614 { return { a614: 1, m614: () => 1 }; }
+function c614(): void { say("record/computed-member/strict-ne", (({ ["k"]: make614().m614 })["k"]) !== (({ ["k"]: make614().m614 })["k"])); }
+
+interface R615 { a615: number; m615: () => number }
+function make615(): R615 { return { a615: 1, m615: () => 1 }; }
+function c615(): void { say("record/computed-member/loose-eq", (({ ["k"]: make615().m615 })["k"]) == (({ ["k"]: make615().m615 })["k"])); }
+
+interface R616 { a616: number; m616: () => number }
+function make616(): R616 { return { a616: 1, m616: () => 1 }; }
+function c616(): void { say("record/computed-member/object-is", Object.is((({ ["k"]: make616().m616 })["k"]), (({ ["k"]: make616().m616 })["k"]))); }
+
+interface R617 { a617: number; m617: () => number }
+function make617(): R617 { return { a617: 1, m617: () => 1 }; }
+function c617(): void { say("record/computed-member/set", new Set([(({ ["k"]: make617().m617 })["k"]), (({ ["k"]: make617().m617 })["k"])]).size); }
+
+interface R618 { a618: number; m618: () => number }
+function make618(): R618 { return { a618: 1, m618: () => 1 }; }
+function c618(): void { say("record/computed-member/map-key", new Map([[(({ ["k"]: make618().m618 })["k"]), 1], [(({ ["k"]: make618().m618 })["k"]), 2]]).size); }
+
+interface R619 { a619: number; m619: () => number }
+function make619(): R619 { return { a619: 1, m619: () => 1 }; }
+function c619(): void { say("record/computed-member/includes", [(({ ["k"]: make619().m619 })["k"])].includes((({ ["k"]: make619().m619 })["k"]))); }
+
+interface R620 { a620: number; m620: () => number }
+function make620(): R620 { return { a620: 1, m620: () => 1 }; }
+function c620(): void { say("record/computed-member/index-of", [(({ ["k"]: make620().m620 })["k"])].indexOf((({ ["k"]: make620().m620 })["k"]))); }
+
+interface R621 { a621: number; m621: () => number }
+function make621(): R621 { return { a621: 1, m621: () => 1 }; }
+const ws621 = new WeakSet<object>();
+function c621(): void { say("record/computed-member/weak-set", (ws621.add((({ ["k"]: make621().m621 })["k"]) as object), ws621.has((({ ["k"]: make621().m621 })["k"]) as object))); }
+
+interface R622 { a622: number; m622: () => number }
+function make622(): R622 { return { a622: 1, m622: () => 1 }; }
+const wm622 = new WeakMap<object, number>();
+function c622(): void { say("record/computed-member/weak-map", (wm622.set((({ ["k"]: make622().m622 })["k"]) as object, 1), wm622.has((({ ["k"]: make622().m622 })["k"]) as object))); }
+
+interface R623 { a623: number; m623: () => number }
+function make623(): R623 { return { a623: 1, m623: () => 1 }; }
+function c623(): void { say("record/computed-member/written", ((((({ ["k"]: make623().m623 })["k"])) as any).tag = 1, (((({ ["k"]: make623().m623 })["k"])) as any).tag)); }
+
+interface R624 { a624: number; m624: () => number }
+function make624(): R624 { return { a624: 1, m624: () => 1 }; }
+function c624(): void { say("record/computed-member/defined", (Object.defineProperty((({ ["k"]: make624().m624 })["k"]) as object, "t", { value: 1 }), "t" in ((({ ["k"]: make624().m624 })["k"]) as object))); }
+
+interface R625 { a625: number; m625: () => number }
+function make625(): R625 { return { a625: 1, m625: () => 1 }; }
+function c625(): void { say("record/computed-member/frozen", (Object.freeze((({ ["k"]: make625().m625 })["k"])), Object.isFrozen((({ ["k"]: make625().m625 })["k"])))); }
+
+interface R626 { a626: number; m626: () => number }
+function make626(): R626 { return { a626: 1, m626: () => 1 }; }
+function c626(): void { say("record/computed-member/prototype-set", (Object.setPrototypeOf((({ ["k"]: make626().m626 })["k"]) as object, null), Object.getPrototypeOf((({ ["k"]: make626().m626 })["k"])) === null)); }
+
+interface R627 { a627: number; m627: () => number }
+function make627(): R627 { return { a627: 1, m627: () => 1 }; }
+function c627(): void { say("record/computed-member/deleted", (delete (((({ ["k"]: make627().m627 })["k"])) as any).length, Object.hasOwn((({ ["k"]: make627().m627 })["k"]) as object, "length"))); }
+
+interface R628 { a628: number; m628: () => number }
+function make628(): R628 { return { a628: 1, m628: () => 1 }; }
+function same628(a: unknown, b: unknown): boolean { return a === b; }
+function c628(): void { say("record/computed-member/in-a-callee", same628((({ ["k"]: make628().m628 })["k"]), (({ ["k"]: make628().m628 })["k"]))); }
+
+interface R629 { a629: number; m629: () => number }
+function make629(): R629 { return { a629: 1, m629: () => 1 }; }
+function hit629(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c629(): void { say("record/computed-member/switch", hit629((({ ["k"]: make629().m629 })["k"]), (({ ["k"]: make629().m629 })["k"]))); }
+
+interface R630 { a630: number; m630: () => number }
+function make630(): R630 { return { a630: 1, m630: () => 1 }; }
+let last630: unknown;
+function seen630(f: unknown): boolean { const same = f === last630; last630 = f; return same; }
+function c630(): void { say("record/computed-member/kept-then-compared", (seen630((({ ["k"]: make630().m630 })["k"])), seen630((({ ["k"]: make630().m630 })["k"])))); }
+
+interface R631 { a631: number; m631: () => number }
+function make631(): R631 { return { a631: 1, m631: () => 1 }; }
+const s631 = Symbol();
+function c631(): void { say("record/symbol-member/strict-eq", (({ [s631]: make631().m631 })[s631]) === (({ [s631]: make631().m631 })[s631])); }
+
+interface R632 { a632: number; m632: () => number }
+function make632(): R632 { return { a632: 1, m632: () => 1 }; }
+const s632 = Symbol();
+function c632(): void { say("record/symbol-member/strict-ne", (({ [s632]: make632().m632 })[s632]) !== (({ [s632]: make632().m632 })[s632])); }
+
+interface R633 { a633: number; m633: () => number }
+function make633(): R633 { return { a633: 1, m633: () => 1 }; }
+const s633 = Symbol();
+function c633(): void { say("record/symbol-member/loose-eq", (({ [s633]: make633().m633 })[s633]) == (({ [s633]: make633().m633 })[s633])); }
+
+interface R634 { a634: number; m634: () => number }
+function make634(): R634 { return { a634: 1, m634: () => 1 }; }
+const s634 = Symbol();
+function c634(): void { say("record/symbol-member/object-is", Object.is((({ [s634]: make634().m634 })[s634]), (({ [s634]: make634().m634 })[s634]))); }
+
+interface R635 { a635: number; m635: () => number }
+function make635(): R635 { return { a635: 1, m635: () => 1 }; }
+const s635 = Symbol();
+function c635(): void { say("record/symbol-member/set", new Set([(({ [s635]: make635().m635 })[s635]), (({ [s635]: make635().m635 })[s635])]).size); }
+
+interface R636 { a636: number; m636: () => number }
+function make636(): R636 { return { a636: 1, m636: () => 1 }; }
+const s636 = Symbol();
+function c636(): void { say("record/symbol-member/map-key", new Map([[(({ [s636]: make636().m636 })[s636]), 1], [(({ [s636]: make636().m636 })[s636]), 2]]).size); }
+
+interface R637 { a637: number; m637: () => number }
+function make637(): R637 { return { a637: 1, m637: () => 1 }; }
+const s637 = Symbol();
+function c637(): void { say("record/symbol-member/includes", [(({ [s637]: make637().m637 })[s637])].includes((({ [s637]: make637().m637 })[s637]))); }
+
+interface R638 { a638: number; m638: () => number }
+function make638(): R638 { return { a638: 1, m638: () => 1 }; }
+const s638 = Symbol();
+function c638(): void { say("record/symbol-member/index-of", [(({ [s638]: make638().m638 })[s638])].indexOf((({ [s638]: make638().m638 })[s638]))); }
+
+interface R639 { a639: number; m639: () => number }
+function make639(): R639 { return { a639: 1, m639: () => 1 }; }
+const s639 = Symbol();
+const ws639 = new WeakSet<object>();
+function c639(): void { say("record/symbol-member/weak-set", (ws639.add((({ [s639]: make639().m639 })[s639]) as object), ws639.has((({ [s639]: make639().m639 })[s639]) as object))); }
+
+interface R640 { a640: number; m640: () => number }
+function make640(): R640 { return { a640: 1, m640: () => 1 }; }
+const s640 = Symbol();
+const wm640 = new WeakMap<object, number>();
+function c640(): void { say("record/symbol-member/weak-map", (wm640.set((({ [s640]: make640().m640 })[s640]) as object, 1), wm640.has((({ [s640]: make640().m640 })[s640]) as object))); }
+
+interface R641 { a641: number; m641: () => number }
+function make641(): R641 { return { a641: 1, m641: () => 1 }; }
+const s641 = Symbol();
+function c641(): void { say("record/symbol-member/written", ((((({ [s641]: make641().m641 })[s641])) as any).tag = 1, (((({ [s641]: make641().m641 })[s641])) as any).tag)); }
+
+interface R642 { a642: number; m642: () => number }
+function make642(): R642 { return { a642: 1, m642: () => 1 }; }
+const s642 = Symbol();
+function c642(): void { say("record/symbol-member/defined", (Object.defineProperty((({ [s642]: make642().m642 })[s642]) as object, "t", { value: 1 }), "t" in ((({ [s642]: make642().m642 })[s642]) as object))); }
+
+interface R643 { a643: number; m643: () => number }
+function make643(): R643 { return { a643: 1, m643: () => 1 }; }
+const s643 = Symbol();
+function c643(): void { say("record/symbol-member/frozen", (Object.freeze((({ [s643]: make643().m643 })[s643])), Object.isFrozen((({ [s643]: make643().m643 })[s643])))); }
+
+interface R644 { a644: number; m644: () => number }
+function make644(): R644 { return { a644: 1, m644: () => 1 }; }
+const s644 = Symbol();
+function c644(): void { say("record/symbol-member/prototype-set", (Object.setPrototypeOf((({ [s644]: make644().m644 })[s644]) as object, null), Object.getPrototypeOf((({ [s644]: make644().m644 })[s644])) === null)); }
+
+interface R645 { a645: number; m645: () => number }
+function make645(): R645 { return { a645: 1, m645: () => 1 }; }
+const s645 = Symbol();
+function c645(): void { say("record/symbol-member/deleted", (delete (((({ [s645]: make645().m645 })[s645])) as any).length, Object.hasOwn((({ [s645]: make645().m645 })[s645]) as object, "length"))); }
+
+interface R646 { a646: number; m646: () => number }
+function make646(): R646 { return { a646: 1, m646: () => 1 }; }
+const s646 = Symbol();
+function same646(a: unknown, b: unknown): boolean { return a === b; }
+function c646(): void { say("record/symbol-member/in-a-callee", same646((({ [s646]: make646().m646 })[s646]), (({ [s646]: make646().m646 })[s646]))); }
+
+interface R647 { a647: number; m647: () => number }
+function make647(): R647 { return { a647: 1, m647: () => 1 }; }
+const s647 = Symbol();
+function hit647(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c647(): void { say("record/symbol-member/switch", hit647((({ [s647]: make647().m647 })[s647]), (({ [s647]: make647().m647 })[s647]))); }
+
+interface R648 { a648: number; m648: () => number }
+function make648(): R648 { return { a648: 1, m648: () => 1 }; }
+const s648 = Symbol();
+let last648: unknown;
+function seen648(f: unknown): boolean { const same = f === last648; last648 = f; return same; }
+function c648(): void { say("record/symbol-member/kept-then-compared", (seen648((({ [s648]: make648().m648 })[s648])), seen648((({ [s648]: make648().m648 })[s648])))); }
+
+interface R649 { a649: number; m649: () => number }
+function make649(): R649 { return { a649: 1, m649: () => 1 }; }
+function c649(): void { say("record/getter-member/strict-eq", (({ get f(): unknown { return make649().m649; } }).f) === (({ get f(): unknown { return make649().m649; } }).f)); }
+
+interface R650 { a650: number; m650: () => number }
+function make650(): R650 { return { a650: 1, m650: () => 1 }; }
+function c650(): void { say("record/getter-member/strict-ne", (({ get f(): unknown { return make650().m650; } }).f) !== (({ get f(): unknown { return make650().m650; } }).f)); }
+
+interface R651 { a651: number; m651: () => number }
+function make651(): R651 { return { a651: 1, m651: () => 1 }; }
+function c651(): void { say("record/getter-member/loose-eq", (({ get f(): unknown { return make651().m651; } }).f) == (({ get f(): unknown { return make651().m651; } }).f)); }
+
+interface R652 { a652: number; m652: () => number }
+function make652(): R652 { return { a652: 1, m652: () => 1 }; }
+function c652(): void { say("record/getter-member/object-is", Object.is((({ get f(): unknown { return make652().m652; } }).f), (({ get f(): unknown { return make652().m652; } }).f))); }
+
+interface R653 { a653: number; m653: () => number }
+function make653(): R653 { return { a653: 1, m653: () => 1 }; }
+function c653(): void { say("record/getter-member/set", new Set([(({ get f(): unknown { return make653().m653; } }).f), (({ get f(): unknown { return make653().m653; } }).f)]).size); }
+
+interface R654 { a654: number; m654: () => number }
+function make654(): R654 { return { a654: 1, m654: () => 1 }; }
+function c654(): void { say("record/getter-member/map-key", new Map([[(({ get f(): unknown { return make654().m654; } }).f), 1], [(({ get f(): unknown { return make654().m654; } }).f), 2]]).size); }
+
+interface R655 { a655: number; m655: () => number }
+function make655(): R655 { return { a655: 1, m655: () => 1 }; }
+function c655(): void { say("record/getter-member/includes", [(({ get f(): unknown { return make655().m655; } }).f)].includes((({ get f(): unknown { return make655().m655; } }).f))); }
+
+interface R656 { a656: number; m656: () => number }
+function make656(): R656 { return { a656: 1, m656: () => 1 }; }
+function c656(): void { say("record/getter-member/index-of", [(({ get f(): unknown { return make656().m656; } }).f)].indexOf((({ get f(): unknown { return make656().m656; } }).f))); }
+
+interface R657 { a657: number; m657: () => number }
+function make657(): R657 { return { a657: 1, m657: () => 1 }; }
+const ws657 = new WeakSet<object>();
+function c657(): void { say("record/getter-member/weak-set", (ws657.add((({ get f(): unknown { return make657().m657; } }).f) as object), ws657.has((({ get f(): unknown { return make657().m657; } }).f) as object))); }
+
+interface R658 { a658: number; m658: () => number }
+function make658(): R658 { return { a658: 1, m658: () => 1 }; }
+const wm658 = new WeakMap<object, number>();
+function c658(): void { say("record/getter-member/weak-map", (wm658.set((({ get f(): unknown { return make658().m658; } }).f) as object, 1), wm658.has((({ get f(): unknown { return make658().m658; } }).f) as object))); }
+
+interface R659 { a659: number; m659: () => number }
+function make659(): R659 { return { a659: 1, m659: () => 1 }; }
+function c659(): void { say("record/getter-member/written", ((((({ get f(): unknown { return make659().m659; } }).f)) as any).tag = 1, (((({ get f(): unknown { return make659().m659; } }).f)) as any).tag)); }
+
+interface R660 { a660: number; m660: () => number }
+function make660(): R660 { return { a660: 1, m660: () => 1 }; }
+function c660(): void { say("record/getter-member/defined", (Object.defineProperty((({ get f(): unknown { return make660().m660; } }).f) as object, "t", { value: 1 }), "t" in ((({ get f(): unknown { return make660().m660; } }).f) as object))); }
+
+c601(); c602(); c603(); c604(); c605(); c606(); c607(); c608(); c609(); c610(); c611(); c612(); c613(); c614(); c615(); c616(); c617(); c618(); c619(); c620(); c621(); c622(); c623(); c624(); c625(); c626(); c627(); c628(); c629(); c630(); c631(); c632(); c633(); c634(); c635(); c636(); c637(); c638(); c639(); c640(); c641(); c642(); c643(); c644(); c645(); c646(); c647(); c648(); c649(); c650(); c651(); c652(); c653(); c654(); c655(); c656(); c657(); c658(); c659(); c660();
+console.log(out.join("\n"));
+//// identity2-11.ts
+// Generated program: object and closure identity stays observable when allocations are removed (second series, part 11).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R661 { a661: number; m661: () => number }
+function make661(): R661 { return { a661: 1, m661: () => 1 }; }
+function c661(): void { say("record/getter-member/frozen", (Object.freeze((({ get f(): unknown { return make661().m661; } }).f)), Object.isFrozen((({ get f(): unknown { return make661().m661; } }).f)))); }
+
+interface R662 { a662: number; m662: () => number }
+function make662(): R662 { return { a662: 1, m662: () => 1 }; }
+function c662(): void { say("record/getter-member/prototype-set", (Object.setPrototypeOf((({ get f(): unknown { return make662().m662; } }).f) as object, null), Object.getPrototypeOf((({ get f(): unknown { return make662().m662; } }).f)) === null)); }
+
+interface R663 { a663: number; m663: () => number }
+function make663(): R663 { return { a663: 1, m663: () => 1 }; }
+function c663(): void { say("record/getter-member/deleted", (delete (((({ get f(): unknown { return make663().m663; } }).f)) as any).length, Object.hasOwn((({ get f(): unknown { return make663().m663; } }).f) as object, "length"))); }
+
+interface R664 { a664: number; m664: () => number }
+function make664(): R664 { return { a664: 1, m664: () => 1 }; }
+function same664(a: unknown, b: unknown): boolean { return a === b; }
+function c664(): void { say("record/getter-member/in-a-callee", same664((({ get f(): unknown { return make664().m664; } }).f), (({ get f(): unknown { return make664().m664; } }).f))); }
+
+interface R665 { a665: number; m665: () => number }
+function make665(): R665 { return { a665: 1, m665: () => 1 }; }
+function hit665(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c665(): void { say("record/getter-member/switch", hit665((({ get f(): unknown { return make665().m665; } }).f), (({ get f(): unknown { return make665().m665; } }).f))); }
+
+interface R666 { a666: number; m666: () => number }
+function make666(): R666 { return { a666: 1, m666: () => 1 }; }
+let last666: unknown;
+function seen666(f: unknown): boolean { const same = f === last666; last666 = f; return same; }
+function c666(): void { say("record/getter-member/kept-then-compared", (seen666((({ get f(): unknown { return make666().m666; } }).f)), seen666((({ get f(): unknown { return make666().m666; } }).f)))); }
+
+interface R667 { a667: number; m667: () => number }
+function make667(): R667 { return { a667: 1, m667: () => 1 }; }
+function c667(): void { say("record/proxy-get/strict-eq", (new Proxy({ f: make667().m667 as unknown }, {}).f) === (new Proxy({ f: make667().m667 as unknown }, {}).f)); }
+
+interface R668 { a668: number; m668: () => number }
+function make668(): R668 { return { a668: 1, m668: () => 1 }; }
+function c668(): void { say("record/proxy-get/strict-ne", (new Proxy({ f: make668().m668 as unknown }, {}).f) !== (new Proxy({ f: make668().m668 as unknown }, {}).f)); }
+
+interface R669 { a669: number; m669: () => number }
+function make669(): R669 { return { a669: 1, m669: () => 1 }; }
+function c669(): void { say("record/proxy-get/loose-eq", (new Proxy({ f: make669().m669 as unknown }, {}).f) == (new Proxy({ f: make669().m669 as unknown }, {}).f)); }
+
+interface R670 { a670: number; m670: () => number }
+function make670(): R670 { return { a670: 1, m670: () => 1 }; }
+function c670(): void { say("record/proxy-get/object-is", Object.is((new Proxy({ f: make670().m670 as unknown }, {}).f), (new Proxy({ f: make670().m670 as unknown }, {}).f))); }
+
+interface R671 { a671: number; m671: () => number }
+function make671(): R671 { return { a671: 1, m671: () => 1 }; }
+function c671(): void { say("record/proxy-get/set", new Set([(new Proxy({ f: make671().m671 as unknown }, {}).f), (new Proxy({ f: make671().m671 as unknown }, {}).f)]).size); }
+
+interface R672 { a672: number; m672: () => number }
+function make672(): R672 { return { a672: 1, m672: () => 1 }; }
+function c672(): void { say("record/proxy-get/map-key", new Map([[(new Proxy({ f: make672().m672 as unknown }, {}).f), 1], [(new Proxy({ f: make672().m672 as unknown }, {}).f), 2]]).size); }
+
+interface R673 { a673: number; m673: () => number }
+function make673(): R673 { return { a673: 1, m673: () => 1 }; }
+function c673(): void { say("record/proxy-get/includes", [(new Proxy({ f: make673().m673 as unknown }, {}).f)].includes((new Proxy({ f: make673().m673 as unknown }, {}).f))); }
+
+interface R674 { a674: number; m674: () => number }
+function make674(): R674 { return { a674: 1, m674: () => 1 }; }
+function c674(): void { say("record/proxy-get/index-of", [(new Proxy({ f: make674().m674 as unknown }, {}).f)].indexOf((new Proxy({ f: make674().m674 as unknown }, {}).f))); }
+
+interface R675 { a675: number; m675: () => number }
+function make675(): R675 { return { a675: 1, m675: () => 1 }; }
+const ws675 = new WeakSet<object>();
+function c675(): void { say("record/proxy-get/weak-set", (ws675.add((new Proxy({ f: make675().m675 as unknown }, {}).f) as object), ws675.has((new Proxy({ f: make675().m675 as unknown }, {}).f) as object))); }
+
+interface R676 { a676: number; m676: () => number }
+function make676(): R676 { return { a676: 1, m676: () => 1 }; }
+const wm676 = new WeakMap<object, number>();
+function c676(): void { say("record/proxy-get/weak-map", (wm676.set((new Proxy({ f: make676().m676 as unknown }, {}).f) as object, 1), wm676.has((new Proxy({ f: make676().m676 as unknown }, {}).f) as object))); }
+
+interface R677 { a677: number; m677: () => number }
+function make677(): R677 { return { a677: 1, m677: () => 1 }; }
+function c677(): void { say("record/proxy-get/written", ((((new Proxy({ f: make677().m677 as unknown }, {}).f)) as any).tag = 1, (((new Proxy({ f: make677().m677 as unknown }, {}).f)) as any).tag)); }
+
+interface R678 { a678: number; m678: () => number }
+function make678(): R678 { return { a678: 1, m678: () => 1 }; }
+function c678(): void { say("record/proxy-get/defined", (Object.defineProperty((new Proxy({ f: make678().m678 as unknown }, {}).f) as object, "t", { value: 1 }), "t" in ((new Proxy({ f: make678().m678 as unknown }, {}).f) as object))); }
+
+interface R679 { a679: number; m679: () => number }
+function make679(): R679 { return { a679: 1, m679: () => 1 }; }
+function c679(): void { say("record/proxy-get/frozen", (Object.freeze((new Proxy({ f: make679().m679 as unknown }, {}).f)), Object.isFrozen((new Proxy({ f: make679().m679 as unknown }, {}).f)))); }
+
+interface R680 { a680: number; m680: () => number }
+function make680(): R680 { return { a680: 1, m680: () => 1 }; }
+function c680(): void { say("record/proxy-get/prototype-set", (Object.setPrototypeOf((new Proxy({ f: make680().m680 as unknown }, {}).f) as object, null), Object.getPrototypeOf((new Proxy({ f: make680().m680 as unknown }, {}).f)) === null)); }
+
+interface R681 { a681: number; m681: () => number }
+function make681(): R681 { return { a681: 1, m681: () => 1 }; }
+function c681(): void { say("record/proxy-get/deleted", (delete (((new Proxy({ f: make681().m681 as unknown }, {}).f)) as any).length, Object.hasOwn((new Proxy({ f: make681().m681 as unknown }, {}).f) as object, "length"))); }
+
+interface R682 { a682: number; m682: () => number }
+function make682(): R682 { return { a682: 1, m682: () => 1 }; }
+function same682(a: unknown, b: unknown): boolean { return a === b; }
+function c682(): void { say("record/proxy-get/in-a-callee", same682((new Proxy({ f: make682().m682 as unknown }, {}).f), (new Proxy({ f: make682().m682 as unknown }, {}).f))); }
+
+interface R683 { a683: number; m683: () => number }
+function make683(): R683 { return { a683: 1, m683: () => 1 }; }
+function hit683(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c683(): void { say("record/proxy-get/switch", hit683((new Proxy({ f: make683().m683 as unknown }, {}).f), (new Proxy({ f: make683().m683 as unknown }, {}).f))); }
+
+interface R684 { a684: number; m684: () => number }
+function make684(): R684 { return { a684: 1, m684: () => 1 }; }
+let last684: unknown;
+function seen684(f: unknown): boolean { const same = f === last684; last684 = f; return same; }
+function c684(): void { say("record/proxy-get/kept-then-compared", (seen684((new Proxy({ f: make684().m684 as unknown }, {}).f)), seen684((new Proxy({ f: make684().m684 as unknown }, {}).f)))); }
+
+interface R685 { a685: number; m685: () => number }
+function make685(): R685 { return { a685: 1, m685: () => 1 }; }
+function c685(): void { say("record/prototype-chain/strict-eq", (Object.create({ f: make685().m685 }).f) === (Object.create({ f: make685().m685 }).f)); }
+
+interface R686 { a686: number; m686: () => number }
+function make686(): R686 { return { a686: 1, m686: () => 1 }; }
+function c686(): void { say("record/prototype-chain/strict-ne", (Object.create({ f: make686().m686 }).f) !== (Object.create({ f: make686().m686 }).f)); }
+
+interface R687 { a687: number; m687: () => number }
+function make687(): R687 { return { a687: 1, m687: () => 1 }; }
+function c687(): void { say("record/prototype-chain/loose-eq", (Object.create({ f: make687().m687 }).f) == (Object.create({ f: make687().m687 }).f)); }
+
+interface R688 { a688: number; m688: () => number }
+function make688(): R688 { return { a688: 1, m688: () => 1 }; }
+function c688(): void { say("record/prototype-chain/object-is", Object.is((Object.create({ f: make688().m688 }).f), (Object.create({ f: make688().m688 }).f))); }
+
+interface R689 { a689: number; m689: () => number }
+function make689(): R689 { return { a689: 1, m689: () => 1 }; }
+function c689(): void { say("record/prototype-chain/set", new Set([(Object.create({ f: make689().m689 }).f), (Object.create({ f: make689().m689 }).f)]).size); }
+
+interface R690 { a690: number; m690: () => number }
+function make690(): R690 { return { a690: 1, m690: () => 1 }; }
+function c690(): void { say("record/prototype-chain/map-key", new Map([[(Object.create({ f: make690().m690 }).f), 1], [(Object.create({ f: make690().m690 }).f), 2]]).size); }
+
+interface R691 { a691: number; m691: () => number }
+function make691(): R691 { return { a691: 1, m691: () => 1 }; }
+function c691(): void { say("record/prototype-chain/includes", [(Object.create({ f: make691().m691 }).f)].includes((Object.create({ f: make691().m691 }).f))); }
+
+interface R692 { a692: number; m692: () => number }
+function make692(): R692 { return { a692: 1, m692: () => 1 }; }
+function c692(): void { say("record/prototype-chain/index-of", [(Object.create({ f: make692().m692 }).f)].indexOf((Object.create({ f: make692().m692 }).f))); }
+
+interface R693 { a693: number; m693: () => number }
+function make693(): R693 { return { a693: 1, m693: () => 1 }; }
+const ws693 = new WeakSet<object>();
+function c693(): void { say("record/prototype-chain/weak-set", (ws693.add((Object.create({ f: make693().m693 }).f) as object), ws693.has((Object.create({ f: make693().m693 }).f) as object))); }
+
+interface R694 { a694: number; m694: () => number }
+function make694(): R694 { return { a694: 1, m694: () => 1 }; }
+const wm694 = new WeakMap<object, number>();
+function c694(): void { say("record/prototype-chain/weak-map", (wm694.set((Object.create({ f: make694().m694 }).f) as object, 1), wm694.has((Object.create({ f: make694().m694 }).f) as object))); }
+
+interface R695 { a695: number; m695: () => number }
+function make695(): R695 { return { a695: 1, m695: () => 1 }; }
+function c695(): void { say("record/prototype-chain/written", ((((Object.create({ f: make695().m695 }).f)) as any).tag = 1, (((Object.create({ f: make695().m695 }).f)) as any).tag)); }
+
+interface R696 { a696: number; m696: () => number }
+function make696(): R696 { return { a696: 1, m696: () => 1 }; }
+function c696(): void { say("record/prototype-chain/defined", (Object.defineProperty((Object.create({ f: make696().m696 }).f) as object, "t", { value: 1 }), "t" in ((Object.create({ f: make696().m696 }).f) as object))); }
+
+interface R697 { a697: number; m697: () => number }
+function make697(): R697 { return { a697: 1, m697: () => 1 }; }
+function c697(): void { say("record/prototype-chain/frozen", (Object.freeze((Object.create({ f: make697().m697 }).f)), Object.isFrozen((Object.create({ f: make697().m697 }).f)))); }
+
+interface R698 { a698: number; m698: () => number }
+function make698(): R698 { return { a698: 1, m698: () => 1 }; }
+function c698(): void { say("record/prototype-chain/prototype-set", (Object.setPrototypeOf((Object.create({ f: make698().m698 }).f) as object, null), Object.getPrototypeOf((Object.create({ f: make698().m698 }).f)) === null)); }
+
+interface R699 { a699: number; m699: () => number }
+function make699(): R699 { return { a699: 1, m699: () => 1 }; }
+function c699(): void { say("record/prototype-chain/deleted", (delete (((Object.create({ f: make699().m699 }).f)) as any).length, Object.hasOwn((Object.create({ f: make699().m699 }).f) as object, "length"))); }
+
+interface R700 { a700: number; m700: () => number }
+function make700(): R700 { return { a700: 1, m700: () => 1 }; }
+function same700(a: unknown, b: unknown): boolean { return a === b; }
+function c700(): void { say("record/prototype-chain/in-a-callee", same700((Object.create({ f: make700().m700 }).f), (Object.create({ f: make700().m700 }).f))); }
+
+interface R701 { a701: number; m701: () => number }
+function make701(): R701 { return { a701: 1, m701: () => 1 }; }
+function hit701(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c701(): void { say("record/prototype-chain/switch", hit701((Object.create({ f: make701().m701 }).f), (Object.create({ f: make701().m701 }).f))); }
+
+interface R702 { a702: number; m702: () => number }
+function make702(): R702 { return { a702: 1, m702: () => 1 }; }
+let last702: unknown;
+function seen702(f: unknown): boolean { const same = f === last702; last702 = f; return same; }
+function c702(): void { say("record/prototype-chain/kept-then-compared", (seen702((Object.create({ f: make702().m702 }).f)), seen702((Object.create({ f: make702().m702 }).f)))); }
+
+interface R703 { a703: number; m703: () => number }
+function make703(): R703 { return { a703: 1, m703: () => 1 }; }
+function c703(): void { say("record/weak-ref/strict-eq", (new WeakRef(make703().m703 as object).deref()) === (new WeakRef(make703().m703 as object).deref())); }
+
+interface R704 { a704: number; m704: () => number }
+function make704(): R704 { return { a704: 1, m704: () => 1 }; }
+function c704(): void { say("record/weak-ref/strict-ne", (new WeakRef(make704().m704 as object).deref()) !== (new WeakRef(make704().m704 as object).deref())); }
+
+interface R705 { a705: number; m705: () => number }
+function make705(): R705 { return { a705: 1, m705: () => 1 }; }
+function c705(): void { say("record/weak-ref/loose-eq", (new WeakRef(make705().m705 as object).deref()) == (new WeakRef(make705().m705 as object).deref())); }
+
+interface R706 { a706: number; m706: () => number }
+function make706(): R706 { return { a706: 1, m706: () => 1 }; }
+function c706(): void { say("record/weak-ref/object-is", Object.is((new WeakRef(make706().m706 as object).deref()), (new WeakRef(make706().m706 as object).deref()))); }
+
+interface R707 { a707: number; m707: () => number }
+function make707(): R707 { return { a707: 1, m707: () => 1 }; }
+function c707(): void { say("record/weak-ref/set", new Set([(new WeakRef(make707().m707 as object).deref()), (new WeakRef(make707().m707 as object).deref())]).size); }
+
+interface R708 { a708: number; m708: () => number }
+function make708(): R708 { return { a708: 1, m708: () => 1 }; }
+function c708(): void { say("record/weak-ref/map-key", new Map([[(new WeakRef(make708().m708 as object).deref()), 1], [(new WeakRef(make708().m708 as object).deref()), 2]]).size); }
+
+interface R709 { a709: number; m709: () => number }
+function make709(): R709 { return { a709: 1, m709: () => 1 }; }
+function c709(): void { say("record/weak-ref/includes", [(new WeakRef(make709().m709 as object).deref())].includes((new WeakRef(make709().m709 as object).deref()))); }
+
+interface R710 { a710: number; m710: () => number }
+function make710(): R710 { return { a710: 1, m710: () => 1 }; }
+function c710(): void { say("record/weak-ref/index-of", [(new WeakRef(make710().m710 as object).deref())].indexOf((new WeakRef(make710().m710 as object).deref()))); }
+
+interface R711 { a711: number; m711: () => number }
+function make711(): R711 { return { a711: 1, m711: () => 1 }; }
+const ws711 = new WeakSet<object>();
+function c711(): void { say("record/weak-ref/weak-set", (ws711.add((new WeakRef(make711().m711 as object).deref()) as object), ws711.has((new WeakRef(make711().m711 as object).deref()) as object))); }
+
+interface R712 { a712: number; m712: () => number }
+function make712(): R712 { return { a712: 1, m712: () => 1 }; }
+const wm712 = new WeakMap<object, number>();
+function c712(): void { say("record/weak-ref/weak-map", (wm712.set((new WeakRef(make712().m712 as object).deref()) as object, 1), wm712.has((new WeakRef(make712().m712 as object).deref()) as object))); }
+
+interface R713 { a713: number; m713: () => number }
+function make713(): R713 { return { a713: 1, m713: () => 1 }; }
+function c713(): void { say("record/weak-ref/written", ((((new WeakRef(make713().m713 as object).deref())) as any).tag = 1, (((new WeakRef(make713().m713 as object).deref())) as any).tag)); }
+
+interface R714 { a714: number; m714: () => number }
+function make714(): R714 { return { a714: 1, m714: () => 1 }; }
+function c714(): void { say("record/weak-ref/defined", (Object.defineProperty((new WeakRef(make714().m714 as object).deref()) as object, "t", { value: 1 }), "t" in ((new WeakRef(make714().m714 as object).deref()) as object))); }
+
+interface R715 { a715: number; m715: () => number }
+function make715(): R715 { return { a715: 1, m715: () => 1 }; }
+function c715(): void { say("record/weak-ref/frozen", (Object.freeze((new WeakRef(make715().m715 as object).deref())), Object.isFrozen((new WeakRef(make715().m715 as object).deref())))); }
+
+interface R716 { a716: number; m716: () => number }
+function make716(): R716 { return { a716: 1, m716: () => 1 }; }
+function c716(): void { say("record/weak-ref/prototype-set", (Object.setPrototypeOf((new WeakRef(make716().m716 as object).deref()) as object, null), Object.getPrototypeOf((new WeakRef(make716().m716 as object).deref())) === null)); }
+
+interface R717 { a717: number; m717: () => number }
+function make717(): R717 { return { a717: 1, m717: () => 1 }; }
+function c717(): void { say("record/weak-ref/deleted", (delete (((new WeakRef(make717().m717 as object).deref())) as any).length, Object.hasOwn((new WeakRef(make717().m717 as object).deref()) as object, "length"))); }
+
+interface R718 { a718: number; m718: () => number }
+function make718(): R718 { return { a718: 1, m718: () => 1 }; }
+function same718(a: unknown, b: unknown): boolean { return a === b; }
+function c718(): void { say("record/weak-ref/in-a-callee", same718((new WeakRef(make718().m718 as object).deref()), (new WeakRef(make718().m718 as object).deref()))); }
+
+interface R719 { a719: number; m719: () => number }
+function make719(): R719 { return { a719: 1, m719: () => 1 }; }
+function hit719(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c719(): void { say("record/weak-ref/switch", hit719((new WeakRef(make719().m719 as object).deref()), (new WeakRef(make719().m719 as object).deref()))); }
+
+interface R720 { a720: number; m720: () => number }
+function make720(): R720 { return { a720: 1, m720: () => 1 }; }
+let last720: unknown;
+function seen720(f: unknown): boolean { const same = f === last720; last720 = f; return same; }
+function c720(): void { say("record/weak-ref/kept-then-compared", (seen720((new WeakRef(make720().m720 as object).deref())), seen720((new WeakRef(make720().m720 as object).deref())))); }
+
+c661(); c662(); c663(); c664(); c665(); c666(); c667(); c668(); c669(); c670(); c671(); c672(); c673(); c674(); c675(); c676(); c677(); c678(); c679(); c680(); c681(); c682(); c683(); c684(); c685(); c686(); c687(); c688(); c689(); c690(); c691(); c692(); c693(); c694(); c695(); c696(); c697(); c698(); c699(); c700(); c701(); c702(); c703(); c704(); c705(); c706(); c707(); c708(); c709(); c710(); c711(); c712(); c713(); c714(); c715(); c716(); c717(); c718(); c719(); c720();
+console.log(out.join("\n"));

@@ -1,0 +1,19 @@
+//// built-ins-removable-rows/error-probe.js
+// Built ins removable rows: error probe. It prints what plain Bun prints.
+let calls = 0;
+Error.prepareStackTrace = (error, sites) => { calls++; return "S" + sites.length; };
+new Error("x");
+console.log("after an unused error", calls);
+const kept = new Error("y");
+console.log("before the read", calls);
+kept.stack;
+console.log("after the read", calls);
+Object.defineProperty(Error, "stackTraceLimit", { get() { console.log("limit read"); return 10; }, configurable: true });
+new Error("z");
+console.log("after an error under a getter for the limit", calls);
+new TypeError("t", { get cause() { console.log("cause read"); return 1; } });
+new Error({ toString() { console.log("message converted"); return "m"; } });
+try { new Error(Symbol("s")); } catch (error) { console.log("symbol:", error.constructor.name); }
+class Mine extends Error {}
+new Mine("m");
+console.log("end", calls);

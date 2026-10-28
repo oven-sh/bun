@@ -1,0 +1,1 @@
+{ "entryPoints": ["./honest.cjs", "./first.cjs", "./second.cjs", "./third.cjs"] }

@@ -1,0 +1,45 @@
+//// a-class-is-read-above-its-declaration-in-a-bundle-in-the-commonjs-format-of-bun-build.cjs
+// @bun @bun-cjs
+(function(exports, require, module, __filename, __dirname) {// A class whose body calls nothing is read above its declaration.
+function attempt(read) {
+  try {
+    console.log(typeof read());
+  } catch (error) {
+    console.log(error.name);
+  }
+}
+attempt(() => Late);
+class Late {
+  static first = 1;
+}
+attempt(() => Late);
+})
+//// a-function-of-a-bundle-in-the-commonjs-format-of-bun-build-has-a-strict-directive.cjs
+// @bun @bun-cjs
+(function(exports, require, module, __filename, __dirname) {// One function of the bundle starts with "use strict", another does not.
+function strict() {
+  "use strict";
+  return typeof this;
+}
+function sloppy() {
+  return typeof this;
+}
+function storeInStrict() {
+  "use strict";
+  try {
+    undeclaredInStrict = 1;
+    return "stored";
+  } catch (error) {
+    return error.name;
+  }
+}
+function storeInSloppy() {
+  undeclaredInSloppy = 1;
+  return typeof undeclaredInSloppy;
+}
+const inner = function () {
+  "use strict";
+  return (() => typeof this)() + " " + (function () { return typeof this; })();
+};
+console.log(strict(), sloppy(), storeInStrict(), storeInSloppy(), inner());
+})

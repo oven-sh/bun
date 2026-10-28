@@ -1,0 +1,3067 @@
+////: Line
+class Line extends Shape {
+  area(): number {
+    return 0;
+  }
+  get label(): string {
+    return "line";
+  }
+}
+////: Pair-4
+class Pair extends Base {
+  get level(): number {
+    log.push("get");
+    return 42;
+  }
+  set level(value: number) {
+    log.push("set " + value);
+  }
+}
+////: Shape-3
+abstract class Shape {
+  side = 2;
+  abstract area(): number;
+  abstract get label(): string;
+  describe(): string {
+    return this.label + " " + this.area();
+  }
+}
+////: Shape-6
+////= Shape-3
+
+////= Square-8
+
+////= Line
+
+////= attempt-7
+////: Sink-2
+class Sink {
+  got = 0;
+  set level(value: number) {
+    this.got = value;
+  }
+}
+////: Sized
+interface Sized {
+  get size(): number;
+  set size(value: number | string);
+}
+////: Square-8
+class Square extends Shape {
+  area(): number {
+    return this.side * this.side;
+  }
+  get label(): string {
+    return "square";
+  }
+}
+////: TakesText
+class TakesText {
+  kept = "start";
+  get v(): number {
+    return this.kept.length;
+  }
+  set v(value: string) {
+    this.kept = value;
+  }
+}
+////: lines-130
+class «1» {
+  kept = 1;
+  get size(): number {
+    return this.kept;
+  }
+  set size(value: number | string) {
+    this.kept = typeof value === "string" ? value.length : value;
+  }
+}
+////: lines-138
+class «1» «2» «3» {
+  kept = «4»;
+  get size(): number {
+    return this.kept;
+  }
+  set size(value: number | string) {
+    this.kept = typeof value === "string" ? value.length : value;
+  }
+}
+////: lines-304
+function «1»(p: «2», really: boolean): string {
+  const before = p.norm();
+  const target: Target = spare();
+  «3»;
+  return before + " " + p.norm();
+}
+//// a-write-between-two-calls-in-one-function-replaces-the-method-on-the-prototype.ts
+////= Target
+
+function spare(): Target {
+  return { norm: () => 0 };
+}
+
+const replacement = (): number => -1;
+const key: "norm" = ["no", "rm"].join("") === "norm" ? "norm" : "norm";
+
+////= drive-4
+
+////= ByStore
+
+function byStore(p: ByStore, really: boolean): string {
+  const before = p.norm();
+  const target: Target = really ? ByStore.prototype : spare();
+  target.norm = replacement;
+  return before + " " + p.norm();
+}
+
+////= lines-49	ByStore	"a plain store"	byStore
+
+////= ByAssign
+
+////= lines-303	byAssign	ByAssign	ByAssign.prototype	Object.assign(target, { norm: replacement })
+
+////= lines-49	ByAssign	"Object.assign"	byAssign
+
+////= ByDefine
+
+function byDefine(p: ByDefine, really: boolean): string {
+  const before = p.norm();
+  const target: Target = really ? ByDefine.prototype : spare();
+  Object.defineProperty(target, "norm", { value: replacement, writable: true, configurable: true });
+  return before + " " + p.norm();
+}
+
+////= lines-49	ByDefine	"Object.defineProperty"	byDefine
+
+////= ByDefineSeveral
+
+function byDefineSeveral(p: ByDefineSeveral, really: boolean): string {
+  const before = p.norm();
+  const target: Target = really ? ByDefineSeveral.prototype : spare();
+  Object.defineProperties(target, { norm: { value: replacement, writable: true, configurable: true } });
+  return before + " " + p.norm();
+}
+
+////= lines-49	ByDefineSeveral	"Object.defineProperties"	byDefineSeveral
+
+////= ByReflectSet
+
+function byReflectSet(p: ByReflectSet, really: boolean): string {
+  const before = p.norm();
+  const target: Target = really ? ByReflectSet.prototype : spare();
+  Reflect.set(target, "norm", replacement);
+  return before + " " + p.norm();
+}
+
+////= lines-49	ByReflectSet	"Reflect.set"	byReflectSet
+
+////= ByReflectDefine
+
+function byReflectDefine(p: ByReflectDefine, really: boolean): string {
+  const before = p.norm();
+  const target: Target = really ? ByReflectDefine.prototype : spare();
+  Reflect.defineProperty(target, "norm", { value: replacement, writable: true, configurable: true });
+  return before + " " + p.norm();
+}
+
+////= lines-49	ByReflectDefine	"Reflect.defineProperty"	byReflectDefine
+
+////= ByGetter
+
+function byGetter(p: ByGetter, really: boolean): string {
+  const before = p.norm();
+  const target: Target = really ? ByGetter.prototype : spare();
+  Object.defineProperty(target, "norm", { get: () => replacement, configurable: true });
+  return before + " " + p.norm();
+}
+
+////= lines-49	ByGetter	"a getter"	byGetter
+
+////= ByComputedName
+
+function byComputedName(p: ByComputedName, really: boolean): string {
+  const before = p.norm();
+  const target: Target = really ? ByComputedName.prototype : spare();
+  target[key] = replacement;
+  return before + " " + p.norm();
+}
+
+////= lines-49	ByComputedName	"a computed name"	byComputedName
+
+////= ByProxy
+
+function byProxy(p: ByProxy, really: boolean): string {
+  const before = p.norm();
+  const target: Target = really ? ByProxy.prototype : spare();
+  new Proxy(target, {}).norm = replacement;
+  return before + " " + p.norm();
+}
+
+////= lines-49	ByProxy	"a store through a proxy"	byProxy
+
+////= ByPattern
+
+function byPattern(p: ByPattern, really: boolean): string {
+  const before = p.norm();
+  const target: Target = really ? ByPattern.prototype : spare();
+  ({ norm: target.norm } = { norm: replacement });
+  return before + " " + p.norm();
+}
+
+////= lines-49	ByPattern	"an object pattern"	byPattern
+
+export {};
+//// a-write-to-another-object-between-two-calls-in-one-function-honest.ts
+////= Target
+
+function spare(): Target {
+  return { norm: () => 0 };
+}
+
+const replacement = (): number => -1;
+const key: "norm" = ["no", "rm"].join("") === "norm" ? "norm" : "norm";
+
+function drive<T extends Target>(label: string, p: T, holder: Target, run: (p: T, really: boolean) => string): void {
+  let warm = 0;
+  for (let i = 0; i < 2000; i++) warm += run(p, false).length;
+  const parts = [String(warm), run(p, false), run(p, true), run(p, false)];
+  parts.push(run(p, false));
+  console.log(label + ": " + parts.join(" | "));
+}
+
+////= ByStore
+
+////= lines-304	byStore	ByStore	target.norm = replacement
+
+////= lines-50	ByStore	"a plain store"	byStore
+
+////= ByAssign
+
+////= lines-304	byAssign	ByAssign	Object.assign(target, { norm: replacement })
+
+////= lines-50	ByAssign	"Object.assign"	byAssign
+
+////= ByDefine
+
+////= lines-304	byDefine	ByDefine	Object.defineProperty(target, "norm", { value: replacement, writable: true, configurable: true })
+
+////= lines-50	ByDefine	"Object.defineProperty"	byDefine
+
+////= ByDefineSeveral
+
+////= lines-304	byDefineSeveral	ByDefineSeveral	Object.defineProperties(target, { norm: { value: replacement, writable: true, configurable: true } })
+
+////= lines-50	ByDefineSeveral	"Object.defineProperties"	byDefineSeveral
+
+////= ByReflectSet
+
+////= lines-304	byReflectSet	ByReflectSet	Reflect.set(target, "norm", replacement)
+
+////= lines-50	ByReflectSet	"Reflect.set"	byReflectSet
+
+////= ByReflectDefine
+
+////= lines-304	byReflectDefine	ByReflectDefine	Reflect.defineProperty(target, "norm", { value: replacement, writable: true, configurable: true })
+
+////= lines-50	ByReflectDefine	"Reflect.defineProperty"	byReflectDefine
+
+////= ByGetter
+
+////= lines-304	byGetter	ByGetter	Object.defineProperty(target, "norm", { get: () => replacement, configurable: true })
+
+////= lines-50	ByGetter	"a getter"	byGetter
+
+////= ByComputedName
+
+////= lines-304	byComputedName	ByComputedName	target[key] = replacement
+
+////= lines-50	ByComputedName	"a computed name"	byComputedName
+
+////= ByProxy
+
+function byProxy(p: ByProxy, really: boolean): string {
+  const before = p.norm();
+  const target: Target = spare();
+  new Proxy(target, {}).norm = replacement;
+  return before + " " + p.norm();
+}
+
+////= lines-50	ByProxy	"a store through a proxy"	byProxy
+
+////= ByPattern
+
+////= lines-304	byPattern	ByPattern	({ norm: target.norm } = { norm: replacement })
+
+////= lines-50	ByPattern	"an object pattern"	byPattern
+
+export {};
+//// a-written-constructor-calls-super-and-the-base-is-typed-by-a-construct-signature.ts
+////= Point-10
+const Base: new () => object = Point;
+class Derived extends Base {
+  constructor() {
+    super();
+  }
+}
+const made = new Derived();
+console.log("zq keys [" + Object.keys(made).join(" ") + "] point " + (made instanceof Point));
+//// a-yield-in-a-finally-block-holds-up-a-return.ts
+////= text-14
+
+function* stubborn(label: string): Generator<number, string, string> {
+  let kept = "nothing";
+  try {
+    kept = yield 1;
+    console.log(label + ": after the first yield " + text(kept));
+    kept = yield 2;
+    return "try " + kept;
+  } finally {
+    console.log(label + ": finally begins with " + text(kept));
+    const inFinally: string = yield 100;
+    console.log(label + ": finally was sent " + text(inFinally));
+    const second: string = yield 200;
+    console.log(label + ": finally was sent " + text(second));
+  }
+}
+
+const a = stubborn("by hand");
+console.log(text(a.next()));
+console.log(text(a.return("asked")));
+console.log(text(a.next("one")));
+console.log(text(a.next("two")));
+console.log(text(a.next("three")));
+
+const b = stubborn("return twice");
+console.log(text(b.next()));
+console.log(text(b.return("first")));
+console.log(text(b.return("second")));
+console.log(text(b.next("late")));
+
+const c = stubborn("throw in finally");
+console.log(text(c.next()));
+console.log(text(c.return("asked")));
+try {
+  console.log(text(c.throw(new SyntaxError("thrown in"))));
+} catch (error) {
+  console.log("throw in finally: " + failure(error));
+}
+console.log(text(c.next("late")));
+
+const d = stubborn("break");
+const hidden: Iterable<number> = d;
+for (const n of hidden) {
+  console.log("break: for-of got " + n);
+  break;
+}
+console.log("break: the generator is still alive");
+console.log(text(d.next("after the loop")));
+console.log(text(d.next("and again")));
+console.log(text(d.next("and once more")));
+
+const e = stubborn("destructuring");
+const alsoHidden: Iterable<number> = e;
+const [first] = alsoHidden;
+console.log("destructuring: got " + first);
+console.log(text(e.next("after the pattern")));
+console.log(text(e.next("and again")));
+
+const f = stubborn("normal end");
+console.log(text(f.next()));
+console.log(text(f.next("x")));
+console.log(text(f.next("y")));
+console.log(text(f.next("z")));
+console.log(text(f.next("w")));
+console.log(text(f.next("v")));
+//// abstract-members-are-read-by-the-base-constructor.ts
+////= text-12
+
+const log: string[] = [];
+
+abstract class Shape {
+  abstract readonly sides: number;
+  abstract name: string;
+  abstract area(): number;
+  abstract get corners(): number;
+  summary: string;
+  doubled: number;
+  constructor() {
+    this.summary = this.describe();
+    this.doubled = this.twice();
+  }
+  describe(): string {
+    return typeof this.sides + " " + this.sides + " " + typeof this.name + " " + this.name + " " + this.corners;
+  }
+  twice(): number {
+    return this.sides * 2;
+  }
+  safeArea(): string {
+    try {
+      return String(this.area());
+    } catch (error) {
+      return "threw";
+    }
+  }
+}
+
+class Square extends Shape {
+  readonly sides: number = 4;
+  name: string = "square";
+  side: number = 3;
+  area(): number {
+    return this.side * this.side;
+  }
+  get corners(): number {
+    return this.sides;
+  }
+}
+
+class Fixed extends Shape {
+  get sides(): number {
+    return 3;
+  }
+  get name(): string {
+    return "fixed";
+  }
+  set name(value: string) {
+    log.push("name set to " + value);
+  }
+  area(): number {
+    return 1;
+  }
+  get corners(): number {
+    return 3;
+  }
+}
+
+class Early extends Shape {
+  readonly sides: number = 5;
+  name: string = "early";
+  areaSeen: string;
+  points: number[] = [1, 2];
+  constructor() {
+    super();
+    this.areaSeen = this.safeArea();
+  }
+  area(): number {
+    return this.points.length;
+  }
+  get corners(): number {
+    return this.points.length;
+  }
+  describe(): string {
+    try {
+      return super.describe();
+    } catch (error) {
+      return "threw " + (error instanceof Error ? error.constructor.name : typeof error);
+    }
+  }
+}
+
+const square = new Square();
+show("square summary", () => square.summary);
+show("square doubled", () => square.doubled);
+show("square describe now", () => square.describe());
+show("square twice now", () => square.twice());
+show("square area", () => square.area());
+show("square keys", () => Object.keys(square).join());
+
+const fixed = new Fixed();
+show("fixed summary", () => fixed.summary);
+show("fixed doubled", () => fixed.doubled);
+fixed.name = "other";
+show("fixed name", () => fixed.name);
+show("log", () => log.join());
+show("fixed keys", () => Object.keys(fixed).join());
+
+const early = new Early();
+show("early summary", () => early.summary);
+show("early doubled", () => early.doubled);
+show("early area seen", () => early.areaSeen);
+
+const shapes: Shape[] = [square, fixed, early];
+let total = 0;
+for (const shape of shapes) total += shape.doubled;
+show("all doubled added", () => total);
+show("sides", () => shapes.map(s => s.sides).join());
+//// accessors-a-getter-typed-number-returns-a-string-after-a-while.ts
+////= say
+
+class Gauge {
+  raw: number | string = 1;
+  ticks = 0;
+  tick(): void {
+    this.ticks++;
+    if (this.ticks > 2) this.raw = "text";
+  }
+  get level(): number {
+    if (typeof this.raw === "number") {
+      this.tick();
+      return this.raw;
+    }
+    return -1;
+  }
+}
+
+const gauge = new Gauge();
+for (let i = 0; i < 5; i++) {
+  const level = gauge.level;
+  say("read " + i, level);
+  say("read " + i + " plus one", level + 1);
+  say("read " + i + " doubled", level * 2);
+}
+
+////= half
+
+const second = new Gauge();
+say("first", half(second.level));
+say("second", half(second.level));
+say("third", half(second.level));
+say("fourth", half(second.level));
+//// accessors-a-getter-typed-number-turns-into-a-string-in-five-places.ts
+////= text-13
+
+class Gauge {
+  raw: number | string = 1;
+  turnsAfter: number;
+  reads = 0;
+  constructor(turnsAfter: number) {
+    this.turnsAfter = turnsAfter;
+  }
+  tick(): void {
+    if (++this.reads > this.turnsAfter) this.raw = "text";
+  }
+  get level(): number {
+    if (typeof this.raw === "number") {
+      this.tick();
+      return this.raw;
+    }
+    return -1;
+  }
+}
+
+////= lines-203	interface	Leveled	readonly	level
+
+////= half
+
+function inAParameter(g: Leveled): unknown {
+  return [g.level, g.level + 1, half(g.level)];
+}
+
+function inALocal(turnsAfter: number): unknown {
+  const g = new Gauge(turnsAfter);
+  const level = g.level;
+  return [level, level + 1, level * 2, half(level)];
+}
+
+class Panel {
+  gauge: Gauge;
+  last = 0;
+  constructor(turnsAfter: number) {
+    this.gauge = new Gauge(turnsAfter);
+  }
+  inAField(): unknown {
+    this.last = this.gauge.level;
+    return [this.last, this.last + 1, half(this.last)];
+  }
+}
+
+function inAnElement(gauges: Leveled[]): unknown {
+  const levels: number[] = [];
+  for (const g of gauges) levels.push(g.level);
+  let sum = 0;
+  for (const n of levels) sum += n;
+  return [levels, sum];
+}
+
+function inACapturedVariable(turnsAfter: number): unknown {
+  const g = new Gauge(turnsAfter);
+  let level = 0;
+  const read = (): void => {
+    level = g.level;
+  };
+  read();
+  return [level, level + 1, half(level)];
+}
+
+const never = 1e9;
+
+function round(label: string, turnsAfter: number): void {
+  attempt(label + " in a parameter", () => inAParameter(new Gauge(turnsAfter)));
+  attempt(label + " in a local", () => inALocal(turnsAfter));
+  attempt(label + " in a field", () => new Panel(turnsAfter).inAField());
+  attempt(label + " in an element", () => inAnElement([new Gauge(never), new Gauge(turnsAfter), { level: 3 }]));
+  attempt(label + " in a captured variable", () => inACapturedVariable(turnsAfter));
+}
+
+round("steady", never);
+let sum = 0;
+const longLived = new Gauge(2000);
+for (let i = 0; i < 2000; i++) sum += longLived.level;
+console.log("2000 honest reads: " + sum);
+attempt("read 2001 at the same getter", () => {
+  const level = longLived.level;
+  return [level, level + 1, half(level)];
+});
+attempt("read 2002", () => longLived.level);
+round("turned at once", 0);
+round("turned at the second read", 1);
+round("steady again", never);
+//// accessors-a-member-with-only-a-getter-is-stored-to-in-sloppy-code.cts
+////= say
+
+say("strict", (function (this: unknown) {
+  return this === undefined;
+})());
+
+const literal = {
+  get size(): number {
+    return 5;
+  },
+};
+
+const writeOnly = {
+  got: 0,
+  set level(value: number) {
+    this.got = value;
+  },
+};
+
+type Loose = { size: number };
+
+function store(o: Loose): number {
+  return (o.size = 6);
+}
+
+function add(o: Loose): number {
+  return (o.size += 1);
+}
+
+function increment(o: Loose): number {
+  return o.size++;
+}
+
+say("a store", store(literal));
+say("afterwards", literal.size);
+say("plus equals", add(literal));
+say("afterwards", literal.size);
+say("increment", increment(literal));
+say("afterwards", literal.size);
+say("a plain object", store({ size: 1 }) + add({ size: 1 }) + increment({ size: 1 }));
+say("write only: read", writeOnly.level);
+say("write only: plus equals", (writeOnly.level += 1));
+say("write only: got", writeOnly.got);
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += store(i % 2 === 0 ? literal : { size: i }) + literal.size;
+say("2000 rounds", sum);
+//// accessors-a-member-with-only-a-getter-is-stored-to-through-a-mutable-view.ts
+////= text-13
+
+class Fixed {
+  get size(): number {
+    return 5;
+  }
+}
+
+class Child extends Fixed {}
+
+class Counted {
+  static get size(): number {
+    return 5;
+  }
+}
+
+function literal() {
+  return {
+    get size(): number {
+      return 5;
+    },
+  };
+}
+
+type Loose = { size: number };
+
+const stores: [string, (o: Loose) => unknown][] = [
+  ["a store", o => (o.size = 6)],
+  ["plus equals", o => (o.size += 1)],
+  ["increment", o => o.size++],
+  ["or equals, which stores nothing", o => (o.size ||= 6)],
+  ["and equals", o => (o.size &&= 6)],
+  ["nullish equals, which stores nothing", o => (o.size ??= 6)],
+  ["a destructuring store", o => ([o.size] = [6])],
+  ["Object.assign", o => Object.assign(o, { size: 6 }).size],
+  ["Reflect.set", o => Reflect.set(o, "size", 6)],
+  ["Object.defineProperty", o => Object.defineProperty(o, "size", { value: 6 }).size],
+];
+
+const makers: [string, () => Loose][] = [
+  ["a class", () => new Fixed()],
+  ["a subclass", () => new Child()],
+  ["a literal", literal],
+  ["a static member", () => Counted],
+  ["a plain object", () => ({ size: 5 })],
+];
+
+for (const [kind, make] of makers) {
+  for (const [name, store] of stores) {
+    if (kind === "a static member" && name === "Object.defineProperty") continue;
+    attempt(kind + ": " + name, () => {
+      const o = make();
+      let result: unknown;
+      try {
+        result = store(o);
+      } finally {
+        console.log("  afterwards: " + text(o.size) + ", own: " + Object.hasOwn(o, "size"));
+      }
+      return result;
+    });
+  }
+}
+let sum = 0;
+const mixed: Loose[] = [];
+for (let i = 0; i < 2000; i++) mixed.push({ size: i });
+mixed.push(new Fixed());
+let threw = 0;
+for (const o of mixed) {
+  try {
+    o.size += 1;
+  } catch {
+    threw++;
+  }
+  sum += o.size;
+}
+console.log("2000 plain objects and one with only a getter: " + sum + ", threw " + threw);
+//// accessors-a-member-with-only-a-setter-in-every-use.ts
+////= text-13
+
+const log: string[] = [];
+
+class Sink {
+  got: unknown[] = [];
+  set level(value: number) {
+    log.push("set " + String(value));
+    this.got.push(value);
+  }
+}
+
+const literal = {
+  got: 0,
+  set level(value: number) {
+    log.push("literal set " + String(value));
+    this.got = value;
+  },
+};
+
+interface WriteOnly {
+  set level(value: number);
+}
+
+class Child extends Sink {}
+
+class Fixed {
+  static got = 0;
+  static set level(value: number) {
+    log.push("static set " + String(value));
+    Fixed.got = value;
+  }
+}
+
+////= half
+
+function uses(label: string, make: () => { level: number }): void {
+  attempt(label + ": read", () => make().level);
+  attempt(label + ": plus one", () => make().level + 1);
+  attempt(label + ": handed on", () => half(make().level));
+  attempt(label + ": to fixed", () => make().level.toFixed(1));
+  attempt(label + ": kept in a constant", () => {
+    const n: number = make().level;
+    return [n, n * 2];
+  });
+  attempt(label + ": plus equals", () => (make().level += 1));
+  attempt(label + ": increment", () => make().level++);
+  attempt(label + ": or equals", () => (make().level ||= 5));
+  attempt(label + ": nullish equals", () => (make().level ??= 5));
+  attempt(label + ": destructured", () => {
+    const { level } = make();
+    return [level, level + 1];
+  });
+  attempt(label + ": destructured with a default", () => {
+    const { level = 9 } = make();
+    return level;
+  });
+  attempt(label + ": the name is there", () => "level" in make());
+  attempt(label + ": keys", () => Object.keys(make()).join());
+  attempt(label + ": as JSON", () => JSON.stringify(make()));
+  attempt(label + ": copied by Object.assign", () => JSON.stringify(Object.assign({}, make())));
+  attempt(label + ": filled by Object.assign", () => {
+    const o = make();
+    Object.assign(o, { level: 3 });
+    return o.level;
+  });
+}
+
+uses("a class", () => new Sink());
+uses("a subclass", () => new Child());
+uses("a literal", () => literal);
+uses("a static member", () => Fixed);
+attempt("through an interface", () => {
+  const w: WriteOnly = new Sink();
+  w.level = 4;
+  return [w.level, w.level + 1];
+});
+attempt("a spread of the literal", () => {
+  const copy = { ...literal };
+  return [Object.keys(copy).join(), copy.level];
+});
+console.log(log.join(", "));
+let sum = 0;
+const plainOnes: { level: number }[] = [];
+for (let i = 0; i < 2000; i++) plainOnes.push({ level: i });
+plainOnes.push(new Sink());
+for (const o of plainOnes) sum += o.level;
+console.log("2000 plain members and one write-only member: " + sum);
+//// accessors-a-member-with-only-a-setter-is-read-as-a-number.ts
+////= say
+
+////= Sink-2
+
+////= half
+
+const sink = new Sink();
+sink.level = 8;
+say("got", sink.got);
+say("read", sink.level);
+say("read, plus one", sink.level + 1);
+say("read, halved", half(sink.level));
+const kept: number = sink.level;
+say("kept", kept);
+say("kept, or zero", kept | 0);
+say("plus equals", (sink.level += 1));
+say("got", sink.got);
+say("increment", sink.level++);
+say("got", sink.got);
+say("nullish equals", (sink.level ??= 3));
+say("got", sink.got);
+//// accessors-a-setter-of-strings-gets-a-number-through-the-type-of-its-getter.ts
+////= say
+
+////= TakesText
+
+////= lines-234	store	o	v	number	o.v	12
+
+const t = new TakesText();
+say("before", t.v);
+store(t);
+say("the field typed string", t.kept);
+say("the field typed string, joined", t.kept + "!");
+say("the getter typed number", t.v);
+say("the getter typed number, plus one", t.v + 1);
+t.v = "again";
+say("a string again", t.v);
+//// accessors-a-store-narrows-what-the-getter-then-contradicts.ts
+////= text-13
+
+class Words {
+  kept: number | string = 0;
+  get v(): number | string {
+    return this.kept;
+  }
+  set v(value: number) {
+    this.kept = value === 0 ? "zero" : value < 0 ? "negative" : value;
+  }
+}
+
+////= Leaf
+
+class Loses {
+  kept: Leaf | null = null;
+  get leaf(): Leaf | null {
+    return this.kept;
+  }
+  set leaf(value: Leaf) {
+    this.kept = value.weight > 5 ? null : value;
+  }
+}
+
+class Flips {
+  kept: "on" | "off" = "off";
+  get mode(): "on" | "off" {
+    return this.kept;
+  }
+  set mode(value: "on") {
+    this.kept = this.kept === "on" ? "off" : "on";
+  }
+}
+
+////= half
+
+attempt("an honest store", () => {
+  const w = new Words();
+  w.v = 5;
+  return [w.v, w.v + 1, w.v * 2, half(w.v), w.v.toFixed(1)];
+});
+let sum = 0;
+const shared = new Words();
+for (let i = 1; i <= 2000; i++) {
+  shared.v = i;
+  sum += shared.v;
+}
+console.log("2000 honest stores: " + sum);
+attempt("zero comes back as a word", () => {
+  const w = new Words();
+  w.v = 0;
+  return [w.v, w.v + 1, w.v * 2, half(w.v)];
+});
+attempt("zero comes back as a word, a method of numbers", () => {
+  const w = new Words();
+  w.v = 0;
+  return w.v.toFixed(1);
+});
+attempt("at the site of the 2000 stores", () => {
+  shared.v = -1;
+  sum += shared.v;
+  return sum;
+});
+attempt("kept in a constant", () => {
+  const w = new Words();
+  w.v = 0;
+  const n: number = w.v;
+  return [n, n - 1];
+});
+attempt("the value of the store itself", () => {
+  const w = new Words();
+  const n = (w.v = 0);
+  return [n, n + 1];
+});
+attempt("an object comes back as null", () => {
+  const l = new Loses();
+  l.leaf = new Leaf();
+  return l.leaf;
+});
+attempt("an object comes back as null, a member", () => {
+  const l = new Loses();
+  l.leaf = new Leaf();
+  return l.leaf.weight;
+});
+attempt("a literal comes back as the other one", () => {
+  const f = new Flips();
+  f.mode = "on";
+  const first: "on" = f.mode;
+  f.mode = "on";
+  const second: "on" = f.mode;
+  return [first, second, second === "on"];
+});
+attempt("an honest store again", () => {
+  const w = new Words();
+  w.v = 5;
+  return [w.v, w.v + 1];
+});
+//// accessors-a-typed-setter-gets-what-its-parameter-does-not-list.ts
+////= text-13
+
+const seen: string[] = [];
+
+class Narrow {
+  kept = 0;
+  get v(): number {
+    return this.kept;
+  }
+  set v(value: number) {
+    seen.push(typeof value);
+    this.kept = value * 2;
+  }
+}
+
+class Adds {
+  kept = 0;
+  get v(): number {
+    return this.kept;
+  }
+  set v(value: number) {
+    seen.push(typeof value);
+    this.kept = value + 1;
+  }
+}
+
+class TakesText {
+  kept = "";
+  get v(): number {
+    return this.kept.length;
+  }
+  set v(value: string) {
+    seen.push(typeof value);
+    this.kept = value + "!";
+  }
+}
+
+interface Wide {
+  get v(): number;
+  set v(value: number | string | null);
+}
+
+function store(w: Wide, value: number | string | null): unknown {
+  w.v = value;
+  return w.v;
+}
+
+function storeANumber(o: { v: number }, value: number): unknown {
+  o.v = value;
+  return o.v;
+}
+
+attempt("honest: a number for a setter of numbers", () => [store(new Narrow(), 4), store(new Adds(), 4)]);
+for (let i = 0; i < 2000; i++) {
+  store(new Narrow(), i);
+  store(new Adds(), i);
+}
+seen.length = 0;
+attempt("a string for a setter that multiplies", () => {
+  const n = new Narrow();
+  return [store(n, "text"), n.kept, n.v + 1];
+});
+attempt("a numeric string for a setter that multiplies", () => {
+  const n = new Narrow();
+  return [store(n, "21"), n.kept, n.v + 1];
+});
+attempt("a string for a setter that adds", () => {
+  const a = new Adds();
+  return [store(a, "text"), a.kept, a.v + 1, a.v * 2];
+});
+attempt("null for a setter that adds", () => {
+  const a = new Adds();
+  return [store(a, null), a.kept];
+});
+attempt("a number for a setter of strings", () => {
+  const t = new TakesText();
+  return [storeANumber(t, 12), t.kept, typeof t.kept];
+});
+attempt("Reflect.set hands over an object", () => {
+  const a = new Adds();
+  return [Reflect.set(a, "v", { valueOf: () => 9 }), a.kept, a.v];
+});
+attempt("Object.assign hands over a boolean", () => {
+  const a = new Adds();
+  Object.assign(a, { v: true });
+  return [a.kept, a.v];
+});
+attempt("Object.assign hands over undefined", () => {
+  const n = new Narrow();
+  Object.assign(n, { v: undefined });
+  return [n.kept, n.v];
+});
+console.log("what the setters saw: " + seen.join());
+attempt("honest again", () => [store(new Narrow(), 4), store(new Adds(), 4)]);
+//// accessors-and-fields-override-each-other-through-a-base-that-is-a-call.ts
+////= text-13
+
+const log: string[] = [];
+
+class WithAccessors {
+  kept = 1;
+  get size(): number {
+    log.push("get");
+    return this.kept;
+  }
+  set size(value: number) {
+    log.push("set " + value);
+    this.kept = value;
+  }
+  twice(): number {
+    return this.size * 2;
+  }
+}
+
+////= lines-31	WithField	size	1	twice	2
+
+////= lines-246	FieldLike	size	twice	number
+
+interface AccessorLike {
+  get size(): number;
+  set size(value: number);
+  twice(): number;
+}
+
+function saidToHaveAField(): new () => FieldLike {
+  return WithAccessors;
+}
+
+function saidToHaveAccessors(): new () => AccessorLike {
+  return WithField;
+}
+
+class FieldOverAccessors extends saidToHaveAField() {
+  size = 5;
+}
+
+class AccessorsOverField extends saidToHaveAccessors() {
+  get size(): number {
+    log.push("child get");
+    return 50;
+  }
+  set size(value: number) {
+    log.push("child set " + value);
+  }
+}
+
+////= logged-2	console.log("  [" + log.join(", ") + "]"
+
+logged("a field over accessors", () => {
+  const o = new FieldOverAccessors();
+  return [o.size, o.twice(), Object.keys(o).join(), JSON.stringify(o)];
+});
+logged("a field over accessors, stored to", () => {
+  const o = new FieldOverAccessors();
+  o.size = 9;
+  return [o.size, o.twice(), JSON.stringify(o)];
+});
+logged("accessors over a field", () => {
+  const o = new AccessorsOverField();
+  return [o.size, o.twice(), Object.keys(o).join(), JSON.stringify(o)];
+});
+logged("accessors over a field, stored to", () => {
+  const o = new AccessorsOverField();
+  o.size = 9;
+  return [o.size, o.twice(), JSON.stringify(o)];
+});
+logged("the bases themselves", () => [new WithAccessors().twice(), new WithField().twice()]);
+//// accessors-are-replaced-on-the-prototype-after-2000-uses.ts
+const log: string[] = [];
+
+class Tank {
+  liters = 5;
+  get level(): number {
+    return this.liters;
+  }
+  set level(value: number) {
+    this.liters = value;
+  }
+  fill(): number {
+    this.level += 1;
+    return this.level;
+  }
+}
+
+class Small extends Tank {}
+
+////= lines-20	read	t	Tank	number	return	t.level
+
+function write(t: Tank, value: number): number {
+  t.level = value;
+  return t.liters;
+}
+
+function bump(t: Tank): number {
+  return t.level++;
+}
+
+const t = new Tank();
+const small = new Small();
+
+function round(label: string): void {
+  t.liters = 5;
+  small.liters = 5;
+  const parts = [read(t), write(t, 7), bump(t), t.liters, t.fill(), read(small), write(small, 8), small.fill()];
+  console.log(label + ": " + parts.join(" ") + " [" + log.join(", ") + "]");
+  log.length = 0;
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += read(t) + write(t, i) + bump(t) + t.fill() + read(small);
+console.log("2000 honest: " + warm);
+round("before");
+
+const original = Object.getOwnPropertyDescriptor(Tank.prototype, "level");
+
+Object.defineProperty(Tank.prototype, "level", {
+  get(this: Tank) {
+    log.push("get");
+    return this.liters * 10;
+  },
+  set(this: Tank, value: number) {
+    log.push("set " + value);
+    this.liters = value + 0.5;
+  },
+  configurable: true,
+});
+round("both replaced");
+
+Object.defineProperty(Tank.prototype, "level", {
+  get(this: Tank) {
+    log.push("get only");
+    return -1;
+  },
+  set: undefined,
+  configurable: true,
+});
+try {
+  round("no setter any more");
+} catch (error) {
+  console.log("no setter any more: threw " + (error instanceof Error ? error.constructor.name : typeof error) + " [" + log.join(", ") + "]");
+  log.length = 0;
+}
+
+Object.defineProperty(Tank.prototype, "level", { value: 42, writable: true, configurable: true });
+round("a plain value on the prototype");
+console.log("own level now: " + Object.hasOwn(t, "level") + " " + Object.hasOwn(small, "level") + ", keys " + Object.keys(t).join());
+Reflect.deleteProperty(t, "level");
+Reflect.deleteProperty(small, "level");
+
+Object.defineProperty(Small.prototype, "level", {
+  get() {
+    log.push("small get");
+    return 1000;
+  },
+  set(value: number) {
+    log.push("small set " + value);
+  },
+  configurable: true,
+});
+if (original) Object.defineProperty(Tank.prototype, "level", original);
+round("the base restored, the subclass got its own pair");
+
+Reflect.deleteProperty(Small.prototype, "level");
+round("restored");
+
+export {};
+//// accessors-object-assign-hands-the-setter-what-its-parameter-does-not-list.ts
+////= say
+
+const seen: string[] = [];
+
+class Box {
+  kept = 0;
+  get size(): number {
+    return this.kept;
+  }
+  set size(value: number | string) {
+    seen.push(typeof value);
+    this.kept = typeof value === "string" ? value.length : value + 1;
+  }
+}
+
+const box = new Box();
+Object.assign(box, { size: 4 });
+say("a number", box.size);
+Object.assign(box, { size: "four" });
+say("a string", box.size);
+Object.assign(box, { size: true });
+say("a boolean", box.size);
+Object.assign(box, { size: null });
+say("null", box.size);
+Object.assign(box, { size: undefined });
+say("undefined", box.size);
+try {
+  Object.assign(box, { size: 5n });
+  say("a bigint", box.size);
+} catch (error) {
+  say("a bigint threw a TypeError", error instanceof TypeError);
+}
+Object.assign(box, { size: { valueOf: () => 41 } });
+say("an object with valueOf", box.size);
+Object.assign(box, { size: [7] });
+say("an array", box.size);
+say("what the setter saw", seen.join());
+//// accessors-of-two-types-are-destructured-spread-assigned-and-serialized.ts
+////= text-13
+
+const log: string[] = [];
+
+function literal() {
+  return {
+    kept: 2,
+    get size(): number {
+      log.push("get");
+      return this.kept;
+    },
+    set size(value: number | string) {
+      log.push("set " + typeof value);
+      this.kept = typeof value === "string" ? value.length : value;
+    },
+  };
+}
+
+class Box {
+  kept = 2;
+  get size(): number {
+    log.push("get");
+    return this.kept;
+  }
+  set size(value: number | string) {
+    log.push("set " + typeof value);
+    this.kept = typeof value === "string" ? value.length : value;
+  }
+}
+
+////= logged-2	console.log("  [" + log.join(", ") + "]"
+
+logged("a literal, destructured", () => {
+  const { size, kept } = literal();
+  return [size, kept];
+});
+logged("a class, destructured", () => {
+  const { size, kept } = new Box();
+  return [size, kept];
+});
+logged("a parameter pattern", () => (({ size }: { size: number }) => size + 1)(new Box()));
+logged("a pattern with a rest", () => {
+  const { kept, ...rest } = literal();
+  return [kept, Object.keys(rest).join(), rest.size, Object.getOwnPropertyDescriptor(rest, "size")?.get === undefined];
+});
+logged("a spread of the literal takes the value", () => {
+  const source = literal();
+  const copy = { ...source };
+  source.size = "longer";
+  copy.size = 50;
+  return [copy.size, copy.kept, source.size, source.kept, Object.keys(copy).join()];
+});
+logged("a spread of the class leaves the accessor behind", () => {
+  const copy = { ...new Box() };
+  return [Object.keys(copy).join(), "size" in copy];
+});
+logged("a spread over the accessor", () => {
+  const merged = { ...literal(), size: 9 };
+  return [merged.size, merged.kept];
+});
+logged("Object.assign into the literal runs the setter", () => {
+  const target = literal();
+  Object.assign(target, { size: "assigned" });
+  return [target.size, target.kept];
+});
+logged("Object.assign into the class runs the setter", () => {
+  const target = new Box();
+  Object.assign(target, { size: "assigned" });
+  return [target.size, target.kept, Object.keys(target).join()];
+});
+logged("Object.assign from the literal runs the getter", () => {
+  const copy = Object.assign({}, literal());
+  return [copy.size, Object.keys(copy).join(), Object.getOwnPropertyDescriptor(copy, "size")?.value];
+});
+logged("Object.assign from one accessor to another", () => {
+  const target = new Box();
+  const source = literal();
+  source.size = 7;
+  Object.assign(target, source);
+  return [target.size, target.kept];
+});
+logged("the literal as JSON", () => JSON.stringify(literal()));
+logged("the class as JSON", () => JSON.stringify(new Box()));
+logged("entries of the literal", () => Object.entries(literal()).map(([k, v]) => k + "=" + v));
+logged("values of the class", () => Object.values(new Box()));
+logged("a structured clone of the literal", () => {
+  const copy = structuredClone(literal());
+  copy.size = "text";
+  return [copy.size, copy.kept, typeof copy.size];
+});
+logged("for in over the literal", () => {
+  const names: string[] = [];
+  for (const name in literal()) names.push(name);
+  return names;
+});
+logged("frozen, then stored to", () => {
+  const frozen = Object.freeze(literal());
+  const loose: { size: number } = frozen;
+  loose.size = 3;
+  return [frozen.size, frozen.kept];
+});
+//// accessors-of-two-types-honest.ts
+////= text-13
+
+////= lines-130	Box
+
+class Meter {
+  static total = 0;
+  static get reading(): number {
+    return Meter.total;
+  }
+  static set reading(value: number | string) {
+    Meter.total += typeof value === "string" ? value.length : value;
+  }
+}
+
+const literal = {
+  kept: 1,
+  get size(): number {
+    return this.kept;
+  },
+  set size(value: number | string) {
+    this.kept = typeof value === "string" ? value.length : value;
+  },
+};
+
+////= Sized
+
+function fill(s: Sized, value: number | string): number {
+  s.size = value;
+  return s.size;
+}
+
+let sum = 0;
+const box = new Box();
+for (let i = 0; i < 4000; i++) {
+  box.size = i % 2 === 0 ? i : "abc";
+  sum += box.size;
+  box.size += 1;
+  box.size++;
+  sum += box.size;
+  literal.size = i % 3 === 0 ? "ab" : i;
+  sum += literal.size;
+  Meter.reading = i % 5 === 0 ? "abcd" : 1;
+  sum += fill(box, i) + fill(literal, "abcde");
+}
+console.log("the total of 4000 rounds: " + sum);
+console.log("the meter: " + Meter.reading);
+attempt("the box", () => [box.size, box.kept, Object.keys(box).join()]);
+attempt("the literal", () => [literal.size, literal.kept, JSON.stringify(literal)]);
+attempt("a fresh box", () => {
+  const b = new Box();
+  return [fill(b, "four"), b.size, (b.size += 1), b.size++, b.size];
+});
+//// accessors-of-two-types-in-an-interface-in-five-places.ts
+////= text-13
+
+////= Sized
+
+////= lines-138	Measured	implements	Sized	1
+
+////= lines-31	Plain	size	1	twice	2
+
+function fill(s: Sized, value: number | string): unknown {
+  s.size = value;
+  return [s.size, s.size + 1, s.size * 2];
+}
+
+class Shelf {
+  item: Sized;
+  constructor(item: Sized) {
+    this.item = item;
+  }
+  fill(value: number | string): unknown {
+    this.item.size = value;
+    return [this.item.size, this.item.size + 1];
+  }
+}
+
+function captured(s: Sized): (value: number | string) => unknown {
+  return value => {
+    s.size = value;
+    return [s.size, s.size + 1];
+  };
+}
+
+attempt("accessors, a number", () => fill(new Measured(), 4));
+attempt("accessors, a string", () => fill(new Measured(), "four"));
+attempt("a plain field, a number", () => fill(new Plain(), 4));
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  const m = new Measured();
+  const p = new Plain();
+  fill(m, i);
+  fill(m, "ab");
+  fill(p, i);
+  sum += m.size + p.size + p.twice();
+}
+console.log("honest rounds: " + sum);
+attempt("a plain field, a string, in a parameter", () => {
+  const p = new Plain();
+  return [fill(p, "four"), p.size, p.size + 1, p.twice(), JSON.stringify(p)];
+});
+attempt("a plain field, a string, in a local", () => {
+  const p = new Plain();
+  const view: Sized = p;
+  view.size = "four";
+  return [view.size, p.size, p.size + 1, p.twice()];
+});
+attempt("a plain field, a string, in a field", () => {
+  const p = new Plain();
+  return [new Shelf(p).fill("four"), p.size, p.twice()];
+});
+attempt("a plain field, a string, in an element", () => {
+  const plains = [new Plain(), new Plain()];
+  const views: Sized[] = plains;
+  views[1].size = "four";
+  return plains.map(p => [p.size, p.size + 1, p.twice()]);
+});
+attempt("a plain field, a string, in a captured variable", () => {
+  const p = new Plain();
+  return [captured(p)("four"), p.size, p.twice()];
+});
+attempt("a literal with a number member", () => {
+  const literal = { size: 1, other: 2 };
+  return [fill(literal, "four"), literal.size, literal.size + 1, JSON.stringify(literal)];
+});
+attempt("updates through the view", () => {
+  const p = new Plain();
+  const view: Sized = p;
+  fill(view, "4");
+  view.size++;
+  const first = p.size;
+  fill(view, "4");
+  view.size += 1;
+  return [first, p.size];
+});
+attempt("a plain field, a number again", () => fill(new Plain(), 4));
+attempt("accessors again", () => fill(new Measured(), "four"));
+//// accessors-of-two-types-in-an-interface-over-a-plain-number-field.ts
+////= say
+
+////= Sized
+
+class Plain {
+  size = 1;
+  other = 2;
+  twice(): number {
+    return this.size * 2;
+  }
+}
+
+const plain = new Plain();
+const view: Sized = plain;
+say("before", plain.size);
+say("before, twice", plain.twice());
+view.size = "text";
+say("through the view", view.size);
+say("through the view, plus one", view.size + 1);
+say("through the class", plain.size);
+say("through the class, plus one", plain.size + 1);
+say("through the class, doubled", plain.size * 2);
+say("a method of the class", plain.twice());
+say("the other field", plain.other);
+say("keys", Object.keys(plain).join());
+view.size = 5;
+say("a number again", plain.size + 1);
+//// accessors-of-two-types-inherited-overridden-and-static.ts
+////= text-13
+
+const log: string[] = [];
+
+class Base {
+  kept = 1;
+  get size(): number {
+    log.push("base get");
+    return this.kept;
+  }
+  set size(value: number | string) {
+    log.push("base set " + typeof value);
+    this.kept = typeof value === "string" ? value.length : value;
+  }
+  grow(): number {
+    this.size = "grown";
+    return this.size;
+  }
+}
+
+class Inherits extends Base {}
+
+class CallsSuper extends Base {
+  get size(): number {
+    log.push("child get");
+    return super.size * 10;
+  }
+  set size(value: number | string) {
+    log.push("child set " + typeof value);
+    super.size = typeof value === "string" ? value + value : value + 1;
+  }
+}
+
+class WiderStill extends Base {
+  get size(): number {
+    return super.size;
+  }
+  set size(value: number | string | boolean) {
+    super.size = typeof value === "boolean" ? (value ? 100 : 0) : value;
+  }
+}
+
+class Counter {
+  static kept = 1;
+  static get size(): number {
+    return Counter.kept;
+  }
+  static set size(value: number | string) {
+    Counter.kept = typeof value === "string" ? value.length : value;
+  }
+}
+
+class SubCounter extends Counter {}
+
+////= logged-2	if (log.length > 0) console.log("  " + log.join(", ")
+
+function fill(b: Base, value: number | string): unknown {
+  b.size = value;
+  return [b.size, b.size + 1, b.kept];
+}
+
+const makers: [string, () => Base][] = [
+  ["the base", () => new Base()],
+  ["a subclass that inherits both", () => new Inherits()],
+  ["a subclass that calls super", () => new CallsSuper()],
+  ["a subclass with a wider setter", () => new WiderStill()],
+];
+
+for (const [name, make] of makers) {
+  logged(name + ": a number", () => fill(make(), 4));
+  logged(name + ": a string", () => fill(make(), "four"));
+  logged(name + ": plus equals", () => {
+    const b = make();
+    b.size += 1;
+    return [b.size, b.kept];
+  });
+  logged(name + ": a method of the base stores a string", () => make().grow());
+  logged(name + ": own keys", () => Object.keys(make()).join());
+}
+logged("the wider setter takes a boolean", () => {
+  const w = new WiderStill();
+  w.size = true;
+  return [w.size, w.kept];
+});
+logged("static: a string", () => {
+  Counter.size = "four";
+  return [Counter.size, Counter.size + 1, Counter.kept];
+});
+logged("static: plus equals", () => {
+  Counter.size += 1;
+  return [Counter.size, Counter.kept];
+});
+logged("static, through the subclass", () => {
+  SubCounter.size = "sub";
+  return [SubCounter.size, Counter.size, Counter.kept, Object.keys(SubCounter).join()];
+});
+let sum = 0;
+const shared: Base[] = [new Base(), new Inherits(), new CallsSuper(), new WiderStill()];
+for (let i = 0; i < 2000; i++) {
+  const b = shared[i % 4];
+  b.size = i % 3 === 0 ? "abc" : i;
+  sum += b.size;
+}
+console.log("2000 rounds: " + sum);
+//// accessors-of-two-types-under-every-kind-of-store.ts
+////= text-13
+
+const log: string[] = [];
+
+class Box {
+  kept = 10;
+  get size(): number {
+    log.push("get");
+    return this.kept;
+  }
+  set size(value: number | string) {
+    log.push("set " + typeof value + " " + String(value));
+    this.kept = typeof value === "string" ? value.length : value;
+  }
+}
+
+function logged(label: string, run: (b: Box) => unknown): void {
+  log.length = 0;
+  const b = new Box();
+  attempt(label, () => [run(b), b.kept]);
+  console.log("  " + log.join(", "));
+}
+
+logged("a store of a number", b => (b.size = 3));
+logged("a store of a string", b => (b.size = "four"));
+logged("plus equals", b => (b.size += 1));
+logged("minus equals", b => (b.size -= 1));
+logged("times equals", b => (b.size *= 2));
+logged("power equals", b => (b.size **= 2));
+logged("shift equals", b => (b.size <<= 1));
+logged("increment after", b => b.size++);
+logged("increment before", b => ++b.size);
+logged("decrement after", b => b.size--);
+logged("or equals, truthy", b => (b.size ||= "unused"));
+logged("or equals, falsy", b => {
+  b.kept = 0;
+  return (b.size ||= "seven letters".slice(0, 7));
+});
+logged("and equals, truthy", b => (b.size &&= "abc"));
+logged("and equals, falsy", b => {
+  b.kept = 0;
+  return (b.size &&= "abc");
+});
+logged("nullish equals", b => (b.size ??= "unused"));
+logged("a chain of stores", b => {
+  const other = new Box();
+  const result = (b.size = other.size = "chain");
+  return [result, other.kept];
+});
+logged("its own value stored back", b => (b.size = b.size));
+logged("added to itself", b => (b.size += b.size));
+logged("a store inside the right side", b => (b.size += b.size = 5));
+logged("a store as an argument", b => String((b.size = "ab")).length);
+logged("a destructuring store", b => {
+  [b.size] = ["abcde"];
+  return b.size;
+});
+logged("a destructuring store from an object", b => {
+  ({ n: b.size } = { n: "abcdef" });
+  return b.size;
+});
+logged("a loop variable", b => {
+  const seen: number[] = [];
+  for (b.size of [1, "ab", 3]) seen.push(b.size);
+  return seen;
+});
+logged("2000 numbers and then a string", b => {
+  let sum = 0;
+  log.length = 0;
+  for (let i = 0; i < 2000; i++) {
+    b.size = i;
+    sum += b.size;
+  }
+  log.length = 0;
+  b.size = "abc";
+  return [sum, b.size];
+});
+//// accessors-of-two-types-under-symbol-numeric-computed-and-private-names.ts
+////= text-13
+
+const key = Symbol("size");
+const spelled = "computed";
+
+class Box {
+  kept = 1;
+  get [key](): number {
+    return this.kept;
+  }
+  set [key](value: number | string) {
+    this.kept = typeof value === "string" ? value.length : value;
+  }
+  get [spelled](): number {
+    return this.kept * 10;
+  }
+  set [spelled](value: number | string) {
+    this.kept = typeof value === "string" ? value.length * 10 : value;
+  }
+  get 0(): number {
+    return this.kept * 100;
+  }
+  set 0(value: number | string) {
+    this.kept = typeof value === "string" ? value.length * 100 : value;
+  }
+  get "two words"(): number {
+    return this.kept * 1000;
+  }
+  set "two words"(value: number | string) {
+    this.kept = typeof value === "string" ? value.length * 1000 : value;
+  }
+  get #hidden(): number {
+    return this.kept + 0.5;
+  }
+  set #hidden(value: number | string) {
+    this.kept = typeof value === "string" ? -value.length : value;
+  }
+  hidden(value: number | string): unknown {
+    this.#hidden = value;
+    const first = this.#hidden;
+    this.#hidden += 1;
+    this.#hidden++;
+    return [first, this.#hidden, this.kept];
+  }
+  static #shared = 1;
+  static get #count(): number {
+    return Box.#shared;
+  }
+  static set #count(value: number | string) {
+    Box.#shared = typeof value === "string" ? value.length : value;
+  }
+  static count(value: number | string): unknown {
+    Box.#count = value;
+    return [Box.#count, (Box.#count += 1)];
+  }
+}
+
+attempt("a symbol key", () => {
+  const b = new Box();
+  const store = (value: number | string): void => {
+    b[key] = value;
+  };
+  store("four");
+  const first = b[key];
+  b[key] = b[key] + 1;
+  b[key] = b[key] + 1;
+  return [first, b[key], b.kept];
+});
+attempt("a computed name", () => {
+  const b = new Box();
+  const store = (value: number | string): void => {
+    b[spelled] = value;
+  };
+  store("four");
+  const first = b.computed;
+  b.computed += 1;
+  return [first, b[spelled], b.kept];
+});
+attempt("a numeric name", () => {
+  const b = new Box();
+  b[0] = "four";
+  const first = b[0];
+  b["0"] = 2;
+  return [first, b[0], b.kept];
+});
+attempt("a quoted name", () => {
+  const b = new Box();
+  const store = (value: number | string): void => {
+    b["two words"] = value;
+  };
+  store("four");
+  const first = b["two words"];
+  b["two words"] = b["two words"] - 1;
+  return [first, b["two words"], b.kept];
+});
+attempt("a private name, a string", () => new Box().hidden("four"));
+attempt("a private name, a number", () => new Box().hidden(4));
+attempt("a static private name", () => [Box.count("four"), Box.count(1)]);
+attempt("own keys", () => Reflect.ownKeys(new Box()).map(String));
+attempt("keys of the prototype", () => Reflect.ownKeys(Box.prototype).map(String));
+let sum = 0;
+const shared = new Box();
+for (let i = 0; i < 2000; i++) {
+  shared[key] = i % 2 === 0 ? i : "ab";
+  sum += shared[key] + shared[0];
+}
+console.log("2000 rounds: " + sum);
+//// accessors-of-unrelated-types.ts
+////= text-13
+
+class Unrelated {
+  stored = "";
+  get v(): number {
+    return this.stored.length;
+  }
+  set v(text: string) {
+    this.stored = text;
+  }
+}
+
+////= Leaf
+
+class Wraps {
+  inner = new Leaf();
+  get leaf(): Leaf {
+    return this.inner;
+  }
+  set leaf(weight: number) {
+    this.inner = new Leaf();
+    this.inner.weight = weight;
+  }
+}
+
+class Lists {
+  items: number[] = [];
+  get all(): number[] {
+    return this.items;
+  }
+  set all(one: number) {
+    this.items.push(one);
+  }
+}
+
+class Calls {
+  count = 0;
+  get run(): () => number {
+    return () => this.count;
+  }
+  set run(count: number) {
+    this.count = count;
+  }
+}
+
+attempt("a number out, a string in", () => {
+  const u = new Unrelated();
+  const stored = (u.v = "hello");
+  return [stored, u.v, u.v + 1, u.v * 2];
+});
+attempt("plus equals joins the number and a string", () => {
+  const u = new Unrelated();
+  u.v = "hello";
+  const result = (u.v += "!");
+  return [result, u.stored, u.v];
+});
+attempt("after a store the type is the getter's", () => {
+  const u = new Unrelated();
+  u.v = "abc";
+  const n: number = u.v;
+  return [n, n.toFixed(1)];
+});
+attempt("an object out, a number in", () => {
+  const w = new Wraps();
+  const stored = (w.leaf = 3);
+  return [stored, w.leaf, w.leaf.weight, w.leaf.weight + 1];
+});
+attempt("an array out, a number in", () => {
+  const l = new Lists();
+  l.all = 1;
+  l.all = 2;
+  return [l.all, l.all.length, l.all[1]];
+});
+attempt("a function out, a number in", () => {
+  const c = new Calls();
+  c.run = 5;
+  return [typeof c.run, c.run(), c.run() + 1];
+});
+attempt("as a plain member of the getter's type", () => {
+  const reader = (o: { readonly v: number }): number => o.v + 1;
+  const u = new Unrelated();
+  u.v = "four";
+  return [reader(u), reader({ v: 1 })];
+});
+attempt("as a mutable member of the getter's type", () => {
+  const writer = (o: { v: number }): unknown => {
+    o.v = 12;
+    return o.v;
+  };
+  const u = new Unrelated();
+  return [writer({ v: 1 }), writer(u), typeof u.stored, u.stored];
+});
+attempt("the setter then meets a number", () => {
+  const writer = (o: { v: number }): void => {
+    o.v = 12;
+  };
+  const u = new Unrelated();
+  writer(u);
+  return u.v;
+});
+let sum = 0;
+const one = new Unrelated();
+for (let i = 0; i < 2000; i++) {
+  one.v = i % 2 === 0 ? "ab" : "abc";
+  sum += one.v;
+}
+console.log("2000 rounds: " + sum);
+//// accessors-one-function-with-honest-callers-and-odd-callers.ts
+////= text-13
+
+////= Sized
+
+////= lines-130	Measured
+
+////= lines-18	Plain	size	1
+
+class WriteOnly {
+  got = 0;
+  set size(value: number) {
+    this.got = value;
+  }
+}
+
+class Echo {
+  kept: number | string = 1;
+  get size(): number {
+    if (typeof this.kept === "number") return this.kept;
+    return this.parse();
+  }
+  set size(value: number | string) {
+    this.kept = value;
+  }
+  parse(): number {
+    const box: { n: number } = { n: 0 };
+    const wide: { n: number | string } = box;
+    wide.n = this.kept;
+    return box.n;
+  }
+}
+
+function grow(s: Sized): unknown {
+  s.size = "grown";
+  const size = s.size;
+  return [size, size + 1, size * 2];
+}
+
+function firstHonestCaller(): unknown {
+  return grow(new Measured());
+}
+
+function secondHonestCaller(): unknown {
+  let last: unknown = null;
+  for (let i = 0; i < 2000; i++) last = grow(new Measured());
+  return last;
+}
+
+const table = { grow };
+
+attempt("the first honest caller", firstHonestCaller);
+attempt("the second honest caller", secondHonestCaller);
+attempt("a caller with a plain number field", () => {
+  const p = new Plain();
+  return [grow(p), p.size, p.size + 1];
+});
+attempt("a caller with a member that has only a setter", () => {
+  const w = new WriteOnly();
+  return [grow(w), w.got];
+});
+attempt("a caller whose getter hands back what was stored", () => grow(new Echo()));
+attempt("a caller with a literal", () => grow({ size: 1 }));
+attempt("a caller with a proxy", () => grow(new Proxy(new Measured(), {})));
+attempt("a caller with a proxy of a plain field", () => grow(new Proxy(new Plain(), {})));
+attempt("through call", () => grow.call(undefined, new Plain()));
+attempt("through a member", () => table.grow(new Plain()));
+attempt("through map", () => [new Measured(), new Plain(), new Measured()].map(grow));
+attempt("the first honest caller again", firstHonestCaller);
+//// accessors-stand-where-a-field-was-promised-and-the-reverse.ts
+////= text-13
+
+const log: string[] = [];
+
+abstract class FieldPromised {
+  abstract size: number;
+  twice(): number {
+    return this.size * 2;
+  }
+  reset(): void {
+    this.size = 0;
+  }
+}
+
+class WithAccessors extends FieldPromised {
+  kept = 5;
+  get size(): number {
+    log.push("get");
+    return this.kept;
+  }
+  set size(value: number) {
+    log.push("set " + value);
+    this.kept = value + 100;
+  }
+}
+
+////= lines-14	class	WithField	extends	FieldPromised	size	5
+
+abstract class AccessorsPromised {
+  abstract get size(): number;
+  abstract set size(value: number | string);
+  twice(): number {
+    return this.size * 2;
+  }
+  fill(): void {
+    this.size = "text";
+  }
+}
+
+////= lines-138	KeepsItsPromise	extends	AccessorsPromised	5
+
+////= lines-14	class	AFieldInstead	extends	AccessorsPromised	size	5
+
+////= logged-2	if (log.length > 0) console.log("  " + log.join(", ")
+
+logged("a field was promised, accessors came", () => {
+  const o = new WithAccessors();
+  const before = o.twice();
+  o.reset();
+  return [before, o.size, o.twice(), Object.keys(o).join(), JSON.stringify(o)];
+});
+logged("a field was promised, a field came", () => {
+  const o = new WithField();
+  const before = o.twice();
+  o.reset();
+  return [before, o.size, o.twice(), Object.keys(o).join(), JSON.stringify(o)];
+});
+logged("accessors were promised, accessors came", () => {
+  const o = new KeepsItsPromise();
+  const before = o.twice();
+  o.fill();
+  return [before, o.size, o.size + 1, o.twice(), Object.keys(o).join()];
+});
+logged("accessors were promised, a number field came", () => {
+  const o = new AFieldInstead();
+  const before = o.twice();
+  o.fill();
+  return [before, o.size, o.size + 1, o.twice(), Object.keys(o).join(), JSON.stringify(o)];
+});
+logged("both kinds at one site", () => {
+  const all: FieldPromised[] = [new WithField(), new WithAccessors(), new WithField()];
+  return all.map(o => (o.reset(), [o.size, o.twice()]));
+});
+logged("both kinds at the other site", () => {
+  const all: AccessorsPromised[] = [new KeepsItsPromise(), new AFieldInstead(), new KeepsItsPromise()];
+  return all.map(o => (o.fill(), [o.size, o.twice()]));
+});
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  const o: FieldPromised = i % 2 === 0 ? new WithField() : new WithAccessors();
+  o.size = i;
+  sum += o.twice();
+}
+console.log("2000 rounds: " + sum);
+//// accessors-were-promised-a-number-field-came-and-the-base-stores-a-string.ts
+////= say
+
+abstract class Promised {
+  abstract get size(): number;
+  abstract set size(value: number | string);
+  fill(): void {
+    this.size = "text";
+  }
+}
+
+class AField extends Promised {
+  size = 5;
+  other = 6;
+  twice(): number {
+    return this.size * 2;
+  }
+}
+
+const o = new AField();
+say("before", o.size);
+say("before, twice", o.twice());
+o.fill();
+say("after", o.size);
+say("after, plus one", o.size + 1);
+say("after, doubled", o.size * 2);
+say("after, twice", o.twice());
+say("the other field", o.other);
+//// accessors-whose-values-leave-their-types-are-tested-again.ts
+////= say
+
+////= Sink-2
+
+const sink = new Sink();
+sink.level = 8;
+say("write only: is undefined", sink.level === undefined);
+say("write only: is loosely null", sink.level == null);
+say("write only: typeof is number", typeof sink.level === "number");
+say("write only: typeof is undefined", typeof sink.level === "undefined");
+say("write only: a default", sink.level ?? 9);
+say("write only: an optional call", sink.level?.toFixed(1));
+say("write only: truthy", sink.level ? "truthy" : "falsy");
+say("write only: is NaN", Number.isNaN(sink.level));
+
+class Gauge {
+  raw: number | string = 1;
+  spoil(): void {
+    this.raw = "text";
+  }
+  get level(): number {
+    if (typeof this.raw === "number") {
+      this.spoil();
+      return this.raw;
+    }
+    return -1;
+  }
+}
+
+const level = new Gauge().level;
+say("a getter typed number: typeof is number", typeof level === "number");
+say("a getter typed number: typeof is string", typeof level === "string");
+say("a getter typed number: is an integer", Number.isInteger(level));
+say("a getter typed number: equals itself", level === level);
+say("a getter typed number: greater than zero", level > 0);
+say("a getter typed number, read in place: typeof is number", typeof new Gauge().level === "number");
+
+////= Sized
+
+////= lines-18	Plain	size	1
+
+const plain = new Plain();
+const view: Sized = plain;
+view.size = "text";
+say("a number field: typeof is number", typeof plain.size === "number");
+say("a number field: typeof is string", typeof plain.size === "string");
+say("a number field: is finite", Number.isFinite(plain.size));
+say("a number field: through the view", typeof view.size === "number");
+
+////= TakesText
+
+////= lines-234	store	o	v	number	o.v	12
+
+const takes = new TakesText();
+store(takes);
+say("a string field: typeof is string", typeof takes.kept === "string");
+say("a string field: typeof is number", typeof takes.kept === "number");
+say("the getter over it: is undefined", takes.v === undefined);
+say("the getter over it: typeof is number", typeof takes.v === "number");
+//// an-absent-member-against-one-that-is-present-and-undefined.ts
+////= lines-71	Options	name	string	limit	number
+
+function facts(o: Options): string {
+  const walked: string[] = [];
+  for (const key in o) walked.push(key);
+  const copy = { ...o };
+  return [
+    "reads " + o.limit,
+    "in " + ("limit" in o),
+    "hasOwnProperty " + o.hasOwnProperty("limit"),
+    "hasOwn " + Object.hasOwn(o, "limit"),
+    "keys " + Object.keys(o).join(),
+    "for-in " + walked.join(),
+    "json " + JSON.stringify(o),
+    "entries " + Object.entries(o).join("|"),
+    "values " + Object.values(o).length,
+    "copy has it " + ("limit" in copy) + " " + Object.keys(copy).join(),
+    "assign " + Object.keys(Object.assign({}, o)).join(),
+    "descriptor " + (Object.getOwnPropertyDescriptor(o, "limit") !== undefined),
+    "clone " + Object.keys(structuredClone(o)).join(),
+  ].join("; ");
+}
+
+function has(o: Options): boolean {
+  return "limit" in o;
+}
+
+////= lines-230	orDefault	o	Options	number	o.limit
+
+function patternDefault({ limit = -2 }: Options): number {
+  return limit;
+}
+
+function make(kind: number): Options {
+  if (kind === 0) return { name: "absent" };
+  if (kind === 1) return { name: "undefined", limit: undefined };
+  if (kind === 2) return { limit: undefined, name: "undefined first" };
+  return { name: "present", limit: 0 };
+}
+
+class Holder {
+  options: Options;
+  constructor(options: Options) {
+    this.options = options;
+  }
+  has(): boolean {
+    return "limit" in this.options;
+  }
+  keys(): string {
+    return Object.keys(this.options).join();
+  }
+}
+
+const absent: Options = { name: "absent" };
+const present: Options = { name: "undefined", limit: undefined };
+
+console.log("local, absent: " + ("limit" in absent) + " " + Object.keys(absent).join() + " " + JSON.stringify({ ...absent }));
+console.log("local, undefined: " + ("limit" in present) + " " + Object.keys(present).join() + " " + Object.keys({ ...present }).join());
+console.log("parameter, absent: " + facts(absent));
+console.log("parameter, undefined: " + facts(present));
+for (let kind = 0; kind < 4; kind++) console.log("result " + kind + ": " + facts(make(kind)));
+for (let kind = 0; kind < 4; kind++) {
+  const holder = new Holder(make(kind));
+  console.log("field " + kind + ": " + holder.has() + " " + holder.keys());
+}
+const list: Options[] = [0, 1, 2, 3].map(make);
+console.log("elements: " + list.map(has).join() + " " + JSON.stringify(list));
+console.log("defaults: " + list.map(orDefault).join() + " " + list.map(patternDefault).join());
+const captured = () => has(absent) + " " + has(present);
+console.log("captured: " + captured());
+
+let count = 0;
+for (let i = 0; i < 2000; i++) if (has({ name: "n", limit: i })) count++;
+console.log("2000 that have it: " + count);
+console.log("then: " + has(absent) + " " + has(present) + " " + has({ name: "n", limit: 1 }));
+
+count = 0;
+for (let i = 0; i < 2000; i++) if (has({ name: "n" })) count++;
+console.log("2000 that lack it: " + count);
+console.log("then: " + has(present) + " " + has(absent));
+
+const inherited: Options = Object.assign(Object.create({ limit: 9 }), { name: "inherited" });
+console.log("on the prototype: " + facts(inherited));
+
+const merged: Options = { ...{ name: "base", limit: 5 }, ...present };
+console.log("undefined wins a merge: " + facts(merged));
+const mergedAbsent: Options = { ...{ name: "base", limit: 5 }, ...absent };
+console.log("absent does not: " + facts(mergedAbsent));
+
+export {};
+//// an-absent-member-and-an-undefined-one.ts
+////= lines-71	Options	name	string	limit	number
+
+function show(o: Options): void {
+  console.log("limit" in o);
+  console.log(Object.keys(o).join());
+  console.log(JSON.stringify(o));
+  console.log(Object.keys({ ...o }).join());
+  console.log(o.limit);
+}
+
+show({ name: "absent" });
+show({ name: "undefined", limit: undefined });
+show({ name: "given", limit: 1 });
+
+export {};
+//// an-absent-optional-member-is-found-on-the-prototype-later.ts
+interface Themed {
+  name: string;
+  color?: string;
+  weight?: number;
+}
+
+////= lines-18	Button	name	"button"
+
+class Link {
+  name = "link";
+  color?: string;
+}
+
+////= lines-183	color	t	Themed	string	t.color	"no color"
+
+function weight(t: Themed): number {
+  return (t.weight ?? 0) + 1;
+}
+
+function facts(t: Themed): string {
+  return [color(t), weight(t), "color" in t, Object.hasOwn(t, "color"), Object.keys(t).join("+"), JSON.stringify(t), JSON.stringify({ ...t })].join(" | ");
+}
+
+const button = new Button();
+const link = new Link();
+const literal: Themed = { name: "literal" };
+const bare: Themed = Object.assign(Object.create(null), { name: "bare" });
+
+function all(label: string): void {
+  console.log(label + ", button: " + facts(button));
+  console.log(label + ", link: " + facts(link));
+  console.log(label + ", literal: " + facts(literal));
+  console.log(label + ", no prototype: " + facts(bare));
+}
+
+let length = 0;
+for (let i = 0; i < 2000; i++) length += color(button).length + weight(button) + color(literal).length;
+console.log("2000 reads that find nothing: " + length);
+all("at first");
+
+Object.assign(Button.prototype, { color: "red", weight: 5 });
+all("Button.prototype has them");
+
+Object.assign(Link.prototype, { color: "blue" });
+all("Link.prototype has one, under an own undefined");
+
+Reflect.deleteProperty(Button.prototype, "color");
+all("taken away again");
+
+////= Object-defineProperty-6	Button	"weight"	40
+all("a getter on Button.prototype");
+
+const themedButton: Themed = button;
+themedButton.color = "own";
+console.log("an own one: " + facts(button));
+delete themedButton.color;
+console.log("deleted: " + facts(button));
+
+////= attempt-7
+
+attempt("a store under a getter without a setter", () => {
+  themedButton.weight = 1;
+  return weight(button);
+});
+
+Object.setPrototypeOf(literal, { color: "adopted", weight: 2 });
+console.log("the literal got a prototype: " + facts(literal));
+
+export {};
+//// an-abstract-accessor-is-read-and-stored-to-by-the-base-constructor.ts
+////= text-11
+
+const log: string[] = [];
+
+abstract class Sensor {
+  abstract get level(): number;
+  abstract set level(value: number);
+  abstract get unit(): string;
+  first: number;
+  unitAtStart: string;
+  constructor() {
+    this.first = this.levelNow();
+    this.unitAtStart = this.unitNow();
+    this.setLevel(5);
+  }
+  levelNow(): number {
+    return this.level;
+  }
+  unitNow(): string {
+    return this.unit;
+  }
+  setLevel(value: number): void {
+    this.level = value;
+  }
+  raised(): number {
+    return this.level + 1;
+  }
+}
+
+class WithAccessors extends Sensor {
+  get level(): number {
+    log.push("get");
+    return 10;
+  }
+  set level(value: number) {
+    log.push("set " + value);
+  }
+  get unit(): string {
+    return "volt";
+  }
+}
+
+class WithBacking extends Sensor {
+  held: number = 1;
+  get level(): number {
+    return this.held;
+  }
+  set level(value: number) {
+    this.held = value;
+  }
+  get unit(): string {
+    return "unit " + this.held;
+  }
+}
+
+class WithFields extends Sensor {
+  level: number = 2;
+  unit: string = "field";
+}
+
+////= lines-20	firstOf	sensor	Sensor	number	return	sensor.first
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += firstOf(new WithAccessors());
+log.length = 0;
+show("2000 with accessors", () => sum);
+
+const accessors = new WithAccessors();
+show("accessors: what ran", () => log.join());
+show("accessors", () => [accessors.first, accessors.unitAtStart, accessors.raised(), Object.keys(accessors)]);
+
+const backing = new WithBacking();
+show("a field behind the accessor: first", () => [backing.first, typeof backing.first, firstOf(backing) + 1]);
+show("a field behind the accessor: the unit at the start", () => backing.unitAtStart);
+show("a field behind the accessor: the early store is overwritten", () => [backing.held, backing.level, backing.raised()]);
+show("a field behind the accessor: keys", () => Object.keys(backing));
+
+const fields = new WithFields();
+show("fields: first", () => [fields.first, typeof fields.first, firstOf(fields) + 1]);
+show("fields: the unit at the start", () => fields.unitAtStart);
+show("fields: the early store is overwritten", () => [fields.level, fields.raised()]);
+show("fields: keys", () => Object.keys(fields));
+show("fields: JSON", () => JSON.stringify(fields));
+show("three in a row", () => [new WithAccessors(), new WithFields(), new WithBacking()].map(firstOf));
+//// an-abstract-base-is-completed-by-a-mixin.ts
+////= describe
+
+abstract class Shape {
+  sides = 4;
+  abstract area(): number;
+  report(): string {
+    return this.sides + " sides, area " + this.area();
+  }
+}
+
+function Sized(Base: abstract new () => Shape) {
+  return class extends Base {
+    edge = 3;
+    area(): number {
+      return this.edge * this.edge;
+    }
+  };
+}
+
+const made = new (Sized(Shape))();
+console.log(describe(made));
+console.log(made.report() + " instance: " + (made instanceof Shape));
+//// an-abstract-class-type-holds-things-that-never-extended-it.ts
+abstract class Job {
+  abstract run(): string;
+  priority = 1;
+  describe(): string {
+    return "job " + this.run() + " at " + this.priority;
+  }
+  static compare(a: Job, b: Job): number {
+    return a.priority - b.priority;
+  }
+}
+
+////= lines-119	Build	extends	Job	run	"build"
+
+class Deploy extends Job {
+  priority = 5;
+  run(): string {
+    return "deploy";
+  }
+  describe(): string {
+    return "careful " + super.describe();
+  }
+}
+
+class Stranger {
+  priority = 3;
+  run(): string {
+    return "stranger";
+  }
+  describe(): string {
+    return "a stranger at " + this.priority;
+  }
+}
+
+const literal: Job = {
+  describe() {
+    return "literal " + this.run();
+  },
+  run: () => "literal run",
+  priority: 2,
+};
+
+function show(job: Job): string {
+  return job.describe() + " | " + job.run() + " | " + job.priority + " | " + (job instanceof Job) + " | " + job.constructor.name;
+}
+
+////= lines-214	baseDescribe	job	Job	Job	describe
+
+const jobs: Job[] = [new Deploy(), new Stranger(), new Build(), literal];
+
+for (const job of jobs) console.log(show(job));
+for (const job of jobs) console.log("the base's describe: " + baseDescribe(job));
+
+console.log("sorted: " + [...jobs].sort(Job.compare).map(job => job.run()).join());
+console.log("real jobs: " + jobs.filter(job => job instanceof Job).map(job => job.run()).join());
+console.log("json: " + JSON.stringify(jobs));
+
+let text = "";
+for (let i = 0; i < 2000; i++) text = show(i % 2 === 0 ? jobs[0] : jobs[2]);
+console.log("2000 real jobs, the last: " + text);
+console.log("then the stranger: " + show(jobs[1]));
+console.log("then the literal: " + show(jobs[3]));
+
+class Queue {
+  current: Job = new Build();
+  waiting: Job[] = [];
+  push(job: Job): void {
+    this.waiting.push(this.current);
+    this.current = job;
+  }
+  report(): string {
+    return this.current.describe() + " after " + this.waiting.map(job => job.describe()).join("; ");
+  }
+}
+
+const queue = new Queue();
+for (const job of jobs) {
+  queue.push(job);
+  console.log("queue: " + queue.report());
+}
+
+const Concrete: new () => Job = Stranger;
+console.log("a construct signature: " + show(new Concrete()));
+
+export {};
+//// an-abstract-member-is-a-field-in-one-subclass-and-an-accessor-in-another.ts
+const log: string[] = [];
+
+abstract class Sensor {
+  abstract value: number;
+  abstract readonly unit: string;
+  describe(): string {
+    return this.value + " " + this.unit;
+  }
+  reset(): number {
+    this.value = 0;
+    return this.value;
+  }
+}
+
+class Stored extends Sensor {
+  value = 1;
+  unit = "stored";
+}
+
+class Computed extends Sensor {
+  reads = 0;
+  get value(): number {
+    log.push("get");
+    return ++this.reads * 100;
+  }
+  set value(next: number) {
+    log.push("set " + next);
+  }
+  get unit(): string {
+    log.push("unit");
+    return "computed";
+  }
+}
+
+class Late extends Sensor {
+  value: number;
+  unit: string;
+  constructor() {
+    super();
+    this.unit = "late";
+    this.value = 3;
+  }
+}
+
+////= Holder-11	public	sensor	Sensor	ask	sensor.value
+
+////= lines-20	read	s	Sensor	number	return	s.value
+
+function write(s: Sensor, next: number): number {
+  s.value = next;
+  return s.value;
+}
+
+////= line
+
+const sensors: Sensor[] = [new Stored(), new Computed(), new Late()];
+for (const s of sensors) {
+  const name = s.constructor.name;
+  line(name + ", read", read(s));
+  line(name + ", a field of a holder", new Holder(s).ask());
+  line(name + ", described by the base", s.describe());
+  line(name + ", stored", write(s, 9));
+  line(name + ", reset by the base", s.reset());
+  line(name + ", own", Object.hasOwn(s, "value") + " " + Object.hasOwn(s, "unit") + " keys " + Object.keys(s).join());
+}
+
+const stored = new Stored();
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += read(stored) + write(stored, i) + stored.describe().length;
+line("2000 with the field", warm);
+const computed = new Computed();
+line("then the accessor at the same sites", read(computed) + " " + write(computed, 5) + " " + computed.describe());
+line("then the field again", read(stored) + " " + write(stored, 5) + " " + stored.describe());
+
+let mixed = 0;
+for (let i = 0; i < 2000; i++) mixed += read(sensors[i % 3]);
+log.length = 0;
+line("2000 mixed reads", mixed);
+
+export {};
+//// an-abstract-method-gets-a-body-on-the-base-at-run-time.ts
+////= Shape-6
+
+////= lines-19	areaOf	s	Shape	number	s.area
+
+////= lines-19	squareArea	s	Square	number	s.area
+
+const square = new Square();
+const line = new Line();
+
+function round(label: string): void {
+  attempt(label, () => areaOf(square) + " " + squareArea(square) + " " + square.describe() + " | " + areaOf(line) + " " + line.describe() + " | on the base " + typeof Shape.prototype.area);
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += areaOf(square) + squareArea(square) + areaOf(line) + square.describe().length;
+console.log("2000 honest: " + warm);
+round("before");
+Shape.prototype.area = function () { return -this.side; };
+round("the base got a body, the subclasses still override it");
+const squareAreaWritten = Square.prototype.area;
+Reflect.deleteProperty(Square.prototype, "area");
+round("the square's override deleted");
+Reflect.deleteProperty(Shape.prototype, "area");
+round("the base's body deleted too");
+Square.prototype.area = squareAreaWritten;
+round("the square's override stored again");
+Reflect.deleteProperty(Line.prototype, "label");
+round("the line's getter deleted and nothing above it");
+
+export {};
+//// an-abstract-method-is-called-through-the-base-honest.ts
+////= Shape-6
+
+////= lines-19	areaOf	s	Shape	number	s.area
+
+////= lines-19	squareArea	s	Square	number	s.area
+
+const square = new Square();
+const line = new Line();
+
+function round(label: string): void {
+  attempt(label, () => areaOf(square) + " " + squareArea(square) + " " + square.describe() + " | " + areaOf(line) + " " + line.describe() + " | on the base " + typeof Shape.prototype.area);
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += areaOf(square) + squareArea(square) + areaOf(line) + square.describe().length;
+console.log("2000 honest: " + warm);
+round("before");
+round("again 1");
+round("again 2");
+round("again 3");
+round("again 4");
+round("again 5");
+
+export {};
+//// an-abstract-method-run-by-the-base-constructor-reads-fields-that-do-not-exist-yet.ts
+////= text-11
+
+abstract class Model {
+  abstract size(): number;
+  abstract label(): string;
+  abstract fill(): void;
+  sizeAtStart: number;
+  labelAtStart: string;
+  constructor() {
+    this.sizeAtStart = this.size();
+    this.labelAtStart = this.label();
+    this.fill();
+  }
+}
+
+class Grid extends Model {
+  columns: number = 3;
+  rows: number = 2;
+  caption: string = "grid";
+  cells: number[] = [];
+  size(): number {
+    return this.columns * this.rows;
+  }
+  label(): string {
+    return this.caption + " " + this.columns;
+  }
+  fill(): void {
+    this.rows = 50;
+    this.caption = "filled early";
+  }
+}
+
+class Constant extends Model {
+  size(): number {
+    return 7;
+  }
+  label(): string {
+    return "constant";
+  }
+  fill(): void {}
+}
+
+class Pushes extends Model {
+  cells: number[] = [];
+  size(): number {
+    return 0;
+  }
+  label(): string {
+    return "pushes";
+  }
+  fill(): void {
+    this.cells.push(1);
+  }
+}
+
+////= lines-20	startOf	model	Model	number	return	model.sizeAtStart
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += startOf(new Constant()) + new Constant().labelAtStart.length;
+show("2000 that need no field", () => sum);
+
+const grid = new Grid();
+show("the size at the start", () => [grid.sizeAtStart, typeof grid.sizeAtStart, startOf(grid), startOf(grid) + 1]);
+show("the label at the start", () => [grid.labelAtStart, grid.labelAtStart.length]);
+show("the size now", () => grid.size());
+show("the label now", () => grid.label());
+show("what the early stores left", () => [grid.rows, grid.caption]);
+show("keys", () => Object.keys(grid));
+show("JSON", () => JSON.stringify(grid));
+show("one that pushes into a list that is not there", () => new Pushes());
+show("the constant one", () => [startOf(new Constant()), new Constant().labelAtStart, Object.keys(new Constant())]);
+show("three in a row", () => [new Constant(), new Grid(), new Constant()].map(startOf));
+//// an-abstract-method-that-takes-a-dog-is-called-with-a-cat.ts
+////= Person-5
+
+abstract class Keeper {
+  abstract legsOf(a: Animal): number;
+  abstract tagOf(a: Animal): string;
+  abstract ownerOf(a: Animal): Person;
+  abstract speak(a: Animal): string;
+  abstract shoe(a: Animal, legs: number): void;
+  report(a: Animal): string {
+    return "legs " + this.legsOf(a) + ", tag " + this.tagOf(a);
+  }
+  doubled(a: Animal): number {
+    const legs: number = this.legsOf(a);
+    return legs * 2;
+  }
+  shout(a: Animal): string {
+    const tag: string = this.tagOf(a);
+    return tag.toUpperCase();
+  }
+  greet(a: Animal): string {
+    const owner: Person = this.ownerOf(a);
+    return "hello " + owner.first;
+  }
+}
+
+////= DogKeeper	extends
+
+const own = new DogKeeper();
+const keeper: Keeper = own;
+
+function all(kind: string, a: Animal): void {
+  show(kind + " legsOf", () => keeper.legsOf(a));
+  show(kind + " tagOf", () => keeper.tagOf(a));
+  show(kind + " ownerOf", () => keeper.ownerOf(a));
+  show(kind + " speak", () => keeper.speak(a));
+  show(kind + " report", () => keeper.report(a));
+  show(kind + " doubled", () => keeper.doubled(a));
+  show(kind + " shout", () => keeper.shout(a));
+  show(kind + " greet", () => keeper.greet(a));
+  show(kind + " shoe", () => keeper.shoe(a, 6));
+  show(kind + " legsOf after shoe", () => keeper.legsOf(a));
+  show(kind + " afterwards", () => a);
+}
+
+const rex = new Dog("rex");
+show("typed caller legsOf", () => own.legsOf(rex));
+show("typed caller speak", () => own.speak(rex));
+all("dog", rex);
+all("cat", new Cat("tom"));
+all("animal", new Animal("thing"));
+all("spider", new Spider("boris"));
+all("dog again", new Dog("fido"));
+show("typed caller doubled", () => own.doubled(rex));
+//// an-abstract-number-is-copied-into-a-number-field-by-the-base-constructor.ts
+////= text-11
+
+abstract class Shape {
+  abstract sides: number;
+  copy: number;
+  doubled: number;
+  whole: number;
+  constructor() {
+    this.copy = this.sidesNow();
+    this.doubled = this.sidesNow() * 2;
+    this.whole = this.sidesNow() | 0;
+  }
+  sidesNow(): number {
+    return this.sides;
+  }
+  copyPlusOne(): number {
+    return this.copy + 1;
+  }
+}
+
+////= lines-87	ByField	Shape	sides	number	4
+
+////= lines-92	ByGetter	Shape	get	sides	number	3
+
+class ByParameter extends Shape {
+  constructor(public sides: number) {
+    super();
+  }
+}
+
+class ByStore extends Shape {
+  sides: number;
+  constructor() {
+    super();
+    this.sides = 6;
+  }
+}
+
+////= lines-20	copyOf	shape	Shape	number	return	shape.copy
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += copyOf(new ByGetter()) + new ByGetter().doubled + new ByGetter().copyPlusOne();
+show("2000 that have it in time", () => sum);
+
+for (const shape of [new ByGetter(), new ByField(), new ByParameter(5), new ByStore()]) {
+  const kind = shape.constructor.name;
+  show(kind + ": sides now", () => shape.sides);
+  show(kind + ": the copy", () => [shape.copy, typeof shape.copy, copyOf(shape)]);
+  show(kind + ": the copy plus one", () => [shape.copy + 1, shape.copyPlusOne()]);
+  show(kind + ": doubled", () => shape.doubled);
+  show(kind + ": whole", () => shape.whole);
+  show(kind + ": keys", () => Object.keys(shape));
+  show(kind + ": JSON", () => JSON.stringify(shape));
+}
+
+const shapes: Shape[] = [new ByGetter(), new ByField(), new ByGetter()];
+show("copies", () => shapes.map(copyOf));
+show("copies added", () => shapes.reduce((total, shape) => total + shape.copy, 0));
+show("copies as doubles", () => Array.from(Float64Array.from(shapes, copyOf)));
+//// an-abstract-string-a-list-and-an-object-are-used-by-the-base-constructor.ts
+////= text-11
+
+////= Person-3
+
+abstract class Page {
+  abstract title: string;
+  abstract lines: string[];
+  abstract author: Person;
+  seen: string[] = [];
+  heading: string;
+  constructor() {
+    this.heading = this.titleNow() + "!";
+    this.note("title", () => this.title);
+    this.note("the length of the title", () => this.title.length);
+    this.note("the title in capitals", () => this.title.toUpperCase());
+    this.note("lines", () => this.lines);
+    this.note("the number of lines", () => this.lines.length);
+    this.note("lines iterated", () => [...this.lines].length);
+    this.note("author", () => this.author);
+    this.note("the name of the author", () => this.author.first);
+  }
+  titleNow(): string {
+    return this.title;
+  }
+  note(label: string, run: () => unknown): void {
+    try {
+      const value = run();
+      this.seen.push(label + " " + typeof value + " " + String(value));
+    } catch (error) {
+      this.seen.push(label + " threw " + (error instanceof TypeError ? "TypeError" : "another error"));
+    }
+  }
+}
+
+class ByFields extends Page {
+  title: string = "fields";
+  lines: string[] = ["one", "two"];
+  author: Person = new Person();
+}
+
+class ByGetters extends Page {
+  get title(): string {
+    return "getters";
+  }
+  get lines(): string[] {
+    return ["only"];
+  }
+  get author(): Person {
+    return new Person();
+  }
+}
+
+abstract class Strict {
+  abstract title: string;
+  width: number;
+  constructor() {
+    this.width = this.measure();
+  }
+  measure(): number {
+    return this.title.length;
+  }
+}
+
+////= lines-87	StrictByField	Strict	title	string	"late"
+
+////= lines-92	StrictByGetter	Strict	get	title	string	"early"
+
+const byGetters = new ByGetters();
+show("getters: heading", () => byGetters.heading);
+for (const line of byGetters.seen) console.log("getters: " + line);
+
+const byFields = new ByFields();
+show("fields: heading", () => byFields.heading);
+for (const line of byFields.seen) console.log("fields: " + line);
+show("fields: now", () => [byFields.title, byFields.lines, byFields.author.first]);
+show("fields: keys", () => Object.keys(byFields));
+
+show("a constructor that needs it: by a getter", () => new StrictByGetter().width);
+show("a constructor that needs it: by a field", () => new StrictByField().width);
+show("2000 of each", () => {
+  let made = 0;
+  let failed = 0;
+  for (let i = 0; i < 2000; i++) {
+    made += new StrictByGetter().width;
+    try {
+      made += new StrictByField().width;
+    } catch {
+      failed++;
+    }
+  }
+  return [made, failed];
+});
+//// an-accessor-in-a-subclass-over-a-field-of-a-base-typed-by-an-interface.ts
+const log: string[] = [];
+
+////= lines-246	Leveled	level	read	number
+
+const Base: new () => Leveled = class {
+  level = 1;
+  read(): number {
+    return this.level;
+  }
+};
+
+////= Pair-4
+
+class Plain extends Base {}
+
+////= lines-20	read	l	Leveled	number	return	l.level
+
+function write(l: Leveled, value: number): number {
+  l.level = value;
+  return l.level;
+}
+
+////= line
+
+for (const [name, make] of [
+  ["the base", () => new Base()],
+  ["a plain subclass", () => new Plain()],
+  ["a subclass with a pair", () => new Pair()],
+] satisfies [string, () => Leveled][]) {
+  line(name + ", made", JSON.stringify(make()) + " own " + Object.hasOwn(make(), "level"));
+  line(name + ", read", read(make()) + " " + make().read());
+  line(name + ", stored", write(make(), 5));
+}
+
+const pair = new Pair();
+Reflect.deleteProperty(pair, "level");
+line("the own field deleted, the pair shows", read(pair) + " " + pair.read() + " " + write(pair, 6) + " own " + Object.hasOwn(pair, "level"));
+
+export {};
+//// an-accessor-in-a-subclass-over-a-member-the-base-constructor-stores.ts
+const log: string[] = [];
+
+////= lines-28	Base	level	number
+
+class Base {
+  other = "other";
+  constructor(level: number) {
+    this.level = level;
+  }
+  read(): number {
+    return this.level;
+  }
+  raise(): number {
+    this.level += 1;
+    return this.level;
+  }
+}
+
+class Plain extends Base {}
+
+////= Pair-4
+
+class Keeping extends Base {
+  declare kept: number;
+  get level(): number {
+    log.push("get kept");
+    return this.kept * 10;
+  }
+  set level(value: number) {
+    log.push("keep " + value);
+    this.kept = value;
+  }
+}
+
+class OnlyGetter extends Base {
+  get level(): number {
+    log.push("get only");
+    return -1;
+  }
+}
+
+////= read-3
+
+////= attempt-21
+
+const makers: [string, () => Base][] = [
+  ["the base", () => new Base(1)],
+  ["a plain subclass", () => new Plain(1)],
+  ["a pair", () => new Pair(1)],
+  ["a pair that keeps the value", () => new Keeping(1)],
+  ["only a getter", () => new OnlyGetter(1)],
+];
+
+for (const [label, make] of makers) {
+  attempt(label + ", made", () => Object.keys(make()).join() + " " + JSON.stringify(make()));
+  attempt(label + ", read", () => read(make()));
+  attempt(label + ", read by a method of the base", () => make().read());
+  attempt(label + ", stored", () => write(make(), 5));
+  attempt(label + ", raised by a method of the base", () => make().raise());
+  attempt(label + ", own", () => Object.hasOwn(make(), "level"));
+}
+
+let warm = 0;
+const honest = new Base(0);
+for (let i = 0; i < 2000; i++) warm += write(honest, i) + read(honest) + honest.raise() + new Base(i).read();
+console.log("2000 honest: " + warm);
+for (const [label, make] of makers) attempt("then " + label, () => write(make(), 7) + " " + make().raise());
+
+export {};

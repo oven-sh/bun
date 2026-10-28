@@ -180,6 +180,7 @@ fn add_namespace(file: &mut FileBuilder, alias: StmtId, has_value: bool) -> Stmt
         name: ModuleName::Ident(known::object),
         name_pos: 0,
         flags: Flags::empty(),
+        attributes: TypeNodeId::NONE,
         body,
         has_body: true,
         specifies_module: false,

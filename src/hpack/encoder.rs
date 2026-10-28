@@ -114,7 +114,7 @@ impl Encoder {
         Self {
             entries: VecDeque::new(),
             storage: Storage::default(),
-            // About to wrap, as in ls-hpack, so that every test crosses the wrap.
+            // About to wrap, as in ls-hpack, so that the tests cross the wrap.
             next_id: Id::MAX - 3,
             buckets: vec![Bucket::default(); 4],
             size: 0,

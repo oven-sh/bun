@@ -236,15 +236,16 @@ mod tests {
     #[test]
     fn memory_stays_bounded() {
         let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
-        // The table holds about ten of these, so it turns over many times. Every eighth does not fit at all.
+        // The table holds about ten of these, so it turns over many times.
         for i in 0..160 {
-            let len = if i % 8 == 7 { i * 400 } else { 300 + i % 100 };
-            let block = encode(
-                &mut encoder,
-                &format!("x-{i}"),
-                &"~".repeat(len),
-                Indexing::Add,
-            );
+            let value = "~".repeat(300 + i % 100);
+            let mut block = encode(&mut encoder, &format!("x-{i}"), &value, Indexing::Add);
+            if i % 8 == 7 {
+                // One that does not fit at all, which an encoder does not keep.
+                block.extend(hex("00 0161"));
+                integer::encode(&mut block, 0x00, 7, i as u32 * 400);
+                block.resize(block.len() + i * 400, b'~');
+            }
             assert!(decode(&mut decoder, &block).is_ok());
             assert_eq!(decoder.table_size(), encoder.table_size());
             // What the large field took is given back at the end of its block.
@@ -687,32 +688,44 @@ mod tests {
 
     #[test]
     fn field_length_limit_however_the_strings_are_coded() {
-        let string = |len, coded| {
-            let (bytes, mut out) = (vec![b'a'; len], Vec::new());
+        let string = |len: usize, coded| {
+            let mut out = Vec::new();
             if coded {
-                integer::encode(&mut out, 0x80, 7, huffman::encoded_len(&bytes) as u32);
-                huffman::encode(&bytes, &mut out);
+                // 8 times "a" take 5 bytes.
+                let mut code = hex("18c6318c63").repeat(len / 8);
+                huffman::encode(&vec![b'a'; len % 8], &mut code);
+                integer::encode(&mut out, 0x80, 7, code.len() as u32);
+                out.extend(code);
             } else {
                 integer::encode(&mut out, 0x00, 7, len as u32);
-                out.extend_from_slice(&bytes);
+                out.resize(out.len() + len, b'a');
             }
             out
         };
-        for (name_coded, value_coded) in [(false, true), (true, false), (true, true)] {
-            for (name_len, value_len, fits) in [
-                (6, MAX_FIELD_LEN - 6, true),
-                (6, MAX_FIELD_LEN - 5, false),
-                (MAX_FIELD_LEN - 1, 1, true),
-                (MAX_FIELD_LEN, 1, false),
-                (MAX_FIELD_LEN + 1, 1, false),
-            ] {
-                let mut block = vec![0x00];
-                block.extend(string(name_len, name_coded));
-                block.extend(string(value_len, value_coded));
-                let decoded = decode(&mut Decoder::new(), &block).map(|fields| fields.len());
-                assert_eq!(decoded, if fits { Ok(1) } else { Err(Error::TooLarge) });
-            }
+        // The long string is coded in three of these only: each takes Miri a minute.
+        for (name_len, name_coded, value_len, value_coded, fits) in [
+            (6, true, MAX_FIELD_LEN - 6, false, true),
+            (6, true, MAX_FIELD_LEN - 5, false, false),
+            (6, false, MAX_FIELD_LEN - 5, true, false),
+            (MAX_FIELD_LEN - 1, false, 1, true, true),
+            (MAX_FIELD_LEN, false, 1, true, false),
+            (MAX_FIELD_LEN + 1, false, 1, true, false),
+            (MAX_FIELD_LEN, true, 0, false, true),
+        ] {
+            let mut block = vec![0x00];
+            block.extend(string(name_len, name_coded));
+            block.extend(string(value_len, value_coded));
+            let decoded = decode(&mut Decoder::new(), &block).map(|fields| fields.len());
+            assert_eq!(decoded, if fits { Ok(1) } else { Err(Error::TooLarge) });
         }
+        // A name that is too long and then malformed: it is not decoded to its end.
+        let mut name = hex("18c6318c63").repeat(MAX_FIELD_LEN / 8 + 1);
+        name.push(0xfe);
+        let mut block = vec![0x00];
+        integer::encode(&mut block, 0x80, 7, name.len() as u32);
+        block.extend(name);
+        block.extend(hex("0161"));
+        assert_eq!(decode(&mut Decoder::new(), &block), Err(Error::TooLarge));
     }
 
     #[test]

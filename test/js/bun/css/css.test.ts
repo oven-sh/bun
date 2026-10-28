@@ -8553,6 +8553,20 @@ describe("math functions", () => {
     minify_test("a{rotate:atan2(1in,10px)}", "a{rotate:1.467rad}");
   });
 
+  describe("atan2() takes two values of one type", () => {
+    minify_test("a{rotate:atan2(1s,2s)}", "a{rotate:.463648rad}");
+    minify_test("a{rotate:atan2(50%,25%)}", "a{rotate:1.10715rad}");
+    minify_test("a{rotate:atan2(1px + 1em - 1em,1px)}", "a{rotate:45deg}");
+    minify_test("a{rotate:atan2(1px,1s)}", "a{rotate:atan2(1px,1s)}");
+    minify_test("a{rotate:atan2(1px + 1s,1px)}", "a{rotate:atan2(1px + 1s,1px)}");
+    // sign() gives a number for every type.
+    minify_test("a{rotate:atan2(sign(1px),sign(1s))}", "a{rotate:45deg}");
+    // A length plus a number is no length, also when the length is zero.
+    minify_test("a{rotate:atan2(0px + 5,1)}", "a{rotate:atan2(0px + 5,1)}");
+    // The end of the input closes every block.
+    minify_test("a{rotate:atan2(1,sign(1s", "a{rotate:45deg}");
+  });
+
   describe("rem() keeps the sign of the dividend", () => {
     minify_test("a{margin-left:rem(-18px,5px)}", "a{margin-left:-3px}");
     minify_test("a{rotate:rem(140deg,-90deg)}", "a{rotate:50deg}");

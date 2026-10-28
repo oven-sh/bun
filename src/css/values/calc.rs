@@ -70,23 +70,6 @@ impl CalcUnit {
             _ => None,
         }
     }
-
-    pub(crate) fn arg_parse_is_type_independent(self) -> bool {
-        matches!(
-            self,
-            Self::Sin
-                | Self::Cos
-                | Self::Tan
-                | Self::Asin
-                | Self::Acos
-                | Self::Atan
-                | Self::Atan2
-                | Self::Pow
-                | Self::Log
-                | Self::Sqrt
-                | Self::Exp
-        )
-    }
 }
 
 /// A mathematical expression used within the `calc()` function.
@@ -441,7 +424,7 @@ impl<V: CalcValue> Calc<V> {
             CalcUnit::Acos => Self::parse_trig(input, TrigFnKind::Acos, true, parse_ident),
             CalcUnit::Atan => Self::parse_trig(input, TrigFnKind::Atan, true, parse_ident),
             CalcUnit::Atan2 => input.parse_nested_block(|i| {
-                let res = Self::parse_atan2(i, parse_ident)?;
+                let res = parse_atan2(i, &Self::number_ident(parse_ident))?;
                 if let Some(v) = V::try_from_angle(res) {
                     return Ok(Calc::Value(Box::new(v)));
                 }
@@ -654,10 +637,7 @@ impl<V: CalcValue> Calc<V> {
                     _ => None,
                 };
                 input.reset(&start);
-                if let Some(unit) = failed_unit {
-                    if unit.arg_parse_is_type_independent() {
-                        input.note_math_fn_parse_failure();
-                    }
+                if failed_unit.is_some() {
                     return Err(e);
                 }
             }
@@ -760,92 +740,6 @@ impl<V: CalcValue> Calc<V> {
             Calc::Number(n) => Some(Calc::Number(n)),
             _ => None,
         }
-    }
-
-    pub(crate) fn parse_atan2(
-        input: &mut css::Parser,
-        parse_ident: ParseIdent<'_, V>,
-    ) -> CssResult<Angle> {
-        let angle_ident = Self::number_ident::<Angle>(parse_ident);
-
-        let before_args = input.state();
-        let failures_before = input.math_fn_parse_failures();
-        let hit_unrecoverable =
-            |input: &css::Parser| input.math_fn_parse_failures() != failures_before;
-
-        let reconcile =
-            |input: &mut css::Parser, a: &Calc<Angle>, b: &Calc<Angle>| -> CssResult<Angle> {
-                if let (Calc::Value(av), Calc::Value(bv)) = (a, b) {
-                    if let Some(v) = av.try_op_to(&**bv, (), |_, x, y| Angle::Rad(x.atan2(y))) {
-                        return Ok(v);
-                    }
-                } else if let (Calc::Number(an), Calc::Number(bn)) = (a, b) {
-                    return Ok(Angle::Rad(an.atan2(*bn)));
-                }
-                Err(input.new_custom_error(css::ParserError::invalid_value))
-            };
-
-        match Calc::<Angle>::parse_sum(input, &angle_ident) {
-            Ok(a) => {
-                input.expect_comma()?;
-                match Calc::<Angle>::parse_sum(input, &angle_ident) {
-                    Ok(b) => {
-                        if let Ok(v) = reconcile(input, &a, &b) {
-                            return Ok(v);
-                        }
-                        return Err(input.new_custom_error(css::ParserError::invalid_value));
-                    }
-                    Err(e) => {
-                        if hit_unrecoverable(input) {
-                            return Err(e);
-                        }
-                        input.reset(&before_args);
-                    }
-                }
-            }
-            Err(e) => {
-                if hit_unrecoverable(input) {
-                    return Err(e);
-                }
-                input.reset(&before_args);
-            }
-        }
-
-        for try_parse_args in [
-            try_parse_atan2_args::<Length>,
-            try_parse_atan2_args::<Percentage>,
-            try_parse_atan2_args::<Time>,
-        ] {
-            let result = try_parse_args(input);
-            if result.is_ok() || hit_unrecoverable(input) {
-                return result;
-            }
-        }
-
-        Calc::<CSSNumber>::parse_atan2_args(input, &Self::number_ident(parse_ident))
-    }
-
-    pub(crate) fn parse_atan2_args(
-        input: &mut css::Parser,
-        parse_ident: ParseIdent<'_, V>,
-    ) -> CssResult<Angle> {
-        let a = Self::parse_sum(input, parse_ident)?;
-        input.expect_comma()?;
-        let b = Self::parse_sum(input, parse_ident)?;
-
-        if let (Calc::Value(av), Calc::Value(bv)) = (&a, &b) {
-            if let Some(v) = av.try_op_to(&**bv, (), |_, x, y| Angle::Rad(x.atan2(y))) {
-                return Ok(v);
-            }
-        } else if let (Calc::Number(an), Calc::Number(bn)) = (&a, &b) {
-            return Ok(Angle::Rad(an.atan2(*bn)));
-        } else {
-            // doo nothing
-        }
-
-        // We don't have a way to represent arguments that aren't angles, so just error.
-        // This will fall back to an unparsed property, leaving the atan2() function intact.
-        Err(input.new_custom_error(css::ParserError::invalid_value))
     }
 
     pub(crate) fn parse_numeric(
@@ -1074,9 +968,17 @@ impl<V: CalcValue> Calc<V> {
     }
 }
 
-#[inline]
-fn try_parse_atan2_args<Value: CalcValue>(input: &mut css::Parser) -> CssResult<Angle> {
-    input.try_parse(|i| Calc::<Value>::parse_atan2_args(i, &|_| None))
+/// The arguments of `atan2()` are two numbers or two values of one type, which is known after the parse.
+fn parse_atan2(input: &mut css::Parser, parse_ident: ParseIdent<'_, Atan2Arg>) -> CssResult<Angle> {
+    let a = Calc::parse_sum(input, parse_ident)?;
+    input.expect_comma()?;
+    let b = Calc::parse_sum(input, parse_ident)?;
+    let angle = match (&a, &b) {
+        (Calc::Value(a), Calc::Value(b)) => a.try_op_to(&**b, (), |_, y, x| Angle::Rad(y.atan2(x))),
+        (Calc::Number(a), Calc::Number(b)) => Some(Angle::Rad(a.atan2(*b))),
+        _ => None,
+    };
+    angle.ok_or_else(|| input.new_custom_error(css::ParserError::invalid_value))
 }
 
 #[derive(Copy, Clone)]
@@ -1756,3 +1658,117 @@ macro_rules! dim_pct_protocol {
 }
 dim_pct_protocol!(LengthValue);
 dim_pct_protocol!(Angle, parse_to_css: forward,);
+
+/// A value in an `atan2()` argument. It keeps its own type, and `atan2()` compares the two arguments.
+#[derive(Clone, css::ToCss, IsCompatible)]
+enum Atan2Arg {
+    Angle(Angle),
+    Length(Length),
+    Percentage(Percentage),
+    Time(Time),
+    /// A sum of two types, which no argument can be.
+    Mixed,
+}
+
+/// Forwards the numeric protocol of `Atan2Arg` to the type that each variant holds.
+macro_rules! atan2_arg_protocol {
+    ($($T:ident),+) => {
+        impl protocol::MulF32 for Atan2Arg {
+            fn mul_f32(self, rhs: f32) -> Self {
+                match self {
+                    $(Self::$T(v) => Self::$T(protocol::MulF32::mul_f32(v, rhs)),)+
+                    Self::Mixed => Self::Mixed,
+                }
+            }
+        }
+        impl protocol::TrySign for Atan2Arg {
+            fn try_sign(&self) -> Option<f32> {
+                match self {
+                    $(Self::$T(v) => protocol::TrySign::try_sign(v),)+
+                    Self::Mixed => None,
+                }
+            }
+        }
+        impl protocol::TryMap for Atan2Arg {
+            fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> {
+                match self {
+                    $(Self::$T(v) => protocol::TryMap::try_map(v, f).map(Self::$T),)+
+                    Self::Mixed => None,
+                }
+            }
+        }
+        impl protocol::TryOp for Atan2Arg {
+            fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
+                match (self, rhs) {
+                    $((Self::$T(a), Self::$T(b)) => protocol::TryOp::try_op(a, b, ctx, f).map(Self::$T),)+
+                    _ => None,
+                }
+            }
+        }
+        impl protocol::TryOpTo for Atan2Arg {
+            fn try_op_to<R, C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> R) -> Option<R> {
+                match (self, rhs) {
+                    $((Self::$T(a), Self::$T(b)) => protocol::TryOpTo::try_op_to(a, b, ctx, f),)+
+                    _ => None,
+                }
+            }
+        }
+        impl protocol::PartialCmp for Atan2Arg {
+            fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
+                match (self, rhs) {
+                    $((Self::$T(a), Self::$T(b)) => protocol::PartialCmp::partial_cmp(a, b),)+
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+atan2_arg_protocol!(Angle, Length, Percentage, Time);
+
+impl protocol::TryFromAngle for Atan2Arg {
+    fn try_from_angle(angle: Angle) -> Option<Self> {
+        Some(Self::Angle(angle))
+    }
+}
+
+impl protocol::Parse for Atan2Arg {
+    fn parse(input: &mut css::Parser) -> CssResult<Self> {
+        let location = input.current_source_location();
+        let token = *input.next()?;
+        if let Ok(angle) = Angle::try_from_token(&token) {
+            return Ok(Self::Angle(angle));
+        }
+        if let Ok(length) = LengthValue::try_from_token(&token) {
+            return Ok(Self::Length(Length::Value(length)));
+        }
+        if let Ok(time) = Time::try_from_token(&token) {
+            return Ok(Self::Time(time));
+        }
+        if let css::Token::Percentage { unit_value, .. } = token {
+            return Ok(Self::Percentage(Percentage { v: unit_value }));
+        }
+        Err(location.new_unexpected_token_error(token))
+    }
+}
+
+impl CalcValue for Atan2Arg {
+    fn add_internal(self, rhs: Self) -> Self {
+        match (self, rhs) {
+            (Self::Angle(a), Self::Angle(b)) => Self::Angle(a.add_internal(b)),
+            // `Length::add` keeps a sum of two units, so that `1px + 1em - 1em` is `1px`.
+            (Self::Length(a), Self::Length(b)) => Self::Length(a.add(b)),
+            (Self::Percentage(a), Self::Percentage(b)) => Self::Percentage(a.add_internal(b)),
+            (Self::Time(a), Self::Time(b)) => Self::Time(a.add_internal(b)),
+            _ => Self::Mixed,
+        }
+    }
+    fn into_calc(self) -> Calc<Self> {
+        Calc::Value(Box::new(self))
+    }
+    fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
+        match c {
+            Calc::Value(v) => Ok(*v),
+            _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
+        }
+    }
+}

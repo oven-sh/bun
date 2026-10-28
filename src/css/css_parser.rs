@@ -3398,16 +3398,6 @@ impl<'a> Parser<'a> {
         parse_nested_block(self, parsefn)
     }
 
-    #[inline]
-    pub(crate) fn math_fn_parse_failures(&self) -> u64 {
-        self.input.math_fn_parse_failures
-    }
-
-    #[inline]
-    pub(crate) fn note_math_fn_parse_failure(&mut self) {
-        self.input.math_fn_parse_failures += 1;
-    }
-
     /// See `ParserInput::token_list_parse_failures`.
     #[inline]
     pub(crate) fn token_list_parse_failures(&self) -> u64 {
@@ -3981,7 +3971,6 @@ pub struct ParserInput<'a> {
     /// instead of re-scanning (and re-recursing through) the truncated
     /// suffix once per backtracking alternative per nesting level.
     unclosed_block_at_eof: Option<UnclosedBlockAtEof>,
-    math_fn_parse_failures: u64,
     /// Monotonic count of raw token-list parse failures
     /// (`TokenList::parse_into`). A token-list parse is context-free: it
     /// fails or succeeds the same way every time it runs over the same
@@ -4019,7 +4008,6 @@ impl<'a> ParserInput<'a> {
             cached_token: None,
             nesting_depth: 0,
             unclosed_block_at_eof: None,
-            math_fn_parse_failures: 0,
             token_list_parse_failures: 0,
             may_revert_rule: false,
         }

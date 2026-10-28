@@ -335,12 +335,14 @@ test.concurrent("timerify and AsyncResource.bind survive Object.prototype.get po
 // does not run inside observe(), which is what WPT
 // performance-timeline/buffered-does-not-sync-invoke.html checks.
 // Verified against Node v26.3.0.
-test.concurrent("observe({type, buffered: true}) buffers synchronously and delivers as one deferred batch", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const { performance, PerformanceObserver } = require("node:perf_hooks");
+test.concurrent(
+  "observe({type, buffered: true}) buffers synchronously and delivers as one deferred batch",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { performance, PerformanceObserver } = require("node:perf_hooks");
        const names = list => list.getEntries().map(entry => entry.name);
        (async () => {
          const out = {};
@@ -403,23 +405,24 @@ test.concurrent("observe({type, buffered: true}) buffers synchronously and deliv
            console.log(JSON.stringify(out));
          }).observe({ type: "mark", buffered: true });
        })();`,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
-    calledInsideObserve: false,
-    takeRecords: ["pre1", "pre2", "post1"],
-    batches: [["b1", "b2"]],
-    afterDisconnect: [],
-    appended: ["e1", "e2", "e3"],
-    last: ["d1"],
-  });
-  expect(exitCode).toBe(0);
-});
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      calledInsideObserve: false,
+      takeRecords: ["pre1", "pre2", "post1"],
+      batches: [["b1", "b2"]],
+      afterDisconnect: [],
+      appended: ["e1", "e2", "e3"],
+      last: ["d1"],
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
 test("net entries are instanceof PerformanceEntry", async () => {
   const { promise, resolve } = Promise.withResolvers<PerformanceNodeEntry>();

@@ -1,18 +1,35 @@
-// A thread that sleeps until another thread wakes it pays for the wake. So a work pool thread that is out of jobs
-// waits briefly for the next one before it sleeps, and the event loop waits briefly for the result of a job it just
-// gave the pool (src/threading/brief_wait.rs). In a chain of awaited jobs, neither thread sleeps between two jobs.
-//
+// A thread that sleeps until another thread wakes it pays for the wake. So the work pool wakes one thread for one job,
+// and not a second one to look for more. A pool thread that is out of jobs waits briefly for the next one before it
+// sleeps, and the event loop waits briefly for the result of a job it just gave the pool (src/threading/brief_wait.rs).
+// In a chain of awaited jobs, neither thread sleeps between two jobs.
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
+
+// The pool's threads live until the process ends, so the names under /proc/self/task are all the threads it started.
+test.skipIf(!isLinux)("one awaited work pool job starts one pool thread", async () => {
+  const script = /* js */ `
+    import { hkdf } from "node:crypto";
+    import fs from "node:fs";
+
+    await new Promise(done => hkdf("sha256", "key", "salt", "info", 32, done));
+    let poolThreads = 0;
+    for (const thread of fs.readdirSync("/proc/self/task")) {
+      if (fs.readFileSync("/proc/self/task/" + thread + "/comm", "utf8").startsWith("Bun Pool")) poolThreads++;
+    }
+    console.log(poolThreads);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1\n", stderr: "", exitCode: 0 });
+});
+
 // The wait is 20 microseconds, less than a debug build takes for its turn. With BUN_DEBUG_TEST_LONG_BRIEF_WAIT the
 // builds with debug assertions (debug, ASAN) wait ten seconds in its place. A release build has no such variable.
 //
 // A sleep is a voluntary context switch of the thread, which Linux counts in /proc/<pid>/task/<tid>/status. A thread
 // that gives its processor to another one that is ready to run makes an involuntary one.
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
-
 const jobs = 12;
-// Without the wait the pool's threads sleep twice a job (the thread that ran it, and the spare one that was woken with
-// it), and the event loop up to once.
+// Without the wait a pool thread sleeps once a job, and the event loop up to once.
 const fewSleeps = jobs / 4;
 
 const fixture = /* js */ `

@@ -376,8 +376,7 @@ async function copyDir(src: string, dest: string, opts: CpOptions) {
     const { destStat, skipped } = await checkPaths(srcItem, destItem, opts);
     if (!skipped) await getStatsForCopy(destStat, srcItem, destItem, opts);
   }
-  // Stamps created and existing directories alike, so every exit of copyDir must reach it. Node has one
-  // stamp in onDir and one in mkDirAndCopy instead.
+  // Node's stamps in onDir and in mkDirAndCopy, in one place. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/cp/cp.js#L306-L327
   if (opts.preserveTimestamps) await setDestTimestamps(src, dest);
 }
 

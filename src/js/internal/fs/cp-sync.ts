@@ -498,8 +498,7 @@ function copyDir(src: string, dest: string, opts: CpOptions) {
     const { destStat, skipped } = checkPathsSync(srcItem, destItem, opts);
     if (!skipped) getStats(destStat, srcItem, destItem, opts);
   }
-  // Stamps created and existing directories alike, so every exit of copyDir must reach it. Node's sync walk
-  // does this in a `finally`. Here a copy that throws leaves the directory as it is, as for its mode.
+  // Not in a `finally` as in node's filter walk: a copy that throws keeps its times and mode, as in node's native cpSync. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/cp/cp-sync.js#L188-L197
   if (opts.preserveTimestamps) setDestTimestamps(src, dest);
 }
 

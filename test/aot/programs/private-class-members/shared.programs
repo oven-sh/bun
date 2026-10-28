@@ -1,0 +1,12 @@
+////: describeOutcome
+function describeOutcome(f) {
+  try {
+    return String(f());
+  } catch (e) {
+    return "threw " + e.name;
+  }
+}
+////: lines-2
+class «1» extends «2» {
+  extra = «3»;
+}

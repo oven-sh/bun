@@ -1,0 +1,6 @@
+before the replacement: first.cjs undefined
+first part replaced: second.cjs undefined
+required again: second.cjs first.cjs undefined
+required by a compiled module: requires third.cjs undefined
+both parts replaced: fourth.cjs undefined
+the default parts again: fifth.cjs undefined

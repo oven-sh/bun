@@ -1,0 +1,18 @@
+# process.versions is read and nobody takes the value. Nothing in the program lists the keys of process, so nobody can tell whether the member was added: nothing is left of the read.
+# FORM: AsRead
+# RUN: pipeline ResolveAccesses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="versions"
+    v2 = Integer integer=1
+    Return v2
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: versions
+# CHECK-NOT: ProcessVersions
+# CHECK: Return

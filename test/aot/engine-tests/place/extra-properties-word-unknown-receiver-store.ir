@@ -1,0 +1,36 @@
+# A store under a new name through an unknown receiver may reach every object that was handed to a function nobody knows: its layout has the word for extra properties. A logged object did not escape and has none
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow references=narrow disable=flow:AppendedFields
+# RUN: plan-slots layouts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Logged" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L1 name="HandedOut" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="console" [isFreeName]
+    v7 = PropGet v6 key="log"
+    v8 = Call v7, v6, v4 calleeKey="log"
+    v9 = NewObject -, v2, v2 layout=L1 fields=[0, 1]
+    v10 = FinishObject v9
+    v11 = PropGet v5 key="publish" [isFreeName]
+    v12 = Call v11, -, v10
+    v13 = PropGet v5 key="input" [isFreeName]
+    PropSet v13, v2 key="extra" mode=Strict
+    Return
+}
+
+# CHECK: L0 CompiledObject size=32
+# CHECK-NEXT: .0 "x" {{*}} @16
+# CHECK-NEXT: .1 "y" {{*}} @24
+# CHECK-NEXT: L1 CompiledObject size=48
+# CHECK-NEXT: .0 "x" {{*}} @16
+# CHECK-NEXT: .1 "y" {{*}} @24
+# CHECK-NEXT: extra-properties Cell32 @32

@@ -3,7 +3,9 @@
 use super::*;
 
 /// DevServer is stored on the heap, storing its allocator.
+#[inline(never)]
 pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
+    bun_removable_features::removable_definition!(Bundler, init);
     // Note: `Features.dev_server +|= 1` (saturating add). AtomicUsize has
     // no `saturating_inc`; on a 64-bit counter overflow is unreachable, so a
     // relaxed `fetch_add(1)` is equivalent in practice.
@@ -350,7 +352,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             #[cfg(not(windows))]
             bun_core::write_any_to_hasher(&mut h, stat.st_mtime as i64);
             #[cfg(windows)]
-            bun_core::write_any_to_hasher(&mut h, &(stat.mtim.sec as i64));
+            bun_core::write_any_to_hasher(&mut h, stat.mtim.sec as i64);
             h.update(crate::bake::get_hmr_runtime(bake::Side::Client).code);
             h.update(crate::bake::get_hmr_runtime(bake::Side::Server).code);
         } else {
@@ -735,7 +737,6 @@ impl DevServer {
             crate::bake::get_hmr_runtime(crate::bake::Side::Server)
                 .code
                 .as_bytes(),
-            true,
         );
 
         // `self.global()` returns `&'static`, decoupled from `&self` — it's

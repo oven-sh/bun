@@ -1,0 +1,4 @@
+{
+  "env": { "BUN_JSC_useGC": "0" },
+  "skipInShell": "it uses what Bun provides and the jsc shell does not: bun:jsc"
+}

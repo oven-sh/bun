@@ -1,0 +1,3087 @@
+////: counts
+const counts = [
+  ["3", () => 3],
+  ["'2'", () => '2'],
+  ["''", () => ''],
+  ["' 2 '", () => ' 2 '],
+  ["'0x2'", () => '0x2'],
+  ["'abc'", () => 'abc'],
+  ["null", () => null],
+  ["undefined", () => undefined],
+  ["true", () => true],
+  ["false", () => false],
+  ["NaN", () => NaN],
+  ["-0", () => -0],
+  ["0.5", () => 0.5],
+  ["2.9", () => 2.9],
+  ["-1", () => -1],
+  ["-1.5", () => -1.5],
+  ["-Infinity", () => -Infinity],
+  ["2n", () => 2n],
+  ["[]", () => []],
+  ["[2]", () => [2]],
+  ["[1, 2]", () => [1, 2]],
+  ["({})", () => ({})],
+  ["Object.create(null)", () => Object.create(null)],
+  ["new Number(2)", () => new Number(2)],
+  ["new String('2')", () => new String('2')],
+  ["Symbol('s')", () => Symbol('s')],
+  ["({ valueOf() { log.push('valueOf'); return 2; }, toString() { log.push('toString'); return '1'; } })", () => ({ valueOf() { log.push('valueOf'); return 2; }, toString() { log.push('toString'); return '1'; } })],
+  ["({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '1'; } })", () => ({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '1'; } })],
+  ["({ valueOf() { log.push('valueOf'); throw new RangeError('no'); } })", () => ({ valueOf() { log.push('valueOf'); throw new RangeError('no'); } })],
+  ["({ valueOf() { log.push('valueOf'); return 2n; } })", () => ({ valueOf() { log.push('valueOf'); return 2n; } })],
+  ["({ valueOf() { log.push('valueOf'); return '2'; } })", () => ({ valueOf() { log.push('valueOf'); return '2'; } })],
+  ["({ [Symbol.toPrimitive](hint) { log.push(hint); return hint === 'number' ? 1 : hint === 'string' ? '2' : 3; } })", () => ({ [Symbol.toPrimitive](hint) { log.push(hint); return hint === 'number' ? 1 : hint === 'string' ? '2' : 3; } })],
+];
+////: counts-2
+////= counts
+
+////= describe-4
+
+////= runTable
+////: for-21
+for (const name of Object.keys(holders)) {
+  const inArray = value => readAndDouble(holders[name](), value);
+  const compared = value => readAndCompare(holders[name](), value);
+  const incremented = value => readAndIncrement(holders[name](), value);
+  const negated = value => readAndNegate(holders[name](), value);
+  for (const [label, use] of [["double", inArray], ["compare", compared], ["increment", incremented], ["negate", negated]]) {
+    if (name !== "array" && name !== "object" && label !== "double") continue;
+    for (const text of texts) {
+      log.length = 0;
+      const result = outcome(() => use(make(text)));
+      console.log(name, label, text, "->", result + (log.length ? " after " + log.join(", ") : ""));
+    }
+  }
+}
+////: for-93
+for (const route of Object.keys(routes)) {
+  for (const value of ["3", 0.5, -0, undefined, null, 3n, NaN, 2147483647, { valueOf: () => 3 }]) {
+    const gauge = makeGauge();
+    raise(gauge);
+    routes[route](gauge, value);
+    attempt(route + " stores " + show(value) + ": report", () => report(gauge));
+    attempt(route + " stores " + show(value) + ": raise", () => [raise(gauge), gauge.level]);
+  }
+}
+////: lines-202
+function «1»(source) {
+  let index = 0;
+  const seen = [];
+  for (index «2» source) seen.push(letters[index], index | 0, index + 1);
+  seen.push(index);
+  return seen;
+}
+////: lines-237
+function «1»(«2», «3») {
+  const n = «4»(«2», «3»);
+  return [n + 1, n * 2, n | 0, n < 5];
+}
+////: lines-330
+function «1»(value) {
+  let count = 0;
+  for (let i = 0; i «2» value; i++) {
+    count++;
+    if (count === 10) break;
+  }
+  return count;
+}
+////: readAndIncrement
+function readAndIncrement(holder, key) {
+  const found = holder[key];
+  key++;
+  return [found, holder[key], key];
+}
+////: symbols
+const symbols = {
+  "a symbol": () => Symbol("s"),
+  "a registered symbol": () => Symbol.for("s"),
+  "a well-known symbol": () => Symbol.iterator,
+  "a symbol object": () => Object(Symbol("s")),
+  "an object that converts to a symbol": () => ({ valueOf: () => Symbol("s") }),
+};
+//// numbers/a-class-with-value-of-is-used-in-arithmetic-and-then-changed.js
+////= show-25
+
+const log = [];
+
+class Money {
+  constructor(cents) {
+    this.cents = cents;
+  }
+  valueOf() {
+    log.push("valueOf");
+    return this.cents;
+  }
+  toString() {
+    log.push("toString");
+    return "$" + this.cents / 100;
+  }
+}
+
+class Tip extends Money {
+  valueOf() {
+    log.push("Tip.valueOf");
+    return super.valueOf() * 2;
+  }
+}
+
+class Label extends Money {
+  [Symbol.toPrimitive](hint) {
+    log.push("toPrimitive " + hint);
+    return hint === "number" ? 1 : "label";
+  }
+}
+
+function uses(a, b) {
+  return [a + b, a - b, a * 2, a < b, a == 100, a | 0, -a, `${a}`, a + "", Math.max(a, b), [10, 20, 30][a / 100]];
+}
+
+////= total-3
+
+function report(label, run) {
+  log.length = 0;
+  const result = outcome(run);
+  console.log(label + " -> " + result + " | " + log.join(" "));
+}
+
+for (let i = 0; i < 1000; i++) {
+  uses(new Money(100), new Money(250));
+  total([new Money(1), new Money(2)]);
+}
+
+report("two amounts", () => uses(new Money(100), new Money(250)));
+report("an amount and a number", () => uses(new Money(100), 250));
+report("a number and an amount", () => uses(100, new Money(250)));
+report("numbers", () => uses(100, 250));
+report("a subclass that overrides valueOf", () => uses(new Tip(100), new Money(250)));
+report("a subclass with Symbol.toPrimitive", () => uses(new Label(100), new Money(250)));
+report("an amount of text", () => uses(new Money("100"), new Money(250)));
+report("an amount of a bigint", () => uses(new Money(100n), new Money(250n)));
+report("an amount of nothing", () => uses(new Money(), new Money(250)));
+report("an amount of an amount", () => uses(new Money(new Money(100)), new Money(250)));
+report("an own valueOf", () => uses(Object.assign(new Money(100), { valueOf: () => 7 }), new Money(250)));
+report("an own valueOf that is no function", () => uses(Object.assign(new Money(100), { valueOf: 7 }), new Money(250)));
+report("another prototype", () => uses(Object.setPrototypeOf(new Money(100), { valueOf: () => 8 }), new Money(250)));
+report("no prototype", () => uses(Object.setPrototypeOf(new Money(100), null), new Money(250)));
+report("total", () => total([new Money(1), new Money(2), new Tip(3), 4, "5", new Money(6)]));
+
+const original = Money.prototype.valueOf;
+Money.prototype.valueOf = function () {
+  log.push("replaced");
+  return this.cents + 1;
+};
+report("valueOf replaced on the prototype", () => uses(new Money(100), new Money(250)));
+report("the subclass reaches the replacement", () => uses(new Tip(100), new Money(250)));
+Money.prototype.valueOf = function () {
+  log.push("gives a text");
+  return String(this.cents);
+};
+report("valueOf gives a text", () => uses(new Money(100), new Money(250)));
+Money.prototype.valueOf = function () {
+  log.push("gives an object");
+  return {};
+};
+report("valueOf gives an object", () => uses(new Money(100), new Money(250)));
+delete Money.prototype.valueOf;
+report("valueOf deleted", () => uses(new Money(100), new Money(250)));
+Money.prototype[Symbol.toPrimitive] = function (hint) {
+  log.push("added " + hint);
+  return 5;
+};
+report("Symbol.toPrimitive added", () => uses(new Money(100), new Money(250)));
+delete Money.prototype[Symbol.toPrimitive];
+Money.prototype.valueOf = original;
+report("everything restored", () => uses(new Money(100), new Money(250)));
+//// numbers/a-constant-table-of-integers-is-changed-later.js
+////= show-25
+
+const PRIMES = [2, 3, 5, 7, 11, 13, 17, 19];
+const WEIGHTS = { small: 1, medium: 2, large: 4 };
+const GRID = [
+  [1, 2, 3],
+  [4, 5, 6],
+];
+const FROZEN = Object.freeze([1, 2, 3]);
+const LIMITS = Object.freeze({ low: 0, high: 10 });
+
+////= lines-37	prime	i	PRIMES[i
+
+function sumOfPrimes() {
+  let total = 0;
+  for (let i = 0; i < PRIMES.length; i++) total += PRIMES[i];
+  return total;
+}
+
+function xorOfPrimes() {
+  let bits = 0;
+  for (const value of PRIMES) bits ^= value;
+  return bits;
+}
+
+function weight(name) {
+  return WEIGHTS[name] * 2;
+}
+
+function totalWeight() {
+  return WEIGHTS.small + WEIGHTS.medium + WEIGHTS.large;
+}
+
+function cell(y, x) {
+  return GRID[y][x] + 1;
+}
+
+function frozenSum() {
+  return FROZEN[0] + FROZEN[1] + FROZEN[2];
+}
+
+function inLimits(n) {
+  return n >= LIMITS.low && n <= LIMITS.high;
+}
+
+function report() {
+  return [prime(1), sumOfPrimes(), xorOfPrimes(), weight("medium"), totalWeight(), cell(1, 1), frozenSum(), inLimits(5), PRIMES.length];
+}
+
+for (let i = 0; i < 2000; i++) report();
+attempt("before any change", report);
+
+const changes = [
+  ["PRIMES[1] = 0.5", () => (PRIMES[1] = 0.5)],
+  ["PRIMES[1] = '3'", () => (PRIMES[1] = "3")],
+  ["PRIMES[1] = undefined", () => (PRIMES[1] = undefined)],
+  ["delete PRIMES[1]", () => delete PRIMES[1]],
+  ["PRIMES[1] = 3n", () => (PRIMES[1] = 3n)],
+  ["PRIMES[1] = -0", () => (PRIMES[1] = -0)],
+  ["PRIMES[1] = 2147483648", () => (PRIMES[1] = 2147483648)],
+  ["PRIMES[1] = 3", () => (PRIMES[1] = 3)],
+  ["PRIMES.push(23)", () => PRIMES.push(23)],
+  ["PRIMES.push('x')", () => PRIMES.push("x")],
+  ["PRIMES.length = 3", () => (PRIMES.length = 3)],
+  ["PRIMES.reverse()", () => PRIMES.reverse().length],
+  ["PRIMES[10] = 1", () => (PRIMES[10] = 1)],
+  ["PRIMES.length = 0", () => (PRIMES.length = 0)],
+  ["WEIGHTS.medium = '2'", () => (WEIGHTS.medium = "2")],
+  ["WEIGHTS.medium = 2.5", () => (WEIGHTS.medium = 2.5)],
+  ["delete WEIGHTS.medium", () => delete WEIGHTS.medium],
+  ["WEIGHTS.medium = 2", () => (WEIGHTS.medium = 2)],
+  ["WEIGHTS.extra = 8", () => (WEIGHTS.extra = 8)],
+  ["a getter for WEIGHTS.small", () => Object.keys(Object.defineProperty(WEIGHTS, "small", { get: () => 100, enumerable: true }))],
+  ["GRID[1][1] = '5'", () => (GRID[1][1] = "5")],
+  ["GRID[1] = [7, 8.5, 9]", () => (GRID[1] = [7, 8.5, 9]).length],
+  ["GRID[1] = 'abc'", () => (GRID[1] = "abc")],
+  ["FROZEN[0] = 9", () => (FROZEN[0] = 9)],
+  ["FROZEN.push(9)", () => FROZEN.push(9)],
+  ["LIMITS.high = 1", () => (LIMITS.high = 1)],
+];
+
+for (const [label, change] of changes) {
+  console.log(label, "->", outcome(change));
+  attempt("  then", report);
+}
+//// numbers/a-conversion-changes-the-other-operand-in-the-middle-of-an-expression.js
+////= show-25
+
+function sumWithACapturedVariable(makeOperand) {
+  let n = 1;
+  const operand = makeOperand(value => {
+    n = value;
+  });
+  const first = n + operand;
+  const second = operand + n;
+  return [first, second, n];
+}
+
+function sumWithAField(makeOperand) {
+  const holder = { n: 1 };
+  const operand = makeOperand(value => {
+    holder.n = value;
+  });
+  const first = holder.n + operand;
+  const second = operand + holder.n;
+  return [first, second, holder.n];
+}
+
+function sumWithAnElement(makeOperand) {
+  const list = [1, 2, 3];
+  const operand = makeOperand(value => {
+    list[0] = value;
+  });
+  const first = list[0] + operand;
+  const second = operand + list[0];
+  return [first, second, list];
+}
+
+function compoundOnACapturedVariable(makeOperand) {
+  let n = 1;
+  const operand = makeOperand(value => {
+    n = value;
+  });
+  n += operand;
+  return n;
+}
+
+function compoundOnAField(makeOperand) {
+  const holder = { n: 1 };
+  const operand = makeOperand(value => {
+    holder.n = value;
+  });
+  holder.n *= operand;
+  return holder.n;
+}
+
+function compoundOnAnElement(makeOperand) {
+  const list = [1, 2, 3];
+  const operand = makeOperand(value => {
+    list[0] = value;
+    list.length = 1;
+  });
+  list[0] -= operand;
+  return list;
+}
+
+function comparison(makeOperand) {
+  let n = 1;
+  const operand = makeOperand(value => {
+    n = value;
+  });
+  return [n < operand, operand < n, n];
+}
+
+function loopBound(makeOperand) {
+  let step = 1;
+  const bound = makeOperand(value => {
+    step = value;
+  });
+  const seen = [];
+  for (let i = 0; i < bound; i += step) {
+    seen.push(i);
+    if (seen.length === 6) break;
+  }
+  return seen;
+}
+
+function indexAndElement(makeOperand) {
+  const list = [10, 20, 30];
+  const index = makeOperand(value => {
+    list[1] = value;
+  });
+  return [list[+index % 3], list[1]];
+}
+
+const uses = [sumWithACapturedVariable, sumWithAField, sumWithAnElement, compoundOnACapturedVariable, compoundOnAField, compoundOnAnElement, comparison, loopBound, indexAndElement];
+const honest = () => 4;
+for (let i = 0; i < 1000; i++) for (const use of uses) use(honest);
+for (const stored of [7, "7", 0.5, -0, undefined, null, 7n, NaN, 2147483647, [7]]) {
+  const makeOperand = change => ({
+    valueOf() {
+      change(stored);
+      return 4;
+    },
+  });
+  for (const use of uses) attempt(use.name + " while the conversion stores " + show(stored), () => use(makeOperand));
+}
+for (const use of uses) attempt(use.name + " with a plain number", () => use(honest));
+//// numbers/a-count-that-is-not-an-integer-repeats-and-pads-a-string.js
+////= show-25
+
+const log = [];
+
+////= counts-2
+
+////= lines-3	repeated	value	"ab".repeat	value
+
+////= lines-33	paddedAtTheStart	value	"x".padStart	value	"-"
+
+////= lines-33	paddedAtTheEnd	value	"x".padEnd	value	"-"
+
+function fixed(value) {
+  return (1.23456).toFixed(value);
+}
+
+function inBase(value) {
+  return (255).toString(value);
+}
+
+const texts = counts.concat([["Infinity", () => Infinity], ["16", () => 16], ["37", () => 37], ["101", () => 101]]);
+runTable([repeated, paddedAtTheStart, paddedAtTheEnd, fixed], texts);
+for (const text of texts) console.log(describe(inBase, text));
+for (let i = 0; i < 2000; i++) inBase(2 + (i % 35));
+for (const text of texts) console.log("after 2000 honest calls", describe(inBase, text));
+//// numbers/a-date-is-used-like-a-number.js
+////= show-25
+
+const uses = {
+  "date - 0": date => date - 0,
+  "+date": date => +date,
+  "-date": date => -date,
+  "date * 1": date => date * 1,
+  "date / 1000": date => date / 1000,
+  "date % 1000": date => date % 1000,
+  "date | 0": date => date | 0,
+  "date >>> 0": date => date >>> 0,
+  "typeof (date + 1)": date => typeof (date + 1),
+  "typeof (1 + date)": date => typeof (1 + date),
+  "(date + 1).length > 10": date => (date + 1).length > 10,
+  "date < 5000000000": date => date < 5000000000,
+  "date > 5000000000": date => date > 5000000000,
+  "date == 4102444800123": date => date == 4102444800123,
+  "date === 4102444800123": date => date === 4102444800123,
+  "date == String(date)": date => date == String(date),
+  "date - date": date => date - date,
+  "date == date": date => date == date,
+  "date <= date": date => date <= date,
+  "date++": date => [date++, date],
+  "--date": date => [--date, date],
+  "date -= 1": date => (date -= 1),
+  "typeof (date += 1)": date => typeof (date += 1),
+  "Math.floor(date / 1000)": date => Math.floor(date / 1000),
+  "Math.max(date, 0)": date => Math.max(date, 0),
+  "Math.min(date, 0)": date => Math.min(date, 0),
+  "Number(date)": date => Number(date),
+  "isNaN(date)": date => isNaN(date),
+  "Number.isNaN(date)": date => Number.isNaN(date),
+  "Number.isInteger(date)": date => Number.isInteger(date),
+  "new Date(date) - date": date => new Date(date) - date,
+  "[1, 2, 3][date]": date => [1, 2, 3][date],
+  "[1, 2, 3][date - date]": date => [1, 2, 3][date - date],
+  "JSON": date => JSON.stringify({ at: date }),
+};
+
+const dates = {
+  "a date": () => new Date(4102444800123),
+  "the epoch": () => new Date(0),
+  "an invalid date": () => new Date(NaN),
+  "a date before the epoch": () => new Date(-1),
+  "a date with its own valueOf": () => Object.assign(new Date(5), { valueOf: () => 42 }),
+  "a date with its own toString": () => Object.assign(new Date(5), { toString: () => "7" }),
+  "a subclass that overrides getTime": () => new (class extends Date { getTime() { return 1; } })(5),
+  "a subclass that overrides valueOf": () => new (class extends Date { valueOf() { return 99; } })(5),
+  "a number": () => 4102444800123,
+};
+
+for (const name of Object.keys(uses)) for (let i = 0; i < 300; i++) uses[name](i * 1000);
+for (const kind of Object.keys(dates)) for (const name of Object.keys(uses)) attempt(name + " of " + kind, () => uses[name](dates[kind]()));
+//// numbers/a-division-is-exact-2000-times-and-then-has-a-fraction.js
+////= show-25
+
+////= lines-118	half	n	n	2
+
+function halfOfInt32(n) {
+  return (n | 0) / 2;
+}
+
+////= lines-118	third	n	n	3
+
+function middle(low, high) {
+  return (low + high) / 2;
+}
+
+function elementInTheMiddle(list) {
+  return list[list.length / 2];
+}
+
+////= lines-172	perItem	total	count
+
+function halvedInPlace(n) {
+  let value = n;
+  value /= 2;
+  return [value, value + 1, value | 0];
+}
+
+const holder = { half: 0 };
+function halfInAField(n) {
+  holder.half = n / 2;
+  return holder.half + holder.half;
+}
+
+const halves = [0, 0, 0, 0];
+function halfInAnElement(n) {
+  halves[n & 3] = n / 2;
+  return halves[n & 3] * 2;
+}
+
+let checksum = 0;
+for (let i = 0; i < 2000; i++) {
+  checksum += half(i * 2) + halfOfInt32(i * 2) + third(i * 3) + middle(i, i + 2) + perItem(i * 4, 4) + halvedInPlace(i * 2)[0] + halfInAField(i * 2) + halfInAnElement(i * 2);
+  checksum += elementInTheMiddle([i, i, i, i]);
+}
+console.log("checksum of the exact divisions", checksum);
+
+attempt("half(7)", () => half(7));
+attempt("half(-1)", () => half(-1));
+attempt("half(0)", () => half(0));
+attempt("half(-0)", () => half(-0));
+attempt("half(8)", () => half(8));
+attempt("halfOfInt32(7)", () => halfOfInt32(7));
+attempt("halfOfInt32(-2147483647)", () => halfOfInt32(-2147483647));
+attempt("third(10)", () => third(10));
+attempt("third(1)", () => third(1));
+attempt("third(9)", () => third(9));
+attempt("middle(1, 2)", () => middle(1, 2));
+attempt("middle(2147483647, 2147483647)", () => middle(2147483647, 2147483647));
+attempt("middle(2147483647, 2147483646)", () => middle(2147483647, 2147483646));
+attempt("elementInTheMiddle of three", () => elementInTheMiddle(["a", "b", "c"]));
+attempt("elementInTheMiddle of two", () => elementInTheMiddle(["a", "b"]));
+attempt("elementInTheMiddle of none", () => elementInTheMiddle([]));
+attempt("perItem(10, 4)", () => perItem(10, 4));
+attempt("perItem(10, 0)", () => perItem(10, 0));
+attempt("perItem(0, 0)", () => perItem(0, 0));
+attempt("perItem(-10, 0)", () => perItem(-10, 0));
+attempt("perItem(0, -4)", () => perItem(0, -4));
+attempt("perItem(12, 4)", () => perItem(12, 4));
+attempt("halvedInPlace(5)", () => halvedInPlace(5));
+attempt("halvedInPlace(-5)", () => halvedInPlace(-5));
+attempt("halfInAField(5)", () => [halfInAField(5), holder.half]);
+attempt("halfInAField(6)", () => [halfInAField(6), holder.half]);
+attempt("halfInAnElement(5)", () => [halfInAnElement(5), halves]);
+attempt("halfInAnElement(6)", () => [halfInAnElement(6), halves]);
+//// numbers/a-field-that-is-not-a-number-is-incremented.js
+////= show-25
+
+const log = [];
+
+////= impostors-8
+
+function incremented(value) {
+  const holder = { count: value };
+  const result = holder.count++;
+  return [result, holder.count];
+}
+
+function decrementedBefore(value) {
+  const holder = { count: value };
+  const result = --holder.count;
+  return [result, holder.count];
+}
+
+function addedTo(value) {
+  const holder = { count: value };
+  holder.count += 1;
+  return holder.count;
+}
+
+function orAssigned(value) {
+  const holder = { count: value };
+  holder.count |= 0;
+  return holder.count;
+}
+
+runTable([incremented, decrementedBefore, addedTo, orAssigned], impostors);
+//// numbers/a-field-that-only-sees-integer-stores-gets-something-else-by-a-hidden-route.js
+////= show-25
+
+function makeGauge() {
+  return { level: 0, name: "gauge" };
+}
+
+////= lines-274	raise	gauge	gauge.level
+
+////= lines-35	reset	gauge	gauge.level	0
+
+function report(gauge) {
+  return [gauge.level, gauge.level + 1, gauge.level * 2, gauge.level & 7, gauge.level < 5, typeof gauge.level];
+}
+
+const name = ["le", "vel"].join("");
+const routes = {
+  "a computed name": (gauge, value) => {
+    gauge[name] = value;
+  },
+  "Object.assign": (gauge, value) => {
+    Object.assign(gauge, Object.fromEntries([[name, value]]));
+  },
+  "Reflect.set": (gauge, value) => {
+    Reflect.set(gauge, name, value);
+  },
+  "Object.defineProperty": (gauge, value) => {
+    Object.defineProperty(gauge, name, { value });
+  },
+  "run-time text": (gauge, value) => {
+    new Function("gauge", "value", "gauge.level = value;")(gauge, value);
+  },
+  "a loop over the keys": (gauge, value) => {
+    for (const key in gauge) if (key.length === 5) gauge[key] = value;
+  },
+  "Object.entries and back": (gauge, value) => {
+    for (const [key] of Object.entries(gauge)) if (key !== "name") gauge[key] = value;
+  },
+  "a proxy and a computed name": (gauge, value) => {
+    new Proxy(gauge, {})[name] = value;
+  },
+  "an accessor under a computed name": (gauge, value) => {
+    Object.defineProperty(gauge, name, {
+      get() {
+        return value;
+      },
+      set() {},
+      configurable: true,
+      enumerable: true,
+    });
+  },
+};
+
+const warm = makeGauge();
+for (let i = 0; i < 2000; i++) {
+  raise(warm);
+  report(warm);
+  if ((i & 7) === 7) reset(warm);
+}
+console.log("after 2000 honest rounds", show(report(warm)));
+
+////= for-93
+
+attempt("an honest gauge afterwards", () => {
+  const gauge = makeGauge();
+  return [raise(gauge), report(gauge)];
+});
+//// numbers/a-field-used-like-a-number-holds-something-else.js
+////= show-25
+
+const log = [];
+
+////= impostors-8
+
+////= lines-146	doubledField	doubled	size
+
+function doubled(holder) {
+  return holder.size * 2;
+}
+
+////= lines-146	truncatedField	truncated	size
+
+////= lines-224	truncated	holder	holder.size
+
+////= lines-146	comparedField	compared	size
+
+function compared(holder) {
+  return holder.size < 5;
+}
+
+////= lines-146	addedField	added	size
+
+////= lines-148	added	holder	holder.size
+
+runTable([doubledField, truncatedField, comparedField, addedField], impostors);
+//// numbers/a-function-that-returned-integers-2000-times-returns-something-else.js
+////= show-25
+
+////= lines-73	pick	list	index	list[index
+
+function lookup(table, key) {
+  if (key in table) return table[key];
+}
+
+function countOf(text, letter) {
+  let count = 0;
+  for (let i = 0; i < text.length; i++) if (text[i] === letter) count++;
+  return count || null;
+}
+
+function parse(text) {
+  const n = parseInt(text);
+  return n;
+}
+
+function firstIndex(list, value) {
+  let found = -1;
+  for (let i = 0; i < list.length; i++) {
+    if (list[i] === value) {
+      found = i;
+      break;
+    }
+  }
+  return found;
+}
+
+function ratio(a, b) {
+  let result = 0;
+  result = a / b;
+  return result;
+}
+
+function chosen(flag, other) {
+  let n = 0;
+  n = flag ? 1 : other;
+  return n;
+}
+
+////= lines-237	usePick	list	index	pick
+
+////= lines-237	useLookup	table	key	lookup
+
+////= lines-237	useCountOf	text	letter	countOf
+
+function useParse(text) {
+  const n = parse(text);
+  return [n + 1, n * 2, n | 0, n < 5, ["a", "b", "c"][n]];
+}
+
+function useFirstIndex(list, value) {
+  const n = firstIndex(list, value);
+  return [n + 1, list[n], n >>> 0, ~n];
+}
+
+function useRatio(a, b) {
+  const n = ratio(a, b);
+  return [n + 1, n | 0, ["a", "b", "c"][n]];
+}
+
+function useChosen(flag, other) {
+  const n = chosen(flag, other);
+  return [n + 1, n | 0, ["a", "b", "c"][n]];
+}
+
+for (let i = 0; i < 2000; i++) {
+  usePick([1, 2, 3], i % 3);
+  useLookup({ a: 1, b: 2 }, i & 1 ? "a" : "b");
+  useCountOf("banana", "a");
+  useParse("2");
+  useFirstIndex([1, 2, 3], 1 + (i % 3));
+  useRatio(i * 2, 2);
+  useChosen(true, 2);
+}
+
+attempt("pick an integer", () => usePick([1, 2, 3], 1));
+attempt("pick past the end", () => usePick([1, 2, 3], 3));
+attempt("pick a text", () => usePick([1, "2", 3], 1));
+attempt("pick a fraction", () => usePick([1, 2.5, 3], 1));
+attempt("pick a hole", () => usePick([1, , 3], 1));
+attempt("pick a bigint", () => usePick([1, 2n, 3], 1));
+attempt("pick from a text", () => usePick("123", 1));
+attempt("lookup a known key", () => useLookup({ a: 1 }, "a"));
+attempt("lookup an unknown key", () => useLookup({ a: 1 }, "z"));
+attempt("lookup an inherited key", () => useLookup({ a: 1 }, "toString"));
+attempt("lookup a text", () => useLookup({ a: "1" }, "a"));
+attempt("countOf a letter that is there", () => useCountOf("banana", "n"));
+attempt("countOf a letter that is not there", () => useCountOf("banana", "z"));
+attempt("parse digits", () => useParse("1"));
+attempt("parse letters", () => useParse("x"));
+attempt("parse a large number", () => useParse("4294967297"));
+attempt("parse a negative zero", () => useParse("-0"));
+attempt("parse nothing", () => useParse(""));
+attempt("firstIndex found", () => useFirstIndex([1, 2, 3], 3));
+attempt("firstIndex not found", () => useFirstIndex([1, 2, 3], 9));
+attempt("ratio exact", () => useRatio(4, 2));
+attempt("ratio with a fraction", () => useRatio(3, 2));
+attempt("ratio by zero", () => useRatio(3, 0));
+attempt("ratio zero by zero", () => useRatio(0, 0));
+attempt("ratio negative zero", () => useRatio(0, -2));
+attempt("chosen honest", () => useChosen(false, 2));
+attempt("chosen a text", () => useChosen(false, "2"));
+attempt("chosen a fraction", () => useChosen(false, 1.5));
+attempt("chosen undefined", () => useChosen(false));
+attempt("chosen a bigint", () => useChosen(false, 2n));
+attempt("chosen 2 ** 31", () => useChosen(false, 2147483648));
+attempt("chosen true again", () => useChosen(true, "2"));
+//// numbers/a-hoisted-variable-is-read-before-its-integer-initializer.js
+////= show-25
+
+const letters = ["a", "b", "c", "d"];
+
+function readBefore() {
+  const early = [index, typeof index, letters[index], index | 0, index + 1];
+  var index = 0;
+  return [early, index, letters[index]];
+}
+
+function declaredTwice() {
+  var index;
+  const early = [index, letters[index], index & 3, index + 1];
+  var index = 2;
+  return [early, letters[index]];
+}
+
+function initializedInABranch(flag) {
+  if (flag) var index = 1;
+  return [index, letters[index], index | 0, index + 1, index++, index];
+}
+
+function initializedInALoop(rounds) {
+  const seen = [];
+  for (var round = 0; round < rounds; round++) {
+    seen.push(index, letters[index]);
+    var index = round;
+  }
+  return seen;
+}
+
+function skippedByASwitch(value) {
+  switch (value) {
+    case 0:
+      var index = 3;
+      break;
+    case 1:
+      return [index, letters[index], index | 0];
+  }
+  return [index, letters[index], index | 0];
+}
+
+function readByAnEarlierClosure() {
+  const read = () => [index, letters[index], index | 0];
+  const early = read();
+  var index = 1;
+  return [early, read()];
+}
+
+function letReadTooEarly() {
+  const read = () => letters[index];
+  const early = outcome(read);
+  let index = 1;
+  index++;
+  return [early, read(), index & 3];
+}
+
+function neverInitialized() {
+  if (letters.length > 100) var index = 1;
+  let total = 0;
+  for (let i = 0; i < 3; i++) total += index | 0;
+  return [total, index, letters[index]];
+}
+
+function functionOfTheSameName() {
+  const early = typeof index;
+  var index = 1;
+  function index() {}
+  return [early, index, letters[index]];
+}
+
+for (let i = 0; i < 2; i++) {
+  attempt("readBefore", readBefore);
+  attempt("declaredTwice", declaredTwice);
+  attempt("initializedInABranch(true)", () => initializedInABranch(true));
+  attempt("initializedInABranch(false)", () => initializedInABranch(false));
+  attempt("initializedInALoop(3)", () => initializedInALoop(3));
+  attempt("skippedByASwitch(0)", () => skippedByASwitch(0));
+  attempt("skippedByASwitch(1)", () => skippedByASwitch(1));
+  attempt("skippedByASwitch(2)", () => skippedByASwitch(2));
+  attempt("readByAnEarlierClosure", readByAnEarlierClosure);
+  attempt("letReadTooEarly", letReadTooEarly);
+  attempt("neverInitialized", neverInitialized);
+  attempt("functionOfTheSameName", functionOfTheSameName);
+  for (let j = 0; j < 2000; j++) initializedInABranch(true);
+}
+//// numbers/a-key-of-a-string-or-a-map-that-is-also-used-in-arithmetic-is-not-an-integer.js
+////= show-25
+
+const log = [];
+
+////= make-9
+
+const holders = {
+  string: () => "xyz",
+  map: () => new Map([[1, "one"]]),
+};
+
+function readAndDouble(holder, key) {
+  return [holder[key], key * 2];
+}
+
+function readAndCompare(holder, key) {
+  return [holder[key], key < 2];
+}
+
+////= readAndIncrement
+
+function readAndNegate(holder, key) {
+  return [holder[key], holder[-key]];
+}
+
+const texts = impostors.concat(["1", "'1'", "1.5", "'1.5'", "-1", "1n", "[1]", "new Number(1)"]);
+////= for-21
+//// numbers/a-key-of-an-array-that-is-also-used-in-arithmetic-is-not-an-integer.js
+////= show-25
+
+const log = [];
+
+////= make-9
+
+const holders = {
+  array: () => ["a", "b", "c"],
+};
+
+function readAndDouble(holder, key) {
+  return [holder[key], key * 2];
+}
+
+function readAndCompare(holder, key) {
+  return [holder[key], key < 2];
+}
+
+////= readAndIncrement
+
+function readAndNegate(holder, key) {
+  return [holder[key], holder[-key]];
+}
+
+const texts = impostors.concat(["1", "'1'", "1.5", "'1.5'", "-1", "1n", "[1]", "new Number(1)"]);
+////= for-21
+//// numbers/a-key-of-an-object-that-is-also-used-in-arithmetic-is-not-an-integer.js
+////= show-25
+
+const log = [];
+
+////= make-9
+
+const holders = {
+  object: () => ({ 0: "zero", 1: "one", 1.5: "one and a half", "-0": "minus zero text", NaN: "not a number", abc: "letters", true: "yes", null: "nothing", undefined: "missing" }),
+};
+
+function readAndDouble(holder, key) {
+  return [holder[key], key * 2];
+}
+
+function readAndCompare(holder, key) {
+  return [holder[key], key < 2];
+}
+
+////= readAndIncrement
+
+function readAndNegate(holder, key) {
+  return [holder[key], holder[-key]];
+}
+
+const texts = impostors.concat(["1", "'1'", "1.5", "'1.5'", "-1", "1n", "[1]", "new Number(1)"]);
+////= for-21
+//// numbers/a-length-above-int32-is-kept-in-an-integer-variable.js
+////= show-25
+
+const marks = ["a", "b", "c", "d"];
+
+function lengthInAVariable(list) {
+  let n = 0;
+  n = list.length;
+  return [n, n + 1, n | 0, marks[n & 3], n - 1, n * 2];
+}
+
+function lastIndex(list) {
+  let last = 0;
+  last = list.length - 1;
+  return [last, last | 0, list[last], marks[last & 3]];
+}
+
+function sumOfLengths(a, b) {
+  let total = 0;
+  total = a.length + b.length;
+  return [total, total | 0, marks[total & 3], total >>> 0];
+}
+
+function differenceOfLengths(a, b) {
+  let difference = 0;
+  difference = a.length - b.length;
+  return [difference, difference | 0, marks[difference & 3]];
+}
+
+function countedDown(list) {
+  let n = list.length;
+  const seen = [];
+  while (n > list.length - 3 && n > 0) {
+    n--;
+    seen.push(n, n & 3);
+  }
+  return seen;
+}
+
+function halfway(list) {
+  let middle = 0;
+  middle = list.length >> 1;
+  let unsignedMiddle = 0;
+  unsignedMiddle = list.length >>> 1;
+  return [middle, unsignedMiddle, marks[middle & 3]];
+}
+
+function sparse(length) {
+  const list = [];
+  list.length = length;
+  return list;
+}
+
+for (let i = 0; i < 1000; i++) {
+  lengthInAVariable([i, i]);
+  lastIndex([i, i]);
+  sumOfLengths([i], [i, i]);
+  differenceOfLengths([i], [i, i]);
+  countedDown([i, i, i]);
+  halfway([i, i, i]);
+}
+
+for (const length of [3, 2147483647, 2147483648, 4294967295]) {
+  attempt("lengthInAVariable " + length, () => lengthInAVariable(sparse(length)));
+  attempt("lastIndex " + length, () => lastIndex(sparse(length)));
+  attempt("sumOfLengths " + length, () => sumOfLengths(sparse(length), sparse(length)));
+  attempt("differenceOfLengths " + length, () => differenceOfLengths([], sparse(length)));
+  attempt("countedDown " + length, () => countedDown(sparse(length)));
+  attempt("halfway " + length, () => halfway(sparse(length)));
+}
+for (const [label, value] of [["an array-like with a fraction", { length: 2.5 }], ["an array-like with a text", { length: "3" }], ["an array-like with 2 ** 40", { length: 2 ** 40 }], ["an array-like without a length", {}], ["a string", "abc"], ["a function", function (a, b) {}], ["a typed array", new Uint8Array(3)], ["an array-like with -0", { length: -0 }]]) {
+  attempt("lengthInAVariable of " + label, () => lengthInAVariable(value));
+  attempt("lastIndex of " + label, () => lastIndex(value));
+  attempt("sumOfLengths of " + label, () => sumOfLengths(value, value));
+  attempt("halfway of " + label, () => halfway(value));
+}
+
+const shared = [1, 2, 3];
+const other = [4, 5];
+
+function lengthOfAKnownArray() {
+  let n = shared.length;
+  const first = [n, n + 1, n | 0, marks[n & 3]];
+  n = shared.length - 1;
+  n++;
+  return [first, n, n | 0, marks[n & 3]];
+}
+
+function sumOfKnownLengths() {
+  let total = shared.length + other.length;
+  total = total + other.length;
+  return [total, total | 0, marks[total & 3], total - shared.length];
+}
+
+function complementOfAKnownLength() {
+  let n = ~shared.length;
+  n = n - 1;
+  return [n, marks[n & 3], ~n];
+}
+
+function countedOverAKnownArray() {
+  let count = 0;
+  for (let i = shared.length - 2; i < shared.length; i++) count++;
+  return count;
+}
+
+for (let i = 0; i < 1000; i++) {
+  lengthOfAKnownArray();
+  sumOfKnownLengths();
+  complementOfAKnownLength();
+  countedOverAKnownArray();
+}
+for (const length of [3, 2147483647, 2147483648, 4294967295, 0]) {
+  shared.length = length;
+  other.length = length;
+  attempt("lengthOfAKnownArray at " + length, lengthOfAKnownArray);
+  attempt("sumOfKnownLengths at " + length, sumOfKnownLengths);
+  attempt("complementOfAKnownLength at " + length, complementOfAKnownLength);
+  attempt("countedOverAKnownArray at " + length, countedOverAKnownArray);
+}
+//// numbers/a-length-that-is-not-an-integer-makes-an-array.js
+////= show-25
+
+const log = [];
+
+////= counts-2
+
+////= lines-27	called	value	Array	value
+
+////= lines-149	constructed	value	Array
+
+function fromALength(value) {
+  return Array.from({ length: value });
+}
+
+function lengthAssigned(value) {
+  const list = [1, 2, 3, 4];
+  list.length = value;
+  return list;
+}
+
+function typed(value) {
+  return Array.from(new Uint8Array(value));
+}
+
+runTable([called, constructed, fromALength, lengthAssigned, typed], counts);
+attempt("Array(4294967295).length", () => called(4294967295).length);
+attempt("Array(4294967296)", () => called(4294967296));
+attempt("Array(2147483648).length", () => constructed(2147483648).length);
+attempt("length = 4294967295", () => lengthAssigned(4294967295).length);
+attempt("length = 4294967296", () => lengthAssigned(4294967296));
+attempt("length = Infinity", () => lengthAssigned(Infinity));
+//// numbers/a-loop-bound-that-is-not-a-number.js
+////= show-25
+
+const log = [];
+
+////= counts-2
+
+////= lines-330	countedUpTo	<
+
+////= lines-330	countedUpToAndIncluding	<=
+
+////= lines-155	countedDownFrom	value	seen	4
+
+function countedDownInPlace(value) {
+  const seen = [];
+  while (value--) {
+    seen.push(value);
+    if (seen.length === 4) break;
+  }
+  return seen;
+}
+
+////= lines-330	countedUntilDifferent	!==
+
+runTable([countedUpTo, countedUpToAndIncluding, countedDownFrom, countedDownInPlace, countedUntilDifferent], counts.concat([["Infinity", () => Infinity], ["2147483648", () => 2147483648], ["'10'", () => '10'], ["'9'", () => '9']]));
+//// numbers/a-member-that-held-integers-is-stored-to-by-patterns-loop-heads-and-built-ins.js
+////= show-25
+
+function makeGauge() {
+  return { level: 0, name: "gauge" };
+}
+
+////= lines-274	raise	gauge	gauge.level
+
+////= lines-35	reset	gauge	gauge.level	0
+
+function report(gauge) {
+  return [gauge.level, gauge.level + 1, gauge.level * 2, gauge.level & 7, gauge.level < 5, typeof gauge.level];
+}
+
+const routes = {
+  "an assignment pattern": (gauge, value) => {
+    ({ level: gauge.level } = { level: value });
+  },
+  "a list pattern": (gauge, value) => {
+    [gauge.level] = [value];
+  },
+  "the head of a for-of": (gauge, value) => {
+    for (gauge.level of [value]);
+  },
+  "the head of a for-in": (gauge, value) => {
+    for (gauge.level in { [String(value)]: 1 });
+  },
+  "a proxy around it": (gauge, value) => {
+    new Proxy(gauge, {}).level = value;
+  },
+  "Object.assign from a literal": (gauge, value) => {
+    Object.assign(gauge, { level: value });
+  },
+  "Object.defineProperty": (gauge, value) => {
+    Object.defineProperty(gauge, "level", { value });
+  },
+  "Reflect.set": (gauge, value) => {
+    Reflect.set(gauge, "level", value);
+  },
+  "a logical assignment": (gauge, value) => {
+    gauge.level &&= value;
+  },
+  "a default in a pattern": (gauge, value) => {
+    ({ level: gauge.level = value } = {});
+  },
+};
+
+const warm = makeGauge();
+for (let i = 0; i < 2000; i++) {
+  raise(warm);
+  report(warm);
+  if ((i & 7) === 7) reset(warm);
+}
+console.log("after 2000 honest rounds", show(report(warm)));
+
+////= for-93
+
+attempt("made by JSON", () => report(JSON.parse('{"level":"3","name":"gauge"}')));
+attempt("made by a spread", () => report({ ...makeGauge(), level: "3" }));
+attempt("made by Object.create", () => report(Object.create(makeGauge(), { level: { value: 2.5 } })));
+attempt("made by Object.fromEntries", () => report(Object.fromEntries([["level", "3"], ["name", "gauge"]])));
+attempt("made by structuredClone", () => report(structuredClone({ level: 3n, name: "gauge" })));
+attempt("an honest gauge afterwards", () => {
+  const gauge = makeGauge();
+  return [raise(gauge), report(gauge)];
+});
+//// numbers/a-number-that-looks-constant-in-a-loop-is-changed-by-a-callee.js
+////= show-25
+
+function nothing() {}
+
+function capturedVariable(rounds, at, replacement) {
+  let factor = 2;
+  const change = () => {
+    factor = replacement;
+  };
+  const seen = [];
+  for (let i = 0; i < rounds; i++) {
+    seen.push(factor * 3, factor | 0, factor + 1);
+    (i === at ? change : nothing)();
+  }
+  return seen;
+}
+
+function memberOfAnObject(rounds, at, replacement) {
+  const holder = { factor: 2 };
+  const change = target => {
+    target.factor = replacement;
+  };
+  const seen = [];
+  for (let i = 0; i < rounds; i++) {
+    seen.push(holder.factor * 3, holder.factor | 0, holder.factor + 1);
+    (i === at ? change : nothing)(holder);
+  }
+  return seen;
+}
+
+function elementOfAnArray(rounds, at, replacement) {
+  const list = [2, 4];
+  const change = target => {
+    target[0] = replacement;
+  };
+  const seen = [];
+  for (let i = 0; i < rounds; i++) {
+    seen.push(list[0] * 3, list[0] | 0, list[0] + 1);
+    (i === at ? change : nothing)(list);
+  }
+  return seen;
+}
+
+function lengthOfAnArray(rounds, at, replacement) {
+  const list = [1, 2, 3, 4];
+  const change = target => {
+    target.length = replacement;
+  };
+  const seen = [];
+  for (let i = 0; i < rounds; i++) {
+    seen.push(list.length, list.length - 1, list[list.length - 1]);
+    (i === at ? change : nothing)(list);
+  }
+  return seen;
+}
+
+let shared = 2;
+////= lines-192	changeShared	shared
+
+function moduleVariable(rounds, at, replacement) {
+  shared = 2;
+  const seen = [];
+  for (let i = 0; i < rounds; i++) {
+    seen.push(shared * 3, shared | 0, shared + 1);
+    if (i === at) changeShared(replacement);
+  }
+  return seen;
+}
+
+function boundOfTheLoop(at, replacement) {
+  const limits = { rounds: 6 };
+  const change = target => {
+    target.rounds = replacement;
+  };
+  const seen = [];
+  for (let i = 0; i < limits.rounds; i++) {
+    seen.push(i);
+    (i === at ? change : nothing)(limits);
+    if (seen.length === 9) break;
+  }
+  return seen;
+}
+
+function memberBehindAGetter(rounds, at, replacement) {
+  let reads = 0;
+  const holder = {
+    get factor() {
+      return reads++ > at * 3 + 2 ? replacement : 2;
+    },
+  };
+  const seen = [];
+  for (let i = 0; i < rounds; i++) seen.push(holder.factor * 3, holder.factor | 0, holder.factor + 1);
+  return seen;
+}
+
+function conversionThatChanges(rounds, at, replacement) {
+  let calls = 0;
+  const factor = { valueOf: () => (calls++ > at * 3 + 2 ? replacement : 2) };
+  const seen = [];
+  for (let i = 0; i < rounds; i++) seen.push(factor * 3, factor | 0, factor + 1);
+  return seen;
+}
+
+for (let i = 0; i < 1000; i++) {
+  capturedVariable(3, 1, 3);
+  memberOfAnObject(3, 1, 3);
+  elementOfAnArray(3, 1, 3);
+  lengthOfAnArray(3, 1, 3);
+  moduleVariable(3, 1, 3);
+  boundOfTheLoop(1, 4);
+  memberBehindAGetter(3, 1, 3);
+  conversionThatChanges(3, 1, 3);
+}
+
+for (const replacement of [5, "5", "", 0.5, -0, null, undefined, true, 5n, NaN, 2147483647, 2147483648, [5], { valueOf: () => 5 }, Symbol("s")]) {
+  const label = show(replacement);
+  attempt("capturedVariable becomes " + label, () => capturedVariable(3, 1, replacement));
+  attempt("memberOfAnObject becomes " + label, () => memberOfAnObject(3, 1, replacement));
+  attempt("elementOfAnArray becomes " + label, () => elementOfAnArray(3, 1, replacement));
+  attempt("moduleVariable becomes " + label, () => moduleVariable(3, 1, replacement));
+  attempt("memberBehindAGetter becomes " + label, () => memberBehindAGetter(3, 1, replacement));
+  attempt("conversionThatChanges becomes " + label, () => conversionThatChanges(3, 1, replacement));
+  attempt("boundOfTheLoop becomes " + label, () => boundOfTheLoop(1, replacement));
+}
+for (const replacement of [0, 1, 2, 6, "2", 2.5, -1, null, 4294967295]) attempt("lengthOfAnArray becomes " + show(replacement), () => lengthOfAnArray(3, 1, replacement));
+//// numbers/a-parameter-that-is-not-a-number-gets-a-number-by-a-logical-assignment.js
+////= show-25
+
+const log = [];
+
+////= impostors-8
+
+function orAssign(value) {
+  value ||= 5;
+  return value;
+}
+
+function andAssign(value) {
+  value &&= 5;
+  return value;
+}
+
+function nullishAssign(value) {
+  value ??= 5;
+  return value;
+}
+
+function orAssignThenAdd(value) {
+  value ||= 5;
+  return value + 1;
+}
+
+runTable([orAssign, andAssign, nullishAssign, orAssignThenAdd], impostors);
+//// numbers/a-parameter-that-is-not-a-number-is-incremented.js
+////= show-25
+
+const log = [];
+
+////= impostors-8
+
+function incrementedBefore(value) {
+  const result = ++value;
+  return [result, value];
+}
+
+function incrementedAfter(value) {
+  const result = value++;
+  return [result, value];
+}
+
+function decrementedBefore(value) {
+  const result = --value;
+  return [result, value];
+}
+
+function decrementedAfter(value) {
+  const result = value--;
+  return [result, value];
+}
+
+runTable([incrementedBefore, incrementedAfter, decrementedBefore, decrementedAfter], impostors);
+//// numbers/a-parameter-that-is-not-a-number-is-updated-by-arithmetic.js
+////= show-25
+
+const log = [];
+
+////= impostors-8
+
+////= lines-125	plusAssign	value	1
+
+function minusAssign(value) {
+  value -= 1;
+  return value;
+}
+
+function timesAssign(value) {
+  value *= 2;
+  return value;
+}
+
+function divideAssign(value) {
+  value /= 2;
+  return value;
+}
+
+runTable([plusAssign, minusAssign, timesAssign, divideAssign], impostors);
+//// numbers/a-parameter-with-a-number-default-gets-something-else.js
+////= show-25
+
+const log = [];
+
+////= impostors-8
+
+function plusOne(value = 0) {
+  return value + 1;
+}
+
+function truncated(value = 0) {
+  return value | 0;
+}
+
+function doubled(value = 1) {
+  return value * 2;
+}
+
+function element(value = 0) {
+  return ["a", "b", "c"][value];
+}
+
+runTable([plusOne, truncated, doubled, element], impostors);
+attempt("no argument", () => [plusOne(), truncated(), doubled(), element()]);
+//// numbers/a-pattern-with-number-defaults-gets-something-else.js
+////= show-25
+
+const log = [];
+
+////= impostors-8
+
+////= lines-146	fromAnObject	scaled	factor
+
+function scaled({ factor = 2, offset = 1 }) {
+  return [factor * 3, factor + offset, factor | 0];
+}
+
+function fromAList(value) {
+  return shifted([value]);
+}
+
+function shifted([amount = 2, base = 1]) {
+  return [base << amount, amount + base];
+}
+
+function fromALocalPattern(value) {
+  const { size = 4 } = { size: value };
+  return [size * 2, size + 1, size & 3];
+}
+
+runTable([fromAnObject, fromAList, fromALocalPattern], impostors);
+//// numbers/a-position-that-is-not-an-integer-searches-an-array.js
+////= show-25
+
+const log = [];
+
+////= counts-2
+
+function foundFrom(value) {
+  return [1, 2, 1, 2, 1, 2].indexOf(2, value);
+}
+
+function foundBackFrom(value) {
+  return [1, 2, 1, 2, 1, 2].lastIndexOf(2, value);
+}
+
+function includedFrom(value) {
+  return [1, 2, 1, 2, 1, 2].includes(1, value);
+}
+
+function at(value) {
+  return [10, 11, 12, 13, 14, 15].at(value);
+}
+
+function replacedAt(value) {
+  return [10, 11, 12, 13].with(value, 0);
+}
+
+const texts = counts.concat([["Infinity", () => Infinity], ["4294967297", () => 4294967297], ["-4294967295", () => -4294967295]]);
+runTable([foundFrom, foundBackFrom, includedFrom, at], texts);
+for (const text of texts) console.log(describe(replacedAt, text));
+for (let i = 0; i < 2000; i++) replacedAt(i % 4);
+for (const text of texts) console.log("after 2000 honest calls", describe(replacedAt, text));
+//// numbers/a-position-that-is-not-an-integer-slices-a-string.js
+////= show-25
+
+const log = [];
+
+////= counts-2
+
+////= lines-3	sliced	value	"abcdef".slice	value
+
+////= lines-33	slicedUpTo	value	"abcdef".slice	1	value
+
+////= lines-33	substring	value	"abcdef".substring	value	4
+
+////= lines-33	foundFrom	value	"abcabc".indexOf	"b"	value
+
+////= lines-33	foundBackFrom	value	"abcabc".lastIndexOf	"b"	value
+
+runTable([sliced, slicedUpTo, substring, foundFrom, foundBackFrom], counts.concat([["Infinity", () => Infinity], ["4294967297", () => 4294967297], ["-4294967295", () => -4294967295]]));
+//// numbers/a-position-that-is-not-an-integer-slices-an-array.js
+////= show-25
+
+const log = [];
+
+////= counts-2
+
+function sliced(value) {
+  return [0, 1, 2, 3, 4, 5].slice(value);
+}
+
+function slicedUpTo(value) {
+  return [0, 1, 2, 3, 4, 5].slice(1, value);
+}
+
+function spliced(value) {
+  const list = [0, 1, 2, 3, 4, 5];
+  return [list.splice(value, 1), list];
+}
+
+function splicedCount(value) {
+  const list = [0, 1, 2, 3, 4, 5];
+  return [list.splice(1, value), list];
+}
+
+function filledFrom(value) {
+  return [0, 1, 2, 3, 4, 5].fill(9, value);
+}
+
+runTable([sliced, slicedUpTo, spliced, splicedCount, filledFrom], counts.concat([["Infinity", () => Infinity], ["4294967297", () => 4294967297], ["-4294967295", () => -4294967295]]));
+//// numbers/a-reviver-and-a-clone-hand-over-values-that-are-not-numbers.js
+////= show-25
+
+function score(record) {
+  return [record.points * 2, record.points | 0, record.points + 1, record.points < 5];
+}
+
+////= lines-131	scoreOfAll	records	points
+
+const source = '{"points":3}';
+const list = '[{"points":1},{"points":2},{"points":3}]';
+for (let i = 0; i < 2000; i++) {
+  score(JSON.parse(source));
+  scoreOfAll(JSON.parse(list));
+}
+
+const revivers = {
+  "none": undefined,
+  "to a text": (key, value) => (key === "points" ? String(value) : value),
+  "to a fraction": (key, value) => (key === "points" ? value + 0.5 : value),
+  "to a bigint": (key, value) => (key === "points" ? BigInt(value) : value),
+  "to undefined": (key, value) => (key === "points" ? undefined : value),
+  "to null": (key, value) => (key === "points" ? null : value),
+  "to negative zero": (key, value) => (key === "points" ? -0 : value),
+  "to 2 ** 31": (key, value) => (key === "points" ? 2147483648 : value),
+  "to an object": (key, value) => (key === "points" ? { valueOf: () => value * 10 } : value),
+  "to a date": (key, value) => (key === "points" ? new Date(value) : value),
+  "to an array": (key, value) => (key === "points" ? [value] : value),
+  "to NaN": (key, value) => (key === "points" ? NaN : value),
+};
+
+for (const name of Object.keys(revivers)) {
+  attempt("score revived " + name, () => score(JSON.parse(source, revivers[name])));
+  attempt("scoreOfAll revived " + name, () => scoreOfAll(JSON.parse(list, revivers[name])));
+}
+
+const originals = {
+  "an integer": 3,
+  "a fraction": 3.5,
+  "negative zero": -0,
+  "NaN": NaN,
+  "a text": "3",
+  "a bigint": 3n,
+  "a Number object": new Number(3),
+  "a date": new Date(3),
+  "undefined": undefined,
+  "an array": [3],
+};
+for (const name of Object.keys(originals)) attempt("score of a clone with " + name, () => score(structuredClone({ points: originals[name] })));
+attempt("score of an honest record", () => score(JSON.parse(source)));
+//// numbers/a-sort-comparator-returns-something-that-is-not-a-number.js
+////= show-25
+
+const log = [];
+const comparators = {
+  "a difference": (a, b) => a - b,
+  "a reversed difference": (a, b) => b - a,
+  "a boolean": (a, b) => a > b,
+  "a text": (a, b) => String(a - b),
+  "a text that is not a number": () => "abc",
+  "NaN": () => NaN,
+  "undefined": () => undefined,
+  "null": () => null,
+  "negative zero": () => -0,
+  "a fraction": (a, b) => (a - b) / 10,
+  "a tiny fraction": (a, b) => (a - b) * 1e-300,
+  "infinities": (a, b) => (a < b ? -Infinity : a > b ? Infinity : 0),
+  "a large number": (a, b) => (a - b) * 4294967296,
+  "2 ** 31 times the sign": (a, b) => Math.sign(a - b) * 2147483648,
+  "a bigint": (a, b) => BigInt(a - b),
+  "a symbol": () => Symbol("s"),
+  "an object with valueOf": (a, b) => ({
+    valueOf() {
+      log.push("valueOf");
+      return a - b;
+    },
+  }),
+  "an object that cannot be converted": () => Object.create(null),
+  "an array": (a, b) => [a - b],
+  "a date": (a, b) => new Date(a - b),
+  "it throws": () => {
+    throw new RangeError("no");
+  },
+};
+
+////= lines-25	sorted	list	comparator	list.sort
+
+////= lines-25	sortedCopy	list	comparator	list.toSorted
+
+function typedSorted(list, comparator) {
+  return Array.from(new Int32Array(list).sort(comparator));
+}
+
+for (let i = 0; i < 300; i++) {
+  sorted([3, 1, 2], comparators["a difference"]);
+  sortedCopy([3, 1, 2], comparators["a difference"]);
+  typedSorted([3, 1, 2], comparators["a difference"]);
+}
+
+for (const name of Object.keys(comparators)) {
+  log.length = 0;
+  attempt("sort with " + name, () => sorted([5, 1, 4, 2, 3], comparators[name]));
+  attempt("toSorted with " + name, () => sortedCopy([5, 1, 4, 2, 3], comparators[name]));
+  attempt("typed sort with " + name, () => typedSorted([5, 1, 4, 2, 3], comparators[name]));
+  if (log.length) console.log("  conversions:", log.length);
+}
+attempt("sort with a difference again", () => sorted([5, 1, 4, 2, 3], comparators["a difference"]));
+attempt("a difference of texts", () => sorted(["10", "9", "1"], comparators["a difference"]));
+attempt("a difference of mixed values", () => sorted([10, "9", true, null, [2]], comparators["a difference"]));
+attempt("a difference with undefined and holes", () => sorted([3, undefined, 1, , 2], comparators["a difference"]));
+attempt("no comparator sorts as texts", () => sorted([10, 9, 1, -1, -10, 2147483648, 1e21, 0.5, -0]));
+attempt("a comparator that is not a function", () => sorted([2, 1], 5));
+//// numbers/a-store-at-an-index-that-is-not-an-integer.js
+////= show-25
+
+const log = [];
+
+////= impostors-8
+
+function storedInAnArray(value) {
+  const list = [1, 2, 3];
+  list[value] = 9;
+  return list.length > 100 ? [list.length, Object.keys(list)] : [list, Object.keys(list)];
+}
+
+function storedInATypedArray(value) {
+  const list = new Int32Array(3);
+  list[value] = 9;
+  return [Array.from(list), Object.keys(list)];
+}
+
+function storedInAnObject(value) {
+  const object = { 0: "zero", a: "a" };
+  object[value] = 9;
+  return Reflect.ownKeys(object).map(String);
+}
+
+function incrementedInAnArray(value) {
+  const list = [1, 2, 3];
+  list[value]++;
+  return list.length > 100 ? [list.length, Object.keys(list)] : [list, Object.keys(list)];
+}
+
+runTable([storedInAnArray, storedInATypedArray, storedInAnObject, incrementedInAnArray], impostors.concat([["'1'", () => '1'], ["'01'", () => '01'], ["1.5", () => 1.5], ["-1", () => -1], ["4294967294", () => 4294967294], ["4294967296", () => 4294967296], ["1n", () => 1n], ["[1]", () => [1]]]));
+//// numbers/a-symbol-arrives-where-numbers-were-given-to-built-ins.js
+////= show-25
+
+const list = [1, 2, 3];
+const uses = {
+  "list[value]": value => list[value],
+  "value in list": value => value in list,
+  "template": value => `${value}`,
+  "String(value)": value => String(value),
+  "Number(value)": value => Number(value),
+  "Math.abs(value)": value => Math.abs(value),
+  "Math.max(1, value)": value => Math.max(1, value),
+  "isNaN(value)": value => isNaN(value),
+  "Number.isNaN(value)": value => Number.isNaN(value),
+  "parseInt(value)": value => parseInt(value),
+  "list.at(value)": value => list.at(value),
+  "list.slice(value)": value => list.slice(value),
+  "list.indexOf(value)": value => list.indexOf(value),
+  "Array(value).length": value => Array(value).length,
+  "'a'.repeat(value)": value => "a".repeat(value),
+  "'a'.charAt(value)": value => "a".charAt(value),
+  "new Date(value)": value => new Date(value),
+  "typed array store": value => {
+    const array = new Float64Array(1);
+    array[0] = value;
+    return array[0];
+  },
+  "switch": value => {
+    switch (value) {
+      case 1:
+        return "one";
+      default:
+        return "none";
+    }
+  },
+  "loop bound": value => {
+    let count = 0;
+    for (let i = 0; i < value; i++) count++;
+    return count;
+  },
+};
+
+////= symbols
+
+for (const kind of Object.keys(symbols)) for (const name of Object.keys(uses)) attempt("cold " + name + " of " + kind, () => uses[name](symbols[kind]()));
+for (const name of Object.keys(uses)) for (let i = 0; i < 2000; i++) uses[name](i % 3);
+for (const kind of Object.keys(symbols)) for (const name of Object.keys(uses)) attempt("warm " + name + " of " + kind, () => uses[name](symbols[kind]()));
+for (const name of Object.keys(uses)) attempt(name + " of 1", () => uses[name](1));
+//// numbers/a-symbol-arrives-where-numbers-were-used-by-operators.js
+////= show-25
+
+const list = [1, 2, 3];
+const uses = {
+  "value - 1": value => value - 1,
+  "value + 1": value => value + 1,
+  "value + ''": value => value + "",
+  "+value": value => +value,
+  "-value": value => -value,
+  "~value": value => ~value,
+  "value | 0": value => value | 0,
+  "value >>> 0": value => value >>> 0,
+  "value ** 2": value => value ** 2,
+  "value++": value => value++,
+  "value += 1": value => (value += 1),
+  "value < 1": value => value < 1,
+  "value >= 1": value => value >= 1,
+  "value == 1": value => value == 1,
+  "value === 1": value => value === 1,
+  "value != 1": value => value != 1,
+  "!value": value => !value,
+  "value ? 1 : 2": value => (value ? 1 : 2),
+  "value || 1": value => typeof (value || 1),
+  "typeof value": value => typeof value,
+};
+
+////= symbols
+
+for (const kind of Object.keys(symbols)) for (const name of Object.keys(uses)) attempt("cold " + name + " of " + kind, () => uses[name](symbols[kind]()));
+for (const name of Object.keys(uses)) for (let i = 0; i < 2000; i++) uses[name](i % 3);
+for (const kind of Object.keys(symbols)) for (const name of Object.keys(uses)) attempt("warm " + name + " of " + kind, () => uses[name](symbols[kind]()));
+for (const name of Object.keys(uses)) attempt(name + " of 1", () => uses[name](1));
+//// numbers/a-variable-gets-one-of-two-literals-and-one-is-negative-zero.js
+////= show-25
+
+const marks = ["a", "b", "c", "d"];
+
+function startsAsNegativeZero(flag) {
+  let z = -0;
+  if (flag) z = 1;
+  return [z, 1 / z, marks[z], z | 0, Object.is(z, -0)];
+}
+
+function choosesNegativeZero(flag) {
+  let z = 0;
+  z = flag ? 1 : -0;
+  return [z, 1 / z, marks[z], z | 0, Object.is(z, -0)];
+}
+
+function choosesAFraction(flag) {
+  let n = 0;
+  n = flag ? 1 : 0.5;
+  return [n, marks[n], n | 0, n + 1];
+}
+
+function choosesALargeLiteral(flag) {
+  let n = 0;
+  n = flag ? 1 : 2147483648;
+  return [n, marks[n & 3], n | 0, n + 1];
+}
+
+function choosesTheLargestInt32(flag) {
+  let n = 0;
+  n = flag ? 1 : 2147483647;
+  n++;
+  return [n, marks[n & 3], n | 0];
+}
+
+function choosesNaN(flag) {
+  let n = 0;
+  n = flag ? 1 : NaN;
+  return [n, marks[n], n | 0, n === n];
+}
+
+function choosesInfinity(flag) {
+  let n = 0;
+  n = flag ? 1 : Infinity;
+  return [n, marks[n], n | 0, n - 1];
+}
+
+function negatesZero(flag) {
+  let n = 0;
+  if (!flag) n = -n;
+  return [n, 1 / n, marks[n]];
+}
+
+function assignsNegativeZeroLate(count) {
+  let n = 0;
+  for (let i = 0; i < count; i++) n = i & 3;
+  if (count > 5) n = -0;
+  return [n, 1 / n, marks[n]];
+}
+
+function hexAndExponentLiterals(flag) {
+  let n = 0x7fffffff;
+  if (flag) n = 1e3;
+  else n = 0xffffffff;
+  return [n, n | 0, marks[n & 3], n + 1];
+}
+
+const uses = [startsAsNegativeZero, choosesNegativeZero, choosesAFraction, choosesALargeLiteral, choosesTheLargestInt32, choosesNaN, choosesInfinity, negatesZero, hexAndExponentLiterals];
+for (let i = 0; i < 2000; i++) for (const use of uses) use(true);
+for (const use of uses) {
+  attempt(use.name + "(true)", () => use(true));
+  attempt(use.name + "(false)", () => use(false));
+  attempt(use.name + "(true) again", () => use(true));
+}
+attempt("assignsNegativeZeroLate(3)", () => assignsNegativeZeroLate(3));
+attempt("assignsNegativeZeroLate(9)", () => assignsNegativeZeroLate(9));
+//// numbers/a-variable-initialized-with-a-number-later-holds-something-else.js
+////= show-25
+
+function becomesAText() {
+  let value = 0;
+  const before = value + 1;
+  value = "abc";
+  return [before, value + 1, value * 2, value | 0, typeof value, value.length];
+}
+
+function becomesANumericText() {
+  let value = 1;
+  value = "2";
+  return [value + 1, value * 2, value | 0, value < 10, value === 2, value == 2];
+}
+
+function becomesUndefined() {
+  let value = 1;
+  value = undefined;
+  return [value + 1, value | 0, value === undefined, typeof value];
+}
+
+function becomesNull() {
+  let value = 1;
+  value = null;
+  return [value + 1, value | 0, value === null, typeof value];
+}
+
+function becomesAnObject() {
+  let value = 1;
+  value = { valueOf: () => 41, extra: "member" };
+  return [value + 1, value * 2, value.extra, typeof value];
+}
+
+function becomesAnArray() {
+  let value = 1;
+  value = [4];
+  return [value + 1, value * 2, value.length, Array.isArray(value)];
+}
+
+function becomesABigInt() {
+  let value = 1;
+  value = 4n;
+  return [value + 1n, value * 2n, typeof value, outcome(() => value + 1)];
+}
+
+function becomesABoolean() {
+  let value = 1;
+  value = true;
+  return [value + 1, value === true, typeof value];
+}
+
+function becomesAFunction() {
+  let value = 1;
+  value = () => 7;
+  return [value(), typeof value, typeof (value + 1)];
+}
+
+function changesInALoop() {
+  let value = 0;
+  const seen = [];
+  for (let i = 0; i < 6; i++) {
+    seen.push(value + 1);
+    value = i % 3 === 0 ? "t" : i % 3 === 1 ? 1.5 : i;
+  }
+  return seen;
+}
+
+function changesInOneBranch(flag) {
+  let value = 0;
+  if (flag) value = "text";
+  return [value + 1, value | 0, typeof value];
+}
+
+////= lines-22	accumulatesTexts	parts	let	result	0
+
+var atTheTop = 0;
+////= lines-192	storesAtTheTop	atTheTop
+function readsTheTop() {
+  return [atTheTop + 1, atTheTop | 0, typeof atTheTop];
+}
+
+const uses = [becomesAText, becomesANumericText, becomesUndefined, becomesNull, becomesAnObject, becomesAnArray, becomesABigInt, becomesABoolean, becomesAFunction, changesInALoop];
+for (const round of ["first", "second"]) for (const use of uses) attempt(round + " " + use.name, use);
+for (let i = 0; i < 2000; i++) changesInOneBranch(false);
+attempt("changesInOneBranch(false)", () => changesInOneBranch(false));
+attempt("changesInOneBranch(true)", () => changesInOneBranch(true));
+attempt("accumulatesTexts of numbers", () => accumulatesTexts([1, 2, 3]));
+attempt("accumulatesTexts of texts", () => accumulatesTexts(["a", "b"]));
+attempt("accumulatesTexts of both", () => accumulatesTexts([1, 2, "a", 3, 4]));
+for (const value of [5, "5", 5.5, undefined, null, 5n, [5]]) {
+  storesAtTheTop(value);
+  attempt("the variable at the top holds " + show(value), readsTheTop);
+}
+//// numbers/a-variable-that-starts-as-an-integer-gets-a-value-nobody-knows-by-a-logical-assignment.js
+////= show-25
+
+const log = [];
+
+////= make-8
+
+const letters = ["a", "b", "c", "d", "e", "f", "g", "h"];
+
+function orAssigned(unknown) {
+  let index = 0;
+  index ||= unknown;
+  return [letters[index], index, index + 1];
+}
+
+function andAssigned(unknown) {
+  let index = 1;
+  index &&= unknown;
+  return [letters[index], index, index + 1];
+}
+
+function nullishAssigned(unknown) {
+  let index = 2;
+  index ??= unknown;
+  return [letters[index], index, index + 1];
+}
+
+function chosen(unknown) {
+  let index = 0;
+  index = unknown || 3;
+  return [letters[index], index, index + 1];
+}
+
+runTable([orAssigned, andAssigned, nullishAssigned, chosen], impostors);
+//// numbers/a-variable-that-starts-as-an-integer-has-a-value-nobody-knows-added.js
+////= show-25
+
+const log = [];
+
+////= make-8
+
+const letters = ["a", "b", "c", "d", "e", "f", "g", "h"];
+
+function added(unknown) {
+  let index = 1;
+  index += unknown;
+  return [letters[index], index, typeof index];
+}
+
+function subtracted(unknown) {
+  let index = 9;
+  index -= unknown;
+  return [letters[index], index, typeof index];
+}
+
+function addedTwice(unknown) {
+  let total = 0;
+  total += unknown;
+  total += unknown;
+  return [total & 7, total];
+}
+
+function addedByHand(unknown) {
+  let total = 0;
+  total = total + unknown;
+  return [total | 0, total];
+}
+
+runTable([added, subtracted, addedTwice, addedByHand], impostors);
+//// numbers/a-variable-that-starts-as-an-integer-is-assigned-a-value-nobody-knows.js
+////= show-25
+
+const log = [];
+
+////= make-8
+
+const letters = ["a", "b", "c", "d", "e", "f", "g", "h"];
+
+function usedAsAKey(unknown) {
+  let index = 0;
+  index = unknown;
+  return [letters[index], index, typeof index];
+}
+
+function usedAsAKeyInASum(unknown) {
+  let index = 0;
+  index = unknown;
+  return [letters[index + 1], index + 1];
+}
+
+function masked(unknown) {
+  let bits = 0;
+  bits = unknown;
+  return [bits & 7, bits, bits + 1];
+}
+
+function assignedInOneBranch(unknown) {
+  let index = 1;
+  if (unknown !== 7) index = unknown;
+  return [letters[index], index * 2];
+}
+
+runTable([usedAsAKey, usedAsAKeyInASum, masked, assignedInOneBranch], impostors);
+//// numbers/an-accessor-appears-on-the-prototype-of-objects-with-integer-members.js
+////= show-25
+
+const log = [];
+
+////= lines-49	Gauge	level	this.level	level	step	1
+Gauge.prototype.raise = function () {
+  this.level = this.level + this.step;
+  return this.level;
+};
+Gauge.prototype.report = function () {
+  return [this.level, this.level + 1, this.level & 7, typeof this.level, Object.keys(this)];
+};
+
+class Meter {
+  constructor(level) {
+    this.level = level;
+    this.step = 1;
+  }
+  raise() {
+    this.level = this.level + this.step;
+    return this.level;
+  }
+  report() {
+    return [this.level, this.level + 1, this.level & 7, typeof this.level, Object.keys(this)];
+  }
+}
+
+class Dial {
+  level = 0;
+  step = 1;
+  raise() {
+    this.level = this.level + this.step;
+    return this.level;
+  }
+  report() {
+    return [this.level, this.level + 1, this.level & 7, typeof this.level, Object.keys(this)];
+  }
+}
+
+const kinds = [
+  ["constructor function", Gauge, () => new Gauge(0)],
+  ["class with assignments", Meter, () => new Meter(0)],
+  ["class with fields", Dial, () => new Dial()],
+];
+
+function exercise(label, make) {
+  log.length = 0;
+  const result = outcome(() => {
+    const made = make();
+    return [made.raise(), made.raise(), made.report()];
+  });
+  console.log(label + " -> " + result + " | " + log.join(", "));
+}
+
+const name = ["le", "vel"].join("");
+for (const [kind, constructor, make] of kinds) {
+  const old = make();
+  for (let i = 0; i < 2000; i++) {
+    const made = make();
+    made.raise();
+    made.report();
+    old.raise();
+  }
+  exercise(kind + " before", make);
+
+  let kept = 100;
+  Object.defineProperty(constructor.prototype, name, {
+    get() {
+      log.push("get");
+      return kept;
+    },
+    set(value) {
+      log.push("set " + show(value));
+      kept = value;
+    },
+    configurable: true,
+  });
+  exercise(kind + " with an accessor on the prototype", make);
+  attempt(kind + ": an object made earlier keeps its own member", () => [old.raise(), old.report()]);
+
+  Object.defineProperty(constructor.prototype, name, {
+    get() {
+      log.push("get");
+      return "text";
+    },
+    set: undefined,
+    configurable: true,
+  });
+  exercise(kind + " with a getter only", make);
+
+  Object.defineProperty(constructor.prototype, name, { value: 0.5, writable: false, configurable: true });
+  exercise(kind + " with a member that is not writable", make);
+
+  Object.defineProperty(constructor.prototype, name, { value: "inherited", writable: true, configurable: true });
+  exercise(kind + " with a writable member", make);
+  attempt(kind + ": the inherited member shows after a deletion", () => {
+    const made = make();
+    delete made[name];
+    return [made.report(), made.raise(), made.report()];
+  });
+
+  delete constructor.prototype[name];
+  exercise(kind + " after the prototype is clean again", make);
+}
+//// numbers/an-array-is-used-like-a-number.js
+////= show-25
+
+const uses = {
+  "value - 0": value => value - 0,
+  "+value": value => +value,
+  "value * 2": value => value * 2,
+  "value + 1": value => value + 1,
+  "value | 0": value => value | 0,
+  "value < 6": value => value < 6,
+  "value == 0": value => value == 0,
+  "value == 5": value => value == 5,
+  "value == false": value => value == false,
+  "!value": value => !value,
+  "value++": value => [value++, value],
+  "Math.max(value, 1)": value => Math.max(value, 1),
+  "'abcdefg'[value]": value => "abcdefg"[value],
+  "isNaN(value)": value => isNaN(value),
+  "'ab'.repeat(value)": value => "ab".repeat(value),
+};
+
+const arrays = {
+  "[]": () => [],
+  "[5]": () => [5],
+  "[1, 2]": () => [1, 2],
+  "['5']": () => ["5"],
+  "[[5]]": () => [[5]],
+  "[[[]]]": () => [[[]]],
+  "[null]": () => [null],
+  "[undefined]": () => [undefined],
+  "[,]": () => [,],
+  "[-0]": () => [-0],
+  "[true]": () => [true],
+  "[5n]": () => [5n],
+  "[{}]": () => [{}],
+  "[' 5 ']": () => [" 5 "],
+  "[1e21]": () => [1e21],
+  "Array(1)": () => Array(1),
+  "new Array(5)": () => new Array(5),
+  "an array with its own valueOf": () => Object.assign([1, 2], { valueOf: () => 3 }),
+  "an array with its own toString": () => Object.assign([1, 2], { toString: () => "4" }),
+  "an array with its own join": () => Object.assign([1, 2], { join: () => "6" }),
+  "an array without join": () => Object.assign([5], { join: undefined }),
+  "a subclass that overrides toString": () => new (class extends Array { toString() { return "2"; } })(),
+  "a typed array": () => new Uint8Array([5]),
+  "an empty typed array": () => new Uint8Array(0),
+  "an array that contains itself": () => {
+    const list = [];
+    list.push(list);
+    return list;
+  },
+};
+
+for (const name of Object.keys(uses)) for (let i = 0; i < 300; i++) uses[name](i % 6);
+for (const kind of Object.keys(arrays)) for (const name of Object.keys(uses)) attempt(name + " of " + kind, () => uses[name](arrays[kind]()));
+//// numbers/an-element-changes-type-while-a-loop-sums-the-array.js
+////= show-25
+
+////= lines-346	sum	let i = 0; i < list.length; i++) total += +list[i]
+
+////= lines-22	sumWithoutConversion	list	let	total	0
+
+function sumOfInt32(list) {
+  let total = 0;
+  for (let i = 0; i < list.length; i++) total = (total + (list[i] | 0)) | 0;
+  return total;
+}
+
+function sumWithACachedLength(list) {
+  let total = 0;
+  for (let i = 0, n = list.length; i < n; i++) total += +list[i];
+  return total;
+}
+
+////= lines-347	sumWithForOf	const value of list) total += +value
+
+function sumWithForEach(list) {
+  let total = 0;
+  list.forEach(value => {
+    total += +value;
+  });
+  return total;
+}
+
+const uses = [sum, sumWithoutConversion, sumOfInt32, sumWithACachedLength, sumWithForOf, sumWithForEach];
+const changes = {
+  "stores a text further on": list => {
+    list[3] = "100";
+  },
+  "stores a fraction further on": list => {
+    list[3] = 0.5;
+  },
+  "stores undefined further on": list => {
+    list[3] = undefined;
+  },
+  "deletes an element further on": list => {
+    delete list[3];
+  },
+  "shortens the array": list => {
+    list.length = 2;
+  },
+  "empties the array": list => {
+    list.length = 0;
+  },
+  "pushes an element": list => {
+    if (list.length < 8) list.push(1000);
+  },
+  "pushes a text": list => {
+    if (list.length < 8) list.push("1000");
+  },
+  "stores far past the end": list => {
+    list[12] = 1;
+  },
+  "stores a bigint further on": list => {
+    list[3] = 5n;
+  },
+  "defines a getter further on": list => {
+    Object.defineProperty(list, 3, { get: () => 7, configurable: true });
+  },
+  "changes the prototype and deletes": list => {
+    Object.setPrototypeOf(list, Object.assign(Object.create(Array.prototype), { 3: 70 }));
+    delete list[3];
+  },
+  "reverses the array": list => {
+    list.reverse();
+  },
+  "freezes the array": list => {
+    Object.freeze(list);
+  },
+};
+
+for (let i = 0; i < 2000; i++) for (const use of uses) use([i, 1, 2, 3, 4]);
+for (const use of uses) {
+  for (const name of Object.keys(changes)) {
+    attempt(use.name + " while an element " + name, () => {
+      let done = false;
+      const list = [1, 2, 3, 4, 5];
+      list[1] = {
+        valueOf() {
+          if (!done) {
+            done = true;
+            changes[name](list);
+          }
+          return 2;
+        },
+      };
+      return use(list);
+    });
+  }
+  attempt(use.name + " of integers afterwards", () => use([1, 2, 3, 4, 5]));
+}
+//// numbers/an-element-that-is-not-a-number-is-incremented.js
+////= show-25
+
+const log = [];
+
+////= impostors-8
+
+function incremented(value) {
+  const list = [1, value, 3];
+  const result = list[1]++;
+  return [result, list];
+}
+
+function decrementedBefore(value) {
+  const list = [1, value, 3];
+  const result = --list[1];
+  return [result, list];
+}
+
+function addedTo(value) {
+  const list = [1, value, 3];
+  list[1] += 1;
+  return list;
+}
+
+function shifted(value) {
+  const list = [1, value, 3];
+  list[1] <<= 1;
+  return list;
+}
+
+runTable([incremented, decrementedBefore, addedTo, shifted], impostors);
+//// numbers/an-impostor-arrives-inside-try-finally-and-nested-calls.js
+////= show-25
+
+const log = [];
+
+function triple(value) {
+  log.push("triple");
+  return value * 3;
+}
+
+function low(value) {
+  log.push("low");
+  return value & 3;
+}
+
+function insideTry(value) {
+  let stage = 0;
+  try {
+    stage = 1;
+    const result = triple(value) + low(value);
+    stage = 2;
+    return [result, stage];
+  } catch (error) {
+    log.push("catch at stage " + stage);
+    return [error.constructor.name, stage];
+  } finally {
+    log.push("finally at stage " + stage);
+  }
+}
+
+function finallyOverrides(value) {
+  let n = 0;
+  try {
+    n = value + 1;
+    return n;
+  } finally {
+    n++;
+    log.push("finally " + show(n));
+  }
+}
+
+function nestedTries(value) {
+  const trail = [];
+  try {
+    trail.push("outer");
+    try {
+      trail.push("inner");
+      trail.push(value - 1);
+      trail.push(-value);
+    } finally {
+      trail.push("inner finally");
+    }
+    trail.push("between");
+  } catch (error) {
+    trail.push("caught " + error.constructor.name);
+  } finally {
+    trail.push("outer finally");
+  }
+  return trail;
+}
+
+function throwsItsArithmetic(value) {
+  try {
+    throw value * 2;
+  } catch (thrown) {
+    if (thrown instanceof Error) return thrown.constructor.name;
+    return [thrown, thrown + 1];
+  }
+}
+
+function loopWithTry(list) {
+  let total = 0;
+  let failures = 0;
+  for (let i = 0; i < list.length; i++) {
+    try {
+      total += list[i] * 1;
+    } catch {
+      failures++;
+      continue;
+    } finally {
+      total += 100;
+    }
+    total += 1000;
+  }
+  return [total, failures];
+}
+
+function recursion(value, depth) {
+  if (depth === 0) return value | 0;
+  return recursion(value, depth - 1) + depth;
+}
+
+function chain(value) {
+  return triple(low(triple(value)));
+}
+
+function argumentsAreEvaluatedFirst(value) {
+  const order = [];
+  const take = (a, b, c) => [a, b, c];
+  const result = take((order.push("a"), value + 1), (order.push("b"), value * 2), (order.push("c"), ~value));
+  return [result, order];
+}
+
+const uses = [insideTry, finallyOverrides, nestedTries, throwsItsArithmetic, chain, argumentsAreEvaluatedFirst];
+for (let i = 0; i < 2000; i++) {
+  for (const use of uses) use(i);
+  loopWithTry([1, 2, 3]);
+  recursion(i, 5);
+}
+
+const impostors = ["5", "x", 0.5, -0, null, undefined, 5n, NaN, 2147483647, [5], Symbol("s"), Object.create(null), { valueOf: () => 5 }, { valueOf() { throw new RangeError("no"); } }];
+for (const value of impostors) {
+  for (const use of uses) {
+    log.length = 0;
+    const result = outcome(() => use(value));
+    console.log(use.name, "of", outcome(() => value), "->", result, "|", log.join(", "));
+  }
+  attempt("loopWithTry with " + outcome(() => value), () => loopWithTry([1, value, 3]));
+  attempt("recursion of " + outcome(() => value), () => recursion(value, 5));
+}
+//// numbers/an-integer-variable-is-incremented-after-it-got-a-value-nobody-knows.js
+////= show-25
+
+const log = [];
+
+////= make-8
+
+const letters = ["a", "b", "c", "d", "e", "f", "g", "h"];
+
+function incremented(unknown) {
+  let index = 0;
+  index = unknown;
+  index++;
+  return [letters[index], index, typeof index];
+}
+
+function decremented(unknown) {
+  let index = 0;
+  index = unknown;
+  --index;
+  return [letters[index], index, typeof index];
+}
+
+function incrementedInALoop(unknown) {
+  let index = 0;
+  const seen = [];
+  for (let round = 0; round < 3; round++) {
+    seen.push(letters[index]);
+    index++;
+    if (round === 0) index = unknown;
+  }
+  seen.push(index);
+  return seen;
+}
+
+function shifted(unknown) {
+  let bits = 1;
+  bits = unknown;
+  bits <<= 1;
+  return [bits, letters[bits]];
+}
+
+runTable([incremented, decremented, incrementedInALoop, shifted], impostors);
+//// numbers/an-integer-variable-is-stored-to-by-patterns-and-loop-heads.js
+////= show-25
+
+const letters = ["a", "b", "c", "d"];
+
+function report(index) {
+  return [index, typeof index, letters[index]];
+}
+
+function arrayPattern(source) {
+  let index = 0;
+  [index] = source;
+  return [report(index), letters[index], index | 0, index + 1];
+}
+
+function objectPattern(source) {
+  let index = 0;
+  ({ index } = source);
+  return [report(index), letters[index], index | 0, index + 1];
+}
+
+function renamedInAnObjectPattern(source) {
+  let index = 0;
+  ({ at: index } = source);
+  return [letters[index], index & 3, index + 1];
+}
+
+function patternWithADefault(source) {
+  let index = 0;
+  [index = 1.5] = source;
+  return [letters[index], index | 0, index + 1];
+}
+
+function restPattern(source) {
+  let index = 0;
+  [...index] = source;
+  return [letters[index], index | 0, index + 1];
+}
+
+function nestedPattern(source) {
+  let index = 0;
+  [[index]] = source;
+  return [letters[index], index | 0, index + 1];
+}
+
+////= lines-202	forOf	of
+
+////= lines-202	forIn	in
+
+function swapped(a, b) {
+  let low = 0;
+  let high = 1;
+  low = a | 0;
+  high = b;
+  [low, high] = [high, low];
+  return [letters[low], letters[high], low + 1, high + 1];
+}
+
+for (const round of ["cold", "warm"]) {
+  for (const value of [2, "2", 1.5, -0, undefined, null, 2n, NaN, 2147483648, [1], { valueOf: () => 3 }]) {
+    const label = round + " " + show(value);
+    attempt(label + " arrayPattern", () => arrayPattern([value]));
+    attempt(label + " objectPattern", () => objectPattern({ index: value }));
+    attempt(label + " renamedInAnObjectPattern", () => renamedInAnObjectPattern({ at: value }));
+    attempt(label + " patternWithADefault", () => patternWithADefault([value]));
+    attempt(label + " restPattern", () => restPattern([value]));
+    attempt(label + " nestedPattern", () => nestedPattern([[value]]));
+    attempt(label + " forOf", () => forOf([1, value]));
+    attempt(label + " swapped", () => swapped(1, value));
+  }
+  attempt(round + " forIn over an array", () => forIn(["x", "y"]));
+  attempt(round + " forIn over an object", () => forIn({ 1: "x", b: "y" }));
+  attempt(round + " forIn over a string", () => forIn("xy"));
+  attempt(round + " forOf over a string", () => forOf("12"));
+  attempt(round + " arrayPattern of a string", () => arrayPattern("2"));
+  for (let i = 0; i < 1000; i++) {
+    arrayPattern([i & 3]);
+    objectPattern({ index: i & 3 });
+    forOf([i & 3]);
+    swapped(i & 3, i & 1);
+  }
+}
+//// numbers/an-object-converts-to-a-different-number-each-time.js
+////= show-25
+
+function counter() {
+  let next = 0;
+  return { valueOf: () => ++next };
+}
+
+function alternating() {
+  let calls = 0;
+  const results = [1, "2", 3.5, true, null, 4n];
+  return { valueOf: () => results[calls++ % results.length] };
+}
+
+function minusItself(value) {
+  return value - value;
+}
+
+////= lines-117	timesItself	value	value
+
+function lessThanItself(value) {
+  return [value < value, value > value, value <= value, value >= value];
+}
+
+function equalToItself(value) {
+  return [value == value, value === value, value == 1, value == 2];
+}
+
+function truncatedTwice(value) {
+  return [value | 0, value | 0, ~value, value >>> 0];
+}
+
+function incremented(value) {
+  const before = value++;
+  return [before, value];
+}
+
+////= lines-125	addedToItself	value	value
+
+function usedAsAnIndexTwice(value) {
+  const list = ["a", "b", "c", "d", "e"];
+  return [list[+value], list[+value], list[value | 0]];
+}
+
+function usedAsABound(value) {
+  const seen = [];
+  for (let i = 0; i < value; i += 2) seen.push(i);
+  return seen;
+}
+
+function clamped(value) {
+  return value < 2 ? 2 : value > 3 ? 3 : +value;
+}
+
+function summed(value) {
+  let total = 0;
+  for (let i = 0; i < 5; i++) total += +value;
+  return total;
+}
+
+const uses = [minusItself, timesItself, lessThanItself, equalToItself, truncatedTwice, incremented, addedToItself, usedAsAnIndexTwice, usedAsABound, clamped, summed];
+for (const use of uses) attempt(use.name + " of a counter", () => use(counter()));
+for (const use of uses) attempt(use.name + " of an alternating value", () => use(alternating()));
+for (let i = 0; i < 2000; i++) for (const use of uses) use(i % 5);
+for (const use of uses) attempt(use.name + " of a counter after 2000 numbers", () => use(counter()));
+for (const use of uses) attempt(use.name + " of an alternating value after 2000 numbers", () => use(alternating()));
+for (const use of uses) attempt(use.name + " of 3", () => use(3));
+//// numbers/an-object-literal-with-number-members-later-holds-something-else.js
+////= show-25
+
+function length(point) {
+  return Math.sqrt(point.x * point.x + point.y * point.y);
+}
+
+function moved(point, dx) {
+  point.x += dx;
+  point.y++;
+  return point;
+}
+
+function cell(point) {
+  return (point.x | 0) + "," + (point.y | 0);
+}
+
+////= lines-80	total	point	point.x	point.y
+
+for (let i = 0; i < 2000; i++) {
+  const point = { x: i, y: 4 };
+  length(point);
+  moved(point, 1);
+  cell(point);
+  total(point);
+}
+
+const changes = {
+  "x = '3'": point => {
+    point.x = "3";
+  },
+  "x = 0.5": point => {
+    point.x = 0.5;
+  },
+  "x = undefined": point => {
+    point.x = undefined;
+  },
+  "delete x": point => {
+    delete point.x;
+  },
+  "delete x and add it again": point => {
+    delete point.x;
+    point.x = 3;
+  },
+  "x = 3n": point => {
+    point.x = 3n;
+  },
+  "x = 2147483647": point => {
+    point.x = 2147483647;
+  },
+  "x = -0": point => {
+    point.x = -0;
+  },
+  "x = an object": point => {
+    point.x = { valueOf: () => 3 };
+  },
+  "x becomes a getter": point => {
+    Object.defineProperty(point, "x", { get: () => 3.5, set() {}, enumerable: true });
+  },
+  "x is not writable": point => {
+    Object.defineProperty(point, "x", { writable: false });
+  },
+  "frozen": point => {
+    Object.freeze(point);
+  },
+  "another member is added": point => {
+    point.z = "z";
+  },
+  "the prototype has x and the own one is deleted": point => {
+    Object.setPrototypeOf(point, { x: "inherited" });
+    delete point.x;
+  },
+  "both swapped for texts": point => {
+    [point.x, point.y] = ["3", "4"];
+  },
+};
+
+for (const name of Object.keys(changes)) {
+  const make = () => {
+    const point = { x: 3, y: 4 };
+    changes[name](point);
+    return point;
+  };
+  attempt(name + ": length", () => length(make()));
+  attempt(name + ": total", () => total(make()));
+  attempt(name + ": cell", () => cell(make()));
+  attempt(name + ": moved", () => moved(make(), 1));
+  attempt(name + ": moved by a text", () => moved(make(), "1"));
+  attempt(name + ": keys", () => Object.keys(moved(make(), 1)));
+}
+attempt("an honest point afterwards", () => [length({ x: 3, y: 4 }), total({ x: 3, y: 4 }), cell({ x: 3, y: 4 }), moved({ x: 3, y: 4 }, 1)]);
+//// numbers/an-unsigned-shift-gives-a-number-above-int32.js
+////= show-25
+
+////= lines-269	unsigned	value	0
+
+function unsignedPlusOne(value) {
+  return (value >>> 0) + 1;
+}
+
+function unsignedTimesTwo(value) {
+  return (value >>> 0) * 2;
+}
+
+function unsignedMinus(value) {
+  return -(value >>> 0);
+}
+
+function unsignedCompared(value) {
+  const n = value >>> 0;
+  return [n > 0, n > 2147483647, n === value, n == -1, n < 4294967296];
+}
+
+function unsignedAsAnIndex(value) {
+  const list = ["a", "b", "c"];
+  return [list[value >>> 0], list[(value >>> 0) % 3], list[value >>> 30], list[value >>> 31]];
+}
+
+function unsignedStoredAsAnIndex(value) {
+  const list = [];
+  list[value >>> 0] = "x";
+  return [list.length, Object.keys(list)];
+}
+
+function unsignedInAVariable(value) {
+  let n = 0;
+  n = value >>> 0;
+  n++;
+  return [n, n | 0, n >>> 0];
+}
+
+function unsignedAssigned(value) {
+  let n = value | 0;
+  n >>>= 0;
+  return [n, n + n, n / 2, n % 10];
+}
+
+function unsignedInAField(value) {
+  const holder = { n: 0 };
+  holder.n = value >>> 0;
+  return [holder.n, holder.n + 1];
+}
+
+function unsignedInAnArray(value) {
+  const list = [1, 2, 3];
+  list[1] = value >>> 0;
+  return [list, list[1] + 1];
+}
+
+function unsignedInTypedArrays(value) {
+  const n = value >>> 0;
+  return [new Int32Array([n])[0], new Uint32Array([n])[0], new Uint8Array([n])[0], new Float32Array([n])[0]];
+}
+
+function unsignedAsText(value) {
+  const n = value >>> 0;
+  return [String(n), n.toString(16), `${n}`, JSON.stringify(n)];
+}
+
+function hash(text) {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h;
+}
+
+function hashBySums(text) {
+  let h = 0;
+  for (let i = 0; i < text.length; i++) h = ((h << 5) - h + text.charCodeAt(i)) >>> 0;
+  return h;
+}
+
+const uses = [unsigned, unsignedPlusOne, unsignedTimesTwo, unsignedMinus, unsignedCompared, unsignedAsAnIndex, unsignedStoredAsAnIndex, unsignedInAVariable, unsignedAssigned, unsignedInAField, unsignedInAnArray, unsignedInTypedArrays, unsignedAsText];
+for (let i = 0; i < 2000; i++) for (const use of uses) use(i % 3);
+for (const use of uses) for (const value of [1, -1, -2, -2147483648, 2147483647, 2147483648, 4294967295, 4294967296, -4294967295, 0, -0, 1.9, -1.9]) attempt(use.name + "(" + show(value) + ")", () => use(value));
+for (const text of ["", "a", "hello", "the quick brown fox jumps over the lazy dog"]) {
+  attempt("hash(" + show(text) + ")", () => hash(text));
+  attempt("hashBySums(" + show(text) + ")", () => hashBySums(text));
+}
+//// numbers/arithmetic-functions-kept-in-fields-arrays-and-parameters-get-impostors.js
+////= show-31
+
+const toolbox = { add, scale, next, nested: { bucket } };
+const pipeline = [next, bucket, value => scale(value, 2)];
+
+function applyTwice(operation, value) {
+  return operation(operation(value));
+}
+
+function runPipeline(value) {
+  for (let i = 0; i < pipeline.length; i++) value = pipeline[i](value);
+  return value;
+}
+
+function compose(first, second) {
+  return value => second(first(value));
+}
+
+class Calculator {
+  constructor(operation) {
+    this.operation = operation;
+  }
+  run(a, b) {
+    return this.operation(a, b);
+  }
+}
+
+const adder = new Calculator(add);
+const scaler = new Calculator(scale);
+const nextBucket = compose(next, bucket);
+
+let total = 0;
+for (let i = 0; i < 2000; i++) total += toolbox.add(i, 1) + toolbox.scale(i, 2) + toolbox.next(i) + toolbox.nested.bucket(i) + applyTwice(next, i) + runPipeline(i) + adder.run(i, 1) + scaler.run(i, 2) + nextBucket(i);
+console.log("the honest total", total);
+
+const impostors = ["5", "", "abc", 1.5, -0, null, undefined, true, 5n, NaN, 2147483647, 4294967297, [5], { valueOf: () => 5 }, Symbol("s")];
+for (const value of impostors) {
+  const label = show(value);
+  attempt("toolbox.add(" + label + ", 1)", () => toolbox.add(value, 1));
+  attempt("toolbox.scale(" + label + ", 2)", () => toolbox.scale(value, 2));
+  attempt("toolbox.next(" + label + ")", () => toolbox.next(value));
+  attempt("toolbox.nested.bucket(" + label + ")", () => toolbox.nested.bucket(value));
+  attempt("applyTwice(next, " + label + ")", () => applyTwice(next, value));
+  attempt("applyTwice(bucket, " + label + ")", () => applyTwice(bucket, value));
+  attempt("runPipeline(" + label + ")", () => runPipeline(value));
+  attempt("adder.run(" + label + ", 1)", () => adder.run(value, 1));
+  attempt("scaler.run(" + label + ", 2)", () => scaler.run(value, 2));
+  attempt("nextBucket(" + label + ")", () => nextBucket(value));
+}
+
+toolbox.next = value => value + "!";
+pipeline[0] = value => value + 0.5;
+adder.operation = scale;
+attempt("the field holds another function", () => [toolbox.next(1), runPipeline(1), adder.run(3, 4)]);
+attempt("honest calls afterwards", () => [toolbox.add(1, 2), toolbox.scale(3, 4), applyTwice(next, 1), scaler.run(3, 4), nextBucket(30)]);
+//// numbers/arithmetic-imported-from-a-module-gets-impostors/arithmetic.js
+export function add(a, b) {
+  return a + b;
+}
+
+export function scale(value, factor) {
+  return value * factor;
+}
+
+export function bucket(value) {
+  return value & 15;
+}
+
+export const next = value => value + 1;
+
+export let counter = 0;
+
+export function bump() {
+  return ++counter;
+}
+
+export function setCounter(value) {
+  counter = value;
+}
+//// numbers/arithmetic-imported-from-a-module-gets-impostors/impostors.js
+export const impostors = ["5", "", 1.5, -0, null, undefined, true, 5n, NaN, 2147483647, 4294967297, [5], { valueOf: () => 5 }, Symbol("s")];
+//// numbers/arithmetic-imported-from-a-module-gets-impostors/main.js
+import { add, scale, bucket, next, counter, bump, setCounter } from "./arithmetic.js";
+import * as everything from "./arithmetic.js";
+import { show, attempt } from "./printing.js";
+import { impostors } from "./impostors.js";
+
+let total = 0;
+for (let i = 0; i < 2000; i++) total += add(i, 1) + scale(i, 2) + bucket(i) + next(i) + bump();
+console.log("the honest total", total, counter);
+
+for (const value of impostors) {
+  const label = show(value);
+  attempt("add(" + label + ", 1)", () => add(value, 1));
+  attempt("scale(" + label + ", 2)", () => scale(value, 2));
+  attempt("bucket(" + label + ")", () => bucket(value));
+  attempt("next(" + label + ")", () => next(value));
+  attempt("everything.next(" + label + ")", () => everything.next(value));
+  attempt("everything['ne' + 'xt'](" + label + ")", () => everything["ne" + "xt"](value));
+  attempt("the exported counter becomes " + label, () => {
+    setCounter(value);
+    return [counter, everything.counter, counter + 1, counter | 0];
+  });
+  attempt("and is bumped", () => [bump(), counter, everything.counter]);
+}
+
+setCounter(2147483646);
+attempt("the exported counter passes the largest int32", () => [bump(), bump(), bump(), counter, counter | 0]);
+attempt("honest calls afterwards", () => [add(1, 2), scale(3, 4), bucket(300), next(41)]);
+//// numbers/arithmetic-imported-from-a-module-gets-impostors/printing.js
+export function show(value) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "symbol") return value.toString();
+  if (typeof value !== "object" || value === null) return String(value);
+  if (Array.isArray(value)) return "[" + value.map(show).join(", ") + "]";
+  return Object.prototype.toString.call(value);
+}
+
+export function attempt(label, run) {
+  try {
+    console.log(label, "->", show(run()));
+  } catch (error) {
+    console.log(label, "-> threw", error.constructor.name);
+  }
+}
+//// numbers/arithmetic-required-from-a-commonjs-module-gets-impostors/arithmetic.cjs
+var hidden = 0;
+
+exports.add = function (a, b) {
+  return a + b;
+};
+
+exports.scale = function scale(value, factor) {
+  return value * factor;
+};
+
+exports.bucket = function (value) {
+  return value & 15;
+};
+
+exports.next = function (value) {
+  return value + 1;
+};
+
+exports.counter = 0;
+
+exports.bump = function () {
+  exports.counter++;
+  return ++hidden;
+};
+
+exports.read = function () {
+  return hidden;
+};
+
+exports.viaExports = function () {
+  return [this.counter * 2, exports.counter & 7];
+};
+//// numbers/arithmetic-required-from-a-commonjs-module-gets-impostors/impostors.cjs
+module.exports = ["5", "", 1.5, -0, null, undefined, true, 5n, NaN, 2147483647, 4294967297, [5], { valueOf: () => 5 }, Symbol("s")];
+//// numbers/arithmetic-required-from-a-commonjs-module-gets-impostors/main.cjs
+const arithmetic = require("./arithmetic.cjs");
+const { add, scale, bucket, next } = require("./arithmetic.cjs");
+const { show, attempt } = require("./printing.cjs");
+const impostors = require("./" + ["impostors", "cjs"].join("."));
+
+let total = 0;
+for (let i = 0; i < 2000; i++) total += add(i, 1) + scale(i, 2) + bucket(i) + next(i) + arithmetic.bump() + arithmetic.add(i, 1);
+console.log("the honest total", total, arithmetic.counter, arithmetic.read());
+
+for (const value of impostors) {
+  const label = show(value);
+  attempt("add(" + label + ", 1)", () => add(value, 1));
+  attempt("scale(" + label + ", 2)", () => scale(value, 2));
+  attempt("bucket(" + label + ")", () => bucket(value));
+  attempt("next(" + label + ")", () => next(value));
+  attempt("arithmetic.next(" + label + ")", () => arithmetic.next(value));
+  attempt("arithmetic['ne' + 'xt'](" + label + ")", () => arithmetic["ne" + "xt"](value));
+  attempt("exports.counter becomes " + label, () => {
+    arithmetic.counter = value;
+    return [arithmetic.counter, arithmetic.counter + 1, arithmetic.counter | 0, arithmetic.viaExports()];
+  });
+  attempt("and is incremented", () => [arithmetic.counter++, arithmetic.counter]);
+}
+
+arithmetic.next = value => value + "!";
+attempt("a replaced export", () => [arithmetic.next(1), next(1), require("./arithmetic.cjs").next(1)]);
+attempt("honest calls afterwards", () => [add(1, 2), scale(3, 4), bucket(300), next(41)]);
+//// numbers/arithmetic-required-from-a-commonjs-module-gets-impostors/printing.cjs
+function show(value) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "symbol") return value.toString();
+  if (typeof value !== "object" || value === null) return String(value);
+  if (Array.isArray(value)) return "[" + value.map(show).join(", ") + "]";
+  return Object.prototype.toString.call(value);
+}
+
+////= attempt-18
+
+module.exports = { show, attempt };
+//// numbers/assignments-inside-arithmetic-change-a-variable-between-its-two-reads.js
+////= show-25
+
+function readThenAssigned(value) {
+  let n = 1;
+  return [n + (n = value), n];
+}
+
+function assignedThenRead(value) {
+  let n = 1;
+  return [(n = value) + n, n];
+}
+
+function readThenIncremented(value) {
+  let n = value;
+  return [n + n++, n];
+}
+
+function incrementedThenRead(value) {
+  let n = value;
+  return [n++ + n, n];
+}
+
+function multipliedByItsOwnUpdate(value) {
+  let n = value;
+  return [n * ++n, n];
+}
+
+function compoundWithAnAssignmentInside(value) {
+  let n = 1;
+  n += n = value;
+  return n;
+}
+
+function indexUpdatedWhileStoring(value) {
+  const list = [0, 0, 0, 0];
+  let i = 0;
+  list[i++] = i;
+  list[i] = i = value;
+  return [list.slice(0, 4), Object.keys(list), i];
+}
+
+function elementAndIndexInOneExpression(value) {
+  const list = [10, 20, 30];
+  let i = 0;
+  return [list[i] + list[(i = value)], i];
+}
+
+function argumentsInOrder(value) {
+  let n = 1;
+  return [[n, (n = value), n, n++, n]];
+}
+
+function conditionAssigns(value) {
+  let n = 1;
+  const result = (n = value) ? n + 1 : n - 1;
+  return [result, n];
+}
+
+function commaAssigns(value) {
+  let n = 1;
+  return [(n++, (n = value), n + 1), n];
+}
+
+function shortCircuitSkipsTheStore(value) {
+  let n = 0;
+  const result = n && (n = value);
+  const other = n || (n = value);
+  return [result, other, n, n + 1];
+}
+
+const uses = [readThenAssigned, assignedThenRead, readThenIncremented, incrementedThenRead, multipliedByItsOwnUpdate, compoundWithAnAssignmentInside, indexUpdatedWhileStoring, elementAndIndexInOneExpression, argumentsInOrder, conditionAssigns, commaAssigns, shortCircuitSkipsTheStore];
+for (let i = 0; i < 2000; i++) for (const use of uses) use(i % 3);
+for (const use of uses) for (const value of [2, "2", 1.5, -0, 0, null, undefined, true, 2n, NaN, 2147483647, [2], { valueOf: () => 2 }]) attempt(use.name + "(" + show(value) + ")", () => use(value));

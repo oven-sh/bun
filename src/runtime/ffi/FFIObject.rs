@@ -466,12 +466,10 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
     }
 
     let mut addr: usize = array_buffer.ptr as usize;
-    if let Some(off) = byte_offset {
-        if !off.is_empty_or_undefined_or_null() {
-            if !off.is_number() {
-                return global_this
-                    .to_invalid_arguments(format_args!("Expected number for byteOffset"));
-            }
+    if let Some(off) = byte_offset.filter(|off| !off.is_empty_or_undefined_or_null()) {
+        if !off.is_number() {
+            return global_this
+                .to_invalid_arguments(format_args!("Expected number for byteOffset"));
         }
 
         let bytei64 = off.to_int64();

@@ -1,0 +1,105 @@
+//// damage-behind-a-call-buffers-and-collections/a-buffer-is-transferred-below-the-call.ts
+// A typed function reads elements of a Float64Array and of a Uint8Array, makes a call and reads them again. Below the call the buffer is transferred away, so the views are detached and have no elements.
+let strikes = false;
+function below(buffer: ArrayBuffer): number {
+  if (strikes) buffer.transfer();
+  return 1;
+}
+
+function holder(buffer: ArrayBuffer, view: Float64Array, bytes: Uint8Array): string {
+  const before = view[1] + bytes[0] + view.length;
+  const got = below(buffer);
+  let sum = 0;
+  for (let index = 0; index < view.length; index++) sum += view[index];
+  view[1] = 9;
+  return before + " " + got + " " + sum + " " + view[1] + " " + bytes[0] + " " + view.length + " " + bytes.byteLength;
+}
+
+for (let round = 0; round < 300; round++) {
+  strikes = round % 100 === 99;
+  const buffer = new ArrayBuffer(32);
+  const view = new Float64Array(buffer);
+  view.set([round, 1.5, 2.5, 3.5]);
+  const line = holder(buffer, view, new Uint8Array(buffer, 8));
+  if (strikes || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-buffers-and-collections/a-map-and-a-set-change-below-the-call.ts
+// A typed function asks a Map and a Set, makes a call and asks them again. Below the call entries come and go, and in one round `get` is hidden behind an own property of the map.
+let mode = 0;
+function below(map: Map<string, number>, set: Set<number>): number {
+  if (mode === 1) {
+    map.set("a", 100);
+    set.delete(1);
+  } else if (mode === 2) {
+    map.clear();
+    set.add(50);
+  } else if (mode === 3) {
+    (map as any).get = () => -1;
+    Object.defineProperty(set, "size", { get: () => -2 });
+  }
+  return 1;
+}
+
+function holder(map: Map<string, number>, set: Set<number>): string {
+  const before = map.get("a") + "," + map.size + "," + set.has(1) + "," + set.size;
+  const got = below(map, set);
+  return before + " " + got + " " + map.get("a") + "," + map.size + "," + set.has(1) + "," + set.size;
+}
+
+////= for-26	holder(new Map([["a", round], ["b", 2]]), new Set([1, 2, 3])
+//// damage-behind-a-call-buffers-and-collections/a-resizable-buffer-shrinks-below-the-call.ts
+// A loop walks a view of a resizable buffer and makes a call in every iteration. In one iteration the buffer shrinks, in another round it grows, and the view follows its length.
+let mode = 0;
+function below(buffer: ArrayBuffer, index: number): number {
+  if (index === 2) {
+    if (mode === 1) buffer.resize(16);
+    else if (mode === 2) buffer.resize(64);
+  }
+  return 1;
+}
+
+function holder(buffer: ArrayBuffer, view: Int32Array): string {
+  let text = "";
+  for (let index = 0; index < view.length; index++) {
+    text += view[index] + ":";
+    below(buffer, index);
+    text += view[view.length - 1] + " ";
+  }
+  return text + view.length;
+}
+
+for (let round = 0; round < 300; round++) {
+  mode = round % 100 === 99 ? (round + 1) / 100 : 0;
+  const buffer = new ArrayBuffer(32, { maxByteLength: 64 });
+  const view = new Int32Array(buffer);
+  for (let index = 0; index < view.length; index++) view[index] = round + index;
+  const line = holder(buffer, view);
+  if (mode || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-buffers-and-collections/an-array-of-objects-gets-a-stranger.ts
+// A typed function has read an element of an array of instances and holds it. Below a call the element in the array is replaced by an object of another shape, by a number, and by a hole, and the held instance is damaged.
+////= Point
+
+let mode = 0;
+function below(list: Point[]): number {
+  if (mode === 1) (list as any)[0] = { y: 1, x: "stranger" };
+  else if (mode === 2) (list as any)[0] = 17;
+  else if (mode === 3) delete list[0];
+  else if (mode === 4) delete (list[0] as any).x;
+  return 1;
+}
+
+function holder(list: Point[]): string {
+  const held = list[0];
+  const before = held.x + list[1].x;
+  const got = below(list);
+  let through: string;
+  try {
+    through = "" + list[0].x;
+  } catch (error) {
+    through = (error as Error).name;
+  }
+  return before + " " + got + " " + through + " " + held.x + " " + list[1].x + " " + (list[0] === held);
+}
+
+////= for-27	holder([new Point(round, 1), new Point(round + 1, 2)]

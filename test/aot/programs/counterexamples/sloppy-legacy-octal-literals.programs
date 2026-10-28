@@ -1,0 +1,1190 @@
+////: Labeled
+interface Labeled {
+  inner: Inner;
+  x: number;
+  label: string;
+  entries: Map<string, number>;
+  chain: Link0 | null;
+}
+////: S
+class S { c = new C(); tag?: () => string;
+  get() { return this.c }
+  run = async (flag: boolean): Promise<string> => {
+    const out: string[] = [];
+    try {
+      const o = { ...f("a", 1), x: 1, y: "y", z: flag ? undefined : this.tag?.() } satisfies Parameters<C["callService"]>[1];
+      for await (const line of this.get().callService("q", o)) out.push(line);
+    } catch (e) { out.push(words(e)) }
+    return out.join();
+  }
+}
+////: lines
+interface «1» {
+  entries: Map<string, number>;
+  next: «2» | null;
+}
+////: pointGivenTheOtherMembers
+function pointGivenTheOtherMembers(): any {
+  const point: Point = { inner: { value: 1 }, x: 1.5, y: 2.5 };
+  moved(point);
+  const object = hide(point);
+  object.label = "n";
+  object.entries = new Map([["a", 1]]);
+  object.chain = null;
+  return object;
+}
+////: row
+function row(name: string, run: () => unknown): void {
+  try {
+    console.log(name + ": " + String(run()));
+  } catch (error) {
+    console.log(name + ": " + (error instanceof Error ? error.name : String(error)));
+  }
+}
+//// sloppy-legacy-octal-literals/main.ts
+// `010`, `"\033["` and `08` in a sloppy CommonJS file that TypeScript imports.
+declare const console: { log(...values: unknown[]): void };
+import "./old.cjs";
+//// sloppy-legacy-octal-literals/old.cjs
+module.exports = 0;
+console.log("legacy octal: " + 010 + " " + "\033[".length + " " + 08);
+//// sloppy-legacy-octal-literals/tsconfig.json
+{ "compilerOptions": { "strict": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "allowJs": true, "noEmit": true, "types": [] } }
+//// sloppy-reserved-word-names/main.ts
+// A sloppy file names variables `package`, `interface` and `static`, deletes a name and reads `arguments.callee`.
+// @ts-ignore
+import old from "./old.js";
+console.log(old.sum, old.gone, old.callee, old.octal);
+//// sloppy-reserved-word-names/old.js
+var package = 1, interface = 2, static = 3;
+var x = 5;
+var gone = delete x;
+function f(a, a2) { return arguments.callee === f }
+module.exports = { sum: package + interface + static, gone: gone, callee: f(1, 2), octal: 010 };
+//// sloppy-reserved-word-names/tsconfig.json
+{ "compilerOptions": { "strict": true, "target": "esnext", "module": "preserve", "moduleResolution": "bundler", "noEmit": true, "types": [], "lib": ["esnext", "dom"] }, "include": ["main.ts"] }
+//// small-untyped-objects-vs-larger-type.ts
+// Small objects made by untyped code are held to a type that has optional members besides, and stay the same objects.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
+function hide(v: unknown): any { return v }
+function parse(t: string): any { return JSON.parse(t) }
+type Item = { id: number; n: number; tag?: string; sub?: string };
+function bump(x: Item): number { x.n += 1; return x.n }
+function small(n: number): any { return hide({ id: 1, n }) }
+const made: Item = { id: 0, n: 0, tag: "t", sub: "s" };
+row("a small literal of untyped code, by an annotation", () => { const r = hide((() => { const o: any = {}; o.id = 1; o.n = 1; return o })()); const t: Item = r; bump(t); return r.n + " " + ((t as unknown) === r) });
+row("the same, by `as`", () => { const r = Object.assign(Object.create(Object.prototype), { id: 1, n: 1 }); const t = r as Item; bump(t); return r.n + " " + ((t as unknown) === r) });
+row("Object.fromEntries", () => { const r: any = Object.fromEntries([["id", 1], ["n", 1]]); const t: Item = r; bump(t); return r.n + " " + ((t as unknown) === r) });
+row("a literal of two names made where no type is seen", () => { const r = small(1); const t: Item = r; bump(t); return r.n + " " + ((t as unknown) === r) + " " + made.n });
+row("one node of a graph", () => { type Tree = { v: number; kid?: Tree; a?: number; b?: number }; const kid: any = hide(Object.fromEntries([["v", 2]])); const r = parse('{"v":1}'); r.kid = kid; const t: Tree = r; t.kid!.v = 9; t.v = 8; return r.v + " " + kid.v + " " + ((t as unknown) === r) + " " + ((t.kid as unknown) === kid) });
+//// sort-comparator-freezes-array.js
+// `sort` throws a TypeError when the comparator has frozen the array, even when nothing moved.
+const a = [1, 2];
+try { a.sort((x, y) => (Object.freeze(a), x - y)); console.log("no error", Object.isFrozen(a)); } catch (e) { console.log(e.name, Object.isFrozen(a)); }
+//// sort-writes-back-in-order.js
+// `sort` writes the sorted list back even when nothing moved, over what the comparator stored.
+const a = [1, 2];
+console.log(a.sort((x, y) => (a[0] = 9, x - y)).join());
+//// spread-inherits-required-member.ts
+// A spread of an object that inherits a required member lacks that member, and reading it yields undefined.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
+function hide(v: unknown): any { return v }
+interface S { a: number; b: number }
+row("a spread of an heir", () => { const base = { b: 2 }; const o: S = Object.assign(Object.create(base), { a: 1 }); const c: S = { ...o }; return c.a + " " + c.b });
+//// spread-into-any-holding-literal.ts
+// `const a: any = { ...outer }; a.inner.m` reads the function of that inner literal.
+declare const console: { log(...a: unknown[]): void };
+const make = () => ({ inner: { m: () => 1 } });
+const a: any = { ...make() }, b: any = { ...make() };
+console.log(a.inner.m === b.inner.m);
+//// spread-literal-for-intersection-parameter/lib.ts
+export interface A { k1?: string; k2?: number; timeout?: number; headers?: Record<string, string>; retries?: number; o0?: number; o1?: number; o2?: number; o3?: number; o4?: number; o5?: number; o6?: number; o7?: number; o8?: number; o9?: number; o10?: number; o11?: number; o12?: number; o13?: number; o14?: number; o15?: number; o16?: number; o17?: number; o18?: number; o19?: number; o20?: number; o21?: number; o22?: number; o23?: number; o24?: number; o25?: number; o26?: number; o27?: number; o28?: number; o29?: number; o30?: number; o31?: number; o32?: number; o33?: number; o34?: number; o35?: number; o36?: number; o37?: number; o38?: number; o39?: number; u0?: unknown; a0?: any; u1?: unknown; a1?: any; u2?: unknown; a2?: any; }
+export class C { async *callService(a: string, opts?: A & { x?: number; y?: string; z?: string; w0?: number; w1?: number; w2?: number; w3?: number; w4?: number }): AsyncGenerator<string> { yield a + " " + (opts ? opts.x + " " + opts.y + " " + opts.z + " " + opts.timeout + " " + Object.keys(opts).join() : "none") } }
+//// spread-literal-for-intersection-parameter/main.ts
+// A literal with a spread satisfies the type of a parameter that is an intersection of an interface and a literal type.
+declare const console: { log(...values: unknown[]): void };
+import { C } from "./lib";
+function f(a: string, b: number): Omit<NonNullable<Parameters<C["callService"]>[1]>, "x" | "y" | "z"> { return { timeout: b, headers: { a }, o0: 0, o1: 1, o2: 2, o3: 3, o4: 4, o5: 5, o6: 6, o7: 7, o8: 8, o9: 9, o10: 10, o11: 11, o12: 12, o13: 13, o14: 14, o15: 15, o16: 16, o17: 17, o18: 18, o19: 19, o20: 20, o21: 21, o22: 22, o23: 23 } }
+
+interface Config { timeout?: number; retries?: number }
+const config = JSON.parse('{"timeout":5}') as Config;
+function words(e: unknown) { return "THROWN: " + (e as Error).message.split("\n").slice(0, 2).join(" | ").slice(0, 260) }
+////= S
+console.log(config.timeout);
+console.log(await new S().run(false));
+console.log(await new S().run(true));
+//// spread-literal-satisfies/main.ts
+// `{ ...f(), x, y, z } satisfies P`, P with many optional members, is passed on as a P.
+declare const console: { log(...values: unknown[]): void };
+import type { C } from "./sdk";
+type Opts = Omit<NonNullable<Parameters<C["callService"]>[1]>, "k1" | "k2">;
+function f(a: string, b: number): Opts { return { timeout: b, headers: { a } } }
+function f2(a: string, b: number): Opts { const o: Opts = {}; o.timeout = b; if (a) o.headers = { a }; return o }
+type P = { timeout?: number; headers?: Record<string, string>; retries?: number; signal?: { aborted: boolean }; o0?: number; o1?: number; o2?: number; o3?: number; o4?: number; o5?: number; o6?: number; o7?: number; o8?: number; o9?: number; o10?: number; o11?: number; o12?: number; o13?: number; o14?: number; o15?: number; o16?: number; o17?: number; x: number; y: string; z: boolean };
+function g(p: P): string { return p.x + " " + p.y + " " + p.z + " " + p.timeout + " " + JSON.stringify(p.headers) + " " + Object.keys(p).join() }
+function row(n: string, run: () => unknown) { try { console.log(n + ": " + String(run())) } catch (e) { console.log(n + ": THROWN: " + (e as Error).message.split("\n").slice(0, 2).join(" | ").slice(0, 200)) } }
+row("satisfies, a const, then an argument", () => { const o = { ...f("a", 1), x: 1, y: "y", z: true } satisfies P; return g(o) });
+row("the same, the source filled by stores", () => { const o = { ...f2("a", 1), x: 1, y: "y", z: true } satisfies P; return g(o) });
+row("an inferred const", () => { const o = { ...f("a", 1), x: 1, y: "y", z: true }; return g(o) });
+row("straight to the argument", () => g({ ...f("a", 1), x: 1, y: "y", z: true }));
+row("annotated", () => { const o: P = { ...f("a", 1), x: 1, y: "y", z: true }; return g(o) });
+row("used twice", () => { const o = { ...f("a", 1), x: 1, y: "y", z: true } satisfies P; return g(o) + " | " + g(o) + " | " + o.x });
+//// spread-literal-satisfies/sdk.d.ts
+export declare class C { callService(a: string, opts?: { k1?: string; k2?: number; timeout?: number; headers?: Record<string, string>; retries?: number; signal?: { aborted: boolean }; o0?: number; o1?: number; o2?: number; o3?: number; o4?: number; o5?: number; o6?: number; o7?: number; o8?: number; o9?: number; o10?: number; o11?: number; o12?: number; o13?: number; o14?: number; o15?: number; o16?: number; o17?: number; }): void }
+//// spread-literal-satisfies-dts-type/main.ts
+// A literal with a spread satisfies an interface, and a union, that only a declaration file declares.
+declare const console: { log(...values: unknown[]): void };
+import type { C, P, U } from "./sdk";
+function f(a: string, b: number): Omit<NonNullable<Parameters<C["callService"]>[1]>, "k1" | "k2"> { return { timeout: b, headers: { a } } }
+type Q = { timeout?: number; headers?: Record<string, string>; retries?: number; o0?: number; o1?: number; o2?: number; o3?: number; o4?: number; o5?: number; o6?: number; o7?: number; o8?: number; o9?: number; o10?: number; o11?: number; o12?: number; o13?: number; o14?: number; o15?: number; o16?: number; o17?: number; x: number; y: string; z: boolean };
+function g(p: Q): string { return p.x + " " + p.y + " " + p.z + " " + p.timeout + " " + JSON.stringify(p.headers) + " " + Object.keys(p).join() }
+const made: Q = { x: 0, y: "", z: false };
+function row(n: string, run: () => unknown) { try { console.log(n + ": " + String(run())) } catch (e) { console.log(n + ": THROWN: " + (e as Error).message.split("\n").slice(0, 2).join(" | ").slice(0, 220)) } }
+row("made", () => g(made));
+row("satisfies a declared-only interface", () => { const o = { ...f("a", 1), x: 1, y: "y", z: true } satisfies P; return g(o) });
+row("satisfies a union of declared-only types", () => { const o = { ...f("a", 1), x: 1, y: "y", z: true } satisfies U; return g(o) });
+row("without the spread", () => { const o = { timeout: 1, x: 1, y: "y", z: true } satisfies P; return g(o) });
+row("satisfies, used twice", () => { const o = { ...f("a", 1), x: 1, y: "y", z: true } satisfies P; return g(o) + " | " + g(o) + " | " + o.x });
+row("in parentheses", () => { const o = ({ ...f("a", 1), x: 1, y: "y", z: true }) satisfies P; return g(o) });
+//// spread-literal-satisfies-dts-type/sdk.d.ts
+export declare class C { callService(a: string, opts?: { k1?: string; k2?: number; timeout?: number; headers?: Record<string, string>; retries?: number; o0?: number; o1?: number; o2?: number; o3?: number; o4?: number; o5?: number; o6?: number; o7?: number; o8?: number; o9?: number; o10?: number; o11?: number; o12?: number; o13?: number; o14?: number; o15?: number; o16?: number; o17?: number; }): void }
+export interface P { timeout?: number; headers?: Record<string, string>; retries?: number; o0?: number; o1?: number; o2?: number; o3?: number; o4?: number; o5?: number; o6?: number; o7?: number; o8?: number; o9?: number; o10?: number; o11?: number; o12?: number; o13?: number; o14?: number; o15?: number; o16?: number; o17?: number; x: number; y: string; z: boolean }
+export type U = P | { other: string };
+//// spread-literal-satisfies-in-try/main.ts
+// A literal with a spread under `satisfies`, outside and inside a `try` block.
+declare const console: { log(...values: unknown[]): void };
+import type { CallOptions } from "./sdk";
+function f(a: string, b: number): Omit<CallOptions, "k1" | "k2"> { return { timeout: b, headers: { a } } }
+type P = { timeout?: number; headers?: Record<string, string>; retries?: number; o0?: number; o1?: number; o2?: number; o3?: number; o4?: number; o5?: number; o6?: number; o7?: number; o8?: number; o9?: number; o10?: number; o11?: number; o12?: number; o13?: number; o14?: number; o15?: number; o16?: number; o17?: number; o18?: number; o19?: number; o20?: number; o21?: number; o22?: number; o23?: number; o24?: number; o25?: number; o26?: number; o27?: number; o28?: number; o29?: number; o30?: number; o31?: number; o32?: number; o33?: number; o34?: number; o35?: number; o36?: number; o37?: number; o38?: number; o39?: number; o40?: number; o41?: number; o42?: number; o43?: number; x: number; y: string; z: boolean };
+function g(p: P): string { return p.x + " " + p.y + " " + p.z + " " + p.timeout + " " + Object.keys(p).join() }
+const made: P = { x: 0, y: "", z: false }; g(made);
+function words(e: unknown) { return "THROWN: " + (e as Error).message.split("\n").slice(0, 2).join(" | ").slice(0, 260) }
+function outside(): string { const o = { ...f("a", 1), x: 1, y: "y", z: true } satisfies P; return g(o) }
+function inside(): string { try { const o = { ...f("a", 1), x: 1, y: "y", z: true } satisfies P; return g(o) } catch (e) { return words(e) } }
+function insideInferred(): string { try { const o = { ...f("a", 1), x: 1, y: "y", z: true }; return g(o) } catch (e) { return words(e) } }
+function insideStraight(): string { try { return g({ ...f("a", 1), x: 1, y: "y", z: true }) } catch (e) { return words(e) } }
+try { console.log("outside a try: " + outside()) } catch (e) { console.log("outside a try: " + words(e)) }
+console.log("in a try: " + inside());
+console.log("in a try, inferred: " + insideInferred());
+console.log("in a try, straight: " + insideStraight());
+//// spread-literal-satisfies-in-try/sdk.d.ts
+export interface CallOptions { k1?: string; k2?: number; timeout?: number; headers?: Record<string, string>; retries?: number; o0?: number; o1?: number; o2?: number; o3?: number; o4?: number; o5?: number; o6?: number; o7?: number; o8?: number; o9?: number; o10?: number; o11?: number; o12?: number; o13?: number; o14?: number; o15?: number; o16?: number; o17?: number; o18?: number; o19?: number; o20?: number; o21?: number; o22?: number; o23?: number; o24?: number; o25?: number; o26?: number; o27?: number; o28?: number; o29?: number; o30?: number; o31?: number; o32?: number; o33?: number; o34?: number; o35?: number; o36?: number; o37?: number; o38?: number; o39?: number; o40?: number; o41?: number; o42?: number; o43?: number; }
+export declare class C { callService(a: string, opts?: CallOptions & { x: number; y: string; z: boolean }): void }
+//// spread-literal-satisfies-optional-parameter/lib.ts
+export class C { async *callService(a: string, opts?: { k1?: string; k2?: number; timeout?: number; headers?: Record<string, string>; retries?: number; o0?: number; o1?: number; o2?: number; o3?: number; o4?: number; o5?: number; o6?: number; o7?: number; o8?: number; o9?: number; o10?: number; o11?: number; o12?: number; o13?: number; o14?: number; o15?: number; o16?: number; o17?: number; o18?: number; o19?: number; o20?: number; o21?: number; o22?: number; o23?: number; o24?: number; o25?: number; o26?: number; o27?: number; o28?: number; o29?: number; o30?: number; o31?: number; o32?: number; o33?: number; o34?: number; o35?: number; o36?: number; o37?: number; o38?: number; o39?: number; u0?: unknown; a0?: any; u1?: unknown; a1?: any; u2?: unknown; a2?: any; x: number; y: string; z?: string }): AsyncGenerator<string> { yield a + " " + (opts ? opts.x + " " + opts.y + " " + opts.z + " " + opts.timeout + " " + Object.keys(opts).join() : "none") } }
+//// spread-literal-satisfies-optional-parameter/main.ts
+// A literal with a spread satisfies the type of the optional parameter of an async generator method and is passed to it.
+declare const console: { log(...values: unknown[]): void };
+import { C } from "./lib";
+function f(a: string, b: number): Omit<NonNullable<Parameters<C["callService"]>[1]>, "x" | "y" | "z"> { return { timeout: b, headers: { a } } }
+function words(e: unknown) { return "THROWN: " + (e as Error).message.split("\n").slice(0, 2).join(" | ").slice(0, 260) }
+////= S
+console.log(await new S().run(false));
+console.log(await new S().run(true));
+//// spread-literal-vs-similar-parsed-data/lib.ts
+export class C { async *callService(a: string, opts?: { k1?: string; k2?: number; timeout?: number; headers?: Record<string, string>; retries?: number; o0?: number; o1?: number; o2?: number; o3?: number; o4?: number; o5?: number; o6?: number; o7?: number; o8?: number; o9?: number; o10?: number; o11?: number; o12?: number; o13?: number; o14?: number; o15?: number; o16?: number; o17?: number; o18?: number; o19?: number; o20?: number; o21?: number; o22?: number; o23?: number; o24?: number; o25?: number; o26?: number; o27?: number; o28?: number; o29?: number; o30?: number; o31?: number; o32?: number; o33?: number; o34?: number; o35?: number; o36?: number; o37?: number; o38?: number; o39?: number; u0?: unknown; a0?: any; u1?: unknown; a1?: any; u2?: unknown; a2?: any; x: number; y: string; z?: string }): AsyncGenerator<string> { yield a + " " + (opts ? opts.x + " " + opts.y + " " + opts.z + " " + opts.timeout + " " + Object.keys(opts).join() : "none") } }
+//// spread-literal-vs-similar-parsed-data/main.ts
+// A literal with a spread under `satisfies`, in a program that also casts parsed JSON to a type with members of the same names.
+declare const console: { log(...values: unknown[]): void };
+import { C } from "./lib";
+function f(a: string, b: number): Omit<NonNullable<Parameters<C["callService"]>[1]>, "x" | "y" | "z"> { return { timeout: b, headers: { a } } }
+
+interface Config { timeout?: number; retries?: number }
+const config = JSON.parse('{"timeout":5}') as Config;
+function words(e: unknown) { return "THROWN: " + (e as Error).message.split("\n").slice(0, 2).join(" | ").slice(0, 260) }
+////= S
+console.log(config.timeout);
+console.log(await new S().run(false));
+console.log(await new S().run(true));
+//// spread-literal-with-untyped-freeze/lib.ts
+export interface A { k1?: string; k2?: number; timeout?: number; headers?: Record<string, string>; retries?: number; o0?: number; o1?: number; o2?: number; o3?: number; o4?: number; o5?: number; o6?: number; o7?: number; o8?: number; o9?: number; o10?: number; o11?: number; o12?: number; o13?: number; o14?: number; o15?: number; o16?: number; o17?: number; o18?: number; o19?: number; o20?: number; o21?: number; o22?: number; o23?: number; o24?: number; o25?: number; o26?: number; o27?: number; o28?: number; o29?: number; o30?: number; o31?: number; o32?: number; o33?: number; o34?: number; o35?: number; o36?: number; o37?: number; o38?: number; o39?: number; u0?: unknown; a0?: any; u1?: unknown; a1?: any; u2?: unknown; a2?: any; }
+export class C { async *callService(a: string, opts?: A & { x?: number; y?: string; z?: string; w0?: number; w1?: number; w2?: number; w3?: number; w4?: number }): AsyncGenerator<string> { yield a + " " + (opts ? opts.x + " " + opts.y + " " + opts.z + " " + opts.timeout + " " + Object.keys(opts).join() : "none") } }
+//// spread-literal-with-untyped-freeze/main.ts
+// A literal with a spread under `satisfies`, in a program that freezes objects and sets prototypes through `any`.
+declare const console: { log(...values: unknown[]): void };
+import { C } from "./lib";
+function f(a: string, b: number): Omit<NonNullable<Parameters<C["callService"]>[1]>, "x" | "y" | "z"> { return { timeout: b, headers: { a }, o0: 0, o1: 1, o2: 2, o3: 3, o4: 4, o5: 5, o6: 6, o7: 7, o8: 8, o9: 9, o10: 10, o11: 11, o12: 12, o13: 13, o14: 14, o15: 15, o16: 16, o17: 17, o18: 18, o19: 19, o20: 20, o21: 21, o22: 22, o23: 23 } }
+
+interface Config { timeout?: number; retries?: number }
+const config = JSON.parse('{"timeout":5}') as Config;
+function fr(v: any) { return Object.freeze(v) }
+function sp(v: any) { return Object.setPrototypeOf(v, null) }
+fr({ q: 1 }); sp({ q: 2 });
+function words(e: unknown) { return "THROWN: " + (e as Error).message.split("\n").slice(0, 2).join(" | ").slice(0, 260) }
+////= S
+console.log(config.timeout);
+console.log(await new S().run(false));
+console.log(await new S().run(true));
+//// spread-of-dts-interface/main.ts
+// What is spread has a type derived from an interface of a declaration file.
+declare const console: { log(...values: unknown[]): void };
+import type { C } from "./sdk";
+function f(a: string, b: number): Omit<NonNullable<Parameters<C["callService"]>[1]>, "k1" | "k2"> { return { timeout: b, headers: { a } } }
+type P = { timeout?: number; headers?: Record<string, string>; retries?: number; o0?: number; o1?: number; o2?: number; o3?: number; o4?: number; o5?: number; o6?: number; o7?: number; o8?: number; o9?: number; o10?: number; o11?: number; o12?: number; o13?: number; o14?: number; o15?: number; o16?: number; o17?: number; x: number; y: string; z: boolean };
+function g(p: P): string { return p.x + " " + p.y + " " + p.z + " " + p.timeout + " " + JSON.stringify(p.headers) + " " + Object.keys(p).join() }
+const made: P = { x: 0, y: "", z: false };
+function row(n: string, run: () => unknown) { try { console.log(n + ": " + String(run())) } catch (e) { console.log(n + ": THROWN: " + (e as Error).message.split("\n").slice(0, 2).join(" | ").slice(0, 260)) } }
+row("made", () => g(made));
+row("satisfies, a const, then an argument", () => { const o = { ...f("a", 1), x: 1, y: "y", z: true } satisfies P; return g(o) });
+row("an inferred const", () => { const o = { ...f("a", 1), x: 1, y: "y", z: true }; return g(o) });
+row("straight to the argument", () => g({ ...f("a", 1), x: 1, y: "y", z: true }));
+row("annotated", () => { const o: P = { ...f("a", 1), x: 1, y: "y", z: true }; return g(o) });
+row("used twice", () => { const o = { ...f("a", 1), x: 1, y: "y", z: true } satisfies P; return g(o) + " | " + g(o) + " | " + o.x });
+//// spread-of-dts-interface/sdk.d.ts
+export interface CallOptions { k1?: string; k2?: number; timeout?: number; headers?: Record<string, string>; retries?: number; o0?: number; o1?: number; o2?: number; o3?: number; o4?: number; o5?: number; o6?: number; o7?: number; o8?: number; o9?: number; o10?: number; o11?: number; o12?: number; o13?: number; o14?: number; o15?: number; o16?: number; o17?: number; }
+export declare class C { callService(a: string, opts?: CallOptions): void }
+//// spread-over-narrower-record-copy.ts
+// `{ ...w, ...s }`: the second spread may store a string where the object behind w holds a number.
+declare const console: { log(...a: unknown[]): void };
+const n = { v: 1 }, w: { v: number | string } = n, s: { v: number | string } = { v: "s" };
+console.log(JSON.stringify({ ...w, ...s }));
+//// spread-then-constant-key.ts
+// The keys after a spread that were right while a literal index was wrong (spread-then-index-key.ts): enum members, constants, a template, a key in third place.
+enum Plain { Zero, One, Two }
+const enum Constant { Zero, One, Two }
+const fixed = 1;
+const fixedString = "1";
+const table = { one: 1 } as const;
+function look(x: unknown): string { const o = x as any; return Reflect.ownKeys(o).join() + " " + o[1]; }
+const plainEnum = (o: any, k: number): string => look({ ...o, [Plain.One]: k });
+const constEnum = (o: any, k: number): string => look({ ...o, [Constant.One]: k });
+const constNumber = (o: any, k: number): string => look({ ...o, [fixed]: k });
+const constString = (o: any, k: number): string => look({ ...o, [fixedString]: k });
+const constMember = (o: any, k: number): string => look({ ...o, [table.one]: k });
+const template = (o: any, k: number): string => look({ ...o, [`1`]: k });
+const third = (o: any, k: number): string => look({ ...o, b: k, c: k, 1: k });
+const second = (o: any, k: number): string => look({ ...o, b: k, 1: k });
+console.log("plainEnum", plainEnum({ a: 1 }, 7));
+console.log("constEnum", constEnum({ a: 1 }, 7));
+console.log("constNumber", constNumber({ a: 1 }, 7));
+console.log("constString", constString({ a: 1 }, 7));
+console.log("constMember", constMember({ a: 1 }, 7));
+console.log("template", template({ a: 1 }, 7));
+console.log("third", third({ a: 1 }, 7));
+console.log("second", second({ a: 1 }, 7));
+//// spread-then-index-key.ts
+// A property whose name is an array index, defined right after a spread, is an indexed property: it comes first in the key order and `object[1]` finds it.
+function look(x: unknown): string {
+  const o = x as any;
+  let inOrder = "";
+  for (const key in o) inOrder += key + " ";
+  return `${Reflect.ownKeys(o).join()} | ${o[1]} ${o["1"]} ${1 in o} ${Object.hasOwn(o, 1)} | ${JSON.stringify(o)} | ${inOrder}| ${delete o[1]} ${Reflect.ownKeys(o).join()}`;
+}
+const computedNumber = (o: any, k: number): string => look({ ...o, [1]: k });
+const computedString = (o: any, k: number): string => look({ ...o, ["1"]: k });
+const literalNumber = (o: any, k: number): string => look({ ...o, 1: k });
+const twoKeys = (o: any, k: number): string => look({ ...o, 1: k, 0: k + 1 });
+const indexThenName = (o: any, k: number): string => look({ ...o, 1: k, b: k + 1 });
+const nameThenIndex = (o: any, k: number): string => look({ ...o, b: k + 1, 1: k });
+const double = (o: any, k: number): string => look({ ...o, 1: k + 0.5 });
+const edges = (o: any, k: number): string => look({ ...o, 4294967294: k, 4294967295: k });
+const notIndexes = (o: any, k: number): string => look({ ...o, "01": k, "-1": k });
+const typedSource = (o: { a: number }, k: number): string => look({ ...o, 1: k });
+function storedAfterwards(o: any, k: number): string {
+  const copy = { ...o };
+  copy["1"] = k;
+  return look(copy);
+}
+function inClosure(o: any, k: number): string {
+  const call = (make: () => unknown): string => look(make());
+  return call(() => ({ ...o, [1]: k }));
+}
+const built: any = {};
+built.a = 1;
+for (const [name, source] of [["literal", { a: 1 }], ["built", built], ["parsed", JSON.parse('{"a":1}')], ["empty", {}], ["indexed", { 0: "zero", a: 1 }]] as [string, any][]) {
+  console.log(name, "computedNumber", computedNumber(source, 7));
+  console.log(name, "computedString", computedString(source, 7));
+  console.log(name, "literalNumber", literalNumber(source, 7));
+  console.log(name, "twoKeys", twoKeys(source, 7));
+  console.log(name, "indexThenName", indexThenName(source, 7));
+  console.log(name, "nameThenIndex", nameThenIndex(source, 7));
+  console.log(name, "double", double(source, 7));
+  console.log(name, "edges", edges(source, 7));
+  console.log(name, "notIndexes", notIndexes(source, 7));
+  console.log(name, "typedSource", typedSource(source, 7));
+  console.log(name, "storedAfterwards", storedAfterwards(source, 7));
+  console.log(name, "inClosure", inClosure(source, 7));
+}
+//// stack-trace-after-finally.ts
+// The stack trace of an error that passed through `finally` names the function that threw.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
+function hide(v: unknown): any { return v }
+function thrower() { throw new Error("x") }
+function holder() { try { thrower() } finally { hide(0) } }
+row("the trace behind a finally", () => { try { holder() } catch (e) { return String((e as Error).stack).split("\n").slice(0, 3).map(l => l.replace(/@.*|\s*\(.*/, "").trim()).join() } });
+//// static-and-dynamic-import-commonjs/fib.cjs
+exports.fib = function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); };
+//// static-and-dynamic-import-commonjs/main.ts
+// One CommonJS file is imported by name and by `await import(..)`.
+declare const console: { log(...values: unknown[]): void };
+import { fib } from "./fib.cjs";
+const late = await import("./fib.cjs");
+console.log(fib(20), late.default.fib === fib);
+//// static-field-on-non-extensible-class.ts
+// Defining a static field on a class that its own initializer made non-extensible throws a TypeError.
+try { class P { static a = Object.preventExtensions(P) && 1; } console.log(Object.keys(P).join()); } catch (e) { console.log((e as Error).name); }
+//// static-field-read-before-init.ts
+// A static field that a static method reads ahead of its initializer is undefined.
+class S { static a = S.f(); static b: number | undefined = 1; static f() { return S.b; } }
+console.log(S.a, S.b);
+//// static-field-reads-block-const-in-tdz.js
+// A static field initializer that reads a `const` declared below the class in the same block throws a ReferenceError.
+try { class C { static x = y; } const y = {}; console.log(C.x); } catch (e) { console.log(e.name); }
+//// static-field-reads-local-in-tdz.js
+// A static field initializer that reads a `let` declared below the class throws a ReferenceError.
+function f() { class C { static x = n; } let n = {}; return C.x; }
+try { console.log("no throw: " + f()); } catch (e) { console.log(e.name); }
+//// static-field-this-reads-static-private.js
+// `static x = this.#a` in a class that a function returns.
+function f() { return class { static #a = 1; static x = this.#a; }; }
+console.log(f().x);
+//// static-private-field-before-init.js
+// `#b in C` in a static block above the field is false.
+class C {
+  static { console.log(#b in C); }
+  static #b = 1;
+}
+//// static-private-field-non-null-call.ts
+// `T.#f!()` calls the function in the static private field.
+declare const console: { log(...a: unknown[]): void };
+class T { static #f = () => "private"; static { console.log(T.#f!()); } }
+//// static-private-method-as-listener.ts
+// A static private method that was added to a Set can be deleted from it.
+declare const console: { log(...a: unknown[]): void };
+function f(log: string[]) {
+  class C { static #heard() { log.push("fired"); } static go(s: Set<() => void>) { s.add(C.#heard); s.delete(C.#heard); } }
+  const s = new Set<() => void>(); C.go(s); for (const h of s) h();
+  return "still listening: " + s.size + " [" + log.join() + "]";
+}
+console.log(f([]));
+//// static-private-method-as-tag.js
+// A static private method is called as the tag of a template.
+console.log(class C { static #m() { return 1; } static x = C.#m``; }.x);
+//// static-private-methods-js.js
+// JavaScript: a static private method is one function per evaluation of the class.
+const make = n => class C {
+  static #m() { return n; }
+  static #k() {}
+  static same() { return C.#m === C.#m; }
+  static k() { return C.#k; }
+};
+console.log(make(1).same(), make(1).k() === make(1).k());
+//// static-private-methods-per-evaluation.ts
+// The static private methods of two evaluations of a class are two functions.
+declare const console: { log(...a: unknown[]): void };
+function make() { return class P { static #u() {} static u() { return P.#u; } }; }
+console.log(make().u() === make().u());
+//// static-private-name-in-primitive.js
+// `#s in 1` throws a TypeError.
+class P { static #s; static { try { console.log(#s in 1); } catch (e) { console.log(e.name); } } }
+//// static-private-setter-only.js
+// Reading a static private accessor that has only a setter throws a TypeError.
+class C { static set #s(v) {} static read() { return C.#s; } }
+try { console.log(String(C.read())); } catch (e) { console.log("threw " + e.name); }
+//// store-after-literal-stays-local.js
+// A second store to a property added after a literal does not overwrite the object allocated next.
+const o = { a: 1, a: 2, b: 3 };
+o.d = 5;
+const n = { p: 1 };
+o.d = 7;
+Object.assign(o, {});
+console.log(n.p);
+//// store-in-unevaluated-pattern-default.js
+// A store inside the default of a pattern element does not happen when the element has a value.
+let f, a;
+const one = () => 1, later = () => { f = one; };
+[a = (f = one)] = [1];
+try { console.log(f()); } catch (e) { console.log(e.name); }
+//// store-into-infinite-type-family.ts
+// A valid store into a type that never ends, while a second family of such types stands in the program.
+declare const console: { log(...values: unknown[]): void };
+interface Key { key: number }
+const untyped = (x: any): any => x;
+interface F2<T> { value: T; more?: F2b<(x: T) => number> }
+interface F2b<T> { value: T; more?: F2<(x: T) => number> }
+const v2 = untyped({ value: { key: 1 }, more: { value: (x: Key) => 1, more: { value: (x: (x: Key) => number) => 2 } } }) as F2<Key>;
+{ const kept = v2.more; v2.more = { value: (x: Key) => 37, more: { value: (x: (x: Key) => number) => 38 } }; console.log(v2.more!.value({ key: 39 })); v2.more = kept; console.log(v2.more === kept); }
+interface F3<T> { value: T; more?: F3b<{ inner: T }> }
+interface F3b<T> { value: T; more?: F3<{ inner: T }> }
+const v3 = JSON.parse(JSON.stringify({ value: { key: 40 }, more: { value: { inner: { key: 41 } }, more: { value: { inner: { inner: { key: 42 } } } } } })) as F3<Key>;
+//// storing-parameter-default-after-fields.ts
+// A field initializer reads a variable before the default of a constructor's parameter stores to it.
+declare const console: { log(...a: unknown[]): void };
+let n = 0;
+class A { x = n; constructor(a = n = 1) {} }
+console.log(new A().x);
+//// string-raw-keeps-escapes.ts
+// `String.raw` keeps `\u2028`, `\n` and `\x41` as they are written.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
+function hide(v: unknown): any { return v }
+row("String.raw", () => String.raw`\u2028`.length + " " + String.raw`\n\x41`.length);
+//// super-in-arrow-in-inner-literal-key.js
+// `super` in an arrow function in a computed key belongs to the method around the literal, not to the literal.
+console.log({ __proto__: { s: "outer" }, m() { return Object.keys({ __proto__: { s: "inner" }, [(() => super.s)()]() {} })[0]; } }.m());
+//// super-in-arrow-in-static-field.js
+// `super` in an arrow function in a static field initializer goes by the class.
+class A { static f = () => typeof super.call; }
+console.log(A.f());
+//// super-in-spread-literal-method-satisfies.ts
+// A method of a literal with a spread under `satisfies` uses `super`, and the prototype of the literal is changed later.
+declare const console: { log(...values: unknown[]): void };
+interface P { timeout?: number; o0?: number; o1?: number; o2?: number; o3?: number; o4?: number; o5?: number; o6?: number; o7?: number; o8?: number; o9?: number; o10?: number; o11?: number; o12?: number; o13?: number; o14?: number; o15?: number; o16?: number; o17?: number; o18?: number; o19?: number; o20?: number; o21?: number; o22?: number; o23?: number; o24?: number; o25?: number; o26?: number; o27?: number; o28?: number; o29?: number; o30?: number; o31?: number; o32?: number; o33?: number; o34?: number; o35?: number; o36?: number; o37?: number; o38?: number; o39?: number; o40?: number; o41?: number; o42?: number; o43?: number; o44?: number; o45?: number; o46?: number; o47?: number; o48?: number; o49?: number; o50?: number; o51?: number; o52?: number; o53?: number; o54?: number; o55?: number; o56?: number; o57?: number; o58?: number; o59?: number; x?: number; y?: string; m?: () => unknown; inner?: P; readonly g?: number }
+interface Config { timeout?: number; retries?: number }
+const config = JSON.parse('{"timeout":5}') as Config;
+function f(b: number): Omit<P, "x" | "y" | "m" | "inner" | "g"> { return { timeout: b, o0: 0, o1: 1, o2: 2, o3: 3, o4: 4, o5: 5, o6: 6, o7: 7, o8: 8, o9: 9, o10: 10, o11: 11, o12: 12, o13: 13, o14: 14, o15: 15, o16: 16, o17: 17, o18: 18, o19: 19, o20: 20, o21: 21, o22: 22, o23: 23, o24: 24, o25: 25, o26: 26, o27: 27, o28: 28, o29: 29, o30: 30, o31: 31, o32: 32, o33: 33, o34: 34, o35: 35, o36: 36, o37: 37, o38: 38, o39: 39, o40: 40, o41: 41, o42: 42, o43: 43, o44: 44, o45: 45, o46: 46, o47: 47, o48: 48, o49: 49, o50: 50, o51: 51, o52: 52, o53: 53, o54: 54, o55: 55, o56: 56, o57: 57, o58: 58, o59: 59 } }
+function take(p: P): number { let s = (p.timeout ?? 0) + (p.x ?? 0); s += (p.o0 ?? 0) + (p.o59 ?? 0); return s }
+function words(e: unknown): string { return "THROWN: " + (e as Error).name }
+const o = { ...f(1), x: 1, m() { return super.toString === Object.prototype.toString } } satisfies P;
+console.log(o.m(), take(o)); Object.setPrototypeOf(o, { toString: 1 }); console.log(o.m());
+console.log(config.timeout);
+//// super-member-as-tag.js
+// `super.m` as the tag of a template is called with the `this` of the method.
+class A { m() { return this; } }
+class B extends A { tag() { return super.m`x`; } }
+const b = new B();
+console.log(b.tag() === b);
+//// super-member-non-null-call.ts
+// `super.m!()` calls the method with the `this` of the caller.
+declare const console: { log(...a: unknown[]): void };
+class A { m(): unknown { return this; } }
+class B extends A { n() { return super.m!(); } }
+console.log(typeof new B().n());
+//// symbol-nobody-knows-on-built-in-objects.js
+// A key that is a symbol nobody knows at build time names no global that is read by its name, and still hits whatever lies under a symbol on a built-in object.
+const version = process.versions.bun.length;
+const key = Symbol.for(`someNameOfMine.${version}`);
+globalThis[key] = { run() { return 42; } };
+console.log(globalThis[Symbol.for(`someNameOfMine.${version}`)].run());
+console.log(typeof Date.now(), typeof Buffer.from, Math.floor(1.5));
+console.log(Object.getOwnPropertySymbols(globalThis).includes(key));
+console.log(key in globalThis, delete globalThis[key], key in globalThis, globalThis[key]);
+
+Object.defineProperty(globalThis, Symbol.for(`defined.${version}`), { value: "defined", configurable: true });
+console.log(globalThis[Symbol.for(`defined.${version}`)]);
+
+const unknownKey = process.argv.length > 99 ? "Date" : Symbol.for(`defined.${version}`);
+console.log(globalThis[unknownKey]);
+
+class Stamp extends Date {}
+const conversion = Object.getOwnPropertySymbols(Date.prototype)[0];
+console.log(conversion === Symbol.toPrimitive, typeof +new Stamp(0));
+Object.defineProperty(Stamp.prototype, conversion, { value() { return 5; }, configurable: true });
+console.log(+new Stamp(0), `${new Stamp(0)}`);
+const tag = Object.getOwnPropertySymbols(WeakRef.prototype)[0];
+console.log(tag === Symbol.toStringTag, String(new WeakRef({})));
+Object.defineProperty(WeakRef.prototype, tag, { value: "Renamed", configurable: true });
+console.log(String(new WeakRef({})));
+//// target-prototype-set-after-bind.js
+// `[] instanceof bound` goes by the `prototype` that the target got after the bind.
+const f = () => 1, b = f.bind(null);
+f.prototype = Array.prototype;
+console.log([] instanceof b);
+//// template-object-after-two-super-calls.js
+// A tagged template in a field initializer has one template object though the constructor has two `super()` calls.
+const id = s => s;
+class D extends Object { t = id`x`; constructor(c) { if (c) super(); else super(); } }
+console.log(new D(1).t === new D(0).t, new D(1).t === new D(1).t);
+//// template-object-matching-or-not.ts
+// A tagged template in an arrow function has one template object, whether the argument of the call fits its type or not.
+declare const console: { log(...a: unknown[]): void };
+const site = (o: { a: number }) => ((s: TemplateStringsArray) => s)`x`;
+console.log(site({ a: 1 }) === (site as any)({}));
+//// template-object-typed-and-untyped-callers.ts
+// A tagged template has one template object, whether its function is called with a typed or an untyped argument.
+declare const console: { log(...a: unknown[]): void };
+const id = (s: TemplateStringsArray) => s;
+function f(p: { x: number }) { return id`a`; }
+const g: any = f;
+console.log(f({ x: 1 }) === g(JSON.parse('{"x":1}')));
+//// the-name-of-a-layout-is-cut-in-the-middle-of-a-character.ts
+// The name of a layout is the text of its type, which is cut at 320 bytes: here between the two bytes of a letter.
+interface Box<T> {
+  value: T;
+}
+
+function wrap(): Box<"aéééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"> {
+  return { value: "aéééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé" };
+}
+
+// The text of a type site, which only the log of type mismatches asks for, is cut the same way.
+export function same(text: "aéééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé") {
+  return text;
+}
+
+const box = wrap();
+console.log(box.value.length, same(box.value).length);
+//// this-arrow-called-from-inner-class.js
+// An arrow function keeps the `this` of the method that made it when a static method of an inner class calls it.
+const o = { m() { const f = () => this; return class { static k() { return f(); } }.k(); } };
+console.log(o.m() === o);
+//// this-arrow-called-from-typed-inner-class.ts
+// An arrow function that reads a field of `this` is called from a method of a class declared inside the method.
+declare const console: { log(...a: unknown[]): void };
+class Outer { v = 1; m() { const f = () => this.v; class Inner { k() { return f(); } } return new Inner().k(); } }
+console.log(new Outer().m());
+//// this-getter-after-spread.ts
+// A getter that uses `this` in a literal that begins with a spread.
+declare const console: { log(...a: unknown[]): void };
+console.log({ ...{ q: 1 }, get g(): number { return this.q; } }.g);
+//// this-getter-in-spread-literal.ts
+// A getter that uses `this` in a literal that is only spread.
+declare const console: { log(...a: unknown[]): void };
+console.log({ ...{ a: 1, get g() { return this.a + 1; } } }.g);
+//// this-in-arrow-in-static-field-key.js
+// `this` in an arrow function in the computed key of a static field is that of the code around the class.
+class A { static [console.log((() => this)() == null)] = 1; }
+export {};
+//// this-in-ts-namespace-call.ts
+// `N.g()` on a TypeScript namespace is called with the namespace object as `this`.
+declare const console: { log(...a: unknown[]): void };
+namespace N { export function g(this: unknown) { return typeof this; } }
+console.log(N.g());
+//// this-method-in-define-property-literal.ts
+// A method that uses `this` in a literal that is handed to `Object.defineProperty`.
+declare const console: { log(...a: unknown[]): void };
+console.log(Object.defineProperty({ a: 1, m() { return this.a; } }, "z", { value: 1 }).m());
+//// this-of-export-stored-via-jsdoc-cast/lib.js
+"use strict";
+/** @type {any} */ (exports.f) = function () { return this; };
+//// this-of-export-stored-via-jsdoc-cast/main.js
+// A function stored to `exports.f` through a JSDoc cast is called with the exports object as `this`.
+console.log(typeof require("./lib").f());
+//// throwing-element-getter-in-for-of.js
+// An exception out of an element read in `for..of` is caught by the `try` around the loop.
+function f(a) { try { for (const x of a) Object.defineProperty(a, 1, { get() { throw "boom"; } }); } catch (e) { return "caught " + e; } }
+try { console.log(f([1, 2])); } catch (e) { console.log("the caller caught " + e); }
+//// throwing-getter-caught-by-try.ts
+// A field that `defineProperty` made a throwing accessor is read inside `try`.
+declare const console: { log(...a: unknown[]): void };
+const held: { x: number } = {} as any, define: any = Object.defineProperty;
+function f(c: boolean): number {
+  const o: typeof held = { x: 1 };
+  try { if (c) define(o, "x", { get() { throw 1; } }); return o.x; } catch { return -1; }
+}
+try { console.log(f(true)); } catch { console.log("left the try"); }
+//// throwing-heritage-clause/main.js
+// `class extends Bound` with a bound class throws a TypeError when the module is evaluated.
+import("./module.ts").then(module => console.log("no error", Object.keys(module).join()), e => console.log(e.name));
+//// throwing-heritage-clause/module.ts
+declare const console: { log(...a: unknown[]): void };
+const Bound = (class {}).bind(null);
+const k = [class extends Bound {}];
+console.log("evaluated");
+export function read() { return k; }
+//// thrown-number-in-reassigned-catch-parameter.js
+// A catch parameter holds the number that was thrown, so calling it throws a TypeError.
+function caught(n) { try { throw 7; } catch (f) { return () => f() + (f = () => n); } }
+try { caught(2)(); } catch (e) { console.log(e.name); }
+//// top-level-enum-before-declaration.ts
+// A top-level enum that a function reads ahead of the declaration is undefined, like a `var`.
+declare const console: { log(...a: unknown[]): void };
+function early() { return E; }
+console.log(early() === undefined);
+enum E { A }
+//// top-level-variables-assigned-after-readers.ts
+// Variables without an initializer are read by functions and classes that run after the assignment.
+declare const console: { log(...values: unknown[]): void };
+let port: number;
+export let seen: string;
+function listen(): string { return "on " + port }
+class Server { start(): string { return listen() + " " + seen } }
+function late(k: number): number { let d: number; const f = () => d + 1; if (k > 0) d = k; else d = -k; return f() }
+function cannot_be_shown(k: number): string { let d: number; const f = () => d; const hold = [f]; d = k; return String(hold[0]()) }
+port = 80; seen = "s";
+console.log(new Server().start(), late(2), cannot_be_shown(3));
+//// trap-reads-const-during-init.js
+// The `get` trap of a Proxy in a heritage clause reads the const whose initializer is running.
+let busy, first;
+const P = new Proxy(class {}, { get(t, k) { if (!busy) { busy = 1; try { first = read(); } catch (e) { first = e.name; } } return t[k]; } });
+const k = [class extends P {}];
+export function read() { return k; }
+console.log(read() === first ? "one array" : typeof first === "string" ? first : "two arrays");
+//// try-catch-returns-different-key-order.ts
+// A literal returned from `try` and one returned from `catch` each keep the order of their own keys.
+declare const console: { log(...a: unknown[]): void };
+function f(s: string): { a: number; b: number } { try { return { a: JSON.parse(s), b: 2 }; } catch { return { b: 0, a: 0 }; } }
+console.log(Object.keys(f("1")).join());
+//// ts-module-namespace-as-interface/m.ts
+export function match(x: number): number { return x + 1 }
+export function other(): string { return "o" }
+export function a1(): void {} export function a2(): void {} export function a3(): void {} export const a4 = 4;
+//// ts-module-namespace-as-interface/main.ts
+// The namespace object of a TypeScript module is used where an interface is expected.
+declare const console: { log(...values: unknown[]): void };
+import { mod } from "./mod.ts";
+interface Api { match(x: number): number; other(): string }
+const own: Api = Object.freeze({ match: (x: number) => x * 2, other: () => "own" });
+async function run<T, R>(first: T, n: number, ctx: { api: Api | null; make: (t: T) => R; f1: number; f2: number; f3: T[]; f4: number; f5: number; f6: number; f7: number }): Promise<string> {
+  return String(ctx.make(first)) + " " + ctx.api?.match(n) + " " + ctx.api?.other() + " " + ctx.f7;
+}
+function direct(api: Api | null): string { return api?.match(1) + " " + api?.other() }
+try { console.log(await run("a", 1, { api: own, make: t => t + "!", f1: 1, f2: 2, f3: [], f4: 4, f5: 5, f6: 6, f7: 7 })); } catch (e) { console.log("THROWN: " + (e as Error).message); }
+try { console.log(await run("b", 1, { api: mod, make: t => t.length, f1: 1, f2: 2, f3: ["x"], f4: 4, f5: 5, f6: 6, f7: 7 })); } catch (e) { console.log("THROWN: " + (e as Error).message); }
+try { console.log(direct(mod)); } catch (e) { console.log("THROWN: " + (e as Error).message); }
+try { const held: { api: Api | null } = { api: mod }; console.log(held.api?.match(5)); } catch (e) { console.log("THROWN: " + (e as Error).message); }
+//// ts-module-namespace-as-interface/mod.ts
+import * as m from "./m.ts";
+function on(): boolean { return true }
+export const mod = on() ? m : null;
+//// ts-namespace-before-evaluation.ts
+// A function that a TypeScript namespace exports cannot be called above the namespace.
+declare const console: { log(...a: unknown[]): void };
+try { N.f(); console.log("ran"); } catch { console.log("threw"); }
+namespace N { export function f() {} }
+//// two-paths-through-create-require/counter.cjs
+globalThis.timesTheCounterRan = (globalThis.timesTheCounterRan || 0) + 1;
+let n = 0;
+exports.next = () => ++n;
+//// two-paths-through-create-require/main.js
+// A CommonJS module that one require made by createRequire reaches under a written name and under a computed one is one module: it runs once and has one state.
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+import.meta.resolve("./counter.cjs"); // names the file, so it is part of the executable whatever the build makes of the two calls below
+const name = ["./counter", ".cjs"].join("");
+console.log(require("./counter.cjs").next(), require(name).next(), require("./counter.cjs") === require(name), globalThis.timesTheCounterRan);
+//// two-returns-different-key-order.ts
+// Each of two returned literals of one type keeps the order of its own keys.
+declare const console: { log(...a: unknown[]): void };
+function f(c: boolean): { a: number; b: number } { if (c) return { a: 1, b: 2 }; return { b: 2, a: 1 }; }
+console.log(Object.keys(f(false)).join());
+//// type-parameter-named-like-parameter.ts
+// A type parameter that has the name of a parameter does not hide the uses of the parameter.
+declare const console: { log(...a: unknown[]): void };
+function self<f>(f: () => void) { return f; }
+const make = () => self(() => {});
+console.log(make() === make());
+//// typed-elements-into-any-in-for-of.ts
+// `let x: any; for (x of typedArray)`: the elements keep their own functions.
+declare const console: { log(...a: unknown[]): void };
+const make = () => ({ m: () => 1 });
+let x: any, y: any;
+for (x of [1].map(make)); for (y of [1].map(make));
+console.log(x.m === y.m);
+//// typed-elements-spread-into-any-array.ts
+// `[0 as any, ...typedArray]`: the elements keep their own functions.
+declare const console: { log(...a: unknown[]): void };
+const made = [0 as any, ...[1, 2].map(() => ({ m: () => 1 }))];
+console.log(made[1].m === made[2].m);
+//// typed-object-via-any-to-other-type.ts
+// An object of typed code goes through `any` into another type that it satisfies.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
+function hide(v: unknown): any { return v }
+function parse(t: string): any { return JSON.parse(t) }
+interface Sub { v: number }
+interface Item { id: string; n: number; sub: Sub | null }
+const made: Item[] = [{ id: "m", n: 0.5, sub: { v: 1 } }, { id: "m", n: 1, sub: null }];
+function bump(x: Item): number { x.n += 1; return x.n }
+function kind(x: Item): string { return typeof x.n }
+row("(made by typed code)", () => bump(made[0]) + bump(made[1]));
+const text = '{"id":"s","n":7,"sub":null}';
+interface Twin { id: string; n: number; sub: Sub | null; note?: string }
+const madeTwin: Twin = { id: "m", n: 0.5, sub: null, note: "n" };
+function twin(x: Twin): number { x.n += 1; return x.n }
+row("an object of typed code, through any, into another type that it satisfies", () => { const a: Item = { id: "s", n: 1, sub: null }; const b: Twin = hide(a); twin(b); return a.n + " " + ((a as unknown) === (b as unknown)) + " " + twin(madeTwin) });
+//// typed-objects-as-keys-and-dictionaries.ts
+// Typed objects in Map, Set, WeakMap and WeakRef, and objects that are used as dictionaries.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
+function hide(v: unknown): any { return v }
+function parse(t: string): any { return JSON.parse(t) }
+type Item = { id: number; n: number };
+class Node1 { v = 1 }
+row("typed objects as keys", () => { const a: Item = { id: 1, n: 1 }, b: Item = { id: 1, n: 1 }; const m = new Map<Item, number>([[a, 1], [b, 2]]); const s = new Set<Item>([a, b, a]); const w = new WeakMap<Item, number>([[a, 5]]); return m.get(a) + " " + m.get(b) + " " + s.size + " " + w.get(a) + " " + w.has(b) });
+row("plain data as a key, then held to a type", () => { const r = parse('{"id":1,"n":1}'); const m = new Map<unknown, number>([[r, 1]]); const w = new WeakSet<object>([r]); const t: Item = r; return m.get(t) + " " + w.has(t) + " " + m.has(r) });
+row("WeakRef", () => { const t = new Node1(); const w = new WeakRef(t); return w.deref()!.v + " " + (w.deref() === t) });
+row("-0, NaN as keys", () => { const m = new Map<number, string>([[NaN, "nan"], [0, "zero"]]); return m.get(NaN) + " " + m.get(-0) + " " + [...new Set([0, -0, NaN, NaN])].length });
+row("the order of a Map with deletes", () => { const m = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]]); m.delete("b"); m.set("b", 4); m.set("a", 5); return [...m].join("|") });
+row("a Map changed while it is iterated", () => { const m = new Map<number, number>([[1, 1]]); const out: number[] = []; for (const [k] of m) { out.push(k); if (k < 4) m.set(k + 1, 0) } return out.join() });
+row("an object as a dictionary: numbers first", () => { const d: Record<string, number> = {}; d.b = 1; d["2"] = 2; d.a = 3; d["1"] = 4; return Object.keys(d).join() });
+row("__proto__ as a key of a dictionary", () => { const d: Record<string, unknown> = {}; d["__proto__"] = 5; const e = parse('{"__proto__":5}'); return Object.keys(d).length + " " + Object.keys(e).length + " " + e.__proto__ });
+row("constructor, toString, hasOwnProperty as keys", () => { const d: Record<string, number> = {}; const before = typeof d["constructor"] + " " + ("toString" in d); d["constructor"] = 1; d["hasOwnProperty"] = 2; return before + " " + Object.keys(d).join() });
+row("a dictionary without a prototype", () => { const d: Record<string, number> = Object.create(null); d.a = 1; return ("toString" in d) + " " + Object.keys(d).join() + " " + JSON.stringify(d) });
+//// typed-objects-json-and-conversions.ts
+// `toJSON`, `toPrimitive`, replacers, revivers, cycles, `==` and `typeof`.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
+function hide(v: unknown): any { return v }
+function parse(t: string): any { return JSON.parse(t) }
+type Item = { id: number; n: number; when?: Date; sub?: Item };
+class Money { constructor(public cents: number) { } toJSON(): string { return (this.cents / 100).toFixed(2) } toString(): string { return "$" + this.toJSON() } valueOf(): number { return this.cents } [Symbol.toPrimitive](hint: string): unknown { return hint === "number" ? this.cents : this.toString() } }
+row("toJSON, toString, valueOf, toPrimitive on an instance", () => { const m = new Money(150); return JSON.stringify({ m }) + " " + `${m}` + " " + (+m) + " " + (hide(m) + 1) + " " + (hide(m) > 100) });
+row("stringify with a replacer, a list, an indent", () => { const t: Item = { id: 1, n: 2, sub: { id: 3, n: 4 } }; return JSON.stringify(t, (k, v) => typeof v === "number" ? v * 2 : v) + " " + JSON.stringify(t, ["id"]) + " " + JSON.stringify({ id: 1 } as Partial<Item>, null, 1).length });
+row("undefined, functions, symbols are left out", () => JSON.stringify({ a: undefined, b: () => 1, c: Symbol("s"), d: null, e: NaN, f: [undefined] }));
+row("a cycle", () => { const t: Item = { id: 1, n: 1 }; t.sub = t; return JSON.stringify(t) });
+row("parse with a reviver into a type", () => { const t: Item = JSON.parse('{"id":1,"n":2,"when":"2020-01-01T00:00:00.000Z"}', (k, v) => k === "when" ? new Date(v) : v); return t.when!.getUTCFullYear() + " " + t.n });
+row("a record to a primitive", () => { const t: Item = { id: 1, n: 1 }; return "" + hide(t) + " " + isNaN(+hide(t)) + " " + (hide(t) == "[object Object]") });
+row("== between kinds", () => (hide(1) == "1") + " " + (hide(null) == undefined) + " " + (hide(0) == "") + " " + (hide([1]) == 1) + " " + (hide({}) == "[object Object]") + " " + (hide(NaN) == hide(NaN)));
+row("typeof of everything", () => [undefined, null, 1, 1n, "s", Symbol(), () => 1, class { }, {}, [], new Date(), /r/].map(v => typeof v).join());
+row("Date, RegExp, Error through types", () => { const d: Date = new Date(0); const r: RegExp = /a(b)?/g; const e: Error = new TypeError("m", { cause: 5 }); return d.toISOString() + " " + "ab a".replace(r, "x") + " " + r.lastIndex + " " + e.name + " " + e.cause + " " + Object.keys(e).join() });
+//// typed-objects-key-order-and-reflection.ts
+// The order of keys, symbols, index names, enumeration, copies and `toString` of records and instances.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
+function hide(v: unknown): any { return v }
+function parse(t: string): any { return JSON.parse(t) }
+type Item = { id: number; n: number; tag?: string; sub?: string };
+class Point { x = 1; y = 2 }
+row("the order of keys: optional fields stored out of the declared order", () => { const t: Item = { id: 1, n: 1 }; t.sub = "s"; t.tag = "t"; return Object.keys(t).join() + " " + JSON.stringify(t) });
+row("a literal written out of the declared order", () => { const t: Item = { n: 1, id: 2 }; return Object.keys(t).join() });
+row("delete an optional field and store it again", () => { const t: Item = { id: 1, tag: "t", n: 1 }; delete t.tag; t.tag = "u"; return Object.keys(t).join() });
+row("an optional field that holds undefined", () => { const t: Item = { id: 1, n: 1, tag: undefined }; return Object.keys(t).join() + " " + ("tag" in t) + " " + JSON.stringify(t) + " " + Object.hasOwn(t, "sub") });
+row("names that are numbers, through any", () => { const t: Item = { id: 1, n: 1 }; const a = hide(t); a[2] = "two"; a[0] = "zero"; a.z = 1; return Object.keys(t).join() + " " + a[0] });
+row("a symbol, through any", () => { const t: Item = { id: 1, n: 1 }; const s = Symbol("s"); hide(t)[s] = 5; return hide(t)[s] + " " + Object.getOwnPropertySymbols(t).length + " " + Reflect.ownKeys(t).length });
+row("for..in, entries, spread, assign", () => { const t: Item = { id: 1, n: 2, sub: "s" }; const k: string[] = []; for (const n in t) k.push(n); return k.join() + " " + Object.entries(t).join("|") + " " + JSON.stringify({ ...t }) + " " + JSON.stringify(Object.assign({}, t)) });
+row("what it says it is", () => { const t: Item = { id: 1, n: 1 }; return Object.prototype.toString.call(t) + " " + (t.constructor === Object) + " " + (Object.getPrototypeOf(t) === Object.prototype) + " " + String(t) + " " + typeof t });
+row("an instance says what it is", () => { const p = new Point(); return p.constructor.name + " " + Object.keys(p).join() + " " + JSON.stringify(p) + " " + (Object.getPrototypeOf(p) === Point.prototype) + " " + Object.prototype.toString.call(p) });
+row("structuredClone", () => { const t: Item = { id: 1, n: 2 }; const c = hide(globalThis).structuredClone ? hide(globalThis).structuredClone(t) : { ...t }; return JSON.stringify(c) + " " + (c !== t) });
+//// typed-store-in-unevaluated-pattern-default.ts
+// A `let n: number` that only the unevaluated default of a pattern element assigns is still undefined.
+declare const console: { log(...a: unknown[]): void };
+let n: number, a: number;
+[a = (n = 1, 2)] = [1];
+console.log(n + 1);
+//// uncalled-closure-inlines-global-reads.ts
+// A closure that is never called loses its body. What had been inlined into it read globals (Error, Object, Array), and the compiler still looked at those reads.
+class OutOfFuel extends Error {}
+class Box<T> {
+  constructor(public value: T) {}
+}
+function describeError(error: unknown): string {
+  return typeof error + " " + String(error);
+}
+function inspect(value: unknown): string {
+  if (value === undefined) return "undefined";
+  if (value instanceof Error) return describeError(value);
+  const flags = (Object.isFrozen(value) ? "F" : Object.isSealed(value) ? "S" : Object.isExtensible(value) ? "" : "N");
+  const parts: string[] = [];
+  const proto = Object.getPrototypeOf(value);
+  const name = Array.isArray(value) ? "[]" : proto === null ? "null" : proto === Object.prototype ? "" : typeof proto.constructor === "function" ? proto.constructor.name : "?";
+  return name + flags + "{" + parts.join(",") + "}";
+}
+function say(label: string, make: () => string): void {
+}
+type T11 = { readonly kind: "line"; items: boolean; };
+const fn31 = (p0: number, p1: Box<T11>, p2: string, p3: Box<string>[]): number => {
+  const seen: string[] = [];
+  seen.push(inspect(p2));
+  return (-(~~p0));
+};
+say("e1", (): string => {
+  const seen: string[] = [];
+  for (let i50 = -2; i50 < 3; i50++) {
+    if (Boolean(fn31(i50, new Box<T11>({ kind: "line", items: true }), "", []))) {
+    }
+  }
+  try {
+  } catch (error54) {
+  }
+  return seen.join(";");
+});
+console.log("built and ran");
+//// unsigned-shift-key.ts
+// An element is stored at `n | 0` and read at `n >>> 0`, with keys inside the array, beyond its end and below zero.
+declare const console: { log(...values: unknown[]): void };
+function v1(k: number | string): string { const a = [0.5, 1.5, 2.5] as number[]; const o = a as any; const n = Number(k); o[n | 0] = 7.5; return String(o[n >>> 0]) + "," + String(o[n.toString()]); }
+function v2(k: number | string): string { const a = [0.5, 1.5, 2.5] as number[]; const o = a as any; const n = Number(k); o[n | 0] = 7.5; return String(o[n >>> 0]); }
+function v3(n: number): string { const a = [0.5, 1.5, 2.5] as number[]; const o = a as any; o[n | 0] = 7.5; return String(o[n >>> 0]) + "," + String(o[n.toString()]); }
+function v4(k: number | string): string { const o: any = [0.5, 1.5, 2.5]; const n = Number(k); o[n | 0] = 7.5; return String(o[n >>> 0]); }
+function v5(k: number | string): string { const a = [0.5, 1.5, 2.5] as number[]; const o = a as any; const n = Number(k); return String(o[n >>> 0]); }
+function v6(k: number | string): string { const a = [0.5, 1.5, 2.5] as number[]; const n = Number(k); a[n | 0] = 7.5; return String(a[n >>> 0]); }
+function v7(k: number | string): string { const a = [10, 11, 12] as number[]; const o = a as any; const n = Number(k); o[n | 0] = 77; return String(o[n >>> 0]); }
+function v8(k: number | string): string { const a = ["a", "b", "c"] as string[]; const o = a as any; const n = Number(k); o[n | 0] = "S"; return String(o[n >>> 0]); }
+const all = [v1, v2, v4, v5, v6, v7, v8];
+for (let i = 0; i < 200; i++) { for (const f of all) f(i & 1 ? i & 3 : String(i & 3)); v3(i & 3); }
+for (const k of [0, 1, 2, 3, 5, 9, -1, 2147483648, 4294967295, "3", "-1"]) console.log(String(k), all.map(f => f(k)).join(" | "), "|", v3(Number(k)));
+//// untyped-caller-omits-typed-argument/caller.js
+import { Test, free, freeRest } from "./typed.ts";
+function row(name, f) { try { console.log(name + ": " + f()) } catch (e) { console.log(name + ": THROWS " + String(e).split(" (bun")[0]) } }
+row("a method", () => new Test().plain(() => "ran"));
+row("a method with a rest parameter", () => new Test().rest(() => "ran"));
+row("a function", () => free(() => "ran"));
+row("a function with a rest parameter", () => freeRest(() => "ran"));
+const t = new Test(), hidden = [t.plain, t.rest, free, freeRest];
+for (const f of hidden) row("by value " + f.name, () => f.call(t, () => "ran"));
+//// untyped-caller-omits-typed-argument/main.ts
+// JavaScript calls typed functions and methods and leaves out a parameter of type number.
+import "./caller.js";
+//// untyped-caller-omits-typed-argument/typed.ts
+declare const console: { log(...values: unknown[]): void };
+export class Test {
+  plain(fn: () => string, timeout: number): string { return fn() + " " + String(timeout) + " " + typeof timeout }
+  rest(fn: () => string, timeout: number, ...args: unknown[]): string { return fn() + " " + String(timeout) + " " + args.length }
+}
+export function free(fn: () => string, timeout: number): string { return fn() + " " + String(timeout) }
+export function freeRest(fn: () => string, timeout: number, ...args: unknown[]): string { return fn() + " " + String(timeout) + " " + args.length }
+//// untyped-class-instance-checked-against-type.ts
+// An instance of a class that typed code does not see is held to a record type.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
+function hide(v: unknown): any { return v }
+function parse(t: string): any { return JSON.parse(t) }
+interface Sub { v: number }
+interface Item { id: string; n: number; sub: Sub | null }
+const made: Item[] = [{ id: "m", n: 0.5, sub: { v: 1 } }, { id: "m", n: 1, sub: null }];
+function bump(x: Item): number { x.n += 1; return x.n }
+function kind(x: Item): string { return typeof x.n }
+row("(made by typed code)", () => bump(made[0]) + bump(made[1]));
+const text = '{"id":"s","n":7,"sub":null}';
+row("an instance of a class that typed code does not see", () => { const C = hide(class { id = "s"; n = 7; sub = null; hello() { return "hi" } }); const raw = new C(); const t: Item = raw; bump(t); return raw.n + " " + ((t as unknown) === raw) + " " + hide(t).hello() });
+//// untyped-computed-key-literal-checked.ts
+// An untyped literal one of whose required names is a computed key is held to a type.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
+function hide(v: unknown): any { return v }
+function parse(t: string): any { return JSON.parse(t) }
+interface Sub { v: number }
+interface Item { id: string; n: number; sub: Sub | null }
+const made: Item[] = [{ id: "m", n: 0.5, sub: { v: 1 } }, { id: "m", n: 1, sub: null }];
+function bump(x: Item): number { x.n += 1; return x.n }
+function kind(x: Item): string { return typeof x.n }
+row("(made by typed code)", () => bump(made[0]) + bump(made[1]));
+const text = '{"id":"s","n":7,"sub":null}';
+row("a small literal with a computed key", () => { const key = hide("n"); const raw: any = hide({ id: "s", [key]: 7, sub: null }); const t: Item = raw; bump(t); return raw.n + " " + ((t as unknown) === raw) });
+//// untyped-object-inherits-required-field.ts
+// An untyped object that inherits a required field is held to a type.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
+function hide(v: unknown): any { return v }
+function parse(t: string): any { return JSON.parse(t) }
+interface Sub { v: number }
+interface Item { id: string; n: number; sub: Sub | null }
+const made: Item[] = [{ id: "m", n: 0.5, sub: { v: 1 } }, { id: "m", n: 1, sub: null }];
+function bump(x: Item): number { x.n += 1; return x.n }
+function kind(x: Item): string { return typeof x.n }
+row("(made by typed code)", () => bump(made[0]) + bump(made[1]));
+const text = '{"id":"s","n":7,"sub":null}';
+row("data that inherits a field", () => { const raw = Object.create(parse('{"n":7}')); raw.id = "s"; raw.sub = null; const t: Item = raw; return t.n + " " + bump(t) + " " + Object.keys(raw).join() });
+//// untyped-object-with-getter-checked.ts
+// An untyped object with a getter under a required name is held to a type.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
+function hide(v: unknown): any { return v }
+function parse(t: string): any { return JSON.parse(t) }
+interface Sub { v: number }
+interface Item { id: string; n: number; sub: Sub | null }
+const made: Item[] = [{ id: "m", n: 0.5, sub: { v: 1 } }, { id: "m", n: 1, sub: null }];
+function bump(x: Item): number { x.n += 1; return x.n }
+function kind(x: Item): string { return typeof x.n }
+row("(made by typed code)", () => bump(made[0]) + bump(made[1]));
+const text = '{"id":"s","n":7,"sub":null}';
+row("data with a getter", () => { let calls = 0; const raw: any = { id: "s", get n() { calls++; return 7 }, sub: null }; const t: Item = hide(raw); return kind(t) + " " + t.n + " " + calls });
+//// untyped-subclass-checked-against-type.ts
+// An instance of a class that extends an untyped class is held to a type that it satisfies.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
+function hide(v: unknown): any { return v }
+const Base = hide(class { updater = { n: 1 } });
+class Derived extends (Base as any) {}
+interface U { n: number }
+row("heir of an untyped class", () => { const r: { updater: U } = new Derived() as any; return r.updater.n });
+//// unused-function-value-inlines-free-name-reads.ts
+// `target` is stored as a function value that nothing reads, so the entry made for calls through that value loses its body. `free` had been inlined into it, and the compiler still looked at its reads of a free name.
+declare const someFreeName: number | undefined;
+function free(): number {
+  return typeof someFreeName === "undefined" ? 0.5 : someFreeName;
+}
+function target(x: number): number {
+  return free() + x;
+}
+export const unused: (x: number) => number = target;
+console.log(target(1.5));
+//// unused-pure-call.js
+// An unused const whose initializer is marked `/* @__PURE__ */`: whether it runs follows the bundler.
+const a = /* @__PURE__ */ console.log("ran");
+console.log("end");
+//// var-exports-in-commonjs.js
+// `var exports = exports || {}` in a CommonJS file keeps the file's own exports object.
+var exports = exports || {};
+exports.a = 3;
+console.log(module.exports.a);
+//// var-named-like-catch-parameter.js
+// `catch (e) { var e = 2 }` stores to the catch parameter.
+try { throw 1; } catch (e) { var e = 2; console.log(e); }
+//// variable-under-satisfies-as-non-null.ts
+// `made satisfies P`, `made as P` and `made!` are the same object as `made`.
+declare const console: { log(...values: unknown[]): void };
+interface P { timeout?: number; o0?: number; o1?: number; o2?: number; o3?: number; o4?: number; o5?: number; o6?: number; o7?: number; o8?: number; o9?: number; o10?: number; o11?: number; o12?: number; o13?: number; o14?: number; o15?: number; o16?: number; o17?: number; o18?: number; o19?: number; o20?: number; o21?: number; o22?: number; o23?: number; o24?: number; o25?: number; o26?: number; o27?: number; o28?: number; o29?: number; o30?: number; o31?: number; o32?: number; o33?: number; o34?: number; o35?: number; o36?: number; o37?: number; o38?: number; o39?: number; o40?: number; o41?: number; o42?: number; o43?: number; o44?: number; o45?: number; o46?: number; o47?: number; o48?: number; o49?: number; o50?: number; o51?: number; o52?: number; o53?: number; o54?: number; o55?: number; o56?: number; o57?: number; o58?: number; o59?: number; x?: number; y?: string; m?: () => unknown; inner?: P; readonly g?: number }
+interface Config { timeout?: number; retries?: number }
+const config = JSON.parse('{"timeout":5}') as Config;
+function f(b: number): Omit<P, "x" | "y" | "m" | "inner" | "g"> { return { timeout: b, o0: 0, o1: 1, o2: 2, o3: 3, o4: 4, o5: 5, o6: 6, o7: 7, o8: 8, o9: 9, o10: 10, o11: 11, o12: 12, o13: 13, o14: 14, o15: 15, o16: 16, o17: 17, o18: 18, o19: 19, o20: 20, o21: 21, o22: 22, o23: 23, o24: 24, o25: 25, o26: 26, o27: 27, o28: 28, o29: 29, o30: 30, o31: 31, o32: 32, o33: 33, o34: 34, o35: 35, o36: 36, o37: 37, o38: 38, o39: 39, o40: 40, o41: 41, o42: 42, o43: 43, o44: 44, o45: 45, o46: 46, o47: 47, o48: 48, o49: 49, o50: 50, o51: 51, o52: 52, o53: 53, o54: 54, o55: 55, o56: 56, o57: 57, o58: 58, o59: 59 } }
+function take(p: P): number { let s = (p.timeout ?? 0) + (p.x ?? 0); s += (p.o0 ?? 0) + (p.o59 ?? 0); return s }
+function words(e: unknown): string { return "THROWN: " + (e as Error).name }
+const made: P = { ...f(1), x: 1 };
+const o = made satisfies P; const q = made as P; const r = made!;
+console.log(o === made, q === made, r === made, take(o)); made.x = 9; console.log(o.x, q.x, r.x);
+console.log(config.timeout);
+//// variables-assigned-then-captured.ts
+// Variables without an initializer are assigned on every path and then read by closures.
+declare const console: { log(...values: unknown[]): void };
+function may(n: number): number { if (n < 0) throw new Error("no"); return n }
+function g(p: number): string { let m: number; try { m = may(p) } catch { return "g missing" } const later = () => m > 0; return later() ? "g ok" : "g zero" }
+function h(k: number): string { let d: number; if (k > 0) d = 1; else d = 2; return [1, 2].map(x => x + d).join() }
+function i(): string | undefined { let a: number, b: number; try { ;({ a, b } = { a: may(1), b: may(2) }) } catch { return } const f = () => a + b; return f() > 0 ? "i ok" : "i zero" }
+function j(ps: number[]): string { const fs: Array<() => boolean> = []; for (const p of ps) { let m: number; try { m = may(p) } catch { continue } fs.push(() => m > 0) } return "j " + fs.filter(f => f()).length }
+function k(n: number): string { let t: number; t = n * 2; const o = { read() { return t + 1 }, get twice() { return t * 2 } }; return o.read() + " " + o.twice }
+console.log(g(1), g(-1), h(1), h(0), i(), j([1, -1, 2]), k(3));
+//// variables-in-hoisted-functions.ts
+// Variables without an initializer are assigned and then read by function declarations of the same scope.
+declare const console: { log(...values: unknown[]): void };
+function may(n: number): number { if (n < 0) throw new Error("no"); return n }
+function k(p: number): string { let epoch: number; try { epoch = may(p) } catch { return "k missing" } function mark(): boolean { return epoch > 0 } return mark() ? "k ok" : "k zero" }
+function l(p: number): string { let n: number; n = p + 1; function a(): number { return b() + 1 } function b(): number { return n * 2 } return String(a()) }
+function m(p: number): string { let n: number; n = p; function down(i: number): number { return i <= 0 ? n : down(i - 1) } return [1, 2].map(x => down(x) + x).join() }
+function o(p: number): string { let n: number; if (p > 0) n = 1; else n = 2; function read(): number { return n } const later = { go() { return read() } }; return String(later.go()) }
+console.log(k(1), k(-1), k(0), l(2), m(5), o(1), o(0));
+//// widened-record-same-object-as-argument.ts
+// An object made as one record type gets the members of a larger one through `any` and is passed as that type. It has every member, so it is taken as it is: the same object, and a store through the parameter is seen through the first reference.
+////= row
+function hide(value: unknown): any {
+  return value;
+}
+
+interface Inner {
+  value: number;
+}
+interface Point {
+  inner: Inner;
+  x: number;
+  y: number;
+}
+////= lines	Link0	Link1
+////= lines	Link1	Link2
+////= lines	Link2	Link3
+////= lines	Link3	Link4
+////= lines	Link4	Link5
+////= lines	Link5	Link6
+////= lines	Link6	Link7
+////= lines	Link7	Link8
+////= lines	Link8	Link9
+////= lines	Link9	Link10
+////= lines	Link10	Link11
+////= lines	Link11	Link12
+////= lines	Link12	Link13
+////= lines	Link13	Link14
+////= lines	Link14	Link15
+////= lines	Link15	Link16
+////= lines	Link16	Link17
+////= lines	Link17	Link18
+////= lines	Link18	Link19
+////= lines	Link19	Link20
+////= lines	Link20	Link21
+////= lines	Link21	Link22
+////= lines	Link22	Link23
+////= lines	Link23	Link24
+////= lines	Link24	Link25
+////= lines	Link25	Link26
+////= lines	Link26	Link27
+////= lines	Link27	Link28
+////= lines	Link28	Link29
+////= lines	Link29	Link30
+////= lines	Link30	Link31
+////= lines	Link31	Link32
+////= lines	Link32	Link33
+////= lines	Link33	Link34
+////= lines	Link34	Link35
+////= lines	Link35	Link36
+////= lines	Link36	Link37
+////= lines	Link37	Link38
+////= lines	Link38	Link39
+////= lines	Link39	Link0
+////= Labeled
+
+let seen: unknown = null;
+function moved(point: Point): number {
+  point.x += 1;
+  return point.inner.value + point.x + point.y;
+}
+function described(labeled: Labeled): string {
+  seen = labeled;
+  labeled.x += 1;
+  return labeled.label + labeled.x + labeled.entries.size;
+}
+////= pointGivenTheOtherMembers
+
+const link0: Link0 = { entries: new Map(), next: null };
+const link1: Link1 = { entries: new Map(), next: null };
+const link2: Link2 = { entries: new Map(), next: null };
+const link3: Link3 = { entries: new Map(), next: null };
+const link4: Link4 = { entries: new Map(), next: null };
+const link5: Link5 = { entries: new Map(), next: null };
+const link6: Link6 = { entries: new Map(), next: null };
+const link7: Link7 = { entries: new Map(), next: null };
+const link8: Link8 = { entries: new Map(), next: null };
+const link9: Link9 = { entries: new Map(), next: null };
+const link10: Link10 = { entries: new Map(), next: null };
+const link11: Link11 = { entries: new Map(), next: null };
+const link12: Link12 = { entries: new Map(), next: null };
+const link13: Link13 = { entries: new Map(), next: null };
+const link14: Link14 = { entries: new Map(), next: null };
+const link15: Link15 = { entries: new Map(), next: null };
+const link16: Link16 = { entries: new Map(), next: null };
+const link17: Link17 = { entries: new Map(), next: null };
+const link18: Link18 = { entries: new Map(), next: null };
+const link19: Link19 = { entries: new Map(), next: null };
+const link20: Link20 = { entries: new Map(), next: null };
+const link21: Link21 = { entries: new Map(), next: null };
+const link22: Link22 = { entries: new Map(), next: null };
+const link23: Link23 = { entries: new Map(), next: null };
+const link24: Link24 = { entries: new Map(), next: null };
+const link25: Link25 = { entries: new Map(), next: null };
+const link26: Link26 = { entries: new Map(), next: null };
+const link27: Link27 = { entries: new Map(), next: null };
+const link28: Link28 = { entries: new Map(), next: null };
+const link29: Link29 = { entries: new Map(), next: null };
+const link30: Link30 = { entries: new Map(), next: null };
+const link31: Link31 = { entries: new Map(), next: null };
+const link32: Link32 = { entries: new Map(), next: null };
+const link33: Link33 = { entries: new Map(), next: null };
+const link34: Link34 = { entries: new Map(), next: null };
+const link35: Link35 = { entries: new Map(), next: null };
+const link36: Link36 = { entries: new Map(), next: null };
+const link37: Link37 = { entries: new Map(), next: null };
+const link38: Link38 = { entries: new Map(), next: null };
+const link39: Link39 = { entries: new Map(), next: null };
+const links = [link0, link1, link2, link3, link4, link5, link6, link7, link8, link9, link10, link11, link12, link13, link14, link15, link16, link17, link18, link19, link20, link21, link22, link23, link24, link25, link26, link27, link28, link29, link30, link31, link32, link33, link34, link35, link36, link37, link38, link39];
+const labeled: Labeled = { inner: { value: 1 }, x: 1, label: "t", entries: new Map(), chain: link0 };
+row("created as the type", () => described(labeled) + ":" + links.length);
+row("as an argument", () => {
+  const object = pointGivenTheOtherMembers();
+  const text = described(object);
+  return text + " " + (object === seen) + " " + object.x;
+});
+//// widened-record-same-object-in-field.ts
+// An object made as one record type gets the members of a larger one through `any` and is stored into a field of that type. It has every member, so the field holds the same object, and a store through the field is seen through the first reference.
+////= row
+function hide(value: unknown): any {
+  return value;
+}
+
+interface Inner {
+  value: number;
+}
+interface Point {
+  inner: Inner;
+  x: number;
+  y: number;
+}
+////= lines	Link0	Link1
+////= lines	Link1	Link2
+////= lines	Link2	Link3
+////= lines	Link3	Link4
+////= lines	Link4	Link5
+////= lines	Link5	Link6
+////= lines	Link6	Link7
+////= lines	Link7	Link8
+////= lines	Link8	Link9
+////= lines	Link9	Link10
+////= lines	Link10	Link11
+////= lines	Link11	Link12
+////= lines	Link12	Link13
+////= lines	Link13	Link14
+////= lines	Link14	Link15
+////= lines	Link15	Link16
+////= lines	Link16	Link17
+////= lines	Link17	Link18
+////= lines	Link18	Link19
+////= lines	Link19	Link20
+////= lines	Link20	Link21
+////= lines	Link21	Link22
+////= lines	Link22	Link23
+////= lines	Link23	Link24
+////= lines	Link24	Link25
+////= lines	Link25	Link26
+////= lines	Link26	Link27
+////= lines	Link27	Link28
+////= lines	Link28	Link29
+////= lines	Link29	Link30
+////= lines	Link30	Link31
+////= lines	Link31	Link32
+////= lines	Link32	Link33
+////= lines	Link33	Link34
+////= lines	Link34	Link35
+////= lines	Link35	Link36
+////= lines	Link36	Link37
+////= lines	Link37	Link38
+////= lines	Link38	Link39
+////= lines	Link39	Link0
+////= Labeled
+
+let seen: unknown = null;
+function moved(point: Point): number {
+  point.x += 1;
+  return point.inner.value + point.x + point.y;
+}
+function described(labeled: Labeled): string {
+  seen = labeled;
+  labeled.x += 1;
+  return labeled.label + labeled.x + labeled.entries.size;
+}
+////= pointGivenTheOtherMembers
+
+const link0: Link0 = { entries: new Map(), next: null };
+const link1: Link1 = { entries: new Map(), next: null };
+const link2: Link2 = { entries: new Map(), next: null };
+const link3: Link3 = { entries: new Map(), next: null };
+const link4: Link4 = { entries: new Map(), next: null };
+const link5: Link5 = { entries: new Map(), next: null };
+const link6: Link6 = { entries: new Map(), next: null };
+const link7: Link7 = { entries: new Map(), next: null };
+const link8: Link8 = { entries: new Map(), next: null };
+const link9: Link9 = { entries: new Map(), next: null };
+const link10: Link10 = { entries: new Map(), next: null };
+const link11: Link11 = { entries: new Map(), next: null };
+const link12: Link12 = { entries: new Map(), next: null };
+const link13: Link13 = { entries: new Map(), next: null };
+const link14: Link14 = { entries: new Map(), next: null };
+const link15: Link15 = { entries: new Map(), next: null };
+const link16: Link16 = { entries: new Map(), next: null };
+const link17: Link17 = { entries: new Map(), next: null };
+const link18: Link18 = { entries: new Map(), next: null };
+const link19: Link19 = { entries: new Map(), next: null };
+const link20: Link20 = { entries: new Map(), next: null };
+const link21: Link21 = { entries: new Map(), next: null };
+const link22: Link22 = { entries: new Map(), next: null };
+const link23: Link23 = { entries: new Map(), next: null };
+const link24: Link24 = { entries: new Map(), next: null };
+const link25: Link25 = { entries: new Map(), next: null };
+const link26: Link26 = { entries: new Map(), next: null };
+const link27: Link27 = { entries: new Map(), next: null };
+const link28: Link28 = { entries: new Map(), next: null };
+const link29: Link29 = { entries: new Map(), next: null };
+const link30: Link30 = { entries: new Map(), next: null };
+const link31: Link31 = { entries: new Map(), next: null };
+const link32: Link32 = { entries: new Map(), next: null };
+const link33: Link33 = { entries: new Map(), next: null };
+const link34: Link34 = { entries: new Map(), next: null };
+const link35: Link35 = { entries: new Map(), next: null };
+const link36: Link36 = { entries: new Map(), next: null };
+const link37: Link37 = { entries: new Map(), next: null };
+const link38: Link38 = { entries: new Map(), next: null };
+const link39: Link39 = { entries: new Map(), next: null };
+const links = [link0, link1, link2, link3, link4, link5, link6, link7, link8, link9, link10, link11, link12, link13, link14, link15, link16, link17, link18, link19, link20, link21, link22, link23, link24, link25, link26, link27, link28, link29, link30, link31, link32, link33, link34, link35, link36, link37, link38, link39];
+const labeled: Labeled = { inner: { value: 1 }, x: 1, label: "t", entries: new Map(), chain: link0 };
+row("created as the type", () => described(labeled) + ":" + links.length);
+row("stored into a field", () => {
+  const holder: { labeled: Labeled | null } = { labeled: null };
+  const object = pointGivenTheOtherMembers();
+  holder.labeled = object;
+  holder.labeled!.x += 1;
+  return (hide(holder.labeled) === object) + " " + object.x;
+});
+//// wrong-kind-stored-via-any.ts
+// A field of type number gets a string, undefined, null or nothing through `any`, `Object.assign` and parsed JSON. Every store succeeds. A typed read of the string throws a TypeError; undefined, null and a missing field pass.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name : String(e))) } }
+function hide(v: unknown): any { return v }
+function parse(t: string): any { return JSON.parse(t) }
+type Item = { id: number; n: number; tag?: string };
+function read(x: Item): string { return typeof x.n }
+row("a string stored to a number's field through any", () => { const t: Item = { id: 1, n: 1 }; hide(t).n = "seven"; return read(t) + " " + hide(t).n });
+row("delete of a required field through any", () => { const t: Item = { id: 1, n: 1 }; const was = delete hide(t).n; return was + " " + read(t) + " " + Object.keys(t).join() });
+row("undefined stored to a required field through any", () => { const t: Item = { id: 1, n: 1 }; hide(t).n = undefined; return read(t) });
+row("Object.assign with another kind", () => { const t: Item = { id: 1, n: 1 }; Object.assign(t, hide({ n: "x" })); return read(t) });
+row("plain data that does not satisfy the type", () => { const t: Item = parse('{"id":1,"n":"x"}'); return read(t) });
+row("plain data that lacks a required field", () => { const t: Item = parse('{"id":1}'); return read(t) });
+row("null where the type has none", () => { const t: Item = parse('{"id":1,"n":null}'); return read(t) });

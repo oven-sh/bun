@@ -1,0 +1,1897 @@
+////: attempt-4
+attempt(«1», () => {
+  const [buffer, view] = resizable();
+  const seen: number[] = [];
+  for (const «2» of view.«3»()) {
+    seen.push(«2»);
+    if (seen.length === 2) buffer.resize(«4»);
+  }
+  return seen;
+});
+////: lines-56
+function «1»: number): string {
+    let seen = "";
+    for (let i = 0; i < count; i++) {
+        if (i === when)
+            «2»);
+        bytes[i] = i + 1;
+        seen += bytes[i] + " ";
+    }
+    return seen + bytes.length;
+}
+//// stores-between-arrays-of-every-storage.ts
+function fill(list: any[], from: any[]): void { for (let i = 0; i < from.length; i++) list[i] = from[i]; }
+const texts = ["[1.5,2.5,3.5]", "[1,2,3]", "[{},\"a\",null]", "[1,2.5,\"x\"]", "[]", "[1.5,null,3]"];
+for (const target of texts) {
+  for (const source of texts) {
+    const list = JSON.parse(target) as any[];
+    const from = JSON.parse(source) as any[];
+    fill(list, from);
+    list[list.length + 1] = 7;
+    list[0] = from;
+    console.log(target, source, JSON.stringify(list), list.length);
+  }
+}
+//// stores-under-numbers-that-are-no-index-in-a-validating-build.js
+// -1, 1.5, 4294967295 and their like name properties of an array, no elements. Such a data property is stored, read back, tested for, listed, copied, updated and deleted, as in plain Bun, and a validating build has nothing to find: the array keeps what is proven of its names and of its storage.
+function show(what, f) { let last; for (let round = 0; round < 300; round++) last = f(); console.log(what, JSON.stringify(last)); }
+for (const key of [-1, 1.5, 4294967295, -0.5, 1e21, NaN, Infinity]) {
+  show("literal, read back " + key, () => { const a = [1, 2, 3]; a[key] = 5; return [a[key], a.length]; });
+  show("in " + key, () => { const a = [1, 2, 3]; a[key] = 5; return [key in a, String(key) in a, Object.hasOwn(a, key)]; });
+  show("keys " + key, () => { const a = [1, 2, 3]; a[key] = 5; return [Object.keys(a), Object.getOwnPropertyNames(a).length]; });
+  show("for-in " + key, () => { const a = [1, 2, 3]; a[key] = 5; const seen = []; for (const k in a) seen.push(k); return seen; });
+  show("entries " + key, () => { const a = [1, 2, 3]; a[key] = 5; return Object.entries(a); });
+  show("spread into an object " + key, () => { const a = [1, 2, 3]; a[key] = 5; return { ...a }; });
+  show("assign " + key, () => { const a = [1, 2, 3]; a[key] = 5; return Object.assign({}, a); });
+  show("delete " + key, () => { const a = [1, 2, 3]; a[key] = 5; const gone = delete a[key]; return [gone, a[key], key in a]; });
+  show("update " + key, () => { const a = [1, 2, 3]; a[key] = 5; a[key] += 2; a[key]++; return a[key]; });
+}
+show("constant -1", () => { const a = [1, 2, 3]; a[-1] = 5; return [a[-1], -1 in a, Object.keys(a), a.at(-1)]; });
+show("constant 1.5", () => { const a = [1, 2, 3]; a[1.5] = 5; return [a[1.5], 1.5 in a, Object.keys(a)]; });
+show("a loop that runs below zero", () => { const a = [1, 2, 3]; for (let i = 2; i >= -2; i--) a[i] = i; let sum = 0; for (let i = 2; i >= -2; i--) sum += a[i]; return [sum, a.length, Object.keys(a)]; });
+show("handed to a function", () => { const a = [1, 2, 3]; (function (list, at) { list[at] = 9; })(a, -1); return [a[-1], Object.keys(a)]; });
+show("an accessor under -1", () => { const a = [1, 2, 3]; Object.defineProperty(a, -1, { get() { return "got"; }, configurable: true }); return [a[-1], a.length]; });
+//// subclass-and-proxy-elements.ts
+declare const console: { log(...values: unknown[]): void };
+
+const events: string[] = [];
+function flushEvents(): string {
+    const text = events.join(",");
+    events.length = 0;
+    return text;
+}
+function describe(value: unknown): string {
+    return typeof value === "symbol" ? "symbol" : typeof value + ":" + String(value);
+}
+function report(name: string, run: () => unknown): void {
+    let text: string;
+    try { text = describe(run()); } catch (error) { text = "threw " + (error as Error).name; }
+    console.log(name + " -> " + text + " [" + flushEvents() + "]");
+}
+function read(array: unknown[], key: any): unknown { return array[key]; }
+function store(array: unknown[], key: any, value: unknown): unknown { array[key] = value; return array.length; }
+
+class Stack<T> extends Array<T> {
+    push(...items: T[]): number {
+        events.push("own push");
+        return super.push(...items);
+    }
+    slice(start?: number, end?: number): T[] {
+        events.push("own slice");
+        return super.slice(start, end);
+    }
+}
+Object.defineProperty(Stack.prototype, "4", {
+    get() { events.push("get 4"); return "from getter"; },
+    set(value: unknown) { events.push("set 4 " + String(value)); },
+    configurable: true,
+});
+
+const marker = Symbol("marker");
+const keys: [string, any][] = [
+    ["0", 0], ["1", 1], ["4", 4], ["9", 9], ["-1", -1], ["1.5", 1.5], ["string 1", "1"],
+    ["string name", "name"], ["null", null], ["undefined", undefined], ["symbol", marker], ["length", "length"],
+];
+
+function makeStack(): Stack<unknown> {
+    const stack = new Stack<unknown>();
+    stack.push("a", "b", "c");
+    flushEvents();
+    return stack;
+}
+function makeProxied(): unknown[] {
+    const array: unknown[] = ["a", "b", "c"];
+    const handler: ProxyHandler<any> = {
+        get(target: any, key: string | symbol, receiver: unknown): unknown {
+            events.push("trap get " + String(key));
+            return Reflect.get(target, key, receiver);
+        },
+        set(target: any, key: string | symbol, value: unknown, receiver: unknown): boolean {
+            events.push("trap set " + String(key));
+            return Reflect.set(target, key, value, receiver);
+        },
+    };
+    Object.setPrototypeOf(array, new Proxy(Array.prototype, handler));
+    return array;
+}
+function makePlain(): unknown[] { return ["a", "b", "c"]; }
+
+const makers: [string, () => unknown[]][] = [["stack", makeStack], ["proxied", makeProxied], ["plain", makePlain]];
+for (const [name, make] of makers) {
+    for (const [label, key] of keys) {
+        report(name + " read " + label, () => read(make(), key));
+        if (label !== "length")
+            report(name + " store " + label, () => { const array = make(); const length = store(array, key, "new"); return String(length) + " " + String(read(array, key)); });
+    }
+}
+
+report("own push runs", () => { const stack = makeStack(); return stack.push("d"); });
+report("own slice runs", () => makeStack().slice(1).length);
+report("slice keeps subclass", () => makeStack().slice(1) instanceof Stack);
+report("spread of subclass", () => [...makeStack()].join("|"));
+report("literal from proxied", () => [...makeProxied()].length);
+
+function sumNumbers(values: number[]): number {
+    let sum = 0;
+    for (let index = 0; index < values.length; index++) sum += values[index];
+    return sum;
+}
+const numbers: number[] = [1, 2, 3];
+numbers[1] = 20;
+numbers[3] = 4.5;
+numbers.push(5);
+report("plain numbers sum", () => sumNumbers(numbers));
+report("plain numbers slice", () => numbers.slice(1, 3).join("|"));
+report("plain numbers past the end", () => numbers[100]);
+//// the-array-that-map-makes-of-numbers-is-read-as-numbers.ts
+// `list.map(v => (v + k) | 0)[0]` with a list of which nothing is proven: the array that map makes takes numbers only and is read as a number[], so it is allocated with storage for
+// numbers. It is an ordinary array all the same: holes stay holes, and whatever is stored into it later is found again.
+const hidden = (value: unknown): any => JSON.parse(JSON.stringify(value));
+function firstOfMapped(list: number[], k: number): number {
+  return list.map((v: number): number => (v + k) | 0)[0]!;
+}
+function mapped(list: number[], k: number): number[] {
+  const result = list.map((v: number): number => (v + k) | 0);
+  if (result[0]! > 1000) return [];
+  return result;
+}
+function halves(list: number[]): number {
+  return list.map((v: number): number => v / 2)[1]!;
+}
+function notNumbers(list: number[]): number {
+  return list.map((v: number): number => v / 0 - v / 0)[0]!;
+}
+function describe(list: unknown[]): string {
+  const parts: string[] = [];
+  for (let i = 0; i < list.length; i++) parts.push(i in list ? typeof list[i] + ":" + String(list[i]) : "hole");
+  return list.length + " [" + parts.join(", ") + "] " + JSON.stringify(list);
+}
+const sparse: number[] = [1, 2, 3, 4];
+delete (sparse as any)[1];
+for (let round = 0; round < 3; round++) {
+  const list: number[] = hidden([round + 1, 2, 3]);
+  console.log(firstOfMapped(list, round), firstOfMapped(hidden([]), 1), firstOfMapped(hidden([1.5, 2]), 1), firstOfMapped(sparse, round));
+  console.log(halves(list), halves(hidden([7])), notNumbers(list));
+  const result = mapped(list, 10);
+  console.log(describe(result), describe(mapped(sparse, 1)), describe(mapped(hidden([]), 1)));
+  (result as unknown[]).push("text");
+  result[0] = 0.5;
+  (result as unknown[])[1] = { a: round };
+  result[6] = -0;
+  console.log(describe(result), Object.is(result[6], -0), result.indexOf(0.5), result.includes(NaN));
+  const frozen = Object.freeze(mapped(list, 1));
+  try { (frozen as number[])[0] = 9; console.log("stored"); } catch (error) { console.log((error as Error).name); }
+  console.log(describe(frozen as number[]), mapped(hidden(["a", "b"]), 1).join());
+}
+//// the-largest-and-the-smallest-of-a-spread-array.ts
+// Math.max(...list) and Math.min(...list) are a loop over the elements where the list is an array of int32, of doubles or of boxed elements that are numbers.
+// Anything else among the elements (a hole, undefined, a text, an object with valueOf) and any other way to walk the list is the call as the language describes it.
+const lines: string[] = [];
+function show(v: unknown): string { return Object.is(v, -0) ? "-0" : String(v); }
+function say(label: string, ...values: unknown[]): void { lines.push(label + ": " + values.map(show).join(" ")); }
+
+function largest(list: number[]): number { return Math.max(...list); }
+function smallest(list: number[]): number { return Math.min(...list); }
+function largestOfAny(list: unknown[]): number { return Math.max(...(list as number[])); }
+function smallestOfAny(list: unknown[]): number { return Math.min(...(list as number[])); }
+function both(label: string, list: number[]): void { say(label, largest(list), smallest(list), largestOfAny(list), smallestOfAny(list)); }
+function attempt(label: string, f: () => unknown): void { try { say(label, f()); } catch (error) { say(label, (error as Error).constructor.name); } }
+
+const integers = [3, 1, 4, 1, 5, 9, 2, 6];
+const doubles = [3.5, 1.25, -4.75, 9.125];
+both("int32", integers);
+both("doubles", doubles);
+both("mapped", integers.map((x) => x));
+both("mapped to doubles", integers.map((x) => x / 2));
+both("filtered", integers.filter((x) => x > 2));
+both("parsed", JSON.parse("[7, 2.5, -1, 1e300]") as number[]);
+{
+  const boxed: unknown[] = ["text", 1, 2.5, -7, 2 ** 40];
+  boxed.shift();
+  both("boxed, once with a text", boxed as number[]);
+  const mixed: unknown[] = [{}, 1]; mixed[0] = -0; mixed[1] = 0;
+  both("boxed zeros", mixed as number[]);
+  mixed[0] = 0; mixed[1] = -0;
+  both("boxed zeros the other way", mixed as number[]);
+  mixed[1] = NaN;
+  both("boxed with NaN", mixed as number[]);
+  mixed[0] = Infinity; mixed[1] = -Infinity;
+  both("boxed infinities", mixed as number[]);
+  mixed.length = 0;
+  both("boxed and empty", mixed as number[]);
+}
+both("empty", []);
+both("one", [42]);
+both("zeros", [0, -0]); both("zeros the other way", [-0, 0]); both("double zeros", [-0, 0.5, 0]);
+both("NaN first", [NaN, 1, 2]); both("NaN last", [1.5, 2, NaN]);
+{
+  const holes: unknown[] = [{}, 1, 2, 3]; holes[0] = 5; delete holes[2];
+  say("a hole among boxed elements", largestOfAny(holes), smallestOfAny(holes));
+  const intHoles = [1, 2, 3]; delete intHoles[1];
+  both("a hole among int32", intHoles);
+  const doubleHoles = [1.5, 2.5, 3.5]; delete doubleHoles[0];
+  both("a hole among doubles", doubleHoles);
+  const parent = Object.create(Array.prototype) as number[];
+  parent[2] = 100;
+  Object.setPrototypeOf(holes, parent);
+  say("the hole is filled from the prototype", largestOfAny(holes), smallestOfAny(holes));
+  Object.setPrototypeOf(intHoles, parent); parent[1] = -100;
+  both("and the one among int32", intHoles);
+}
+say("undefined", largestOfAny([1, undefined, 3]), smallestOfAny([1, undefined, 3]));
+say("null", largestOfAny([1, null, 3]), smallestOfAny([1, null, 3]));
+say("booleans", largestOfAny([false, true]), smallestOfAny([false, true]));
+say("texts", largestOfAny(["10", "9", 3]), smallestOfAny(["10", "9", 3]), largestOfAny([1, "x"]));
+{
+  const order: string[] = [];
+  const object = (name: string, value: number) => ({ valueOf() { order.push(name); return value; } });
+  say("objects", largestOfAny([1, object("a", 5), NaN, object("b", 7), 2]), order.join());
+  order.length = 0;
+  const list: unknown[] = [1, 2, 3];
+  list[1] = { valueOf() { order.push("changes"); list[2] = 1000; list.length = 2; return 2; } };
+  say("an element changes the list", largestOfAny(list), order.join(), list.length);
+}
+attempt("a bigint", () => largestOfAny([1, 2n]));
+attempt("a symbol", () => smallestOfAny([1, Symbol("s")]));
+attempt("throws in the middle", () => largestOfAny([1, { valueOf() { throw new RangeError("no"); } }, 2n]));
+{
+  const long: unknown[] = [{}];
+  for (let i = 0; i < 20000; i++) long[i] = (i * 7919) % 20011;
+  say("long and boxed", largestOfAny(long), smallestOfAny(long));
+  long[19999] = 0.5 - 1;
+  say("long with a double at the end", largestOfAny(long), smallestOfAny(long));
+}
+{
+  class List extends Array<number> {}
+  const list = List.from([4, 8, 2]);
+  both("a subclass", list);
+  both("frozen", Object.freeze([6, 7, 5]) as number[]);
+  const own = [1, 2, 3];
+  (own as unknown as { [Symbol.iterator]: () => Iterator<number> })[Symbol.iterator] = function* () { yield 10; yield 20; };
+  both("its own iterator", own);
+}
+let total = 0;
+const boxedAgain = integers.map((x) => x * 1.5);
+for (let round = 0; round < 3000; round++) total += largest(boxedAgain) + smallest(boxedAgain) + largest(integers) + smallest(doubles);
+say("often", total);
+console.log(lines.join("\n"));
+//// the-library-hands-doubles-to-callbacks-as-they-are.ts
+// The loops of Array.prototype over storage of doubles: what the callback is handed (NaN, -0, infinities, the smallest and the largest numbers, integers kept as doubles), holes between them,
+// and the arrays that filter, map, flatMap, slice and concat make of them, from none to many elements.
+const launder = new Function("v", process.env.LAUNDER_TEXT ?? "return v") as <V>(v: V) => V;
+const text = (v: unknown): string => (Object.is(v, -0) ? "-0" : Array.isArray(v) ? "[" + Array.from(v, (each, i) => (i in v ? text(each) : "hole")).join(",") + "]" : typeof v === "string" ? JSON.stringify(v) : String(v));
+const show = (label: string, ...values: unknown[]) => console.log(label, values.map(text).join(" | "));
+const lists: [string, () => number[]][] = [
+  ["odd numbers", () => [0.5, NaN, -0, Infinity, -Infinity, 5e-324, 1.7976931348623157e308, 4294967296.5, -1.5]],
+  ["integers beside a fraction", () => [1, 2, 0.5, 3, 2147483648, -2147483649, 9007199254740991]],
+  ["holes", () => [0.5, , NaN, , -0, ,] as number[]],
+  ["parsed", () => JSON.parse("[0.5,1,-0,1e308,2.5]") as number[]],
+  ["made by map", () => [1, 2, 3].map((v) => v / 2)],
+  ["one", () => [0.25]],
+  ["none, once doubles", () => { const list = [0.5]; list.length = 0; return list; }],
+];
+for (const [label, make] of lists) {
+  const handed: unknown[] = [];
+  const note = launder((v: unknown, i: number) => { handed.push(i, v); return false; });
+  make().some(note); show(label + " some", handed);
+  handed.length = 0; make().forEach(note); show(label + " forEach", handed);
+  handed.length = 0; make().find(note); show(label + " find", handed);
+  handed.length = 0; make().findLast(note); show(label + " findLast", handed);
+  show(label + " map", make().map(launder((v: number) => v)), make().map(launder((v: number) => -v)), make().map(launder((v: number) => String(v))));
+  show(label + " filter", make().filter(launder(() => true)), make().filter(launder((v: number) => v !== v)), make().filter(launder((v: number) => Object.is(v, -0))), make().filter(launder(() => false)));
+  show(label + " reduce", make().reduce(launder((all: unknown[], v: number, i: number) => (all.push(i, v), all)), [] as unknown[]));
+  show(label + " reduceRight", make().reduceRight(launder((all: unknown[], v: number, i: number) => (all.push(i, v), all)), [] as unknown[]));
+  show(label + " flatMap", make().flatMap(launder((v: number) => [v, v])));
+  show(label + " every", make().every(launder((v: number) => typeof v === "number")), make().findIndex(launder((v: number) => v !== v)), make().findLastIndex(launder((v: number) => Object.is(v, -0))));
+}
+for (let kept = 0; kept <= 20; kept++) {
+  const source = Array.from({ length: 24 }, (_, i) => i + 0.5);
+  const result = launder(source).filter(launder((v: number) => v < kept));
+  result.push(-1);
+  show("kept " + kept, result.length, result[0], result[result.length - 2], result[result.length - 1], Object.keys(result).length);
+}
+const grown = launder([0.5, 1.5]).filter(launder(() => false));
+grown[3] = 1; show("a store beyond the end of an empty result", grown, grown.length);
+const named = launder([0.5]).filter(launder(() => false)) as number[] & { note?: string };
+named.note = "kept"; named.push(1, 2, 3, 4, 5, 6, 7); show("names and elements on an empty result", named, named.note);
+class Kept extends Array<number> {}
+show("a derived class", Kept.from([0.5, 1.5]).filter(launder((v: number) => v > 1)) instanceof Kept, Kept.from([0.5, 1.5]).filter(launder(() => false)).length);
+//// the-loops-of-the-library-count-in-integers.ts
+// some | every | forEach | map | filter | find | findIndex | findLast | reduce | indexOf over arrays of every kind of storage and over objects that only look like arrays:
+// the index that the callback gets, what happens when the callback changes the array under the loop, and lengths up to 2 ** 53 - 1, where the counter is no index any more.
+const launder = new Function("v", process.env.LAUNDER_TEXT ?? "return v") as <V>(v: V) => V;
+const show = (label: string, ...values: unknown[]) => console.log(label, values.map((v) => (Object.is(v, -0) ? "-0" : typeof v === "object" ? JSON.stringify(v) : String(v))).join(" | "));
+type Test = (value: unknown, index: number, list: unknown) => unknown;
+
+function all(label: string, make: () => unknown[], test: Test) {
+  const seen: string[] = [];
+  const spy: Test = (value, index, list) => { seen.push(typeof index + ":" + index); return test(value, index, list); };
+  show(label + " some", make().some(launder(spy)), seen.join(","));
+  seen.length = 0; show(label + " every", make().every(launder(spy)), seen.join(","));
+  seen.length = 0; make().forEach(launder(spy)); show(label + " forEach", seen.join(","));
+  seen.length = 0; show(label + " map", make().map(launder(spy)), seen.join(","));
+  seen.length = 0; show(label + " filter", make().filter(launder(spy)), seen.join(","));
+  seen.length = 0; show(label + " find", make().find(launder(spy)), seen.join(","));
+  seen.length = 0; show(label + " findIndex", make().findIndex(launder(spy)), seen.join(","));
+  seen.length = 0; show(label + " findLast", make().findLast(launder(spy)), seen.join(","));
+  seen.length = 0; show(label + " reduce", make().reduce((sum: number, value, index) => { seen.push(String(index)); return sum + index; }, 0), seen.join(","));
+}
+
+all("int32", () => [1, 2, 3, 4], (v) => v === 3);
+all("doubles", () => [0.5, 1.5, 2.5], (v) => (v as number) > 2);
+all("boxed", () => ["a", {}, 3, null], (v) => v === null);
+all("holes", () => [1, , 3, , 5], (v) => v === 5);
+all("holes alone", () => new Array(3), () => true);
+all("empty", () => [], () => true);
+all("from unseen code", () => launder(JSON.parse("[1,2,3]")), (v) => v === 2);
+all("grows under the loop", () => [1, 2, 3], (v, i, list) => { (list as unknown[]).push(i); return false; });
+all("shrinks under the loop", () => [1, 2, 3, 4, 5], (v, i, list) => { (list as unknown[]).length = 3; return false; });
+all("emptied under the loop", () => [1, 2, 3], (v, i, list) => { (list as unknown[]).length = 0; return false; });
+all("turns to doubles under the loop", () => [1, 2, 3], (v, i, list) => { (list as unknown[])[2] = 0.5; return false; });
+all("turns to boxed under the loop", () => [1, 2, 3], (v, i, list) => { (list as unknown[])[2] = "text"; return false; });
+all("gets a hole under the loop", () => [1, 2, 3], (v, i, list) => { delete (list as unknown[])[2]; return false; });
+all("becomes sparse under the loop", () => [1, 2, 3], (v, i, list) => { (list as unknown[])[100000] = 1; (list as unknown[]).length = 3; return false; });
+all("gets an accessor under the loop", () => [1, 2, 3], (v, i, list) => { if (!i) Object.defineProperty(list, "2", { get() { return "got"; }, configurable: true }); return v === "got"; });
+all("gets another prototype under the loop", () => [1, , 3], (v, i, list) => { Object.setPrototypeOf(list, { 1: "inherited", __proto__: Array.prototype }); return v === "inherited"; });
+
+const methods = ["some", "every", "forEach", "map", "filter", "find", "findIndex", "indexOf", "includes", "lastIndexOf"] as const;
+function onObject(label: string, make: () => object, limit: number) {
+  for (const name of methods) {
+    const seen: number[] = [];
+    let result: unknown;
+    try {
+      const method = (Array.prototype as any)[name] as Function;
+      result = name === "indexOf" || name === "includes" || name === "lastIndexOf"
+        ? method.call(make(), "wanted")
+        : method.call(make(), launder((value: unknown, index: number) => { seen.push(index); if (seen.length >= limit) { if (name === "every") return false; if (name === "forEach" || name === "map" || name === "filter") throw new Error("enough"); return true; } return name === "every"; }));
+    } catch (error) { result = (error as Error).constructor.name + ": " + (error as Error).message; }
+    show(label + " " + name, result, seen.join(","));
+  }
+}
+onObject("three", () => ({ length: 3, 0: "a", 1: "wanted", 2: "c" }), 9);
+onObject("length is text", () => ({ length: "2", 0: "a", 1: "wanted" }), 9);
+onObject("length is a fraction", () => ({ length: 2.9, 0: "a", 1: "b", 2: "wanted" }), 9);
+onObject("length is negative", () => ({ length: -5, 0: "wanted" }), 9);
+onObject("length is NaN", () => ({ length: NaN, 0: "wanted" }), 9);
+onObject("text", () => new String("abc"), 9);
+onObject("typed array", () => new Uint8Array([1, 2, 3]), 9);
+function early(label: string, length: number, keys: number[]) {
+  const object: Record<string, unknown> = { length };
+  for (const key of keys) object[key] = "at " + key;
+  const seen: string[] = [];
+  show(label, Array.prototype.find.call(launder(object), (value: unknown, index: number) => { seen.push(index + "=" + value); return seen.length === 3; }), seen.join(","));
+  seen.length = 0;
+  show(label + " from the end", Array.prototype.findLast.call(launder(object), (value: unknown, index: number) => { seen.push(index + "=" + value); return seen.length === 3; }), seen.join(","));
+}
+early("2 ** 32 - 1", 4294967295, [0, 4294967294]);
+early("2 ** 32", 4294967296, [1, 4294967295]);
+early("2 ** 32 + 2", 4294967298, [2, 4294967297, 4294967296]);
+early("2 ** 53 - 1", 9007199254740991, [0, 9007199254740990, 9007199254740989]);
+early("beyond 2 ** 53", 9007199254740993, [9007199254740990]);
+early("Infinity", Infinity, [9007199254740990, 9007199254740988]);
+//// the-raw-strings-of-a-tagged-template-are-mapped.js
+function raw(strings, ...values) {
+  return strings.raw.map((part, index) => part + (values[index] ?? "")).join("");
+}
+console.log(raw`x\n${1}y`);
+//// the-rest-of-a-destructured-list-is-asked-for-its-length.ts
+// `const [first, ...rest] = parts` reads `parts` behind a test of its storage and appends to `rest`, a new array, in the same loop. A list of one element and a list of two go through it.
+const MANY = "many";
+function head(parts: string[]): string {
+  const [first, ...rest] = parts;
+  if (first !== undefined && rest.length === 0) return first;
+  return MANY;
+}
+console.log(head(JSON.parse(process.argv.length > 5 ? "[]" : "[\"a\"]")), head(JSON.parse("[\"a\",\"b\"]")));
+//// the-strings-of-a-tagged-template-are-copied-by-concat.js
+const tag = (strings, ...rest) => strings;
+const copy = tag`a${1}b`.concat();
+console.log(typeof copy[0], copy[0], copy.length);
+//// the-strings-of-a-tagged-template-are-filtered-and-joined.js
+const tag = (strings, ...rest) => strings.filter(part => part.length > 0).join("+");
+console.log(tag`a${1}${2}b`);
+//// the-strings-of-a-tagged-template-are-mapped-and-joined.js
+const tag = (strings, ...rest) => strings;
+console.log(tag`a${1}b`.map(part => part + part).join());
+//// the-strings-of-a-tagged-template-are-reduced.js
+function dedent(strings, ...values) {
+  return strings.reduce((text, part, index) => text + part + (index < values.length ? values[index] : ""), "");
+}
+console.log(dedent`one ${1} two ${2} three`);
+//// the-strings-of-a-tagged-template-are-sliced.js
+const tag = (strings, ...rest) => strings;
+const part = tag`a${1}b`.slice(1);
+console.log(typeof part[0], part[0] + "!");
+//// the-strings-of-a-tagged-template-are-spread.js
+const tag = (strings, ...rest) => [...strings];
+const list = tag`a${1}b`;
+console.log(typeof list[0], list.map(part => part.length).join());
+//// the-strings-of-a-tagged-template-are-walked-by-for-each.js
+function build(strings, ...values) {
+  let text = "";
+  strings.forEach((part, index) => { text += part.toUpperCase() + (values[index] ?? ""); });
+  return text;
+}
+console.log(build`ab${1}cd${2}ef`);
+//// to-locale-string-converts-locales.ts
+// Array.prototype.toLocaleString hands its two arguments to each element's toLocaleString, which converts what they contain to strings: a toString method of an object in the list of locales, and one of an object in the options, are both called.
+const trace: string[] = [];
+const locale = { toString() { trace.push("locale"); return "en-US"; } };
+const style = { toString() { trace.push("style"); return "percent"; } };
+function format(list: number[]): string { return list.toLocaleString([locale] as any, { style } as any); }
+console.log(format([1, 2]), trace.join());
+export {};
+//// typed-array-accesses-outside.ts
+// Typed code reads and stores elements of typed arrays outside of them: at the length and past it, at -1, at fractions, NaN, 2 ** 32 and Infinity; on an empty view, a detached buffer, a view that tracks the length of a resizable buffer, a view of fixed length that a resizable buffer no longer covers, a growable shared buffer, a subclass, a view whose prototype has properties named like those keys. A read outside gives undefined whatever the prototypes hold, a store outside converts its value and does nothing else. In loops a callee shrinks, grows or transfers the buffer, or looks at the buffer of a small view, which moves its elements. Every kind of element takes part: what Uint8ClampedArray rounds, NaN in Float64Array with any bits, what BigInt64Array wraps and refuses.
+// STATISTIC: ElementPresenceTestsPlaced >= 10
+////= show-2
+
+function listView(view: ArrayLike<unknown>): string {
+  const shown = Math.min(view.length, 12);
+  let text = "[";
+  for (let i = 0; i < shown; i++) text += (i > 0 ? " " : "") + show(view[i]);
+  if (view.length > shown) {
+    let sum = 0;
+    for (let i = shown; i < view.length; i++) sum = (sum * 31 + Number(view[i])) % 1000003;
+    text += " .. " + view.length + " long, " + sum;
+  }
+  text += "]";
+  for (const key of Object.keys(view)) if (String(Number(key) >>> 0) !== key) text += " " + key + "=" + show((view as unknown as Record<string, unknown>)[key]);
+  return text;
+}
+
+let events = "";
+////= attempt
+
+// "NaN ; NaN ; NaN ; 1" becomes "NaN*3 ; 1".
+////= inRuns
+
+////= twice
+
+// One read of a byte, one use.
+function byteAt(b: Uint8Array, k: number): number { return b[k]; }
+function bytePlusOne(b: Uint8Array, k: number): number { return b[k] + 1; }
+function byteTimesTwo(b: Uint8Array, k: number): number { return b[k] * 2; }
+function byteAsInteger(b: Uint8Array, k: number): number { return b[k] | 0; }
+function byteShifted(b: Uint8Array, k: number): number { return b[k] << 4; }
+function byteBesideText(b: Uint8Array, k: number): string { return "<" + b[k] + ">"; }
+function byteIsSmall(b: Uint8Array, k: number): boolean { return b[k] < 3; }
+function byteIsNotSmall(b: Uint8Array, k: number): boolean { return !(b[k] < 3); }
+function byteEquals(b: Uint8Array, k: number): boolean { return b[k] === 2; }
+function byteIsUndefined(b: Uint8Array, k: number): boolean { return b[k] === undefined; }
+function byteOrDefault(b: Uint8Array, k: number): number { return b[k] ?? -7; }
+function byteOrOther(b: Uint8Array, k: number): number { return b[k] || -8; }
+function byteIsTruthy(b: Uint8Array, k: number): string { return b[k] ? "yes" : "no"; }
+function byteTypeName(b: Uint8Array, k: number): string { return typeof b[k]; }
+function byteHandedOn(b: Uint8Array, k: number): string { return show(b[k]); }
+function byteChased(b: Uint8Array, k: number): number { k = b[k]; k = b[k]; k = b[k]; return k; }
+function byteIsThere(b: Uint8Array, k: number): boolean { return k in b; }
+function twoBytes(b: Uint8Array, k: number): number { return b[k] + b[k + 1]; }
+function fourBytes(b: Uint8Array, k: number): number { return b[k] | (b[k + 1] << 8) | (b[k + 2] << 16) | (b[k + 3] << 24); }
+function byteBelowLength(b: Uint8Array, k: number): number { return k < b.length ? b[k] : -1; }
+function byteInside(b: Uint8Array, k: number): number { return k >= 0 && k < b.length ? b[k] + 1 : -1; }
+function byteIntoArray(b: Uint8Array, k: number): string { const kept: number[] = [0.5]; kept[0] = b[k]; kept.push(b[k]); return listView(kept); }
+
+const byteUses: [string, (b: Uint8Array, k: number) => unknown][] = [
+  ["returned", byteAt], ["+ 1", bytePlusOne], ["* 2", byteTimesTwo], ["| 0", byteAsInteger], ["<< 4", byteShifted], ["beside a text", byteBesideText],
+  ["< 3", byteIsSmall], ["!(< 3)", byteIsNotSmall], ["=== 2", byteEquals], ["=== undefined", byteIsUndefined], ["?? -7", byteOrDefault], ["|| -8", byteOrOther], ["? :", byteIsTruthy], ["typeof", byteTypeName],
+  ["handed on", byteHandedOn], ["chased", byteChased], ["in", byteIsThere], ["two bytes", twoBytes], ["four bytes", fourBytes], ["below the length, then read", byteBelowLength], ["inside, then read", byteInside], ["into an array", byteIntoArray],
+];
+
+// One store of a byte.
+function putByte(b: Uint8Array, k: number, v: number): void { b[k] = v; }
+function putByteForItsValue(b: Uint8Array, k: number, v: number): number { return (b[k] = v); }
+function bumpByte(b: Uint8Array, k: number, v: number): number { return v + b[k]++; }
+function addToByte(b: Uint8Array, k: number, v: number): number { return (b[k] += v); }
+function putByteThenRead(b: Uint8Array, k: number, v: number): number { b[k] = v; return b[k]; }
+
+const byteStores: [string, (b: Uint8Array, k: number, v: number) => unknown][] = [
+  ["stored", putByte], ["stored for its value", putByteForItsValue], ["++", bumpByte], ["+=", addToByte], ["stored, then read", putByteThenRead],
+];
+
+function fillUp<V extends Uint8Array>(view: V): V {
+  const bytes: Uint8Array = view;
+  for (let i = 0; i < bytes.length; i++) bytes[i] = i < 3 ? i + 1 : i + 6;
+  return view;
+}
+
+function resizable(byteLength: number): ArrayBuffer {
+  return new ArrayBuffer(byteLength, { maxByteLength: 16 });
+}
+
+function changed<V>(view: V, change: (view: V) => void): V {
+  change(view);
+  return view;
+}
+
+class Bytes extends Uint8Array {}
+class NamedBytes extends Uint8Array {
+  name = "named";
+}
+
+const oddNames = { "-1": "minus one", "1.5": "one and a half", "-0": "minus zero", NaN: "not a number", Infinity: "endless", "-Infinity": "endless too", "4294967296": "large", "4294967295": "nearly as large", "1e+21": "huge", 4: "four", 9: "nine", "1.0": "one point zero", "01": "zero one" };
+
+const byteViews: [string, () => Uint8Array][] = [
+  ["small", () => fillUp(new Uint8Array(4))],
+  ["from a list", () => new Uint8Array([1, 2, 3, 9])],
+  ["large", () => fillUp(new Uint8Array(1200))],
+  ["small, its buffer seen", () => changed(fillUp(new Uint8Array(4)), view => void view.buffer)],
+  ["over a buffer", () => fillUp(new Uint8Array(new ArrayBuffer(4)))],
+  ["part of a buffer", () => fillUp(new Uint8Array(new ArrayBuffer(8), 2, 4))],
+  ["a subarray", () => fillUp(new Uint8Array(8).fill(99).subarray(2, 6))],
+  ["empty", () => new Uint8Array(0)],
+  ["an empty part of a buffer", () => new Uint8Array(new ArrayBuffer(8), 8)],
+  ["detached", () => changed(fillUp(new Uint8Array(4)), view => void (view.buffer as ArrayBuffer).transfer())],
+  ["tracking a resizable buffer", () => fillUp(new Uint8Array(resizable(4)))],
+  ["tracking a resizable buffer from 2", () => fillUp(new Uint8Array(resizable(6), 2))],
+  ["4 bytes of a resizable buffer", () => fillUp(new Uint8Array(resizable(8), 2, 4))],
+  ["tracking a buffer that shrank", () => changed(fillUp(new Uint8Array(resizable(8))), view => (view.buffer as ArrayBuffer).resize(4))],
+  ["tracking a buffer that grew", () => changed(fillUp(new Uint8Array(resizable(2))), view => (view.buffer as ArrayBuffer).resize(4))],
+  ["tracking from 2 a buffer that shrank to 1", () => changed(fillUp(new Uint8Array(resizable(6), 2)), view => (view.buffer as ArrayBuffer).resize(1))],
+  ["4 bytes of a buffer that shrank under them", () => changed(fillUp(new Uint8Array(resizable(8), 2, 4)), view => (view.buffer as ArrayBuffer).resize(5))],
+  ["4 bytes of a buffer that shrank and grew again", () => changed(fillUp(new Uint8Array(resizable(8), 2, 4)), view => ((view.buffer as ArrayBuffer).resize(3), (view.buffer as ArrayBuffer).resize(8)))],
+  ["over a shared buffer", () => fillUp(new Uint8Array(new SharedArrayBuffer(4)))],
+  ["tracking a growable shared buffer", () => fillUp(new Uint8Array(new SharedArrayBuffer(4, { maxByteLength: 16 })))],
+  ["a subclass", () => fillUp(new Bytes(4))],
+  ["a subclass with a field", () => fillUp(new NamedBytes(4))],
+  ["odd names on another prototype", () => changed(fillUp(new Uint8Array(4)), view => Object.setPrototypeOf(view, { __proto__: Uint8Array.prototype, ...oddNames }))],
+  ["an own name", () => changed(fillUp(new Uint8Array(4)), view => ((view as unknown as Record<string, unknown>).label = "own"))],
+  ["a proxy", () => new Proxy(fillUp(new Uint8Array(4)), {})],
+];
+
+const keys = [0, 1, 3, 4, 5, 9, -1, 0.5, 1.5, -0, NaN, 4294967296, 4294967295, 2147483648, -2147483648, Infinity, -Infinity, 1e21];
+const keysToStoreAt = [0, 3, 4, 9, -1, 1.5, -0, NaN, 4294967296, Infinity];
+console.log("keys: " + keys.map(show).join(" "));
+console.log("keys to store at: " + keysToStoreAt.map(show).join(" "));
+
+for (const [name, make] of byteViews) {
+  for (const [use, run] of byteUses) {
+    const view = make();
+    console.log(name + " | " + use + ": " + inRuns(keys.map(k => twice(() => run(view, k)))));
+  }
+  for (const [use, run] of byteStores) {
+    console.log(name + " | " + use + ": " + inRuns(keysToStoreAt.map(k => {
+      const view = make();
+      return attempt(() => show(run(view, k, 300))) + " " + attempt(() => listView(view));
+    })));
+  }
+}
+
+// Keys that are texts, handed to the same functions.
+const textKeys = ["0", "1", "4", "-1", "-0", "1.5", "1.0", "01", "1e0", "NaN", "Infinity", "4294967296", " 1", "", "length", "label"];
+console.log("text keys: " + textKeys.map(show).join(" "));
+for (const name of ["small", "empty", "detached", "tracking a resizable buffer", "odd names on another prototype", "an own name"]) {
+  const make = byteViews.find(entry => entry[0] === name)![1];
+  const view = make();
+  console.log(name + " | returned: " + inRuns(textKeys.map(k => twice(() => byteAt(view, k as unknown as number)))));
+  console.log(name + " | in: " + inRuns(textKeys.map(k => twice(() => byteIsThere(view, k as unknown as number)))));
+  console.log(name + " | stored: " + textKeys.filter(k => k !== "length").map(k => {
+    const stored = make();
+    return attempt(() => show(putByteForItsValue(stored, k as unknown as number, 77))) + " " + attempt(() => listView(stored));
+  }).join(" ; "));
+}
+
+// A store converts its value, once, wherever it goes.
+const counted = { valueOf() { events += " valueOf"; return 65; } } as unknown as number;
+console.log("an object stored: " + [0, 4, -1, 1.5, NaN].map(k => { const view = fillUp(new Uint8Array(4)); return attempt(() => typeof putByteForItsValue(view, k, counted)) + " " + listView(view); }).join(" ; "));
+console.log("an object stored into a detached view: " + [0, 4].map(k => { const view = fillUp(new Uint8Array(4)); (view.buffer as ArrayBuffer).transfer(); return attempt(() => typeof putByteForItsValue(view, k, counted)) + " " + listView(view); }).join(" ; "));
+console.log("a value that detaches the view: " + [0, 3].map(k => {
+  const view = fillUp(new Uint8Array(4));
+  return attempt(() => typeof putByteForItsValue(view, k, { valueOf() { (view.buffer as ArrayBuffer).transfer(); return 65; } } as unknown as number)) + " " + listView(view);
+}).join(" ; "));
+console.log("a value that shrinks the buffer: " + [0, 3].map(k => {
+  const view = fillUp(new Uint8Array(resizable(4)));
+  return attempt(() => typeof putByteForItsValue(view, k, { valueOf() { (view.buffer as ArrayBuffer).resize(2); return 65; } } as unknown as number)) + " " + listView(view);
+}).join(" ; "));
+console.log("other values stored: " + [undefined, null, true, "12", "x", 5n, Symbol.iterator].map(v => { const view = fillUp(new Uint8Array(4)); return attempt(() => show(putByteThenRead(view, 1, v as unknown as number))) + " " + attempt(() => show(putByteThenRead(view, 4, v as unknown as number))) + " " + listView(view); }).join(" ; "));
+
+// Loops that run past the elements.
+function sumWithin(b: Uint8Array): string { let total = 0, bits = 0; for (let i = 0; i < b.length; i++) { total += b[i]; bits = (bits << 1) ^ b[i]; } return show(total) + " " + bits; }
+function sumOnePast(b: Uint8Array): string { let total = 0, bits = 0; for (let i = 0; i <= b.length; i++) { total += b[i]; bits = (bits << 1) ^ b[i]; } return show(total) + " " + bits; }
+function sumFromMinusOne(b: Uint8Array): string { let total = 0, bits = 0; for (let i = -1; i < b.length; i++) { total += b[i]; bits = (bits << 1) ^ b[i]; } return show(total) + " " + bits; }
+function sumOfSix(b: Uint8Array): string { let total = 0, bits = 0; for (let i = 0; i < 6; i++) { total += b[i]; bits = (bits << 1) ^ b[i]; } return show(total) + " " + bits; }
+function sumByHalves(b: Uint8Array): string { let total = 0, bits = 0; for (let i = 0; i < b.length; i += 0.5) { total += b[i]; bits = (bits << 1) ^ b[i]; } return show(total) + " " + bits; }
+function sumBackwards(b: Uint8Array): string { let total = 0, bits = 0; for (let i = b.length; i >= -1; i--) { total += b[i]; bits = (bits << 1) ^ b[i]; } return show(total) + " " + bits; }
+function textOnePast(b: Uint8Array): string { let text = ""; for (let i = Math.max(0, b.length - 3); i <= b.length; i++) text += b[i] + ","; return text; }
+function countAbsentOfSix(b: Uint8Array): number { let absent = 0; for (let i = 0; i < 6; i++) if (b[i] === undefined) absent++; return absent; }
+function sumOfSixWithDefaults(b: Uint8Array): number { let total = 0; for (let i = 0; i < 6; i++) total += b[i] ?? 100; return total; }
+function iterated(b: Uint8Array): string { let total = 0, count = 0; for (const byte of b) { total += byte; count++; } return total + " " + count; }
+function fillSix(b: Uint8Array): string { for (let i = 0; i < 6; i++) b[i] = i + 100; return listView(b); }
+function fillFromMinusTwo(b: Uint8Array): string { for (let i = -2; i <= b.length; i++) b[i] = i + 100; return listView(b); }
+function fillByHalves(b: Uint8Array): string { for (let i = 0; i < b.length; i += 0.5) b[i] = i * 2 + 100; return listView(b); }
+function moveDown(b: Uint8Array): string { for (let i = 0; i < b.length; i++) b[i] = b[i + 1]; return listView(b); }
+function moveUp(b: Uint8Array): string { for (let i = b.length; i > 0; i--) b[i] = b[i - 1]; return listView(b); }
+function bumpSix(b: Uint8Array): string { for (let i = 0; i < 6; i++) b[i]++; return listView(b); }
+
+const byteLoops: [string, (b: Uint8Array) => unknown][] = [
+  ["sum", sumWithin], ["sum one past", sumOnePast], ["sum from -1", sumFromMinusOne], ["sum of six", sumOfSix], ["sum by halves", sumByHalves], ["sum backwards", sumBackwards], ["text one past", textOnePast],
+  ["absent of six", countAbsentOfSix], ["sum of six with defaults", sumOfSixWithDefaults], ["iterated", iterated],
+  ["fill six", fillSix], ["fill from -2", fillFromMinusTwo], ["fill by halves", fillByHalves], ["move down", moveDown], ["move up", moveUp], ["bump six", bumpSix],
+];
+for (const [name, make] of byteViews) {
+  for (const [use, run] of byteLoops) {
+    const view = make();
+    console.log(name + " | " + use + ": " + twice(() => run(view)));
+  }
+}
+
+// Loops in which a callee changes the view.
+type Act = (b: Uint8Array) => void;
+
+function sumAround(b: Uint8Array, when: number, act: Act): string {
+  let total = 0, bits = 0;
+  for (let i = 0; i < b.length; i++) {
+    if (i === when) act(b);
+    total += b[i];
+    bits = (bits << 1) ^ b[i];
+  }
+  return show(total) + " " + bits;
+}
+
+function sumUnderAnEarlierLength(b: Uint8Array, when: number, act: Act): string {
+  let total = 0, bits = 0;
+  for (let i = 0, length = b.length; i < length; i++) {
+    if (i === when) act(b);
+    total += b[i];
+    bits = (bits << 1) ^ b[i];
+  }
+  return show(total) + " " + bits;
+}
+
+function textUnderAnEarlierLength(b: Uint8Array, when: number, act: Act): string {
+  let text = "";
+  for (let i = 0, length = Math.min(b.length, 10); i < length; i++) {
+    if (i === when) act(b);
+    text += b[i] + ",";
+  }
+  return text;
+}
+
+function fillAround(b: Uint8Array, when: number, act: Act): string {
+  for (let i = 0; i < b.length; i++) {
+    if (i === when) act(b);
+    b[i] = i + 100;
+  }
+  return String(b.length);
+}
+
+function fillUnderAnEarlierLength(b: Uint8Array, when: number, act: Act): string {
+  for (let i = 0, length = b.length; i < length; i++) {
+    if (i === when) act(b);
+    b[i] = i + 100;
+  }
+  return String(b.length);
+}
+
+function doubleUnderAnEarlierLength(b: Uint8Array, when: number, act: Act): string {
+  for (let i = 0, length = b.length; i < length; i++) {
+    if (i === when) act(b);
+    b[i] = b[i] * 2;
+  }
+  return String(b.length);
+}
+
+function iterateAround(b: Uint8Array, when: number, act: Act): string {
+  let total = 0, i = 0;
+  for (const byte of b) {
+    if (i++ === when) act(b);
+    total += byte;
+  }
+  return total + " " + i;
+}
+
+function readCallRead(b: Uint8Array, when: number, act: Act): string {
+  const before = b[when];
+  act(b);
+  return show(before) + " " + show(b[when]) + " " + show(b[when] + 1);
+}
+
+function storeCallStore(b: Uint8Array, when: number, act: Act): string {
+  b[when] = 200;
+  act(b);
+  b[when + 1] = 201;
+  return show(b[when]) + " " + show(b[when + 1]);
+}
+
+const loopsAround: [string, (b: Uint8Array, when: number, act: Act) => string][] = [
+  ["sum", sumAround], ["sum under an earlier length", sumUnderAnEarlierLength], ["text under an earlier length", textUnderAnEarlierLength],
+  ["fill", fillAround], ["fill under an earlier length", fillUnderAnEarlierLength], ["double under an earlier length", doubleUnderAnEarlierLength],
+  ["iterate", iterateAround], ["read, call, read", readCallRead], ["store, call, store", storeCallStore],
+];
+
+let otherView: Uint8Array = new Uint8Array(0);
+const resizes: [string, Act][] = [
+  ["shrinks to 5", b => (b.buffer as ArrayBuffer).resize(5)],
+  ["shrinks to 3", b => (b.buffer as ArrayBuffer).resize(3)],
+  ["shrinks to 0", b => (b.buffer as ArrayBuffer).resize(0)],
+  ["grows to 12", b => (b.buffer as ArrayBuffer).resize(12)],
+  ["shrinks to 3 and grows to 12", b => ((b.buffer as ArrayBuffer).resize(3), (b.buffer as ArrayBuffer).resize(12))],
+];
+const acts: [string, Act][] = [
+  ["nothing", () => {}],
+  ["throws", () => { throw new RangeError("thrown by the callee"); }],
+  ["is transferred", b => void (b.buffer as ArrayBuffer).transfer()],
+  ["has its buffer seen", b => void b.buffer],
+  ["gets a second view", b => { otherView = new Uint8Array(b.buffer); otherView[b.byteOffset + 6] = 77; }],
+  ["is filled", b => void b.fill(9)],
+  ["gets a name", b => { (b as unknown as Record<string, number>).label = 1; }],
+  ["gets another prototype", b => void Object.setPrototypeOf(b, { __proto__: Uint8Array.prototype, 20: "up", "-1": "down" })],
+];
+const viewsOfFixedBuffers: [string, () => Uint8Array][] = [
+  ["small", () => fillUp(new Uint8Array(8))],
+  ["large", () => fillUp(new Uint8Array(1200))],
+  ["over a buffer", () => fillUp(new Uint8Array(new ArrayBuffer(8)))],
+  ["a subclass", () => fillUp(new Bytes(8))],
+];
+const viewsOfResizableBuffers: [string, () => Uint8Array][] = [
+  ["tracking a resizable buffer", () => fillUp(new Uint8Array(resizable(8)))],
+  ["tracking a resizable buffer from 2", () => fillUp(new Uint8Array(resizable(10), 2))],
+  ["6 bytes of a resizable buffer from 2", () => fillUp(new Uint8Array(resizable(10), 2, 6))],
+  ["a subclass that tracks a resizable buffer", () => fillUp(new Bytes(resizable(8)))],
+];
+for (const [loop, run] of loopsAround) {
+  for (const [what, act] of [...acts, ...resizes]) {
+    for (const [name, make] of resizes.some(entry => entry[1] === act) ? viewsOfResizableBuffers : [...viewsOfFixedBuffers, ...viewsOfResizableBuffers]) {
+      console.log(loop + ", " + what + ", " + name + ": " + [0, 2, 6].map(when => {
+        const view = make();
+        otherView = new Uint8Array(0);
+        return attempt(() => run(view, when, act)) + " " + listView(view) + (otherView.length > 0 ? " " + listView(otherView) : "");
+      }).join(" ; "));
+    }
+  }
+}
+
+// The other kinds of elements.
+function readInt8(v: Int8Array, k: number): number { return v[k]; }
+function plusInt8(v: Int8Array, k: number): number { return v[k] + 1; }
+function writeInt8(v: Int8Array, k: number, x: number): number { v[k] = x; return v[k]; }
+function sumInt8(v: Int8Array, from: number, to: number): string { let total = 0, bits = 0; for (let i = from; i < to; i++) { total += v[i]; bits = (bits << 1) ^ v[i]; } return show(total) + " " + bits; }
+function readClamped(v: Uint8ClampedArray, k: number): number { return v[k]; }
+function plusClamped(v: Uint8ClampedArray, k: number): number { return v[k] + 1; }
+function writeClamped(v: Uint8ClampedArray, k: number, x: number): number { v[k] = x; return v[k]; }
+function sumClamped(v: Uint8ClampedArray, from: number, to: number): string { let total = 0, bits = 0; for (let i = from; i < to; i++) { total += v[i]; bits = (bits << 1) ^ v[i]; } return show(total) + " " + bits; }
+function readInt16(v: Int16Array, k: number): number { return v[k]; }
+function plusInt16(v: Int16Array, k: number): number { return v[k] + 1; }
+function writeInt16(v: Int16Array, k: number, x: number): number { v[k] = x; return v[k]; }
+function sumInt16(v: Int16Array, from: number, to: number): string { let total = 0, bits = 0; for (let i = from; i < to; i++) { total += v[i]; bits = (bits << 1) ^ v[i]; } return show(total) + " " + bits; }
+function readUint16(v: Uint16Array, k: number): number { return v[k]; }
+function plusUint16(v: Uint16Array, k: number): number { return v[k] + 1; }
+function writeUint16(v: Uint16Array, k: number, x: number): number { v[k] = x; return v[k]; }
+function sumUint16(v: Uint16Array, from: number, to: number): string { let total = 0, bits = 0; for (let i = from; i < to; i++) { total += v[i]; bits = (bits << 1) ^ v[i]; } return show(total) + " " + bits; }
+function readInt32(v: Int32Array, k: number): number { return v[k]; }
+function plusInt32(v: Int32Array, k: number): number { return v[k] + 1; }
+function writeInt32(v: Int32Array, k: number, x: number): number { v[k] = x; return v[k]; }
+function sumInt32(v: Int32Array, from: number, to: number): string { let total = 0, bits = 0; for (let i = from; i < to; i++) { total += v[i]; bits = (bits << 1) ^ v[i]; } return show(total) + " " + bits; }
+function readUint32(v: Uint32Array, k: number): number { return v[k]; }
+function plusUint32(v: Uint32Array, k: number): number { return v[k] + 1; }
+function writeUint32(v: Uint32Array, k: number, x: number): number { v[k] = x; return v[k]; }
+function sumUint32(v: Uint32Array, from: number, to: number): string { let total = 0, bits = 0; for (let i = from; i < to; i++) { total += v[i]; bits = (bits << 1) ^ v[i]; } return show(total) + " " + bits; }
+function readFloat16(v: Float16Array, k: number): number { return v[k]; }
+function plusFloat16(v: Float16Array, k: number): number { return v[k] + 1; }
+function writeFloat16(v: Float16Array, k: number, x: number): number { v[k] = x; return v[k]; }
+function sumFloat16(v: Float16Array, from: number, to: number): string { let total = 0, bits = 0; for (let i = from; i < to; i++) { total += v[i]; bits = (bits << 1) ^ v[i]; } return show(total) + " " + bits; }
+function readFloat32(v: Float32Array, k: number): number { return v[k]; }
+function plusFloat32(v: Float32Array, k: number): number { return v[k] + 1; }
+function writeFloat32(v: Float32Array, k: number, x: number): number { v[k] = x; return v[k]; }
+function sumFloat32(v: Float32Array, from: number, to: number): string { let total = 0, bits = 0; for (let i = from; i < to; i++) { total += v[i]; bits = (bits << 1) ^ v[i]; } return show(total) + " " + bits; }
+function readFloat64(v: Float64Array, k: number): number { return v[k]; }
+function plusFloat64(v: Float64Array, k: number): number { return v[k] + 1; }
+function writeFloat64(v: Float64Array, k: number, x: number): number { v[k] = x; return v[k]; }
+function sumFloat64(v: Float64Array, from: number, to: number): string { let total = 0, bits = 0; for (let i = from; i < to; i++) { total += v[i]; bits = (bits << 1) ^ v[i]; } return show(total) + " " + bits; }
+
+const numbersToStore = [7, 127, 128, 255, 256, 300, -1, -129, 0.5, 1.5, 2.5, -0.5, 254.5, 255.5, 0.1, -0, NaN, Infinity, -Infinity, 32768, 65504, 65520, 65536, 2147483647, 2147483648, 4294967295, 4294967301, -2147483649, 1e300, 5e-324];
+console.log("numbers to store: " + numbersToStore.map(show).join(" "));
+
+function exercise<V extends ArrayLike<number>>(name: string, make: (buffer?: ArrayBuffer) => V, read: (view: V, k: number) => number, plus: (view: V, k: number) => number, write: (view: V, k: number, x: number) => number, sum: (view: V, from: number, to: number) => string): void {
+  const view = make();
+  for (let i = 0; i < 4; i++) write(view, i, i * 3 - 2);
+  console.log(name + " | returned: " + inRuns(keys.map(k => twice(() => read(view, k)))));
+  console.log(name + " | + 1: " + inRuns(keys.map(k => twice(() => plus(view, k)))));
+  console.log(name + " | sums: " + [[0, 4], [0, 5], [-1, 4], [2, 8], [4, 6], [0.5, 3]].map(([from, to]) => sum(view, from, to)).join(" ; "));
+  console.log(name + " | stored inside: " + numbersToStore.map(x => show(write(view, 1, x))).join(" "));
+  console.log(name + " | stored outside: " + inRuns(numbersToStore.map(x => show(write(view, 4, x)))) + " ; " + inRuns(keysToStoreAt.slice(2).map(k => show(write(view, k, 5)))) + " " + listView(view));
+  const buffer = resizable(16);
+  const tracking = make(buffer);
+  for (let i = 0; i < tracking.length; i++) write(tracking, i, i + 1);
+  const before = sum(tracking, 0, tracking.length + 1);
+  const length = tracking.length;
+  buffer.resize(8);
+  console.log(name + " | tracking a buffer that shrinks: " + length + " " + before + " ; " + tracking.length + " " + sum(tracking, 0, length) + " " + show(read(tracking, length - 1)) + " " + show(write(tracking, length - 1, 9)) + " " + listView(tracking));
+  buffer.transfer();
+  console.log(name + " | detached: " + tracking.length + " " + sum(tracking, 0, 2) + " " + show(read(tracking, 0)) + " " + show(write(tracking, 0, 9)) + " " + listView(tracking));
+}
+
+exercise("Int8Array", buffer => (buffer ? new Int8Array(buffer) : new Int8Array(4)), readInt8, plusInt8, writeInt8, sumInt8);
+exercise("Uint8ClampedArray", buffer => (buffer ? new Uint8ClampedArray(buffer) : new Uint8ClampedArray(4)), readClamped, plusClamped, writeClamped, sumClamped);
+exercise("Int16Array", buffer => (buffer ? new Int16Array(buffer) : new Int16Array(4)), readInt16, plusInt16, writeInt16, sumInt16);
+exercise("Uint16Array", buffer => (buffer ? new Uint16Array(buffer) : new Uint16Array(4)), readUint16, plusUint16, writeUint16, sumUint16);
+exercise("Int32Array", buffer => (buffer ? new Int32Array(buffer) : new Int32Array(4)), readInt32, plusInt32, writeInt32, sumInt32);
+exercise("Uint32Array", buffer => (buffer ? new Uint32Array(buffer) : new Uint32Array(4)), readUint32, plusUint32, writeUint32, sumUint32);
+exercise("Float16Array", buffer => (buffer ? new Float16Array(buffer) : new Float16Array(4)), readFloat16, plusFloat16, writeFloat16, sumFloat16);
+exercise("Float32Array", buffer => (buffer ? new Float32Array(buffer) : new Float32Array(4)), readFloat32, plusFloat32, writeFloat32, sumFloat32);
+exercise("Float64Array", buffer => (buffer ? new Float64Array(buffer) : new Float64Array(4)), readFloat64, plusFloat64, writeFloat64, sumFloat64);
+
+// NaN with any bits is one NaN as soon as it leaves the view.
+const words = new Uint32Array(2), doubles = new Float64Array(words.buffer);
+const halfWords = new Uint32Array(1), floats = new Float32Array(halfWords.buffer);
+function keepDouble(v: Float64Array, kept: number[], anything: unknown[], holder: { value: number }): string {
+  kept[0] = v[0];
+  kept.push(v[0]);
+  anything[0] = v[0];
+  holder.value = v[0];
+  const value = v[0];
+  return show(value) + " " + (value !== value) + " " + Object.is(value, NaN) + " " + show(value + 1) + " " + show(value | 0) + " " + typeof value + " " + show(Math.max(value, 1)) + " " + String(value);
+}
+function keepFloat(v: Float32Array, kept: number[], anything: unknown[]): string {
+  kept[0] = v[0];
+  kept.push(v[0]);
+  anything[0] = v[0];
+  return show(v[0]) + " " + (v[0] !== v[0]);
+}
+for (const [high, low] of [[0x7ff80000, 0], [0xfff80000, 0], [0x7ff00000, 1], [0xfff00000, 1], [0x7ff80000, 1], [0xfffe0000, 42], [0xfffe0000, 0], [0xffff0000, 7], [0xffffffff, 0xffffffff], [0x7fffffff, 0xffffffff], [0xfffc0000, 2], [0x7ff00000, 0], [0xfff00000, 0]]) {
+  words[0] = low;
+  words[1] = high;
+  const kept: number[] = [0.5], anything: unknown[] = [], holder = { value: 0.5 };
+  console.log("double " + high.toString(16) + " " + low.toString(16) + ": " + keepDouble(doubles, kept, anything, holder) + " " + listView(kept) + " " + (0 in kept) + " " + (1 in kept) + " " + kept.includes(NaN) + " " + kept.indexOf(NaN) + " " + listView(anything) + " " + show(holder.value) + " " + show(readFloat64(doubles, 0)) + " " + show(readFloat64(doubles, 1)));
+}
+for (const bits of [0x7fc00000, 0xffc00000, 0x7f800001, 0xff800001, 0xffffffff, 0x7f800000]) {
+  halfWords[0] = bits;
+  const kept: number[] = [0.5], anything: unknown[] = [];
+  console.log("float " + bits.toString(16) + ": " + keepFloat(floats, kept, anything) + " " + listView(kept) + " " + (0 in kept) + " " + kept.includes(NaN) + " " + listView(anything));
+}
+
+// 64-bit integers.
+function readBig(v: BigInt64Array, k: number): bigint { return v[k]; }
+function plusBig(v: BigInt64Array, k: number): bigint { return v[k] + 1n; }
+function writeBig(v: BigInt64Array, k: number, x: bigint): bigint { v[k] = x; return v[k]; }
+function bigIsUndefined(v: BigInt64Array, k: number): boolean { return v[k] === undefined; }
+function sumBig(v: BigInt64Array, from: number, to: number): bigint { let total = 0n; for (let i = from; i < to; i++) total += v[i]; return total; }
+function readBigUnsigned(v: BigUint64Array, k: number): bigint { return v[k]; }
+function writeBigUnsigned(v: BigUint64Array, k: number, x: bigint): bigint { v[k] = x; return v[k]; }
+
+const big = new BigInt64Array([1n, -2n, 3n, -4n]), bigUnsigned = new BigUint64Array([1n, 2n, 3n, 4n]);
+console.log("BigInt64Array | returned: " + inRuns(keys.map(k => twice(() => readBig(big, k)))));
+console.log("BigInt64Array | + 1n: " + inRuns(keys.map(k => twice(() => plusBig(big, k)))));
+console.log("BigInt64Array | === undefined: " + inRuns(keys.map(k => twice(() => bigIsUndefined(big, k)))));
+console.log("BigInt64Array | sums: " + [[0, 4], [0, 5], [-1, 4], [1, 3]].map(([from, to]) => attempt(() => show(sumBig(big, from, to)))).join(" ; "));
+const bigsToStore = [5n, -1n, 2n ** 63n - 1n, 2n ** 63n, -(2n ** 63n) - 1n, 2n ** 64n + 3n, 0n];
+console.log("BigInt64Array | stored inside: " + bigsToStore.map(x => show(writeBig(big, 1, x))).join(" "));
+console.log("BigInt64Array | stored outside: " + inRuns(bigsToStore.map(x => show(writeBig(big, 4, x)))) + " ; " + inRuns(keysToStoreAt.slice(2).map(k => show(writeBig(big, k, 5n)))) + " " + listView(big));
+console.log("BigInt64Array | a number stored: " + [0, 4, -1, 1.5].map(k => attempt(() => show(writeBig(big, k, 1 as unknown as bigint)))).join(" ; ") + " " + listView(big));
+console.log("BigUint64Array | returned: " + inRuns(keys.map(k => twice(() => readBigUnsigned(bigUnsigned, k)))));
+console.log("BigUint64Array | stored inside: " + bigsToStore.map(x => show(writeBigUnsigned(bigUnsigned, 1, x))).join(" "));
+console.log("BigUint64Array | stored outside: " + inRuns(bigsToStore.map(x => show(writeBigUnsigned(bigUnsigned, 4, x)))) + " " + listView(bigUnsigned));
+(big.buffer as ArrayBuffer).transfer();
+console.log("BigInt64Array | detached: " + big.length + " " + show(readBig(big, 0)) + " " + show(writeBig(big, 0, 5n)) + " " + attempt(() => show(plusBig(big, 0))) + " " + attempt(() => show(writeBig(big, 0, 1 as unknown as bigint))));
+//// typed-array-copies.ts
+// Array.from(view) and [...view] copy the elements of a typed array in an inline loop. Every element kind goes through it, then the views that have to leave it: NaN among doubles, no elements, a detached buffer, 513 elements, a resizable buffer, a subclass, an iterator of its own.
+const lines: string[] = [];
+function text(list: unknown[]): string {
+  let said = list.length + "[";
+  for (let i = 0; i < list.length; i++) {
+    if (i === 20 && list.length > 40) i = list.length - 4;
+    said += (i in list ? (Object.is(list[i], -0) ? "-0" : String(list[i])) : "hole") + " ";
+  }
+  return said + "]";
+}
+function attempt(name: string, run: () => unknown[][]): void {
+  const said = new Set<string>();
+  for (let round = 0; round < 20; round++) {
+    try { said.add(run().map(text).join(" ")); } catch (error) { said.add(error instanceof TypeError ? "TypeError" : "another error"); }
+  }
+  lines.push(name + ": " + [...said].join(" | "));
+}
+
+const values = [0, 1, -1, 127, 128, 255, 256, 32767, 32768, 65535, 65536, 2147483647, 2147483648, 4294967295, 1.5, -1.5, -0, 1e40];
+attempt("Int8Array", () => { const view = new Int8Array(values); return [Array.from(view), [...view], [1, ...view, 2], [0.5, ...view], ["a", ...view]]; });
+attempt("Uint8Array", () => { const view = new Uint8Array(values); return [Array.from(view), [...view], [1, ...view, 2], [0.5, ...view], ["a", ...view]]; });
+attempt("Uint8ClampedArray", () => { const view = new Uint8ClampedArray(values); return [Array.from(view), [...view], [1, ...view, 2], [0.5, ...view], ["a", ...view]]; });
+attempt("Int16Array", () => { const view = new Int16Array(values); return [Array.from(view), [...view], [1, ...view, 2], [0.5, ...view], ["a", ...view]]; });
+attempt("Uint16Array", () => { const view = new Uint16Array(values); return [Array.from(view), [...view], [1, ...view, 2], [0.5, ...view], ["a", ...view]]; });
+attempt("Int32Array", () => { const view = new Int32Array(values); return [Array.from(view), [...view], [1, ...view, 2], [0.5, ...view], ["a", ...view]]; });
+attempt("Uint32Array", () => { const view = new Uint32Array(values); return [Array.from(view), [...view], [1, ...view, 2], [0.5, ...view], ["a", ...view]]; });
+attempt("Float32Array", () => { const view = new Float32Array(values); return [Array.from(view), [...view], [1, ...view, 2], [0.5, ...view], ["a", ...view]]; });
+attempt("Float64Array", () => { const view = new Float64Array(values); return [Array.from(view), [...view], [1, ...view, 2], [0.5, ...view], ["a", ...view]]; });
+attempt("BigInt64Array", () => { const view = new BigInt64Array([1n, -1n]); return [Array.from(view), [...view], ["a", ...view]]; });
+
+function fromBytes(view: Uint8Array): number[] { return Array.from(view); }
+function spreadBytes(view: Uint8Array): number[] { return [7, ...view, 9]; }
+function fromFloats(view: Float32Array): number[] { return Array.from(view); }
+function spreadFloats(view: Float32Array): number[] { return [0.5, ...view, 1.5]; }
+function fromDoubles(view: Float64Array): number[] { return Array.from(view); }
+function spreadDoubles(view: Float64Array): number[] { return [0.5, ...view, 1.5]; }
+function spreadBehindText(view: Float64Array): (string | number)[] { return ["a", ...view]; }
+function spreadThrice(a: Float64Array, b: Uint8Array): number[] { return [...a, ...b, ...a]; }
+function counting(length: number): Uint8Array { const view = new Uint8Array(length); for (let i = 0; i < length; i++) view[i] = i; return view; }
+function halves(length: number, nanAt: number): Float64Array { const view = new Float64Array(length); for (let i = 0; i < length; i++) view[i] = i === nanAt ? NaN : i + 0.5; return view; }
+function detached(): Uint8Array { const buffer = new ArrayBuffer(3); const view = new Uint8Array(buffer); buffer.transfer(); return view; }
+function resizable(): [ArrayBuffer, Uint8Array] { const buffer = new ArrayBuffer(4, { maxByteLength: 16 }); const view = new Uint8Array(buffer); for (let i = 0; i < 4; i++) view[i] = i + 1; return [buffer, view]; }
+class Named extends Uint8Array {}
+
+for (const length of [1, 2, 511, 512, 513, 5000]) attempt(length + " elements", () => [fromBytes(counting(length)), spreadBytes(counting(length)), fromDoubles(halves(length, -1)), spreadDoubles(halves(length, -1))]);
+for (const at of [0, 1, 2]) attempt("NaN at " + at + " of 3 doubles", () => [fromDoubles(halves(3, at)), spreadDoubles(halves(3, at))]);
+attempt("only NaN", () => [fromDoubles(halves(1, 0)), spreadDoubles(halves(1, 0))]);
+attempt("NaN at the end of 40 doubles", () => [fromDoubles(halves(40, 39)), spreadDoubles(halves(40, 39))]);
+attempt("NaN at the end of 512 doubles", () => [fromDoubles(halves(512, 511)), spreadDoubles(halves(512, 511))]);
+attempt("NaN among floats", () => { const view = new Float32Array([0.5, NaN, 2.5]); return [fromFloats(view), spreadFloats(view)]; });
+attempt("NaN with a payload", () => { const view = new Float64Array(new BigUint64Array([0xfffe000000000002n, 0x7ff8000000000001n]).buffer); return [fromDoubles(view), spreadDoubles(view), spreadBehindText(view)]; });
+attempt("no elements", () => [fromBytes(new Uint8Array(0)), spreadBytes(new Uint8Array(0)), fromDoubles(new Float64Array(0)), spreadDoubles(new Float64Array(0))]);
+attempt("detached, Array.from", () => [fromBytes(detached())]);
+attempt("detached, spread", () => [spreadBytes(detached())]);
+attempt("length-tracking", () => { const [, view] = resizable(); return [fromBytes(view), spreadBytes(view)]; });
+attempt("length-tracking, grown", () => { const [buffer, view] = resizable(); buffer.resize(6); return [fromBytes(view), spreadBytes(view)]; });
+attempt("length-tracking, emptied", () => { const [buffer, view] = resizable(); buffer.resize(0); return [fromBytes(view), spreadBytes(view)]; });
+attempt("fixed length in a resizable buffer", () => { const [buffer] = resizable(); const part = new Uint8Array(buffer, 1, 2); return [fromBytes(part), spreadBytes(part)]; });
+attempt("out of bounds, Array.from", () => { const [buffer] = resizable(); const part = new Uint8Array(buffer, 1, 2); buffer.resize(2); return [fromBytes(part)]; });
+attempt("out of bounds, spread", () => { const [buffer] = resizable(); const part = new Uint8Array(buffer, 1, 2); buffer.resize(2); return [spreadBytes(part)]; });
+attempt("part of a buffer", () => { const view = counting(10).subarray(3, 7); return [fromBytes(view), spreadBytes(view)]; });
+attempt("subclass", () => { const view = new Named([1, 2, 3]); return [fromBytes(view), spreadBytes(view)]; });
+attempt("iterator of its own", () => { const view = new Uint8Array([1, 2, 3]); (view as any)[Symbol.iterator] = function* () { yield 40; yield 50; }; return [fromBytes(view), spreadBytes(view)]; });
+attempt("three spreads", () => [spreadThrice(halves(3, -1), counting(5)), spreadThrice(halves(3, 1), counting(5)), spreadThrice(halves(30, -1), counting(30))]);
+attempt("written afterwards", () => { const copy = fromBytes(counting(3)), spread = spreadBytes(counting(3)); copy.push(0.5); copy[6] = 7; spread.push(0.5); spread[8] = 7; return [copy, spread]; });
+console.log(lines.join("\n"));
+export {};
+//// typed-array-iterator-methods.ts
+// keys(), values(), entries() and [Symbol.iterator]() of a typed array return an iterator over it: in for..of, stepped by hand, spread, destructured, half used, passed on, over a view that changes meanwhile, and with the view read and written afterwards.
+export {};
+
+const lines: string[] = [];
+function show(value: unknown): string {
+  if (typeof value === "bigint") return value + "n";
+  if (Array.isArray(value)) return "[" + value.map(element => show(element)).join(",") + "]";
+  return Object.is(value, -0) ? "-0" : String(value);
+}
+function attempt(name: string, run: () => unknown): void {
+  let said: string;
+  try {
+    said = show(run());
+  } catch (error) {
+    said = error instanceof TypeError ? "TypeError" : "another error";
+  }
+  lines.push(name + ": " + said);
+}
+
+function counting(length: number): Uint8Array {
+  const view = new Uint8Array(length);
+  for (let i = 0; i < length; i++) view[i] = i * 3 + 1;
+  return view;
+}
+function sumValues(view: Uint8Array): number {
+  let sum = 0;
+  for (const value of view.values()) sum += value;
+  return sum;
+}
+function sumKeys(view: Uint8Array): number {
+  let sum = 0;
+  for (const key of view.keys()) sum += key;
+  return sum;
+}
+function sumEntries(view: Float64Array): number {
+  let sum = 0;
+  for (const [key, value] of view.entries()) sum += key * value;
+  return sum;
+}
+function sumDefault(view: Int32Array): number {
+  let sum = 0;
+  for (const value of view[Symbol.iterator]()) sum += value;
+  return sum;
+}
+function step(iterator: Iterator<unknown>, times: number): unknown[] {
+  const seen: unknown[] = [];
+  for (let i = 0; i < times; i++) {
+    const result = iterator.next();
+    seen.push(result.done, result.value);
+  }
+  return seen;
+}
+function walk(collection: any): string {
+  let said = "";
+  for (const [key, value] of collection.entries()) said += show(key) + "=" + show(value) + " ";
+  return said;
+}
+function resizable(): [ArrayBuffer, Uint8Array] {
+  const buffer = new ArrayBuffer(4, { maxByteLength: 8 });
+  const view = new Uint8Array(buffer);
+  view.set([1, 2, 3, 4]);
+  return [buffer, view];
+}
+
+attempt("values", () => [sumValues(counting(0)), sumValues(counting(1)), sumValues(counting(40))]);
+attempt("keys", () => [sumKeys(counting(0)), sumKeys(counting(1)), sumKeys(counting(40))]);
+attempt("entries", () => [sumEntries(new Float64Array(0)), sumEntries(new Float64Array([0.5, 1.5, -2.25, 1e3]))]);
+attempt("the default iterator", () => [sumDefault(new Int32Array(0)), sumDefault(new Int32Array([2147483647, -2147483648, 5]))]);
+
+attempt("values, stepped past the end", () => step(new Int16Array([-1, 2]).values(), 4));
+attempt("keys, stepped past the end", () => step(new Int16Array(2).keys(), 4));
+attempt("entries, stepped past the end", () => step(new Uint32Array([7, 4294967295]).entries(), 4));
+attempt("the default iterator, stepped", () => step(new Float32Array([1.5, -0, NaN])[Symbol.iterator](), 4));
+attempt("big integers", () => [[...new BigInt64Array([1n, -2n]).values()], [...new BigUint64Array([3n]).entries()], [...new BigInt64Array(2).keys()]]);
+
+attempt("spread", () => {
+  const view = counting(3);
+  return [[...view.keys()], [...view.values()], [...view.entries()], [...view[Symbol.iterator]()]];
+});
+attempt("destructured", () => {
+  const [first, second = -1, ...rest] = counting(4).values();
+  const [only, missing = -1] = counting(1).values();
+  const [[key, value]] = counting(2).entries();
+  return [first, second, rest, only, missing, key, value];
+});
+attempt("half used", () => {
+  const iterator = counting(5).values();
+  iterator.next();
+  iterator.next();
+  return [[...iterator], [...iterator]];
+});
+attempt("left early", () => {
+  const iterator = counting(5).keys();
+  for (const key of iterator) if (key === 1) break;
+  return [...iterator];
+});
+attempt("an iterator is its own iterable", () => {
+  const iterator = counting(2).entries();
+  return iterator[Symbol.iterator]() === iterator;
+});
+attempt("two iterators over one view", () => {
+  const view = counting(3);
+  const first = view.values();
+  const second = view.values();
+  return [first === second, first.next().value, first.next().value, second.next().value];
+});
+attempt("pairs are not shared", () => {
+  const pairs = [...counting(2).entries()];
+  pairs[0][1] = 99;
+  return [pairs, pairs[0] === pairs[1]];
+});
+attempt("passed on", () => [Array.from(counting(3).keys()), new Set(counting(3).values()).size, new Map(counting(2).entries()).get(1), Math.max(...counting(3).values())]);
+
+attempt("written meanwhile", () => {
+  const view = counting(4);
+  const seen: number[] = [];
+  for (const [key, value] of view.entries()) {
+    seen.push(value);
+    if (key + 1 < view.length) view[key + 1] = 200 + key;
+  }
+  return [seen, Array.from(view)];
+});
+attempt("the view afterwards", () => {
+  const view = counting(3);
+  const iterator = view.values();
+  view[0] = 50;
+  const first = iterator.next().value;
+  view.fill(9);
+  return [first, [...iterator], view.length, view[2], sumValues(view)];
+});
+////= attempt-4	"shrunk meanwhile"	value	values	3
+////= attempt-4	"grown meanwhile"	key	keys	6
+attempt("grown after the end", () => {
+  const [buffer, view] = resizable();
+  const iterator = view.values();
+  const seen = [...iterator];
+  buffer.resize(6);
+  return [seen, step(iterator, 1)];
+});
+attempt("detached before a step", () => {
+  const buffer = new ArrayBuffer(2);
+  const iterator = new Uint8Array(buffer).values();
+  const first = iterator.next().value;
+  buffer.transfer();
+  return [first, iterator.next().value];
+});
+attempt("detached before the call", () => {
+  const buffer = new ArrayBuffer(2);
+  const view = new Uint8Array(buffer);
+  buffer.transfer();
+  return typeof view.entries();
+});
+
+class Samples extends Float32Array {
+  total(): number {
+    let sum = 0;
+    for (const value of this.values()) sum += value;
+    return sum;
+  }
+}
+attempt("a subclass", () => [new Samples([0.5, 0.25]).total(), [...new Samples(2).keys()]]);
+attempt("a Buffer", () => [[...Buffer.from([6, 7]).entries()], [...Buffer.from("ab").values()]]);
+attempt("borrowed by an array", () => typeof Uint8Array.prototype.values.call([1, 2] as any));
+attempt("borrowed by another typed array", () => [...Uint8Array.prototype.entries.call(new Float64Array([0.5]) as any)]);
+attempt("the kind of object", () => {
+  const iterator = counting(1).values();
+  const arrayIterator = [0].values();
+  return [typeof iterator.next, Object.prototype.toString.call(iterator), Object.getPrototypeOf(iterator) === Object.getPrototypeOf(arrayIterator), Object.keys(iterator).length];
+});
+attempt("through any", () => [walk(counting(2)), walk(new BigInt64Array([5n])), walk([1, , 3]), walk(new Map([["a", 1]]))]);
+
+console.log(lines.join("\n"));
+//// typed-array-loop-hoisting.ts
+let log: string[] = [];
+
+function show(bytes: Uint8Array): string {
+    const shown: number[] = [];
+    bytes.length && bytes.forEach(byte => shown.push(byte));
+    return bytes.length + ":" + shown.join(",");
+}
+
+function attempt(run: () => unknown): string {
+    try {
+        return String(run());
+    } catch (error) {
+        return (error as Error).constructor.name + " after " + log.join("");
+    }
+}
+
+function copyAscii(text: string, bytes: Uint8Array): number {
+    let at = 0;
+    for (let i = 0; i < text.length; i++) {
+        const code = text.charCodeAt(i);
+        if (code < 128)
+            bytes[at++] = code;
+        else
+            log.push("w");
+    }
+    return at;
+}
+
+function sumEven(bytes: Uint8Array, count: number): number {
+    let sum = 0;
+    for (let i = 0; i < count; i++) {
+        if ((i & 1) === 0)
+            sum += bytes[i] ?? 1000;
+    }
+    return sum;
+}
+
+function detach(bytes: Uint8Array): void {
+    (bytes.buffer as ArrayBuffer).transfer();
+}
+
+////= lines-56	storeAndDetachAt(bytes: Uint8Array, count: number, when	detach(bytes
+
+////= lines-56	resizeAt(bytes: Uint8Array, buffer: ArrayBuffer, count: number, when: number, to	buffer.resize(to
+
+function takeBufferAt(bytes: Uint8Array, count: number, when: number): string {
+    let other: Uint8Array | undefined;
+    for (let i = 0; i < count; i++) {
+        if (i === when)
+            other = new Uint8Array(bytes.buffer);
+        bytes[i] = i + 1;
+    }
+    return show(bytes) + " " + (other ? show(other) : "none");
+}
+
+function detachAndThrow(bytes: Uint8Array): void {
+    (bytes.buffer as ArrayBuffer).transfer();
+    throw new RangeError("gone");
+}
+
+function caughtInLoop(bytes: Uint8Array, count: number, when: number): string {
+    let seen = "";
+    for (let i = 0; i < count; i++) {
+        try {
+            if (i === when)
+                detachAndThrow(bytes);
+        } catch {
+            seen += "caught ";
+        }
+        bytes[i] = i + 1;
+        seen += bytes[i] + " ";
+    }
+    return seen + bytes.length;
+}
+
+function rows(bytes: Uint8Array, height: number, width: number, when: number): string {
+    let sum = 0;
+    for (let y = 0; y < height; y++) {
+        if (y === when)
+            detach(bytes);
+        for (let x = 0; x < width; x++) {
+            if (x !== 1)
+                bytes[y * width + x] = y + x + 1;
+            sum += bytes[y * width + x] ?? 100;
+        }
+    }
+    return sum + " " + show(bytes);
+}
+
+function swapped(first: Uint8Array, second: Uint8Array, count: number): string {
+    let bytes = first;
+    for (let i = 0; i < count; i++) {
+        bytes[i] = i + 1;
+        bytes = bytes === first ? second : first;
+    }
+    return show(first) + " " + show(second);
+}
+
+class Writer {
+    bytes = new Uint8Array(4);
+    length = 0;
+    grow(): void {
+        const larger = new Uint8Array(this.bytes.length * 2);
+        larger.set(this.bytes);
+        this.bytes = larger;
+    }
+    write(text: string): void {
+        let bytes = this.bytes;
+        let at = this.length;
+        for (let i = 0; i < text.length; i++) {
+            if (at === bytes.length) {
+                this.grow();
+                bytes = this.bytes;
+            }
+            bytes[at++] = text.charCodeAt(i);
+        }
+        this.length = at;
+    }
+}
+
+const none = undefined as unknown as Uint8Array;
+const byName: { [name: string]: (...rest: any[]) => unknown } = { copyAscii, sumEven, storeAndDetachAt, resizeAt, takeBufferAt, caughtInLoop, rows, swapped };
+
+const target = new Uint8Array(6);
+console.log(copyAscii("abécd", target), show(target), log.join(""));
+console.log(byName.copyAscii("0123456789", target), show(target));
+log = [];
+console.log(attempt(() => copyAscii("", none)), attempt(() => copyAscii("éé", none)), attempt(() => copyAscii("éx", none)));
+console.log(sumEven(new Uint8Array([1, 2, 3, 4, 5]), 5), byName.sumEven(new Uint8Array([1, 2, 3]), 7), sumEven(new Uint8Array(0), 3), attempt(() => sumEven(none, 0)), attempt(() => sumEven(none, 1).toString().length > 0));
+console.log(storeAndDetachAt(new Uint8Array(4), 4, 2));
+console.log(byName.storeAndDetachAt(new Uint8Array(4), 4, 0));
+console.log(storeAndDetachAt(new Uint8Array(4), 6, 9));
+for (const [when, to] of [[2, 2], [2, 8], [0, 0], [9, 0]]) {
+    const buffer = new ArrayBuffer(4, { maxByteLength: 8 });
+    console.log(resizeAt(new Uint8Array(buffer), buffer, 6, when, to));
+    const fixed = new ArrayBuffer(4, { maxByteLength: 8 });
+    console.log(byName.resizeAt(new Uint8Array(fixed, 0, 3), fixed, 6, when, to));
+}
+console.log(takeBufferAt(new Uint8Array(4), 4, 2), "|", byName.takeBufferAt(new Uint8Array(4), 4, 9), "|", takeBufferAt(new Uint8Array(300), 2, 1).length);
+console.log(caughtInLoop(new Uint8Array(4), 4, 1), "|", byName.caughtInLoop(new Uint8Array(4), 4, 7));
+console.log(rows(new Uint8Array(6), 2, 3, 5), "|", byName.rows(new Uint8Array(6), 2, 3, 1), "|", rows(new Uint8Array(4), 2, 3, 9));
+console.log(swapped(new Uint8Array(3), new Uint8Array(3), 5));
+const writer = new Writer();
+writer.write("hello, ");
+writer.write("typed arrays");
+console.log(writer.length, writer.bytes.length, String.fromCharCode(...writer.bytes.subarray(0, writer.length)));
+//// typed-array-same-type-copies.ts
+// toReversed, toSorted and with allocate a typed array of the receiver's element type and ask no species, so a Buffer and a subclass give a plain Uint8Array. The copy is then used as what it is. buffer-copy-methods-class.js is the untyped counterpart.
+export {};
+
+const lines: string[] = [];
+function show(value: unknown): string {
+  if (typeof value === "bigint") return value + "n";
+  if (Array.isArray(value)) return "[" + value.map(element => show(element)).join(",") + "]";
+  return Object.is(value, -0) ? "-0" : String(value);
+}
+function attempt(name: string, run: () => unknown): void {
+  let said: string;
+  try {
+    said = show(run());
+  } catch (error) {
+    said = error instanceof RangeError ? "RangeError" : error instanceof TypeError ? "TypeError" : "another error";
+  }
+  lines.push(name + ": " + said);
+}
+function describe(copy: Uint8Array): unknown[] {
+  const hasPlainPrototype = Object.getPrototypeOf(copy) === Uint8Array.prototype;
+  return [copy instanceof Buffer, hasPlainPrototype, copy.constructor === Uint8Array, typeof (copy as any).readUInt8, copy.length, Array.from(copy)];
+}
+
+function reverse(source: Buffer): Uint8Array {
+  return source.toReversed();
+}
+function sort(source: Buffer): Uint8Array {
+  return source.toSorted();
+}
+function sortDescending(source: Buffer): Uint8Array {
+  return source.toSorted((left, right) => right - left);
+}
+function replace(source: Buffer, index: number, value: number): Uint8Array {
+  return source.with(index, value);
+}
+function useCopy(source: Buffer): unknown[] {
+  const copy = source.toReversed();
+  copy.set([7], 1);
+  copy[0] += 1;
+  let digits = 0;
+  for (const byte of copy) digits = digits * 10 + byte;
+  return [digits, copy.subarray(1).length, copy.byteLength, copy.indexOf(7), Array.from(source)];
+}
+
+attempt("Buffer, toReversed", () => describe(reverse(Buffer.from([3, 1, 2]))));
+attempt("Buffer, toSorted", () => describe(sort(Buffer.from([3, 1, 2]))));
+attempt("Buffer, toSorted with a comparator", () => describe(sortDescending(Buffer.from([3, 1, 2]))));
+attempt("Buffer, with", () => describe(replace(Buffer.from([3, 1, 2]), 0, 9)));
+attempt("Buffer, with a negative index", () => describe(replace(Buffer.from([3, 1, 2]), -1, 300)));
+attempt("Buffer, with an index past the end", () => describe(replace(Buffer.from([3, 1, 2]), 3, 0)));
+attempt("Buffer, no elements", () => [describe(reverse(Buffer.alloc(0))), describe(sort(Buffer.alloc(0)))]);
+attempt("Buffer, part of a pool", () => describe(reverse(Buffer.from("abc"))));
+attempt("the copy in use", () => useCopy(Buffer.from([3, 1, 2])));
+attempt("every call allocates", () => {
+  const source = Buffer.from([1, 2]);
+  const first = reverse(source);
+  const second = reverse(source);
+  first[0] = 9;
+  return [first === second, first.buffer === second.buffer, first.buffer === source.buffer, Array.from(second), Array.from(source)];
+});
+
+class Bytes extends Uint8Array {
+  first(): number {
+    return this[0];
+  }
+}
+function copiesOf(source: Bytes): Uint8Array[] {
+  return [source.toReversed(), source.toSorted(), source.toSorted((left, right) => right - left), source.with(1, 7)];
+}
+attempt("a subclass", () => copiesOf(new Bytes([5, 4, 6])).map(copy => [copy instanceof Bytes, copy.constructor === Uint8Array, typeof (copy as any).first, Array.from(copy)]));
+
+class Watched extends Uint8Array {
+  static get [Symbol.species](): Uint8ArrayConstructor {
+    lines.push("the species was asked");
+    return Uint8Array;
+  }
+}
+attempt("a subclass with a species", () => {
+  const source = new Watched([2, 1]);
+  const copies = [source.toReversed(), source.toSorted(), source.with(0, 3)];
+  lines.push("now slice");
+  copies.push(source.slice());
+  return copies.map(copy => [copy instanceof Watched, Array.from(copy)]);
+});
+attempt("an own constructor property", () => {
+  const source = new Uint8Array([2, 1]);
+  Object.defineProperty(source, "constructor", { get() { lines.push("constructor was read"); return undefined; } });
+  return [Array.from(source.toReversed()), Array.from(source.toSorted()), Array.from(source.with(0, 3))];
+});
+
+attempt("doubles", () => {
+  const source = new Float64Array([1.5, -0, NaN, 0, -Infinity]);
+  const copies = [source.toReversed(), source.toSorted(), source.with(1, 0.25)];
+  return copies.map(copy => [copy.constructor === Float64Array, Array.from(copy)]);
+});
+attempt("clamped bytes", () => {
+  const copy = new Uint8ClampedArray([1, 2]).with(0, 300);
+  return [copy.constructor === Uint8ClampedArray, Array.from(copy)];
+});
+attempt("big integers", () => {
+  const source = new BigInt64Array([3n, -1n, 2n]);
+  const copies = [source.toReversed(), source.toSorted(), source.with(0, 5n)];
+  return copies.map(copy => [copy.constructor === BigInt64Array, Array.from(copy)]);
+});
+attempt("a number for a big integer", () => Array.from((new BigInt64Array(1) as any).with(0, 5)));
+attempt("a length-tracking view", () => {
+  const buffer = new ArrayBuffer(2, { maxByteLength: 4 });
+  const source = new Uint8Array(buffer);
+  source.set([1, 2]);
+  const copy = source.toReversed();
+  buffer.resize(4);
+  return [source.length, copy.length, copy.buffer.resizable, Array.from(copy)];
+});
+attempt("a detached view", () => {
+  const buffer = new ArrayBuffer(2);
+  const source = new Uint8Array(buffer);
+  buffer.transfer();
+  return Array.from(source.toReversed());
+});
+attempt("a comparator that is no function", () => Array.from((new Uint8Array(2) as any).toSorted(5)));
+attempt("a comparator that throws", () => Array.from(new Uint8Array([2, 1]).toSorted(() => { throw new RangeError("from the comparator"); })));
+
+console.log(lines.join("\n"));
+//// typed-arrays-in-uncounted-loops.ts
+// Loops over typed arrays that step by one or by two, or leave in the middle: what is tested once ahead of the loop is tested again where the array changes under it.
+declare const console: any;
+
+function lengthOfQuoted(bytes: Uint8Array): number {
+    let i = 0;
+    while (i < bytes.length) {
+        const c = bytes[i];
+        if (c === 34) break;
+        if (c === 92) { i += 2; continue; }
+        if (c < 32) return -2;
+        i++;
+    }
+    return i;
+}
+
+function filled(text: string): Uint8Array {
+    const bytes = new Uint8Array(text.length);
+    for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i);
+    return bytes;
+}
+
+function sumWhileItShrinks(bytes: Uint8Array, buffer: ArrayBuffer, shrinkAt: number, to: number): number {
+    let sum = 0;
+    let i = 0;
+    while (i < bytes.length) {
+        const c = bytes[i];
+        if (i === shrinkAt) buffer.resize(to);
+        if (c === 92) { i += 2; continue; }
+        sum += c;
+        i++;
+    }
+    return sum * 1000 + i;
+}
+
+function sumWhileItGrows(bytes: Uint8Array, buffer: ArrayBuffer, growAt: number, to: number): number {
+    let sum = 0;
+    let i = 0;
+    while (i < bytes.length) {
+        if (i === growAt) buffer.resize(to);
+        const c = bytes[i];
+        if (c === 1) { i += 2; continue; }
+        sum += c + 1;
+        i++;
+    }
+    return sum * 1000 + i;
+}
+
+function sumUntilItIsDetached(bytes: Uint8Array, detachAt: number): number {
+    let sum = 0;
+    let i = 0;
+    while (i < bytes.length) {
+        if (i === detachAt) (bytes.buffer as ArrayBuffer).transfer();
+        const c = bytes[i];
+        if (c === undefined) { sum += 1000000; break; }
+        if (c === 92) { i += 2; continue; }
+        sum += c;
+        i++;
+    }
+    return sum * 1000 + i;
+}
+
+function writesWithTwoSteps(bytes: Uint8Array): number {
+    let i = 0;
+    let written = 0;
+    while (i < bytes.length) {
+        if (bytes[i] === 92) { bytes[i] = 47; i += 2; continue; }
+        bytes[i] = bytes[i] ^ 32;
+        written++;
+        i++;
+    }
+    return written;
+}
+
+function readsPastTheEnd(bytes: Uint8Array): string {
+    let seen = "";
+    let i = 0;
+    while (i < bytes.length + 3) {
+        const c = bytes[i];
+        if (c === 92) { i += 2; continue; }
+        seen += c === undefined ? "u" : String(c % 10);
+        i++;
+    }
+    return seen;
+}
+
+function overOtherKinds(values: Int16Array | Float64Array | Uint8ClampedArray): number {
+    let sum = 0;
+    let i = 0;
+    while (i < values.length) {
+        const value = values[i];
+        if (value < 0) { i += 2; continue; }
+        sum += value;
+        i++;
+    }
+    return sum;
+}
+
+console.log(lengthOfQuoted(filled('plain"')), lengthOfQuoted(filled('a\\"b"c')), lengthOfQuoted(filled("no quote")), lengthOfQuoted(filled("tab\there")), lengthOfQuoted(filled("")), lengthOfQuoted(filled("ends in \\")), lengthOfQuoted(filled("\\\\\\\\")));
+for (const [at, to] of [[0, 0], [1, 1], [3, 2], [3, 4], [5, 6], [7, 8], [9, 3]]) {
+    const buffer = new ArrayBuffer(10, { maxByteLength: 32 });
+    const bytes = new Uint8Array(buffer);
+    for (let i = 0; i < 10; i++) bytes[i] = i === 4 ? 92 : i + 1;
+    console.log("shrinks", at, to, sumWhileItShrinks(bytes, buffer, at, to), bytes.length);
+}
+for (const [at, to] of [[0, 12], [3, 32], [9, 11]]) {
+    const buffer = new ArrayBuffer(10, { maxByteLength: 32 });
+    const bytes = new Uint8Array(buffer);
+    for (let i = 0; i < 10; i++) bytes[i] = i % 3;
+    console.log("grows", at, to, sumWhileItGrows(bytes, buffer, at, to), bytes.length);
+}
+{
+    const buffer = new ArrayBuffer(16, { maxByteLength: 32 });
+    const part = new Uint8Array(buffer, 4, 8);
+    for (let i = 0; i < 8; i++) part[i] = i + 1;
+    console.log("a part with a length of its own", sumWhileItShrinks(part, buffer, 2, 8), part.length, sumWhileItShrinks(part, buffer, 0, 16), part.length);
+}
+for (const at of [0, 1, 5, 9, 20]) console.log("detached", at, sumUntilItIsDetached(filled("ab\\cdefghi"), at));
+{
+    const bytes = filled("ab\\cd\\\\e");
+    console.log(writesWithTwoSteps(bytes), Array.from(bytes).join(","));
+}
+console.log(readsPastTheEnd(filled("ab\\cd")), readsPastTheEnd(filled("")), readsPastTheEnd(filled("abc\\")));
+console.log(overOtherKinds(new Int16Array([1, -1, 100, 2, -5])), overOtherKinds(new Float64Array([0.5, -0.5, NaN, 1.25])), overOtherKinds(new Uint8ClampedArray([300, 2, 3])));
+export {};
+//// typed-element-reads-slow-path.ts
+declare const console: { log(...values: unknown[]): void };
+class Rec { constructor(public amount: number, public label: string) {} }
+interface Pt { x: number; y: number; }
+let depth = 0;
+function recAt(a: Rec[], i: number): Rec { if (depth > 0) { depth--; recAt(a, i); } return a[i]; }
+function strAt(a: string[], i: number): string { if (depth > 0) { depth--; strAt(a, i); } return a[i]; }
+function flagAt(a: boolean[], i: number): boolean { if (depth > 0) { depth--; flagAt(a, i); } return a[i]; }
+function ptAt(a: Pt[], i: number): Pt { if (depth > 0) { depth--; ptAt(a, i); } return a[i]; }
+function rowAt(a: Rec[][], i: number): Rec[] { if (depth > 0) { depth--; rowAt(a, i); } return a[i]; }
+function orMake(a: Rec[], i: number): Rec { if (depth > 0) { depth--; orMake(a, i); } return a[i] || (a[i] = new Rec(i, "made")); }
+function inTry(a: Rec[], i: number): string { try { return show(a[i]); } catch (e) { return "caught " + (e instanceof TypeError); } }
+function count(a: Rec[]): string { let there = 0, nothing = 0, none = 0; for (const r of a) { if (r === undefined) nothing++; else if (r === null) none++; else there += r.amount; } return there + " " + nothing + " " + none; }
+function countByIndex(a: Rec[]): string { let there = 0, nothing = 0, none = 0; for (let i = 0; i < a.length; i++) { const r = a[i]; if (r === undefined) nothing++; else if (r === null) none++; else there += r.amount; } return there + " " + nothing + " " + none; }
+function show(v: unknown): string { return v === undefined ? "undefined" : v === null ? "null" : v instanceof Rec ? "Rec " + v.amount + v.label : typeof v === "object" ? JSON.stringify(v) : typeof v + " " + String(v); }
+function tell(name: string, f: () => unknown): void { let text: string; try { text = show(f()); } catch (e) { text = e instanceof TypeError ? "TypeError" : "threw " + String(e); } console.log(name + ": " + text); }
+const R = (n: number) => new Rec(n, "r");
+for (let turn = 0; turn < 2; turn++) {
+    const recs = [R(1), R(2), R(3)];
+    for (const i of [0, 2, 3, 100, -1, 0.5, NaN, 4294967294, 4294967295, 4294967296, -0]) tell("recs[" + (Object.is(i, -0) ? "-0" : i) + "]", () => recAt(recs, i));
+    const holey = [R(1), R(2), R(3)]; delete (holey as unknown[])[1];
+    tell("a hole", () => recAt(holey, 1)); tell("beside a hole", () => recAt(holey, 2)); tell("holes counted", () => count(holey) + " | " + countByIndex(holey));
+    const nils: Rec[] = [R(1), undefined as unknown as Rec, null as unknown as Rec, R(4)];
+    tell("undefined", () => recAt(nils, 1)); tell("null", () => recAt(nils, 2)); tell("nils counted", () => count(nils) + " | " + countByIndex(nils));
+    tell("empty", () => recAt([], 0)); tell("new Array(3)", () => recAt(new Array<Rec>(3), 1)); tell("new Array(3) counted", () => count(new Array<Rec>(3)) + " | " + countByIndex(new Array<Rec>(3)));
+    const longer = [R(1)]; longer.length = 3; tell("lengthened", () => recAt(longer, 2)); tell("lengthened counted", () => count(longer));
+    const sparse = [R(1)]; sparse[200000] = R(2); tell("sparse, there", () => recAt(sparse, 200000)); tell("sparse, not there", () => recAt(sparse, 5)); tell("sparse, beyond", () => recAt(sparse, 200001));
+    const frozen = Object.freeze([R(1), R(2)]) as Rec[]; tell("frozen", () => recAt(frozen, 1)); tell("frozen, beyond", () => recAt(frozen, 2)); tell("frozen counted", () => count(frozen));
+    const named = [R(1)]; (named as unknown as Record<string, unknown>)["-1"] = R(9); (named as unknown as Record<string, unknown>)["1.5"] = R(8); (named as unknown as Record<string, unknown>)["4294967295"] = R(7);
+    tell("named -1", () => recAt(named, -1)); tell("named 1.5", () => recAt(named, 1.5)); tell("named 4294967295", () => recAt(named, 4294967295));
+    const heir = [R(1), , R(3)] as Rec[]; Object.setPrototypeOf(heir, { __proto__: Array.prototype, 1: R(50), 7: R(70) });
+    tell("inherited in a hole", () => recAt(heir, 1)); tell("inherited beyond", () => recAt(heir, 7)); tell("not inherited", () => recAt(heir, 8));
+    const got = [R(1), R(2)]; Object.defineProperty(got, "1", { get() { return R(60); }, configurable: true }); tell("a getter", () => recAt(got, 1));
+    tell("plain object", () => recAt([{ amount: 5, label: "p" } as Rec], 0).amount); tell("JSON", () => recAt(JSON.parse('[{"amount":6,"label":"j"}]'), 0).amount);
+    tell("made where absent", () => { const a: Rec[] = []; return orMake(a, 2).label + orMake(a, 2).label + a.length + show(recAt(a, 0)); });
+    tell("in try", () => inTry(recs, 1) + inTry(recs, 9) + inTry(holey, 1) + inTry(nils, 2));
+    const strs = ["a", "bc"]; tell("strs", () => strAt(strs, 1) + show(strAt(strs, 2)) + show(strAt(strs, -1))); const gap = ["a", "b", "c"]; delete (gap as unknown[])[1]; tell("strs, a hole", () => strAt(gap, 1));
+    tell("constants", () => strAt(["x", "y", "z"], 2) + show(strAt(["x", "y", "z"], 3)));
+    tell("flags", () => show(flagAt([true, false], 1)) + show(flagAt([true, false], 2)) + show(flagAt([true, undefined as unknown as boolean], 1)));
+    tell("points", () => ptAt([{ x: 1, y: 2 }], 0).y + show(ptAt([{ x: 1, y: 2 }], 1))); tell("rows", () => rowAt([[R(1)], []], 0).length + show(rowAt([[R(1)], []], 2)));
+    tell("used though absent", () => recAt(recs, 7).amount); tell("used though a hole", () => recAt(holey, 1).amount);
+}
+//// typed-reads-by-number-keys.ts
+declare const console: { log(...values: unknown[]): void };
+class Rec { constructor(public n: number) {} }
+interface Holder { place: number; }
+let depth = 0;
+function recAt(a: Rec[], h: Holder): Rec | undefined { if (depth > 0) { depth--; recAt(a, h); } return a[h.place]; }
+function textAt(a: string[], h: Holder): string | undefined { if (depth > 0) { depth--; textAt(a, h); } return a[h.place]; }
+function maybeAt(a: (Rec | undefined | null)[], h: Holder): Rec | undefined | null { if (depth > 0) { depth--; maybeAt(a, h); } return a[h.place]; }
+function nOf(a: Rec[], h: Holder): number { if (depth > 0) { depth--; nOf(a, h); } const rec = a[h.place]; return rec ? rec.n : -1; }
+function sumBy(a: Rec[], places: Holder[]): number { let t = 0; for (const h of places) { const rec = a[h.place]; if (rec) t += rec.n; } return t; }
+function show(v: unknown): string { return v instanceof Rec ? "Rec" + v.n : String(v); }
+const places = [0, 1, 2, 3, -1, -0, 0.5, 1.5, NaN, Infinity, -Infinity, 4294967294, 4294967295, 4294967296, 9007199254740992, -9223372036854775808, 1e300, 2147483648, 5000].map(place => ({ place }));
+const recs = [new Rec(1), new Rec(2), new Rec(3)]; const texts = ["a", "b", "c"];
+const holes = [new Rec(1), , new Rec(3)] as Rec[]; const sparse: Rec[] = []; sparse[5000] = new Rec(50); const frozen = Object.freeze(recs.slice()) as Rec[];
+const named = recs.slice() as Rec[] & Record<string, unknown>; named["-1"] = new Rec(-1); named["0.5"] = new Rec(5); named["NaN"] = new Rec(99); named["Infinity"] = new Rec(77); named["4294967295"] = new Rec(42); named["-9223372036854775808"] = new Rec(63); named["1e+300"] = new Rec(300);
+class Recs extends Array<Rec> {} const derived = new Recs(); derived.push(new Rec(21), new Rec(22));
+for (let round = 0; round < 2; round++) {
+    for (const [name, a] of [["recs", recs], ["holes", holes], ["sparse", sparse], ["frozen", frozen], ["named", named], ["derived", derived], ["empty", []]] as [string, Rec[]][])
+        console.log(name, places.map(h => show(recAt(a, h)) + "/" + nOf(a, h)).join(" "), sumBy(a, places));
+    console.log("texts", places.map(h => show(textAt(texts, h))).join(" "));
+    console.log("maybe", places.map(h => show(maybeAt([undefined, null, new Rec(3)], h))).join(" "));
+}
+//// untyped-element-reads-slow-path.ts
+declare const console: { log(...values: unknown[]): void };
+let deep = 0;
+function at<T>(a: readonly T[], i: number): unknown { if (deep > 0) { deep--; at(a, i); } return a[i | 0]; }
+function atAny(a: unknown[], i: number): unknown { if (deep > 0) { deep--; atAny(a, i); } const k = i | 0; return a[k]; }
+function each<T>(a: readonly T[], f: (x: T, i: number) => void): void { if (deep > 0) { deep--; each(a, f); } for (let i = 0; i < a.length; i++) f(a[i], i); }
+function eachOf<T>(a: readonly T[], f: (x: T) => void): void { if (deep > 0) { deep--; eachOf(a, f); } for (const x of a) f(x); }
+function beyond<T>(a: readonly T[], f: (x: T, i: number) => void): void { if (deep > 0) { deep--; beyond(a, f); } for (let i = 0; i < a.length + 2; i++) f(a[i], i); }
+function down<T>(a: readonly T[], f: (x: T) => void): void { if (deep > 0) { deep--; down(a, f); } for (let i = a.length - 1; i >= 0; i--) f(a[i]); }
+function keepsFloats(a: unknown[], x: number, y: number): string { if (deep > 0) { deep--; keepsFloats(a, x, y); } let p = x * 1.5, q = y / 3; let s = ""; for (let i = 0; i < a.length; i++) { s += text(a[i]); p += 0.25; q -= 0.5; } return s + p + "," + q; }
+function text(x: unknown): string { return x === undefined ? "U" : x === null ? "N" : typeof x === "number" ? (Object.is(x, -0) ? "-0" : String(x)) + "n" : typeof x === "object" ? "{" + Object.keys(x as object).length + "}" : typeof x + ":" + String(x); }
+function tell(name: string, f: () => unknown): void { let t: string; try { t = String(f()); } catch (e) { t = e instanceof TypeError ? "TypeError" : e instanceof RangeError ? "RangeError" : "threw " + String(e); } console.log(name + ": " + t); }
+class Mine extends Array<unknown> { }
+const kinds: [string, () => unknown[]][] = [
+    ["values", () => ["a", { x: 1 }, null, undefined, true, 7, 1.5, 10n, Symbol.iterator]], ["whole", () => [1, 2, -3, 2147483647, -2147483648]],
+    ["doubles", () => [1.5, -0, 0, 2, 1e300, -1e-300, 2147483648, -2147483649, 4294967296, Infinity, -Infinity, 0.1 + 0.2]], ["a NaN among doubles", () => [1.5, NaN, 2.5]],
+    ["empty", () => []], ["holes among values", () => ["a", , "c", , ,] as unknown[]], ["holes among whole", () => [1, , 3] as unknown[]], ["holes among doubles", () => [1.5, , 3.5] as unknown[]],
+    ["new Array(4)", () => new Array(4)], ["lengthened", () => { const a: unknown[] = ["a"]; a.length = 3; return a; }], ["deleted", () => { const a: unknown[] = [1.5, 2.5, 3.5]; delete a[1]; return a; }],
+    ["constants", () => ["x", "y", "z"]], ["keys", () => Object.keys({ a: 1, b: 2 })], ["split", () => "p,q,r".split(",")], ["JSON", () => JSON.parse("[1,2.5,\"s\",null,[1]]")],
+    ["frozen", () => Object.freeze(["a", 1.5]) as unknown[]], ["frozen doubles", () => Object.freeze([0.5, 1.5]) as unknown[]], ["sealed", () => Object.seal([1, 2])],
+    ["sparse", () => { const a: unknown[] = ["a"]; a[100000] = "z"; a.length = 4; return a; }], ["very sparse", () => { const a: unknown[] = []; a[4000000000] = 1; a.length = 3; return a; }],
+    ["a subclass", () => { const a = new Mine(); a.push(1.5, "s"); a.length = 3; return a; }],
+    ["an heir", () => { const a: unknown[] = ["a", , "c"] as unknown[]; Object.setPrototypeOf(a, { __proto__: Array.prototype, 1: "inherited", 4: "beyond" }); return a; }],
+    ["own names", () => { const a: unknown[] = [1.5]; (a as unknown as Record<string, unknown>)["-1"] = "minus"; (a as unknown as Record<string, unknown>).x = 1; return a; }],
+    ["mapped", () => [1, 2, 3].map(x => x / 2)], ["filtered", () => ["a", 1, null].filter(() => true)], ["sliced", () => [1.5, 2.5, 3.5].slice(1)], ["spread", () => [...[1, 2], ..."ab"]], ["concatenated", () => [1.5].concat([2] as number[])],
+    ["popped", () => { const a: unknown[] = [1, 2, 3]; a.pop(); return a; }], ["shifted", () => { const a: unknown[] = [1.5, 2.5, 3.5]; a.shift(); return a; }], ["turned to values", () => { const a: unknown[] = [1.5, 2.5]; a.push("s"); return a; }], ["turned to doubles", () => { const a: unknown[] = [1, 2]; a.push(0.5); return a; }],
+];
+for (let turn = 0; turn < 2; turn++) {
+    for (const [name, make] of kinds) {
+        tell(name + " each", () => { let s = ""; each(make(), (x, i) => { s += i + text(x) + " "; }); return s; });
+        tell(name + " of", () => { let s = ""; eachOf(make(), x => { s += text(x) + " "; }); return s; });
+        tell(name + " beyond", () => { let s = ""; beyond(make(), x => { s += text(x) + " "; }); return s; });
+        tell(name + " down", () => { let s = ""; down(make(), x => { s += text(x) + " "; }); return s; });
+        tell(name + " at", () => [0, 1, 2, 3, 4, 100, -1, 2147483647, -2147483648].map(i => text(at(make(), i)) + text(atAny(make(), i))).join(" "));
+        tell(name + " floats kept", () => keepsFloats(make(), 1.25, 9.75));
+    }
+    tell("shrinks under the loop", () => { const a: unknown[] = [1.5, 2.5, 3.5, 4.5]; let s = ""; beyond(a, x => { s += text(x); a.length = 2; }); return s; });
+    tell("changes kind under the loop", () => { const a: unknown[] = [1, 2, 3, 4]; let s = ""; each(a, (x, i) => { s += text(x); if (i === 0) a[2] = 0.5; if (i === 1) a[3] = "s"; }); return s; });
+    tell("long", () => { const a: unknown[] = []; for (let i = 0; i < 70000; i++) a.push(i % 3 ? i / 2 : i); let n = 0, t = 0; each(a, x => { n++; t += x as number; }); return n + " " + t; });
+}
+//// views-read-under-a-condition-in-a-loop.ts
+// A loop that reads and stores views only where a flag says so. What the loop reads of a view beside its elements (where they lie, how many there are, whether the length is fixed) stays the same while it runs,
+// unless the loop itself calls code that takes the buffer away or changes its size: then each turn sees the view as it is.
+function gather(a: Float64Array, b: Float64Array, c: Uint8Array, n: number): void {
+  for (let i = 0; i < n; i++) { if (c[i] !== 0) a[i] = b[i] * 2; }
+}
+function gatherAndTell(a: Float64Array, b: Float64Array, c: Uint8Array, n: number, tell: (i: number) => void): number {
+  let seen = 0;
+  for (let i = 0; i < n; i++) { if (c[i] !== 0) { tell(i); const v = b[i]; a[i] = v * 2; seen += v === undefined ? 100 : 1; } }
+  return seen;
+}
+function pickSum(b: number[], c: number[], n: number): number {
+  let s = 0;
+  for (let i = 0; i < n; i++) { if (c[i] > 0.5) s += b[i]; }
+  return s;
+}
+class Samples extends Float64Array { get first(): number { return this[0]; } }
+
+const size: number = JSON.parse("64");
+const source = new Float64Array(64), target = new Float64Array(64), flags = new Uint8Array(64);
+const weights: number[] = [], marks: number[] = [];
+for (let i = 0; i < 64; ++i) { source[i] = i * 1.5; flags[i] = i & 1; weights.push(i + 0.25); marks.push((i & 1) + 0.25); }
+let total = 0;
+for (let turn = 0; turn < 5000; ++turn) { gather(target, source, flags, size); total += pickSum(weights, marks, size) + gatherAndTell(target, source, flags, size, () => {}); }
+console.log(total, target.join());
+
+// No flag is set: nothing of the two views is asked, whatever they are
+gather(new Float64Array(0), new Float64Array(0), new Uint8Array(64), size);
+const gone = new Float64Array(8); structuredClone(gone.buffer, { transfer: [gone.buffer] });
+gather(gone, gone, new Uint8Array(64), size);
+gather(gone, gone, flags, size);
+console.log(gone.length);
+
+// Shorter than the flags, an instance of a class below, a view into the middle of a buffer
+const short = new Float64Array(5); gather(short, source, flags, size); console.log(short.join());
+const samples = new Samples(8); gather(samples, source, flags, size); console.log(samples.join(), samples.first);
+const middle = new Float64Array(source.buffer.slice(0), 16, 4); gather(target, middle, flags, size); console.log(target.slice(0, 8).join());
+
+// The buffer shrinks, grows and goes away while the loop runs
+const resizable = new ArrayBuffer(64 * 8, { maxByteLength: 128 * 8 });
+const tracking = new Float64Array(resizable); tracking.fill(3);
+console.log(gatherAndTell(target, tracking, flags, size, i => { if (i === 9) resizable.resize(16 * 8); if (i === 41) resizable.resize(128 * 8); }), tracking.length, target.slice(0, 48).join());
+const leaving = new Float64Array(64).fill(5);
+console.log(gatherAndTell(target, leaving, flags, size, i => { if (i === 5) structuredClone(leaving.buffer, { transfer: [leaving.buffer] }); }), leaving.length, target.slice(0, 12).join());
+const receiving = new Float64Array(64);
+console.log(gatherAndTell(receiving, source, flags, size, i => { if (i === 7) structuredClone(receiving.buffer, { transfer: [receiving.buffer] }); }), receiving.length);
+//// whoever-knows-the-storage-of-an-array-that-a-reader-of-numbers-meets.ts
+// A reader of a `number[]` gives an array with storage for any value the storage of numbers where the array holds numbers and nothing else.
+// Others know the storage of an array without asking: whoever made it in its frame, whoever reads an array of which all stores are known, a table of constants that is shared until the first store.
+// Each of them meets such a reader here, with the array empty, full of holes, full of numbers for a while, and goes on as if nothing had happened.
+function sum(numbers: number[]): number {
+  let total = 0;
+  for (let i = 0; i < numbers.length; i++) total += numbers[i]! | 0;
+  return total;
+}
+function first(numbers: number[]): number {
+  return numbers[0]!;
+}
+function describe(values: unknown[]): string {
+  let text = "";
+  for (let i = 0; i < values.length; i++) text += (i in values ? (Object.is(values[i], -0) ? "-0" : typeof values[i] === "object" ? JSON.stringify(values[i]) : String(values[i])) : "hole") + ",";
+  return text + values.length;
+}
+
+class Point {
+  constructor(public x: number) {}
+}
+function xOf(points: Point[], index: number): number {
+  return points[index]!.x;
+}
+
+// Arrays of objects, seen by the reader while no object lies in them.
+const points: Point[] = [];
+console.log("empty", sum(points as unknown as number[]), first(points as unknown as number[]));
+points.push(new Point(1), new Point(2));
+console.log(xOf(points, 0) + xOf(points, 1), points.length, describe(points));
+const places: Point[] = new Array(4);
+console.log("holes", sum(places as unknown as number[]), first(places as unknown as number[]));
+places[2] = new Point(7);
+console.log(xOf(places, 2), 0 in places, describe(places));
+const emptied: Point[] = [new Point(3)];
+emptied.pop();
+console.log("emptied", sum(emptied as unknown as number[]));
+emptied.push(new Point(4));
+console.log(xOf(emptied, 0), describe(emptied));
+
+// Texts and numbers: numbers alone for a while.
+function join(parts: (string | number)[]): string {
+  let text = "";
+  for (const part of parts) text += typeof part === "string" ? part : part + 1;
+  return text;
+}
+const parts: (string | number)[] = [1, 2];
+console.log(join(parts), sum(parts as number[]), join(parts));
+parts[0] = "one";
+parts.push("three", 4);
+console.log(join(parts), sum(parts as number[]), describe(parts));
+const pair: [string | number, number] = [5, 6];
+console.log(first(pair as number[]), pair[0], pair[1]);
+pair[0] = "five";
+console.log(first(pair as number[]), pair[0], pair[1], describe(pair));
+
+// Arrays that may lie in the frame of whoever made them.
+function ofLiteral(a: unknown, b: unknown): string {
+  const list = [a, b];
+  const total = sum(list as number[]);
+  return total + ":" + String(list[0]) + ":" + String(list[1]) + ":" + list.length;
+}
+function ofRest(...rest: unknown[]): string {
+  const total = sum(rest as number[]) + first(rest as number[]);
+  return total + ":" + String(rest[0]) + ":" + String(rest[rest.length - 1]);
+}
+for (let i = 0; i < 3; i++) console.log(ofLiteral(i, i + 0.5), ofLiteral(i, "text"), ofLiteral({ i }, i), ofRest(i, 2, 3), ofRest(i, "two"), ofRest(1.5, i));
+
+// An array that refuses is asked again and again; later it holds numbers alone.
+const odd: unknown[] = [1, 2, "x", 4];
+let asked = 0;
+for (let i = 0; i < 20; i++) asked += sum(odd as number[]);
+console.log(asked, describe(odd));
+odd[2] = 3;
+for (let i = 0; i < 20; i++) asked += sum(odd as number[]);
+Bun.gc(true);
+for (let i = 0; i < 20; i++) asked += sum(odd as number[]);
+console.log(asked, describe(odd));
+odd.push({ last: true });
+console.log(sum(odd as number[]), describe(odd));
+const many: unknown[][] = [];
+for (let i = 0; i < 24; i++) many.push([i, i + 1, i % 3 ? i : NaN]);
+let turns = 0;
+for (let turn = 0; turn < 4; turn++) for (const each of many) turns += sum(each as number[]);
+console.log(turns, describe(many[0]!), describe(many[1]!), describe(many[23]!));
+
+// A table of constants is shared until somebody stores into it.
+function table(): unknown[] {
+  return [10, 20, 30];
+}
+const shared = table();
+console.log(sum(shared as number[]), describe(shared), describe(table()));
+shared[1] = "twenty";
+console.log(sum(shared as number[]), describe(shared), describe(table()));
+
+// An array that lies in the object that lists it.
+class Holder {
+  list: unknown[];
+  name: string;
+  constructor(seed: number) {
+    this.list = [seed, seed + 1, seed + 2];
+    this.name = "holder" + seed;
+  }
+}
+const holders: Holder[] = [];
+for (let i = 0; i < 50; i++) holders.push(new Holder(i));
+let held = 0;
+for (const holder of holders) held += sum(holder.list as number[]);
+Bun.gc(true);
+for (const holder of holders) holder.list.push(holder.name);
+for (const holder of holders) held += sum(holder.list as number[]);
+console.log(held, describe(holders[0]!.list), describe(holders[49]!.list), holders[49]!.name);
+
+// Many arrays get new storage while the collector runs.
+let kept: unknown[][] = [];
+let checksum = 0;
+for (let round = 0; round < 200; round++) {
+  const numbers: unknown[] = [];
+  for (let i = 0; i < 40; i++) numbers.push(round + i / 2);
+  checksum += sum(numbers as number[]);
+  kept.push(numbers);
+  if (round % 50 === 49) {
+    Bun.gc(true);
+    for (const each of kept) checksum += first(each as number[]) + (each[39] as number);
+    kept = kept.slice(-5);
+  }
+}
+console.log(checksum, describe(kept[0]!.slice(0, 3)));
+
+// A long one.
+const long: unknown[] = [];
+for (let i = 0; i < 100_000; i++) long.push(i & 255);
+console.log(sum(long as number[]), first(long as number[]), long.length, long[99_999]);
+long[50_000] = "middle";
+console.log(sum(long as number[]), long[50_000], long[50_001]);
+//// young-elements-in-large-arrays.js
+// Old arrays of 5,000 and of 1,000 elements get young objects, strings and arrays at scattered indexes, 12,000 between two Eden collections, and every element is read back.
+const collect = globalThis.Bun ? full => globalThis.Bun.gc(full) : full => (full ? fullGC() : edenGC());
+const storesPerRound = 20000;
+const oldObjects = [];
+for (let i = 0; i < 8; i++) oldObjects.push({ id: 1000000 + i });
+const recent = new Array(64).fill(null);
+let churnTotal = 0;
+
+function kindOf(id) {
+  return (id >>> 3) % 5;
+}
+
+function createElement(id) {
+  switch (kindOf(id)) {
+    case 0:
+      return { id };
+    case 1:
+      return "text " + id;
+    case 2:
+      return [id, id + 1];
+    case 3:
+      return id + 0.5;
+    default:
+      return oldObjects[id % oldObjects.length];
+  }
+}
+
+function textOf(element) {
+  if (element === null) return "null";
+  if (typeof element !== "object") return String(element);
+  return Array.isArray(element) ? "array " + element[0] + "," + element[1] : "object " + element.id;
+}
+
+function expectedText(id) {
+  if (id < 0) return "null";
+  switch (kindOf(id)) {
+    case 0:
+      return "object " + id;
+    case 1:
+      return "text " + id;
+    case 2:
+      return "array " + id + "," + (id + 1);
+    case 3:
+      return String(id + 0.5);
+    default:
+      return "object " + (1000000 + (id % oldObjects.length));
+  }
+}
+
+function churn() {
+  for (let i = 0; i < 20000; i++) {
+    recent[i & 63] = createElement(i);
+    churnTotal += textOf(recent[(i * 7) & 63]).length;
+  }
+}
+
+function countMismatches(array, storedIds) {
+  let mismatches = 0;
+  for (let index = 0; index < array.length; index++) {
+    if (textOf(array[index]) !== expectedText(storedIds[index])) mismatches++;
+  }
+  return mismatches;
+}
+
+function run(length) {
+  const array = new Array(length).fill(null);
+  const storedIds = new Array(length).fill(-1);
+  collect(true);
+  collect(true);
+  console.log(length + " elements, nothing stored: " + countMismatches(array, storedIds) + " mismatches");
+  for (let round = 0; round < 4; round++) {
+    for (let step = 0; step < storesPerRound; step++) {
+      const id = round * storesPerRound + step;
+      const index = (id * 7919) % length;
+      array[index] = createElement(id);
+      storedIds[index] = id;
+    }
+    collect(false);
+    churn();
+    console.log(length + " elements, round " + round + ": " + countMismatches(array, storedIds) + " mismatches");
+  }
+  collect(true);
+  churn();
+  console.log(length + " elements, full collection: " + countMismatches(array, storedIds) + " mismatches");
+}
+
+run(5000);
+run(1000);
+console.log("churn: " + churnTotal);

@@ -1,0 +1,1620 @@
+////: Point
+interface Point {
+  x: number;
+  y: number;
+}
+////: attempt
+function attempt(label: string, run: () => unknown): void {
+  try {
+    console.log(label, "->", show(run()));
+  } catch (error) {
+    console.log(label, "threw", error instanceof Error ? error.constructor.name : typeof error);
+  }
+}
+////: classOf
+function classOf(run: () => unknown): string {
+  try {
+    run();
+    return "value";
+  } catch (error) {
+    return error instanceof Error ? error.constructor.name : typeof error;
+  }
+}
+////: lines
+interface «1» {
+  «2»: «3»;
+  «4»: «5»;
+}
+////: lines-2
+try {
+  console.log(«1»);
+} catch (error) {
+  console.log(error instanceof TypeError);
+}
+////: lines-3
+function «1»(«2»: «3»): «4» {
+  return «5»;
+}
+////: lines-4
+interface «1» {
+  «2»: «3»;
+}
+////: lines-5
+enum «1» {
+  «2» = «3»,
+  «4» = «5»,
+}
+////: norm
+function norm(point: Point): number {
+  return point.x * point.x + point.y * point.y;
+}
+////: show
+function show(value: unknown): string {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "function") return "function";
+  if (typeof value !== "object" || value === null) return String(value);
+  if (Array.isArray(value)) {
+    const parts: string[] = [];
+    for (let i = 0; i < value.length; i++) parts.push(i in value ? show(value[i]) : "hole");
+    return "[" + parts.join(", ") + "]";
+  }
+  const parent = Object.getPrototypeOf(value);
+  const mark = parent === Object.prototype ? "" : parent === null ? "without a prototype " : "with another prototype ";
+  return mark + "{" + Object.entries(value).map(([key, held]) => JSON.stringify(key) + ": " + show(held)).join(", ") + "}";
+}
+////: show-2
+////= show
+
+////= attempt
+//// a-member-is-missing-from-the-text-for-an-annotated-variable.ts
+interface User {
+  id: number;
+  name: string;
+  on: boolean;
+  tags: string[];
+}
+
+const user: User = JSON.parse('{"id":7}');
+console.log(user.name);
+console.log(user.name === undefined);
+console.log(typeof user.name);
+console.log(typeof user.name === "string");
+console.log(user.name ?? "no name");
+console.log("" + user.name);
+console.log(user.on, user.on ? "on" : "off", user.on === false, typeof user.on === "boolean");
+console.log(user.tags, user.tags === undefined, Array.isArray(user.tags));
+console.log("name" in user, Object.keys(user).join());
+////= lines-2	user.name.length
+////= lines-2	user.tags.length
+//// a-number-is-parsed-by-type.ts
+console.log(JSON.parse("2.5") as number);
+//// a-number-member-of-a-result-parsed-by-type-is-added-to.ts
+////= lines-4	Line	count	number
+const line = JSON.parse('{"count":2.5}') as Line;
+console.log(0 + line.count);
+//// a-text-arrives-for-a-number-member-of-an-annotated-variable.ts
+////= lines	User	id	number	name	string
+
+const user: User = JSON.parse('{"id":"7","name":"ann"}');
+console.log(user.id);
+console.log(typeof user.id);
+console.log(typeof user.id === "number");
+console.log(user.id + 1);
+console.log(user.id * 2);
+console.log(user.id === 7);
+console.log(user.id | 0);
+console.log(user.id > 5, user.id < 10);
+console.log(-user.id, +user.id);
+console.log(JSON.stringify(user));
+//// an-array-a-text-and-a-number-arrive-for-an-annotated-object.ts
+////= Point
+
+////= lines-3	xOf	point	Point	number	point.x
+function look(point: Point): string {
+  return typeof point + " " + xOf(point) + " " + (xOf(point) === undefined) + " " + (point.x + point.y) + " " + JSON.stringify(point);
+}
+
+const fromList: Point = JSON.parse("[3,4]");
+const fromText: Point = JSON.parse('"xy"');
+const fromNumber: Point = JSON.parse("7");
+const fromTruth: Point = JSON.parse("true");
+const honest: Point = JSON.parse('{"x":3,"y":4}');
+console.log(look(honest));
+console.log(look(fromList), Array.isArray(fromList));
+console.log(look(fromText));
+console.log(look(fromNumber));
+console.log(look(fromTruth));
+const fromNull: Point = JSON.parse("null");
+try {
+  console.log(look(fromNull));
+} catch (error) {
+  console.log(error instanceof TypeError);
+}
+console.log(fromNull === null, typeof fromNull);
+//// an-unknown-tag-arrives-for-an-annotated-union.ts
+type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number };
+
+function area(shape: Shape): number {
+  switch (shape.kind) {
+    case "circle":
+      return shape.radius * shape.radius * 3;
+    case "square":
+      return shape.side * shape.side;
+  }
+}
+function other(shape: Shape): number {
+  return shape.kind === "circle" ? shape.radius : shape.side;
+}
+
+const triangle: Shape = JSON.parse('{"kind":"triangle","base":2}');
+const bare: Shape = JSON.parse('{"radius":2}');
+const mixed: Shape = JSON.parse('{"kind":"circle","side":2}');
+const circle: Shape = JSON.parse('{"kind":"circle","radius":2}');
+console.log(area(circle), other(circle));
+console.log(triangle.kind, area(triangle), area(triangle) === undefined, typeof area(triangle), other(triangle));
+console.log(bare.kind, area(bare), other(bare));
+console.log(mixed.kind, area(mixed), other(mixed));
+console.log(triangle.kind === "circle" || triangle.kind === "square");
+//// json-into-an-annotated-class-type.ts
+////= show-2
+
+class Money {
+  amount: number = 0;
+  currency: string = "EUR";
+  #secret = 7;
+  static is(value: object): boolean {
+    return #secret in value;
+  }
+  twice(): number {
+    return this.amount * 2;
+  }
+  get label(): string {
+    return this.amount + " " + this.currency;
+  }
+  secret(): number {
+    return this.#secret;
+  }
+}
+
+////= lines-3	amountOf	money	Money	number	money.amount
+function twiceOf(money: Money): number {
+  return money.twice();
+}
+////= lines-3	labelOf	money	Money	string	money.label
+function secretOf(money: Money): number {
+  return money.secret();
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const money = new Money();
+  money.amount = i;
+  warm += amountOf(money) + twiceOf(money) + labelOf(money).length + secretOf(money);
+}
+console.log("2000 honest instances", warm);
+
+for (const text of ['{"amount":5,"currency":"USD"}', '{"currency":"USD","amount":5}', '{"amount":"5"}', "{}", '{"amount":5,"currency":"USD","twice":1,"label":"own"}', "[]", "null"]) {
+  attempt(text + " fields", () => {
+    const money: Money = JSON.parse(text);
+    return [amountOf(money), money.currency, Object.keys(money), money instanceof Money, Money.is(money)];
+  });
+  attempt(text + " a method", () => {
+    const money: Money = JSON.parse(text);
+    return twiceOf(money);
+  });
+  attempt(text + " a getter", () => {
+    const money: Money = JSON.parse(text);
+    return [labelOf(money), typeof labelOf(money)];
+  });
+  attempt(text + " a private name", () => {
+    const money: Money = JSON.parse(text);
+    return secretOf(money);
+  });
+  attempt(text + " the method of the class on it", () => {
+    const money: Money = JSON.parse(text);
+    return [Money.prototype.twice.call(money), Money.prototype.secret.call(money)];
+  });
+}
+attempt("given the prototype afterwards", () => {
+  const money: Money = Object.setPrototypeOf(JSON.parse('{"currency":"USD","amount":5}'), Money.prototype);
+  return [amountOf(money), twiceOf(money), labelOf(money), money instanceof Money, Money.is(money), Object.keys(money)];
+});
+attempt("given the prototype afterwards, a private name", () => {
+  const money: Money = Object.setPrototypeOf(JSON.parse('{"amount":5}'), Money.prototype);
+  return secretOf(money);
+});
+attempt("honest again", () => {
+  const money = new Money();
+  return [amountOf(money), twiceOf(money), labelOf(money), secretOf(money)];
+});
+//// json-into-an-annotated-parameter-field-element-and-result.ts
+////= show-2
+
+////= Point
+
+////= norm
+function parsePoint(text: string): Point {
+  return JSON.parse(text);
+}
+class Holder {
+  point: Point;
+  constructor(text: string) {
+    this.point = JSON.parse(text);
+  }
+  norm(): number {
+    return norm(this.point);
+  }
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += norm({ x: i, y: 1 }) + norm(parsePoint('{"x":1,"y":2}')) + new Holder('{"x":2,"y":1}').norm();
+console.log("2000 honest rounds", warm);
+
+const texts = ['{"x":"3","y":4}', '{"x":3}', "{}", '{"y":4,"x":null}', "[3,4]", '"xy"', "7", "null", "true", '{"x":{"valueOf":1},"y":1}', '{"x":[2],"y":[3]}', '{"x":1e400,"y":-0}', '{"X":3,"Y":4}'];
+for (const text of texts) {
+  attempt(text + " as an argument", () => norm(JSON.parse(text)));
+  attempt(text + " as a result", () => norm(parsePoint(text)));
+  attempt(text + " in a field", () => new Holder(text).norm());
+  attempt(text + " in an element", () => {
+    const points: Point[] = [{ x: 1, y: 1 }, JSON.parse(text)];
+    return points.map(norm);
+  });
+  attempt(text + " in a captured variable", () => {
+    const point: Point = JSON.parse(text);
+    const later = (): number => norm(point);
+    return later();
+  });
+  attempt(text + " the whole list is parsed", () => {
+    const points: Point[] = JSON.parse("[" + text + "]");
+    let sum = 0;
+    for (const point of points) sum += norm(point);
+    return sum;
+  });
+}
+const fromResponse: Point = await new Response('{"x":"3","y":4}').json();
+attempt("out of a response", () => [norm(fromResponse), fromResponse]);
+const fromRequest: Point = await new Request("http://localhost/", { method: "POST", body: "[1,2]" }).json();
+attempt("out of a request", () => [norm(fromRequest), fromRequest]);
+const fromBlob: Point = await new Blob(['{"y":2}']).json();
+attempt("out of a blob", () => [norm(fromBlob), fromBlob]);
+attempt("honest again", () => [norm(parsePoint('{"x":3,"y":4}')), new Holder('{"y":4,"x":3}').norm()]);
+
+export {};
+//// json-into-an-annotated-union-with-an-unknown-tag.ts
+////= show-2
+
+type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number } | { kind: "label"; text: string };
+
+function area(shape: Shape): number {
+  switch (shape.kind) {
+    case "circle":
+      return shape.radius * shape.radius * 3;
+    case "square":
+      return shape.side * shape.side;
+    case "label":
+      return shape.text.length;
+  }
+}
+function describe(shape: Shape): string {
+  if (shape.kind === "circle") return "circle " + shape.radius;
+  if (shape.kind === "square") return "square " + shape.side;
+  if (shape.kind === "label") return "label " + shape.text;
+  const rest: never = shape;
+  return "never " + show(rest);
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += area(i % 3 === 0 ? { kind: "circle", radius: i } : i % 3 === 1 ? { kind: "square", side: i } : { kind: "label", text: "t" });
+console.log("2000 honest literals", warm);
+
+const texts = [
+  '{"kind":"circle","radius":2}',
+  '{"kind":"triangle","base":1}',
+  '{"radius":2}',
+  '{"kind":"circle"}',
+  '{"kind":"circle","side":2}',
+  '{"kind":"square","radius":2}',
+  '{"kind":"label"}',
+  '{"kind":"label","text":5}',
+  '{"kind":"label","text":null}',
+  '{"kind":"circle","radius":"2"}',
+  '{"kind":null}',
+  '{"kind":0}',
+  '{"kind":["circle"],"radius":2}',
+  '{"kind":"circle","kind":"square","radius":2,"side":3}',
+  '{"kind":"CIRCLE","radius":2}',
+  "[]",
+  "null",
+  '"circle"',
+  "0",
+];
+for (const text of texts) {
+  attempt(text + " area", () => {
+    const shape: Shape = JSON.parse(text);
+    return [area(shape), typeof area(shape)];
+  });
+  attempt(text + " described", () => {
+    const shape: Shape = JSON.parse(text);
+    return describe(shape);
+  });
+}
+attempt("in one list", () => {
+  const shapes: Shape[] = JSON.parse("[" + texts.slice(0, 6).join(",") + "]");
+  return [shapes.map(area), shapes.map(describe)];
+});
+//// json-into-an-annotated-variable-with-a-wrong-kind-for-each-member.ts
+////= show-2
+
+interface Record1 {
+  count: number;
+  name: string;
+  on: boolean;
+  list: number[];
+  inner: { x: number };
+  maybe?: number;
+}
+
+function countPlus(r: Record1): number {
+  return r.count + 1;
+}
+function nameLength(r: Record1): number {
+  return r.name.length;
+}
+function onText(r: Record1): string {
+  return r.on ? "on" : "off";
+}
+function listSum(r: Record1): number {
+  let sum = 0;
+  for (const n of r.list) sum += n;
+  return sum;
+}
+function innerX(r: Record1): number {
+  return r.inner.x * 2;
+}
+function maybeOr(r: Record1): number {
+  return r.maybe ?? -1;
+}
+
+const good = { count: "1", name: '"n"', on: "true", list: "[1,2]", inner: '{"x":3}', maybe: "4" };
+const values = ["1.5", '"text"', "false", "null", "[]", '["a"]', "{}", '{"x":"y"}', '{"length":2}'];
+function textWith(key: string, value: string | undefined): string {
+  const parts: string[] = [];
+  for (const [name, held] of Object.entries(good)) {
+    if (name !== key) parts.push(JSON.stringify(name) + ":" + held);
+    else if (value !== undefined) parts.push(JSON.stringify(name) + ":" + value);
+  }
+  return "{" + parts.join(",") + "}";
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const r: Record1 = { count: i, name: "n", on: true, list: [i], inner: { x: i } };
+  warm += countPlus(r) + nameLength(r) + onText(r).length + listSum(r) + innerX(r) + maybeOr(r);
+}
+console.log("2000 honest literals", warm);
+
+const uses: [string, (r: Record1) => unknown][] = [
+  ["count", countPlus],
+  ["name", nameLength],
+  ["on", onText],
+  ["list", listSum],
+  ["inner", innerX],
+  ["maybe", maybeOr],
+];
+for (const [key, use] of uses) {
+  for (const value of [...values, undefined]) {
+    attempt(key + " is " + (value ?? "missing"), () => {
+      const r: Record1 = JSON.parse(textWith(key, value));
+      return [use(r), Object.keys(r).length];
+    });
+  }
+}
+attempt("direct calls with a text for the count", () => {
+  const r: Record1 = JSON.parse(textWith("count", '"7"'));
+  return [countPlus(r), r.count, typeof r.count, r.count + 1, r.count * 2, nameLength(r), listSum(r)];
+});
+attempt("honest text", () => {
+  const r: Record1 = JSON.parse(textWith("", undefined));
+  return [countPlus(r), nameLength(r), onText(r), listSum(r), innerX(r), maybeOr(r), JSON.stringify(r)];
+});
+//// json-into-annotated-arrays-tuples-records-and-enums.ts
+////= show-2
+
+enum Color {
+  Red,
+  Green,
+}
+
+function sum(list: number[]): number {
+  let total = 0;
+  for (let i = 0; i < list.length; i++) total += list[i];
+  return total;
+}
+function joined(list: string[]): string {
+  let text = "";
+  for (const part of list) text += part.toUpperCase();
+  return text;
+}
+function swap(pair: [number, string]): string {
+  return pair[1].length + ":" + (pair[0] + 1) + ":" + pair.length;
+}
+function count(table: Record<string, number>): number {
+  let total = 0;
+  for (const key in table) total += table[key];
+  return total;
+}
+function nameOf(color: Color): string {
+  switch (color) {
+    case Color.Red:
+      return "red";
+    case Color.Green:
+      return "green";
+  }
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += sum([i, 1]) + joined(["a"]).length + swap([i, "s"]).length + count({ a: i }) + nameOf(i % 2).length;
+console.log("2000 honest rounds", warm);
+
+for (const text of ["[1,2,3]", "[1,2.5,-0]", '[1,"2",3]', "[1,null,3]", "[1,[2],3]", "[true,false]", '[{"valueOf":1}]', "[]", "{}", '{"length":2,"0":5,"1":6}', '"123"', "5", "null"]) {
+  attempt(text + " as numbers", () => {
+    const list: number[] = JSON.parse(text);
+    return sum(list);
+  });
+}
+for (const text of ['["a","b"]', '["a",1]', '["a",null]', '[["a"]]', '"ab"', "{}", "null"]) {
+  attempt(text + " as texts", () => {
+    const list: string[] = JSON.parse(text);
+    return joined(list);
+  });
+}
+for (const text of ['[1,"a"]', '["a",1]', "[1]", "[]", '[1,"a",2,"b"]', '[null,"a"]', '[1,null]', '{"0":1,"1":"a","length":2}', "null"]) {
+  attempt(text + " as a pair", () => {
+    const pair: [number, string] = JSON.parse(text);
+    return swap(pair);
+  });
+}
+for (const text of ['{"a":1,"b":2}', '{"a":"1","b":2}', '{"a":null}', '{"a":[1]}', '{"__proto__":{"c":3},"a":1}', "[1,2]", '"ab"', "3", "null"]) {
+  attempt(text + " as a table", () => {
+    const table: Record<string, number> = JSON.parse(text);
+    return count(table);
+  });
+}
+for (const text of ["0", "1", "2", "-0", "0.5", '"0"', '"Red"', "null", "[0]", "true"]) {
+  attempt(text + " as a color", () => {
+    const color: Color = JSON.parse(text);
+    return [nameOf(color), typeof nameOf(color), Color[color], color === Color.Red];
+  });
+}
+//// keys-in-another-order-and-more-keys-arrive-for-an-annotated-variable.ts
+////= Point
+
+////= norm
+function move(point: Point): void {
+  point.x += 1;
+  point.y -= 1;
+}
+
+const written: Point = { x: 3, y: 4 };
+const turned: Point = JSON.parse('{"y":4,"x":3}');
+const wider: Point = JSON.parse('{"a":0,"x":3,"b":0,"y":4,"c":0}');
+const indexed: Point = JSON.parse('{"x":3,"1":0,"y":4,"0":0}');
+const twice: Point = JSON.parse('{"x":0,"y":4,"x":3}');
+for (const point of [written, turned, wider, indexed, twice]) {
+  console.log(norm(point), Object.keys(point).join(), JSON.stringify(point));
+  move(point);
+  console.log(norm(point), Object.keys(point).join(), JSON.stringify(point));
+}
+//// null-arrives-for-each-member-of-an-annotated-variable.ts
+interface Item {
+  count: number;
+  label: string;
+  on: boolean;
+  inner: { x: number };
+  list: number[];
+}
+
+const item: Item = JSON.parse('{"count":null,"label":null,"on":null,"inner":null,"list":null}');
+console.log(item.count, item.count === null, typeof item.count, item.count + 1, item.count * 2, item.count | 0);
+console.log(item.label, item.label === null, typeof item.label, item.label + "!", typeof item.label === "string");
+console.log(item.on, item.on === null, item.on ? "on" : "off", !item.on, item.on === false);
+console.log(item.inner, item.inner === null, typeof item.inner);
+console.log(item.list, item.list === null, Array.isArray(item.list));
+////= lines-2	item.inner.x
+try {
+  console.log(item.list[0]);
+} catch (error) {
+  console.log(error instanceof TypeError);
+}
+////= lines-2	item.label.length
+console.log(JSON.stringify(item));
+//// parsed-by-type-with-a-reviver.ts
+////= show-2
+
+interface Order {
+  id: number;
+  note: string;
+  lines: { count: number }[];
+}
+
+function total(order: Order): number {
+  let sum = order.id;
+  for (const line of order.lines) sum += line.count;
+  return sum;
+}
+
+const log: string[] = [];
+function logged(this: unknown, key: string, value: unknown): unknown {
+  log.push(key + "=" + (typeof value === "object" ? (Array.isArray(value) ? "list" : value === null ? "null" : "object") : String(value)));
+  return value;
+}
+
+attempt("a reviver that changes nothing", () => {
+  log.length = 0;
+  const order = JSON.parse('{"id":1,"note":"n","lines":[{"count":2},{"count":3}]}', logged) as Order;
+  return [order, total(order), log.join(" ")];
+});
+attempt("a reviver that turns texts into numbers", () => {
+  const order = JSON.parse('{"id":"7","note":"n","lines":[{"count":"8"}]}', (key, value) => (key === "id" || key === "count" ? Number(value) : value)) as Order;
+  return [order, total(order), typeof order.id];
+});
+attempt("a reviver that fills in a member", () => {
+  const order = JSON.parse('{"id":1,"lines":[]}', (key, value) => (key === "" ? { ...value, note: "added" } : value)) as Order;
+  return [order, Object.keys(order), order.note.length];
+});
+attempt("a reviver that removes an undeclared member", () => {
+  const order = JSON.parse('{"id":1,"secret":"x","note":"n","lines":[]}', (key, value) => (key === "secret" ? undefined : value)) as Order;
+  return [order, Object.keys(order), "secret" in order];
+});
+attempt("a reviver that replaces the whole value", () => {
+  const order = JSON.parse("[1,2,3]", (key, value) => (key === "" ? { id: value.length, note: "from a list", lines: [] } : value)) as Order;
+  return [order, total(order)];
+});
+attempt("a reviver that returns the same object for every line", () => {
+  const shared = { count: 5 };
+  const order = JSON.parse('{"id":0,"note":"","lines":[{"count":1},{"count":2}]}', (key, value) => (typeof value === "object" && value !== null && "count" in value ? shared : value)) as Order;
+  return [order, total(order), order.lines[0] === order.lines[1], order.lines[0] === shared];
+});
+attempt("a reviver that sees the text of a number", () => {
+  const seen: string[] = [];
+  const order = JSON.parse('{"id":1.0,"note":"n","lines":[]}', function (key, value) {
+    if (key === "id") seen.push(String(arguments.length), typeof arguments[2]);
+    return value;
+  }) as Order;
+  return [order.id, seen];
+});
+attempt("a reviver that throws", () =>
+  JSON.parse('{"id":1,"note":"n","lines":[]}', key => {
+    if (key === "note") throw new RangeError("stop");
+    return 1;
+  }) as Order,
+);
+//// parsed-by-type-duplicate-keys-the-last-one-wins.ts
+////= show-2
+
+////= lines	Pair	a	number	b	string
+interface Nest {
+  inner: { x: number };
+  list: number[];
+}
+
+function sum(pair: Pair): string {
+  return pair.a + 1 + pair.b;
+}
+
+const texts = [
+  '{"a":1,"b":"x","a":2}',
+  '{"a":1,"a":2,"b":"x"}',
+  '{"a":"wrong","b":"x","a":3}',
+  '{"a":null,"a":[],"a":{},"a":4,"b":"x"}',
+  '{"b":1,"a":5,"b":"y"}',
+  '{"a":6,"b":"x","b":"y","b":"z"}',
+  '{"a":7,"b":"x","c":1,"c":2,"c":"three"}',
+  '{"a":8,"\\u0061":9,"b":"x"}',
+  '{"\\u0061":10,"a":11,"\\u0062":"escaped"}',
+  '{"a":1.5,"b":"x","a":-0}',
+];
+for (const text of texts) {
+  attempt(text, () => {
+    const pair = JSON.parse(text) as Pair;
+    return [pair, Object.keys(pair), sum(pair), JSON.stringify(pair), typeof pair.a, typeof pair.b];
+  });
+}
+attempt("nested members twice", () => {
+  const nest = JSON.parse('{"inner":{"x":"wrong"},"list":"wrong","inner":{"x":1,"x":2},"list":[1],"list":[2,3]}') as Nest;
+  return [nest, nest.inner.x + 1, nest.list.length, Object.keys(nest)];
+});
+attempt("a thousand times", () => {
+  let text = "{";
+  for (let i = 0; i < 1000; i++) text += '"a":' + i + ",";
+  const pair = JSON.parse(text + '"b":"end"}') as Pair;
+  return [pair, sum(pair)];
+});
+//// parsed-by-type-enums-and-literal-types.ts
+////= show-2
+
+enum Color {
+  Red,
+  Green,
+  Blue = 5,
+}
+////= lines-5	Way	Up	"UP"	Down	"DOWN"
+interface Painted {
+  color: Color;
+  way: Way;
+  size: "s" | "m" | "l";
+  level: 1 | 2 | 3;
+  on: true;
+  none: null;
+  id: `id-${number}`;
+}
+
+function nameOf(color: Color): string {
+  switch (color) {
+    case Color.Red:
+      return "red";
+    case Color.Green:
+      return "green";
+    case Color.Blue:
+      return "blue";
+  }
+}
+function describe(painted: Painted): unknown[] {
+  return [nameOf(painted.color), Color[painted.color], painted.way === Way.Up ? "up" : "down", painted.size.toUpperCase(), painted.level + 1, painted.on ? "on" : "off", painted.none, painted.id.slice(3), JSON.stringify(painted)];
+}
+
+const texts = [
+  '{"color":0,"way":"UP","size":"s","level":1,"on":true,"none":null,"id":"id-1"}',
+  '{"color":1,"way":"DOWN","size":"m","level":2,"on":true,"none":null,"id":"id-2.5"}',
+  '{"color":5,"way":"UP","size":"l","level":3,"on":true,"none":null,"id":"id--1"}',
+  '{"color":5.0,"way":"\\u0055P","size":"\\u006c","level":3.0,"on":true,"none":null,"id":"id-1e3"}',
+  '{"color":0.0,"way":"UP","size":"s","level":1e0,"on":true,"none":null,"id":"id-0"}',
+  '{"color":50e-1,"way":"UP","size":"s","level":10e-1,"on":true,"none":null,"id":"id-\\u0031"}',
+  '{"id":"id-7","none":null,"on":true,"level":2,"size":"m","way":"DOWN","color":1}',
+];
+for (const text of texts) attempt(text, () => describe(JSON.parse(text) as Painted));
+attempt("alone", () => [JSON.parse("5") as Color, JSON.parse('"DOWN"') as Way, JSON.parse('"m"') as "s" | "m", JSON.parse("2") as 1 | 2, JSON.parse("true") as true, JSON.parse("null") as null, JSON.parse("1") as Color.Green]);
+attempt("lists", () => {
+  const colors = JSON.parse("[0,1,5,5,0]") as Color[];
+  const ways = JSON.parse('["UP","DOWN","UP"]') as Way[];
+  return [colors.map(nameOf), ways.map(way => way === Way.Up), colors.indexOf(Color.Blue), ways.indexOf(Way.Down)];
+});
+attempt("as keys", () => {
+  const table = JSON.parse('{"DOWN":2,"UP":1}') as Record<Way, number>;
+  const byColor = JSON.parse('{"5":"b","0":"r","1":"g"}') as Record<Color, string>;
+  return [table[Way.Up], table[Way.Down], Object.keys(table), byColor[Color.Blue], byColor[Color.Red], Object.keys(byColor)];
+});
+//// parsed-by-type-honest.ts
+////= show-2
+
+interface Line {
+  sku: string;
+  count: number;
+  price: number;
+}
+interface Order {
+  id: number;
+  customer: { name: string; vip: boolean };
+  lines: Line[];
+  note: string | null;
+}
+
+function total(order: Order): number {
+  let sum = 0;
+  for (const line of order.lines) sum += line.count * line.price;
+  return order.customer.vip ? sum * 0.9 : sum;
+}
+function skus(order: Order): string {
+  return order.lines.map(line => line.sku).join("+");
+}
+
+function textOf(i: number): string {
+  return '{"id":' + i + ',"customer":{"name":"c' + (i % 5) + '","vip":' + (i % 2 === 0) + '},"lines":[{"sku":"a","count":' + (i % 3) + ',"price":2.5},{"sku":"b","count":1,"price":' + i + '}],"note":' + (i % 4 === 0 ? "null" : '"n"') + "}";
+}
+
+let sum = 0;
+let names = 0;
+for (let i = 0; i < 2000; i++) {
+  const order = JSON.parse(textOf(i)) as Order;
+  sum += total(order) + order.id;
+  names += order.customer.name.length + skus(order).length + (order.note === null ? 0 : order.note.length);
+}
+attempt("totals", () => [sum, names]);
+attempt("one order", () => {
+  const order = JSON.parse(textOf(7)) as Order;
+  return [order, total(order), skus(order), Object.keys(order), JSON.stringify(order) === textOf(7)];
+});
+//// parsed-by-type-keys-in-another-order-and-extra-keys-stay-as-written.ts
+////= show-2
+
+interface User {
+  id: number;
+  name: string;
+  active: boolean;
+}
+
+function describe(user: User): string {
+  return user.id + 1 + "/" + user.name.toUpperCase() + "/" + (user.active ? "on" : "off");
+}
+function rename(user: User, name: string): User {
+  user.name = name;
+  user.id += 0.5;
+  return user;
+}
+
+const texts = [
+  '{"id":1,"name":"a","active":true}',
+  '{"active":false,"name":"b","id":2}',
+  '{"name":"c","id":3,"active":true}',
+  '{"extra":0,"id":4,"name":"d","active":true}',
+  '{"id":5,"extra":[1],"name":"e","active":false}',
+  '{"id":6,"name":"f","active":true,"extra":{"id":"x"}}',
+  '{"z":1,"y":2,"active":true,"x":3,"name":"g","w":4,"id":7,"v":5}',
+  '{"Id":0,"ID":0,"id":8,"name ":"","name":"h","active":true," active":false}',
+  ' { "id" : 9 , "name" : "i" , "active" : false } ',
+  '\n{\t"id":10,\r\n"name":"j","active":true}\n',
+];
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += describe({ id: i, name: "n", active: i % 2 === 0 }).length;
+console.log("2000 honest literals", warm);
+
+for (const text of texts) {
+  attempt(JSON.stringify(text), () => {
+    const user = JSON.parse(text) as User;
+    return [user, Object.keys(user), JSON.stringify(user), describe(user), typeof user.id, typeof user.name, typeof user.active, "extra" in user, Object.getPrototypeOf(user) === Object.prototype];
+  });
+  attempt("  then stored to", () => {
+    const user = rename(JSON.parse(text) as User, "renamed");
+    return [user, JSON.stringify(user), describe(user)];
+  });
+  attempt("  then copied", () => {
+    const user = JSON.parse(text) as User;
+    const copy: User = { ...user };
+    const assigned: User = Object.assign({ id: 0, name: "", active: false }, user);
+    return [copy, assigned, describe(copy), describe(assigned)];
+  });
+}
+//// parsed-by-type-keys-named-proto-constructor-and-to-string.ts
+////= show-2
+
+////= lines-4	Plain	id	number
+interface Named {
+  constructor: string;
+  toString: number;
+  valueOf: boolean;
+  hasOwnProperty: null;
+}
+interface WithProto {
+  id: number;
+  ["__proto__"]: { admin: boolean };
+}
+
+////= lines-3	idOf	plain	Plain	number	plain.id
+function look(value: object): unknown[] {
+  return [Object.keys(value), Object.getOwnPropertyNames(value), Object.getPrototypeOf(value) === Object.prototype, JSON.stringify(value), Object.hasOwn(value, "__proto__"), "admin" in value];
+}
+
+const extra = [
+  '{"id":1,"__proto__":{"admin":true}}',
+  '{"__proto__":{"admin":true},"id":2}',
+  '{"id":3,"__proto__":null}',
+  '{"id":4,"__proto__":5}',
+  '{"id":5,"__proto__":[]}',
+  '{"id":6,"constructor":1,"toString":2,"valueOf":3}',
+  '{"id":7,"__proto__":{"id":99}}',
+  '{"__proto__":{"__proto__":{"id":1}},"id":8}',
+  '{"id":9,"__defineGetter__":1,"__lookupGetter__":2,"isPrototypeOf":3}',
+];
+for (const text of extra) {
+  attempt(text, () => {
+    const plain = JSON.parse(text) as Plain;
+    return [plain, idOf(plain), look(plain)];
+  });
+}
+attempt("an object with its own toString is written out", () => {
+  const plain = JSON.parse('{"id":6,"toString":2,"valueOf":3}') as Plain;
+  return String(plain);
+});
+attempt("declared names that every object inherits", () => {
+  const named = JSON.parse('{"constructor":"c","toString":1,"valueOf":true,"hasOwnProperty":null}') as Named;
+  return [named, named.constructor, named.toString + 1, named.valueOf, named.hasOwnProperty, look(named)];
+});
+attempt("a declared member named __proto__", () => {
+  const value = JSON.parse('{"id":1,"__proto__":{"admin":true}}') as WithProto;
+  return [value, value.id, look(value), Object.getOwnPropertyDescriptor(value, "__proto__")];
+});
+attempt("copies of an object with its own __proto__", () => {
+  const plain = JSON.parse('{"id":1,"__proto__":{"admin":true}}') as Plain;
+  const spread = { ...plain };
+  const assigned = Object.assign({}, plain);
+  return [look(spread), look(assigned), "admin" in assigned];
+});
+//// parsed-by-type-keys-that-look-like-numbers.ts
+////= show-2
+
+interface Indexed {
+  0: string;
+  1: string;
+  name: string;
+}
+interface Quoted {
+  "10": number;
+  "9": number;
+  "01": number;
+  "-1": number;
+  "1.5": number;
+  "4294967295": number;
+  "4294967294": number;
+}
+type Table = Record<string, number>;
+
+function first(indexed: Indexed): string {
+  return indexed[0] + indexed[1] + indexed.name;
+}
+function total(table: Table): number {
+  let sum = 0;
+  for (const key in table) sum += table[key];
+  return sum;
+}
+
+attempt("declared indexes", () => {
+  const indexed = JSON.parse('{"name":"n","1":"b","0":"a"}') as Indexed;
+  return [indexed, Object.keys(indexed), first(indexed), JSON.stringify(indexed), Array.isArray(indexed)];
+});
+attempt("declared indexes and more", () => {
+  const indexed = JSON.parse('{"5":"f","name":"n","1":"b","x":1,"0":"a","3":"d"}') as Indexed;
+  return [indexed, Object.keys(indexed), first(indexed)];
+});
+attempt("quoted names", () => {
+  const quoted = JSON.parse('{"10":1,"9":2,"01":3,"-1":4,"1.5":5,"4294967295":6,"4294967294":7}') as Quoted;
+  return [quoted, Object.keys(quoted), quoted[10] + quoted[9], quoted["01"], quoted["-1"], quoted["1.5"], quoted[4294967295], quoted[4294967294]];
+});
+attempt("a table", () => {
+  const table = JSON.parse('{"b":1,"2":2,"a":3,"1":4,"-0":5,"0":6,"1e3":7,"1000":8,"":9," 1":10}') as Table;
+  return [table, Object.keys(table), total(table), table[0], table["-0"], table[1000], table["1e3"], table[""]];
+});
+attempt("a table with very many indexes", () => {
+  let text = "{";
+  for (let i = 2000; i > 0; i--) text += '"' + i + '":' + i + ",";
+  const table = JSON.parse(text + '"0":0}') as Table;
+  const keys = Object.keys(table);
+  return [keys.length, keys[0], keys[1], keys[2000], total(table)];
+});
+attempt("a sparse table", () => {
+  const table = JSON.parse('{"1000000":1,"5":2,"4000000000":3}') as Table;
+  return [table, Object.keys(table), total(table)];
+});
+//// parsed-by-type-long-strings-and-many-elements.ts
+////= show-2
+
+interface Page {
+  text: string;
+  items: { id: number; tag: string }[];
+}
+
+function idSum(page: Page): number {
+  let sum = 0;
+  for (const item of page.items) sum += item.id;
+  return sum;
+}
+function tagLength(page: Page): number {
+  let length = 0;
+  for (const item of page.items) length += item.tag.length;
+  return length;
+}
+
+attempt("a string of a million letters", () => {
+  const page = JSON.parse('{"text":"' + "ab".repeat(500_000) + '","items":[]}') as Page;
+  return [page.text.length, page.text.slice(-3), page.text.charCodeAt(999_999), page.items];
+});
+attempt("a string of a hundred thousand escapes", () => {
+  const page = JSON.parse('{"text":"' + "\\n\\u00e9".repeat(50_000) + '","items":[]}') as Page;
+  return [page.text.length, page.text.charCodeAt(99_999), page.text.charCodeAt(99_998)];
+});
+attempt("fifty thousand items", () => {
+  const parts: string[] = [];
+  for (let i = 0; i < 50_000; i++) parts.push('{"id":' + i + ',"tag":"t' + (i % 7) + '"}');
+  const page = JSON.parse('{"text":"","items":[' + parts.join(",") + "]}") as Page;
+  return [page.items.length, idSum(page), tagLength(page), page.items[49_999], Object.keys(page.items[25_000])];
+});
+attempt("items whose keys change places", () => {
+  const parts: string[] = [];
+  for (let i = 0; i < 5_000; i++) parts.push(i % 3 === 0 ? '{"id":' + i + ',"tag":"a"}' : i % 3 === 1 ? '{"tag":"bb","id":' + i + "}" : '{"more":0,"tag":"ccc","id":' + (i + 0.5) + "}");
+  const page = JSON.parse('{"items":[' + parts.join(",") + '],"text":"t"}') as Page;
+  return [page.items.length, idSum(page), tagLength(page), page.items[0], page.items[1], page.items[2], Object.keys(page)];
+});
+attempt("a key of ten thousand letters", () => {
+  const key = "k".repeat(10_000);
+  const table = JSON.parse('{"' + key + '":1,"' + key + 'x":2}') as Record<string, number>;
+  return [Object.keys(table).map(name => name.length), table[key], table[key + "x"]];
+});
+attempt("much white space", () => {
+  const space = " \n\t\r".repeat(25_000);
+  const page = JSON.parse(space + "{" + space + '"text"' + space + ":" + space + '"t"' + space + "," + space + '"items"' + space + ":" + space + "[" + space + "]" + space + "}" + space) as Page;
+  return page;
+});
+//// parsed-by-type-negative-zero-in-an-int32-member.ts
+import type { int32 } from "bun";
+
+////= show-2
+
+////= lines	Point	x	int32	y	int32
+
+function uses(v: int32): unknown[] {
+  return [v, 1 / v, Object.is(v, -0), Object.is(v, 0), v === 0, String(v), v + 0, v * 1, -v, v | 0, Math.sign(v), Math.max(v, -0), Math.atan2(v, -1) > 0, [v], JSON.stringify(v)];
+}
+////= lines-3	xOf	point	Point	int32	point.x
+class Kept {
+  held: int32 = 1;
+}
+
+attempt("an honest zero", () => uses(xOf(JSON.parse('{"x":0,"y":1}') as Point)));
+for (const spelling of ["-0", "-0.0", "-0e0", "-0E+5", "-0.000e-3"]) {
+  attempt(spelling, () => {
+    const point = JSON.parse('{"x":' + spelling + ',"y":1}') as Point;
+    return [point, uses(xOf(point)), uses(point.x)];
+  });
+  attempt(spelling + " kept in a field", () => {
+    const kept = new Kept();
+    kept.held = (JSON.parse('{"x":' + spelling + ',"y":1}') as Point).x;
+    return [kept.held, 1 / kept.held];
+  });
+  attempt(spelling + " in a list", () => {
+    const list = JSON.parse("[1," + spelling + "]") as int32[];
+    return [list, uses(list[1])];
+  });
+}
+attempt("other spellings of integers", () => ["1.0", "1e2", "100e-2", "2147483647.0", "-2147483648", "2.147483647e9", "0.0"].map(spelling => (JSON.parse('{"x":' + spelling + ',"y":0}') as Point).x));
+//// parsed-by-type-nested-a-few-hundred-levels-deep.ts
+////= show-2
+
+interface Tree {
+  value: number;
+  children: Tree[];
+}
+interface Chain {
+  next: Chain | null;
+}
+type Nest = Nest[];
+
+function depthOf(tree: Tree): number {
+  let depth = 1;
+  let at = tree;
+  while (at.children.length > 0) {
+    at = at.children[0];
+    depth++;
+  }
+  return depth;
+}
+function sumOf(tree: Tree): number {
+  let sum = tree.value;
+  for (const child of tree.children) sum += sumOf(child);
+  return sum;
+}
+function lengthOf(chain: Chain): number {
+  let length = 0;
+  for (let at: Chain | null = chain; at !== null; at = at.next) length++;
+  return length;
+}
+function levels(nest: Nest): number {
+  let count = 1;
+  let at = nest;
+  while (at.length > 0) {
+    at = at[0];
+    count++;
+  }
+  return count;
+}
+
+for (const depth of [1, 2, 10, 100, 400]) {
+  attempt("a tree of depth " + depth, () => {
+    const tree = JSON.parse('{"value":1,"children":['.repeat(depth).slice(0, -1) + "[]" + "}]".repeat(depth).slice(0, -1)) as Tree;
+    return [depthOf(tree), sumOf(tree)];
+  });
+  attempt("a chain of length " + depth, () => lengthOf(JSON.parse('{"next":'.repeat(depth) + "null" + "}".repeat(depth)) as Chain));
+  attempt("lists in lists, " + depth + " levels", () => levels(JSON.parse("[".repeat(depth) + "]".repeat(depth)) as Nest));
+}
+attempt("a wide tree", () => {
+  const leaf = '{"value":1,"children":[]}';
+  const branch = '{"value":10,"children":[' + Array.from({ length: 20 }, () => leaf).join(",") + "]}";
+  const tree = JSON.parse('{"value":100,"children":[' + Array.from({ length: 20 }, () => branch).join(",") + "]}") as Tree;
+  return [depthOf(tree), sumOf(tree), tree.children[19].children[19]];
+});
+//// parsed-by-type-nesting-of-a-million-levels-gives-the-value-or-a-range-error.ts
+////= show-2
+
+type Nest = Nest[];
+interface Chain {
+  next: Chain | null;
+}
+
+function levels(nest: Nest): number {
+  let count = 1;
+  for (let at = nest; at.length > 0; at = at[0]) count++;
+  return count;
+}
+function links(chain: Chain): number {
+  let count = 0;
+  for (let at: Chain | null = chain; at !== null; at = at.next) count++;
+  return count;
+}
+function either(label: string, wanted: number, run: () => number): void {
+  let got: string;
+  try {
+    const value = run();
+    got = value === wanted ? "the value or a RangeError" : "another value: " + value;
+  } catch (error) {
+    got = error instanceof RangeError ? "the value or a RangeError" : error instanceof Error ? error.constructor.name : typeof error;
+  }
+  console.log(label, "->", got);
+}
+
+for (const depth of [10_000, 100_000, 1_000_000]) {
+  either(depth + " lists", depth, () => levels(JSON.parse("[".repeat(depth) + "]".repeat(depth)) as Nest));
+  either(depth + " objects", depth, () => links(JSON.parse('{"next":'.repeat(depth) + "null" + "}".repeat(depth)) as Chain));
+  attempt(depth + " lists that are never closed", () => JSON.parse("[".repeat(depth)) as Nest);
+  attempt("afterwards", () => [levels(JSON.parse("[[[]]]") as Nest), links(JSON.parse('{"next":{"next":null}}') as Chain)]);
+}
+//// parsed-by-type-numbers-in-odd-spellings.ts
+////= show-2
+
+////= lines-4	Reading	n	number
+
+function uses(reading: Reading): unknown[] {
+  const n = reading.n;
+  return [n, typeof n, n + 1, n * 2, n | 0, n >>> 0, 1 / n, n === Math.floor(n), Number.isSafeInteger(n), String(n), JSON.stringify(reading)];
+}
+function sumOf(list: number[]): number {
+  let sum = 0;
+  for (const n of list) sum += n;
+  return sum;
+}
+
+const spellings = ["0", "-0", "0.0", "-0.0", "0e0", "-0e-0", "1.0", "1.50", "1e0", "1E2", "1e+2", "1e-2", "100e-2", "2147483647", "2147483648", "-2147483648", "-2147483649", "4294967295", "4294967296", "9007199254740991", "9007199254740992", "9007199254740993", "12345678901234567890", "1e21", "1e308", "1.7976931348623157e308", "5e-324", "1e-400", "-1e-400", "0.1", "0.30000000000000004", "123456789.123456789", "1.0000000000000000000000000000001", "0.000001", "0.0000001"];
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += uses({ n: i }).length;
+console.log("2000 honest literals with integers", warm);
+
+for (const spelling of spellings) attempt(spelling, () => uses(JSON.parse('{"n":' + spelling + "}") as Reading));
+attempt("alone", () => spellings.map(spelling => JSON.parse(spelling) as number));
+attempt("in one list", () => {
+  const list = JSON.parse("[" + spellings.join(",") + "]") as number[];
+  return [list.length, list, sumOf(list.slice(0, 12))];
+});
+attempt("integers and then a fraction", () => {
+  const list = JSON.parse("[1,2,3,4,5,6,7,8,0.5]") as number[];
+  return [list, sumOf(list)];
+});
+attempt("integers and then negative zero", () => {
+  const list = JSON.parse("[1,2,-0]") as number[];
+  return [list, 1 / list[2], list.indexOf(0), list.includes(-0), Object.is(list.at(-1), -0)];
+});
+//// parsed-by-type-optional-null-and-absent-members.ts
+////= show-2
+
+interface Profile {
+  name: string;
+  age?: number;
+  nick: string | null;
+  tags?: string[] | null;
+  inner?: { deep?: number };
+}
+
+function describe(profile: Profile): unknown[] {
+  return [
+    profile.name,
+    profile.age,
+    profile.age === undefined ? "no age" : profile.age + 1,
+    profile.nick,
+    profile.nick === null ? "no nick" : profile.nick.length,
+    profile.tags,
+    profile.tags?.length ?? "no tags",
+    profile.inner?.deep ?? "not deep",
+    "age" in profile,
+    "tags" in profile,
+    "inner" in profile,
+    Object.keys(profile),
+    JSON.stringify(profile),
+  ];
+}
+
+const texts = [
+  '{"name":"a","nick":null}',
+  '{"name":"b","nick":"bee","age":1}',
+  '{"name":"c","nick":"","age":0,"tags":[]}',
+  '{"name":"d","nick":null,"tags":null}',
+  '{"name":"e","nick":null,"inner":{}}',
+  '{"name":"f","nick":null,"inner":{"deep":-0}}',
+  '{"inner":{"deep":1,"deeper":2},"tags":["x"],"age":1.5,"nick":"n","name":"g"}',
+];
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += describe(i % 2 ? { name: "n", nick: null } : { name: "n", nick: "k", age: i, tags: ["t"], inner: { deep: i } }).length;
+console.log("2000 honest literals", warm);
+
+for (const text of texts) attempt(text, () => describe(JSON.parse(text) as Profile));
+attempt("optional members are added later", () => {
+  const profile = JSON.parse('{"name":"a","nick":null}') as Profile;
+  profile.age = 3;
+  profile.inner = { deep: 4 };
+  profile.tags = null;
+  return describe(profile);
+});
+attempt("optional members are deleted later", () => {
+  const profile = JSON.parse('{"name":"b","age":1,"nick":"n","tags":["x"],"inner":{"deep":2}}') as Profile;
+  delete profile.age;
+  delete profile.inner;
+  profile.tags = undefined;
+  return describe(profile);
+});
+attempt("mapped types", () => {
+  const part = JSON.parse("{}") as Partial<Profile>;
+  const picked = JSON.parse('{"name":"p","nick":5}') as Pick<Profile, "name" | "age">;
+  const whole = JSON.parse('{"age":2}') as Required<Pick<Profile, "age">>;
+  return [part, Object.keys(part), part.name, picked, picked.name.length, whole.age + 1];
+});
+//// parsed-by-type-results-and-literals-go-through-one-function.ts
+////= show-2
+
+////= Point
+class Dot implements Point {
+  constructor(
+    public x: number,
+    public y: number,
+  ) {}
+}
+
+////= norm
+function move(point: Point, by: number): Point {
+  point.x += by;
+  point.y -= by;
+  return point;
+}
+function keys(point: Point): string {
+  return Object.keys(point).join();
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += norm({ x: i, y: 1 }) + norm(new Dot(1, i)) + move({ x: i, y: i }, 1).x;
+console.log("2000 honest literals and instances", warm);
+
+const texts = ['{"x":3,"y":4}', '{"y":4,"x":3}', '{"x":0.5,"y":-0}', '{"w":0,"x":3,"y":4}', '{"x":3,"w":0,"y":4}', '{"x":3,"y":4,"z":5}', '{"y":1e21,"z":{},"x":1e-7}', '{"0":1,"x":3,"y":4}'];
+for (const text of texts) {
+  attempt(text, () => {
+    const point = JSON.parse(text) as Point;
+    return [norm(point), keys(point), move(point, 1), keys(point), JSON.stringify(point)];
+  });
+}
+attempt("in one list with literals and instances", () => {
+  const points: Point[] = [{ x: 1, y: 2 }, JSON.parse('{"y":2,"x":1}') as Point, new Dot(1, 2), JSON.parse('{"z":0,"x":1,"y":2}') as Point, { y: 2, x: 1 }];
+  return [points.map(norm), points.map(keys), points.map(point => move(point, 0.5).x)];
+});
+attempt("a list that was parsed, then pushed to", () => {
+  const points = JSON.parse('[{"x":1,"y":1},{"y":2,"x":2}]') as Point[];
+  points.push({ x: 3, y: 3 }, new Dot(4, 4));
+  return [points.map(norm), points.map(keys)];
+});
+attempt("parsed 2000 times, each third with other keys", () => {
+  let sum = 0;
+  for (let i = 0; i < 2000; i++) sum += norm(JSON.parse(i % 3 === 0 ? '{"x":1,"y":2}' : i % 3 === 1 ? '{"y":2,"x":1}' : '{"k' + i + '":0,"x":1,"y":2}') as Point);
+  return sum;
+});
+attempt("honest again", () => [norm({ x: 3, y: 4 }), norm(new Dot(3, 4)), keys(new Dot(0, 0))]);
+//// parsed-by-type-results-are-changed-afterwards.ts
+////= show-2
+
+interface Account {
+  id: number;
+  owner: string;
+  limits: { daily: number };
+}
+
+////= lines-3	idOf	account	Account	number	account.id
+function ownerLength(account: Account): number {
+  return account.owner.length;
+}
+function daily(account: Account): number {
+  return account.limits.daily * 2;
+}
+function look(account: Account): unknown[] {
+  return [idOf(account), account.owner, daily(account), Object.keys(account), JSON.stringify(account)];
+}
+function fresh(): Account {
+  return JSON.parse('{"id":1,"owner":"ann","limits":{"daily":10}}') as Account;
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const account = fresh();
+  warm += idOf(account) + ownerLength(account) + daily(account);
+}
+console.log("2000 honest rounds", warm);
+
+attempt("typed stores", () => {
+  const account = fresh();
+  account.id = 2.5;
+  account.owner = "bob";
+  account.limits = { daily: -0 };
+  return look(account);
+});
+attempt("a member is added", () => {
+  const account = fresh();
+  Object.assign(account, { extra: true, another: [1] });
+  return look(account);
+});
+attempt("a member is deleted by reflection", () => {
+  const account = fresh();
+  Reflect.deleteProperty(account, "id");
+  return [idOf(account), idOf(account) + 1, Object.keys(account), "id" in account];
+});
+attempt("a deleted member is used", () => {
+  const account = fresh();
+  Reflect.deleteProperty(account, "owner");
+  return ownerLength(account);
+});
+attempt("a member gets another kind of value by reflection", () => {
+  const account = fresh();
+  Reflect.set(account, "id", "seven");
+  Reflect.set(account, "limits", null);
+  return [idOf(account), typeof idOf(account), idOf(account) + 1, JSON.stringify(account)];
+});
+attempt("the member that is now null is used", () => {
+  const account = fresh();
+  Reflect.set(account, "limits", null);
+  return daily(account);
+});
+attempt("a member becomes an accessor", () => {
+  const account = fresh();
+  let reads = 0;
+  Object.defineProperty(account, "id", { get: () => ++reads * 100, enumerable: true, configurable: true });
+  return [idOf(account), idOf(account), reads, JSON.stringify(account)];
+});
+attempt("frozen", () => {
+  const account = Object.freeze(fresh());
+  const open: Account = account;
+  let threw = "no";
+  try {
+    open.id = 5;
+  } catch (error) {
+    threw = error instanceof Error ? error.constructor.name : typeof error;
+  }
+  open.limits.daily = 50;
+  return [threw, look(account)];
+});
+attempt("given another prototype", () => {
+  const account = fresh();
+  Object.setPrototypeOf(account, { inherited: 1, id: 99 });
+  Reflect.deleteProperty(account, "id");
+  return [idOf(account), Object.keys(account), "inherited" in account, JSON.stringify(account)];
+});
+attempt("given no prototype", () => {
+  const account = fresh();
+  Object.setPrototypeOf(account, null);
+  return [idOf(account), daily(account), Object.keys(account), JSON.stringify(account)];
+});
+attempt("very many members are added", () => {
+  const account = fresh();
+  const open: Record<string, unknown> = { ...account };
+  for (let i = 0; i < 200; i++) Reflect.set(account, "k" + i, i);
+  return [idOf(account), daily(account), Object.keys(account).length, Object.keys(open).length];
+});
+attempt("honest again", () => look(fresh()));
+//// parsed-by-type-strings-with-escapes-and-lone-surrogates.ts
+////= show-2
+
+////= lines	Note	title	string	body	string
+
+function codes(text: string): string {
+  const parts: string[] = [];
+  for (let i = 0; i < text.length; i++) parts.push(text.charCodeAt(i).toString(16));
+  return parts.join(" ");
+}
+function uses(note: Note): unknown[] {
+  return [codes(note.title), note.title.length, codes(note.body), note.title + note.body === note.title.concat(note.body), note.title === note.body, codes(JSON.stringify(note.title)), note.title.isWellFormed()];
+}
+
+const values = ['""', '"a"', '"\\""', '"\\\\"', '"\\/"', '"\\b\\f\\n\\r\\t"', '"\\u0000"', '"\\u0041"', '"\\u00e9"', '"é"', '"\\u65e5"', '"日"', '"\\ud83d\\ude00"', '"😀"', '"\\ud800"', '"\\udc00"', '"\\ude00\\ud83d"', '"a\\ud800b"', '"\\uD83D"', '"\\u2028\\u2029"', '"\u007f"', '"\\uFFFF"', '"\\ufeff"'];
+for (const value of values) {
+  attempt(codes(value), () => uses(JSON.parse('{"title":' + value + ',"body":"a"}') as Note));
+}
+attempt("declared keys written with escapes", () => {
+  const note = JSON.parse('{"\\u0074itle":"t","bod\\u0079":"b"}') as Note;
+  return [note, Object.keys(note), note.title, note.body];
+});
+attempt("declared keys written with every letter escaped", () => {
+  const note = JSON.parse('{"\\u0074\\u0069\\u0074\\u006c\\u0065":"t","\\u0062\\u006F\\u0064\\u0079":"b"}') as Note;
+  return [note, Object.keys(note), note.title, note.body];
+});
+attempt("keys that only look like the declared ones", () => {
+  const note = JSON.parse('{"title":"t","body":"b","tіtle":"cyrillic","title\\u0000":"nul","Title":"upper","title ":"space"}') as Note;
+  return [Object.keys(note).map(codes), note.title, note.body];
+});
+attempt("keys that are lone surrogates", () => {
+  const table = JSON.parse('{"\\ud800":1,"\\udc00":2,"\\ud800\\udc00":3,"":4}') as Record<string, number>;
+  return [Object.keys(table).map(codes), table["\ud800"], table["\udc00"], table["𐀀"], table[""]];
+});
+attempt("a text in 16 bits", () => {
+  const note = JSON.parse('{"title":"日本","body":"語","日":"本"}') as Note;
+  return [note, uses(note)];
+});
+//// parsed-by-type-text-cut-at-every-position-is-a-syntax-error.ts
+////= show-2
+
+interface Item {
+  id: number;
+  name: string;
+  tags: string[];
+  inner: { ok: boolean; none: null };
+}
+
+const whole = '{"id":-12.5e+1,"name":"a\\u0041\\n","tags":["x","y"],"inner":{"ok":true,"none":null}}';
+
+////= classOf
+
+attempt("whole", () => JSON.parse(whole) as Item);
+const cut: string[] = [];
+for (let end = 0; end < whole.length; end++) cut.push(classOf(() => JSON.parse(whole.slice(0, end)) as Item));
+console.log("cut after each character:", cut.every(name => name === "SyntaxError") ? "always a SyntaxError" : cut.join(" "));
+
+const started: string[] = [];
+for (let start = 1; start < whole.length; start++) started.push(classOf(() => JSON.parse(whole.slice(start)) as Item));
+console.log("started after each character:", started.every(name => name === "SyntaxError") ? "always a SyntaxError" : started.join(" "));
+
+const tails = [",", "}", "]", "x", "{}", "null", '"', "\u0000", "﻿", "/", "//", "/**/", " ", " ", "\v", "\f"];
+for (const tail of tails) attempt("followed by " + JSON.stringify(tail), () => classOf(() => JSON.parse(whole + tail) as Item));
+for (const head of [",", "﻿", " ", "\v", "+", "(", "'"]) attempt("after " + JSON.stringify(head), () => classOf(() => JSON.parse(head + whole) as Item));
+
+const broken = [
+  "",
+  " ",
+  "{",
+  "{}x",
+  '{"id":1,}',
+  '{,"id":1}',
+  '{"id" 1}',
+  '{"id":}',
+  "{id:1}",
+  "{'id':1}",
+  '{"id":01}',
+  '{"id":1.}',
+  '{"id":.5}',
+  '{"id":+1}',
+  '{"id":1e}',
+  '{"id":0x10}',
+  '{"id":NaN}',
+  '{"id":Infinity}',
+  '{"id":-}',
+  '{"id":- 1}',
+  '{"id":1_000}',
+  '{"id":1n}',
+  '{"id":undefined}',
+  '{"id":True}',
+  '{"id":nul}',
+  '{"name":"\\x41"}',
+  '{"name":"\\u12"}',
+  '{"name":"\\u12G4"}',
+  '{"name":"\\"}',
+  '{"name":"a\nb"}',
+  '{"name":"a\tb"}',
+  '{"name":"\u0000"}',
+  '{"tags":[1,]}',
+  '{"tags":[,1]}',
+  '{"tags":[1 2]}',
+  '{"tags":[}',
+  '{"tags":]}',
+  '{"inner":{]}',
+];
+for (const text of broken) attempt(JSON.stringify(text), () => classOf(() => JSON.parse(text) as Item));
+//// parsed-by-type-text-that-is-both-mistyped-and-broken-is-a-syntax-error.ts
+////= show-2
+
+interface Item {
+  id: number;
+  name: string;
+  list: number[];
+}
+type Shape = { kind: "a"; x: number } | { kind: "b"; y: string };
+
+////= classOf
+
+const items = [
+  '{"id":"wrong","name":"n","list":[]',
+  '{"id":"wrong","name":"n","list":[]}}',
+  '{"id":"wrong",',
+  '{"id":null,"name":1,"list":{}} x',
+  '{"id":1,"name":"n","list":["wrong",]}',
+  '{"id":1,"name":"n","list":["wrong"',
+  '{"list":"wrong","id":1,"name":"n"',
+  '[1,2,3',
+  '"text',
+  "nul",
+  "12x",
+  '{"id":1e400,"name":"n","list":[]',
+  '{"missing":true',
+  "{}}",
+  "[]]",
+  "null null",
+];
+for (const text of items) attempt(JSON.stringify(text), () => classOf(() => JSON.parse(text) as Item));
+
+const shapes = ['{"kind":"c","x":1', '{"kind":"a","x":"wrong"', '{"kind":"a","y":"of b",}', '{"kind":1]', '{"kind":"b","y":2}{'];
+for (const text of shapes) attempt("shape " + JSON.stringify(text), () => classOf(() => JSON.parse(text) as Shape));
+
+attempt("mistyped far before the break", () => {
+  const parts: string[] = [];
+  for (let i = 0; i < 5000; i++) parts.push(i === 3 ? '"wrong"' : String(i));
+  return classOf(() => JSON.parse('{"id":1,"name":"n","list":[' + parts.join(",") + "]") as Item);
+});
+//// parsed-by-type-tuples-records-and-nested-lists.ts
+////= show-2
+
+type Pair = [number, string];
+type Grid = number[][];
+type Rows = { cells: [number, number]; label: string }[];
+type Table = Record<string, { count: number }>;
+type Fixed = Record<"a" | "b", number>;
+
+function swap(pair: Pair): [string, number] {
+  return [pair[1], pair[0]];
+}
+function sumGrid(grid: Grid): number {
+  let sum = 0;
+  for (const row of grid) for (const cell of row) sum += cell;
+  return sum;
+}
+function widths(rows: Rows): number[] {
+  return rows.map(row => row.cells[1] - row.cells[0]);
+}
+function counts(table: Table): number {
+  let sum = 0;
+  for (const key of Object.keys(table)) sum += table[key].count;
+  return sum;
+}
+
+attempt("a pair", () => {
+  const pair = JSON.parse('[1,"one"]') as Pair;
+  return [pair, pair.length, swap(pair), Array.isArray(pair), pair[0] + 1, pair[1].length];
+});
+attempt("a pair that is pushed to", () => {
+  const pair = JSON.parse('[1,"one"]') as Pair;
+  pair.push(2, "two");
+  return [pair, pair.length, swap(pair)];
+});
+attempt("an empty tuple", () => JSON.parse("[]") as []);
+attempt("a grid", () => {
+  const grid = JSON.parse("[[1,2],[],[3.5],[-0],[1e21]]") as Grid;
+  return [grid, sumGrid(grid), grid[1].length, grid[3][0]];
+});
+attempt("rows", () => {
+  const rows = JSON.parse('[{"cells":[1,5],"label":"a"},{"label":"b","cells":[0.5,0.25]},{"cells":[2,2],"label":"c","more":[]}]') as Rows;
+  return [rows, widths(rows), rows.map(row => row.label).join()];
+});
+attempt("a table", () => {
+  const table = JSON.parse('{"x":{"count":1},"y":{"count":2,"more":true},"":{"count":3},"constructor":{"count":4}}') as Table;
+  const name: string = "constructor";
+  return [table, counts(table), Object.keys(table), table[name].count, table["missing"]];
+});
+attempt("an empty table", () => {
+  const table = JSON.parse("{}") as Table;
+  const name: string = "toString";
+  return [table, counts(table), table[name] === undefined, typeof table[name]];
+});
+attempt("fixed keys", () => {
+  const fixed = JSON.parse('{"b":2,"c":3,"a":1}') as Fixed;
+  return [fixed, fixed.a + fixed.b, Object.keys(fixed)];
+});
+attempt("read-only lists", () => {
+  const list = JSON.parse("[3,1,2]") as readonly number[];
+  const pair = JSON.parse("[1,2]") as readonly [number, number];
+  return [list, list.toSorted(), pair, Object.isFrozen(list), Object.isFrozen(pair)];
+});
+//// parsed-by-type-unions-and-tags-in-any-place.ts
+////= show-2
+
+type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number } | { kind: "label"; text: string; size?: number };
+type Result = { ok: true; value: number } | { ok: false; error: string };
+type Loose = number | string | null | number[] | { n: number };
+type Versioned = { version: 1; name: string } | { version: 2; name: { first: string } };
+
+function area(shape: Shape): number {
+  switch (shape.kind) {
+    case "circle":
+      return shape.radius * shape.radius * 3;
+    case "square":
+      return shape.side * shape.side;
+    case "label":
+      return shape.text.length * (shape.size ?? 1);
+  }
+}
+function unwrap(result: Result): string {
+  return result.ok ? "value " + (result.value + 1) : "error " + result.error.toUpperCase();
+}
+function kindOf(loose: Loose): string {
+  if (loose === null) return "null";
+  if (typeof loose === "number") return "number " + (loose + 1);
+  if (typeof loose === "string") return "string " + loose.length;
+  if (Array.isArray(loose)) return "list " + loose.length;
+  return "object " + loose.n;
+}
+function nameOf(value: Versioned): string {
+  return value.version === 1 ? value.name : value.name.first;
+}
+
+const shapes = [
+  '{"kind":"circle","radius":2}',
+  '{"radius":2,"kind":"circle"}',
+  '{"kind":"square","side":3}',
+  '{"side":3,"extra":1,"kind":"square"}',
+  '{"kind":"label","text":"abc"}',
+  '{"size":2,"text":"abc","kind":"label"}',
+  '{"kind":"circle","radius":2,"side":5}',
+  '{"side":"not a number","kind":"circle","radius":1}',
+  '{"kind":"square","kind":"circle","radius":4}',
+  '{"k\\u0069nd":"circle","radius":5}',
+  '{"kind":"c\\u0069rcle","radius":6}',
+];
+for (const text of shapes) {
+  attempt(text, () => {
+    const shape = JSON.parse(text) as Shape;
+    return [shape, area(shape), Object.keys(shape)];
+  });
+}
+attempt("a list of shapes", () => {
+  const list = JSON.parse("[" + shapes.join(",") + "]") as Shape[];
+  return list.map(area);
+});
+for (const text of ['{"ok":true,"value":1}', '{"value":1,"ok":true}', '{"ok":false,"error":"e"}', '{"error":"e","ok":false,"value":"ignored"}']) attempt(text, () => unwrap(JSON.parse(text) as Result));
+for (const text of ["1", "-0", '"text"', "null", "[]", "[1,2]", '{"n":1}', '{"n":1,"m":2}', '""']) attempt("loose " + text, () => [JSON.parse(text) as Loose, kindOf(JSON.parse(text) as Loose)]);
+for (const text of ['{"version":1,"name":"a"}', '{"name":{"first":"b"},"version":2}', '{"version":1.0,"name":"c"}', '{"version":2e0,"name":{"first":"d","last":"e"}}']) attempt(text, () => nameOf(JSON.parse(text) as Versioned));
+//// products-of-members-parsed-by-type-are-summed-in-a-loop.ts
+////= lines	Line	count	number	price	number
+function total(lines: Line[]): number {
+  let sum = 0;
+  for (const line of lines) sum += line.count * line.price;
+  return sum;
+}
+console.log(total(JSON.parse('[{"count":2,"price":2.5}]') as Line[]));
+//// squares-of-members-are-summed-over-literals-and-over-a-parsed-list.ts
+////= Point
+////= norm
+function total(text: string): number {
+  const points: Point[] = JSON.parse(text);
+  let sum = 0;
+  for (const point of points) sum += norm(point);
+  return sum;
+}
+let warm = 0;
+for (let i = 0; i < 3; i++) warm += norm({ x: i, y: 1 });
+console.log(warm, total('[{"x":3,"y":4}]'));
+//// texts-and-null-arrive-in-an-annotated-list-of-numbers.ts
+const list: number[] = JSON.parse('[1,"2",null,3.5,true,[4],{"a":5}]');
+
+function sum(values: number[]): number {
+  let total = 0;
+  for (const value of values) total += value;
+  return total;
+}
+function kinds(values: number[]): string {
+  return values.map(value => typeof value).join();
+}
+function numbersOnly(values: number[]): number {
+  let count = 0;
+  for (const value of values) if (typeof value === "number") count++;
+  return count;
+}
+
+console.log(list.length);
+console.log(sum(list.slice(0, 1)), sum(list.slice(0, 2)), sum(list.slice(0, 3)), sum(list.slice(2, 4)), sum(list.slice(3, 5)));
+console.log(kinds(list));
+console.log(numbersOnly(list));
+console.log(list[1] + 1, list[2] + 1, list[4] + 1, list[5] + 1);
+console.log(list[1] === 2, list[2] === 0, list[2] === null, list[4] === 1);
+console.log(list.indexOf(2), list.includes(2), list.indexOf(3.5), list.includes(1));
+console.log(list.map(value => value * 2).join());
+console.log(list.filter(value => value > 1).length);
+console.log(Math.max(...list.slice(0, 2)), Math.max(...list.slice(0, 3)), Math.min(...list.slice(0, 5)));
+console.log(JSON.stringify(list));

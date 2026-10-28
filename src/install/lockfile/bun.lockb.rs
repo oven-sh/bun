@@ -111,6 +111,7 @@ struct PatchedDepExternal {
     patchfile_hash_is_null: u8,
     patchfile_hash: u64,
 }
+bun_core::impl_any_bit_pattern!(PatchedDepExternal);
 
 const _: () = {
     assert!(size_of::<PatchedDepExternal>() == size_of::<PatchedDep>());

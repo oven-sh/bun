@@ -1,0 +1,30 @@
+// Loads files with code that the build has not seen. A trimmed executable transpiles and interprets them too.
+//@ build --aot-allow-code-from-disk
+const folder = process.cwd();
+//// require-commonjs
+//@ file cwd/plugin.cjs "module.exports = { answer: 6 * 7 };"
+console.log(require(folder + "/plugin.cjs").answer);
+//// import-typescript
+//@ file cwd/plugin.ts "interface Answer { answer: number } const it: Answer = { answer: 42 }; export default it; export enum Level { Low = 1 }"
+const plugin = await import(folder + "/plugin.ts");
+console.log(plugin.default.answer, plugin.Level.Low);
+//// file-imports-what-the-program-uses
+//@ file cwd/plugin.mjs "import { join } from 'node:path'; export default join('a', 'b');"
+import { join } from "node:path";
+console.log((await import(folder + "/plugin.mjs")).default === join("a", "b"));
+//// file-imports-a-module-that-the-program-never-names
+//@ file cwd/plugin.mjs "import { inspect } from 'node:util'; export default inspect({ a: [1] });"
+console.log((await import(folder + "/plugin.mjs")).default);
+//// file-requires-a-file-beside-it
+//@ file cwd/plugin.cjs "module.exports = require('./beside.cjs') + 1;"
+//@ file cwd/beside.cjs "module.exports = 41;"
+console.log(require(folder + "/plugin.cjs"));
+//// data-file
+//@ file cwd/data.json "{ \"a\": 1 }"
+console.log(require(folder + "/data.json").a);
+//// file-that-is-not-there
+try {
+  require(folder + "/missing.cjs");
+} catch (error) {
+  console.log(error.code);
+}

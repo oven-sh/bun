@@ -1,0 +1,6 @@
+{
+  "export-star.collide_named.mjs": {
+    "errors": "error: TS100201: Ambiguous import \"both\" has multiple matching exports\n"
+  },
+  "handed-on-under-side-effects-false.star.mjs": "compiled"
+}

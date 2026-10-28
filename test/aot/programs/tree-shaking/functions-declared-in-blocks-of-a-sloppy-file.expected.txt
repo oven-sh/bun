@@ -1,0 +1,5 @@
+undefined undefined undefined
+the first arm, helper of the first arm
+in a block, helper of the block
+labeled, helper of the labeled one
+in try, helper of try

@@ -97,7 +97,7 @@ interface Backend {
 type Receive = (...messages: string[]) => number | void;
 // Makes the transport write what it holds and returns the bytes it still holds.
 type UnsentBytes = () => number;
-// Closes a frontend that took nothing while the backend queued its limit for it.
+// Closes a frontend that took nothing while the backend queued its limit for it. The backend disconnects it after the call.
 type Dismiss = (reason: string) => void;
 type CreateBackendFn = (
   executionContextId: number,
@@ -580,6 +580,8 @@ class Debugger {
       return ws.getBufferedAmount();
     };
     const dismiss = (reason: string) => {
+      // The backend takes nothing more from this frontend once this returns.
+      data.adapter?.removeBreakpoints();
       if (ws.getBufferedAmount() === 0) {
         ws.close(1013, reason);
         return;

@@ -1,4 +1,4 @@
-import { spawn } from "bun";
+import { spawn, type Subprocess } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
@@ -9,16 +9,87 @@ import { WebSocket } from "ws";
 // under validateExceptionChecks.
 const { BUN_JSC_validateExceptionChecks, BUN_JSC_dumpSimulatedThrows, ...inspecteeEnv } = bunEnv;
 
-// JSGlobalObjectInspectorController::disconnectFrontend tears down every agent
-// (willDestroyFrontendAndBackend) before its last-frontend check, so without
-// Bun's per-connection routing a second client's close would silently disable
-// Console/Runtime/Debugger for the still-attached first client.
-test("a second --inspect client disconnecting does not disable inspector agents for the first", async () => {
-  using dir = tempDir("inspect-second-client", {
-    "keepalive.js": "setInterval(() => {}, 1e9);\n",
-  });
-  await using proc = spawn({
-    cmd: [bunExe(), "--inspect-wait=127.0.0.1:0", join(String(dir), "keepalive.js")],
+// `tick()` logs one line. The breakpoint of the tests goes on its `console.log`.
+const fixture = `function tick(tag) {
+  console.log("tick " + tag);
+}
+globalThis.tick = tick;
+setInterval(() => {}, 1e9);
+console.log("ready");
+`;
+const breakpoint = { lineNumber: 1, urlRegex: "fixture\\.js$" };
+
+/** A frontend that speaks the JSC inspector protocol over the `--inspect` WebSocket. */
+class Client {
+  /** The text of each `Console.messageAdded` event. */
+  readonly consoleTexts: string[] = [];
+
+  #ws: WebSocket;
+  #nextId = 1;
+  #pending = new Map<number, { resolve: (message: any) => void; reject: (error: Error) => void }>();
+  #waiters: (() => void)[] = [];
+  #events: string[] = [];
+  #closed = Promise.withResolvers<void>();
+
+  private constructor(ws: WebSocket) {
+    this.#ws = ws;
+    ws.addEventListener("message", ({ data }) => {
+      const message = JSON.parse(String(data));
+      if (message.method) {
+        this.#events.push(message.method);
+        if (message.method === "Console.messageAdded") this.consoleTexts.push(message.params?.message?.text ?? "");
+        for (const waiter of this.#waiters.splice(0)) waiter();
+        return;
+      }
+      // Every frontend gets every response, so an id this client did not send is not an error.
+      this.#pending.get(message.id)?.resolve(message);
+      this.#pending.delete(message.id);
+    });
+    ws.addEventListener("close", () => {
+      const error = new Error("the inspector socket closed before the response");
+      for (const { reject } of this.#pending.values()) reject(error);
+      this.#pending.clear();
+      this.#closed.resolve();
+    });
+  }
+
+  static async connect(url: URL): Promise<Client> {
+    const ws = new WebSocket(url);
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => resolve());
+      ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+    });
+    return new Client(ws);
+  }
+
+  send(method: string, params?: object): Promise<any> {
+    const id = this.#nextId++;
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
+    this.#pending.set(id, { resolve, reject });
+    this.#ws.send(JSON.stringify({ id, method, params }));
+    return promise;
+  }
+
+  /** Resolves when `condition()` holds. It is checked again after each event. */
+  async until(condition: () => boolean): Promise<void> {
+    while (!condition()) await new Promise<void>(resolve => this.#waiters.push(resolve));
+  }
+
+  /** How many events with this method arrived. */
+  count(method: string): number {
+    return this.#events.filter(event => event === method).length;
+  }
+
+  close(): Promise<void> {
+    this.#ws.close();
+    return this.#closed.promise;
+  }
+}
+
+/** Starts the fixture under `--inspect-wait`. The first client is attached and past `Inspector.initialized`. */
+async function start(dir: string): Promise<{ proc: Subprocess; url: URL; a: Client }> {
+  const proc = spawn({
+    cmd: [bunExe(), "--inspect-wait=127.0.0.1:0", join(dir, "fixture.js")],
     env: inspecteeEnv,
     stdout: "ignore",
     stderr: "pipe",
@@ -38,86 +109,106 @@ test("a second --inspect client disconnecting does not disable inspector agents 
     if (url || stderr.includes("Listening:")) break;
   }
   if (!url) {
-    process.stderr.write(stderr);
-    throw new Error("Unable to find inspector URL");
+    proc.kill();
+    throw new Error("Unable to find inspector URL:\n" + stderr);
   }
 
-  const consoleTexts: string[] = [];
-  const pending = new Map<number, { resolve: (message: any) => void; reject: (err: unknown) => void }>();
-  let nextId = 1;
-  let aClosed = false;
+  const a = await Client.connect(url);
+  await a.send("Inspector.enable");
+  await a.send("Console.enable");
+  await a.send("Runtime.enable");
+  await a.send("Inspector.initialized");
+  // The program runs from here. Its last statement logs "ready".
+  await a.until(() => a.consoleTexts.includes("ready"));
+  return { proc, url, a };
+}
 
-  const a = new WebSocket(url);
-  await new Promise<void>((resolve, reject) => {
-    a.addEventListener("open", () => resolve());
-    a.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
-  });
-  a.addEventListener("message", ({ data }) => {
-    const message = JSON.parse(String(data));
-    if (message.id && pending.has(message.id)) {
-      pending.get(message.id)!.resolve(message);
-      pending.delete(message.id);
-    } else if (message.method === "Console.messageAdded") {
-      consoleTexts.push(message.params?.message?.text ?? "");
-    }
-  });
-  const failPending = (cause: unknown) => {
-    aClosed = true;
-    const err = new Error("inspector socket closed before response", { cause });
-    for (const { reject } of pending.values()) reject(err);
-    pending.clear();
-  };
-  a.addEventListener("close", failPending);
-  a.addEventListener("error", failPending);
-  const send = (method: string, params?: object) =>
-    new Promise<any>((resolve, reject) => {
-      if (aClosed) return reject(new Error("inspector socket already closed"));
-      const id = nextId++;
-      pending.set(id, { resolve, reject });
-      a.send(JSON.stringify({ id, method, params }));
-    });
+/** Attaches a second client that turns the debugger on and sets the breakpoint in `tick()`. */
+async function attachDebugger(url: URL): Promise<Client> {
+  const b = await Client.connect(url);
+  await b.send("Debugger.enable");
+  await b.send("Debugger.setBreakpointsActive", { active: true });
+  const { result } = await b.send("Debugger.setBreakpointByUrl", breakpoint);
+  expect(result?.locations).toHaveLength(1);
+  return b;
+}
 
-  await send("Inspector.enable");
-  await send("Console.enable");
-  await send("Runtime.enable");
-  await send("Inspector.initialized");
+// JSGlobalObjectInspectorController::disconnectFrontend tears down every agent
+// (willDestroyFrontendAndBackend) before its last-frontend check, so without
+// Bun's per-connection routing a second client's close would silently disable
+// Console/Runtime/Debugger for the still-attached first client.
+test("a second --inspect client disconnecting does not disable inspector agents for the first", async () => {
+  using dir = tempDir("inspect-second-client", { "fixture.js": fixture });
+  const { proc, url, a } = await start(String(dir));
+  await using _ = proc;
 
   // The Console.messageAdded event for a console.log inside Runtime.evaluate is
   // emitted synchronously during dispatch, so it arrives on this socket before
   // the evaluate response does.
-  await send("Runtime.evaluate", { expression: "console.log('probe-before')" });
-  expect(consoleTexts).toContain("probe-before");
+  await a.send("Runtime.evaluate", { expression: "tick('before')" });
+  expect(a.consoleTexts).toContain("tick before");
 
-  const b = new WebSocket(url);
-  await new Promise<void>((resolve, reject) => {
-    b.addEventListener("open", () => resolve());
-    b.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
-  });
   // One round-trip so B is registered as a FrontendChannel on the inspected
   // thread before it closes; a socket that never reached connectFrontend
   // wouldn't exercise the agent-teardown path on disconnect. B never enables
   // any domain, so this can't be the source of a later disable.
-  const bCommandId = 1 << 20;
-  const bReady = new Promise<void>((resolve, reject) => {
-    b.addEventListener("message", ({ data }) => {
-      if (JSON.parse(String(data)).id === bCommandId) resolve();
-    });
-    b.addEventListener("close", cause => reject(new Error("B closed before round-trip", { cause })));
-    b.addEventListener("error", cause => reject(new Error("B errored before round-trip", { cause })));
-  });
-  b.send(JSON.stringify({ id: bCommandId, method: "Runtime.evaluate", params: { expression: "0" } }));
-  await bReady;
-  const bClosed = new Promise<void>(resolve => b.addEventListener("close", () => resolve()));
-  b.close();
-  await bClosed;
+  const b = await Client.connect(url);
+  await b.send("Runtime.evaluate", { expression: "0" });
+  await b.close();
 
   // One round-trip so B's disconnect task (posted to the inspected thread before
   // this message was) has run before the probe below.
-  await send("Runtime.evaluate", { expression: "0" });
+  await a.send("Runtime.evaluate", { expression: "0" });
 
-  await send("Runtime.evaluate", { expression: "console.log('probe-after')" });
-  expect(consoleTexts).toContain("probe-after");
+  await a.send("Runtime.evaluate", { expression: "tick('after')" });
+  expect(a.consoleTexts).toContain("tick after");
 
-  a.close();
-  proc.kill();
+  await a.close();
+});
+
+// JSC has one debugger state for every frontend. What a client that left had turned on
+// must not stop the program when the client that stays never turned the debugger on.
+test("a debugger client that leaves takes its breakpoints with it, and the other client keeps its events", async () => {
+  using dir = tempDir("inspect-debugger-leaves", { "fixture.js": fixture });
+  const { proc, url, a } = await start(String(dir));
+  await using _ = proc;
+  const b = await attachDebugger(url);
+
+  // The breakpoint works: the program stops in tick() until B resumes it.
+  const first = a.send("Runtime.evaluate", { expression: "tick('one')" });
+  await b.until(() => b.count("Debugger.paused") === 1);
+  await b.send("Debugger.resume");
+  await first;
+  expect(a.consoleTexts).toContain("tick one");
+
+  await b.close();
+  // One round-trip so that B's disconnect task has run.
+  await a.send("Runtime.evaluate", { expression: "0" });
+
+  // Nobody is left to resume the program, so it must not stop in tick() again.
+  const second = a.send("Runtime.evaluate", { expression: "tick('two')" });
+  await Promise.race([second, a.until(() => a.count("Debugger.paused") > 1)]);
+  expect({ pausedAgain: a.count("Debugger.paused") > 1, consoleTexts: a.consoleTexts }).toEqual({
+    pausedAgain: false,
+    consoleTexts: ["ready", "tick one", "tick two"],
+  });
+
+  await a.close();
+});
+
+test("the program continues when its debugger client leaves during a pause and another client stays", async () => {
+  using dir = tempDir("inspect-debugger-leaves-paused", { "fixture.js": fixture });
+  const { proc, url, a } = await start(String(dir));
+  await using _ = proc;
+  const b = await attachDebugger(url);
+
+  const evaluated = a.send("Runtime.evaluate", { expression: "tick('one')" });
+  await b.until(() => b.count("Debugger.paused") === 1);
+  // A did not turn the debugger on, so it does not resume the program. B leaves without a resume.
+  await b.close();
+
+  await evaluated;
+  expect(a.consoleTexts).toEqual(["ready", "tick one"]);
+
+  await a.close();
 });

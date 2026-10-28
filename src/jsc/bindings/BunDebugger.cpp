@@ -95,10 +95,8 @@ public:
 enum class ConnectionStatus : int32_t {
     Pending = 0,
     Connected = 1,
-    // Dropped for not reading. debugger.ts still holds the transport, to tell the frontend why.
-    Muted = 2,
-    Disconnecting = 3,
-    Disconnected = 4,
+    Disconnecting = 2,
+    Disconnected = 3,
 };
 
 // A frontend is dropped once this much was queued for it since it last took a byte. Node queues without bound.
@@ -222,6 +220,7 @@ public:
                 if (router.frontendCount() > 1) {
                     JSC::JSLockHolder locker(inspectedGlobalObject->vm());
                     router.disconnectFrontend(connection.get());
+                    connection->disableDomainsOnlyThisFrontendEnabled();
                 } else {
                     connection->inspector().disconnect(connection.get());
                 }
@@ -248,10 +247,55 @@ public:
         return globalObject->inspectorDebuggable();
     }
 
-    // The frontend gets no more answers, so the debugger goes on without it.
-    bool isGone() const
+    bool hasLeft() const
     {
-        return status.load() >= ConnectionStatus::Muted;
+        auto status = this->status.load();
+        return status == ConnectionStatus::Disconnected || status == ConnectionStatus::Disconnecting;
+    }
+
+    // Inspected thread. Only a frontend that turned the debugger on answers a pause.
+    bool canResumeProgram() const
+    {
+        return !hasLeft() && enabledDomains.contains("Debugger"_s);
+    }
+
+    // Inspected thread. Remembers `"<domain>.enable"` and `"<domain>.disable"` from this frontend.
+    void trackEnabledDomains(StringView message)
+    {
+        auto domainBefore = [&](ASCIILiteral suffix) -> StringView {
+            size_t end = message.find(suffix);
+            size_t start = end == notFound ? notFound : message.reverseFind('"', end);
+            if (start == notFound)
+                return {};
+            auto domain = message.substring(start + 1, end - start - 1);
+            return domain.containsOnly<isASCIIAlphanumeric>() ? domain : StringView();
+        };
+
+        if (auto domain = domainBefore(".enable\""_s); !domain.isEmpty()) {
+            if (!enabledDomains.contains(domain))
+                enabledDomains.append(domain.toString());
+        } else if (auto domain = domainBefore(".disable\""_s); !domain.isEmpty())
+            enabledDomains.removeAll(domain);
+    }
+
+    // Inspected thread. JSC keeps one state per domain for every frontend, so this one's leftovers could pause the program.
+    void disableDomainsOnlyThisFrontendEnabled()
+    {
+        Vector<RefPtr<BunInspectorConnection>, 8> connections;
+        {
+            Locker<Lock> locker(inspectorConnectionsLock);
+            connections.appendVector(inspectorConnections->get(scriptExecutionContextIdentifier));
+        }
+
+        for (auto& domain : std::exchange(enabledDomains, {})) {
+            bool anotherFrontendEnabledIt = connections.containsIf([&](auto& other) {
+                return other.get() != this && other->status != ConnectionStatus::Disconnected && other->enabledDomains.contains(domain);
+            });
+            // JSC asserts when a frontend disables a debugger that is not attached.
+            if (anotherFrontendEnabledIt || (domain == "Debugger"_s && !globalObject->debugger()))
+                continue;
+            inspector().dispatchMessageFromRemote(makeString("{\"id\":-1,\"method\":\""_s, domain, ".disable\"}"_s));
+        }
     }
 
     void sendMessageToFrontend(const String& message) override
@@ -259,9 +303,8 @@ public:
         if (message.length() == 0)
             return;
 
-        // The debugger thread no longer hands anything to these.
-        auto status = this->status.load(std::memory_order_relaxed);
-        if (status == ConnectionStatus::Muted || status == ConnectionStatus::Disconnecting)
+        // The debugger thread dropped this frontend and hands it nothing more.
+        if (this->status.load(std::memory_order_relaxed) == ConnectionStatus::Disconnecting)
             return;
 
         this->sendMessageToDebuggerThread(message.isolatedCopy());
@@ -290,13 +333,13 @@ public:
         while (!isDoneProcessingEvents) {
             size_t closedCount = 0;
             for (auto& connection : connections) {
-                if (connection->isGone()) {
-                    closedCount++;
-                    continue;
+                if (!connection->hasLeft()) {
+                    connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global, true);
+                    if (isDoneProcessingEvents)
+                        break;
                 }
-                connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global, true);
-                if (isDoneProcessingEvents)
-                    break;
+                if (!connection->canResumeProgram())
+                    closedCount++;
             }
 
             if (isDoneProcessingEvents)
@@ -328,10 +371,10 @@ public:
     {
         size_t closedCount = 0;
         for (auto& connection : connections) {
-            if (connection->isGone()) {
+            if (!connection->canResumeProgram())
                 closedCount++;
+            if (connection->hasLeft())
                 continue;
-            }
 
             Locker<Lock> locker(connection->jsThreadMessagesLock);
             if (!connection->jsThreadMessages.isEmpty())
@@ -393,6 +436,7 @@ public:
         if (!debugger) {
             for (auto message : messages) {
                 resolveWaitIfInitialized(message);
+                trackEnabledDomains(message);
                 dispatcher.dispatchMessageFromRemote(WTF::move(message));
 
                 if (!debugger) {
@@ -407,6 +451,7 @@ public:
         } else {
             for (auto message : messages) {
                 resolveWaitIfInitialized(message);
+                trackEnabledDomains(message);
                 dispatcher.dispatchMessageFromRemote(WTF::move(message));
             }
         }
@@ -425,6 +470,11 @@ public:
 
         auto& vm = debuggerGlobalObject->vm();
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+        if (!jsBunDebuggerOnMessageFunction) {
+            dropQueuedMessages();
+            return;
+        }
 
         if (transportIsFull && !transportHasRoom(debuggerGlobalObject))
             return;
@@ -515,30 +565,37 @@ public:
         }
 
         if (stalledBytes)
-            muteOnDebuggerThread(debuggerGlobalObject, stalledBytes);
+            dropStalledFrontend(debuggerGlobalObject, stalledBytes);
         return false;
     }
 
-    // Debugger thread. Frees the queue, and debugger.ts closes the transport once it has said why.
-    void muteOnDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, size_t stalledBytes)
+    // Debugger thread. The frontend leaves the inspector now. debugger.ts closes the transport once it has said why.
+    void dropStalledFrontend(Zig::GlobalObject* debuggerGlobalObject, size_t stalledBytes)
     {
-        auto connected = ConnectionStatus::Connected;
-        if (!status.compare_exchange_strong(connected, ConnectionStatus::Muted))
+        if (JSValue dismissFn = jsTransportDismissFunction.get()) {
+            auto& vm = debuggerGlobalObject->vm();
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            MarkedArgumentBuffer arguments;
+            arguments.append(jsString(vm, makeString("Inspector frontend read nothing while "_s, stalledBytes / (1024 * 1024), " MB were queued for it"_s)));
+            JSC::call(debuggerGlobalObject, dismissFn, arguments, "BunInspectorConnection::dropStalledFrontend - dismissFn"_s);
+            reportExceptionOnDebuggerThread(debuggerGlobalObject, scope);
+        }
+        disconnectFromDebuggerThread();
+    }
+
+    // Debugger thread.
+    void disconnectFromDebuggerThread()
+    {
+        auto status = this->status.load();
+        if (status != ConnectionStatus::Connected && status != ConnectionStatus::Pending)
             return;
+
+        this->status = ConnectionStatus::Disconnecting;
+        jsBunDebuggerOnMessageFunction.clear();
+        jsTransportUnsentBytesFunction.clear();
+        jsTransportDismissFunction.clear();
         dropQueuedMessages();
-        // A paused inspected thread stops waiting for this frontend.
-        notifyPausedThread();
-
-        if (!jsTransportDismissFunction)
-            return;
-
-        auto& vm = debuggerGlobalObject->vm();
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        MarkedArgumentBuffer arguments;
-        arguments.append(jsString(vm, makeString("Inspector frontend read nothing while "_s, stalledBytes / (1024 * 1024), " MB were queued for it"_s)));
-        JSC::call(debuggerGlobalObject, jsTransportDismissFunction.get(), arguments, "BunInspectorConnection::muteOnDebuggerThread - dismissFn"_s);
-        reportExceptionOnDebuggerThread(debuggerGlobalObject, scope);
-        RETURN_IF_EXCEPTION(scope, );
+        disconnect();
     }
 
     // debugger.ts runs at the top of the stack here, so what it throws has no handler.
@@ -660,6 +717,9 @@ public:
     JSC::Strong<JSC::Unknown> jsTransportUnsentBytesFunction {};
     JSC::Strong<JSC::Unknown> jsTransportDismissFunction {};
 
+    // Inspected thread only: the domains this frontend turned on.
+    WTF::Vector<WTF::String, 4> enabledDomains;
+
     std::atomic<ConnectionStatus> status = ConnectionStatus::Pending;
 
     bool unrefOnDisconnect = false;
@@ -729,7 +789,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSend, (JSC::JSGlobalObject * globalObject, JS
     if (!jsConnection)
         return JSValue::encode(jsUndefined());
 
-    // Nothing answers a frontend that is muted or on its way out.
+    // Nothing answers a frontend that left.
     auto status = jsConnection->connection()->status.load();
     if (status != ConnectionStatus::Pending && status != ConnectionStatus::Connected)
         return JSValue::encode(jsUndefined());
@@ -755,17 +815,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDisconnect, (JSC::JSGlobalObject * globalObje
     if (!jsConnection)
         return JSValue::encode(jsUndefined());
 
-    auto& connection = *jsConnection->connection();
-
-    auto status = connection.status.load();
-    if (status == ConnectionStatus::Connected || status == ConnectionStatus::Pending || status == ConnectionStatus::Muted) {
-        connection.status = ConnectionStatus::Disconnecting;
-        connection.jsBunDebuggerOnMessageFunction.clear();
-        connection.jsTransportUnsentBytesFunction.clear();
-        connection.jsTransportDismissFunction.clear();
-        connection.dropQueuedMessages();
-        connection.disconnect();
-    }
+    jsConnection->connection()->disconnectFromDebuggerThread();
 
     return JSValue::encode(jsUndefined());
 }

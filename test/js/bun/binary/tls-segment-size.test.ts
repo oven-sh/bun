@@ -15,8 +15,11 @@
 // every platform rather than only showing up as a Windows size bump.
 
 import { describe, expect, test } from "bun:test";
-import { isFreeBSD, isLinux, isWindows, preadExact, readElf64ProgramHeaders } from "harness";
-import { closeSync, openSync } from "node:fs";
+import { bunExe, isASAN, isDebug, isFreeBSD, isLinux, isWindows, preadExact, readElf64ProgramHeaders } from "harness";
+import { once } from "node:events";
+import { closeSync, openSync, readFileSync, readlinkSync } from "node:fs";
+import http2 from "node:http2";
+import type { AddressInfo } from "node:net";
 
 /**
  * ELF: size of the PT_TLS segment's in-memory template (p_memsz). This is
@@ -82,5 +85,92 @@ describe("static TLS footprint", () => {
     console.log(`.tls VirtualSize = ${size} bytes (${(size / 1024).toFixed(1)} KB)`);
     expect(size).toBeGreaterThan(0);
     expect(size).toBeLessThan(CEILING);
+  });
+});
+
+// Where /sys/kernel/mm/transparent_hugepage/enabled is `always`, the kernel backs a stretch of anonymous memory that has
+// the size and alignment of a huge page (2 MB) with one huge page, at the first write to it. Bun opts its heaps out
+// (MADV_NOHUGEPAGE). It can't do that in time for the executable's zero-filled data (.bss): the kernel maps it, and the
+// dynamic loader writes to it (it copies environ, stdin, stdout and stderr there) before any code of Bun runs.
+//
+// A mapping smaller than a huge page holds no such stretch, wherever the link puts it. At 2 MB or more it depends on the
+// address the link gave .bss whether every process takes 2 MB more, so any change to Bun can switch that on, and
+// test/aot/perf/start.test.ts fails for that build alone.
+//
+// When one of these fails, allocate the large table at its first use instead of declaring it zero-filled.
+describe("zero-filled data", () => {
+  const smallestPage = 4096n;
+  const hugePage = 2 * 1024 * 1024;
+  const [PT_LOAD, PF_W] = [1, 2];
+  const pageUp = (address: bigint) => ((address + smallestPage - 1n) / smallestPage) * smallestPage;
+
+  // The anonymous mappings that the kernel makes for an ELF executable, at the addresses of the link: what each
+  // writable PT_LOAD segment has in memory past the last page of its data in the file.
+  function zeroFilledMappings(path: string) {
+    return readElf64ProgramHeaders(path)
+      .filter(segment => segment.type === PT_LOAD && (segment.flags & PF_W) !== 0)
+      .map(segment => ({ start: pageUp(segment.vaddr + segment.filesz), end: pageUp(segment.vaddr + segment.memsz) }))
+      .filter(mapping => mapping.end > mapping.start);
+  }
+
+  // A debug build and AddressSanitizer make .bss several times larger, and nobody measures their memory. The link of a
+  // build that ships holds the same limit (zeroFilledBelow in scripts/build/binary-expectations.ts).
+  test.skipIf(!isLinux || isDebug || isASAN)("is smaller than a transparent huge page", () => {
+    const sizes = zeroFilledMappings(bunExe()).map(mapping => Number(mapping.end - mapping.start));
+    expect(sizes.length).toBeGreaterThan(0);
+    expect(Math.max(...sizes)).toBeLessThan(hugePage);
+  });
+
+  // The Huffman tables of HPACK (768 KB, which only a process that speaks HTTP/2 or HTTP/3 fills) were zero-filled
+  // data. This process reads its own zero-filled data before and after its first HTTP/2 request: the longest stretch
+  // of pages that the request filled is the largest table that lives there.
+  test.skipIf(!isLinux)("the first HTTP/2 request fills no large table in it", async () => {
+    const addresses = readElf64ProgramHeaders(bunExe())
+      .filter(segment => segment.type === PT_LOAD)
+      .map(segment => segment.vaddr);
+    const lowest = addresses.reduce((least, address) => (address < least ? address : least));
+    // Where the kernel put the executable, which is not where the link put a position-independent one.
+    const executable = readlinkSync("/proc/self/exe");
+    const first = readFileSync("/proc/self/maps", "utf8")
+      .split("\n")
+      .find(line => line.endsWith(" " + executable))!;
+    const moved = BigInt("0x" + first.split("-")[0]) - (lowest / smallestPage) * smallestPage;
+
+    const memory = openSync("/proc/self/mem", "r");
+    const server = http2.createServer((request, response) => response.end("the response"));
+    try {
+      const read = () =>
+        zeroFilledMappings(bunExe()).map(mapping =>
+          preadExact(memory, Number(mapping.start + moved), Number(mapping.end - mapping.start)),
+        );
+      const before = read();
+
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const client = http2.connect(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
+      const request = client.request({ ":path": "/", "x-a-header": "a value that the client codes with the tables" });
+      let body = "";
+      request.setEncoding("utf8").on("data", chunk => (body += chunk));
+      request.end();
+      await once(request, "end");
+      client.close();
+      expect(body).toBe("the response");
+
+      const after = read();
+      const empty = Buffer.alloc(Number(smallestPage));
+      let longest = 0;
+      for (const [mapping, was] of before.entries()) {
+        for (let at = 0, filled = 0; at < was.length; at += empty.length) {
+          const wasEmpty = was.subarray(at, at + empty.length).equals(empty);
+          const isEmpty = after[mapping].subarray(at, at + empty.length).equals(empty);
+          filled = wasEmpty && !isEmpty ? filled + empty.length : 0;
+          longest = Math.max(longest, filled);
+        }
+      }
+      // The tables are 512 KB and 256 KB. What else the request fills there is a few pages.
+      expect(longest).toBeLessThan(128 * 1024);
+    } finally {
+      server.close();
+      closeSync(memory);
+    }
   });
 });

@@ -6799,15 +6799,15 @@ pub(crate) trait FileCloser: Sized {
             }
         }
 
+        use bun_sys::FdExt as _;
         if is_allowed_to_close_fd
             && self.opened_fd() != Fd::INVALID
-            && self.opened_fd().stdio_tag().is_none()
+            && !self.opened_fd().is_startup_stdio()
         {
             #[cfg(windows)]
             bun_io::Closer::close(self.opened_fd(), self.loop_());
             #[cfg(not(windows))]
             {
-                use bun_sys::FdExt as _;
                 let _ = self.opened_fd().close_allowing_bad_file_descriptor(None);
             }
             self.set_opened_fd(Fd::INVALID);

@@ -2,6 +2,8 @@
 use core::ffi::c_int;
 #[cfg(windows)]
 use core::ffi::c_void;
+#[cfg(unix)]
+use core::sync::atomic::{AtomicU8, Ordering};
 
 // `Fd` (the packed handle struct + pure-data accessors) is canonical in
 // bun_core. This file adds the syscall-touching surface as an extension trait.
@@ -36,7 +38,8 @@ pub enum MakeLibUvOwnedError {
 // `use bun_sys::FdExt;` at call sites; or call `bun_sys::close(fd)` directly.
 // ──────────────────────────────────────────────────────────────────────────
 pub trait FdExt: Copy + Sized {
-    /// fd function will NOT CLOSE stdin/stdout/stderr.
+    /// fd function will NOT CLOSE stdin/stdout/stderr as the process started
+    /// with them (see [`FdExt::is_startup_stdio`]).
     /// Expects a VALID file descriptor object.
     ///
     /// Do not use fd on JS-provided file descriptors (e.g. in `fs.closeSync`).
@@ -46,7 +49,8 @@ pub trait FdExt: Copy + Sized {
     /// closing something completely unrelated; fd would cause weird behavior
     /// as you see EBADF errors in unrelated places.
     fn close(self);
-    /// fd function will NOT CLOSE stdin/stdout/stderr.
+    /// fd function will NOT CLOSE stdin/stdout/stderr as the process started
+    /// with them.
     /// Prefer asserting that EBADF does not happen with `.close()`.
     fn close_allowing_bad_file_descriptor(
         self,
@@ -56,6 +60,14 @@ pub trait FdExt: Copy + Sized {
     /// Use fd API to implement `node:fs` close: stdio must actually close and
     /// EBADF must surface to the caller. Consider fd the raw close method.
     fn close_allowing_standard_io(self, return_address: Option<usize>) -> Option<sys::Error>;
+    /// Whether fd is the stdin, stdout or stderr that the process started
+    /// with. Nothing owns those, so `close()` and `File` leave them open.
+    ///
+    /// On POSIX that is fd 0, 1 or 2 until `close_allowing_standard_io` closes
+    /// that number (`fs.closeSync(1)`). The kernel gives a new descriptor the
+    /// lowest free number, so after that close the number belongs to whatever
+    /// opens next, and its owner has to close it.
+    fn is_startup_stdio(self) -> bool;
     /// Assumes given a valid file descriptor. If error, the handle has not been closed.
     fn make_lib_uv_owned(self) -> Result<Fd, MakeLibUvOwnedError>;
     fn make_lib_uv_owned_for_syscall(
@@ -77,15 +89,34 @@ impl FdExt for Fd {
         self,
         return_address: Option<usize>,
     ) -> Option<sys::Error> {
-        if self.stdio_tag().is_some() {
+        if self.is_startup_stdio() {
             log!("close({}) SKIPPED", self);
             return None;
         }
         self.close_allowing_standard_io(return_address)
     }
 
+    fn is_startup_stdio(self) -> bool {
+        #[cfg(unix)]
+        {
+            match self.native() {
+                n @ 0..=2 => CLOSED_STDIO.load(Ordering::SeqCst) & (1 << n) == 0,
+                _ => false,
+            }
+        }
+        #[cfg(windows)]
+        {
+            self.stdio_tag().is_some()
+        }
+    }
+
     fn close_allowing_standard_io(self, return_address: Option<usize>) -> Option<sys::Error> {
         debug_assert!(self.is_valid()); // probably a UAF
+        // Before the syscall: the kernel can give the number to a new descriptor right after it.
+        #[cfg(unix)]
+        if let n @ 0..=2 = self.native() {
+            CLOSED_STDIO.fetch_or(1 << n, Ordering::SeqCst);
+        }
 
         // Format the file descriptor for logging BEFORE closing it.
         // Otherwise the file descriptor is always invalid after closing it.
@@ -291,6 +322,10 @@ impl FdExt for Fd {
 //   getFdPath, getFdPathW, getFdPathZ.
 // TODO: move these methods defined in bun.sys.File to bun.sys, then delete
 // bun.sys.File.
+
+/// Bit `n` is set once `close_allowing_standard_io` closed fd `n`, for `n` in 0..=2.
+#[cfg(unix)]
+static CLOSED_STDIO: AtomicU8 = AtomicU8::new(0);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Platform helpers (Windows libuv / macOS close_nocancel).

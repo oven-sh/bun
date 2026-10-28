@@ -1,7 +1,8 @@
 //! `bun.sys.File` — high-level file handle.
 //!
-//! Owns the descriptor; closes it on Drop (skipping `Fd::INVALID` and stdio
-//! so `File::stdin()`/`stdout()`/`stderr()` and default-constructed handles
+//! Owns the descriptor; closes it on Drop (skipping `Fd::INVALID` and the
+//! process's own stdio, see [`FdExt::is_startup_stdio`], so
+//! `File::stdin()`/`stdout()`/`stderr()` and default-constructed handles
 //! are safe to drop). Use [`File::into_raw`] to hand the fd off,
 //! [`File::borrow`] for a non-owning `&File` view of someone else's fd.
 //! All methods preserve OS errno via [`crate::Maybe`].
@@ -16,9 +17,25 @@ pub struct File {
 impl Drop for File {
     #[inline]
     fn drop(&mut self) {
-        if self.handle != Fd::INVALID && !self.handle.is_stdio() {
+        if !leaves_open(self.handle) {
             let _ = close(self.handle);
         }
+    }
+}
+
+/// The descriptors that `Drop` and [`File::close`] do not close.
+#[inline]
+fn leaves_open(fd: Fd) -> bool {
+    if fd == Fd::INVALID {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        fd.is_startup_stdio()
+    }
+    #[cfg(windows)]
+    {
+        fd.is_stdio()
     }
 }
 
@@ -310,7 +327,7 @@ impl File {
     /// observable. Skips the same sentinels as `Drop`.
     pub fn close(self) -> Maybe<()> {
         let fd = self.into_raw();
-        if fd == Fd::INVALID || fd.is_stdio() {
+        if leaves_open(fd) {
             return Ok(());
         }
         close(fd)

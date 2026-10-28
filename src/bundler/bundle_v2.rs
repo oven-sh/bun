@@ -2731,15 +2731,13 @@ pub mod bv2_impl {
                             contents: std::borrow::Cow::Borrowed(&b""[..]),
                             ..Default::default()
                         };
-                        let idx = self
-                            .enqueue_parse_task(
-                                &file_map_result,
-                                file_map_result.path_pair.primary,
-                                &mut tmp_source,
-                                loader,
-                                import_record.original_target,
-                            )
-                            .expect("oom");
+                        let idx = self.enqueue_parse_task(
+                            &file_map_result,
+                            file_map_result.path_pair.primary,
+                            &mut tmp_source,
+                            loader,
+                            import_record.original_target,
+                        );
                         // SAFETY: see `value_ptr` note above.
                         unsafe { *value_ptr = idx };
                         let record: &mut ImportRecord =
@@ -2974,15 +2972,13 @@ pub mod bv2_impl {
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
                     ..Default::default()
                 };
-                let idx = self
-                    .enqueue_parse_task(
-                        &resolve_result,
-                        self.parse_task_path(&resolve_result, path),
-                        &mut tmp_source,
-                        loader,
-                        import_record.original_target,
-                    )
-                    .expect("oom");
+                let idx = self.enqueue_parse_task(
+                    &resolve_result,
+                    self.parse_task_path(&resolve_result, path),
+                    &mut tmp_source,
+                    loader,
+                    import_record.original_target,
+                );
                 self.path_to_source_index_map(target)
                     .put(path.text, idx)
                     .expect("oom");
@@ -3044,7 +3040,7 @@ pub mod bv2_impl {
             path_slice: &[u8],
             target: options::Target,
             loader: Option<Loader>,
-        ) -> Result<(), Error> {
+        ) {
             // TODO: plugins with non-file namespaces
             // borrowck: get-then-put (instead of a single get-or-put) so the map
             // borrow doesn't span the resolver / `&mut self` calls below.
@@ -3053,7 +3049,7 @@ pub mod bv2_impl {
                 .get(path_slice)
                 .is_some()
             {
-                return Ok(());
+                return;
             }
             let dot_slash = OnceCell::new();
             let result = match self
@@ -3061,20 +3057,22 @@ pub mod bv2_impl {
                 .resolve_entry_point(path_slice, &dot_slash)
             {
                 Ok(r) => r,
-                Err(_) => return Ok(()),
+                Err(_) => return,
             };
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
             let loader = self.requested_file_loader(&result.path_pair.primary, loader);
 
-            let path = self.path_with_pretty_initialized(&result.path_pair.primary, target)?;
+            let path = bun_core::handle_oom(
+                self.path_with_pretty_initialized(&result.path_pair.primary, target),
+            );
             path.assert_pretty_is_valid();
             self.path_to_source_index_map(target)
                 .put(path_slice, source_index.get())
                 .expect("oom");
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
+            bun_core::handle_oom(self.graph.ast.append(JSAst::empty_in(self.graph.heap)));
 
-            self.graph.input_files.append(crate::Graph::InputFile {
+            bun_core::handle_oom(self.graph.input_files.append(crate::Graph::InputFile {
                 source: bun_ast::Source {
                     path,
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
@@ -3084,7 +3082,7 @@ pub mod bv2_impl {
                 loader,
                 side_effects: result.primary_side_effects_data,
                 ..Default::default()
-            })?;
+            }));
             // Arena-owned; freed on heap reset.
             let task_val = ParseTask::init(&result, path, source_index, self);
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
@@ -3112,7 +3110,6 @@ pub mod bv2_impl {
 
                 self.graph.pool().schedule(task);
             }
-            Ok(())
         }
 
         /// The dev server passes `Loader::Html` for the html file of a route: its extension need not be `.html`.
@@ -3123,6 +3120,8 @@ pub mod bv2_impl {
             })
         }
 
+        /// Cannot fail: its callers have handed work out by the time they call it, and cannot
+        /// take that work back. Out of memory aborts.
         /// `loader`: see `requested_file_loader`.
         pub(crate) fn enqueue_entry_item(
             &mut self,
@@ -3130,7 +3129,7 @@ pub mod bv2_impl {
             is_entry_point: bool,
             target: options::Target,
             loader: Option<Loader>,
-        ) -> Result<Option<IndexInt>, Error> {
+        ) -> Option<IndexInt> {
             let path = result.path_const().expect(
                 "resolve_entry_point rejects disabled results and FileMap results have a path",
             );
@@ -3145,22 +3144,22 @@ pub mod bv2_impl {
                 .get(path.text)
                 .is_some()
             {
-                return Ok(None);
+                return None;
             }
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
 
             let loader = self.requested_file_loader(path, loader);
 
-            let path = self.path_with_pretty_initialized(path, target)?;
+            let path = bun_core::handle_oom(self.path_with_pretty_initialized(path, target));
             path.assert_pretty_is_valid();
             self.path_to_source_index_map(target)
                 .put(path.text, source_index.get())
                 .expect("oom");
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
+            bun_core::handle_oom(self.graph.ast.append(JSAst::empty_in(self.graph.heap)));
 
             let side_effects = result.primary_side_effects_data;
-            self.graph.input_files.append(crate::Graph::InputFile {
+            bun_core::handle_oom(self.graph.input_files.append(crate::Graph::InputFile {
                 source: bun_ast::Source {
                     path,
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
@@ -3170,7 +3169,7 @@ pub mod bv2_impl {
                 loader,
                 side_effects,
                 ..Default::default()
-            })?;
+            }));
             // Arena-owned; freed on heap reset.
             let task_path = self.parse_task_path(result, path);
             let task_val = ParseTask::init(result, task_path, source_index, self);
@@ -3205,7 +3204,7 @@ pub mod bv2_impl {
                 .entry_points
                 .push(bun_ast::Index::init(source_index.get()));
 
-            Ok(Some(source_index.get()))
+            Some(source_index.get())
         }
 
         /// `heap` is not freed when `deinit`ing the BundleV2
@@ -3542,20 +3541,19 @@ pub mod bv2_impl {
 
         // A const-generic enum param with variant-dependent data cannot be
         // expressed on stable Rust, so this is split into three monomorphic fns.
-        pub(crate) fn enqueue_entry_points_normal<P: AsRef<[u8]>>(
-            &mut self,
-            data: &[P],
-        ) -> Result<(), Error> {
-            self.enqueue_entry_points_common()?;
+        pub(crate) fn enqueue_entry_points_normal<P: AsRef<[u8]>>(&mut self, data: &[P]) {
+            self.enqueue_entry_points_common();
             // (variant != .dev_server)
-            self.reserve_source_indexes_for_bake()?;
+            self.reserve_source_indexes_for_bake();
 
             // Setup entry points
             let num_entry_points = data.len();
             self.graph.entry_points.reserve(num_entry_points);
-            self.graph
-                .input_files
-                .ensure_unused_capacity(num_entry_points)?;
+            bun_core::handle_oom(
+                self.graph
+                    .input_files
+                    .ensure_unused_capacity(num_entry_points),
+            );
 
             for entry_point in data {
                 let entry_point: &[u8] = entry_point.as_ref();
@@ -3576,7 +3574,7 @@ pub mod bv2_impl {
                             true,
                             self.transpiler.options.target,
                             None,
-                        )?;
+                        );
                         continue;
                     }
                 }
@@ -3602,24 +3600,25 @@ pub mod bv2_impl {
                     }
                     break 'brk main_target;
                 };
-                let _ = self.enqueue_entry_item(&resolved, true, target, None)?;
+                let _ = self.enqueue_entry_item(&resolved, true, target, None);
             }
-            Ok(())
         }
 
         pub(crate) fn enqueue_entry_points_dev_server(
             &mut self,
             files: &bake_types::EntryPointList,
             css_data: &mut ArrayHashMap<Index, CssEntryPointMeta>,
-        ) -> Result<(), Error> {
-            self.enqueue_entry_points_common()?;
+        ) {
+            self.enqueue_entry_points_common();
             debug_assert!(self.dev_server.is_some());
 
             let num_entry_points = files.set.count();
             self.graph.entry_points.reserve(num_entry_points);
-            self.graph
-                .input_files
-                .ensure_unused_capacity(num_entry_points)?;
+            bun_core::handle_oom(
+                self.graph
+                    .input_files
+                    .ensure_unused_capacity(num_entry_points),
+            );
 
             debug_assert_eq!(files.set.keys().len(), files.set.values().len());
             for (abs_path, flags) in files.set.keys().iter().zip(files.set.values().iter()) {
@@ -3710,17 +3709,16 @@ pub mod bv2_impl {
                             true,
                             Target::Browser,
                             client_loader,
-                        )?
-                        else {
+                        ) else {
                             break 'brk;
                         };
                         if flags.css() {
-                            css_data.put_no_clobber(
+                            bun_core::handle_oom(css_data.put_no_clobber(
                                 Index::init(source_index),
                                 CssEntryPointMeta {
                                     imported_on_server: false,
                                 },
-                            )?;
+                            ));
                         }
                     }
                 }
@@ -3730,32 +3728,29 @@ pub mod bv2_impl {
                         true,
                         self.transpiler.options.target,
                         None,
-                    )?;
+                    );
                 }
                 if flags.ssr() {
-                    let _ = self.enqueue_entry_item(
-                        &resolved,
-                        true,
-                        Target::ServerComponentsSsr,
-                        None,
-                    )?;
+                    let _ =
+                        self.enqueue_entry_item(&resolved, true, Target::ServerComponentsSsr, None);
                 }
             }
-            Ok(())
         }
 
         pub(crate) fn enqueue_entry_points_bake_production(
             &mut self,
             data: &bake_types::production::EntryPointMap,
-        ) -> Result<(), Error> {
-            self.enqueue_entry_points_common()?;
-            self.reserve_source_indexes_for_bake()?;
+        ) {
+            self.enqueue_entry_points_common();
+            self.reserve_source_indexes_for_bake();
 
             let num_entry_points = data.files.count();
             self.graph.entry_points.reserve(num_entry_points);
-            self.graph
-                .input_files
-                .ensure_unused_capacity(num_entry_points)?;
+            bun_core::handle_oom(
+                self.graph
+                    .input_files
+                    .ensure_unused_capacity(num_entry_points),
+            );
 
             for key in data.files.keys() {
                 let abs_path = key.abs_path();
@@ -3776,26 +3771,25 @@ pub mod bv2_impl {
                 };
 
                 // TODO: wrap client files so the exports arent preserved.
-                let Some(_) = self.enqueue_entry_item(&resolved, true, target, None)? else {
-                    continue;
-                };
+                let _ = self.enqueue_entry_item(&resolved, true, target, None);
             }
-            Ok(())
         }
 
         /// Common prelude shared by all enqueue_entry_points_* variants: add the runtime task.
-        fn enqueue_entry_points_common(&mut self) -> Result<(), Error> {
+        /// The task is on the pool when this returns, so no enqueue returns an error after it: a
+        /// driver would tear the bundle down under the task. Out of memory aborts.
+        fn enqueue_entry_points_common(&mut self) {
             // Add the runtime
             let rt = ParseTask::get_runtime_source(self.transpiler.options.target);
-            self.graph.input_files.append(crate::Graph::InputFile {
+            bun_core::handle_oom(self.graph.input_files.append(crate::Graph::InputFile {
                 source: rt.source,
                 loader: Loader::Js,
                 side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
                 ..Default::default()
-            })?;
+            }));
 
             // try this.graph.entry_points.append(arena, Index.runtime);
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
+            bun_core::handle_oom(self.graph.ast.append(JSAst::empty_in(self.graph.heap)));
             self.path_to_source_index_map(self.transpiler.options.target)
                 .put(&b"bun:wrap"[..], Index::RUNTIME.get())
                 .expect("oom");
@@ -3814,7 +3808,6 @@ pub mod bv2_impl {
             }
             self.increment_scan_counter();
             self.graph.pool().schedule(runtime_parse_task);
-            Ok(())
         }
 
         pub(crate) fn clone_ast(&mut self) -> Result<(), Error> {
@@ -4107,16 +4100,16 @@ pub mod bv2_impl {
             source: &mut bun_ast::Source<'a>,
             loader: Loader,
             known_target: options::Target,
-        ) -> Result<IndexInt, AllocError> {
+        ) -> IndexInt {
             let source_index = Index::init(u32::try_from(self.graph.ast.len()).expect("int cast"));
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
+            bun_core::handle_oom(self.graph.ast.append(JSAst::empty_in(self.graph.heap)));
 
-            self.graph.input_files.append(crate::Graph::InputFile {
+            bun_core::handle_oom(self.graph.input_files.append(crate::Graph::InputFile {
                 source: core::mem::take(source),
                 loader,
                 side_effects: loader.side_effects(),
                 ..Default::default()
-            })?;
+            }));
             // `ParseTask::init` takes `bun_ast::Index`; both Index newtypes
             // are `repr(transparent)` u32 so reconstruct via `.get()`.
             // Arena-owned; freed on heap reset.
@@ -4152,7 +4145,7 @@ pub mod bv2_impl {
                 self.graph.pool().schedule(task);
             }
 
-            Ok(source_index.get())
+            source_index.get()
         }
 
         pub(crate) fn enqueue_parse_task2(
@@ -4161,16 +4154,16 @@ pub mod bv2_impl {
             loader: Loader,
             known_target: options::Target,
             module_type: options::ModuleType,
-        ) -> Result<IndexInt, AllocError> {
+        ) -> IndexInt {
             let source_index = Index::init(u32::try_from(self.graph.ast.len()).expect("int cast"));
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
+            bun_core::handle_oom(self.graph.ast.append(JSAst::empty_in(self.graph.heap)));
 
-            self.graph.input_files.append(crate::Graph::InputFile {
+            bun_core::handle_oom(self.graph.input_files.append(crate::Graph::InputFile {
                 source: core::mem::take(source),
                 loader,
                 side_effects: loader.side_effects(),
                 ..Default::default()
-            })?;
+            }));
             // `core::mem::take` moved the real `Source` into `graph.input_files`,
             // leaving `*source` as `Default`. Read path/contents back from the
             // graph's stored copy (where the data now lives for the rest of the
@@ -4246,7 +4239,7 @@ pub mod bv2_impl {
 
                 self.graph.pool().schedule(task);
             }
-            Ok(source_index.get())
+            source_index.get()
         }
 
         /// Enqueue a ServerComponentParseTask.
@@ -4255,7 +4248,7 @@ pub mod bv2_impl {
             &mut self,
             data: crate::ServerComponentParseTask::Data<'a>,
             source_without_index: bun_ast::Source<'a>,
-        ) -> Result<IndexInt, AllocError> {
+        ) -> IndexInt {
             let mut new_source = source_without_index;
             let source_index = self.graph.input_files.len();
             new_source.index = bun_ast::Index(source_index as u32);
@@ -4267,13 +4260,13 @@ pub mod bv2_impl {
                 identifier_name: new_source.identifier_name.clone(),
                 index: new_source.index,
             };
-            self.graph.input_files.append(crate::Graph::InputFile {
+            bun_core::handle_oom(self.graph.input_files.append(crate::Graph::InputFile {
                 source: new_source,
                 loader: Loader::Js,
                 side_effects: bun_ast::SideEffects::HasSideEffects,
                 ..Default::default()
-            })?;
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
+            }));
+            bun_core::handle_oom(self.graph.ast.append(JSAst::empty_in(self.graph.heap)));
 
             // `bun.new(ServerComponentParseTask, …)` — heap-owned by the
             // worker pool; freed via `bun.destroy` in `on_complete` after the
@@ -4303,7 +4296,7 @@ pub mod bv2_impl {
                     core::ptr::addr_of_mut!((*task).task)
                 }));
 
-            Ok(u32::try_from(source_index).expect("int cast"))
+            u32::try_from(source_index).expect("int cast")
         }
     }
 
@@ -4453,7 +4446,7 @@ pub mod bv2_impl {
                 // SAFETY: `transpiler.options.entry_points` is borrowed only for the duration
                 // of `enqueue_entry_points_normal`, which never frees/reallocates it; raw-ptr
                 // sidestep for the `&mut self` overlap.
-                this.enqueue_entry_points_normal(unsafe { &*entry_points })?;
+                this.enqueue_entry_points_normal(unsafe { &*entry_points });
 
                 // Like `run_from_js_in_new_thread`: drain the pool, then report entry point errors.
                 this.wait_for_parse();
@@ -4585,14 +4578,7 @@ pub mod bv2_impl {
                 return Err(crate::Error::BuildFailed);
             }
 
-            // enqueueEntryPoints schedules the runtime task before any fallible
-            // allocation. If a later allocation fails we must still drain the
-            // pool so workers aren't left holding pointers into the caller's
-            // stack-allocated Transpiler.
-            if let Err(err) = this.enqueue_entry_points_normal(entry_points) {
-                this.wait_for_parse();
-                return Err(err);
-            }
+            this.enqueue_entry_points_normal(entry_points);
 
             // Even if entry point resolution produced errors we still wait for
             // all enqueued parse tasks to finish so the graph is consistent.
@@ -4626,7 +4612,7 @@ pub mod bv2_impl {
                     return Err(crate::Error::BuildFailed);
                 }
 
-                this.enqueue_entry_points_bake_production(entry_points)?;
+                this.enqueue_entry_points_bake_production(entry_points);
 
                 // Drain the pool, then report entry point errors (as `generate_from_cli` does).
                 this.wait_for_parse();
@@ -5286,14 +5272,12 @@ pub mod bv2_impl {
                             else {
                                 return;
                             };
-                            let Ok(source_index) = this.enqueue_entry_item(
+                            let source_index = this.enqueue_entry_item(
                                 &resolved,
                                 true,
                                 target,
                                 resolve.import_record.loader,
-                            ) else {
-                                return;
-                            };
+                            );
 
                             // Store the original entry point name for virtual entries that fall back to file resolution
                             if let Some(idx) = source_index {
@@ -5393,7 +5377,9 @@ pub mod bv2_impl {
                             // SAFETY: map slot from `get_or_put` above; map not mutated since.
                             unsafe { *value_ptr = source_index.get() };
                             out_source_index = Some(source_index);
-                            let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
+                            bun_core::handle_oom(
+                                this.graph.ast.append(JSAst::empty_in(this.graph.heap)),
+                            );
                             // A file that a plugin resolved the record to instead keeps its own loader.
                             let loader = this.requested_file_loader(
                                 &path,
@@ -5558,6 +5544,12 @@ pub mod bv2_impl {
         }
 
         pub fn deinit_without_freeing_arena(&mut self) {
+            // Everything below frees what a parse task reads. A driver waits for its parse tasks
+            // (`wait_for_parse`, or `is_done` for the dev server) before it gets here.
+            assert_eq!(
+                self.graph.pending_items, 0,
+                "BundleV2 torn down with parse tasks in flight"
+            );
             // A build that stops between `compute_data_for_source_map` and the waits in
             // `generate_chunks_in_parallel` gets here with those tasks still on the pool,
             // creating `Worker`s and reading `graph`.
@@ -5690,7 +5682,7 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-            self.enqueue_entry_points_normal(entry_points)?;
+            self.enqueue_entry_points_normal(entry_points);
 
             // We must wait for all the parse tasks to complete, even if there are errors.
             self.wait_for_parse();
@@ -5895,7 +5887,7 @@ pub mod bv2_impl {
         pub fn start_from_bake_dev_server(
             &mut self,
             bake_entry_points: &bake_types::EntryPointList,
-        ) -> Result<DevServerInput, Error> {
+        ) -> DevServerInput {
             self.unique_key = generate_unique_key();
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
@@ -5903,11 +5895,11 @@ pub mod bv2_impl {
             let mut ctx = DevServerInput {
                 css_entry_points: ArrayHashMap::new(),
             };
-            self.enqueue_entry_points_dev_server(bake_entry_points, &mut ctx.css_entry_points)?;
+            self.enqueue_entry_points_dev_server(bake_entry_points, &mut ctx.css_entry_points);
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-            Ok(ctx)
+            ctx
         }
 
         // The body has deep DevServer field access (current_bundle.start_data,
@@ -6469,20 +6461,20 @@ pub mod bv2_impl {
             )
         }
 
-        fn reserve_source_indexes_for_bake(&mut self) -> Result<(), Error> {
+        fn reserve_source_indexes_for_bake(&mut self) {
             let Some(fw) = &self.framework else {
-                return Ok(());
+                return;
             };
             if fw.server_components.is_none() {
-                return Ok(());
+                return;
             }
 
             // Call this after
             debug_assert!(self.graph.input_files.len() == 1);
             debug_assert!(self.graph.ast.len() == 1);
 
-            self.graph.ast.ensure_unused_capacity(2)?;
-            self.graph.input_files.ensure_unused_capacity(2)?;
+            bun_core::handle_oom(self.graph.ast.ensure_unused_capacity(2));
+            bun_core::handle_oom(self.graph.input_files.ensure_unused_capacity(2));
 
             // The statics are `LazyLock<Source>` and `Source` is not `Clone`, so
             // rebuild an owned `Source` from the static's clonable fields
@@ -6498,20 +6490,22 @@ pub mod bv2_impl {
                 ..Default::default()
             };
 
-            // OOM/capacity: fire-and-forget
-            let _ = self.graph.input_files.append(crate::Graph::InputFile {
-                source: server_source,
-                loader: Loader::Js,
-                side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
-                ..Default::default()
-            });
-            // OOM/capacity: fire-and-forget
-            let _ = self.graph.input_files.append(crate::Graph::InputFile {
-                source: client_source,
-                loader: Loader::Js,
-                side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
-                ..Default::default()
-            });
+            self.graph
+                .input_files
+                .append_assume_capacity(crate::Graph::InputFile {
+                    source: server_source,
+                    loader: Loader::Js,
+                    side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
+                    ..Default::default()
+                });
+            self.graph
+                .input_files
+                .append_assume_capacity(crate::Graph::InputFile {
+                    source: client_source,
+                    loader: Loader::Js,
+                    side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
+                    ..Default::default()
+                });
 
             debug_assert!(
                 self.graph.input_files.items_source()[Index::BAKE_SERVER_DATA.get() as usize]
@@ -6526,9 +6520,12 @@ pub mod bv2_impl {
                     == Index::BAKE_CLIENT_DATA.get()
             );
 
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap));
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap));
-            Ok(())
+            self.graph
+                .ast
+                .append_assume_capacity(JSAst::empty_in(self.graph.heap));
+            self.graph
+                .ast
+                .append_assume_capacity(JSAst::empty_in(self.graph.heap));
         }
 
         // See barrel_imports.rs for barrel optimization implementation.
@@ -7439,7 +7436,7 @@ pub mod bv2_impl {
                         .input_files
                         .append(new_input_file)
                         .expect("unreachable");
-                    let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
+                    bun_core::handle_oom(self.graph.ast.append(JSAst::empty_in(self.graph.heap)));
 
                     if is_html_entrypoint {
                         self.ensure_client_transpiler();
@@ -7658,7 +7655,7 @@ pub mod bv2_impl {
 
             let fake_source_index = fake_input_file.source.index;
             self.graph.input_files.append(fake_input_file)?;
-            let _ = self.graph.ast.append(ast_for_html_entrypoint); // OOM/capacity: fire-and-forget
+            bun_core::handle_oom(self.graph.ast.append(ast_for_html_entrypoint));
 
             import_record.source_index = Index::init(fake_source_index.0);
             let _ = self
@@ -8001,8 +7998,7 @@ pub mod bv2_impl {
                                         },
                                     ),
                                     scb_source,
-                                )
-                                .expect("oom");
+                                );
 
                             let mut ssr_source =
                                 this.graph.input_files.items_source()[result_source_index].clone();
@@ -8017,14 +8013,12 @@ pub mod bv2_impl {
                                     Target::ServerComponentsSsr,
                                 )
                                 .expect("oom");
-                            let ssr_index = this
-                                .enqueue_parse_task2(
-                                    &mut ssr_source,
-                                    source_loader,
-                                    Target::ServerComponentsSsr,
-                                    source_module_type,
-                                )
-                                .expect("oom");
+                            let ssr_index = this.enqueue_parse_task2(
+                                &mut ssr_source,
+                                source_loader,
+                                Target::ServerComponentsSsr,
+                                source_module_type,
+                            );
 
                             (reference_source_index, ssr_index)
                         } else {
@@ -8036,14 +8030,12 @@ pub mod bv2_impl {
                             server_source.path = this
                                 .path_with_pretty_initialized(&server_source.path, server_target)
                                 .expect("oom");
-                            let server_index = this
-                                .enqueue_parse_task2(
-                                    &mut server_source,
-                                    source_loader,
-                                    Target::Browser,
-                                    source_module_type,
-                                )
-                                .expect("oom");
+                            let server_index = this.enqueue_parse_task2(
+                                &mut server_source,
+                                source_loader,
+                                Target::Browser,
+                                source_module_type,
+                            );
 
                             (server_index, Index::INVALID.get())
                         };

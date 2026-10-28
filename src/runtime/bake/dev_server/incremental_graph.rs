@@ -1644,11 +1644,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 .is_some()
                 .then_some(bun_ast::Loader::Html);
             let mut enqueue = |target| {
-                bun_core::handle_oom(
-                    bv2.enqueue_file_from_dev_server_incremental_graph_invalidation(
-                        key, target, loader,
-                    ),
-                )
+                bv2.enqueue_file_from_dev_server_incremental_graph_invalidation(key, target, loader)
             };
             match SIDE {
                 Side::Client => enqueue(bun_ast::Target::Browser),

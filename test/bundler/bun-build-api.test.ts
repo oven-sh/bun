@@ -377,6 +377,58 @@ describe("Bun.build", () => {
     60_000,
   );
 
+  // The child refuses each allocation over 1 MiB, so one growth of the bundler's two lists of sources fails:
+  // the `graph.ast` row of an entry point, the `input_files` reserve for the entry points, the `graph.ast` row of an import.
+  // `--debug-crash-handler-use-trace-string`: a debug build takes seconds to symbolize its report.
+  test.skipIf(!isASAN).each([
+    { entryPoints: 3000, imports: 0 },
+    { entryPoints: 8000, imports: 0 },
+    { entryPoints: 1, imports: 2000 },
+  ])("a build that cannot allocate the row of a source stops with the out-of-memory message %j", async rows => {
+    using dir = tempDir("bun-build-api-source-row-oom", {
+      "source-row-oom-fixture.ts": /* ts */ `
+        const { entryPoints, imports } = JSON.parse(process.argv[2]);
+        const files = {};
+        let importer = "";
+        for (let i = 0; i < imports; i++) {
+          files["/m" + i + ".ts"] = "export default " + i + ";";
+          importer += "import m" + i + ' from "./m' + i + '.ts"; console.log(m' + i + ");";
+        }
+        const entrypoints = [];
+        for (let i = 0; i < entryPoints; i++) {
+          entrypoints.push("/entry" + i + ".ts");
+          files["/entry" + i + ".ts"] = importer + "export default " + i + ";";
+        }
+        console.log(await Bun.build({ entrypoints, files }).then(() => "built", error => error.message));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "source-row-oom-fixture.ts", JSON.stringify(rows)],
+      env: {
+        ...bunEnv,
+        BUN_CRASH_REPORT_URL: "",
+        BUN_ENABLE_CRASH_REPORTING: "0",
+        ASAN_OPTIONS: [
+          bunEnv.ASAN_OPTIONS,
+          "allocator_may_return_null=1",
+          "max_allocation_size_mb=1",
+          "disable_coredump=1",
+        ]
+          .filter(Boolean)
+          .join(":"),
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout,
+      outOfMemory: stderr.includes("Bun has run out of memory."),
+      signalCode: proc.signalCode,
+    }).toEqual({ stdout: "", outOfMemory: true, signalCode: "SIGABRT" });
+  });
+
   test("ignores a corrupted or truncated .jsc sidecar", async () => {
     using dir = tempDir("bun-build-api-bytecode-corrupt", {
       "app.ts": `

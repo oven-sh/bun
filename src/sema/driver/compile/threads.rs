@@ -406,6 +406,20 @@ mod tests {
     }
 
     #[test]
+    fn work_pool_tells_a_thread_once_that_it_gave_the_pool_a_task() {
+        set_up_output();
+        // On a thread of its own: the other tests give the pool tasks from theirs.
+        let told = std::thread::spawn(|| {
+            let before = bun_threading::WorkPool::take_scheduled_by_this_thread();
+            bun_threading::WorkPool::go((), |()| {}).expect("a task");
+            let after = bun_threading::WorkPool::take_scheduled_by_this_thread();
+            let again = bun_threading::WorkPool::take_scheduled_by_this_thread();
+            (before, after, again)
+        });
+        assert_eq!(told.join().expect("no panic"), (false, true, false));
+    }
+
+    #[test]
     fn tasks_that_wait_get_the_threads_that_a_pool_is_allowed_later() {
         set_up_output();
         let pool = pool_without_spare_threads();

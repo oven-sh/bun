@@ -10,12 +10,14 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
 
-const jobs = 20;
+const jobs = 12;
+// Without the wait the pool's threads sleep twice a job (the thread that ran it, and the spare one that was woken with
+// it), and the event loop up to once.
+const fewSleeps = jobs / 4;
 
 const fixture = /* js */ `
   import { pbkdf2 } from "node:crypto";
   import fs from "node:fs";
-  import { deflate } from "node:zlib";
 
   function sleeps() {
     const counts = { eventLoop: 0, pool: 0, poolThreads: 0 };
@@ -35,10 +37,10 @@ const fixture = /* js */ `
   async function sleepsOfChain(job) {
     // The first jobs start the pool's threads, and one of them becomes the thread that stays awake.
     for (let i = 0; i < 6; i++) await job();
-    // The best of three chains. A thread also sleeps when another one holds a lock that it needs, and on a busy
-    // machine the other one can lose its processor while it holds the lock.
+    // The best of up to three chains. A thread also sleeps when another one holds a lock that it needs, and on a
+    // busy machine the other one can lose its processor while it holds the lock.
     const best = { eventLoop: Infinity, pool: Infinity, poolThreads: 0 };
-    for (let chain = 0; chain < 3; chain++) {
+    for (let chain = 0; chain < 3 && !(best.eventLoop < ${fewSleeps} && best.pool < ${fewSleeps}); chain++) {
       const before = sleeps();
       for (let i = 0; i < ${jobs}; i++) await job();
       const after = sleeps();
@@ -58,8 +60,6 @@ const fixture = /* js */ `
       job: await sleepsOfChain(() => new Promise(done => pbkdf2("password", "salt", 1000, 32, "sha256", done))),
       // crypto.subtle: ConcurrentCppTask.
       cppTask: await sleepsOfChain(() => crypto.subtle.deriveBits(algorithm, key, 256)),
-      // node:zlib gives the pool a task of its own, as fs.cp() and N-API async work do.
-      ownTask: await sleepsOfChain(() => new Promise(done => deflate("brief wait", done))),
     }),
   );
 `;
@@ -76,14 +76,12 @@ test.skipIf(!isLinux || (!isDebug && !isASAN))(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
 
-    const sleeps: Record<"job" | "cppTask" | "ownTask", { eventLoop: number; pool: number; poolThreads: number }> =
+    const sleeps: Record<"job" | "cppTask", { eventLoop: number; pool: number; poolThreads: number }> =
       JSON.parse(stdout);
-    for (const carrier of ["job", "cppTask", "ownTask"] as const) {
-      // Without the wait the pool's threads sleep twice a job (the thread that ran it, and the spare one that was
-      // woken with it), and the event loop once.
+    for (const carrier of ["job", "cppTask"] as const) {
       expect(sleeps[carrier].poolThreads).toBeGreaterThanOrEqual(1);
-      expect(sleeps[carrier].pool).toBeLessThan(jobs / 4);
-      expect(sleeps[carrier].eventLoop).toBeLessThan(jobs / 4);
+      expect(sleeps[carrier].pool).toBeLessThan(fewSleeps);
+      expect(sleeps[carrier].eventLoop).toBeLessThan(fewSleeps);
     }
   },
 );

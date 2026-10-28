@@ -2063,7 +2063,7 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
             if (auto* hmacKeyParams = dynamicDowncast<CryptoAlgorithmHmacKeyParams>(*params))
                 return !hmacKeyParams->length || CryptoKeyHMAC::lengthIsValid(*hmacKeyParams->length);
             if (auto* rsaKeyGenParams = dynamicDowncast<CryptoAlgorithmRsaHashedKeyGenParams>(*params))
-                return CryptoKeyRSA::publicExponentIsValid(rsaKeyGenParams->publicExponent->span());
+                return CryptoKeyRSA::modulusLengthIsValid(rsaKeyGenParams->modulusLength) && CryptoKeyRSA::publicExponentIsValid(rsaKeyGenParams->publicExponent->span());
         }
         return true;
     };

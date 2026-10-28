@@ -9,7 +9,9 @@ function createWindowsEnv() {
   let promoted = false;
   const edit = jest.fn();
   const coerce = jest.fn((_key, value) => `${value}`);
-  const env = windowsEnv(internal, ["KEY"], edit, coerce, jest.fn(), Bun.inspect.custom, () => (promoted ? shared : undefined));
+  const env = windowsEnv(internal, ["KEY"], edit, coerce, jest.fn(), Bun.inspect.custom, () =>
+    promoted ? shared : undefined,
+  );
   return { env, internal, shared, edit, coerce, promote: () => (promoted = true) };
 }
 

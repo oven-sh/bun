@@ -41,8 +41,6 @@ pub(crate) struct ExecState {
     pub(crate) error_signal: AtomicBool,
     pub(crate) output_done: AtomicUsize,
     pub(crate) output_count: AtomicUsize,
-    /// The outputs in `output_count` that reached the main thread; the rest are verbose lists still on their way from the pool.
-    pub(crate) output_begun: usize,
     pub(crate) tasks_done: usize,
     pub(crate) started: bool,
 }
@@ -51,13 +49,6 @@ impl ExecState {
     #[inline]
     fn output_drained(&self) -> bool {
         self.output_done.load(Ordering::SeqCst) >= self.output_count.load(Ordering::SeqCst)
-    }
-
-    /// A stopped `rm` is over when every operand has reported and no verbose list is on its way.
-    #[inline]
-    fn stopped_idle(&self) -> bool {
-        self.tasks_done >= self.total_tasks
-            && self.output_begun >= self.output_count.load(Ordering::SeqCst)
     }
 }
 
@@ -260,7 +251,6 @@ impl Rm {
                                 error_signal: AtomicBool::new(false),
                                 output_done: AtomicUsize::new(0),
                                 output_count: AtomicUsize::new(0),
-                                output_begun: 0,
                                 tasks_done: 0,
                                 started: false,
                             });
@@ -359,16 +349,6 @@ impl Rm {
         Builtin::done(interp, cmd, 1)
     }
 
-    /// `Builtin::after_stop`: `rm` ends when the pool is through with it, because its tasks point into this state.
-    pub(crate) fn after_stop(interp: &Interpreter, cmd: NodeId) -> bool {
-        match &Self::state_mut(interp, cmd).state {
-            RmState::Exec(exec) => exec.stopped_idle(),
-            RmState::Idle | RmState::ParseOpts { .. } | RmState::Done { .. } | RmState::Err(_) => {
-                true
-            }
-        }
-    }
-
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
@@ -432,19 +412,11 @@ impl Rm {
             (exec.tasks_done, exec.total_tasks)
         };
 
-        if Builtin::of(interp, cmd).is_stopped() {
-            if matches!(&Self::state_mut(interp, cmd).state, RmState::Exec(exec) if exec.stopped_idle())
-            {
-                Builtin::done_stopped(interp, cmd).run(interp);
-            }
-            return;
-        }
-
-        if let Some(s) = errstr {
+        // A stopped `rm` writes nothing more.
+        if let Some(s) = errstr.filter(|_| !Builtin::of(interp, cmd).is_stopped()) {
             if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
                 if let RmState::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                     exec.output_count.fetch_add(1, Ordering::SeqCst);
-                    exec.output_begun += 1;
                 }
                 let child = ChildPtr::new(cmd, WriterTag::Builtin);
                 Builtin::of_mut(interp, cmd)
@@ -501,15 +473,9 @@ impl Rm {
             }
         });
 
-        if let RmState::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_begun += 1;
-        }
+        // A stopped `rm` writes nothing more: the list counts as written.
         if Builtin::of(interp, cmd).is_stopped() {
-            if matches!(&Self::state_mut(interp, cmd).state, RmState::Exec(exec) if exec.stopped_idle())
-            {
-                return Builtin::done_stopped(interp, cmd);
-            }
-            return Yield::done();
+            return Self::on_io_writer_chunk(interp, cmd, 0, None);
         }
 
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {

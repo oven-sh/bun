@@ -194,18 +194,6 @@ impl Ls {
         Self::next(interp, cmd)
     }
 
-    /// `Builtin::after_stop`: free the queued output; a pool task still out ends `ls` through `next`.
-    pub(crate) fn after_stop(interp: &Interpreter, cmd: NodeId) -> bool {
-        match &mut Self::state_mut(interp, cmd).state {
-            State::Exec(exec) => {
-                OutputTask::release_queued(&mut exec.output_queue);
-                exec.output_done = exec.output_waiting;
-                exec.tasks_done >= exec.task_count.load(Ordering::Relaxed)
-            }
-            State::Idle | State::WaitingWriteErr | State::Done => true,
-        }
-    }
-
     /// # Safety
     /// `task` must be a live heap allocation produced by
     /// [`ShellLsTask::create`]; ownership is reclaimed here.

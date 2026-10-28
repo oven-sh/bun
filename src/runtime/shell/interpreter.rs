@@ -254,10 +254,10 @@ pub(crate) enum OutputNeedsIOSafeGuard {
     OutputNeedsIo,
 }
 
-/// The shell promise's `reject` function and the error to call it with. The stop task roots both until it runs.
+/// The shell promise's `reject` function and the error to call it with. Kept on the stack, where the GC sees it.
 pub(crate) type Rejection = (crate::jsc::JSValue, crate::jsc::JSValue);
 
-/// Why `Interpreter::stop_in_flight` stops what a script runs.
+/// Why `Interpreter::stop` stops what a script runs.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StopCause {
     /// A node threw a JS error (`Interpreter::fail`).
@@ -304,11 +304,7 @@ pub(crate) struct Interpreter {
     /// `halted()` for pool threads: a glob walk of the script ends on it.
     halt_signal: AtomicBool,
 
-    /// What `finish` waits for besides the root script: `&` commands and stop tasks.
     pub(crate) async_commands_executing: Cell<u32>,
-    /// `Yield::run` frames of this script on the stack: a stop task runs at zero.
-    #[cfg(debug_assertions)]
-    pub(crate) trampolines: Cell<u32>,
 
     // JSC_BORROW: always borrowed, never owned. Stored raw because the struct
     // is heap-allocated and outlives any single &JSGlobalObject borrow scope.
@@ -340,8 +336,10 @@ bun_jsc::impl_abort_handle_owner!(Interpreter, abort_handle, |this, cause| {
         cause,
         bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::VmTeardown)
     );
-    if !teardown && this.stop_in_flight(StopCause::ContextStopped) {
-        this.queue_stop_task(NodeId::NONE, None);
+    if !teardown {
+        this.stop(StopCause::ContextStopped);
+        // `dispose()` is on the stack, and no frame of this script that names a node is under it.
+        this.drain_cancelled();
     }
 });
 
@@ -604,8 +602,6 @@ impl Interpreter {
             abort_handle: bun_jsc::AbortHandle::for_owner::<Interpreter>(),
             halt_signal: AtomicBool::new(false),
             async_commands_executing: Cell::new(0),
-            #[cfg(debug_assertions)]
-            trampolines: Cell::new(0),
             global_this: Cell::new(core::ptr::null_mut()),
             flags: Cell::new(InterpreterFlags::default()),
             // Starts at `None` so `async_cmd_done` only finishes once
@@ -727,6 +723,7 @@ impl Interpreter {
         };
 
         // ── run ────────────────────────────────────────────────────────────
+        interp.exit_code.set(Some(1));
         if let Err(e) = interp.run() {
             let name = e.name();
             drop(interp);
@@ -1077,11 +1074,6 @@ impl Interpreter {
     pub(crate) fn async_cmd_done(&self, async_id: NodeId) {
         Async::actually_deinit(self, async_id);
         self.free_node(async_id);
-        self.release_finish_hold();
-    }
-
-    /// An `&` command or a stop task is over: `finish` runs when the last one is.
-    fn release_finish_hold(&self) {
         self.async_commands_executing
             .set(self.async_commands_executing.get() - 1);
         if self.async_commands_executing.get() == 0 {
@@ -1271,7 +1263,7 @@ impl Interpreter {
             let this_value = self.this_value.replace(JsRef::empty());
             if let Some(this_jsvalue) = this_value.try_get() {
                 if self.failed() {
-                    // The stop task that `fail` queued rejected the promise.
+                    // The trampoline that ran `fail` rejects the promise.
                     self.keep_alive.with_mut(|k| k.disable());
                     self.deref_root_shell_and_io_if_needed(true);
                 } else if let Some(resolve) = js::resolve_get_cached(this_jsvalue) {
@@ -1350,134 +1342,97 @@ impl Interpreter {
         self.halt_signal.store(true, Ordering::Relaxed);
     }
 
-    /// Node `id` threw: stop what runs and queue the task that reports `id` and rejects, so no JS runs under the trampoline.
-    pub(crate) fn fail(&self, id: NodeId) -> Yield {
-        let rejection = self.take_failure();
-        if !self.failed() {
-            let parent = self
-                .node(id)
-                .base()
-                .map_or(NodeId::INTERPRETER, |b| b.parent);
-            return self.child_done(parent, id, 1);
+    /// Node `id` threw and holds nothing in flight: stop what the script runs and wind the tree down.
+    /// The first failure fills `rejection`, which the trampoline passes to `reject` once it holds no node.
+    pub(crate) fn fail(&self, id: NodeId, rejection: &mut Option<Rejection>) -> Yield {
+        if let Some(first) = self.take_failure() {
+            *rejection = Some(first);
         }
-        if let Node::Cmd(cmd) = self.node_mut(id) {
-            // Parked until the task reports it: a stop leaves a `Done` command alone.
-            cmd.exit_code = Some(1);
-            cmd.state = crate::shell::states::cmd::CmdState::Done;
+        if self.failed() {
+            if let Node::Cmd(cmd) = self.node_mut(id) {
+                // `id` is reported below: the stop leaves a `Done` command alone.
+                cmd.exit_code = Some(1);
+                cmd.state = crate::shell::states::cmd::CmdState::Done;
+            }
+            self.stop(StopCause::Failed);
         }
-        self.stop_in_flight(StopCause::Failed);
-        self.queue_stop_task(id, rejection);
-        Yield::suspended()
+        let parent = self
+            .node(id)
+            .base()
+            .map_or(NodeId::INTERPRETER, |b| b.parent);
+        self.child_done(parent, id, 1)
     }
 
-    /// Stop every command that still runs (`Cmd::stop`); `true` when a builtin now waits for a stop task. Reports and frees nothing.
-    pub(crate) fn stop_in_flight(&self, cause: StopCause) -> bool {
-        let mut stopped_builtin = false;
+    /// Runs JS, which can turn the event loop and free any node of the script.
+    pub(crate) fn reject(&self, (reject, error): Rejection) {
+        let global_this = self
+            .global_this_ref()
+            .expect("take_failure returned a rejection on the Js path");
+        let _entered = self.event_loop.entered();
+        global_this.bun_vm().event_loop_mut().run_callback(
+            self.task_context(),
+            reject,
+            global_this,
+            crate::jsc::JSValue::UNDEFINED,
+            &[error],
+        );
+    }
+
+    /// Stop what the script runs: kill its subprocesses (a Ctrl+C already reached them) and withdraw what its other nodes wait for at a writer or a reader. No node is told or freed here (`next_cancelled` does that), so it is safe to repeat.
+    pub(crate) fn stop(&self, cause: StopCause) {
         for i in 0..self.nodes.get().len() {
             let id = NodeId(i as u32);
             match self.node(id).kind() {
-                StateKind::Cmd => stopped_builtin |= Cmd::stop(self, id, cause),
-                // Nothing of these is stopped: each ends with its children, or with its own error message or `[[ ]]` stat.
+                StateKind::Cmd => Cmd::stop(self, id, cause),
+                StateKind::Pipeline => Pipeline::stop(self, id),
+                StateKind::Condexpr => CondExpr::stop(self, id),
+                StateKind::Expansion => Expansion::stop(self, id, cause),
+                // These wait for their children only.
                 StateKind::Script
                 | StateKind::Stmt
                 | StateKind::Binary
-                | StateKind::Pipeline
                 | StateKind::Subshell
                 | StateKind::IfClause
                 | StateKind::Async
                 | StateKind::Assign
-                | StateKind::Expansion
-                | StateKind::Condexpr
                 | StateKind::Free => {}
             }
         }
-        stopped_builtin
     }
 
-    /// Queue the task of a stop (`run_stop_task`); `finish` waits for it.
-    pub(crate) fn queue_stop_task(&self, failed: NodeId, rejection: Option<Rejection>) {
-        use crate::shell::dispatch_tasks::ShellStopTask;
-        self.async_commands_executing
-            .set(self.async_commands_executing.get() + 1);
-        let rejection = rejection.map(|(reject, error)| {
-            let global = self
-                .global_this_ref()
-                .expect("a rejection comes from the Js path");
-            (
-                bun_jsc::Strong::create(reject, global),
-                bun_jsc::Strong::create(error, global),
-            )
-        });
-        let task = bun_core::heap::into_raw(Box::new(ShellStopTask {
-            interp: self.as_ctx_ptr(),
-            failed,
-            rejection,
-        }));
-        match self.event_loop {
-            EventLoopHandle::Js { owner } => owner.enqueue_task(bun_jsc::Task::init(task)),
-            EventLoopHandle::Mini(mut mini) => {
-                let any = bun_jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from_callback_auto_deinit(
-                    task,
-                    ShellStopTask::run_from_main_thread_mini,
-                );
-                // SAFETY: the shell's own mini loop, on its thread.
-                unsafe { mini.get_mut() }
-                    .enqueue_task_concurrent(core::ptr::NonNull::new(any).expect("heap task"));
-            }
-        }
-    }
-
-    /// A stop task's turn, with no frame of this script on the stack: report the stopped builtins and `failed`, reject, then let `finish` run.
-    pub(crate) fn run_stop_task(
-        &self,
-        failed: NodeId,
-        rejection: Option<(bun_jsc::Strong, bun_jsc::Strong)>,
-    ) {
-        #[cfg(debug_assertions)]
-        debug_assert_eq!(self.trampolines.get(), 0, "stop task under a shell frame");
-        let mut i = 0;
-        // Reporting one can free nodes and allocate others: the length is read each time.
-        while i < self.nodes.get().len() {
+    /// The next completion `stop` left a node owed, or `None` when every one is delivered. The caller's trampoline runs it, so it must hold no node: a completion ends its node, and that can free the nodes above it.
+    pub(crate) fn next_cancelled(&self) -> Option<Yield> {
+        // Output the script issued before it failed gets one more write attempt.
+        let flush = self.failed();
+        for i in 0..self.nodes.get().len() {
             let id = NodeId(i as u32);
-            i += 1;
-            match self.node(id).kind() {
-                StateKind::Cmd => Cmd::finish_stopped(self, id),
-                // See `stop_in_flight`.
+            let owed = match self.node(id).kind() {
+                StateKind::Cmd => Cmd::next_cancelled(self, id, flush),
+                StateKind::Pipeline => Pipeline::next_cancelled(self, id, flush),
+                StateKind::Condexpr => CondExpr::next_cancelled(self, id, flush),
+                // See `stop`.
                 StateKind::Script
                 | StateKind::Stmt
                 | StateKind::Binary
-                | StateKind::Pipeline
                 | StateKind::Subshell
                 | StateKind::IfClause
                 | StateKind::Async
                 | StateKind::Assign
                 | StateKind::Expansion
-                | StateKind::Condexpr
-                | StateKind::Free => {}
+                | StateKind::Free => None,
+            };
+            if owed.is_some() {
+                return owed;
             }
         }
-        if failed != NodeId::NONE {
-            let parent = self
-                .node(failed)
-                .base()
-                .expect("the failed node stays parked until its stop task reports it")
-                .parent;
-            self.child_done(parent, failed, 1).run(self);
+        None
+    }
+
+    /// Deliver what `stop` left owed, for a stop that no trampoline of the script made (a Ctrl+C, `dispose()`).
+    pub(crate) fn drain_cancelled(&self) {
+        while let Some(y) = self.next_cancelled() {
+            y.run(self);
         }
-        if let Some((reject, error)) = rejection {
-            let global_this = self
-                .global_this_ref()
-                .expect("a rejection comes from the Js path");
-            let _entered = self.event_loop.entered();
-            global_this.bun_vm().event_loop_mut().run_callback(
-                self.task_context(),
-                reject.get(),
-                global_this,
-                crate::jsc::JSValue::UNDEFINED,
-                &[error.get()],
-            );
-        }
-        self.release_finish_hold();
     }
 
     /// Take the pending exception and set `failed`; `Some` when the promise still has to be rejected.
@@ -2754,11 +2709,14 @@ impl<P: OutputTaskVTable> OutputTask<P> {
             match me.state {
                 OutputTaskState::WaitingWriteErr => {
                     P::on_write_err(interp, me.parent);
-                    me.state = OutputTaskState::WaitingWriteOut;
-                    if let Some(y) = P::write_out(interp, me.parent, this, &mut me.output) {
-                        return y;
+                    // A stopped builtin writes nothing more.
+                    if !crate::shell::builtin::Builtin::of(interp, me.parent).is_stopped() {
+                        me.state = OutputTaskState::WaitingWriteOut;
+                        if let Some(y) = P::write_out(interp, me.parent, this, &mut me.output) {
+                            return y;
+                        }
+                        P::on_write_out(interp, me.parent);
                     }
-                    P::on_write_out(interp, me.parent);
                     me.state = OutputTaskState::Done;
                     Self::deinit(this, interp)
                 }
@@ -2782,14 +2740,6 @@ impl<P: OutputTaskVTable> OutputTask<P> {
         // SAFETY: `this` is the live heap-allocated `OutputTask` guaranteed by
         // this fn's caller contract; forwarded unchanged to `next`.
         unsafe { Self::next(this, interp) }
-    }
-
-    /// Free the queued tasks of a stopped builtin: `Builtin::stop` cancelled the chunks that would have completed them.
-    pub(crate) fn release_queued(queue: &mut std::collections::VecDeque<*mut Self>) {
-        for task in queue.drain(..) {
-            // SAFETY: a queued task is the live box `start` leaked; only its cancelled chunk would have freed it.
-            drop(unsafe { bun_core::heap::take(task) });
-        }
     }
 
     /// Fires `on_done` then frees.

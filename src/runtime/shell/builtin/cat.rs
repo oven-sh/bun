@@ -55,10 +55,6 @@ impl Step {
         match self {
             Step::Suspend => Yield::suspended(),
             Step::Done(code) => Builtin::done(interp, cmd, code),
-            // A stopped `cat` opens nothing more and reads nothing more: the stop task reports it.
-            Step::Next | Step::ReadMore if Builtin::of(interp, cmd).is_stopped() => {
-                Yield::suspended()
-            }
             Step::Next => Cat::next(interp, cmd),
             Step::ReadMore => Cat::read_more(interp, cmd),
         }
@@ -287,20 +283,31 @@ impl Cat {
         }
     }
 
-    /// `Builtin::stop`: leave the reader this `cat` listens on (its stdin, or the operand it reads).
+    /// The reader this `cat` listens on: the operand it reads, or its stdin.
+    fn reader(interp: &Interpreter, cmd: NodeId) -> Option<Arc<IOReader>> {
+        match &Self::state_mut(interp, cmd).state {
+            CatState::ExecFilepathArgs { reader, .. } => reader.clone(),
+            CatState::ExecStdin { .. } => match &Builtin::of(interp, cmd).stdin {
+                BuiltinInput::Fd(r) => Some(Arc::clone(r)),
+                _ => None,
+            },
+            CatState::Idle | CatState::WaitingWriteErr => None,
+        }
+    }
+
+    /// `Builtin::stop`: this `cat` gets no more input, and its reader owes it the done that ends it.
     pub(crate) fn stop(interp: &Interpreter, cmd: NodeId) {
-        let rchild = ReaderChildPtr {
-            node: cmd,
-            tag: ReaderTag::Cat,
-        };
-        if let BuiltinInput::Fd(r) = &Builtin::of(interp, cmd).stdin {
-            r.remove_reader(rchild);
+        if let Some(reader) = Self::reader(interp, cmd) {
+            reader.cancel(ReaderChildPtr {
+                node: cmd,
+                tag: ReaderTag::Cat,
+            });
         }
-        if let CatState::ExecFilepathArgs { reader, .. } = &mut Self::state_mut(interp, cmd).state {
-            if let Some(r) = reader.take() {
-                r.remove_reader(rchild);
-            }
-        }
+    }
+
+    /// The done `stop` left this `cat` owed (`Builtin::next_cancelled`).
+    pub(crate) fn next_cancelled(interp: &Interpreter, cmd: NodeId) -> Option<Yield> {
+        Self::reader(interp, cmd)?.next_cancelled()
     }
 
     pub(crate) fn on_io_writer_chunk(
@@ -378,14 +385,7 @@ impl Cat {
     }
 
     fn read_more(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let reader = match &Self::state_mut(interp, cmd).state {
-            CatState::ExecFilepathArgs { reader, .. } => reader.clone(),
-            _ => match &Builtin::of(interp, cmd).stdin {
-                BuiltinInput::Fd(r) => Some(Arc::clone(r)),
-                _ => None,
-            },
-        };
-        reader.map_or(Yield::suspended(), |r| r.resume())
+        Self::reader(interp, cmd).map_or(Yield::suspended(), |r| r.resume())
     }
 
     pub(crate) fn on_io_reader_chunk(

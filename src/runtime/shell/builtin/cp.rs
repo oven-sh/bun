@@ -204,36 +204,6 @@ impl Cp {
         Self::next(interp, cmd)
     }
 
-    /// `Builtin::after_stop`: as `Ls::after_stop`.
-    pub(crate) fn after_stop(interp: &Interpreter, cmd: NodeId) -> bool {
-        let me = Self::state_mut(interp, cmd);
-        OutputTask::release_queued(&mut me.output_queue);
-        match &mut me.state {
-            State::Exec(exec) => {
-                exec.output_done = exec.output_waiting;
-                let idle = exec.tasks_count == 0;
-                // An idle `cp` is reported at once: the tasks kept for the EBUSY pass are not looked at again.
-                #[cfg(windows)]
-                if idle {
-                    for task in exec.ebusy.tasks.drain(..) {
-                        // SAFETY: stashed by `on_shell_cp_task_done`; not freed since.
-                        drop(unsafe { bun_core::heap::take(task) });
-                    }
-                }
-                idle
-            }
-            #[cfg(windows)]
-            State::Ebusy(ebusy) => {
-                for task in ebusy.tasks.drain(ebusy.idx..) {
-                    // SAFETY: as above; the pass consumed the tasks before `idx`.
-                    drop(unsafe { bun_core::heap::take(task) });
-                }
-                true
-            }
-            State::Idle | State::WaitingWriteErr | State::Done => true,
-        }
-    }
-
     /// Windows-only post-processing of tasks that failed with EBUSY: if some
     /// other task already succeeded
     /// for the same absolute src/tgt, the EBUSY is benign and the task is

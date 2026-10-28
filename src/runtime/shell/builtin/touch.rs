@@ -142,18 +142,6 @@ impl Touch {
         Self::next(interp, cmd)
     }
 
-    /// `Builtin::after_stop`: as `Ls::after_stop`.
-    pub(crate) fn after_stop(interp: &Interpreter, cmd: NodeId) -> bool {
-        match &mut Self::state_mut(interp, cmd).state {
-            State::Exec(exec) => {
-                OutputTask::release_queued(&mut exec.output_queue);
-                exec.output_done = exec.output_waiting;
-                exec.tasks_done >= exec.tasks_count
-            }
-            State::Idle | State::WaitingWriteErr | State::Done => true,
-        }
-    }
-
     /// # Safety
     /// `task` must be a live heap allocation produced by
     /// [`ShellTouchTask::create`]; ownership is reclaimed here.

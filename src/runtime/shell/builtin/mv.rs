@@ -299,19 +299,6 @@ impl Mv {
         }
     }
 
-    /// `Builtin::after_stop`: `mv` ends when its pool tasks are back, because they live in this state.
-    pub(crate) fn after_stop(interp: &Interpreter, cmd: NodeId) -> bool {
-        match &Self::state_mut(interp, cmd).state {
-            MvState::CheckTarget(task) => task.done,
-            MvState::Executing {
-                task_count,
-                tasks_done,
-                ..
-            } => tasks_done >= task_count,
-            MvState::Idle | MvState::Done | MvState::WaitingWriteErr { .. } | MvState::Err => true,
-        }
-    }
-
     fn check_target_task_done(interp: &Interpreter, cmd: NodeId) {
         let stopped = Builtin::of(interp, cmd).is_stopped();
         let me = Self::state_mut(interp, cmd);
@@ -322,7 +309,7 @@ impl Mv {
                 if let Some(Ok(fd)) = t.result.take() {
                     me.args.target_fd = fd;
                 }
-                return Builtin::done_stopped(interp, cmd).run(interp);
+                return Builtin::done(interp, cmd, 1).run(interp);
             }
         }
         Self::next(interp, cmd).run(interp);
@@ -351,7 +338,7 @@ impl Mv {
         };
         if Builtin::of(interp, cmd).is_stopped() {
             if all_done {
-                Builtin::done_stopped(interp, cmd).run(interp);
+                Builtin::done(interp, cmd, 1).run(interp);
             }
             return;
         }

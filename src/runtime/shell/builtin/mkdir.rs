@@ -153,18 +153,6 @@ impl Mkdir {
         Self::next(interp, cmd)
     }
 
-    /// `Builtin::after_stop`: as `Ls::after_stop`.
-    pub(crate) fn after_stop(interp: &Interpreter, cmd: NodeId) -> bool {
-        match &mut Self::state_mut(interp, cmd).state {
-            State::Exec(exec) => {
-                OutputTask::release_queued(&mut exec.output_queue);
-                exec.output_done = exec.output_waiting;
-                exec.tasks_done >= exec.tasks_count
-            }
-            State::Idle | State::WaitingWriteErr | State::Done => true,
-        }
-    }
-
     /// The caller ([`ShellMkdirTask::run_from_main_thread`]) owns the heap
     /// allocation and drops it after this returns.
     fn on_shell_mkdir_task_done(interp: &Interpreter, cmd: NodeId, task: &mut ShellMkdirTask) {

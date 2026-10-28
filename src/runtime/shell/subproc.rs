@@ -933,16 +933,45 @@ impl ShellSubprocess {
         let cmd = unsafe { handle.cmd_mut() };
         cmd.base.interrupted |= interrupted;
         let y = cmd.on_exit(code.into());
-        if interrupted
-            && handle
-                .interp
-                .stop_in_flight(sh::interpreter::StopCause::Interrupted)
-        {
+        if interrupted {
             // The Ctrl+C went to every process of the job: a builtin is not one, so it is stopped here.
-            handle.interp.queue_stop_task(NodeId::NONE, None);
+            handle.interp.stop(sh::interpreter::StopCause::Interrupted);
         }
         // May free `*this`.
         y.run(&handle.interp);
+        if interrupted {
+            handle.interp.drain_cancelled();
+        }
+    }
+
+    /// The script is stopped and this child killed: its output is teed no further, and what the tee has queued at the shell's own writer is withdrawn.
+    pub(crate) fn cancel_captured_writes(&self) {
+        for out in [&self.stdout, &self.stderr] {
+            let Readable::Pipe(pipe) = out else { continue };
+            // SAFETY: see `arc_as_mut_ptr` — single-threaded shell; only fields of the `CapturedWriter` are touched, and `cancel` fires no callback.
+            unsafe {
+                let captured: *mut CapturedWriter =
+                    &raw mut (*arc_as_mut_ptr(pipe)).captured_writer;
+                let Some(writer) = (*captured).writer.clone() else {
+                    continue;
+                };
+                if !writer.cancel(io_writer::ChildPtr::subproc_capture(captured.cast())) {
+                    // Nothing of it is queued, so no completion ends the tee (`on_iowriter_chunk`): end it here.
+                    (*captured).writer = None;
+                    (*captured).dead = true;
+                }
+            }
+        }
+    }
+
+    /// The next completion `cancel_captured_writes` left owed (`Interpreter::next_cancelled`).
+    pub(crate) fn next_cancelled_capture(&self, flush: bool) -> Option<Yield> {
+        [&self.stdout, &self.stderr]
+            .into_iter()
+            .find_map(|out| match out {
+                Readable::Pipe(pipe) => pipe.captured_writer.writer.as_ref()?.next_cancelled(flush),
+                _ => None,
+            })
     }
 }
 

@@ -111,10 +111,9 @@ struct Writer {
     ptr: ChildPtr,
     len: usize,
     written: usize,
-    bytelist: Option<*mut Vec<u8>>,
-    /// Cancelled while libuv had it: the write cannot be taken back, so its bytes stay in the accounting and only the completion is dropped.
-    #[cfg(windows)]
-    detached: bool,
+    bytelist: Option<core::ptr::NonNull<Vec<u8>>>,
+    /// A stop of the script withdrew this chunk (`IOWriter::cancel`): its one completion reports `ECANCELED`.
+    cancelled: bool,
 }
 
 impl Writer {
@@ -131,15 +130,6 @@ impl Writer {
     fn set_dead(&mut self) {
         self.ptr = ChildPtr::NULL;
     }
-    /// The child still waits for the completion of this chunk.
-    #[inline]
-    fn has_child(&self) -> bool {
-        #[cfg(windows)]
-        if self.detached {
-            return false;
-        }
-        !self.is_dead()
-    }
     /// Tee `chunk` into the optional capture buffer.
     ///
     /// `bytelist` (when set) points into a live `ShellExecEnv` `Bufio`
@@ -150,7 +140,7 @@ impl Writer {
     fn tee(&self, chunk: &[u8]) {
         if let Some(bl) = self.bytelist {
             // SAFETY: see doc comment.
-            let _ = unsafe { (*bl).append_slice(chunk) };
+            let _ = unsafe { (*bl.as_ptr()).append_slice(chunk) };
         }
     }
 }
@@ -209,6 +199,8 @@ struct State {
     /// `SystemError`) so each rejected chunk gets its own freshly-derived
     /// `SystemError`.
     err: Option<sys::Error>,
+    /// The fd did not take all of a cancelled chunk: `next_cancelled` writes no more of them.
+    flush_blocked: bool,
     evtloop: EventLoopHandle,
     is_writing: bool,
     started: bool,
@@ -287,6 +279,7 @@ impl IOWriter {
                 writer_idx: 0,
                 total_bytes_written: 0,
                 err: None,
+                flush_blocked: false,
                 evtloop,
                 is_writing: false,
                 started: false,
@@ -532,17 +525,89 @@ impl IOWriter {
         if idx >= s.writers.len() {
             return;
         }
-        // The write that libuv holds is the chunk at `idx`.
-        #[cfg(windows)]
-        if s.writer.has_inflight_stream_write() && s.writers[idx].ptr == ptr {
-            let w = &mut s.writers[idx];
-            w.detached = true;
-            w.bytelist = None;
-        }
         for w in &mut s.writers[idx..] {
-            if w.ptr == ptr && w.has_child() {
+            if w.ptr == ptr {
                 w.set_dead();
             }
+        }
+    }
+
+    /// A stop of the script withdraws what `child` has queued: each chunk is owed one `ECANCELED` completion, which `next_cancelled` hands out. `false` when nothing of `child` is queued.
+    pub(crate) fn cancel(&self, child: ChildPtr) -> bool {
+        let s = self.state();
+        // `fail_pending_writers` is completing every chunk, or has.
+        if s.err.is_some() {
+            return false;
+        }
+        let mut owed = false;
+        for w in s.writers.iter_mut().skip(s.writer_idx) {
+            if w.ptr == child {
+                w.cancelled = true;
+                owed = true;
+            }
+        }
+        owed
+    }
+
+    /// The completion of the next chunk `cancel` withdrew, or `None` when none is left. It is returned, not run: it ends its node, so only a trampoline that holds no node can run it. With `flush`, a chunk at the head of the queue is first written as far as the fd takes it without blocking.
+    pub(crate) fn next_cancelled(&self, flush: bool) -> Option<Yield> {
+        // Windows: uv is writing the chunk at the head. `bump` completes it, and until then its bytes are accounted to it.
+        let in_flight = cfg!(windows) && self.state().is_writing;
+        if !in_flight {
+            self.skip_dead();
+        }
+        let s = self.state();
+        let head = s.writer_idx + usize::from(in_flight);
+        let mut queued = s.writers.iter().skip(head);
+        let Some(at) = queued.position(|w| w.cancelled && !w.is_dead()) else {
+            s.flush_blocked = false;
+            return None;
+        };
+        let at = head + at;
+        #[cfg(not(windows))]
+        if flush && at == s.writer_idx {
+            self.flush_head();
+        }
+        let _ = flush;
+        let w = &mut self.state().writers[at];
+        let (child, written) = (w.ptr, w.written);
+        w.set_dead();
+        Some(Yield::OnIoWriterChunk {
+            child,
+            written,
+            err: Some(cancelled_err()),
+        })
+    }
+
+    /// Write the chunk at the head of the queue as far as the fd takes it now. A blocking pipe gets one `PIPE_BUF` per `poll`, which it takes whole or not at all.
+    #[cfg(not(windows))]
+    fn flush_head(&self) {
+        use bun_io::pipe_writer::PosixPipeWriter;
+        loop {
+            let s = self.state();
+            let idx = s.writer_idx;
+            let remaining = s.writers[idx].len - s.writers[idx].written;
+            let pollable =
+                s.flags.pollable && matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_));
+            if remaining == 0 || s.flush_blocked || !pollable {
+                return;
+            }
+            let blocking = PosixPipeWriter::get_file_type(&s.writer) == bun_io::FileType::Pipe;
+            let step = if blocking {
+                remaining.min(libc::PIPE_BUF)
+            } else {
+                remaining
+            };
+            let lo = s.total_bytes_written;
+            let wrote = match s.writer.try_write(false, &s.buf[lo..lo + step]) {
+                bun_io::WriteResult::Wrote(n)
+                | bun_io::WriteResult::Done(n)
+                | bun_io::WriteResult::Pending(n) => n,
+                // The chunk is cancelled either way; the poll reports what is wrong with the fd.
+                bun_io::WriteResult::Err(_) => 0,
+            };
+            s.flush_blocked = wrote < step;
+            self.record_write_progress(idx, wrote);
         }
     }
 
@@ -631,10 +696,10 @@ impl IOWriter {
         // NOTE: reshaped for borrowck — `skip_dead()` re-derives `state()`,
         // so we must drop `s` before calling it and re-derive after, otherwise
         // two `&mut State` are live simultaneously (UB under Stacked Borrows).
-        let (is_dead, has_child, written, child_ptr) = {
+        let (is_dead, written, child_ptr, was_cancelled) = {
             let s = self.state();
             let w = &s.writers[current_idx];
-            (w.is_dead(), w.has_child(), w.written, w.ptr)
+            (w.is_dead(), w.written, w.ptr, w.cancelled)
         };
 
         if is_dead {
@@ -662,11 +727,12 @@ impl IOWriter {
             }
         }
 
-        if has_child {
+        if !is_dead {
             return Yield::OnIoWriterChunk {
                 child: child_ptr,
                 written,
-                err: None,
+                // A write that was in flight when the script was stopped (Windows) ends its child like the chunks behind it.
+                err: was_cancelled.then(cancelled_err),
             };
         }
         Yield::done()
@@ -836,9 +902,9 @@ impl IOWriter {
         let mut withheld: Option<usize> = None;
         // Re-derived every iteration: a completion may `cancel_chunks` the entries behind it.
         while let Some(w) = self.state().writers.get(idx) {
-            let (has_child, child) = (w.has_child(), w.ptr);
+            let (dead, child) = (w.is_dead(), w.ptr);
             idx += 1;
-            if !has_child {
+            if dead {
                 continue;
             }
             if withheld.is_none() && withhold == Some(child) {
@@ -850,7 +916,7 @@ impl IOWriter {
         let s = self.state();
         let withheld = withheld
             .map(|i| &s.writers[i])
-            .filter(|w| w.has_child())
+            .filter(|w| !w.is_dead())
             .map(|w| completion(w.ptr));
         s.total_bytes_written = 0;
         s.writer_idx = 0;
@@ -992,9 +1058,8 @@ impl IOWriter {
             ptr: child,
             len: buf.len(),
             written: 0,
-            bytelist,
-            #[cfg(windows)]
-            detached: false,
+            bytelist: bytelist.and_then(core::ptr::NonNull::new),
+            cancelled: false,
         });
         self.enqueue_internal(child)
     }
@@ -1040,12 +1105,16 @@ impl IOWriter {
             ptr: child,
             len: end - start,
             written: 0,
-            bytelist,
-            #[cfg(windows)]
-            detached: false,
+            bytelist: bytelist.and_then(core::ptr::NonNull::new),
+            cancelled: false,
         });
         self.enqueue_internal(child)
     }
+}
+
+/// What the completion of a chunk that `IOWriter::cancel` withdrew reports.
+fn cancelled_err() -> sys::SystemError {
+    sys::Error::from_code(E::ECANCELED, sys::Tag::write).to_shell_system_error()
 }
 
 enum WriteOutcome {

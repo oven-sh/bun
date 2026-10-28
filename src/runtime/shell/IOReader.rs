@@ -24,6 +24,14 @@ pub(crate) struct ChildPtr {
     pub(crate) tag: ReaderTag,
 }
 
+impl ChildPtr {
+    /// What a listener that left becomes in a list a loop is walking.
+    const GONE: ChildPtr = ChildPtr {
+        node: NodeId::NONE,
+        tag: ReaderTag::Cat,
+    };
+}
+
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum ReaderTag {
@@ -42,8 +50,14 @@ pub(crate) type ReaderImpl = bun_io::BufferedReader;
 struct State {
     fd: Fd,
     buf: Vec<u8>,
-    /// Listeners for the in-flight read (see `take_readers`).
+    /// Listeners for the in-flight read.
     readers: Readers,
+    /// A chunk is being handed to `readers`: a listener that leaves is blanked in place, so the loop keeps its index.
+    in_chunk_loop: bool,
+    /// Listeners of a read that ended, while they are told. One that leaves is blanked, and the loop skips it.
+    delivering: Readers,
+    /// Listeners a stop of the script withdrew (`cancel`): each is owed the done that ends it (`next_cancelled`).
+    cancelled: Readers,
     /// True while `start()` is on the stack. An error reported meanwhile goes to `start_err`.
     starting: bool,
     start_err: Option<sys::Error>,
@@ -142,6 +156,9 @@ impl IOReader {
                 fd,
                 buf: Vec::new(),
                 readers: Readers::new(),
+                in_chunk_loop: false,
+                delivering: Readers::new(),
+                cancelled: Readers::new(),
                 starting: false,
                 start_err: None,
                 paused: false,
@@ -264,7 +281,7 @@ impl IOReader {
         self.start()
     }
 
-    /// No listener can take more input: each one still writes the chunks it got, or none is left.
+    /// Nobody is left to read for, or every listener still writes the chunks it got. Reading on would drop input, or queue it without bound.
     fn nobody_ready(&self) -> bool {
         let s = self.state();
         s.readers.iter().all(|r| awaits_write(*r, s.interp))
@@ -278,19 +295,56 @@ impl IOReader {
         }
     }
 
-    /// Unregister a listener; no-op if it was never added.
+    /// Unregister a listener; no-op if it was never added. A done that is on its way to it is not delivered.
     pub(crate) fn remove_reader(&self, reader: ChildPtr) {
+        self.leave(reader);
         let s = self.state();
-        let Some(idx) = s.readers.iter().position(|r| *r == reader) else {
-            return;
+        s.cancelled.retain(|owed| *owed != reader);
+        for told in &mut s.delivering {
+            if *told == reader {
+                *told = ChildPtr::GONE;
+            }
+        }
+    }
+
+    /// A stop of the script withdraws `listener`: it gets no more input, and `next_cancelled` owes it an `ECANCELED` done. Not when a done is already on its way to it.
+    pub(crate) fn cancel(&self, listener: ChildPtr) {
+        if self.leave(listener) {
+            self.state().cancelled.push(listener);
+        }
+    }
+
+    /// Tells the next listener `cancel` withdrew that its input ended, or `None` when none is left. The caller's trampoline continues with what it returns.
+    pub(crate) fn next_cancelled(&self) -> Option<Yield> {
+        let s = self.state();
+        let listener = s.cancelled.pop()?;
+        let err = sys::Error::from_code(sys::E::ECANCELED, sys::Tag::read);
+        let interp = s.interp;
+        Some(dispatch_reader_done(
+            listener,
+            Some(err.to_shell_system_error()),
+            interp,
+        ))
+    }
+
+    /// Takes `listener` out of `readers`; `false` when it is not there.
+    fn leave(&self, listener: ChildPtr) -> bool {
+        let s = self.state();
+        let Some(idx) = s.readers.iter().position(|r| *r == listener) else {
+            return false;
         };
+        if s.in_chunk_loop {
+            s.readers[idx] = ChildPtr::GONE;
+            return true;
+        }
         s.readers.swap_remove(idx);
-        // The last listener left: the input stays in the fd until `start()`. Windows pauses after the read that is out.
-        #[cfg(not(windows))]
-        if s.readers.is_empty() {
+        // Nobody is left to read for, so the fd is left to the process. (A loop that is telling the listeners is not reading.)
+        if s.readers.is_empty() && s.delivering.is_empty() {
             s.paused = true;
+            self.set_reading(false);
             self.reader().pause();
         }
+        true
     }
 
     /// The `BufferedReader.onReadChunk` hook.
@@ -307,17 +361,23 @@ impl IOReader {
         // `&mut State` across the dispatch. Re-derive `state()` per access
         // instead.
         let mut i = 0usize;
+        self.state().in_chunk_loop = true;
         while i < self.state().readers.len() {
             let r = self.state().readers[i];
+            i += 1;
+            if r == ChildPtr::GONE {
+                continue;
+            }
             let interp = self.state().interp;
             let mut remove = false;
             self.run_yield(dispatch_read_chunk(r, chunk, &mut remove, interp));
             if remove {
-                self.state().readers.swap_remove(i);
-            } else {
-                i += 1;
+                self.leave(r);
             }
         }
+        let s = self.state();
+        s.in_chunk_loop = false;
+        s.readers.retain(|r| *r != ChildPtr::GONE);
 
         let should_continue = has_more != bun_io::ReadState::Eof;
         if should_continue && self.nobody_ready() {
@@ -325,7 +385,7 @@ impl IOReader {
             self.reader().pause();
             return false;
         }
-        if should_continue && !self.state().readers.is_empty() {
+        if should_continue {
             self.set_reading(true);
             // Don't re-arm here (Windows doesn't allow it, see `reader()`). The
             // caller re-arms after we return (on posix, based on the `bool` below),
@@ -343,13 +403,8 @@ impl IOReader {
             self.state().start_err = Some(err.clone());
             return;
         }
-        let interp = self.state().interp;
-        for r in self.take_readers() {
-            // Re-derive a fresh SystemError per callee (see
-            // IOWriter.on_error note).
-            let ee = err.to_shell_system_error();
-            self.run_yield(dispatch_reader_done(r, Some(ee), interp));
-        }
+        let tail = self.deliver(Some(err), false);
+        debug_assert!(matches!(tail, Yield::Suspended));
     }
 
     fn on_reader_done_cb(&self) {
@@ -364,33 +419,45 @@ impl IOReader {
         {
             self.state().reached_eof = true;
         }
-        let interp = self.state().interp;
-        for r in self.take_readers() {
-            self.run_yield(dispatch_reader_done(r, None, interp));
-        }
+        let tail = self.deliver(None, false);
+        debug_assert!(matches!(tail, Yield::Suspended));
     }
 
     /// Reports EOF (`None`) or an error to the listeners from under `start()`. Returns the last
     /// continuation instead of running it, so consecutive `cat`s don't nest `Yield::run` calls.
     fn finish_listeners(&self, err: Option<&sys::Error>) -> Yield {
         let _keepalive = self.keepalive();
-        let interp = self.state().interp;
-        let mut readers = self.take_readers();
-        let last = readers.pop();
-        let done = |r| dispatch_reader_done(r, err.map(sys::Error::to_shell_system_error), interp);
-        for r in readers {
-            self.run_yield(done(r));
-        }
-        match last {
-            Some(r) => done(r),
-            None => Yield::suspended(),
-        }
+        self.deliver(err, true)
     }
 
-    /// Removes and returns the finished read's listeners. The next read would notify a
-    /// stale entry again, and by then its `NodeId` may be recycled.
-    fn take_readers(&self) -> Readers {
-        core::mem::take(&mut self.state().readers)
+    /// Tells the listeners that the read ended (`None` is EOF), after moving them out of `readers`: the next read must not tell a recycled `NodeId`. With `return_last`, the caller's trampoline tells the last one.
+    fn deliver(&self, err: Option<&sys::Error>, return_last: bool) -> Yield {
+        let s = self.state();
+        let interp = s.interp;
+        // A delivery that nests in another one (a done starts a `cat` whose reader fails to start) gets its own range.
+        let base = s.delivering.len();
+        let mut ended = core::mem::take(&mut s.readers);
+        s.delivering.append(&mut ended);
+        let end = s.delivering.len();
+        let done = |r| dispatch_reader_done(r, err.map(sys::Error::to_shell_system_error), interp);
+        let nested = if return_last {
+            end.saturating_sub(1).max(base)
+        } else {
+            end
+        };
+        for i in base..nested {
+            let r = self.state().delivering[i];
+            if r != ChildPtr::GONE {
+                self.run_yield(done(r));
+            }
+        }
+        let s = self.state();
+        let last = s.delivering[nested..end].first().copied();
+        s.delivering.truncate(base);
+        match last {
+            Some(r) if r != ChildPtr::GONE => done(r),
+            _ => Yield::suspended(),
+        }
     }
 
     fn run_yield(&self, y: Yield) {

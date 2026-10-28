@@ -156,6 +156,27 @@ impl CondExpr {
         }
     }
 
+    /// `Interpreter::stop`: withdraw the error message this `[[ ]]` waits to have written.
+    pub(crate) fn stop(interp: &Interpreter, this: NodeId) {
+        use crate::shell::io::OutKind;
+        use crate::shell::io_writer::{ChildPtr, WriterTag};
+        let me = interp.as_condexpr(this);
+        if let (CondExprState::WaitingWriteErr, OutKind::Fd(fd)) = (&me.state, &me.io.stderr) {
+            fd.writer.cancel(ChildPtr::new(this, WriterTag::CondExpr));
+        }
+    }
+
+    /// The next completion `stop` left owed at the writer of this `[[ ]]` (`Interpreter::next_cancelled`).
+    pub(crate) fn next_cancelled(interp: &Interpreter, this: NodeId, flush: bool) -> Option<Yield> {
+        let me = interp.as_condexpr(this);
+        match (&me.state, &me.io.stderr) {
+            (CondExprState::WaitingWriteErr, crate::shell::io::OutKind::Fd(fd)) => {
+                fd.writer.next_cancelled(flush)
+            }
+            _ => None,
+        }
+    }
+
     /// IOWriter completion callback for the error message written in
     /// `WaitingWriteErr`: on write failure finish with the errno as the exit
     /// code, otherwise finish with exit code 1.

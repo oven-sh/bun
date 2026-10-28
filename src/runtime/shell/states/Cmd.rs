@@ -10,6 +10,7 @@ use crate::shell::interpreter::{
     CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind, StopCause, log,
 };
 use crate::shell::io::{IO, OutKind as IoOutKind};
+use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::shell_body::subproc::{Readable, ShellSubprocess, StdioKind};
 use crate::shell::states::assigns::{AssignCtx, Assigns};
 use crate::shell::states::base::Base;
@@ -312,7 +313,8 @@ impl Cmd {
         _written: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if let Some(err) = e {
+        // A stop of the script withdrew the message: that is not a write failure to throw.
+        if let Some(err) = e.filter(|err| err.get_errno() != bun_sys::E::ECANCELED) {
             interp.throw(crate::shell::ShellErr::from_system(err));
             return Yield::Failed(this);
         }
@@ -887,46 +889,66 @@ impl Cmd {
         Self::deinit(interp, this);
     }
 
-    /// Stop what this command runs (`Interpreter::stop_in_flight`); `true` when its builtin now waits for a stop task.
-    pub(crate) fn stop(interp: &Interpreter, this: NodeId, cause: StopCause) -> bool {
+    /// Stop what this command runs or waits for (`Interpreter::stop`). Its exit, or the completion `next_cancelled` hands it, finishes the Cmd.
+    pub(crate) fn stop(interp: &Interpreter, this: NodeId, cause: StopCause) {
         let me = interp.as_cmd(this);
         let interrupted = cause == StopCause::Interrupted;
+        if matches!(me.state, CmdState::WaitingWriteErr) {
+            if let IoOutKind::Fd(fd) = &me.io.stderr {
+                fd.writer.cancel(ChildPtr::new(this, WriterTag::Cmd));
+            }
+            return;
+        }
         match &me.exec {
-            Exec::None => false,
+            Exec::None => {}
             Exec::Subproc(sub) => {
                 if !sub.child.is_null() && !interrupted {
                     // SAFETY: `child` was set by `spawn_async` from a `heap::alloc(ShellSubprocess)` and stays valid until `deinit`.
-                    let _ = unsafe { (*sub.child).try_kill(bun_core::SignalCode::SIGKILL as i32) };
+                    unsafe {
+                        let _ = (*sub.child).try_kill(bun_core::SignalCode::SIGKILL as i32);
+                        (*sub.child).cancel_captured_writes();
+                    }
                 }
-                false
             }
             Exec::Builtin(builtin) => {
                 if !matches!(me.state, CmdState::Exec) || builtin.is_stopped() {
-                    return false;
+                    return;
                 }
                 if interrupted {
                     // A Ctrl+C is for the foreground job: an `&` command goes on, as its subprocess does.
                     if interp.in_background(this) {
-                        return false;
+                        return;
                     }
                     interp.as_cmd_mut(this).base.interrupted = true;
                 }
                 Builtin::stop(interp, this);
-                true
             }
         }
     }
 
-    /// A stop task's turn: report the stopped builtin unless it still has work out.
-    pub(crate) fn finish_stopped(interp: &Interpreter, this: NodeId) {
+    /// The next completion `stop` left owed at a writer or a reader this command waits on (`Interpreter::next_cancelled`).
+    pub(crate) fn next_cancelled(interp: &Interpreter, this: NodeId, flush: bool) -> Option<Yield> {
         let me = interp.as_cmd(this);
-        let stopped = matches!(me.state, CmdState::Exec)
-            && matches!(&me.exec, Exec::Builtin(builtin) if builtin.is_stopped());
-        if !stopped {
-            return;
+        if matches!(me.state, CmdState::WaitingWriteErr) {
+            return match &me.io.stderr {
+                IoOutKind::Fd(fd) => fd.writer.next_cancelled(flush),
+                IoOutKind::Pipe | IoOutKind::Ignore => None,
+            };
         }
-        if Builtin::after_stop(interp, this) {
-            Builtin::done_stopped(interp, this).run(interp);
+        match &me.exec {
+            Exec::None => None,
+            // SAFETY: as in `stop`.
+            Exec::Subproc(sub) if !sub.child.is_null() => unsafe {
+                (*sub.child).next_cancelled_capture(flush)
+            },
+            Exec::Subproc(_) => None,
+            // Still running (`CmdState::Exec`): a builtin that ended is owed nothing more.
+            Exec::Builtin(builtin)
+                if builtin.is_stopped() && matches!(me.state, CmdState::Exec) =>
+            {
+                Builtin::next_cancelled(interp, this, flush)
+            }
+            Exec::Builtin(_) => None,
         }
     }
 

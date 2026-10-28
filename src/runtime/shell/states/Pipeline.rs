@@ -309,6 +309,24 @@ impl Pipeline {
         Self::finish(interp, this, 1)
     }
 
+    /// `Interpreter::stop`: withdraw the error message this pipeline waits to have written.
+    pub(crate) fn stop(interp: &Interpreter, this: NodeId) {
+        let me = interp.as_pipeline(this);
+        if let (PipelineState::WaitingWriteErr, OutKind::Fd(fd)) = (&me.state, &me.io.stderr) {
+            let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::Pipeline);
+            fd.writer.cancel(child);
+        }
+    }
+
+    /// The next completion `stop` left owed at this pipeline's writer (`Interpreter::next_cancelled`).
+    pub(crate) fn next_cancelled(interp: &Interpreter, this: NodeId, flush: bool) -> Option<Yield> {
+        let me = interp.as_pipeline(this);
+        match (&me.state, &me.io.stderr) {
+            (PipelineState::WaitingWriteErr, OutKind::Fd(fd)) => fd.writer.next_cancelled(flush),
+            _ => None,
+        }
+    }
+
     /// IOWriter completion callback for the error message written in
     /// `WaitingWriteErr`. The pipeline finishes with exit code 1 whether or
     /// not the write succeeded: the parent always needs a completion, and a

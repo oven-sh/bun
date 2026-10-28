@@ -160,10 +160,6 @@ macro_rules! shell_builtins {
                 written: usize,
                 err: Option<bun_sys::SystemError>,
             ) -> Yield {
-                debug_assert!(
-                    !Self::of(interp, cmd).is_stopped(),
-                    "a chunk of a stopped builtin completed"
-                );
                 match Self::kind_of(interp, cmd) {
                     $( Kind::$UV => crate::shell::builtins::$u_mod::$UT::on_io_writer_chunk(interp, cmd, written, err), )*
                     $( Kind::$IV => crate::shell::builtins::$i_mod::$IT::on_io_writer_chunk(interp, cmd, written, err), )*
@@ -828,78 +824,36 @@ impl Builtin {
         self.stopped.load(core::sync::atomic::Ordering::Relaxed)
     }
 
-    /// The script is stopped while this runs (`Cmd::stop`): give up what names the node, free nothing. From here on no chunk and no input reaches the builtin.
+    /// The script is stopped while this runs (`Cmd::stop`): it writes nothing more, its pool work does nothing more, and what it waits for at a writer or a reader is withdrawn.
     pub(crate) fn stop(interp: &Interpreter, cmd: NodeId) {
-        let me = Self::of_mut(interp, cmd);
+        let me = Self::of(interp, cmd);
         me.stopped
             .store(true, core::sync::atomic::Ordering::Relaxed);
         let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Builtin);
         for out in [&me.stdout, &me.stderr] {
             if let BuiltinIO::Fd(fd) = out {
-                fd.writer.cancel_chunks(child);
+                fd.writer.cancel(child);
             }
         }
-        match me.kind {
-            Kind::Cat => crate::shell::builtins::cat::Cat::stop(interp, cmd),
-            // Nothing else names these: queued chunks are cancelled above, and pool tasks read `stopped`.
-            Kind::Yes
-            | Kind::Ls
-            | Kind::Mkdir
-            | Kind::Touch
-            | Kind::Cp
-            | Kind::Rm
-            | Kind::Mv
-            | Kind::True
-            | Kind::False
-            | Kind::Pwd
-            | Kind::Exit
-            | Kind::Basename
-            | Kind::Dirname
-            | Kind::Cd
-            | Kind::Echo
-            | Kind::Export
-            | Kind::Which
-            | Kind::Seq => {}
+        if me.kind == Kind::Cat {
+            crate::shell::builtins::cat::Cat::stop(interp, cmd);
         }
     }
 
-    /// A stop task's turn for a stopped builtin: free what its cancelled chunks left, and say whether nothing else of it is out.
-    pub(crate) fn after_stop(interp: &Interpreter, cmd: NodeId) -> bool {
-        use crate::shell::builtins::{cp, ls, mkdir, mv, rm, touch, yes};
-
-        match Self::kind_of(interp, cmd) {
-            Kind::Yes => yes::Yes::after_stop(interp, cmd),
-            Kind::Ls => ls::Ls::after_stop(interp, cmd),
-            Kind::Mkdir => mkdir::Mkdir::after_stop(interp, cmd),
-            Kind::Touch => touch::Touch::after_stop(interp, cmd),
-            Kind::Cp => cp::Cp::after_stop(interp, cmd),
-            Kind::Rm => rm::Rm::after_stop(interp, cmd),
-            Kind::Mv => mv::Mv::after_stop(interp, cmd),
-            // These had at most a reader entry and one queued chunk out.
-            Kind::Cat
-            | Kind::True
-            | Kind::False
-            | Kind::Pwd
-            | Kind::Exit
-            | Kind::Basename
-            | Kind::Dirname
-            | Kind::Cd
-            | Kind::Echo
-            | Kind::Export
-            | Kind::Which
-            | Kind::Seq => true,
+    /// The next completion `stop` left owed at a writer or a reader of this builtin (`Interpreter::next_cancelled`).
+    pub(crate) fn next_cancelled(interp: &Interpreter, cmd: NodeId, flush: bool) -> Option<Yield> {
+        let me = Self::of(interp, cmd);
+        for out in [&me.stdout, &me.stderr] {
+            if let BuiltinIO::Fd(fd) = out {
+                if let Some(owed) = fd.writer.next_cancelled(flush) {
+                    return Some(owed);
+                }
+            }
         }
-    }
-
-    /// Report a stopped builtin that has nothing out, with the exit code of a Ctrl+C when that stopped it.
-    pub(crate) fn done_stopped(interp: &Interpreter, cmd: NodeId) -> Yield {
-        debug_assert!(Self::of(interp, cmd).is_stopped());
-        let exit_code = if interp.as_cmd(cmd).base.interrupted {
-            bun_sys::SignalCode::SIGINT.to_exit_code().into()
-        } else {
-            1
-        };
-        Self::done(interp, cmd, exit_code)
+        if me.kind == Kind::Cat {
+            return crate::shell::builtins::cat::Cat::next_cancelled(interp, cmd);
+        }
+        None
     }
 
     /// Look up the Builtin inside a Cmd's `exec` slot.

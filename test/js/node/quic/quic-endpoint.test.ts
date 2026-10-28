@@ -114,8 +114,10 @@ describe("server ALPN list", () => {
 describe("server handshake", () => {
   // The same engine limit as Bun.serve({ http3: true }): the server keeps the
   // CRYPTO frames ahead of its read offset, and used to close the connection
-  // with INTERNAL_ERROR at the 11th (issue #47163).
-  test("answers a ClientHello split into 32 out-of-order CRYPTO frames with a ServerHello", async () => {
+  // with INTERNAL_ERROR at the 11th (issue #47163). It now keeps
+  // US_QUIC_MAX_CRYPTO_STASH (packages/bun-usockets/src/quic.h) of them.
+  const stashLimit = 64;
+  test("answers a ClientHello split into out-of-order CRYPTO frames with a ServerHello, up to the stash limit", async () => {
     await using server = await listen(
       async (s: any) => {
         await s.closed.catch(() => {});
@@ -124,6 +126,12 @@ describe("server handshake", () => {
     );
     expect(await firstFlight(server.address!.port, 1)).toEqual({ outcome: "crypto" });
     expect(await firstFlight(server.address!.port, 32)).toEqual({ outcome: "crypto" });
+    expect(await firstFlight(server.address!.port, stashLimit + 1)).toEqual({ outcome: "crypto" });
+    expect(await firstFlight(server.address!.port, stashLimit + 2)).toEqual({
+      outcome: "close",
+      errorCode: 1,
+      reason: "",
+    });
   });
 });
 

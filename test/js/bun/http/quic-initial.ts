@@ -218,7 +218,8 @@ function initialFrames(datagram: Buffer, serverKeys: Keys): { frames: Frame[]; s
   while (i < datagram.length) {
     if (!(datagram[i] & 0x80)) break; // a short header packet ends the datagram
     const type = (datagram[i] >> 4) & 3;
-    if (datagram.readUInt32BE(i + 1) === 0 || type === 3) break; // version negotiation or Retry
+    if (datagram.readUInt32BE(i + 1) === 0) throw new Error("the server answered with Version Negotiation");
+    if (type === 3) throw new Error("the server answered with Retry");
     const pos = { i: i + 5 };
     pos.i += 1 + datagram[pos.i]; // dcid
     scid = datagram.subarray(pos.i + 1, pos.i + 1 + datagram[pos.i]);
@@ -278,6 +279,9 @@ export async function firstFlight(port: number, parts: number, serverName = "loc
     hostname: "127.0.0.1",
     port: 0,
     socket: {
+      error(_socket, error) {
+        reject(error);
+      },
       data(_socket, data) {
         try {
           const { frames, scid: serverCid } = initialFrames(Buffer.from(data), serverKeys);
@@ -297,7 +301,9 @@ export async function firstFlight(port: number, parts: number, serverName = "loc
     },
   });
   try {
-    socket.send(initialPacket(dcid, scid, clientKeys, 0, frames), port, "127.0.0.1");
+    if (!socket.send(initialPacket(dcid, scid, clientKeys, 0, frames), port, "127.0.0.1")) {
+      throw new Error("the Initial packet was not sent");
+    }
     const { result, serverCid } = await promise;
     if (result.outcome === "crypto") {
       socket.send(initialPacket(serverCid, scid, clientKeys, 1, [CONNECTION_CLOSE_NO_ERROR]), port, "127.0.0.1");

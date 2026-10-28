@@ -30,24 +30,24 @@ Then it prints every row that moved by more than 2% and two instructions, and ex
 
 A row that moved is measured a second time on both sides. It is printed only if both readings of one Bun lie beyond both readings of the other by more than the threshold.
 
-| You want | Add |
-| --- | --- |
-| A quick answer (13 minutes on 16 cores) | `--only '^[a-z-]+/'`: the 260 benchmarks of `idioms/` alone. Everything takes an hour and a half |
-| One group, one benchmark | `--only '^text/'`, `--only 'char-code-at'` |
-| No servers, or some | `--servers none`, `--servers koa,fastify` |
-| No network | `--modules <node_modules>`: what `bun install` made of `../servers/app/package.json` |
-| A baseline that is measured once | `--out <folder>` on the first run, then `--before <folder>/before` |
-| What a compiler flag costs | the same Bun on both sides and `--build-flag=--aot-disable=<pass>`. A server whose executable the flag leaves as it is has the same code on both sides: it is named and not measured |
-| Another threshold | `--threshold 0.5` |
+| You want                                | Add                                                                                                                                                                                  |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A quick answer (13 minutes on 16 cores) | `--only '^[a-z-]+/'`: the 260 benchmarks of `idioms/` alone. Everything takes an hour and a half                                                                                     |
+| One group, one benchmark                | `--only '^text/'`, `--only 'char-code-at'`                                                                                                                                           |
+| No servers, or some                     | `--servers none`, `--servers koa,fastify`                                                                                                                                            |
+| No network                              | `--modules <node_modules>`: what `bun install` made of `../servers/app/package.json`                                                                                                 |
+| A baseline that is measured once        | `--out <folder>` on the first run, then `--before <folder>/before`                                                                                                                   |
+| What a compiler flag costs              | the same Bun on both sides and `--build-flag=--aot-disable=<pass>`. A server whose executable the flag leaves as it is has the same code on both sides: it is named and not measured |
+| Another threshold                       | `--threshold 0.5`                                                                                                                                                                    |
 
 ### The three program sizes
 
 The same text is not compiled the same way everywhere, and a change often moves one size only.
 
-| Size | What it models |
-| --- | --- |
-| `small` | The benchmark is the whole program. Its loop calls `turn()` directly, so `turn()` is usually copied into the loop |
-| `called` | The loop finds `turn()` at run time. `turn()` stays a function with a caller, like most functions of a real program |
+| Size         | What it models                                                                                                                                       |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `small`      | The benchmark is the whole program. Its loop calls `turn()` directly, so `turn()` is usually copied into the loop                                    |
+| `called`     | The loop finds `turn()` at run time. `turn()` stays a function with a caller, like most functions of a real program                                  |
 | `very-large` | The same, compiled the way it would be inside a very large program, where only code in a loop or with several callers counts as code that runs often |
 
 ### How a number is made
@@ -74,13 +74,13 @@ counts exactly _n_ requests to a warm server. The top of the file has the detail
 
 Other ways in, none of which needs a counter of the processor:
 
-| Question | Tool |
-| --- | --- |
+| Question                                                | Tool                                                                   |
+| ------------------------------------------------------- | ---------------------------------------------------------------------- |
 | Which tests does a request run, and which of them fail? | `../servers/measure/tests-by-request.ts`, `failed-tests-by-request.ts` |
-| How often does a request look something up at run time? | `../servers/measure/arrivals-by-request.ts` |
-| Which optimization is a benchmark's speed owed to? | `what-each-switch-is-worth.ts` |
-| Which property accesses got worse between two builds? | `sites-that-got-worse.ts` |
-| What does the compiler say about a program? | `bun build --compile --aot --explain` |
+| How often does a request look something up at run time? | `../servers/measure/arrivals-by-request.ts`                            |
+| Which optimization is a benchmark's speed owed to?      | `what-each-switch-is-worth.ts`                                         |
+| Which property accesses got worse between two builds?   | `sites-that-got-worse.ts`                                              |
+| What does the compiler say about a program?             | `bun build --compile --aot --explain`                                  |
 
 ## Compare with the JIT
 
@@ -105,18 +105,18 @@ CI does not run these. Its machines have no counter of executed instructions tha
 a change to the compiler lands, and after one that was meant to make programs faster. Each file is a file of `bun test`, named
 `<name>.measure.ts`, and can be run alone: `bun test ./test/aot/perf/operations.measure.ts`.
 
-| Files | What they hold |
-| --- | --- |
-| `idioms`, `idioms-in-parts-*` | Instructions per turn of each benchmark of `idioms/` (`pins.linux-x64.json`) |
-| `pinned-everyday-idioms-*` | The same for `everyday/` (`everyday-pins.linux-x64.json`): 1,163 benchmarks, as TypeScript and as JavaScript. 128 of them are the entry points of one executable, and nothing runs under the JIT |
-| `pinned-applications` | zod, and the type checker of the `typescript` package (`application-pins.linux-x64.json`) |
-| `idioms-against-the-jit`, `idioms-in-a-very-large-program` | No benchmark takes over 1.35 times the JIT's instructions, unless `behind-the-jit.linux-x64.json` lists it. What a list names has a pin |
-| `generated-code-of-idioms-*`, `generated-code-of-operations-*` | The same programs by their generated code: instructions and patchpoints of each function and loop. Nothing runs, so it needs no counter, only time |
-| `operations`, `small-benchmarks`, `front-end`, `plain-bun-costs`, `serial-time` | Single operations, whole small programs, a model of a processor's front end, what a program pays that never asks for the compiler, how much of a build runs on one thread |
-| `loops-at-the-top-level`, `equivalent-*`, `one-loop-against-another`, `*-in-cold-code`, `names-given-by-key` .. | One loop against another of the same executable. Nothing is pinned |
-| `compare-builds` | `compare-builds.ts` finds no difference between a Bun and itself: its numbers repeat on a busy machine |
-| `../long-functions-*`, `../many-*-build-time`, `../analysis-scaling`, `../startup-scaling` .. | What a build or a start costs as a program grows |
-| `../minifying-first-saves-no-code-*`, `../knowing-more-adds-no-code`, `more-knowledge-costs-no-site`, `../typed-package-costs-no-more-than-erased` .. | Bytes of code and classes of accesses: one build against another of the same program |
+| Files                                                                                                                                                 | What they hold                                                                                                                                                                                   |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `idioms`, `idioms-in-parts-*`                                                                                                                         | Instructions per turn of each benchmark of `idioms/` (`pins.linux-x64.json`)                                                                                                                     |
+| `pinned-everyday-idioms-*`                                                                                                                            | The same for `everyday/` (`everyday-pins.linux-x64.json`): 1,163 benchmarks, as TypeScript and as JavaScript. 128 of them are the entry points of one executable, and nothing runs under the JIT |
+| `pinned-applications`                                                                                                                                 | zod, and the type checker of the `typescript` package (`application-pins.linux-x64.json`)                                                                                                        |
+| `idioms-against-the-jit`, `idioms-in-a-very-large-program`                                                                                            | No benchmark takes over 1.35 times the JIT's instructions, unless `behind-the-jit.linux-x64.json` lists it. What a list names has a pin                                                          |
+| `generated-code-of-idioms-*`, `generated-code-of-operations-*`                                                                                        | The same programs by their generated code: instructions and patchpoints of each function and loop. Nothing runs, so it needs no counter, only time                                               |
+| `operations`, `small-benchmarks`, `front-end`, `plain-bun-costs`, `serial-time`                                                                       | Single operations, whole small programs, a model of a processor's front end, what a program pays that never asks for the compiler, how much of a build runs on one thread                        |
+| `equivalent-*`, `*-in-cold-code`, `names-given-by-key` ..                                                                                             | One loop against another of the same executable. Nothing is pinned                                                                                                                               |
+| `compare-builds`                                                                                                                                      | `compare-builds.ts` finds no difference between a Bun and itself: its numbers repeat on a busy machine                                                                                           |
+| `../long-functions-*`, `../many-*-build-time`, `../analysis-scaling`, `../startup-scaling` ..                                                         | What a build or a start costs as a program grows                                                                                                                                                 |
+| `../minifying-first-saves-no-code-*`, `../knowing-more-adds-no-code`, `more-knowledge-costs-no-site`, `../typed-package-costs-no-more-than-erased` .. | Bytes of code and classes of accesses: one build against another of the same program                                                                                                             |
 
 A pin only goes down: `AOT_PERF=lower bun test/aot/perf/measure.ts idioms` rewrites the pins that got better.
 
@@ -129,12 +129,12 @@ pair of a hundred), which is why 1,000 turns of a short benchmark say nothing.
 
 ## What CI holds
 
-| Test | What it holds |
-| --- | --- |
-| `start.test.ts` | Page faults, system calls and private memory of a start. Its instructions only where they can be counted |
-| `threads-of-a-build.test.ts` | How many threads a build starts |
+| Test                              | What it holds                                                                                                                                                 |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `start.test.ts`                   | Page faults, system calls and private memory of a start. Its instructions only where they can be counted                                                      |
+| `threads-of-a-build.test.ts`      | How many threads a build starts                                                                                                                               |
 | `../servers/budgets-of-*.test.ts` | Bytes of code, tests that fail, accesses by name, calls of the run time, allocations of one round of requests to each server: exact counts of branch counters |
-| `../build-scaling` | Peak memory of a build as a program grows, and its instructions where they can be counted |
+| `../build-scaling`                | Peak memory of a build as a program grows, and its instructions where they can be counted                                                                     |
 
 ## Which number decides
 

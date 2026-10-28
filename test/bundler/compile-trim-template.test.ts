@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { spawned, unsupported } from "../aot/harness/commands";
@@ -82,8 +82,7 @@ describe.skipIf(!canTrim || !!unsupported)("a template made with --trim-template
     console.error(`on the template less on Bun, in bytes: ${JSON.stringify(larger)}`);
   }, 900_000);
 
-  // TODO: on Windows x64 what `--trim` builds on the template is more than 256 KiB larger than what it builds on Bun.
-  test.todoIf(isWindows && !isArm64)("what is built on it is as small as what the same build on Bun gives", () => {
+  test("what is built on it is as small as what the same build on Bun gives", () => {
     expect(Object.keys(larger)).toHaveLength(6);
     // The template's own program takes a few of the places where the file can be cut.
     expect(Object.entries(larger).filter(([, bytes]) => bytes >= 256 * 1024)).toEqual([]);

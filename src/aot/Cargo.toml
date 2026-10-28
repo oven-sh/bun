@@ -13,6 +13,7 @@ path = "tests/ir_tests.rs"
 
 [features]
 linked_names = ["bun_aot_builtins/linked_names"]
+linked_archive = ["bun_builtin_sources/linked_archive"]
 # The printer of IR text. Bun writes the program as bytes: only tests read text.
 ir_text = []
 # What only tests use, those in `tests/` too.

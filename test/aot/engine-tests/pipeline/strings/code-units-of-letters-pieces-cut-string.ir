@@ -311,5 +311,5 @@ function f6 name="unitOfPieceOfPiece" module=m0 position=949 flags=[IsChecked, H
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="codePoints"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 95, patchpoints: 13, rare instructions: 174
+# CHECK-NEXT: instructions: 96, patchpoints: 13, rare instructions: 172
 # CHECK-NEXT: end of function f3

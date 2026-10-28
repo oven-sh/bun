@@ -36,6 +36,12 @@ test("a symbolizer finds the debug information unpacked in the step that tests a
   expect(files.filter(name => name.endsWith(".debug"))).toHaveLength(1);
 });
 
+// scripts/runner.node.ts ends a file at its time limit and tries it again. A build or a server that the first try has started would run on beside the second.
+test("what a file of this folder starts ends with it in a step of CI", () => {
+  if (!process.env.EXPECTED_PLATFORM_OS) return;
+  expect(process.env.BUN_FEATURE_FLAG_NO_ORPHANS).toBe("1");
+});
+
 // run-parallel.ts leaves every program out on a build that is no canary.
 test("it is a canary in a step that tests one", () => {
   if (!canary) return;

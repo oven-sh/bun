@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { types } from "node:util";
 import { separatePrograms, startsAtAnyEntryPoint } from "./harness/separate-programs";
 import { test } from "./supported";
 
@@ -68,7 +69,8 @@ const allowed: Record<string, number> = {
   "functions-in-a-literal": 8,
   "members-of-a-function": 8,
   "names-that-a-function-inherits": 8,
-  "variables-of-the-environment": 8,
+  // Where the object is a proxy, each read goes through the run time, which calls the trap: once a read and no more.
+  "variables-of-the-environment": (types.isProxy(process.env) ? copies + 1 : 0) + 8,
   "methods-of-an-array": 8,
   "names-that-a-function-of-the-engine-lacks-or-inherits": 8,
   // One a function, which makes the object.

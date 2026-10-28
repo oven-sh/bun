@@ -16,7 +16,9 @@
 //     then `[N/M] <path> (compile X ms, run Y ms)` per program once its build
 //     and both its runs are through (not a path, so no span opens)
 //   - phase of the long files that build many executables: `--- Running N files that
-//     build many executables`, then `[N/M] <path> (X.XXs)` per file once it has passed
+//     build many executables`, then `[N/M] <path> (X.XXs)` per file once it has passed,
+//     `[N/M] <path> - <error>` where a try fails and `[N/M] <path> [attempt #K]` where the
+//     next begins (neither is a path, and neither opens a group)
 //   - other startGroup phases: `--- napi prebuild: ...`, `--- End`
 // A parser that only recognises the first shape folds the entire following
 // phase into whichever serial test happened to precede it.

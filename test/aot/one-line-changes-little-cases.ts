@@ -38,8 +38,11 @@ import { libraryLines, programLines, type Line } from "./one-line-changes-little
 import { describe, test } from "./supported";
 
 const mostFunctionsAdded = 120;
-// The code of an image ends at a whole page of 16 KiB, with its constants behind it, so what a line adds is counted up to a page too high.
-const mostCodeBytesAdded = 65536 + 16384;
+// The code of an image ends at a whole page of 16 KiB, so what a line adds is counted up to a page too high.
+const page = 16384;
+const mostCodeBytesAdded = 65536 + page;
+// The constants lie behind the last page of the code and are counted with it.
+const withoutConstants = (codeBytes: number) => codeBytes - (codeBytes % page);
 const mostFreeAccessesLost = 3;
 const mostAccessesByNameGained = 3;
 const mostDirectCallsLost = 2;
@@ -143,7 +146,7 @@ function addedToLibrary(alone: Measured, withLine: Measured) {
   if (withLine.functions > alone.functions + mostFunctionsAdded)
     found.push(moved("functions", alone.functions, withLine.functions));
   // An ASAN build emits four times the bytes for the same functions.
-  if (!isASAN && withLine.codeBytes > alone.codeBytes + mostCodeBytesAdded)
+  if (!isASAN && withoutConstants(withLine.codeBytes) > withoutConstants(alone.codeBytes) + mostCodeBytesAdded)
     found.push(
       moved("bytes of code", alone.codeBytes, withLine.codeBytes) +
         ", " +

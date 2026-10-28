@@ -696,9 +696,9 @@ runtimefunction id=131072 function=f303 visibility=Private
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v4: anything = GetGlobalBinding key="innerWidth" level=Expected accessSite=22 [seesScriptBindings]
 # CHECK-NEXT: v5: undefined|int = AssumeType v4 provenType=undefined|int
-# CHECK-NEXT: Jump -> next b2(v5)
-# CHECK-NEXT: b2(v6: undefined|int):
-# CHECK-NEXT: v7: undefined|int ~ int = Expect v6 expectedType=number
+# CHECK-NEXT: v6: undefined|int ~ int = Expect v5 expectedType=number
+# CHECK-NEXT: Jump -> next b2(v6)
+# CHECK-NEXT: b2(v7: undefined|int ~ int):
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"

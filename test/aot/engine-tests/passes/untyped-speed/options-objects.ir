@@ -312,5 +312,5 @@ runtimefunction id=131091 function=f19 visibility=Private
 # CHECK-NEXT: end of function f4
 # CHECK-LABEL: function {{*}}name="extend"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 334, patchpoints: 34, polls: 1
+# CHECK-NEXT: instructions: 335, patchpoints: 34, polls: 1
 # CHECK-NEXT: end of function f26

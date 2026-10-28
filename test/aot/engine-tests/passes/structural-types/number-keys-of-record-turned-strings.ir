@@ -341,19 +341,20 @@ function f36 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b3(v4)
 # CHECK-NEXT: b2(v5: Object @Cell) frequency=Unlikely:
 # CHECK-NEXT: v6: anything @JSValue = ElemGet v5, v1 accessSite=14 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b3(v6)
-# CHECK-NEXT: b3(v7: anything @JSValue):
-# CHECK-NEXT: v8: boolean|number|string|symbol|bigint|object @JSValue = RequireObjectCoercible v7 name="length"
-# CHECK-NEXT: v9: boolean @Boolean = TypeTest v8 testedType=string
-# CHECK-NEXT: TestAndBranch v9 -> taken b4(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b4(v10: string @Cell):
-# CHECK-NEXT: v11: int[0, 2147483647] @Int32 = GetStringLength v10
-# CHECK-NEXT: Return v11
-# CHECK-NEXT: b5(v12: boolean|number|symbol|bigint|object @JSValue) frequency=Rare:
-# CHECK-NEXT: v13: anything @JSValue = PropGet v12 key="length" accessSite=15 siteCache=5
-# CHECK-NEXT: v14: undefined|number @JSValue = AssumeType v13 provenType=undefined|number
-# CHECK-NEXT: v15: undefined|number @JSValue = Expect v14 expectedType=number
-# CHECK-NEXT: Return v15
+# CHECK-NEXT: v7: anything @JSValue = Expect v6 expectedType=undefined|null|string
+# CHECK-NEXT: Jump -> next b3(v7)
+# CHECK-NEXT: b3(v8: anything @JSValue):
+# CHECK-NEXT: v9: boolean|number|string|symbol|bigint|object @JSValue = RequireObjectCoercible v8 name="length"
+# CHECK-NEXT: v10: boolean @Boolean = TypeTest v9 testedType=string
+# CHECK-NEXT: TestAndBranch v10 -> taken b4(| 0), notTaken b5(| 0)
+# CHECK-NEXT: b4(v11: string @Cell):
+# CHECK-NEXT: v12: int[0, 2147483647] @Int32 = GetStringLength v11
+# CHECK-NEXT: Return v12
+# CHECK-NEXT: b5(v13: boolean|number|symbol|bigint|object @JSValue) frequency=Rare:
+# CHECK-NEXT: v14: anything @JSValue = PropGet v13 key="length" accessSite=15 siteCache=5
+# CHECK-NEXT: v15: undefined|number @JSValue = AssumeType v14 provenType=undefined|number
+# CHECK-NEXT: v16: undefined|number @JSValue = Expect v15 expectedType=number
+# CHECK-NEXT: Return v16
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
 # CHECK: module=m0 position=897 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f6|f17|f19 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]

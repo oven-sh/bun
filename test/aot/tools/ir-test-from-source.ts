@@ -69,7 +69,14 @@ export function recordsOfSource(source: string) {
   using folder = tempDir("aot-ir-test-from-source", {});
   const program = join(String(folder), "program.aot");
   // The engine may stop the build with a diagnostic, which is what some tests are about. The front end has written its program by then.
-  run([bunExe(), "compile", `--aot-out=${program}`, basename(source)], dirname(resolve(source)), bunEnv, program);
+  // A line `// Flags: --aot-erase-types` in the program: the front end reads it as it reads a file without types.
+  const flags = /^\/\/ Flags:.* --aot-erase-types\b/m.test(readFileSync(source, "utf8")) ? ["--aot-erase-types"] : [];
+  run(
+    [bunExe(), "compile", ...flags, `--aot-out=${program}`, basename(source)],
+    dirname(resolve(source)),
+    bunEnv,
+    program,
+  );
   const records = recordsOf(run([testaot!, "print", program], String(folder), toolEnv));
   const byID = new Map(records.flatMap(record => (record.id ? [[record.id, record] as const] : [])));
 

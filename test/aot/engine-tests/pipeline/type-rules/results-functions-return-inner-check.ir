@@ -2332,47 +2332,42 @@ runtimefunction id=131091 function=f25 visibility=Private
 # CHECK-NEXT: v3: int[0, 4294967295] = CallBuiltin v2 overload=ArrayPrototypeLength/0 accessSite=53
 # CHECK-NEXT: v4: int|whole = Mod v1, v3
 # CHECK-NEXT: v5: boolean = HasArrayStorage v2 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b11()
+# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b9()
 # CHECK-NEXT: b1(v6: guard):
 # CHECK-NEXT: v7: undefined|null|7|string|L0 = GetArrayElement v2, v4, v6 arrayStorage=Contiguous level=Expected accessSite=54 [keyIsIntegral]
 # CHECK-NEXT: v8: undefined|null|7|string|L0 ~ undefined|null|string = Expect v7 expectedType=undefined|null|string
 # CHECK-NEXT: v9: boolean = TypeTest v8 testedType=undefined|null
-# CHECK-NEXT: Branch v9 -> taken b9(), notTaken b2(| 0)
+# CHECK-NEXT: Branch v9 -> taken b7(), notTaken b2(| 0)
 # CHECK-NEXT: b2(v10: 7|string|L0 ~ string):
 # CHECK-NEXT: v11: boolean ~ true = TypeTest v10 testedType=string
 # CHECK-NEXT: Branch v11 -> taken b3(| 0), notTaken b4(| 0)
 # CHECK-NEXT: b3(v12: string):
 # CHECK-NEXT: v13: int[0, 2147483647] = GetStringLength v12
-# CHECK-NEXT: Jump -> next b7(v13)
-# CHECK-NEXT: b4(v14: 7|L0) frequency=Unlikely:
-# CHECK-NEXT: v15: boolean = TypeTest v14 testedType=L0
-# CHECK-NEXT: Branch v15 -> taken b5(), notTaken b6()
+# CHECK-NEXT: v14: 12 = Integer integer=12
+# CHECK-NEXT: v15: boolean = LessEq v13, v14
+# CHECK-NEXT: Branch v15 -> taken b8(v10), notTaken b7()
+# CHECK-NEXT: b4(v16: 7|L0) frequency=Unlikely:
+# CHECK-NEXT: v17: boolean = TypeTest v16 testedType=L0
+# CHECK-NEXT: Branch v17 -> taken b5(), notTaken b6()
 # CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b10(v10)
+# CHECK-NEXT: Jump -> next b8(v10)
 # CHECK-NEXT: b6() frequency=Unlikely:
-# CHECK-NEXT: v16: 7 = Integer integer=7
-# CHECK-NEXT: v17: anything = PropGet v16 key="length" accessSite=58
-# CHECK-NEXT: v18: undefined|number = AssumeType v17 provenType=undefined|number
-# CHECK-NEXT: v19: undefined|number ~ int[0, 2147483647] = Upcast v18 castType=undefined|number
-# CHECK-NEXT: v20: boolean ~ true = TypeTest v19 testedType=i32
-# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b8()
-# CHECK-NEXT: b7(v21: i32 ~ int[0, 2147483647]):
+# CHECK-NEXT: v18: 7 = Integer integer=7
+# CHECK-NEXT: v19: anything = PropGet v18 key="length" accessSite=58
+# CHECK-NEXT: v20: undefined|number = AssumeType v19 provenType=undefined|number
+# CHECK-NEXT: v21: undefined|number ~ number = Expect v20 expectedType=number
 # CHECK-NEXT: v22: 12 = Integer integer=12
 # CHECK-NEXT: v23: boolean = LessEq v21, v22
-# CHECK-NEXT: Branch v23 -> taken b10(v10), notTaken b9()
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v24: 12 = Integer integer=12
-# CHECK-NEXT: v25: boolean = LessEq v19, v24
-# CHECK-NEXT: Branch v25 -> taken b10(v10), notTaken b9()
-# CHECK-NEXT: b9():
-# CHECK-NEXT: v26: "..." = String string="..."
-# CHECK-NEXT: v27: string = Add v0, v26
-# CHECK-NEXT: Jump -> next b10(v27)
-# CHECK-NEXT: b10(v28: 7|string|L0 ~ string):
-# CHECK-NEXT: Return v28
-# CHECK-NEXT: b11() frequency=Rare:
-# CHECK-NEXT: v29: anything ~ undefined|null|string = CallDirect v0, v1 function=f38 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v29 requirement=Allowed
+# CHECK-NEXT: Branch v23 -> taken b8(v10), notTaken b7()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v24: "..." = String string="..."
+# CHECK-NEXT: v25: string = Add v0, v24
+# CHECK-NEXT: Jump -> next b8(v25)
+# CHECK-NEXT: b8(v26: 7|string|L0 ~ string):
+# CHECK-NEXT: Return v26
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v27: anything ~ undefined|null|string = CallDirect v0, v1 function=f38 [isNeverInlined]
+# CHECK-NEXT: ReturnCall v27 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="describe"
 # CHECK: module=m0 position=1828 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w24}] results=[{type=string site=w25 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f8 parameterMap=[{original=0}]} {

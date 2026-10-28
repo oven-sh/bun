@@ -329,11 +329,7 @@ runtimefunction id=12 function=f5
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="m"
-# CHECK: module=m0 position=389 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=1 site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-# CHECK-NEXT: b0():
-# CHECK-NEXT: v0: 1 = Integer integer=1
-# CHECK-NEXT: Return v0
-# CHECK-NEXT: }
+# CHECK: module=m0 position=389 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=1 site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
 # CHECK-LABEL: function {{*}}name="call"
 # CHECK: module=m1 kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=12 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|function, v1: int[0, 4294967295], v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: Array):

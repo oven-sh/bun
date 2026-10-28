@@ -330,16 +330,16 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v14: 1 = Integer integer=1
 # CHECK-NEXT: v15: int[1, 4294967295] = Add v12, v14
 # CHECK-NEXT: v16: false = Boolean
-# CHECK-NEXT: Jump -> next b6(v16, v13, v15)
+# CHECK-NEXT: v17: undefined|L1 ~ undefined = Expect v13 expectedType=undefined|null|Array<number>
+# CHECK-NEXT: Jump -> next b6(v16, v17, v15)
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v17: true = Boolean boolean=true
-# CHECK-NEXT: v18: undefined = Undefined
-# CHECK-NEXT: Jump -> next b6(v17, v18, v6)
-# CHECK-NEXT: b6(v19: boolean, v20: undefined|L1, v21: int[0, 4294967295]):
-# CHECK-NEXT: v22: undefined|L1 ~ undefined = Expect v20 expectedType=undefined|null|Array<number>
-# CHECK-NEXT: v23: string = CallDirect v22 function=f1 accessSite=4
+# CHECK-NEXT: v18: true = Boolean boolean=true
+# CHECK-NEXT: v19: undefined = Undefined
+# CHECK-NEXT: Jump -> next b6(v18, v19, v6)
+# CHECK-NEXT: b6(v20: boolean, v21: undefined|L1 ~ undefined, v22: int[0, 4294967295]):
+# CHECK-NEXT: v23: string = CallDirect v21 function=f1 accessSite=4
 # CHECK-NEXT: StringBuilderAppend v4, v23
-# CHECK-NEXT: Jump -> next b1(v19, v21)
+# CHECK-NEXT: Jump -> next b1(v20, v22)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="yielded"
 # CHECK: module=m0 position=1525 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=2 thisType={type=undefined} parameters=[{type=undefined|null|L0}, {type=L1}] results=[{type=Generator<anything, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f3 body=f22 promiseParameter=4} {

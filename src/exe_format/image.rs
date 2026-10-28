@@ -416,6 +416,19 @@ impl<'a> ImageEditor<'a> {
         }
     }
 
+    /// Where a cut takes slots of a table that has few, what an earlier cut took out of the file is there again, as zeros, and its
+    /// slots are free: the cuts are chosen anew among all that is removed. What holds any of `stay_cut` is not given back.
+    /// Returns the number of bytes that the file has grown by.
+    pub fn give_back_cuts(&mut self, stay_cut: &[AddressRange]) -> Result<u64, Error> {
+        if self.format != ExecutableFormat::Pe {
+            return Ok(0);
+        }
+        let old_len = self.bytes.len();
+        pe_ranges::fill_holes(self.vector()?, &merge_ranges(stay_cut.to_vec()))?;
+        self.spans = read_mapped_spans(self.format, self.bytes)?;
+        Ok(self.bytes.len().saturating_sub(old_len) as u64)
+    }
+
     /// Drops the load-time relocations whose target is in `ranges`. Returns the number dropped.
     pub fn remove_relocations_in(&mut self, ranges: &[AddressRange]) -> Result<u64, Error> {
         match self.format {

@@ -140,9 +140,10 @@ impl WrittenNames {
 struct Follower<'i, 'a, 's> {
     inputs: &'i ScanInputs<'a, 's>,
     written_names: &'i WrittenNames,
-    /// The variables whose lists and objects are taken to stay as they are written. One that does not ends the search.
+    /// The variables whose lists and objects are taken to stay as they are written.
     kept_as_written: FxHashSet<SymbolId>,
     unchecked: Vec<SymbolId>,
+    not_kept_as_written: FxHashSet<SymbolId>,
     variables_in_progress: Vec<SymbolId>,
     functions_in_progress: Vec<FnId>,
     expressions_left: u32,
@@ -167,17 +168,13 @@ pub(super) fn find_alternatives(
         written_names,
         kept_as_written: FxHashSet::default(),
         unchecked: Vec::new(),
+        not_kept_as_written: FxHashSet::default(),
         variables_in_progress: Vec::new(),
         functions_in_progress: Vec::new(),
         expressions_left: MOST_EXPRESSIONS_FOLLOWED,
         depth: 0,
     };
-    let values = follower.values_of(argument)?;
-    while let Some(symbol) = follower.unchecked.pop() {
-        if !follower.is_kept_as_written(symbol) {
-            return None;
-        }
-    }
+    let values = follower.values_of_argument(argument)?;
     let mut texts: Vec<Text> = Vec::with_capacity(values.len());
     let mut forms: Vec<Option<ResolvedForm>> = Vec::with_capacity(values.len());
     for value in values {
@@ -238,6 +235,22 @@ pub(super) fn find_alternatives(
 }
 
 impl Follower<'_, '_, '_> {
+    fn values_of_argument(&mut self, argument: ExprId) -> Option<Values> {
+        loop {
+            let values = self.values_of(argument)?;
+            let known_before = self.not_kept_as_written.len();
+            while let Some(symbol) = self.unchecked.pop() {
+                if !self.is_kept_as_written(symbol) {
+                    self.not_kept_as_written.insert(symbol);
+                }
+            }
+            if self.not_kept_as_written.len() == known_before {
+                return Some(values);
+            }
+            self.kept_as_written.clear();
+        }
+    }
+
     fn text_of(&self, constant: Constant) -> Option<Text> {
         let atoms = self.inputs.atoms;
         if let Constant::String(text) = constant {
@@ -468,7 +481,7 @@ impl Follower<'_, '_, '_> {
             places.push(match expr_kind(hir, item)? {
                 ExprKind::Missing => vec![Held::Primitive(Constant::Undefined)],
                 ExprKind::Spread(_) => return None,
-                _ => self.values_of(item)?,
+                _ => self.values_of(item).unwrap_or_else(some_text),
             });
         }
         Some(vec![Held::List(places)])
@@ -546,10 +559,9 @@ impl Follower<'_, '_, '_> {
         };
         self.variables_in_progress.pop();
         let values = values?;
-        if values.iter().any(Held::can_be_changed) {
-            self.take_as_kept_as_written(symbol);
-        }
-        Some(values)
+        let is_as_written =
+            !values.iter().any(Held::can_be_changed) || self.take_as_kept_as_written(symbol);
+        is_as_written.then_some(values)
     }
 
     fn values_of_variable(&mut self, symbol: SymbolId) -> Option<Values> {
@@ -743,17 +755,17 @@ impl Follower<'_, '_, '_> {
             return false;
         }
         let holder = bound.declared_symbol(Decl::Param(pattern));
-        self.take_as_kept_as_written(holder);
-        bound.dynamic_lookup_scope(NodeData::Pat(pattern)).is_none()
+        self.take_as_kept_as_written(holder)
+            && bound.dynamic_lookup_scope(NodeData::Pat(pattern)).is_none()
             && !bound.is_visible_to_eval(holder)
     }
 
     fn values_of_walk(&mut self, call: Call) -> Option<Values> {
         let (list, name) = self.find_walk_of_list(call)?;
-        let mut elements = self.values_of_elements(list)?;
         match self.inputs.atoms.bytes(name) {
-            b"filter" => Some(vec![Held::ListOf(elements)]),
+            b"filter" => Some(vec![Held::ListOf(self.values_of_elements(list)?)]),
             b"find" | b"findLast" => {
+                let mut elements = self.values_of_elements(list)?;
                 add(&mut elements, Held::Primitive(Constant::Undefined));
                 Some(elements)
             }
@@ -920,10 +932,14 @@ impl Follower<'_, '_, '_> {
     }
 
     /// It is looked at once nothing is half followed.
-    fn take_as_kept_as_written(&mut self, symbol: SymbolId) {
+    fn take_as_kept_as_written(&mut self, symbol: SymbolId) -> bool {
+        if self.not_kept_as_written.contains(&symbol) {
+            return false;
+        }
         if self.kept_as_written.insert(symbol) {
             self.unchecked.push(symbol);
         }
+        true
     }
 
     fn is_kept_as_written(&mut self, symbol: SymbolId) -> bool {
@@ -953,8 +969,8 @@ impl Follower<'_, '_, '_> {
                 return matches!(hir[pattern].kind, PatKind::Ident(_))
                     && match bound.initialized_binding(pattern) {
                         Binding::Symbol(holder) => {
-                            self.take_as_kept_as_written(holder);
-                            bound.dynamic_lookup_scope(NodeData::Pat(pattern)).is_none()
+                            self.take_as_kept_as_written(holder)
+                                && bound.dynamic_lookup_scope(NodeData::Pat(pattern)).is_none()
                                 && !bound.is_visible_to_eval(holder)
                         }
                         _ => false,

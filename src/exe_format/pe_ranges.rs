@@ -40,7 +40,8 @@ struct Headers {
 
 struct NewSection {
     header: SectionHeader,
-    source: Range<usize>,
+    /// Where each part of the data begins in the section, and where it lies in the old file. Between the parts the data is zero.
+    parts: Vec<(usize, Range<usize>)>,
 }
 
 struct RelocationBlock {
@@ -120,15 +121,49 @@ pub(crate) fn make_room_for_a_section_header(file: &mut PEFile) -> Result<(), Er
     remove_ranges_in(file, &[])
 }
 
+/// The holes that an earlier cut has left are zeros in the file again, each in the section that it was cut out of, and their slots
+/// in the table are free. A hole that holds any of `stay_cut`, which is ascending, stays.
+pub(crate) fn fill_holes(pe: &mut Vec<u8>, stay_cut: &[AddressRange]) -> Result<(), Error> {
+    let layout = PEFile::layout_of(pe)?;
+    let mut file = PEFile::from_layout(core::mem::take(pe), layout);
+    let result = fill_holes_in(&mut file, stay_cut);
+    *pe = core::mem::take(&mut file.data);
+    result
+}
+
+fn fill_holes_in(file: &mut PEFile, stay_cut: &[AddressRange]) -> Result<(), Error> {
+    let headers = read_checked_headers(file)?;
+    if !headers.sections.iter().any(is_hole) {
+        return Ok(());
+    }
+    let pieces = create_new_sections(&headers, &[])?;
+    let alignment = headers.optional.section_alignment;
+    let new_sections = join_pieces_over_holes(pieces, alignment, stay_cut);
+    write_sections(file, &headers, new_sections)
+}
+
 fn remove_ranges_in(file: &mut PEFile, cuts: &[AddressRange]) -> Result<(), Error> {
-    file.strip_authenticode()?;
-    let mut headers = read_headers(&file.data)?;
-    check(&file.data, &headers)?;
+    let mut headers = read_checked_headers(file)?;
     check_cuts(&file.data, &headers, cuts)?;
-    let mut new_sections = create_new_sections(&headers, cuts)?;
+    let new_sections = create_new_sections(&headers, cuts)?;
     remove_relocation_blocks(&mut file.data, &mut headers, cuts)?;
-    let mut bytes = write_image(&file.data, &headers, &mut new_sections)?;
-    update_debug_directory(&mut bytes, &headers, &new_sections)?;
+    write_sections(file, &headers, new_sections)
+}
+
+fn read_checked_headers(file: &mut PEFile) -> Result<Headers, Error> {
+    file.strip_authenticode()?;
+    let headers = read_headers(&file.data)?;
+    check(&file.data, &headers)?;
+    Ok(headers)
+}
+
+fn write_sections(
+    file: &mut PEFile,
+    headers: &Headers,
+    mut new_sections: Vec<NewSection>,
+) -> Result<(), Error> {
+    let mut bytes = write_image(&file.data, headers, &mut new_sections)?;
+    update_debug_directory(&mut bytes, headers, &new_sections)?;
     file.data = bytes;
     file.num_sections = new_sections.len() as u16;
     file.recompute_pe_checksum()?;
@@ -331,7 +366,7 @@ fn find_cuttable_spans(
     let alignment = headers.optional.section_alignment;
     let mut spans = Vec::new();
     for (index, section) in sections.iter().enumerate() {
-        if section.size_of_raw_data == 0 || section.characteristics & IMAGE_SCN_MEM_WRITE != 0 {
+        if !can_be_cut(section) {
             continue;
         }
         let mapped = mapped_addresses(section);
@@ -371,6 +406,82 @@ fn join_holes_that_touch(sections: &mut Vec<NewSection>) {
     });
 }
 
+fn can_be_cut(section: &SectionHeader) -> bool {
+    section.size_of_raw_data > 0 && section.characteristics & IMAGE_SCN_MEM_WRITE == 0
+}
+
+fn are_pieces_of_one_section(first: &SectionHeader, second: &SectionHeader) -> bool {
+    first.name == second.name && first.characteristics == second.characteristics
+}
+
+/// A cut begins at a multiple of the alignment, so what it leaves in front of it ends there.
+fn can_end_at_a_cut(section: &SectionHeader, alignment: u32) -> bool {
+    can_be_cut(section) && section.virtual_size.is_multiple_of(alignment)
+}
+
+/// What is found by its name is read from where it begins.
+fn is_found_by_name(section: &SectionHeader) -> bool {
+    section.name.starts_with(b".bun")
+}
+
+fn take_in(section: &mut NewSection, next: NewSection) {
+    let offset = (next.header.virtual_address - section.header.virtual_address) as usize;
+    section.header.virtual_size = offset as u32 + effective_virtual_size(&next.header);
+    section.header.size_of_raw_data = offset as u32 + next.header.size_of_raw_data;
+    let parts = next.parts.into_iter();
+    (section.parts).extend(parts.map(|(start, source)| (offset + start, source)));
+}
+
+/// A hole between two pieces of one section goes back to that section. One in front of a piece, behind a section that ends where no
+/// cut begins, goes to the section of that piece as its beginning. Of any other hole the table does not say whose it is, and it stays.
+fn join_pieces_over_holes(
+    pieces: Vec<NewSection>,
+    alignment: u32,
+    stay_cut: &[AddressRange],
+) -> Vec<NewSection> {
+    let can_be_filled = |hole: &SectionHeader| {
+        let addresses = widen_address_range(hole.virtual_address, hole.virtual_size);
+        is_hole(hole) && !overlaps_cut(addresses, stay_cut)
+    };
+    let mut joined: Vec<NewSection> = Vec::with_capacity(pieces.len());
+    for piece in pieces {
+        let is_behind_hole = (joined.last()).is_some_and(|last| can_be_filled(&last.header));
+        if !is_behind_hole || !can_be_cut(&piece.header) {
+            joined.push(piece);
+            continue;
+        }
+        let in_front = joined
+            .len()
+            .checked_sub(2)
+            .map(|index| &joined[index].header);
+        let is_inside = in_front.is_some_and(|in_front| {
+            can_be_cut(in_front) && are_pieces_of_one_section(in_front, &piece.header)
+        });
+        let is_beginning = !is_found_by_name(&piece.header)
+            && !in_front.is_some_and(|in_front| can_end_at_a_cut(in_front, alignment));
+        if !is_inside && !is_beginning {
+            joined.push(piece);
+            continue;
+        }
+        let Some(hole) = joined.pop() else { continue };
+        if !is_inside {
+            joined.push(NewSection {
+                header: SectionHeader {
+                    virtual_address: hole.header.virtual_address,
+                    virtual_size: 0,
+                    size_of_raw_data: 0,
+                    ..piece.header
+                },
+                parts: Vec::new(),
+            });
+        }
+        if let Some(section) = joined.last_mut() {
+            take_in(section, piece);
+        }
+    }
+    joined
+}
+
 fn check_cuts(pe: &[u8], headers: &Headers, cuts: &[AddressRange]) -> Result<(), Error> {
     let required = find_required_ranges(pe, headers)?;
     if required.iter().any(|range| overlaps_cut(*range, cuts)) {
@@ -391,7 +502,7 @@ fn create_new_sections(headers: &Headers, cuts: &[AddressRange]) -> Result<Vec<N
             let start = section.pointer_to_raw_data as usize;
             new_sections.push(NewSection {
                 header: *section,
-                source: start..start + section.size_of_raw_data as usize,
+                parts: vec![(0, start..start + section.size_of_raw_data as usize)],
             });
             continue;
         }
@@ -430,7 +541,7 @@ fn create_retained_piece(
             size_of_raw_data: raw_size,
             ..*section
         },
-        source: start..start + raw_size as usize,
+        parts: vec![(0, start..start + raw_size as usize)],
     })
 }
 
@@ -443,7 +554,7 @@ fn create_removed_section(cut: AddressRange) -> Result<NewSection, Error> {
             characteristics: IMAGE_SCN_CNT_UNINITIALIZED_DATA,
             ..read_struct(&[0; size_of::<SectionHeader>()])
         },
-        source: 0..0,
+        parts: Vec::new(),
     })
 }
 
@@ -567,9 +678,9 @@ fn write_image(
     for (index, section) in new_sections.iter().enumerate() {
         let entry_offset = table_offset + index * size_of::<SectionHeader>();
         write_struct(&mut bytes[entry_offset..], &section.header);
-        if section.header.size_of_raw_data > 0 {
-            let start = section.header.pointer_to_raw_data as usize;
-            bytes[start..start + section.source.len()].copy_from_slice(&pe[section.source.clone()]);
+        for (offset, source) in section.parts.iter().filter(|part| !part.1.is_empty()) {
+            let start = section.header.pointer_to_raw_data as usize + offset;
+            bytes[start..start + source.len()].copy_from_slice(&pe[source.clone()]);
         }
     }
 

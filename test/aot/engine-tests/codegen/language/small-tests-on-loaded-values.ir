@@ -255,7 +255,7 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # -- generated: f0 keepPositive quotients swapsOnSign
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 102, patchpoints: 15, rare instructions: 118, polls: 1
+# CHECK-NEXT: instructions: 98, patchpoints: 15, rare instructions: 118, polls: 1
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="keepPositive"
 # CHECK: role=Source

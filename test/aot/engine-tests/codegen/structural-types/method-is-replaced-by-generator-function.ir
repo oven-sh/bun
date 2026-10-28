@@ -426,7 +426,7 @@ runtimefunction id=86 function=f21 visibility=Private
 # CHECK-NEXT: end of function f26
 # CHECK-LABEL: function {{*}}name="firstTwo"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 162, patchpoints: 17, rare instructions: 102
+# CHECK-NEXT: instructions: 160, patchpoints: 18, rare instructions: 97
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="kind"
 # CHECK: role=Source

@@ -294,6 +294,11 @@ const environmentObjects = ["%ImportMeta%.env", "Bun.env", "process.env"].map(pa
 }));
 
 const workerConstructors = ["Worker", "native:Cpp:Worker.cpp:createNodeWorkerConstructor"];
+// Naming the class starts no worker. The binding is read where a worker is made.
+const startedWorkers: readonly b.CallingEntrySpec[] = [
+  { path: "Worker", when: b.whenCallRunsOtherCode },
+  "native:Cpp:Worker.cpp:createNodeWorkerConstructor",
+];
 
 const messagePortSources = ["MessageChannel", "MessagePort", "native:Cpp:Worker.cpp:createNodeWorkerThreadsBinding"];
 
@@ -643,14 +648,14 @@ const nativeCalls = [
       {
         file: inBindings("JSEnvironmentVariableMap.cpp"),
         caller: "ensureSharedEnvStoreForWorker",
-        onBehalfOf: workerConstructors,
+        onBehalfOf: startedWorkers,
         calls: environmentObjectMade(listedWithValues),
       },
       // It copies the object that the thread has. It makes none.
       {
         file: inBindings("webcore/JSWorker.cpp"),
         caller: "JSWorkerDOMConstructor::construct",
-        onBehalfOf: workerConstructors,
+        onBehalfOf: startedWorkers,
         calls: environmentObjectMade(listedWithValues),
       },
     ],

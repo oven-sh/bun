@@ -4,5 +4,9 @@ try {
   console.log(EventEmitter.prototype.rawListeners.call(anything, "constructor")[0]("return 6 * 7")());
 } catch (error) {
   // An executable runs the text or refuses it with an EvalError.
-  console.log(error instanceof EvalError ? 42 : error.name);
+  console.log(error.name);
 }
+
+/* Output:
+42
+*/

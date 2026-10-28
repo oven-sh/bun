@@ -576,7 +576,7 @@ layout L1 kind=Instance module=m0 position=922 constructor=f16 fields=[{key="id"
 layout L2 kind=Instance module=m0 position=8216 constructor=f28 fields=[{key="id" declared={type=number site=w187} flags=[IsRequired] originLayout=L9 originField=0}] supertypes=[L9] flags=[IsConstructorFunction] ownFieldCount=1
 layout L3 name="Links" module=m0 position=592 fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="list" declared={type=undefined|null|Array<number> flags=[OmitsNull]}}, {key="mapper" declared={type=undefined|null|function|f17|f21 flags=[OmitsNull]}}, {key="name" declared={type=undefined|null|string flags=[OmitsNull]}}, {key="target" declared={type=undefined|null|L0|L1|L2 flags=[OmitsNull]}}, {key="type" declared={type=undefined|null|L0|L1|L2 flags=[OmitsNull]}}] flags=[IsNeverAllocated] declaredOrder=[0, 5, 4, 2, 3, 1] ownFieldCount=6 flow={allocation=NeverAllocated}
 layout L4 name="Kind" module=m0 position=717 fields=[{key="alias" declared={type=undefined|null|L0|L1|L2 flags=[OmitsNull]} flags=[IsNeverWritten]}, {key="id" declared={type=number} flags=[IsRequired]}, {key="members" declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull]}}, {key="resolved" declared={type=undefined|null|L0|L1|L2 flags=[OmitsNull]}}] flags=[IsNeverAllocated] declaredOrder=[1, 2, 3, 0] ownFieldCount=4 flow={allocation=NeverAllocated}
-layout L5 name="PropertyDescriptor" fields=[{key="configurable" declared={type=undefined|boolean}}, {key="enumerable" declared={type=undefined|boolean}}, {key="get" declared={type=undefined|null|function|f19|f20|f22 flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+layout L5 name="PropertyDescriptor" fields=[{key="configurable" declared={type=undefined|boolean}}, {key="enumerable" declared={type=undefined|boolean}}, {key="get" declared={type=undefined|null|function|f19|f20|f22 flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
 layout L6 module=m0 position=5318
 layout L7 module=m0 position=6048
 layout L8 module=m0 position=6479
@@ -3756,9 +3756,10 @@ runtimefunction id=131091 function=f63 visibility=Private
 # CHECK-NEXT: v10: "none" = String string="none"
 # CHECK-NEXT: Jump -> next b6(v10)
 # CHECK-NEXT: b5(v11: int|string|L0|L1|L6|Map):
-# CHECK-NEXT: Jump -> next b6(v11)
-# CHECK-NEXT: b6(v12: int|string|L0|L1|L6|Map ~ "none"):
-# CHECK-NEXT: Return v12
+# CHECK-NEXT: v12: int|string|L0|L1|L6|Map ~ string = Expect v11 expectedType=undefined|null|string
+# CHECK-NEXT: Jump -> next b6(v12)
+# CHECK-NEXT: b6(v13: int|string|L0|L1|L6|Map ~ string):
+# CHECK-NEXT: Return v13
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="firstOf"
 # CHECK: module=m0 position=2300 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L0 site=w13 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|number site=w14 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

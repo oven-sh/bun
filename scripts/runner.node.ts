@@ -269,6 +269,195 @@ const aotDriver = "test/aot/run-parallel.ts";
 const strippedBuns = new Map<string, string>();
 const buildsManyExecutables = (testPath: string) =>
   /^(?:aot\/|cli\/aot-|cli\/run\/run-aot\.|bundler\/compile-(?:aot|trim)-)/.test(testPath.replaceAll("\\", "/"));
+// Every test of the ahead-of-time compiler runs on every push: on Alpine, on x64 and on arm64.
+// Nearly all that they cost is compiling, and the compiler is deterministic. A test whose verdict hangs on what it makes of a
+// program (listings, counts, pins, sizes, reports, the errors of a build, the builds of frameworks and packages, what a program
+// of the language alone prints) runs there alone. What asks the system runs on every lane: a test file or a folder of programs
+// whose path under test/ begins with one of these.
+const aotTestsThatAskTheSystem = [
+  // The image: written, loaded, trimmed, refused.
+  "aot/in-place-executables",
+  "aot/embedded-assets",
+  "aot/code-from-disk",
+  "aot/carrier-executable",
+  "aot/cli/carrier-identity",
+  "aot/cli/executable-record",
+  "aot/cli/image-rejection",
+  "aot/every-image-of-an-executable-has-its-map",
+  "aot/an-executable-",
+  "aot/a-truncated-executable-says-so",
+  "aot/a-start-writes-to-no-page-of-the-embedded-program",
+  "aot/without-executable-memory",
+  "aot/every-launch-places-its-heap-anew",
+  "aot/worker-of-text-in-a-trimmed-executable",
+  "aot/hardened",
+  "aot/a-hardened-build",
+  "aot/executable-memory-filter",
+  "aot/compiled-code-mapping",
+  "aot/code-addresses-have-names",
+  "aot/symbols-of-compiled-functions",
+  "aot/packed-relocations",
+  "aot/static-tls-size",
+  "aot/inserted-library",
+  // Processes, their arguments, environment and streams.
+  "aot/compile-exec-argv",
+  "aot/channel-of-process-by-use",
+  "aot/built-in-functions-by-use",
+  "aot/title-a-process-starts-with",
+  "aot/ways-to-start-an-executable",
+  "aot/process-platform-run-and-compile",
+  "aot/exit-hooks-of-an-executable",
+  "aot/time-zone-at-start",
+  "aot/raw-mode-of-a-terminal",
+  "aot/perf/start",
+  "aot/a-busy-caller-unbinds-no-child",
+  "aot/programs-that-died-in-the-shell-on-one-platform",
+  "aot/back-end-options-from-environment",
+  "aot/parallel/process/",
+  "aot/parallel/globals/",
+  "aot/parallel/host-classes/process-env-read-fast-every-variable",
+  // Workers and threads.
+  "aot/workers-",
+  "aot/a-program-that-starts-itself-as-a-worker-ends-every-time",
+  "aot/a-worker-in-a-loop-is-terminated",
+  "aot/a-loop-that-calls-nothing-is-terminated",
+  "aot/no-thread-can-be-started",
+  "aot/what-states-that-nothing-was-thrown-puts-the-end-of-a-worker-off",
+  "aot/parallel/workers/",
+  // Files and paths.
+  "aot/entry-point-names",
+  "aot/extensionless-entry-points",
+  "aot/entry-points-behind-links",
+  "aot/cli/entry-points-that-are-not-text",
+  "aot/resolver/",
+  "aot/file-names-in-another-letter-case",
+  "aot/build-errors-name-real-paths",
+  "aot/stack-frame-paths",
+  "aot/the-folder-of-a-program-has-a-short-name",
+  "aot/diagnostics-end-in-lf",
+  "aot/system-ca-certificates-by-use",
+  "aot/parallel/modules/all-kinds-path-starts-folder-executable",
+  // Native code: addons, sockets, the engine's own tests.
+  "aot/native-addons",
+  "aot/napi-addon",
+  "aot/addons-named-by-the-platform",
+  "aot/servers/bun",
+  "aot/servers/thin",
+  "aot/engine/native-",
+  "aot/backend/",
+  "aot/parallel/node-http/",
+  "aot/parallel/native-callbacks/",
+  "aot/parallel/webassembly/",
+  "aot/parallel/node-vm/",
+  "aot/parallel/smoke/",
+  // Memory, the stack, faults.
+  "aot/heap-limit",
+  "aot/a-heap-that-was-full",
+  "aot/cell-cage-messages",
+  "aot/a-field-that-holds-undefined-outside-the-cell-fails-no-test",
+  "aot/the-first-read-of-a-standard-stream-finds-no-room-on-the-stack",
+  "aot/reading-a-property-of-null-throws-",
+  "aot/native-fault-still-crashes",
+  "aot/fault-inside-a-removed-range",
+  "aot/crash-in-compiled-code",
+  "aot/abort-is-reported",
+  "aot/uncaught-errors-show-the-frames-of-the-throw",
+  "aot/memory-",
+  "aot/small-program-memory",
+  "aot/json-stringify-",
+  "aot/regexp-jit-memory",
+  "aot/a-weak-map-given-new-keys-for-ever-stays-small",
+  "aot/a-collection-filled-and-emptied-in-turns-lets-its-old-tables-go",
+  "aot/a-program-that-fills-the-memory-fails-alone",
+  "aot/blocks-freed-between-live-ones-leave-a-bounded-number-of-mappings",
+  "aot/build-without-memory-or-threads",
+  "aot/commands-that-hold-too-much-memory-together-are-ended",
+  "aot/no-leak-records-at-exit",
+  "aot/the-marking-version-wraps",
+  "aot/under-zombie-mode-a-sweep-overwrites-dead-cells",
+  "aot/gc-verifier-reports-unmarked-cells",
+  "aot/address-sanitizer-",
+  "aot/thread-sanitizer",
+  "aot/parallel/gc/",
+  "aot/parallel/stress/",
+  // Its budgets of memory are those of glibc.
+  "aot/build-scaling/",
+  // Programs of the language, a hundred to a build: cheap each, and together they go through the calling convention and
+  // the unwinding of the platform.
+  "aot/parallel/builtins/",
+  "aot/parallel/calls/",
+  "aot/parallel/errors/",
+  "aot/parallel/async/",
+  "aot/parallel/strings/",
+];
+// Windows as well: there the compiler is built by another toolchain, which the listings hold against the others, and the library
+// holds other code.
+const aotTestsThatAskWindows = [
+  "aot/engine/ir-",
+  "aot/the-table-of-section-headers-has-room-on-windows",
+  "aot/first-reads-by-name-avoid-the-lookup-of-the-runtime",
+  "aot/one-line-changes-little-1",
+  "aot/one-line-changes-little-2",
+  "aot/asking-about-a-class-keeps-none-of-its-code",
+  "aot/a-build-that-stops-says-where",
+  "aot/parallel/closed-world/names-of-the-host-bring-little-of-the-library",
+  "aot/parallel/soundness/members-bun-taken-values-unknown-names",
+  "aot/parallel/type-rules/log-build-continues-after-mismatch",
+];
+// Under a sanitizer the compiler itself is what is tested, and a sanitizer finds by which code runs over which input, never by a
+// verdict. There every test runs but those that feed it nothing new: they compile one text again and again with a line or a flag
+// changed and compare what comes out, or read a number or a list off a report.
+const aotTestsThatFeedNothingNew = [
+  "aot/static-modules-one-odd-file",
+  "aot/one-line-changes-little-",
+  "aot/tools/same-code-",
+  "aot/a-function-constructor-kept-under-a-computed-key-costs-the-analysis-a-fixed-amount",
+  "aot/a-name-read-on-an-object-nobody-follows-costs-the-analysis-a-fixed-amount",
+  "aot/an-object-that-leaves-late-costs-the-analysis-a-fixed-amount",
+  "aot/an-object-wrapped-key-by-key-costs-the-analysis-a-fixed-amount",
+  "aot/an-object-copied-from-whatever-is-handed-on-costs-the-analysis-a-bounded-amount",
+  "aot/entry-points-begin-programs-of-their-own",
+  "aot/sabotages",
+  "aot/audit-agrees-with-the-executable",
+  "aot/transpiler-parity-",
+  "aot/builtins/differential/",
+  "aot/build-options",
+  "aot/build-flags",
+  "aot/bun-build-takes-aot-disable-and-aot-heat",
+  "aot/strict-flag-refuses-as-without-aot",
+  "aot/same-program-however-the-threads-fall",
+  "aot/two-builds-give-the-same-bytes",
+  "aot/repeated-builds",
+  "aot/load/determinism",
+  "aot/the-table-of-built-ins-lists-the-own-names-of-what-its-rows-make",
+  "aot/names-of-unreached-code-in-executables",
+  "aot/names-of-bindings-in-minified-executables",
+  "aot/methods-of-library-classes-nobody-calls",
+  "aot/options-that-a-library-module-carries-out",
+  "aot/library-modules-by-computed-name",
+  "aot/members-of-bun-named-late",
+  "aot/small-programs-stay-closed",
+  "aot/runtime-use-",
+  "aot/trim-keeps-functions-handed-on",
+  "aot/trim-report-",
+  "aot/later-awaits-avoid-runtime",
+];
+/** Which lane runs the rest of them, or nothing where this one runs them all. */
+function laneOfOtherAotTests(execPath: string) {
+  if (getAbi() === "musl") return undefined;
+  return basename(execPath).includes("asan") || options.step?.includes("-asan-")
+    ? "the lanes without a sanitizer"
+    : "Alpine";
+}
+// The second build of a program, with its types erased, asks the compiler, and is the same text again.
+const flagsOfAotDriver = (execPath: string) => (isCI && laneOfOtherAotTests(execPath) ? ["--no-erased"] : []);
+function runsOnThisLane(testPath: string, others: ReturnType<typeof laneOfOtherAotTests>) {
+  const path = testPath.replaceAll("\\", "/");
+  const beginsWithOneOf = (beginnings: string[]) => beginnings.some(beginning => path.startsWith(beginning));
+  if (others === undefined || !/^(?:aot|bundler\/trim-by-use)\//.test(path)) return true;
+  if (others !== "Alpine") return !beginsWithOneOf(aotTestsThatFeedNothingNew);
+  return beginsWithOneOf(aotTestsThatAskTheSystem) || (isWindows && beginsWithOneOf(aotTestsThatAskWindows));
+}
 // A file says so where it judges by a clock, or by the memory that is held or left.
 const runsAlone = (testPath: string) => /^\/\/ Runs alone: /m.test(readFileSync(join(testsPath, testPath), "utf8"));
 const withSymbols = (execPath: string) =>
@@ -843,13 +1032,14 @@ async function runTests(): Promise<TestResult[]> {
   // The programs compiled ahead of time come last and nothing of the shard runs beside them. Their driver and this runner only wait: a job for each processor.
   const aotWidth = parallelism > 1 ? parallelism : Math.min(parallelSafeCap, availableParallelism());
   // A file that builds many executables waits for one build or one run most of the time: alone it keeps between two and
-  // three processors busy, whatever their number, and holds up to five gigabytes.
+  // three processors busy, whatever their number. On four processors all of them, the file cache included, held 2.4 GB
+  // at the most one at a time, 3.5 GB two at a time and 4.5 GB three at a time.
   const buildingFilesWidth =
     parallelism > 1
       ? 1
       : Math.max(
           1,
-          Math.min(parallelSafeCap, Math.ceil(availableParallelism() / 3), Math.floor(totalmem() / (6 * 1024 ** 3))),
+          Math.min(parallelSafeCap, Math.ceil(availableParallelism() / 3), Math.floor(totalmem() / (3 * 1024 ** 3))),
         );
   const isParallelSafeTest = (testPath: string) => {
     const p = testPath.replaceAll("\\", "/");
@@ -889,6 +1079,8 @@ async function runTests(): Promise<TestResult[]> {
       if (attempt > 1) grouptitle += ` ${getAnsi("gray")}[attempt #${attempt}]${getAnsi("reset")}`;
 
       if (concurrent && saysDuration) {
+        // Where a further try begins. The title of the first alone would be taken for a file that took no time.
+        if (attempt > 1) console.log(grouptitle);
         const startedAt = Date.now();
         result = await fn(index);
         const seconds = ((Date.now() - startedAt) / 1000).toFixed(2);
@@ -1175,6 +1367,7 @@ async function runTests(): Promise<TestResult[]> {
           async () =>
             spawnBunTest(bunFor(execPath, testPath), join("test", testPath), {
               cwd,
+              filesAtATime: saysDuration ? buildingFilesWidth : 1,
               stdout: concurrent ? () => {} : pipeTestStdout(process.stdout),
               stderr: concurrent ? () => {} : pipeTestStdout(process.stderr),
             }),
@@ -1204,7 +1397,7 @@ async function runTests(): Promise<TestResult[]> {
         env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
         env.LSAN_OPTIONS = `malloc_context_size=30:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
       }
-      if (isAsan) env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
+      if (isAsan || buildsManyExecutables(bucketFiles[0]!)) env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
 
       const byPath = new Map(bucketFiles.map(t => [join("test", t).replaceAll("\\", "/"), t]));
       const norm = (p: string) =>
@@ -1364,7 +1557,7 @@ async function runTests(): Promise<TestResult[]> {
       let unfinishedLine = "";
       let unexpectedLine: string | undefined;
       const { error, exitCode, crashes } = await spawnBun(bunFor(execPath, "aot/"), {
-        args: [aotDriver, `--jobs=${aotWidth}`, `--files-from=${list}`],
+        args: [aotDriver, ...flagsOfAotDriver(execPath), `--jobs=${aotWidth}`, `--files-from=${list}`],
         cwd,
         timeout: Math.max(60_000, Math.min(60 * 60_000, jobBudgetMs() - 5 * 60_000)),
         idleTimeout: 4 * 60_000,
@@ -1444,7 +1637,7 @@ async function runTests(): Promise<TestResult[]> {
         return;
       }
       const stdout = [
-        `bun ${aotDriver} ${title}`,
+        ["bun", aotDriver, ...flagsOfAotDriver(execPath), title].join(" "),
         "",
         ...describeAotOutput(`expected, from bun ${title}`, verdict.expected),
         ...describeAotOutput("actual, compiled ahead of time", verdict.actual),
@@ -2362,6 +2555,8 @@ interface TestError {
 
 interface SpawnBunTestOptions {
   cwd: string;
+  /** How many files share the machine. Each may take that many times as long as alone, so its time limits are that many times as long. */
+  filesAtATime?: number;
   args?: string[];
   env?: SpawnEnv;
   stdout?: SpawnOutputHandler;
@@ -2373,7 +2568,7 @@ async function spawnBunTest(
   testPath: string,
   opts: SpawnBunTestOptions = { cwd },
 ): Promise<TestResult> {
-  const timeout = getTestTimeout(testPath);
+  const timeout = getTestTimeout(testPath) * (opts.filesAtATime ?? 1);
   const isAsan = basename(execPath).includes("asan");
   const perTestTimeout = Math.ceil(timeout / 2) * (isAsan ? 3 : 1);
   const absPath = join(opts.cwd, testPath);
@@ -2416,7 +2611,9 @@ async function spawnBunTest(
     // prettier-ignore
     env.LSAN_OPTIONS = `malloc_context_size=30:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
   }
-  if (basename(execPath).includes("asan")) {
+  // A file that builds many executables is ended at its time limit in the middle of a build that keeps every processor busy,
+  // or beside a server that it has started, and the next try begins seconds later.
+  if (basename(execPath).includes("asan") || buildsManyExecutables(relative(testsPath, absPath))) {
     // ASAN test processes are slow and memory-heavy; if the bun test runner is
     // SIGKILLed (timeout, OOM) its spawned subprocesses keep running and pile
     // up, eventually OOM-killing the agent. --no-orphans makes every spawned
@@ -2914,7 +3111,7 @@ function getBuildsOfAotPrograms(execPath: string, testsPath: string, programs: s
     writeFileSync(join(folder, "files.txt"), [...byPath.keys()].join("\n") + "\n");
     const { status, stdout, stderr } = spawnSync(
       execPath,
-      [aotDriver, "--deal", `--files-from=${join(folder, "files.txt")}`],
+      [aotDriver, ...flagsOfAotDriver(execPath), "--deal", `--files-from=${join(folder, "files.txt")}`],
       {
         cwd,
         encoding: "utf8",
@@ -2948,6 +3145,15 @@ function getRelevantTests(
   let tests = getTests(cwd);
   const availableTests: string[] = [];
   const filteredTests: string[] = [];
+
+  // Whoever names tests gets them.
+  if (isCI && !filters?.length && !options.include?.length) {
+    const all = tests.length;
+    const others = laneOfOtherAotTests(execPath);
+    tests = tests.filter(testPath => runsOnThisLane(testPath, others));
+    if (tests.length < all && !isQuiet)
+      console.log(`Left to ${others}: ${all - tests.length} tests of the ahead-of-time compiler`);
+  }
 
   if (options["node-tests"]) {
     tests = tests.filter(isNodeTest);

@@ -53,6 +53,19 @@ function serversOf(framework: string): Server[] {
   }));
 }
 
+/** By origin: what has become of the process that listens there. */
+const stateOfServer = new Map<string, () => Promise<string>>();
+/** fetch(). Where the request fails the error also says whether the server still runs, how it ended, and what it printed last. */
+async function fetchFrom(origin: string, path: string, init: RequestInit = {}) {
+  try {
+    return await fetch(origin + path, init);
+  } catch (error) {
+    throw new Error(`${init.method ?? "GET"} ${path}: ${error}\n${await stateOfServer.get(origin)?.()}`, {
+      cause: error,
+    });
+  }
+}
+
 /** Starts the servers on free ports and waits until each has printed `listening <port>`. */
 async function start(cmd: string[], count: number, env: Record<string, string | undefined>) {
   // stderr is piped because Express logs every error that it answers with 400.
@@ -64,7 +77,10 @@ async function start(cmd: string[], count: number, env: Record<string, string | 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const errors = proc.stderr.text();
+  let errors = "";
+  const readErrors = (async () => {
+    for await (const chunk of proc.stderr.pipeThrough(new TextDecoderStream())) errors += chunk;
+  })();
   let output = "";
   let told = Promise.withResolvers<void>();
   const read = (async () => {
@@ -79,11 +95,23 @@ async function start(cmd: string[], count: number, env: Record<string, string | 
     const next = told.promise;
     if ((await Promise.race([next, read.then(() => "ended")])) === "ended" && ports().length < count)
       throw new Error(
-        `${cmd.join(" ")} exited with code ${await proc.exited} before listening:\n${output}${await errors}`,
+        `${cmd.join(" ")} exited with code ${await proc.exited} before listening:\n${output}${(await readErrors, errors)}`,
       );
   }
+  const origins = ports().map(port => `http://127.0.0.1:${port}`);
+  for (const origin of origins)
+    stateOfServer.set(origin, async () => {
+      // A process that is ending closes its connections first.
+      const hasEnded = await Promise.race([Promise.all([proc.exited, readErrors]).then(() => true), Bun.sleep(2000)]);
+      return [
+        hasEnded
+          ? `the server ended with ${proc.signalCode ?? `exit code ${proc.exitCode}`}`
+          : "the server is still running",
+        ...errors.split("\n").filter(Boolean).slice(-20),
+      ].join("\n  ");
+    });
   return {
-    origins: ports().map(port => `http://127.0.0.1:${port}`),
+    origins,
     /** Ends the input of the process, at which ./app/all/array-kind.ts has it exit. */
     async end() {
       proc.stdin.end();
@@ -102,7 +130,7 @@ const withoutTimes = (text: string, origin: string) =>
   text.replaceAll(origin, "<origin>").replace(/\b\d{13}\b/g, "<time>");
 
 async function send(origin: string, route: Route, body = route.request) {
-  const response = await fetch(origin + route.path, {
+  const response = await fetchFrom(origin, route.path, {
     redirect: "manual",
     method: route.method,
     body,
@@ -123,7 +151,7 @@ async function sendWhole(
   headers?: Record<string, string>,
   body?: string,
 ) {
-  const response = await fetch(origin + path, { method, headers, body, redirect: "manual" });
+  const response = await fetchFrom(origin, path, { method, headers, body, redirect: "manual" });
   return {
     status: response.status,
     headers: [...response.headers]
@@ -201,7 +229,7 @@ async function runWebSocketSession(origin: string) {
 /** Aborts a request to the endless event stream of ./app/features/bun.ts. Returns what the client read and what the server counted. */
 async function abortEventStream(origin: string) {
   const controller = new AbortController();
-  const response = await fetch(origin + "/events", { signal: controller.signal });
+  const response = await fetchFrom(origin, "/events", { signal: controller.signal });
   const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
   let text = "";
   while (!text.includes("id: 5\n")) text += (await reader.read()).value;
@@ -209,7 +237,7 @@ async function abortEventStream(origin: string) {
   let counters = {};
   while (!Bun.deepEquals(counters, { aborted: 1, cancelled: 1 })) {
     await Bun.sleep(1);
-    counters = await (await fetch(origin + "/left")).json();
+    counters = await (await fetchFrom(origin, "/left")).json();
   }
   return { type: response.headers.get("Content-Type"), first: text.slice(0, text.indexOf("id: 5\n")), counters };
 }
@@ -240,7 +268,7 @@ async function ask(origin: string, { kind, file }: Server): Promise<Answers> {
   const answers: Answers = {};
   if (kind === "routes") {
     for (const route of routes) answers[route.name] = await send(origin, route);
-    answers["an unknown path"] = (await fetch(origin + "/nothing")).status;
+    answers["an unknown path"] = (await fetchFrom(origin, "/nothing")).status;
     for (const route of routes.filter(route => route.method === "POST")) {
       for (const [description, request] of Object.entries(invalidOrders))
         answers[`${route.name}: ${description}`] = await send(origin, route, request);
@@ -315,11 +343,13 @@ export function testFramework(
   const flags = ["--define", 'process.env.NODE_ENV="production"', "--target=bun"];
   afterAll(() => dir[Symbol.dispose]());
 
-  async function build(name: string, more: string[]) {
-    const executable = join(String(dir), name + (isWindows ? ".exe" : ""));
+  const executableNamed = (name: string) => join(String(dir), name + (isWindows ? ".exe" : ""));
+  async function build(name: string, more: string[], env = bunEnv) {
+    const executable = executableNamed(name);
     const built = await run(
       [bunExe(), "build", "--compile", "--aot", ...moreFlags, ...more, ...flags, entry, "--outfile", executable],
       app,
+      env,
     );
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
       stderr: expect.not.stringMatching(/^error\b/m),
@@ -338,10 +368,20 @@ export function testFramework(
   describe(framework, () => {
     let executable: string;
     let expected: Record<string, Answers>;
+    const options = [
+      ...(canTrim ? ["--trim"] : []),
+      ...(generatesHandlersFromStrings ? [] : ["--disallow-code-generation-from-strings"]),
+    ];
+    // What --trim removes is decided behind the compiler. Where it is the only other option, one build compiles the servers and writes both executables.
+    const oneBuildWritesBoth = alsoWithOtherBuildOptions && options.join() === "--trim";
 
     beforeAll(async () => {
       await copyApp(app);
-      const building = build("compiled", []);
+      const building = oneBuildWritesBoth
+        ? build("variant", options, { ...bunEnv, BUN_DEBUG_TEST_UNTRIMMED_OUTFILE: executableNamed("compiled") }).then(
+            () => executableNamed("compiled"),
+          )
+        : build("compiled", []);
       await using plain = await start([bunExe(), entry], servers.length, bunEnv);
       expected = await askAll(plain.origins, servers);
       executable = await building;
@@ -413,14 +453,11 @@ export function testFramework(
       timeout,
     );
 
-    const options = [
-      ...(canTrim ? ["--trim"] : []),
-      ...(generatesHandlersFromStrings ? [] : ["--disallow-code-generation-from-strings"]),
-    ];
     test.skipIf(options.length === 0 || !alsoWithOtherBuildOptions)(
       `answers the same when built with ${options.join(" ")}`,
       async () => {
-        await using compiled = await start([await build("variant", options)], servers.length, bunEnv);
+        const variant = oneBuildWritesBoth ? executableNamed("variant") : await build("variant", options);
+        await using compiled = await start([variant], servers.length, bunEnv);
         expect(await askAll(compiled.origins, servers)).toEqual(expected);
         expect(await compiled.end()).toMatchObject({ exitCode: 0, signal: null });
       },

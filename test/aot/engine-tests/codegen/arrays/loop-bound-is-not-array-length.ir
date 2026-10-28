@@ -1091,7 +1091,7 @@ function f18 name="notANumberBound" module=m0 position=3205 flags=[IsChecked, Ha
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="neighbours"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 52, patchpoints: 8, rare instructions: 166, polls: 2
+# CHECK-NEXT: instructions: 52, patchpoints: 8, rare instructions: 167, polls: 2
 # CHECK-NEXT: end of function f4
 # CHECK-LABEL: function {{*}}name="blurred"
 # CHECK: role=Source
@@ -1099,7 +1099,7 @@ function f18 name="notANumberBound" module=m0 position=3205 flags=[IsChecked, Ha
 # CHECK-NEXT: end of function f5
 # CHECK-LABEL: function {{*}}name="counterIsSetBack"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 95, patchpoints: 4, rare instructions: 128, polls: 3
+# CHECK-NEXT: instructions: 96, patchpoints: 4, rare instructions: 128, polls: 3
 # CHECK-NEXT: end of function f15
 # CHECK-LABEL: function {{*}}name="detached"
 # CHECK: role=Source

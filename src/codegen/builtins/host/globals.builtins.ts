@@ -125,7 +125,7 @@ const keptByNativeCode = (readMembers: readonly string[], calledMembers: readonl
     "Iterate",
     "ToPrimitive",
     b.named(...readMembers),
-    b.calls(...calledMembers),
+    ...(calledMembers.length > 0 ? [b.calls(...calledMembers)] : []),
   ),
   b.membersOfObjectsOnly,
 ];
@@ -988,7 +988,59 @@ const cachedServerGetters = {
   url: b.instance("URL"),
 } satisfies Readonly<Record<string, b.TableType>>;
 
-const subprocessOptions = keptByNativeCode(subprocessOptionNames, subprocessHandlerNames);
+// js_bun_spawn_bindings.rs reads each option off the options under its name, during the call, and keeps what it has read: not the options.
+const memberOf = (operand: b.OperandName, ...path: b.MemberPath): b.PlaceSpec => ({ place: "Member", operand, path });
+
+// ToString of what lies at the end of the path: of an object, a function among them, it calls these three and nothing else.
+const convertedToString = (operand: b.OperandName, ...path: b.MemberPath) =>
+  [
+    { name: "@@toPrimitive", args: [b.string] },
+    { name: "toString", args: [] },
+    { name: "valueOf", args: [] },
+  ].map(({ name, args }) =>
+    b.memberCalled([...path, name], { times: "Once", this: memberOf(operand, ...path), args, result: "Ignored" }),
+  );
+
+const subprocessOptionsConverted = ["argv0", "cwd"];
+// A stream, a blob, a view, a signal, a terminal: native code goes on using them behind the call.
+const subprocessOptionsKept: readonly b.MemberPath[] = [
+  ["stdin"],
+  ["stdout"],
+  ["stderr"],
+  ["stdio", b.everyOwnValue],
+  ["signal"],
+  ["terminal"],
+  ["cgroup"],
+];
+
+const subprocessOptionsAt = (operand: b.OperandName) => [
+  b.runsTransitively(b.named(...subprocessOptionNames, ...subprocessHandlerNames)),
+  b.membersOfObjectsOnly,
+  // What it keeps of them, and what it calls, is listed below.
+  b.membersOnlyInspected,
+  ...subprocessOptionsConverted.flatMap(name => convertedToString(operand, name)),
+  // The variables of the child: the own enumerable names of `env`, and each value as a string. The command: each element as a string.
+  ...convertedToString(operand, "env", b.everyOwnValue),
+  ...convertedToString(operand, "cmd", b.everyOwnValue),
+  ...subprocessOptionsKept.map(path => b.memberStoredIn(path, b.nativeMemory)),
+  // subprocess.rs: (the Subprocess or undefined, the exit code or null, the signal or null, an error of the system or undefined), (the message, the Subprocess, a handle), (true).
+  b.memberCalled(["onExit"], {
+    times: "PerEvent",
+    this: b.any,
+    args: [b.any, b.f64.nullable, b.union(b.string, b.f64, b.strictNull), b.any],
+    result: "Ignored",
+  }),
+  b.memberCalled(["ipc"], { times: "PerEvent", this: b.any, args: [b.any, b.any, b.any], result: "Ignored" }),
+  b.memberCalled(["onDisconnect"], { times: "PerEvent", this: b.any, args: [b.bool], result: "Ignored" }),
+  ...["data", "exit", "drain"].map(handler =>
+    b.memberCalled(["terminal", handler], {
+      times: "PerEvent",
+      this: b.any,
+      args: [b.any, b.any, b.any],
+      result: "Ignored",
+    }),
+  ),
+];
 // A socket is one object for as long as it lives.
 const socket = b.nativeCell(socketsCell);
 const newSocket = b.union(b.instance("TCPSocket"), b.instance("TLSSocket")).fresh;
@@ -1013,8 +1065,24 @@ const socketHandlerArguments: Readonly<Record<string, readonly b.PlaceLike[]>> =
 // The data of the listener for a socket that it accepted, the socket's own for one that was upgraded, undefined where there is none.
 const dataOfServer = [b.nativeCell(socketDataCell), b.undefined];
 
+// SocketConfig.bind.ts and SSLConfig.bind.ts: a dictionary. Each member is read under its name and is of its type or refused, but these:
+// `hostname`, `host` and `port` are converted, and `ca`, `cert`, `key` and `crl` of `tls` may be a sequence, which is iterated.
+// Listener.rs describes a `secureContext` that is none in its message: whatever is there may be printed.
 const socketOptions = [
-  ...readAndKeptIn(socketOptionsCell, socketOptionNames),
+  b.storedIn(b.nativeCell(socketOptionsCell)),
+  b.reachableValuesStoredIn(b.nativeCell(socketOptionsCell)),
+  b.runsTransitively(b.named(...socketOptionNames)),
+  b.membersOfObjectsOnly,
+  ...["hostname", "host", "port"].flatMap(name => convertedToString("options", name)),
+  ...["ca", "cert", "key", "crl"].map(name =>
+    b.memberCalled(["tls", name, "@@iterator"], {
+      times: "Once",
+      this: memberOf("options", "tls", name),
+      args: [],
+      result: "Escapes",
+    }),
+  ),
+  b.memberStoredIn(["tls", "secureContext"], b.nativeMemory),
   b.createdIn(newSocket, socket),
   b.createdIn(newSocket, b.nativeMemory),
   b.memberStoredIn(["data"], b.nativeCell(socketDataCell)),
@@ -1039,14 +1107,14 @@ const startsSubprocess = (returns: b.TableType): b.FunctionField[] => [
     returns,
     uses: {
       commandOrOptions: [b.readsContents(), b.runsTransitively("OwnValues", "ToPrimitive")],
-      options: subprocessOptions,
+      options: subprocessOptionsAt("options"),
     },
   },
   {
     ...startedByOptions,
     args: { commandOrOptions: b.object },
     returns,
-    uses: { commandOrOptions: subprocessOptions },
+    uses: { commandOrOptions: subprocessOptionsAt("commandOrOptions") },
   },
 ];
 
@@ -1169,7 +1237,14 @@ const mainModulePath = {
 } satisfies b.GetterField;
 
 const sentWithRequest = [
-  ...keptByNativeCode(requestOptionNames, requestCallbackNames),
+  ...keptByNativeCode([...requestOptionNames, ...requestCallbackNames], []),
+  // fetch.rs looks for it on `tls` of the options and nowhere else. FetchTasklet.rs calls it with the name of the host and the certificate, and an object that it answers rejects the promise.
+  b.memberCalled(["tls", "checkServerIdentity"], {
+    times: "PerEvent",
+    this: b.undefined,
+    args: [b.string, b.any],
+    result: "Escapes",
+  }),
   b.reachableValuesStoredIn(b.resultSlot("reason")),
 ];
 
@@ -1427,7 +1502,7 @@ export default b.declarations(
       },
       listen: {
         ...startedByOptions,
-        runsOnlyOperandCode: true,
+        refusalsPrintNoValue: true,
         args: { options: b.object },
         returns: b.instance("Listener").fresh,
         uses: { options: socketOptions },

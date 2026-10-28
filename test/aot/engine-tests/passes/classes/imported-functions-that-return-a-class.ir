@@ -408,5 +408,5 @@ function f32 module=m2 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: f20
 # CHECK-LABEL: function f20 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 16, patchpoints: 3, rare instructions: 2
+# CHECK-NEXT: instructions: 15, patchpoints: 3, rare instructions: 4
 # CHECK-NEXT: end of function f20

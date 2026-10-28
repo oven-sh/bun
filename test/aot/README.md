@@ -74,11 +74,17 @@ that runs and is red for a file that nothing reaches.
   a project's `tsconfig.json` would. What a `.d.ts` of a test declares needs names of its own: no `declare function require`, no
   class with a method `m`.
 - **The time limit of a file is three minutes**, as for any other test (`getTestTimeout()` in `scripts/runner.node.ts`): whatever
-  limit a test gives itself, the file is killed then.
+  limit a test gives itself, the file is killed then, with all that it has started (`BUN_FEATURE_FLAG_NO_ORPHANS`). Where two
+  or three files run beside one another in processes of their own, the limit is two or three times as long.
 - **A file runs beside others.** One that takes under fifteen seconds on every lane runs in a bucket, many files to a process
   (`test/parallel-allowlist.json`). The longer ones run beside one another too, each in a process of its own: one for every three
-  processors, and no more than one for every six gigabytes of the machine. A file that judges by a clock, or by the memory that is
+  processors, and no more than one for every three gigabytes of the machine. A file that judges by a clock, or by the memory that is
   held or left, says so in a line `// Runs alone: <why>`, and nothing else of the shard runs beside it.
+- **Every test runs on every push, on Alpine (x64 and arm64). The other lanes run what asks the system**: processes, Workers and
+  threads, the environment, files and paths, sockets, memory and its limits, faults, the image of an executable, native code. A
+  test whose verdict hangs on what the compiler makes of a program runs on Alpine alone: the compiler is deterministic. The list is
+  `aotTestsThatAskTheSystem` in `scripts/runner.node.ts`: a test file or a folder of programs that asks the system is added there.
+  The lane with a sanitizer runs everything but what compiles one text again and again: `aotTestsThatFeedNothingNew`.
 - **A path is short.** Windows does not find a path of 260 characters: `the-folder-of-a-program-has-a-short-name.test.ts`.
 - **Disk.** Each build leaves an executable the size of Bun in the temporary directory, which is deleted afterwards. CI tests
   `bun-profile`, which on Linux carries its debug information: three times the bytes of the Bun that ships. A test file that builds

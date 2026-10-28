@@ -11,6 +11,11 @@ const modules = {
   "derived class": () => import("./derived-class.js"),
   "behind other members": () => import("./behind-other-members.js"),
   "prototype object": () => import("./prototype-object.js"),
+  "the text in brackets": () => import("./text-in-brackets.js"),
+  "the text in brackets, a getter": () => import("./text-in-brackets-getter.js"),
+  "the text in brackets, a setter": () => import("./text-in-brackets-setter.js"),
+  "a template in brackets": () => import("./template-in-brackets.js"),
+  "the text in brackets, prototype object": () => import("./text-in-brackets-prototype-object.js"),
 };
 for (const name in modules) {
   try {

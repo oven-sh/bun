@@ -865,25 +865,24 @@ runtimefunction id=131091 function=f30 visibility=Private
 # CHECK-NEXT: b18():
 # CHECK-NEXT: v41: 0 = Integer
 # CHECK-NEXT: v42: Array = TruncateNewArray v10, v41
-# CHECK-NEXT: v43: Array ~ Array<number> = Expect v42 expectedType=undefined|null|Array<number>
-# CHECK-NEXT: v44: 0 = Integer
-# CHECK-NEXT: v45: Array<number> = Upcast v43 castType=Array<number>
-# CHECK-NEXT: v46: boolean = HasArrayStorage v45 arrayStorage=Double
-# CHECK-NEXT: Branch v46 -> taken b19(| 0), notTaken b21()
-# CHECK-NEXT: b19(v47: guard):
-# CHECK-NEXT: v48: boolean = IsElementPresent v45, v44, v47 arrayStorage=Double [keyIsIntegral]
-# CHECK-NEXT: Branch v48 -> taken b20(), notTaken b22()
+# CHECK-NEXT: v43: boolean = HasArrayStorage v42 arrayStorage=Double
+# CHECK-NEXT: Branch v43 -> taken b19(| 0), notTaken b21()
+# CHECK-NEXT: b19(v44: guard):
+# CHECK-NEXT: v45: 0 = Integer
+# CHECK-NEXT: v46: boolean = IsElementPresent v42, v45, v44 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v46 -> taken b20(), notTaken b22()
 # CHECK-NEXT: b20():
-# CHECK-NEXT: Return v45
+# CHECK-NEXT: Return v42
 # CHECK-NEXT: b21() frequency=Rare:
-# CHECK-NEXT: ConvertToDoubleStorage v45
+# CHECK-NEXT: ConvertToDoubleStorage v42
 # CHECK-NEXT: Jump -> next b22()
 # CHECK-NEXT: b22() frequency=Rare:
-# CHECK-NEXT: v50: anything ~ undefined|number = ElemGet v43, v44 accessSite=6 [keyIsIntegral]
-# CHECK-NEXT: Return v43
+# CHECK-NEXT: v48: 0 = Integer
+# CHECK-NEXT: v49: anything ~ undefined|number = ElemGet v42, v48 accessSite=6 [keyIsIntegral]
+# CHECK-NEXT: Return v42
 # CHECK-NEXT: b23() frequency=Rare:
-# CHECK-NEXT: v51: anything ~ undefined|null|Array<number> = CallDirect v0, v1 function=f34 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v51 requirement=Allowed
+# CHECK-NEXT: v50: anything ~ undefined|null|Array<number> = CallDirect v0, v1 function=f34 [isNeverInlined]
+# CHECK-NEXT: ReturnCall v50 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="mapped"
 # CHECK: module=m0 position=499 role=GenericVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w5 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=10 site=w6}] results=[{type=undefined|null|Array<number> site=w7 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f32} {

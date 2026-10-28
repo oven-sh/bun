@@ -73,7 +73,7 @@ export function sharedBuilds(name: string, files: Record<string, string>) {
         ...(await run(
           [bunExe(), ...compile, "--aot", "--trim", ...flags, ...withoutDebugInformation, entry, "--outfile", name],
           folder,
-          { ...bunEnv, BUN_DEBUG_TEST_UNTRIMMED_OUTFILE: join(folder, name + "-whole") },
+          { ...bunEnv, BUN_DEBUG_TEST_UNTRIMMED_OUTFILE: named(name + "-whole").file },
         )),
         ...named(name),
       })),

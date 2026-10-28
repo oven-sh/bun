@@ -138,13 +138,13 @@ function f4 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Jump -> next b6(v12)
 # CHECK-NEXT: b5():
 # CHECK-NEXT: v13: anything = SuperGet v1, v1 key="m"
-# CHECK-NEXT: Jump -> next b6(v13)
-# CHECK-NEXT: b6(v14: anything ~ function|f2):
-# CHECK-NEXT: v15: anything ~ function = Expect v14 expectedType=undefined|null|function
+# CHECK-NEXT: v14: anything ~ function = Expect v13 expectedType=undefined|null|function
+# CHECK-NEXT: Jump -> next b6(v14)
+# CHECK-NEXT: b6(v15: anything ~ function|f2):
 # CHECK-NEXT: v16: 1 = Integer integer=1
 # CHECK-NEXT: v17: anything = Call v15, -, v16 calleeName="f" accessSite=4 callees=[f2, ..]
 # CHECK-NEXT: v18: int|whole = AssumeType v17 provenType=int|whole
-# CHECK-NEXT: v19: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v15 name="name"
+# CHECK-NEXT: v19: boolean|number|string|symbol|bigint|object ~ function|f2 = RequireObjectCoercible v15 name="name"
 # CHECK-NEXT: v20: anything = PropGet v19 key="name" accessSite=5
 # CHECK-NEXT: v21: undefined|null|string = AssumeType v20 provenType=undefined|null|string
 # CHECK-NEXT: v22: Array<string> = CallBuiltin -, v1 overload=ObjectKeys/0 accessSite=6

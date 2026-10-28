@@ -35,7 +35,7 @@
 // of memory is judged only where the size adds enough of it to tell it from what the allocators keep for themselves. The budgets are those of Linux on x64 with glibc.
 // A size that nothing is judged by is not built.
 //
-// The shapes are dealt out over the files build-scaling-<part>.test.ts by what they cost.
+// The shapes are dealt out over the files build-scaling-<part>.test.ts by what they cost, so that the few builds that take long run side by side.
 //
 //   bun test test/aot/build-scaling                                     all shapes (a minute on eight cores)
 //   AOT_BUILD_SCALING=wrappers bun test test/aot/build-scaling          the shapes whose name contains the text
@@ -170,11 +170,32 @@ const rounded = (times: number) => Math.round(times * 100) / 100;
 const lower = (a: number | undefined, b: number | undefined) =>
   a === undefined || b === undefined ? b : Math.min(a, b);
 
-/** The dearest shape goes to the first part, the next to the second, and so on there and back. */
-function partOf(shape: Shape, parts: number) {
-  const costOf = ({ name }: Shape) => budgets[name]?.millionInstructions ?? 0;
-  const place = shapes.toSorted((a, b) => costOf(b) - costOf(a)).indexOf(shape) % (2 * parts);
-  return 1 + Math.min(place, 2 * parts - 1 - place);
+// In million instructions, by the file: the largest build of a shape, and its three builds together.
+const largestBuildOf = ({ name }: Shape) => budgets[name]?.millionInstructions ?? 0;
+const buildsOf = (shape: Shape) => 1.5 * largestBuildOf(shape);
+const dearestFirst = shapes.toSorted((a, b) => largestBuildOf(b) - largestBuildOf(a));
+// The last part has it as well.
+const buildOfAllShapesTogether = 90_000;
+const processorsOfALane = 4;
+
+/**
+ * A build has one thread, so a file takes as long as its largest build, however little else it has. Each part takes the dearest shape that is left and
+ * whatever else the other processors get done in that time, the dearest first. What is left over then goes, one by one, to the part with the least work.
+ */
+function dealOut(parts: number) {
+  const work = Array.from({ length: parts }, (_, index) => (index === parts - 1 ? buildOfAllShapesTogether : 0));
+  const partOf = new Map<Shape, number>();
+  const give = (shape: Shape, index: number) => {
+    work[index] += buildsOf(shape);
+    partOf.set(shape, index + 1);
+  };
+  let left = dearestFirst;
+  for (let index = 0; index < parts && left.length > 0; index++) {
+    const room = processorsOfALane * largestBuildOf(left[0]);
+    left = left.filter(shape => work[index] + buildsOf(shape) > room || void give(shape, index));
+  }
+  for (const shape of left) give(shape, work.indexOf(Math.min(...work)));
+  return partOf;
 }
 
 const leastPeakOfNothing = new Map<string, number>();
@@ -197,8 +218,47 @@ export const buildScaling = (part: number, parts: number) =>
           ) + "\n",
         );
     });
-    for (const shape of shapes) {
-      if (!shape.name.includes(wanted) || partOf(shape, parts) !== part) continue;
+    for (const [name, slackOfRow, measureMegabytes] of [
+      [oneLine, slack, async () => inMillions((await slot(() => measureOneLine(carrier))).peakBytes)],
+      [
+        allShapesTogether,
+        slackOfAllShapesTogether,
+        async () => {
+          const [nothing, all] = await Promise.all([
+            slot(() => measureOneLine(carrier)),
+            slot(() => measureAllShapesTogether(carrier)),
+          ]);
+          return judgedMegabytes(nothing, all);
+        },
+      ],
+    ] as const)
+      if (name.includes(wanted) && part === parts)
+        test.concurrent(
+          name,
+          async () => {
+            const budget = holdsBudgets ? budgets[name] : undefined;
+            const megabytes = await measureUntilWithinBounds(
+              name,
+              measureMegabytes,
+              megabytes => !budget || megabytes <= budget.megabytes * slackOfRow,
+            );
+            console.error(`SCALING ${name}: ${megabytes} MB`);
+            if (!holdsBudgets) return;
+            if (mode === "accept" || !budget) {
+              budgets[name] = { megabytes };
+              expect(["accept", "lower"]).toContain(mode);
+              return;
+            }
+            if (mode === "lower") budget.megabytes = Math.min(budget.megabytes, megabytes);
+            expect(megabytes).toBeLessThanOrEqual(budget.megabytes * slackOfRow);
+          },
+          1_800_000,
+        );
+
+    const partOf = dealOut(parts);
+    // A slot goes to whoever asked first: the largest builds begin first, and the small ones fill what is left beside them.
+    for (const shape of dearestFirst) {
+      if (!shape.name.includes(wanted) || partOf.get(shape) !== part) continue;
       test.concurrent(
         shape.name,
         async () => {
@@ -229,10 +289,11 @@ export const buildScaling = (part: number, parts: number) =>
             shape.name,
             async () => {
               const build = (size: number) => slot(() => measure(shape, size, carrier));
+              const largest = build(2 * size);
               // By the file the larger size adds enough memory, so the smaller one is wanted whatever else turns out.
               const early =
                 (budget?.megabytes ?? 0) * 1e6 - bytesOfOneLineInFile >= leastBytesJudged ? build(size) : undefined;
-              const [none, twice] = await Promise.all([build(0), build(2 * size)]);
+              const [none, twice] = await Promise.all([build(0), largest]);
               const isOnceJudged =
                 !!shape.counts ||
                 none.instructions !== undefined ||
@@ -349,41 +410,4 @@ export const buildScaling = (part: number, parts: number) =>
         1_800_000,
       );
     }
-
-    for (const [name, slackOfRow, measureMegabytes] of [
-      [oneLine, slack, async () => inMillions((await slot(() => measureOneLine(carrier))).peakBytes)],
-      [
-        allShapesTogether,
-        slackOfAllShapesTogether,
-        async () => {
-          const [nothing, all] = await Promise.all([
-            slot(() => measureOneLine(carrier)),
-            slot(() => measureAllShapesTogether(carrier)),
-          ]);
-          return judgedMegabytes(nothing, all);
-        },
-      ],
-    ] as const)
-      if (name.includes(wanted) && part === parts)
-        test.concurrent(
-          name,
-          async () => {
-            const budget = holdsBudgets ? budgets[name] : undefined;
-            const megabytes = await measureUntilWithinBounds(
-              name,
-              measureMegabytes,
-              megabytes => !budget || megabytes <= budget.megabytes * slackOfRow,
-            );
-            console.error(`SCALING ${name}: ${megabytes} MB`);
-            if (!holdsBudgets) return;
-            if (mode === "accept" || !budget) {
-              budgets[name] = { megabytes };
-              expect(["accept", "lower"]).toContain(mode);
-              return;
-            }
-            if (mode === "lower") budget.megabytes = Math.min(budget.megabytes, megabytes);
-            expect(megabytes).toBeLessThanOrEqual(budget.megabytes * slackOfRow);
-          },
-          1_800_000,
-        );
   });

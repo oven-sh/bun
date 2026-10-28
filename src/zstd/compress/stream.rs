@@ -238,16 +238,20 @@ impl CCtx {
                 pledged_src_size,
                 true,
             )?;
+            // They are part of the workspace in the C code.
             resize_buffer(
                 &mut self.in_buff,
                 &mut self.in_buff_size,
                 sizes.buff_in_size,
-            )?;
-            resize_buffer(
-                &mut self.out_buff,
-                &mut self.out_buff_size,
-                sizes.buff_out_size,
-            )?;
+            )
+            .and_then(|()| {
+                resize_buffer(
+                    &mut self.out_buff,
+                    &mut self.out_buff_size,
+                    sizes.buff_out_size,
+                )
+            })
+            .inspect_err(|_| self.frame.forget())?;
             self.in_to_compress = 0;
             self.in_buff_pos = 0;
             // One more byte, to tell an input of exactly one block from a longer one.

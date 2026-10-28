@@ -268,9 +268,6 @@ fn compression_job(state: &mut WorkerState, job: &Job, cancelled: &AtomicBool) -
         Ok(())
     };
     for chunk_nb in 1..nb_chunks {
-        if cancelled.load(Ordering::SeqCst) {
-            return Err(Error::Generic);
-        }
         let chunk = Span {
             buf: BufId::User,
             start: ip,
@@ -296,9 +293,9 @@ fn compression_job(state: &mut WorkerState, job: &Job, cancelled: &AtomicBool) -
     send(state.dst.sub(..last_c_block_size)?, src_size)
 }
 
-fn worker_main(jobs: &Receiver<Job>, cancelled: &AtomicBool) {
+fn worker_main(jobs: &Receiver<Job>, cancelled: &Arc<AtomicBool>) {
     let mut state = WorkerState {
-        cctx: FrameCompressor::for_worker(),
+        cctx: FrameCompressor::for_worker(Arc::clone(cancelled)),
         seq: Vec::new(),
         dst: Vec::new(),
     };
@@ -377,7 +374,7 @@ impl PendingJob {
 
 /// `ZSTDMT_CCtx`
 pub(crate) struct MtCtx {
-    /// They are on their own: they share nothing, and leave once there is no queue or the frame is given up.
+    /// They are on their own: they share nothing, and leave once nothing can be sent to their queue.
     nb_workers: usize,
     /// Whichever worker is free takes the next job, so that a job does not wait for one thread to be scheduled.
     queue: Sender<Job>,
@@ -490,7 +487,6 @@ impl MtCtx {
                 .map_err(|_| Error::MemoryAllocation)?;
             self.nb_workers += 1;
         }
-        self.params.nb_workers = nb_workers as i32;
         Ok(())
     }
 
@@ -815,5 +811,80 @@ impl Drop for MtCtx {
     fn drop(&mut self) {
         // Nobody waits for them, which could take as long as a job does.
         self.cancelled.store(true, Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compress::internal::{CompressionParameters, Strategy};
+    use crate::compress::params::{FrameParameters, Parameters};
+
+    #[test]
+    fn a_worker_stops_at_a_prefix_or_a_block_of_a_frame_that_is_given_up() {
+        let params = CCtxParams::from_params(
+            &Parameters {
+                c_params: CompressionParameters {
+                    window_log: 10,
+                    chain_log: 6,
+                    hash_log: 6,
+                    search_log: 1,
+                    min_match: 4,
+                    target_length: 0,
+                    strategy: Some(Strategy::BtOpt),
+                },
+                f_params: FrameParameters {
+                    content_size_flag: false,
+                    checksum_flag: false,
+                    no_dict_id_flag: false,
+                },
+            },
+            0,
+        );
+        let data = [0u8; 64];
+        let input = Input {
+            bufs: Buffers {
+                in_buff: &[],
+                user: &data,
+                dict: &[],
+            },
+            cdict: None,
+        };
+        let span = |start, end| Span {
+            buf: BufId::User,
+            start,
+            end,
+        };
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let mut cctx = FrameCompressor::for_worker(Arc::clone(&cancelled));
+        let begin = |cctx: &mut FrameCompressor| {
+            cctx.begin(
+                &input,
+                Some(span(0, 32)),
+                DictContentType::RawContent,
+                DictTableLoadMethod::Fast,
+                &params,
+                32,
+                false,
+            )
+            .map(|_| ())
+        };
+        let mut dst = [0u8; 128];
+
+        cancelled.store(true, Ordering::SeqCst);
+        assert_eq!(begin(&mut cctx), Err(Error::Generic));
+
+        cancelled.store(false, Ordering::SeqCst);
+        assert_eq!(begin(&mut cctx), Ok(()));
+        cancelled.store(true, Ordering::SeqCst);
+        let given_up = cctx.compress_continue(&mut dst, &input, span(32, 64));
+        assert_eq!(given_up, Err(Error::Generic));
+
+        cancelled.store(false, Ordering::SeqCst);
+        assert_eq!(begin(&mut cctx), Ok(()));
+        assert!(
+            cctx.compress_continue(&mut dst, &input, span(32, 64))
+                .is_ok()
+        );
     }
 }

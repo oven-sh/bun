@@ -464,13 +464,11 @@ pub(crate) fn compress_block_double_fast_dict_match_state(
         long: TaggedTable::new(
             &dms.ms.hash_table,
             dms.ms.tagged_hash_log(),
-            8,
             block.dict_start_index,
         )?,
         short: TaggedTable::new(
             &dms.ms.chain_table,
             dms.ms.tagged_chain_log(),
-            ms.c_params.min_match,
             block.dict_start_index,
         )?,
     };

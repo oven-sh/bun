@@ -1,7 +1,8 @@
 //! `zstd_compress_internal.h`: what the parts of the compressor share.
 
 use core::hint::{Locality, prefetch_read};
-use core::sync::atomic::{Ordering, compiler_fence};
+use core::sync::atomic::{AtomicBool, Ordering, compiler_fence};
+use std::sync::Arc;
 
 use super::fse::{FseCTable, FseRepeat};
 use super::huf::{HufCTable, HufRepeat};
@@ -717,6 +718,16 @@ pub(crate) fn common_prefix(a: &[u8], b: &[u8]) -> usize {
 #[derive(Clone, Copy)]
 pub(crate) struct Near<'a>(&'a [u8]);
 
+/// A bit for each of the 16 bytes that is not the same in both. A comparison of vectors.
+#[inline(always)]
+fn differences(bytes: &[u8; 16], match_bytes: &[u8; 16]) -> u32 {
+    let mut differ = 0u32;
+    for (n, (byte, match_byte)) in (0..16).zip(bytes.iter().zip(match_bytes)) {
+        differ |= u32::from(byte != match_byte).wrapping_shl(n);
+    }
+    differ
+}
+
 impl<'a> Near<'a> {
     #[inline]
     pub(crate) fn new(bytes: &'a [u8]) -> Result<Self> {
@@ -888,11 +899,7 @@ impl<'a> Near<'a> {
             self.chunk16(pos.wrapping_add(len)),
             other.chunk16(match_pos.wrapping_add(len)),
         ) {
-            // A comparison of vectors.
-            let mut differ = 0u32;
-            for (n, (byte, match_byte)) in (0..16).zip(bytes.iter().zip(match_bytes)) {
-                differ |= u32::from(byte != match_byte).wrapping_shl(n);
-            }
+            let differ = differences(bytes, match_bytes);
             if differ != 0 {
                 let first = differ.trailing_zeros();
                 let byte = bytes.get(first as usize & 15).copied().unwrap_or(0);
@@ -909,11 +916,7 @@ impl<'a> Near<'a> {
     #[inline(always)]
     pub(crate) fn compare_head(self, head: &[u8; 16], match_pos: u32, from: u32) -> Option<Common> {
         let match_bytes = self.chunk16(match_pos)?;
-        let mut differ = 0u32;
-        for (n, (byte, match_byte)) in (0..16).zip(head.iter().zip(match_bytes)) {
-            differ |= u32::from(byte != match_byte).wrapping_shl(n);
-        }
-        let first = differ.trailing_zeros();
+        let first = differences(head, match_bytes).trailing_zeros();
         if first >= 16 || first < from {
             return None;
         }
@@ -931,11 +934,8 @@ impl<'a> Near<'a> {
     /// How many of the 16 bytes at `match_pos` are the same as `bytes`, from the first on. It takes no branch.
     #[inline(always)]
     fn count16(self, bytes: &[u8; 16], match_pos: u32) -> Option<u32> {
-        let mut same = 0u16;
-        for (i, (byte, match_byte)) in bytes.iter().zip(self.chunk16(match_pos)?).enumerate() {
-            same |= u16::from(byte == match_byte) << i;
-        }
-        Some((!u32::from(same)).trailing_zeros())
+        let differ = differences(bytes, self.chunk16(match_pos)?);
+        Some((differ | 1 << 16).trailing_zeros())
     }
 
     /// [`Self::count`], of which only the comparison of the first 16 bytes is inlined. It takes few registers of a loop
@@ -1711,12 +1711,6 @@ impl Hash8 {
     pub(crate) const fn of(self, bytes: u64) -> u32 {
         (bytes.wrapping_mul(self.mul) ^ self.salt).wrapping_shr(self.shift) as u32
     }
-
-    /// [`Self::of`], when the salt is known to be 0.
-    #[inline(always)]
-    pub(crate) const fn of_unsalted(self, bytes: u64) -> u32 {
-        bytes.wrapping_mul(self.mul).wrapping_shr(self.shift) as u32
-    }
 }
 
 // ── the window ────────────────────────────────────────────────────────────
@@ -2199,6 +2193,8 @@ pub(crate) struct MatchState {
     /// `dictMatchState != NULL`: the match state of the dictionary is searched beside this one.
     pub(crate) has_dict_match_state: bool,
     pub(crate) c_params: CompressionParameters,
+    /// For a worker: whether its frame is given up.
+    pub(crate) cancelled: Option<Arc<AtomicBool>>,
 }
 
 impl MatchState {
@@ -2228,6 +2224,15 @@ impl MatchState {
                 target_length: 0,
                 strategy: None,
             },
+            cancelled: None,
+        }
+    }
+
+    /// Fails if there is no use in going on.
+    pub(crate) fn check_cancelled(&self) -> Result<()> {
+        match &self.cancelled {
+            Some(cancelled) if cancelled.load(Ordering::SeqCst) => Err(Error::Generic),
+            _ => Ok(()),
         }
     }
 

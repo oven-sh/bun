@@ -124,17 +124,13 @@ impl Error {
 
 /// What the functions that allocate their output fail with. Users get to see the names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
+#[error("{}", <&'static str>::from(self))]
 pub enum ZstdError {
     /// The output, or the decoder state the frame's window size dictates, could not be allocated.
-    #[error("OutOfMemory")]
     OutOfMemory,
-    #[error("InvalidZstdData")]
     InvalidZstdData,
-    #[error("DecompressionFailed")]
     DecompressionFailed,
-    #[error("ZstdDecompressionError")]
     ZstdDecompressionError,
-    #[error("ShortRead")]
     ShortRead,
 }
 

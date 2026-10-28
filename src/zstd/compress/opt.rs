@@ -613,13 +613,21 @@ impl<'a> Trees<'a> {
     }
 
     /// `ZSTD_updateTree_internal`: adds the positions from `next_to_update` up to `target` to the trees.
-    #[inline(never)]
+    #[inline(always)]
     fn update_tree(&mut self, target: u32) -> Result<()> {
+        self.update_tree_in_part(target, target)?;
+        self.next_to_update = target;
+        Ok(())
+    }
+
+    /// The part of [`Self::update_tree`] that gets to `up_to`, or somewhat beyond.
+    #[inline(never)]
+    fn update_tree_in_part(&mut self, up_to: u32, target: u32) -> Result<()> {
         let mut idx = self.next_to_update;
-        while idx < target {
+        while idx < up_to {
             idx = idx.wrapping_add(self.insert_bt1(idx, target)?);
         }
-        self.next_to_update = target;
+        self.next_to_update = idx;
         Ok(())
     }
 
@@ -877,9 +885,16 @@ pub(crate) fn update_tree(
 ) -> Result<()> {
     let no_dict = Prefix { buf: &[], base: 0 };
     let mls = ms.c_params.min_match;
-    let mut trees = Trees::new(ms, prefix, no_dict, None, iend, mls)?;
-    trees.update_tree(prefix.index_of(ip))?;
-    ms.next_to_update = prefix.index_of(ip);
+    let target = prefix.index_of(ip);
+    // The prefix of a job can take seconds.
+    while ms.next_to_update < target {
+        ms.check_cancelled()?;
+        let up_to = ms.next_to_update.saturating_add(1 << 12).min(target);
+        let mut trees = Trees::new(ms, prefix, no_dict, None, iend, mls)?;
+        trees.update_tree_in_part(up_to, target)?;
+        ms.next_to_update = trees.next_to_update;
+    }
+    ms.next_to_update = target;
     Ok(())
 }
 

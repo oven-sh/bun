@@ -1192,9 +1192,9 @@ fn resolve_offset(sequences: &mut [RawSequence], index: usize) -> u32 {
 
 /// Turns sequences into output.
 struct Executor<'buf, 'a> {
-    /// Ends no further than `oend`.
+    /// What is beyond `oend` is room for copies in chunks.
     out: OutputBuffer<'buf>,
-    /// Where the block has to stop writing.
+    /// Where the output of the block has to end.
     oend: usize,
     op: usize,
     prefix_start: usize,

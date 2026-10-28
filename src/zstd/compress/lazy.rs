@@ -846,7 +846,7 @@ pub(crate) fn insert_and_find_first_index(
 struct ChainDict<'a> {
     hash_table: &'a [u32],
     chain_table: &'a [u32],
-    hasher: Hash8,
+    hasher: Hasher,
     /// The index, among its own, of its first byte.
     lowest_index: u32,
     /// Below this, an index is no longer in the chain table.
@@ -858,7 +858,7 @@ impl<'a> ChainDict<'a> {
         Self {
             hash_table: &dms.ms.hash_table,
             chain_table: &dms.ms.chain_table,
-            hasher: Hash8::new(mls, dms.ms.c_params.hash_log, 0),
+            hasher: Hasher::new(dms.ms.c_params.hash_log, mls),
             lowest_index: dms.ms.window.dict_limit,
             min_chain: dms_end_index(dms).saturating_sub(1 << dms.ms.c_params.chain_log),
         }
@@ -874,8 +874,8 @@ struct Chains<'a> {
 impl Chains<'_> {
     /// Adds the position that `bytes` is the 8 bytes of.
     #[inline(always)]
-    fn insert(&mut self, hasher: Hash8, bytes: u64, index: u32) {
-        let hash = hasher.of(bytes) as usize & self.hash_table.len().wrapping_sub(1);
+    fn insert(&mut self, hasher: Hasher, bytes: u64, index: u32) {
+        let hash = hasher.hash(bytes) & self.hash_table.len().wrapping_sub(1);
         let in_chain = index as usize & self.chain_table.len().wrapping_sub(1);
         if let Some(first) = self.hash_table.get_mut(hash)
             && let Some(next) = self.chain_table.get_mut(in_chain)
@@ -886,7 +886,7 @@ impl Chains<'_> {
 
     /// Adds every position that has 8 bytes in `positions`. The first one has the index `index`.
     #[inline(never)]
-    fn insert_all(self, hasher: Hash8, positions: &[u8], index: u32) {
+    fn insert_all(self, hasher: Hasher, positions: &[u8], index: u32) {
         let (Some(hash_mask), Some(chain_mask)) = (
             self.hash_table.len().checked_sub(1),
             self.chain_table.len().checked_sub(1),
@@ -895,7 +895,7 @@ impl Chains<'_> {
         };
         for (n, bytes) in positions.array_windows().enumerate() {
             let index = index as usize + n;
-            let hash = hasher.of_unsalted(u64::from_le_bytes(*bytes)) as usize;
+            let hash = hasher.hash(u64::from_le_bytes(*bytes));
             if let Some(head) = self.hash_table.get_mut(hash & hash_mask)
                 && let Some(next) = self.chain_table.get_mut(index & chain_mask)
             {
@@ -919,7 +919,7 @@ struct Candidate {
 struct ChainFinder<'a, const DICT_MODE: u8, const SIMPLE: bool> {
     block: LazyBlock<'a>,
     chains: Chains<'a>,
-    hasher: Hash8,
+    hasher: Hasher,
     mls: u32,
     nb_attempts: u32,
     /// `ms.next_to_update`, as a position.
@@ -970,7 +970,7 @@ impl<const DICT_MODE: u8, const SIMPLE: bool> ChainFinder<'_, DICT_MODE, SIMPLE>
             }
         }
         self.next_to_update = ip;
-        let hash = self.hasher.of(near.read64(ip).ok_or(BUG)?) as usize;
+        let hash = self.hasher.hash(near.read64(ip).ok_or(BUG)?);
         let hash = hash & self.chains.hash_table.len().wrapping_sub(1);
         let head = self.chains.hash_table.get(hash).copied().unwrap_or(0);
         self.next_hash = hash;
@@ -994,7 +994,7 @@ impl<'a, const DICT_MODE: u8, const SIMPLE: bool> Finder<'a>
                 hash_table: &mut ms.hash_table,
                 chain_table: &mut ms.chain_table,
             },
-            hasher: Hash8::new(mls, ms.c_params.hash_log, 0),
+            hasher: Hasher::new(ms.c_params.hash_log, mls),
             mls,
             nb_attempts: 1 << ms.c_params.search_log,
             next_to_update: ms.next_to_update.wrapping_sub(block.base_index),
@@ -1058,7 +1058,7 @@ impl<'a, const DICT_MODE: u8, const SIMPLE: bool> Finder<'a>
             && low_limit >= self.dense_from
             && let Some(end) = (best.len + 1).checked_sub(self.mls)
             && let Some(bytes) = block.near.read64(ip + end)
-            && table_get(self.chains.hash_table, self.hasher.of(bytes) as usize) < low_limit
+            && table_get(self.chains.hash_table, self.hasher.hash(bytes)) < low_limit
         {
             return Ok(None);
         }
@@ -1083,7 +1083,7 @@ impl<'a, const DICT_MODE: u8, const SIMPLE: bool> Finder<'a>
 
         if DICT_MODE == DICT_MATCH_STATE {
             let dms = self.dms.ok_or(BUG)?;
-            let hash = dms.hasher.of(block.near.read64(ip).ok_or(BUG)?) as usize;
+            let hash = dms.hasher.hash(block.near.read64(ip).ok_or(BUG)?);
             match_index = dms.hash_table.at(hash)?;
 
             while match_index >= dms.lowest_index && nb_attempts > 0 {

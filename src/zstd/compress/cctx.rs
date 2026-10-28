@@ -2,6 +2,7 @@
 //! and what they need.
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use super::block_entropy::{
     build_entropy_statistics_and_estimate_sub_block_size, count_seq_store_literals_bytes,
@@ -812,7 +813,7 @@ pub(crate) struct FrameCompressor {
     pub(crate) dict_content_size: usize,
     /// `None` for a worker, see [`Self::for_worker`].
     workspace: Option<Workspace>,
-    /// For how many frames in a row the tables have been much larger than it takes.
+    /// For a worker: for how many frames in a row the tables have been much larger than it takes.
     oversized_duration: usize,
     pub(crate) block_size_max: usize,
     pub(crate) pledged_src_size_plus_one: u64,
@@ -880,11 +881,18 @@ impl FrameCompressor {
 
     /// For the jobs of one worker. Which context a job goes to is a matter of timing in the C code, so what its contexts
     /// have been through cannot show in the output.
-    pub(crate) fn for_worker() -> Self {
-        Self {
+    pub(crate) fn for_worker(cancelled: Arc<AtomicBool>) -> Self {
+        let mut worker = Self {
             workspace: None,
             ..Self::new()
-        }
+        };
+        worker.match_state.cancelled = Some(cancelled);
+        worker
+    }
+
+    /// The next frame starts from nothing, as after a reset that failed.
+    pub(crate) fn forget(&mut self) {
+        self.initialized = false;
     }
 
     /// `ZSTD_resetCCtx_internal`
@@ -947,14 +955,21 @@ impl FrameCompressor {
             IndexResetPolicy::Continue
         };
 
-        // `ZSTD_cwksp_check_wasteful`: a context does not hold on for long to much more than it uses.
-        let needed = tables_size(&params.c_params, params.use_row_match_finder);
-        if tables_capacity(&self.match_state) < needed.saturating_mul(ZSTD_WORKSPACETOOLARGE_FACTOR)
-        {
-            self.oversized_duration = 0;
-        } else if self.oversized_duration < ZSTD_WORKSPACETOOLARGE_MAXDURATION {
-            self.oversized_duration += 1;
+        // A context does not hold on for long to much more than it uses.
+        let new_tables = if self.workspace.is_some() {
+            new_workspace
         } else {
+            let needed = tables_size(&params.c_params, params.use_row_match_finder);
+            let oversized = tables_capacity(&self.match_state)
+                >= needed.saturating_mul(ZSTD_WORKSPACETOOLARGE_FACTOR);
+            self.oversized_duration = if oversized {
+                self.oversized_duration + 1
+            } else {
+                0
+            };
+            self.oversized_duration > ZSTD_WORKSPACETOOLARGE_MAXDURATION
+        };
+        if new_tables {
             self.oversized_duration = 0;
             let ms = &mut self.match_state;
             ms.hash_table = Table::new();
@@ -1654,6 +1669,7 @@ impl FrameCompressor {
         }
 
         while ip < src.end {
+            self.match_state.check_cancelled()?;
             let remaining = src.end - ip;
             let block_size = self.optimal_block_size(bytes.sub(ip - src.start..)?, savings)?;
             let last_block = last_frame_chunk && block_size == remaining;

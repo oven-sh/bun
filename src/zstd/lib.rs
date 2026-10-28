@@ -132,9 +132,15 @@ pub fn compress_alloc(src: &[u8], level: i32) -> Result<Vec<u8>> {
 /// With that much room after its output, a decoder copies in chunks up to the end.
 const OUTPUT_SLACK: usize = common::WILDCOPY_OVERLENGTH;
 
-/// `len` zeros for a decoder to write to.
-fn output_buffer(len: usize) -> Result<Vec<u8>, ZstdError> {
-    util::try_zeroed(len).map_err(|_| ZstdError::OutOfMemory)
+/// Zeros for a decoder to write `size` bytes to.
+fn output_buffer(size: usize) -> Result<Vec<u8>, ZstdError> {
+    // Not where it would be most of the buffer: to give that back can take a copy.
+    let slack = if size >= 2 * OUTPUT_SLACK {
+        OUTPUT_SLACK
+    } else {
+        0
+    };
+    util::try_zeroed(size + slack).map_err(|_| ZstdError::OutOfMemory)
 }
 
 /// Decompress data, automatically allocating the output buffer.
@@ -169,13 +175,7 @@ pub fn decompress_alloc(src: &[u8]) -> Result<Vec<u8>, ZstdError> {
     }
 
     // Fast path: size is known and within reasonable limits
-    // Not where it would be most of the buffer: to give that back can take a copy.
-    let slack = if size as usize >= 2 * OUTPUT_SLACK {
-        OUTPUT_SLACK
-    } else {
-        0
-    };
-    let mut output = output_buffer(size as usize + slack)?;
+    let mut output = output_buffer(size as usize)?;
     let written = decompress(&mut output, src)
         .map_err(|code| ZstdError::for_decompression(code, ZstdError::DecompressionFailed))?;
     output.truncate(written);

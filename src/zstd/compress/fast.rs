@@ -74,6 +74,7 @@ pub(super) fn restore_rep(
 
 /// What `fast` and `dfast` index a dictionary by: every third position, with the 10 bytes there, which the 8 bytes at
 /// it and at the two positions in between are among.
+/// `array_windows().step_by(3)` gives the same, and indexing a dictionary then takes 1.4 to 1.6 times as long.
 #[derive(Clone)]
 pub(super) struct ThirdPositions<'a> {
     /// From the first position that is left up to the end of the 10 bytes at the last one.
@@ -155,6 +156,7 @@ pub(super) fn put_tagged_in_between(
     hasher: Hasher,
     positions: ThirdPositions<'_>,
 ) {
+    debug_assert!(table.iter().all(|&cell| cell == 0));
     for at in positions.rev() {
         put_tagged(table, hasher.hash(le64_at::<2, _>(at.bytes)), at.index + 2);
         put_tagged(table, hasher.hash(le64_at::<1, _>(at.bytes)), at.index + 1);
@@ -929,18 +931,17 @@ impl<'a> DictBlock<'a> {
 #[derive(Clone, Copy)]
 pub(super) struct TaggedTable<'a> {
     table: &'a [u32],
-    /// To a hash and a tag.
-    hasher: Hasher,
+    /// How many bits a hash and a tag have.
+    h_bits: u32,
     /// The index that the first place has in the table.
     start_index: u32,
 }
 
 impl<'a> TaggedTable<'a> {
-    /// `mls` is how many bytes are hashed.
-    pub(super) fn new(table: &'a [u32], h_bits: u32, mls: u32, start_index: u32) -> Result<Self> {
+    pub(super) fn new(table: &'a [u32], h_bits: u32, start_index: u32) -> Result<Self> {
         Ok(Self {
             table: table.sub(..1 << (h_bits - ZSTD_SHORT_CACHE_TAG_BITS))?,
-            hasher: Hasher::new(h_bits, mls),
+            h_bits,
             start_index,
         })
     }
@@ -949,7 +950,7 @@ impl<'a> TaggedTable<'a> {
     /// tells that it is for something else, or if it is the first place, which stands for none.
     #[inline(always)]
     pub(super) fn get<const MLS: u32>(self, bytes: u64) -> Option<u32> {
-        let hash_and_tag = self.hasher.with_mls(MLS).hash(bytes);
+        let hash_and_tag = Hasher::new(self.h_bits, MLS).hash(bytes);
         let index_and_tag = hashed_get(self.table, hash_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS);
         if !compare_packed_tags(index_and_tag as usize, hash_and_tag) {
             return None;
@@ -1086,7 +1087,6 @@ pub(crate) fn compress_block_fast_dict_match_state(
     let dict_table = TaggedTable::new(
         &dms.ms.hash_table,
         dms.ms.tagged_hash_log(),
-        ms.c_params.min_match,
         block.dict_start_index,
     )?;
     let hlog = ms.c_params.hash_log;

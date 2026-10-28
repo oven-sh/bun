@@ -2960,6 +2960,17 @@ console.log(<div {...obj} key="after" />);`),
       expect(out).toMatch(/^import { createElement as (\w+) } from "react";\nexport default \1\("div",/);
     });
 
+    it("key-after-spread imports createElement from the tsconfig jsxImportSource", () => {
+      const out = new Bun.Transpiler({
+        loader: "tsx",
+        tsconfig: { compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } },
+        logLevel: "error",
+      }).transformSync(`export default <div {...obj} key="after"><span /></div>;`);
+      expect(out).toMatch(
+        /^import { jsx as (\w+) } from "preact\/jsx-runtime";\nimport { createElement as (\w+) } from "preact";\nexport default \2\("div",/,
+      );
+    });
+
     it("does not affect the classic runtime", () => {
       const out = new Bun.Transpiler({
         loader: "tsx",
@@ -2986,6 +2997,17 @@ console.log(<div {...obj} key="after" />);`),
       ]);
       expect(new Bun.Transpiler({ ...opts, autoImportJSX: false }).scan("export default <div/>;").imports).toEqual([]);
       expect(new Bun.Transpiler(opts).scan("export const x = 1;").imports).toEqual([]);
+    });
+
+    it(".scan() and .scanImports() honour logLevel like .transformSync()", () => {
+      const src = `export default <div {...p} key="k" />;`;
+      const loud = new Bun.Transpiler({ loader: "tsx" });
+      expect(() => loud.scan(src)).toThrow('"key" prop after a {...spread} is deprecated in JSX');
+      expect(() => loud.scanImports(src)).toThrow('"key" prop after a {...spread} is deprecated in JSX');
+
+      const quiet = new Bun.Transpiler({ loader: "tsx", logLevel: "error" });
+      expect(quiet.scan(src).imports).toEqual([{ kind: "import-statement", path: "react" }]);
+      expect(quiet.scanImports(src)).toEqual([{ kind: "import-statement", path: "react" }]);
     });
 
     describe(".scanImports() reports the injected JSX runtime import", () => {
@@ -3034,6 +3056,44 @@ console.log(<div {...obj} key="after" />);`),
           [{ kind: "import-statement", path: "preact/jsx-dev-runtime" }],
         ],
         ["no JSX", dev, "export const x = 1;", []],
+        // A key after a spread falls back to createElement from the package.
+        [
+          "createElement fallback alone",
+          { ...dev, logLevel: "error" },
+          `export default <div {...p} key="k" />;`,
+          [{ kind: "import-statement", path: "react" }],
+        ],
+        [
+          "createElement fallback with a child element",
+          { ...dev, logLevel: "error" },
+          `export default <div {...p} key="k"><span/></div>;`,
+          [...jsxDevRuntime, { kind: "import-statement", path: "react" }],
+        ],
+        [
+          "createElement fallback with jsxImportSource",
+          {
+            loader: "tsx",
+            tsconfig: { compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } },
+            logLevel: "error",
+          },
+          `export default <div {...p} key="k"><span/></div>;`,
+          [
+            { kind: "import-statement", path: "preact/jsx-runtime" },
+            { kind: "import-statement", path: "preact" },
+          ],
+        ],
+        [
+          "createElement fallback with @jsxImportSource pragma",
+          { ...dev, logLevel: "error" },
+          `/** @jsxImportSource preact */\nexport default <div {...p} key="k" />;`,
+          [{ kind: "import-statement", path: "preact" }],
+        ],
+        [
+          "createElement fallback under the classic runtime",
+          { loader: "tsx", tsconfig: { compilerOptions: { jsx: "react" } }, logLevel: "error" },
+          `export default <div {...p} key="k" />;`,
+          [],
+        ],
       ])("%s", (_, opts, src, expected) => {
         const t = new Bun.Transpiler(opts);
         expect(t.scanImports(src)).toEqual(expected);

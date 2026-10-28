@@ -55,7 +55,7 @@ pub(crate) fn add_declaration_files(
         if !has_javascript(&declaration.source) {
             continue;
         }
-        let Some(path) = declaration_path(root_directory, &declaration.source) else {
+        let Some(path) = path_below(root_directory, &declaration.beside_source) else {
             return Err(OutsideRootDirectory {
                 source: declaration.source,
                 root_directory: root_directory.to_vec(),
@@ -76,22 +76,21 @@ pub(crate) fn add_declaration_files(
 }
 
 pub(super) fn declaration_path(root_directory: &[u8], source: &[u8]) -> Option<Vec<u8>> {
-    let relative = relative_platform::<Auto, false>(root_directory, source);
+    let relative = path_below(root_directory, source)?;
+    let (stem, extension) = DECLARATION_EXTENSIONS
+        .iter()
+        .find_map(|(from, to)| Some((relative.strip_suffix(*from)?, *to)))?;
+    Some([stem, extension].concat())
+}
+
+fn path_below(root_directory: &[u8], path: &[u8]) -> Option<Vec<u8>> {
+    let relative = relative_platform::<Auto, false>(root_directory, path);
     if leaves_its_directory(relative) {
         return None;
     }
-    let known = DECLARATION_EXTENSIONS
-        .iter()
-        .find_map(|(from, to)| Some([relative.strip_suffix(*from)?, *to].concat()));
-    // `GetDeclarationEmitExtensionForPath`: `App.vue`, which a content mapper reads, has `App.d.vue.ts`.
-    let mut path = known.unwrap_or_else(|| {
-        let name = relative.len() - bun_paths::basename(relative).len();
-        let dot = bun_core::strings::last_index_of_char(&relative[name..], b'.');
-        let (stem, extension) = relative.split_at(dot.map_or(relative.len(), |dot| name + dot));
-        [stem, b".d", extension, b".ts"].concat()
-    });
-    platform_to_posix_in_place::<u8>(&mut path);
-    Some(path)
+    let mut relative = relative.to_vec();
+    platform_to_posix_in_place::<u8>(&mut relative);
+    Some(relative)
 }
 
 fn leaves_its_directory(relative: &[u8]) -> bool {

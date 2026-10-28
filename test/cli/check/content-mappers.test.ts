@@ -1256,6 +1256,22 @@ done({ ...built, declarations: fs.readdirSync("out").filter(name => /\\.d\\.(vue
       });
     });
 
+    test("the declaration file of App.vue has the name that the others import", async () => {
+      const program = `
+const { success } = await build({ runExternalCode: true }, ${dts});
+done({ success, main: fs.readFileSync("out/main.d.ts", "utf8"), app: fs.readFileSync("out/App.d.ts", "utf8") });`;
+      const options = {
+        mapper: `serve();`,
+        manifest: { outputExtensions: { ".vue": ".js" } },
+        compilerOptions: { rewriteRelativeImportExtensions: true },
+      };
+      expect(await run(options, program)).toEqual({
+        success: true,
+        main: `import type { Count } from "./App.js";\nexport declare const one: Count;\n`,
+        app: "export type Count = number;\n",
+      });
+    });
+
     test("the errors in App.vue fail the build", async () => {
       const program = `done(await build({ runExternalCode: true }, ${dts}));`;
       expect(await run({ mapper: `${recordsPid} serve();`, files: wrong }, program)).toEqual({

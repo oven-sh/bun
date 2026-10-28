@@ -848,8 +848,9 @@ pub(crate) fn run_scripts_with_filter(
             store_root_fd: false,
         },
     )?;
+    // In place: its linker points back into it.
     // SAFETY: configure_env_for_run fully initializes the out-param on Ok.
-    let this_transpiler = unsafe { this_transpiler.assume_init() };
+    let this_transpiler = unsafe { this_transpiler.assume_init_ref() };
 
     let selected =
         FilterArg::select_packages(&*ctx, &this_transpiler.resolver, fsinstance.top_level_dir())?;

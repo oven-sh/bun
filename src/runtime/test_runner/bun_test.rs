@@ -934,38 +934,47 @@ impl BunTest {
             }
         }
 
-        // SAFETY: loop done; sole `&mut` for the timer update.
-        unsafe { (*this).update_min_timeout(global_this, &min_timeout) };
+        // SAFETY: `this` is `this_strong`'s payload; the loop's reborrows have ended.
+        unsafe { Self::update_min_timeout(this, global_this, &min_timeout) };
         Ok(())
     }
 
-    fn update_min_timeout(&mut self, global_this: &JSGlobalObject, min_timeout: &Timespec) {
+    /// # Safety
+    /// `this` comes from the `UnsafeCell` of a live `Rc<BunTestCell>`, and nothing borrows the `BunTest`.
+    unsafe fn update_min_timeout(this: *mut Self, global_this: &JSGlobalObject, min_timeout: &Timespec) {
         let _g = group_begin!();
+        // Not through a `&mut BunTest`: the heap keeps this pointer, and the handler walks back
+        // from it to the `BunTest`.
+        // SAFETY: `this` is live.
+        let timer = unsafe { &raw mut (*this).timer };
+        // SAFETY: as above; nothing borrows the node.
+        let next = unsafe { (*timer).next };
         // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
         bun_core::scoped_log!(
             bun_test_group,
             "-> timeout: {:?} {}.{}, {:?}",
             min_timeout,
-            self.timer.next.sec,
-            self.timer.next.nsec,
-            Timespec::order_ignore_epoch(*min_timeout, self.timer.next)
+            next.sec,
+            next.nsec,
+            Timespec::order_ignore_epoch(*min_timeout, next)
         );
-        if Timespec::order_ignore_epoch(*min_timeout, self.timer.next) == core::cmp::Ordering::Less {
+        if Timespec::order_ignore_epoch(*min_timeout, next) == core::cmp::Ordering::Less {
             bun_core::scoped_log!(bun_test_group, "-> setting timer to {:?}", min_timeout);
             let all = crate::timer::All::of(global_this.bun_vm());
-            if self.timer.next != Timespec::EPOCH {
+            if next != Timespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> removing existing timer");
                 // SAFETY: `next` is not `EPOCH` only while the node is linked:
                 // `bun_test_timeout_callback`, which runs once it is popped or
                 // `remove_active_timeout` has unlinked it, resets `next` first thing.
-                unsafe { all.remove(&raw mut self.timer) };
+                unsafe { all.remove(timer) };
             }
-            self.timer.next = *min_timeout;
-            if self.timer.next != Timespec::EPOCH {
+            // SAFETY: live, unlinked and not borrowed.
+            unsafe { (*timer).next = *min_timeout };
+            if *min_timeout != Timespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> inserting timer");
-                // SAFETY: unlinked: `next` was `EPOCH`, or it was removed above. `self` is the
-                // payload of an `Rc<BunTestCell>` (`run` got it from one), and `Drop` unlinks the node.
-                unsafe { all.insert(&raw mut self.timer) };
+                // SAFETY: unlinked: `next` was `EPOCH`, or it was removed above. `timer` reaches the
+                // whole `BunTest`, which its `Rc` pins, and `Drop` unlinks the node.
+                unsafe { all.insert(timer) };
                 if debug::group::get_log_enabled() {
                     let duration = min_timeout.since_now_force_real_time();
                     bun_core::scoped_log!(bun_test_group, "-> timer duration: {}", duration);
@@ -1110,8 +1119,8 @@ impl BunTest {
             };
         }
 
-        // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
-        unsafe { (*this).update_min_timeout(global_this, timeout) };
+        // SAFETY: `UnsafeCell`-derived; nothing borrows it at this point (before JS re-entry).
+        unsafe { Self::update_min_timeout(this, global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
         let result: JSValue = match vm.event_loop().run_callback_with_result_and_forcefully_drain_microtasks(bun_event_loop::ContextId::NONE, 
             cfg_callback,

@@ -247,7 +247,8 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     expect(sha1(body)).toBe(expectedHash);
   });
 
-  test("a client disconnect while a large write is draining releases the pin", async () => {
+  // The pinned-tail state is never reached on Windows (see the first test), so there is no pin to release.
+  test.skipIf(isWindows)("a client disconnect while a large write is draining releases the pin", async () => {
     // Run in a child so the pin release on the close path is observed in
     // isolation: after 'close' fires the backing store is unpinned, so
     // transfer() detaches again.
@@ -261,14 +262,20 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
         const { once } = require("node:events");
         const CHUNK_SIZE = ${CHUNK_SIZE};
         const PATTERN = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
+        let detachedWhilePending;
         let detachedAfterClose;
         const server = http.createServer((req, res) => {
-          const payload = Buffer.alloc(CHUNK_SIZE, PATTERN);
+          // A pending write pins only a Buffer that already has an ArrayBuffer behind it.
+          const payload = Buffer.from(new ArrayBuffer(CHUNK_SIZE)).fill(PATTERN);
           res.writeHead(200, { "Content-Type": "application/octet-stream" });
           res.write(payload);
+          // The tail is pending, so the ArrayBuffer is pinned and transfer() copies.
+          payload.buffer.transfer();
+          detachedWhilePending = payload.buffer.detached;
           res.once("close", () => {
             // The close path unpinned the backing store, so transfer() detaches.
-            payload.buffer.transfer();
+            // It throws if the first transfer() already detached the buffer.
+            if (!detachedWhilePending) payload.buffer.transfer();
             detachedAfterClose = payload.buffer.detached;
           });
         });
@@ -283,7 +290,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
         for (let i = 0; i < 50 && detachedAfterClose === undefined; i++) {
           await new Promise(r => setTimeout(r, 10));
         }
-        console.log(JSON.stringify({ detachedAfterClose }));
+        console.log(JSON.stringify({ detachedWhilePending, detachedAfterClose }));
         server.close();
         `,
       ],
@@ -294,7 +301,13 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const result = JSON.parse(stdout.trim());
-    expect({ detachedAfterClose: result.detachedAfterClose, exitCode, stderr }).toEqual({
+    expect({
+      detachedWhilePending: result.detachedWhilePending,
+      detachedAfterClose: result.detachedAfterClose,
+      exitCode,
+      stderr,
+    }).toEqual({
+      detachedWhilePending: false,
       detachedAfterClose: true,
       exitCode: 0,
       stderr: expect.any(String),
@@ -481,21 +494,27 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     30_000,
   );
 
-  test("a second write before drain releases the pin on the first buffer", async () => {
+  // The pinned-tail state is never reached on Windows (see the first test), so there is no pin to release.
+  test.skipIf(isWindows)("a second write before drain releases the pin on the first buffer", async () => {
+    let detachedWhilePending: boolean | undefined;
     let detachedAfterSecondWrite: boolean | undefined;
     const total = CHUNK_SIZE + 1024;
 
     await using server = http.createServer((req, res) => {
-      const first = makePayload(CHUNK_SIZE);
+      const first = makeArrayBufferBackedPayload(CHUNK_SIZE);
       res.writeHead(200, {
         "Content-Type": "application/octet-stream",
         "Content-Length": String(total),
       });
       res.write(first);
+      // The tail of `first` is pending, so its ArrayBuffer is pinned and transfer() copies.
+      first.buffer.transfer();
+      detachedWhilePending = first.buffer.detached;
       res.write(Buffer.alloc(1024, 0xee));
       // The second write spilled first's tail into uWS backpressure and
-      // released the pin, so transfer() detaches again.
-      first.buffer.transfer();
+      // released the pin, so transfer() detaches again. It throws if the
+      // first transfer() already detached the buffer.
+      if (!detachedWhilePending) first.buffer.transfer();
       detachedAfterSecondWrite = first.buffer.detached;
       res.end();
     });
@@ -504,6 +523,9 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
 
     const body = await fetch(`http://localhost:${port}/`).then(r => r.arrayBuffer());
     expect(body.byteLength).toBe(total);
-    expect(detachedAfterSecondWrite).toBe(true);
+    expect({ detachedWhilePending, detachedAfterSecondWrite }).toEqual({
+      detachedWhilePending: false,
+      detachedAfterSecondWrite: true,
+    });
   });
 });

@@ -140,6 +140,16 @@ export default b.declarations(
     uses: { object: [b.runs("OwnKeys"), b.readsContents()], filter: converted },
     implementation: b.hostCall,
   }),
+  // It reads the own @@toStringTag and `constructor` of the value and of each object above it where they are stored, and of a `constructor` that is a function the name it was made with: no getter and no trap runs, and a proxy ends the walk. A class, its prototype object and a function of the program make their own properties first, as for any lookup.
+  b.static(cpp("UtilInspect.cpp", "jsFunctionGetConstructorName"), {
+    args: { value: b.any.optional },
+    returns: b.string,
+    capability: "heap",
+    throws: true,
+    uses: { value: b.inspected },
+    reads: ["ObjectFields", "ShapeWords", "OrderWords", "NamedProperties", "PrototypeLinks"],
+    implementation: b.hostCall,
+  }),
   // It lists the own keys of the holder and asks first `except` and then the holder for the property under each: no getter of either runs. Of each function that the holder has for a value it reads `length`, and those without parameters it calls on the receiver. Of an object that such a call answers it asks whether it has @@iterator.
   b.static(cpp("BunCompiledModules.cpp", "jsFunctionCallOwnFunctionsWithoutParameters"), {
     args: { holder: b.object, except: b.object, receiver: b.any.optional },

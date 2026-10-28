@@ -1,11 +1,11 @@
 import assert from "assert";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, nodeExe, tempDir, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, nodeExe, withoutAggressiveGC } from "harness";
 import { Console } from "node:console";
 import { join } from "node:path";
 import { Writable } from "node:stream";
-import { pathToFileURL } from "node:url";
 import util from "util";
+import * as dataNamespace from "./constructor-export-fixture.json";
 import constructorNameRows from "./constructor-name-fixture.cjs";
 
 const { constructorNames, builtinNames, differsFromNode, getterRuns, builtinName } = constructorNameRows;
@@ -133,8 +133,13 @@ test.each(differsFromNode)("util.inspect does not name %s as Node.js does", (_, 
 const node = nodeExe();
 async function nodeVersion() {
   if (!node) return undefined;
-  await using proc = Bun.spawn({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
-  return (await proc.stdout.text()).trim();
+  try {
+    await using proc = Bun.spawn({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
+    return (await proc.stdout.text()).trim();
+  } catch {
+    // A file that cannot start: a script whose interpreter is gone, a binary of another architecture.
+    return undefined;
+  }
 }
 
 test.skipIf((await nodeVersion()) !== process.versions.node)(
@@ -163,11 +168,9 @@ test.skipIf((await nodeVersion()) !== process.versions.node)(
   },
 );
 
-test("util.inspect does not take the name of a module namespace from an export named constructor", async () => {
+test("util.inspect does not take the name of a module namespace from an export named constructor", () => {
   // Each key of a JSON file is an export. The namespace object of Bun has a prototype, so the lookup names it.
-  using dir = tempDir("inspect-namespace", { "data.json": '{"constructor":{"name":{"toString":1}}}' });
-  const namespace = await import(pathToFileURL(join(String(dir), "data.json")).href);
-  expect({ value: util.inspect(namespace), pastDepth: util.inspect({ a: namespace }, { depth: 0 }) }).toEqual({
+  expect({ value: util.inspect(dataNamespace), pastDepth: util.inspect({ a: dataNamespace }, { depth: 0 }) }).toEqual({
     value:
       "Module <[Object: null prototype] {}> [Module] {\n" +
       "  constructor: { name: { toString: 1 } },\n" +
@@ -179,7 +182,9 @@ test("util.inspect does not take the name of a module namespace from an export n
 
 test("util.inspect does not read the prototype that import.meta hides", () => {
   // import.meta reports no prototype. The object in its structure has the tag ImportMeta.
-  expect(util.inspect(Object.create(import.meta))).toStartWith("Object <[Object: null prototype]");
+  expect(util.inspect(Object.create(import.meta))).toBe(
+    "Object <[Object: null prototype] [ImportMeta] {}> [ImportMeta] {}",
+  );
 });
 
 test("util.inspect calls no Proxy trap to name a value", () => {

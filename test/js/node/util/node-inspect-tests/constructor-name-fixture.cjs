@@ -4,9 +4,9 @@
 //
 // Node.js takes the name from V8's GetConstructorName. That lookup reads data properties only: no getter and no
 // Proxy trap runs. UtilInspect.cpp has a port of its walk of the chain and of V8's word for a type. V8 first asks
-// for the constructor that made the value, which JavaScriptCore does not record. Only the kind of a function
-// stands in for it. Every expected string is the output of the Node.js version that Bun reports, but for the
-// first strings of `differsFromNode`.
+// for the constructor that made the value, which JavaScriptCore does not record, so nothing stands in for it.
+// Every expected string is the output of the Node.js version that Bun reports, but for the first strings of
+// `differsFromNode`.
 const util = require("node:util");
 const vm = require("node:vm");
 const { EventEmitter } = require("node:events");
@@ -36,6 +36,13 @@ const asPrototype = value => (reproto({}, value), value);
 const native = name => vm.runInNewContext(name);
 function Foo() {}
 class Baz {}
+// instanceof answers false for each instance, so the lookup of util.inspect passes the constructor of the class by.
+class Denies {
+  static [Symbol.hasInstance]() {
+    return false;
+  }
+}
+reproto(Denies.prototype, null);
 class NameGetter {
   static get name() {
     getterRuns.push("name");
@@ -43,6 +50,19 @@ class NameGetter {
   }
 }
 const renamed = define(function Renamed() {}, "name", { value: "NewName" });
+const key = Symbol("key");
+// A computed key names a function when the program runs. V8 and JavaScriptCore make such a function with no name.
+class Keyed {
+  [key]() {}
+  get [key.description]() {
+    return 1;
+  }
+  get written() {
+    return 1;
+  }
+}
+const getterOf = (holder, name) => Object.getOwnPropertyDescriptor(holder, name).get;
+const literal = { [key]() {} };
 const noName = new Function("return function () {}")();
 // The transpiler folds `{ key: fn }.key` written in one expression, and the function then has no name.
 const namedByProperty = { expression: function () {} };
@@ -68,6 +88,7 @@ const constructorNames = [
   ["own constructor", () => util.inspect(define(bare(), "constructor", data(Foo))), "[Object: null prototype] {}"],
   ["constructor on the prototype", () => util.inspect(child(define(bare(), "constructor", data(Foo)))), "Foo <[Object: null prototype] {}> {}"],
   ["class on the prototype", () => util.inspect(child(define(bare(), "constructor", data(Baz)))), "Baz <[Object: null prototype] {}> {}"],
+  ["instance of a class whose Symbol.hasInstance answers false", () => util.inspect(new Denies()), "Denies <[Object: null prototype] {}> {}"],
   ["built-in constructor on the prototype", () => util.inspect(child(define(bare(), "constructor", data(Map)))), "Map <[Object: null prototype] {}> {}"],
   ["constructor that is not a function", () => util.inspect(child(define(bare(), "constructor", data({ name: "Fake" })))), "Object <[Object: null prototype] {}> {}"],
   ["constructor that is a bound function", () => util.inspect(child(define(bare(), "constructor", data(Foo.bind(null))))), "Object <[Object: null prototype] {}> {}"],
@@ -76,7 +97,11 @@ const constructorNames = [
   ["constructor that is a built-in function written in JS", () => util.inspect(child(define(bare(), "constructor", data(Array.prototype.map)))), "map <[Object: null prototype] {}> {}"],
   ["constructor that is a native function", () => util.inspect(child(define(bare(), "constructor", data(native("parseInt"))))), "parseInt <[Object: null prototype] {}> {}"],
   ["constructor with no name", () => util.inspect(child(define(bare(), "constructor", data(noName)))), "Object <[Object: null prototype] {}> {}"],
-  ["constructor that the Function constructor made", () => util.inspect(child(define(bare(), "constructor", data(new Function(""))))), "Object <[Object: null prototype] {}> {}"],
+  ["constructor that is a method under a computed key", () => util.inspect(child(define(bare(), "constructor", data(Keyed.prototype[key])))), "Object <[Object: null prototype] {}> {}"],
+  ["constructor that is a getter under a computed key", () => util.inspect(child(define(bare(), "constructor", data(getterOf(Keyed.prototype, "key"))))), "Object <[Object: null prototype] {}> {}"],
+  ["constructor that is a getter under a computed key, below a constructor with a name", () => util.inspect(child(define(child(define(bare(), "constructor", data(Foo))), "constructor", data(getterOf(Keyed.prototype, "key"))))), "Foo <Foo <[Object: null prototype] {}>> {}"],
+  ["constructor that is a getter under a written key", () => util.inspect(child(define(bare(), "constructor", data(getterOf(Keyed.prototype, "written"))))), "get written <[Object: null prototype] {}> {}"],
+  ["constructor named anonymous", () => util.inspect(child(define(bare(), "constructor", data(function anonymous() {})))), "anonymous <[Object: null prototype] {}> {}"],
   ["constructor named Object", () => util.inspect(child(define(bare(), "constructor", data(function Object() {})))), "Object <[Object: null prototype] {}> {}"],
   ["constructor named Object, below a constructor with a name", () => util.inspect(child(define(child(define(bare(), "constructor", data(Foo))), "constructor", data(function Object() {})))), "Foo <Foo <[Object: null prototype] {}>> {}"],
   ["constructor with no name, below a constructor with a name", () => util.inspect(child(define(child(define(bare(), "constructor", data(Foo))), "constructor", data(noName)))), "Foo <Foo <[Object: null prototype] {}>> {}"],
@@ -114,28 +139,19 @@ const constructorNames = [
   ["WeakMap with no prototype, past the depth", () => pastDepth(reproto(new WeakMap(), null)), "{ a: [WeakMap: null prototype] }"],
   ["SharedArrayBuffer with no prototype, past the depth", () => pastDepth(reproto(new SharedArrayBuffer(1), null)), "{ a: [SharedArrayBuffer: null prototype] }"],
 
-  // The kind of a function names it, unless the function is a prototype. A class and a bound function get
-  // their name from the chain.
+  // The chain names a function as it names any value, and the word for its type is Function.
   ["function", () => util.inspect(reproto(function f() {}, bare())), "[Function: f] Function <[Object: null prototype] {}>"],
-  ["async function", () => util.inspect(reproto(async function f() {}, bare())), "[AsyncFunction: f] AsyncFunction <[Object: null prototype] {}>"],
-  ["generator function", () => util.inspect(reproto(function* f() {}, bare())), "[GeneratorFunction: f] GeneratorFunction <[Object: null prototype] {}>"],
-  ["async generator function", () => util.inspect(reproto(async function* f() {}, bare())), "[AsyncGeneratorFunction: f] AsyncGeneratorFunction <[Object: null prototype] {}>"],
   ["class", () => util.inspect(reproto(class K {}, bare())), "[class K [Function <[Object: null prototype] {}>]]"],
   ["bound function", () => util.inspect(reproto(function f() {}.bind(null), bare())), "[Function: bound f] Function <[Object: null prototype] {}>"],
-  ["function with a tag on the prototype", () => util.inspect(reproto(function f() {}, tagged())), "[Function: f] Function <[Object: null prototype] [Tag] {}> [Tag]"],
   ["class with a tag on the prototype", () => util.inspect(reproto(class K {}, tagged())), "[class K [Tag <[Object: null prototype] [Tag] {}>] [Tag]]"],
   ["function of a ShadowRealm with a tag on the prototype", () => util.inspect(reproto(new ShadowRealm().evaluate("(function f() {})"), tagged())), "[Function: f] Tag <[Object: null prototype] [Tag] {}> [Tag]"],
   ["bound function with a tag on the prototype", () => util.inspect(reproto(function f() {}.bind(null), tagged())), "[Function: bound f] Tag <[Object: null prototype] [Tag] {}> [Tag]"],
-  ["native function with a tag on the prototype", () => util.inspect(reproto(native("parseInt"), tagged())), "[Function: parseInt] Function <[Object: null prototype] [Tag] {}> [Tag]"],
-  ["native function with a constructor on the prototype", () => util.inspect(reproto(native("parseInt"), define(bare(), "constructor", data(Foo)))), "[Function: parseInt] Function <[Object: null prototype] {}>"],
-  ["native constructor with a tag on the prototype", () => util.inspect(reproto(native("Map"), tagged())), "[Function: Map] Function <[Object: null prototype] [Tag] {}> [Tag]"],
   ["native function that is a prototype, with a tag on the prototype", () => util.inspect(asPrototype(reproto(native("parseInt"), tagged()))), "[Function: parseInt] Tag <[Object: null prototype] [Tag] {}> [Tag]"],
   ["object whose prototype is an async function", () => util.inspect(child(reproto(async function f() {}, bare()))), "Object <Function <[Object: null prototype] {}>> {}"],
   ["async function that is a prototype", () => util.inspect(asPrototype(reproto(async function f() {}, bare()))), "[AsyncFunction: f] Function <[Object: null prototype] {}>"],
-  ["async function with no prototype, past the depth", () => pastDepth(Object.assign(reproto(async function f() {}, null), { x: 1 })), "{ a: [AsyncFunction: null prototype] }"],
-  ["generator function with no prototype, past the depth", () => pastDepth(Object.assign(reproto(function* f() {}, null), { x: 1 })), "{ a: [GeneratorFunction: null prototype] }"],
 
-  // The lookup ends at an object that answers getPrototypeOf itself: a Proxy, the global of a node:vm context.
+  // The lookup ends at an object that answers getPrototypeOf itself: a Proxy. The global of a node:vm context has
+  // the prototype that a script set.
   ["object whose prototype is a Proxy of an object with a constructor", () => util.inspect(child(new Proxy(child(define(bare(), "constructor", data(Foo))), {}))), "Object <Object <[Object: null prototype] {}>> {}"],
   ["child of the global of a node:vm context, after that global lost a prototype that has a tag", () => util.inspect(child(vm.runInNewContext('Object.defineProperty(Object.getPrototypeOf(globalThis), Symbol.toStringTag, { value: "Stale" }); Object.setPrototypeOf(globalThis, null); globalThis'))), "Object <[Object: null prototype] {}> {}"],
 ];
@@ -188,8 +204,9 @@ const builtinNames = [
 ];
 
 // What the port cannot know. V8 keeps the constructor that made a value and names the value by it first, with the
-// `name` property of that constructor when it is a string. V8 also infers a name for a function from the source.
-// The last string of each row is the output of Node.js.
+// `name` property of that constructor when it is a string. For a function that is not and was not a prototype,
+// that constructor is the one of its kind. V8 also infers a name for a function from the source, and gives no
+// name to a function that the Function constructor made. The last string of each row is the output of Node.js.
 // prettier-ignore
 const differsFromNode = [
   ["an instance of a class, with no prototype", () => util.inspect(reproto(new (class Foo {})(), null)), "[Object: null prototype] {}", "[Foo: null prototype] {}"],
@@ -202,6 +219,17 @@ const differsFromNode = [
   ["an instance of a class, with a tag on the prototype", () => util.inspect(reproto(new (class Foo {})(), tagged())), "Tag <[Object: null prototype] [Tag] {}> [Tag] {}", "Foo <[Object: null prototype] [Tag] {}> [Tag] {}"],
   ["an instance of a class whose name was redefined, on a copy of its prototype", () => { class Model {} define(Model, "name", { value: "Restored" }); return util.inspect(reproto(new Model(), child(null, Object.getOwnPropertyDescriptors(Model.prototype)))); }, "Model <[Object: null prototype] {}> {}", "Restored <[Object: null prototype] {}> {}"],
   ["a constructor that is a function with no name, assigned to a member", () => { const ns = {}; ns.Widget = function () {}; return util.inspect(child(define(bare(), "constructor", data(ns.Widget)))); }, "Object <[Object: null prototype] {}> {}", "ns.Widget <[Object: null prototype] {}> {}"],
+  ["an async function", () => util.inspect(reproto(async function f() {}, bare())), "[AsyncFunction: f] Function <[Object: null prototype] {}>", "[AsyncFunction: f] AsyncFunction <[Object: null prototype] {}>"],
+  ["a generator function", () => util.inspect(reproto(function* f() {}, bare())), "[GeneratorFunction: f] Function <[Object: null prototype] {}>", "[GeneratorFunction: f] GeneratorFunction <[Object: null prototype] {}>"],
+  ["an async generator function", () => util.inspect(reproto(async function* f() {}, bare())), "[AsyncGeneratorFunction: f] Function <[Object: null prototype] {}>", "[AsyncGeneratorFunction: f] AsyncGeneratorFunction <[Object: null prototype] {}>"],
+  ["a function with a tag on the prototype", () => util.inspect(reproto(function f() {}, tagged())), "[Function: f] Tag <[Object: null prototype] [Tag] {}> [Tag]", "[Function: f] Function <[Object: null prototype] [Tag] {}> [Tag]"],
+  ["a native function with a tag on the prototype", () => util.inspect(reproto(native("parseInt"), tagged())), "[Function: parseInt] Tag <[Object: null prototype] [Tag] {}> [Tag]", "[Function: parseInt] Function <[Object: null prototype] [Tag] {}> [Tag]"],
+  ["a native function with a constructor on the prototype", () => util.inspect(reproto(native("parseInt"), define(bare(), "constructor", data(Foo)))), "[Function: parseInt] Foo <[Object: null prototype] {}>", "[Function: parseInt] Function <[Object: null prototype] {}>"],
+  ["a native constructor with a tag on the prototype", () => util.inspect(reproto(native("Map"), tagged())), "[Function: Map] Tag <[Object: null prototype] [Tag] {}> [Tag]", "[Function: Map] Function <[Object: null prototype] [Tag] {}> [Tag]"],
+  ["an async function with no prototype, past the depth", () => pastDepth(Object.assign(reproto(async function f() {}, null), { x: 1 })), "{ a: [Function: null prototype] }", "{ a: [AsyncFunction: null prototype] }"],
+  ["a generator function with no prototype, past the depth", () => pastDepth(Object.assign(reproto(function* f() {}, null), { x: 1 })), "{ a: [Function: null prototype] }", "{ a: [GeneratorFunction: null prototype] }"],
+  ["a constructor that the Function constructor made", () => util.inspect(child(define(bare(), "constructor", data(new Function(""))))), "anonymous <[Object: null prototype] {}> {}", "Object <[Object: null prototype] {}> {}"],
+  ["a constructor that is a method of an object literal under a computed key", () => util.inspect(child(define(bare(), "constructor", data(literal[key])))), "Object <[Object: null prototype] {}> {}", "literal <[Object: null prototype] {}> {}"],
   ["a child of the global of a node:vm context that has no prototype and a variable named constructor", () => util.inspect(child(vm.runInNewContext("Object.setPrototypeOf(globalThis, null); var constructor = function Foo() {}; globalThis"))), "Object <[Object: null prototype]> {}", "Foo <[Foo: null prototype]> {}"],
 ];
 

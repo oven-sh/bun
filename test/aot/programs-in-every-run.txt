@@ -390,6 +390,7 @@ builtin-modules/the-process-object-is-whole-at-the-first-statement
 builtin-modules/the-runtime-fills-lists-and-objects-that-it-has-made-itself
 builtin-modules/the-text-of-a-buffer-with-every-kind-of-receiver-encoding-and-bound
 builtin-modules/unused-next-tick-read-beside-other-entry-points
+builtin-modules/util-inspect-names-a-value-whose-chain-has-no-constructor
 bundler-features/a-call-marked-as-pure-that-the-build-keeps-stands-between-a-declaration-and-its-return
 bundler-features/a-flag-that-is-on-chooses-the-value-of-a-variable-that-is-returned-later
 bundler-features/a-flag-that-is-on-chooses-what-a-return-makes-of-a-variable
@@ -3498,6 +3499,7 @@ ways-into-library-modules/querystring-stringify-through-get-builtin-module-by-ap
 ways-into-library-modules/util-inspect-through-get-builtin-module-as-a-reaction
 webassembly/module-in-data-url
 who-writes-a-variable/the-exports-of-the-file-that-starts-the-program-are-stored-through-require-main
+workers/a-duplicate-entry-of-a-transfer-list-is-named-by-its-class
 workers/a-worker-of-text-asks-for-the-module-of-bun-s-own-tests
 workers/a-worker-of-text-loads-the-modules-of-bun
 workers/a-worker-of-text-runs-beside-compiled-workers

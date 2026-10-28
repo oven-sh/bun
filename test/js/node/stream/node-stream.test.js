@@ -1,7 +1,7 @@
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import { tmpdir } from "node:os";
@@ -1707,6 +1707,41 @@ describe("node v26 stream semantics", () => {
         .on("error", reject)
         .end(body);
       expect(await promise).toBe(body.toString("base64"));
+    });
+  });
+
+  // Upstream: nodejs/node#64048 (test-stream2-readable-wrap-proxy-methods.js), in Node v26.5.0.
+  describe("wrap() proxies the method at the first own key of the old stream", () => {
+    // An old stream that never ran the EventEmitter constructor: `_events` is not its first own key.
+    const oldStream = () => {
+      const old = Object.create(EventEmitter.prototype);
+      old.first = function () {
+        return this === old ? "first" : "not bound";
+      };
+      old.second = function () {
+        return this === old ? "second" : "not bound";
+      };
+      old.pause = () => {};
+      old.resume = () => {};
+      return old;
+    };
+
+    it.each([
+      ["readable.wrap(old)", old => new Readable().wrap(old)],
+      ["Readable.wrap(old)", old => Readable.wrap(old)],
+      [
+        "Readable.prototype[Symbol.asyncIterator] on an old stream",
+        old => Readable.prototype[Symbol.asyncIterator].call(old).stream,
+      ],
+      ["Readable.prototype.iterator on an old stream", old => Readable.prototype.iterator.call(old).stream],
+    ])("%s", (_, wrap) => {
+      const old = oldStream();
+      expect(Object.keys(old)[0]).toBe("first");
+      const wrapped = wrap(old);
+      expect({ first: wrapped.first?.(), second: wrapped.second?.() }).toEqual({ first: "first", second: "second" });
+      // The proxy does not replace what a Readable has itself.
+      expect(wrapped.pause).toBe(Readable.prototype.pause);
+      wrapped.destroy();
     });
   });
 

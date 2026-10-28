@@ -1,11 +1,12 @@
 // require() of an ES module graph that contains top-level await.
 //
 // Like Node, Bun rejects it with ERR_REQUIRE_ASYNC_MODULE, decided from the
-// records' [[HasTLA]] flags once the graph is loaded and before any module
-// body in it runs. $esmLoadSync used to load+link+evaluate in one step and
-// infer "async" from a still-pending promise afterwards, so side effects ran
-// before the throw, graphs whose awaits settled on microtasks alone were
-// returned, and a graph that import() had already evaluated was returned too.
+// records' [[HasTLA]] flags once the graph is loaded and before any ES module
+// in it runs. $esmLoadSync used to load+link+evaluate in one step and infer
+// "async" from a still-pending promise afterwards, so side effects ran before
+// the throw, and graphs whose awaits settled on microtasks alone were returned.
+// Unlike Node, a graph whose top-level awaits have all run to their end (an
+// import() evaluated it) is handed over: nothing is left to wait for.
 //
 // Separately, when $esmLoadSync does throw for a load it cannot finish
 // synchronously, it must only removeEntry() an entry it created itself. If an
@@ -81,25 +82,35 @@ describe("require(esm) rejects top-level await before evaluating anything", () =
     });
   });
 
-  test.concurrent("also when import() already evaluated the graph", async () => {
-    using dir = tempDir("require-esm-tla-cached", {
+  // The gate holds awaits-gate.mjs at its top-level await until the test has seen what require() does meanwhile.
+  test.concurrent("also while an import() still awaits in the graph, and hands the graph over once that has ended", async () => {
+    using dir = tempDir("require-esm-tla-states", {
       ...fixtures,
+      "awaits-gate.mjs": `globalThis.order.push("awaits-gate"); await globalThis.gate; export const x = "gate";`,
+      "imports-gate.mjs": `import { x as gate } from "./awaits-gate.mjs"; globalThis.order.push("imports-gate"); export const x = "imports:" + gate;`,
       "main.cjs": `
         const { attempt } = require("./attempt.cjs");
+        let open;
+        globalThis.gate = new Promise(resolve => (open = resolve));
         (async () => {
-          const first = await import("./parent.mjs");
-          const required = attempt("./parent.mjs");
-          const requiredDep = attempt("./dep-tla.mjs");
-          const second = await import("./parent.mjs");
-          console.log(JSON.stringify({ required, requiredDep, same: first === second, order: globalThis.order }));
+          const pending = import("./awaits-gate.mjs");
+          while (!globalThis.order.includes("awaits-gate")) await new Promise(resolve => setImmediate(resolve));
+          const whileAwaiting = [attempt("./awaits-gate.mjs"), attempt("./imports-gate.mjs")];
+          const orderWhileAwaiting = [...globalThis.order];
+          open();
+          const namespace = await pending;
+          const afterwards = [attempt("./awaits-gate.mjs"), attempt("./imports-gate.mjs")];
+          const same = require("./awaits-gate.mjs") === namespace;
+          console.log(JSON.stringify({ whileAwaiting, orderWhileAwaiting, afterwards, same, order: globalThis.order }));
         })();
       `,
     });
     expect(await run(String(dir), "main.cjs")).toEqual({
-      required: rejected,
-      requiredDep: rejected,
+      whileAwaiting: [rejected, rejected],
+      orderWhileAwaiting: ["awaits-gate"],
+      afterwards: [{ returned: "gate" }, { returned: "imports:gate" }],
       same: true,
-      order: ["dep-tla", "parent"],
+      order: ["awaits-gate", "imports-gate"],
     });
   });
 
@@ -160,9 +171,9 @@ describe("require(esm) rejects top-level await before evaluating anything", () =
       ...fixtures,
       "main.cjs": `
         globalThis.order = [];
-        function messageOf(file) {
+        function messageOf(load) {
           try {
-            require(file);
+            load();
             return "returned";
           } catch (e) {
             let message = e.message;
@@ -172,18 +183,24 @@ describe("require(esm) rejects top-level await before evaluating anything", () =
             return message.split("\\n");
           }
         }
-        const direct = messageOf("./parent.mjs");
+        const direct = messageOf(() => require("./parent.mjs"));
         // A wrapped handler calls the built-in one with the module that is being loaded, not the one that requires it.
         const builtin = require.extensions[".mjs"];
         require.extensions[".mjs"] = (module, filename) => builtin(module, filename);
-        const throughHandler = messageOf("./tla-value.mjs");
-        console.log(JSON.stringify({ direct, throughHandler }));
+        const throughHandler = messageOf(() => require("./tla-value.mjs"));
+        // A module object that no module required has no parent to name.
+        const orphan = new (require("node:module"))(require.resolve("./tla-value.mjs"));
+        orphan.filename = orphan.id;
+        const withoutParent = messageOf(() => builtin(orphan, orphan.filename));
+        console.log(JSON.stringify({ direct, throughHandler, withoutParent, order: globalThis.order }));
       `,
     });
     const message = "require() cannot be used on an ESM graph with top-level await. Use import() instead.";
     expect(await run(String(dir), "main.cjs")).toEqual({
       direct: [message, "  From <main.cjs>", "  Requiring <parent.mjs>", "  The top-level await is in <dep-tla.mjs>"],
       throughHandler: [message, "  From <main.cjs>", "  Requiring <tla-value.mjs>"],
+      withoutParent: [message, "  Requiring <tla-value.mjs>"],
+      order: [],
     });
   });
 });

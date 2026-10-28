@@ -942,26 +942,29 @@ static bool isModuleEvaluating(JSC::AbstractModuleRecord* record)
     return cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating;
 }
 
-// Past Status::New, LoadRequestedModules has completed: [[LoadedModules]] is complete, transitively.
-static bool isModuleGraphLoaded(JSC::AbstractModuleRecord* record)
-{
-    auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
-    return cyclic && cyclic->status() != JSC::CyclicModuleRecord::Status::New;
-}
-
-// Node's check before require(esm) may evaluate (v8::Module::IsGraphAsync): a [[HasTLA]] record anywhere in the loaded graph.
-static JSC::AbstractModuleRecord* findTopLevelAwaitInGraph(JSC::AbstractModuleRecord* root)
+// The module with top-level await that evaluation of `root`'s loaded graph has to wait for (ReadyForSyncExecution of the import defer proposal), or null.
+static JSC::AbstractModuleRecord* findPendingTopLevelAwait(JSC::AbstractModuleRecord* root)
 {
     WTF::UncheckedKeyHashSet<JSC::AbstractModuleRecord*> visited;
     WTF::Vector<JSC::AbstractModuleRecord*, 16> stack;
     visited.add(root);
     stack.append(root);
     while (!stack.isEmpty()) {
-        auto* record = stack.takeLast();
+        auto* record = dynamicDowncast<JSC::CyclicModuleRecord>(stack.takeLast());
+        // Done with its whole cycle, or mid-evaluation below this require(): a cycle that require() reads as it is.
+        if (!record || record->isSCCEvaluated() || record->status() == JSC::CyclicModuleRecord::Status::Evaluating)
+            continue;
         if (record->hasTLA())
             return record;
-        for (auto& [key, loaded] : record->loadedModules()) {
-            auto* dependency = loaded.m_module.get();
+        const auto& requests = record->requestedModules();
+        const auto& loaded = record->loadedModules();
+        for (unsigned i = 0; i < requests.size(); ++i) {
+            // An edge between two modules of a prelinked graph (a compiled executable's) is not in [[LoadedModules]].
+            auto* dependency = record->prelinkedRequestedModule(i);
+            if (!dependency) {
+                auto iter = loaded.find(JSC::ModuleMapKey { requests[i].m_specifier.impl(), requests[i].type() });
+                dependency = iter == loaded.end() ? nullptr : iter->value.m_module.get();
+            }
             if (dependency && visited.add(dependency).isNewEntry)
                 stack.append(dependency);
         }
@@ -971,20 +974,18 @@ static JSC::AbstractModuleRecord* findTopLevelAwaitInGraph(JSC::AbstractModuleRe
 
 static JSC::EncodedJSValue throwRequireAsyncModule(Zig::GlobalObject* globalObject, JSC::ThrowScope& scope, const WTF::String& key, Bun::JSCommonJSModule* requirer, JSC::AbstractModuleRecord* asyncRecord)
 {
-    WTF::String parentFilename;
-    if (requirer) {
-        JSValue filename = requirer->filename();
-        if (filename.isString()) {
-            parentFilename = asString(filename)->value(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        // A Module._extensions handler passes the module that is being loaded. The file whose require() this is, is its parent.
-        if (parentFilename == key) {
-            auto* parent = requirer->m_parent.get();
-            filename = parent ? parent->filename() : JSValue();
-            parentFilename = filename.isString() ? asString(filename)->value(globalObject) : WTF::String();
-            RETURN_IF_EXCEPTION(scope, {});
-        }
+    auto filenameOf = [&](Bun::JSCommonJSModule* module) -> WTF::String {
+        JSValue filename = module ? module->filename() : JSValue();
+        if (!filename || !filename.isString())
+            return {};
+        return asString(filename)->value(globalObject);
+    };
+    WTF::String parentFilename = filenameOf(requirer);
+    RETURN_IF_EXCEPTION(scope, {});
+    // A Module._extensions handler passes the module that is being loaded. The file whose require() this is, is its parent.
+    if (requirer && parentFilename == key) {
+        parentFilename = filenameOf(requirer->m_parent.get());
+        RETURN_IF_EXCEPTION(scope, {});
     }
     WTF::String from = parentFilename.isEmpty() ? emptyString() : makeString("\n  From "_s, parentFilename);
     WTF::String asyncKey = asyncRecord->moduleKey().isSymbol() ? WTF::String() : asyncRecord->moduleKey().string();
@@ -1154,11 +1155,6 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     bool entryExistedBefore = false;
     if (auto* entry = loader->registryEntry(key)) {
         entryExistedBefore = true;
-        // First, so that a graph import() has already evaluated is rejected too, as in Node.
-        if (auto* record = entry->record(); isModuleGraphLoaded(record)) {
-            if (auto* asyncRecord = findTopLevelAwaitInGraph(record))
-                return throwRequireAsyncModule(globalObject, scope, keyString, requirer, asyncRecord);
-        }
         if (isModuleEvaluated(entry->record()) || isModuleEvaluatingSync(entry->record())) {
             auto* ns = entry->record()->getModuleNamespace(globalObject, false);
             RETURN_IF_EXCEPTION(scope, {});
@@ -1167,10 +1163,10 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         // Any other Evaluating record (one with top-level await) must not
         // reach loadModuleSync: Link() and Evaluate() reject that status.
         if (isModuleEvaluating(entry->record()))
-            return JSValue::encode(throwException(globalObject, scope, Bun::createAsyncModuleRequiredError(globalObject, keyString)));
+            return throwRequireAsyncModule(globalObject, scope, keyString, requirer, entry->record());
     }
 
-    // Load the whole graph without evaluating it, so that top-level await is rejected before any module body runs.
+    // Load the whole graph without evaluating it, so that top-level await is rejected before any ES module of it runs.
     JSPromise* loadPromise;
     {
         JSC::VM::SynchronousModuleQueue queue;
@@ -1186,7 +1182,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     case JSPromise::Status::Fulfilled: {
         auto* entry = loader->registryEntry(key);
         if (auto* record = entry ? entry->record() : nullptr) {
-            if (auto* asyncRecord = findTopLevelAwaitInGraph(record))
+            if (auto* asyncRecord = findPendingTopLevelAwait(record))
                 return throwRequireAsyncModule(globalObject, scope, keyString, requirer, asyncRecord);
         }
         break;
@@ -1205,7 +1201,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     }
     }
 
-    // Link and evaluate. With the graph loaded and free of top-level await this settles synchronously.
+    // Link and evaluate. Nothing in the graph is left to wait for, so this settles synchronously.
     JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
 

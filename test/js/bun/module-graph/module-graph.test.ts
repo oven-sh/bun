@@ -437,7 +437,7 @@ describe("Bun.ModuleGraph", () => {
     const g = ModuleGraph();
     const inflight = g.import(join(dir, "slow.mjs"));
     const req = (await g.import(join(dir, "req.cjs"))).default;
-    expect(() => req()).toThrow(/Unable to synchronously evaluate|async module|cannot be evaluated synchronously/);
+    expect(() => req()).toThrow(/Unable to synchronously evaluate|async module|cannot be evaluated synchronously|top-level await/);
     expect((await inflight).v).toBe(1);
     rmSync(dir, { recursive: true, force: true });
   });
@@ -2351,7 +2351,7 @@ describe("Bun.ModuleGraph — require(): ES modules and CommonJS modules per gra
         requireEsm: [import.meta.require("./e.mjs") === e, require("./e.mjs") === e, created("./e.mjs") === e, c.req() === e, (await c.dyn()) === e],
         moduleExportsInterop: import.meta.require("./me.mjs").who,
         onlyRequiredWho: import.meta.require("./only-required.mjs").who,
-        tla: (() => { try { import.meta.require("./tla.mjs"); return "loaded" } catch (err) { return String(err.message).includes("await import") } })(),
+        tla: (() => { try { import.meta.require("./tla.mjs"); return "loaded" } catch (err) { return err.code === "ERR_REQUIRE_ASYNC_MODULE" } })(),
         jsonViaRequireIsThisImport: import.meta.require("./d.json").default === json,
         inRequireCache: require.cache[require.resolve("./c.cjs")]?.exports === c,
       })`,
@@ -2397,7 +2397,8 @@ describe("Bun.ModuleGraph — require(): ES modules and CommonJS modules per gra
         onlyRequired: [true, true],
         jsonPerGraph: [true, true],
         cacheKeys: [
-          ["c.cjs", "d.json", "e.mjs", "entry.mjs", "me.mjs", "named.cjs", "only-required.mjs", "tla.mjs"],
+          // Not tla.mjs: require() refused it before it ran, and nothing has imported it.
+          ["c.cjs", "d.json", "e.mjs", "entry.mjs", "me.mjs", "named.cjs", "only-required.mjs"],
           true,
         ],
         evals: ["c@A", "c@B", "c@host"],

@@ -82,7 +82,7 @@ fn errors_of(log: &Log) -> Vec<TranspilerError> {
         .map(|error| {
             let location = error.data.location.as_ref();
             let start = location.map_or(0, |location| location.offset);
-            let end = start + location.map_or(0, |location| location.length);
+            let end = start + location.map_or(0, |location| location.length as usize);
             TranspilerError {
                 start: u32::try_from(start).unwrap_or(0),
                 end: u32::try_from(end).unwrap_or(0),

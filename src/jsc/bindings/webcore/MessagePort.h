@@ -107,7 +107,7 @@ public:
     // The message may legitimately be `undefined`/falsy, so emptiness is reported through hadMessage.
     JSValue tryTakeMessage(JSGlobalObject*, bool& hadMessage);
 
-    // Whether the call also switches m_isRefd, the hold of the 'message' listeners. The onmessage setter keeps it.
+    // Whether the call also switches m_isRefd, the hold of the 'message' listeners. The onmessage setter keeps it, except for a non-callable object.
     enum class ListenerHold : bool {
         Keep,
         Switch,

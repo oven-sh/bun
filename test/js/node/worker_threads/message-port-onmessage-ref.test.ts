@@ -126,7 +126,8 @@ describe("port.onmessage = <not a function> removes the handler and leaves the '
       ),
     ],
 
-    // An object that is not callable can never run. As a handler's replacement it unrefs the port.
+    // An object that is not callable can never run. As a handler's replacement it unrefs the port, and it holds nothing.
+    ["used; onmessage = {}", false, port => (used(port), (port.onmessage = {} as any))],
     ["onmessage = g; onmessage = {}", false, port => ((port.onmessage = g), (port.onmessage = {} as any))],
     [
       "ref(); onmessage = g; onmessage = {}",
@@ -147,6 +148,25 @@ describe("port.onmessage = <not a function> removes the handler and leaves the '
       "on(f); unref(); onmessage = g; onmessage = {}",
       false,
       port => (port.on("message", f), port.unref(), (port.onmessage = g), (port.onmessage = {} as any)),
+    ],
+    [
+      "used; on(f); onmessage = {}; off(f)",
+      false,
+      port => (used(port), port.on("message", f), (port.onmessage = {} as any), port.off("message", f)),
+    ],
+    // A function takes the object's place and holds the port again.
+    ["onmessage = {}; onmessage = g", true, port => ((port.onmessage = {} as any), (port.onmessage = g))],
+    [
+      "used; on(f); onmessage = {}; onmessage = g; onmessage = null; off(f)",
+      false,
+      port => (
+        used(port),
+        port.on("message", f),
+        (port.onmessage = {} as any),
+        (port.onmessage = g),
+        (port.onmessage = null),
+        port.off("message", f)
+      ),
     ],
 
     // A function handler keeps the port ref'd, after unref() too.
@@ -220,143 +240,188 @@ describe("port.onmessage = <not a function> removes the handler and leaves the '
   );
 
   test(
-    "an object that is not callable removes the handler like null",
-    todoOnBun("a non-callable object stays a listener that never runs, and the setter still unrefs the port for it"),
+    "an object that is not callable leaves the other 'message' listeners ref'd, like null",
+    todoOnBun(
+      "a non-callable object stays a counted listener that never runs, so the setter unrefs the whole port for it",
+    ),
     () => {
-      assert.strictEqual(
-        hasRefAfter(port => (port.on("message", f), (port.onmessage = {} as any))),
-        true,
+      const inert = {} as any;
+      assert.deepStrictEqual(
+        {
+          "used; on(f); onmessage = {}": hasRefAfter(
+            port => (used(port), port.on("message", f), (port.onmessage = inert)),
+          ),
+          "used; onmessage = {}; on(f)": hasRefAfter(
+            port => (used(port), (port.onmessage = inert), port.on("message", f)),
+          ),
+          "used; on(f); onmessage = {}; onmessage = null": hasRefAfter(
+            port => (used(port), port.on("message", f), (port.onmessage = inert), (port.onmessage = null)),
+          ),
+        },
+        {
+          "used; on(f); onmessage = {}": true,
+          "used; onmessage = {}; on(f)": true,
+          "used; on(f); onmessage = {}; onmessage = null": true,
+        },
       );
     },
   );
+
+  // What makes the test above pass must keep this: the object stays where the handler was, and it never runs.
+  test("a non-callable object keeps the handler's place in the listener list", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const calls: (number | string)[] = [];
+    const inert: any = { handleEvent: () => calls.push("inert") };
+    const { promise, resolve } = Promise.withResolvers<void>();
+    port1.addEventListener("message", () => calls.push(1));
+    port1.onmessage = () => calls.push("first handler");
+    port1.onmessage = inert;
+    const getter = port1.onmessage === inert;
+    port1.addEventListener("message", () => calls.push(3));
+    port1.onmessage = () => calls.push(2);
+    port1.addEventListener("message", () => (calls.push(4), resolve()));
+    port2.postMessage(null);
+    await promise;
+    port1.close();
+    port2.close();
+    assert.deepStrictEqual({ getter, calls }, { getter: true, calls: [1, 2, 3, 4] });
+  });
 });
 
-// Runs `script` in its own process, with `port1` and `port2` of a fresh channel in scope, and resolves with what it
-// printed. `later(fn)` is an unref'd timer: it runs only when the port holds the loop open. A process that exited too
-// early has no other way to say so. The last timer bounds the other failure, a process that never exits.
+// Runs `script` as a module in its own process and resolves with the lines it printed. The last timer bounds a
+// process that never exits.
 async function inOwnProcess(script: string) {
   const child = spawn(
     process.execPath,
     [
       "--expose-gc",
       "-e",
-      `const { MessageChannel } = require("node:worker_threads");
-       const { port1, port2 } = new MessageChannel();
-       globalThis.keep = port2;
-       const later = fn => setTimeout(fn, 100).unref();
-       const got = message => { console.log("got " + message); port1.close(); };
+      `import { MessageChannel } from "node:worker_threads";
        ${script}
        setTimeout(() => { console.log("still alive"); process.exit(1); }, 3_000).unref();`,
     ],
-    { stdio: ["ignore", "pipe", "inherit"] },
+    { stdio: ["ignore", "pipe", "inherit"], env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" } },
   );
   let stdout = "";
   child.stdout.setEncoding("utf8").on("data", chunk => (stdout += chunk));
   const [code, signal] = await once(child, "close");
-  return { stdout: stdout.trim(), code, signal };
+  return { stdout: stdout.trim().split("\n"), code, signal };
 }
 
 describe("the process of a port whose onmessage lost its handler", () => {
-  const ended = (stdout: string) => ({ stdout, code: 0, signal: null });
-  const delivered = ended("got late");
-
-  async function inOwnProcesses(rows: [name: string, script: string, expected: typeof delivered][]) {
-    const results = await Promise.all(rows.map(([, script]) => inOwnProcess(script)));
-    assert.deepStrictEqual(
-      Object.fromEntries(rows.map(([name], i) => [name, results[i]])),
-      Object.fromEntries(rows.map(([name, , expected]) => [name, expected])),
-    );
-  }
+  // The source of an array of [name, (port, got) => { order }] for a child process.
+  const asSource = (orders: [name: string, order: string][]) =>
+    `[${orders.map(([name, order]) => `[${JSON.stringify(name)}, (port, got) => { ${order} }]`).join(", ")}]`;
 
   test("stays alive for the 'message' listeners and gets the next message", async () => {
-    await inOwnProcesses([
-      [
-        "on(got); onmessage = null",
-        `port1.on("message", got); port1.onmessage = null; later(() => port2.postMessage("late"));`,
-        delivered,
-      ],
-      [
-        "onmessage = null; on(got)",
-        `port1.onmessage = null; port1.on("message", got); later(() => port2.postMessage("late"));`,
-        delivered,
-      ],
+    const steps: [name: string, order: string][] = [
+      ["on(got); onmessage = null", `port.on("message", got); port.onmessage = null;`],
+      ["onmessage = null; on(got)", `port.onmessage = null; port.on("message", got);`],
       [
         "onmessage = g; onmessage = null; addEventListener(got)",
-        `port1.onmessage = () => {}; port1.onmessage = null;
-         port1.addEventListener("message", event => got(event.data));
-         later(() => port2.postMessage("late"));`,
-        delivered,
+        `port.onmessage = () => {}; port.onmessage = null; port.addEventListener("message", event => got(event.data));`,
       ],
       // A function handler next to a listener keeps the port ref'd after unref().
-      [
-        "unref(); on(got); onmessage = g",
-        `port1.unref(); port1.on("message", got); port1.onmessage = () => {}; later(() => port2.postMessage("late"));`,
-        delivered,
-      ],
-    ]);
+      ["unref(); on(got); onmessage = g", `port.unref(); port.on("message", got); port.onmessage = () => {};`],
+    ];
+    // One port after the other. The timer is unref'd: it runs only when the port of that step holds the loop open.
+    // A process that exited too early has no other way to say so, and its output stops at that step.
+    const result = await inOwnProcess(
+      `const steps = ${asSource(steps)};
+       const peers = [];
+       (function step(i) {
+         if (i === steps.length) return;
+         const [name, order] = steps[i];
+         const { port1, port2 } = new MessageChannel();
+         peers.push(port2);
+         order(port1, message => { console.log(name + ": got " + message); port1.close(); step(i + 1); });
+         setTimeout(() => port2.postMessage("late"), 100).unref();
+       })(0);`,
+    );
+    assert.deepStrictEqual(result, { stdout: steps.map(([name]) => `${name}: got late`), code: 0, signal: null });
   });
 
   test("ends by itself when no listener is left or unref() is in force", async () => {
-    await inOwnProcesses([
-      [
-        "onmessage = g; onmessage = null",
-        `port1.onmessage = () => {}; port1.onmessage = null; console.log("hasRef=" + port1.hasRef());`,
-        ended("hasRef=false"),
-      ],
+    const orders: [name: string, order: string][] = [
+      ["onmessage = g; onmessage = null", `port.onmessage = () => {}; port.onmessage = null;`],
+      ["onmessage = g; onmessage = {}", `port.onmessage = () => {}; port.onmessage = {};`],
       [
         "onmessage = f; onmessage = g; onmessage = null",
-        `port1.onmessage = () => {}; port1.onmessage = () => {}; port1.onmessage = null;
-         console.log("hasRef=" + port1.hasRef());`,
-        ended("hasRef=false"),
+        `port.onmessage = () => {}; port.onmessage = () => {}; port.onmessage = null;`,
       ],
       [
         "on(f); unref(); onmessage = g; onmessage = null",
-        `port1.on("message", () => {}); port1.unref(); port1.onmessage = () => {}; port1.onmessage = null;
-         console.log("hasRef=" + port1.hasRef());`,
-        ended("hasRef=false"),
+        `port.on("message", () => {}); port.unref(); port.onmessage = () => {}; port.onmessage = null;`,
       ],
       [
         "onmessage = g; onmessage = null; ref(); on(f); off(f); onmessage = null",
         `const f = () => {};
-         port1.onmessage = () => {}; port1.onmessage = null;
-         port1.ref(); port1.on("message", f); port1.off("message", f); port1.onmessage = null;
-         console.log("hasRef=" + port1.hasRef());`,
-        ended("hasRef=false"),
+         port.onmessage = () => {}; port.onmessage = null;
+         port.ref(); port.on("message", f); port.off("message", f); port.onmessage = null;`,
       ],
-    ]);
+    ];
+    const result = await inOwnProcess(
+      `const peers = [];
+       for (const [name, order] of ${asSource(orders)}) {
+         const { port1, port2 } = new MessageChannel();
+         peers.push(port2);
+         order(port1);
+         console.log(name + ": hasRef=" + port1.hasRef());
+       }`,
+    );
+    assert.deepStrictEqual(result, { stdout: orders.map(([name]) => `${name}: hasRef=false`), code: 0, signal: null });
   });
 
-  test("ends by itself when the port is closed, transferred or collected", async () => {
-    // Twenty ports listen, their peers close, and the ports are collected before the close reaches them.
-    const collected = (listen: string) =>
-      `(function () {
-         for (let i = 0; i < 20; i++) {
-           const channel = new MessageChannel();
-           const port = channel.port2;
-           ${listen}
-           channel.port1.close();
+  // A port that is closed or transferred takes no hold for a handler.
+  test("ends by itself when the port is closed or transferred", async () => {
+    const result = await inOwnProcess(
+      `const closed = new MessageChannel();
+       closed.port1.close();
+       closed.port1.onmessage = () => {};
+       const transferred = new MessageChannel(), carrier = new MessageChannel();
+       carrier.port1.postMessage(null, [transferred.port1]);
+       transferred.port1.onmessage = () => {};
+       carrier.port1.close();
+       console.log("done");`,
+    );
+    assert.deepStrictEqual(result, { stdout: ["done"], code: 0, signal: null });
+  });
+
+  // Bun collects a listening port whose peer closed, and it can do that before the port hears of the close.
+  test("ends by itself when the peers of its listening ports have closed", async () => {
+    const results = await Promise.all([
+      // The module's last statement closes the peer. Bun collects once more when the entry module is done.
+      inOwnProcess(
+        `function listen() {
+           const { port1, port2 } = new MessageChannel();
+           port2.on("message", () => {});
+           return port1;
          }
-       })();
-       gc(); gc(); console.log("done");`;
-    await inOwnProcesses([
-      // A port that is closed or transferred takes no hold for a handler.
-      ["close(); onmessage = g", `port1.close(); port1.onmessage = () => {}; console.log("done");`, ended("done")],
-      [
-        "transfer; onmessage = g",
-        `const carrier = new MessageChannel();
-         carrier.port1.postMessage(null, [port1]);
-         port1.onmessage = () => {};
-         carrier.port1.close();
-         console.log("done");`,
-        ended("done"),
-      ],
-      // A listening port that is collected gives the loop back, with or without a cleared handler.
-      ["on(f); peer close(); collected", collected(`port.on("message", () => {});`), ended("done")],
-      [
-        "on(f); onmessage = null; peer close(); collected",
-        collected(`port.on("message", () => {}); port.onmessage = null;`),
-        ended("done"),
-      ],
+         const sender = listen();
+         await new Promise(resolve => setImmediate(resolve));
+         sender.close();
+         console.log("closed");`,
+      ),
+      // Twenty ports, with and without a cleared handler, and a collection in the same turn. The port that is still
+      // open keeps its own hold: the timer is unref'd and runs only for it.
+      inOwnProcess(
+        `const live = new MessageChannel();
+         live.port1.on("message", message => { console.log("live: got " + message); live.port1.close(); });
+         (function () {
+           for (let i = 0; i < 20; i++) {
+             const { port1, port2 } = new MessageChannel();
+             port2.on("message", () => {});
+             if (i % 2) port2.onmessage = null;
+             port1.close();
+           }
+         })();
+         gc(); gc(); console.log("done");
+         setTimeout(() => live.port2.postMessage("late"), 100).unref();`,
+      ),
+    ]);
+    assert.deepStrictEqual(results, [
+      { stdout: ["closed"], code: 0, signal: null },
+      { stdout: ["done", "live: got late"], code: 0, signal: null },
     ]);
   });
 });

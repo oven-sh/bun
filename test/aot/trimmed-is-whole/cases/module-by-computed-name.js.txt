@@ -1,0 +1,150 @@
+// Loads a built-in module by a computed name, in an executable that only runs what was compiled into it.
+//@ build --aot-refuse-code-from-disk
+//@ args node:zlib node:sqlite bun:sqlite
+const names = process.argv.slice(2);
+function show(module) { console.log(Object.keys(module).sort().slice(0, 6).join()); }
+//// import-argv
+//@ exit 1
+for (const name of names) show(await import(name));
+//// import-concat
+show(await import("node:" + "zlib"));
+//// import-template
+const tail = "zlib";
+show(await import(`node:${tail}`));
+//// import-ternary
+show(await import(names.length > 100 ? "node:fs" : "node:zlib"));
+//// import-then
+//@ exit 1
+import(names[0]).then(show);
+//// require-argv
+//@ exit 1
+//@ ext cjs
+for (const name of names) show(require(name));
+//// require-concat
+//@ ext cjs
+show(require("node:" + "zlib"));
+//// require-alias
+//@ exit 1
+//@ ext cjs
+const r = require;
+for (const name of names) show(r(name));
+//// require-call
+//@ exit 1
+//@ ext cjs
+show(require.call(null, names[0]));
+//// require-apply
+//@ exit 1
+//@ ext cjs
+show(require.apply(null, [names[0]]));
+//// require-map
+//@ exit 1
+//@ ext cjs
+names.map(require).forEach(show);
+//// require-in-esm
+//@ exit 1
+for (const name of names) show(require(name));
+//// module-require
+//@ exit 1
+//@ ext cjs
+for (const name of names) show(module.require(name));
+//// module-constructor-load
+//@ exit 1
+//@ ext cjs
+for (const name of names) show(module.constructor._load(name));
+//// module-constructor-prototype-require
+//@ exit 1
+//@ ext cjs
+for (const name of names) show(module.constructor.prototype.require.call(module, name));
+//// import-meta-require
+//@ exit 1
+for (const name of names) show(import.meta.require(name));
+//// import-meta-require-alias
+//@ exit 1
+const { require: r } = import.meta;
+for (const name of names) show(r(name));
+//// import-meta-escapes
+//@ exit 1
+const meta = import.meta;
+for (const name of names) show(meta["req" + "uire"](name));
+//// createRequire-import
+//@ exit 1
+import { createRequire } from "node:module";
+const r = createRequire(import.meta.url);
+for (const name of names) show(r(name));
+//// createRequire-default
+//@ exit 1
+import Module from "node:module";
+const r = Module.createRequire(import.meta.url);
+for (const name of names) show(r(name));
+//// Module-load
+//@ exit 1
+import Module from "node:module";
+for (const name of names) show(Module._load(name));
+//// getBuiltinModule
+//@ exit 1
+for (const name of names) show(process.getBuiltinModule(name));
+//// getBuiltinModule-literal
+show(process.getBuiltinModule("node:zlib"));
+//// getBuiltinModule-alias
+//@ exit 1
+const get = process.getBuiltinModule;
+for (const name of names) show(get(name));
+//// mainModule-require
+//@ exit 1
+//@ ext cjs
+for (const name of names) show(process.mainModule.require(name));
+//// require-main-require
+//@ exit 1
+//@ ext cjs
+for (const name of names) show(require.main.require(name));
+//// require-cache
+//@ ext cjs
+console.log(Object.keys(require.cache).length);
+for (const key in require.cache) for (const name of names) show(require.cache[key].require(name));
+//// require-resolve
+//@ ext cjs
+for (const name of names) console.log(require.resolve(name));
+//// import-meta-resolve
+for (const name of names) console.log(import.meta.resolve(name));
+//// Bun-resolveSync
+for (const name of names) console.log(Bun.resolveSync(name, import.meta.dir));
+//// builtinModules
+import { builtinModules } from "node:module";
+console.log(builtinModules.slice().sort().join());
+//// isBuiltin
+import { isBuiltin } from "node:module";
+for (const name of names) console.log(isBuiltin(name));
+//// children-parent
+//@ ext cjs
+console.log(module.children.length, module.parent, typeof module.paths, module.id, typeof module.loaded);
+//// arguments-of-wrapper
+//@ exit 1
+//@ ext cjs
+for (const name of names) show(arguments[1](name));
+//// this-is-exports
+//@ ext cjs
+console.log(this === module.exports, this === exports);
+//// typed-union-import
+//@ ext ts
+const name = (process.argv[2] ?? "node:zlib") as "node:zlib" | "node:fs";
+console.log(Object.keys(await import(name)).length > 5);
+//// namespace-computed-member
+import * as zlib from "node:zlib";
+//@ args zstdCompressSync brotliCompressSync
+for (const name of names.slice(3)) console.log(zlib[name](Buffer.from("aaaaaaaaaaaaaaaaaaaa")).length);
+//// default-computed-member
+import zlib from "node:zlib";
+//@ args zstdCompressSync brotliCompressSync
+for (const name of names.slice(3)) console.log(zlib[name](Buffer.from("aaaaaaaaaaaaaaaaaaaa")).length);
+//// require-computed-member
+//@ ext cjs
+//@ args zstdCompressSync brotliCompressSync
+for (const name of names.slice(3)) console.log(require("node:zlib")[name](Buffer.from("aaaaaaaaaaaaaaaaaaaa")).length);
+//// bare-names
+//@ ext cjs
+//@ args zlib sqlite
+for (const name of names.slice(3)) { try { show(require(name)); } catch (error) { console.log(error.name, error.code); } }
+//// a-native-module
+//@ trimmed-says Cannot load 'node:sqlite': it isn't in this executable. Import it by name somewhere in your program to keep it.
+//@ ext cjs
+show(require(names[1]));

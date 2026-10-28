@@ -1,0 +1,4 @@
+object
+node:dgram MODULE_NOT_FOUND
+node:zlib MODULE_NOT_FOUND
+node:readline object

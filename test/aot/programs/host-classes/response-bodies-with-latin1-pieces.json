@@ -1,0 +1,3 @@
+{
+  "skipInShell": "it uses what Bun provides and the jsc shell does not: Response, Bun.hash"
+}

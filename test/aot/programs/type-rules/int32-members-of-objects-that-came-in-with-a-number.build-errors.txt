@@ -1,0 +1,4 @@
+error: TS100031: The return value of 'ofLiteral' is declared 'int32', but 'point.x' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'point.x | 0'.
+error: TS100031: The return value of 'ofGetter' is declared 'int32', but 'point.x' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'point.x | 0'.
+error: TS100031: The return value of 'ofInstance' is declared 'int32', but 'point.x' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'point.x | 0'.
+error: TS100031: The return value of 'ofOptional' is declared 'int32', but 'holder.y ?? -1' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write '(holder.y ?? -1) | 0'.

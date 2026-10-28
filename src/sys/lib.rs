@@ -1274,7 +1274,7 @@ impl Tag {
     pub const access: Tag = Tag(2);
     pub const connect: Tag = Tag(3);
     pub const chmod: Tag = Tag(4);
-    pub(crate) const chown: Tag = Tag(5);
+    pub const chown: Tag = Tag(5);
     pub const clonefile: Tag = Tag(6);
     pub const close: Tag = Tag(8);
     pub const copy_file_range: Tag = Tag(9);
@@ -1293,7 +1293,7 @@ impl Tag {
     pub const getdents64: Tag = Tag(21);
     pub const getdirentries64: Tag = Tag(22);
     pub const lchmod: Tag = Tag(23);
-    pub(crate) const lchown: Tag = Tag(24);
+    pub const lchown: Tag = Tag(24);
     pub const link: Tag = Tag(25);
     pub(crate) const lseek: Tag = Tag(26);
     pub const lstat: Tag = Tag(27);
@@ -4207,18 +4207,21 @@ mod windows_impl {
         let dir = dir.as_fd();
         // Open with `op = OnlyCreate`, then close the resulting handle on
         // success.
-        let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
-        let made = super::open_dir_at_windows_nt_path(
-            dir,
-            wpath,
-            super::WindowsOpenDirOptions {
-                iterable: false,
-                can_rename_or_delete: true,
-                op: super::WindowsOpenDirOp::OnlyCreate,
-                ..Default::default()
-            },
-        )?;
+        let options = super::WindowsOpenDirOptions {
+            iterable: false,
+            can_rename_or_delete: true,
+            op: super::WindowsOpenDirOp::OnlyCreate,
+            ..Default::default()
+        };
+        let facts = bun_paths::classify_rel_t(path.as_bytes(), bun_paths::PathFormat::Windows);
+        // `NtCreateFile` does not resolve `..` in a name relative to a directory handle.
+        let made = if facts.climbs_above_start {
+            super::open_dir_at_windows_a(dir, path.as_bytes(), options)?
+        } else {
+            let mut wbuf = bun_paths::w_path_buffer_pool::get();
+            let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
+            super::open_dir_at_windows_nt_path(dir, wpath, options)?
+        };
         made.close();
         Ok(())
     }
@@ -8593,6 +8596,10 @@ pub mod elf {
         pub name: Box<[u8]>,
         /// End address (exclusive) of the `PT_LOAD` segment that contains the lookup address.
         pub segment_end: usize,
+        /// `dlpi_phdr` — `program_header_count` headers, mapped until the object is unloaded.
+        pub program_headers: *const libc::Elf64_Phdr,
+        /// `dlpi_phnum`.
+        pub program_header_count: usize,
     }
 
     /// Walk loaded ELF objects via `dl_iterate_phdr`, returning the one whose
@@ -8654,6 +8661,8 @@ pub mod elf {
                         base_address: info.dlpi_addr as usize,
                         name,
                         segment_end: seg_end,
+                        program_headers: info.dlpi_phdr,
+                        program_header_count: info.dlpi_phnum as usize,
                     });
                     return 1; // error.Found → stop iteration
                 }

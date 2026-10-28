@@ -1,6 +1,6 @@
 // This is the file that loads when you pass a '.html' entry point to Bun.
 // It imports the entry points and initializes a server.
-import type { HTMLBundle } from "bun";
+type HTMLBundle = Bun.HTMLBundle;
 const initial = performance.now();
 const argv = process.argv;
 
@@ -22,7 +22,7 @@ async function start() {
   const flags = defaultServeFlags();
   // Step 1. Resolve all HTML entry points
   for (let i = 1, argvLength = argv.length; i < argvLength; i++) {
-    const arg = argv[i];
+    const arg: string = argv[i];
 
     if (!arg.endsWith(".html")) {
       const used = parseServeFlag(argv, i, flags);
@@ -62,10 +62,10 @@ yourself with Bun.serve().
     }
 
     if (arg.includes("*") || arg.includes("**") || arg.includes("{")) {
-      const glob = new Bun.Glob(arg);
+      const glob: import("bun").Glob = new Bun.Glob(arg);
 
       for (const file of glob.scanSync(cwd)) {
-        let resolved = path.resolve(cwd, file);
+        let resolved: string = path.resolve(cwd, file);
         if (resolved.includes(path.sep + "node_modules" + path.sep)) {
           continue;
         }

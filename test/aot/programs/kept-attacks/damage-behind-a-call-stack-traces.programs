@@ -1,0 +1,212 @@
+////: for-12
+for (let round = 0; round < 300; round++) {
+  strikes = round % 100 === 99;
+  const line = holder(new Point(round, 1));
+  if (round === 0) {
+    calm = trace;
+    console.log(trace);
+  }
+  if (strikes) console.log(round + ": " + line + " | the same trace: " + (trace === calm));
+  if (trace !== calm) console.log(trace);
+}
+////: for-19
+for (let round = 0; round < 300; round++) {
+  strikes = round % 100 === 99;
+  const line = «1»(new Point(round, 1));
+  if (round === 0) {
+    calm = «2»;
+    console.log(«2»);
+  }
+  if (strikes) console.log(round + ": " + line + «3» + («2» === calm));
+  if («2» !== calm) console.log(«2»);
+}
+////: holder-30
+function holder(p: Point): string {
+  const before = p.x;
+  const got = «1»(p);
+  return before + " " + got + " " + p.x;
+}
+//// damage-behind-a-call-stack-traces/a-trace-behind-a-dirty-tail-call.ts
+// A function does the damage and leaves through a call in tail position, so its frame is gone. The trace taken in the function that runs in its place shows that function and then the holder, at the position of the holder's call.
+////= Point
+
+const own = new Set(["last", "leaves", "holder"]);
+////= framesOf
+
+let strikes = false;
+let trace = "";
+function last(n: number): number {
+  trace = framesOf(String(new Error("last").stack));
+  return n;
+}
+function leaves(p: Point): number {
+  if (strikes) delete (p as any).x;
+  return last(p.y);
+}
+////= holder-30	leaves
+
+let calm = "";
+////= for-12
+//// damage-behind-a-call-stack-traces/a-trace-taken-behind-a-dirty-return.ts
+// The callee has done the damage and has returned. Now the holder is dirty itself, and so is its caller as soon as the holder returns. Each takes a trace behind its call, which shows its own position there and its callers'.
+////= Point
+
+const own = new Set(["damages", "holder", "outer", "outermost"]);
+////= framesOf
+
+let strikes = false;
+let traces = "";
+function damages(p: Point): number {
+  if (strikes) delete (p as any).x;
+  return 1;
+}
+function holder(p: Point): string {
+  const before = p.x;
+  const got = damages(p);
+  traces = framesOf(String(new Error("in the holder").stack));
+  return before + " " + got + " " + p.x;
+}
+function outer(p: Point): string {
+  const told = holder(p);
+  traces += " | " + framesOf(String(new Error("in the caller").stack));
+  return told + " " + p.x;
+}
+function outermost(p: Point): string {
+  const told = outer(p);
+  traces += " | " + framesOf(String(new Error("at the top").stack));
+  return told + " " + p.x;
+}
+
+let calm = "";
+////= for-19	outermost	traces	" | the same traces: "
+//// damage-behind-a-call-stack-traces/a-trace-under-a-tower-of-dirty-activations.ts
+// A function calls itself, and every activation does some damage to an object of its own before it goes deeper. The deepest one takes a trace, which lists them all with the position of the same call.
+////= Point
+
+const own = new Set(["tower", "holder"]);
+function framesOf(stack: string): string {
+  const frames: string[] = [];
+  for (const line of stack.split("\n")) {
+    const frame = /^\s*at (\w+) \(.*:(\d+):(\d+)\)$/.exec(line);
+    if (frame && own.has(frame[1])) frames.push(frame[1] + "@" + frame[2] + ":" + frame[3]);
+  }
+  return frames.join(" ");
+}
+
+let strikes = false;
+let trace = "";
+function tower(depth: number): string {
+  const p = new Point(depth, 1);
+  const before = p.x;
+  if (strikes) delete (p as any).x;
+  if (depth === 0) {
+    trace = framesOf(String(new Error("bottom").stack));
+    return "";
+  }
+  const below = tower(depth - 1);
+  return before + ">" + p.x + " " + below;
+}
+function holder(q: Point): string {
+  const before = q.x;
+  const told = tower(6);
+  return before + " " + told + q.x;
+}
+
+let calm = "";
+////= for-12
+//// damage-behind-a-call-stack-traces/capture-stack-trace-in-a-dirty-activation.ts
+// Error.captureStackTrace, with and without a function to cut the trace at, in an activation that has done the damage and below one that has.
+////= Point
+
+const own = new Set(["capture", "damages", "holder"]);
+////= framesOf
+
+let strikes = false;
+let whole = "";
+let cut = "";
+function capture(): number {
+  const all: { stack?: string } = {};
+  Error.captureStackTrace(all);
+  whole = framesOf(String(all.stack));
+  const above: { stack?: string } = {};
+  Error.captureStackTrace(above, damages);
+  cut = framesOf(String(above.stack));
+  return 1;
+}
+function damages(p: Point): number {
+  if (strikes) Object.defineProperty(p, "x", { get: () => -7 });
+  const got = capture();
+  return got + 1;
+}
+////= holder-30	damages
+
+let calm = "";
+for (let round = 0; round < 300; round++) {
+  strikes = round % 100 === 99;
+  const line = holder(new Point(round, 1));
+  const traces = whole + " | " + cut;
+  if (round === 0) {
+    calm = traces;
+    console.log(traces);
+  }
+  if (strikes) console.log(round + ": " + line + " | the same traces: " + (traces === calm));
+  if (traces !== calm) console.log(traces);
+}
+//// damage-behind-a-call-stack-traces/error-stack-in-a-dirty-activation.ts
+// A function does the damage and then makes an Error. The trace names that function, its caller and the caller's caller with the line and column of each call, as it does in a round without damage.
+////= Point
+
+const own = new Set(["damages", "holder", "outer"]);
+////= framesOf
+
+let strikes = false;
+let trace = "";
+function damages(p: Point): number {
+  if (strikes) delete (p as any).x;
+  trace = framesOf(String(new Error("here").stack));
+  return 1;
+}
+////= holder-30	damages
+function outer(p: Point): string {
+  const before = p.y;
+  const told = holder(p);
+  return before + " " + told + " " + p.y + " " + p.x;
+}
+
+let calm = "";
+////= for-19	outer	trace	" | the same trace: "
+//// damage-behind-a-call-stack-traces/the-stack-of-an-error-thrown-in-a-dirty-activation.ts
+// The stack of an error that is thrown behind the damage and read by the handler three frames up, and the stack of a TypeError that the run time throws there.
+////= Point
+
+const own = new Set(["throws", "second", "first", "holder"]);
+////= framesOf
+
+let strikes = false;
+let byRunTime = false;
+const nothing: any = null;
+function throws(p: Point): number {
+  if (strikes) delete (p as any).x;
+  if (byRunTime) return nothing.field;
+  throw new Error("thrown");
+}
+////= lines-31	second	throws
+////= lines-31	first	second
+function holder(p: Point): string {
+  const before = p.x;
+  try {
+    return "" + first(p);
+  } catch (error) {
+    return before + ">" + p.x + " " + (error as Error).name + " " + framesOf(String((error as Error).stack));
+  }
+}
+
+for (const round of [0, 1, 2, 3]) {
+  let line = "";
+  for (let turn = 0; turn < 100; turn++) {
+    strikes = (round & 1) === 1;
+    byRunTime = (round & 2) === 2;
+    line = holder(new Point(7, 1));
+  }
+  console.log(round + ": " + line);
+}

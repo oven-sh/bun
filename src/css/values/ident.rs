@@ -37,7 +37,7 @@ macro_rules! arena_slice_newtype {
             /// NOTE: the borrow is tied to `&self`. Call sites that must return
             /// the slice with the `'static` placeholder lifetime (e.g.
             /// `IdentOrRef::{debug_ident,as_str,as_original_string}`,
-            /// `Printer::lookup_ident_or_ref`, `SelectorParser::namespace_for_prefix`)
+            /// `SelectorParser::namespace_for_prefix`)
             /// still go through the raw `v` field directly until `'bump` is threaded.
             #[inline]
             pub fn v(&self) -> &[u8] {
@@ -364,9 +364,8 @@ impl IdentOrRef {
         if let Some(ident) = self.as_ident() {
             hasher.update(ident.v());
         } else {
-            // Hashing only 2 of the 16 bytes (sic) is preserved for
-            // behavioral compatibility; PR #30784 hashes the full identity.
-            hasher.update(&bun_core::bytes_of(&self.0)[..2]);
+            // Only the bits of the `Ref`: in debug builds `__ptrbits` differs between equal refs.
+            hasher.update(&self.len_bits().to_ne_bytes());
         }
     }
 
@@ -413,6 +412,7 @@ pub(crate) fn is_reserved_custom_ident(s: &[u8]) -> bool {
             b"default",
             b"revert",
             b"revert-layer",
+            b"revert-rule",
         ],
     )
 }

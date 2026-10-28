@@ -1,0 +1,3150 @@
+////: Point-2
+class Point {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+  }
+  sum() {
+    return this.x + this.y;
+  }
+  reset() {
+    this.x = 1;
+    return this;
+  }
+}
+////: Stack-2
+class Stack extends Array {
+  add() {
+    this.push(1);
+    return this.length;
+  }
+  all() {
+    const seen = [];
+    for (const x of this) seen.push(x);
+    return seen;
+  }
+}
+////: arrays-7
+const arrays = [
+  ["an array", () => [5, 6]],
+  ["a subclass with its own push and iterator", () => Odd.of(5, 6)],
+  ["an array-like", () => ({ 0: 5, length: 7, push(value) { log.push("own push " + value); return "pushed"; }, [Symbol.iterator]() { log.push("own iterator"); return [8, 9][Symbol.iterator](); } })],
+  ["a proxy", () => logged([5, 6])],
+  ["a frozen array", () => Object.freeze([5, 6])],
+  ["a text", () => "ab"],
+  ["arguments", () => (function () { return arguments; })(5, 6)],
+];
+////: for-103
+for (const [name, method, receivers, own] of methods) {
+  for (const [label, make] of receivers) {
+    attempt(name + " through call on " + label, () => method.call(make()));
+    attempt(name + " through Reflect.apply on " + label, () => Reflect.apply(method, make(), []));
+    attempt(name + " bound to " + label, () => method.bind(make())());
+    attempt(name + " on its own kind", () => method.call(own()));
+  }
+}
+////: for-110
+for (let i = 0; i < 2000; i++) {
+  new Point(1, 2).sum();
+  new Point(0, 2).reset();
+  new OldPoint(1, 2).sum();
+  new OldPoint(0, 2).reset();
+  Stack.of(5, 6).add();
+  Stack.of(5, 6).all();
+}
+////: for-25
+for (let round = 0; round < 2; round++) {
+  let total = 0;
+  for (let i = 0; i < 1000; i++) {
+    const honest = round === 0 ? "abc" : ["a", "b", "c"];
+    total += lastElement(honest).length + withoutFirst(honest).length + positionOfB(honest) + joinedWithItself(honest).length + lastByAt(honest).length + reversedCopy(honest).length;
+    if (hasB(honest)) total++;
+    if (isPalindrome(honest)) total++;
+  }
+  console.log("1000 rounds of " + (round === 0 ? "texts" : "lists"), total);
+  for (const [name, use] of uses) {
+    for (const text of values) attempt(round + " " + name + " of " + text, () => use(make(text)));
+  }
+}
+////: isPalindrome
+function isPalindrome(value) {
+  for (let i = 0, j = value.length - 1; i < j; i++, j--) {
+    if (value[i] !== value[j]) return false;
+  }
+  return true;
+}
+////: lines-115
+function «1»(value, which, text) {
+  return «2»(value, which, text).«3»(«4»);
+}
+////: lines-176
+function «1»(value, which, text) {
+  if (which === 1) return Object.freeze({ x: 3, y: 1 });
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+////: lines-181
+function «1»(value, which, text) {
+  if (which === 1) return { «2»: «3», «4»: «5» };
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+////: methods
+const methods = [
+  ["Point.sum", Point.prototype.sum, objects, () => new Point(1, 2)],
+  ["Point.reset", Point.prototype.reset, objects, () => new Point(0, 2)],
+  ["OldPoint.sum", OldPoint.prototype.sum, objects, () => new OldPoint(1, 2)],
+  ["OldPoint.reset", OldPoint.prototype.reset, objects, () => new OldPoint(0, 2)],
+  ["Stack.add", Stack.prototype.add, arrays, () => Stack.of(5, 6)],
+  ["Stack.all", Stack.prototype.all, arrays, () => Stack.of(5, 6)],
+];
+////: objects-11
+const objects = [
+  ["accessors", () => ({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })],
+  ["a proxy", () => logged({ y: 2, x: 1 })],
+  ["a frozen object", () => Object.freeze({ x: 5, y: 6 })],
+  ["texts in another order", () => ({ y: "2", x: "1" })],
+  ["inherited members", () => Object.create({ x: 3, y: 4 })],
+  ["an instance of the other kind", () => new OldPoint(7, 8)],
+  ["an array", () => [1, 2]],
+  ["a number", () => 5],
+  ["a text", () => "xy"],
+  ["undefined", () => undefined],
+];
+////: objects-12
+////= objects-11
+////= arrays-7
+
+////= for-110
+
+////= methods
+////= for-103
+////: reversedCopy
+function reversedCopy(value) {
+  let result = value.slice(0, 0);
+  for (let i = value.length - 1; i >= 0; i--) result = result.concat(value[i]);
+  return result;
+}
+////: reversedCopy-2
+////= reversedCopy
+
+////= isPalindrome
+
+////= uses-12
+
+////= values-9
+
+////= for-25
+////: uses-12
+const uses = [
+  ["last element", lastElement],
+  ["without first", withoutFirst],
+  ["position of b", positionOfB],
+  ["has b", hasB],
+  ["joined with itself", joinedWithItself],
+  ["last by at", lastByAt],
+  ["reversed copy", reversedCopy],
+  ["is palindrome", isPalindrome],
+];
+////: values-9
+const values = [
+  "'abc'",
+  "['a', 'b', 'c']",
+  "'aba'",
+  "['a', 'b', 'a']",
+  "''",
+  "[]",
+  "'b'",
+  "['b']",
+  "[['b']]",
+  "['abc']",
+  "new String('abc')",
+  "Buffer.from('abc')",
+  "new Uint8Array([97, 98, 99])",
+  "[, 'b', ,]",
+  "class Letters extends Array { slice() { return 'sliced by the subclass'; } indexOf() { return 'found by the subclass'; } }.from('abc')",
+  "(function () { return arguments; })('a', 'b', 'c')",
+  "{ 0: 'a', 1: 'b', length: 2 }",
+  "{ 0: 'a', 1: 'b', length: 2, slice: Array.prototype.slice, indexOf: String.prototype.indexOf, includes: Array.prototype.includes, concat: String.prototype.concat, at: Array.prototype.at }",
+  "{ 0: 'a', 1: 'b', length: 2, slice: String.prototype.slice, indexOf: Array.prototype.indexOf, includes: String.prototype.includes, concat: Array.prototype.concat, at: String.prototype.at, toString() { return 'xby'; } }",
+  "123",
+  "null",
+];
+//// many-callers-use-the-result-as-a-small-integer-and-one-path-returns-something-else.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+const letters = ["a", "b", "c", "d", "e", "f", "g", "h"];
+
+////= lines-18	forOrZero	2147483648
+
+function orZero(value, which, text) {
+  return forOrZero(value, which, text) | 0;
+}
+
+////= lines-18	forShifted	4294967297
+
+function shifted(value, which, text) {
+  return forShifted(value, which, text) >> 1;
+}
+
+////= lines-18	forMasked	1.5
+
+function masked(value, which, text) {
+  return forMasked(value, which, text) & 3;
+}
+
+////= lines-177	forUnsigned	0
+
+function unsigned(value, which, text) {
+  return forUnsigned(value, which, text) >>> 0;
+}
+
+////= lines-18	forInverted	NaN
+
+function inverted(value, which, text) {
+  return ~forInverted(value, which, text);
+}
+
+////= lines-18	forShiftedLeft	"1"
+
+function shiftedLeft(value, which, text) {
+  return forShiftedLeft(value, which, text) << 28;
+}
+
+////= lines-18	forLetterAt	"length"
+
+function letterAt(value, which, text) {
+  return letters[forLetterAt(value, which, text)];
+}
+
+////= lines-18	forCharacterAt	1n
+
+////= lines-222	characterAt	"abcdefgh".charAt	forCharacterAt
+
+////= lines-18	forCodeAt	undefined
+
+////= lines-222	codeAt	"abcdefgh".charCodeAt	forCodeAt
+
+////= lines-177	forSliced	1
+
+function sliced(value, which, text) {
+  return letters.slice(forSliced(value, which, text)).length;
+}
+
+////= lines-18	forLooped	Infinity
+
+function looped(value, which, text) {
+  let n = 0;
+  for (let i = 0, end = forLooped(value, which, text); i < end && n < 10; i++) n++;
+  return n;
+}
+
+////= lines-18	forMadeArray	null
+
+function madeArray(value, which, text) {
+  return new Array(forMadeArray(value, which, text)).length;
+}
+
+const hidden = [
+  "2147483648",
+  "4294967297",
+  "-2147483649",
+  "1.5",
+  "-0",
+  "NaN",
+  "Infinity",
+  "\"1\"",
+  "\"length\"",
+  "1n",
+  "undefined",
+  "null",
+  "({ valueOf() { return 2; }, toString() { return \"3\"; } })",
+  "[1]",
+  "-1",
+];
+
+function honest(round) {
+  console.log(round, "orZero", show(orZero(7)), show(orZero(1)), show(orZero(0)), show(orZero(3)), show(orZero(5)));
+  console.log(round, "shifted", show(shifted(7)), show(shifted(1)), show(shifted(0)), show(shifted(3)), show(shifted(5)));
+  console.log(round, "masked", show(masked(7)), show(masked(1)), show(masked(0)), show(masked(3)), show(masked(5)));
+  console.log(round, "unsigned", show(unsigned(7)), show(unsigned(1)), show(unsigned(0)), show(unsigned(3)), show(unsigned(5)));
+  console.log(round, "inverted", show(inverted(7)), show(inverted(1)), show(inverted(0)), show(inverted(3)), show(inverted(5)));
+  console.log(round, "shiftedLeft", show(shiftedLeft(7)), show(shiftedLeft(1)), show(shiftedLeft(0)), show(shiftedLeft(3)), show(shiftedLeft(5)));
+  console.log(round, "letterAt", show(letterAt(7)), show(letterAt(1)), show(letterAt(0)), show(letterAt(3)), show(letterAt(5)));
+  console.log(round, "characterAt", show(characterAt(7)), show(characterAt(1)), show(characterAt(0)), show(characterAt(3)), show(characterAt(5)));
+  console.log(round, "codeAt", show(codeAt(7)), show(codeAt(1)), show(codeAt(0)), show(codeAt(3)), show(codeAt(5)));
+  console.log(round, "sliced", show(sliced(7)), show(sliced(1)), show(sliced(0)), show(sliced(3)), show(sliced(5)));
+  console.log(round, "looped", show(looped(7)), show(looped(1)), show(looped(0)), show(looped(3)), show(looped(5)));
+  console.log(round, "madeArray", show(madeArray(7)), show(madeArray(1)), show(madeArray(0)), show(madeArray(3)), show(madeArray(5)));
+}
+
+honest("before");
+attempt("orZero, the other path in sight", () => orZero(undefined, 1));
+for (const text of hidden) attempt("orZero of " + text, () => orZero(undefined, 2, text));
+attempt("shifted, the other path in sight", () => shifted(undefined, 1));
+for (const text of hidden) attempt("shifted of " + text, () => shifted(undefined, 2, text));
+attempt("masked, the other path in sight", () => masked(undefined, 1));
+for (const text of hidden) attempt("masked of " + text, () => masked(undefined, 2, text));
+attempt("unsigned, the other path in sight", () => unsigned(undefined, 1));
+for (const text of hidden) attempt("unsigned of " + text, () => unsigned(undefined, 2, text));
+attempt("inverted, the other path in sight", () => inverted(undefined, 1));
+for (const text of hidden) attempt("inverted of " + text, () => inverted(undefined, 2, text));
+attempt("shiftedLeft, the other path in sight", () => shiftedLeft(undefined, 1));
+for (const text of hidden) attempt("shiftedLeft of " + text, () => shiftedLeft(undefined, 2, text));
+attempt("letterAt, the other path in sight", () => letterAt(undefined, 1));
+for (const text of hidden) attempt("letterAt of " + text, () => letterAt(undefined, 2, text));
+attempt("characterAt, the other path in sight", () => characterAt(undefined, 1));
+for (const text of hidden) attempt("characterAt of " + text, () => characterAt(undefined, 2, text));
+attempt("codeAt, the other path in sight", () => codeAt(undefined, 1));
+for (const text of hidden) attempt("codeAt of " + text, () => codeAt(undefined, 2, text));
+attempt("sliced, the other path in sight", () => sliced(undefined, 1));
+for (const text of hidden) attempt("sliced of " + text, () => sliced(undefined, 2, text));
+attempt("looped, the other path in sight", () => looped(undefined, 1));
+for (const text of hidden) attempt("looped of " + text, () => looped(undefined, 2, text));
+attempt("madeArray, the other path in sight", () => madeArray(undefined, 1));
+for (const text of hidden) attempt("madeArray of " + text, () => madeArray(undefined, 2, text));
+honest("after");
+//// many-callers-use-the-result-as-a-string-and-one-path-returns-something-else.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+////= lines-179	forLengthOf	"a"	"b"
+
+////= lines-259	lengthOf	forLengthOf	length
+
+////= lines-18	forCodeOf	65
+
+////= lines-115	codeOf	forCodeOf	charCodeAt	0
+
+////= lines-18	forExclaimed	null
+
+function exclaimed(value, which, text) {
+  return forExclaimed(value, which, text) + "!";
+}
+
+////= lines-18	forTailOf	undefined
+
+////= lines-115	tailOf	forTailOf	slice	1
+
+function forShouted(value, which, text) {
+  if (which === 1) return new String("ab");
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+
+function shouted(value, which, text) {
+  return forShouted(value, which, text).toUpperCase();
+}
+
+////= lines-180	forFirstOf	length	2
+
+function firstOf(value, which, text) {
+  return forFirstOf(value, which, text)[0];
+}
+
+function forIsAb(value, which, text) {
+  if (which === 1) return Symbol("ab");
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+
+function isAb(value, which, text) {
+  return forIsAb(value, which, text) === "ab";
+}
+
+////= lines-18	forBeforeB	1
+
+function beforeB(value, which, text) {
+  return forBeforeB(value, which, text) < "b";
+}
+
+////= lines-127	forInTemplate	toString	"ab"
+
+function inTemplate(value, which, text) {
+  return `<${forInTemplate(value, which, text)}>`;
+}
+
+function forSplit(value, which, text) {
+  if (which === 1) return /b/;
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+
+////= lines-115	split	forSplit	split	""
+
+function forSearched(value, which, text) {
+  if (which === 1) return ["b"];
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+
+////= lines-115	searched	forSearched	indexOf	"b"
+
+////= lines-18	forAsKey	1n
+
+function asKey(value, which, text) {
+  return ({ ab: "found", 1: "one" })[forAsKey(value, which, text)];
+}
+
+const hidden = [
+  "[\"a\", \"b\"]",
+  "65",
+  "null",
+  "undefined",
+  "new String(\"ab\")",
+  "true",
+  "1n",
+  "Symbol(\"ab\")",
+  "({ toString() { return \"ab\"; } })",
+  "({ valueOf() { return \"ab\"; }, toString() { return \"cd\"; } })",
+  "({ length: 1, charCodeAt() { return \"its own\"; }, slice() { return \"its own\"; }, toUpperCase() { return \"its own\"; }, split() { return \"its own\"; }, indexOf() { return \"its own\"; } })",
+  "Buffer.from(\"ab\")",
+];
+
+function honest(round) {
+  console.log(round, "lengthOf", show(lengthOf("ab")), show(lengthOf("")), show(lengthOf("xyz")), show(lengthOf(`a${1}`)), show(lengthOf(String(12))));
+  console.log(round, "codeOf", show(codeOf("ab")), show(codeOf("")), show(codeOf("xyz")), show(codeOf(`a${1}`)), show(codeOf(String(12))));
+  console.log(round, "exclaimed", show(exclaimed("ab")), show(exclaimed("")), show(exclaimed("xyz")), show(exclaimed(`a${1}`)), show(exclaimed(String(12))));
+  console.log(round, "tailOf", show(tailOf("ab")), show(tailOf("")), show(tailOf("xyz")), show(tailOf(`a${1}`)), show(tailOf(String(12))));
+  console.log(round, "shouted", show(shouted("ab")), show(shouted("")), show(shouted("xyz")), show(shouted(`a${1}`)), show(shouted(String(12))));
+  console.log(round, "firstOf", show(firstOf("ab")), show(firstOf("")), show(firstOf("xyz")), show(firstOf(`a${1}`)), show(firstOf(String(12))));
+  console.log(round, "isAb", show(isAb("ab")), show(isAb("")), show(isAb("xyz")), show(isAb(`a${1}`)), show(isAb(String(12))));
+  console.log(round, "beforeB", show(beforeB("ab")), show(beforeB("")), show(beforeB("xyz")), show(beforeB(`a${1}`)), show(beforeB(String(12))));
+  console.log(round, "inTemplate", show(inTemplate("ab")), show(inTemplate("")), show(inTemplate("xyz")), show(inTemplate(`a${1}`)), show(inTemplate(String(12))));
+  console.log(round, "split", show(split("ab")), show(split("")), show(split("xyz")), show(split(`a${1}`)), show(split(String(12))));
+  console.log(round, "searched", show(searched("ab")), show(searched("")), show(searched("xyz")), show(searched(`a${1}`)), show(searched(String(12))));
+  console.log(round, "asKey", show(asKey("ab")), show(asKey("")), show(asKey("xyz")), show(asKey(`a${1}`)), show(asKey(String(12))));
+}
+
+honest("before");
+attempt("lengthOf, the other path in sight", () => lengthOf(undefined, 1));
+for (const text of hidden) attempt("lengthOf of " + text, () => lengthOf(undefined, 2, text));
+attempt("codeOf, the other path in sight", () => codeOf(undefined, 1));
+for (const text of hidden) attempt("codeOf of " + text, () => codeOf(undefined, 2, text));
+attempt("exclaimed, the other path in sight", () => exclaimed(undefined, 1));
+for (const text of hidden) attempt("exclaimed of " + text, () => exclaimed(undefined, 2, text));
+attempt("tailOf, the other path in sight", () => tailOf(undefined, 1));
+for (const text of hidden) attempt("tailOf of " + text, () => tailOf(undefined, 2, text));
+attempt("shouted, the other path in sight", () => shouted(undefined, 1));
+for (const text of hidden) attempt("shouted of " + text, () => shouted(undefined, 2, text));
+attempt("firstOf, the other path in sight", () => firstOf(undefined, 1));
+for (const text of hidden) attempt("firstOf of " + text, () => firstOf(undefined, 2, text));
+attempt("isAb, the other path in sight", () => isAb(undefined, 1));
+for (const text of hidden) attempt("isAb of " + text, () => isAb(undefined, 2, text));
+attempt("beforeB, the other path in sight", () => beforeB(undefined, 1));
+for (const text of hidden) attempt("beforeB of " + text, () => beforeB(undefined, 2, text));
+attempt("inTemplate, the other path in sight", () => inTemplate(undefined, 1));
+for (const text of hidden) attempt("inTemplate of " + text, () => inTemplate(undefined, 2, text));
+attempt("split, the other path in sight", () => split(undefined, 1));
+for (const text of hidden) attempt("split of " + text, () => split(undefined, 2, text));
+attempt("searched, the other path in sight", () => searched(undefined, 1));
+for (const text of hidden) attempt("searched of " + text, () => searched(undefined, 2, text));
+attempt("asKey, the other path in sight", () => asKey(undefined, 1));
+for (const text of hidden) attempt("asKey of " + text, () => asKey(undefined, 2, text));
+honest("after");
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// many-callers-use-the-result-as-an-array-and-one-path-returns-something-else.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+////= lines-18	forLengthOf	"12"
+
+////= lines-259	lengthOf	forLengthOf	length
+
+////= lines-18	forFirstOf	null
+
+function firstOf(value, which, text) {
+  return forFirstOf(value, which, text)[0];
+}
+
+////= lines-181	forPushedTo	0	1	length	1
+
+////= lines-115	pushedTo	forPushedTo	push	1
+
+function forCounted(value, which, text) {
+  if (which === 1) return new Set([1, 2]);
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+
+function counted(value, which, text) {
+  let n = 0;
+  for (const item of forCounted(value, which, text)) n++;
+  return n;
+}
+
+function forMapped(value, which, text) {
+  if (which === 1) return new Uint8Array([1, 2]);
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+
+function mapped(value, which, text) {
+  return forMapped(value, which, text).map(item => item + 1);
+}
+
+////= lines-18	forSpread	undefined
+
+function spread(value, which, text) {
+  return [...forSpread(value, which, text)];
+}
+
+////= lines-18	forUnpacked	5
+
+function unpacked(value, which, text) {
+  const [first, second] = forUnpacked(value, which, text);
+  return [first, second];
+}
+
+function forJoined(value, which, text) {
+  if (which === 1) return new Map([[1, 2]]);
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+
+////= lines-115	joined	forJoined	join	"-"
+
+////= lines-18	forSearched	"2"
+
+////= lines-115	searched	forSearched	indexOf	2
+
+////= lines-180	forSummed	length	2
+
+////= lines-344	function summed(value, which, tex	const list = forSummed(value, which, text)
+
+function forStored(value, which, text) {
+  if (which === 1) return Object.freeze([1]);
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+
+function stored(value, which, text) {
+  const list = forStored(value, which, text);
+  list[1] = 9;
+  return list.length;
+}
+
+function forTested(value, which, text) {
+  if (which === 1) return new Proxy([], {});
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+
+////= lines-222	tested	Array.isArray	forTested
+
+const hidden = [
+  "\"12\"",
+  "null",
+  "undefined",
+  "5",
+  "({ 0: 1, 1: 2, length: 2 })",
+  "new Set([1, 2])",
+  "new Uint8Array([1, 2])",
+  "(function () { return arguments; })(1, 2)",
+  "Object.freeze([1, 2])",
+  "new Array(2)",
+  "new (class extends Array { push() { return \"mine\"; } map() { return \"mine\"; } join() { return \"mine\"; } indexOf() { return \"mine\"; } })(1, 2)",
+  "new Proxy([1, 2], {})",
+  "({ length: 1, 0: 2, push() { return \"its own\"; }, map() { return \"its own\"; }, join() { return \"its own\"; }, indexOf() { return \"its own\"; }, *[Symbol.iterator]() { yield 8; } })",
+];
+
+function honest(round) {
+  console.log(round, "lengthOf", show(lengthOf([1, 2, 3])), show(lengthOf([])), show(lengthOf(new Array(4, 5))), show(lengthOf([0.5])), show(lengthOf(Array.of(6))));
+  console.log(round, "firstOf", show(firstOf([1, 2, 3])), show(firstOf([])), show(firstOf(new Array(4, 5))), show(firstOf([0.5])), show(firstOf(Array.of(6))));
+  console.log(round, "pushedTo", show(pushedTo([1, 2, 3])), show(pushedTo([])), show(pushedTo(new Array(4, 5))), show(pushedTo([0.5])), show(pushedTo(Array.of(6))));
+  console.log(round, "counted", show(counted([1, 2, 3])), show(counted([])), show(counted(new Array(4, 5))), show(counted([0.5])), show(counted(Array.of(6))));
+  console.log(round, "mapped", show(mapped([1, 2, 3])), show(mapped([])), show(mapped(new Array(4, 5))), show(mapped([0.5])), show(mapped(Array.of(6))));
+  console.log(round, "spread", show(spread([1, 2, 3])), show(spread([])), show(spread(new Array(4, 5))), show(spread([0.5])), show(spread(Array.of(6))));
+  console.log(round, "unpacked", show(unpacked([1, 2, 3])), show(unpacked([])), show(unpacked(new Array(4, 5))), show(unpacked([0.5])), show(unpacked(Array.of(6))));
+  console.log(round, "joined", show(joined([1, 2, 3])), show(joined([])), show(joined(new Array(4, 5))), show(joined([0.5])), show(joined(Array.of(6))));
+  console.log(round, "searched", show(searched([1, 2, 3])), show(searched([])), show(searched(new Array(4, 5))), show(searched([0.5])), show(searched(Array.of(6))));
+  console.log(round, "summed", show(summed([1, 2, 3])), show(summed([])), show(summed(new Array(4, 5))), show(summed([0.5])), show(summed(Array.of(6))));
+  console.log(round, "stored", show(stored([1, 2, 3])), show(stored([])), show(stored(new Array(4, 5))), show(stored([0.5])), show(stored(Array.of(6))));
+  console.log(round, "tested", show(tested([1, 2, 3])), show(tested([])), show(tested(new Array(4, 5))), show(tested([0.5])), show(tested(Array.of(6))));
+}
+
+honest("before");
+attempt("lengthOf, the other path in sight", () => lengthOf(undefined, 1));
+for (const text of hidden) attempt("lengthOf of " + text, () => lengthOf(undefined, 2, text));
+attempt("firstOf, the other path in sight", () => firstOf(undefined, 1));
+for (const text of hidden) attempt("firstOf of " + text, () => firstOf(undefined, 2, text));
+attempt("pushedTo, the other path in sight", () => pushedTo(undefined, 1));
+for (const text of hidden) attempt("pushedTo of " + text, () => pushedTo(undefined, 2, text));
+attempt("counted, the other path in sight", () => counted(undefined, 1));
+for (const text of hidden) attempt("counted of " + text, () => counted(undefined, 2, text));
+attempt("mapped, the other path in sight", () => mapped(undefined, 1));
+for (const text of hidden) attempt("mapped of " + text, () => mapped(undefined, 2, text));
+attempt("spread, the other path in sight", () => spread(undefined, 1));
+for (const text of hidden) attempt("spread of " + text, () => spread(undefined, 2, text));
+attempt("unpacked, the other path in sight", () => unpacked(undefined, 1));
+for (const text of hidden) attempt("unpacked of " + text, () => unpacked(undefined, 2, text));
+attempt("joined, the other path in sight", () => joined(undefined, 1));
+for (const text of hidden) attempt("joined of " + text, () => joined(undefined, 2, text));
+attempt("searched, the other path in sight", () => searched(undefined, 1));
+for (const text of hidden) attempt("searched of " + text, () => searched(undefined, 2, text));
+attempt("summed, the other path in sight", () => summed(undefined, 1));
+for (const text of hidden) attempt("summed of " + text, () => summed(undefined, 2, text));
+attempt("stored, the other path in sight", () => stored(undefined, 1));
+for (const text of hidden) attempt("stored of " + text, () => stored(undefined, 2, text));
+attempt("tested, the other path in sight", () => tested(undefined, 1));
+for (const text of hidden) attempt("tested of " + text, () => tested(undefined, 2, text));
+honest("after");
+//// many-callers-use-the-result-as-an-object-of-one-shape-and-one-path-returns-something-else.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+////= Point
+
+////= lines-181	forXOf	y	1	x	3
+
+////= lines-259	xOf	forXOf	x
+
+////= lines-18	forSpan	null
+
+function span(value, which, text) {
+  const point = forSpan(value, which, text);
+  return point.x - point.y;
+}
+
+////= lines-18	forUnpacked	undefined
+
+function unpacked(value, which, text) {
+  const { x, y } = forUnpacked(value, which, text);
+  return x * y;
+}
+
+////= lines-18	forMoved	5
+
+function moved(value, which, text) {
+  const point = forMoved(value, which, text);
+  point.x = 9;
+  return point.x;
+}
+
+////= lines-18	forHasX	"xy"
+
+function hasX(value, which, text) {
+  return "x" in forHasX(value, which, text);
+}
+
+////= lines-179	forKeysOf	3	1
+
+function keysOf(value, which, text) {
+  return Object.keys(forKeysOf(value, which, text)).join();
+}
+
+////= lines-181	forListed	x	"3"	y	"1"
+
+function listed(value, which, text) {
+  const names = [];
+  for (const name in forListed(value, which, text)) names.push(name);
+  return names.join();
+}
+
+////= lines-176	forCopied
+
+function copied(value, which, text) {
+  return JSON.stringify({ ...forCopied(value, which, text) });
+}
+
+////= lines-176	forGrown
+
+function grown(value, which, text) {
+  const point = forGrown(value, which, text);
+  point.z = 1;
+  return Object.keys(point).join();
+}
+
+////= lines-176	forShrunk
+
+function shrunk(value, which, text) {
+  const point = forShrunk(value, which, text);
+  return [delete point.x, "x" in point];
+}
+
+////= lines-18	forMaybeX	0
+
+function maybeX(value, which, text) {
+  return forMaybeX(value, which, text)?.x;
+}
+
+function forBumped(value, which, text) {
+  if (which === 1) return { x: 3, get y() { return 1; } };
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+
+function bumped(value, which, text) {
+  const point = forBumped(value, which, text);
+  point.y++;
+  return point.y;
+}
+
+const hidden = [
+  "({ y: 1, x: 3 })",
+  "({ x: 3 })",
+  "null",
+  "undefined",
+  "5",
+  "\"xy\"",
+  "[3, 1]",
+  "({ x: \"3\", y: \"1\" })",
+  "Object.freeze({ x: 3, y: 1 })",
+  "Object.create({ x: 3, y: 1 })",
+  "({ get x() { return 3; }, get y() { return 1; } })",
+  "Object.assign(Object.create(null), { x: 3, y: 1 })",
+  "new Proxy({ x: 3, y: 1 }, {})",
+  "Object.assign(() => {}, { x: 3, y: 1 })",
+];
+
+function honest(round) {
+  console.log(round, "xOf", show(xOf({ x: 3, y: 1 })), show(xOf({ x: 0.5, y: 0.25 })), show(xOf(new Point(5, 2))), show(xOf({ x: -1, y: -1 })), show(xOf(new Point(0, 0))));
+  console.log(round, "span", show(span({ x: 3, y: 1 })), show(span({ x: 0.5, y: 0.25 })), show(span(new Point(5, 2))), show(span({ x: -1, y: -1 })), show(span(new Point(0, 0))));
+  console.log(round, "unpacked", show(unpacked({ x: 3, y: 1 })), show(unpacked({ x: 0.5, y: 0.25 })), show(unpacked(new Point(5, 2))), show(unpacked({ x: -1, y: -1 })), show(unpacked(new Point(0, 0))));
+  console.log(round, "moved", show(moved({ x: 3, y: 1 })), show(moved({ x: 0.5, y: 0.25 })), show(moved(new Point(5, 2))), show(moved({ x: -1, y: -1 })), show(moved(new Point(0, 0))));
+  console.log(round, "hasX", show(hasX({ x: 3, y: 1 })), show(hasX({ x: 0.5, y: 0.25 })), show(hasX(new Point(5, 2))), show(hasX({ x: -1, y: -1 })), show(hasX(new Point(0, 0))));
+  console.log(round, "keysOf", show(keysOf({ x: 3, y: 1 })), show(keysOf({ x: 0.5, y: 0.25 })), show(keysOf(new Point(5, 2))), show(keysOf({ x: -1, y: -1 })), show(keysOf(new Point(0, 0))));
+  console.log(round, "listed", show(listed({ x: 3, y: 1 })), show(listed({ x: 0.5, y: 0.25 })), show(listed(new Point(5, 2))), show(listed({ x: -1, y: -1 })), show(listed(new Point(0, 0))));
+  console.log(round, "copied", show(copied({ x: 3, y: 1 })), show(copied({ x: 0.5, y: 0.25 })), show(copied(new Point(5, 2))), show(copied({ x: -1, y: -1 })), show(copied(new Point(0, 0))));
+  console.log(round, "grown", show(grown({ x: 3, y: 1 })), show(grown({ x: 0.5, y: 0.25 })), show(grown(new Point(5, 2))), show(grown({ x: -1, y: -1 })), show(grown(new Point(0, 0))));
+  console.log(round, "shrunk", show(shrunk({ x: 3, y: 1 })), show(shrunk({ x: 0.5, y: 0.25 })), show(shrunk(new Point(5, 2))), show(shrunk({ x: -1, y: -1 })), show(shrunk(new Point(0, 0))));
+  console.log(round, "maybeX", show(maybeX({ x: 3, y: 1 })), show(maybeX({ x: 0.5, y: 0.25 })), show(maybeX(new Point(5, 2))), show(maybeX({ x: -1, y: -1 })), show(maybeX(new Point(0, 0))));
+  console.log(round, "bumped", show(bumped({ x: 3, y: 1 })), show(bumped({ x: 0.5, y: 0.25 })), show(bumped(new Point(5, 2))), show(bumped({ x: -1, y: -1 })), show(bumped(new Point(0, 0))));
+}
+
+honest("before");
+attempt("xOf, the other path in sight", () => xOf(undefined, 1));
+for (const text of hidden) attempt("xOf of " + text, () => xOf(undefined, 2, text));
+attempt("span, the other path in sight", () => span(undefined, 1));
+for (const text of hidden) attempt("span of " + text, () => span(undefined, 2, text));
+attempt("unpacked, the other path in sight", () => unpacked(undefined, 1));
+for (const text of hidden) attempt("unpacked of " + text, () => unpacked(undefined, 2, text));
+attempt("moved, the other path in sight", () => moved(undefined, 1));
+for (const text of hidden) attempt("moved of " + text, () => moved(undefined, 2, text));
+attempt("hasX, the other path in sight", () => hasX(undefined, 1));
+for (const text of hidden) attempt("hasX of " + text, () => hasX(undefined, 2, text));
+attempt("keysOf, the other path in sight", () => keysOf(undefined, 1));
+for (const text of hidden) attempt("keysOf of " + text, () => keysOf(undefined, 2, text));
+attempt("listed, the other path in sight", () => listed(undefined, 1));
+for (const text of hidden) attempt("listed of " + text, () => listed(undefined, 2, text));
+attempt("copied, the other path in sight", () => copied(undefined, 1));
+for (const text of hidden) attempt("copied of " + text, () => copied(undefined, 2, text));
+attempt("grown, the other path in sight", () => grown(undefined, 1));
+for (const text of hidden) attempt("grown of " + text, () => grown(undefined, 2, text));
+attempt("shrunk, the other path in sight", () => shrunk(undefined, 1));
+for (const text of hidden) attempt("shrunk of " + text, () => shrunk(undefined, 2, text));
+attempt("maybeX, the other path in sight", () => maybeX(undefined, 1));
+for (const text of hidden) attempt("maybeX of " + text, () => maybeX(undefined, 2, text));
+attempt("bumped, the other path in sight", () => bumped(undefined, 1));
+for (const text of hidden) attempt("bumped of " + text, () => bumped(undefined, 2, text));
+honest("after");
+//// map-and-set-keys-that-look-alike.js
+////= show-26
+
+function put(map, key, value) {
+  map.set(key, value);
+  return map.size;
+}
+
+////= lines-25	get	map	key	map.get
+
+////= lines-25	has	map	key	map.has
+
+function add(set, key) {
+  set.add(key);
+  return set.size;
+}
+
+////= lines-187	distinct	values	Set	values	size
+
+const texts = [
+  "'1'",
+  "1",
+  "1n",
+  "1.0",
+  "'1.0'",
+  "'a'",
+  "'a' + ''",
+  "'xa'.slice(1)",
+  "['a'].join()",
+  "'a\\u4e16'.slice(0, 1)",
+  "String.fromCharCode(97)",
+  "new String('a')",
+  "new String('a')",
+  "0",
+  "-0",
+  "'0'",
+  "'-0'",
+  "NaN",
+  "0 / 0",
+  "'NaN'",
+  "null",
+  "'null'",
+  "undefined",
+  "'undefined'",
+  "true",
+  "'true'",
+  "''",
+  "[]",
+  "[]",
+  "Symbol('a')",
+  "Symbol('a')",
+  "Symbol.for('a')",
+  "Symbol.for('a')",
+  "'\\u00e9'",
+  "'e\\u0301'",
+  "'e\\u0301'.normalize()",
+  "'\\ud83d'",
+  "'\\ud83d\\ude00'[0]",
+  "2 ** 53",
+  "2 ** 53 + 1",
+  "2n ** 53n",
+  "0.1 + 0.2",
+  "0.3",
+  "{ toString() { return 'a'; } }",
+];
+
+const warm = new Map();
+const warmSet = new Set();
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  const key = "k" + (i % 7);
+  total += put(warm, key, i) + add(warmSet, key) + get(warm, key);
+  if (has(warm, key)) total++;
+}
+console.log("2000 honest rounds", total);
+
+const map = new Map();
+const set = new Set();
+for (const text of texts) {
+  attempt("set " + text, () => {
+    const key = make(text);
+    const before = has(map, key);
+    return [before, get(map, key), put(map, key, text), add(set, key)];
+  });
+}
+console.log("keys in order:", [...map.keys()].map(show).join(" "));
+console.log("values in order:", [...map.values()].join(" | "));
+console.log("set in order:", [...set].map(show).join(" "));
+attempt("minus zero comes back as", () => [...new Set([-0])][0]);
+attempt("minus zero as a map key comes back as", () => [...new Map([[-0, 1]]).keys()][0]);
+attempt("distinct", () => [distinct(["a", "a" + "", new String("a"), new String("a")]), distinct([1, "1", 1n, 1.0]), distinct([NaN, NaN, 0, -0]), distinct("hello"), distinct([[], []])]);
+attempt("delete by a look-alike", () => {
+  const letters = new Map([["1", "text"], [1, "number"]]);
+  return [letters.delete(1n), letters.delete("1.0"), letters.delete(1.0), [...letters.keys()]];
+});
+attempt("weak collections refuse texts", () => new WeakMap().set("a", 1));
+attempt("weak sets refuse texts", () => new WeakSet().add("a"));
+attempt("weak collections take wrapped texts", () => new WeakMap().set(new String("a"), 1).has(new String("a")));
+attempt("weak collections and symbols", () => [new WeakMap().set(Symbol("a"), 1) instanceof WeakMap]);
+attempt("weak collections and registered symbols", () => new WeakMap().set(Symbol.for("a"), 1));
+attempt("Object.groupBy turns keys into texts", () => {
+  const groups = Object.groupBy([1, "1", 1n, null, "null", -0, [1]], value => value);
+  return Reflect.ownKeys(groups).map(key => key + ":" + groups[key].length);
+});
+attempt("Map.groupBy does not", () => [...Map.groupBy([1, "1", 1n, null, "null", -0, 0], value => value)].map(([key, values]) => show(key) + ":" + values.length));
+//// match-answers-with-an-object-that-has-its-own-join.js
+const pattern = { [Symbol.match]: () => ({ join: () => "joined" }) };
+console.log("a,b".match(pattern).join());
+//// members-added-to-built-in-prototypes-and-removed-in-the-middle-of-a-loop.cjs
+const log = [];
+
+////= show-27
+
+console.log("strict:", (function () { return this === undefined; })());
+
+////= addsMembers-2
+////= truncates
+function subtracts(n, results, tick) {
+  for (let i = 0; i < 6; i++) {
+    tick(i);
+    results.push(n - 1);
+  }
+  return "done";
+}
+function joins(e, results, tick) {
+  for (let i = 0; i < 6; i++) {
+    tick(i);
+    results.push("" + e);
+  }
+  return "done";
+}
+function serializes(d, results, tick) {
+  for (let i = 0; i < 6; i++) {
+    tick(i);
+    results.push(JSON.stringify([d]));
+  }
+  return "done";
+}
+function parses(text, results, tick) {
+  for (let i = 0; i < 6; i++) {
+    tick(i);
+    const n = JSON.parse(text);
+    results.push(n + 1);
+  }
+  return "done";
+}
+
+////= lines-94	trims	s	s.trim
+function takesTheFirst(s, results, tick) {
+  for (let i = 0; i < 6; i++) {
+    tick(i);
+    results.push(s.at(0));
+  }
+  return "done";
+}
+
+function during(use, value, put, restore) {
+  const results = [];
+  const end = outcome(() =>
+    use(value, results, i => {
+      if (i === 2) put();
+      if (i === 4) restore();
+    }),
+  );
+  return show(results) + " " + end;
+}
+function member(prototype, name, value) {
+  const had = Object.getOwnPropertyDescriptor(prototype, name);
+  return [
+    () => Object.defineProperty(prototype, name, typeof value === "object" ? { ...value, configurable: true } : { value, writable: true, configurable: true }),
+    () => (had ? Object.defineProperty(prototype, name, had) : delete prototype[name]),
+  ];
+}
+class Stamp extends Date {}
+function both(first, second) {
+  return [() => (first[0](), second[0]()), () => (first[1](), second[1]())];
+}
+
+for (let i = 0; i < 300; i++) {
+  addsMembers({ x: 1, y: 2 }, [], () => {});
+  truncates(new Date(7), [], () => {});
+  subtracts(new Date(7), [], () => {});
+  joins(new RangeError("r"), [], () => {});
+  serializes(new Date(0), [], () => {});
+  parses("7", [], () => {});
+  trims(" a ", [], () => {});
+  takesTheFirst("abc", [], () => {});
+}
+
+console.log("x and y on Array.prototype: " + during(addsMembers, [5, 6], ...both(member(Array.prototype, "x", 1), member(Array.prototype, "y", 2))));
+console.log("x and y on String.prototype: " + during(addsMembers, "abc", ...both(member(String.prototype, "x", 1), member(String.prototype, "y", 2))));
+console.log("x and y on Number.prototype: " + during(addsMembers, 5, ...both(member(Number.prototype, "x", 1), member(Number.prototype, "y", 2))));
+console.log("getters x and y on Number.prototype: " + during(addsMembers, 5, ...both(member(Number.prototype, "x", { get() { log.push("get x " + typeof this); return this + 1; } }), member(Number.prototype, "y", { get() { log.push("get y"); return 2; } }))));
+console.log("x and y on Date.prototype: " + during(addsMembers, new Date(0), ...both(member(Date.prototype, "x", 1), member(Date.prototype, "y", 2))));
+console.log("x and y on Map.prototype: " + during(addsMembers, new Map(), ...both(member(Map.prototype, "x", 1), member(Map.prototype, "y", 2))));
+console.log("an object in between: " + during(addsMembers, { x: 1, y: 2 }, () => {}, () => {}));
+console.log("valueOf of a class below Date, truncated: " + during(truncates, new Stamp(7), ...member(Stamp.prototype, "valueOf", function () { log.push("valueOf"); return 2 ** 31 + 0.5; })));
+console.log("valueOf of a class below Date, subtracted: " + during(subtracts, new Stamp(7), ...member(Stamp.prototype, "valueOf", function () { log.push("valueOf"); return "3"; })));
+console.log("toString of Error.prototype: " + during(joins, new RangeError("r"), ...member(Error.prototype, "toString", function () { log.push("toString"); return "replaced " + this.message; })));
+console.log("name of RangeError.prototype: " + during(joins, new RangeError("r"), ...member(RangeError.prototype, "name", "Renamed")));
+console.log("toJSON of a class below Date: " + during(serializes, new Stamp(0), ...member(Stamp.prototype, "toJSON", function () { log.push("toJSON"); return 5; })));
+console.log("toISOString of a class below Date: " + during(serializes, new Stamp(0), ...member(Stamp.prototype, "toISOString", function () { log.push("toISOString"); return { not: "a text" }; })));
+console.log("trim of String.prototype: " + during(trims, " a ", ...member(String.prototype, "trim", function () { log.push("trim " + typeof this); return 5; })));
+console.log("at of String.prototype: " + during(takesTheFirst, "abc", ...member(String.prototype, "at", function (index) { log.push("at " + index); return ["replaced"]; })));
+console.log("at of String.prototype, for an array: " + during(takesTheFirst, ["abc"], ...member(String.prototype, "at", () => "replaced")));
+console.log("JSON.stringify: " + during(serializes, new Date(0), ...member(JSON, "stringify", value => { log.push("stringify"); return value.length; })));
+console.log("JSON.parse: " + during(parses, "7", ...member(JSON, "parse", text => { log.push("parse"); return text; })));
+//// members-of-a-class-instance-are-reached-by-computed-names.js
+////= show-26
+
+class Account {
+  #secret = "hidden";
+  owner = "ada";
+  balance = 10;
+  static bank = "first";
+
+  get label() {
+    return this.owner + ":" + this.balance;
+  }
+
+  set label(value) {
+    this.owner = value;
+  }
+
+  get readOnly() {
+    return "read only";
+  }
+
+  describe() {
+    return "account of " + this.owner;
+  }
+
+  deposit(amount) {
+    this.balance += amount;
+    return this.balance;
+  }
+
+  reveal() {
+    return this.#secret;
+  }
+
+  static open() {
+    return new Account();
+  }
+}
+
+////= lines-73	read	account	name	account[name
+
+////= lines-196	store	account	name	account[name
+
+function call(account, name, argument) {
+  return account[name](argument);
+}
+
+////= remove	account	name	account[name
+
+function has(account, name) {
+  return [name in account, Object.hasOwn(account, name)];
+}
+
+function summary(account) {
+  const parts = [];
+  for (const use of [() => account.owner, () => account.balance, () => account.label, () => account.describe(), () => account.deposit(1), () => account.reveal(), () => Object.keys(account).join(",")]) {
+    try {
+      parts.push(show(use()));
+    } catch (error) {
+      parts.push("threw " + error.constructor.name);
+    }
+  }
+  return parts.join(" | ");
+}
+
+for (let i = 0; i < 2000; i++) {
+  const account = new Account();
+  read(account, i % 2 ? "owner" : "balance");
+  store(account, "owner", "grace");
+  call(account, "describe");
+  has(account, "owner");
+  account.describe();
+  account.deposit(1);
+  account.label;
+}
+
+const names = ["'owner'", "'own' + 'er'", "'balance'", "'label'", "'readOnly'", "'describe'", "'deposit'", "'reveal'", "'#secret'", "'secret'", "'bank'", "'open'", "'constructor'", "'__proto__'", "'prototype'", "'toString'", "'hasOwnProperty'", "'missing'", "''", "0", "null", "['owner']", "new String('owner')", "{ toString() { return 'describe'; } }", "Symbol('owner')", "Symbol.toStringTag"];
+
+for (const name of names) {
+  attempt("read " + name, () => {
+    const found = read(new Account(), make(name));
+    return typeof found === "function" ? "function " + found.name : found === Account.prototype ? "Account.prototype" : found;
+  });
+  attempt("in and own " + name, () => has(new Account(), make(name)));
+  attempt("call " + name, () => call(new Account(), make(name), 5));
+  let account = new Account();
+  let outcome = "";
+  try {
+    store(account, make(name), "stored");
+  } catch (error) {
+    outcome = "(threw " + error.constructor.name + ") ";
+  }
+  console.log("after a store of a text by " + name + " -> " + outcome + summary(account));
+  account = new Account();
+  outcome = "";
+  try {
+    store(account, make(name), () => "replaced");
+  } catch (error) {
+    outcome = "(threw " + error.constructor.name + ") ";
+  }
+  console.log("after a store of a function by " + name + " -> " + outcome + summary(account));
+  account = new Account();
+  try {
+    outcome = "(" + remove(account, make(name)) + ") ";
+  } catch (error) {
+    outcome = "(threw " + error.constructor.name + ") ";
+  }
+  console.log("after a delete by " + name + " -> " + outcome + summary(account));
+}
+
+attempt("a store by name into the prototype changes every instance", () => {
+  const before = new Account();
+  const original = Account.prototype.describe;
+  store(Account.prototype, make("'describe'"), function () { return "patched for " + this.owner; });
+  const result = [before.describe(), new Account().describe(), call(before, "describe")];
+  Account.prototype.describe = original;
+  return result.concat(before.describe());
+});
+attempt("a delete by name from the prototype", () => {
+  const original = Account.prototype.describe;
+  remove(Account.prototype, make("'describe'"));
+  let result;
+  try {
+    result = new Account().describe();
+  } catch (error) {
+    result = error.constructor.name;
+  }
+  Account.prototype.describe = original;
+  return [result, new Account().describe()];
+});
+attempt("static members by name", () => [read(Account, make("'bank'")), call(Account, make("'open'")) instanceof Account, read(Account, make("'name'")), read(Account, make("'length'"))]);
+attempt("honest again", () => summary(new Account()));
+//// members-of-a-class-under-index-keys-are-used.js
+class Shelf {
+  get 1() {
+    return "getter";
+  }
+  2() {
+    return "method";
+  }
+  ["3"]() {
+    return "method under a text";
+  }
+  static 4() {
+    return "static method";
+  }
+  set 5(value) {
+    this.stored = value;
+  }
+}
+function attempt(label, use) {
+  try {
+    console.log(label, use());
+  } catch (error) {
+    console.log(label, error.constructor.name);
+  }
+}
+const shelf = new Shelf();
+const keys = [1, 2, 3, 4, 5];
+attempt("getter", () => shelf[1]);
+attempt("getter by a text", () => shelf["1"]);
+attempt("getter by a variable", () => shelf[keys[0]]);
+attempt("method", () => shelf[2]());
+attempt("method by a variable", () => shelf[keys[1]]());
+attempt("method under a text", () => shelf[3]());
+attempt("static method", () => Shelf[4]());
+attempt("setter", () => ((shelf[5] = "kept"), shelf.stored));
+//// members-of-objects-whose-constructor-deleted-a-member-are-read-ten-million-times.js
+function Pair() {
+  this.x = 42;
+  this.y = 1337;
+  delete this.y;
+}
+const pairs = [];
+for (let i = 0; i < 50; ++i) pairs.push(new Pair());
+let sum = 0;
+for (let round = 0; round < 200000; ++round) {
+  for (let i = 0; i < pairs.length; ++i) {
+    const pair = pairs[i];
+    if (pair.y === undefined) sum += pair.x;
+  }
+}
+console.log(sum);
+//// members-that-lists-and-texts-share.js
+////= show-26
+
+////= lines-258	lastElement	value	value[value
+
+////= lines-3	withoutFirst	value	value.slice	1
+
+////= lines-3	positionOfB	value	value.indexOf	"b"
+
+////= lines-3	hasB	value	value.includes	"b"
+
+////= lines-3	joinedWithItself	value	value.concat	value
+
+////= lines-193	lastByAt	value	value.at	1
+
+////= reversedCopy-2
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// members-that-lists-and-texts-share-in-sloppy-commonjs/main.cjs
+////= show-26
+
+////= lines-258	lastElement	value	value[value
+
+////= lines-3	withoutFirst	value	value.slice	1
+
+////= lines-3	positionOfB	value	value.indexOf	"b"
+
+////= lines-3	hasB	value	value.includes	"b"
+
+////= lines-3	joinedWithItself	value	value.concat	value
+
+////= lines-193	lastByAt	value	value.at	1
+
+////= reversedCopy-2
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// members-that-lists-and-texts-share-with-the-values-in-plain-sight.js
+////= show-33
+
+const made = {
+  "'abc'": () => ('abc'),
+  "['a', 'b', 'c']": () => (['a', 'b', 'c']),
+  "'aba'": () => ('aba'),
+  "['a', 'b', 'a']": () => (['a', 'b', 'a']),
+  "''": () => (''),
+  "[]": () => ([]),
+  "'b'": () => ('b'),
+  "['b']": () => (['b']),
+  "[['b']]": () => ([['b']]),
+  "['abc']": () => (['abc']),
+  "new String('abc')": () => (new String('abc')),
+  "Buffer.from('abc')": () => (Buffer.from('abc')),
+  "new Uint8Array([97, 98, 99])": () => (new Uint8Array([97, 98, 99])),
+  "[, 'b', ,]": () => ([, 'b', ,]),
+  "class Letters extends Array { slice() { return 'sliced by the subclass'; } indexOf() { return 'found by the subclass'; } }.from('abc')": () => (class Letters extends Array { slice() { return 'sliced by the subclass'; } indexOf() { return 'found by the subclass'; } }.from('abc')),
+  "(function () { return arguments; })('a', 'b', 'c')": () => ((function () { return arguments; })('a', 'b', 'c')),
+  "{ 0: 'a', 1: 'b', length: 2 }": () => ({ 0: 'a', 1: 'b', length: 2 }),
+  "{ 0: 'a', 1: 'b', length: 2, slice: Array.prototype.slice, indexOf: String.prototype.indexOf, includes: Array.prototype.includes, concat: String.prototype.concat, at: Array.prototype.at }": () => ({ 0: 'a', 1: 'b', length: 2, slice: Array.prototype.slice, indexOf: String.prototype.indexOf, includes: Array.prototype.includes, concat: String.prototype.concat, at: Array.prototype.at }),
+  "{ 0: 'a', 1: 'b', length: 2, slice: String.prototype.slice, indexOf: Array.prototype.indexOf, includes: String.prototype.includes, concat: Array.prototype.concat, at: String.prototype.at, toString() { return 'xby'; } }": () => ({ 0: 'a', 1: 'b', length: 2, slice: String.prototype.slice, indexOf: Array.prototype.indexOf, includes: String.prototype.includes, concat: Array.prototype.concat, at: String.prototype.at, toString() { return 'xby'; } }),
+  "123": () => (123),
+  "null": () => (null),
+};
+
+////= make-3
+
+////= lines-258	lastElement	value	value[value
+
+////= lines-3	withoutFirst	value	value.slice	1
+
+////= lines-3	positionOfB	value	value.indexOf	"b"
+
+////= lines-3	hasB	value	value.includes	"b"
+
+////= lines-3	joinedWithItself	value	value.concat	value
+
+////= lines-193	lastByAt	value	value.at	1
+
+////= reversedCopy-2
+//// members-under-computed-symbol-and-numeric-looking-names.js
+const log = [];
+
+////= show-23	value.map(show	" + Reflect.ownKeys(value).map(key => String(key) + ": " + show(value[key])).join(", ") + "
+
+////= lines-140	Shelf	width	"field width"	height	"field height"
+
+////= lines-84	OldShelf	width	"field width"	height	"field height"
+
+////= lines-73	readKey	shelf	key	shelf[key
+
+////= lines-232	storeKey	shelf	key	shelf[key	"stored"
+
+////= lines-90	askKey	shelf	key	key	in	shelf
+
+function deleteKey(shelf, key) {
+  return [delete shelf[key], Reflect.ownKeys(shelf).length];
+}
+
+function readThenReadByName(shelf, key) {
+  return [shelf[key], shelf.width];
+}
+
+function storeThenReadByName(shelf, key) {
+  shelf[key] = "stored";
+  return shelf.width;
+}
+
+function literalWithKey(key) {
+  return { width: "before", [key]: "computed", height: "after" };
+}
+
+function patternWithKey(shelf, key) {
+  const { [key]: found = "default", ...others } = shelf;
+  return [found, others];
+}
+
+const mark = Symbol("mark");
+const keys = [
+  ['"width"', () => "width"],
+  ["joined to width", () => ["wid", "th"].join("")],
+  ["from JSON", () => JSON.parse('"width"')],
+  ["a String object", () => new String("width")],
+  ["an array of one string", () => ["width"]],
+  ["an object whose toString logs", () => ({ toString() { log.push("toString"); return "width"; } })],
+  ["an object with Symbol.toPrimitive", () => ({ [Symbol.toPrimitive](hint) { log.push("toPrimitive " + hint); return "width"; } })],
+  ["an object whose toString answers a symbol", () => ({ toString() { return mark; } })],
+  ["a name nobody has", () => "depth"],
+  ["an empty string", () => ""],
+  ["a symbol", () => mark],
+  ["a registered symbol", () => Symbol.for("width")],
+  ["Symbol.iterator", () => Symbol.iterator],
+  ["0", () => 0],
+  ['"0"', () => "0"],
+  ["-0", () => -0],
+  ['"-0"', () => "-0"],
+  ['"01"', () => "01"],
+  ["1.5", () => 1.5],
+  ["-1", () => -1],
+  ["4294967294", () => 4294967294],
+  ["4294967295", () => 4294967295],
+  ["1e21", () => 1e21],
+  ["NaN", () => NaN],
+  ["5n", () => 5n],
+  ["null", () => null],
+  ["undefined", () => undefined],
+  ['"__proto__"', () => "__proto__"],
+  ['"constructor"', () => "constructor"],
+  ['"hasOwnProperty"', () => "hasOwnProperty"],
+];
+
+const uses = [
+  ["shelf[key]", (make, key) => readKey(make(), key)],
+  ["shelf[key] = ..", (make, key) => storeKey(make(), key)],
+  ["key in shelf", (make, key) => askKey(make(), key)],
+  ["delete shelf[key]", (make, key) => deleteKey(make(), key)],
+  ["shelf[key], shelf.width", (make, key) => readThenReadByName(make(), key)],
+  ["shelf[key] = .., shelf.width", (make, key) => storeThenReadByName(make(), key)],
+  ["{ width, [key], height }", (make, key) => literalWithKey(key)],
+  ["{ [key]: found = .., ...others }", (make, key) => patternWithKey(make(), key)],
+];
+
+const kinds = [
+  ["class", () => new Shelf()],
+  ["constructor function", () => new OldShelf()],
+];
+
+for (let i = 0; i < 2000; i++) for (const [, make] of kinds) for (const [, use] of uses) use(make, i % 2 ? "width" : "height");
+
+kinds.forEach(([kind, make], which) => {
+  for (const [label, makeKey] of keys) {
+    for (const [name, use] of uses) {
+      if (which === 1 && name !== "shelf[key]" && name !== "shelf[key] = .., shelf.width") continue;
+      let line = kind + " | " + label + " | " + name + " -> ";
+      try {
+        line += show(use(make, makeKey()));
+      } catch (error) {
+        line += "threw " + error.constructor.name;
+      }
+      console.log(line + (log.length ? " | log " + log.splice(0).join(", ") : ""));
+    }
+  }
+});
+//// methods-are-put-on-prototypes-under-computed-names.cjs
+////= show-34
+
+function Router(base) {
+  this.base = base;
+  this.routes = [];
+}
+
+["get", "post", "remove"].forEach(function (verb) {
+  Router.prototype[verb] = function (path) {
+    this.routes.push(verb + " " + this.base + path);
+    return this;
+  };
+});
+
+var extras = {
+  list: function () {
+    return this.routes.join(", ");
+  },
+  count: function () {
+    return this.routes.length;
+  },
+};
+Object.keys(extras).forEach(function (name) {
+  Router.prototype[name] = extras[name];
+});
+
+for (var index = 0; index < 2; index++) {
+  Router.prototype["step" + index] = (function (step) {
+    return function () {
+      return "step " + step + " of " + this.base;
+    };
+  })(index);
+}
+
+Router.prototype.del = Router.prototype["delete"] = Router.prototype.remove;
+Router.prototype.toJSON = Router.prototype.toString = function () {
+  return "router " + this.base;
+};
+
+Object.defineProperty(Router.prototype, ["si", "ze"].join(""), {
+  get: function () {
+    return this.routes.length * 10;
+  },
+});
+
+////= lines-3	useGet	router	router.get	"/a"
+
+////= lines-3	usePost	router	router.post	"/b"
+
+////= lines-5	useList	router	router.list
+
+////= lines-5	useStep	router	router.step1
+
+////= lines-7	useSize	router	router.size
+
+var length = 0;
+for (var i = 0; i < 2000; i++) {
+  var honest = new Router("/r" + (i % 3));
+  length += useList(usePost(useGet(honest))).length + useStep(honest).length + useSize(honest);
+}
+console.log("2000 honest routers", length);
+
+attempt("get, post, list", function () { return useList(usePost(useGet(new Router("/x")))); });
+attempt("count", function () { return useGet(new Router("/x")).count(); });
+attempt("step0, step1", function () { return [new Router("/x").step0(), useStep(new Router("/x"))]; });
+attempt("del, delete and remove are one function", function () { return [Router.prototype.del === Router.prototype.remove, Router.prototype["delete"] === Router.prototype.remove]; });
+attempt("del", function () { return useList(new Router("/x").del("/c")); });
+attempt("in a template, in JSON", function () { return [`${new Router("/x")}`, JSON.stringify({ router: new Router("/x") })]; });
+attempt("size", function () { return useSize(useGet(new Router("/x"))); });
+attempt("names on the prototype", function () { return Object.keys(Router.prototype); });
+attempt("for-in over a router", function () { var names = []; for (var name in new Router("/x")) names.push(name); return names; });
+attempt("a verb that was never defined", function () { return new Router("/x").patch("/d"); });
+
+var impostors = [
+  ["a literal with its own get", function () { return { base: "/l", routes: [], get: function () { return "a literal's get"; }, post: function () { return this; }, list: function () { return "a literal's list"; }, step1: function () { return "a literal's step"; }, size: "a literal's size" }; }],
+  ["a literal under the prototype", function () { return { __proto__: Router.prototype, routes: ["early"], base: "/p" }; }],
+  ["an object made from the prototype alone", function () { return Object.create(Router.prototype); }],
+  ["a router whose routes is a string", function () { var router = new Router("/s"); router.routes = "text"; return router; }],
+  ["a router whose routes is an array-like", function () { var router = new Router("/s"); router.routes = { length: 0, push: Array.prototype.push, join: Array.prototype.join }; return router; }],
+  ["a router with its own get", function () { var router = new Router("/o"); router.get = function () { return "own get"; }; return router; }],
+  ["a frozen router", function () { return Object.freeze(new Router("/f")); }],
+  ["a Map, which has get and size", function () { return new Map([["/a", "from the map"]]); }],
+  ["a URLSearchParams, which has get and size", function () { return new URLSearchParams("/a=found"); }],
+];
+impostors.forEach(function (pair) {
+  [["get", useGet], ["post", usePost], ["list", useList], ["step1", useStep], ["size", useSize]].forEach(function (use) {
+    attempt(pair[0] + ": " + use[0], function () {
+      var result = use[1](pair[1]());
+      return typeof result === "object" && result !== null ? "an object with " + Object.keys(result).join() : result;
+    });
+  });
+  attempt("honest again", function () { return useList(usePost(useGet(new Router("/x")))); });
+});
+
+["get", "list"].forEach(function (name) {
+  Router.prototype[name] = function () {
+    return "replaced " + name;
+  };
+});
+attempt("after a loop replaced get and list", function () { return [useGet(new Router("/x")), useList(new Router("/x"))]; });
+delete Router.prototype["po" + "st"];
+attempt("after post was deleted under a computed name", function () { return usePost(new Router("/x")); });
+//// methods-made-inside-the-constructor-close-over-self.cjs
+////= show-21
+
+////= attempt-9
+
+function Timer(start) {
+  var self = this;
+  var secret = start * 10;
+  this.ticks = start;
+  this.tick = function () {
+    self.ticks++;
+    return self.ticks;
+  };
+  this.tickThis = function () {
+    this.ticks++;
+    return this.ticks;
+  };
+  this.peek = function () {
+    return secret;
+  };
+  this.poke = function (value) {
+    secret = value;
+    return self;
+  };
+}
+////= lines-58	Timer	tick	"the prototype's tick"
+Timer.prototype.report = function () {
+  return this.ticks + " ticks, secret " + this.peek();
+};
+
+////= lines-5	tick	timer	timer.tick
+
+////= lines-5	tickThis	timer	timer.tickThis
+
+////= lines-5	peek	timer	timer.peek
+
+////= lines-5	report	timer	timer.report
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) {
+  var honest = new Timer(i % 5);
+  sum += tick(honest) + tickThis(honest) + peek(honest) + report(honest).length;
+}
+console.log("2000 honest timers", sum);
+
+var one = new Timer(1);
+var two = new Timer(100);
+attempt("two timers keep their own state", function () { return [tick(one), tick(two), peek(one), peek(two)]; });
+attempt("their methods are different functions", function () { return one.tick === two.tick; });
+attempt("keys", function () { return Object.keys(one); });
+
+attempt("tick detached still finds self", function () { var detached = one.tick; return [detached(), one.ticks]; });
+attempt("tickThis detached", function () { var detached = one.tickThis; var result = detached(); delete globalThis.ticks; return result; });
+attempt("one's tick on two", function () { two.tick = one.tick; return [tick(two), one.ticks, two.ticks]; });
+attempt("one's tickThis on two", function () { two.tickThis = one.tickThis; return [tickThis(two), one.ticks, two.ticks]; });
+attempt("one's peek on two", function () { two.peek = one.peek; return [peek(two), report(two)]; });
+attempt("poke through one changes what two's borrowed peek sees", function () { one.poke("poked"); return [peek(one), peek(two)]; });
+
+attempt("the own tick deleted, the prototype's shows", function () { var timer = new Timer(1); delete timer.tick; return tick(timer); });
+attempt("a copy by spread still ticks the original", function () { var timer = new Timer(1); var copy = Object.assign({}, timer); return [tick(copy), copy.ticks, timer.ticks, tickThis(copy), copy.ticks]; });
+attempt("an object that inherits from a timer", function () { var timer = new Timer(1); var child = Object.create(timer); return [tick(child), tickThis(child), Object.keys(child), timer.ticks, child.ticks]; });
+attempt("a frozen timer", function () { var timer = Object.freeze(new Timer(1)); return [tick(timer), tickThis(timer), timer.poke(5) === timer, peek(timer)]; });
+attempt("Timer called with a literal as this", function () { var literal = { ticks: "old" }; Timer.call(literal, 7); return [tick(literal), peek(literal), Object.keys(literal)]; });
+attempt("Timer called twice with the same object", function () { var timer = new Timer(1); var firstPeek = timer.peek; Timer.call(timer, 2); return [firstPeek(), peek(timer), timer.ticks]; });
+attempt("a timer with a string", function () { var timer = new Timer("3"); return [tick(timer), tickThis(timer), peek(timer)]; });
+attempt("ticks replaced by a getter", function () { var timer = new Timer(1); Object.defineProperty(timer, "ticks", { get: function () { return 50; }, set: function () {} }); return [tick(timer), tickThis(timer), report(timer)]; });
+attempt("a literal with the same names", function () { var literal = { ticks: 5, tick: function () { return "a literal's tick"; }, tickThis: function () { return ++this.ticks; }, peek: function () { return "a literal's secret"; }, report: Timer.prototype.report }; return [tick(literal), tickThis(literal), peek(literal), report(literal)]; });
+attempt("peek replaced under a joined name", function () { var timer = new Timer(1); timer[["pe", "ek"].join("")] = function () { return "joined"; }; return [peek(timer), report(timer)]; });
+attempt("honest again", function () { var timer = new Timer(2); return [tick(timer), tickThis(timer), peek(timer), report(timer)]; });
+//// methods-of-classes-are-borrowed-for-other-receivers-sloppy.cjs
+const log = [];
+
+////= show-29
+
+console.log("strict:", (function () { return this === undefined; })());
+
+////= Point-2
+////= Stack-2
+////= OldPoint
+////= lines-133	OldPoint	x	y
+////= lines-271	OldPoint	reset	x	1
+
+////= objects-12
+attempt("Point.sum as a member of another object", () => ({ x: "a", y: "b", sum: Point.prototype.sum }).sum());
+attempt("Point.sum inherited by an object that is no Point", () => Object.create(Point.prototype, { x: { get() { log.push("get x"); return 1; } }, y: { value: 2 } }).sum());
+attempt("Point.sum taken off and called bare", () => (0, Point.prototype.sum)());
+attempt("OldPoint.sum taken off and called bare", () => typeof (0, OldPoint.prototype.sum)());
+attempt("an instance whose prototype is swapped", () => Object.setPrototypeOf(new Point(1, 2), OldPoint.prototype).sum());
+attempt("an instance whose member is deleted", () => {
+  const point = new Point(1, 2);
+  delete point.x;
+  return [point.sum(), point.reset(), point.sum()];
+});
+//// methods-of-classes-are-borrowed-for-other-receivers-strict.js
+"use strict";
+
+const log = [];
+
+////= show-29
+
+console.log("strict:", (function () { return this === undefined; })());
+
+////= Point-2
+////= Stack-2
+////= OldPoint
+////= lines-133	OldPoint	x	y
+////= lines-271	OldPoint	reset	x	1
+
+////= objects-12
+attempt("Point.sum as a member of another object", () => ({ x: "a", y: "b", sum: Point.prototype.sum }).sum());
+attempt("Point.sum inherited by an object that is no Point", () => Object.create(Point.prototype, { x: { get() { log.push("get x"); return 1; } }, y: { value: 2 } }).sum());
+attempt("Point.sum taken off and called bare", () => (0, Point.prototype.sum)());
+attempt("OldPoint.sum taken off and called bare", () => typeof (0, OldPoint.prototype.sum)());
+attempt("an instance whose prototype is swapped", () => Object.setPrototypeOf(new Point(1, 2), OldPoint.prototype).sum());
+attempt("an instance whose member is deleted", () => {
+  const point = new Point(1, 2);
+  delete point.x;
+  return [point.sum(), point.reset(), point.sum()];
+});
+//// methods-that-only-built-ins-and-computed-names-reach.js
+import { inspect } from "node:util";
+import { EventEmitter } from "node:events";
+
+const log = [];
+
+////= show-9
+
+async function attempt(label, run) {
+  let line;
+  try {
+    line = label + " -> " + show(await run());
+  } catch (error) {
+    line = label + " -> threw " + error.constructor.name;
+  }
+  console.log(line + (log.length ? " | log " + log.splice(0).join(", ") : ""));
+}
+
+class Gauge {
+  constructor(level) {
+    this.level = level;
+  }
+  toJSON(key) {
+    log.push("toJSON " + show(key));
+    return { level: this.level, from: "toJSON" };
+  }
+  toString() {
+    log.push("toString");
+    return "gauge at " + this.level;
+  }
+  valueOf() {
+    log.push("valueOf");
+    return this.level;
+  }
+  [Symbol.toPrimitive](hint) {
+    log.push("toPrimitive " + hint);
+    return hint === "string" ? "gauge " + this.level : this.level;
+  }
+  *[Symbol.iterator]() {
+    log.push("iterator");
+    yield this.level;
+    yield this.level + 1;
+  }
+  get [Symbol.toStringTag]() {
+    log.push("toStringTag");
+    return "Gauge";
+  }
+  [inspect.custom]() {
+    log.push("inspect.custom");
+    return "a gauge, inspected";
+  }
+  then(resolve) {
+    log.push("then");
+    resolve("settled at " + this.level);
+  }
+  static [Symbol.hasInstance](value) {
+    log.push("hasInstance");
+    return value === 5;
+  }
+  get reading() {
+    log.push("get reading");
+    return this.level * 2;
+  }
+  reachedByAJoinedName() {
+    return "joined name, level " + this.level;
+  }
+  reachedByAWalkOverTheNames() {
+    return "walk, level " + this.level;
+  }
+  reachedThroughADescriptor() {
+    return "descriptor, level " + this.level;
+  }
+  reachedAsAListener(extra) {
+    return log.push("listener, level " + this.level + ", " + extra);
+  }
+  reachedAsACallback(element) {
+    return element + (this === undefined ? " without this" : " level " + this.level);
+  }
+}
+
+////= lines-35	OldGauge	level	this.level	level
+OldGauge.prototype.toJSON = function () {
+  log.push("old toJSON");
+  return "old gauge " + this.level;
+};
+OldGauge.prototype.toString = function () {
+  log.push("old toString");
+  return "old gauge at " + this.level;
+};
+OldGauge.prototype.valueOf = function () {
+  log.push("old valueOf");
+  return this.level;
+};
+////= lines-36	OldGauge	reachedByAJoinedName	"old, joined name, level "	level
+
+const comparators = {
+  ascending(a, b) {
+    return a - b;
+  },
+  descending(a, b) {
+    return b - a;
+  },
+};
+
+const handler = {
+  get(target, key) {
+    return typeof key === "string" ? "trapped " + key : undefined;
+  },
+  has() {
+    return true;
+  },
+  ownKeys() {
+    return ["made", "up"];
+  },
+  getOwnPropertyDescriptor() {
+    return { value: "made up", enumerable: true, configurable: true };
+  },
+};
+
+await attempt("JSON.stringify", () => JSON.stringify({ gauge: new Gauge(1), list: [new Gauge(2)] }));
+await attempt("a template", () => `${new Gauge(1)}`);
+await attempt("+", () => +new Gauge(1));
+await attempt("gauge + ''", () => new Gauge(1) + "");
+await attempt("gauge < 5", () => new Gauge(1) < 5);
+await attempt("as a key", () => ({ "gauge 1": "found" })[new Gauge(1)]);
+await attempt("a spread into a list", () => [...new Gauge(1)]);
+await attempt("an array pattern", () => { const [first, second] = new Gauge(1); return [first, second]; });
+await attempt("Array.from", () => Array.from(new Gauge(1)));
+await attempt("new Set", () => new Set(new Gauge(1)).size);
+await attempt("Object.prototype.toString", () => Object.prototype.toString.call(new Gauge(1)));
+await attempt("inspect", () => inspect(new Gauge(1)));
+await attempt("await", async () => await new Gauge(1));
+await attempt("Promise.resolve", () => Promise.resolve(new Gauge(2)));
+await attempt("returned from an async function", () => (async () => new Gauge(3))());
+await attempt("instanceof", () => [5 instanceof Gauge, new Gauge(1) instanceof Gauge]);
+await attempt("a getter through a spread of the prototype's copy", () => ({ ...Object.create(null, { reading: Object.getOwnPropertyDescriptor(Gauge.prototype, "reading"), level: { value: 4 } }) }));
+await attempt("a getter through Reflect.get", () => Reflect.get(Gauge.prototype, "reading", { level: 21 }));
+await attempt("a joined name", () => new Gauge(1)[["reached", "By", "A", "Joined", "Name"].join("")]());
+await attempt("a walk over the names", () => Object.getOwnPropertyNames(Gauge.prototype).filter(name => name.endsWith("OverTheNames")).map(name => new Gauge(1)[name]()));
+await attempt("a descriptor", () => Object.getOwnPropertyDescriptor(Gauge.prototype, "reachedThroughADescriptor").value.call(new Gauge(1)));
+await attempt("a listener", () => { const emitter = new EventEmitter(); const gauge = new Gauge(1); emitter.on("event", gauge.reachedAsAListener.bind(gauge)); return emitter.emit("event", "emitted"); });
+await attempt("a callback with a this argument", () => ["a"].map(Gauge.prototype.reachedAsACallback, new Gauge(1)));
+await attempt("a callback without one", () => ["a"].map(Gauge.prototype.reachedAsACallback));
+await attempt("old: JSON.stringify", () => JSON.stringify([new OldGauge(1)]));
+await attempt("old: a template", () => `${new OldGauge(1)}`);
+await attempt("old: arithmetic", () => new OldGauge(2) * 3);
+await attempt("old: a joined name", () => new OldGauge(1)[["reachedBy", "AJoinedName"].join("")]());
+await attempt("a comparator picked by a joined name", () => [3, 1, 2].sort(comparators[["des", "cending"].join("")]));
+await attempt("the other one", () => [3, 1, 2].sort(comparators[["as", "cending"].join("")]));
+await attempt("the traps of a handler", () => { const proxy = new Proxy({}, handler); return [proxy.anything, "x" in proxy, Object.keys(proxy), { ...proxy }]; });
+//// mixins-copy-methods-onto-prototypes.cjs
+const log = [];
+
+////= show-41
+
+function makeMixin() {
+  const mixin = {
+    serial: 0,
+    tag() {
+      return "tagged " + this.title;
+    },
+    get shout() {
+      log.push("get shout of " + show(this.title));
+      return String(this.title).toUpperCase();
+    },
+    [Symbol.for("secret")]() {
+      return "secret of " + this.title;
+    },
+  };
+  Object.defineProperty(mixin, "quiet", { value() { return "quiet " + this.title; }, enumerable: false });
+  return Object.setPrototypeOf(mixin, { inheritedByTheMixin() { return "inherited " + this.title; } });
+}
+
+const copiers = [
+  ["Object.assign", (target, source) => Object.assign(target, source)],
+  ["a for-in loop", (target, source) => { for (const name in source) target[name] = source[name]; }],
+  ["a for-in loop with hasOwnProperty", (target, source) => { for (const name in source) if (Object.prototype.hasOwnProperty.call(source, name)) target[name] = source[name]; }],
+  ["Object.keys and forEach", (target, source) => Object.keys(source).forEach(name => { target[name] = source[name]; })],
+  ["own names and descriptors", (target, source) => { for (const name of Object.getOwnPropertyNames(source)) Object.defineProperty(target, name, Object.getOwnPropertyDescriptor(source, name)); }],
+  ["Object.defineProperties with all descriptors", (target, source) => Object.defineProperties(target, Object.getOwnPropertyDescriptors(source))],
+  ["a spread into a new prototype", (target, source, Maker) => { Maker.prototype = { ...target, ...source }; }],
+  ["the mixin put into the prototype chain", (target, source) => Object.setPrototypeOf(target, source)],
+];
+
+////= lines-5	tagOf	thing	thing.tag
+
+////= lines-7	shoutOf	thing	thing.shout
+
+////= lines-5	titleLineOf	thing	thing.titleLine
+
+for (const [label, copy] of copiers) {
+  function Book(title) {
+    this.title = title;
+  }
+  Book.prototype.titleLine = function () {
+    return "book " + this.title;
+  };
+  Book.prototype.tag = function () {
+    return "the book's own tag " + this.title;
+  };
+
+  const makeBook = title => new Book(title);
+  const before = makeBook("before");
+  let length = 0;
+  for (let i = 0; i < 2000; i++) length += tagOf(before).length + titleLineOf(before).length;
+  console.log(label + ": 2000 calls before the mixin", length);
+
+  const mixin = makeMixin();
+  attempt(label + ": copy", () => void copy(Book.prototype, mixin, Book));
+  const after = makeBook("after");
+  for (const [which, book] of [["made before", before], ["made after", after]]) {
+    attempt(label + ", " + which + ": tag()", () => tagOf(book));
+    attempt(label + ", " + which + ": shout", () => shoutOf(book));
+    attempt(label + ", " + which + ": titleLine()", () => titleLineOf(book));
+    attempt(label + ", " + which + ": quiet()", () => book.quiet());
+    attempt(label + ", " + which + ": inheritedByTheMixin()", () => book.inheritedByTheMixin());
+    attempt(label + ", " + which + ": the symbol method", () => book[Symbol.for("secret")]());
+  }
+  attempt(label + ": shout on the prototype is", () => { const found = Object.getOwnPropertyDescriptor(Book.prototype, "shout"); return found === undefined ? "absent" : "get" in found ? "an accessor" : found.value; });
+  attempt(label + ": names on the prototype", () => Object.getOwnPropertyNames(Book.prototype));
+  mixin.tag = function () { return "the mixin changed later"; };
+  attempt(label + ": after the mixin changed, tag()", () => tagOf(after));
+}
+//// name-converters-get-values-that-are-not-strings.js
+////= show-26
+
+function camelCase(text) {
+  return text.replace(/[-_\s]+(.)?/g, function (match, character) {
+    return character ? character.toUpperCase() : "";
+  });
+}
+
+function kebabCase(text) {
+  var result = "";
+  for (var i = 0; i < text.length; i++) {
+    var character = text[i];
+    var lower = character.toLowerCase();
+    if (character !== lower && i > 0) result += "-";
+    result += lower;
+  }
+  return result;
+}
+
+function capitalize(text) {
+  return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase();
+}
+
+function titleCase(text) {
+  return text.split(" ").map(capitalize).join(" ");
+}
+
+function leftPad(text, width, filler) {
+  text = text + "";
+  filler = filler === undefined ? " " : filler + "";
+  while (text.length < width && filler.length > 0) text = filler + text;
+  return text;
+}
+
+function truncate(text, width) {
+  if (text.length <= width) return text;
+  return text.slice(0, width - 1) + "…";
+}
+
+function baseName(path) {
+  var end = path.length;
+  while (end > 1 && path[end - 1] === "/") end--;
+  var start = path.lastIndexOf("/", end - 1) + 1;
+  return path.slice(start, end);
+}
+
+function extension(path) {
+  var name = baseName(path);
+  var dot = name.lastIndexOf(".");
+  return dot <= 0 ? "" : name.slice(dot);
+}
+
+function isUpperCase(text) {
+  return text === text.toUpperCase() && text !== text.toLowerCase();
+}
+
+function compareVersions(a, b) {
+  var left = a.split(".");
+  var right = b.split(".");
+  for (var i = 0; i < Math.max(left.length, right.length); i++) {
+    var difference = (left[i] | 0) - (right[i] | 0);
+    if (difference !== 0) return difference < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+var uses = [
+  ["camelCase", camelCase],
+  ["kebabCase", kebabCase],
+  ["capitalize", capitalize],
+  ["titleCase", titleCase],
+  ["leftPad", function (value) { return leftPad(value, 8, "."); }],
+  ["leftPad with the value as filler", function (value) { return leftPad("x", 4, value); }],
+  ["leftPad with the value as width", function (value) { return leftPad("x", value, "."); }],
+  ["truncate", function (value) { return truncate(value, 4); }],
+  ["baseName", baseName],
+  ["extension", extension],
+  ["isUpperCase", isUpperCase],
+  ["compareVersions", function (value) { return compareVersions(value, "1.2.3"); }],
+];
+
+var values = [
+  "'hello-big_world now'",
+  "'helloBigWorld'",
+  "'/usr/local/lib/file.tar.gz'",
+  "'dir/'",
+  "'1.10.0'",
+  "'ABC'",
+  "''",
+  "'\\u00e9cole-\\u00fcber \\u0130\\u00df'",
+  "'a' + '-b'",
+  "new String('hello-world')",
+  "['hello', 'World']",
+  "['a/b', '/', 'c.d']",
+  "[1, 2, 3]",
+  "{ length: 2, 0: 'A', 1: 'b' }",
+  "{ replace() { return 5; }, charAt() { return 'x'; }, slice() { return 'Y'; }, split() { return ['p', 'q']; }, lastIndexOf() { return 0; }, toUpperCase() { return this; }, toLowerCase() { return null; }, length: 9, toString() { return 'look'; } }",
+  "Buffer.from('a/b.c')",
+  "5",
+  "3",
+  "'3'",
+  "1.5",
+  "null",
+  "undefined",
+  "Symbol('s')",
+];
+
+var total = 0;
+for (var i = 0; i < 2000; i++) {
+  for (var j = 0; j < uses.length; j++) {
+    if (j !== 6) total += String(uses[j][1]("hello-World/a.b")).length;
+  }
+  total += leftPad("x", 3, ".").length;
+}
+console.log("2000 honest rounds", total);
+
+////= uses-forEach
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// native-functions-reached-in-roundabout-ways-change-objects.js
+////= show-10
+
+////= Box
+
+////= lines-7	read	box	box.width
+
+////= lines-60	store	box	box.width	5
+
+////= lines-60	add	box	box.depth	6
+
+////= lines-147	remove	box	delete	box.height
+
+////= lines-5	area	box	box.area
+
+function look(box) {
+  return [read, area, store, add, remove]
+    .map(use => {
+      try {
+        return show(use(box));
+      } catch (error) {
+        return error.constructor.name;
+      }
+    })
+    .join(" ") + " | keys " + Object.keys(box).join();
+}
+
+const other = { area: () => "another area" };
+
+const natives = [
+  ["Object", "freeze", box => [box]],
+  ["Object", "seal", box => [box]],
+  ["Object", "preventExtensions", box => [box]],
+  ["Reflect", "preventExtensions", box => [box]],
+  ["Reflect", "deleteProperty", box => [box, "width"]],
+  ["Reflect", "set", box => [box, "width", "set"]],
+  ["Reflect", "defineProperty", box => [box, "width", { get: () => "got", configurable: true }]],
+  ["Object", "defineProperty", box => [box, "width", { value: "fixed", writable: false }]],
+  ["Object", "setPrototypeOf", box => [box, other]],
+  ["Object", "assign", box => [box, { width: "assigned", extra: 1 }]],
+];
+
+const { freeze: pulledOutFreeze } = Object;
+const renamed = Object;
+const call = Function.prototype.call;
+
+const routes = [
+  ["a plain call", (holder, name, inputs) => (holder === "Object" ? Object : Reflect)[name](...inputs)],
+  ["a name joined at run time", (holder, name, inputs) => globalThis[holder][name.slice(0, 2) + name.slice(2)](...inputs)],
+  ["a holder under another name", (holder, name, inputs) => (holder === "Object" ? renamed : Reflect)[name](...inputs)],
+  ["call", (holder, name, inputs) => globalThis[holder][name].call(null, ...inputs)],
+  ["apply", (holder, name, inputs) => globalThis[holder][name].apply(null, inputs)],
+  ["bind", (holder, name, inputs) => globalThis[holder][name].bind(null, ...inputs)()],
+  ["Reflect.apply", (holder, name, inputs) => Reflect.apply(globalThis[holder][name], null, inputs)],
+  ["call.call", (holder, name, inputs) => call.call(globalThis[holder][name], null, ...inputs)],
+  ["a callable proxy", (holder, name, inputs) => new Proxy(globalThis[holder][name], {})(...inputs)],
+  ["its descriptor's value", (holder, name, inputs) => Object.getOwnPropertyDescriptor(globalThis[holder], name).value(...inputs)],
+  ["a parameter", (holder, name, inputs) => ((callee, list) => callee(...list))(globalThis[holder][name], inputs)],
+  ["a promise reaction", (holder, name, inputs) => Promise.resolve(inputs).then(list => globalThis[holder][name](...list))],
+];
+
+for (let i = 0; i < 2000; i++) look(new Box(3, 4));
+console.log("honest", look(new Box(3, 4)));
+
+for (const [holder, name, inputsFor] of natives) {
+  for (const [route, reach] of routes) {
+    const box = new Box(3, 4);
+    let line = holder + "." + name + " through " + route + " -> ";
+    try {
+      await reach(holder, name, inputsFor(box));
+      line += look(box);
+    } catch (error) {
+      line += "threw " + error.constructor.name;
+    }
+    console.log(line);
+  }
+}
+
+const handedOver = [
+  ["forEach(Object.freeze)", box => [box].forEach(Object.freeze)],
+  ["map(Object.seal)", box => [box].map(Object.seal)],
+  ["Array.from with Object.freeze", box => Array.from([box], Object.freeze)],
+  ["find(Object.isFrozen) after some(Object.freeze)", box => [[box].some(Object.freeze), [box].find(Object.isFrozen)]],
+  ["then(Object.freeze)", box => Promise.resolve(box).then(Object.freeze)],
+  ["a freeze pulled out of Object", box => pulledOutFreeze(box)],
+  ["a Set's forEach", box => new Set([box]).forEach(Object.freeze)],
+  ["a Map's forEach", box => new Map([["key", box]]).forEach(Object.freeze)],
+  ["a reviver's holder", box => JSON.parse("[1]", function (key, value) { if (key === "0") Object.freeze(box); return value; })],
+  ["Object.entries, then freeze each value", box => Object.entries({ box }).forEach(([, value]) => Object.freeze(value))],
+  ["freeze of an object that holds it", box => Object.freeze({ box })],
+  ["freeze of an array that holds it", box => Object.freeze([box])],
+  ["freeze of its prototype's copy", box => Object.freeze(Object.create(box))],
+];
+
+for (const [label, reach] of handedOver) {
+  const box = new Box(3, 4);
+  let line = label + " -> ";
+  try {
+    await reach(box);
+    line += look(box);
+  } catch (error) {
+    line += "threw " + error.constructor.name;
+  }
+  console.log(line);
+}
+console.log("honest again", look(new Box(3, 4)));
+//// new-function-hands-over-the-value.js
+"use strict";
+
+const log = (globalThis.log = []);
+
+////= show-30
+
+////= pushes-14	new Function("return " + text)()
+
+////= lines-343	iterates(text	const a = new Function("return " + text)()
+
+////= readsCharCode-13	new Function("return " + text)()
+
+////= truncates-10	new Function("return " + text)()
+
+////= addsOne-9	new Function("return " + text)()
+
+////= calls-11	new Function("return " + text)()
+
+////= addsMembers-12	new Function("return " + text)()
+
+////= storesMember-14	new Function("return " + text)()
+
+////= table-10
+
+console.log("strict:", (function () { return this === undefined; })());
+everyCase("at first");
+////= for-13
+everyCase("after 2000");
+//// new-function-is-given-a-literal-text-with-yield-in-the-parameters-of-an-arrow-function.js
+let caught = "nothing";
+try {
+  new Function("(function* () { (x = yield) => 1 })");
+} catch (error) {
+  caught = error.constructor.name;
+}
+console.log(caught);
+//// new-function-is-given-literal-texts-that-may-be-early-errors.js
+// new Function is given literal texts that are early errors in some code and legal in other code: in strict code, in the parameters of an arrow function, in a class. Each throws or gives a function as under plain Bun.
+function attempt(make) {
+  try {
+    return typeof make();
+  } catch (error) {
+    return error.constructor.name;
+  }
+}
+console.log("'use strict'; eval = 1", attempt(() => new Function("'use strict'; eval = 1")));
+console.log("'use strict'; arguments = 1", attempt(() => new Function("'use strict'; arguments = 1")));
+console.log("'use strict'; eval++", attempt(() => new Function("'use strict'; eval++")));
+console.log("'use strict'; --arguments", attempt(() => new Function("'use strict'; --arguments")));
+console.log("'use strict'; function f(eval) {}", attempt(() => new Function("'use strict'; function f(eval) {}")));
+console.log("'use strict'; function f(arguments) {}", attempt(() => new Function("'use strict'; function f(arguments) {}")));
+console.log("'use strict'; function eval() {}", attempt(() => new Function("'use strict'; function eval() {}")));
+console.log("'use strict'; var eval", attempt(() => new Function("'use strict'; var eval")));
+console.log("'use strict'; let arguments", attempt(() => new Function("'use strict'; let arguments")));
+console.log("'use strict'; try {} catch (eval) {}", attempt(() => new Function("'use strict'; try {} catch (eval) {}")));
+console.log("'use strict'; ({ set a(eval) {} })", attempt(() => new Function("'use strict'; ({ set a(eval) {} })")));
+console.log("'use strict'; (eval) => 1", attempt(() => new Function("'use strict'; (eval) => 1")));
+console.log("'use strict'; [eval] = []", attempt(() => new Function("'use strict'; [eval] = []")));
+console.log("'use strict'; ({ eval } = {})", attempt(() => new Function("'use strict'; ({ eval } = {})")));
+console.log("'use strict'; for (eval in {}) ;", attempt(() => new Function("'use strict'; for (eval in {}) ;")));
+console.log("'use strict'; var implements", attempt(() => new Function("'use strict'; var implements")));
+console.log("'use strict'; var interface", attempt(() => new Function("'use strict'; var interface")));
+console.log("'use strict'; var package", attempt(() => new Function("'use strict'; var package")));
+console.log("'use strict'; var private", attempt(() => new Function("'use strict'; var private")));
+console.log("'use strict'; var protected", attempt(() => new Function("'use strict'; var protected")));
+console.log("'use strict'; var public", attempt(() => new Function("'use strict'; var public")));
+console.log("'use strict'; var static", attempt(() => new Function("'use strict'; var static")));
+console.log("'use strict'; var let", attempt(() => new Function("'use strict'; var let")));
+console.log("'use strict'; function static() {}", attempt(() => new Function("'use strict'; function static() {}")));
+console.log("'use strict'; label: function f() {}", attempt(() => new Function("'use strict'; label: function f() {}")));
+console.log("label: function f() {}", attempt(() => new Function("label: function f() {}")));
+console.log("label: function* g() {}", attempt(() => new Function("label: function* g() {}")));
+console.log("label: async function f() {}", attempt(() => new Function("label: async function f() {}")));
+console.log("if (1) function* g() {}", attempt(() => new Function("if (1) function* g() {}")));
+console.log("if (1) async function f() {}", attempt(() => new Function("if (1) async function f() {}")));
+console.log("if (1) ; else function f() {}", attempt(() => new Function("if (1) ; else function f() {}")));
+console.log("'use strict'; if (1) ; else function f() {}", attempt(() => new Function("'use strict'; if (1) ; else function f() {}")));
+console.log("'use strict'; 08", attempt(() => new Function("'use strict'; 08")));
+console.log("'use strict'; 09.5", attempt(() => new Function("'use strict'; 09.5")));
+console.log("'use strict'; 00", attempt(() => new Function("'use strict'; 00")));
+console.log("'use strict'; -010", attempt(() => new Function("'use strict'; -010")));
+console.log("'use strict'; \"\\1\"", attempt(() => new Function("'use strict'; \"\\1\"")));
+console.log("'use strict'; \"\\07\"", attempt(() => new Function("'use strict'; \"\\07\"")));
+console.log("'use strict'; \"\\8\"", attempt(() => new Function("'use strict'; \"\\8\"")));
+console.log("'use strict'; \"\\0\"", attempt(() => new Function("'use strict'; \"\\0\"")));
+console.log("'use strict'; \"\\00\"", attempt(() => new Function("'use strict'; \"\\00\"")));
+console.log("`\\1`", attempt(() => new Function("`\\1`")));
+console.log("`\\07`", attempt(() => new Function("`\\07`")));
+console.log("\"\\1\"; 'use strict'", attempt(() => new Function("\"\\1\"; 'use strict'")));
+console.log("function f() { \"\\1\"; 'use strict' }", attempt(() => new Function("function f() { \"\\1\"; 'use strict' }")));
+console.log("function f() { 'use strict'; 010 }", attempt(() => new Function("function f() { 'use strict'; 010 }")));
+console.log("function f() { 'use strict'; with (a) {} }", attempt(() => new Function("function f() { 'use strict'; with (a) {} }")));
+console.log("function f(a = 1) { 'use strict' }", attempt(() => new Function("function f(a = 1) { 'use strict' }")));
+console.log("function f(...a) { 'use strict' }", attempt(() => new Function("function f(...a) { 'use strict' }")));
+console.log("function f({ a }) { 'use strict' }", attempt(() => new Function("function f({ a }) { 'use strict' }")));
+console.log("function f(a, a) { 'use strict' }", attempt(() => new Function("function f(a, a) { 'use strict' }")));
+console.log("(a, a) => 1", attempt(() => new Function("(a, a) => 1")));
+console.log("function f(a, [a]) {}", attempt(() => new Function("function f(a, [a]) {}")));
+console.log("function f(a, a = 1) {}", attempt(() => new Function("function f(a, a = 1) {}")));
+console.log("({ m(a, a) {} })", attempt(() => new Function("({ m(a, a) {} })")));
+console.log("class A { m() { 010 } }", attempt(() => new Function("class A { m() { 010 } }")));
+console.log("class A { m() { with (a) {} } }", attempt(() => new Function("class A { m() { with (a) {} } }")));
+console.log("class A { m(a, a) {} }", attempt(() => new Function("class A { m(a, a) {} }")));
+console.log("class A { static prototype() {} }", attempt(() => new Function("class A { static prototype() {} }")));
+console.log("class A { get constructor() {} }", attempt(() => new Function("class A { get constructor() {} }")));
+console.log("class A { async constructor() {} }", attempt(() => new Function("class A { async constructor() {} }")));
+console.log("class A { *constructor() {} }", attempt(() => new Function("class A { *constructor() {} }")));
+console.log("class A extends B { m() { super() } }", attempt(() => new Function("class A extends B { m() { super() } }")));
+console.log("class A { constructor() { super() } }", attempt(() => new Function("class A { constructor() { super() } }")));
+console.log("class A { x = arguments }", attempt(() => new Function("class A { x = arguments }")));
+console.log("class A { static { arguments } }", attempt(() => new Function("class A { static { arguments } }")));
+console.log("class A { static { await } }", attempt(() => new Function("class A { static { await } }")));
+console.log("class A { static { return } }", attempt(() => new Function("class A { static { return } }")));
+console.log("class A { static { var a; let a } }", attempt(() => new Function("class A { static { var a; let a } }")));
+console.log("function* g() { function yield() {} }", attempt(() => new Function("function* g() { function yield() {} }")));
+console.log("function* g() { var yield }", attempt(() => new Function("function* g() { var yield }")));
+console.log("function* g() { (yield) => 1 }", attempt(() => new Function("function* g() { (yield) => 1 }")));
+console.log("function* g() { (a = yield 1) => 1 }", attempt(() => new Function("function* g() { (a = yield 1) => 1 }")));
+console.log("function* g() { ({ a = yield }) => 1 }", attempt(() => new Function("function* g() { ({ a = yield }) => 1 }")));
+console.log("function* g() { ([a = yield]) => 1 }", attempt(() => new Function("function* g() { ([a = yield]) => 1 }")));
+console.log("function* g() { async (a = yield) => 1 }", attempt(() => new Function("function* g() { async (a = yield) => 1 }")));
+console.log("async function f() { (a = await 1) => 1 }", attempt(() => new Function("async function f() { (a = await 1) => 1 }")));
+console.log("async function f() { var await }", attempt(() => new Function("async function f() { var await }")));
+console.log("async function f() { (await) => 1 }", attempt(() => new Function("async function f() { (await) => 1 }")));
+console.log("async function f() { function await() {} }", attempt(() => new Function("async function f() { function await() {} }")));
+console.log("async (await) => 1", attempt(() => new Function("async (await) => 1")));
+console.log("async function f(await) {}", attempt(() => new Function("async function f(await) {}")));
+console.log("function f() { new.target = 1 }", attempt(() => new Function("function f() { new.target = 1 }")));
+console.log("new.target", attempt(() => new Function("new.target")));
+console.log("function f() { break }", attempt(() => new Function("function f() { break }")));
+console.log("a: { continue a }", attempt(() => new Function("a: { continue a }")));
+console.log("a: while (1) { (() => { break a })() }", attempt(() => new Function("a: while (1) { (() => { break a })() }")));
+console.log("for (let a of b, c) ;", attempt(() => new Function("for (let a of b, c) ;")));
+console.log("for (var a = 1 of b) ;", attempt(() => new Function("for (var a = 1 of b) ;")));
+console.log("for (let a = 1 in b) ;", attempt(() => new Function("for (let a = 1 in b) ;")));
+console.log("'use strict'; for (var a = 1 in b) ;", attempt(() => new Function("'use strict'; for (var a = 1 in b) ;")));
+console.log("for (var a = 1 in b) ;", attempt(() => new Function("for (var a = 1 in b) ;")));
+console.log("for (async of b) ;", attempt(() => new Function("for (async of b) ;")));
+console.log("for (let of b) ;", attempt(() => new Function("for (let of b) ;")));
+console.log("let let", attempt(() => new Function("let let")));
+console.log("const let = 1", attempt(() => new Function("const let = 1")));
+console.log("let [let] = []", attempt(() => new Function("let [let] = []")));
+console.log("do function f() {} while (0)", attempt(() => new Function("do function f() {} while (0)")));
+console.log("with (a) function f() {}", attempt(() => new Function("with (a) function f() {}")));
+console.log("for (;;) function f() {}", attempt(() => new Function("for (;;) function f() {}")));
+console.log("for (;;) let a", attempt(() => new Function("for (;;) let a")));
+console.log("if (1) let a", attempt(() => new Function("if (1) let a")));
+console.log("if (1) const a = 1", attempt(() => new Function("if (1) const a = 1")));
+console.log("while (1) class A {}", attempt(() => new Function("while (1) class A {}")));
+console.log("try {} catch (a) { let a }", attempt(() => new Function("try {} catch (a) { let a }")));
+console.log("try {} catch ([a]) { var a }", attempt(() => new Function("try {} catch ([a]) { var a }")));
+console.log("try {} catch (a) { var a }", attempt(() => new Function("try {} catch (a) { var a }")));
+console.log("try {} catch (a) { for (var a of b) ; }", attempt(() => new Function("try {} catch (a) { for (var a of b) ; }")));
+console.log("switch (1) { case 1: let a; case 2: let a }", attempt(() => new Function("switch (1) { case 1: let a; case 2: let a }")));
+console.log("switch (1) { case 1: let a; default: var a }", attempt(() => new Function("switch (1) { case 1: let a; default: var a }")));
+console.log("{ function f() {} let f }", attempt(() => new Function("{ function f() {} let f }")));
+console.log("{ function f() {} function f() {} }", attempt(() => new Function("{ function f() {} function f() {} }")));
+console.log("'use strict'; { function f() {} function f() {} }", attempt(() => new Function("'use strict'; { function f() {} function f() {} }")));
+console.log("{ async function f() {} function f() {} }", attempt(() => new Function("{ async function f() {} function f() {} }")));
+console.log("({ get a(b) {} })", attempt(() => new Function("({ get a(b) {} })")));
+console.log("({ set a() {} })", attempt(() => new Function("({ set a() {} })")));
+console.log("({ set a(...b) {} })", attempt(() => new Function("({ set a(...b) {} })")));
+console.log("({ a: 1, a: 2 })", attempt(() => new Function("({ a: 1, a: 2 })")));
+console.log("({ __proto__: 1, __proto__ })", attempt(() => new Function("({ __proto__: 1, __proto__ })")));
+console.log("({ __proto__: 1, \"__proto__\": 2 })", attempt(() => new Function("({ __proto__: 1, \"__proto__\": 2 })")));
+console.log("({ __proto__: 1, [\"__proto__\"]: 2 })", attempt(() => new Function("({ __proto__: 1, [\"__proto__\"]: 2 })")));
+console.log("({ async *a() { yield await 1 } })", attempt(() => new Function("({ async *a() { yield await 1 } })")));
+console.log("({ a() { super() } })", attempt(() => new Function("({ a() { super() } })")));
+console.log("({ a: function () { super.b } })", attempt(() => new Function("({ a: function () { super.b } })")));
+console.log("a ?? b || c", attempt(() => new Function("a ?? b || c")));
+console.log("a || b ?? c", attempt(() => new Function("a || b ?? c")));
+console.log("-a ** b", attempt(() => new Function("-a ** b")));
+console.log("(-a) ** b", attempt(() => new Function("(-a) ** b")));
+console.log("delete this.#a", attempt(() => new Function("delete this.#a")));
+console.log("a.#b", attempt(() => new Function("a.#b")));
+console.log("class A { #a; m() { delete this.#a } }", attempt(() => new Function("class A { #a; m() { delete this.#a } }")));
+console.log("class A { #a; m() { delete this?.#a } }", attempt(() => new Function("class A { #a; m() { delete this?.#a } }")));
+console.log("class A { #a; m() { #a in #a in this } }", attempt(() => new Function("class A { #a; m() { #a in #a in this } }")));
+console.log("class A { #constructor }", attempt(() => new Function("class A { #constructor }")));
+console.log("class A { #a; get #a() {} }", attempt(() => new Function("class A { #a; get #a() {} }")));
+console.log("class A { get #a() {} set #a(b) {} }", attempt(() => new Function("class A { get #a() {} set #a(b) {} }")));
+console.log("class A { static get #a() {} set #a(b) {} }", attempt(() => new Function("class A { static get #a() {} set #a(b) {} }")));
+console.log("import(\"a\", \"b\", \"c\")", attempt(() => new Function("import(\"a\", \"b\", \"c\")")));
+console.log("import()", attempt(() => new Function("import()")));
+console.log("import(...a)", attempt(() => new Function("import(...a)")));
+console.log("new import(\"a\")", attempt(() => new Function("new import(\"a\")")));
+console.log("import.meta.a", attempt(() => new Function("import.meta.a")));
+console.log("export {}", attempt(() => new Function("export {}")));
+console.log("import \"a\"", attempt(() => new Function("import \"a\"")));
+console.log("a => {} ()", attempt(() => new Function("a => {} ()")));
+console.log("a => {} || 1", attempt(() => new Function("a => {} || 1")));
+console.log("() => {}.b", attempt(() => new Function("() => {}.b")));
+console.log("async a => {} ()", attempt(() => new Function("async a => {} ()")));
+console.log("async", attempt(() => new Function("async")));
+console.log("a => 1", attempt(() => new Function("a => 1")));
+console.log("1 = 2", attempt(() => new Function("1 = 2")));
+console.log("a() = 1", attempt(() => new Function("a() = 1")));
+console.log("'use strict'; a() = 1", attempt(() => new Function("'use strict'; a() = 1")));
+console.log("a()++", attempt(() => new Function("a()++")));
+console.log("++a()", attempt(() => new Function("++a()")));
+console.log("for (a() in b) ;", attempt(() => new Function("for (a() in b) ;")));
+console.log("[a()] = []", attempt(() => new Function("[a()] = []")));
+console.log("({ a: b() } = {})", attempt(() => new Function("({ a: b() } = {})")));
+console.log("[...a, b] = []", attempt(() => new Function("[...a, b] = []")));
+console.log("[...a,] = []", attempt(() => new Function("[...a,] = []")));
+console.log("({ ...{ a } } = {})", attempt(() => new Function("({ ...{ a } } = {})")));
+console.log("({ ...a, b } = {})", attempt(() => new Function("({ ...a, b } = {})")));
+console.log("(a, ...b)", attempt(() => new Function("(a, ...b)")));
+console.log("(...a)", attempt(() => new Function("(...a)")));
+console.log("()", attempt(() => new Function("()")));
+console.log("(a,)", attempt(() => new Function("(a,)")));
+console.log("function f(a,) {}", attempt(() => new Function("function f(a,) {}")));
+console.log("function f(...a,) {}", attempt(() => new Function("function f(...a,) {}")));
+console.log("f(a,)", attempt(() => new Function("f(a,)")));
+console.log("f(,)", attempt(() => new Function("f(,)")));
+console.log("0++", attempt(() => new Function("0++")));
+console.log("0n++", attempt(() => new Function("0n++")));
+console.log("1_000", attempt(() => new Function("1_000")));
+console.log("1__0", attempt(() => new Function("1__0")));
+console.log("1_", attempt(() => new Function("1_")));
+console.log("0_1", attempt(() => new Function("0_1")));
+console.log("0x_1", attempt(() => new Function("0x_1")));
+console.log("1n.a", attempt(() => new Function("1n.a")));
+console.log("1.5n", attempt(() => new Function("1.5n")));
+console.log("01n", attempt(() => new Function("01n")));
+console.log("1e3n", attempt(() => new Function("1e3n")));
+console.log("\"\\u{110000}\"", attempt(() => new Function("\"\\u{110000}\"")));
+console.log("\"\\u{}\"", attempt(() => new Function("\"\\u{}\"")));
+console.log("\"\\x1\"", attempt(() => new Function("\"\\x1\"")));
+console.log("\"\\u12\"", attempt(() => new Function("\"\\u12\"")));
+console.log("a\\u{110000}", attempt(() => new Function("a\\u{110000}")));
+console.log("await: 1", attempt(() => new Function("await: 1")));
+console.log("async function f() { await: 1 }", attempt(() => new Function("async function f() { await: 1 }")));
+console.log("var a", attempt(() => new Function("var a")));
+console.log("({ var: 1 })", attempt(() => new Function("({ var: 1 })")));
+console.log("let", attempt(() => new Function("let")));
+console.log("a", attempt(() => new Function("a")));
+console.log("'use strict'; let", attempt(() => new Function("'use strict'; let")));
+console.log("yield: 1", attempt(() => new Function("yield: 1")));
+console.log("function* g() { yield: 1 }", attempt(() => new Function("function* g() { yield: 1 }")));
+console.log("<!-- a", attempt(() => new Function("<!-- a")));
+console.log("a", attempt(() => new Function("a")));
+console.log("--> b", attempt(() => new Function("--> b")));
+console.log("/* */ --> b", attempt(() => new Function("/* */ --> b")));
+console.log("a --> b", attempt(() => new Function("a --> b")));
+console.log("#!a", attempt(() => new Function("#!a")));
+console.log(" #!a", attempt(() => new Function(" #!a")));
+//// new-function-is-given-texts-that-bind-the-names-of-constant-globals.js
+// A literal text that binds `undefined`, `NaN` or `Infinity` itself (a parameter, a declaration, a `with` object) reads its own binding, not the global of that name.
+console.log(new Function("with ({ undefined: 3 }) return undefined")());
+console.log(new Function("o", "with (o) return [undefined, NaN, Infinity]")({ NaN: 4 }).join());
+console.log(new Function("undefined = 5; return undefined")());
+console.log(new Function("let Infinity = 6; return Infinity")());
+console.log(new Function("return typeof undefined + typeof NaN + typeof Infinity")());
+console.log(new Function("function undefined() {} return typeof undefined")());
+console.log(new Function("try { throw 7 } catch (NaN) { return NaN }")());
+console.log(new Function("return (({ undefined }) => undefined)({ undefined: 8 })")());
+console.log(new Function("return globalThis.undefined === undefined && Object.is(globalThis.NaN, NaN)")());
+console.log((0, eval)("var Infinity; Infinity"), (0, eval)("-Infinity"), (0, eval)("[undefined].length"));
+//// new-function-is-given-texts-that-name-constant-globals.js
+// `undefined`, `NaN` and `Infinity` cannot be changed, so a literal text that names them is compiled like any other literal text, and nothing of the library is kept for text that the build cannot see.
+// STATISTIC: ImageFunctionsEmitted <= 100
+const isMissing = new Function("a", "return a === undefined");
+console.log(isMissing(), isMissing(1), isMissing.name, isMissing.length, String(isMissing));
+console.log(Function("return NaN")(), Function("return -Infinity")(), (0, eval)("undefined"), (0, eval)("NaN"));
+console.log(new Function("undefined", "return undefined")(1), new Function("var NaN = 2; return NaN")());
+//// new-function-of-constant-text-hands-over-the-value.cjs
+const log = (globalThis.log = []);
+
+////= show-27
+
+console.log("strict:", (function () { return this === undefined; })());
+
+attempt("pushes an array", () => { const a = new Function("return [5, 6]")(); a.push(1); return a.length; });
+attempt("pushes a subclass", () => { const a = new Function("return new (class extends Array { push(value) { log.push('Odd.push ' + value); return 42; } *[Symbol.iterator]() { log.push('Odd.iterator'); yield 'odd'; } })(5, 6)")(); a.push(1); return a.length; });
+attempt("pushes an array-like", () => { const a = new Function("return ({ 0: 5, length: 7, push(value) { log.push('own push ' + value); return 'pushed'; }, [Symbol.iterator]() { log.push('own iterator'); return [8, 9][Symbol.iterator](); } })")(); a.push(1); return a.length; });
+attempt("pushes a proxy", () => { const a = new Function("return new Proxy([5, 6], { get(target, key, receiver) { log.push('get ' + String(key)); return Reflect.get(target, key, receiver); }, set(target, key, value, receiver) { log.push('set ' + String(key)); return Reflect.set(target, key, value, receiver); } })")(); a.push(1); return a.length; });
+attempt("pushes a frozen array", () => { const a = new Function("return Object.freeze([5, 6])")(); a.push(1); return a.length; });
+attempt("pushes a string", () => { const a = new Function("return 'ab'")(); a.push(1); return a.length; });
+
+attempt("iterates an array", () => { const a = new Function("return [5, 6]")(); const seen = []; for (const x of a) seen.push(x); return seen; });
+attempt("iterates a subclass", () => { const a = new Function("return new (class extends Array { push(value) { log.push('Odd.push ' + value); return 42; } *[Symbol.iterator]() { log.push('Odd.iterator'); yield 'odd'; } })(5, 6)")(); const seen = []; for (const x of a) seen.push(x); return seen; });
+attempt("iterates an array-like", () => { const a = new Function("return ({ 0: 5, length: 7, push(value) { log.push('own push ' + value); return 'pushed'; }, [Symbol.iterator]() { log.push('own iterator'); return [8, 9][Symbol.iterator](); } })")(); const seen = []; for (const x of a) seen.push(x); return seen; });
+attempt("iterates a proxy", () => { const a = new Function("return new Proxy([5, 6], { get(target, key, receiver) { log.push('get ' + String(key)); return Reflect.get(target, key, receiver); }, set(target, key, value, receiver) { log.push('set ' + String(key)); return Reflect.set(target, key, value, receiver); } })")(); const seen = []; for (const x of a) seen.push(x); return seen; });
+attempt("iterates a frozen array", () => { const a = new Function("return Object.freeze([5, 6])")(); const seen = []; for (const x of a) seen.push(x); return seen; });
+attempt("iterates a string", () => { const a = new Function("return 'ab'")(); const seen = []; for (const x of a) seen.push(x); return seen; });
+
+attempt("readsCharCode a string", () => { const s = new Function("return 'abc'")(); return s.charCodeAt(0); });
+attempt("readsCharCode an object with charCodeAt", () => { const s = new Function("return ({ charCodeAt(index) { log.push('own charCodeAt ' + index); return 'mine'; } })")(); return s.charCodeAt(0); });
+attempt("readsCharCode a String object with its own charCodeAt", () => { const s = new Function("return Object.assign(new String('xyz'), { charCodeAt: () => -1 })")(); return s.charCodeAt(0); });
+attempt("readsCharCode an array", () => { const s = new Function("return ['abc']")(); return s.charCodeAt(0); });
+attempt("readsCharCode a number", () => { const s = new Function("return 65")(); return s.charCodeAt(0); });
+
+attempt("truncates an integer", () => { const n = new Function("return 7")(); return n | 0; });
+attempt("truncates a string", () => { const n = new Function("return '3'")(); return n | 0; });
+attempt("truncates an object with valueOf", () => { const n = new Function("return ({ valueOf() { log.push('valueOf'); return 2 ** 31 + 0.5; }, toString() { log.push('toString'); return 'text'; } })")(); return n | 0; });
+attempt("truncates a bigint", () => { const n = new Function("return 10n")(); return n | 0; });
+attempt("truncates the largest int32", () => { const n = new Function("return 2147483647")(); return n | 0; });
+attempt("truncates minus zero", () => { const n = new Function("return -0")(); return n | 0; });
+attempt("truncates undefined", () => { const n = new Function("return undefined")(); return n | 0; });
+
+attempt("addsOne an integer", () => { const n = new Function("return 7")(); return n + 1; });
+attempt("addsOne a string", () => { const n = new Function("return '3'")(); return n + 1; });
+attempt("addsOne an object with valueOf", () => { const n = new Function("return ({ valueOf() { log.push('valueOf'); return 2 ** 31 + 0.5; }, toString() { log.push('toString'); return 'text'; } })")(); return n + 1; });
+attempt("addsOne a bigint", () => { const n = new Function("return 10n")(); return n + 1; });
+attempt("addsOne the largest int32", () => { const n = new Function("return 2147483647")(); return n + 1; });
+attempt("addsOne minus zero", () => { const n = new Function("return -0")(); return n + 1; });
+attempt("addsOne undefined", () => { const n = new Function("return undefined")(); return n + 1; });
+
+attempt("calls a function", () => { const f = new Function("return (x => x + 1)")(); return f(1); });
+attempt("calls a class", () => { const f = new Function("return (class Made { constructor(x) { log.push('constructed ' + x); } })")(); return f(1); });
+attempt("calls a callable proxy", () => { const f = new Function("return new Proxy(x => x + 2, { apply(target, self, list) { log.push('apply ' + list.length); return Reflect.apply(target, self, list); } })")(); return f(1); });
+attempt("calls a bound function", () => { const f = new Function("return (function (a, b) { return [this.tag, a, b]; }).bind({ tag: 'bound' }, 'first')")(); return f(1); });
+attempt("calls an object with call", () => { const f = new Function("return ({ call() { log.push('call'); return 'called'; } })")(); return f(1); });
+
+attempt("addsMembers an object", () => { const o = new Function("return ({ x: 1, y: 2 })")(); return o.x + o.y; });
+attempt("addsMembers accessors", () => { const o = new Function("return ({ get x() { log.push('get x'); return 10; }, set x(value) { log.push('set x ' + value); }, get y() { log.push('get y'); return 20; } })")(); return o.x + o.y; });
+attempt("addsMembers a proxy", () => { const o = new Function("return new Proxy({ y: 2, x: 1 }, { get(target, key, receiver) { log.push('get ' + String(key)); return Reflect.get(target, key, receiver); }, set(target, key, value, receiver) { log.push('set ' + String(key)); return Reflect.set(target, key, value, receiver); } })")(); return o.x + o.y; });
+attempt("addsMembers a frozen object", () => { const o = new Function("return Object.freeze({ x: 5, y: 6 })")(); return o.x + o.y; });
+attempt("addsMembers texts in another order", () => { const o = new Function("return ({ y: '2', x: '1' })")(); return o.x + o.y; });
+attempt("addsMembers inherited members", () => { const o = new Function("return Object.create({ x: 3, y: 4 })")(); return o.x + o.y; });
+
+attempt("storesMember an object", () => { const o = new Function("return ({ x: 1, y: 2 })")(); o.x = 1; return o; });
+attempt("storesMember accessors", () => { const o = new Function("return ({ get x() { log.push('get x'); return 10; }, set x(value) { log.push('set x ' + value); }, get y() { log.push('get y'); return 20; } })")(); o.x = 1; return o; });
+attempt("storesMember a proxy", () => { const o = new Function("return new Proxy({ y: 2, x: 1 }, { get(target, key, receiver) { log.push('get ' + String(key)); return Reflect.get(target, key, receiver); }, set(target, key, value, receiver) { log.push('set ' + String(key)); return Reflect.set(target, key, value, receiver); } })")(); o.x = 1; return o; });
+attempt("storesMember a frozen object", () => { const o = new Function("return Object.freeze({ x: 5, y: 6 })")(); o.x = 1; return o; });
+attempt("storesMember texts in another order", () => { const o = new Function("return ({ y: '2', x: '1' })")(); o.x = 1; return o; });
+attempt("storesMember inherited members", () => { const o = new Function("return Object.create({ x: 3, y: 4 })")(); o.x = 1; return o; });
+//// new-is-used-on-values-that-only-look-like-a-function.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+function Pair(a, b) {
+  this.a = a;
+  this.b = b;
+}
+
+////= lines-133	Pair	a	b
+
+class Box {
+  constructor(value) {
+    this.value = value;
+    this.target = new.target === Box ? "Box" : typeof new.target;
+  }
+}
+
+function build(type) {
+  return new type(1, 2);
+}
+
+function buildAndSum(type) {
+  return new type(1, 2).sum();
+}
+
+function targetOf(type) {
+  return Reflect.construct(function () { return { seen: new.target === type }; }, [], type);
+}
+
+function honest(round) {
+  console.log(round, show(build(Pair)), show(build(Box)), show(build(Object)), show(build(function () {})), show(build(class {})), buildAndSum(Pair), buildAndSum(class extends Pair {}));
+}
+
+const types = [
+  ["a function that answers an object", () => function () { return { other: true, sum: () => "other" }; }],
+  ["a function that answers a number", () => function () { this.kept = true; return 5; }],
+  ["a function that answers null", () => function () { this.kept = true; return null; }],
+  ["a function that answers a function", () => function () { return Object.assign(() => {}, { sum: () => "from a function" }); }],
+  ["a function whose prototype is null", () => Object.assign(function () { this.proto = Object.getPrototypeOf(this) === Object.prototype; }, { prototype: null })],
+  ["a function whose prototype is an array", () => Object.assign(function () { this.isArray = Array.isArray(this); this.size = this.length; }, { prototype: [1, 2] })],
+  ["a function whose prototype is Pair's", () => Object.assign(function (a, b) { this.a = a * 10; this.b = b * 10; }, { prototype: Pair.prototype })],
+  ["a bound Pair", () => Pair.bind({ ignored: true }, 10)],
+  ["a bound Box", () => Box.bind(null, "bound")],
+  ["a proxy of Pair", () => new Proxy(Pair, {})],
+  ["a proxy that swaps the arguments", () => new Proxy(Pair, { construct: (target, [a, b], newTarget) => Reflect.construct(target, [b * 10, a], newTarget) })],
+  ["a proxy that hands out another prototype", () => new Proxy(Pair, { get: (target, key) => (log.push("get " + String(key)), key === "prototype" ? { sum: () => "from the trap" } : target[key]) })],
+  ["a subclass that changes the fields", () => class extends Pair { constructor(a, b) { super(a, b); this.a = "a"; delete this.b; } }],
+  ["a subclass that overrides sum", () => class extends Pair { sum() { return "overridden " + super.sum(); } }],
+  ["a subclass of a function chosen at run time", () => class extends [Pair, Box][0] {}],
+  ["an arrow function", () => () => {}],
+  ["a method", () => ({ method() {} }).method],
+  ["an async function", () => async function () {}],
+  ["a generator function", () => function* () {}],
+  ["Symbol", () => Symbol],
+  ["Math.max", () => Math.max],
+  ["an object", () => ({})],
+  ["a string", () => "Pair"],
+  ["undefined", () => undefined],
+];
+
+honest("before");
+for (const [name, make] of types) {
+  attempt("new on " + name, () => build(make()));
+  attempt("new on " + name + ", then its sum", () => buildAndSum(make()));
+  attempt("Reflect.construct of " + name, () => Reflect.construct(make(), [1, 2]));
+  attempt("Pair built for " + name, () => { const built = Reflect.construct(Pair, [1, 2], make()); return [built.a, typeof built.sum]; });
+  attempt("new.target is " + name, () => targetOf(make()));
+}
+attempt("Pair without new", () => Pair(1, 2));
+attempt("Box without new", () => Box(1));
+attempt("Box through call", () => Box.call({}, 1));
+attempt("Pair through call on an object", () => { const object = {}; Pair.call(object, 1, 2); return object; });
+attempt("new with no parentheses", () => new Pair);
+attempt("new on a member", () => new ({ Pair }.Pair)(1, 2).sum());
+attempt("new on the result of a call", () => new (() => Pair)()(1, 2) === undefined);
+attempt("new.target in a plain call", () => (function () { return new.target; })());
+attempt("new.target in an arrow function inside a constructor", () => new (function Outer() { return { same: (() => new.target)() === Outer }; })());
+attempt("Box built for Pair", () => { const built = Reflect.construct(Box, [1], Pair); return [built.target, built instanceof Pair, built instanceof Box, built.value]; });
+for (let i = 0; i < 2000; i++) buildAndSum(Pair);
+for (const [name, make] of types) attempt("after 2000 pairs, new on " + name + ", then its sum", () => buildAndSum(make()));
+honest("after");
+//// new-members-are-added-to-the-string-prototype.js
+////= show-26
+
+////= lines-5	shout	text	text.shout
+
+////= lines-5	kindOfThis	text	text.kindOfThis
+
+////= lines-7	doubled	text	text.doubled
+
+////= lines-93	store	text	value	text.remembered	text.remembered
+
+function lengthAndShout(text) {
+  return text.length + text.shout();
+}
+
+function hasShout(text) {
+  return ["shout" in Object(text), Object.hasOwn(Object(text), "shout"), typeof text.shout];
+}
+
+attempt("before anything is added", () => shout("hello"));
+attempt("a member that is missing reads as undefined", () => [doubled("hello"), hasShout("hello")]);
+attempt("before the setter is added, a store into a plain text", () => store("hello", 3));
+attempt("before the setter is added, a store into a wrapped text", () => store(new String("hello"), 4));
+
+String.prototype.shout = function () {
+  return this.toUpperCase() + "!";
+};
+String.prototype.kindOfThis = function () {
+  return typeof this;
+};
+Object.defineProperty(String.prototype, "doubled", {
+  get() {
+    return typeof this + " " + this + this;
+  },
+  configurable: true,
+});
+
+for (let i = 0; i < 2000; i++) {
+  shout("hello");
+  kindOfThis("hello");
+  doubled("hello");
+  lengthAndShout("hello");
+  hasShout("hello");
+}
+
+const values = [
+  "'hello'",
+  "''",
+  "'hel' + 'lo'",
+  "'\\u4e16'",
+  "new String('hello')",
+  "Object.assign(new String('hello'), { shout() { return 'own shout'; }, doubled: 'own doubled' })",
+  "Object.setPrototypeOf(new String('hello'), null)",
+  "Object.setPrototypeOf(new String('hello'), { shout() { return 'other prototype'; } })",
+  "new (class Quiet extends String { shout() { return 'quiet ' + super.shout(); } })('hello')",
+  "['hello']",
+  "{ shout() { return 'look alike'; }, kindOfThis() { return 'look alike'; }, doubled: 'look alike', length: 1 }",
+  "5",
+  "null",
+  "undefined",
+  "Symbol('s')",
+  "Object.create(String.prototype)",
+  "String.prototype",
+  "new Proxy(new String('hello'), {})",
+];
+
+for (const text of values) {
+  attempt("shout " + text, () => shout(make(text)));
+  attempt("kind of this " + text, () => kindOfThis(make(text)));
+  attempt("doubled " + text, () => doubled(make(text)));
+  attempt("length and shout " + text, () => lengthAndShout(make(text)));
+  attempt("has shout " + text, () => hasShout(make(text)));
+}
+
+attempt("the new members are enumerable or not as they were defined", () => {
+  const seen = [];
+  for (const key in "hi") seen.push(key);
+  return [seen, Object.keys(String.prototype), Object.keys("hi")];
+});
+attempt("borrowed by other values", () => [String.prototype.shout.call(5), String.prototype.shout.call(["a", "b"]), String.prototype.kindOfThis.call(5), String.prototype.kindOfThis.call(null)]);
+attempt("borrowed by null", () => String.prototype.shout.call(null));
+attempt("read by a computed name", () => ["hello"[make("'sho' + 'ut'")](), "hello"[make("'doubled'")]]);
+attempt("called from eval", () => make("'from eval'.shout()"));
+
+const stored = [];
+Object.defineProperty(String.prototype, "remembered", {
+  set(value) {
+    stored.push(typeof this + " " + this + " " + value);
+  },
+  get() {
+    return "from the getter of " + typeof this;
+  },
+  configurable: true,
+});
+attempt("a setter on the prototype is called for a plain text", () => [store("hello", 1), stored.splice(0)]);
+attempt("a setter on the prototype is called for a wrapped text", () => [store(new String("hello"), 2), stored.splice(0)]);
+attempt("a setter on the prototype is not reached from a number", () => [store(Object(5), 3), stored.splice(0)]);
+//// new-this-constructor-after-the-constructor-member-changed.cjs
+////= show-34
+
+function Range(from, to) {
+  this.from = from;
+  this.to = to;
+}
+Range.prototype.shift = function (by) {
+  return new this.constructor(this.from + by, this.to + by);
+};
+Range.prototype.span = function () {
+  return this.to - this.from;
+};
+
+////= lines-212	Interval	from	to	Range	closed	true
+Interval.prototype = Object.create(Range.prototype);
+
+////= lines-212	Fixed	from	to	Range	fixed	true
+Fixed.prototype = Object.create(Range.prototype);
+Fixed.prototype.constructor = Fixed;
+
+function Literal(from, to) {
+  Range.call(this, from, to);
+}
+Literal.prototype = {
+  shift: Range.prototype.shift,
+  span: Range.prototype.span,
+};
+
+function Backwards(from, to) {
+  this.to = from;
+  this.from = to;
+}
+////= lines-58	Backwards	span	"backwards span"
+
+////= lines-3	shifted	range	range.shift	1
+
+////= lines-5	spanOf	range	range.span
+
+function look(label, range) {
+  attempt(label + ": shift(1)", () => shifted(range));
+  attempt(label + ": the shifted one is a Range, Interval, Fixed", () => { const next = shifted(range); return [next instanceof Range, next instanceof Interval, next instanceof Fixed]; });
+  attempt(label + ": span of the shifted one", () => spanOf(shifted(range)));
+}
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += spanOf(shifted(new Range(i % 5, 10)));
+console.log("2000 honest shifts", sum);
+
+look("a range", new Range(1, 5));
+look("a child that never set constructor", new Interval(1, 5));
+look("a child that set constructor", new Fixed(1, 5));
+look("a child whose prototype is a literal", new Literal(1, 5));
+
+const own = new Range(1, 5);
+own.constructor = Backwards;
+look("a range with its own constructor member", own);
+
+const arrow = new Range(1, 5);
+arrow.constructor = (from, to) => ({ from, to });
+look("constructor is an arrow function", arrow);
+
+const number = new Range(1, 5);
+number.constructor = 5;
+look("constructor is a number", number);
+
+const bare = Object.setPrototypeOf(new Range(1, 5), { shift: Range.prototype.shift, __proto__: null });
+look("no constructor anywhere", bare);
+
+const getter = Object.defineProperty(new Range(1, 5), "constructor", { get() { return this.from > 1 ? Backwards : Fixed; } });
+look("constructor is a getter", getter);
+
+Range.prototype.constructor = Backwards;
+look("Range.prototype.constructor was replaced, a range", new Range(1, 5));
+look("Range.prototype.constructor was replaced, a child that never set it", new Interval(1, 5));
+look("Range.prototype.constructor was replaced, a child that set it", new Fixed(1, 5));
+
+delete Range.prototype.constructor;
+look("Range.prototype.constructor was deleted, a range", new Range(1, 5));
+
+Range.prototype[["construct", "or"].join("")] = Range;
+look("a store under a joined name put it back, a range", new Range(1, 5));
+attempt("constructor is enumerable now", () => { const names = []; for (const name in new Range(1, 5)) names.push(name); return names; });
+//// next-is-called-on-the-prototype-object-of-a-generator-function.js
+////= lines-270	numbers	2
+
+try {
+  console.log(numbers.prototype.next());
+} catch (error) {
+  console.log(error instanceof TypeError);
+}
+console.log(numbers().next().value);
+//// node-functions-that-expect-a-string-get-something-else.js
+////= show-26
+
+const path = require("node:path");
+const util = require("node:util");
+const querystring = require("node:querystring");
+const { StringDecoder } = require("node:string_decoder");
+
+////= lines-152	baseName	value	path.posix.basename	value
+
+////= lines-152	directory	value	path.posix.dirname	value
+
+////= lines-152	extension	value	path.posix.extname	value
+
+function joined(value) {
+  return path.posix.join("a", value, "b");
+}
+
+////= lines-152	normalized	value	path.posix.normalize	value
+
+////= lines-152	isAbsolute	value	path.posix.isAbsolute	value
+
+function formatted(value) {
+  return util.format("%s|%d|%j", value, value, value);
+}
+
+////= lines-3	escaped	value	querystring.escape	value
+
+function parsedQuery(value) {
+  return Object.keys(querystring.parse(value)).join(",");
+}
+
+function builtQuery(value) {
+  return querystring.stringify({ key: value });
+}
+
+function bufferOf(value) {
+  return Buffer.from(value, "utf8").toString("hex");
+}
+
+function withEncoding(value) {
+  return Buffer.from("hi").toString(value);
+}
+
+////= lines-3	isEncoding	value	Buffer.isEncoding	value
+
+function written(value) {
+  const bytes = Buffer.alloc(4);
+  return [bytes.write(value), bytes.toString("hex")];
+}
+
+function filled(value) {
+  return Buffer.alloc(4, value).toString("hex");
+}
+
+function decoded(value) {
+  return new StringDecoder("utf8").write(value);
+}
+
+////= lines-3	strippedOfColors	value	util.stripVTControlCharacters	value
+
+const uses = [
+  ["basename", baseName],
+  ["dirname", directory],
+  ["extname", extension],
+  ["join", joined],
+  ["normalize", normalized],
+  ["isAbsolute", isAbsolute],
+  ["format", formatted],
+  ["escape", escaped],
+  ["parse", parsedQuery],
+  ["stringify", builtQuery],
+  ["Buffer.from", bufferOf],
+  ["toString(encoding)", withEncoding],
+  ["isEncoding", isEncoding],
+  ["write", written],
+  ["alloc fill", filled],
+  ["decoder", decoded],
+  ["strip", strippedOfColors],
+];
+
+const values = [
+  "'/x/y.z'",
+  "''",
+  "'hex'",
+  "'a=1&b=2'",
+  "'/x' + '/y.z'",
+  "'/\\u4e16/\\ud83d\\ude00.\\u00e9'",
+  "'\\ud83d'",
+  "new String('/x/y.z')",
+  "['/x/y.z']",
+  "{ toString() { return '/x/y.z'; } }",
+  "5",
+  "-0",
+  "5n",
+  "true",
+  "null",
+  "undefined",
+  "Symbol('/x')",
+  "Buffer.from('/x/y.z')",
+  "new Uint8Array([47, 120])",
+  "{}",
+];
+
+let total = 0;
+for (let i = 0; i < 1000; i++) {
+  for (const [name, use] of uses) {
+    if (name !== "toString(encoding)") total += String(use("/x/y.z")).length;
+  }
+}
+console.log("1000 honest rounds", total);
+
+for (const [name, use] of uses) {
+  for (const text of values) {
+    let line;
+    try {
+      line = show(use(make(text)));
+    } catch (error) {
+      line = "threw " + error.constructor.name + " " + String(error.code);
+    }
+    console.log(name + " " + text + " -> " + line);
+  }
+}
+//// not-a-numbers-with-payloads-come-out-of-typed-arrays.js
+function show(value) {
+  if (Object.is(value, -0)) return "-0";
+  if (typeof value === "object" && value !== null) return "object";
+  return typeof value + " " + String(value);
+}
+
+const payloads = [
+  [0x7ff80000, 0],
+  [0xfff80000, 0],
+  [0x7ff00000, 1],
+  [0xfff00000, 1],
+  [0x7ffa0000, 0],
+  [0x7ffb0000, 0],
+  [0x7ffc0000, 0],
+  [0x7ffe0000, 0],
+  [0xfffa0000, 0],
+  [0xfffc0000, 42],
+  [0xfffc0000, 0],
+  [0xfffd0000, 7],
+  [0xfffe0000, 0],
+  [0xfffe0000, 2],
+  [0xfffe0000, 6],
+  [0xfffe0000, 7],
+  [0xfffe0000, 10],
+  [0xfffe0000, 0x1000],
+  [0xffff0000, 0],
+  [0xffffffff, 0xffffffff],
+  [0x7fffffff, 0xffffffff],
+];
+
+const floatPayloads = [
+  0x7fc00000, 0xffc00000, 0x7f800001, 0x7fd00000, 0x7fd80000, 0x7fe00000, 0xffe00000, 0xfff00000, 0xffffffff,
+];
+
+////= lines-37	firstOf	floats	floats[0
+
+////= lines-22	sumOf	floats	let	total	0
+
+////= lines-191	kindOfFirst	floats	typeof	floats[0
+
+////= lines-174	copyOut	floats	list
+
+function keep(floats) {
+  return { kept: floats[0], other: 0.5 };
+}
+
+////= lines-7	keptOf	holder	holder.kept
+
+function firstOrText(floats) {
+  return floats[0] ?? "nullish";
+}
+
+function isFirstItself(floats) {
+  const first = floats[0];
+  return first === first;
+}
+
+function negated(floats) {
+  return -floats[0];
+}
+
+////= lines-3	viewed	view	view.getFloat64	0
+
+const honest = new Float64Array([0.5, 1.5, 2.5]);
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  warm +=
+    firstOf(honest) +
+    sumOf(honest) +
+    kindOfFirst(honest).length +
+    copyOut(honest).length +
+    keptOf(keep(honest)) +
+    firstOrText(honest) +
+    negated(honest) +
+    (isFirstItself(honest) ? 1 : 0);
+}
+console.log("2000 honest rounds:", warm);
+
+function report(label, floats) {
+  const list = copyOut(floats);
+  const holder = keep(floats);
+  console.log(
+    label + ":",
+    show(firstOf(floats)),
+    "| sum",
+    show(sumOf(floats)),
+    "| typeof",
+    kindOfFirst(floats),
+    "| copied",
+    show(list[0]),
+    0 in list,
+    list.length,
+    "| kept",
+    show(keptOf(holder)),
+    "kept" in holder,
+    JSON.stringify(holder),
+    "| or",
+    show(firstOrText(floats)),
+    "| itself",
+    isFirstItself(floats),
+    "| negated",
+    show(negated(floats)),
+    "| is NaN",
+    Object.is(firstOf(floats), NaN),
+  );
+}
+
+for (const [high, low] of payloads) {
+  const label = high.toString(16) + " " + low.toString(16);
+  report("Float64Array " + label, new Float64Array(new Uint32Array([low, high]).buffer));
+  const view = new DataView(new ArrayBuffer(8));
+  view.setUint32(0, high);
+  view.setUint32(4, low);
+  console.log(
+    "DataView " + label + ":",
+    show(viewed(view)),
+    typeof viewed(view),
+    show([viewed(view)][0]),
+    show({ kept: viewed(view) }.kept),
+  );
+}
+
+for (const bits of floatPayloads)
+  report("Float32Array " + bits.toString(16), new Float32Array(new Uint32Array([bits]).buffer));
+
+const mixed = new Float64Array(new Uint32Array([0, 0x3ff00000, 2, 0xfffe0000, 0, 0x40000000]).buffer);
+report("a payload between one and two", mixed);
+console.log("copied:", copyOut(mixed).map(show).join(", "));
+console.log("sorted:", Array.from(mixed).sort().map(show).join(", "));
+console.log(
+  "mapped:",
+  Array.from(mixed, value => value * 2)
+    .map(show)
+    .join(", "),
+);
+report("honest again", honest);
+//// number-keys-are-written-in-many-ways.js
+////= show-26
+
+const written = {
+  1: "1",
+  2.0: "2.0",
+  0x10: "0x10",
+  0b11: "0b11",
+  0o17: "0o17",
+  1e2: "1e2",
+  1_000: "1_000",
+  0.5: "0.5",
+  .25: ".25",
+  5.: "5.",
+  1e21: "1e21",
+  1e-7: "1e-7",
+  123456789012345680000: "123456789012345680000",
+  0.1: "0.1",
+  9007199254740993: "9007199254740993",
+  4294967295: "4294967295",
+  4294967296: "4294967296",
+  7n: "7n",
+  0xffn: "0xffn",
+};
+
+attempt("the keys of the literal", () => Object.keys(written));
+
+////= lines-37	read	key	written[key
+
+for (let i = 0; i < 2000; i++) read("1");
+
+const keys = ["1", "'1'", "1.0", "2", "'2'", "'2.0'", "16", "'16'", "'0x10'", "0x10", "3", "15", "100", "'100'", "'1e2'", "1e2", "1000", "'1_000'", "0.5", "'0.5'", "'.5'", "0.25", "'.25'", "'0.25'", "5", "'5.'", "1e21", "'1e21'", "'1e+21'", "1e-7", "'1e-7'", "'1e-07'", "123456789012345680000", "'123456789012345680000'", "123456789012345678901", "0.1", "0.1 + 0", "0.30000000000000004 - 0.2", "9007199254740992", "9007199254740993", "'9007199254740993'", "'9007199254740992'", "4294967295", "4294967296", "7", "7n", "'7'", "'7n'", "255", "255n"];
+for (const key of keys) attempt("written[" + key + "]", () => read(make(key)));
+
+attempt("literal reads", () => [written[1], written[1.0], written["1"], written[0x10], written[16], written[1e2], written[1_0_0], written[.5], written[5.], written[7n], written[0.1 + 0.2 - 0.2]]);
+attempt("later keys win", () => JSON.stringify({ 1: "a", "1": "b", 1.0: "c", 0x1: "d", 1n: "e" }));
+attempt("order of number-like keys", () => Object.keys({ b: 1, 10: 1, 9: 1, "08": 1, 1.5: 1, "-1": 1, a: 1, 0: 1, 4294967294: 1, 4294967295: 1, 1e3: 1 }));
+attempt("class members", () => {
+  class Numbered {
+    1() { return "one"; }
+    0x10() { return "sixteen"; }
+    1e3() { return "thousand"; }
+    static 2 = "static two";
+    3 = "field three";
+    get 4() { return "getter four"; }
+    .5() { return "half"; }
+  }
+  const made = new Numbered();
+  return [made[1](), made["16"](), made[1000](), Numbered["2"], made[3], made["4"], made["0.5"](), Object.getOwnPropertyNames(Numbered.prototype), made[1].name, made[16].name];
+});
+attempt("patterns", () => {
+  const { 1: one, 0x10: sixteen, 1e2: hundred, 0.5: half, 7n: seven } = written;
+  return [one, sixteen, hundred, half, seven];
+});
+attempt("lists and number-like keys", () => {
+  const list = ["zero", "one", "two"];
+  return [list[1.0], list[0x1], list[1e0], list["1"], list[1n], list["1.0"], list["0x1"], list["1e0"], list[-0], list["-0"], list[0.5 + 0.5], list[2 - 1e-17]];
+});
+attempt("texts and number-like keys", () => ["abc"[1.0], "abc"[0x1], "abc"["1"], "abc"[1n], "abc"["1.0"], "abc"[-0], "abc"["-0"], "abc"[1e0]]);
+attempt("numbers turned into texts", () => [String(1e21), String(1e-7), String(123456789012345680000), String(0.000001), String(1e-6), String(-1e-7), String(100), String(1e2), String(0.1 + 0.2), String(2 ** 53), String(-0), String(5e-324), String(1.7976931348623157e308), String(4.35), String(0.5e1), (25).toString(2), (255).toString(16), (0.5).toString(2), (-255).toString(36)]);
+//// numbers/a-bigint-arrives-where-numbers-were-compared-and-converted.js
+////= show-25
+
+const list = ["zero", "one", "two", "three"];
+const uses = {
+  "value++": value => [value++, value],
+  "--value": value => [--value, value],
+  "value += 1": value => (value += 1),
+  "value < 3": value => value < 3,
+  "value < 2.5": value => value < 2.5,
+  "value >= 2": value => value >= 2,
+  "value < '3'": value => value < "3",
+  "value < 'x'": value => value < "x",
+  "value < NaN": value => value < NaN,
+  "value < Infinity": value => value < Infinity,
+  "value == 2": value => value == 2,
+  "value === 2": value => value === 2,
+  "value == '2'": value => value == "2",
+  "value == true": value => value == true,
+  "value != 2": value => value != 2,
+  "!value": value => !value,
+  "typeof value": value => typeof value,
+  "list[value]": value => list[value],
+  "value in list": value => value in list,
+  "template": value => `${value}`,
+  "Number(value)": value => Number(value),
+};
+
+const values = { "2n": 2n, "0n": 0n, "-3n": -3n, "Object(2n)": Object(2n), "2": 2 };
+for (const kind of Object.keys(values)) for (const name of Object.keys(uses)) attempt("cold " + name + " of " + kind, () => uses[name](values[kind]));
+for (const name of Object.keys(uses)) for (let i = 0; i < 2000; i++) outcome(() => uses[name](i % 4));
+for (const kind of Object.keys(values)) for (const name of Object.keys(uses)) attempt("warm " + name + " of " + kind, () => uses[name](values[kind]));
+//// numbers/a-bigint-arrives-where-numbers-were-given-to-built-ins.js
+////= show-25
+
+const list = ["zero", "one", "two", "three"];
+const uses = {
+  "parseInt(value)": value => parseInt(value),
+  "Math.abs(value)": value => Math.abs(value),
+  "Math.max(value, 1)": value => Math.max(value, 1),
+  "isNaN(value)": value => isNaN(value),
+  "Number.isInteger(value)": value => Number.isInteger(value),
+  "list.at(value)": value => list.at(value),
+  "list.slice(value)": value => list.slice(value),
+  "[1, 2, 3].indexOf(value)": value => [1, 2, 3].indexOf(value),
+  "[1, 2, 3].includes(value)": value => [1, 2, 3].includes(value),
+  "Array(value)": value => Array(value),
+  "'a'.repeat(value)": value => "a".repeat(value),
+  "new Map([[2, 'two']]).get(value)": value => new Map([[2, "two"]]).get(value),
+  "Object.keys({ [value]: 0 })": value => Object.keys({ [value]: 0 }),
+  "JSON.stringify(value)": value => JSON.stringify(value),
+  "Int32Array store": value => {
+    const array = new Int32Array(1);
+    array[0] = value;
+    return array[0];
+  },
+  "BigInt64Array store": value => {
+    const array = new BigInt64Array(1);
+    array[0] = value;
+    return array[0];
+  },
+  "switch": value => {
+    switch (value) {
+      case 2:
+        return "the number two";
+      case 2n:
+        return "the bigint two";
+      default:
+        return "none";
+    }
+  },
+  "loop bound": value => {
+    let count = 0;
+    for (let i = 0; i < value; i++) count++;
+    return count;
+  },
+  "loop start": value => {
+    const seen = [];
+    for (let i = value; i < 5; i++) seen.push(i);
+    return seen;
+  },
+};
+
+const values = { "2n": 2n, "0n": 0n, "-3n": -3n, "Object(2n)": Object(2n), "2": 2 };
+for (const kind of Object.keys(values)) for (const name of Object.keys(uses)) attempt("cold " + name + " of " + kind, () => uses[name](values[kind]));
+for (const name of Object.keys(uses)) for (let i = 0; i < 2000; i++) outcome(() => uses[name](i % 4));
+for (const kind of Object.keys(values)) for (const name of Object.keys(uses)) attempt("warm " + name + " of " + kind, () => uses[name](values[kind]));
+//// numbers/a-bigint-arrives-where-numbers-were-used-in-arithmetic.js
+////= show-25
+
+const list = ["zero", "one", "two", "three"];
+const uses = {
+  "value - 1": value => value - 1,
+  "value + 1": value => value + 1,
+  "value * 2": value => value * 2,
+  "value / 2": value => value / 2,
+  "value % 2": value => value % 2,
+  "value ** 2": value => value ** 2,
+  "value + ''": value => value + "",
+  "value + '1'": value => value + "1",
+  "value - value": value => value - value,
+  "value * value": value => value * value,
+  "value / value": value => value / value,
+  "value ** value": value => value ** value,
+  "+value": value => +value,
+  "-value": value => -value,
+  "~value": value => ~value,
+  "value | 0": value => value | 0,
+  "value >>> 0": value => value >>> 0,
+  "value >>> value": value => value >>> value,
+  "value << value": value => value << value,
+  "value >> value": value => value >> value,
+  "value & value": value => value & value,
+};
+
+const values = { "2n": 2n, "0n": 0n, "-3n": -3n, "Object(2n)": Object(2n), "2": 2 };
+for (const kind of Object.keys(values)) for (const name of Object.keys(uses)) attempt("cold " + name + " of " + kind, () => uses[name](values[kind]));
+for (const name of Object.keys(uses)) for (let i = 0; i < 2000; i++) outcome(() => uses[name](i % 4));
+for (const kind of Object.keys(values)) for (const name of Object.keys(uses)) attempt("warm " + name + " of " + kind, () => uses[name](values[kind]));
+//// numbers/a-captured-variable-that-is-not-a-number-is-incremented.js
+////= show-25
+
+const log = [];
+
+////= impostors-8
+
+function incrementedInside(value) {
+  let count = value;
+  const step = () => count++;
+  return [step(), step(), count];
+}
+
+function incrementedOutside(value) {
+  let count = value;
+  const read = () => count;
+  count++;
+  return [read(), count];
+}
+
+function replacedInside(value) {
+  let count = 0;
+  const replace = next => {
+    count = next;
+  };
+  count++;
+  replace(value);
+  count++;
+  return [count, count | 0];
+}
+
+function addedInside(value) {
+  let total = 0;
+  const add = amount => {
+    total += amount;
+  };
+  add(1);
+  add(value);
+  add(1);
+  return [total, typeof total];
+}
+
+runTable([incrementedInside, incrementedOutside, replacedInside, addedInside], impostors);
+//// numbers/a-class-field-initialized-with-a-number-later-holds-something-else.js
+////= show-25
+
+class Account {
+  balance = 0;
+  #secret = 0;
+  static opened = 0;
+
+  deposit(amount) {
+    this.balance += amount;
+    this.#secret += amount;
+    Account.opened += 1;
+    return this.balance;
+  }
+
+  report() {
+    return [this.balance, this.balance + 1, this.balance * 2, this.balance | 0, this.#secret, this.#secret + 1, typeof this.balance];
+  }
+
+  overwrite(value) {
+    this.balance = value;
+    this.#secret = value;
+  }
+}
+
+////= lines-136	Savings	Account	balance	"none yet"
+
+const honest = new Account();
+for (let i = 0; i < 2000; i++) honest.deposit(1);
+attempt("after 2000 deposits", () => honest.report());
+
+for (const amount of ["5", 0.5, -0, null, undefined, true, 5n, NaN, 2147483647, [5], { valueOf: () => 5 }, Symbol("s")]) {
+  attempt("a deposit of " + show(amount), () => {
+    const account = new Account();
+    account.deposit(1);
+    account.deposit(amount);
+    return account.report();
+  });
+  attempt("then an honest deposit after " + show(amount), () => {
+    const account = new Account();
+    account.deposit(amount);
+    account.deposit(1);
+    return account.report();
+  });
+  attempt("overwritten with " + show(amount), () => {
+    const account = new Account();
+    account.overwrite(amount);
+    return account.report();
+  });
+}
+
+attempt("a subclass redefines the field", () => new Savings().report());
+attempt("a subclass redefines the field and deposits", () => {
+  const savings = new Savings();
+  savings.deposit(1);
+  return savings.report();
+});
+attempt("the field is deleted", () => {
+  const account = new Account();
+  delete account.balance;
+  return [account.report(), account.deposit(1)];
+});
+attempt("the field becomes an accessor", () => {
+  const account = new Account();
+  Object.defineProperty(account, "balance", { get: () => "from a getter", set() {} });
+  return [account.report(), account.deposit(1)];
+});
+attempt("the method runs on another object", () => Account.prototype.deposit.call({ balance: "x" }, 1));
+attempt("the honest account afterwards", () => [honest.deposit(1), honest.report()]);

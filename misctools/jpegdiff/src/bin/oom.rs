@@ -1,6 +1,8 @@
 //! Fails the Nth allocation, for every N, in decode and encode. 
 //! usage: oom FILE_OR_DIR...      every failure must come out as Error::Alloc; an allocation that cannot fail shows as a panic.
 #![feature(alloc_error_hook)]
+// For the kernels, which come with that crate.
+use jpegdiff as _;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::collections::BTreeMap;

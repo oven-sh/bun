@@ -147,6 +147,7 @@ typedef int mode_t;
 
 #include <cstring>
 #include "ErrorStackTrace.h"
+extern "C" bool isBunTest;
 extern "C" bool Bun__Node__ProcessNoDeprecation;
 extern "C" bool Bun__Node__ProcessNoWarnings;
 extern "C" bool Bun__Node__ProcessTraceWarnings;
@@ -4724,21 +4725,57 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
     process->queueNextTick<2>(globalObject, function, { JSValue::decode(arg1), JSValue::decode(arg2) });
 }
 
-// `require.cache.get(Bun.main)`. Not cached, because `bun test` runs many main modules in one process.
-JSC_DEFINE_CUSTOM_GETTER(processMainModule, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue, PropertyName))
+// This does the equivalent of
+// return require.cache.get(Bun.main)
+static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
+{
+    // Lazy property builder: exceptions must not propagate into
+    // reifyStaticProperty, which performs no exception check.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(processObject->globalObject());
+    // No file of an ahead-of-time executable is in the require map.
+    if (Bun::hasCompiledModules()) {
+        JSValue mainModule = Bun::mainModuleOfExecutable(globalObject);
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSC::jsUndefined();
+        }
+        return mainModule;
+    }
+    auto* bun = globalObject->bunObject();
+    auto& builtinNames = Bun::builtinNames(vm);
+    JSValue mainValue = bun->get(globalObject, builtinNames.mainPublicName());
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSC::jsUndefined();
+    }
+    auto* requireMap = globalObject->requireMap();
+    JSValue mainModule = requireMap->get(globalObject, mainValue);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSC::jsUndefined();
+    }
+    return mainModule;
+}
+
+// `bun test` runs many main modules in one process, so it doesn't cache what the function above returns.
+JSC_DEFINE_CUSTOM_GETTER(processMainModuleOfTestFile, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    // No file of an ahead-of-time executable is in the require map.
-    if (Bun::hasCompiledModules())
-        RELEASE_AND_RETURN(scope, JSValue::encode(Bun::mainModuleOfExecutable(globalObject)));
     JSValue main = globalObject->bunObject()->get(globalObject, Bun::builtinNames(vm).mainPublicName());
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::testFileRequireMap(globalObject)->get(globalObject, main)));
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setProcessMainModule, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName propertyName))
+JSC_DEFINE_CUSTOM_SETTER(setProcessMainModuleOfTestFile, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName propertyName))
 {
     auto* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
     if (!thisObject)
@@ -5276,7 +5313,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   hrtime                           constructProcessHrtimeObject                        PropertyCallback
   isBun                            constructIsBun                                      PropertyCallback
   kill                             Process_functionKill                                Function 2
-  mainModule                       processMainModule                                   CustomAccessor
+  mainModule                       constructMainModuleProperty                         PropertyCallback
   memoryUsage                      constructMemoryUsage                                PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                              PropertyCallback
   nextTick                         constructProcessNextTickFn                          PropertyCallback
@@ -5357,6 +5394,9 @@ void Process::finishCreation(JSC::VM& vm)
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
+    // Compiled code reads the property as the table of built-ins describes it.
+    if (isBunTest && !Bun::hasCompiledModules())
+        putDirectCustomAccessor(vm, Identifier::fromString(vm, "mainModule"_s), CustomGetterSetter::create(vm, processMainModuleOfTestFile, setProcessMainModuleOfTestFile), PropertyAttribute::CustomAccessor | 0);
 
     // No-op stubs Node only has on the main thread; a worker_threads Worker's process lacks them.
     if (!WebCore::clientData(vm)->isNodeWorkerVM()) {

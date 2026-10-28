@@ -147,25 +147,7 @@ export default b.declarations(
     uses: { id: [b.loadedAsModule] },
     implementation: b.hostCall,
   }),
-  // Like setProcessPpid, setProcessMainModule defines a data property on whatever it is called on.
-  b.static("process.mainModule", {
-    getter: b.any,
-    capability: "js",
-    throws: true,
-    reads: ["ExternalState"],
-    implementation: b.generic,
-    setter: {
-      value: b.any,
-      capability: "js",
-      throws: true,
-      runsOnlyOperandCode: true,
-      uses: {
-        this: [b.definesName(["mainModule"], b.operand("value")), ...b.ownPropertyTraps],
-        value: [b.retained],
-      },
-      implementation: b.generic,
-    },
-  }),
+  b.static("process.mainModule", b.property(b.union(moduleObject, b.undefined))),
   b.class("node:module", {
     hasPrototype: false,
     call: {

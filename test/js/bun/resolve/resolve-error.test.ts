@@ -554,6 +554,24 @@ describe.concurrent("Node 24 package configuration validation", () => {
     });
   }
 
+  it.each(["pkg/foo", "pkg/foo.js"])("validates the selected package scope after resolving %s", async specifier => {
+    await run(
+      {
+        "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: { "./foo": "./src/foo.js" } }),
+        "node_modules/pkg/src/package.json": '{"type":42}',
+        "node_modules/pkg/src/foo.js": "export default 1;",
+      },
+      `import assert from 'node:assert/strict';
+       import {join} from 'node:path';
+       const specifier = ${JSON.stringify(specifier)};
+       const expected = {name:'Error', code:'ERR_INVALID_PACKAGE_CONFIG', message:'Invalid package config ' + join(process.cwd(),'node_modules/pkg/src/package.json') + '.'};
+       assert.throws(() => Bun.resolveSync(specifier, import.meta.dir, true), expected);
+       assert.throws(() => import.meta.resolve(specifier), expected);
+       await assert.rejects(import(specifier), expected);
+       console.log('ok');`,
+    );
+  });
+
   it.each(["import", "require"])("defers selected malformed package metadata for %s", async mode => {
     await run(
       {

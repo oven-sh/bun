@@ -5658,6 +5658,16 @@ impl VirtualMachine {
             (jsc_vm.transpiler).with_mut(|t| t.resolver.resolves_for_code_from_disk = false);
         }
         if resolve_result.is_ok()
+            && jsc_vm
+                .transpiler
+                .resolver
+                .node_module_error
+                .as_ref()
+                .is_some_and(|error| !error.is_fatal())
+        {
+            jsc_vm.transpiler.resolver.node_module_error = None;
+        }
+        if resolve_result.is_ok()
             && mode.is_esm()
             && !result.is_external
             && jsc_vm.transpiler.get().resolver.node_module_error.is_none()

@@ -415,13 +415,18 @@ describe("util", () => {
   });
   describe("stripVTControlCharacters", () => {
     it("strips what node strips", () => {
-      // Outputs of the node v26.8.2 binary, which has the RegExp of nodejs/node#64319.
+      // Outputs of the node v26.12.1 binary, which has the RegExp of nodejs/node#64319.
       const cases = [
         ["\u001b[31mred\u001b[0m plain", "red plain"],
         ["\u009b31mred\u009b0m", "red"],
         ["\u2603\u001b[1;38;2;255;0;0mred\u001b[0m\u2603", "\u2603red\u2603"],
         ["\u001b[38:2:255:0:0mred\u001b[4:3m", "red"],
+        ["\u001b[38:5:1mx", "x"],
+        ["\u001b[38:2::1:2:3mx", "x"],
         ["\u001b]0;my title\u0007x", "x"],
+        ["\u001b]0;caf\u00e9\u0007x", "x"],
+        ["\u001b]0;a\nb\u0007x", "x"],
+        ["\u001b]52;c;!\u0007x", "x"],
         ["\u001b]8;;https://example.com/a b\u0007link\u001b]8;;\u001b\\", "link"],
         ["\u001b]0;a\u001bb\u009cc", "c"],
         ["a\u001b]0;titleXYZ", "aitleXYZ"],

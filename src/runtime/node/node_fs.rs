@@ -10258,6 +10258,11 @@ struct DeleteTreeStackItem {
     /// owner; this is just the raw fd for `Dir::borrow` at call sites.
     parent_dir: FD,
     iter: DirIterator::WrappedIterator,
+    /// `Some(n)` once the directory is re-walked after an ENOTEMPTY rmdir,
+    /// where `n` is the delete count at that point. A re-walk that removes
+    /// nothing means an entry is listed but cannot be removed (its unlink
+    /// keeps reporting ENOENT), so the next ENOTEMPTY is final.
+    deleted_at_retry: Option<usize>,
 }
 
 pub(crate) fn zig_delete_tree(
@@ -10289,7 +10294,9 @@ pub(crate) fn zig_delete_tree(
         name_is_borrowed: true,
         parent_dir: self_.fd,
         iter: DirIterator::WrappedIterator::init(initial_iterable_dir.into_raw()),
+        deleted_at_retry: None,
     });
+    let mut deleted: usize = 0;
 
     'process_stack: while !stack.is_empty() {
         let top_idx = stack.len() - 1;
@@ -10322,6 +10329,7 @@ pub(crate) fn zig_delete_tree(
                                     iter: DirIterator::WrappedIterator::init(
                                         iterable_dir.into_raw(),
                                     ),
+                                    deleted_at_retry: None,
                                 });
                                 continue 'process_stack;
                             }
@@ -10361,14 +10369,22 @@ pub(crate) fn zig_delete_tree(
                             &entry_name,
                             entry.kind,
                         ) {
-                            Ok(()) | Err(crate::Error::FileNotFound) => break 'handle_entry,
+                            Ok(()) => {
+                                deleted += 1;
+                                break 'handle_entry;
+                            }
+                            Err(crate::Error::FileNotFound) => break 'handle_entry,
                             Err(e) => return Err(e),
                         }
                     }
                 } else {
                     let top_fd = stack[top_idx].iter.iter.dir;
                     match dt_delete_file(sys::Dir::borrow(&top_fd), &entry_name) {
-                        Ok(()) | Err(E::ENOENT) => break 'handle_entry,
+                        Ok(()) => {
+                            deleted += 1;
+                            break 'handle_entry;
+                        }
+                        Err(E::ENOENT) => break 'handle_entry,
                         Err(E::EISDIR) => {
                             treat_as_dir = true;
                             continue 'handle_entry;
@@ -10424,12 +10440,16 @@ pub(crate) fn zig_delete_tree(
 
         let mut need_to_retry = false;
         match dt_delete_dir(sys::Dir::borrow(&parent_dir), name) {
-            Ok(()) => {}
+            Ok(()) => deleted += 1,
             Err(E::ENOENT) => {}
-            Err(E::ENOTEMPTY) => need_to_retry = true,
             // Some OSes report EEXIST instead of ENOTEMPTY for a non-empty
             // directory; treat it the same.
-            Err(E::EEXIST) => need_to_retry = true,
+            Err(E::ENOTEMPTY | E::EEXIST) => {
+                if top.deleted_at_retry == Some(deleted) {
+                    return Err(dt_err(E::ENOTEMPTY));
+                }
+                need_to_retry = true;
+            }
             #[cfg(target_os = "macos")]
             Err(e @ (E::EACCES | E::EPERM)) => {
                 // Node's rimraf keeps going after a child deletion is denied and
@@ -10475,7 +10495,10 @@ pub(crate) fn zig_delete_tree(
                     }
                 } else {
                     match dt_delete_file(sys::Dir::borrow(&parent_dir), name) {
-                        Ok(()) => continue 'process_stack,
+                        Ok(()) => {
+                            deleted += 1;
+                            continue 'process_stack;
+                        }
                         Err(E::ENOENT) => continue 'process_stack,
                         Err(E::EISDIR) => {
                             treat_as_dir = true;
@@ -10499,6 +10522,7 @@ pub(crate) fn zig_delete_tree(
                 name_is_borrowed: top.name_is_borrowed,
                 parent_dir,
                 iter: DirIterator::WrappedIterator::init(iterable_dir.into_raw()),
+                deleted_at_retry: Some(deleted),
             });
             continue 'process_stack;
         }
@@ -10540,7 +10564,13 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
     sub_path: &[u8],
     kind_hint: sys::FileKind,
 ) -> crate::Result<()> {
+    // A pass that removes nothing and still ends in ENOTEMPTY would repeat
+    // forever: an entry is listed but its unlink keeps reporting ENOENT.
+    // A pass that ends in ENOENT is not that: the directory this pass
+    // opened is gone, so the tree did shrink.
+    let mut deleted: usize = 0;
     'start_over: loop {
+        let deleted_at_start = deleted;
         let mut dir = match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint)? {
             Some(d) => d,
             None => return Ok(()),
@@ -10598,7 +10628,10 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                         }
                     } else {
                         match dt_delete_file(&dir, &entry_name) {
-                            Ok(()) => continue 'dir_it,
+                            Ok(()) => {
+                                deleted += 1;
+                                continue 'dir_it;
+                            }
                             Err(E::ENOENT) => continue 'dir_it,
                             Err(E::EISDIR) => {
                                 treat_as_dir = true;
@@ -10627,8 +10660,14 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
             };
             if let Some(d) = cleanup_dir_parent {
                 match dt_delete_dir(&d, dir_name) {
-                    Ok(()) | Err(E::ENOENT) | Err(E::ENOTEMPTY) | Err(E::EEXIST) => {
-                        // These two things can happen due to file system race conditions.
+                    Ok(()) | Err(E::ENOENT) => {
+                        deleted += 1;
+                        continue 'start_over;
+                    }
+                    Err(E::ENOTEMPTY) | Err(E::EEXIST) => {
+                        if deleted == deleted_at_start {
+                            return Err(dt_err(E::ENOTEMPTY));
+                        }
                         continue 'start_over;
                     }
                     Err(e) => {
@@ -10638,7 +10677,12 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
             } else {
                 match dt_delete_dir(self_, sub_path) {
                     Ok(()) | Err(E::ENOENT) => return Ok(()),
-                    Err(E::ENOTEMPTY) | Err(E::EEXIST) => continue 'start_over,
+                    Err(E::ENOTEMPTY) | Err(E::EEXIST) => {
+                        if deleted == deleted_at_start {
+                            return Err(dt_err(E::ENOTEMPTY));
+                        }
+                        continue 'start_over;
+                    }
                     Err(e) => return Err(dt_err(e)),
                 }
             }

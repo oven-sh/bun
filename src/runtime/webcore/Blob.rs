@@ -75,15 +75,19 @@ pub(crate) fn is_valid_blob_type(slice: &[u8]) -> bool {
     slice.iter().all(|&c| matches!(c, 0x20..=0x7E))
 }
 
-/// WebIDL `[Clamp] long long` (https://webidl.spec.whatwg.org/#abstract-opdef-converttoint).
-fn clamp_to_long_long(number: f64) -> i64 {
-    const MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
-    if number.is_nan() {
-        return 0;
+/// WebIDL `[Clamp] long long` of a Number: clamp to the safe integers, round half to even.
+/// `None` for any other value, which `Blob.slice` does not convert with `ToNumber`.
+#[inline]
+fn clamp_long_long(value: JSValue) -> Option<i64> {
+    if value.is_int32() {
+        return Some(i64::from(value.as_int32()));
     }
-    number
-        .clamp(-MAX_SAFE_INTEGER, MAX_SAFE_INTEGER)
-        .round_ties_even() as i64
+    if !value.is_number() {
+        return None;
+    }
+    const MAX: f64 = bun_jsc::MAX_SAFE_INTEGER as f64;
+    // NaN passes through `clamp` and `round_ties_even`, and `as` makes it 0.
+    Some(value.as_double().clamp(-MAX, MAX).round_ties_even() as i64)
 }
 
 /// Result delivered to `ReadBytesHandler::on_read_bytes`.
@@ -1782,35 +1786,22 @@ impl BlobExt for Blob {
 
         let size_i64 = i64::try_from(self.size.get()).unwrap_or(i64::MAX);
 
-        // If the optional start parameter is not used as a parameter, let relativeStart be 0.
-        let mut relative_start: i64 = 0;
-        // If the optional end parameter is not used, let relativeEnd be size.
-        let mut relative_end: i64 = size_i64;
-
-        // A string in place of `start` or `end` is the content type.
-        let (start, end, content_type) = match (start.to_js(), end.to_js(), content_type.to_js()) {
-            (start, _, _) if start.is_string() => (JSValue::UNDEFINED, JSValue::UNDEFINED, start),
-            (start, end, _) if end.is_string() => (start, JSValue::UNDEFINED, end),
-            args => args,
+        // An offset that is not a Number keeps its default: 0 for `start`, the size for `end`.
+        let relative = |offset: JSValue, default: i64| match clamp_long_long(offset) {
+            None => default,
+            Some(offset) if offset < 0 => offset.saturating_add(size_i64).max(0),
+            Some(offset) => offset.min(size_i64),
         };
 
-        if start.is_number() {
-            let start = clamp_to_long_long(start.as_number());
-            if start < 0 {
-                relative_start = start.saturating_add(size_i64).max(0);
-            } else {
-                relative_start = start.min(size_i64);
-            }
-        }
-
-        if end.is_number() {
-            let end = clamp_to_long_long(end.as_number());
-            if end < 0 {
-                relative_end = end.saturating_add(size_i64).max(0);
-            } else {
-                relative_end = end.min(size_i64);
-            }
-        }
+        // A string in place of `start` or `end` is the content type.
+        let (relative_start, relative_end, content_type) =
+            match (start.to_js(), end.to_js(), content_type.to_js()) {
+                (start, _, _) if start.is_string() => (0, size_i64, start),
+                (start, end, _) if end.is_string() => (relative(start, 0), size_i64, end),
+                (start, end, content_type) => {
+                    (relative(start, 0), relative(end, size_i64), content_type)
+                }
+            };
 
         let mut blob_content_type = BlobContentType::default();
         if content_type.is_string() {

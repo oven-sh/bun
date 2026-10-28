@@ -1,8 +1,9 @@
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, isASAN, tempDir } from "harness";
+import { afterAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, gcTick, isASAN, isLinux, tempDir } from "harness";
 import type { BlobPropertyBag } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
+import { closeSync, openSync, rmSync, writeSync } from "node:fs";
 import path from "node:path";
 
 test("blob: imports have sourcemapped stacktraces", async () => {
@@ -116,6 +117,8 @@ for (const info of [
       "MAX_VALUE, 3": [[Number.MAX_VALUE, 3], ""],
       "-MAX_VALUE, 3": [[-Number.MAX_VALUE, 3], "Bun"],
       "NaN, NaN": [[NaN, NaN], ""],
+      "0, 2 ** 31": [[0, 2 ** 31], "BunFoo"],
+      "2 ** 31": [[2 ** 31], ""],
     };
     const actual: Record<string, string> = {};
     const expected: Record<string, string> = {};
@@ -149,6 +152,58 @@ test("Blob.slice rounds double offsets as web-platform-tests expects", async () 
     actual.push({ start, ...(end === undefined ? {} : { end }), contents: await slice.text() });
   }
   expect(actual).toEqual(expected);
+});
+
+test("Blob.slice(begin, contentType) rounds begin", async () => {
+  const slice = (new Blob(["BunFoo"]) as Bun.BunFile).slice(1.5, "a/b");
+  expect({ text: await slice.text(), type: slice.type }).toEqual({ text: "nFoo", type: "a/b" });
+});
+
+test("Bun.file().slice rounds offsets before the size of the file is known", async () => {
+  const file = Bun.file(path.join(import.meta.dir, "fixtures", "slice.txt"));
+  expect(await file.slice(1.5, 4.5).text()).toBe("nF");
+});
+
+// `[Clamp]` stops an offset at 2^53 - 1, which shows only on a Blob of 2^53 bytes or more. The one
+// way to have such a Blob is a sparse file, and of the common Linux filesystems only tmpfs takes a
+// write at that offset.
+const fileOf2Pow53Bytes = (() => {
+  if (!isLinux) return undefined;
+  const file = `/dev/shm/bun-blob-slice-${Bun.randomUUIDv7()}`;
+  try {
+    const fd = openSync(file, "wx");
+    try {
+      writeSync(fd, new Uint8Array(1), 0, 1, 2 ** 53 - 1);
+    } finally {
+      closeSync(fd);
+    }
+    return file;
+  } catch {
+    rmSync(file, { force: true });
+    return undefined;
+  }
+})();
+afterAll(() => {
+  if (fileOf2Pow53Bytes) rmSync(fileOf2Pow53Bytes, { force: true });
+});
+
+test.skipIf(!fileOf2Pow53Bytes)("Bun.file().slice clamps an offset to 2^53 - 1", () => {
+  const file = Bun.file(fileOf2Pow53Bytes!);
+  expect({
+    "size": file.size,
+    "2 ** 53": file.slice(2 ** 53).size,
+    "Infinity": file.slice(Infinity).size,
+    "-(2 ** 53)": file.slice(-(2 ** 53)).size,
+    "-Infinity": file.slice(-Infinity).size,
+    "0, 2 ** 53": file.slice(0, 2 ** 53).size,
+  }).toEqual({
+    "size": 2 ** 53,
+    "2 ** 53": 1,
+    "Infinity": 1,
+    "-(2 ** 53)": 2 ** 53 - 1,
+    "-Infinity": 2 ** 53 - 1,
+    "0, 2 ** 53": 2 ** 53 - 1,
+  });
 });
 
 test("new Blob", () => {

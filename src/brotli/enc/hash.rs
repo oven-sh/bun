@@ -256,11 +256,8 @@ fn find_longest_match_at_last_distances(
     let cur_ix_masked = cur_ix & mask;
     let window = window(data, mask);
     let mut best_score = out.score;
-    for (i, &distance) in distance_cache
-        .iter()
-        .enumerate()
-        .take(num_last_distances_to_check)
-    {
+    let last_distances = distance_cache.sub(..num_last_distances_to_check)?;
+    for (i, &distance) in last_distances.iter().enumerate() {
         let backward = distance as usize;
         let mut prev_ix = cur_ix.wrapping_sub(backward);
         if prev_ix >= cur_ix {
@@ -475,13 +472,8 @@ pub(crate) trait HasherImpl {
     /// Adds the position `ix`.
     fn store(&mut self, data: &[u8], mask: usize, ix: usize) -> Checked;
 
-    #[inline(always)]
-    fn store_range(&mut self, data: &[u8], mask: usize, ix_start: usize, ix_end: usize) -> Checked {
-        for i in ix_start..ix_end {
-            self.store(data, mask, i)?;
-        }
-        Ok(())
-    }
+    /// Adds the positions from `ix_start` up to `ix_end`.
+    fn store_range(&mut self, data: &[u8], mask: usize, ix_start: usize, ix_end: usize) -> Checked;
 
     /// Adds the last three positions of the previous block, which could not be hashed without the `num_bytes` that were
     /// written at `position` since.
@@ -532,9 +524,9 @@ type H4 = HashLongestMatchQuickly<{ 1 << 17 }, 4, 5, true>;
 type H5 = HashLongestMatch<false>;
 type H6 = HashLongestMatch<true>;
 pub(crate) type H10 = HashToBinaryTree;
-type H40 = HashForgetfulChain<15, 1, 16, 4>;
-type H41 = HashForgetfulChain<15, 1, 16, 10>;
-type H42 = HashForgetfulChain<15, 512, 9, 16>;
+type H40 = HashForgetfulChain<1, { 1 << 16 }, 4>;
+type H41 = HashForgetfulChain<1, { 1 << 16 }, 10>;
+type H42 = HashForgetfulChain<512, { 1 << 9 }, 16>;
 type H54 = HashLongestMatchQuickly<{ 1 << 20 }, 4, 7, false>;
 type H58<const N: usize> = HashLongestMatchTagged<false, N, DenseBuckets<N>>;
 type H58Sparse<const N: usize> = HashLongestMatchTagged<false, N, SparseBuckets<N>>;
@@ -642,9 +634,9 @@ impl Hasher {
                 HasherType::H6(hasher_params) => HasherKind::H6(H6::new(hasher_params)?),
                 HasherType::H10 => HasherKind::H10(H10::new(params, one_shot, input_size)?),
                 HasherType::H35 => HasherKind::H35(H35::new(H3::new()?, HashRolling::new()?)),
-                HasherType::H40 => HasherKind::H40(H40::new(params)?),
-                HasherType::H41 => HasherKind::H41(H41::new(params)?),
-                HasherType::H42 => HasherKind::H42(H42::new(params)?),
+                HasherType::H40 => HasherKind::H40(H40::new(params.quality)?),
+                HasherType::H41 => HasherKind::H41(H41::new(params.quality)?),
+                HasherType::H42 => HasherKind::H42(H42::new(params.quality)?),
                 HasherType::H54 => HasherKind::H54(H54::new()?),
                 HasherType::H55 => HasherKind::H55(H55::new(H54::new()?, HashRolling::new()?)),
                 HasherType::H58x16 if input_end > H58Sparse::<16>::MAX_INPUT => {
@@ -757,7 +749,8 @@ fn find_compound_dictionary_match(
     let mut best_len = out.len;
     let chain = compound_dictionary_chain(dictionary, data, cur_ix_masked)?;
 
-    for (i, &distance) in distance_cache.iter().enumerate().take(4) {
+    let last_distances: &[i32; 4] = distance_cache.array_at(0)?;
+    for (i, &distance) in last_distances.iter().enumerate() {
         let distance = distance as usize;
         if distance <= boundary || distance > distance_offset {
             continue;

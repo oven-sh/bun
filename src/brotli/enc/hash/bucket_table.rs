@@ -1,6 +1,6 @@
 //! The storage of the hasher that keeps the last few positions of each hash.
 
-use crate::util::{Bug, Checked, SliceExt, try_reserve_up_to, try_zeroed};
+use crate::util::{Bug, Checked, SliceExt, try_boxed_zeroed, try_reserve_up_to};
 use bun_core::AllocError;
 
 /// How many bits a hash has.
@@ -16,7 +16,7 @@ pub(crate) struct BucketTable {
     /// How many positions a bucket holds. Older ones are forgotten.
     pub(crate) block_size: usize,
     block_bits: u32,
-    heads: Vec<Head>,
+    heads: Box<[Head; NUM_BUCKETS]>,
     /// Ring buffers of `block_size` positions. A bucket gets one with its first position, so that a short input does
     /// not touch the room for all of them, which can be 32 MiB.
     pub(crate) blocks: Vec<u32>,
@@ -26,7 +26,7 @@ pub(crate) struct BucketTable {
 
 /// The table while no bucket gets a block, for loops: what is borrowed here can stay in registers.
 pub(crate) struct Buckets<'a> {
-    heads: &'a mut [Head],
+    heads: &'a mut [Head; NUM_BUCKETS],
     pub(crate) blocks: &'a mut [u32],
     block_bits: u32,
     pub(crate) block_mask: usize,
@@ -37,7 +37,7 @@ impl BucketTable {
         Ok(Self {
             block_size: 1 << block_bits,
             block_bits,
-            heads: try_zeroed(NUM_BUCKETS)?,
+            heads: try_boxed_zeroed()?,
             blocks: Vec::new(),
             is_clear: true,
         })

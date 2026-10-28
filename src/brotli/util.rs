@@ -140,6 +140,9 @@ impl<'a> Loads<'a> {
 /// `len` zeros, or nothing if there is no memory for them. Of a large table, the parts that are never used cost nothing.
 pub(crate) use bun_core::vec::try_zeroed;
 
+/// A `T` of zeros on the heap, or nothing if there is no memory for it.
+pub(crate) use bun_core::try_boxed_zeroed;
+
 /// `value` on the heap, or nothing if there is no memory for it.
 pub(crate) fn try_box<T>(value: T) -> Result<Box<T>, AllocError> {
     Box::try_new(value).map_err(|_| AllocError)

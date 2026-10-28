@@ -5,9 +5,9 @@ use super::{
     StaticDictionarySearch, backward_reference_score, backward_reference_score_using_last_distance,
     for_each_position, hash_low_bytes, search_in_static_dictionary,
 };
-use crate::enc::Fallible;
 use crate::enc::find_match_length::find_match_length_with_limit;
-use crate::util::{Bug, Checked, SliceExt, load_u64_le, try_zeroed};
+use crate::util::{Checked, SliceExt, load_u64_le, try_boxed_zeroed};
+use bun_core::AllocError;
 
 /// `NUM_BUCKETS` positions, a power of 2. A position whose first `HASH_LEN` bytes hash to `key` is in one of the
 /// `BUCKET_SWEEP` entries `key`, `key + 8`, `key + 16`...
@@ -33,10 +33,9 @@ impl<
     const BUCKET_MASK: usize = NUM_BUCKETS - 1;
     const BUCKET_SWEEP_MASK: usize = (BUCKET_SWEEP - 1) << 3;
 
-    pub(crate) fn new() -> Fallible<Self> {
-        let buckets = try_zeroed(NUM_BUCKETS)?.into_boxed_slice();
+    pub(crate) fn new() -> Result<Self, AllocError> {
         Ok(Self {
-            buckets: buckets.try_into().map_err(|_| Bug)?,
+            buckets: try_boxed_zeroed()?,
             is_clear: true,
         })
     }
@@ -222,6 +221,7 @@ impl<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::enc::Fallible;
     use crate::enc::dictionary_hash::DictionaryHash;
     use crate::enc::hash::{DictionaryStats, SCORE_BASE};
     use std::sync::OnceLock;

@@ -3389,7 +3389,9 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_HTTP2_PUSH_DISABLED();
     }
     // After the checks above, as in node: a disabled or a nested push wins over a bad callback.
-    validateFunction(callback, "callback");
+    if (typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+    }
     const session = this[bunHTTP2Session];
     const parser = session?.[bunHTTP2Native];
     if (!parser) {

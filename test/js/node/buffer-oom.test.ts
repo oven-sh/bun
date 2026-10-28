@@ -525,7 +525,8 @@ test.concurrent.skipIf(isASAN || !isGlibc)("node:sqlite and Bun.CookieMap under 
 
 // For up to 1,024 bytes the buffer of the converter is on the stack. An
 // ill-formed byte gives one UTF-16 unit, so these inputs fill that buffer, or
-// are one unit over it.
+// are one unit over it. This passed before the converter changed too: its
+// output must stay the same.
 test("ill-formed UTF-8 bytes at the end of the converter's stack buffer", async () => {
   const textOf = (bytes: Uint8Array) =>
     Bun.readableStreamToText(

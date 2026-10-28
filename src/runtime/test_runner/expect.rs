@@ -3173,7 +3173,7 @@ pub(crate) struct ExpectTypeOf {}
 impl ExpectTypeOf {
     pub(crate) fn type_assertion(&self) {}
 
-    pub(crate) fn map<'a>(&self, heap: &JsHeap<'a>) -> JsWrapper<'a, Self> {
+    pub(crate) fn type_step<'a>(&self, heap: &JsHeap<'a>) -> JsWrapper<'a, Self> {
         ExpectTypeOf {}.into_js(heap)
     }
 

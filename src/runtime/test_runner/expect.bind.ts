@@ -291,6 +291,8 @@ export const printWithType = b.fn({
 export const diff = b.fn({ ...utility("diff", "diff"), args: { expected: b.any, received: b.any } });
 
 const typeAssertion = { length: 1, rustName: "type_assertion" } as const;
+/** A matcher can follow it, as it can follow a `typeProperty`. */
+const typeStep = { returns: b.self, capability: "heap", length: 1, rustName: "type_step" } as const;
 const typeProperty = { getter: b.self, capability: "heap", rustName: "type_property" } as const;
 
 /** Only the type checker looks at `expectTypeOf()`: at run time nothing is checked. */
@@ -302,17 +304,17 @@ export const ExpectTypeOf = b.class({
     asserts: typeProperty,
     branded: typeProperty,
     constructorParameters: typeProperty,
-    exclude: typeAssertion,
-    extract: typeAssertion,
+    exclude: typeStep,
+    extract: typeStep,
     guards: typeProperty,
     instance: typeProperty,
     items: typeProperty,
-    map: { returns: b.self, capability: "heap", length: 1 },
+    map: typeStep,
     not: typeProperty,
-    omit: typeAssertion,
-    parameter: typeAssertion,
+    omit: typeStep,
+    parameter: typeStep,
     parameters: typeProperty,
-    pick: typeAssertion,
+    pick: typeStep,
     resolves: typeProperty,
     returns: typeProperty,
     thisParameter: typeProperty,
@@ -320,11 +322,12 @@ export const ExpectTypeOf = b.class({
     toBeArray: typeAssertion,
     toBeBigInt: typeAssertion,
     toBeBoolean: typeAssertion,
-    toBeCallableWith: typeAssertion,
+    toBeCallableWith: typeStep,
     toBeConstructibleWith: typeAssertion,
     toBeFunction: typeAssertion,
     toBeNever: typeAssertion,
     toBeNull: typeAssertion,
+    toBeNullable: typeAssertion,
     toBeNumber: typeAssertion,
     toBeObject: typeAssertion,
     toBeString: typeAssertion,
@@ -334,7 +337,7 @@ export const ExpectTypeOf = b.class({
     toBeVoid: typeAssertion,
     toEqualTypeOf: typeAssertion,
     toExtend: typeAssertion,
-    toHaveProperty: typeAssertion,
+    toHaveProperty: typeStep,
     toMatchObjectType: typeAssertion,
     toMatchTypeOf: typeAssertion,
   },

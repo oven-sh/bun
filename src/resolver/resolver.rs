@@ -3731,10 +3731,7 @@ impl<'a> Resolver<'a> {
         // outlives the resolver. Hoist the `&'static [u8] dir` read out so no `&EntriesOption`
         // temporary is live when the raw `*mut` is passed below (avoids a needless Unique
         // retag that would pop the shared tag mid-argument-list under Stacked Borrows).
-        let dir_entries_dir = unsafe { &*dir_entries_option }
-            .as_entries()
-            .expect("unreachable")
-            .dir;
+        let dir_entries_dir = unsafe { &*dir_entries_option }.entries().dir;
         self.dir_info_uncached(
             dir_info_ptr,
             dir_entries_dir,
@@ -6373,8 +6370,7 @@ impl<'a> Resolver<'a> {
         // `DirEntry` is a separate process-lifetime allocation, so the shared
         // `BackRef` survives entries-map traffic. All uses below are `&self`
         // reads under `entries_mutex`.
-        let dir_entries =
-            bun_ptr::BackRef::new(unsafe { &*_entries }.as_entries().expect("unreachable"));
+        let dir_entries = bun_ptr::BackRef::new(unsafe { &*_entries }.entries());
         macro_rules! entries {
             () => {
                 dir_entries.get()

@@ -580,15 +580,10 @@ impl Watcher {
             };
             self.platform.watch_path(slice)?
         };
-        // `dir_fd` can find an item that is not the folder: a descriptor number is used again.
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let folder_watch_descriptor = match folder {
-            Some(folder)
-                if self.watchlist.items_kind()[folder as usize] == WatchItemKind::Directory =>
-            {
-                self.watchlist.items_eventlist_index()[folder as usize]
-            }
-            _ => NO_FOLDER,
+            Some(folder) => self.watchlist.items_eventlist_index()[folder as usize],
+            None => NO_FOLDER,
         };
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         let _ = folder;
@@ -1154,20 +1149,22 @@ impl WatchList {
         self.items
             .ensure_unused_capacity(additional_count)
             .unwrap_or_else(|_| bun_core::out_of_memory());
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        self.files_by_name
+            .reserve(additional_count, Self::files_by_name_hasher(&self.items));
     }
 
     pub(crate) fn append_assume_capacity(&mut self, item: WatchItem) {
         self.items.append_assume_capacity(item);
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            let items = &self.items;
-            let index = items.len() - 1;
-            if let Some(key) = Self::files_by_name_key_of(items, index) {
-                self.files_by_name
-                    .insert_unique(key, index as WatchItemIndex, |&other| {
-                        Self::files_by_name_key_of(items, other as usize)
-                            .expect("files_by_name holds only items that have a key")
-                    });
+            let index = self.items.len() - 1;
+            if let Some(key) = Self::files_by_name_key_of(&self.items, index) {
+                self.files_by_name.insert_unique(
+                    key,
+                    index as WatchItemIndex,
+                    Self::files_by_name_hasher(&self.items),
+                );
             }
         }
     }
@@ -1202,6 +1199,17 @@ impl WatchList {
 
     pub(crate) fn items_fd_mut(&mut self) -> &mut [Fd] {
         self.items.items_fd_mut()
+    }
+
+    /// Hashes an item that `files_by_name` holds, for when the table grows.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn files_by_name_hasher(
+        items: &MultiArrayList<WatchItem>,
+    ) -> impl Fn(&WatchItemIndex) -> u64 + '_ {
+        |&index| {
+            Self::files_by_name_key_of(items, index as usize)
+                .expect("files_by_name holds only items that have a key")
+        }
     }
 
     /// The key of the item at `index`, if it is a File item whose folder a Directory item watches.

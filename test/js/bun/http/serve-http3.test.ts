@@ -2467,7 +2467,7 @@ describe("Bun.serve HTTP/3 handshake", () => {
   // Initial packets. The server keeps the frames ahead of its read offset until
   // the missing ones arrive. Its engine used to keep at most 10 and then close
   // the connection with INTERNAL_ERROR (issue #47163).
-  test.concurrent("completes the handshake when the ClientHello arrives as 32 out-of-order CRYPTO frames", async () => {
+  test.concurrent("answers a ClientHello split into 32 out-of-order CRYPTO frames with a ServerHello", async () => {
     await using server = Bun.serve({
       port: 0,
       tls,

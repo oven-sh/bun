@@ -109,17 +109,22 @@ function clientHello(scid: Buffer, serverName: string): Buffer {
   return Buffer.concat([Buffer.from([1, body.length >> 16, (body.length >> 8) & 0xff, body.length & 0xff]), body]);
 }
 
-/** Split `data` into `parts` CRYPTO frames. The frame at offset 0 goes last. */
+/** Split `data` into exactly `parts` CRYPTO frames. The frame at offset 0 goes last. */
 function cryptoFrames(data: Buffer, parts: number): Buffer[] {
+  if (parts > data.length) throw new Error(`cannot split ${data.length} bytes into ${parts} frames`);
   const frames: Buffer[] = [];
-  const size = Math.ceil(data.length / parts);
-  for (let off = 0; off < data.length; off += size) {
-    const chunk = data.subarray(off, Math.min(off + size, data.length));
-    frames.push(Buffer.concat([Buffer.from([FRAME_CRYPTO]), varint(off), varint(chunk.length), chunk]));
+  for (let k = 0; k < parts; k++) {
+    const start = Math.floor((k * data.length) / parts);
+    const end = Math.floor(((k + 1) * data.length) / parts);
+    const chunk = data.subarray(start, end);
+    frames.push(Buffer.concat([Buffer.from([FRAME_CRYPTO]), varint(start), varint(chunk.length), chunk]));
   }
   frames.push(frames.shift()!);
   return frames;
 }
+
+/** A CONNECTION_CLOSE frame with transport error 0 and no reason. */
+const CONNECTION_CLOSE_NO_ERROR = Buffer.from([FRAME_CONNECTION_CLOSE, 0, 0, 0]);
 
 function headerProtectionMask(hp: Buffer, sample: Buffer): Buffer {
   const cipher = createCipheriv("aes-128-ecb", hp, null);
@@ -205,9 +210,10 @@ function parseFrames(payload: Buffer): Frame[] {
   return frames;
 }
 
-/** The frames of every Initial packet in one datagram from the server. */
-function initialFrames(datagram: Buffer, serverKeys: Keys): Frame[] {
+/** The frames of every Initial packet in one datagram from the server, and the server's connection id. */
+function initialFrames(datagram: Buffer, serverKeys: Keys): { frames: Frame[]; scid: Buffer } {
   const frames: Frame[] = [];
+  let scid = Buffer.alloc(0);
   let i = 0;
   while (i < datagram.length) {
     if (!(datagram[i] & 0x80)) break; // a short header packet ends the datagram
@@ -215,7 +221,8 @@ function initialFrames(datagram: Buffer, serverKeys: Keys): Frame[] {
     if (datagram.readUInt32BE(i + 1) === 0 || type === 3) break; // version negotiation or Retry
     const pos = { i: i + 5 };
     pos.i += 1 + datagram[pos.i]; // dcid
-    pos.i += 1 + datagram[pos.i]; // scid
+    scid = datagram.subarray(pos.i + 1, pos.i + 1 + datagram[pos.i]);
+    pos.i += 1 + datagram[pos.i];
     if (type === 0) {
       const tokenLength = readVarint(datagram, pos);
       pos.i += tokenLength;
@@ -245,7 +252,7 @@ function initialFrames(datagram: Buffer, serverKeys: Keys): Frame[] {
     }
     i = end;
   }
-  return frames;
+  return { frames, scid };
 }
 
 export type FirstFlightResult = { outcome: "crypto" } | { outcome: "close"; errorCode: number; reason: string };
@@ -254,25 +261,34 @@ export type FirstFlightResult = { outcome: "crypto" } | { outcome: "close"; erro
  * Send a ClientHello to the QUIC server on `port`, split into `parts` CRYPTO
  * frames with the frame at offset 0 last, so the server has to stash every
  * other frame. Resolves with what the server's Initial packets carry first: a
- * CRYPTO frame (the handshake goes on) or a CONNECTION_CLOSE.
+ * CRYPTO frame or a CONNECTION_CLOSE. The client has no TLS state and stops
+ * after this first flight. A CRYPTO frame from the server is its ServerHello,
+ * which TLS builds only after it has read the whole ClientHello, so it proves
+ * that the server kept every stashed frame. The client then closes the
+ * connection so that the server does not wait for the handshake to time out.
  */
 export async function firstFlight(port: number, parts: number, serverName = "localhost"): Promise<FirstFlightResult> {
   const dcid = randomBytes(8);
   const scid = randomBytes(8);
+  const clientKeys = initialKeys(dcid, "client");
   const serverKeys = initialKeys(dcid, "server");
   const frames = cryptoFrames(clientHello(scid, serverName), parts);
-  const { promise, resolve, reject } = Promise.withResolvers<FirstFlightResult>();
+  const { promise, resolve, reject } = Promise.withResolvers<{ result: FirstFlightResult; serverCid: Buffer }>();
   const socket = await Bun.udpSocket({
     hostname: "127.0.0.1",
     port: 0,
     socket: {
       data(_socket, data) {
         try {
-          for (const frame of initialFrames(Buffer.from(data), serverKeys)) {
+          const { frames, scid: serverCid } = initialFrames(Buffer.from(data), serverKeys);
+          for (const frame of frames) {
             if (frame.type === FRAME_CONNECTION_CLOSE || frame.type === FRAME_CONNECTION_CLOSE_APP) {
-              return resolve({ outcome: "close", errorCode: frame.errorCode!, reason: frame.reason! });
+              return resolve({
+                result: { outcome: "close", errorCode: frame.errorCode!, reason: frame.reason! },
+                serverCid,
+              });
             }
-            if (frame.type === FRAME_CRYPTO) return resolve({ outcome: "crypto" });
+            if (frame.type === FRAME_CRYPTO) return resolve({ result: { outcome: "crypto" }, serverCid });
           }
         } catch (error) {
           reject(error);
@@ -281,8 +297,12 @@ export async function firstFlight(port: number, parts: number, serverName = "loc
     },
   });
   try {
-    socket.send(initialPacket(dcid, scid, initialKeys(dcid, "client"), 0, frames), port, "127.0.0.1");
-    return await promise;
+    socket.send(initialPacket(dcid, scid, clientKeys, 0, frames), port, "127.0.0.1");
+    const { result, serverCid } = await promise;
+    if (result.outcome === "crypto") {
+      socket.send(initialPacket(serverCid, scid, clientKeys, 1, [CONNECTION_CLOSE_NO_ERROR]), port, "127.0.0.1");
+    }
+    return result;
   } finally {
     socket.close();
   }

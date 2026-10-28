@@ -115,14 +115,12 @@ describe("server handshake", () => {
   // The same engine limit as Bun.serve({ http3: true }): the server keeps the
   // CRYPTO frames ahead of its read offset, and used to close the connection
   // with INTERNAL_ERROR at the 11th (issue #47163).
-  test("completes when the ClientHello arrives as 32 out-of-order CRYPTO frames", async () => {
+  test("answers a ClientHello split into 32 out-of-order CRYPTO frames with a ServerHello", async () => {
     await using server = await listen(
       async (s: any) => {
         await s.closed.catch(() => {});
       },
-      // The probe stops after the first flight. close() waits for the unfinished
-      // handshake, so keep its timeout short.
-      { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["h3"], handshakeTimeout: 100 },
+      { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["h3"] },
     );
     expect(await firstFlight(server.address!.port, 1)).toEqual({ outcome: "crypto" });
     expect(await firstFlight(server.address!.port, 32)).toEqual({ outcome: "crypto" });

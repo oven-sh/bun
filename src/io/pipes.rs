@@ -59,8 +59,6 @@ impl PollOrFd {
     ) where
         F: FnOnce(*mut c_void),
     {
-        #[cfg(windows)]
-        let _ = close_fd;
         let fd = self.get_fd();
         #[cfg(target_os = "macos")]
         let mut close_async = true;
@@ -100,7 +98,9 @@ impl PollOrFd {
             // TODO: We should make this call compatible using bun.FD
             #[cfg(windows)]
             {
-                crate::closer::Closer::close(fd, bun_sys::windows::libuv::Loop::get());
+                if close_fd {
+                    crate::closer::Closer::close(fd, bun_sys::windows::libuv::Loop::get());
+                }
             }
             #[cfg(not(windows))]
             {
@@ -128,6 +128,11 @@ impl PollOrFd {
     {
         self.close_impl(ctx, on_close_fn, true);
     }
+
+    /// Unregisters and releases the poll; the fd stays open for its owner to close.
+    pub fn close_without_closing_fd(&mut self) {
+        self.close_impl(None, None::<fn(*mut c_void)>, false);
+    }
 }
 
 // Sunk to `bun_io` so `FilePoll::file_type()` needs no aio→io edge; re-export
@@ -140,7 +145,7 @@ pub enum ReadState {
     /// Neither EOF nor EAGAIN
     Progress,
 
-    /// Received a 0-byte read
+    /// Received a 0-byte read, or the reader's limit or byte budget is used up: nothing more will be read
     Eof,
 
     /// Received an EAGAIN
@@ -153,7 +158,7 @@ pub enum Chunk<'a> {
     Scratch(&'a [u8]),
     /// The reader's own buffer, which it clears and reuses after the call. Copy what you keep, or `take()` it when moving beats copying.
     Buffer(&'a mut Vec<u8>),
-    /// The reader is finished with these bytes (EOF, error, budget): yours to move.
+    /// The reader is finished with these bytes (EOF, limit, error, budget): yours to move.
     Owned(Vec<u8>),
 }
 
@@ -169,14 +174,6 @@ impl Chunk<'_> {
 
     pub fn is_owned(&self) -> bool {
         matches!(self, Chunk::Owned(_))
-    }
-
-    pub fn truncate(&mut self, len: usize) {
-        match self {
-            Chunk::Scratch(bytes) => *bytes = &bytes[..len.min(bytes.len())],
-            Chunk::Buffer(buffer) => buffer.truncate(len),
-            Chunk::Owned(buffer) => buffer.truncate(len),
-        }
     }
 }
 

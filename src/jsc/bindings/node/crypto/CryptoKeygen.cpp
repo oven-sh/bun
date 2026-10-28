@@ -54,7 +54,6 @@ JSCallbackArgs SecretKeyJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
     KeyObject keyObject = KeyObject::create(WTF::move(*m_result));
 
     Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
     JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTF::move(keyObject));
     RETURN_IF_EXCEPTION(scope, {});
 

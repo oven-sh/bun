@@ -1,0 +1,3 @@
+{
+  "skipInShell": "it uses node:fs and Bun.file"
+}

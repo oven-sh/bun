@@ -1,0 +1,212 @@
+////: lines-11
+function «1»(rounds: number): number {
+  let sum = 0;
+  for (let i = 0; i < rounds; ++i) sum += «2»(«3»).length;
+  return sum;
+}
+////: lines-13
+function «1»(key: string, unread: object): () => unknown {
+  let lastRaw: unknown = unread;
+  let lastParsed: unknown;
+  return () => {
+    const raw = «2».env[key];
+    if (raw !== lastRaw) {
+      lastParsed = raw === undefined ? 0 : raw.length;
+      lastRaw = raw;
+    }
+    return lastParsed;
+  };
+}
+////: lines-37
+function «1»(rounds: number): number {
+  let sum = 0;
+  for (let i = 0; i < rounds; ++i) sum += «2»(«3») ? 1 : 2;
+  return sum;
+}
+////: none
+function none(rounds: number): number {
+  let sum = 0;
+  for (let i = 0; i < rounds; ++i) sum += i & 1;
+  return sum;
+}
+//// members-that-are-listed/env-one.ts
+// Members that are listed: env one. It prints what plain Bun prints.
+import path from "node:path";
+const unknownProcess: any = (globalThis as any)[process.argv[9] ?? "process"];
+////= lines-13	provenGetter	process
+////= lines-13	unknownGetter	unknownProcess
+const names = ["HOME", "NOT_THERE_1", "PATH", "NOT_THERE_2", "USER", "NOT_THERE_3", "TERM", "NOT_THERE_4"];
+const word = process.argv[2];
+const rounds = Number(process.argv[3] ?? 200000);
+const getters = names.map(name => (word === "proven" ? provenGetter : unknownGetter)(name, names));
+let sum = 0;
+for (let i = 0; i < rounds; i++) {
+  if (path.isAbsolute("/a")) sum += getters[i & 7]() as number;
+}
+console.log(sum > 0, rounds);
+//// members-that-are-listed/env-two.ts
+// Members that are listed: env two. It prints what plain Bun prints.
+import path from "node:path";
+type Field = { parse(raw: string | undefined): unknown };
+////= getterFor
+////= build
+const flag: Field = { parse: raw => raw === "1" || raw === "true" };
+const text: Field = { parse: raw => raw };
+////= settings
+const rounds = Number(process.argv[3] ?? 200000);
+let sum = 0;
+for (let i = 0; i < rounds; i++) {
+  if (!path.isAbsolute("/a")) continue;
+  if (settings.NOT_THERE_1) sum++;
+}
+console.log(sum >= 0, rounds);
+//// members-that-are-listed/js-one.js
+// Members that are listed: js one. It prints what plain Bun prints.
+function write(out, record) {
+  for (const key in record) {
+    out.push(JSON.stringify(key), ":");
+    out.push(JSON.stringify(record[key]) ?? "null");
+  }
+}
+const records = JSON.parse('[{"alpha":"one","beta":2,"gamma":true,"delta":"four words in here"},{"epsilon":null,"zeta":"z","eta":7.5,"theta":"t"}]');
+const rounds = Number(process.argv[3] ?? 100000);
+let length = 0;
+for (let i = 0; i < rounds; i++) { const out = []; write(out, records[i & 1]); length += out.length; }
+console.log(length);
+//// members-that-are-listed/keyed-one.ts
+// Members that are listed: keyed one. It prints what plain Bun prints.
+import path from "node:path";
+type Style = { alignItems?: string; alignSelf?: string; color?: string; width?: number; height?: number; margin?: number; padding?: number; bold?: boolean };
+function make(i: number): Style {
+  return { alignItems: "center", alignSelf: "end", color: "red", width: i, height: i + 1, margin: 2, padding: 3, bold: (i & 1) === 0 };
+}
+const styles: Style[] = [make(1), make(2), make(3), make(4)];
+const keys = ["alignItems", "width", "color", "bold", "height", "margin", "alignSelf", "padding"];
+function differs(a: any, b: any, key: string): boolean {
+  return a[key] !== b[key];
+}
+const rounds = Number(process.argv[3] ?? 200000);
+let sum = 0;
+for (let i = 0; i < rounds; i++) {
+  if (!path.isAbsolute("/a")) continue;
+  if (differs(styles[i & 3], styles[(i + 1) & 3], keys[i & 7])) sum++;
+}
+console.log(sum > 0, rounds);
+//// members-that-are-listed/native-one.ts
+// Members that are listed: native one. It prints what plain Bun prints.
+import path from "node:path";
+import { EventEmitter } from "node:events";
+
+////= none
+
+////= lines-37	isAbsolute	path.isAbsolute	"/a"
+
+const timer = setTimeout(() => {}, 1 << 30);
+function hasRef(rounds: number): number {
+  let sum = 0;
+  for (let i = 0; i < rounds; ++i) sum += timer.hasRef() ? 1 : 2;
+  return sum;
+}
+
+const emitter = new EventEmitter();
+function setMaxListeners(rounds: number): number {
+  let sum = 0;
+  for (let i = 0; i < rounds; ++i) sum += emitter.setMaxListeners(20) === emitter ? 1 : 2;
+  return sum;
+}
+
+function nanoseconds(rounds: number): number {
+  let sum = 0;
+  for (let i = 0; i < rounds; ++i) sum += Bun.nanoseconds() > 0 ? 1 : 2;
+  return sum;
+}
+
+const glob = new Bun.Glob("*.ts");
+////= lines-37	match	glob.match	"a.ts"
+
+const cases: Record<string, (rounds: number) => number> = { none, isAbsolute, hasRef, setMaxListeners, nanoseconds, match };
+const which = process.argv[2] ?? "none";
+const rounds = Number(process.argv[3] ?? 1000);
+console.log(which, rounds, cases[which](rounds));
+clearTimeout(timer);
+//// members-that-are-listed/operation-one.ts
+// Members that are listed: operation one. It prints what plain Bun prints.
+////= none
+
+const words: string[] = ["a", "b"];
+////= lines-11	join	words.join	"-"
+
+function sin(rounds: number): number {
+  let sum = 0;
+  for (let i = 0; i < rounds; ++i) sum += Math.sin(i);
+  return sum;
+}
+
+const point = { x: 1, y: 2 };
+////= lines-11	keys	Object.keys	point
+
+const texts: string[] = ["Ab", "Cd"];
+function lower(rounds: number): number {
+  let sum = 0;
+  for (let i = 0; i < rounds; ++i) sum += texts[i & 1].toLowerCase().length;
+  return sum;
+}
+
+function own(rounds: number): number {
+  let sum = 0;
+  for (let i = 0; i < rounds; ++i) sum += Object.hasOwn(point, texts[i & 1]) ? 1 : 2;
+  return sum;
+}
+
+const cases: Record<string, (rounds: number) => number> = { none, join, sin, keys, lower, own };
+const which = process.argv[2] ?? "none";
+const rounds = Number(process.argv[3] ?? 1000);
+console.log(which, rounds, cases[which](rounds));
+//// members-that-are-listed/path-one.ts
+// Members that are listed: path one. It prints what plain Bun prints.
+import path from "node:path";
+
+////= none
+
+////= lines-37	isAbsolute	path.isAbsolute	"/a"
+
+function join(rounds: number): number {
+  let sum = 0;
+  for (let i = 0; i < rounds; ++i) sum += path.join("a", "b").length;
+  return sum;
+}
+
+////= lines-11	dirname	path.dirname	"/a/b"
+
+////= lines-11	basename	path.basename	"/a/b"
+
+////= lines-11	toNamespacedPath	path.toNamespacedPath	"/a"
+
+function held(rounds: number): number {
+  const f = path.isAbsolute;
+  let sum = 0;
+  for (let i = 0; i < rounds; ++i) sum += f("/a") ? 1 : 2;
+  return sum;
+}
+
+const cases: Record<string, (rounds: number) => number> = { none, isAbsolute, join, dirname, basename, toNamespacedPath, held };
+const which = process.argv[2] ?? "none";
+const rounds = Number(process.argv[3] ?? 1000);
+console.log(which, rounds, cases[which](rounds));
+//// members-that-are-listed/stores-two.ts
+// One shape with an optional field y, one place that stores y by name. Between two calls of the marker (Date.now): one object is made and one store is done.
+// argv[2]: filled (the store replaces) | empty (the store creates).
+type Shape = { a: number; y?: number };
+const empty = (): Shape => ({ a: 1 });
+const filled = (): Shape => ({ a: 1, y: 1 });
+function store(object: any, value: number) { object.y = value; }
+const make = process.argv[2] === "filled" ? filled : empty;
+const rounds = Number(process.argv[3] ?? 200000);
+const kept: object[] = [];
+for (let i = 0; i < rounds; i++) {
+  if (Date.now() === 0) continue;
+  const object = make();
+  store(object, i);
+  kept[i & 7] = object;
+}
+console.log(process.argv[2], rounds, kept.length);

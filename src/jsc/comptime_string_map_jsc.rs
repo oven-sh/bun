@@ -3,7 +3,7 @@
 //! here.
 
 use crate::{JSGlobalObject, JSValue, JsResult};
-use bun_core::{OwnedString, String as BunString, Tag};
+use bun_core::{String as BunString, Tag};
 // `from_js` on `bun_core::String` is provided by the `StringJsc` extension
 // trait, which is allowed here because this file lives in `src/jsc/`.
 use crate::StringJsc as _;
@@ -19,8 +19,7 @@ where
     M: bun_core::comptime_string_map::ComptimeStringMap,
     M::Value: Copy,
 {
-    // `defer str.deref()` — `OwnedString` releases the +1 ref on Drop.
-    let str = OwnedString::new(BunString::from_js(input, global_this)?);
+    let str = BunString::from_js(input, global_this)?;
     debug_assert!(str.tag() != Tag::Dead);
     // Map keys are `&[u8]`, so materialize UTF-8 bytes and do a direct
     // lookup.

@@ -13,7 +13,7 @@
 //! 1. Forward data-flow: identify all macro tags (including property loads like `fbt.param`)
 //! 2. Reverse data-flow: merge arguments of macro invocations into the same scope
 
-use std::collections::{HashMap, HashSet};
+use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::collections::IdMap;
 use crate::hir::environment::Environment;
@@ -53,7 +53,7 @@ fn transitive_macro() -> MacroDefinition {
 }
 
 fn fbt_macro() -> MacroDefinition {
-    let mut props: HashMap<&'static [u8], MacroDefinition> = HashMap::new();
+    let mut props: HashMap<&'static [u8], MacroDefinition> = HashMap::default();
     props.insert(b"*", shallow_macro());
     // fbt.enum gets FBT_MACRO (recursive/transitive)
     // We'll fill this in after construction since it's self-referential.
@@ -67,7 +67,7 @@ fn fbt_macro() -> MacroDefinition {
     let enum_macro = MacroDefinition {
         level: InlineLevel::Transitive,
         properties: Some({
-            let mut p: HashMap<&'static [u8], MacroDefinition> = HashMap::new();
+            let mut p: HashMap<&'static [u8], MacroDefinition> = HashMap::default();
             p.insert(b"*", shallow_macro());
             // enum's enum is also recursive, but in practice the depth is bounded
             p.insert(b"enum", transitive_macro());
@@ -80,7 +80,7 @@ fn fbt_macro() -> MacroDefinition {
 
 /// Built-in FBT tags and their macro definitions.
 fn fbt_tags() -> HashMap<Vec<u8>, MacroDefinition> {
-    let mut tags: HashMap<Vec<u8>, MacroDefinition> = HashMap::new();
+    let mut tags: HashMap<Vec<u8>, MacroDefinition> = HashMap::default();
     tags.insert(b"fbt".to_vec(), fbt_macro());
     tags.insert(b"fbt:param".to_vec(), shallow_macro());
     tags.insert(b"fbt:enum".to_vec(), fbt_macro());
@@ -92,11 +92,18 @@ fn fbt_tags() -> HashMap<Vec<u8>, MacroDefinition> {
     tags
 }
 
-/// Main entry point. Returns the set of identifier IDs that are fbt/macro operands.
+pub(crate) struct MacroOperands {
+    /// The identifier IDs that are fbt/macro operands. TS: the returned `macroValues`.
+    pub(crate) values: HashSet<IdentifierId>,
+    /// Not in upstream: operands that must print inside the macro call, not `fbt.param()` values.
+    pub(crate) inline: HashSet<IdentifierId>,
+}
+
+/// Main entry point.
 pub(crate) fn memoize_fbt_and_macro_operands_in_same_scope(
     func: &HirFunction,
     env: &mut Environment,
-) -> HashSet<IdentifierId> {
+) -> MacroOperands {
     // Phase 1: Build macro kinds map from built-in FBT tags + custom macros
     let mut macro_kinds: HashMap<Vec<u8>, MacroDefinition> = fbt_tags();
     if let Some(ref custom_macros) = env.config.custom_macros {
@@ -111,7 +118,10 @@ pub(crate) fn memoize_fbt_and_macro_operands_in_same_scope(
     // Phase 3: Reverse data-flow to merge arguments of macro invocations
     let macro_values = merge_macro_arguments(func, env, &mut macro_tags, &macro_kinds);
 
-    macro_values
+    MacroOperands {
+        values: macro_values,
+        inline: macro_tags.iter().map(|(id, _)| id).collect(),
+    }
 }
 
 /// Forward data-flow analysis to identify all macro tags, including
@@ -358,13 +368,7 @@ fn visit_operands(
 ) {
     macro_values.insert(lvalue_id);
 
-    let operand_ids: Vec<IdentifierId> =
-        visitors::each_instruction_value_operand_with_functions(value, &env.functions)
-            .into_iter()
-            .map(|p| p.identifier)
-            .collect();
-
-    for operand_id in operand_ids {
+    for operand_id in visitors::each_instruction_value_operand_ids(value, env) {
         if matches!(macro_def.level, InlineLevel::Transitive) {
             env.identifiers[operand_id.0 as usize].scope = Some(scope_id);
             expand_fbt_scope_range(env, scope_id, operand_id);

@@ -1,0 +1,482 @@
+////: Base-4
+class Base {
+  struck: boolean;
+  constructor() {
+    this.struck = strike();
+  }
+}
+////: Derived
+class Derived extends Base {
+  seen: number;
+  constructor(round: number) {
+    super();
+    this.seen = round & 3;
+  }
+}
+////: Probe
+class Probe {
+  seen: number;
+  constructor(round: number) {
+    strike();
+    this.seen = round & 3;
+  }
+}
+////: Probe-2
+class Probe {
+  struck = strike();
+  seen: number;
+  constructor(round: number) {
+    this.seen = round & 3;
+  }
+}
+////: callee
+function callee(round: number): number {
+  class Local {
+    [strike() ? "struck" : "calm"](): number {
+      return round & 3;
+    }
+  }
+  return Object.getOwnPropertyNames(Local.prototype)[1].length;
+}
+////: holder-29
+function holder(p: number[], round: number): string {
+  const before = p[0] + p[3] + p.length;
+  const got = new «1»(round).seen;
+  let sum = 0;
+  for (let index = 0; index < p.length; index++) sum += p[index];
+  const after = sum + "," + p.length + "," + p[1] + "," + p[3];
+  return before + " " + got + " " + after;
+}
+//// damage-behind-a-call-constructors/a-computed-member-name-of-a-class-definition-gives-an-array-another-prototype.ts
+// A typed caller reads an array, makes a call and reads it again. The computed name of a method, which is evaluated because the callee defines a class, deletes an element of the array and gives the array a prototype that has an element there.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+const withAnElement: number[] = Object.create(Array.prototype, { 1: { value: 111 } });
+
+let victim: number[] | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-4
+////= strike
+
+////= callee
+
+////= holder-42
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-constructors/a-computed-member-name-of-a-class-definition-replaces-a-method-of-the-base-class.ts
+// A typed caller reads an object, makes a call and reads it again. The computed name of a method, which is evaluated because the callee defines a class, replaces a method on the prototype object of the base class.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+
+let victim: Square | null = null;
+////= strike-16
+
+////= callee
+
+////= holder-39
+
+let digest = 0;
+////= for-6
+console.log("digest " + digest);
+//// damage-behind-a-call-constructors/a-computed-member-name-of-a-class-definition-stores-a-string-into-a-number-field-of-a-literal.ts
+// A typed caller reads an object, makes a call and reads it again. The computed name of a method, which is evaluated because the callee defines a class, stores a string into a number field of the object, which an object literal has made.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+type Pair = { left: number; right: number; note?: string };
+
+let victim: Pair | null = null;
+let spark: number = 0;
+////= hot-9
+////= strike-2
+
+////= callee
+
+////= holder-21
+
+////= outer-29
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-constructors/a-constructor-called-through-reflect-construct-cuts-the-length-of-an-array.ts
+// A typed caller reads an array, makes a call and reads it again. A constructor that the callee calls through Reflect.construct cuts the length of the array.
+
+let victim: number[] | null = null;
+////= strike-18
+
+////= Probe
+function callee(round: number): number {
+  return Reflect.construct(Probe, [round]).seen;
+}
+
+////= holder-41
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-constructors/a-constructor-called-through-reflect-construct-fills-an-optional-field.ts
+// A typed caller reads an object, makes a call and reads it again. A constructor that the callee calls through Reflect.construct fills an optional field of the object, in typed code.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Card
+
+let victim: Card | null = null;
+let spark: number = 0;
+////= hot-2
+////= strike-2
+
+////= Probe
+function callee(round: number): number {
+  return Reflect.construct(Probe, [round]).seen;
+}
+
+////= holder-6
+
+////= outer-15
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-constructors/a-constructor-called-through-reflect-construct-stores-an-object-with-value-of-into-a-number-field.ts
+// A typed caller reads an object, makes a call and reads it again. A constructor that the callee calls through Reflect.construct stores an object with a valueOf method into a number field of the object.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Point
+
+let victim: Point | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-8
+////= strike
+
+////= Probe
+function callee(round: number): number {
+  return Reflect.construct(Probe, [round]).seen;
+}
+
+////= holder-46
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-constructors/a-constructor-cuts-the-length-of-an-array.ts
+// A typed caller reads an array, makes a call and reads it again. The constructor of another class, which the caller calls with `new`, cuts the length of the array.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+
+let victim: number[] | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-16
+////= strike
+
+////= Probe
+
+////= holder-29	Probe
+
+////= outer
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-constructors/a-constructor-damages-its-argument.ts
+// The caller has read an object and passes it to `new`. The constructor damages it, in some rounds in front of its own stores to `this` and in some behind them.
+////= Point
+
+let mode = 0;
+class Wrapper {
+  first: number;
+  second: number;
+  constructor(p: Point) {
+    if (mode === 1) delete (p as any).x;
+    this.first = p.y;
+    if (mode === 2) (p as any).x = "text";
+    this.second = p.y + 1;
+  }
+}
+
+function holder(p: Point): string {
+  const before = p.x;
+  const wrapper = new Wrapper(p);
+  return before + " " + wrapper.first + "," + wrapper.second + " " + p.x + "," + p.y;
+}
+
+////= for-18	300	holder	Point	round	1
+//// damage-behind-a-call-constructors/a-constructor-fills-an-optional-field.ts
+// A typed caller reads an object, makes a call and reads it again. The constructor of another class, which the caller calls with `new`, fills an optional field of the object, in typed code.
+////= Card
+
+let victim: Card | null = null;
+////= strike-4
+
+////= Probe
+
+function holder(p: Card, round: number): string {
+  const before = p.id + ":" + p.note;
+  const got = new Probe(round).seen;
+  const after = p.note + "," + p.id + "," + ("note" in p) + "," + Object.keys(p).join("");
+  return before + " " + got + " " + after;
+}
+
+////= outer-24
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-constructors/a-constructor-stores-a-fitting-number-by-name.ts
+// A typed caller reads an object, makes a call and reads it again. The constructor of another class, which the caller calls with `new`, stores a number into a field of the object by a computed name, so that nothing about the object changes but the value.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Point
+const names = ["x", "y"];
+
+let victim: Point | null = null;
+let spark: number = 0;
+////= hot-11
+////= strike-2
+
+////= Probe
+
+function holder(p: Point, round: number): string {
+  const before = p.x + p.y;
+  const got = new Probe(round).seen;
+  const after = p.x + "," + p.y;
+  return before + " " + got + " " + after;
+}
+
+////= outer-19
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-constructors/a-derived-constructor-holds-an-object-across-super.ts
+// A derived constructor has read its argument, calls super(), which damages that argument, and reads it again. Behind super() it also reads fields of `this` that the base constructor has stored and then damaged.
+////= Point
+
+let strikes = false;
+class Base {
+  base: number;
+  constructor(p: Point) {
+    this.base = p.y;
+    if (strikes) {
+      delete (p as any).x;
+      (this as any).base = "text";
+    }
+  }
+}
+class Derived extends Base {
+  told: string;
+  constructor(p: Point) {
+    const before = p.x;
+    super(p);
+    this.told = before + ">" + p.x + " " + this.base;
+  }
+}
+
+function holder(p: Point): string {
+  const before = p.x;
+  const d = new Derived(p);
+  return before + " " + d.told + " " + d.base + " " + p.x;
+}
+
+////= for-4
+//// damage-behind-a-call-constructors/the-base-constructor-behind-super-gives-an-array-another-prototype.ts
+// A typed caller reads an array, makes a call and reads it again. The constructor of a base class, which runs because of super(), deletes an element of the array and gives the array a prototype that has an element there.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+const withAnElement: number[] = Object.create(Array.prototype, { 1: { value: 111 } });
+
+let victim: number[] | null = null;
+let spark: number = 0;
+////= hot-4
+////= strike-2
+
+////= Base-4
+////= Derived
+
+////= holder-29	Derived
+
+////= outer-3
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-constructors/the-base-constructor-behind-super-makes-a-field-of-a-literal-an-accessor.ts
+// A typed caller reads an object, makes a call and reads it again. The constructor of a base class, which runs because of super(), makes a field of the object, which an object literal has made, an accessor.
+type Pair = { left: number; right: number; note?: string };
+
+let victim: Pair | null = null;
+////= strike-11
+
+////= Base-4
+////= Derived
+
+////= holder-36	new Derived(round).seen	p.right + "," + JSON.stringify(p)
+
+////= outer-34
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-constructors/the-base-constructor-behind-super-replaces-a-method-of-the-base-class.ts
+// A typed caller reads an object, makes a call and reads it again. The constructor of a base class, which runs because of super(), replaces a method on the prototype object of the base class.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+
+let victim: Square | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-14
+////= strike
+
+////= Base-4
+////= Derived
+
+////= holder-38	new Derived(round).seen
+
+////= outer-4
+
+let digest = 0;
+////= for-6
+console.log("digest " + digest);
+//// damage-behind-a-call-constructors/the-base-constructor-returns-another-object.ts
+// In some rounds the constructor of the base class returns an object of its own making, so `this` in the derived constructor is not what the class would have made. The derived constructor stores its fields into it, and the caller reads them.
+let swaps = false;
+const stranger: any = { x: "stranger" };
+class Base {
+  x: number;
+  constructor(x: number) {
+    this.x = x;
+    if (swaps) return stranger;
+  }
+}
+class Derived extends Base {
+  y: number;
+  constructor(x: number, y: number) {
+    super(x);
+    this.y = y;
+  }
+  sum(): number {
+    return this.x + this.y;
+  }
+}
+
+function holder(n: number): string {
+  const d = new Derived(n, 1);
+  const read = d.x + "," + d.y;
+  let sum: string;
+  try {
+    sum = "" + d.sum();
+  } catch (error) {
+    sum = (error as Error).name;
+  }
+  return read + " " + sum + " " + (d instanceof Derived) + " " + (d === stranger);
+}
+
+////= for-21	300	swaps	100	99	holder	round
+//// damage-behind-a-call-constructors/the-initializer-of-a-class-field-freezes-the-object.ts
+// A typed caller reads an object, makes a call and reads it again. The initializer of a class field freezes the object.
+////= Point
+
+let victim: Point | null = null;
+////= strike-3
+
+////= Probe-2
+
+////= holder-33	new Probe(round).seen
+
+////= outer-22
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-constructors/the-initializer-of-a-class-field-puts-the-class-under-another-base.ts
+// A typed caller reads an object, makes a call and reads it again. The initializer of a class field puts the prototype object of the class under another one.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+const otherBase = { kind: () => "another base", area: () => -4 };
+
+let victim: Square | null = null;
+let spark: number = 0;
+////= hot-13
+////= strike-2
+
+////= Probe-2
+
+////= holder-38	new Probe(round).seen
+
+////= outer-2
+
+let digest = 0;
+////= for-5
+console.log("digest " + digest);
+//// damage-behind-a-call-constructors/the-initializer-of-a-class-field-stores-a-number-into-a-reference-field.ts
+// A typed caller reads an object, makes a call and reads it again. The initializer of a class field stores a number into a field that is declared to hold an object.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Leaf-5
+
+let victim: Branch | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-5
+////= strike
+
+////= Probe-2
+
+////= holder-32	new Probe(round).seen
+
+////= outer-6
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-constructors/this-is-damaged-before-the-constructor-has-finished.ts
+// A constructor stores a field, calls a function that reaches `this` and damages it, and goes on storing and reading. The function that called `new` reads the new object, which it takes for fresh.
+let mode = 0;
+function register(p: object): number {
+  if (mode === 1) delete (p as any).x;
+  else if (mode === 2) Object.defineProperty(p, "y", { get: () => -7, set() {}, configurable: true });
+  else if (mode === 3) Object.preventExtensions(p);
+  else if (mode === 4) Object.setPrototypeOf(p, { z: "inherited" });
+  return 1;
+}
+
+class Point {
+  x: number;
+  y: number;
+  declare z?: number | string;
+  sum: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = 0;
+    this.sum = 0;
+    register(this);
+    this.y = y;
+    this.sum = this.x + this.y;
+  }
+}
+
+function holder(n: number): string {
+  const p = new Point(n, 1);
+  const read = p.x + "," + p.y + "," + p.sum + "," + p.z;
+  let stored = "stored";
+  try {
+    p.z = 5;
+  } catch (error) {
+    stored = (error as Error).name;
+  }
+  return read + " " + stored + " " + p.z + " " + Object.keys(p).join("");
+}
+
+////= for-27	holder(round

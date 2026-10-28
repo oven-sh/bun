@@ -101,17 +101,10 @@ public:
     bool propagationStopped() const { return m_propagationStopped || m_immediatePropagationStopped; }
     bool immediatePropagationStopped() const { return m_immediatePropagationStopped; }
 
-    void resetBeforeDispatch();
     void resetAfterDispatch();
 
     bool defaultPrevented() const { return m_wasCanceled; }
     void preventDefault();
-
-    bool defaultHandled() const { return m_defaultHandled; }
-    void setDefaultHandled() { m_defaultHandled = true; }
-
-    bool isDefaultEventHandlerIgnored() const { return m_isDefaultEventHandlerIgnored; }
-    void setIsDefaultEventHandlerIgnored() { m_isDefaultEventHandlerIgnored = true; }
 
     void setInPassiveListener(bool value) { m_isExecutingPassiveEventListener = value; }
 
@@ -122,16 +115,11 @@ public:
     // https://dom.spec.whatwg.org/#dispatch-flag
     bool isBeingDispatched() const { return eventPhase(); }
 
-    virtual EventTarget* relatedTarget() const { return nullptr; }
-    virtual void setRelatedTarget(EventTarget*) {}
-
 protected:
     explicit Event(EventInterface, IsTrusted = IsTrusted::No);
     Event(EventInterface, const AtomString& type, CanBubble, IsCancelable, IsComposed = IsComposed::No);
     Event(EventInterface, const AtomString& type, CanBubble, IsCancelable, IsComposed, MonotonicTime timestamp, IsTrusted isTrusted = IsTrusted::Yes);
     Event(EventInterface, const AtomString& type, const EventInit&, IsTrusted);
-
-    virtual void receivedTarget() {}
 
 private:
     explicit Event(EventInterface, MonotonicTime createTime, const AtomString& type, IsTrusted, CanBubble, IsCancelable, IsComposed);
@@ -146,8 +134,6 @@ private:
     unsigned m_propagationStopped : 1;
     unsigned m_immediatePropagationStopped : 1;
     unsigned m_wasCanceled : 1;
-    unsigned m_defaultHandled : 1;
-    unsigned m_isDefaultEventHandlerIgnored : 1;
     unsigned m_isTrusted : 1;
     unsigned m_isExecutingPassiveEventListener : 1;
     unsigned m_currentTargetIsInShadowTree : 1;

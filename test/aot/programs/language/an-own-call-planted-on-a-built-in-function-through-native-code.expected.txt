@@ -1,0 +1,7 @@
+Function.prototype.call: the target ran | refused (TypeError) | the target ran | false
+Function.prototype.apply: the target ran | refused (TypeError) | the target ran | false
+Array.prototype.map: 2,4 | refused (TypeError) | 2,4 | false
+Array.prototype.filter: 2 | refused (TypeError) | 2 | false
+Reflect.get: 7 | refused (TypeError) | 7 | false
+Array.prototype.slice: 2 | refused (TypeError) | 2 | false
+Math.max: 2 | refused (TypeError) | 2 | false

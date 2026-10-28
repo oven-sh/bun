@@ -64,27 +64,30 @@ const FFIType = {
 
 const suffix = process.platform === "win32" ? "dll" : process.platform === "darwin" ? "dylib" : "so";
 
-var ffi = globalThis.Bun.FFI;
-const ptr = (arg1, arg2) => (typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2));
+var ffi: $Node.FFIObject = globalThis.Bun.FFI;
+const ptr = (arg1: ArrayBufferView | ArrayBufferLike, arg2?: number) =>
+  typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2);
 const toBuffer = ffi.toBuffer;
 const toArrayBuffer = ffi.toArrayBuffer;
 const nativeViewSource = ffi.viewSource;
 
 const nativeLinkSymbols = ffi.linkSymbols;
 const nativeDLOpen = ffi.dlopen;
-const nativeCallback = ffi.callback;
-const closeCallback = ffi.closeCallback;
-const nativeCFunction = ffi.cfunction;
+const nativeCallback = ffi.callback!;
+const closeCallback: (callback: JSCallback) => void = $bindgen("ffi.bind.ts", "closeCallback");
+const nativeCFunction = ffi.cfunction!;
 delete ffi.callback;
 delete ffi.closeCallback;
 delete ffi.cfunction;
 
 class JSCallback {
-  constructor(cb, options) {
+  declare readonly ptr: number | null;
+
+  constructor(cb: (...args: any[]) => unknown, options: object) {
     const cell = nativeCallback(options, cb);
     if (Error.isError(cell)) throw cell;
     Object.setPrototypeOf(cell, (new.target ?? JSCallback).prototype);
-    return cell;
+    return cell as JSCallback;
   }
 
   [Symbol.toPrimitive]() {
@@ -106,60 +109,57 @@ class JSCallback {
 
 const CString = ffi.CString;
 
-function FFIBuilder(params, functionToCall, name) {
-  var paramNames = new Array(params.length);
-  for (let i = 0; i < params.length; i++) paramNames[i] = `p${i}`;
+function toCString(v: number) {
+  return v ? new CString(v) : null;
+}
 
-  var code = `return (v=>v?new __CString(v):null)(functionToCall(${paramNames.join(", ")}))`;
-
-  var func = new Function("functionToCall", "__CString", ...paramNames, code);
-  Object.defineProperty(func, "name", {
-    value: name,
-  });
-
+function FFIBuilder(params: unknown[], functionToCall: $Node.FFIFunction, name: string) {
   // variadic arguments can be expensive
   // most FFI functions are going to be < 5 arguments
   // so we just inline it
-  var wrap;
-  switch (paramNames.length) {
+  var wrap: $Node.FFIFunction;
+  switch (params.length) {
     case 0:
-      wrap = () => func(functionToCall, CString);
+      wrap = () => toCString(functionToCall());
       break;
     case 1:
-      wrap = arg1 => func(functionToCall, CString, arg1);
+      wrap = arg1 => toCString(functionToCall(arg1));
       break;
     case 2:
-      wrap = (arg1, arg2) => func(functionToCall, CString, arg1, arg2);
+      wrap = (arg1, arg2) => toCString(functionToCall(arg1, arg2));
       break;
     case 3:
-      wrap = (arg1, arg2, arg3) => func(functionToCall, CString, arg1, arg2, arg3);
+      wrap = (arg1, arg2, arg3) => toCString(functionToCall(arg1, arg2, arg3));
       break;
     case 4:
-      wrap = (arg1, arg2, arg3, arg4) => func(functionToCall, CString, arg1, arg2, arg3, arg4);
+      wrap = (arg1, arg2, arg3, arg4) => toCString(functionToCall(arg1, arg2, arg3, arg4));
       break;
     case 5:
-      wrap = (arg1, arg2, arg3, arg4, arg5) => func(functionToCall, CString, arg1, arg2, arg3, arg4, arg5);
+      wrap = (arg1, arg2, arg3, arg4, arg5) => toCString(functionToCall(arg1, arg2, arg3, arg4, arg5));
       break;
     case 6:
-      wrap = (arg1, arg2, arg3, arg4, arg5, arg6) => func(functionToCall, CString, arg1, arg2, arg3, arg4, arg5, arg6);
+      wrap = (arg1, arg2, arg3, arg4, arg5, arg6) => toCString(functionToCall(arg1, arg2, arg3, arg4, arg5, arg6));
       break;
     case 7:
       wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7) =>
-        func(functionToCall, CString, arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+        toCString(functionToCall(arg1, arg2, arg3, arg4, arg5, arg6, arg7));
       break;
     case 8:
       wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) =>
-        func(functionToCall, CString, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+        toCString(functionToCall(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8));
       break;
     case 9:
       wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) =>
-        func(functionToCall, CString, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
+        toCString(functionToCall(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9));
       break;
     default: {
-      wrap = (...args) => func(functionToCall, CString, ...args);
+      wrap = (...args) => toCString(functionToCall(...args));
       break;
     }
   }
+  Object.defineProperty(wrap, "name", {
+    value: name,
+  });
   wrap.native = functionToCall;
   wrap.ptr = functionToCall.ptr;
   return wrap;
@@ -172,9 +172,9 @@ const native = {
   },
 };
 
-const ccFn = $newRustFunction("ffi.rs", "Bun__FFI__cc", 1);
+const ccFn: (options: object) => $Node.FFILibrary | Error = $bindgen("ffi.bind.ts", "cc");
 
-function normalizePath(path) {
+function normalizePath(path: string | URL | Bun.BunFile | undefined) {
   if (typeof path === "string" && path?.startsWith?.("file:")) {
     // import.meta.url returns a file: URL
     // https://github.com/oven-sh/bun/issues/10304
@@ -194,7 +194,7 @@ function normalizePath(path) {
   return path;
 }
 
-function dlopen(path, options) {
+function dlopen(path: string | URL | Bun.BunFile | undefined, options: object) {
   path = normalizePath(path);
 
   const result = nativeDLOpen(path, options);
@@ -255,13 +255,13 @@ function cc(options) {
   return result;
 }
 
-function viewSource(symbols, isCallback?) {
+function viewSource(symbols: object, isCallback?: boolean) {
   const result = nativeViewSource(symbols, isCallback);
   if (Error.isError(result)) throw result;
   return result;
 }
 
-function linkSymbols(options) {
+function linkSymbols(options: object) {
   const result = nativeLinkSymbols(options);
   if (Error.isError(result)) throw result;
   return result;
@@ -269,7 +269,7 @@ function linkSymbols(options) {
 
 var cFunctionI = 0;
 function closeJSCFFICFunction() {}
-function CFunction(options) {
+function CFunction(options: object) {
   const identifier = `CFunction${cFunctionI++}`;
 
   const fn = nativeCFunction(options, identifier);

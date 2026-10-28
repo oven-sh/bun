@@ -315,6 +315,37 @@ describe("bundler", async () => {
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
   });
 
+  itBundled("bun/loader-yaml-boolean-keys-minify-syntax", {
+    target: "bun",
+    minifySyntax: true,
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.yaml';
+    console.write(JSON.stringify(data));
+  `,
+      "/data.yaml": `true: t\nfalse: f\nok: 1\n`,
+    },
+    run: { stdout: `{"true":"t","false":"f","ok":1}` },
+  });
+  itBundled("bun/loader-yaml-non-string-keys-no-bundle", {
+    target: "bun",
+    bundling: false,
+    entryPoints: ["/data.yaml"],
+    files: {
+      "/data.yaml": `true: t\n~: tilde\n1: one\n1.5: f\n-1: neg\n.inf: i\n.nan: n\n[a, b]: seq\n{x: 1}: map\nok: 1\n`,
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+    import data, * as ns from './out.js';
+    console.write(JSON.stringify(data) + " " + JSON.stringify(Object.keys(ns)));
+  `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: `{"1":"one","true":"t","null":"tilde","1.5":"f","-1":"neg","Infinity":"i","NaN":"n","a,b":"seq","[object Object]":"map","ok":1} ["default","ok"]`,
+    },
+  });
+
   itBundled("bun/loader-xml-proto-key-is-own-property", {
     target: "bun",
     files: {
@@ -407,9 +438,12 @@ describe("bundler", async () => {
     },
   });
 
-  const moon = await Bun.file(
-    fileURLToPath(import.meta.resolve("../js/bun/util/text-loader-fixture-text-file.backslashes.txt")),
-  ).text();
+  // (a Windows checkout may have given the fixture CRLF line endings; the harness compares LF-normalized output)
+  const moon = (
+    await Bun.file(
+      fileURLToPath(import.meta.resolve("../js/bun/util/text-loader-fixture-text-file.backslashes.txt")),
+    ).text()
+  ).replaceAll("\r\n", "\n");
 
   // https://github.com/oven-sh/bun/issues/3449
   itBundled("bun/loader-text-file-#3449", {
@@ -487,6 +521,43 @@ describe("bundler", async () => {
       },
     });
   }
+
+  // `import addon from "./addon.node"` prints as `__require("./addon-[hash].node")`
+  // in ESM output, so the chunk has to define the runtime helper.
+  itBundled("bun/loader-napi-esm-runtime-require", {
+    target: "bun",
+    format: "esm",
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* js */ `
+        import addon from "./addon.node";
+        export default addon;
+      `,
+      "/addon.node": "not a real addon",
+    },
+    onAfterBundle(api) {
+      const js = api.readFile("/out/entry.js");
+      expect(js).toContain("var __require = import.meta.require;");
+      expect(js).toMatch(/__require\("\.\/addon-[a-z0-9]+\.node"\)/);
+    },
+  });
+
+  itBundled("loader/AssetEntryPointInlinedByStylesheet", {
+    backend: "cli",
+    outdir: "/out",
+    entryPoints: ["/logo.png", "/style.css"],
+    outputPaths: ["/out/logo.js", "/out/style.css"],
+    files: {
+      "/logo.png": "png bytes",
+      "/style.css": `body { background: url("./logo.png"); }`,
+    },
+    onAfterBundle(api) {
+      const png = readdirSync(api.outdir).find(x => x.endsWith(".png"))!;
+      expect(api.readFile(join("/out", png))).toBe("png bytes");
+      expect(api.readFile("/out/logo.js")).toContain(`"./${png}"`);
+      expect(api.readFile("/out/style.css")).toContain(`url("data:image/png;base64,`);
+    },
+  });
 
   describe("handles empty files", () => {
     for (const target of ["bun", "node", "browser"] as const) {

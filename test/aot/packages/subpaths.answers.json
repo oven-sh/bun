@@ -1,0 +1,26 @@
+{
+  "exports.closed0.cjs": {
+    "output": "require THROWS Error MODULE_NOT_FOUND\nresolve \"string\"\n"
+  },
+  "exports.closed0.mjs": {
+    "output": "import THROWS Error ERR_MODULE_NOT_FOUND\n"
+  },
+  "exports.closed6.cjs": {
+    "output": "require THROWS Error MODULE_NOT_FOUND\nresolve \"string\"\n"
+  },
+  "exports.closed6.mjs": {
+    "output": "import THROWS Error ERR_MODULE_NOT_FOUND\n"
+  },
+  "exports.closed_literal0.cjs": {
+    "output": "require THROWS Error MODULE_NOT_FOUND\n"
+  },
+  "exports.closed_literal0.mjs": {
+    "output": "import THROWS Error ERR_MODULE_NOT_FOUND\n"
+  },
+  "exports.closed_literal6.cjs": {
+    "output": "require THROWS Error MODULE_NOT_FOUND\n"
+  },
+  "exports.closed_literal6.mjs": {
+    "output": "import THROWS Error ERR_MODULE_NOT_FOUND\n"
+  }
+}

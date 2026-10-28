@@ -78,9 +78,11 @@
 #include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/text/MakeString.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/HandleSet.h>
+#include <JavaScriptCore/StrongSet.h>
 #include <wtf/Ref.h>
 #include <wtf/ThreadSafeRefCounted.h>
+#include "RemovableFeatures.h"
+#include "BunWithoutAOT.h"
 #endif
 
 #define ENABLE_WEB_CRYPTO 1

@@ -1,10 +1,11 @@
-declare const self: typeof globalThis;
-type WebWorker = InstanceType<typeof globalThis.Worker>;
+declare const self: EventTarget & {
+  onmessage: ((this: typeof globalThis, ev: MessageEvent) => unknown) | null;
+  onmessageerror: ((this: typeof globalThis, ev: MessageEvent) => unknown) | null;
+};
+type WebWorker = globalThis.Worker;
 
 const EventEmitter = require("node:events");
 const { SafeMap } = require("internal/primordials");
-const Readable = require("internal/streams/readable");
-const Writable = require("internal/streams/writable");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
 const {
   validateString,
@@ -16,7 +17,7 @@ const {
 
 // node's name handling (lib/internal/worker.js): truthy → validateString + trim,
 // falsy (undefined/null/0/"") → default "". So {name: 0|null} is silently ignored.
-function normalizeWorkerName(rawName) {
+function normalizeWorkerName(rawName: string | null | undefined) {
   if (rawName) {
     validateString(rawName, "options.name");
     return rawName.trim();
@@ -54,16 +55,6 @@ function validateWorkerFilename(filename) {
   throw $ERR_WORKER_PATH(message);
 }
 
-const {
-  MessageChannel,
-  BroadcastChannel,
-  Worker: WebWorker,
-} = globalThis as typeof globalThis & {
-  // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
-  // instance. This is so that it can emit the `worker` event on the process with the
-  // node:worker_threads instance instead of the Web Worker instance.
-  Worker: new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker;
-};
 const SHARE_ENV = Symbol.for("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
@@ -80,6 +71,13 @@ const {
   9: _setEntryEvaluatedHook,
   10: _isNodeWorker,
   11: _setParentPort,
+  12: _setStdioPorts,
+  // The intrinsic web constructors, captured natively so user code replacing the
+  // globals (e.g. happy-dom's registrator) before this module loads cannot break
+  // worker_threads (#40268).
+  13: _MessagePort,
+  14: MessageChannel,
+  15: BroadcastChannel,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -93,15 +91,43 @@ const {
   (hook: () => void) => void,
   boolean,
   (port: MessagePort) => void,
+  (ports: object) => void,
+  typeof globalThis.MessagePort,
+  typeof globalThis.MessageChannel,
+  typeof globalThis.BroadcastChannel,
 ];
 
-type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
+// The Worker constructor secretly takes an extra parameter to provide the node:worker_threads instance.
+type WebWorkerConstructor = new (filename: string | URL, options: object, nodeWorker: Worker) => WebWorker;
+
+interface NodeWorkerOptions {
+  argv?: unknown[];
+  env?: Record<string, string | undefined> | typeof SHARE_ENV;
+  eval?: boolean;
+  execArgv?: string[];
+  name?: string | null;
+  resourceLimits?: Record<string, number>;
+  stdin?: boolean;
+  stdout?: boolean;
+  stderr?: boolean;
+  trackUnmanagedFds?: boolean;
+  transferList?: unknown[];
+  workerData?: unknown;
+  /** For the native constructor: what `env: SHARE_ENV` becomes. */
+  shareEnv?: boolean;
+  // What `packJSTransferables` leaves on the options it answers.
+  [kRestoreJSTransferables]?: () => void;
+  [kFinalizeJSTransferables]?: () => void;
+}
 
 // Used to ensure that Blobs created to hold the source code for `eval: true` Workers get cleaned up
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
 
-function injectFakeEmitter(Class) {
+type Listener = (...args: any[]) => unknown;
+type EventListener = (event: any) => unknown;
+
+function injectFakeEmitter(Class: { prototype: EventTarget }) {
   // Per-instance registry mapping each event to (user listener -> wrapper), so
   // listenerCount/eventNames/removeAllListeners work over EventTarget's opaque
   // internal map and off() can find the wrapper a given listener registered.
@@ -110,7 +136,14 @@ function injectFakeEmitter(Class) {
   // (It has no @get/@set private names, so the $-intrinsics don't apply to it.)
   // Keyed by a module-local symbol, not a WeakMap — WeakMap has neither defence.
   const kListenerRegistry = Symbol("listenerRegistry");
-  function registryFor(target, create) {
+  type Registry = Map<string, Map<Listener, EventListener>>;
+  type Target = EventTarget & {
+    [kListenerRegistry]?: Registry;
+    [kMaxListeners]?: number;
+    /** Throws: the native function requires a listener. */
+    removeEventListener(type: string): void;
+  };
+  function registryFor(target: Target, create: boolean): Registry | undefined {
     let map = target[kListenerRegistry];
     if (!map && create) target[kListenerRegistry] = map = new SafeMap();
     return map;
@@ -124,17 +157,17 @@ function injectFakeEmitter(Class) {
     return event.error;
   }
 
-  function customEventHandler(event) {
+  function customEventHandler(event: { detail: unknown }) {
     return event.detail;
   }
 
-  function wrapped(run, listener) {
-    return function (event) {
+  function wrapped<E>(run: (event: E) => unknown, listener: Listener): EventListener {
+    return function (event: E) {
       return listener(run(event));
     };
   }
 
-  function functionForEventType(event, listener) {
+  function functionForEventType(event: string, listener: Listener) {
     switch (event) {
       case "error":
       case "messageerror": {
@@ -151,7 +184,7 @@ function injectFakeEmitter(Class) {
     }
   }
 
-  function EventClass(eventName) {
+  function EventClass(eventName: string) {
     if (eventName === "error" || eventName === "messageerror") {
       return ErrorEvent;
     }
@@ -162,7 +195,13 @@ function injectFakeEmitter(Class) {
   // EventTarget dedupes on (type, callback), so in node the FIRST registration of
   // a listener wins outright -- including its once-ness -- and later adds of the
   // same function are no-ops. Keying wrappers per listener reproduces that.
-  function register(target, event, listener, wrapper, options) {
+  function register(
+    target: Target,
+    event: string,
+    listener: Listener,
+    wrapper: EventListener,
+    options: AddEventListenerOptions | undefined,
+  ) {
     const map = registryFor(target, true)!;
     let byListener = map.get(event);
     if (!byListener) map.set(event, (byListener = new SafeMap()));
@@ -172,12 +211,12 @@ function injectFakeEmitter(Class) {
     return true;
   }
 
-  function on(event, listener) {
+  function on(this: Target, event: string, listener: Listener) {
     register(this, event, listener, functionForEventType(event, listener), undefined);
     return this;
   }
 
-  function off(event, listener) {
+  function off(this: Target, event: string, listener?: Listener) {
     if (listener) {
       const byListener = registryFor(this, false)?.get(event);
       const wrapper = byListener?.get(listener) ?? listener;
@@ -189,13 +228,13 @@ function injectFakeEmitter(Class) {
     return this;
   }
 
-  function once(event, listener) {
+  function once(this: Target, event: string, listener: Listener) {
     const wrapper = functionForEventType(event, listener);
     const target = this;
     // EventTarget drops a {once:true} listener natively, without telling the
     // registry — so purge it here or listenerCount()/eventNames() keep counting
     // a listener that already fired.
-    function onceWrapper(ev) {
+    function onceWrapper(ev: unknown) {
       registryFor(target, false)?.get(event)?.delete(listener);
       return wrapper(ev);
     }
@@ -203,7 +242,7 @@ function injectFakeEmitter(Class) {
     return this;
   }
 
-  function emit(event, ...args) {
+  function emit(this: Target, event: string, ...args: any[]) {
     switch (event) {
       case "error":
       case "messageerror":
@@ -220,27 +259,27 @@ function injectFakeEmitter(Class) {
   }
 
   const kMaxListeners = Symbol("kMaxListeners");
-  function setMaxListeners(n) {
+  function setMaxListeners(this: Target, n: number) {
     this[kMaxListeners] = n;
     return this;
   }
-  function getMaxListeners() {
+  function getMaxListeners(this: Target) {
     return this[kMaxListeners] ?? 10;
   }
-  function listenerCount(type) {
+  function listenerCount(this: Target, type: string) {
     return registryFor(this, false)?.get(type)?.size ?? 0;
   }
-  function eventNames() {
+  function eventNames(this: Target) {
     const map = registryFor(this, false);
     if (!map) return [];
     const out: string[] = [];
     for (const [k, v] of map) if (v.size > 0) out.push(k);
     return out;
   }
-  function removeAllListeners(type) {
+  function removeAllListeners(this: Target, type?: string) {
     const map = registryFor(this, false);
     if (!map) return this;
-    const removeType = t => {
+    const removeType = (t: string) => {
       const byListener = map.get(t);
       if (byListener) {
         for (const w of byListener.values()) this.removeEventListener(t, w);
@@ -252,7 +291,7 @@ function injectFakeEmitter(Class) {
       // entry it just yielded — so no snapshot copy is needed here.
       for (const t of map.keys()) removeType(t);
     } else {
-      removeType(type);
+      removeType(type!);
     }
     return this;
   }
@@ -281,7 +320,6 @@ function injectFakeEmitter(Class) {
   Object.setPrototypeOf(proto, inherited);
 }
 
-const _MessagePort = globalThis.MessagePort;
 injectFakeEmitter(_MessagePort);
 
 const MessagePort = _MessagePort;
@@ -291,7 +329,7 @@ const MessagePort = _MessagePort;
 const closedMessagePorts = new WeakSet();
 const nativeMessagePortClose = MessagePort.prototype.close;
 Object.defineProperty(MessagePort.prototype, "close", {
-  value: function close(cb) {
+  value: function close(this: MessagePort, cb?: () => void) {
     closedMessagePorts.add(this);
     // node's mechanism is literally `this.once('close', cb)`, so cb interleaves
     // with other close listeners in registration order. The close event fires at
@@ -309,7 +347,7 @@ Object.defineProperty(MessagePort.prototype, "close", {
 // still active). Symbol-keyed so it does not appear in getOwnPropertyNames.
 const kInspectCustom = Symbol.for("nodejs.util.inspect.custom");
 Object.defineProperty(MessagePort.prototype, kInspectCustom, {
-  value: function (_depth, _options) {
+  value: function (this: MessagePort, _depth: unknown, _options: unknown) {
     return `MessagePort [EventTarget] { active: ${_isMessagePortActive(this)}, refed: ${this.hasRef()} }`;
   },
   writable: true,
@@ -326,175 +364,24 @@ const BUN_WORKER_MESSAGING_KEY = "@@bunWorkerThreadsMessaging";
 // stdio and control ports.
 const BUN_WORKER_PARENT_PORT_KEY = "@@bunWorkerThreadsParentPort";
 
-// Captured stdio rides a dedicated MessageChannel per stream with node's flow
-// control (lib/internal/worker/io.js): the writer posts an array of chunks
-// (STDIO_PAYLOAD) and withholds the writev callback until the reader posts an
-// ack (STDIO_WANTS_MORE_DATA) from _read(). One batch is in flight at a time;
-// further writes buffer in the Writable, so write() returns false and 'drain'
-// fires only when the consumer catches up — end-to-end backpressure. Since
-// each stream has its own port (node multiplexes one env port), the payload is
-// the bare chunk array, EOF is null, and any other message is the ack.
-
-const kFlushSync = Symbol("kFlushSync");
-
-// Readable fed by a control MessagePort (worker.stdout/stderr on the parent,
-// process.stdin in the worker). The peer posts arrays of Buffers; null signals EOF.
-function makePortReadable(port, incrementsPortRef) {
-  let ended = false;
-  let startedReading = false;
-  function onMessage(payload) {
-    if (payload === null) {
-      if (ended === false) {
-        ended = true;
-        stream.push(null);
-      }
-      port.off("message", onMessage);
-    } else if (ended === false) {
-      for (let i = 0; i < payload.length; i++) {
-        stream.push(Buffer.from(payload[i]));
-      }
-    }
-  }
-  const stream = new Readable({
-    read() {
-      if (startedReading === false && incrementsPortRef) {
-        startedReading = true;
-        port.ref();
-      }
-      // Tell the writer we want more data; it completes its in-flight writev
-      // on receipt (node's STDIO_WANTS_MORE_DATA).
-      if (ended === false) port.postMessage(true);
-    },
-  });
-  // Attach eagerly so the peer's writev is ack'd (via push -> maybeReadMore ->
-  // _read) even when no one consumes this stream; unref immediately so an
-  // unconsumed captured stream never pins the loop on its own (node's model).
-  port.on("message", onMessage);
-  port.unref();
-  // 'close' covers natural EOF and destroy(); release the read-time ref and
-  // drop the listener so a destroyed captured stream can't pin an unref'd worker.
-  stream.on("close", () => {
-    ended = true;
-    port.off("message", onMessage);
-    if (startedReading && incrementsPortRef) {
-      startedReading = false;
-      port.unref();
-    }
-  });
-  // Lets the parent end worker.stdout/stderr when the worker exits abruptly.
-  stream.endFromOwner = function () {
-    if (ended === false) {
-      ended = true;
-      stream.push(null);
-      port.off("message", onMessage);
-    }
-  };
-  return stream;
-}
-
-// Writable that forwards chunks over a control MessagePort (worker.stdin on the
-// parent, process.stdout/stderr in the worker). final() posts null as EOF.
-function makePortWritable(port) {
-  // Reader-side acks complete the in-flight writev. The listener refs the
-  // event loop; release that immediately — the port is re-ref'd only while a
-  // batch is awaiting its ack, so unflushed data keeps the writer alive
-  // (node's kWaitingStreams) but an idle stream never pins the loop.
-  let pendingWriteCallback: ((error?: Error | null) => void) | null = null;
-  function onAck() {
-    const cb = pendingWriteCallback;
-    if (cb !== null) {
-      pendingWriteCallback = null;
-      port.unref();
-      cb();
-    }
-  }
-  port.on("message", onAck);
-  port.unref();
-  const stream = new Writable({
-    decodeStrings: false,
-    writev(chunks, cb) {
-      const payload = new Array(chunks.length);
-      for (let i = 0; i < chunks.length; i++) {
-        const { chunk, encoding } = chunks[i];
-        payload[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
-      }
-      port.postMessage(payload);
-      if (process._exiting) {
-        // No event loop turns remain to deliver an ack; complete synchronously
-        // so exit-time writes are not lost (node does the same).
-        cb();
-      } else {
-        // Only one writev is in flight at a time, so the slot can't be occupied.
-        pendingWriteCallback = cb;
-        port.ref();
-      }
-    },
-    final(cb) {
-      port.postMessage(null);
-      cb();
-    },
-    destroy(err, cb) {
-      // Discharge an in-flight batch: the reader may never ack a destroyed
-      // stream, so release the loop ref taken in writev and complete the
-      // parked callback; drop the ack listener so a late ack can't fire
-      // into the destroyed stream.
-      const pending = pendingWriteCallback;
-      if (pending !== null) {
-        pendingWriteCallback = null;
-        port.unref();
-        pending(err);
-      }
-      port.off("message", onAck);
-      cb(err);
-    },
-  });
-  // On a synchronous exit no ack can arrive; completing the parked writev lets
-  // the Writable clear its buffer through writev, which now completes
-  // synchronously because process._exiting is set (node's flushSync).
-  stream[kFlushSync] = onAck;
-  return stream;
-}
+const { makePortReadable, makePortWritable } = require("internal/worker/stdio");
 
 // The parent always sends stdout and stderr ports; stdin only for { stdin: true }.
+// With the ports registered on the global, process.stdin/stdout/stderr's native
+// lazy getters build the port-backed streams (never the fd-backed ones a plain
+// thread would get); read them here so they exist before user code, as in node.
 function setupWorkerStdio(stdio) {
-  const { stdin, stdout, stderr } = stdio;
-  const stdoutStream = makePortWritable(stdout);
-  const stderrStream = makePortWritable(stderr);
-  Object.defineProperty(process, "stdout", {
-    value: stdoutStream,
-    writable: true,
-    configurable: true,
-    enumerable: true,
-  });
-  Object.defineProperty(process, "stderr", {
-    value: stderrStream,
-    writable: true,
-    configurable: true,
-    enumerable: true,
-  });
+  _setStdioPorts(stdio);
+  const stdoutStream = process.stdout;
+  const stderrStream = process.stderr;
   // node always replaces a worker's process.stdin: port-backed when { stdin: true },
   // otherwise an immediately-EOF'd stream — never the process-wide fd 0, which
   // would race the main thread (and hang on a TTY).
-  Object.defineProperty(process, "stdin", {
-    value: stdin
-      ? makePortReadable(stdin, true)
-      : new Readable({
-          read() {
-            this.push(null);
-          },
-        }),
-    writable: true,
-    configurable: true,
-    enumerable: true,
-  });
+  void process.stdin;
   // node routes console.log through process.stdout/stderr; Bun's global console
   // writes the fd directly, so rebind it to the port-backed streams.
   const { Console } = require("node:console");
-  globalThis.console = new Console(stdoutStream, stderrStream);
-  process.on("exit", () => {
-    stdoutStream[kFlushSync]();
-    stderrStream[kFlushSync]();
-  });
+  (globalThis as unknown as { console: unknown }).console = new Console(stdoutStream, stderrStream);
 }
 
 // Emulation of Node's JSTransferable protocol (kTransfer/kTransferList/kDeserialize) for
@@ -731,7 +618,7 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
   return packed;
 }
 
-let workerData = unpackJSTransferables(_workerData);
+let workerData: any = unpackJSTransferables(_workerData);
 let threadId = _threadId;
 // node: main-thread and unspecified-worker name are both "" (trimmed).
 const threadName = isMainThread ? "" : (_threadName ?? "");
@@ -742,7 +629,7 @@ let parentPort: MessagePort | null = null;
 // postMessageToThread (Node 22+): the Worker ctor always smuggles a control
 // MessagePort to the worker by wrapping workerData; unwrap it here.
 const messaging = require("internal/worker/messaging");
-messaging.initThreadInfo(threadId, isMainThread);
+messaging.initThreadInfo(threadId, isMainThread, MessageChannel);
 // Captured stdio + the messaging control port ride inside workerData (wrapped;
 // ports transferred). Unwrap and bind the worker's stdio / messaging hub.
 // Gate on _isNodeWorker so a raw `new globalThis.Worker` that loads this module
@@ -758,7 +645,7 @@ if (
 ) {
   const stdioPorts = workerData[BUN_WORKER_STDIO_KEY];
   const controlPort = workerData[BUN_WORKER_MESSAGING_KEY];
-  const transferredParentPort = workerData[BUN_WORKER_PARENT_PORT_KEY];
+  const transferredParentPort: MessagePort | undefined = workerData[BUN_WORKER_PARENT_PORT_KEY];
   workerData = workerData.data;
   if (stdioPorts) setupWorkerStdio(stdioPorts);
   if (controlPort) messaging.setupMainThreadPort(controlPort, _setEntryEvaluatedHook);
@@ -871,14 +758,8 @@ function applyWorkerProcessOverrides() {
   try {
     Object.defineProperty(proc, "debugPort", { value: 9229, writable: true, configurable: true, enumerable: true });
   } catch {}
-  // These main-only internals are absent on a worker's process.
-  for (const k of ["_startProfilerIdleNotifier", "_stopProfilerIdleNotifier", "_debugProcess", "_debugEnd"]) {
-    try {
-      delete proc[k];
-    } catch {}
-  }
   // process.umask(setMask) is unsupported in workers; the getter still works.
-  const realUmask = proc.umask;
+  const realUmask: (this: unknown, mask?: number) => number = proc.umask;
   function umask(mask?: unknown) {
     if (mask === undefined) return realUmask.$call(proc);
     throw $ERR_WORKER_UNSUPPORTED_OPERATION("Setting process.umask() is not supported in workers");
@@ -959,18 +840,20 @@ class Worker extends EventEmitter {
   #performance;
   #name: string;
   #exited = false;
-  #stdinPort;
-  #stdoutPort;
+  #stdinPort: MessagePort | undefined;
+  #stdoutPort: MessagePort | undefined;
   // node's kPublicPort: parent end of the parentPort channel.
   #publicPort!: MessagePort;
-  #stderrPort;
-  #stdin;
-  #stdout;
-  #stderr;
+  #stderrPort: MessagePort | undefined;
+  #stdin: ReturnType<typeof makePortWritable> | undefined;
+  #stdout: ReturnType<typeof makePortReadable> | undefined;
+  #stderr: ReturnType<typeof makePortReadable> | undefined;
 
   // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
   #onExitPromise: Promise<number> | number | undefined = undefined;
+  // Resolves that promise. #onClose calls it, so a terminate() from a listener that #onClose itself calls is answered too.
+  #resolveOnExit: ((exitCode: number) => void) | undefined = undefined;
   #urlToRevoke = "";
   // threadId captured for cleaning up the messaging control port on close.
   #messagingThreadId: number | undefined = undefined;
@@ -1080,20 +963,14 @@ class Worker extends EventEmitter {
         // user-supplied value so it can't trigger env sharing on its own.
         options = { ...options, shareEnv: undefined } as NodeWorkerOptions;
       }
-      // node runs its worker bootstrap before user code; preload the
-      // worker_threads module so process.stdin/stdout/stderr are always rebound,
-      // even when the worker never requires it.
-      const userPreload = (options as any).preload;
-      options = {
-        ...options,
-        preload: ["node:worker_threads", ...($isArray(userPreload) ? userPreload : userPreload ? [userPreload] : [])],
-      } as NodeWorkerOptions;
+      // Also the intrinsic constructor. Read here, so that importing this module is not starting a worker.
+      const WebWorker = $cpp("Worker.cpp", "createNodeWorkerConstructor") as WebWorkerConstructor;
       this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this);
       // Create the readables eagerly so the worker's writev is ack'd even when
       // worker.stdout/stderr is never touched; only captured streams ref their
       // port on first read (node's kIncrementsPortRef).
-      this.#stdout = makePortReadable(this.#stdoutPort, !stdoutAutoPipe);
-      this.#stderr = makePortReadable(this.#stderrPort, !stderrAutoPipe);
+      this.#stdout = makePortReadable(this.#stdoutPort, !stdoutAutoPipe, _receiveMessageOnPort);
+      this.#stderr = makePortReadable(this.#stderrPort, !stderrAutoPipe, _receiveMessageOnPort);
       // 'data' instead of pipe(): pipe() adds an error listener on the shared
       // process.stdout per worker, tripping MaxListenersExceededWarning.
       if (stdoutAutoPipe) this.#stdout.on("data", chunk => process.stdout.write(chunk));
@@ -1204,17 +1081,18 @@ class Worker extends EventEmitter {
     });
   }
 
-  terminate(callback: unknown) {
+  terminate(callback?: (error: null, exitCode: number) => unknown) {
+    const onExitPromise = this.#onExitPromise;
     if (typeof callback === "function") {
       process.emitWarning(
         "Passing a callback to worker.terminate() is deprecated. It returns a Promise instead.",
         "DeprecationWarning",
         "DEP0132",
       );
-      this.#worker.addEventListener("close", event => callback(null, event.code), { once: true });
+      // node: a one-time 'exit' listener, and nothing once the worker has exited.
+      if (typeof onExitPromise !== "number") this.once("exit", (exitCode: number) => callback(null, exitCode));
     }
 
-    const onExitPromise = this.#onExitPromise;
     // Not a truthy test: after exit #onExitPromise is the exit code, which can be 0;
     // falling through would wait on a 'close' event that never fires again.
     if (onExitPromise !== undefined) {
@@ -1223,14 +1101,8 @@ class Worker extends EventEmitter {
       return $isPromise(onExitPromise) ? onExitPromise : Promise.$resolve(undefined);
     }
 
-    const { resolve, promise } = Promise.withResolvers();
-    this.#worker.addEventListener(
-      "close",
-      event => {
-        resolve(event.code);
-      },
-      { once: true },
-    );
+    const { resolve, promise } = Promise.withResolvers<number>();
+    this.#resolveOnExit = resolve;
     // Keep the event loop alive until termination completes so the returned
     // promise still resolves even if the worker was unref()'ed.
     this.#worker.ref();
@@ -1246,7 +1118,7 @@ class Worker extends EventEmitter {
 
   getHeapSnapshot(options: unknown) {
     const stringPromise = this.#worker.getHeapSnapshot(options);
-    return stringPromise.then(s => new HeapSnapshotStream(s));
+    return stringPromise.then(makeHeapSnapshotStream);
   }
 
   getHeapStatistics() {
@@ -1332,35 +1204,45 @@ class Worker extends EventEmitter {
       messaging.destroyMainThreadPort(this.#messagingThreadId);
       this.#messagingThreadId = undefined;
     }
-    // End captured stdio readables when the worker exits, even if it was
-    // terminated before its own streams finished.
-    if (this.#stdout) {
-      this.#stdout.endFromOwner();
-    }
-    if (this.#stderr) {
-      this.#stderr.endFromOwner();
-    }
-    // Close the captured stdout/stderr control ports so worker.ref() can't pin the
-    // parent loop after exit (mirrors #stdinPort below).
-    this.#stdoutPort?.close();
-    this.#stderrPort?.close();
-    // Tear down the parent-side stdin Writable + port so post-exit writes fail
-    // (ERR_STREAM_DESTROYED) instead of silently no-oping into a closed peer.
-    if (this.#stdin) {
-      this.#stdin.destroy();
-    }
-    this.#stdinPort?.close();
-    // node delivers everything the worker posted before it exited ahead of
-    // 'exit' (kOnExit drains the public port), then closes the port.
-    {
-      let entry;
-      while ((entry = _receiveMessageOnPort(this.#publicPort)) !== undefined) {
-        this.emit("message", entry.message);
+    // The listeners of 'data' and 'message' are called from here. Whatever they do, the
+    // rest follows, 'exit' is emitted and the promise of terminate() resolves.
+    try {
+      // End captured stdio readables when the worker exits, even if it was
+      // terminated before its own streams finished.
+      if (this.#stdout) {
+        this.#stdout.endFromOwner!();
       }
-      this.#publicPort.close();
+      if (this.#stderr) {
+        this.#stderr.endFromOwner!();
+      }
+    } finally {
+      // Close the captured stdout/stderr control ports so worker.ref() can't pin the
+      // parent loop after exit (mirrors #stdinPort below).
+      this.#stdoutPort?.close();
+      this.#stderrPort?.close();
+      // Tear down the parent-side stdin Writable + port so post-exit writes fail
+      // (ERR_STREAM_DESTROYED) instead of silently no-oping into a closed peer.
+      if (this.#stdin) {
+        this.#stdin.destroy();
+      }
+      this.#stdinPort?.close();
+      // node delivers everything the worker posted before it exited ahead of
+      // 'exit' (kOnExit drains the public port), then closes the port.
+      try {
+        let entry;
+        while ((entry = _receiveMessageOnPort(this.#publicPort)) !== undefined) {
+          this.emit("message", entry.message);
+        }
+      } finally {
+        this.#publicPort.close();
+        this.#onExitPromise = e.code;
+        try {
+          this.emit("exit", e.code);
+        } finally {
+          this.#resolveOnExit?.(e.code);
+        }
+      }
     }
-    this.#onExitPromise = e.code;
-    this.emit("exit", e.code);
   }
 
   #onError(event: ErrorEvent) {
@@ -1370,10 +1252,6 @@ class Worker extends EventEmitter {
     const message = event.message;
     if (message !== "") {
       error = new Error(message, { cause: event });
-      const stack = event?.stack;
-      if (stack) {
-        error.stack = stack;
-      }
     }
     // Reshape the native 'ModuleNotFound ... (entry point)' error into node's
     // "Cannot find module '<path>'" (MODULE_NOT_FOUND).
@@ -1388,12 +1266,12 @@ class Worker extends EventEmitter {
     this.emit("error", error);
   }
 
-  #onMessage(event: MessageEvent) {
+  #onMessage(event: Pick<MessageEvent, "data">) {
     // TODO: is this right?
     this.emit("message", event.data);
   }
 
-  #onMessageError(event: MessageEvent) {
+  #onMessageError(event: Pick<MessageEvent, "data">) {
     // TODO: is this right?
     this.emit("messageerror", (event as any).error ?? event.data ?? event);
   }
@@ -1407,21 +1285,25 @@ class Worker extends EventEmitter {
   }
 }
 
-class HeapSnapshotStream extends Readable {
-  #json: string | undefined;
+let _HeapSnapshotStream: (new (json: string) => $Node.Readable) | undefined;
+function makeHeapSnapshotStream(json: string) {
+  _HeapSnapshotStream ??= class HeapSnapshotStream extends require("internal/streams/readable") {
+    #json: string | undefined;
 
-  constructor(json: string) {
-    super();
-    this.#json = json;
-  }
-
-  _read() {
-    if (this.#json !== undefined) {
-      this.push(this.#json);
-      this.push(null);
-      this.#json = undefined;
+    constructor(json: string) {
+      super();
+      this.#json = json;
     }
-  }
+
+    _read() {
+      if (this.#json !== undefined) {
+        this.push(this.#json);
+        this.push(null);
+        this.#json = undefined;
+      }
+    }
+  };
+  return new _HeapSnapshotStream(json);
 }
 
 export default {

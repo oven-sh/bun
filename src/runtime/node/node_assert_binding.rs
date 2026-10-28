@@ -1,7 +1,9 @@
-use bun_core as bstring;
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
+use bun_core::String as BunString;
+use bun_jsc::bindgen::JsScope;
+use bun_jsc::{JSValue, JsResult};
 
 use super::node_assert;
+use crate::generated_bindgen::node_assert_binding::Colors;
 
 /// ```ts
 /// const enum DiffType {
@@ -9,66 +11,44 @@ use super::node_assert;
 ///     Delete = 1,
 ///     Equal  = 2,
 /// }
-/// type Diff = { operation: DiffType, text: string };
-/// declare function myersDiff(actual: string, expected: string): Diff[];
+/// // `value` is a line, or a char code when `lines` is false.
+/// type Diff = { kind: DiffType, value: string | number };
 /// ```
-#[bun_jsc::host_fn]
-fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let nargs = frame.arguments_count();
-    if nargs < 2 {
-        return Err(global.throw_not_enough_arguments("printMyersDiff", 2, nargs as usize));
-    }
-
-    let actual_arg: JSValue = frame.argument(0);
-    let expected_arg: JSValue = frame.argument(1);
-    let (check_comma_disparity, lines): (bool, bool) = match nargs {
-        0 | 1 => unreachable!(),
-        2 => (false, false),
-        3 => (frame.argument(2).is_truthy(), false),
-        _ => (frame.argument(2).is_truthy(), frame.argument(3).is_truthy()),
-    };
-
-    if !actual_arg.is_string() {
-        return Err(global.throw_invalid_argument_type_value("actual", "string", actual_arg));
-    }
-    if !expected_arg.is_string() {
-        return Err(global.throw_invalid_argument_type_value("expected", "string", expected_arg));
-    }
-
-    // `defer .deref()` — `bun_core::String` is `Copy` (no `Drop`), so wrap in
-    // `OwnedString` for the scope-exit ref-drop.
-    let actual_str = bstring::OwnedString::new(actual_arg.to_bun_string(global)?);
-    let expected_str = bstring::OwnedString::new(expected_arg.to_bun_string(global)?);
-
-    debug_assert!(actual_str.tag() != bstring::Tag::Dead);
-    debug_assert!(expected_str.tag() != bstring::Tag::Dead);
-
-    node_assert::myers_diff(
-        // allocator param dropped (was arena-backed; non-AST crate uses global mimalloc)
-        global,
-        &actual_str,
-        &expected_str,
+pub(crate) fn myers_diff(
+    cx: &mut JsScope<'_>,
+    actual: &BunString,
+    expected: &BunString,
+    check_comma_disparity: bool,
+    lines: bool,
+) -> JsResult<JSValue> {
+    let output = node_assert::Output::List {
         check_comma_disparity,
         lines,
-    )
+    };
+    node_assert::myers_diff(cx.global(), actual, expected, &output)
 }
 
-// =============================================================================
+pub(crate) fn print_simple_myers_diff(
+    cx: &mut JsScope<'_>,
+    actual: &BunString,
+    expected: &BunString,
+    colors: &Colors<'_>,
+) -> JsResult<JSValue> {
+    let output = node_assert::Output::Simple(colors);
+    node_assert::myers_diff(cx.global(), actual, expected, &output)
+}
 
-pub(crate) fn generate(global: &JSGlobalObject) -> JSValue {
-    let exports = JSValue::create_empty_object(global, 1);
-
-    exports.put(
-        global,
-        bstring::String::static_(b"myersDiff"),
-        JSFunction::create(
-            global,
-            "myersDiff",
-            __jsc_host_myers_diff,
-            2,
-            Default::default(),
-        ),
-    );
-
-    exports
+/// Returns `{ message, skipped }`.
+pub(crate) fn print_myers_diff(
+    cx: &mut JsScope<'_>,
+    actual: &BunString,
+    expected: &BunString,
+    check_comma_disparity: bool,
+    colors: &Colors<'_>,
+) -> JsResult<JSValue> {
+    let output = node_assert::Output::Lines {
+        colors,
+        check_comma_disparity,
+    };
+    node_assert::myers_diff(cx.global(), actual, expected, &output)
 }

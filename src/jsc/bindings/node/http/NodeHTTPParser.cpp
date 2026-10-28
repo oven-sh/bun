@@ -1,5 +1,6 @@
 #include "NodeHTTPParser.h"
 #include "BunBuiltinNames.h"
+#include "ErrorCode.h"
 #include "helpers.h"
 #include "JSConnectionsList.h"
 #include "JSHTTPParser.h"
@@ -100,6 +101,9 @@ void HTTPParser::init(llhttp_type_t type, uint64_t maxHttpHeaderSize, uint32_t l
     if (lenientFlags & kLenientSpacesAfterChunkSize) {
         llhttp_set_lenient_spaces_after_chunk_size(&m_parserData, 1);
     }
+    if (lenientFlags & kLenientHeaderValueRelaxed) {
+        llhttp_set_lenient_header_value_relaxed(&m_parserData, 1);
+    }
 
     m_headerNread = 0;
     m_url.reset();
@@ -109,6 +113,8 @@ void HTTPParser::init(llhttp_type_t type, uint64_t maxHttpHeaderSize, uint32_t l
     m_haveFlushed = false;
     m_headersCompleted = false;
     m_maxHttpHeaderSize = maxHttpHeaderSize;
+    m_headerPairs = 0;
+    m_maxHeaderPairs = -1;
 }
 
 JSValue HTTPParser::execute(JSGlobalObject* globalObject, const char* data, size_t len)
@@ -116,6 +122,11 @@ JSValue HTTPParser::execute(JSGlobalObject* globalObject, const char* data, size
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& builtinNames = WebCore::builtinNames(vm);
+
+    if (!isInitialized()) {
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE, "HTTPParser is not initialized"_s);
+        return {};
+    }
 
     // Forbid re-entrant execution of a new buffer while a previous execute()
     // is still on the stack: llhttp keeps span pointers into the in-progress
@@ -316,19 +327,15 @@ JSValue HTTPParser::duration() const
     return jsNumber(duration);
 }
 
-bool HTTPParser::lessThan(HTTPParser& other) const
+int HTTPParser::stopForPendingException()
 {
-    if (m_lastMessageStart == 0 && other.m_lastMessageStart == 0) {
-        return this < &other;
-    } else if (m_lastMessageStart == 0) {
-        return true;
-    } else if (other.m_lastMessageStart == 0) {
-        return false;
-    }
-
-    return m_lastMessageStart < other.m_lastMessageStart;
+    llhttp_set_error_reason(&m_parserData, "HPE_USER:JS Exception");
+    return HPE_USER;
 }
 
+// The on* callbacks run under llhttp_execute(), C frames that cannot check a ThrowScope. Each is the top of
+// its own entry: a JS exception is left pending, llhttp is stopped via the return code, and execute()
+// observes the exception on its own scope once llhttp_execute() returns.
 int HTTPParser::onMessageBegin()
 {
     JSGlobalObject* globalObject = m_globalObject;
@@ -339,9 +346,9 @@ int HTTPParser::onMessageBegin()
 
     if (JSConnectionsList* connections = m_connectionsList.get()) {
         connections->pop(globalObject, thisParser);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, stopForPendingException());
         connections->popActive(globalObject, thisParser);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, stopForPendingException());
     }
 
     m_numFields = 0;
@@ -351,21 +358,22 @@ int HTTPParser::onMessageBegin()
     m_lastMessageStart = uv_hrtime();
     m_url.reset();
     m_statusMessage.reset();
+    m_maxHeaderPairs = -1;
 
     if (JSConnectionsList* connections = m_connectionsList.get()) {
         connections->push(globalObject, thisParser);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, stopForPendingException());
         connections->pushActive(globalObject, thisParser);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, stopForPendingException());
     }
 
     JSValue onMessageBeginCallback = thisParser->get(globalObject, Identifier::from(vm, kOnMessageBegin));
-    RETURN_IF_EXCEPTION(scope, 0);
+    RETURN_IF_EXCEPTION(scope, stopForPendingException());
     if (onMessageBeginCallback.isCallable()) {
         CallData callData = getCallData(onMessageBeginCallback);
         MarkedArgumentBuffer args;
         JSC::profiledCall(globalObject, ProfilingReason::API, onMessageBeginCallback, callData, thisParser, args);
-        RETURN_IF_EXCEPTION(scope, 0);
+        RETURN_IF_EXCEPTION(scope, stopForPendingException());
     }
 
     return 0;
@@ -406,14 +414,17 @@ int HTTPParser::onHeaderField(const char* at, size_t length)
 
     if (m_numFields == m_numValues) {
         // start of new field name
+        rv = trackHeaderPair();
+        RETURN_IF_EXCEPTION(scope, stopForPendingException());
+        if (rv != 0) {
+            return rv;
+        }
+
         m_numFields++;
         if (m_numFields == kMaxHeaderFieldsCount) {
             // ran out of space - flush to javascript land
             flush();
-            if (scope.exception()) [[unlikely]] {
-                llhttp_set_error_reason(&m_parserData, "HPE_USER:JS Exception");
-                return HPE_USER;
-            }
+            RETURN_IF_EXCEPTION(scope, stopForPendingException());
             m_numFields = 1;
             m_numValues = 0;
         }
@@ -503,7 +514,7 @@ int HTTPParser::onHeadersComplete()
     });
 
     JSValue onHeadersCompleteCallback = thisParser->get(globalObject, Identifier::from(vm, kOnHeadersComplete));
-    RETURN_IF_EXCEPTION(scope, -1);
+    RETURN_IF_EXCEPTION(scope, stopForPendingException());
 
     if (!onHeadersCompleteCallback.isCallable()) {
         return 0;
@@ -511,10 +522,10 @@ int HTTPParser::onHeadersComplete()
 
     if (m_haveFlushed) {
         flush();
-        RETURN_IF_EXCEPTION(scope, -1);
+        RETURN_IF_EXCEPTION(scope, stopForPendingException());
     } else {
         auto headers = createHeaders(globalObject);
-        RETURN_IF_EXCEPTION(scope, -1);
+        RETURN_IF_EXCEPTION(scope, stopForPendingException());
         args.at(A_HEADERS) = headers;
         if (m_parserData.type == HTTP_REQUEST) {
             args.at(A_URL) = m_url.toString(globalObject);
@@ -523,6 +534,8 @@ int HTTPParser::onHeadersComplete()
 
     m_numFields = 0;
     m_numValues = 0;
+    m_headerPairs = 0;
+    m_maxHeaderPairs = -1;
 
     if (m_parserData.type == HTTP_REQUEST) {
         args.at(A_METHOD) = jsNumber(m_parserData.method);
@@ -544,10 +557,10 @@ int HTTPParser::onHeadersComplete()
     CallData callData = getCallData(onHeadersCompleteCallback);
 
     JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, onHeadersCompleteCallback, callData, thisParser, args);
-    RETURN_IF_EXCEPTION(scope, -1);
+    RETURN_IF_EXCEPTION(scope, stopForPendingException());
 
     int32_t ret = result.toInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, -1);
+    RETURN_IF_EXCEPTION(scope, stopForPendingException());
 
     return ret;
 }
@@ -564,13 +577,13 @@ int HTTPParser::onBody(const char* at, size_t length)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSValue onBodyCallback = m_thisParser->get(lexicalGlobalObject, Identifier::from(vm, kOnBody));
-    RETURN_IF_EXCEPTION(scope, 0);
+    RETURN_IF_EXCEPTION(scope, stopForPendingException());
     if (!onBodyCallback.isCallable()) {
         return 0;
     }
 
     JSUint8Array* buffer = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), length);
-    RETURN_IF_EXCEPTION(scope, 0);
+    RETURN_IF_EXCEPTION(scope, stopForPendingException());
 
     memcpy(buffer->vector(), at, length);
 
@@ -579,11 +592,7 @@ int HTTPParser::onBody(const char* at, size_t length)
     args.append(buffer);
 
     JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, onBodyCallback, callData, m_thisParser, args);
-
-    if (scope.exception()) [[unlikely]] {
-        llhttp_set_error_reason(&m_parserData, "HPE_USER:JS Exception");
-        return HPE_USER;
-    }
+    RETURN_IF_EXCEPTION(scope, stopForPendingException());
 
     return 0;
 }
@@ -597,25 +606,27 @@ int HTTPParser::onMessageComplete()
 
     if (JSConnectionsList* connections = m_connectionsList.get()) {
         connections->pop(globalObject, thisParser);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, stopForPendingException());
         connections->popActive(globalObject, thisParser);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, stopForPendingException());
     }
 
     m_lastMessageStart = 0;
 
     if (JSConnectionsList* connections = m_connectionsList.get()) {
         connections->push(globalObject, thisParser);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, stopForPendingException());
     }
 
     if (m_numFields) {
         flush();
-        RETURN_IF_EXCEPTION(scope, 0);
+        RETURN_IF_EXCEPTION(scope, stopForPendingException());
     }
 
+    m_headerPairs = 0;
+
     JSValue onMessageCompleteCallback = thisParser->get(globalObject, Identifier::from(vm, kOnMessageComplete));
-    RETURN_IF_EXCEPTION(scope, 0);
+    RETURN_IF_EXCEPTION(scope, stopForPendingException());
 
     if (!onMessageCompleteCallback.isCallable()) {
         return 0;
@@ -624,8 +635,7 @@ int HTTPParser::onMessageComplete()
     CallData callData = getCallData(onMessageCompleteCallback);
     MarkedArgumentBuffer args;
     JSC::profiledCall(globalObject, ProfilingReason::API, onMessageCompleteCallback, callData, thisParser, args);
-
-    RETURN_IF_EXCEPTION(scope, -1);
+    RETURN_IF_EXCEPTION(scope, stopForPendingException());
 
     return 0;
 }
@@ -650,6 +660,35 @@ int HTTPParser::trackHeader(size_t len)
         llhttp_set_error_reason(&m_parserData, "HPE_HEADER_OVERFLOW:Header overflow");
         return HPE_USER;
     }
+    return 0;
+}
+
+// Requests only, node:_http_common truncates a response: https://github.com/nodejs/node/blob/v26.8.0/src/node_http_parser.cc#L1042-L1071
+int HTTPParser::trackHeaderPair()
+{
+    if (m_parserData.type != HTTP_REQUEST) {
+        return 0;
+    }
+
+    m_headerPairs += 2;
+
+    if (m_maxHeaderPairs < 0) {
+        JSGlobalObject* globalObject = m_globalObject;
+        auto& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        JSValue maxHeaderPairsValue = m_thisParser->get(globalObject, WebCore::builtinNames(vm).maxHeaderPairsPublicName());
+        RETURN_IF_EXCEPTION(scope, 0);
+
+        const double value = maxHeaderPairsValue.isNumber() ? maxHeaderPairsValue.asNumber() : 0;
+        m_maxHeaderPairs = value > 0 ? value : 0;
+    }
+
+    if (m_maxHeaderPairs > 0 && static_cast<double>(m_headerPairs) > m_maxHeaderPairs) {
+        llhttp_set_error_reason(&m_parserData, "HPE_HEADER_OVERFLOW:Header overflow");
+        return HPE_USER;
+    }
+
     return 0;
 }
 

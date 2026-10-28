@@ -83,7 +83,7 @@ describe("require(esm) rejects top-level await before evaluating anything", () =
   });
 
   // The gate holds awaits-gate.mjs at its top-level await until the test has seen what require() does meanwhile.
-  test.concurrent("also while an import() still awaits in the graph, and hands the graph over once that has ended", async () => {
+  test.concurrent("also while an import() still awaits in the graph, then hands the graph over", async () => {
     using dir = tempDir("require-esm-tla-states", {
       ...fixtures,
       "awaits-gate.mjs": `globalThis.order.push("awaits-gate"); await globalThis.gate; export const x = "gate";`,

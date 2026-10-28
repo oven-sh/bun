@@ -437,7 +437,9 @@ describe("Bun.ModuleGraph", () => {
     const g = ModuleGraph();
     const inflight = g.import(join(dir, "slow.mjs"));
     const req = (await g.import(join(dir, "req.cjs"))).default;
-    expect(() => req()).toThrow(/Unable to synchronously evaluate|async module|cannot be evaluated synchronously|top-level await/);
+    expect(() => req()).toThrow(
+      /Unable to synchronously evaluate|async module|cannot be evaluated synchronously|top-level await/,
+    );
     expect((await inflight).v).toBe(1);
     rmSync(dir, { recursive: true, force: true });
   });

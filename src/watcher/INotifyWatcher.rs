@@ -73,6 +73,8 @@ impl Default for INotifyWatcher {
 }
 
 pub(crate) type EventListIndex = c_int;
+/// The `eventlist_index` of a file item whose inode is gone. `Watcher::add_file` watches its path again.
+pub(crate) const NO_WATCH: EventListIndex = -1;
 
 #[repr(C)]
 pub struct Event {
@@ -452,6 +454,11 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 }
             };
             this.watch_events[event_id] = watch_event_from_inotify_event(event, idx);
+            if (event.mask & bun_sys::linux::IN::DELETE_SELF) != 0
+                && file_was_replaced(this, idx, event.watch_descriptor)
+            {
+                this.watch_events[event_id].op = Op::WRITE;
+            }
 
             // Safely handle event names with bounds checking
             if event.name_len > 0 && (temp_name_off as usize) < temp_name_list.len() {
@@ -475,6 +482,17 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     }
 
     Ok(())
+}
+
+/// The inode of the item at `index` is gone. True if the item is a file whose path has another one, now watched.
+fn file_was_replaced(this: &mut Watcher, index: WatchItemIndex, watch: EventListIndex) -> bool {
+    use crate::watcher_impl::{WatchItemColumns, WatchItemKind};
+    let _guard = this.mutex.lock_guard();
+    let index = index as usize;
+    // `index` is from the snapshot of this cycle. An eviction since then moves items.
+    this.watchlist.items_eventlist_index().get(index) == Some(&watch)
+        && this.watchlist.items_kind()[index] == WatchItemKind::File
+        && this.watch_file_again(index)
 }
 
 fn process_inotify_event_batch(

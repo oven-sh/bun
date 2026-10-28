@@ -63,12 +63,7 @@ impl DirectoryWatchStore {
             entry.dir
         );
 
-        self.dev_bun_watcher().remove_at_index::<true>(
-            bun_watcher::WatchItemKind::File,
-            entry.watch_index,
-            0,
-            &[],
-        );
+        self.dev_bun_watcher().remove_directory(entry.watch_hash);
 
         // The Box key drops on swap_remove_at.
         let _ = self.watches.swap_remove_at(entry_index);
@@ -93,8 +88,8 @@ pub(crate) struct Entry {
     pub(crate) dir_fd_owned: bool,
     /// `Dep.Index` — head of the singly-linked dep chain for this dir.
     pub(crate) first_dep: u32,
-    /// To pass to `Watcher.remove`.
-    pub(crate) watch_index: bun_watcher::WatchItemIndex,
+    /// To pass to `Watcher::remove_directory`.
+    pub(crate) watch_hash: bun_watcher::HashType,
 }
 impl Default for Entry {
     fn default() -> Self {
@@ -102,7 +97,7 @@ impl Default for Entry {
             dir: bun_sys::Fd::INVALID,
             dir_fd_owned: false,
             first_dep: 0,
-            watch_index: 0,
+            watch_hash: 0,
         }
     }
 }
@@ -357,14 +352,14 @@ impl DirectoryWatchStore {
         // the watcher reads it on a file event. Owning the copy also lets the
         // map keep its own boxed key independently, so no extra intermediate
         // `Box` is needed here.
-        let watch_index = match self.dev_bun_watcher().add_directory::<true>(
-            fd,
-            dir_name_to_watch,
-            bun_watcher::Watcher::get_hash(dir_name_to_watch),
-        ) {
-            Err(_) => return Err(DirectoryWatchInsertError::Ignore),
-            Ok(id) => id,
-        };
+        let watch_hash = bun_watcher::Watcher::get_hash(dir_name_to_watch);
+        if self
+            .dev_bun_watcher()
+            .add_directory::<true>(fd, dir_name_to_watch, watch_hash)
+            .is_err()
+        {
+            return Err(DirectoryWatchInsertError::Ignore);
+        }
 
         // Disarm errdefer guards: success path.
         let fd = scopeguard::ScopeGuard::into_inner(fd_guard);
@@ -379,7 +374,7 @@ impl DirectoryWatchStore {
             dir: fd,
             dir_fd_owned: owned_fd,
             first_dep: dep,
-            watch_index,
+            watch_hash,
         };
         Ok(())
     }

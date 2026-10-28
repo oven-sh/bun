@@ -825,10 +825,14 @@ impl Watcher {
         // Check if already watched (with lock to avoid race with removal)
         {
             self.mutex.lock();
-            let already_watched = self.index_of(hash).is_some();
+            let watched = self.index_of(hash);
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if let Some(index) = watched {
+                self.watch_file_again_if_unwatched(index as usize);
+            }
             self.mutex.unlock();
 
-            if already_watched {
+            if watched.is_some() {
                 return true;
             }
         }
@@ -887,6 +891,8 @@ impl Watcher {
             if fd.is_valid() {
                 self.watchlist.items_offered_with_fd_mut()[index as usize] = true;
             }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            self.watch_file_again_if_unwatched(index as usize);
             self.mutex.unlock();
             return Ok(FdOwnership::Caller);
         }
@@ -900,6 +906,31 @@ impl Watcher {
         );
         self.mutex.unlock();
         r
+    }
+
+    /// Puts the watch of the file item at `index` on the inode at its path. False if there is none.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) fn watch_file_again(&mut self, index: usize) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let path = &self.watchlist.items_file_path()[index];
+        let watch = if path.len() < buf.len() {
+            buf[..path.len()].copy_from_slice(path);
+            buf[path.len()] = 0;
+            // SAFETY: buf[path.len()] == 0 written above
+            let path = unsafe { ZStr::from_raw(buf.as_ptr(), path.len()) };
+            self.platform.watch_path(path).unwrap_or(platform::NO_WATCH)
+        } else {
+            platform::NO_WATCH
+        };
+        self.watchlist.items_eventlist_index_mut()[index] = watch;
+        watch != platform::NO_WATCH
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn watch_file_again_if_unwatched(&mut self, index: usize) {
+        if self.watchlist.items_eventlist_index()[index] == platform::NO_WATCH {
+            self.watch_file_again(index);
+        }
     }
 
     pub fn index_of(&self, hash: HashType) -> Option<u32> {
@@ -934,6 +965,16 @@ impl Watcher {
                     self.evict_list[self.evict_list_i as usize] = parent as WatchItemIndex;
                     self.evict_list_i += 1;
                 }
+            }
+        }
+    }
+
+    /// Queues the directory item with `hash` for eviction. An index kept from `add_directory` can name another item.
+    pub fn remove_directory(&mut self, hash: HashType) {
+        let _guard = self.mutex.lock_guard();
+        if let Some(index) = self.index_of(hash) {
+            if self.watchlist.items_kind()[index as usize] == WatchItemKind::Directory {
+                self.remove_at_index::<false>(WatchItemKind::File, index, 0, &[]);
             }
         }
     }
@@ -1087,6 +1128,8 @@ pub trait WatchItemColumns {
     fn items_offered_with_fd_mut(&mut self) -> &mut [bool];
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex];
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn items_eventlist_index_mut(&mut self) -> &mut [platform::EventListIndex];
 }
 
 impl WatchItemColumns for WatchList {
@@ -1115,6 +1158,10 @@ impl WatchItemColumns for WatchList {
     fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
         self.items::<"eventlist_index", platform::EventListIndex>()
     }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn items_eventlist_index_mut(&mut self) -> &mut [platform::EventListIndex] {
+        self.items_mut::<"eventlist_index", platform::EventListIndex>()
+    }
 }
 
 impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
@@ -1142,6 +1189,10 @@ impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
         self.items::<"eventlist_index", platform::EventListIndex>()
+    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn items_eventlist_index_mut(&mut self) -> &mut [platform::EventListIndex] {
+        self.items_mut::<"eventlist_index", platform::EventListIndex>()
     }
 }
 

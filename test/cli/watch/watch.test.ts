@@ -5,6 +5,7 @@ import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirS
 import {
   copyFileSync,
   linkSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   readlinkSync,
@@ -1068,6 +1069,50 @@ for (const [name, args, generated] of [
   });
 }
 
+// A removed file leaves its entry with a watch on an inode that is gone, when
+// no event of the directory is matched to its name. The entry stands for the
+// path, so the file that is created there later has to get a watch again.
+for (const [name, dep, importDep, makeGone] of [
+  ["a dot-named import", ".dep.js", `(await import("./.dep.js")).n`, (path: string) => rmSync(path)],
+  [
+    "a text import with an extension that has no loader",
+    "dep.data",
+    `(await import("./dep.data", { with: { type: "text" } })).default.trim()`,
+    (path: string) => rmSync(path),
+  ],
+  [
+    "an import in a directory that was removed too",
+    "lib/dep.js",
+    `(await import("./lib/dep.js")).n`,
+    (path: string) => (rmSync(join(path, ".."), { recursive: true }), mkdirSync(join(path, ".."))),
+  ],
+] as const) {
+  it.concurrent.skipIf(!isLinux)(`--hot watches ${name} again after it is removed and created again`, async () => {
+    const main = (save: number) =>
+      `// save ${save}\ntry {\n  console.log("run", ${importDep});\n} catch {\n  console.log("missing");\n}\n${keepAlive}`;
+    const content = (n: number) => (dep.endsWith(".js") ? exporter(n) : `${n}\n`);
+    using dir = tempDir("watch-recreated-import", { "main.js": main(1), [dep]: content(1) });
+    const cwd = realpathSync(String(dir));
+    await using proc = spawnWatchee(cwd, ["--hot", "--no-clear-screen", "main.js"]);
+    const out = stdoutWaiter(proc);
+    const path = join(cwd, dep);
+    await out.waitFor("run 1\n");
+    await watchOn(proc.pid, path);
+    makeGone(path);
+    // The watcher reads the removal before this save, so the run that the save
+    // starts comes after it.
+    writeFileSync(join(cwd, "main.js"), main(2));
+    await out.waitFor("missing\n");
+    writeFileSync(path, content(2));
+    writeFileSync(join(cwd, "main.js"), main(3));
+    await out.waitFor("run 2\n");
+    await watchOn(proc.pid, path);
+    writeFileSync(path, content(3));
+    await out.waitFor("run 3\n");
+    out.release();
+  });
+}
+
 // An import that the user removes from the working directory reloads, and the
 // run reports it. The event of the directory does that, on the old inode's
 // entry. This passes without the fix.
@@ -1096,6 +1141,41 @@ for (const flag of ["--watch", "--hot"]) {
     }
     expect(stderr).toContain("Cannot find module");
   });
+}
+
+// An entry point has no importer that can report it as missing. One that is
+// removed outside the working directory reloads as one inside it does: --hot
+// reports it and keeps the process, --watch ends.
+for (const flag of ["--watch", "--hot"]) {
+  it.concurrent.skipIf(!isLinux)(
+    `${flag} reports an entry point outside the working directory that is removed`,
+    async () => {
+      using dir = tempDir("watch-removed-entry", { "app/.keep": "", "tools/server.js": entryPoint(1) });
+      const root = realpathSync(String(dir));
+      await using proc = spawn({
+        cwd: join(root, "app"),
+        cmd: [bunExe(), flag, "--no-clear-screen", "../tools/server.js"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      concurrentWatchees.add(proc);
+      const out = stdoutWaiter(proc);
+      await out.waitFor("run 1\n");
+      out.release();
+      const entry = join(root, "tools", "server.js");
+      await watchOn(proc.pid, entry);
+      rmSync(entry);
+      let stderr = "";
+      for await (const chunk of proc.stderr) {
+        stderr += new TextDecoder().decode(chunk);
+        if (stderr.includes("Module not found")) break;
+      }
+      expect(stderr).toContain("Module not found");
+      if (flag === "--watch") expect(await proc.exited).toBe(1);
+    },
+  );
 }
 
 // A stylesheet that a program imports once is registered by path, and no run

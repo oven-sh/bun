@@ -683,6 +683,56 @@ devTest("a file outside the root reloads after each save by rename", {
     }
   },
 });
+devTest("a failed import that resolves does not release the directory watch of another one", {
+  // The dev server watches the directory of a failed import, and it kept the
+  // position of that watch in the watchlist. A removed file leaves the
+  // watchlist, which moves the last item into its place.
+  skip: ["win32", "darwin"],
+  files: {
+    "web/index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "web/index.ts": `
+      import { value } from "../outside/dep";
+      import { other } from "../outside/other";
+      console.log(value + other);
+      import.meta.hot.accept();
+    `,
+    "outside/dep.ts": `
+      export const value = "one";
+    `,
+    "outside/other.ts": `
+      export const other = "+";
+    `,
+  },
+  cwd: "web",
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("one+");
+    // A first failed import. The watch on its directory, web, is the last item.
+    await dev.write(
+      "web/index.ts",
+      `
+        import { value } from "../outside/dep";
+        import { other } from "../outside/other";
+        import "./later";
+        console.log(value + other);
+        import.meta.hot.accept();
+      `,
+      { errors: null },
+    );
+    // A removed file is a second failed import. The watch on its directory,
+    // outside, takes the position that the first one had.
+    await dev.delete("outside/other.ts", { errors: null });
+    // The first failed import resolves, which releases its watch.
+    await dev.write("web/later.ts", `export {};`, { errors: null });
+    // The release is applied after the next batch of events.
+    await dev.patch("web/index.ts", { find: "value + other", replace: `value + other + "!"`, errors: null });
+    // The second failed import must still be retried.
+    await dev.write("outside/other.ts", `export const other = "+";`);
+    await c.expectMessage("one+!");
+  },
+});
 devTest("hot update frames are not delivered to application websocket topics", {
   files: {
     "index.html": emptyHtmlFile({

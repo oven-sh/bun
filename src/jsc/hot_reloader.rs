@@ -496,6 +496,9 @@ where
     }
 
     pub(crate) fn append(&mut self, id: u32) {
+        if self.hashes[..self.count as usize].contains(&id) {
+            return;
+        }
         if self.count == 8 {
             self.enqueue();
             self.count = 0;
@@ -879,16 +882,17 @@ where
 
             match kind {
                 bun_watcher::Kind::File => {
-                    // Removed, not replaced: the directory's event reloads it, or nothing does.
-                    let removed = IS_LINUX
+                    // inotify reports `DELETE` for a file only when nothing is at its path.
+                    let gone = IS_LINUX
                         && event.op.contains(WatchOp::DELETE)
-                        && offered_with_fd[event.index as usize]
-                        && !bun_sys::exists(file_path);
-                    let left_to_directory = removed
+                        && offered_with_fd[event.index as usize];
+                    let left_to_directory = gone
                         && hashes.iter().zip(kinds).any(|(hash, kind)| {
                             *hash == parents[event.index as usize]
                                 && *kind == bun_watcher::Kind::Directory
                         });
+                    // A removed module reloads from its directory's event or not at all, an entry point always.
+                    let removed = gone && (left_to_directory || current_hash != self.main.hash);
                     if !bun_watcher::WATCHES_BY_PATH
                         && !left_to_directory
                         && (event.op.contains(WatchOp::DELETE)

@@ -130,9 +130,10 @@ fn testing_impl<'a>(
     parser_options.flags |= flags;
 
     let mut import_records = Vec::<ImportRecord>::default();
+    let sheet = bun_ast::Source::init_path_string(b"", source);
     match StyleSheet::<DefaultAtRule>::parse(
         alloc,
-        source,
+        &sheet,
         parser_options,
         Some(&mut import_records),
         bun_ast::Index::INVALID,
@@ -253,10 +254,11 @@ pub(crate) fn attr_test<'a>(
     let parser_options = ParserOptions::default(Some(&mut log));
 
     let mut import_records = Vec::<ImportRecord>::default();
+    let attribute = bun_ast::Source::init_path_string(b"", source);
     match StyleAttribute::parse(
         alloc,
-        source,
-        &parser_options,
+        &attribute,
+        parser_options,
         &mut import_records,
         bun_ast::Index::INVALID,
     ) {

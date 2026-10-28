@@ -56,6 +56,7 @@ const { width, height, format } = await new Bun.Image(input).metadata();
 
 ```ts
 img.resize(800); // width 800, keep aspect ratio
+img.resize(null, 600); // height 600, keep aspect ratio
 img.resize(800, 600); // exactly 800×600 (stretch)
 img.resize(800, 600, { fit: "inside" }); // fit within 800×600
 img.resize(800, 600, { withoutEnlargement: true }); // never upscale

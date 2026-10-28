@@ -163,6 +163,8 @@ impl jsc::FromJsEnum for codecs::Filter {
     }
 }
 
+/// Target box for `.resize()`. A zero side means "derive from the source
+/// aspect ratio", resolved in `resolve_resize` once the source dims are known.
 #[derive(Clone, Copy)]
 pub(crate) struct Resize {
     pub(crate) w: u32,
@@ -413,17 +415,24 @@ impl Image {
     ) -> JsResult<JsWrapper<'a, Self>> {
         let global = cx.global();
         let (width, height, opt) = (width.to_js(), height.to_js(), options.to_js());
-        if !width.is_number() {
-            return Err(
-                global.throw_invalid_arguments(format_args!("resize(width, height?, options?)"))
-            );
+        // Sharp shape: `resize(w)`, `resize(w, h)` or `resize(null, h)`. A
+        // nullish width is allowed only when the height is given.
+        let width_auto = width.is_undefined_or_null() && height.is_number();
+        if !width.is_number() && !width_auto {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "resize(width | null, height?, options?)"
+            )));
         }
         // 0x3FFF² is the max_pixels default; capping each side at 0x3FFFF (≈262k)
         // keeps every downstream u32 product in range without a per-stage check.
+        // 0 on either side = preserve aspect ratio (resolved at execute time
+        // once the source dimensions are known).
         let mut r = Resize {
-            w: coerce_int!(u32, width.as_number(), 1.0, 0x3FFFF as f64),
-            // 0 height = preserve aspect ratio (resolved at execute time once the
-            // source dimensions are known).
+            w: if width.is_number() {
+                coerce_int!(u32, width.as_number(), 0.0, 0x3FFFF as f64)
+            } else {
+                0
+            },
             h: if height.is_number() {
                 coerce_int!(u32, height.as_number(), 0.0, 0x3FFFF as f64)
             } else {
@@ -1628,9 +1637,13 @@ impl PipelineTask {
         // (flip/flop are pure mirrors that never change w/h, so the hint
         //  stays valid through them.)
         let hint: codecs::DecodeHint = if let Some(r) = self.pipeline.resize {
-            let mut tw = r.w;
-            // r.h==0 means "preserve aspect" — constrain on width only.
-            let mut th = if r.h != 0 { r.h } else { r.w };
+            // A zero side means "preserve aspect" — constrain on the given
+            // side only. Both zero leaves the hint empty (full decode).
+            let (mut tw, mut th) = match (r.w, r.h) {
+                (0, h) => (h, h),
+                (w, 0) => (w, w),
+                (w, h) => (w, h),
+            };
             let swap_explicit = self.pipeline.rotate == 90 || self.pipeline.rotate == 270;
             let swap_exif = self.auto_orient && {
                 let t = exif::read_jpeg(input).transform();
@@ -2008,18 +2021,28 @@ fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs:
     })
 }
 
+/// Derive the unspecified side of a resize box from the source aspect ratio:
+/// `given` is the requested size of one side, `src_given` and `src_other` are
+/// the source sizes of that side and of the derived side.
+///
+/// Computed in f64 so the product cannot wrap (`given` is user-controlled
+/// and a source side is bounded only by `max_pixels`) and rounded to the
+/// nearest pixel, as Sharp/libvips do. The quotient can exceed u32 for
+/// tall-thin sources (1×5M with .resize(1k) → 5e9), so clamp to the same
+/// per-side cap `resize` uses before the narrowing cast. The maxPixels
+/// guard then rejects the product.
+fn derive_axis(given: u32, src_given: u32, src_other: u32) -> u32 {
+    let derived = (f64::from(src_other) * f64::from(given) / f64::from(src_given)).round();
+    coerce_int!(u32, derived, 1.0, 0x3FFFF as f64)
+}
+
 /// Map a resize spec to concrete output dims given the current dims.
 fn resolve_resize(r: Resize, sw: u32, sh: u32) -> (u32, u32) {
-    let mut w = r.w;
-    // Widen before multiplying — `r.w` is user-controlled and `sh` is
-    // bounded only by `max_pixels`, so the u32 product can wrap; and the
-    // quotient can exceed u32 for tall-thin sources (1×5M with .resize(1k)
-    // → 5e9), so clamp to the same per-side cap `resize` uses before the
-    // narrowing cast. The maxPixels guard then rejects the product.
-    let mut h: u32 = if r.h != 0 {
-        r.h
-    } else {
-        u32::try_from((0x3FFFFu64).min(1u64.max((r.w as u64) * (sh as u64) / (sw as u64)))).unwrap()
+    let (mut w, mut h) = match (r.w, r.h) {
+        (0, 0) => return (sw, sh),
+        (0, h) => (derive_axis(h, sh, sw), h),
+        (w, 0) => (w, derive_axis(w, sw, sh)),
+        (w, h) => (w, h),
     };
     if r.fit == Fit::Inside {
         // Shrink the box so the source's aspect ratio is preserved and

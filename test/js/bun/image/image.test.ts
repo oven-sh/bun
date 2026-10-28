@@ -380,6 +380,61 @@ describe("Bun.Image", () => {
       expect({ w: a.w, h: a.h }).toEqual({ w: 4, h: 2 });
       expect({ w: a.w, h: a.h }).toEqual({ w: b.w, h: b.h });
     });
+
+    describe("height only", () => {
+      // 20×13: 13 → 5 derives 20 × 5 / 13 = 7.69, so rounding and truncation
+      // disagree (8 vs 7) and a clamp-to-1 width would give 1×5.
+      const src = makePng(20, 13, (x, y) => [(x * 12) & 255, (y * 19) & 255, 0, 255]);
+      const dims = async (img: Bun.Image) => {
+        const { w, h } = decodePngRaw(await img.png().bytes());
+        return { w, h };
+      };
+
+      test.each([null, undefined, 0])("resize(%p, h) derives the width from the aspect ratio", async width => {
+        expect(await dims(new Bun.Image(src).resize(width, 5))).toEqual({ w: 8, h: 5 });
+      });
+
+      test("resize(w) rounds the derived height", async () => {
+        // 13 × 12 / 20 = 7.8 → 8.
+        expect(await dims(new Bun.Image(src).resize(12))).toEqual({ w: 12, h: 8 });
+      });
+
+      test("fit: 'inside' keeps the requested height", async () => {
+        expect(await dims(new Bun.Image(src).resize(null, 5, { fit: "inside" }))).toEqual({ w: 8, h: 5 });
+      });
+
+      test("withoutEnlargement returns the source size when the height is larger", async () => {
+        expect(await dims(new Bun.Image(src).resize(null, 26, { withoutEnlargement: true }))).toEqual({
+          w: 20,
+          h: 13,
+        });
+        expect(await dims(new Bun.Image(src).resize(null, 26))).toEqual({ w: 40, h: 26 });
+      });
+
+      test("resize(0, 0) keeps the source size", async () => {
+        expect(await dims(new Bun.Image(src).resize(0, 0))).toEqual({ w: 20, h: 13 });
+      });
+
+      test("JPEG source goes through the decode-time downscale hint", async () => {
+        // 64×48 → height 10: the IDCT picker may decode at 1/4 (16×12), which
+        // must still land on round(64 × 10 / 48) = 13 × 10.
+        const big = makePng(64, 48, (x, y) => [(x * 4) & 255, (y * 5) & 255, 128, 255]);
+        const jpg = await new Bun.Image(big).jpeg({ quality: 90 }).bytes();
+        expect(await dims(new Bun.Image(jpg).resize(null, 10))).toEqual({ w: 13, h: 10 });
+        expect(await dims(new Bun.Image(jpg).resize(null, 12))).toEqual({ w: 16, h: 12 });
+      });
+
+      test("a nullish width with no height still throws", () => {
+        for (const args of [[], [null], [undefined], [undefined, undefined], [null, "5"]] as const) {
+          expect(() => new Bun.Image(src).resize(...(args as [number]))).toThrow(
+            expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+          );
+        }
+        expect(() => new Bun.Image(src).resize("5" as any, 5)).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+        );
+      });
+    });
   });
 
   test("path string input reads from disk", async () => {

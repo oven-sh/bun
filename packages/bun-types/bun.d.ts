@@ -9908,8 +9908,16 @@ declare module "bun" {
 
     constructor(input: string | ArrayBuffer | NodeJS.TypedArray | Blob, options?: Image.ConstructorOptions);
 
-    /** Set target dimensions. Omit `height` to keep the source aspect ratio. */
-    resize(width: number, height?: number, options?: Image.ResizeOptions): this;
+    /**
+     * Set target dimensions. Omit `height` to keep the source aspect ratio.
+     * Pass `null` (or `0`) as `width` to resize by height only and derive the
+     * width from the aspect ratio.
+     *
+     * @example
+     * img.resize(800); // width 800, keep aspect ratio
+     * img.resize(null, 600); // height 600, keep aspect ratio
+     */
+    resize(width: number | null | undefined, height?: number, options?: Image.ResizeOptions): this;
     /** Rotate by a multiple of 90°. */
     rotate(degrees: number): this;
     /** Mirror about the x-axis (vertical). */

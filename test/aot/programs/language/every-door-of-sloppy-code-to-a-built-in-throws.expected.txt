@@ -1,0 +1,42 @@
+a store by name | TypeError: Cannot assign to Array.prototype.push because built-in obj | as it was
+a store by a literal key | TypeError: Cannot assign to Array.prototype.push because built-in obj | as it was
+a store by a computed key | TypeError: Cannot assign to Array.prototype.push because built-in obj | as it was
+a store by a symbol | TypeError: Cannot assign to Array.prototype[Symbol(Symbol.iterator)]  | as it was
+a store through a value nobody knows | TypeError: Cannot assign to Array.prototype.push because built-in obj | as it was
+a deletion by name | TypeError: Cannot delete Array.prototype.map because built-in objects | as it was
+a deletion by a computed key | TypeError: Cannot delete Array.prototype.push because built-in object | as it was
+a deletion through a value nobody knows | TypeError: Cannot delete Array.prototype.map because built-in objects | as it was
+a new name on Object.prototype | TypeError: Cannot assign to Object.prototype.extra because built-in o | as it was
+a new name on Object.prototype by a computed key | TypeError: Cannot assign to Object.prototype.pushed because built-in  | as it was
+a member of Object.prototype | TypeError: Cannot assign to Object.prototype.toString because built-i | as it was
+a deletion on Object.prototype | TypeError: Cannot delete Object.prototype.toString because built-in o | as it was
+a new name on Function.prototype | TypeError: Cannot assign to Function.prototype.mine because built-in  | as it was
+a member of Function.prototype | TypeError: Cannot assign to Function.prototype.call because built-in  | as it was
+a member of Promise.prototype | TypeError: Cannot assign to Promise.prototype.then because built-in o | as it was
+a member of RegExp.prototype | TypeError: Cannot assign to RegExp.prototype.exec because built-in ob | as it was
+a compound assignment | TypeError: Cannot assign to Array.prototype.push because built-in obj | as it was
+a logical assignment | TypeError: Cannot assign to Array.prototype.push because built-in obj | as it was
+an increment | TypeError: Cannot assign to Array.prototype.push because built-in obj | as it was
+an array pattern | TypeError: Cannot assign to Array.prototype.push because built-in obj | as it was
+an object pattern | TypeError: Cannot assign to Array.prototype.push because built-in obj | as it was
+the target of for-of | TypeError: Cannot assign to Array.prototype.push because built-in obj | as it was
+the target of for-in | TypeError: Cannot assign to Array.prototype.push because built-in obj | as it was
+with | TypeError: Cannot assign to Array.prototype.push because built-in obj | as it was
+Object.assign | TypeError: Cannot assign to Array.prototype.push because built-in obj | as it was
+a numeric key | TypeError: Cannot assign to Array.prototype[3] because built-in objec | as it was
+the length of Array.prototype | TypeError: Cannot assign to Array.prototype.length because built-in o | as it was
+__proto__ | TypeError: Cannot assign to Array.prototype.__proto__ because built-i | as it was
+a member of a namespace | TypeError: Cannot assign to Math.max because built-in objects are rea | as it was
+a member of a constructor | TypeError: Cannot assign to Array.from because built-in objects are r | as it was
+a global by its name | TypeError: Cannot assign to Array because built-in objects are read-o | as it was
+a global as a member | TypeError: Cannot assign to Array because built-in objects are read-o | as it was
+a deletion of a global | TypeError: Cannot delete Array because built-in objects are read-only | as it was
+call on a built-in function | TypeError: Cannot assign to 'call' of a built-in function because bui | as it was
+a host prototype | TypeError: Cannot assign to Request.prototype.json because built-in o | as it was
+super, with the built-in as this | TypeError: Cannot assign to Array.prototype.push because built-in obj | as it was
+super, a new name | TypeError: Cannot assign to Object.prototype.extra because built-in o | as it was
+text that is evaluated | TypeError: Cannot assign to Array.prototype.push because built-in obj | as it was
+Math.PI, read-only by the language | silent | as it was
+undefined, read-only by the language | silent | as it was
+the same value again | silent | as it was
+Reflect false false false false false

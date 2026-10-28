@@ -51,6 +51,7 @@ unsafe extern "Rust" {
     ) -> Option<Dependency::Version>;
 }
 use crate::cache::Set as CacheSet;
+use crate::compiled_program::PackageLookup;
 use ::bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 
 /// `Dependency` namespace as the body spells it (`Dependency::Version` /
@@ -571,6 +572,9 @@ pub struct Resolver<'a> {
     ///
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
+
+    /// Why "exports" or "imports" led to no file: the first time since this was last `None`.
+    pub esm_failure: Option<crate::package_json::Status>,
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -648,6 +652,7 @@ impl<'a> Resolver<'a> {
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
             custom_dir_paths: None,
+            esm_failure: None,
         }
     }
 
@@ -859,7 +864,10 @@ impl<'a> Resolver<'a> {
         // process-lifetime storage (Transpiler-owned). The returned pointer
         // names the `PackageManager` singleton (`'static`).
         let pm: NonNull<dyn AutoInstaller> = unsafe {
-            __bun_resolver_init_package_manager(
+            bun_removable_features::call_removable!(
+                Install,
+                Abort,
+                __bun_resolver_init_package_manager,
                 self.log,
                 self.opts.install,
                 env,
@@ -905,7 +913,32 @@ impl<'a> Resolver<'a> {
     ) -> Option<Dependency::Version> {
         match self.auto_installer().filter(|_| is_project) {
             Some(pm) => pm.parse_dependency(name, Some(name_hash), version, sliced, log),
-            None => __bun_resolver_parse_dependency(name, name_hash, version, sliced, log),
+            // `bun run --filter` (Tools) calls this too: the parser is removed only with both.
+            None if bun_removable_features::is_removed(
+                bun_removable_features::Feature::Install,
+            ) =>
+            {
+                bun_removable_features::call_removable!(
+                    Tools,
+                    Abort,
+                    __bun_resolver_parse_dependency,
+                    name,
+                    name_hash,
+                    version,
+                    sliced,
+                    log,
+                )
+            }
+            None => bun_removable_features::call_removable!(
+                Install,
+                Abort,
+                __bun_resolver_parse_dependency,
+                name,
+                name_hash,
+                version,
+                sliced,
+                log,
+            ),
         }
     }
 
@@ -942,7 +975,9 @@ impl<'a> Resolver<'a> {
         // in addition to being not fully stable, it is completely unexpected to invoke
         // a package manager after bundling an executable. if enough people run into
         // this, we could implement point 1
-        if self.standalone_module_graph.is_some() {
+        if self.standalone_module_graph.is_some()
+            || bun_removable_features::is_removed(bun_removable_features::Feature::Install)
+        {
             return false;
         }
 
@@ -983,6 +1018,7 @@ impl<'a> Resolver<'a> {
             standalone_module_graph: None,
             prefer_module_field: true,
             custom_dir_paths: None,
+            esm_failure: None,
         }
     }
 
@@ -1095,6 +1131,92 @@ impl<'a> Resolver<'a> {
     }
 
     // var tracing_start: i128 — unused; dropped.
+
+    /// The module of the executable that `specifier` names from `source_dir`, found as `bun run` finds a file: as spelled, with each extension, then the main file or the index file of a directory.
+    pub fn resolve_embedded_module(
+        &self,
+        source_dir: &[u8],
+        specifier: &[u8],
+        kind: ast::ImportKind,
+    ) -> Option<&'static [u8]> {
+        let search = crate::compiled_program::ExtensionSearch {
+            extensions: self.opts.ext_order_slice(self.extension_order),
+            extra_extensions: &self.opts.extra_cjs_extensions,
+            rewritten_extensions: &|extension, path| {
+                rewritten_file_extensions(extension, || {
+                    strings::path_contains_node_modules_folder(path)
+                })
+            },
+        };
+        self.standalone_module_graph?.resolve_module(
+            source_dir,
+            specifier,
+            is_require(kind),
+            &search,
+        )
+    }
+
+    /// The module of the executable that a bare `specifier` names from `source_dir`: an entry point, by the name of its package.
+    pub fn resolve_embedded_package(
+        &self,
+        source_dir: &[u8],
+        specifier: &[u8],
+        kind: ast::ImportKind,
+    ) -> PackageLookup {
+        let search = crate::compiled_program::ExtensionSearch {
+            extensions: self.opts.ext_order_slice(self.extension_order),
+            extra_extensions: &self.opts.extra_cjs_extensions,
+            rewritten_extensions: &|extension, path| {
+                rewritten_file_extensions(extension, || {
+                    strings::path_contains_node_modules_folder(path)
+                })
+            },
+        };
+        let Some(graph) = self.standalone_module_graph else {
+            return PackageLookup::Unknown;
+        };
+        graph.resolve_package(source_dir, specifier, is_require(kind), &search)
+    }
+
+    /// What an executable compiled in place holds under the path that `specifier` names from `source_dir`: a compiled module, then a file that `--asset` gave it.
+    fn resolve_at_source_path(
+        &self,
+        source_dir: &[u8],
+        specifier: &[u8],
+        kind: ast::ImportKind,
+    ) -> Option<&'static [u8]> {
+        use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+        let graph = self.standalone_module_graph?;
+        let program = graph
+            .compiled_program()
+            .filter(|program| program.preserves_source_paths)?;
+        let is_relative = matches!(specifier, [b'.', s, ..] | [b'.', b'.', s, ..] if bun_paths::is_sep_native(*s));
+        if !is_relative && !bun_paths::is_absolute(specifier) {
+            return None;
+        }
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        let path = join_abs_string_buf_checked::<platform::Auto>(
+            source_dir,
+            &mut buffer[..],
+            &[specifier],
+        )?;
+        let search = crate::compiled_program::ExtensionSearch {
+            extensions: self.opts.ext_order_slice(self.extension_order),
+            extra_extensions: &self.opts.extra_cjs_extensions,
+            rewritten_extensions: &|extension, path| {
+                rewritten_file_extensions(extension, || {
+                    strings::path_contains_node_modules_folder(path)
+                })
+            },
+        };
+        let how = crate::compiled_program::HowNamed {
+            names_directory: Self::import_path_names_directory(specifier),
+            is_require: is_require(kind),
+        };
+        program
+            .resolve_module_at_source_path(path, how, &search)
+            .or_else(|| graph.file_at_source_path(path))
+    }
 
     pub fn resolve_and_auto_install<'r>(
         &mut self,
@@ -1356,31 +1478,50 @@ impl<'a> Resolver<'a> {
         //
         // ...unless you pass a relative path that exists in the standalone module graph executable.
         let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
+        let importer_directory: Vec<u8>;
         let source_dir_normalized: &[u8] = 'brk: {
             if let Some(graph) = self.standalone_module_graph {
                 let specifier_is_embedded_path =
                     ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path);
+                let embedded = match self.resolve_embedded_module(source_dir, import_path, kind) {
+                    Some(file_name) => PackageLookup::Found(file_name),
+                    None => self.resolve_embedded_package(source_dir, import_path, kind),
+                };
+                if embedded == PackageLookup::Hidden {
+                    self.extension_order = original_order;
+                    return ResultUnion::NotFound;
+                }
+                if let PackageLookup::Found(file_name) = embedded {
+                    self.extension_order = original_order;
+                    return ResultUnion::Success(Result {
+                        import_kind: kind,
+                        path_pair: PathPair {
+                            primary: Path::init(file_name),
+                            secondary: None,
+                        },
+                        module_type: options::ModuleType::Esm,
+                        flags: ResultFlags::IS_STANDALONE_MODULE,
+                        ..Default::default()
+                    });
+                }
                 if specifier_is_embedded_path
                     || ::bun_options_types::standalone_path::is_bun_standalone_file_path(source_dir)
                 {
-                    if let Some(file_name) = graph.resolve(source_dir, import_path) {
-                        self.extension_order = original_order;
-                        return ResultUnion::Success(Result {
-                            import_kind: kind,
-                            path_pair: PathPair {
-                                primary: Path::init(file_name),
-                                secondary: None,
-                            },
-                            module_type: options::ModuleType::Esm,
-                            flags: ResultFlags::IS_STANDALONE_MODULE,
-                            ..Default::default()
-                        });
-                    }
                     if specifier_is_embedded_path {
                         self.extension_order = original_order;
                         return ResultUnion::NotFound;
                     }
-                    break 'brk Fs::FileSystem::instance().top_level_dir();
+                    let top_level_dir = Fs::FileSystem::instance().top_level_dir();
+                    let mut directories = graph
+                        .directories_of_importer(source_dir, top_level_dir)
+                        .into_iter();
+                    if let Some(directory) = directories
+                        .find(|directory| self.read_dir_info_ignore_error(directory).is_some())
+                    {
+                        importer_directory = directory;
+                        break 'brk &importer_directory[..];
+                    }
+                    break 'brk top_level_dir;
                 }
             }
 
@@ -1434,6 +1575,20 @@ impl<'a> Resolver<'a> {
 
         let mut tmp =
             self.resolve_without_symlinks(source_dir_normalized, import_path, kind, global_cache);
+        if matches!(tmp, ResultUnion::NotFound)
+            && let Some(path) =
+                self.resolve_at_source_path(source_dir_normalized, import_path, kind)
+        {
+            self.extension_order = original_order;
+            return ResultUnion::Success(Result {
+                import_kind: kind,
+                path_pair: PathPair {
+                    primary: Path::init(path),
+                    secondary: None,
+                },
+                ..Default::default()
+            });
+        }
 
         // Fragments in URLs in CSS imports are technically expected to work
         if matches!(tmp, ResultUnion::NotFound) && kind.is_from_css() {
@@ -1635,7 +1790,17 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir) {
+            if let Some(own) = self.aot_package_config(path.text()) {
+                result.jsx = own.merge_jsx(options::jsx::Pragma {
+                    development: result.jsx.development,
+                    ..Default::default()
+                });
+                (result.flags).set_emit_decorator_metadata(own.emit_decorator_metadata);
+                (result.flags).set_experimental_decorators(own.experimental_decorators);
+                (result.flags).set_use_define_for_class_fields(
+                    own.use_define_for_class_fields != Some(false),
+                );
+            } else if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir) {
                 result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
                 result.flags.set_emit_decorator_metadata(
                     result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,
@@ -2071,7 +2236,7 @@ impl<'a> Resolver<'a> {
 
     /// Whether an import specifier explicitly names a directory: a trailing
     /// separator, `.`, `..`, or a path ending in `/.` or `/..`.
-    fn import_path_names_directory(import_path: &[u8]) -> bool {
+    pub(crate) fn import_path_names_directory(import_path: &[u8]) -> bool {
         let Some(&last) = import_path.last() else {
             return false;
         };
@@ -3061,7 +3226,10 @@ impl<'a> Resolver<'a> {
                         for (range, behavior) in installed.filter(|_| !resolve_from_lockfile) {
                             let buf = [esm.name, range].concat();
                             let (name, range) = buf.split_at(esm.name.len());
-                            let version = __bun_resolver_parse_dependency(
+                            let version = bun_removable_features::call_removable!(
+                                Install,
+                                Abort,
+                                __bun_resolver_parse_dependency,
                                 Semver::String::init(&buf, name),
                                 Semver::semver_string::Builder::string_hash(name),
                                 range,
@@ -3676,14 +3844,36 @@ impl<'a> Resolver<'a> {
 
     fn handle_esm_resolution(
         &mut self,
-        esm_resolution_: crate::package_json::Resolution,
+        mut esm_resolution: crate::package_json::Resolution,
         abs_package_path: &[u8],
         kind: ast::ImportKind,
         package_json: &PackageJSON,
         package_subpath: &[u8],
         out: &mut MatchResult,
     ) -> MatchStatus {
-        let mut esm_resolution = esm_resolution_;
+        let status = self.load_esm_resolution(
+            &mut esm_resolution,
+            abs_package_path,
+            kind,
+            package_json,
+            package_subpath,
+            out,
+        );
+        if !status.is_success() {
+            self.esm_failure.get_or_insert(esm_resolution.status);
+        }
+        status
+    }
+
+    fn load_esm_resolution(
+        &mut self,
+        esm_resolution: &mut crate::package_json::Resolution,
+        abs_package_path: &[u8],
+        kind: ast::ImportKind,
+        package_json: &PackageJSON,
+        package_subpath: &[u8],
+        out: &mut MatchResult,
+    ) -> MatchStatus {
         use crate::package_json::Status;
         if !((matches!(
             esm_resolution.status,
@@ -3952,8 +4142,10 @@ impl<'a> Resolver<'a> {
 
         if let Some(last_dot) = strings::last_index_of_char(base, b'.') {
             let ext = &base[last_dot..];
+            // `bun run --aot` finds `x.mts` for "./x.mjs" in a package too, like `bun build --compile --aot`.
             let ts_exts = rewritten_file_extensions(ext, || {
-                resolved_dir_info.is_node_modules() || resolved_dir_info.is_inside_node_modules()
+                (resolved_dir_info.is_node_modules() || resolved_dir_info.is_inside_node_modules())
+                    && !self.opts.conditions.import.contains_key(b"aot")
             });
 
             if !ts_exts.is_empty() {
@@ -5067,6 +5259,8 @@ impl<'a> Resolver<'a> {
                     bstr::BStr::new(import_path)
                 ));
             }
+            self.esm_failure
+                .get_or_insert(crate::package_json::Status::InvalidModuleSpecifier);
             return MatchStatus::NotFound;
         }
 
@@ -6014,8 +6208,10 @@ impl<'a> Resolver<'a> {
         // TypeScript-specific behavior: try rewriting ".js" to ".ts".
         if let Some(last_dot) = strings::last_index_of_char(base, b'.') {
             let ext = &base[last_dot..base.len()];
-            let exts =
-                rewritten_file_extensions(ext, || strings::path_contains_node_modules_folder(path));
+            let exts = rewritten_file_extensions(ext, || {
+                strings::path_contains_node_modules_folder(path)
+                    && !self.opts.conditions.import.contains_key(b"aot")
+            });
             if !exts.is_empty() {
                 let segment = &base[0..last_dot];
                 let tail = &mut bufs!(load_as_file)[path.len() - base.len()..];
@@ -6736,6 +6932,63 @@ impl<'a> Resolver<'a> {
         self.opts.tsconfig_override_json.clone()
     }
 
+    /// The `compilerOptions` that decide how the TypeScript file at `path` becomes JavaScript, if it is in a package with
+    /// the "aot" condition and this resolver reads that condition: those of the package's own `package.json`. No
+    /// `tsconfig.json` and no flag does, so the package answers alike in every program that installs it.
+    /// `None`: another file, or a file of the package that the program runs in.
+    pub fn aot_package_config(&mut self, path: &[u8]) -> Option<Arc<TSConfigJSON>> {
+        if !is_typescript_path(path) || !self.opts.conditions.import.contains_key(b"aot") {
+            return None;
+        }
+        let directory = bun_paths::dirname(path)?;
+        let known =
+            (AOT_PACKAGE_CONFIGS.lock().as_ref()).and_then(|all| all.get(directory).cloned());
+        if let Some(known) = known {
+            return known;
+        }
+        // Not under the lock: this takes the resolver's own.
+        let found = self.find_aot_package_config(directory);
+        let mut all = AOT_PACKAGE_CONFIGS.lock();
+        let _ = all.get_or_insert_default().put(directory, found.clone());
+        found
+    }
+
+    fn find_aot_package_config(&mut self, directory: &[u8]) -> Option<Arc<TSConfigJSON>> {
+        let names_aot = |manifest: &PackageJSON| {
+            [&manifest.exports, &manifest.imports]
+                .into_iter()
+                .flatten()
+                .any(|table| table.names_condition(b"aot"))
+        };
+        let mut manifests: Vec<&'static PackageJSON> = Vec::new();
+        let mut package = None;
+        let mut next = self.read_dir_info_ignore_error(directory);
+        while let Some(info) = next.filter(|info| !info.is_node_modules()) {
+            if let Some(manifest) = info.package_json() {
+                manifests.push(manifest);
+                let speaks_for_package = manifest.exports.is_some() || names_aot(manifest);
+                if package.is_none() && speaks_for_package {
+                    package = Some((info.abs_path, names_aot(manifest)));
+                }
+            }
+            next = info.get_parent();
+        }
+        let (package_directory, true) = package? else {
+            return None;
+        };
+        let working_directory = self.fs_ref().top_level_dir();
+        if ResolvePath::resolve_path::is_parent_or_equal(package_directory, working_directory)
+            != ResolvePath::resolve_path::ParentEqual::Unrelated
+        {
+            return None;
+        }
+        let stated = manifests.into_iter().find_map(|manifest| {
+            let parsed = self.parse_tsconfig(manifest.source.path.text, FD::INVALID);
+            parsed.ok().flatten().filter(|it| it.has_compiler_options)
+        });
+        Some(Arc::from(stated.unwrap_or_default()))
+    }
+
     /// `DirInfo::enclosing_tsconfig_json`, for this resolver.
     pub(crate) fn enclosing_tsconfig_json(
         &mut self,
@@ -6756,6 +7009,18 @@ impl<'a> Resolver<'a> {
             None => dir_info.tsconfig_json().map(TSConfigRef::OfDirectory),
         }
     }
+}
+
+/// [`Resolver::aot_package_config`] by directory. Empty without the "aot" condition. Like `DirInfo`, it belongs to no
+/// resolver: the runtime transpiles on other threads with copies of one.
+static AOT_PACKAGE_CONFIGS: bun_threading::Guarded<
+    Option<bun_collections::StringHashMap<Option<Arc<TSConfigJSON>>>>,
+> = bun_threading::Guarded::new(None);
+
+fn is_typescript_path(path: &[u8]) -> bool {
+    [&b".ts"[..], b".tsx", b".mts", b".cts"]
+        .iter()
+        .any(|extension| path.ends_with(extension))
 }
 
 /// The configuration file that applies in a directory.
@@ -6925,6 +7190,13 @@ bun_core::comptime_string_map! {
 #[inline]
 pub fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
     MODULE_TYPE_FROM_EXT.get(ext).copied()
+}
+
+fn is_require(kind: ast::ImportKind) -> bool {
+    matches!(
+        kind,
+        ast::ImportKind::Require | ast::ImportKind::RequireResolve
+    )
 }
 
 /// TypeScript matches `./foo.js` with `./foo.ts` (microsoft/TypeScript#4595). This

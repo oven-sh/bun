@@ -1,0 +1,8 @@
+a function beside eval: 5
+eval: EvalError undefined
+a function beside Function: 8
+Function: EvalError undefined
+a function beside require: string
+require: Error undefined
+a function beside process.getBuiltinModule: string
+process.getBuiltinModule: Error MODULE_NOT_FOUND

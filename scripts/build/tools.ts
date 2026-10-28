@@ -517,7 +517,6 @@ export function resolveLlvmToolchain(
   | "hostCc"
   | "hostCxx"
   | "ar"
-  | "ranlib"
   | "ld"
   | "ld64Lld"
   | "rustLlvmVersion"
@@ -532,7 +531,6 @@ export function resolveLlvmToolchain(
   | "dsymutil"
   | "ccache"
   | "rc"
-  | "mt"
   | "nasm"
   | "clangVersion"
   | "clangResourceDir"
@@ -599,17 +597,6 @@ export function resolveLlvmToolchain(
     required: true,
   })?.path;
 
-  // ranlib: llvm-ranlib (unix hosts only — llvm-lib targets don't need it).
-  // Needed for nested cmake builds (CMAKE_RANLIB). llvm-ar's `s` flag does the
-  // same thing for our direct archives, but deps may call ranlib explicitly.
-  let ranlib: string | undefined;
-  if (os !== "windows") {
-    ranlib = findLlvmTool("llvm-ranlib", paths, os, {
-      checkVersion: false,
-      required: true,
-    })?.path;
-  }
-
   // ld: lld-link for windows targets, ld.lld on Linux (passed as --ld-path=).
   // On Darwin clang drives the system linker directly.
   let ld: string;
@@ -663,18 +650,10 @@ export function resolveLlvmToolchain(
     dsymutil = findLlvmTool("dsymutil", paths, os, { checkVersion: false, required: false })?.path;
   }
 
-  // rc/mt: windows targets only. Passed to nested cmake — when
-  // CMAKE_C_COMPILER is an explicit path, cmake's find_program for these
-  // may not search the compiler's directory, so we resolve them here and
-  // pass explicitly. rc is required (cmake's try_compile on windows uses
-  // it, and the final link embeds windows-app-info.res); mt is optional
-  // (not all LLVM distros ship it — source.ts sets
-  // CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY as fallback).
+  // rc: windows targets only (the final link embeds windows-app-info.res).
   let rc: string | undefined;
-  let mt: string | undefined;
   if (msvcTarget) {
     rc = findLlvmTool("llvm-rc", paths, os, { checkVersion: false, required: true })?.path;
-    mt = findLlvmTool("llvm-mt", paths, os, { checkVersion: false, required: false })?.path;
   }
 
   // nasm: BoringSSL win-x64 and libjpeg-turbo x86_64 SIMD; compile.ts:nasm() asserts at the use site.
@@ -709,7 +688,6 @@ export function resolveLlvmToolchain(
     hostCc,
     hostCxx,
     ar,
-    ranlib,
     ld,
     ld64Lld,
     rustLlvmVersion,
@@ -724,7 +702,6 @@ export function resolveLlvmToolchain(
     dsymutil,
     ccache,
     rc,
-    mt,
     nasm,
   };
 }
@@ -782,10 +759,12 @@ export function probeRustToolchain(os: OS): {
   // it evidently did more than that check: every build job of CI build 91391
   // spent 34-36s in here without a line of output. Skip when there's no
   // pinned channel or no rustup — the `rustc` queries below will just use
-  // whatever's there.
+  // whatever's there — and when the pinned toolchain is already complete: the
+  // check of the manifest goes to the network, and on a bad day that alone
+  // took 22 to 63s of every build on a machine that had everything.
   const rustup = findTool({ names: ["rustup"], paths: [join(cargoHome, "bin")], required: false })?.path;
   const channel = readRustToolchainChannel();
-  if (rustup !== undefined && channel !== undefined) {
+  if (rustup !== undefined && channel !== undefined && !pinnedToolchainIsInstalled(channel)) {
     const started = performance.now();
     spawnSync(
       rustup,
@@ -836,6 +815,23 @@ export function probeRustToolchain(os: OS): {
   const rustHostTriple = vv.match(/^host:\s*(\S+)/m)?.[1];
   const rustLlvmVersion = vv.match(/^LLVM version:\s*(\d+\.\d+\.\d+)/m)?.[1];
   return { rustLlvmVersion, rustSysroot: sysroot, rustHostTriple };
+}
+
+/**
+ * The toolchain of a dated channel never changes, so once rustup has recorded
+ * what the pre-flight asks for (`lib/rustlib/components`, written when a
+ * component is in place) there is nothing left to ask.
+ */
+function pinnedToolchainIsInstalled(channel: string): boolean {
+  if (!/-\d{4}-\d{2}-\d{2}$/.test(channel)) return false;
+  const toolchains = join(process.env.RUSTUP_HOME ?? join(homedir(), ".rustup"), "toolchains");
+  if (!existsSync(toolchains)) return false;
+  return readdirSync(toolchains).some(name => {
+    const list = join(toolchains, name, "lib", "rustlib", "components");
+    if (!name.startsWith(`${channel}-`) || !existsSync(list)) return false;
+    const components = readFileSync(list, "utf8").split("\n");
+    return ["rustc-", "cargo-", "rust-std-", "rust-src"].every(prefix => components.some(c => c.startsWith(prefix)));
+  });
 }
 
 /**

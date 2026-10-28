@@ -1,0 +1,5 @@
+a compiled module: throws TypeError
+its binding afterwards: real
+import() of it afterwards: real
+a module that is loaded at run time: mocked
+import() of it afterwards: mocked

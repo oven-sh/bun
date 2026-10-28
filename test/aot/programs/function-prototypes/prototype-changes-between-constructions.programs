@@ -1,0 +1,882 @@
+//// prototype-changes-between-constructions-of-a-function-without-fields.js
+// Constructor functions with no `this.x = ..` and no `F.prototype.x = ..`. Each is constructed several times before and after every change, so a cached allocation would show.
+const lines = [];
+function report(label, ...values) {
+  lines.push(label + ": " + values.map(String).join(" "));
+}
+function describe(F, expected) {
+  let matches = 0;
+  for (let i = 0; i < 6; i++) {
+    const made = new F({ a: i });
+    if (Object.getPrototypeOf(made) === expected) matches++;
+  }
+  return matches;
+}
+
+function Assigned(from) { Object.assign(this, from); }
+const firstAssigned = Assigned.prototype;
+report("as created", describe(Assigned, firstAssigned), new Assigned({ a: 1 }) instanceof Assigned, new Assigned({ a: 2 }).a);
+const second = { tag: "second" };
+Assigned.prototype = second;
+report("after a store", describe(Assigned, second), describe(Assigned, firstAssigned), new Assigned({}).tag);
+Assigned.prototype = firstAssigned;
+report("stored back", describe(Assigned, firstAssigned), describe(Assigned, second));
+
+function Defined() {}
+report("defined, before", describe(Defined, Defined.prototype));
+const third = { tag: "third" };
+Object.defineProperty(Defined, "prototype", { value: third });
+report("Object.defineProperty", describe(Defined, third), new Defined().tag);
+const fourth = { tag: "fourth" };
+report("Reflect.defineProperty", Reflect.defineProperty(Defined, "prototype", { value: fourth }), describe(Defined, fourth));
+const fifth = { tag: "fifth" };
+report("Reflect.set", Reflect.set(Defined, "prototype", fifth), describe(Defined, fifth));
+const sixth = { tag: "sixth" };
+Object.assign(Defined, { prototype: sixth });
+report("Object.assign", describe(Defined, sixth));
+const key = ["proto", "type"].join("");
+const seventh = { tag: "seventh" };
+Defined[key] = seventh;
+report("a computed key", describe(Defined, seventh));
+
+function Primitive() {}
+report("primitive, before", describe(Primitive, Primitive.prototype));
+for (const value of [1, "text", null, undefined, true, Symbol.iterator, 10n]) {
+  Primitive.prototype = value;
+  report("prototype is " + typeof value, describe(Primitive, Object.prototype));
+}
+const eighth = { tag: "eighth" };
+Primitive.prototype = eighth;
+report("an object again", describe(Primitive, eighth));
+
+function Locked() {}
+report("locked, before", describe(Locked, Locked.prototype));
+const lockedPrototype = Locked.prototype;
+Object.defineProperty(Locked, "prototype", { writable: false });
+let refusal = "stored";
+try { Locked.prototype = { tag: "refused" }; } catch (error) { refusal = error.constructor.name; }
+report("read-only", refusal, describe(Locked, lockedPrototype), Reflect.set(Locked, "prototype", {}));
+Object.freeze(Locked);
+report("frozen", describe(Locked, lockedPrototype));
+
+function Crowded() {}
+report("crowded, before", describe(Crowded, Crowded.prototype));
+for (let i = 0; i < 200; i++) Crowded["p" + i] = i;
+report("many properties", describe(Crowded, Crowded.prototype));
+for (let i = 0; i < 200; i += 2) delete Crowded["p" + i];
+report("after deletions", describe(Crowded, Crowded.prototype));
+const ninth = { tag: "ninth" };
+Crowded.prototype = ninth;
+report("stored on a dictionary", describe(Crowded, ninth));
+Crowded.later = 1;
+const tenth = { tag: "tenth" };
+Crowded.prototype = tenth;
+report("stored again", describe(Crowded, tenth));
+
+function make() { return function Made() {}; }
+const made = [make(), make(), make()];
+report("closures of one function", made.map(F => describe(F, F.prototype)).join(","), made[0].prototype === made[1].prototype);
+made[1].prototype = second;
+report("one of them changed", made.map((F, i) => describe(F, i === 1 ? second : F.prototype)).join(","));
+let mixed = 0;
+for (let i = 0; i < 30; i++) {
+  const F = made[i % 3];
+  if (Object.getPrototypeOf(new F()) === F.prototype) mixed++;
+}
+report("taken in turn", mixed);
+
+function Target() {}
+function Other() {}
+report("targets, before", describe(Target, Target.prototype), describe(Other, Other.prototype));
+let reflected = 0;
+for (let i = 0; i < 12; i++) {
+  const viaOther = Reflect.construct(Target, [], Other);
+  const viaSelf = Reflect.construct(Target, [], Target);
+  const plain = new Target();
+  if (Object.getPrototypeOf(viaOther) === Other.prototype && Object.getPrototypeOf(viaSelf) === Target.prototype && Object.getPrototypeOf(plain) === Target.prototype) reflected++;
+}
+report("Reflect.construct", reflected);
+class Below extends Target {}
+report("a class below", describe(Below, Below.prototype), new Below() instanceof Target);
+const bound = Target.bind(null);
+report("bound", Object.getPrototypeOf(new bound()) === Target.prototype, Object.getPrototypeOf(Reflect.construct(bound, [], Other)) === Other.prototype);
+const proxied = new Proxy(Target, {});
+report("through a proxy", Object.getPrototypeOf(new proxied()) === Target.prototype);
+let reads = 0;
+const counting = new Proxy(Target, { get(target, name, receiver) { if (name === "prototype") reads++; return Reflect.get(target, name, receiver); } });
+for (let i = 0; i < 5; i++) new counting();
+report("reads of prototype through a proxy", reads);
+
+function Collected() {}
+let survived = 0;
+for (let round = 0; round < 4; round++) {
+  const replacement = { round };
+  Collected.prototype = replacement;
+  for (let i = 0; i < 4; i++) if (Object.getPrototypeOf(new Collected()) === replacement) survived++;
+  Bun.gc(true);
+  for (let i = 0; i < 4; i++) if (Object.getPrototypeOf(new Collected()) === replacement) survived++;
+}
+report("across collections", survived);
+
+function Inherits() {}
+Object.setPrototypeOf(Inherits, { prototype: { tag: "inherited" } });
+report("its own prototype property wins", describe(Inherits, Inherits.prototype), new Inherits().tag);
+
+function Returns(value) { return value; }
+const handed = { tag: "handed" };
+report("returns another object", new Returns(handed) === handed, Object.getPrototypeOf(new Returns(1)) === Returns.prototype, Object.getPrototypeOf(new Returns(1)) === Returns.prototype);
+
+function Changing() { Changing.prototype = Changing.next; }
+Changing.next = { tag: "next" };
+const before = Changing.prototype;
+const one = new Changing();
+const two = new Changing();
+Changing.next = { tag: "after" };
+const three = new Changing();
+const four = new Changing();
+report("changed by the constructor itself", Object.getPrototypeOf(one) === before, two.tag, three.tag, four.tag);
+
+console.log(lines.join("\n"));
+//// reflect-construct-with-another-new-target.js
+// Reflect.construct runs one plain function with another as new.target: the object lies below the prototype object of the second.
+function Meter() { seen.push(new.target === Other, this instanceof Other, this instanceof Meter, typeof this.name); }
+function Other() {}
+const seen = [];
+Meter.prototype.name = function () { return 1; };
+Other.prototype.name = function () { return "other"; };
+const made = Reflect.construct(Meter, [], Other);
+const plain = new Meter();
+console.log(seen.join(), typeof made.name(), typeof plain.name(), Object.getPrototypeOf(made) === Other.prototype);
+//// reflect-construct-with-another-new-target-and-the-function-went-through-a-call.js
+// Reflect.construct runs one plain function with another as new.target: the object lies below the prototype object of the second. The build does not see under which name the function is constructed.
+function hide(callable) { return callable; }
+const Meter = hide(function Meter() { seen.push(new.target === Other, this instanceof Other, this instanceof Meter, typeof this.name); });
+const Other = hide(function Other() {});
+const seen = [];
+Meter.prototype.name = function () { return 1; };
+Other.prototype.name = function () { return "other"; };
+const made = Reflect.construct(Meter, [], Other);
+const plain = new Meter();
+console.log(seen.join(), typeof made.name(), typeof plain.name(), Object.getPrototypeOf(made) === Other.prototype);
+//// shared-prototype-object.js
+const out = [];
+function count(name, test) { let yes = 0; for (let i = 0; i < 20000; i++) if (test()) yes++; out.push(name + " " + yes); }
+
+function A1() { this.x = 1; } function B1() { this.y = 2; }
+const shared1 = { hello() { return "hi"; } };
+A1.prototype = shared1; B1.prototype = shared1;
+let a1 = new A1(), b1 = new B1();
+function a1IsB1() { return a1 instanceof B1; } function b1IsA1() { return b1 instanceof A1; }
+
+function A2() { this.x = 1; } function B2() { this.y = 2; }
+const shared2 = { hello() { return "hi"; } };
+A2.prototype = shared2; B2.prototype = shared2;
+let b2 = new B2(), a2 = new A2();
+function a2IsB2() { return a2 instanceof B2; } function b2IsA2() { return b2 instanceof A2; }
+
+function A3() { this.x = 1; } function B3() { this.y = 2; }
+B3.prototype = A3.prototype;
+let a3 = new A3();
+function a3IsB3() { return a3 instanceof B3; }
+
+function jQuery(s) { return new jQuery.fn.init(s); }
+jQuery.fn = jQuery.prototype = { constructor: jQuery };
+jQuery.fn.init = function (s) { this.s = s; };
+jQuery.fn.init.prototype = jQuery.fn;
+let q4 = jQuery("a");
+function q4IsJQuery() { return q4 instanceof jQuery; }
+
+class C5 { constructor() { this.x = 1; } } function D5() { this.y = 2; }
+D5.prototype = C5.prototype;
+let c5 = new C5(), d5 = new D5();
+function c5IsD5() { return c5 instanceof D5; } function d5IsC5() { return d5 instanceof C5; }
+
+class C11 { constructor() { this.x = 1; } } function D11() { this.y = 2; }
+D11.prototype = C11.prototype;
+let d11 = new D11(), c11 = new C11();
+function c11IsD11() { return c11 instanceof D11; } function d11IsC11() { return d11 instanceof C11; }
+
+function B6() { this.y = 2; }
+B6.prototype = Object.prototype;
+let r6 = { x: 1 }, b6 = new B6();
+function r6IsB6() { return r6 instanceof B6; }
+
+function A7() { this.x = 1; } function B7() { this.y = 2; }
+const above7 = { up() { return 1; } };
+A7.prototype = Object.create(above7); B7.prototype = above7;
+let a7 = new A7(), b7 = new B7();
+function a7IsB7() { return a7 instanceof B7; }
+
+function A8() { this.x = 1; } function B8() { this.y = 2; }
+let a8 = new A8(), b8 = new B8();
+function a8IsB8() { return a8 instanceof B8; }
+
+function A9() { this.x = 1; } function B9() { this.y = 2; }
+let b9 = new B9();
+A9.prototype = B9.prototype;
+let a9 = new A9();
+function a9IsB9() { return a9 instanceof B9; } function b9IsA9() { return b9 instanceof A9; }
+
+function A10() { this.x = 1; } function M10() {} function B10() { this.y = 2; }
+M10.prototype = A10.prototype; B10.prototype = M10.prototype;
+let a10 = new A10(), b10 = new B10();
+function a10IsB10() { return a10 instanceof B10; } function a10IsM10() { return a10 instanceof M10; } function b10IsA10() { return b10 instanceof A10; }
+
+function storeFromOutside(text) {
+  const v = JSON.parse(text);
+  if (!v) return;
+  a1 = v.a1; b1 = v.b1; a2 = v.a2; b2 = v.b2; a3 = v.a3; q4 = v.q4; c5 = v.c5; d5 = v.d5; r6 = v.r6; a7 = v.a7; a8 = v.a8; a9 = v.a9; b9 = v.b9; a10 = v.a10; b10 = v.b10; c11 = v.c11; d11 = v.d11;
+}
+storeFromOutside(process.argv.length > 5 ? "{}" : "null");
+
+count("a1IsB1", a1IsB1); count("b1IsA1", b1IsA1); count("a2IsB2", a2IsB2); count("b2IsA2", b2IsA2); count("a3IsB3", a3IsB3); count("q4IsJQuery", q4IsJQuery);
+count("c5IsD5", c5IsD5); count("d5IsC5", d5IsC5); count("r6IsB6", r6IsB6); count("a7IsB7", a7IsB7);
+count("a8IsB8 before", a8IsB8); B8.prototype = A8.prototype; count("a8IsB8 after", a8IsB8);
+count("a9IsB9", a9IsB9); count("b9IsA9", b9IsA9); count("a10IsB10", a10IsB10); count("a10IsM10", a10IsM10); count("b10IsA10", b10IsA10);
+count("c11IsD11", c11IsD11); count("d11IsC11", d11IsC11);
+console.log(out.join("\n"));
+//// the-constructor-property-is-overwritten.js
+// Another function is stored as `constructor` on the prototype object of a plain function, and code constructs what an instance names as its constructor.
+function Meter() { return undefined; }
+function Other() {}
+Other.prototype.name = function () { return "other"; };
+Meter.prototype.name = function () { return "meter"; };
+const meter = new Meter();
+const first = new meter.constructor().name();
+Meter.prototype.constructor = Other;
+console.log(first, new meter.constructor().name(), meter.constructor === Other, meter instanceof Meter);
+//// the-constructor-property-is-overwritten-and-the-function-went-through-a-call.js
+// Another function is stored as `constructor` on the prototype object of a plain function, and code constructs what an instance names as its constructor. The build does not see under which name the function is constructed.
+function hide(callable) { return callable; }
+const Meter = hide(function Meter() { return undefined; });
+const Other = hide(function Other() {});
+Other.prototype.name = function () { return "other"; };
+Meter.prototype.name = function () { return "meter"; };
+const meter = new Meter();
+const first = new meter.constructor().name();
+Meter.prototype.constructor = Other;
+console.log(first, new meter.constructor().name(), meter.constructor === Other, meter instanceof Meter);
+//// the-default-changes-between-two-stores-of-one-constructor.js
+// The change comes in the middle of a constructor, between the test and the store.
+const log = [];
+let arm = false;
+function poke() {
+  if (arm) {
+    arm = false;
+    Object.defineProperty(Message.prototype, "method", { set(v) { log.push("set method " + v); }, get() { return "getter"; }, configurable: true });
+  }
+  return 7;
+}
+function Message(url, method) {
+  this.url = url;
+  this.extra = poke();
+  this.method = method;
+}
+Message.prototype.url = "";
+Message.prototype.method = null;
+let last;
+for (let i = 0; i < 60; i++) last = new Message("/" + i, "GET");
+log.push(Object.keys(last).join(), last.method);
+arm = true;
+last = new Message("/x", "POST");
+log.push(Object.keys(last).join(), last.method);
+last = new Message("/y", "PUT");
+log.push(Object.keys(last).join(), last.method);
+console.log(log.join(" | "));
+//// the-length-and-the-name-of-a-function-are-what-the-program-made-of-them.js
+// `f.length` and `f.name` answer with what the function was written with until the program defines them anew, deletes them or hands the function to code that does.
+const lines = [];
+const say = (...parts) => lines.push(parts.join(" "));
+function three(a, b, c) {}
+function withDefault(a, b = 1, c) {}
+function withRest(a, ...rest) {}
+const arrow = (a, b) => a;
+const named = function inner(a) {};
+const holder = { method(a, b, c, d) {}, get got() { return 1; }, ["comp" + "uted"](a) {}, plain: function () {}, [Symbol.iterator]() {} };
+async function later(a) {}
+function* steps(a, b) {}
+class Shape { constructor(a, b) {} static make(a) {} area(a, b, c) {} }
+class Odd { static length = 9; static name = "odd"; }
+class OddMethods { static name() { return "called"; } }
+for (let round = 0; round < 2; round++) {
+  say(three.length, three.name, withDefault.length, withRest.length, arrow.length, arrow.name, named.name, named.length);
+  say(holder.method.length, holder.method.name, Object.getOwnPropertyDescriptor(holder, "got").get.name, holder.computed.name, holder.plain.name, holder[Symbol.iterator].name);
+  say(later.length, later.name, steps.length, steps.name, Shape.length, Shape.name, Shape.make.length, Shape.make.name, Shape.prototype.area.length, Odd.length, Odd.name, typeof OddMethods.name);
+  say(three.bind(null, 1).length, three.bind(null).name, arrow.bind(null, 1, 2, 3).length);
+}
+function redefined(a, b) {}
+say(redefined.length, redefined.name);
+Object.defineProperty(redefined, "length", { value: 40 });
+Object.defineProperty(redefined, "name", { value: "other" });
+say(redefined.length, redefined.name);
+function deleted(a, b) {}
+say(delete deleted.length, delete deleted.name, deleted.length, JSON.stringify(deleted.name), Object.hasOwn(deleted, "length"));
+function stored(a) {}
+try {
+  stored.length = 5;
+} catch (error) {
+  say(error.name);
+}
+try {
+  stored.name = "no";
+} catch (error) {
+  say(error.name);
+}
+say(stored.length, stored.name);
+function below(a, b, c) {}
+delete below.length;
+Object.setPrototypeOf(below, { length: "inherited", name: "up" });
+say(below.length, below.name);
+function changedByKey(a) {}
+const key = ["len", "gth"].join("");
+Object.defineProperty(changedByKey, key, { value: 77 });
+say(changedByKey.length);
+function changedElsewhere(a) {}
+const change = target => Object.defineProperty(target, "name", { get() { return "got"; } });
+say(changedElsewhere.name);
+change(changedElsewhere);
+say(changedElsewhere.name);
+function handedOut(a, b) {}
+globalThis.taken = handedOut;
+new Function("Object.defineProperty(taken, 'length', { value: 12 })")();
+say(handedOut.length);
+function made() { return function inner(a, b) {}; }
+const first = made(), second = made();
+Object.defineProperty(first, "length", { value: 1 });
+say(first.length, second.length, first.name, second.name);
+for (const called of [three, withDefault, withRest, arrow, named, holder.method, holder.computed, holder.plain, later, steps, redefined, deleted, stored, below, changedByKey, changedElsewhere, handedOut, first, second]) called(1, 2);
+say(three.length, three.name, redefined.length, redefined.name, deleted.length, below.length, changedByKey.length, changedElsewhere.name, handedOut.length, first.length, second.length);
+console.log(lines.join("\n"));
+//// the-one-call-that-makes-a-constructor-function-runs-more-than-once.js
+// One call in the text makes a constructor function, and that call runs more than once: in a loop, in a function that calls itself, in a callback that a built-in calls, in a getter, a generator, a trap. Each run makes another function with another prototype object. The first is used forty times before the call runs again; the second has a setter where the first has nothing. Every row has a factory and a user of its own. As in plain Bun.
+const log = [];
+const count = Math.random() < 2 ? 2 : 3;
+function seen(o) { return Object.keys(o).join() + " " + o.url; }
+function make0(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in a loop" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; for (let i = 0; i < 2; i++) use(make0(i === 1)); }
+function make1(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in a while loop that a value from outside ends" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; let i = 0; while (i < count) use(make1(i++ === 1)); }
+function make2(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in a function that calls itself" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; (function again(i) { if (i < 2) { use(make2(i === 1)); again(i + 1); } })(0); }
+function make3(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in a callback of map" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; [false, true].map(has => use(make3(has))); }
+function make4(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in a callback of forEach" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; [false, true].forEach(has => { use(make4(has)); }); }
+function make5(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in a callback of Array.from" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; Array.from({ length: 2 }, (_, i) => use(make5(i === 1))); }
+function make6(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in a comparator of sort" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; let n = 0; [3, 1, 2].sort((a, b) => { if (n < 2) use(make6(n++ === 1)); return a - b; }); }
+function make7(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in a getter" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; let i = 0; const o = { get made() { return make7(i++ === 1); } }; use(o.made); use(o.made); }
+function make8(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in a generator" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; function* all() { let i = 0; while (true) yield make8(i++ === 1); } const g = all(); use(g.next().value); use(g.next().value); }
+function make9(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("through a bound function" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; const bound = make9.bind(null); const call = has => bound(has); use(call(false)); use(call(true)); }
+function make10(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("through call and apply" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; const call = (how, has) => how === 0 ? make10.call(null, has) : make10.apply(null, [has]); use(call(0, false)); use(call(1, true)); }
+function make11(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("through Reflect.apply" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; const call = has => Reflect.apply(make11, null, [has]); use(call(false)); use(call(true)); }
+function make12(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in a trap of a proxy" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; let i = 0; const p = new Proxy({}, { get() { return make12(i++ === 1); } }); use(p.a); use(p.b); }
+function make13(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in a replacer of JSON.stringify" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; JSON.stringify([1, 2], (k, v) => { if (typeof v === 'number') use(make13(v === 2)); return v; }); }
+function make14(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in a callback of replace" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; 'ab'.replace(/./g, c => { use(make14(c === 'b')); return c; }); }
+function make15(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in toString of an object that is converted twice" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; let n = 0; const o = { toString() { use(make15(n++ === 1)); return 'x'; } }; String(o) + `${o}`; }
+function make16(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in a constructor" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; class Maker { constructor(has) { this.C = make16(has); } } const call = has => new Maker(has).C; use(call(false)); use(call(true)); }
+function make17(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in a static method, called by a static block and again by hand" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; class Holder { static make(has) { return make17(has); } static { use(Holder.make(false)); } } use(Holder.make(true)); }
+function make18(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in a finally block of a loop" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; for (const has of [false, true]) { try { continue; } finally { use(make18(has)); } } }
+function make19(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in a default value of a parameter" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; const take = (has, C = make19(has)) => C; use(take(false)); use(take(true)); }
+function make20(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in a tagged template" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; const tag = (strings, has) => make20(has); const call = has => tag`${has}`; use(call(false)); use(call(true)); }
+function make21(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in a for-of over an iterator of the program" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; const it = { [Symbol.iterator]() { let i = 0; return { next: () => ({ done: i >= 2, value: i++ === 1 }) }; } }; for (const has of it) use(make21(has)); }
+function make22(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in a function that is called from two places" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; const call = has => make22(has); use(call(false)); use(call(true)); }
+function make23(has) { function Message(url) { this.id = 1; this.url = url; } if (has) Object.defineProperty(Message.prototype, "url", { set(v) { log.push("set " + v); }, get() { return "getter"; }, configurable: true }); return Message; }
+{ log.length = 0; let First, a; const use = C => { if (!First) { First = C; for (let i = 0; i < 40; i++) a = new C("/" + i); return; } console.log("in a job of a promise, twice" + ": " + [First === C, seen(a), seen(new C("/second")), seen(new First("/first")), new C("/x") instanceof First].join(" | ") + " | " + log.join()); }; const job = has => { use(make23(has)); }; await Promise.resolve(false).then(job); await Promise.resolve(true).then(job); }
+//// the-prototype-is-a-literal-with-defaults.js
+// The prototype object is a literal of the program that holds the defaults, an accessor among them.
+const log = [];
+function Message(url, method, mode) {
+  this.url = url;
+  this.method = method;
+  this.mode = mode;
+}
+Message.prototype = {
+  constructor: Message,
+  url: "",
+  method: null,
+  set mode(v) { log.push("set mode " + v); },
+  get mode() { return "mode getter"; },
+  describe() { return this.method + " " + this.url + " " + this.mode; },
+};
+let m;
+for (let i = 0; i < 40; i++) m = new Message("/" + i, "GET", i < 2 ? "m" + i : undefined);
+log.push(Object.keys(m).join(), m.describe());
+Object.defineProperty(Message.prototype, "method", { set(v) { log.push("set method " + v); }, get() { return "method getter"; }, configurable: true });
+m = new Message("/x", "POST", "q");
+log.push(Object.keys(m).join(), m.describe());
+Message.prototype.url = "changed default";
+m = new Message("/y", "PUT", "r");
+log.push(Object.keys(m).join(), m.describe(), Object.create(Message.prototype).url);
+console.log(log.join(" | "));
+//// the-prototype-object-as-it-is-made.js
+// The prototype object of a plain function is an ordinary object below Object.prototype with one property, `constructor`, which is not enumerable.
+function plain() {}
+const made = plain.prototype;
+const described = Object.getOwnPropertyDescriptor(plain, "prototype");
+const constructor = Object.getOwnPropertyDescriptor(made, "constructor");
+console.log(typeof made, made.constructor === plain, Object.getPrototypeOf(made) === Object.prototype, Object.getOwnPropertyNames(made).join(), Object.keys(made).length);
+console.log(described.writable, described.enumerable, described.configurable, constructor.writable, constructor.enumerable, constructor.configurable, Reflect.deleteProperty(plain, "prototype"), plain.prototype === made);
+//// the-prototype-object-as-it-is-made-and-the-function-went-through-a-call.js
+// The prototype object of a plain function is an ordinary object below Object.prototype with one property, `constructor`, which is not enumerable. The build does not see under which name the function is constructed.
+function hide(callable) { return callable; }
+const plain = hide(function plain() {});
+const made = plain.prototype;
+const described = Object.getOwnPropertyDescriptor(plain, "prototype");
+const constructor = Object.getOwnPropertyDescriptor(made, "constructor");
+console.log(typeof made, made.constructor === plain, Object.getPrototypeOf(made) === Object.prototype, Object.getOwnPropertyNames(made).join(), Object.keys(made).length);
+console.log(described.writable, described.enumerable, described.configurable, constructor.writable, constructor.enumerable, constructor.configurable, Reflect.deleteProperty(plain, "prototype"), plain.prototype === made);
+//// the-prototype-object-is-a-literal-written-through-a-variable.js
+////= lines-3	Emitter
+const members = (Emitter.prototype = {});
+members.constructor = Emitter;
+members.limit = 10;
+members.on = function on() {
+  return "on";
+};
+members.emit = function emit(type, ...rest) {
+  this.count++;
+  return "emit " + type + " " + rest.length;
+};
+Object.defineProperty(members, "size", {
+  get() {
+    return this.count * 2;
+  },
+  configurable: true,
+});
+
+function Stream() {
+  Emitter.call(this);
+}
+const streamMembers = (Stream.prototype = { __proto__: members, constructor: Stream, pipe() { return "pipe+" + super.on(); }, get kind() { return "stream"; }, ["comp" + "uted"]: 1, ...{ spread: 2 } });
+
+function First() {}
+function Second() {}
+const shared = (First.prototype = Second.prototype = {});
+shared.run = function run() {
+  return "shared run";
+};
+
+function use(object) {
+  return [object.on(), object.emit("tick", 1, 2), object.limit, object.size, object.constructor.name].join(" ");
+}
+function useStream(stream) {
+  return [use(stream), stream.pipe(), stream.kind, stream.computed, stream.spread].join(" ");
+}
+function hot() {
+  let last = "";
+  const emitter = new Emitter();
+  const stream = new Stream();
+  for (let i = 0; i < 3000; i++) last = use(emitter) + " | " + useStream(stream) + " | " + new First().run() + " " + new Second().run();
+  return last;
+}
+
+console.log(hot());
+console.log(Object.keys(members).join(), Object.keys(streamMembers).join(), JSON.stringify(streamMembers));
+const inherited = [];
+for (const name in new Stream()) inherited.push(name);
+console.log(inherited.join());
+console.log(JSON.stringify(Object.getOwnPropertyDescriptor(members, "emit"), (key, value) => (typeof value === "function" ? value.name : value)));
+console.log(Object.getPrototypeOf(new Emitter()) === members, Object.getPrototypeOf(members) === Object.prototype, new Stream() instanceof Emitter);
+
+members.emit = function () {
+  return "emit replaced";
+};
+console.log(hot());
+streamMembers.emit = function () {
+  return "emit added below";
+};
+console.log(hot());
+delete streamMembers.emit;
+delete members.on;
+try {
+  console.log(hot());
+} catch (error) {
+  console.log(error instanceof TypeError);
+}
+members.on = () => "on again";
+members.limit = 20;
+console.log(hot());
+Object.defineProperty(members, "emit", { get() { return () => "emit from a getter"; }, configurable: true });
+Object.defineProperty(members, "size", { value: "size is a value now", configurable: true });
+console.log(hot());
+shared.run = () => "shared run replaced";
+console.log(hot());
+Object.setPrototypeOf(members, { late() { return "late"; }, emit() { return "never seen"; } });
+console.log(hot(), new Stream().late());
+
+Object.defineProperty(members, "emit", { value() { return "emit is a value again"; }, writable: true, configurable: true });
+const kept = new Emitter();
+kept.emit = () => "own emit";
+console.log(use(kept));
+delete kept.emit;
+console.log(use(kept));
+
+const before = new Emitter();
+Emitter.prototype = { emit() { return "emit of the second prototype object"; }, on() { return "second on"; }, limit: 1, size: 1 };
+console.log(use(before).replace("Emitter", "same"), use(new Emitter()), new Emitter().constructor === Object);
+console.log(hot());
+//// the-prototype-object-is-a-typed-literal.ts
+interface Members {
+  run(this: Point): number;
+  limit: number;
+  constructor: PointMaker;
+}
+interface Point extends Members {
+  x: number;
+}
+interface PointMaker {
+  new (x: number): Point;
+  (this: Point, x: number): void;
+  prototype: Members;
+}
+const Point = function (this: Point, x: number) {
+  this.x = x;
+} as PointMaker;
+Point.prototype = {
+  run() {
+    return this.x + this.limit;
+  },
+  limit: 2,
+  constructor: Point,
+};
+
+function readMembers(members: Members): string {
+  return members.limit + " " + typeof members.run + " " + (members.constructor === Point);
+}
+function use(point: Point): number {
+  return point.run() + point.limit;
+}
+function hot(): number {
+  let sum = 0;
+  for (let i = 0; i < 3000; i++) sum += use(new Point(i & 7));
+  return sum;
+}
+console.log(hot(), readMembers(Point.prototype), readMembers(new Point(1)), readMembers({ run: () => 1, limit: 9, constructor: Point }));
+Point.prototype.limit = 3;
+console.log(hot(), readMembers(Point.prototype));
+Point.prototype.run = function () {
+  return -1;
+};
+console.log(hot(), Object.keys(Point.prototype).join());
+const own = new Point(1);
+own.limit = 100;
+console.log(use(own), Object.keys(own).join());
+//// the-prototype-object-is-handed-to-native-code.js
+// Native code lists, copies, prints and freezes the prototype object of a plain function.
+function Meter() {}
+Meter.prototype.size = 3;
+Meter.prototype.read = function () { return this.size; };
+let thrown = "nothing";
+try { structuredClone(Meter.prototype); } catch (error) { thrown = error.name; }
+console.log(Object.keys(Meter.prototype).join(), JSON.stringify(Meter.prototype), Object.entries(Meter.prototype).length, typeof Object.assign({}, Meter.prototype).read, thrown);
+console.log(Meter.prototype, new Meter());
+Object.freeze(Meter.prototype);
+const refused = [];
+try { Meter.prototype.size = "wide"; } catch (error) { refused.push(error.constructor.name); }
+try { Meter.prototype.more = 1; } catch (error) { refused.push(error.constructor.name); }
+console.log(new Meter().read(), "more" in Meter.prototype, Object.isFrozen(Meter.prototype), refused.join());
+//// the-prototype-object-is-handed-to-native-code-and-the-function-went-through-a-call.js
+// Native code lists, copies, prints and freezes the prototype object of a plain function. The build does not see under which name the function is constructed.
+function hide(callable) { return callable; }
+const Meter = hide(function Meter() {});
+Meter.prototype.size = 3;
+Meter.prototype.read = function () { return this.size; };
+let thrown = "nothing";
+try { structuredClone(Meter.prototype); } catch (error) { thrown = error.name; }
+console.log(Object.keys(Meter.prototype).join(), JSON.stringify(Meter.prototype), Object.entries(Meter.prototype).length, typeof Object.assign({}, Meter.prototype).read, thrown);
+console.log(Meter.prototype, new Meter());
+Object.freeze(Meter.prototype);
+const refused = [];
+try { Meter.prototype.size = "wide"; } catch (error) { refused.push(error.constructor.name); }
+try { Meter.prototype.more = 1; } catch (error) { refused.push(error.constructor.name); }
+console.log(new Meter().read(), "more" in Meter.prototype, Object.isFrozen(Meter.prototype), refused.join());
+//// the-prototype-property-holds-a-primitive.js
+// A number and a string are stored as the prototype property of a plain function: what it constructs lies below Object.prototype.
+function Meter() {}
+const told = [];
+for (const value of [5, "text", undefined, true, Symbol.iterator]) {
+  Meter.prototype = value;
+  const meter = new Meter();
+  told.push(Object.getPrototypeOf(meter) === Object.prototype, typeof Meter.prototype);
+}
+console.log(told.join());
+//// the-prototype-property-holds-a-primitive-and-the-function-went-through-a-call.js
+// A number and a string are stored as the prototype property of a plain function: what it constructs lies below Object.prototype. The build does not see under which name the function is constructed.
+function hide(callable) { return callable; }
+const Meter = hide(function Meter() {});
+const told = [];
+for (const value of [5, "text", undefined, true, Symbol.iterator]) {
+  Meter.prototype = value;
+  const meter = new Meter();
+  told.push(Object.getPrototypeOf(meter) === Object.prototype, typeof Meter.prototype);
+}
+console.log(told.join());
+//// the-prototype-property-holds-null.js
+// null is stored as the prototype property of a plain function: what it constructs lies below Object.prototype, and `instanceof` throws.
+function Meter() {}
+Meter.prototype.read = function () { return 1; };
+Meter.prototype = null;
+const meter = new Meter();
+let thrown = "nothing";
+try { meter instanceof Meter; } catch (error) { thrown = error.constructor.name; }
+console.log(Object.getPrototypeOf(meter) === Object.prototype, typeof meter.read, typeof meter.hasOwnProperty, thrown);
+//// the-prototype-property-holds-null-and-the-function-went-through-a-call.js
+// null is stored as the prototype property of a plain function: what it constructs lies below Object.prototype, and `instanceof` throws. The build does not see under which name the function is constructed.
+function hide(callable) { return callable; }
+const Meter = hide(function Meter() {});
+Meter.prototype.read = function () { return 1; };
+Meter.prototype = null;
+const meter = new Meter();
+let thrown = "nothing";
+try { meter instanceof Meter; } catch (error) { thrown = error.constructor.name; }
+console.log(Object.getPrototypeOf(meter) === Object.prototype, typeof meter.read, typeof meter.hasOwnProperty, thrown);
+//// the-prototype-property-is-assigned-twice-with-a-class-between.js
+// The class is linked to the first object. The test looks at the second, which the function has by then.
+function Meter() {}
+Meter.prototype = { read() { return "first"; } };
+class Fine extends Meter {}
+Meter.prototype = { read() { return "second"; } };
+console.log(new Meter().read(), new Fine() instanceof Meter);
+//// the-prototype-property-is-read-under-a-key-made-at-run-time.js
+// The prototype property of a plain function is read and stored under a key that is put together at run time.
+function Meter() {}
+const key = ["proto", "type"].join(process.argv.length > 99 ? "x" : "");
+Meter[key].read = function () { return "read"; };
+const first = new Meter().read();
+Meter[key] = { read() { return 2; } };
+console.log(first, new Meter().read(), Meter.prototype === Meter[key]);
+//// the-prototype-property-is-read-under-a-key-made-at-run-time-and-the-function-went-through-a-call.js
+// The prototype property of a plain function is read and stored under a key that is put together at run time. The build does not see under which name the function is constructed.
+function hide(callable) { return callable; }
+const Meter = hide(function Meter() {});
+const key = ["proto", "type"].join(process.argv.length > 99 ? "x" : "");
+Meter[key].read = function () { return "read"; };
+const first = new Meter().read();
+Meter[key] = { read() { return 2; } };
+console.log(first, new Meter().read(), Meter.prototype === Meter[key]);
+//// the-prototype-property-is-replaced-before-the-first-instance.js
+// Another object is stored as the prototype property of a plain function before the first instance is made.
+function Meter() {}
+const first = Meter.prototype;
+first.read = function () { return 1; };
+Meter.prototype = { read() { return "other"; } };
+const meter = new Meter();
+console.log(meter.read(), meter instanceof Meter, Object.getPrototypeOf(meter) === first, meter.constructor === Object, first.isPrototypeOf(meter));
+//// the-prototype-property-is-replaced-before-the-first-instance-and-the-function-went-through-a-call.js
+// Another object is stored as the prototype property of a plain function before the first instance is made. The build does not see under which name the function is constructed.
+function hide(callable) { return callable; }
+const Meter = hide(function Meter() {});
+const first = Meter.prototype;
+first.read = function () { return 1; };
+Meter.prototype = { read() { return "other"; } };
+const meter = new Meter();
+console.log(meter.read(), meter instanceof Meter, Object.getPrototypeOf(meter) === first, meter.constructor === Object, first.isPrototypeOf(meter));
+//// the-prototype-property-is-replaced-between-two-instances.js
+// Another object is stored as the prototype property of a plain function between two constructions: the first instance keeps what it was born below.
+function Meter() {}
+Meter.prototype.read = function () { return 1; };
+function make() { return new Meter(); }
+const early = make();
+Meter.prototype = { read() { return "late"; } };
+const late = make();
+const told = [];
+for (const meter of [early, late]) told.push(typeof meter.read(), meter instanceof Meter, meter.constructor === Meter);
+console.log(told.join());
+//// the-prototype-property-is-replaced-between-two-instances-and-the-function-went-through-a-call.js
+// Another object is stored as the prototype property of a plain function between two constructions: the first instance keeps what it was born below. The build does not see under which name the function is constructed.
+function hide(callable) { return callable; }
+const Meter = hide(function Meter() {});
+Meter.prototype.read = function () { return 1; };
+function make() { return new Meter(); }
+const early = make();
+Meter.prototype = { read() { return "late"; } };
+const late = make();
+const told = [];
+for (const meter of [early, late]) told.push(typeof meter.read(), meter instanceof Meter, meter.constructor === Meter);
+console.log(told.join());
+//// two-instances-are-two-objects.js
+// Two constructions at one place make two objects: they are not equal, and a store into one is not seen in the other.
+function Meter() {}
+function make() { return new Meter(); }
+const a = make(), b = make();
+a.size = 1;
+console.log(a === b, a == b, Object.is(a, b), b.size, new Set([a, b, a]).size, Object.getPrototypeOf(a) === Object.getPrototypeOf(b));
+//// two-instances-are-two-objects-and-the-function-went-through-a-call.js
+// Two constructions at one place make two objects: they are not equal, and a store into one is not seen in the other. The build does not see under which name the function is constructed.
+function hide(callable) { return callable; }
+const Meter = hide(function Meter() {});
+function make() { return new Meter(); }
+const a = make(), b = make();
+a.size = 1;
+console.log(a === b, a == b, Object.is(a, b), b.size, new Set([a, b, a]).size, Object.getPrototypeOf(a) === Object.getPrototypeOf(b));
+//// util-inherits-and-the-function-went-through-a-call.js
+// util.inherits puts the prototype object of one plain function above that of another. The build does not see under which name the function is constructed.
+function hide(callable) { return callable; }
+const util = require("node:util");
+const Base = hide(function Base() { this.base = true; });
+Base.prototype.read = function () { return "read " + this.base + " " + this.size; };
+const Meter = hide(function Meter(size) { Base.call(this); this.size = size; });
+util.inherits(Meter, Base);
+const meter = new Meter(4);
+console.log(meter.read(), meter instanceof Base, Meter.super_ === Base, Object.getPrototypeOf(Meter.prototype) === Base.prototype);
+//// what-is-done-to-a-constructor-function-and-its-prototype-object-late.js
+// Each function is constructed and looked at in a loop, then something is done to it or to its prototype object in a way of its own, then it is constructed and looked at again.
+// What a compiler takes for fixed about a constructor function has to survive every one of these.
+const lines = [];
+function look(name, make, isInstance) {
+  let found = 0;
+  let instances = 0;
+  for (let i = 0; i < 300; i++) {
+    const made = make(i);
+    if (made.late !== undefined) found++;
+    if (isInstance(made)) instances++;
+  }
+  lines.push(name + " " + found + " " + instances);
+}
+
+function Stored(k) { this.k = k; }
+look("stored before", i => new Stored(i), x => x instanceof Stored);
+Stored.prototype = { late: 1 };
+look("stored after", i => new Stored(i), x => x instanceof Stored);
+
+function Computed(k) { this.k = k; }
+look("computed before", i => new Computed(i), x => x instanceof Computed);
+Computed["proto" + (lines.length ? "type" : "")] = { late: 1 };
+look("computed after", i => new Computed(i), x => x instanceof Computed);
+
+function Assigned(k) { this.k = k; }
+look("assigned before", i => new Assigned(i), x => x instanceof Assigned);
+Object.assign(Assigned, { prototype: { late: 1 } });
+look("assigned after", i => new Assigned(i), x => x instanceof Assigned);
+
+function Defined(k) { this.k = k; }
+look("defined before", i => new Defined(i), x => x instanceof Defined);
+Object.defineProperty(Defined, "prototype", { value: { late: 1 } });
+look("defined after", i => new Defined(i), x => x instanceof Defined);
+
+function Reflected(k) { this.k = k; }
+look("reflected before", i => new Reflected(i), x => x instanceof Reflected);
+Reflect.set(Reflected, "prototype", { late: 1 });
+look("reflected after", i => new Reflected(i), x => x instanceof Reflected);
+
+function Handed(k) { this.k = k; }
+function swap(f) { f.prototype = { late: 1 }; }
+look("handed before", i => new Handed(i), x => x instanceof Handed);
+swap(Handed);
+look("handed after", i => new Handed(i), x => x instanceof Handed);
+
+function Relinked(k) { this.k = k; }
+look("relinked before", i => new Relinked(i), x => x instanceof Relinked);
+Object.setPrototypeOf(Relinked.prototype, { late: 1 });
+look("relinked after", i => new Relinked(i), x => x instanceof Relinked);
+
+function RelinkedByName(k) { this.k = k; }
+look("relinked by name before", i => new RelinkedByName(i), x => x instanceof RelinkedByName);
+RelinkedByName.prototype.__proto__ = { late: 1 };
+look("relinked by name after", i => new RelinkedByName(i), x => x instanceof RelinkedByName);
+
+function Named(k) { this.k = k; }
+look("named before", i => new Named(i), x => x instanceof Named);
+Named.prototype.late = 1;
+look("named after", i => new Named(i), x => x instanceof Named);
+
+function Keyed(k) { this.k = k; }
+look("keyed before", i => new Keyed(i), x => x instanceof Keyed);
+Keyed.prototype["la" + (lines.length ? "te" : "")] = 1;
+look("keyed after", i => new Keyed(i), x => x instanceof Keyed);
+
+function ThroughInstance(k) { this.k = k; }
+look("through an instance before", i => new ThroughInstance(i), x => x instanceof ThroughInstance);
+Object.getPrototypeOf(new ThroughInstance(0)).late = 1;
+look("through an instance after", i => new ThroughInstance(i), x => x instanceof ThroughInstance);
+
+function ThroughLink(k) { this.k = k; }
+look("through the link before", i => new ThroughLink(i), x => x instanceof ThroughLink);
+new ThroughLink(0).__proto__.late = 1;
+look("through the link after", i => new ThroughLink(i), x => x instanceof ThroughLink);
+
+function ThroughConstructor(k) { this.k = k; }
+look("through constructor before", i => new ThroughConstructor(i), x => x instanceof ThroughConstructor);
+new ThroughConstructor(0).constructor.prototype = { late: 1 };
+look("through constructor after", i => new ThroughConstructor(i), x => x instanceof ThroughConstructor);
+
+function Getter(k) { this.k = k; }
+look("getter before", i => new Getter(i), x => x instanceof Getter);
+Object.defineProperty(Getter.prototype, "late", { get() { return this.k + 1; } });
+look("getter after", i => new Getter(i), x => x instanceof Getter);
+
+let taken = 0;
+function Setter(k) { this.k = k; }
+look("setter before", i => new Setter(i), x => x.k !== undefined);
+Object.defineProperty(Setter.prototype, "k", { set(value) { taken++; } });
+look("setter after", i => new Setter(i), x => x.k !== undefined);
+lines.push("taken " + taken);
+
+function Asked(k) { this.k = k; }
+look("asked before", i => new Asked(i), x => x instanceof Asked);
+Object.defineProperty(Asked, Symbol.hasInstance, { value: () => false });
+look("asked after", i => new Asked(i), x => x instanceof Asked);
+
+function AskedAbove(k) { this.k = k; }
+look("asked above before", i => new AskedAbove(i), x => x instanceof AskedAbove);
+Object.setPrototypeOf(AskedAbove, { [Symbol.hasInstance]: () => false });
+look("asked above after", i => new AskedAbove(i), x => x instanceof AskedAbove);
+
+function Number5(k) { this.k = k; }
+look("no object before", i => new Number5(i), x => Object.getPrototypeOf(x) === Object.prototype);
+Number5.prototype = 5;
+look("no object after", i => new Number5(i), x => Object.getPrototypeOf(x) === Object.prototype);
+
+function Untouched(k) { this.k = k; }
+look("untouched", i => new Untouched(i), x => x instanceof Untouched);
+look("untouched again", i => new Untouched(i), x => x instanceof Untouched && x.constructor === Untouched && Object.getPrototypeOf(Object.getPrototypeOf(x)) === Object.prototype);
+
+console.log(lines.join("\n"));
+//// zod-like-constructor.js
+// A constructor is put together at run time as zod does: a plain function whose prototype object is read, with an initializer hung on it by Object.defineProperty.
+function $constructor(name, initializer) {
+  function init(inst, def) {
+    Object.defineProperty(inst, "_zod", { value: inst._zod ?? {}, enumerable: false });
+    inst._zod.traits ??= new Set();
+    inst._zod.traits.add(name);
+    initializer(inst, def);
+    const proto = _.prototype;
+    for (const k of Object.keys(proto)) if (!(k in inst)) inst[k] = proto[k].bind(inst);
+    inst._zod.constr = _;
+    inst._zod.def = def;
+  }
+  class Definition extends Object {}
+  Object.defineProperty(Definition, "name", { value: name });
+  function _(def) {
+    const inst = this;
+    init(inst, def);
+    return inst;
+  }
+  Object.defineProperty(_, "init", { value: init });
+  Object.defineProperty(_, Symbol.hasInstance, { value: inst => inst?._zod?.traits?.has(name) });
+  Object.defineProperty(_, "name", { value: name });
+  return _;
+}
+const Text = $constructor("Text", (inst, def) => { inst.check = value => typeof value === def.type; });
+const Wide = $constructor("Wide", (inst, def) => { Text.init(inst, def); inst.wide = true; });
+Text.prototype.describe = function () { return "a " + this._zod.def.type; };
+const text = new Text({ type: "string" }), wide = new Wide({ type: "number" });
+console.log(text.check("s"), text.check(1), wide.check(1), text.describe(), typeof wide.describe, wide instanceof Text, text instanceof Wide, Text.name, [...wide._zod.traits].join());

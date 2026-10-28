@@ -1,0 +1,3335 @@
+////: Base
+class Base {
+  x = 1;
+  y: number;
+  constructor(y: number = 2) {
+    this.y = y;
+  }
+  sum(): number {
+    return this.x + this.y;
+  }
+}
+////: Base-3
+export class Base {
+  x = 1;
+  y: number;
+  constructor(y: number = 2) {
+    this.y = y;
+  }
+  sum(): number {
+    return this.x + this.y;
+  }
+}
+////: Base-5
+export class Base {
+  x = 1;
+  constructor(y = 2) {
+    this.y = y;
+  }
+  sum() {
+    return this.x + this.y;
+  }
+}
+////: Base-6
+export declare class Base {
+  x: number;
+  y: number;
+  constructor(y?: number);
+  sum(): number;
+}
+////: Box-2
+class Box<T> {
+  x = 1;
+  y: T;
+  constructor(y: T) {
+    this.y = y;
+  }
+  sum(): string {
+    return this.x + ":" + this.y;
+  }
+}
+////: Derived
+class Derived extends Base {
+  extra = "d";
+  twice(): number {
+    return this.sum() * 2;
+  }
+}
+////: Derived-10
+class Derived extends («1» Base) {
+  extra = "d";
+  twice(): number {
+    return this.sum() * 2;
+  }
+}
+////: Derived-3
+class Derived extends Variable {
+  extra = "d";
+  twice(): number {
+    return this.sum() * 2;
+  }
+}
+////: Derived-4
+class Derived extends give() {
+  extra = "d";
+  twice(): number {
+    return this.sum() * 2;
+  }
+}
+////: Derived-5
+class Derived extends holder.Inner {
+  extra = "d";
+  twice(): number {
+    return this.sum() * 2;
+  }
+}
+////: Derived-8
+class Derived extends «1» {
+  extra = "d";
+  twice(): number {
+    return this.sum() * 2;
+  }
+}
+////: Derived-9
+class Derived extends «1» {
+  extra = "d";
+  twice(): number {
+    return this.sum() * 2;
+  }
+}
+////: Factory
+class Factory {
+  static Kind: new (x: number, y: number) => Point = Point;
+  Kind: new (x: number, y: number) => Point = Point;
+  make(x: number, y: number): Point {
+    return new this.Kind(x, y);
+  }
+  static make(x: number, y: number): Point {
+    return new Factory.Kind(x, y);
+  }
+  static makeThis(x: number, y: number): Point {
+    return new this.Kind(x, y);
+  }
+}
+////: Point-33
+////= Point-6
+
+////= Swapped
+
+////= Raised-2
+
+////= Factory
+////: Raised-2
+class Raised extends Point {
+  z = 9;
+  norm(): number {
+    return super.norm() + 100;
+  }
+}
+////: Swapped
+class Swapped {
+  y: number;
+  x: number;
+  extra = "extra";
+  constructor(x: number, y: number) {
+    this.y = y;
+    this.x = x;
+  }
+  norm(): number {
+    return -1;
+  }
+}
+////: Wide
+class Wide {
+  n = 1;
+  m1(): number {
+    return this.n + 1;
+  }
+  m2(): number {
+    return this.n + 2;
+  }
+  m3(): number {
+    return this.n + 3;
+  }
+  m4(): number {
+    return this.n + 4;
+  }
+  m5(): number {
+    return this.n + 5;
+  }
+  m6(): number {
+    return this.n + 6;
+  }
+  m7(): number {
+    return this.n + 7;
+  }
+  m8(): number {
+    return this.n + 8;
+  }
+  m9(): number {
+    return this.n + 9;
+  }
+  m10(): number {
+    return this.n + 10;
+  }
+  m11(): number {
+    return this.n + 11;
+  }
+  m12(): number {
+    return this.n + 12;
+  }
+  m13(): number {
+    return this.n + 13;
+  }
+  m14(): number {
+    return this.n + 14;
+  }
+  m15(): number {
+    return this.n + 15;
+  }
+  m16(): number {
+    return this.n + 16;
+  }
+  m17(): number {
+    return this.n + 17;
+  }
+  m18(): number {
+    return this.n + 18;
+  }
+  m19(): number {
+    return this.n + 19;
+  }
+  m20(): number {
+    return this.n + 20;
+  }
+  m21(): number {
+    return this.n + 21;
+  }
+  m22(): number {
+    return this.n + 22;
+  }
+  m23(): number {
+    return this.n + 23;
+  }
+  m24(): number {
+    return this.n + 24;
+  }
+  m25(): number {
+    return this.n + 25;
+  }
+  m26(): number {
+    return this.n + 26;
+  }
+  m27(): number {
+    return this.n + 27;
+  }
+  m28(): number {
+    return this.n + 28;
+  }
+  m29(): number {
+    return this.n + 29;
+  }
+  m30(): number {
+    return this.n + 30;
+  }
+  m31(): number {
+    return this.n + 31;
+  }
+  m32(): number {
+    return this.n + 32;
+  }
+  m33(): number {
+    return this.n + 33;
+  }
+  m34(): number {
+    return this.n + 34;
+  }
+  m35(): number {
+    return this.n + 35;
+  }
+  m36(): number {
+    return this.n + 36;
+  }
+  m37(): number {
+    return this.n + 37;
+  }
+  m38(): number {
+    return this.n + 38;
+  }
+  m39(): number {
+    return this.n + 39;
+  }
+  m40(): number {
+    return this.n + 40;
+  }
+  m41(): number {
+    return this.n + 41;
+  }
+  m42(): number {
+    return this.n + 42;
+  }
+  m43(): number {
+    return this.n + 43;
+  }
+  m44(): number {
+    return this.n + 44;
+  }
+  m45(): number {
+    return this.n + 45;
+  }
+  m46(): number {
+    return this.n + 46;
+  }
+  m47(): number {
+    return this.n + 47;
+  }
+  m48(): number {
+    return this.n + 48;
+  }
+  m49(): number {
+    return this.n + 49;
+  }
+  m50(): number {
+    return this.n + 50;
+  }
+  m51(): number {
+    return this.n + 51;
+  }
+  m52(): number {
+    return this.n + 52;
+  }
+  m53(): number {
+    return this.n + 53;
+  }
+  m54(): number {
+    return this.n + 54;
+  }
+  m55(): number {
+    return this.n + 55;
+  }
+  m56(): number {
+    return this.n + 56;
+  }
+  m57(): number {
+    return this.n + 57;
+  }
+  m58(): number {
+    return this.n + 58;
+  }
+  m59(): number {
+    return this.n + 59;
+  }
+  m60(): number {
+    return this.n + 60;
+  }
+  m61(): number {
+    return this.n + 61;
+  }
+  m62(): number {
+    return this.n + 62;
+  }
+  m63(): number {
+    return this.n + 63;
+  }
+  m64(): number {
+    return this.n + 64;
+  }
+  m65(): number {
+    return this.n + 65;
+  }
+  m66(): number {
+    return this.n + 66;
+  }
+  m67(): number {
+    return this.n + 67;
+  }
+  m68(): number {
+    return this.n + 68;
+  }
+  m69(): number {
+    return this.n + 69;
+  }
+  m70(): number {
+    return this.n + 70;
+  }
+}
+//// a-class-claims-to-be-an-error-a-date-and-a-regexp-by-a-merged-interface.ts
+////= text-11
+
+interface Failure extends Error {}
+////= lines-29	Failure	code	number	1
+
+interface Stamp extends Date {}
+////= lines-29	Stamp	id	number	2
+
+interface Pattern extends RegExp {}
+////= lines-29	Pattern	id	number	3
+
+////= lines-20	messageOf	error	Error	string	return	error.message
+
+////= lines-32	messageLength	error	Error	number	error.message.length
+
+////= lines-19	timeOf	date	Date	number	date.getTime
+
+function matches(pattern: RegExp, s: string): boolean {
+  return pattern.test(s);
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += messageOf(new Error("ab")).length + messageLength(new RangeError("c")) + timeOf(new Date(i)) + (matches(/a/, "a") ? 1 : 0);
+show("2000 honest rounds", () => warm);
+
+const failure = new Failure();
+show("message", () => messageOf(failure));
+show("the length of the message", () => messageLength(failure));
+show("its name", () => failure.name);
+show("stack", () => failure.stack);
+show("instanceof Error", () => failure instanceof Error);
+show("toString", () => failure.toString());
+show("thrown and caught", () => {
+  try {
+    throw failure;
+  } catch (caught) {
+    return [caught === failure, caught instanceof Error, typeof caught];
+  }
+});
+show("thrown out of the function", () => {
+  throw failure;
+});
+show("as a cause", () => new Error("outer", { cause: failure }).cause === failure);
+show("keys", () => Object.keys(failure));
+
+const stamp = new Stamp();
+show("getTime", () => timeOf(stamp));
+show("typeof getTime", () => typeof stamp.getTime);
+show("the real getTime on it", () => Date.prototype.getTime.call(stamp));
+show("valueOf is typed number", () => typeof stamp.valueOf());
+show("new Date from it", () => new Date(stamp).getTime());
+show("JSON", () => JSON.stringify(stamp));
+
+const pattern = new Pattern();
+show("test", () => matches(pattern, "a"));
+show("source", () => pattern.source);
+show("lastIndex", () => pattern.lastIndex);
+show("lastIndex plus one", () => pattern.lastIndex + 1);
+show("flags", () => pattern.flags);
+show("replace with it", () => "[object Object]!".replace(pattern, "x"));
+show("split with it", () => "a[object Object]b".split(pattern));
+show("match with it", () => "abc".match(pattern));
+show("new RegExp from it", () => new RegExp(pattern).source);
+show("honest again", () => [messageOf(new Error("m")), timeOf(new Date(5)), matches(/a/, "b")]);
+//// a-class-claims-to-be-callable-by-a-merged-interface.ts
+////= text-11
+
+interface Adder {
+  (n: number): number;
+}
+////= lines-29	Adder	step	number	1
+
+interface Maker {
+  new (n: number): { made: number };
+}
+////= lines-29	Maker	id	number	2
+
+interface Routine extends Function {}
+////= lines-29	Routine	id	number	3
+
+////= apply
+
+function make(maker: new (n: number) => { made: number }, n: number): number {
+  return new maker(n).made;
+}
+
+class Real {
+  made: number;
+  constructor(n: number) {
+    this.made = n;
+  }
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += apply(n => n + 1, i) + make(Real, i);
+show("2000 honest rounds", () => warm);
+
+const adder = new Adder();
+show("typeof", () => typeof adder);
+show("called", () => adder(1));
+show("given to a typed function", () => apply(adder, 1));
+show("as a callback", () => [1, 2].map(adder));
+show("its own member", () => adder.step);
+show("keys", () => Object.keys(adder));
+
+const maker = new Maker();
+show("constructed", () => new maker(1));
+show("given to a typed function", () => make(maker, 1));
+
+const routine = new Routine();
+show("call", () => routine.call(undefined));
+show("apply", () => routine.apply(undefined, []));
+show("bind", () => routine.bind(undefined));
+show("its name", () => routine.name);
+show("its length", () => routine.length);
+show("its length plus one", () => routine.length + 1);
+show("its prototype", () => routine.prototype);
+show("toString", () => routine.toString());
+show("instanceof Function", () => routine instanceof Function);
+show("the real call on it", () => Function.prototype.call.call(routine, undefined));
+show("honest again", () => [apply(n => n + 1, 1), make(Real, 2)]);
+//// a-class-claims-to-be-iterable-and-disposable-by-a-merged-interface.ts
+////= text-11
+
+interface Countdown {
+  [Symbol.iterator](): Iterator<number>;
+}
+////= lines-29	Countdown	from	number	1
+
+interface Feed {
+  [Symbol.asyncIterator](): AsyncIterator<number>;
+}
+////= lines-29	Feed	id	number	2
+
+interface Handle {
+  [Symbol.dispose](): void;
+}
+////= lines-29	Handle	id	number	3
+
+interface Money {
+  [Symbol.toPrimitive](hint: string): number;
+}
+////= lines-29	Money	cents	number	4
+
+////= lines-192	total	numbers	Iterable	sum	n
+
+function listOf(numbers: Iterable<number>): number[] {
+  return [...numbers];
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += total([i, 1]) + total(new Set([i])) + listOf([i]).length;
+show("2000 honest rounds", () => warm);
+
+const range = new Countdown();
+show("for of", () => total(range));
+show("spread", () => listOf(range));
+show("Array.from takes it for an array-like", () => Array.from(range));
+show("new Set", () => new Set(range).size);
+show("taken apart", () => {
+  const [first] = range;
+  return first;
+});
+show("Math.max", () => Math.max(...range));
+show("yield*", () => {
+  function* all(): Generator<number> {
+    yield* range;
+  }
+  return [...all()];
+});
+show("the method itself", () => range[Symbol.iterator]);
+show("in", () => Symbol.iterator in range);
+
+const stream = new Feed();
+try {
+  let sum = 0;
+  for await (const n of stream) sum += n;
+  show("for await", () => sum);
+} catch (error) {
+  show("for await", () => {
+    throw error;
+  });
+}
+
+show("using", () => {
+  using handle = new Handle();
+  return handle.id;
+});
+show("the stack of disposables", () => {
+  const stack = new DisposableStack();
+  stack.use(new Handle());
+  return "taken";
+});
+
+const money = new Money();
+show("the method itself", () => money[Symbol.toPrimitive]);
+show("called", () => money[Symbol.toPrimitive]("number"));
+show("in a template", () => `${money}`);
+show("honest again", () => [total([1, 2]), listOf(new Set([3]))]);
+
+export {};
+//// a-class-constructed-for-another-class-as-new-target-keeps-its-fields.ts
+////= lines-48	Apple	taste	"sweet"	size	1
+
+////= lines-48	Pear	weight	2.5	taste	"mild"
+
+const made: Apple = Reflect.construct(Apple, [], Pear);
+console.log(Object.keys(made).join());
+console.log(JSON.stringify(made));
+console.log(made.taste);
+console.log(made.size);
+console.log(made instanceof Apple);
+console.log(made instanceof Pear);
+
+export {};
+//// a-class-declared-in-a-function-extends-a-base-named-in-place.ts
+////= Base
+
+function derive() {
+  return class extends Base {
+    extra = "d";
+    twice(): number {
+      return this.sum() * 2;
+    }
+  };
+}
+
+const Derived = derive();
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-expression-extends-a-base-that-is-a-parameter.ts
+////= Tagged
+
+////= Point-10
+
+const made = new (Tagged(Point))();
+console.log(Object.keys(made).join());
+console.log(JSON.stringify(made), made.tag, made instanceof Point);
+//// a-class-expression-is-evaluated-many-times.ts
+////= lines-246	Unit	id	label	string
+
+function define(tag: number) {
+  return class Made {
+    static made = 0;
+    id = tag;
+    constructor() {
+      Made.made++;
+    }
+    label(): string {
+      return "made by " + tag;
+    }
+    sameClass(other: object): boolean {
+      return other instanceof Made;
+    }
+  };
+}
+
+const First = define(1);
+const Second = define(2);
+
+const a = new First();
+const b = new Second();
+const alias: InstanceType<typeof First> = b;
+
+console.log("two evaluations are two classes: " + (First === Second) + " " + (First.prototype === Second.prototype));
+console.log("labels: " + a.label() + ", " + b.label() + ", " + alias.label());
+console.log("instanceof: " + (a instanceof First) + " " + (a instanceof Second) + " " + (alias instanceof First) + " " + (alias instanceof Second));
+console.log("asked from inside: " + a.sameClass(a) + " " + a.sameClass(b) + " " + b.sameClass(a) + " " + b.sameClass(b));
+console.log("statics are apart: " + First.made + " " + Second.made);
+new First();
+new First();
+console.log("after two more of the first: " + First.made + " " + Second.made);
+console.log("names: " + First.name + " " + Second.name + " " + a.constructor.name + " " + (a.constructor === b.constructor));
+
+////= lines-19	label	u	Unit	string	u.label
+
+function isFirst(u: InstanceType<typeof First>): boolean {
+  return u instanceof First;
+}
+
+let length = 0;
+let yes = 0;
+for (let i = 0; i < 2000; i++) {
+  length += label(a).length;
+  if (isFirst(a)) yes++;
+}
+console.log("2000 of the first: " + length + " " + yes);
+console.log("then the second: " + label(b) + " " + isFirst(b));
+
+const classes: (typeof First)[] = [];
+for (let i = 0; i < 100; i++) classes.push(define(i));
+const instances = classes.map(C => new C());
+console.log("a hundred classes: " + instances.map(u => u.id).reduce((x, y) => x + y, 0) + " " + label(instances[99]) + " " + label(instances[0]));
+console.log("each is an instance of its own only: " + instances.filter((u, i) => u instanceof classes[i]).length + " " + instances.filter((u, i) => u instanceof classes[(i + 1) % 100]).length);
+console.log("statics: " + classes.map(C => C.made).reduce((x, y) => x + y, 0));
+
+First.prototype.label = () => "patched first";
+console.log("one prototype patched: " + label(a) + ", " + label(b) + ", " + label(instances[1]));
+
+function counter() {
+  let count = 0;
+  return {
+    next(): number {
+      return ++count;
+    },
+    get current(): number {
+      return count;
+    },
+  };
+}
+
+const one = counter();
+const two = counter();
+one.next();
+one.next();
+two.next();
+console.log("literals from one function keep their own closures: " + one.current + " " + two.current + " " + (one.next === two.next));
+
+function subclass(Base: typeof First, extra: number) {
+  return class extends Base {
+    label(): string {
+      return super.label() + " plus " + extra;
+    }
+  };
+}
+
+const OverFirst = subclass(First, 10);
+const OverSecond = subclass(Second, 20);
+console.log("one subclass expression over two bases: " + new OverFirst().label() + ", " + new OverSecond().label());
+console.log("chains: " + (new OverSecond() instanceof First) + " " + (new OverSecond() instanceof Second) + " " + (new OverFirst() instanceof First));
+
+export {};
+//// a-class-expression-without-fields-extends-a-base-that-is-a-parameter.ts
+////= lines-108	Greeting	string	"hello"
+
+////= Point-10
+
+////= lines-18	Other	first	1
+
+console.log(Object.keys(new (Greeting(Point))()).join());
+console.log(Object.keys(new (Greeting(Other))()).join());
+//// a-class-extends-a-base-behind-a-comma.ts
+////= Base
+
+let count = 0;
+
+////= Derived-10	count++,
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-chosen-by-a-condition.ts
+////= Base
+
+const Alias = Base;
+const flag = [1].length === 1;
+
+////= Derived-9	(flag ? Base : Alias)
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-chosen-by-a-default.ts
+////= Base
+
+const Missing: typeof Base | undefined = [undefined][0];
+
+////= Derived-10	Missing ??
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-destructured-from-a-literal.ts
+////= Base
+
+const { Inner } = { Inner: Base };
+
+////= Derived-7	Inner	"d"
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-exported-again-by-another-module/again.ts
+export { Base as Renamed } from "./base.ts";
+//// a-class-extends-a-base-exported-again-by-another-module/base.ts
+////= Base-3
+//// a-class-extends-a-base-exported-again-by-another-module/main.ts
+import { Renamed } from "./again.ts";
+
+////= Derived-7	Renamed	"d"
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Renamed));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-exported-as-a-variable/base.ts
+////= Base
+
+export let Current = Base;
+//// a-class-extends-a-base-exported-as-a-variable/main.ts
+import { Current } from "./base.ts";
+
+////= Derived-7	Current	"d"
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Current));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-held-in-a-let-that-is-never-stored-to.ts
+////= Base
+
+let Variable = Base;
+
+////= Derived-3
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-held-in-a-var.ts
+////= Base
+
+var Variable = Base;
+
+////= Derived-3
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-imported-as-the-default/base.ts
+export default class Base {
+  x = 1;
+  y: number;
+  constructor(y: number = 2) {
+    this.y = y;
+  }
+  sum(): number {
+    return this.x + this.y;
+  }
+}
+//// a-class-extends-a-base-imported-as-the-default/main.ts
+import Base from "./base.ts";
+
+////= Derived
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-imported-by-name/base.ts
+////= Base-3
+//// a-class-extends-a-base-imported-by-name/main.ts
+import { Base } from "./base.ts";
+
+////= Derived
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-in-parentheses.ts
+////= Base
+
+////= Derived-9	(Base)
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-loaded-by-a-dynamic-import/base.ts
+////= Base-3
+//// a-class-extends-a-base-loaded-by-a-dynamic-import/main.ts
+export {};
+
+const { Base } = await import("./base.ts");
+
+////= Derived
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-named-by-a-const-alias.ts
+////= Base
+
+const Alias = Base;
+
+////= Derived-7	Alias	"d"
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-named-in-place-honest.ts
+////= Base
+
+////= Derived
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-read-from-a-namespace-import/base.ts
+////= Base-3
+//// a-class-extends-a-base-read-from-a-namespace-import/main.ts
+import * as shapes from "./base.ts";
+
+////= Derived-8	shapes.Base
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof shapes.Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-returned-by-a-function.ts
+////= Base
+
+function give(): typeof Base {
+  return Base;
+}
+
+////= Derived-4
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-returned-by-a-generic-identity.ts
+////= Base
+
+////= lines-276	identity	T	value
+
+class Derived extends identity(Base) {
+  extra = "d";
+  twice(): number {
+    return this.sum() * 2;
+  }
+}
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-returned-by-an-arrow-function.ts
+////= Base
+
+const give = () => Base;
+
+////= Derived-4
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-taken-from-a-map.ts
+////= Base
+
+const kinds = new Map([["base", Base]]);
+
+////= Derived-10	kinds.get("base") ??
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-that-is-a-captured-variable.ts
+////= Base
+
+function derive() {
+  const Parent = Base;
+  return () =>
+    class extends Parent {
+      extra = "d";
+      twice(): number {
+        return this.sum() * 2;
+      }
+    };
+}
+
+const Derived = derive()();
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-that-is-a-class-expression-in-a-const.ts
+const Base = class {
+  x = 1;
+  y: number;
+  constructor(y: number = 2) {
+    this.y = y;
+  }
+  sum(): number {
+    return this.x + this.y;
+  }
+};
+
+////= Derived
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-that-is-a-getter-of-a-literal.ts
+////= Base
+
+const holder = {
+  get Inner(): typeof Base {
+    return Base;
+  },
+};
+
+////= Derived-5
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-that-is-a-member-of-a-literal.ts
+////= Base
+
+const holder = { Inner: Base };
+
+////= Derived-5
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-that-is-a-member-of-a-namespace.ts
+namespace Space {
+  export class Base {
+    x = 1;
+    y: number;
+    constructor(y: number = 2) {
+      this.y = y;
+    }
+    sum(): number {
+      return this.x + this.y;
+    }
+  }
+}
+
+////= Derived-8	Space.Base
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Space.Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-that-is-a-nested-member-of-a-literal.ts
+////= Base
+
+const holder = { nested: { Deep: Base } };
+
+////= Derived-9	holder.nested.Deep
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-that-is-a-parameter-typed-as-the-class.ts
+////= Base
+
+////= derive	"d"
+
+const Derived = derive(Base);
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-that-is-a-proxy.ts
+////= Base
+
+const Wrapped = new Proxy(Base, {});
+
+////= Derived-7	Wrapped	"d"
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-that-is-a-static-member-of-another-class.ts
+////= Base
+
+////= lines-178	Registry	Kind	Base
+
+////= Derived-8	Registry.Kind
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-that-is-an-element-of-a-list.ts
+////= Base
+
+const list = [Base];
+
+////= Derived-9	list[0]
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-that-is-bound.ts
+////= Base
+
+const Bound = Base.bind(null);
+
+try {
+  class Derived extends Bound {
+    extra = "d";
+  }
+  console.log("defined: " + Object.keys(new Derived()).join(" "));
+} catch (error) {
+  console.log("the definition threw a TypeError: " + (error instanceof TypeError));
+}
+console.log("the bound class alone: " + JSON.stringify(new Bound(5)) + " " + (new Bound() instanceof Base));
+//// a-class-extends-a-base-that-is-bound-and-was-given-a-prototype.ts
+////= Base
+
+const Bound = Base.bind(null, 20);
+Object.defineProperty(Bound, "prototype", { value: Base.prototype });
+
+////= Derived-7	Bound	"d"
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-that-was-awaited.ts
+export {};
+
+////= Base
+
+const Awaited = await Promise.resolve(Base);
+
+////= Derived-7	Awaited	"d"
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-that-went-through-object-assign.ts
+////= Base
+
+const Marked = Object.assign(Base, { marked: true });
+
+////= Derived-7	Marked	"d"
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-base-written-in-javascript/base.js
+////= Base-5
+//// a-class-extends-a-base-written-in-javascript/main.ts
+import { Base } from "./base.js";
+
+////= Derived
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-class-expression-written-in-place.ts
+class Derived extends class {
+  x = 1;
+  y: number;
+  constructor(y: number = 2) {
+    this.y = y;
+  }
+  sum(): number {
+    return this.x + this.y;
+  }
+} {
+  extra = "d";
+  twice(): number {
+    return this.sum() * 2;
+  }
+}
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Derived));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-constructor-function-described-by-a-declaration-file/base.d.ts
+////= Base-6
+//// a-class-extends-a-constructor-function-described-by-a-declaration-file/base.js
+export function Base(y = 2) {
+  this.x = 1;
+  this.y = y;
+}
+
+Base.prototype.sum = function () {
+  return this.x + this.y;
+};
+//// a-class-extends-a-constructor-function-described-by-a-declaration-file/main.ts
+import { Base } from "./base.js";
+
+////= Derived
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-constructor-function-whose-prototype-was-replaced/base.d.ts
+////= Base-6
+//// a-class-extends-a-constructor-function-whose-prototype-was-replaced/base.js
+export function Base(y = 2) {
+  this.x = 1;
+  this.y = y;
+}
+
+Base.prototype = {
+  constructor: Base,
+  sum() {
+    return this.x + this.y;
+  },
+};
+//// a-class-extends-a-constructor-function-whose-prototype-was-replaced/main.ts
+import { Base } from "./base.js";
+
+////= Derived
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-a-generic-base-at-one-type-argument.ts
+////= Box-2
+
+class Derived extends Box<number> {
+  extra = "d";
+}
+
+const made = new Derived(2);
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Box));
+//// a-class-extends-a-javascript-class-described-by-a-declaration-file/base.d.ts
+////= Base-6
+//// a-class-extends-a-javascript-class-described-by-a-declaration-file/base.js
+////= Base-5
+//// a-class-extends-a-javascript-class-described-by-a-declaration-file/main.ts
+import { Base } from "./base.js";
+
+////= Derived
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-an-abstract-base-that-is-a-parameter.ts
+abstract class Base {
+  x = 1;
+  y: number;
+  constructor(y: number = 2) {
+    this.y = y;
+  }
+  abstract name(): string;
+  sum(): number {
+    return this.x + this.y;
+  }
+}
+
+function derive(Parent: abstract new (y?: number) => Base) {
+  abstract class Middle extends Parent {
+    extra = "d";
+    twice(): number {
+      return this.sum() * 2;
+    }
+  }
+  return Middle;
+}
+
+class Derived extends derive(Base) {
+  name(): string {
+    return "derived";
+  }
+}
+
+const made = new Derived();
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " " + made.twice());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Base));
+made.x = 10;
+made.extra = "stored";
+console.log("after stores: " + JSON.stringify(made) + " " + made.sum());
+//// a-class-extends-an-instantiation-expression-of-a-generic-base.ts
+////= Box-2
+
+const NumberBox = Box<number>;
+
+////= lines-14	class	Derived	extends	NumberBox	extra	"d"
+
+const made = new Derived(2);
+console.log("keys: " + Object.keys(made).join(" "));
+console.log("json: " + JSON.stringify(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum());
+console.log("kinds: " + typeof made.x + " " + typeof made.y + " " + typeof made.extra);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Box));
+//// a-class-extends-null.ts
+////= lines-92	Bare	null	static	hello	string	"static members work"
+
+console.log(Bare.hello());
+console.log("prototype of the prototype: " + Object.getPrototypeOf(Bare.prototype));
+console.log("prototype of the class is Function.prototype: " + (Object.getPrototypeOf(Bare) === Function.prototype));
+try {
+  new Bare();
+  console.log("constructed");
+} catch (error) {
+  console.log("construction threw a TypeError: " + (error instanceof TypeError));
+}
+//// a-class-freezes-or-seals-its-own-instances.ts
+////= attempt-7
+
+class Money {
+  amount: number;
+  currency = "USD";
+  constructor(amount: number) {
+    this.amount = amount;
+    Object.freeze(this);
+  }
+  add(n: number): this {
+    this.amount += n;
+    return this;
+  }
+  plus(n: number): Money {
+    return new Money(this.amount + n);
+  }
+}
+
+attempt("a frozen instance is read", () => new Money(1).amount);
+attempt("its own method stores", () => new Money(1).add(2).amount);
+attempt("its own method makes another", () => new Money(1).plus(2).amount);
+
+////= lines-14	class	Tip	extends	Money	percent	10
+attempt("a subclass adds a field to a frozen this", () => new Tip(1).percent);
+
+class Plain extends Money {
+  describe(): string {
+    return this.amount + this.currency;
+  }
+}
+attempt("a subclass without fields", () => new Plain(3).describe());
+
+class Sealed {
+  a = 1;
+  b?: number;
+  constructor() {
+    Object.seal(this);
+  }
+}
+attempt("sealed, a declared optional field", () => {
+  const s = new Sealed();
+  s.b = 2;
+  return JSON.stringify(s) + " " + Object.keys(s).join();
+});
+attempt("sealed, deleting it", () => {
+  const s = new Sealed();
+  return delete s.b;
+});
+
+class Early {
+  first = 1;
+  second: number;
+  constructor() {
+    Object.preventExtensions(this);
+    this.second = 2;
+  }
+}
+attempt("not extensible before the constructor's store", () => JSON.stringify(new Early()));
+
+class FreezesInAField {
+  a = 1;
+  lock = Object.freeze(this);
+  b = 2;
+}
+attempt("frozen by a field initializer", () => JSON.stringify(Object.keys(new FreezesInAField())));
+
+class Sometimes {
+  value = 0;
+  constructor(freeze: boolean) {
+    if (freeze) Object.freeze(this);
+  }
+  set(v: number): number {
+    this.value = v;
+    return this.value;
+  }
+}
+
+const open = new Sometimes(false);
+for (let i = 0; i < 2000; i++) open.set(i);
+console.log("2000 honest: " + open.value);
+attempt("then a frozen instance of the same class", () => new Sometimes(true).set(1));
+attempt("then the open one", () => open.set(1));
+
+const both: Sometimes[] = [new Sometimes(false), new Sometimes(true), new Sometimes(false)];
+attempt("elements", () => both.map(s => s.set(5)).join());
+console.log("they hold: " + both.map(s => s.value).join());
+
+class Registry {
+  static entries: Record<string, number> = Object.freeze({ a: 1 });
+  static count = 0;
+}
+attempt("a frozen static record", () => (Registry.entries.b = 2));
+Object.freeze(Registry);
+attempt("a frozen class, a static store", () => ++Registry.count);
+attempt("a frozen class still constructs", () => new Registry() instanceof Registry);
+
+Object.freeze(Sometimes.prototype);
+attempt("a frozen prototype, a method replaced", () => {
+  Sometimes.prototype.set = () => -1;
+  return "replaced";
+});
+attempt("a frozen prototype, an own member of that name", () => {
+  const s = new Sometimes(false);
+  s.set = () => -2;
+  return s.set(0);
+});
+attempt("a frozen prototype, fields still work", () => new Sometimes(false).set(3));
+
+export {};
+//// a-class-hangs-under-an-object-created-with-a-static-method.ts
+class First {
+  get title(): string {
+    return "first";
+  }
+  static make(): string {
+    return "first make";
+  }
+}
+
+class Plain extends First {}
+
+const plain = new Plain();
+console.log(plain.title + " " + Plain.make());
+Object.setPrototypeOf(Plain.prototype, Object.create(First.prototype, { title: { get: () => "between" } }));
+Object.setPrototypeOf(Plain, Object.create(First, { make: { value: () => "between make" } }));
+console.log(plain.title + " " + Plain.make());
+
+export {};
+//// a-class-implements-an-interface-with-declared-fields-only.ts
+////= text-11
+
+interface Sized {
+  width: number;
+  height: number;
+  label: string;
+}
+
+class Ghost implements Sized {
+  declare width: number;
+  declare height: number;
+  declare label: string;
+  id: number = 1;
+}
+
+class Solid implements Sized {
+  width: number = 2;
+  height: number = 3;
+  label: string = "solid";
+}
+
+////= lines-151	area	sized	Sized	sized.width	sized.height
+
+function caption({ width, label }: Sized): string {
+  return label + " " + width;
+}
+
+////= lines-32	labelWidth	sized	Sized	number	sized.label.length
+
+function widest(all: Sized[]): number {
+  let best = 0;
+  for (const sized of all) if (sized.width > best) best = sized.width;
+  return best;
+}
+
+show("the first call gets the ghost", () => area(new Ghost()));
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  const sized: Sized = i % 2 === 0 ? new Solid() : { width: i, height: 1, label: "literal" };
+  sum += area(sized) + caption(sized).length + labelWidth(sized);
+}
+show("2000 honest rounds", () => sum);
+
+const ghost = new Ghost();
+show("area", () => area(ghost));
+show("caption", () => caption(ghost));
+show("the length of the label", () => labelWidth(ghost));
+show("members", () => [ghost.width, ghost.height, ghost.label]);
+show("keys", () => Object.keys(ghost));
+show("spread", () => ({ ...ghost }));
+show("spread under the interface", () => {
+  const copy: Sized = { ...ghost };
+  return [copy.width, area(copy), Object.keys(copy)];
+});
+show("the widest of three", () => widest([new Solid(), ghost, { width: 5, height: 1, label: "l" }]));
+show("areas of three", () => [new Solid(), ghost, { width: 5, height: 1, label: "l" }].map(area));
+
+ghost.height = 4;
+show("half filled", () => [area(ghost), Object.keys(ghost)]);
+ghost.width = 5;
+ghost.label = "ghost";
+show("filled in another order", () => [area(ghost), caption(ghost), labelWidth(ghost), Object.keys(ghost)]);
+show("honest again", () => [area(new Solid()), caption({ width: 1, height: 1, label: "x" })]);
+//// a-class-in-one-module-and-its-look-alike-in-another/look-alike.ts
+export class Shape {
+  name = "look-alike";
+  hidden = "hidden";
+  sides = 3;
+  area(): number {
+    return this.sides * -10;
+  }
+  get summary(): string {
+    return "not the same " + this.name;
+  }
+  static is(): boolean {
+    return true;
+  }
+}
+
+export const literal = {
+  summary: "a literal",
+  area: () => 0,
+  sides: 0,
+  name: "literal",
+};
+//// a-class-in-one-module-and-its-look-alike-in-another/main.ts
+import { Shape, describe, grow, warm } from "./shape.ts";
+import { Shape as Other, literal } from "./look-alike.ts";
+
+console.log("both are called Shape: " + Shape.name + " " + Other.name + " " + (Object.is(Shape, Other)));
+console.log("look-alike before any honest use: " + describe(new Other()));
+console.log("honest uses in the class's own module: " + warm());
+console.log("the real one: " + describe(new Shape()));
+console.log("the look-alike: " + describe(new Other()));
+console.log("a literal: " + describe(literal));
+console.log("the real one again: " + describe(new Shape()));
+
+const other = new Other();
+console.log("the look-alike grows: " + grow(other) + " " + JSON.stringify(other));
+const real = new Shape();
+console.log("the real one grows: " + grow(real) + " " + JSON.stringify(real));
+
+const local: Shape = new Other();
+console.log("local: " + local.area() + " " + local.summary + " " + (local instanceof Shape) + " " + (local instanceof Other));
+
+const Alias: typeof Shape = Other;
+console.log("the static side: " + Alias.is(new Shape()) + " " + Shape.is(new Alias()) + " " + new Alias().area());
+
+const list: Shape[] = [new Shape(), new Other(), literal, new Alias()];
+console.log("elements: " + list.map(s => s.area()).join() + " " + list.map(s => s instanceof Shape).join());
+console.log("json: " + JSON.stringify(list));
+
+class Canvas {
+  shapes: Shape[] = [];
+  top: Shape = new Shape();
+  add(s: Shape): this {
+    this.shapes.push(s);
+    this.top = s;
+    return this;
+  }
+  total(): number {
+    return this.shapes.reduce((sum, s) => sum + s.area(), this.top.area());
+  }
+}
+console.log("fields: " + new Canvas().add(new Shape()).add(new Other()).add(literal).total());
+
+class Sub extends Other {
+  area(): number {
+    return super.area() - 1;
+  }
+}
+const sub: Shape = new Sub();
+console.log("a subclass of the look-alike: " + describe(sub));
+//// a-class-in-one-module-and-its-look-alike-in-another/shape.ts
+export class Shape {
+  sides = 4;
+  name = "shape";
+  area(): number {
+    return this.sides * 10;
+  }
+  get summary(): string {
+    return this.name + " with " + this.sides;
+  }
+  static is(value: Shape): boolean {
+    return value instanceof Shape;
+  }
+}
+
+export function describe(s: Shape): string {
+  return [s.name, s.sides, s.area(), s.summary, s instanceof Shape, Shape.is(s), s.constructor.name].join(" ");
+}
+
+export function grow(s: Shape): number {
+  s.sides += 1;
+  return s.area();
+}
+
+export function warm(): number {
+  let total = 0;
+  const s = new Shape();
+  for (let i = 0; i < 2000; i++) total += describe(s).length + grow(s);
+  return total;
+}
+//// a-class-instance-gets-members-its-class-never-declared.ts
+class Card {
+  rank = 5;
+  suit = "hearts";
+  text(): string {
+    return this.rank + " of " + this.suit;
+  }
+}
+
+interface Marked extends Card {
+  mark?: string;
+  weight?: number;
+}
+
+////= listing
+
+function text(c: Card): string {
+  return c.text() + " " + c.rank + " " + c.suit;
+}
+
+const warm = new Card();
+let length = 0;
+for (let i = 0; i < 2000; i++) length += text(warm).length + Object.keys(warm).length;
+console.log("2000 untouched: " + length);
+
+const marked: Marked = new Card();
+marked.mark = "bent";
+console.log("one extra: " + text(marked) + " / " + listing(marked));
+marked.weight = 1.5;
+console.log("two extras: " + text(marked) + " / " + listing(marked));
+delete marked.mark;
+console.log("the first extra deleted: " + text(marked) + " / " + listing(marked));
+marked.mark = "again";
+console.log("and added again: " + text(marked) + " / " + listing(marked));
+console.log("still an instance: " + (marked instanceof Card) + " " + marked.constructor.name);
+
+const stuffed = new Card();
+const extras: Record<string, number> = {};
+for (let i = 0; i < 100; i++) extras["extra" + i] = i;
+Object.assign(stuffed, extras);
+console.log("a hundred extras: " + text(stuffed) + " " + Object.keys(stuffed).length + " " + Object.keys(stuffed).slice(0, 4).join() + " " + JSON.stringify(stuffed).length);
+stuffed.rank = 6;
+stuffed.suit = "spades";
+console.log("its declared fields stored: " + text(stuffed) + " " + Object.keys(stuffed).slice(0, 3).join());
+for (let i = 0; i < 100; i++) Reflect.deleteProperty(stuffed, "extra" + i);
+console.log("the extras deleted: " + text(stuffed) + " / " + listing(stuffed));
+
+const indexed = Object.assign(new Card(), { 1: "one", 0: "zero" });
+console.log("index keys come first: " + text(indexed) + " / " + listing(indexed));
+
+const tag = Symbol("tag");
+const tagged = Object.assign(new Card(), { [tag]: true });
+console.log("a symbol key: " + text(tagged) + " / " + listing(tagged) + " " + Object.getOwnPropertySymbols(tagged).length);
+
+const loose: { rank?: number; suit?: string } = new Card();
+const strict: Card = Object.assign(new Card(), {});
+const looseView: { rank?: number; suit?: string } = strict;
+delete looseView.rank;
+console.log("a declared field deleted: " + listing(strict) + " " + ("rank" in strict) + " " + typeof strict.rank + " " + strict.text());
+looseView.rank = 9;
+console.log("and stored again, now last: " + listing(strict) + " " + strict.text());
+delete loose.suit;
+delete loose.rank;
+console.log("both deleted: " + listing(loose));
+loose.suit = "clubs";
+loose.rank = 2;
+console.log("stored in the other order: " + listing(loose));
+
+const watched = new Card();
+const reads: string[] = [];
+Object.defineProperty(watched, "rank", {
+  get() {
+    reads.push("get rank");
+    return 12;
+  },
+  set(value: number) {
+    reads.push("set rank " + value);
+  },
+  enumerable: true,
+  configurable: true,
+});
+console.log("a declared field turned into an accessor: " + text(watched) + " [" + reads.join() + "]");
+watched.rank = 3;
+console.log("stored: " + watched.rank + " [" + reads.join() + "] / " + listing(watched));
+
+const hidden = new Card();
+Object.defineProperty(hidden, "suit", { enumerable: false });
+console.log("a declared field hidden: " + text(hidden) + " / " + listing(hidden));
+
+const all: Card[] = [warm, marked, stuffed, indexed, tagged, strict, watched, hidden];
+console.log("all: " + all.map(c => c.text()).join("; "));
+console.log("untouched at the end: " + text(new Card()) + " / " + listing(new Card()));
+
+export {};
+//// a-class-is-kept-in-a-variable-of-an-object-type.ts
+class Box {
+  static size: number = 6;
+}
+const sized: { size: number } = Box;
+////= lines-41	read	number	sized.size
+console.log("size " + read());
+//// a-class-is-re-evaluated-with-another-base-each-time-a-function-runs.ts
+////= describe-7
+
+class Other {
+  first = "f";
+  sum(): number {
+    return -1;
+  }
+}
+
+function build(flag: boolean): { sum(): number; extra: string } {
+  const Parent: new () => { sum(): number } = flag ? Point : Other;
+  class Local extends Parent {
+    extra = flag ? "over point" : "over other";
+  }
+  return new Local();
+}
+
+for (const flag of [true, false, true, false]) {
+  const made = build(flag);
+  console.log(describe(made) + " sum " + made.sum());
+}
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += build(i % 2 === 0).sum();
+console.log("2000 rounds: " + warm);
+console.log(describe(build(true)) + " | " + describe(build(false)));
+//// a-class-is-taken-for-an-object-type-that-its-static-members-satisfy.ts
+// A class whose static members are those of an object type is passed where the type is declared, beside a literal, a namespace and an enum: static fields, methods, accessors and stores behave as in plain Bun.
+interface Counter { count: number; step(): number }
+class Up { static count = 0; static step() { return ++Up.count; } }
+class Down { static count = 10; static step() { return --this.count; } }
+class Heir extends Up {}
+class Computed { static #n = 1; static get count() { return Computed.#n; } static set count(n: number) { Computed.#n = n * 2; } static step() { return Computed.count; } }
+namespace Space { export let count = 100; export function step() { return (count += 5); } }
+function run(c: Counter): number { const before = c.count; c.count = before + 1; return c.step() + c.count + before; }
+function names(c: Counter): string { return Object.keys(c).join() + typeof c + ("step" in c); }
+let n = 0, t = "";
+const literal: Counter = { count: 1, step() { return this.count * 2; } };
+for (let i = 0; i < 100; i++) {
+  n += run(Up) + run(Down) + run(literal) + run(Space) + run(Computed) % 1000 + run(Heir);
+  t = names(Up) + names(literal) + names(Space) + names(Heir);
+}
+console.log(n, t, Up.count, Down.count, Heir.count, Space.count);
+//// a-class-is-used-while-it-is-being-defined.ts
+////= text-12
+
+const log: string[] = [];
+
+function attempt(label: string, run: () => unknown): string {
+  let result: string;
+  try {
+    result = text(run());
+  } catch (error) {
+    result = "threw " + (error instanceof Error ? error.constructor.name : typeof error);
+  }
+  log.push(label + ": " + result);
+  return "key" + log.length;
+}
+
+class Plain {}
+
+////= lines-41	childName	string	Child.name
+
+function parentOf(): typeof Plain {
+  attempt("in the extends clause", childName);
+  return Plain;
+}
+
+class Child extends parentOf() {
+  [attempt("in a computed method name", childName)](): void {}
+  static [attempt("in a computed static method name", childName)](): void {}
+  static first: string = attempt("in a static initializer", () => Child.name);
+  static {
+    attempt("in a static block", () => Child.name);
+    attempt("an instance made in a static block", () => new Child().field);
+    attempt("a later static read in a static block", () => Child.last);
+  }
+  field: string = attempt("in a field initializer", () => Child.last);
+  static last: number = 9;
+}
+
+new Child();
+for (const entry of log.splice(0)) console.log(entry);
+show("names on the prototype", () => Object.getOwnPropertyNames(Child.prototype).join());
+show("static keys", () => Object.keys(Child).join());
+
+const Expression = class Inner {
+  static self: string = attempt("the inner name in a static initializer", () => Inner.name);
+  static outer: string = attempt("the outer name in a static initializer", () => Expression.name);
+};
+for (const entry of log.splice(0)) console.log(entry);
+show("afterwards", () => Expression.name);
+
+function makeEarly(): string {
+  return attempt("a class declared later in the same block", () => new Later().n);
+}
+makeEarly();
+////= lines-29	Later	n	number	1
+makeEarly();
+for (const entry of log.splice(0)) console.log(entry);
+
+function perCall(n: number): number {
+  class Local {
+    static base: number = n;
+    value: number = Local.base * 2;
+  }
+  return new Local().value;
+}
+show("a class made on every call", () => [perCall(1), perCall(2), perCall(3)].join());
+//// a-class-kept-in-a-member-is-constructed-honest.ts
+////= Point-33
+
+function describe(p: Point): string {
+  return p.constructor.name + " " + p.x + " " + p.y + " " + p.norm() + " " + (p instanceof Point) + " " + Object.keys(p).join() + " " + JSON.stringify(p);
+}
+
+function makeWith(f: Factory): string {
+  return describe(f.make(1, 2));
+}
+
+const f = new Factory();
+const other = new Factory();
+
+function round(label: string): void {
+  console.log(label + ", a field: " + makeWith(f) + " | the other " + makeWith(other));
+  console.log(label + ", a static member: " + describe(Factory.make(1, 2)) + " | " + describe(Factory.makeThis(1, 2)));
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += f.make(i, 1).norm() + Factory.make(i, 1).x + Factory.makeThis(1, i).y;
+console.log("2000 honest: " + warm);
+round("the class itself");
+
+export {};
+//// a-class-kept-in-a-member-is-replaced-by-a-look-alike.ts
+////= Point-33
+
+function describe(p: Point): string {
+  return p.constructor.name + " " + p.x + " " + p.y + " " + p.norm() + " " + (p instanceof Point) + " " + Object.keys(p).join() + " " + JSON.stringify(p);
+}
+
+function makeWith(f: Factory): string {
+  return describe(f.make(1, 2));
+}
+
+const f = new Factory();
+const other = new Factory();
+
+function round(label: string): void {
+  console.log(label + ", a field: " + makeWith(f) + " | the other " + makeWith(other));
+  console.log(label + ", a static member: " + describe(Factory.make(1, 2)) + " | " + describe(Factory.makeThis(1, 2)));
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += f.make(i, 1).norm() + Factory.make(i, 1).x + Factory.makeThis(1, i).y;
+console.log("2000 honest: " + warm);
+round("the class itself");
+
+f.Kind = Raised;
+Factory.Kind = Raised;
+round("a subclass");
+
+f.Kind = Swapped;
+Factory.Kind = Swapped;
+round("a look-alike with its fields in another order");
+
+f.Kind = Point.bind(null, 50);
+Factory.Kind = Point.bind(null, 50);
+round("the class, bound to a first argument");
+
+f.Kind = new Proxy(Point, {
+  construct(target, args) {
+    return new target(args[1], args[0]);
+  },
+});
+Factory.Kind = new Proxy(Point, {});
+round("proxies of the class");
+
+f.Kind = Point;
+Factory.Kind = Point;
+round("restored");
+
+export {};
+//// a-class-of-another-module-is-called-and-never-replaced-honest/main.ts
+import { Point, normOf } from "./point.ts";
+
+const p = new Point(3, 4);
+
+function report(label: string): void {
+  console.log(label + ": " + p.norm() + " " + normOf(p) + " " + p.twice() + " " + new Point(1, 1).norm() + " " + Object.hasOwn(p, "norm"));
+}
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+report("a second time");
+report("a third time");
+report("a fourth time");
+//// a-class-of-another-module-is-called-and-never-replaced-honest/point.ts
+////= Point-12
+
+////= normOf-2
+//// a-class-stands-for-the-iterators-of-arrays-sets-and-maps.ts
+class Pretender extends Iterator<number, undefined, unknown> {
+  at = 0;
+  next(): IteratorResult<number, undefined> {
+    return ++this.at > 2 ? { done: true, value: undefined } : { done: false, value: this.at * 100 };
+  }
+  [Symbol.iterator](): this {
+    return this;
+  }
+}
+function firstOf(walk: ArrayIterator<number>): string {
+  return "zzqq " + walk.next().value;
+}
+////= lines-192	sum	walk	ArrayIterator	total	n
+console.log(firstOf([1, 2].values()));
+console.log(firstOf(new Pretender()));
+console.log("zzqq " + sum([1, 2].values()) + " " + sum(new Pretender()));
+const asSet: SetIterator<number> = new Pretender();
+const asMap: MapIterator<number> = new Pretender();
+console.log("zzqq " + asSet.next().value + " " + asMap.next().value + " " + asSet.toArray().join() + " " + asMap.map(n => n + 1).toArray().join());
+export {};
+//// a-class-that-extends-iterator-has-its-next-called.ts
+class Own extends Iterator<number> {
+  next(): IteratorResult<number> {
+    return { done: false, value: 100 };
+  }
+}
+
+console.log("zzqq " + new Own().next().value);
+//// a-class-that-extends-iterator-overrides-map-and-to-array.ts
+class Odd extends Iterator<number, undefined, unknown> {
+  at = 0;
+  next(): IteratorResult<number, undefined> {
+    return ++this.at > 2 ? { done: true, value: undefined } : { done: false, value: this.at };
+  }
+  map<U>(f: (value: number, index: number) => U): IteratorObject<U, undefined, unknown> {
+    console.log("zzqq the map of Odd");
+    return super.map(f);
+  }
+  toArray(): number[] {
+    console.log("zzqq the toArray of Odd");
+    return super.toArray();
+  }
+}
+function doubled(walk: IteratorObject<number, undefined, unknown>): string {
+  return walk.map(n => n * 2).toArray().join();
+}
+function listed(walk: IteratorObject<number, undefined, unknown>): string {
+  return walk.toArray().join();
+}
+console.log("zzqq " + doubled([1, 2].values()) + " " + listed([1, 2].values()));
+console.log("zzqq " + doubled(new Odd()) + " " + listed(new Odd()));
+export {};
+//// a-class-that-extends-null-returns-an-object-of-its-own.ts
+class Bare extends null {
+  constructor() {
+    return Object.create(new.target.prototype);
+  }
+  hello(): string {
+    return "a method of the bare class";
+  }
+}
+
+const made = new Bare();
+console.log(made.hello());
+console.log("instance: " + (made instanceof Bare) + " " + (made instanceof Object));
+console.log("has toString: " + ("toString" in made));
+console.log("keys: [" + Object.keys(made).join(" ") + "]");
+//// a-class-that-implements-array-like.ts
+////= show-30
+
+const log: string[] = [];
+
+class Squares implements ArrayLike<number> {
+  readonly [index: number]: number;
+  constructor(public readonly length: number) {
+    for (let i = 0; i < length; i++) {
+      Object.defineProperty(this, i, {
+        get() {
+          log.push("get " + i);
+          return i * i;
+        },
+        enumerable: true,
+      });
+    }
+  }
+}
+
+class Sparse implements ArrayLike<number> {
+  readonly [index: number]: number;
+  readonly 0 = 10;
+  readonly 2 = 30;
+  readonly length = 4;
+}
+
+class Counting implements ArrayLike<number> {
+  readonly [index: number]: number;
+  readonly 0 = 1;
+  readonly 1 = 2;
+  reads = 0;
+  get length(): number {
+    this.reads++;
+    return 2;
+  }
+}
+
+function lazy(length: number): ArrayLike<number> {
+  return new Proxy<ArrayLike<number>>({ length }, {
+    get(target, key) {
+      if (key === "length") return target.length;
+      log.push("trap " + String(key));
+      return typeof key === "string" ? Number(key) + 0.5 : undefined;
+    },
+    has(target, key) {
+      log.push("has " + String(key));
+      return key in target;
+    },
+  });
+}
+
+////= sum-3
+
+function inspect(list: ArrayLike<number>): string[] {
+  const lines: string[] = [];
+  for (let i = 0; i < list.length; i++) lines.push(i + " " + (i in list ? "present" : "absent") + " " + typeof list[i] + " " + list[i]);
+  return lines;
+}
+
+function last(list: ArrayLike<number>): number {
+  return list[list.length - 1];
+}
+
+function toArray(list: ArrayLike<number>): number[] {
+  return Array.from(list);
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += sum([i, 1]) + inspect([i]).length + last([i, 2]) + toArray([i]).length;
+console.log("after 2000 arrays", warm);
+
+const makers: [string, () => ArrayLike<number>][] = [
+  ["an array", () => [1, 2, 3]],
+  ["squares behind getters", () => new Squares(3)],
+  ["a sparse class", () => new Sparse()],
+  ["a counted length", () => new Counting()],
+  ["a proxy", () => lazy(2)],
+  ["bytes", () => new Uint8Array([250, 251])],
+  ["a literal", () => ({ 0: 5, 1: 6, length: 2 })],
+];
+for (const [name, make] of makers) {
+  log.length = 0;
+  attempt(name + ": sum", () => sum(make()));
+  attempt(name + ": elements", () => inspect(make()));
+  attempt(name + ": last", () => last(make()));
+  attempt(name + ": Array.from", () => toArray(make()));
+  attempt(name + ": map.call", () => Array.prototype.map.call(make(), value => typeof value));
+  attempt(name + ": isArray", () => Array.isArray(make()));
+  attempt(name + ": keys", () => Object.keys(make()));
+  attempt(name + ": into a Float64Array", () => Array.from(new Float64Array(make())));
+  console.log(name + ": log", log.length, log.slice(0, 6).join("; "));
+}
+attempt("how often the length is read", () => {
+  const counting = new Counting();
+  const total = sum(counting);
+  return [total, counting.reads];
+});
+attempt("an array again", () => [sum([1, 2, 3]), last([4])]);
+//// a-class-that-implements-iterable.ts
+////= show-30
+
+const log: string[] = [];
+
+class Countdown implements Iterable<number> {
+  constructor(private from: number) {}
+  [Symbol.iterator](): Iterator<number> {
+    let current = this.from;
+    log.push("iterator");
+    return {
+      next: () => {
+        log.push("next");
+        return current > 0 ? { done: false, value: current-- } : { done: true, value: undefined };
+      },
+      return: () => {
+        log.push("return");
+        return { done: true, value: undefined };
+      },
+    };
+  }
+}
+
+class Liar implements Iterable<number> {
+  *[Symbol.iterator](): Generator<number> {
+    const numbers: number[] = new Array<number>(2);
+    yield numbers[0];
+    yield 1;
+    yield numbers[1];
+  }
+}
+
+////= total-6
+
+function firstAbove(numbers: Iterable<number>, limit: number): number {
+  for (const number of numbers) if (number > limit) return number;
+  return -1;
+}
+
+function firstTwo(numbers: Iterable<number>): number[] {
+  const [a, b] = numbers;
+  return [a, b];
+}
+
+function firstAndRest(numbers: Iterable<number>): [number, number[]] {
+  const [first, ...rest] = numbers;
+  return [first, rest];
+}
+
+function spread(numbers: Iterable<number>): number[] {
+  return [...numbers];
+}
+
+function largest(numbers: Iterable<number>): number {
+  return Math.max(...numbers);
+}
+
+function* plusOne(numbers: Iterable<number>): Generator<number> {
+  for (const number of numbers) yield number + 1;
+}
+
+function* delegated(numbers: Iterable<number>): Generator<number> {
+  yield* numbers;
+}
+
+function throwsInside(numbers: Iterable<number>): number {
+  for (const number of numbers) if (number < 3) throw new RangeError("low");
+  return 0;
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const honest = [i, 2, 3];
+  warm += total(honest) + firstAbove(honest, 2) + firstTwo(honest)[1] + firstAndRest(honest)[1].length + spread(honest).length + largest(honest) + total(plusOne(honest)) + total(delegated(honest));
+}
+console.log("after 2000 arrays", warm);
+
+const makers: [string, () => Iterable<number>][] = [
+  ["an array", () => [3, 2, 1]],
+  ["a countdown", () => new Countdown(3)],
+  ["a set", () => new Set([3, 2, 1, 3])],
+  ["keys of a map", () => new Map([[3, "c"], [2, "b"]]).keys()],
+  ["bytes", () => new Uint8Array([3, 2, 1])],
+  ["a generator", () => plusOne([2, 1, 0])],
+  ["an array with holes", () => new Array<number>(2)],
+  ["a liar", () => new Liar()],
+  ["an empty countdown", () => new Countdown(0)],
+];
+for (const [name, make] of makers) {
+  log.length = 0;
+  attempt(name + ": total", () => total(make()));
+  attempt(name + ": first above 1", () => firstAbove(make(), 1));
+  attempt(name + ": first two", () => firstTwo(make()));
+  attempt(name + ": first and rest", () => firstAndRest(make()));
+  attempt(name + ": spread", () => spread(make()));
+  attempt(name + ": largest", () => largest(make()));
+  attempt(name + ": plus one", () => spread(plusOne(make())));
+  attempt(name + ": delegated", () => spread(delegated(make())));
+  attempt(name + ": throws inside the loop", () => throwsInside(make()));
+  attempt(name + ": Array.from", () => Array.from(make(), number => number * 2));
+  attempt(name + ": new Set", () => new Set(make()).size);
+  console.log(name + ": log", log.join(" "));
+}
+//// a-class-whose-constructor-stores-its-tag-is-retagged-and-mistagged.ts
+////= show-4
+
+const log: string[] = [];
+
+////= attempt-2
+
+type Kind = "number" | "word";
+
+class Token {
+  constructor(
+    public kind: Kind,
+    public text: string,
+  ) {}
+  value(): number {
+    return this.kind === "number" ? Number(this.text) : this.text.length;
+  }
+}
+
+class Leaf {
+  readonly kind = "leaf";
+  constructor(public value: number) {}
+}
+
+class Branch {
+  readonly kind = "branch";
+  constructor(
+    public left: Tree,
+    public right: Tree,
+  ) {}
+}
+
+type Tree = Leaf | Branch;
+
+function sum(t: Tree): number {
+  return t.kind === "leaf" ? t.value : sum(t.left) + sum(t.right);
+}
+
+function describe(t: Token): string {
+  switch (t.kind) {
+    case "number":
+      return "number " + t.value();
+    case "word":
+      return "word " + t.value();
+  }
+}
+
+function otherKind(): Kind {
+  const box: { kind: Kind } = { kind: "word" };
+  const open: { kind: string } = box;
+  open.kind = "other";
+  return box.kind;
+}
+
+attempt("honest", () => [describe(new Token("number", "12")), describe(new Token("word", "abc")), sum(new Branch(new Leaf(1), new Branch(new Leaf(2), new Leaf(3))))]);
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += new Token(i & 1 ? "number" : "word", "12").value() + describe(new Token("word", "ab")).length + sum(new Branch(new Leaf(i), new Leaf(1)));
+console.log("2000 honest rounds", warm);
+
+attempt("stored to by its own type", () => {
+  const t = new Token("number", "12");
+  const before = describe(t);
+  t.kind = "word";
+  return [before, describe(t), JSON.stringify(t)];
+});
+attempt("stored to in a loop", () => {
+  const t = new Token("number", "12");
+  const seen: string[] = [];
+  for (let i = 0; i < 4; i++) {
+    t.kind = i & 1 ? "word" : "number";
+    seen.push(describe(t));
+  }
+  return seen;
+});
+attempt("constructed with a tag outside the type", () => {
+  const t = new Token(otherKind(), "12");
+  return [t.kind, t.value(), describe(t), JSON.stringify(t)];
+});
+attempt("stored a tag outside the type", () => {
+  const t = new Token("number", "12");
+  t.kind = otherKind();
+  return [t.kind, t.value(), describe(t)];
+});
+attempt("retagged by Reflect.set", () => {
+  const t = new Token("number", "12");
+  Reflect.set(t, "kind", "word");
+  return describe(t);
+});
+attempt("retagged by Object.assign", () => describe(Object.assign(new Token("number", "12"), { kind: "word" })));
+attempt("the tag becomes a getter", () => {
+  const t = new Token("number", "12");
+  let reads = 0;
+  Object.defineProperty(t, "kind", { get: () => (reads++ & 1 ? "word" : "number") });
+  return [describe(t), describe(t), t.value(), t.value()];
+});
+attempt("the tag is deleted", () => {
+  const t = new Token("number", "12");
+  Reflect.deleteProperty(t, "kind");
+  return [t.kind, t.value(), describe(t), Object.keys(t)];
+});
+attempt("a read-only tag is stored to through a view", () => {
+  const leaf = new Leaf(5);
+  const open: { kind: string } = leaf;
+  open.kind = "branch";
+  return [leaf.kind, JSON.stringify(leaf)];
+});
+attempt("a leaf that says it is a branch", () => {
+  const leaf = new Leaf(5);
+  const open: { kind: string } = leaf;
+  open.kind = "branch";
+  return sum(leaf);
+});
+attempt("a branch that says it is a leaf", () => {
+  const branch = new Branch(new Leaf(1), new Leaf(2));
+  const open: { kind: string } = branch;
+  open.kind = "leaf";
+  return [sum(branch), typeof sum(branch)];
+});
+attempt("deep in a tree", () => {
+  const odd = new Leaf(5);
+  const tree = new Branch(new Leaf(1), new Branch(odd, new Leaf(2)));
+  const before = sum(tree);
+  const open: { kind: string } = odd;
+  open.kind = "twig";
+  let after: unknown;
+  try {
+    after = sum(tree);
+  } catch (error) {
+    after = error instanceof Error ? error.constructor.name : "other";
+  }
+  return [before, after];
+});
+attempt("a literal stands for a leaf and for a branch", () => {
+  const fakeLeaf: Leaf = { kind: "leaf", value: 10 };
+  const fakeBranch: Branch = { kind: "branch", left: fakeLeaf, right: new Leaf(1) };
+  return [sum(fakeLeaf), sum(fakeBranch), fakeLeaf instanceof Leaf];
+});
+attempt("a subclass with the same tag", () => {
+  class Heavy extends Leaf {
+    weight = 100;
+  }
+  return sum(new Branch(new Heavy(1), new Leaf(2)));
+});
+attempt("honest again", () => [describe(new Token("number", "12")), describe(new Token("word", "abc")), sum(new Branch(new Leaf(1), new Leaf(3)))]);
+//// a-class-with-a-field-and-a-constructor-extends-a-class-of-an-untyped-package/main.ts
+/// <reference path="./types/legacy.d.ts" />
+import { Widget } from "legacy";
+
+class Wide extends Widget {
+  extra = 1;
+  constructor() {
+    super();
+  }
+}
+console.log(Object.keys(new Wide()).join());
+//// a-class-with-a-field-and-a-constructor-extends-a-class-of-an-untyped-package/packages/legacy/index.js
+export class Widget {
+  width = 2;
+}
+//// a-class-with-a-field-and-a-constructor-extends-a-class-of-an-untyped-package/tsconfig.json
+////= lines-7
+//// a-class-with-a-field-and-a-constructor-extends-a-class-of-an-untyped-package/types/legacy.d.ts
+declare module "legacy";
+declare module "legacy/*";
+//// a-class-with-a-field-extends-a-class-known-only-by-its-declaration/library.d.ts
+export declare class Dog {
+  title: string;
+  constructor(name: string);
+}
+//// a-class-with-a-field-extends-a-class-known-only-by-its-declaration/library.js
+export class Dog {
+  constructor(name) {
+    this.title = name;
+  }
+}
+//// a-class-with-a-field-extends-a-class-known-only-by-its-declaration/main.ts
+import { Dog } from "./library.js";
+
+////= lines-14	class	Puppy	extends	Dog	small	true
+
+const puppy = new Puppy("pup");
+console.log(Object.keys(puppy).join());
+console.log(JSON.stringify(puppy));
+console.log(puppy.title, Object.hasOwn(puppy, "title"), "title" in puppy);
+console.log(Object.keys(new Dog("rex")).join());
+//// a-class-with-a-static-getter-is-sealed-and-then-frozen.ts
+class Config {
+  static two = 2;
+  static get seven(): number {
+    return Config.two + 7;
+  }
+}
+
+console.log(Config.seven);
+Object.seal(Config);
+Object.freeze(Config);
+console.log(Config.seven);
+
+export {};
+//// a-class-with-forty-fields-and-a-look-alike-in-reverse.ts
+class Wide {
+  f0 = 0; f1 = 1; f2 = 2; f3 = 3; f4 = 4; f5 = 5; f6 = 6; f7 = 7;
+  f8 = 8; f9 = 9; f10 = 10; f11 = 11; f12 = 12; f13 = 13; f14 = 14; f15 = 15;
+  f16 = 16; f17 = 17; f18 = 18; f19 = 19; f20 = 20; f21 = 21; f22 = 22; f23 = 23;
+  f24 = 24; f25 = 25; f26 = 26; f27 = 27; f28 = 28; f29 = 29; f30 = 30; f31 = 31;
+  f32 = 32; f33 = 33; f34 = 34; f35 = 35; f36 = 36; f37 = 37; f38 = 38; f39 = 39;
+  ends(): string {
+    return this.f0 + ":" + this.f39;
+  }
+}
+
+class Reverse {
+  f39 = 1039; f38 = 1038; f37 = 1037; f36 = 1036; f35 = 1035; f34 = 1034; f33 = 1033; f32 = 1032;
+  f31 = 1031; f30 = 1030; f29 = 1029; f28 = 1028; f27 = 1027; f26 = 1026; f25 = 1025; f24 = 1024;
+  f23 = 1023; f22 = 1022; f21 = 1021; f20 = 1020; f19 = 1019; f18 = 1018; f17 = 1017; f16 = 1016;
+  f15 = 1015; f14 = 1014; f13 = 1013; f12 = 1012; f11 = 1011; f10 = 1010; f9 = 1009; f8 = 1008;
+  f7 = 1007; f6 = 1006; f5 = 1005; f4 = 1004; f3 = 1003; f2 = 1002; f1 = 1001; f0 = 1000;
+  ends(): string {
+    return "reverse " + this.f0 + ":" + this.f39;
+  }
+}
+
+function sample(w: Wide): string {
+  return [w.f0, w.f1, w.f5, w.f6, w.f7, w.f8, w.f15, w.f16, w.f20, w.f31, w.f32, w.f38, w.f39].join();
+}
+
+function total(w: Wide): number {
+  let sum = 0;
+  for (const value of Object.values(w)) sum += value;
+  return sum;
+}
+
+function touch(w: Wide): void {
+  w.f0 += 0.5;
+  w.f7 = -7;
+  w.f20 *= 2;
+  w.f39++;
+}
+
+const wide = new Wide();
+const reverse: Wide = new Reverse();
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += sample(wide).length + wide.f39;
+console.log("2000 honest: " + warm);
+
+console.log("the class: " + sample(wide) + " " + wide.ends() + " " + total(wide));
+console.log("the look-alike: " + sample(reverse) + " " + reverse.ends() + " " + total(reverse));
+console.log("first keys: " + Object.keys(wide).slice(0, 3).join() + " against " + Object.keys(reverse).slice(0, 3).join());
+console.log("instanceof: " + (wide instanceof Wide) + " " + (reverse instanceof Wide));
+
+touch(wide);
+touch(reverse);
+console.log("stored, the class: " + sample(wide) + " " + total(wide));
+console.log("stored, the look-alike: " + sample(reverse) + " " + total(reverse));
+
+const copy: Omit<Wide, "ends"> = { ...reverse };
+console.log("a copy keeps the look-alike's order: " + Object.keys(copy).slice(0, 2).join() + " " + Object.keys(copy).length);
+console.log("json: " + JSON.stringify(reverse).slice(0, 40) + " " + JSON.stringify(wide).slice(0, 40));
+
+const few: Pick<Wide, "f0" | "f39"> = reverse;
+console.log("seen through two names: " + few.f0 + " " + few.f39 + " " + Object.keys(few).length);
+
+const loose: Partial<Wide> = new Wide();
+for (const key of ["f1", "f20", "f38"] satisfies (keyof Wide)[]) delete loose[key];
+console.log("three fields deleted: " + Object.keys(loose).length + " " + loose.f0 + " " + loose.f1 + " " + loose.f20 + " " + loose.f21 + " " + loose.f38 + " " + loose.f39);
+loose.f20 = 2000;
+console.log("one stored again: " + Object.keys(loose).slice(-2).join() + " " + loose.f20);
+
+const list: Wide[] = [new Wide(), new Reverse(), new Wide()];
+console.log("elements: " + list.map(w => w.f39 - w.f0).join() + " " + list.map(w => w.ends()).join());
+
+export {};
+//// a-class-with-seventy-methods-and-some-are-replaced.ts
+////= Wide
+
+class Below extends Wide {
+  m70(): number {
+    return super.m70() + 1000;
+  }
+}
+
+function some(w: Wide): string {
+  return [w.m1(), w.m2(), w.m32(), w.m33(), w.m63(), w.m64(), w.m65(), w.m66(), w.m69(), w.m70()].join(" ");
+}
+
+function all(w: Wide): number {
+  return w.m1() + w.m2() + w.m3() + w.m4() + w.m5() + w.m6() + w.m7() + w.m8() + w.m9() + w.m10() + w.m11() + w.m12() + w.m13() + w.m14() + w.m15() + w.m16() + w.m17() + w.m18() + w.m19() + w.m20() + w.m21() + w.m22() + w.m23() + w.m24() + w.m25() + w.m26() + w.m27() + w.m28() + w.m29() + w.m30() + w.m31() + w.m32() + w.m33() + w.m34() + w.m35() + w.m36() + w.m37() + w.m38() + w.m39() + w.m40() + w.m41() + w.m42() + w.m43() + w.m44() + w.m45() + w.m46() + w.m47() + w.m48() + w.m49() + w.m50() + w.m51() + w.m52() + w.m53() + w.m54() + w.m55() + w.m56() + w.m57() + w.m58() + w.m59() + w.m60() + w.m61() + w.m62() + w.m63() + w.m64() + w.m65() + w.m66() + w.m67() + w.m68() + w.m69() + w.m70();
+}
+
+const w = new Wide();
+const b = new Below();
+
+function round(label: string): void {
+  console.log(label + ": " + some(w) + " | " + all(w) + " | " + some(b) + " | " + all(b));
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += all(w) + all(b);
+console.log("2000 honest: " + warm);
+round("before");
+Wide.prototype.m1 = () => -1;
+round("the first replaced");
+Wide.prototype.m64 = () => -64;
+round("the 64th");
+Wide.prototype.m65 = () => -65;
+round("the 65th");
+Wide.prototype.m70 = () => -70;
+round("the 70th");
+w.m33 = () => -33;
+round("an instance covers the 33rd");
+b.m66 = () => -66;
+round("an instance of the subclass covers the 66th");
+Below.prototype.m2 = () => -2;
+round("the subclass gets a second of its own");
+
+export {};
+//// a-class-with-seventy-methods-honest.ts
+////= Wide
+
+class Below extends Wide {
+  m70(): number {
+    return super.m70() + 1000;
+  }
+}
+
+function some(w: Wide): string {
+  return [w.m1(), w.m2(), w.m32(), w.m33(), w.m63(), w.m64(), w.m65(), w.m66(), w.m69(), w.m70()].join(" ");
+}
+
+function all(w: Wide): number {
+  return w.m1() + w.m2() + w.m3() + w.m4() + w.m5() + w.m6() + w.m7() + w.m8() + w.m9() + w.m10() + w.m11() + w.m12() + w.m13() + w.m14() + w.m15() + w.m16() + w.m17() + w.m18() + w.m19() + w.m20() + w.m21() + w.m22() + w.m23() + w.m24() + w.m25() + w.m26() + w.m27() + w.m28() + w.m29() + w.m30() + w.m31() + w.m32() + w.m33() + w.m34() + w.m35() + w.m36() + w.m37() + w.m38() + w.m39() + w.m40() + w.m41() + w.m42() + w.m43() + w.m44() + w.m45() + w.m46() + w.m47() + w.m48() + w.m49() + w.m50() + w.m51() + w.m52() + w.m53() + w.m54() + w.m55() + w.m56() + w.m57() + w.m58() + w.m59() + w.m60() + w.m61() + w.m62() + w.m63() + w.m64() + w.m65() + w.m66() + w.m67() + w.m68() + w.m69() + w.m70();
+}
+
+const w = new Wide();
+const b = new Below();
+
+function round(label: string): void {
+  console.log(label + ": " + some(w) + " | " + all(w) + " | " + some(b) + " | " + all(b));
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += all(w) + all(b);
+console.log("2000 honest: " + warm);
+round("before");
+round("again");
+round("again");
+round("again");
+round("again");
+round("again");
+round("again");
+round("again");
+
+export {};
+//// a-clone-of-an-untyped-value-fills-typed-places.ts
+////= Point-2
+
+////= show-15
+
+////= attempt-4
+
+class Pixel {
+  constructor(
+    public x: number,
+    public y: number,
+  ) {}
+  get sum(): number {
+    return this.x + this.y;
+  }
+}
+
+const things = new Map<string, unknown>([
+  ["honest", { x: 1, y: 2 }],
+  ["swapped", { y: 2, x: 1 }],
+  ["texts", { x: "1", y: "2" }],
+  ["an instance", new Pixel(1, 2)],
+  ["getters", { get x() { return 1; }, get y() { return 2; } }],
+  ["inherited", Object.create({ x: 1, y: 2 })],
+  ["boxes", { x: new Number(1), y: new String("2") }],
+  ["dates", { x: new Date(1), y: new Date(2) }],
+  ["bigints", { x: 1n, y: 2n }],
+  ["zeros", { x: -0, y: NaN }],
+  ["a list", [1, 2]],
+  ["a list with members", Object.assign([0], { x: 1, y: 2 })],
+  ["a map", new Map([["x", 1], ["y", 2]])],
+  ["an error", Object.assign(new Error("e"), { x: 1, y: 2 })],
+  ["a typed array", new Float64Array([1, 2])],
+  ["frozen", Object.freeze({ x: 1, y: 2 })],
+  ["a function", () => 1],
+  ["a symbol", Symbol("s")],
+  ["a number", 5],
+  ["a boxed number", new Number(5)],
+  ["a text", "xy"],
+  ["null", null],
+  ["undefined", undefined],
+]);
+const lookUp: Function = (name: string) => things.get(name);
+
+////= sum-8
+
+class Holder {
+  p: Point;
+  constructor(name: string) {
+    this.p = structuredClone(lookUp(name));
+  }
+  sum(): number {
+    return this.p.x + this.p.y;
+  }
+}
+
+const uses: [string, (name: string) => unknown][] = [
+  [
+    "a local",
+    name => {
+      const p: Point = structuredClone(lookUp(name));
+      return [p.x, p.y, p.x + p.y, typeof p.x, Object.keys(p).join(), p === lookUp(name)];
+    },
+  ],
+  ["a parameter", name => sum(structuredClone(lookUp(name)))],
+  ["a field", name => new Holder(name).sum()],
+  [
+    "an element",
+    name => {
+      const list: Point[] = structuredClone([{ x: 1, y: 2 }, lookUp(name)]);
+      let total = 0;
+      for (const p of list) total += p.x;
+      return total;
+    },
+  ],
+  [
+    "a map value",
+    name => {
+      const map: Map<string, Point> = structuredClone(new Map([["k", lookUp(name)]]));
+      const p = map.get("k");
+      return p === undefined ? "nothing" : sum(p);
+    },
+  ],
+  [
+    "a store",
+    name => {
+      const p: Point = structuredClone(lookUp(name));
+      p.x = 7;
+      return [p.x, sum(p), JSON.stringify(p)];
+    },
+  ],
+  [
+    "a number",
+    name => {
+      const n: number = structuredClone(lookUp(name));
+      return [typeof n, n + 1, plusOne(n), [10, 20][n]];
+    },
+  ],
+];
+
+////= for-50	500	use === "a number" ? "a number" : "honest
+
+export {};
+//// a-closure-asks-whether-its-number-parameter-is-an-object-and-only-an-object-arrives.ts
+function ask(run: () => boolean): string {
+  return String(run());
+}
+function take(value: number): string {
+  return "is an object " + ask(() => typeof value === "object");
+}
+const list: number[] = [];
+const wide: unknown[] = list;
+wide.push({});
+console.log(take(list[0]));
+//// a-closure-asks-whether-its-string-parameter-is-an-object-and-a-function-arrives.ts
+////= ask-3
+////= lines-115	isAnObject	string	"object"
+const values: string[] = ["honest"];
+const wide: unknown[] = values;
+wide.push(() => 1);
+console.log(isAnObject(values[0]));
+console.log(isAnObject(values[1]));
+export {};
+//// a-closure-in-a-function-captures-an-instance-of-a-subclass.ts
+////= lines-18	Base	value	1
+
+class Child extends Base {}
+
+function block(): void {
+  const o = new Child();
+  const read = () => o.value;
+  console.log(read());
+}
+
+block();
+
+export {};
+//// a-closure-keeps-an-unbound-method-while-the-object-changes.ts
+////= Owner-2
+
+function watcher(o: Subject): { bare: () => number; kept: () => number; late: () => number } {
+  const method = o.readCount;
+  return {
+    bare: () => method(),
+    kept: () => method.call(o),
+    late: () => o.readCount(),
+  };
+}
+
+const s = new Subject();
+const watch = watcher(s);
+show("bare", watch.bare);
+show("kept", watch.kept);
+show("late", watch.late);
+
+s.count = 11;
+show("after a store: kept", watch.kept);
+show("after a store: late", watch.late);
+
+s.readCount = () => -1;
+show("after an own member hides the method: kept", watch.kept);
+show("after an own member hides the method: late", watch.late);
+
+const original = Subject.prototype.readCount;
+Subject.prototype.readCount = function (): number {
+  return this.count * 100;
+};
+const t = new Subject();
+const second = watcher(t);
+show("taken off after the prototype changed: kept", second.kept);
+show("the first one still has the old function: kept", watch.kept);
+Subject.prototype.readCount = original;
+show("put back: what was taken off stays: kept", second.kept);
+show("put back: late", second.late);
+
+let current: Subject = new Subject();
+const method = current.countPlusOne;
+const onCurrent = (): number => method.call(current);
+show("a captured variable: first object", onCurrent);
+current = t;
+t.count = 70;
+show("a captured variable: second object", onCurrent);
+let total = 0;
+for (let i = 0; i < 2000; i++) total += onCurrent();
+show("2000 calls", () => total);
+const stranger: Subject = Object.create(Subject.prototype);
+current = stranger;
+show("a captured variable: an object without fields", onCurrent);
+//// a-closure-reads-a-variable-before-it-is-assigned.ts
+////= text-21
+
+function numbers(): string {
+  let n: number;
+  const read = () => n;
+  const plusOne = () => n + 1;
+  const whole = () => n | 0;
+  const kind = () => typeof n;
+  const before = kind() + " " + read() + " " + plusOne() + " " + whole();
+  n = 4;
+  return before + " | " + kind() + " " + read() + " " + plusOne() + " " + whole();
+}
+
+function strings(): string {
+  let s: string;
+  const read = () => s;
+  const joined = () => s + "!";
+  const size = () => s.length;
+  let before = typeof read() + " " + joined();
+  try {
+    before += " " + size();
+  } catch (error) {
+    before += " threw";
+  }
+  s = "set";
+  return before + " | " + typeof read() + " " + joined() + " " + size();
+}
+
+function objects(): string {
+  let p: Person;
+  const read = () => p;
+  const name = () => p.first;
+  let before = typeof read();
+  try {
+    before += " " + name();
+  } catch (error) {
+    before += " threw";
+  }
+  p = new Person();
+  return before + " | " + typeof read() + " " + name();
+}
+
+function functions(): string {
+  let f: () => number;
+  const call = () => f();
+  let before: string;
+  try {
+    before = String(call());
+  } catch (error) {
+    before = "threw";
+  }
+  f = () => 3;
+  return before + " | " + call();
+}
+
+function arrays(): string {
+  let list: number[];
+  const size = () => list.length;
+  const kind = () => typeof list;
+  let before = kind();
+  try {
+    before += " " + size();
+  } catch (error) {
+    before += " threw";
+  }
+  list = [1, 2];
+  return before + " | " + kind() + " " + size();
+}
+
+function counters(): string {
+  let count: number;
+  const bump = () => {
+    count++;
+    return count;
+  };
+  const first = bump();
+  count = 10;
+  return first + " | " + bump();
+}
+
+function loops(): string {
+  let total: number;
+  const add = (n: number) => {
+    total += n;
+  };
+  for (let i = 0; i < 3; i++) add(i);
+  const peek = () => total;
+  const early = peek();
+  total = 0;
+  for (let i = 0; i < 2000; i++) add(1);
+  return early + " | " + total;
+}
+
+function hoisted(): string {
+  const before = typeof peek() + " " + peek();
+  var v: number = 5;
+  function peek(): number {
+    return v;
+  }
+  return before + " | " + typeof peek() + " " + peek();
+}
+
+show("numbers", numbers);
+show("strings", strings);
+show("objects", objects);
+show("functions", functions);
+show("arrays", arrays);
+show("counters", counters);
+show("loops", loops);
+show("hoisted var", hoisted);
+
+let shared: number;
+////= lines-34	readShared	number	return	shared
+////= lines-240	sharedPlusOne	shared
+show("a variable of the module", readShared);
+show("plus one", sharedPlusOne);
+shared = 1;
+show("assigned", readShared);
+show("plus one", sharedPlusOne);
+//// a-comparator-method-loses-its-object.ts
+////= show-6
+
+class Sorter {
+  direction: number = -1;
+  key: "size" | "name" = "size";
+  compare(a: number, b: number): number {
+    return (a - b) * this.direction;
+  }
+  byKey(a: { size: number; name: string }, b: { size: number; name: string }): number {
+    const x = a[this.key];
+    const y = b[this.key];
+    return x < y ? -1 : x > y ? 1 : 0;
+  }
+  static ascending(a: number, b: number): number {
+    return a - b;
+  }
+  static flipped(a: number, b: number): number {
+    return -this.ascending(a, b);
+  }
+}
+
+const sorter = new Sorter();
+const items = [
+  { size: 2, name: "b" },
+  { size: 1, name: "c" },
+  { size: 3, name: "a" },
+];
+
+show("honest arrow", () => [1, 3, 2].sort((a, b) => sorter.compare(a, b)).join());
+show("bound", () => [1, 3, 2].sort(sorter.compare.bind(sorter)).join());
+show("bare", () => [1, 3, 2].sort(sorter.compare).join());
+show("bare, one element", () => [1].sort(sorter.compare).join());
+show("bare, no element", () => [].sort(sorter.compare).length);
+show("bare toSorted", () => [1, 3, 2].toSorted(sorter.compare).join());
+show("bare on a typed array", () => new Int8Array([1, 3, 2]).sort(sorter.compare).join());
+show("byKey honest", () => [...items].sort((a, b) => sorter.byKey(a, b)).map(i => i.name).join());
+show("byKey bare", () => [...items].sort(sorter.byKey).map(i => i.name).join());
+show("static that needs no this", () => [1, 3, 2].sort(Sorter.ascending).join());
+show("static that needs this", () => [1, 3, 2].sort(Sorter.flipped).join());
+show("static that needs this, an arrow", () => [1, 3, 2].sort((a, b) => Sorter.flipped(a, b)).join());
+const borrowed = { direction: 1, compare: sorter.compare };
+show("borrowed by another object, an arrow", () => [1, 3, 2].sort((a, b) => borrowed.compare(a, b)).join());
+show("the array is whole after a comparator that throws", () => {
+  const list = [1, 3, 2];
+  try {
+    list.sort(sorter.compare);
+  } catch (error) {
+    return [...list].sort(Sorter.ascending).join();
+  }
+  return "did not throw";
+});
+//// a-conditional-type-resolves-to-another-type-at-each-call.ts
+////= show-32
+
+type Element<T> = T extends readonly (infer U)[] ? U : T;
+type Result<T> = T extends (...parameters: never[]) => infer R ? R : T;
+type Text<T> = T extends number ? string : T extends string ? number : T;
+
+function elementOf<T>(value: T, pick: (value: T) => Element<T>): Element<T> {
+  return pick(value);
+}
+
+function resultOf<T>(value: T, run: (value: T) => Result<T>): Result<T> {
+  return run(value);
+}
+
+function turned<T>(value: T, turn: (value: T) => Text<T>): Text<T> {
+  return turn(value);
+}
+
+function keep<T>(value: T, pick: (value: T) => Element<T>): Element<T>[] {
+  const kept: Element<T>[] = [];
+  for (let i = 0; i < 3; i++) kept.push(pick(value));
+  return kept;
+}
+
+////= Point-21
+
+let total = 0;
+for (let i = 0; i < 2000; i++) total += elementOf([i, 1], list => list[0]) + elementOf(i, n => n) + resultOf(() => i, f => f()) + turned(i, n => String(n)).length + turned("ab", s => s.length);
+console.log("2000 honest rounds: " + total);
+
+attempt("elements", () => [elementOf([1, 2], l => l[1]) + 1, elementOf([0.5], l => l[0]) * 2, elementOf(["a"], l => l[0]).toUpperCase(), elementOf([new Point()], l => l[0]).twice(), elementOf([() => 3], l => l[0])(), elementOf([[1, 2]], l => l[0]).length]);
+attempt("what is no list stays what it is", () => [elementOf(1, n => n) + 1, elementOf("ab", s => s).length, elementOf(new Point(), p => p).twice(), elementOf(null, n => n), elementOf(undefined, u => u)]);
+attempt("a tuple gives a union", () => elementOf<[number, string]>([1, "a"], t => t[1]));
+attempt("an element past the end of numbers", () => elementOf([1, 2], l => l[5]) + 1);
+attempt("an element past the end of strings", () => elementOf(["a"], l => l[5]).length);
+attempt("an element past the end of points", () => elementOf([new Point()], l => l[5]).twice());
+attempt("an element past the end of functions", () => elementOf([() => 3], l => l[5])());
+attempt("an element of holes", () => [typeof elementOf(new Array<number>(2), l => l[0]), elementOf(new Array<number>(2), l => l[0]) + 1]);
+attempt("kept three times", () => [keep([1, 2], l => l[0]), keep([0.5], l => l[9]), keep("s", s => s), keep(["s"], l => l[0])]);
+attempt("kept and summed", () => keep([1, 2], l => l[9]).reduce((a, b) => a + b, 0));
+attempt("results", () => [resultOf(() => 1, f => f()) + 1, resultOf(() => "s", f => f()).length, resultOf(5, n => n) + 1, resultOf(() => new Point(), f => f()).twice(), resultOf(() => () => 2, f => f())()]);
+attempt("turned", () => [turned(1, n => n.toFixed(1)).length, turned("abc", s => s.length) + 1, turned(true, b => b), turned(null, n => n)]);
+attempt("turned at a union: each member by itself", () => {
+  const either: number | string = process.argv.length > 0 ? 5 : "five";
+  const other = turned<number | string>(either, v => (typeof v === "number" ? v + 1 : v + "!"));
+  return [typeof other, other];
+});
+
+export {};
+//// a-const-type-parameter-gives-literal-types-to-an-object-that-is-stored-to.ts
+////= show-32
+
+function exact<const T>(value: T): T {
+  return value;
+}
+
+const config = exact({ retries: 3, mode: "fast", nested: { depth: 1 }, list: [1, 2] });
+const open: { retries: number; mode: string; nested: { depth: number } } = config;
+
+function retriesName(): string {
+  switch (config.retries) {
+    case 3:
+      return "three";
+  }
+}
+
+function modeName(): string {
+  if (config.mode === "fast") return "fast";
+  const never: never = config.mode;
+  return "never: " + show(never);
+}
+
+function report(title: string): void {
+  console.log(title + ": " + JSON.stringify(config));
+  attempt("  retries", () => [config.retries, config.retries + 1, config.retries === 3, retriesName()]);
+  attempt("  mode", () => [config.mode, config.mode.length, config.mode === "fast", modeName()]);
+  attempt("  depth", () => [config.nested.depth, config.nested.depth === 1, config.nested.depth * 2]);
+  attempt("  list", () => [config.list[0], config.list[1], config.list.length, config.list.length === 2, config.list[0] === 1]);
+}
+
+report("before");
+open.retries = 5;
+report("retries = 5");
+open.mode = "slow";
+report("mode = 'slow'");
+open.nested.depth = 0.5;
+report("depth = 0.5");
+open.nested = { depth: 9 };
+report("another nested object");
+
+const source = [1, 2];
+const listed = exact({ list: source });
+source.push(3);
+source[0] = 0.5;
+attempt("a list that has another name", () => [listed.list, listed.list.length, listed.list[0] + 1]);
+
+const pair = exact([1, "a"]);
+attempt("a list literal is a readonly tuple of literals", () => [pair[0], pair[1], pair.length, pair[0] === 1, pair[1] === "a"]);
+const asList: readonly (number | string)[] = pair;
+attempt("seen as a list", () => [asList.length, asList[5], typeof asList[5]]);
+
+const flags = exact({ on: true, off: false, nothing: null, missing: undefined });
+const openFlags: { on: boolean; off: boolean } = flags;
+openFlags.on = false;
+openFlags.off = true;
+attempt("booleans", () => [flags.on, flags.off, flags.on ? "on" : "not on", flags.off ? "off is true" : "off", flags.on === true, flags.nothing, flags.missing]);
+
+const zero = exact({ value: 0 });
+const openZero: { value: number } = zero;
+openZero.value = -0;
+attempt("zero holds minus zero", () => [zero.value, Object.is(zero.value, 0), zero.value === 0, 1 / zero.value]);
+
+export {};
+//// a-constant-object-is-changed-by-reflection-and-read-by-a-typed-function.ts
+const settings = { port: 80, host: "local", open: false } as const;
+////= lines-41	portOf	80	settings.port
+console.log(portOf(), settings.host, settings.open);
+Reflect.set(settings, "port", 81.5);
+Reflect.set(settings, "host", 5);
+Reflect.set(settings, "open", "yes");
+console.log(portOf(), portOf() === 80, portOf() + 1, settings.host, typeof settings.host, settings.open ? "open" : "closed");
+Object.defineProperty(settings, "port", { get: () => "a getter", enumerable: true, configurable: true });
+console.log(portOf(), typeof portOf());
+Reflect.deleteProperty(settings, "port");
+console.log(portOf(), portOf() === undefined, Object.keys(settings).join());
+//// a-constructor-copies-its-options-onto-this-with-object-assign.ts
+////= Leaf
+
+class Cell {
+  leaf: Leaf | null = new Leaf();
+  constructor(options: { leaf?: Leaf | null } = {}) {
+    Object.assign(this, options);
+  }
+}
+
+const cell = new Cell({ leaf: null });
+console.log(cell.leaf === null ? -1 : cell.leaf.weight);
+console.log(new Cell().leaf === null);
+//// a-constructor-hides-an-optional-parameter-behind-a-shorter-construct-signature.ts
+////= text-19
+
+class Tag {
+  name: string;
+  level: string;
+  parent?: Tag;
+  constructor(name: string, level: string = "low", parent?: Tag) {
+    this.name = name;
+    this.level = level;
+    if (parent !== undefined) this.parent = parent;
+  }
+  describe(): string {
+    return this.name + " " + text(this.level) + " " + text(this.level.length) + " parent " + (this.parent === undefined ? "none" : text(this.parent.name));
+  }
+}
+
+class Fields {
+  constructor(public name: string, public weight?: string, readonly flags: string[] = []) {}
+}
+
+function build<T>(type: new (name: string, index: number, all: string[]) => T, names: string[]): T[] {
+  return names.map((name, index, all) => new type(name, index, all));
+}
+
+const ShortTag: new (name: string) => Tag = Tag;
+const ShortFields: new (name: string) => Fields = Fields;
+
+attempt("honest", () => [new Tag("a").describe(), new Tag("a", "high").describe(), new Tag("a", "high", new Tag("p")).describe()]);
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += new Tag("t", "mid").level.length + new ShortTag("s").level.length;
+console.log("2000 honest constructions: " + warm);
+
+const built = build(ShortTag, ["x", "y"]);
+attempt("keys", () => built.map(tag => Object.keys(tag).join()));
+attempt("levels", () => built.map(tag => text(tag.level)));
+attempt("parents", () => built.map(tag => text(tag.parent)));
+attempt("describe", () => built.map(tag => tag.describe()));
+attempt("upper", () => built.map(tag => tag.level.toUpperCase()));
+attempt("json", () => JSON.stringify(built));
+
+const fields = build(ShortFields, ["x", "y"]);
+attempt("parameter properties: keys", () => fields.map(f => Object.keys(f).join()));
+attempt("parameter properties: weight", () => fields.map(f => text(f.weight)));
+attempt("parameter properties: flags are the list of names", () => fields.map(f => f.flags.join("+")));
+attempt("parameter properties: one list for all", () => fields[0].flags === fields[1].flags);
+
+attempt("Reflect.construct with more", () => Reflect.construct(ShortTag, ["r", 5, 6]));
+
+class Child extends Tag {
+  extra: number;
+  constructor(name: string, extra: number = 1) {
+    super(name);
+    this.extra = extra;
+  }
+}
+const asTag: new (name: string) => Tag = Child;
+attempt("a subclass with another second parameter", () => build(asTag, ["c", "d"]).map(tag => JSON.stringify(tag) + " " + tag.describe()));
+attempt("honest again", () => new Tag("z", "top").describe());
+//// a-constructor-returns-another-object.ts
+////= text-12
+
+////= Point-24	sum	x	y
+
+const cache = new Map<number, Cached>();
+class Cached {
+  id: number;
+  hits: number = 0;
+  constructor(id: number) {
+    this.id = id;
+    const found = cache.get(id);
+    if (found !== undefined) {
+      found.hits++;
+      return found;
+    }
+    cache.set(id, this);
+  }
+}
+
+class Literal {
+  x: number = 1;
+  label: string = "literal class";
+  constructor(swap: boolean) {
+    if (swap) return { label: "stand-in", x: 50 };
+  }
+}
+
+class Base {
+  base: number = 1;
+  constructor(other?: Base) {
+    if (other !== undefined) return other;
+  }
+}
+class Stamps extends Base {
+  stamp: number = 7;
+  #hidden: number = 8;
+  static hidden(o: Stamps): number {
+    return o.#hidden;
+  }
+  static has(o: object): boolean {
+    return #hidden in o;
+  }
+}
+
+show("first", () => new Cached(1));
+show("second with the same id", () => new Cached(1));
+show("same object", () => new Cached(1) === cache.get(1));
+show("hits", () => cache.get(1)?.hits);
+show("another id", () => new Cached(2).hits);
+
+const honest = new Literal(false);
+const swapped = new Literal(true);
+show("honest", () => honest);
+show("swapped", () => swapped);
+show("swapped x + 1", () => swapped.x + 1);
+show("swapped label", () => swapped.label.toUpperCase());
+show("swapped instanceof", () => swapped instanceof Literal);
+show("swapped keys", () => Object.keys(swapped).join());
+show("honest keys", () => Object.keys(honest).join());
+
+////= lines-20	xOf	l	Literal	number	return	l.x
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += xOf(honest);
+show("2000 honest reads", () => sum);
+show("then the stand-in", () => xOf(swapped));
+
+const target = new Base();
+const stamped = new Stamps(target);
+show("the subclass's fields land on the other object", () => target);
+show("what new returned is that object", () => stamped === target);
+show("instanceof Stamps", () => stamped instanceof Stamps);
+show("stamp", () => stamped.stamp);
+show("private name", () => Stamps.hidden(stamped));
+show("has the private name", () => Stamps.has(target));
+show("stamping twice", () => new Stamps(target));
+show("a plain one", () => new Stamps());
+
+const point = new Point();
+const stampedPoint = new Stamps(Object.assign(point, { base: 2 }));
+show("a point is stamped", () => point);
+show("keys", () => Object.keys(point).join());
+show("sum still works", () => point.sum());
+show("stamp of the point", () => stampedPoint.stamp);

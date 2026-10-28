@@ -1,0 +1,67 @@
+Array: 4: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+Array.prototype: 39: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError): @@iterator at concat copyWithin entries every fill filter find findIndex findLast findLastIndex flat flatMap forEach includes indexOf join keys lastIndexOf map pop push reduce reduceRight reverse shift slice some sort splice toLocaleString toReversed toSorted toSpliced toString unshift values with
+Array.prototype: 1: store: refused (TypeError) | defineProperty: refused (RangeError) | delete: refused (TypeError): length
+ArrayBuffer: 1: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+ArrayBuffer.prototype: 8: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+Atomics: 14: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+BigInt: 2: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+BigInt.prototype: 3: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+BigInt64Array.prototype: 1: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+BigUint64Array.prototype: 1: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+Boolean.prototype: 2: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+DataView.prototype: 23: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+Date: 1: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError): UTC
+Date: 2: store: REPLACED | defineProperty: REPLACED | delete: DELETED: now parse
+Date.prototype: 44: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError): @@toPrimitive getDate getDay getFullYear getHours getMilliseconds getMinutes getMonth getSeconds getTime getTimezoneOffset getUTCDate getUTCDay getUTCFullYear getUTCHours getUTCMilliseconds getUTCMinutes getUTCMonth getUTCSeconds getYear setDate setFullYear setHours setMilliseconds setMinutes setMonth setSeconds setTime setUTCDate setUTCFullYear setUTCHours setUTCMilliseconds setUTCMinutes setUTCMonth setUTCSeconds setYear toDateString toGMTString toISOString toJSON toTemporalInstant toTimeString toUTCString valueOf
+Date.prototype: 4: store: REPLACED | defineProperty: REPLACED | delete: DELETED: toLocaleDateString toLocaleString toLocaleTimeString toString
+Error: 2: store: REPLACED | defineProperty: REPLACED | delete: DELETED: captureStackTrace isError
+FinalizationRegistry.prototype: 2: store: REPLACED | defineProperty: REPLACED | delete: DELETED: register unregister
+Float16Array.prototype: 1: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+Float32Array.prototype: 1: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+Float64Array.prototype: 1: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+Function.prototype: 4: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError): @@hasInstance apply bind call
+Function.prototype: 1: store: REPLACED | defineProperty: REPLACED | delete: DELETED: toString
+Int16Array.prototype: 1: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+Int32Array.prototype: 1: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+Int8Array.prototype: 1: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+Iterator: 4: store: REPLACED | defineProperty: REPLACED | delete: DELETED: concat from zip zipKeyed
+Iterator.prototype: 15: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError): @@dispose @@iterator drop every filter find flatMap forEach includes join map reduce some take toArray
+Iterator.prototype: 2: store: REPLACED | defineProperty: REPLACED | delete: DELETED: chunks windows
+JSON: 2: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError): isRawJSON rawJSON
+JSON: 2: store: REPLACED | defineProperty: REPLACED | delete: DELETED: parse stringify
+Map: 1: store: REPLACED | defineProperty: REPLACED | delete: DELETED: groupBy
+Map.prototype: 11: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError): @@iterator clear delete entries forEach get has keys set size values
+Map.prototype: 2: store: REPLACED | defineProperty: REPLACED | delete: DELETED: getOrInsert getOrInsertComputed
+Math: 33: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError): abs acos acosh asin asinh atan atan2 atanh cbrt ceil clz32 cos cosh exp expm1 f16round floor fround hypot imul log log10 log1p log2 max min pow round sin sqrt tan tanh trunc
+Math: 4: store: REPLACED | defineProperty: REPLACED | delete: DELETED: random sign sinh sumPrecise
+Number: 4: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError): isFinite isInteger isNaN isSafeInteger
+Number: 2: store: REPLACED | defineProperty: REPLACED | delete: DELETED: parseFloat parseInt
+Number.prototype: 6: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+Object: 23: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+Object.prototype: 10: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+Promise: 7: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError): all allSettled any race reject resolve withResolvers
+Promise: 1: store: REPLACED | defineProperty: REPLACED | delete: DELETED: try
+Promise.prototype: 3: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+Proxy: 1: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+Reflect: 13: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+RegExp: 1: store: REPLACED | defineProperty: REPLACED | delete: DELETED: escape
+RegExp.prototype: 19: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+Set.prototype: 10: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError): @@iterator add clear delete entries forEach has keys size values
+Set.prototype: 7: store: REPLACED | defineProperty: REPLACED | delete: DELETED: difference intersection isDisjointFrom isSubsetOf isSupersetOf symmetricDifference union
+SharedArrayBuffer.prototype: 5: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+String: 3: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+String.prototype: 33: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError): @@iterator charAt charCodeAt codePointAt concat endsWith includes indexOf isWellFormed lastIndexOf length localeCompare match matchAll normalize padEnd padStart repeat replace replaceAll search slice split startsWith substr substring toLocaleLowerCase toLocaleUpperCase toLowerCase toString toUpperCase toWellFormed valueOf
+String.prototype: 19: store: REPLACED | defineProperty: REPLACED | delete: DELETED: anchor at big blink bold fixed fontcolor fontsize italics link small strike sub sup trim trimEnd trimLeft trimRight trimStart
+Symbol: 2: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+Symbol.prototype: 3: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+Uint16Array.prototype: 1: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+Uint32Array.prototype: 1: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+Uint8Array: 2: store: REPLACED | defineProperty: REPLACED | delete: DELETED: fromBase64 fromHex
+Uint8Array.prototype: 3: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError): BYTES_PER_ELEMENT setFromBase64 setFromHex
+Uint8Array.prototype: 2: store: REPLACED | defineProperty: REPLACED | delete: DELETED: toBase64 toHex
+Uint8ClampedArray.prototype: 1: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+WeakMap.prototype: 4: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError): delete get has set
+WeakMap.prototype: 2: store: REPLACED | defineProperty: REPLACED | delete: DELETED: getOrInsert getOrInsertComputed
+WeakRef.prototype: 1: store: REPLACED | defineProperty: REPLACED | delete: DELETED: deref
+WeakSet.prototype: 3: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
+console: store: REPLACED | defineProperty: REPLACED | delete: DELETED

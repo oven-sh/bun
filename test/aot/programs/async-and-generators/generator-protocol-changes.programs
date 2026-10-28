@@ -1,0 +1,3048 @@
+////: attempt-2
+function attempt(action: () => unknown): string {
+  try {
+    return String(action())
+  } catch (error) {
+    return (error as Error).constructor.name + ":" + (error as Error).message
+  }
+}
+////: attempt-3
+attempt(«1», () => {
+  const helper = underlying().flatMap(() => ({
+    [Symbol.iterator]() {
+      return { next() { «2»; } };
+    },
+  }));
+  helper.next();
+  return helper.return();
+});
+////: betweenCreationAndStep
+function betweenCreationAndStep(): void {
+  const made = once("e", 1)
+  log.push("made")
+  for (const value of made) log.push("value " + value)
+  console.log(flush())
+  const late = withDefault()
+  log.push("made")
+  for (const value of late) log.push("value " + value)
+  console.log(flush())
+  for (const value of withDefault(3)) log.push("value " + value)
+  console.log(flush())
+}
+////: byHand
+function byHand(): void {
+  const made = once("f", 2)
+  const a = made.next()
+  const b = made.next()
+  const c = made.next()
+  console.log(a.value, a.done, b.value, b.done, c.value, c.done, flush())
+  const closed = once("g", 3)
+  const d = closed.return("early")
+  const e = closed.next()
+  console.log(d.value, d.done, e.value, e.done, flush() === "")
+  const failed = once("h", 4)
+  console.log(attempt(() => failed.throw(new TypeError("thrown in"))), failed.next().done, flush() === "")
+}
+////: changed
+function changed(): void {
+  let text = ""
+  for (const value of plain()) text += value
+  ;(plain.prototype as { return?: unknown }).return = function (this: Generator<number>, value: unknown) {
+    log.push("own return")
+    return Object.getPrototypeOf(plain.prototype).return.call(this, value)
+  }
+  for (const value of plain()) {
+    text += value
+    break
+  }
+  console.log(text, flush())
+  ;(plain.prototype as { next?: unknown }).next = function (this: Generator<number>) {
+    log.push("own next")
+    return Object.getPrototypeOf(plain.prototype).next.call(this)
+  }
+  for (const value of plain()) text += value
+  console.log(text, flush())
+  function* changesWhileRunning(): Generator<number> {
+    ;(changesWhileRunning.prototype as { return?: unknown }).return = function () {
+      log.push("late return")
+      return { done: true, value: undefined }
+    }
+    yield 1
+    log.push("not reached")
+  }
+  for (const value of changesWhileRunning()) {
+    log.push("value " + value)
+    break
+  }
+  console.log(flush())
+}
+////: lines-2
+function* «1»() {
+  yield 1;
+  yield 2;
+  yield 3;
+}
+////: loops
+function loops(): void {
+  for (const value of never("a")) log.push("value " + value)
+  console.log(flush())
+  for (const value of once("b", 5)) log.push("value " + value)
+  console.log(flush())
+  for (const value of once("c", 6)) {
+    log.push("value " + value)
+    break
+  }
+  console.log(flush())
+  let sum = 0
+  for (const value of count(1000)) sum += value
+  console.log(sum, [...count(4)].join(), Array.from(count(3)).join(), Math.max(...count(6)))
+  const [first, second, third] = count(2)
+  console.log(first, second, third)
+  const [only] = once("d", 8)
+  console.log(only, flush())
+  console.log([...nested(4)].join())
+}
+////: once
+function* once(label: string, value: number): Generator<number, string> {
+  log.push("start " + label)
+  try {
+    yield value
+    log.push("resumed " + label)
+  } finally {
+    log.push("finally " + label)
+  }
+  return "end"
+}
+////: stored
+function stored(): void {
+  const made = count(3)
+  seen.push(made)
+  let text = ""
+  for (const value of made) {
+    text += value
+    if (value === 0) text += "(" + seen[0].next().value + ")"
+  }
+  console.log(text)
+}
+////: throwing
+function* throwing(when: number): Generator<number> {
+  if (when === 0) throw new RangeError("at start")
+  yield 1
+  if (when === 1) throw new RangeError("after one")
+  yield 2
+}
+////: thrown
+function thrown(): void {
+  console.log(attempt(() => firstOrUndefined(throwing(0))), attempt(() => firstOrUndefined(throwing(1))), attempt(() => [...throwing(1)].join()), attempt(() => [...throwing(2)].join()))
+  const kept = throwing(0)
+  try {
+    for (const value of kept) log.push("value " + value)
+  } catch (error) {
+    log.push((error as Error).message)
+  }
+  const after = kept.next()
+  console.log(flush(), after.done, after.value)
+}
+//// generator-protocol-changes.js
+// The iterator protocol of a generator object changes after the object was created: `next` or `Symbol.iterator` is stored on the prototype of its generator function, that prototype gets another parent, the object gets an own `next` or another prototype. for-of, spread, array destructuring and yield* run the replacement as in plain Bun.
+const lines = [];
+const report = (label, ...lists) => lines.push(label + ": " + lists.map(list => "[" + list.map(String).join() + "]").join(" "));
+
+////= lines-2	untouched
+const createdFirst = [untouched(), untouched(), untouched(), untouched()];
+
+const generatorPrototype = Object.getPrototypeOf(untouched.prototype);
+const originalNext = generatorPrototype.next;
+const originalReturn = generatorPrototype.return;
+
+function scalingNext(sent) {
+  const step = originalNext.call(this, sent);
+  return step.done ? step : { done: false, value: step.value * 10 };
+}
+function reversingIterator() {
+  const values = [];
+  for (let step = originalNext.call(this); !step.done; step = originalNext.call(this)) values.unshift(step.value);
+  return values[Symbol.iterator]();
+}
+const otherProtocol = {
+  next: scalingNext,
+  return(value) {
+    lines.push("  other return");
+    return originalReturn.call(this, value);
+  },
+  [Symbol.iterator]() {
+    lines.push("  other Symbol.iterator");
+    return this;
+  },
+};
+function drain(generator) {
+  const values = [];
+  for (let step = originalNext.call(generator); !step.done; step = originalNext.call(generator)) values.push(step.value);
+  return values;
+}
+
+////= lines-2	nextOnPrototype
+function checkNextOnPrototype() {
+  const looped = nextOnPrototype(), spreadOut = nextOnPrototype(), destructured = nextOnPrototype(), delegated = nextOnPrototype();
+  nextOnPrototype.prototype.next = scalingNext;
+  const seen = [];
+  for (const value of looped) seen.push(value);
+  const [first, second] = destructured;
+  function* delegate() {
+    yield* delegated;
+  }
+  report("prototype.next", seen, [...spreadOut], [first, second], drain(delegate()), [...nextOnPrototype()]);
+}
+checkNextOnPrototype();
+
+////= lines-2	iteratorOnPrototype
+function checkIteratorOnPrototype() {
+  const looped = iteratorOnPrototype(), spreadOut = iteratorOnPrototype(), destructured = iteratorOnPrototype(), delegated = iteratorOnPrototype();
+  iteratorOnPrototype.prototype[Symbol.iterator] = reversingIterator;
+  const seen = [];
+  for (const value of looped) seen.push(value);
+  const [first, second] = destructured;
+  function* delegate() {
+    yield* delegated;
+  }
+  report("prototype[Symbol.iterator]", seen, [...spreadOut], [first, second], drain(delegate()), [...iteratorOnPrototype()]);
+}
+checkIteratorOnPrototype();
+
+////= lines-2	parentOfPrototype
+function checkParentOfPrototype() {
+  const looped = parentOfPrototype(), spreadOut = parentOfPrototype(), destructured = parentOfPrototype(), delegated = parentOfPrototype();
+  Object.setPrototypeOf(parentOfPrototype.prototype, otherProtocol);
+  const seen = [];
+  for (const value of looped) seen.push(value);
+  const [first, second] = destructured;
+  function* delegate() {
+    yield* delegated;
+  }
+  report("setPrototypeOf(prototype)", seen, [...spreadOut], [first, second], drain(delegate()), [...parentOfPrototype()]);
+}
+checkParentOfPrototype();
+
+////= lines-2	ownNext
+function checkOwnNext() {
+  const looped = ownNext(), spreadOut = ownNext(), destructured = ownNext(), delegated = ownNext();
+  looped.next = spreadOut.next = destructured.next = delegated.next = scalingNext;
+  const seen = [];
+  for (const value of looped) seen.push(value);
+  const [first, second] = destructured;
+  function* delegate() {
+    yield* delegated;
+  }
+  report("own next", seen, [...spreadOut], [first, second], drain(delegate()), [...ownNext()]);
+}
+checkOwnNext();
+
+////= lines-2	prototypeOfObject
+function checkPrototypeOfObject() {
+  const looped = prototypeOfObject(), spreadOut = prototypeOfObject(), destructured = prototypeOfObject(), delegated = prototypeOfObject();
+  for (const object of [looped, spreadOut, destructured, delegated]) Object.setPrototypeOf(object, otherProtocol);
+  const seen = [];
+  for (const value of looped) seen.push(value);
+  const [first, second] = destructured;
+  function* delegate() {
+    yield* delegated;
+  }
+  report("setPrototypeOf(object)", seen, [...spreadOut], [first, second], drain(delegate()), [...prototypeOfObject()]);
+}
+checkPrototypeOfObject();
+
+function* delegateTo(iterable) {
+  yield* iterable;
+}
+function consume(label, [looped, spreadOut, destructured, delegated]) {
+  const seen = [];
+  for (const value of looped) seen.push(value);
+  const [first, second] = destructured;
+  report(label, seen, [...spreadOut], [first, second], drain(delegateTo(delegated)));
+}
+const makeCounter = () =>
+  function* () {
+    yield 1;
+    yield 2;
+    yield 3;
+  };
+const changes = {
+  "prototype.next"(generatorFunction) {
+    generatorFunction.prototype.next = scalingNext;
+  },
+  "prototype[Symbol.iterator]"(generatorFunction) {
+    generatorFunction.prototype[Symbol.iterator] = reversingIterator;
+  },
+  "setPrototypeOf(prototype)"(generatorFunction) {
+    Object.setPrototypeOf(generatorFunction.prototype, otherProtocol);
+  },
+  "own next"(generatorFunction, objects) {
+    for (const object of objects) object.next = scalingNext;
+  },
+  "setPrototypeOf(object)"(generatorFunction, objects) {
+    for (const object of objects) Object.setPrototypeOf(object, otherProtocol);
+  },
+};
+for (const [name, change] of Object.entries(changes)) {
+  const generatorFunction = makeCounter();
+  const objects = [generatorFunction(), generatorFunction(), generatorFunction(), generatorFunction()];
+  change(generatorFunction, objects);
+  consume("closure, " + name, objects);
+}
+for (const [name, change] of Object.entries(changes)) {
+  const generatorFunction = makeCounter();
+  const object = generatorFunction();
+  const seen = [];
+  for (const value of object) {
+    seen.push(value);
+    if (value === 1) change(generatorFunction, [object]);
+    if (value === 2) break;
+  }
+  report("during for-of, " + name, seen, drain(object));
+}
+
+////= lines-2	frozen
+function checkFrozen() {
+  const looped = Object.freeze(frozen());
+  const seen = [];
+  for (const value of looped) seen.push(value);
+  report("frozen", [Object.isFrozen(looped)], seen);
+  consume("frozen", [frozen(), frozen(), frozen(), frozen()].map(object => Object.freeze(object)));
+}
+checkFrozen();
+
+function* failing() {
+  yield 1;
+  throw new Error("from the body");
+}
+function stepsAfterThrow(generator) {
+  const next = generator.next();
+  const returned = generator.return("returned");
+  return [next.value, next.done, returned.value, returned.done];
+}
+function checkThrowInForOf() {
+  const object = failing();
+  const seen = [];
+  try {
+    for (const value of object) seen.push(value);
+  } catch (error) {
+    seen.push(error.message);
+  }
+  report("throw in for-of", seen, stepsAfterThrow(object));
+}
+checkThrowInForOf();
+function checkThrowInSpread() {
+  const object = failing();
+  const seen = [];
+  try {
+    seen.push(...object);
+  } catch (error) {
+    seen.push(error.message);
+  }
+  report("throw in spread", seen, stepsAfterThrow(object));
+}
+checkThrowInSpread();
+function checkThrowInDestructuring() {
+  const object = failing();
+  const seen = [];
+  try {
+    const [first, second] = object;
+    seen.push(first, second);
+  } catch (error) {
+    seen.push(error.message);
+  }
+  report("throw in destructuring", seen, stepsAfterThrow(object));
+}
+checkThrowInDestructuring();
+function checkThrowInDelegation() {
+  const inner = failing();
+  const outer = delegateTo(inner);
+  const seen = [];
+  try {
+    for (const value of outer) seen.push(value);
+  } catch (error) {
+    seen.push(error.message);
+  }
+  report("throw in yield*", seen, stepsAfterThrow(inner), stepsAfterThrow(outer));
+}
+checkThrowInDelegation();
+function* recovering(inner) {
+  try {
+    yield* inner;
+  } catch (error) {
+    yield "caught " + error.message;
+  }
+  yield "goes on";
+}
+function checkCaughtThrow() {
+  const inner = failing();
+  const outer = recovering(inner);
+  const seen = [];
+  for (const value of outer) seen.push(value);
+  report("throw caught around yield*", seen, stepsAfterThrow(inner), stepsAfterThrow(outer));
+}
+checkCaughtThrow();
+
+function checkUntouched() {
+  consume("untouched, created first", createdFirst);
+  Bun.gc(true);
+  consume("untouched, created last", [untouched(), untouched(), untouched(), untouched()]);
+  const seen = [];
+  for (const value of untouched()) seen.push(value);
+  report("untouched, direct", seen, [...untouched()], [Reflect.ownKeys(untouched.prototype).length]);
+}
+checkUntouched();
+
+console.log(lines.join("\n"));
+//// generator-prototype-fields-read-around-call.ts
+// The first call of a generator function after a store to its `prototype` property makes the stored object a prototype. Fields of that object are read before and after the call.
+type Point = { x: number; y: number; label: string };
+function* steps(): Generator<number> { yield 1; }
+async function* asyncSteps(): AsyncGenerator<number> { yield 1; }
+
+function readAroundCall(point: Point): string {
+  (steps as any).prototype = point;
+  const x = point.x;
+  const generator = steps();
+  return x + point.y + point.label + " " + (Object.getPrototypeOf(generator) === point);
+}
+
+function readAroundAsyncCall(point: Point): string {
+  (asyncSteps as any).prototype = point;
+  const x = point.x;
+  const generator = asyncSteps();
+  return x + point.y + point.label + " " + (Object.getPrototypeOf(generator) === point);
+}
+
+for (let i = 0; i < 4; i++) {
+  console.log(readAroundCall({ x: i + 0.5, y: i * 2, label: "sync" + i }));
+  console.log(readAroundAsyncCall({ x: i + 0.25, y: i * 3, label: "async" + i }));
+}
+//// generator-prototype-mutation.ts
+// `next`, `return` and `Symbol.iterator` are replaced on the prototype of a generator function, before and during a loop over its generators: loops, spreads and patterns see it as in plain Bun. Last, a generator whose parameters run code is closed before its first step.
+const log: string[] = [];
+function takeLog(): string { const text = log.join(","); log.length = 0; return "[" + text + "]"; }
+function countdown(limit: number): () => any { let calls = 0; return () => ({ done: ++calls > limit, value: 100 }); }
+function* untouched(n: number): Generator<number> { for (let i = 0; i < n; i++) yield i; }
+function* gainsMember(n: number): Generator<number> { for (let i = 0; i < n; i++) yield i; }
+function* nextReplaced(n: number): Generator<number> { for (let i = 0; i < n; i++) yield i; }
+function* returnReplaced(n: number): Generator<number> { try { for (let i = 0; i < n; i++) yield i; } finally { log.push("finally"); } }
+function* iteratorReplaced(n: number): Generator<number> { for (let i = 0; i < n; i++) yield i; }
+function* replacedInLoop(n: number): Generator<number> { try { for (let i = 0; i < n; i++) yield i; } finally { log.push("finally"); } }
+function* prototypeReplaced(n: number): Generator<number> { for (let i = 0; i < n; i++) yield i; }
+function* parentReplaced(n: number): Generator<number> { for (let i = 0; i < n; i++) yield i; }
+function* changedThroughObject(n: number): Generator<number> { for (let i = 0; i < n; i++) yield i; }
+function sumUntouched(n: number): number { let sum = 0; for (const x of untouched(n)) sum += x; return sum; }
+function sumGainsMember(n: number): number { let sum = 0; for (const x of gainsMember(n)) sum += x; return sum; }
+function sumNextReplaced(n: number): number { let sum = 0; for (const x of nextReplaced(n)) sum += x; return sum; }
+function sumIteratorReplaced(n: number): number { let sum = 0; for (const x of iteratorReplaced(n)) sum += x; return sum; }
+function sumPrototypeReplaced(n: number): number { let sum = 0; for (const x of prototypeReplaced(n)) sum += x; return sum; }
+function sumParentReplaced(n: number): number { let sum = 0; for (const x of parentReplaced(n)) sum += x; return sum; }
+function sumChangedThroughObject(n: number): number { let sum = 0; for (const x of changedThroughObject(n)) sum += x; return sum; }
+function stopsEarly(n: number): number { let sum = 0; for (const x of returnReplaced(n)) { if (x === 2) break; sum += x; } return sum; }
+function replacesInLoop(n: number): number {
+  let sum = 0;
+  for (const x of replacedInLoop(n)) {
+    if (x === 1) { replacedInLoop.prototype.next = countdown(0); replacedInLoop.prototype.return = function (): any { log.push("return set in the loop"); return { done: true, value: undefined }; }; }
+    if (x === 3) break;
+    sum += x;
+  }
+  return sum;
+}
+function sums(): string { return [sumUntouched(4), sumGainsMember(4), sumNextReplaced(4), sumIteratorReplaced(4), sumPrototypeReplaced(4), sumParentReplaced(4), sumChangedThroughObject(4)].join(" "); }
+console.log("before: " + sums() + " " + stopsEarly(5) + " " + takeLog());
+gainsMember.prototype.doubled = function* (this: Generator<number>): Generator<number> { for (const x of this) yield x * 2; };
+console.log("a new member: " + sumGainsMember(4) + " " + [...(gainsMember(3) as any).doubled()].join());
+nextReplaced.prototype.next = countdown(2);
+console.log("next: " + sumNextReplaced(4) + " " + sumNextReplaced(4) + " [" + [...nextReplaced(3)].join() + "]");
+delete nextReplaced.prototype.next;
+console.log("next deleted: " + sumNextReplaced(4) + " [" + [...nextReplaced(3)].join() + "]");
+returnReplaced.prototype.return = function (value: unknown): any { log.push("own return"); return { done: true, value }; };
+console.log("return: " + stopsEarly(5) + " " + takeLog());
+const [first, second] = returnReplaced(5);
+console.log("return, from a pattern: " + first + " " + second + " " + takeLog());
+iteratorReplaced.prototype[Symbol.iterator] = function (): any { return [7, 8][Symbol.iterator](); };
+console.log("Symbol.iterator: " + sumIteratorReplaced(4) + " [" + [...iteratorReplaced(4)].join() + "]");
+console.log("in the loop: " + replacesInLoop(5) + " " + takeLog() + " " + replacesInLoop(5) + " " + takeLog());
+(prototypeReplaced as any).prototype = { next: countdown(1), [Symbol.iterator](): any { return this; } };
+console.log("the prototype property: " + sumPrototypeReplaced(4) + " " + sumPrototypeReplaced(4));
+Object.setPrototypeOf(parentReplaced.prototype, { next: countdown(3), [Symbol.iterator](): any { return this; } });
+console.log("the prototype's prototype: " + sumParentReplaced(4) + " " + sumParentReplaced(4));
+Object.getPrototypeOf(changedThroughObject(1)).next = countdown(1);
+console.log("through a generator object: " + sumChangedThroughObject(4));
+console.log("after: " + sums());
+function* startsEagerly(n: number = (log.push("default"), 2)): Generator<number> { try { yield n; } finally { log.push("finally"); } }
+const early = startsEagerly();
+console.log("return before the first next: " + JSON.stringify(early.return(7)) + " " + JSON.stringify(early.next()) + " " + takeLog());
+//// generator-prototype-per-closure.ts
+// Every closure of a generator function has its own `prototype` object, whether the generator it creates is stepped, finished, looped over, escapes or is never created.
+const sink: unknown[] = [];
+function stepped() { function* g() { yield 1; } const it = g(); it.next(); return g; }
+function finished() { function* g() { yield 1; } const it = g(); it.next(); it.return(0 as any); return g; }
+function looped() { function* g() { yield 1; yield 2; } let sum = 0; for (const x of g()) sum += x; sink.push(sum); return g; }
+function escaped() { function* g() { yield 1; } sink.push(g()); return g; }
+function neverCalled() { return function* () { yield 1; }; }
+function asyncGenerator() { async function* g() { yield 1; } g().next(); return g; }
+const makers: [string, () => any][] = [["stepped", stepped], ["finished", finished], ["looped", looped], ["escaped", escaped], ["never called", neverCalled], ["async generator", asyncGenerator]];
+for (const [name, make] of makers) {
+  const a = make(), b = make();
+  const checks = [a !== b, a.prototype !== b.prototype, a() instanceof a, a() instanceof b, b() instanceof b, Object.getPrototypeOf(a()) === a.prototype, Object.getPrototypeOf(a.prototype) === Object.getPrototypeOf(b.prototype)];
+  a.prototype.tag = name;
+  checks.push(a().tag === name, b().tag === undefined);
+  const before = a();
+  a.prototype = { replaced: true };
+  checks.push(a().replaced === true, b().replaced === undefined, before.replaced === undefined, before.tag === name);
+  console.log(name + ": " + checks.join(" "));
+}
+export {};
+//// generator-return-and-throw-by-call.js
+// return() and throw() of %GeneratorPrototype%, called with .call on started and unstarted generators: the two must not be swapped.
+function* g() { try { yield 1; yield 2; } finally { console.log("finally"); } }
+const prototype = Object.getPrototypeOf(g.prototype);
+const started = g(); started.next();
+console.log(JSON.stringify(prototype.return.call(started, 7)));
+const thrown = g(); thrown.next();
+try { prototype.throw.call(thrown, new Error("thrown")); } catch (error) { console.log("caught", error.message); }
+console.log(JSON.stringify(prototype.return.call(g(), 8)));
+try { prototype.throw.call(g(), new Error("unstarted")); } catch (error) { console.log("caught", error.message); }
+try { prototype.next.call({}); } catch (error) { console.log(error instanceof TypeError); }
+//// generators.ts
+// Generators: yielded and sent values, `throw` and `return` with `finally`, delegation with `yield*`, and consumers of every kind.
+function* count(from: number, to: number): Generator<number, string, unknown> { for (let i = from; i < to; i++) yield i; return "done" }
+console.log([...count(0, 4)].join(), Array.from(count(2, 5)).join())
+let total = 0
+for (const n of count(0, 10)) { if (n === 7) break; total += n }
+console.log(total)
+const it = count(0, 2)
+console.log(JSON.stringify([it.next(), it.next(), it.next(), it.next()]), it[Symbol.iterator]() === it, Object.prototype.toString.call(it))
+function* echo(): Generator<string, number, number> { let sum = 0; let got = yield "first"; while (got !== 0) { sum += got; got = yield "sum " + sum } return sum }
+const e = echo()
+console.log(e.next(100).value, e.next(1).value, e.next(2).value, JSON.stringify(e.next(0)))
+const log: string[] = []
+function* guarded(): Generator<number, string, unknown> {
+  try { log.push("in"); yield 1; yield 2; return "end" } catch (error) { log.push("caught " + error); yield 99; return "recovered" } finally { log.push("finally") }
+}
+const g1 = guarded(); g1.next(); console.log(JSON.stringify(g1.return("early")), JSON.stringify(g1.next()), log.join())
+log.length = 0
+const g2 = guarded(); g2.next(); console.log(JSON.stringify(g2.throw("boom")), JSON.stringify(g2.next()), log.join())
+log.length = 0
+const g3 = guarded(); console.log(JSON.stringify(g3.return("unstarted")), log.length)
+const g4 = guarded(); try { g4.throw(new Error("unstarted")) } catch (error) { console.log((error as Error).message, JSON.stringify(g4.next())) }
+function* outer(): Generator<number | string, string, unknown> { const r = yield* count(0, 2); yield r; yield* [7, 8]; yield* "ab"; return "outer " + (yield* guarded()) }
+console.log([...outer()].join())
+const o = outer(); o.next(); console.log(JSON.stringify(o.return("stop")), JSON.stringify(o.next()))
+function* fib(): Generator<number> { let [a, b] = [0, 1]; for (;;) { yield a; [a, b] = [b, a + b] } }
+const [f0, f1, f2, , f4] = fib()
+console.log(f0, f1, f2, f4)
+class Tree { constructor(public value: number, public kids: Tree[] = []) {} *[Symbol.iterator](): Generator<number> { yield this.value; for (const kid of this.kids) yield* kid } *walk(depth = 0): Generator<string> { yield depth + ":" + this.value; for (const kid of this.kids) yield* kid.walk(depth + 1) } }
+const tree = new Tree(1, [new Tree(2, [new Tree(3)]), new Tree(4)])
+console.log([...tree].join(), [...tree.walk()].join(), Math.max(...tree))
+function* reentrant(): Generator<number> { yield 1; try { self.next() } catch (error) { yield (error as Error) instanceof TypeError ? 2 : 3 } }
+const self = reentrant(); console.log(self.next().value, self.next().value)
+const lazy = { *[Symbol.iterator]() { yield "x"; yield "y" } }
+console.log([...lazy].join(""), new Map(function* () { yield ["k", 1] as [string, number] }()).get("k"))
+//// generators-from-templates.js
+// Generator objects created in a hot loop take their shape from the function's current prototype, per closure.
+function* counter(limit) {
+  for (let i = 0; i < limit; i++) yield i;
+}
+const original = counter.prototype;
+let sum = 0;
+for (let i = 0; i < 20000; i++) {
+  const it = counter(2);
+  sum += it.next().value + it.next().value;
+  if (Object.getPrototypeOf(it) !== original) throw new Error("wrong prototype in the loop");
+}
+console.log(sum);
+
+const other = { tag: "other", __proto__: Object.getPrototypeOf(original) };
+const before = counter(1);
+counter.prototype = other;
+let tagged = 0;
+for (let i = 0; i < 20000; i++) {
+  const it = counter(1);
+  if (it.tag === "other" && Object.getPrototypeOf(it) === other) tagged++;
+}
+console.log(tagged, before.tag, Object.getPrototypeOf(before) === original, [...counter(3)].join());
+
+counter.prototype = 1;
+const fallback = counter(1);
+console.log(Object.getPrototypeOf(fallback) === Object.getPrototypeOf(function* () {}).prototype, fallback.next().value);
+counter.prototype = original;
+console.log(Object.getPrototypeOf(counter(1)) === original);
+
+function make() {
+  return function* nested() { yield 1; };
+}
+const first = make();
+const second = make();
+first.prototype.owner = "first";
+for (let i = 0; i < 5000; i++) first().next();
+console.log(first.prototype !== second.prototype, first().owner, second().owner);
+console.log(second() instanceof first, second() instanceof second, Object.getPrototypeOf(second()) === second.prototype);
+for (let i = 0; i < 5000; i++) {
+  if (Object.getPrototypeOf(second()) === first.prototype) throw new Error("the second closure inherits from the first");
+}
+console.log([...first()].join(), [...second()].join());
+//// generators-recursing-to-stack-overflow.ts
+// Generators that make and step generators of their own kind until the stack is full. However a body reaches the next one (next(), yield*, for-of, a spread, a pattern, through a plain function),
+// the recursion ends in one RangeError that passes through every frame: each finally runs, each generator that was running is completed afterwards, and the program goes on. How deep the stack is
+// differs from one way of running the program to another, so no line depends on the depth. The time behind a line is not compared.
+// The program counts the entries of the two operations behind the creation of a generator, which only the jsc shell can.
+declare const aotOperationCount: undefined | ((name: string) => number);
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+////= lines-20	entries	"operationAOTNewGenerator"	"operationAOTSaveFrameAndYield"
+const lines: string[] = [];
+const deep = 300;
+let entered = 0;
+let left = 0;
+type Numbers = Generator<number, number, unknown>;
+type NumbersLater = AsyncGenerator<number, number, unknown>;
+
+function nameOf(error: unknown): string {
+  return error instanceof RangeError ? "RangeError" : "another error: " + String(error);
+}
+////= last
+function report(label: string, outcome: string, entriesBefore: number, start: number): void {
+  const made = entries() - entriesBefore;
+  const elapsed = Math.round(performance.now() - start);
+  lines.push(label + ": " + outcome + ", went deep: " + (entered > deep) + ", " + (made * 20 < entered ? "few entries" : made + " ENTRIES FOR " + entered + " GENERATORS") + " " + elapsed + "ms");
+}
+function attempt(label: string, run: () => unknown): void {
+  entered = 0;
+  left = 0;
+  const entriesBefore = entries();
+  const start = performance.now();
+  let outcome: string;
+  try {
+    outcome = "returned " + String(run());
+  } catch (error) {
+    outcome = nameOf(error);
+  }
+  report(label, outcome, entriesBefore, start);
+}
+async function attemptLater(label: string, run: () => Promise<unknown>): Promise<void> {
+  entered = 0;
+  left = 0;
+  const entriesBefore = entries();
+  const start = performance.now();
+  let outcome: string;
+  try {
+    outcome = "returned " + String(await run());
+  } catch (error) {
+    outcome = nameOf(error);
+  }
+  report(label, outcome, entriesBefore, start);
+}
+
+function* byNext(): Numbers {
+  entered++;
+  return byNext().next().value;
+}
+function* byYieldStar(): Numbers {
+  entered++;
+  return yield* byYieldStar();
+}
+function* byForOf(): Numbers {
+  entered++;
+  for (const value of byForOf()) yield value;
+  return 0;
+}
+function* bySpread(): Numbers {
+  entered++;
+  return [...bySpread()].length;
+}
+function* byPattern(): Numbers {
+  entered++;
+  const [first] = byPattern();
+  return first;
+}
+function* byArrayFrom(): Numbers {
+  entered++;
+  return Array.from(byArrayFrom()).length;
+}
+function stepsTheNext(): number {
+  return last(throughAPlainFunction()) + 1;
+}
+function* throughAPlainFunction(): Numbers {
+  entered++;
+  return stepsTheNext() + 1;
+}
+function* one(): Numbers {
+  entered++;
+  return other().next().value;
+}
+function* other(): Numbers {
+  return yield* one();
+}
+class Walker {
+  steps = 0;
+  *walk(): Numbers {
+    entered++;
+    this.steps++;
+    return yield* this.walk();
+  }
+}
+function* takesArguments(a: number, b: string, c: number[]): Numbers {
+  entered++;
+  return (yield* takesArguments(a + 1, b, c)) + a + b.length + c.length;
+}
+function* keepsValues(seed: number): Numbers {
+  entered++;
+  const a = seed + 1, b = seed * 0.5, c = "c" + (seed % 10), d = [seed];
+  const below = keepsValues(a).next().value;
+  return below + a + b + c.length + d.length;
+}
+function* hasAFinally(): Numbers {
+  try {
+    entered++;
+    return yield* hasAFinally();
+  } finally {
+    left++;
+  }
+}
+function* catchesAndRethrows(): Numbers {
+  try {
+    entered++;
+    return catchesAndRethrows().next().value;
+  } catch (error) {
+    left++;
+    throw error;
+  }
+}
+function* yieldsFirst(): Numbers {
+  yield 1;
+  return yield* byYieldStar();
+}
+const kept: Numbers[] = [];
+function* keepsTheFirstOnes(): Numbers {
+  entered++;
+  const inner = keepsTheFirstOnes();
+  if (kept.length < 5) kept.push(inner);
+  return inner.next().value;
+}
+// Some frame near the end of the stack has room enough to catch the error. Which one it is differs, and so does how often that happens on the way back.
+function* recovers(): Generator<string, string, unknown> {
+  entered++;
+  try {
+    return yield* recovers();
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    yield "caught";
+    return "went on";
+  }
+}
+function* range(count: number): Numbers {
+  for (let i = 0; i < count; i++) yield i;
+  return count;
+}
+
+async function* laterByForAwait(): NumbersLater {
+  entered++;
+  for await (const value of laterByForAwait()) yield value;
+  return 0;
+}
+async function* laterByYieldStar(): NumbersLater {
+  entered++;
+  return yield* laterByYieldStar();
+}
+async function* laterByNext(): NumbersLater {
+  entered++;
+  return (await laterByNext().next()).value;
+}
+async function* laterWithAFinally(): NumbersLater {
+  try {
+    entered++;
+    for await (const value of laterWithAFinally()) yield value;
+    return 0;
+  } finally {
+    left++;
+  }
+}
+async function firstOf(stream: NumbersLater): Promise<number> {
+  for await (const value of stream) return value;
+  return -1;
+}
+
+attempt("next()", () => last(byNext()));
+attempt("yield*", () => last(byYieldStar()));
+attempt("for-of", () => last(byForOf()));
+attempt("a spread", () => last(bySpread()));
+attempt("a pattern", () => last(byPattern()));
+attempt("Array.from", () => last(byArrayFrom()));
+attempt("a plain function between the generators", () => last(throughAPlainFunction()));
+attempt("two generator functions", () => last(one()));
+const walker = new Walker();
+attempt("a method", () => last(walker.walk()));
+lines.push("the method counted its calls: " + (walker.steps === entered));
+attempt("with arguments", () => last(takesArguments(0, "text", [1, 2])));
+attempt("with values that are used behind the step", () => last(keepsValues(0)));
+attempt("stepped by for-of from outside", () => {
+  let sum = 0;
+  for (const value of byForOf()) sum += value;
+  return sum;
+});
+attempt("with a finally in every frame", () => last(hasAFinally()));
+lines.push("every finally ran: " + (left === entered));
+attempt("with a catch that throws again in every frame", () => last(catchesAndRethrows()));
+lines.push("every catch ran: " + (left === entered));
+attempt("a generator that has yielded before", () => {
+  const generator = yieldsFirst();
+  const first = generator.next();
+  try {
+    generator.next();
+    return "no error";
+  } catch (error) {
+    const after = generator.next();
+    return [first.value, first.done, nameOf(error), after.value, after.done].join(" ");
+  }
+});
+attempt("the generators that were running are completed", () => {
+  kept.length = 0;
+  const outermost = keepsTheFirstOnes();
+  let outcome: string;
+  try {
+    outcome = "returned " + last(outermost);
+  } catch (error) {
+    outcome = nameOf(error);
+  }
+  return outcome + ", then " + [outermost, ...kept].map(generator => { const step = generator.next(); return step.done + " " + step.value; }).join(", ");
+});
+attempt("caught near the end of the stack", () => {
+  const generator = recovers();
+  let caught = 0;
+  let step = generator.next();
+  while (!step.done) {
+    if (step.value === "caught") caught++;
+    step = generator.next();
+  }
+  return (caught > 0 ? "caught, " : "NOT CAUGHT, ") + step.value;
+});
+attempt("five times", () => {
+  let errors = 0;
+  for (let round = 0; round < 5; round++) {
+    try {
+      last(round % 2 ? byYieldStar() : byNext());
+    } catch (error) {
+      if (error instanceof RangeError) errors++;
+    }
+  }
+  return errors + " errors";
+});
+attempt("in a callback of a built-in", () => [0].map(() => { try { return last(byNext()); } catch (error) { return nameOf(error); } }).join());
+lines.push("what ends, ends: " + [...range(5)].join() + " " + last(range(3)));
+
+await attemptLater("behind an await", async () => {
+  await null;
+  return last(byNext());
+});
+await attemptLater("in a then handler", () => Promise.resolve().then(() => last(byYieldStar())));
+await attemptLater("in a timer callback", () => new Promise<number>((resolve, reject) => {
+  setTimeout(() => {
+    try {
+      resolve(last(byForOf()));
+    } catch (error) {
+      reject(error);
+    }
+  }, 0);
+}));
+await attemptLater("async generators, for await", () => firstOf(laterByForAwait()));
+await attemptLater("async generators, yield*", () => firstOf(laterByYieldStar()));
+await attemptLater("async generators, next()", () => firstOf(laterByNext()));
+await attemptLater("async generators, behind an await", async () => {
+  await null;
+  return await firstOf(laterByForAwait());
+});
+await attemptLater("async generators with a finally in every frame", () => firstOf(laterWithAFinally()));
+lines.push("every finally ran: " + (left === entered));
+await attemptLater("an async generator is completed afterwards", async () => {
+  const stream = laterByForAwait();
+  let outcome: string;
+  try {
+    outcome = "returned " + (await stream.next()).value;
+  } catch (error) {
+    outcome = nameOf(error);
+  }
+  const after = await stream.next();
+  return outcome + ", then " + after.done + " " + after.value;
+});
+attempt("and once more without an await", () => last(byNext()));
+console.log(lines.join("\n"));
+
+export {};
+//// generators-stepped-by-hand-twice-a-turn-in-turns-and-through-helpers.js
+// steps taken by hand: two steps of one place, of two places, of two generators
+const out = [];
+function say(...a) { out.push(a.map(String).join(" ")); }
+function* count(n) { for (let i = 0; i < n; i++) yield i; return "end"; }
+function* echo() { let v = 0; for (;;) v = yield v * 2; }
+function twoAStep(n) { const g = count(n); let s = 0; for (;;) { const a = g.next(); if (a.done) break; const b = g.next(); s += a.value * 10; if (b.done) break; s += b.value; } return s; }
+function sameLine(n) { const g = count(n); let s = 0; for (;;) { const a = g.next(), b = g.next(); if (a.done || b.done) return s + ":" + a.value + ":" + b.value; s += a.value - b.value; } }
+function twoGenerators(n, m) { const g = count(n), h = count(m); let s = ""; for (;;) { const a = g.next(), b = h.next(); if (a.done && b.done) return s; s += (a.done ? "-" : a.value) + "" + (b.done ? "-" : b.value) + ","; } }
+function swapped(n) { let g = count(n), h = count(n + 2), s = 0; for (let i = 0; i < n * 3; i++) { const r = g.next(); if (!r.done) s += r.value; const t = g; g = h; h = t; } return s; }
+function chosen(n, which) { const g = count(n), h = count(n * 2); let s = 0; for (let i = 0; i < n * 2; i++) { const r = (which(i) ? g : h).next(); if (!r.done) s += r.value; } return s; }
+function given(n) { const g = echo(); g.next(); let s = 0; for (let i = 0; i < n; i++) s += g.next(i).value; return s; }
+function helper(g) { return g.next(); }
+function throughAHelper(n) { const g = count(n); let s = 0; for (;;) { const a = helper(g); if (a.done) return s + a.value; const b = helper(g); if (b.done) return s + "/" + b.value; s += a.value + b.value; } }
+function afterTheEnd(n) { const g = count(n); let r; for (let i = 0; i < n + 3; i++) r = g.next(); return JSON.stringify(r); }
+function whileStep(n) { const g = count(n); let r, s = 0; while (!(r = g.next()).done) s += r.value; return s + r.value; }
+function stepsInsideForOf(n) { const g = count(n); let s = 0; for (const v of g) { s += v; const r = g.next(); if (!r.done) s += r.value * 100; } return s; }
+function reentered() { let g; function* self() { try { yield g.next(); } catch (e) { yield e.constructor.name; } } g = self(); return g.next().value; }
+function kept(n) { const g = count(n), rs = []; for (let i = 0; i <= n; i++) rs.push(g.next()); return rs.map(r => r.value + ":" + r.done).join() + (rs[0] === rs[1]); }
+function all() { return [twoAStep(7), twoAStep(8), sameLine(5), sameLine(6), twoGenerators(2, 4), swapped(4), chosen(4, i => i % 2), chosen(4, i => i % 3 == 0), given(6), throughAHelper(5), throughAHelper(6), afterTheEnd(2), whileStep(5), stepsInsideForOf(7), reentered(), kept(3)].join(" | "); }
+let r; for (let i = 0; i < 300; i++) r = all();
+say(r);
+console.log(out.join("\n"));
+//// generators-stepped-right-after-their-creation.ts
+// A generator is most often stepped by the function that creates it, with nothing between: for-of over a call, a helper that takes the first value, a spread, a pattern.
+// The body starts at the first step and not before, the parameters are evaluated at the call, a body that never yields ends the loop at once, a loop that is left early runs the finally blocks,
+// and a generator that something else can see (stored, passed on, with a changed prototype, stepped from its own body, used again after its body has thrown) answers as in plain Bun.
+const log: string[] = []
+function flush(): string {
+  return log.splice(0).join(" ")
+}
+function* never(label: string): Generator<number> {
+  log.push("body " + label)
+}
+////= once
+function* count(limit: number): Generator<number> {
+  for (let i = 0; i < limit; i++) yield i
+}
+function* withDefault(a: number = (log.push("default"), 7)): Generator<number> {
+  log.push("body")
+  yield a
+}
+////= throwing
+function* nested(depth: number): Generator<number> {
+  if (depth > 0) yield* nested(depth - 1)
+  yield depth
+}
+function* filtered(items: readonly number[], wanted: (item: number) => boolean): Generator<number> {
+  for (const item of items) if (wanted(item)) yield item
+}
+function firstOrUndefined<T>(iterable: Iterable<T>): T | undefined {
+  for (const value of iterable) return value
+  return undefined
+}
+function firstOdd(items: readonly number[]): number | undefined {
+  return firstOrUndefined(filtered(items, item => item % 2 === 1))
+}
+////= attempt-2
+
+////= loops
+loops()
+
+////= betweenCreationAndStep
+betweenCreationAndStep()
+
+let total = 0
+const lists = [[2, 4, 6], [2, 3, 4], [], [1], [8, 8, 8, 8, 9]]
+for (let round = 0; round < 20000; round++) total += firstOdd(lists[round % lists.length]) ?? -1
+console.log(total)
+
+////= thrown
+thrown()
+
+////= byHand
+byHand()
+
+const seen: Generator<number>[] = []
+////= stored
+stored()
+
+let self: Generator<number> | undefined
+function* reentrant(): Generator<number> {
+  log.push(attempt(() => self!.next().done))
+  yield 1
+}
+function stepsItself(): void {
+  self = reentrant()
+  for (const value of self) log.push("value " + value)
+  console.log(flush())
+}
+stepsItself()
+
+function* plain(): Generator<number> {
+  yield 1
+  yield 2
+}
+////= changed
+changed()
+//// generators-stepped-right-after-their-creation-and-not-fused.ts
+// The program of generators-stepped-right-after-their-creation.ts, built without the pass that merges a loop with the body of its generator: the generators are made and stepped,
+// as they are in a program where nothing proves that the prototypes of generators stay as they are. The first step calls the body, and a body that never yields saves no frame.
+const log: string[] = []
+function flush(): string {
+  return log.splice(0).join(" ")
+}
+function* never(label: string): Generator<number> {
+  log.push("body " + label)
+}
+////= once
+function* count(limit: number): Generator<number> {
+  for (let i = 0; i < limit; i++) yield i
+}
+function* withDefault(a: number = (log.push("default"), 7)): Generator<number> {
+  log.push("body")
+  yield a
+}
+////= throwing
+function* nested(depth: number): Generator<number> {
+  if (depth > 0) yield* nested(depth - 1)
+  yield depth
+}
+function* filtered(items: readonly number[], wanted: (item: number) => boolean): Generator<number> {
+  for (const item of items) if (wanted(item)) yield item
+}
+function firstOrUndefined<T>(iterable: Iterable<T>): T | undefined {
+  for (const value of iterable) return value
+  return undefined
+}
+function firstOdd(items: readonly number[]): number | undefined {
+  return firstOrUndefined(filtered(items, item => item % 2 === 1))
+}
+////= attempt-2
+
+////= loops
+loops()
+
+////= betweenCreationAndStep
+betweenCreationAndStep()
+
+let total = 0
+const lists = [[2, 4, 6], [2, 3, 4], [], [1], [8, 8, 8, 8, 9]]
+for (let round = 0; round < 20000; round++) total += firstOdd(lists[round % lists.length]) ?? -1
+console.log(total)
+
+////= thrown
+thrown()
+
+////= byHand
+byHand()
+
+const seen: Generator<number>[] = []
+////= stored
+stored()
+
+let self: Generator<number> | undefined
+function* reentrant(): Generator<number> {
+  log.push(attempt(() => self!.next().done))
+  yield 1
+}
+function stepsItself(): void {
+  self = reentrant()
+  for (const value of self) log.push("value " + value)
+  console.log(flush())
+}
+stepsItself()
+
+function* plain(): Generator<number> {
+  yield 1
+  yield 2
+}
+////= changed
+changed()
+//// hand-written-iterator-results.ts
+// `for await` and `yield*` over async iterators written by hand: what next() hands back is of every make: literals with the two properties in either order,
+// with more properties, with getters that note when they are read, inherited properties, class instances, frozen objects, proxies, one object used again and
+// again, the engine's own result objects taken from another iterator; `done` of every kind of value; steps that lack a property; steps that are no objects.
+const lines: string[] = [];
+let log: string[] = [];
+type Step = unknown;
+function iterable(steps: (() => Step)[]): AsyncIterable<unknown> {
+    let i = 0;
+    return { [Symbol.asyncIterator]() { return { next() { return Promise.resolve(i < steps.length ? steps[i++]() : { done: true, value: "the end" }); } } as AsyncIterator<unknown>; } };
+}
+class Made { constructor(public value: unknown, public done: unknown) {} }
+class MadeTheOtherWay { constructor(public done: unknown, public value: unknown) {} }
+const reused: { value: unknown; done: boolean } = { value: 0, done: false };
+function* engine(): Generator<string> { yield "from a generator"; }
+const array = ["from an array"];
+const kinds: [string, (() => Step)[]][] = [
+    ["value first", [() => ({ value: 1, done: false })]],
+    ["done first", [() => ({ done: false, value: 2 })]],
+    ["more properties", [() => ({ extra: 0, value: 3, done: false, more: 1 })]],
+    ["getters", [() => ({ get done() { log.push("done is read"); return false; }, get value() { log.push("value is read"); return 4; } })]],
+    ["getters at the end", [() => ({ get done() { log.push("done is read"); return true; }, get value() { log.push("value is read"); return 5; } })]],
+    ["inherited", [() => Object.create({ value: 6, done: false })]],
+    ["half inherited", [() => Object.assign(Object.create({ done: false }), { value: 7 })]],
+    ["a class instance", [() => new Made(8, false), () => new MadeTheOtherWay(false, 9)]],
+    ["frozen", [() => Object.freeze({ value: 10, done: false })]],
+    ["a proxy", [() => new Proxy({ value: 11, done: false }, { get(target, key, receiver) { log.push("asked for " + String(key)); return Reflect.get(target, key, receiver); } })]],
+    ["one object again and again", [() => { reused.value = 12; return reused; }, () => { reused.value = 13; return reused; }, () => { reused.done = true; return reused; }]],
+    ["the engine's own", [() => engine().next(), () => array[Symbol.iterator]().next(), () => new Map([[1, 2]]).entries().next()]],
+    ["the engine's own, changed", [() => Object.assign(engine().next(), { value: "changed" }), () => { const step = engine().next(); delete (step as any).done; return step; }, () => Object.defineProperty(engine().next(), "value", { get() { log.push("a getter on the engine's own"); return 14; } })]],
+    ["done is zero", [() => ({ value: 15, done: 0 })]],
+    ["done is one", [() => ({ value: 16, done: 1 })]],
+    ["done is a text", [() => ({ value: 17, done: "" }), () => ({ value: 18, done: "yes" })]],
+    ["done is an object", [() => ({ value: 19, done: {} })]],
+    ["done is null, undefined, NaN", [() => ({ value: 20, done: null }), () => ({ value: 21, done: undefined }), () => ({ value: 22, done: NaN })]],
+    ["no done", [() => ({ value: 23 })]],
+    ["no value", [() => ({ done: false })]],
+    ["empty", [() => ({})]],
+    ["a function", [() => Object.assign(() => 0, { value: 24, done: false })]],
+    ["an array", [() => Object.assign([], { value: 25, done: false })]],
+    ["a number", [() => 26]],
+    ["undefined", [() => undefined]],
+    ["a text", [() => "step"]],
+    ["null", [() => null]],
+];
+async function byLoop(source: AsyncIterable<unknown>): Promise<void> {
+    try {
+        for await (const x of source) log.push("got " + JSON.stringify(x));
+        log.push("over");
+    } catch (error) {
+        log.push("caught " + (error as Error).constructor.name);
+    }
+}
+async function* delegating(source: AsyncIterable<unknown>): AsyncGenerator<unknown, string> {
+    const returned = yield* source as AsyncIterable<unknown, unknown>;
+    return "returned " + JSON.stringify(returned);
+}
+async function byDelegation(source: AsyncIterable<unknown>): Promise<void> {
+    const outer = delegating(source);
+    try {
+        for (;;) {
+            const step = await outer.next();
+            log.push((step.done ? "done " : "got ") + JSON.stringify(step.value));
+            if (step.done) break;
+        }
+    } catch (error) {
+        log.push("caught " + (error as Error).constructor.name);
+    }
+}
+async function* throughGenerator(source: AsyncIterable<unknown>): AsyncGenerator<unknown> {
+    for await (const x of source) yield x;
+}
+for (const [title, steps] of kinds) {
+    for (const [way, run] of [["loop", byLoop], ["yield*", byDelegation], ["loop in a generator", (source: AsyncIterable<unknown>) => byLoop(throughGenerator(source))]] as const) {
+        log = []; reused.done = false;
+        await run(iterable(steps));
+        lines.push(title + ", " + way + ": " + log.join(" | "));
+    }
+}
+console.log(lines.join("\n"));
+//// handlers-and-queued-functions-among-coroutines.ts
+// The handlers of promise reactions and the functions given to queueMicrotask: how they are called, what becomes of what they return and throw, and their place among the jobs of coroutines.
+import { AsyncLocalStorage } from "node:async_hooks";
+
+const lines: string[] = [];
+function log(line: string) { lines.push(line); }
+////= show
+process.on("uncaughtException", error => log("uncaught " + show(error)));
+process.on("unhandledRejection", reason => log("unhandled " + show(reason)));
+async function turns(count: number) { for (let i = 0; i < count; i++) await null; }
+const macrotask = () => new Promise<void>(resolve => setTimeout(resolve, 1));
+
+async function* numbers(name: string, count: number): AsyncGenerator<number> {
+  for (let i = 0; i < count; i++) { await null; log(name + " yields " + i); yield i; }
+}
+async function consume(name: string, count: number) {
+  for await (const value of numbers(name, count)) log(name + " sees " + value);
+}
+async function waits(name: string, count: number) {
+  for (let i = 0; i < count; i++) { await null; log(name + " behind await " + i); }
+}
+
+log("== in their places");
+{
+  let chain: Promise<number> = Promise.resolve(0);
+  for (let i = 0; i < 6; i++) chain = chain.then(value => { log("link " + value); return value + 1; });
+  let count = 0;
+  const again = () => { log("queued " + count); if (++count < 6) queueMicrotask(again); };
+  queueMicrotask(again);
+  await Promise.all([chain, consume("a", 2), waits("b", 5), consume("c", 1)]);
+}
+
+log("== how they are called");
+{
+  function counts(this: unknown, ...all: unknown[]) { log("this " + typeof this + ", " + all.length + " arguments: " + all.map(show).join()); }
+  function three(a?: unknown, b?: unknown, c?: unknown) { log("three: " + show(a) + " " + show(b) + " " + show(c) + " of " + arguments.length); }
+  await Promise.resolve("value").then(counts);
+  await Promise.reject("reason").catch(counts);
+  await Promise.resolve("value").then(three);
+  queueMicrotask(counts);
+  queueMicrotask(three);
+  await turns(2);
+  const list: unknown[] = [];
+  await Promise.resolve(1).then(list.push.bind(list));
+  await Promise.resolve(2).then(Array.prototype.push.bind(list, "bound"));
+  log("pushed " + show(list));
+  await Promise.resolve([3, 1, 2]).then(Math.max.apply.bind(Math.max, null)).then(value => log("max " + value));
+  await Promise.resolve("5").then(Number).then(value => log(typeof value + " " + value));
+  await Promise.resolve(4).then(new Proxy((value: number) => value * 2, { apply(target, self, all) { log("trap with " + all.length); return Reflect.apply(target, self, all); } })).then(value => log("through the proxy " + value));
+  class Holder { static tag = "holder"; static read(this: unknown, value: number) { return String(this) + " " + value; } }
+  await Promise.resolve(6).then(Holder.read).then(value => log(value));
+  await Promise.resolve(7).then(async value => { await null; return value + 1; }).then(value => log("from an async function " + value));
+  await Promise.resolve(8).then(function* (value) { yield value; }).then(value => log("a generator " + show([...value])));
+  queueMicrotask(async () => { await null; log("an async function was queued"); });
+  queueMicrotask(log.bind(null, "a bound function was queued"));
+  await turns(3);
+}
+
+log("== what they throw");
+{
+  await Promise.resolve(1).then(() => { throw new TypeError("from a handler"); }).catch(reason => log("caught " + show(reason)));
+  await Promise.reject(2).catch(() => { throw new RangeError("from a catch"); }).then(() => log("never"), reason => log("caught " + show(reason)));
+  Promise.resolve(3).then(() => { throw new Error("nobody catches this"); });
+  Promise.resolve(4).then(() => log("the next handler runs"));
+  queueMicrotask(() => { log("throws next"); throw new Error("from a queued function"); });
+  queueMicrotask(() => log("the next queued function runs"));
+  waits("d", 2);
+  consume("e", 1);
+  queueMicrotask(() => { throw "not an error"; });
+  Promise.resolve(5).then(() => log("and the handler behind it"));
+  await macrotask();
+  await macrotask();
+}
+
+log("== what they return");
+{
+  const pending: ((value: string) => void)[] = [];
+  const outcomes = [
+    Promise.resolve(0).then(() => undefined),
+    Promise.resolve(0).then(() => null),
+    Promise.resolve(0).then(() => ({ plain: true })),
+    Promise.resolve(0).then(() => [1, 2]),
+    Promise.resolve(0).then(() => Promise.resolve("a promise")),
+    Promise.resolve(0).then(() => new Promise<string>(resolve => pending.push(resolve))),
+    Promise.resolve(0).then(() => Promise.reject(new Error("a rejected promise"))),
+    Promise.resolve(0).then(() => ({ then(resolve: (value: string) => void) { log("then of a thenable"); resolve("a thenable"); } }) as unknown as string),
+    Promise.resolve(0).then(() => ({ get then() { log("then is read"); return undefined; } })),
+    Promise.resolve(0).then(() => ({ get then(): never { throw new Error("then throws"); } })),
+    Promise.resolve(0).then(() => () => "a function"),
+    Promise.resolve(0).then(() => Symbol.for("a symbol")),
+  ];
+  await turns(3);
+  pending[0]("settled later");
+  for (const result of await Promise.allSettled(outcomes)) log(result.status + " " + (typeof (result as any).value === "function" ? "function" : typeof (result as any).value === "symbol" ? "symbol" : show(result.status === "fulfilled" ? result.value : result.reason)));
+}
+
+log("== what waits for the derived promise");
+{
+  const base = Promise.resolve("x");
+  const derived = base.then(value => value + "y");
+  derived.then(value => log("first " + value));
+  derived.then(value => log("second " + value));
+  (async () => log("awaited " + (await derived)))();
+  const other = base.then(value => value + "z");
+  (async () => log("awaited alone " + (await other)))();
+  const unused = base.then(value => value + "w");
+  await turns(4);
+  log("unused " + (await unused));
+  const raced = await Promise.race([base.then(() => "left"), base.then(() => "right")]);
+  log("raced " + raced + ", all " + show(await Promise.all([base.then(() => 1), base.then(() => 2)])));
+}
+
+log("== ticks, timers and jobs");
+{
+  process.nextTick(() => { log("tick 1"); Promise.resolve().then(() => log("job from tick 1")); });
+  Promise.resolve().then(() => { log("job 1"); process.nextTick(() => log("tick from job 1")); queueMicrotask(() => log("job from job 1")); });
+  queueMicrotask(() => { log("job 2"); process.nextTick(() => log("tick from job 2")); });
+  setTimeout(() => log("timer"), 0);
+  waits("f", 2);
+  await macrotask();
+  await macrotask();
+}
+
+log("== stores");
+{
+  const storage = new AsyncLocalStorage<string>();
+  const base = Promise.resolve();
+  storage.run("one", () => { base.then(() => log("handler under " + storage.getStore())); queueMicrotask(() => log("queued under " + storage.getStore())); });
+  base.then(() => log("handler under " + storage.getStore()));
+  queueMicrotask(() => log("queued under " + storage.getStore()));
+  storage.run("two", () => { base.then(() => log("handler under " + storage.getStore())).then(() => log("its link under " + storage.getStore())); waits("g", 1).then(() => log("behind a coroutine under " + storage.getStore())); });
+  base.then(() => log("handler under " + storage.getStore()));
+  await turns(5);
+}
+
+log("== traces");
+{
+  async function unrelatedCoroutine() { await null; await null; }
+  function namedHandler() { return String(new Error("here").stack); }
+  unrelatedCoroutine();
+  const trace = await Promise.resolve().then(namedHandler);
+  log("names the handler " + trace.includes("namedHandler") + ", names the coroutine " + trace.includes("unrelatedCoroutine"));
+  let queuedTrace = "";
+  unrelatedCoroutine();
+  queueMicrotask(function namedFunction() { queuedTrace = String(new Error("here").stack); });
+  await turns(3);
+  log("names the function " + queuedTrace.includes("namedFunction") + ", names the coroutine " + queuedTrace.includes("unrelatedCoroutine"));
+}
+
+log("== long");
+{
+  let chain: Promise<number> = Promise.resolve(0);
+  for (let i = 0; i < 50000; i++) chain = chain.then(value => value + 1);
+  let count = 0;
+  await new Promise<void>(resolve => { const next = () => { if (++count < 50000) queueMicrotask(next); else resolve(); }; queueMicrotask(next); });
+  log("chain " + (await chain) + ", queued " + count);
+}
+console.log(lines.join("\n"));
+//// iteration-protocol.ts
+// `for..of` and everything of the iterator protocol that a program can observe.
+declare const console: { log(...v: unknown[]): void };
+let log: string[] = []; const say = (s: string): void => { log.push(s); }; const flush = (title: string): void => { console.log(title + ": " + log.join(" ")); log = []; };
+const kind = (e: unknown): string => (e as Error).constructor.name + ((e as Error).message.length < 12 ? "(" + (e as Error).message + ")" : "");
+// The result is an object of a class with accessors: the order of the reads shows.
+class Res { constructor(public v: number, public d: boolean, public bad: string) {} get done(): boolean { say("done"); if (this.bad === "done") throw new Error("done!"); return this.d; } get value(): number { say("value"); if (this.bad === "value") throw new Error("value!"); return this.v; } }
+class Steps { i = 0; constructor(public n: number, public bad: string, public closing: string) {}
+  next(): Res { say("next"); if (this.bad === "next" && this.i === 1) throw new Error("next!"); const at = this.i++; return new Res(at, at >= this.n, at === 1 ? this.bad : ""); }
+  return(): { value: number, done: boolean } { say("return"); if (this.closing === "throws") throw new Error("return!"); if (this.closing === "no object") return 5 as any; return { value: 0, done: true }; } }
+class Range { constructor(public n: number, public bad = "", public closing = "") {} [Symbol.iterator](): Steps { say("open"); return new Steps(this.n, this.bad, this.closing); } }
+function whole(r: Range): number { let s = 0; for (const x of r) { say("body" + x); s += x; } return s; }
+function broken(r: Range): number { let s = 0; for (const x of r) { say("body" + x); if (x === 1) break; s += x; } return s; }
+function returned(r: Range): number { for (const x of r) { say("body" + x); if (x === 1) return 100 + x; } return -1; }
+function thrown(r: Range): number { for (const x of r) { say("body" + x); if (x === 1) throw new Error("body!"); } return -1; }
+function outer(r: Range, q: Range): number { let s = 0; again: for (const y of q) { for (const x of r) { say("body" + y + x); if (x === 1) continue again; s += x + y; } } return s; }
+const attempt = (f: () => number): void => { try { say("=" + f()); } catch (e) { say("!" + kind(e)); } };
+attempt(() => whole(new Range(2))); flush("whole");
+attempt(() => whole(new Range(0))); flush("empty");
+attempt(() => broken(new Range(3))); flush("break");
+attempt(() => returned(new Range(3))); flush("return");
+attempt(() => thrown(new Range(3))); flush("throw");
+attempt(() => outer(new Range(3), new Range(2))); flush("continue outer");
+for (const bad of ["next", "done", "value"]) { attempt(() => whole(new Range(3, bad))); flush(bad + " throws"); }
+attempt(() => broken(new Range(3, "", "throws"))); flush("break, return throws");
+attempt(() => thrown(new Range(3, "", "throws"))); flush("throw, return throws");
+attempt(() => broken(new Range(3, "", "no object"))); flush("break, return yields no object");
+attempt(() => thrown(new Range(3, "", "no object"))); flush("throw, return yields no object");
+// No `return` method; `done` left out; an iterator that is its own iterable; a subclass that overrides; a union of two classes.
+class Plain { i = 0; constructor(public n: number) {} next(): { value: number, done?: boolean } { if (this.i < this.n) return { value: this.i++ }; return { value: -1, done: true }; } [Symbol.iterator](): Plain { return this; } }
+class Twice extends Plain { next(): { value: number, done?: boolean } { const r = super.next(); if (r.done) return r; return { value: r.value * 2 }; } }
+function sum(p: Plain): number { let s = 0; for (const x of p) { if (x > 50) break; s += x; } return s; }
+function either(p: Plain | Range): number { let s = 0; for (const x of p) s += x; return s; }
+console.log("plain", sum(new Plain(4)), sum(new Twice(4)), sum(new Plain(0)), either(new Plain(3))); log = []; console.log("either", either(new Range(3)), log.length); log = [];
+{ const p = new Plain(5); let first = 0; for (const x of p) { first = x; if (x === 1) break; } let rest = 0; for (const x of p) rest += x; console.log("resumed", first, rest); }
+// The type is only a prediction: the object decides which method is found. An object from untyped code used as an interface; an inheriting object that overrides the method and returns something else; `next` as an accessor; `next` read once from an object from untyped code.
+interface Walkable { [Symbol.iterator](): Plain }
+function walk(w: Walkable): number { let s = 0; for (const x of w) { if (x > 50) break; s += x; } return s; }
+// It has all that a Plain has, and is none: no object of the class.
+const foreign = (n: number): Plain => { const it = { i: 0, n, next(): { value: number, done?: boolean } { say("foreign"); return it.i < n ? { value: 10 + it.i++ } : { value: 0, done: true }; }, return(): { value: number, done: boolean } { say("closed"); return { value: 0, done: true }; }, [Symbol.iterator](): Plain { return it; } }; return it; };
+const stranger: Walkable = { [Symbol.iterator]() { return foreign(2); } };
+class Heir extends Plain { [Symbol.iterator](): Plain { return foreign(3); } }
+console.log("strangers", walk(stranger), walk(new Plain(3)), walk(new Heir(1)), sum(new Heir(1)), log.join()); log = [];
+{ const far: Walkable = { [Symbol.iterator]() { return foreign(100); } }; let s = 0; for (const x of far) { if (x > 11) break; s += x; } console.log("a stranger is closed", s, log.join()); log = []; }
+class Lazy { i = 0; get next(): () => { value: number, done: boolean } { say("get next"); return () => ({ value: this.i, done: this.i++ >= 2 }); } }
+class HasLazy { [Symbol.iterator](): Lazy { return new Lazy(); } }
+{ let s = 0; for (const x of new HasLazy()) s += x; console.log("next is an accessor", s, log.join()); log = []; }
+// A record for an iterator: `next` is read ONCE: storing another in the loop changes nothing for this loop.
+class Bag { constructor(public n: number) {} [Symbol.iterator](): { next: () => { value: number, done: boolean } } { let i = 0; const n = this.n; return { next: () => i < n ? { value: i++, done: false } : { value: 0, done: true } }; } }
+function bag(b: Bag): number { let s = 0; for (const x of b) s += x; return s; }
+console.log("record", bag(new Bag(4)), bag(new Bag(0)));
+class Swapping { it: { next: () => { value: number, done: boolean } }; constructor(n: number) { let i = 0; this.it = { next: () => i < n ? { value: i++, done: false } : { value: 0, done: true } }; } [Symbol.iterator](): { next: () => { value: number, done: boolean } } { return this.it; } }
+function swapped(w: Swapping): number { let s = 0; for (const x of w) { w.it.next = () => ({ value: 1000, done: true }); s += x; } return s; }
+console.log("next stored to in the loop", swapped(new Swapping(3)));
+// The forms of the loop head; a fresh binding for every iteration; nested; in a generator and in an async function.
+class Pairs { constructor(public n: number) {} [Symbol.iterator](): PairSteps { return new PairSteps(this.n); } }
+class PairSteps { i = 0; constructor(public n: number) {} next(): { value: [number, string], done: boolean } { const at = this.i++; return { value: [at, "s" + at], done: at >= this.n }; } }
+{ let t = ""; for (const [a, b] of new Pairs(2)) t += a + b; const o = { p: 0 }; for (o.p of new Plain(3)) t += o.p; var v = 0; for (v of new Plain(2)) t += v; const fs: (() => number)[] = []; for (const x of new Plain(3)) fs.push(() => x); t += fs.map(f => f()).join(); for (const x of new Plain(2)) for (const y of new Plain(2)) t += "" + x + y; console.log("heads", t, v); }
+function* through(p: Plain): Generator<number> { for (const x of p) { yield x; yield x * 10; } }
+console.log("in a generator", [...through(new Plain(2))].join()); { const g = through(new Plain(5)); g.next(); g.next(); console.log(JSON.stringify(g.return(7)), JSON.stringify(g.next())); }
+async function later(p: Plain): Promise<number> { let s = 0; for (const x of p) { s += await Promise.resolve(x); } return s; }
+// What goes as before: arrays, strings, Map, Set, generators, arguments, typed arrays, `any`.
+{ let t = ""; for (const x of [1, 2]) t += x; for (const c of "ab") t += c; for (const [k, w] of new Map([[1, "m"]])) t += k + w; for (const x of new Set([7])) t += x; for (const x of through(new Plain(1))) t += x; for (const x of new Uint8Array([3])) t += x; const a: any = new Plain(2); for (const x of a) t += x; console.log("as before", t); }
+later(new Plain(4)).then(s => console.log("in an async function", s));
+//// iterator-helper-closes-started-iterator.js
+// An iterator helper that has started closes its underlying iterator once: when its return() is called, when a loop over it exits early, and when its callback throws. The result of the underlying return() must be an object, and an error of the callback wins over an error of return().
+const log = [];
+function underlying(close = () => ({})) {
+  let count = 0;
+  return {
+    __proto__: Iterator.prototype,
+    next() {
+      log.push("next");
+      return { value: ++count, done: false };
+    },
+    return() {
+      log.push("return");
+      return close();
+    },
+  };
+}
+function attempt(label, run) {
+  log.length = 0;
+  let outcome;
+  try {
+    outcome = "gives " + JSON.stringify(run());
+  } catch (error) {
+    outcome = "throws " + (error instanceof Error ? error.name + ": " + error.message : String(error));
+  }
+  console.log(label + ": " + outcome + " | " + log.join(" "));
+}
+
+const helpers = {
+  map: (u, callback = x => x) => u.map(callback),
+  filter: (u, callback = () => true) => u.filter(callback),
+  flatMap: (u, callback = x => [x]) => u.flatMap(callback),
+  take: u => u.take(3),
+  drop: u => u.drop(1),
+};
+
+for (const [name, create] of Object.entries(helpers)) {
+  attempt(name + ", next() then return()", () => {
+    const helper = create(underlying());
+    helper.next();
+    return helper.return();
+  });
+  attempt(name + ", return() twice, then next()", () => {
+    const helper = create(underlying());
+    helper.next();
+    helper.return();
+    return [helper.return(), helper.next()];
+  });
+  attempt(name + ", break out of a loop", () => {
+    for (const x of create(underlying())) break;
+  });
+  attempt(name + ", return out of a loop", () => {
+    for (const x of create(underlying())) return x;
+  });
+  attempt(name + ", throw out of a loop", () => {
+    for (const x of create(underlying())) throw "from the loop";
+  });
+  attempt(name + ", a pattern shorter than the iterator", () => {
+    const [first, second] = create(underlying());
+    return [first, second];
+  });
+  for (const primitive of [undefined, null, 1, "text", true]) {
+    attempt(name + ", return() gives " + String(primitive), () => {
+      const helper = create(underlying(() => primitive));
+      helper.next();
+      return helper.return();
+    });
+  }
+  attempt(name + ", return() gives a function", () => {
+    const helper = create(underlying(() => function () {}));
+    helper.next();
+    return helper.return();
+  });
+  attempt(name + ", return() throws", () => {
+    const helper = create(underlying(() => { throw "from return()"; }));
+    helper.next();
+    return helper.return();
+  });
+  attempt(name + ", return() throws and a loop breaks", () => {
+    for (const x of create(underlying(() => { throw "from return()"; }))) break;
+  });
+  attempt(name + ", return() throws and a loop throws", () => {
+    for (const x of create(underlying(() => { throw "from return()"; }))) throw "from the loop";
+  });
+}
+
+for (const name of ["map", "filter", "flatMap"]) {
+  const fail = () => { throw "from the callback"; };
+  attempt(name + ", the callback throws", () => helpers[name](underlying(), fail).next());
+  attempt(name + ", the callback throws and return() throws", () => helpers[name](underlying(() => { throw "from return()"; }), fail).next());
+  attempt(name + ", the callback throws and return() gives a number", () => helpers[name](underlying(() => 1), fail).next());
+  attempt(name + ", the callback throws at the second value", () => {
+    const helper = helpers[name](underlying(() => { throw "from return()"; }), x => { if (x === 2) throw "from the callback"; return [x]; });
+    return [helper.next(), helper.next()];
+  });
+  attempt(name + ", next() and return() after the callback threw", () => {
+    const helper = helpers[name](underlying(), fail);
+    try { helper.next(); } catch {}
+    return [helper.next(), helper.return()];
+  });
+}
+
+////= attempt-3	"flatMap, return() while an inner iterator is open"	log.push("inner next"); return { value: 0, done: false }; }, return() { log.push("inner return"); return {}
+////= attempt-3	"flatMap, the inner return() throws"	return { value: 0, done: false }; }, return() { log.push("inner return"); throw "from the inner return()"
+attempt("flatMap, the callback gives a number", () => underlying(() => { throw "from return()"; }).flatMap(() => 1).next());
+attempt("take, the limit is reached", () => {
+  const helper = underlying().take(1);
+  return [helper.next(), helper.next(), helper.next()];
+});
+attempt("take, the limit is reached and return() gives a number", () => {
+  const helper = underlying(() => 1).take(1);
+  helper.next();
+  return helper.next();
+});
+attempt("a chain of helpers", () => {
+  const helper = underlying().map(x => x + 1).filter(() => true).take(5).drop(0);
+  helper.next();
+  return helper.return();
+});
+attempt("an underlying iterator without return()", () => {
+  const helper = { __proto__: Iterator.prototype, next() { log.push("next"); return { value: 1, done: false }; } }.map(x => x);
+  helper.next();
+  return helper.return();
+});
+//// iterator-helper-return-before-start.js
+// An iterator helper's return() before its first next() closes the underlying iterator and returns an ordinary iterator result.
+let closed = 0;
+const underlying = { __proto__: Iterator.prototype, next() { return { value: 1, done: false }; }, return() { closed++; return {}; } };
+const helper = underlying.map(x => x);
+const result = helper.return();
+console.log(JSON.stringify(result), Object.keys(result).join(), closed);
+console.log(JSON.stringify(helper.next()), JSON.stringify(helper.return()), closed);
+//// job-order-async-generators.ts
+// The order in which things happen when async generators, `for await` and async functions run side by side.
+// Each round builds a few chains from a seed. A chain awaits plain values, settled promises, promises that another chain settles later,
+// thenables and calls of async functions. Everything that happens is written to one log, and the log is reduced to a checksum per round.
+let log: string[] = [];
+////= note
+
+let seed = 1;
+////= random	limit
+
+let gates: ((value: number) => void)[] = [];
+function gate(): Promise<number> {
+    return new Promise<number>(resolve => {
+        gates.push(resolve);
+    });
+}
+function openGate(label: string): void {
+    const resolve = gates.shift();
+    if (resolve) {
+        note(label + " opens a gate");
+        resolve(gates.length);
+    }
+}
+
+async function plain(value: number): Promise<number> {
+    return value + 1;
+}
+async function slow(value: number): Promise<number> {
+    await null;
+    await undefined;
+    return value + 2;
+}
+class Thenable {
+    constructor(private label: string, private value: number) {}
+    then(onFulfilled: (value: number) => void): void {
+        note(this.label + " then is called");
+        onFulfilled(this.value + 3);
+    }
+}
+function thenable(label: string, value: number): Thenable {
+    return new Thenable(label, value);
+}
+
+async function something(label: string, kind: number, value: number): Promise<number> {
+    switch (kind) {
+    case 0:
+        return (await value) + 1;
+    case 1:
+        return await Promise.resolve(value);
+    case 2:
+        return await plain(value);
+    case 3:
+        return await slow(value);
+    case 4:
+        return await thenable(label, value);
+    case 5:
+        openGate(label);
+        return value;
+    case 6:
+        try {
+            return await Promise.reject(new Error("no " + value));
+        } catch (error) {
+            note(label + " caught " + String(error));
+            return value;
+        }
+    default:
+        return await gate();
+    }
+}
+
+async function* source(label: string, count: number, kinds: number[]): AsyncGenerator<number, string, unknown> {
+    note(label + " starts");
+    try {
+        for (let i = 0; i < count; i++) {
+            const kind = kinds[i % kinds.length];
+            let value = i;
+            switch (kind) {
+            case 0:
+                value = (await i) + 1;
+                break;
+            case 1:
+                value = await Promise.resolve(i);
+                break;
+            case 2:
+                value = await plain(i);
+                break;
+            case 3:
+                value = await slow(i);
+                break;
+            case 4:
+                value = await thenable(label, i);
+                break;
+            case 5:
+                openGate(label);
+                break;
+            case 6:
+                value = await something(label, random(8), i);
+                break;
+            case 7:
+                value = await gate();
+                break;
+            default:
+                break;
+            }
+            note(label + " yields " + value);
+            const sent = yield kind === 8 ? Promise.resolve(value) : value;
+            if (sent !== undefined)
+                note(label + " was sent " + String(sent));
+        }
+        return label + " is over";
+    } finally {
+        note(label + " leaves");
+        if (count % 2)
+            await null;
+        note(label + " has left");
+    }
+}
+
+async function* mapped(label: string, inner: AsyncGenerator<number, string, unknown>, awaitsToo: boolean): AsyncGenerator<number, string, unknown> {
+    for await (const value of inner) {
+        note(label + " takes " + value);
+        if (awaitsToo)
+            await null;
+        yield value * 10;
+    }
+    return label + " is over";
+}
+
+async function* delegating(label: string, inner: AsyncGenerator<number, string, unknown>): AsyncGenerator<number, string, unknown> {
+    const result = yield* inner;
+    note(label + " got " + result);
+    return label + " is over";
+}
+
+async function* overSync(label: string, values: (number | Promise<number>)[]): AsyncGenerator<number, void, unknown> {
+    for await (const value of values) {
+        note(label + " takes " + value);
+        yield value;
+    }
+}
+
+async function consume(label: string, chain: AsyncGenerator<number, unknown, unknown>, leavesAt: number): Promise<void> {
+    let seen = 0;
+    for await (const value of chain) {
+        note(label + " sees " + value);
+        if (++seen === leavesAt) {
+            note(label + " breaks");
+            break;
+        }
+    }
+    note(label + " is done");
+}
+
+async function consumeByHand(label: string, chain: AsyncGenerator<number, unknown, unknown>, atOnce: number): Promise<void> {
+    for (let round = 0; round < 4; round++) {
+        const steps: Promise<IteratorResult<number, unknown>>[] = [];
+        for (let i = 0; i < atOnce; i++)
+            steps.push(chain.next(round * 10 + i));
+        if (round === 2)
+            steps.push(chain.return("closed by " + label));
+        for (const step of steps) {
+            const result = await step;
+            note(label + " got " + String(result.value) + " " + result.done);
+        }
+    }
+    note(label + " is done");
+}
+
+async function ticker(label: string, ticks: number): Promise<void> {
+    for (let i = 0; i < ticks; i++) {
+        await null;
+        note(label + " " + i);
+    }
+}
+
+function build(label: string, depth: number): AsyncGenerator<number, unknown, unknown> {
+    const kinds: number[] = [];
+    for (let i = 1 + random(4); i > 0; i--)
+        kinds.push(random(10));
+    let chain: AsyncGenerator<number, string, unknown> = source(label + ".0", 1 + random(6), kinds);
+    for (let level = 1; level <= depth; level++)
+        chain = random(3) ? mapped(label + "." + level, chain, random(2) === 0) : delegating(label + "." + level, chain);
+    return chain;
+}
+
+function checksum(lines: string[]): number {
+    let sum = 0;
+    for (const line of lines) {
+        for (let i = 0; i < line.length; i++)
+            sum = (sum * 31 + line.charCodeAt(i)) % 1000000007;
+        sum = (sum * 31 + 10) % 1000000007;
+    }
+    return sum;
+}
+
+async function round(number: number): Promise<void> {
+    seed = number * 7919 + 1;
+    log = [];
+    gates = [];
+    const running: Promise<void>[] = [];
+    const chains = 1 + random(3);
+    for (let i = 0; i < chains; i++) {
+        const label = "c" + i;
+        const chain = random(5) ? build(label, random(4)) : overSync(label, [1, Promise.resolve(2), 3, plain(3)]);
+        running.push(random(4) ? consume(label, chain, random(3) ? 0 : 1 + random(4)) : consumeByHand(label, chain, 1 + random(3)));
+    }
+    if (random(3) === 0)
+        running.push(ticker("tick", 3 + random(12)));
+    let settled = false;
+    const all = Promise.all(running).then(() => {
+        settled = true;
+    });
+    for (let turn = 0; turn < 60 && !settled; turn++) {
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+        if (!settled)
+            openGate("the round");
+    }
+    await (settled ? all : undefined);
+    console.log(number, settled, log.length, checksum(log));
+    if (number % 25 === 0)
+        console.log(log.slice(0, 40).join(" | "));
+}
+
+async function main(): Promise<void> {
+    for (let number = 1; number <= 150; number++)
+        await round(number);
+}
+
+main();
+//// job-order-async-returns.ts
+// The order in which everything happens when async functions return to async functions that wait for them:
+// alone (nothing else is queued), beside tickers, with several waiters on one promise, and with every kind of returned value.
+import { AsyncLocalStorage } from "node:async_hooks";
+
+let seed = 12345;
+////= random	below
+
+let log: string[] = [];
+////= note
+
+class Thenable implements PromiseLike<number> {
+    constructor(private label: string, private value: number) {}
+    then<A = number, B = never>(onFulfilled?: ((value: number) => A | PromiseLike<A>) | null): PromiseLike<A | B> {
+        note(this.label + " then is called");
+        onFulfilled?.(this.value + 5);
+        return new Promise<A | B>(() => {});
+    }
+}
+
+interface Box { value: number }
+const storage = new AsyncLocalStorage<string>();
+function where(): string {
+    return storage.getStore() ?? "-";
+}
+
+let release: (() => void)[] = [];
+function outside(): Promise<void> {
+    return new Promise(resolve => { release.push(resolve); });
+}
+
+async function bottom(label: string, kind: number, value: number): Promise<number | Box> {
+    note(label + " bottom starts in " + where());
+    switch (kind) {
+    case 0:
+        await null;
+        return value;
+    case 1:
+        await outside();
+        return value + 1;
+    case 2:
+        await outside();
+        return { value: value + 2 };
+    case 3:
+        await null;
+        return Promise.resolve(value + 3);
+    case 4:
+        await outside();
+        return new Thenable(label, value);
+    case 5:
+        await outside();
+        throw new Error(label + " fails");
+    case 6:
+        return value + 6;
+    case 7:
+        try {
+            await outside();
+            return value + 7;
+        } finally {
+            note(label + " finally in " + where());
+        }
+    default:
+        await outside();
+        await null;
+        await outside();
+        return value + 8;
+    }
+}
+
+function numberOf(result: number | Box): number {
+    return typeof result === "number" ? result : result.value;
+}
+
+async function level(label: string, depth: number, kind: number, value: number): Promise<number> {
+    if (!depth)
+        return numberOf(await bottom(label, kind, value));
+    let result: number;
+    if ((depth + kind) % 4 === 3) {
+        try {
+            result = await level(label, depth - 1, kind, value);
+        } catch (error) {
+            note(label + " level " + depth + " caught " + String(error) + " in " + where());
+            result = -depth;
+        }
+    } else if ((depth + kind) % 5 === 4)
+        result = await storage.run(label + depth, () => level(label, depth - 1, kind, value));
+    else
+        result = await level(label, depth - 1, kind, value);
+    note(label + " level " + depth + " has " + result + " in " + where());
+    return result + 1;
+}
+
+////= ticker-2
+
+async function twoWaiters(label: string, kind: number): Promise<void> {
+    const shared = level(label, 1, kind, 100);
+    const first = (async () => { note(label + " first has " + await shared); })();
+    const second = (async () => { note(label + " second has " + await shared); })();
+    shared.then(value => note(label + " then has " + value), error => note(label + " then fails " + String(error)));
+    await Promise.allSettled([first, second]);
+}
+
+function pump(done: () => boolean, finish: () => void): void {
+    const waiting = release;
+    release = [];
+    const only = random(3);
+    waiting.forEach((resolve, index) => {
+        if (only && index % 2 === only - 1 && waiting.length > 1)
+            release.push(resolve);
+        else
+            resolve();
+    });
+    if (done())
+        finish();
+    else
+        setTimeout(() => pump(done, finish), 0);
+}
+
+////= sumOf
+
+async function round(number: number): Promise<void> {
+    log = [];
+    const work: Promise<unknown>[] = [];
+    const chains = 1 + random(3);
+    for (let i = 0; i < chains; i++) {
+        const label = "c" + i;
+        const depth = random(6);
+        const kind = random(9);
+        const started = random(4) ? level(label, depth, kind, i * 10) : storage.run("s" + i, () => level(label, depth, kind, i * 10));
+        work.push(started.then(value => note(label + " ends with " + value), error => note(label + " ends failing " + String(error))));
+    }
+    if (!random(3))
+        work.push(ticker("t", 1 + random(9)));
+    if (!random(4))
+        work.push(twoWaiters("w", random(9)));
+    let finished = false;
+    Promise.all(work).then(() => { finished = true; });
+    await new Promise<void>(resolve => pump(() => finished, resolve));
+    console.log(number, log.length, sumOf(log));
+}
+
+async function main(): Promise<void> {
+    for (let i = 0; i < 200; i++)
+        await round(i);
+    log = [];
+    let finished = false;
+    level("alone", 5, 1, 1).then(value => {
+        note("alone ends with " + value);
+        finished = true;
+    });
+    await new Promise<void>(resolve => pump(() => finished, resolve));
+    console.log(log.join("\n"));
+}
+
+main();
+//// job-order-of-yields-of-proven-values.ts
+// `yield e` in an async generator awaits `e` and hands it out. However much the build knows about `e` (a counter in a range, a constant, a string, a promise, a value nobody knows),
+// a step takes the same turns of the job queue, which a ticker beside the loop shows.
+const order: string[] = [];
+const hidden = new Function("v", "return v" + String(order.length).slice(1)) as <V>(v: V) => V;
+function ticker(label: string, turns: number): Promise<void> {
+    let last: Promise<void> = Promise.resolve();
+    for (let i = 1; i <= turns; i++) last = last.then(() => void order.push(label + i));
+    return last;
+}
+async function* counters(n: number): AsyncGenerator<number> {
+    for (let i = 0; i < n; i++) yield i;
+}
+async function* constants(): AsyncGenerator<number> {
+    yield 1;
+    yield 2;
+}
+async function* texts(n: number): AsyncGenerator<string> {
+    for (let i = 0; i < n; i++) yield "t" + i;
+}
+async function* promises(n: number): AsyncGenerator<number> {
+    for (let i = 0; i < n; i++) yield Promise.resolve(i * 10);
+}
+async function* unknownValues(values: unknown[]): AsyncGenerator<unknown> {
+    for (const value of values) yield hidden(value);
+}
+async function* usedAfterwards(n: number): AsyncGenerator<number> {
+    for (let i = 0; i < n; i++) {
+        const sent = yield i;
+        order.push("sent " + String(sent));
+    }
+}
+async function run(label: string, source: AsyncGenerator<unknown>): Promise<void> {
+    const beside = ticker(label + ".", 10);
+    for await (const value of source) order.push(label + "=" + String(value));
+    order.push(label + " ends");
+    await beside;
+}
+await run("counters", counters(3));
+await run("constants", constants());
+await run("texts", texts(2));
+await run("promises", promises(2));
+await run("unknown", unknownValues([1, "two", Promise.resolve(3), { then(resolve: (value: number) => void) { resolve(4); } }]));
+await run("sent", usedAfterwards(2));
+const byHand = counters(2);
+const beside = ticker("hand.", 8);
+order.push(JSON.stringify(await byHand.next()), JSON.stringify(await byHand.next()), JSON.stringify(await byHand.next()));
+await beside;
+console.log(order.join("\n"));
+export {};
+//// later-awaits-on-pending-promises.ts
+// From its second suspension on an activation registers itself with what it awaits: every kind of awaited value, in the order of jobs that the language gives
+import { AsyncLocalStorage } from "node:async_hooks";
+
+const log: string[] = [];
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+const tick = () => new Promise<void>(resolve => setImmediate(resolve));
+
+async function awaitsTwice(name: string, first: Promise<number>, second: Promise<number>): Promise<number> {
+  const a = await first;
+  log.push(`${name} first ${a}`);
+  const b = await second;
+  log.push(`${name} second ${b}`);
+  return a + b;
+}
+
+async function orderAmongReactions() {
+  const first = deferred<number>();
+  const second = deferred<number>();
+  second.promise.then(v => log.push(`then before ${v}`));
+  const one = awaitsTwice("one", first.promise, second.promise);
+  const two = awaitsTwice("two", first.promise, second.promise);
+  first.resolve(1);
+  await tick();
+  second.promise.then(v => log.push(`then after ${v}`));
+  second.resolve(2);
+  queueMicrotask(() => log.push("job behind the resolution"));
+  log.push(`sums ${await one} ${await two}`);
+}
+
+async function onlyWaiter() {
+  const first = deferred<number>();
+  const second = deferred<number>();
+  const sum = awaitsTwice("alone", first.promise, second.promise);
+  first.resolve(10);
+  await tick();
+  second.resolve(20);
+  Promise.resolve().then(() => log.push("job queued behind"));
+  log.push(`alone ${await sum}`);
+}
+
+async function catchesLaterRejection(first: Promise<number>, second: Promise<number>) {
+  await first;
+  try {
+    await second;
+    log.push("not reached");
+  } catch (error) {
+    log.push(`caught ${(error as Error).message}`);
+  }
+  return "after catch";
+}
+
+async function rejections() {
+  const first = deferred<number>();
+  const second = deferred<number>();
+  const result = catchesLaterRejection(first.promise, second.promise);
+  first.resolve(0);
+  await tick();
+  second.reject(new Error("late"));
+  log.push(await result);
+}
+
+async function resolvedWithPromise() {
+  const first = deferred<number>();
+  const outer = deferred<number>();
+  const inner = deferred<number>();
+  const sum = awaitsTwice("chained", first.promise, outer.promise);
+  first.resolve(1);
+  outer.resolve(inner.promise);
+  await tick();
+  inner.resolve(41);
+  log.push(`chained ${await sum}`);
+}
+
+class OwnPromise<T> extends Promise<T> {}
+async function otherAwaitedValues(gate: Promise<void>) {
+  await gate;
+  log.push(`subclass ${await OwnPromise.resolve(5)}`);
+  log.push(`thenable ${await { then(resolve: (v: number) => void) { resolve(6); } }}`);
+  log.push(`number ${await 7}`);
+  log.push(`object ${JSON.stringify(await { plain: 8 })}`);
+  log.push(`settled ${await Promise.resolve(9)}`);
+  const late = deferred<number>();
+  setImmediate(() => late.resolve(10));
+  log.push(`pending ${await late.promise}`);
+}
+
+async function leaf(gates: Promise<number>[]): Promise<number> {
+  let sum = 0;
+  for (const gate of gates) sum += await gate;
+  return sum;
+}
+async function middle(gates: Promise<number>[], own: Promise<number>): Promise<number> {
+  const before = await own;
+  const below = await leaf(gates);
+  const again = await leaf(gates);
+  return before + below + again;
+}
+async function top(gates: Promise<number>[], own: Promise<number>): Promise<string> {
+  await own;
+  try {
+    return `top ${await middle(gates, own)}`;
+  } catch (error) {
+    return `top caught ${(error as Error).message}`;
+  }
+}
+
+async function chainsOfCalls() {
+  for (const fails of [false, true]) {
+    const own = deferred<number>();
+    const gates = [deferred<number>(), deferred<number>(), deferred<number>()];
+    const result = top(gates.map(g => g.promise), own.promise);
+    own.resolve(100);
+    await tick();
+    gates[0].resolve(1);
+    await tick();
+    gates[1].resolve(2);
+    await tick();
+    if (fails) gates[2].reject(new Error("third gate"));
+    else gates[2].resolve(3);
+    log.push(await result);
+  }
+}
+
+async function manyFramesAcrossCollections() {
+  const gates = Array.from({ length: 200 }, () => deferred<number>());
+  const opened = deferred<number>();
+  const sums = gates.map((gate, i) => awaitsTwice(`frame${i}`, opened.promise, gate.promise));
+  opened.resolve(1);
+  await tick();
+  Bun.gc(true);
+  gates.forEach((gate, i) => gate.resolve(i));
+  Bun.gc(true);
+  const total = (await Promise.all(sums)).reduce((a, b) => a + b, 0);
+  log.splice(log.findIndex(line => line.startsWith("frame")));
+  log.push(`frames ${total}`);
+}
+
+const storage = new AsyncLocalStorage<string>();
+async function readsStore(name: string, first: Promise<number>, second: Promise<number>) {
+  await first;
+  log.push(`${name} ${storage.getStore()}`);
+  await second;
+  log.push(`${name} ${storage.getStore()}`);
+  log.push(`${name} ${await leaf([second])} ${storage.getStore()}`);
+}
+async function contexts() {
+  const first = deferred<number>();
+  const second = deferred<number>();
+  const a = storage.run("a", () => readsStore("in a", first.promise, second.promise));
+  const b = storage.run("b", () => readsStore("in b", first.promise, second.promise));
+  const none = readsStore("outside", first.promise, second.promise);
+  first.resolve(1);
+  await tick();
+  storage.run("resolver", () => second.resolve(2));
+  await Promise.all([a, b, none]);
+}
+
+process.on("unhandledRejection", reason => log.push(`unhandled ${(reason as Error).message}`));
+
+await orderAmongReactions();
+await onlyWaiter();
+await rejections();
+await resolvedWithPromise();
+await otherAwaitedValues(tick());
+await chainsOfCalls();
+await manyFramesAcrossCollections();
+await contexts();
+await onlyWaiter();
+await tick();
+console.log(log.join("\n"));
+//// long-async-generator-streams.ts
+// Long streams: tens of thousands of turns, alone, chained, several at once, and waiting for jobs: the stack must not grow with the
+// turns, whatever the collector does meanwhile.
+async function* count(n: number): AsyncGenerator<number> {
+    for (let i = 0; i < n; i++) yield i;
+}
+async function* objects(n: number): AsyncGenerator<{ i: number }> {
+    for (let i = 0; i < n; i++) yield { i };
+}
+async function* doubled(source: AsyncIterable<number>): AsyncGenerator<number> {
+    for await (const x of source) yield x * 2;
+}
+function later(): Promise<void> {
+    return new Promise(resolve => { Promise.resolve().then(() => resolve()); });
+}
+async function* waits(n: number): AsyncGenerator<number> {
+    for (let i = 0; i < n; i++) { await later(); yield i; }
+}
+async function sum(source: AsyncIterable<number>): Promise<number> {
+    let t = 0;
+    for await (const x of source) t += x;
+    return t;
+}
+async function sumOfObjects(source: AsyncIterable<{ i: number }>): Promise<number> {
+    let t = 0;
+    const kept: { i: number }[] = [];
+    for await (const x of source) {
+        t += x.i;
+        if (x.i % 1000 === 0) kept.push(x);
+    }
+    return t + kept.length;
+}
+const n = 40000;
+console.log("alone", await sum(count(n)));
+console.log("objects", await sumOfObjects(objects(n)));
+console.log("chained", await sum(doubled(doubled(count(n)))));
+console.log("two at once", (await Promise.all([sum(count(n)), sum(count(n))])).join(" "));
+console.log("two chains at once", (await Promise.all([sum(doubled(count(n))), sum(doubled(count(n)))])).join(" "));
+console.log("waits", await sum(waits(n)));
+console.log("a chain that waits", await sum(doubled(waits(n))));
+console.log("three of a kind", (await Promise.all([sum(waits(n)), sum(doubled(count(n))), sumOfObjects(objects(n))])).join(" "));
+//// long-direct-await-chains.ts
+// A chain of 20,000 async functions, each awaiting the next, resumes innermost first once a timer settles the last one, without a stack overflow: with an empty microtask queue, with other jobs queued, through a thenable, and on rejection.
+const chainLength = 20_000;
+const settled = Promise.resolve();
+type Ending = "a number" | "a thenable" | "an error";
+type Chain = (depth: number, ending: Ending) => Promise<number>;
+
+let resumed: number[] = [];
+let marks: string[] = [];
+let ticks = 0;
+let hasOtherJobs = false;
+let isChainDone = false;
+
+function tick(): void {
+  ticks++;
+  if (!isChainDone) settled.then(tick);
+}
+////= afterTimer-2	ettled.then(tick
+////= thenable
+function didResume(depth: number): void {
+  resumed.push(depth);
+  if (depth % 5_000 === 0 || depth === chainLength - 1) marks.push(depth + " at tick " + ticks);
+}
+
+async function innermost(ending: Ending): Promise<number> {
+  await afterTimer();
+  if (ending === "an error") throw new RangeError("thrown by the innermost function");
+  return ending === "a thenable" ? thenable(0) : 0;
+}
+////= awaitsCall
+////= awaitsVariable
+
+async function run(chain: Chain, ending: Ending, withOtherJobs: boolean): Promise<void> {
+  resumed = [];
+  marks = [];
+  ticks = 0;
+  hasOtherJobs = withOtherJobs;
+  isChainDone = false;
+  let outcome: string;
+  try {
+    outcome = "fulfilled with " + (await chain(chainLength - 1, ending));
+  } catch (error) {
+    outcome = "rejected with " + (error as Error).message;
+  }
+  isChainDone = true;
+  const isInnermostFirst = resumed.length === chainLength && resumed.every((depth, index) => depth === index);
+  console.log(chain.name + ", " + ending + (withOtherJobs ? ", other jobs queued: " : ", empty queue: ") + outcome + ", innermost first: " + isInnermostFirst + (withOtherJobs ? ", " + marks.join(", ") : ""));
+}
+
+for (const chain of [awaitsCall, awaitsVariable]) {
+  for (const ending of ["a number", "a thenable", "an error"] as const) {
+    await run(chain, ending, false);
+    await run(chain, ending, true);
+  }
+}
+//// long-streams-via-next.ts
+// Long streams pulled by next() written out: every step is an object of its own that the program may keep: some are kept for the whole run and read at the end,
+// while the rest become garbage; numbers, texts and records are yielded; the puller is an async function, an async generator, or a relay with an async function inside;
+// one stream, two side by side, and one whose steps are asked for ahead of their awaiting.
+interface Chunk { n: number; text: string; }
+async function* numbers(n: number): AsyncGenerator<number, string> { for (let i = 0; i < n; i++) yield i; return "numbers are over"; }
+async function* texts(n: number): AsyncGenerator<string, string> { for (let i = 0; i < n; i++) yield "t" + i; return "texts are over"; }
+async function* chunks(n: number): AsyncGenerator<Chunk, string> { for (let i = 0; i < n; i++) yield { n: i, text: "c" + i }; return "chunks are over"; }
+async function* sometimesWaits(n: number): AsyncGenerator<number, string> {
+    for (let i = 0; i < n; i++) { if (i % 7 === 3) await Promise.resolve().then(() => undefined); yield i; }
+    return "over";
+}
+function weigh(value: unknown): number {
+    return typeof value === "number" ? value : typeof value === "string" ? value.length : (value as Chunk).n + (value as Chunk).text.length;
+}
+async function byFunction<T>(source: AsyncGenerator<T, string>, kept: IteratorResult<T, string>[]): Promise<string> {
+    let total = 0, steps = 0;
+    for (;;) {
+        const step = await source.next();
+        if (steps++ % 97 === 0 || step.done) kept.push(step);
+        if (step.done) return steps + " steps, " + total + ", " + step.value;
+        total += weigh(step.value);
+    }
+}
+async function* byGenerator<T>(source: AsyncGenerator<T, string>, kept: IteratorResult<T, string>[]): AsyncGenerator<T, string> {
+    let steps = 0;
+    for (;;) {
+        const step = await source.next();
+        if (steps++ % 97 === 0 || step.done) kept.push(step);
+        if (step.done) return step.value;
+        yield step.value;
+    }
+}
+async function* relay<T>(source: AsyncGenerator<T, string>): AsyncGenerator<T, string> {
+    const pulled = async (): Promise<IteratorResult<T, string>> => { try { return await source.next(); } catch (error) { throw error; } };
+    while (true) {
+        const step = await pulled();
+        if (step.done === true) return step.value;
+        yield step.value;
+    }
+}
+async function ahead<T>(source: AsyncGenerator<T, string>, kept: IteratorResult<T, string>[]): Promise<string> {
+    let total = 0, steps = 0;
+    let coming = source.next();
+    for (;;) {
+        const next = source.next();
+        const step = await coming;
+        coming = next;
+        if (steps++ % 97 === 0 || step.done) kept.push(step);
+        if (step.done) return steps + " steps, " + total + ", " + step.value;
+        total += weigh(step.value);
+    }
+}
+function told<T>(kept: IteratorResult<T, string>[]): string {
+    let total = 0;
+    for (const step of kept) total += step.done ? 1000000 : weigh(step.value);
+    return kept.length + " kept, " + new Set(kept).size + " different, " + total + ", keys " + Object.keys(kept[0]).join();
+}
+const lines: string[] = [];
+async function scene<T>(title: string, run: (kept: IteratorResult<T, string>[]) => Promise<string>): Promise<void> {
+    const kept: IteratorResult<T, string>[] = [];
+    lines.push(title + ": " + await run(kept) + " | " + told(kept));
+}
+const n = 6000;
+await scene<number>("numbers by a function", kept => byFunction(numbers(n), kept));
+await scene<string>("texts by a function", kept => byFunction(texts(n), kept));
+await scene<Chunk>("records by a function", kept => byFunction(chunks(n), kept));
+await scene<number>("a stream that sometimes waits", kept => byFunction(sometimesWaits(n), kept));
+await scene<Chunk>("records by a generator by a function", kept => byFunction(byGenerator(chunks(n), kept), kept));
+await scene<Chunk>("records relayed twice", kept => byFunction(relay(relay(chunks(n))), kept));
+await scene<number>("sometimes waits, relayed", kept => byFunction(relay(sometimesWaits(n)), kept));
+await scene<string>("asked for ahead", kept => ahead(texts(n), kept));
+await scene<number>("asked for ahead, sometimes waits", kept => ahead(sometimesWaits(n), kept));
+await scene<Chunk>("two side by side", async kept => (await Promise.all([byFunction(chunks(n), kept), byFunction(relay(chunks(n)), kept)])).join(" & "));
+await scene<number>("three kinds side by side", async kept => (await Promise.all([byFunction(numbers(n), kept), byFunction(sometimesWaits(n), kept), ahead(numbers(n), kept)])).join(" & "));
+console.log(lines.join("\n"));
+//// loops-over-generators-whose-own-prototype-is-filled-or-replaced.js
+// The object that a generator function makes inherits from the function's own `prototype`, which the program may fill or replace.
+const log = [];
+function* a(n) { for (let i = 0; i < n; i++) yield i; }
+function* b(n) { for (let i = 0; i < n; i++) yield i; }
+function* c(n) { for (let i = 0; i < n; i++) yield i; }
+function* d(n) { for (let i = 0; i < n; i++) yield i; }
+function sumA() { let s = 0; for (const x of a(4)) s += x; return s; }
+function sumB() { let s = 0; for (const x of b(4)) s += x; return s; }
+function sumC() { let s = 0; for (const x of c(4)) s += x; return s; }
+function sumD() { let s = 0; for (const x of d(4)) { s += x; if (x === 1) break; } return s; }
+function all(tag) { for (let i = 0; i < 200; i++) { sumA(); sumB(); sumC(); sumD(); } log.push(tag + " " + [sumA(), sumB(), sumC(), sumD()].join()); }
+all("before");
+a.prototype.next = function () { return { done: true, value: undefined }; };
+b.prototype[Symbol.iterator] = function () { return [10, 20][Symbol.iterator](); };
+c.prototype = { [Symbol.iterator]() { return [100][Symbol.iterator](); } };
+d.prototype.return = function (v) { log.push("return called"); return { done: true, value: v }; };
+all("after");
+console.log(log.slice(0, 12).join("\n"), log.length);
+//// loops-over-generators-with-handlers-of-their-own-are-left-in-every-way.js
+// A loop over the result of a generator function written beside it, left in every way a loop can be left, while the generator holds handlers of its own.
+const log = [];
+const say = (...a) => { log.push(a.join(" ")); };
+function* plain(n) { for (let i = 0; i < n; i++) yield i; return "end"; }
+function* withFinally(n) { try { for (let i = 0; i < n; i++) yield i; } finally { say("finally"); } }
+function* withCatch(n) { for (let i = 0; i < n; i++) { try { yield i; } catch (e) { say("generator caught", e); } } }
+function* withCatchAndFinally(n) { try { try { for (let i = 0; i < n; i++) yield i; } catch (e) { say("generator caught", e); yield -1; } } finally { say("outer finally"); } }
+function* finallyThrows(n) { try { for (let i = 0; i < n; i++) yield i; } finally { say("finally throws"); throw "from finally"; } }
+function* finallyYields(n) { try { for (let i = 0; i < n; i++) yield i; } finally { say("finally yields"); yield 99; say("behind the yield"); } }
+function* finallyReturns(n) { try { for (let i = 0; i < n; i++) yield i; } finally { say("finally returns"); return 7; } }
+function* readsSent(n) { for (let i = 0; i < n; i++) { const r = yield i; say("sent", r); } }
+function* nestedFinally(n) { try { try { for (let i = 0; i < n; i++) yield i; } finally { say("inner"); } } finally { say("outer"); } }
+function* throwsItself(n) { for (let i = 0; i < n; i++) { if (i === 2) throw "from generator"; yield i; } }
+function* lazy(n) { say("started", n); yield n; }
+function* usesArguments() { for (let i = 0; i < arguments.length; i++) yield arguments[i]; }
+function* defaults(a = say("default") || 2) { yield a; }
+function* delegates(n) { yield* withFinally(n); say("behind delegate"); }
+function* inner(n) { for (const x of withFinally(n)) yield x * 2; }
+const all = { plain, withFinally, withCatch, withCatchAndFinally, finallyThrows, finallyYields, finallyReturns, readsSent, nestedFinally, throwsItself, delegates, inner };
+
+function toTheEnd_plain() { let s = 0; for (const x of plain(4)) s += x; return s; }
+function make(name, g) {
+  return {
+    toTheEnd() { let s = 0; for (const x of g(4)) s += x; return s; },
+    breaks() { let s = 0; for (const x of g(4)) { s += x; if (x === 1) break; } return s; },
+    returns() { for (const x of g(4)) { if (x === 1) return "returned " + x; } return "fell out"; },
+    throws() { for (const x of g(4)) { if (x === 1) throw "from body"; } return "fell out"; },
+    continues() { let s = 0; for (const x of g(4)) { if (x === 1) continue; s += x; } return s; },
+    breaksOuter() { let s = 0; outer: for (let k = 0; k < 2; k++) { for (const x of g(4)) { s += x; if (x === 1) break outer; } } return s; },
+    continuesOuter() { let s = 0; outer: for (let k = 0; k < 2; k++) { for (const x of g(4)) { s += x; if (x === 1) continue outer; } } return s; },
+    catchesInBody() { let s = 0; for (const x of g(4)) { try { if (x === 1) throw "inside"; s += x; } catch (e) { say("body caught", e); } } return s; },
+    closures() { const fs = []; for (const x of g(3)) fs.push(() => x); return fs.map(f => f()).join(); },
+  };
+}
+// Written out for each generator, so that each loop stands beside a call of one function.
+const forms = {};
+forms.plain = { toTheEnd() { let s = 0; for (const x of plain(4)) s += x; return s; }, breaks() { let s = 0; for (const x of plain(4)) { s += x; if (x === 1) break; } return s; }, throws() { for (const x of plain(4)) { if (x === 1) throw "from body"; } } };
+forms.withFinally = { toTheEnd() { let s = 0; for (const x of withFinally(4)) s += x; return s; }, breaks() { let s = 0; for (const x of withFinally(4)) { s += x; if (x === 1) break; } return s; }, returns() { for (const x of withFinally(4)) { if (x === 1) return "r" + x; } }, throws() { for (const x of withFinally(4)) { if (x === 1) throw "from body"; } }, outer() { let s = 0; o: for (let k = 0; k < 2; k++) for (const x of withFinally(4)) { s += x; if (x === 1) continue o; } return s; } };
+forms.withCatch = { toTheEnd() { let s = 0; for (const x of withCatch(4)) s += x; return s; }, throws() { for (const x of withCatch(4)) { if (x === 1) throw "from body"; } }, calls() { for (const x of withCatch(4)) { if (x === 1) thrower(); } } };
+forms.withCatchAndFinally = { throws() { for (const x of withCatchAndFinally(4)) { if (x === 1) throw "from body"; } }, breaks() { for (const x of withCatchAndFinally(4)) { if (x === 1) break; } return "ok"; }, nullRead() { for (const x of withCatchAndFinally(4)) { if (x === 1) nothing().y; } } };
+forms.finallyThrows = { toTheEnd() { let s = 0; for (const x of finallyThrows(2)) s += x; return s; }, breaks() { for (const x of finallyThrows(4)) { if (x === 1) break; } return "ok"; }, throws() { for (const x of finallyThrows(4)) { if (x === 1) throw "from body"; } }, returns() { for (const x of finallyThrows(4)) { if (x === 1) return "r"; } } };
+forms.finallyYields = { toTheEnd() { let s = 0; for (const x of finallyYields(2)) s += x; return s; }, breaks() { for (const x of finallyYields(4)) { if (x === 1) break; } return "ok"; }, throws() { for (const x of finallyYields(4)) { if (x === 1) throw "from body"; } } };
+forms.finallyReturns = { toTheEnd() { let s = 0; for (const x of finallyReturns(2)) s += x; return s; }, breaks() { for (const x of finallyReturns(4)) { if (x === 1) break; } return "ok"; }, throws() { for (const x of finallyReturns(4)) { if (x === 1) throw "from body"; } } };
+forms.readsSent = { toTheEnd() { let s = 0; for (const x of readsSent(3)) s += x; return s; } };
+forms.nestedFinally = { breaks() { for (const x of nestedFinally(4)) { if (x === 1) break; } return "ok"; }, throws() { for (const x of nestedFinally(4)) { if (x === 1) throw "from body"; } } };
+forms.throwsItself = { toTheEnd() { let s = 0; for (const x of throwsItself(4)) s += x; return s; }, caught() { let s = 0; try { for (const x of throwsItself(4)) s += x; } catch (e) { return s + " " + e; } } };
+forms.lazy = { order() { for (const x of lazy(say("argument") || 5)) say("body", x); } };
+forms.usesArguments = { toTheEnd() { let s = ""; for (const x of usesArguments("a", "b", "c")) s += x; return s; } };
+forms.defaults = { toTheEnd() { let s = 0; for (const x of defaults()) s += x; return s; } };
+forms.delegates = { breaks() { for (const x of delegates(4)) { if (x === 1) break; } return "ok"; }, toTheEnd() { let s = 0; for (const x of delegates(3)) s += x; return s; } };
+forms.inner = { breaks() { for (const x of inner(4)) { if (x === 2) break; } return "ok"; }, throws() { for (const x of inner(4)) { if (x === 2) throw "from body"; } }, toTheEnd() { let s = 0; for (const x of inner(3)) s += x; return s; } };
+function thrower() { throw "from callee"; }
+function nothing() { return null; }
+for (let round = 0; round < 3; round++) {
+  for (const g in forms) for (const f in forms[g]) {
+    let r; try { r = "-> " + forms[g][f](); } catch (e) { r = "threw " + (e instanceof Error ? e.name : e); }
+    say(round, g, f, r);
+  }
+  for (const g in all) { const m = make(g, all[g]); for (const f in m) { let r; try { r = "-> " + m[f](); } catch (e) { r = "threw " + e; } say(round, "by value", g, f, r); } }
+}
+console.log(log.join("\n"));
+//// loops-over-objects-whose-class-has-a-generator-for-its-iterator.ts
+////= Span
+
+////= Wider
+
+////= lines-24	sum	span	Span	value
+
+function sumOfNew(i: number): number {
+  let total = 0;
+  for (const value of new Span(i & 3, 8)) total += value;
+  return total;
+}
+
+////= leftEarly
+
+const lines: unknown[] = [];
+let check = 0;
+for (let i = 0; i < 2000; i++) check = (check + sumOfNew(i) + sum(new Span(i & 1, 5)) + sum(new Wider(1, 4)) + leftEarly(i & 7)) | 0;
+lines.push(check);
+
+const span = new Span(1, 4);
+lines.push(span[Symbol.iterator] === Span.prototype[Symbol.iterator], span.values === Span.prototype.values);
+const made = span.values();
+lines.push(Object.getPrototypeOf(made) === Span.prototype.values.prototype, Object.getPrototypeOf(span[Symbol.iterator]()) === Span.prototype[Symbol.iterator].prototype);
+lines.push(made[Symbol.iterator]() === made, [...made], [...span], Array.from(new Wider(2, 4)));
+const [first, second, ...rest] = new Span(5, 9);
+lines.push(first, second, rest);
+
+(Span.prototype.values.prototype as any).label = "of values";
+lines.push((span.values() as any).label, (span[Symbol.iterator]() as any).label);
+
+////= traced
+lines.push(traced());
+
+////= Bag
+////= sumOfBag
+for (let i = 0; i < 2000; i++) check = (check + (sumOfBag(i & 3) as number)) | 0;
+lines.push(check, sumOfBag(4), sumOfBag(9));
+
+////= stepped
+for (let i = 0; i < 2000; i++) check = (check + (stepped(i & 3) as number)) | 0;
+lines.push(check, stepped(4), stepped(9));
+
+console.log(JSON.stringify(lines));
+//// loops-over-objects-whose-iterator-method-is-a-generator-that-is-replaced-shadowed-or-removed.js
+// for-of over an object whose @@iterator is a generator method: every way that belief can end
+const out = [];
+function say(...a) { out.push(a.join(" ")); }
+class Bag {
+  constructor(...v) { this.v = v; }
+  *[Symbol.iterator]() { for (let i = 0; i < this.v.length; i++) yield this.v[i]; }
+}
+class Twice extends Bag { *[Symbol.iterator]() { for (const x of this.v) { yield x; yield x; } } }
+class Plain extends Bag { [Symbol.iterator]() { return this.v[Symbol.iterator](); } }
+class Below extends Bag {}
+function sum(b) { let s = 0; for (const x of b) s += x; return s; }
+function first(b) { for (const x of b) return x; return -1; }
+function spread(b) { return [...b].join(); }
+function destructure(b) { const [p, q = "none"] = b; return p + ":" + q; }
+function warm(b) { let s = 0; for (let i = 0; i < 300; i++) s += sum(b) + first(b); return s; }
+const a = new Bag(1, 2, 3), t = new Twice(1, 2), p = new Plain(4, 5), w = new Below(6, 7);
+say("warm", warm(a), warm(t), warm(p), warm(w), spread(a), spread(t), destructure(a), destructure(new Bag(1)));
+// the order of events: the method is read, called, next is read once
+const log = [];
+const watched = new Proxy(a, { get(o, k, r) { log.push(String(k)); return Reflect.get(o, k, o); } });
+say("proxy", sum(watched), log.join());
+// an own @@iterator
+const own = new Bag(1, 2, 3);
+own[Symbol.iterator] = function* () { yield 50; };
+say("own", sum(own), first(own), spread(own), sum(a));
+delete own[Symbol.iterator];
+say("own gone", sum(own));
+// return() is called when the loop is left
+class Closing { *[Symbol.iterator]() { try { yield 1; yield 2; } finally { say("finally ran"); } } }
+say("left early", first(new Closing()));
+try { for (const x of new Closing()) throw new Error("out"); } catch (e) { say("thrown out", e.message); }
+outer: for (const x of new Closing()) { for (const y of new Closing()) continue outer; }
+// the generators' own prototype gets a next | return
+const mine = Bag.prototype[Symbol.iterator].prototype;
+mine.next = function () { return { done: true }; };
+say("next on the function's prototype", sum(a), sum(w), sum(t));
+delete mine.next;
+say("and gone", sum(a), sum(w));
+mine.return = function (v) { say("my return"); return { done: true, value: v }; };
+say("return on the function's prototype", first(a), first(t));
+delete mine.return;
+function attempt(name, f) { try { f(); say(name, "done"); } catch (e) { say(name, e.constructor.name); } }
+// the method is replaced later
+const old = Bag.prototype[Symbol.iterator];
+Bag.prototype[Symbol.iterator] = function* () { yield 1000; };
+say("replaced", sum(a), sum(w), sum(t), sum(p), first(a), spread(a), destructure(a));
+Bag.prototype[Symbol.iterator] = function () { let n = 0; return { next() { return n++ < 2 ? { done: false, value: 7 } : { done: true } }, return() { say("object's return"); return {}; } }; };
+say("replaced by a protocol object", sum(a), first(a), sum(w));
+Bag.prototype[Symbol.iterator] = function () { return 5; };
+attempt("gives a number", () => sum(a));
+Bag.prototype[Symbol.iterator] = 5;
+attempt("is a number", () => sum(a));
+delete Bag.prototype[Symbol.iterator];
+attempt("deleted", () => sum(a));
+say("heirs with their own", sum(t), sum(p));
+Object.defineProperty(Bag.prototype, Symbol.iterator, { get() { say("getter"); return old; }, configurable: true });
+say("getter", sum(a), sum(w));
+Object.defineProperty(Bag.prototype, Symbol.iterator, { value: old, writable: true, configurable: true });
+say("restored", sum(a), sum(w), warm(a));
+// the object's prototype moves
+const moved = new Bag(1, 2, 3);
+say("moved before", sum(moved));
+Object.setPrototypeOf(moved, Twice.prototype); say("moved", sum(moved));
+Object.setPrototypeOf(moved, Array.prototype); attempt("moved to Array.prototype", () => say(sum(moved)));
+Object.setPrototypeOf(moved, null); attempt("moved to null", () => sum(moved));
+// the list changes while it is walked; the generator throws; yields in a try
+const growing = new Bag(1, 2); let n = 0; for (const x of growing) { if (n++ < 3) growing.v.push(x + 10); } say("growing", growing.v.join());
+class Thrower { *[Symbol.iterator]() { yield 1; throw new RangeError("inside"); } }
+attempt("throws inside", () => sum(new Thrower()));
+class Args { *[Symbol.iterator]() { yield arguments.length; yield this === undefined; yield new.target === undefined; } }
+say("arguments", spread(new Args()));
+class Nested { constructor(k) { this.k = k; } *[Symbol.iterator]() { if (this.k > 0) { yield this.k; yield* new Nested(this.k - 1); } } }
+say("nested", spread(new Nested(4)), sum(new Nested(10)));
+say("uses", Array.from(a).join(), new Set(a).size, Math.max(...a), new Map([[1, a]]).get(1) === a, Object.fromEntries(new Bag(["k", 1]))["k"]);
+Promise.all(new Bag(1, Promise.resolve(2))).then(v => { say("all", v.join()); console.log(out.join("\n")); });
+//// loops-under-their-own-stores-over-one-generator.ts
+// Several loops, each under an AsyncLocalStorage store of its own, step one async generator or one wrapped iterator. A loop goes on under the store that is active where its step is finished,
+// from its first step on: whether or not the function of the loop has been suspended before makes no difference. (Node gives each loop its own store back.)
+import { AsyncLocalStorage } from "node:async_hooks";
+const storage = new AsyncLocalStorage<string>();
+const lines: string[] = [];
+async function* reads(name: string, count: number): AsyncGenerator<string> {
+  for (let i = 0; i < count; i++) { await null; yield name + " " + i + " made under " + storage.getStore(); }
+}
+async function loop(name: string, source: AsyncIterable<string>): Promise<string> {
+  for await (const value of source) lines.push(name + " under " + storage.getStore() + ": " + value);
+  await null;
+  return name + " ends under " + storage.getStore();
+}
+async function loopBehindAnAwait(name: string, source: AsyncIterable<string>): Promise<string> {
+  await null;
+  for await (const value of source) lines.push(name + " under " + storage.getStore() + ": " + value);
+  return name + " ends under " + storage.getStore();
+}
+async function* passesOn(name: string, source: AsyncIterable<string>): AsyncGenerator<string> {
+  for await (const value of source) yield name + " under " + storage.getStore() + ": " + value;
+}
+{
+  const shared = storage.run("maker", () => reads("two", 4));
+  lines.push(...(await Promise.all([storage.run("one", () => loop("a", shared)), storage.run("two", () => loop("b", shared))])));
+}
+{
+  const shared = reads("three", 7);
+  lines.push(...(await Promise.all([storage.run("one", () => loop("a", shared)), storage.run("two", () => loop("b", shared)), storage.run("three", () => loop("c", shared))])));
+}
+{
+  const shared = reads("behind an await", 5);
+  lines.push(...(await Promise.all([storage.run("one", () => loopBehindAnAwait("a", shared)), storage.run("two", () => loop("b", shared)), storage.run("three", () => loopBehindAnAwait("c", shared))])));
+}
+{
+  const shared = reads("through generators", 4);
+  lines.push(...(await Promise.all([storage.run("one", () => loop("a", passesOn("p", shared))), storage.run("two", () => loop("b", passesOn("q", shared)))])));
+}
+{
+  // The generator is done when the second loop comes.
+  const shared = reads("done", 1);
+  lines.push(await storage.run("one", () => loop("a", shared)));
+  lines.push(await storage.run("two", () => loop("b", shared)));
+}
+async function overAList(name: string, list: Iterable<string | Promise<string>>): Promise<string> {
+  for await (const value of list) lines.push(name + " under " + storage.getStore() + ": " + value);
+  return name + " ends under " + storage.getStore();
+}
+function* sync(): Generator<string> { yield "x under " + storage.getStore(); yield "y under " + storage.getStore(); yield "z under " + storage.getStore(); }
+{
+  lines.push(...(await Promise.all([storage.run("one", () => overAList("a", ["l", Promise.resolve("m")])), storage.run("two", () => overAList("b", ["n", Promise.resolve("o")]))])));
+  const shared = sync();
+  lines.push(...(await Promise.all([storage.run("one", () => overAList("a", shared)), storage.run("two", () => overAList("b", shared))])));
+}
+{
+  // By hand beside a loop.
+  const shared = reads("by hand", 4);
+  const looped = storage.run("one", () => loop("a", shared));
+  const stepped = storage.run("two", async () => { const step = await shared.next(); return "by hand under " + storage.getStore() + ": " + step.value; });
+  lines.push(await stepped, await looped);
+}
+console.log(lines.join("\n"));
+//// many-values-across-await-in-try.ts
+// Many values stay alive over an `await` inside a `try` and then go into one array literal: a part of the saved frame lies far from the frame pointer.
+declare const console: { log(...values: unknown[]): void };
+class Rec { constructor(public n: number) {} }
+let made = 0;
+function rec(): Rec { return new Rec(++made); }
+async function tick(): Promise<void> { await null; }
+async function fails(value: unknown): Promise<never> { await tick(); throw value; }
+function sum(all: Rec[]): number { let total = 0; for (const r of all) total = (total * 31 + r.n) % 1000003; return total; }
+async function keeps500(): Promise<string> {
+  const a0 = rec(), a1 = rec(), a2 = rec(), a3 = rec(), a4 = rec(), a5 = rec(), a6 = rec(), a7 = rec(), a8 = rec(), a9 = rec(), a10 = rec(), a11 = rec(), a12 = rec(), a13 = rec(), a14 = rec(), a15 = rec(), a16 = rec(), a17 = rec(), a18 = rec(), a19 = rec(), a20 = rec(), a21 = rec(), a22 = rec(), a23 = rec();
+  const a24 = rec(), a25 = rec(), a26 = rec(), a27 = rec(), a28 = rec(), a29 = rec(), a30 = rec(), a31 = rec(), a32 = rec(), a33 = rec(), a34 = rec(), a35 = rec(), a36 = rec(), a37 = rec(), a38 = rec(), a39 = rec(), a40 = rec(), a41 = rec(), a42 = rec(), a43 = rec(), a44 = rec(), a45 = rec(), a46 = rec(), a47 = rec();
+  const a48 = rec(), a49 = rec(), a50 = rec(), a51 = rec(), a52 = rec(), a53 = rec(), a54 = rec(), a55 = rec(), a56 = rec(), a57 = rec(), a58 = rec(), a59 = rec(), a60 = rec(), a61 = rec(), a62 = rec(), a63 = rec(), a64 = rec(), a65 = rec(), a66 = rec(), a67 = rec(), a68 = rec(), a69 = rec(), a70 = rec(), a71 = rec();
+  const a72 = rec(), a73 = rec(), a74 = rec(), a75 = rec(), a76 = rec(), a77 = rec(), a78 = rec(), a79 = rec(), a80 = rec(), a81 = rec(), a82 = rec(), a83 = rec(), a84 = rec(), a85 = rec(), a86 = rec(), a87 = rec(), a88 = rec(), a89 = rec(), a90 = rec(), a91 = rec(), a92 = rec(), a93 = rec(), a94 = rec(), a95 = rec();
+  const a96 = rec(), a97 = rec(), a98 = rec(), a99 = rec(), a100 = rec(), a101 = rec(), a102 = rec(), a103 = rec(), a104 = rec(), a105 = rec(), a106 = rec(), a107 = rec(), a108 = rec(), a109 = rec(), a110 = rec(), a111 = rec(), a112 = rec(), a113 = rec(), a114 = rec(), a115 = rec(), a116 = rec(), a117 = rec(), a118 = rec(), a119 = rec();
+  const a120 = rec(), a121 = rec(), a122 = rec(), a123 = rec(), a124 = rec(), a125 = rec(), a126 = rec(), a127 = rec(), a128 = rec(), a129 = rec(), a130 = rec(), a131 = rec(), a132 = rec(), a133 = rec(), a134 = rec(), a135 = rec(), a136 = rec(), a137 = rec(), a138 = rec(), a139 = rec(), a140 = rec(), a141 = rec(), a142 = rec(), a143 = rec();
+  const a144 = rec(), a145 = rec(), a146 = rec(), a147 = rec(), a148 = rec(), a149 = rec(), a150 = rec(), a151 = rec(), a152 = rec(), a153 = rec(), a154 = rec(), a155 = rec(), a156 = rec(), a157 = rec(), a158 = rec(), a159 = rec(), a160 = rec(), a161 = rec(), a162 = rec(), a163 = rec(), a164 = rec(), a165 = rec(), a166 = rec(), a167 = rec();
+  const a168 = rec(), a169 = rec(), a170 = rec(), a171 = rec(), a172 = rec(), a173 = rec(), a174 = rec(), a175 = rec(), a176 = rec(), a177 = rec(), a178 = rec(), a179 = rec(), a180 = rec(), a181 = rec(), a182 = rec(), a183 = rec(), a184 = rec(), a185 = rec(), a186 = rec(), a187 = rec(), a188 = rec(), a189 = rec(), a190 = rec(), a191 = rec();
+  const a192 = rec(), a193 = rec(), a194 = rec(), a195 = rec(), a196 = rec(), a197 = rec(), a198 = rec(), a199 = rec(), a200 = rec(), a201 = rec(), a202 = rec(), a203 = rec(), a204 = rec(), a205 = rec(), a206 = rec(), a207 = rec(), a208 = rec(), a209 = rec(), a210 = rec(), a211 = rec(), a212 = rec(), a213 = rec(), a214 = rec(), a215 = rec();
+  const a216 = rec(), a217 = rec(), a218 = rec(), a219 = rec(), a220 = rec(), a221 = rec(), a222 = rec(), a223 = rec(), a224 = rec(), a225 = rec(), a226 = rec(), a227 = rec(), a228 = rec(), a229 = rec(), a230 = rec(), a231 = rec(), a232 = rec(), a233 = rec(), a234 = rec(), a235 = rec(), a236 = rec(), a237 = rec(), a238 = rec(), a239 = rec();
+  const a240 = rec(), a241 = rec(), a242 = rec(), a243 = rec(), a244 = rec(), a245 = rec(), a246 = rec(), a247 = rec(), a248 = rec(), a249 = rec(), a250 = rec(), a251 = rec(), a252 = rec(), a253 = rec(), a254 = rec(), a255 = rec(), a256 = rec(), a257 = rec(), a258 = rec(), a259 = rec(), a260 = rec(), a261 = rec(), a262 = rec(), a263 = rec();
+  const a264 = rec(), a265 = rec(), a266 = rec(), a267 = rec(), a268 = rec(), a269 = rec(), a270 = rec(), a271 = rec(), a272 = rec(), a273 = rec(), a274 = rec(), a275 = rec(), a276 = rec(), a277 = rec(), a278 = rec(), a279 = rec(), a280 = rec(), a281 = rec(), a282 = rec(), a283 = rec(), a284 = rec(), a285 = rec(), a286 = rec(), a287 = rec();
+  const a288 = rec(), a289 = rec(), a290 = rec(), a291 = rec(), a292 = rec(), a293 = rec(), a294 = rec(), a295 = rec(), a296 = rec(), a297 = rec(), a298 = rec(), a299 = rec(), a300 = rec(), a301 = rec(), a302 = rec(), a303 = rec(), a304 = rec(), a305 = rec(), a306 = rec(), a307 = rec(), a308 = rec(), a309 = rec(), a310 = rec(), a311 = rec();
+  const a312 = rec(), a313 = rec(), a314 = rec(), a315 = rec(), a316 = rec(), a317 = rec(), a318 = rec(), a319 = rec(), a320 = rec(), a321 = rec(), a322 = rec(), a323 = rec(), a324 = rec(), a325 = rec(), a326 = rec(), a327 = rec(), a328 = rec(), a329 = rec(), a330 = rec(), a331 = rec(), a332 = rec(), a333 = rec(), a334 = rec(), a335 = rec();
+  const a336 = rec(), a337 = rec(), a338 = rec(), a339 = rec(), a340 = rec(), a341 = rec(), a342 = rec(), a343 = rec(), a344 = rec(), a345 = rec(), a346 = rec(), a347 = rec(), a348 = rec(), a349 = rec(), a350 = rec(), a351 = rec(), a352 = rec(), a353 = rec(), a354 = rec(), a355 = rec(), a356 = rec(), a357 = rec(), a358 = rec(), a359 = rec();
+  const a360 = rec(), a361 = rec(), a362 = rec(), a363 = rec(), a364 = rec(), a365 = rec(), a366 = rec(), a367 = rec(), a368 = rec(), a369 = rec(), a370 = rec(), a371 = rec(), a372 = rec(), a373 = rec(), a374 = rec(), a375 = rec(), a376 = rec(), a377 = rec(), a378 = rec(), a379 = rec(), a380 = rec(), a381 = rec(), a382 = rec(), a383 = rec();
+  const a384 = rec(), a385 = rec(), a386 = rec(), a387 = rec(), a388 = rec(), a389 = rec(), a390 = rec(), a391 = rec(), a392 = rec(), a393 = rec(), a394 = rec(), a395 = rec(), a396 = rec(), a397 = rec(), a398 = rec(), a399 = rec(), a400 = rec(), a401 = rec(), a402 = rec(), a403 = rec(), a404 = rec(), a405 = rec(), a406 = rec(), a407 = rec();
+  const a408 = rec(), a409 = rec(), a410 = rec(), a411 = rec(), a412 = rec(), a413 = rec(), a414 = rec(), a415 = rec(), a416 = rec(), a417 = rec(), a418 = rec(), a419 = rec(), a420 = rec(), a421 = rec(), a422 = rec(), a423 = rec(), a424 = rec(), a425 = rec(), a426 = rec(), a427 = rec(), a428 = rec(), a429 = rec(), a430 = rec(), a431 = rec();
+  const a432 = rec(), a433 = rec(), a434 = rec(), a435 = rec(), a436 = rec(), a437 = rec(), a438 = rec(), a439 = rec(), a440 = rec(), a441 = rec(), a442 = rec(), a443 = rec(), a444 = rec(), a445 = rec(), a446 = rec(), a447 = rec(), a448 = rec(), a449 = rec(), a450 = rec(), a451 = rec(), a452 = rec(), a453 = rec(), a454 = rec(), a455 = rec();
+  const a456 = rec(), a457 = rec(), a458 = rec(), a459 = rec(), a460 = rec(), a461 = rec(), a462 = rec(), a463 = rec(), a464 = rec(), a465 = rec(), a466 = rec(), a467 = rec(), a468 = rec(), a469 = rec(), a470 = rec(), a471 = rec(), a472 = rec(), a473 = rec(), a474 = rec(), a475 = rec(), a476 = rec(), a477 = rec(), a478 = rec(), a479 = rec();
+  const a480 = rec(), a481 = rec(), a482 = rec(), a483 = rec(), a484 = rec(), a485 = rec(), a486 = rec(), a487 = rec(), a488 = rec(), a489 = rec(), a490 = rec(), a491 = rec(), a492 = rec(), a493 = rec(), a494 = rec(), a495 = rec(), a496 = rec(), a497 = rec(), a498 = rec(), a499 = rec();
+  let caught = 0;
+  try { await fails(rec()); } catch (e) { caught = (e as Rec).n; }
+  return sum([
+    a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23, a24, a25, a26, a27, a28, a29, a30, a31, a32, a33, a34, a35, a36, a37, a38, a39,
+    a40, a41, a42, a43, a44, a45, a46, a47, a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, a62, a63, a64, a65, a66, a67, a68, a69, a70, a71, a72, a73, a74, a75, a76, a77, a78, a79,
+    a80, a81, a82, a83, a84, a85, a86, a87, a88, a89, a90, a91, a92, a93, a94, a95, a96, a97, a98, a99, a100, a101, a102, a103, a104, a105, a106, a107, a108, a109, a110, a111, a112, a113, a114, a115, a116, a117, a118, a119,
+    a120, a121, a122, a123, a124, a125, a126, a127, a128, a129, a130, a131, a132, a133, a134, a135, a136, a137, a138, a139, a140, a141, a142, a143, a144, a145, a146, a147, a148, a149, a150, a151, a152, a153, a154, a155, a156, a157, a158, a159,
+    a160, a161, a162, a163, a164, a165, a166, a167, a168, a169, a170, a171, a172, a173, a174, a175, a176, a177, a178, a179, a180, a181, a182, a183, a184, a185, a186, a187, a188, a189, a190, a191, a192, a193, a194, a195, a196, a197, a198, a199,
+    a200, a201, a202, a203, a204, a205, a206, a207, a208, a209, a210, a211, a212, a213, a214, a215, a216, a217, a218, a219, a220, a221, a222, a223, a224, a225, a226, a227, a228, a229, a230, a231, a232, a233, a234, a235, a236, a237, a238, a239,
+    a240, a241, a242, a243, a244, a245, a246, a247, a248, a249, a250, a251, a252, a253, a254, a255, a256, a257, a258, a259, a260, a261, a262, a263, a264, a265, a266, a267, a268, a269, a270, a271, a272, a273, a274, a275, a276, a277, a278, a279,
+    a280, a281, a282, a283, a284, a285, a286, a287, a288, a289, a290, a291, a292, a293, a294, a295, a296, a297, a298, a299, a300, a301, a302, a303, a304, a305, a306, a307, a308, a309, a310, a311, a312, a313, a314, a315, a316, a317, a318, a319,
+    a320, a321, a322, a323, a324, a325, a326, a327, a328, a329, a330, a331, a332, a333, a334, a335, a336, a337, a338, a339, a340, a341, a342, a343, a344, a345, a346, a347, a348, a349, a350, a351, a352, a353, a354, a355, a356, a357, a358, a359,
+    a360, a361, a362, a363, a364, a365, a366, a367, a368, a369, a370, a371, a372, a373, a374, a375, a376, a377, a378, a379, a380, a381, a382, a383, a384, a385, a386, a387, a388, a389, a390, a391, a392, a393, a394, a395, a396, a397, a398, a399,
+    a400, a401, a402, a403, a404, a405, a406, a407, a408, a409, a410, a411, a412, a413, a414, a415, a416, a417, a418, a419, a420, a421, a422, a423, a424, a425, a426, a427, a428, a429, a430, a431, a432, a433, a434, a435, a436, a437, a438, a439,
+    a440, a441, a442, a443, a444, a445, a446, a447, a448, a449, a450, a451, a452, a453, a454, a455, a456, a457, a458, a459, a460, a461, a462, a463, a464, a465, a466, a467, a468, a469, a470, a471, a472, a473, a474, a475, a476, a477, a478, a479,
+    a480, a481, a482, a483, a484, a485, a486, a487, a488, a489, a490, a491, a492, a493, a494, a495, a496, a497, a498, a499,
+  ]) + ":" + caught;
+}
+async function keeps512(): Promise<string> {
+  const a0 = rec(), a1 = rec(), a2 = rec(), a3 = rec(), a4 = rec(), a5 = rec(), a6 = rec(), a7 = rec(), a8 = rec(), a9 = rec(), a10 = rec(), a11 = rec(), a12 = rec(), a13 = rec(), a14 = rec(), a15 = rec(), a16 = rec(), a17 = rec(), a18 = rec(), a19 = rec(), a20 = rec(), a21 = rec(), a22 = rec(), a23 = rec();
+  const a24 = rec(), a25 = rec(), a26 = rec(), a27 = rec(), a28 = rec(), a29 = rec(), a30 = rec(), a31 = rec(), a32 = rec(), a33 = rec(), a34 = rec(), a35 = rec(), a36 = rec(), a37 = rec(), a38 = rec(), a39 = rec(), a40 = rec(), a41 = rec(), a42 = rec(), a43 = rec(), a44 = rec(), a45 = rec(), a46 = rec(), a47 = rec();
+  const a48 = rec(), a49 = rec(), a50 = rec(), a51 = rec(), a52 = rec(), a53 = rec(), a54 = rec(), a55 = rec(), a56 = rec(), a57 = rec(), a58 = rec(), a59 = rec(), a60 = rec(), a61 = rec(), a62 = rec(), a63 = rec(), a64 = rec(), a65 = rec(), a66 = rec(), a67 = rec(), a68 = rec(), a69 = rec(), a70 = rec(), a71 = rec();
+  const a72 = rec(), a73 = rec(), a74 = rec(), a75 = rec(), a76 = rec(), a77 = rec(), a78 = rec(), a79 = rec(), a80 = rec(), a81 = rec(), a82 = rec(), a83 = rec(), a84 = rec(), a85 = rec(), a86 = rec(), a87 = rec(), a88 = rec(), a89 = rec(), a90 = rec(), a91 = rec(), a92 = rec(), a93 = rec(), a94 = rec(), a95 = rec();
+  const a96 = rec(), a97 = rec(), a98 = rec(), a99 = rec(), a100 = rec(), a101 = rec(), a102 = rec(), a103 = rec(), a104 = rec(), a105 = rec(), a106 = rec(), a107 = rec(), a108 = rec(), a109 = rec(), a110 = rec(), a111 = rec(), a112 = rec(), a113 = rec(), a114 = rec(), a115 = rec(), a116 = rec(), a117 = rec(), a118 = rec(), a119 = rec();
+  const a120 = rec(), a121 = rec(), a122 = rec(), a123 = rec(), a124 = rec(), a125 = rec(), a126 = rec(), a127 = rec(), a128 = rec(), a129 = rec(), a130 = rec(), a131 = rec(), a132 = rec(), a133 = rec(), a134 = rec(), a135 = rec(), a136 = rec(), a137 = rec(), a138 = rec(), a139 = rec(), a140 = rec(), a141 = rec(), a142 = rec(), a143 = rec();
+  const a144 = rec(), a145 = rec(), a146 = rec(), a147 = rec(), a148 = rec(), a149 = rec(), a150 = rec(), a151 = rec(), a152 = rec(), a153 = rec(), a154 = rec(), a155 = rec(), a156 = rec(), a157 = rec(), a158 = rec(), a159 = rec(), a160 = rec(), a161 = rec(), a162 = rec(), a163 = rec(), a164 = rec(), a165 = rec(), a166 = rec(), a167 = rec();
+  const a168 = rec(), a169 = rec(), a170 = rec(), a171 = rec(), a172 = rec(), a173 = rec(), a174 = rec(), a175 = rec(), a176 = rec(), a177 = rec(), a178 = rec(), a179 = rec(), a180 = rec(), a181 = rec(), a182 = rec(), a183 = rec(), a184 = rec(), a185 = rec(), a186 = rec(), a187 = rec(), a188 = rec(), a189 = rec(), a190 = rec(), a191 = rec();
+  const a192 = rec(), a193 = rec(), a194 = rec(), a195 = rec(), a196 = rec(), a197 = rec(), a198 = rec(), a199 = rec(), a200 = rec(), a201 = rec(), a202 = rec(), a203 = rec(), a204 = rec(), a205 = rec(), a206 = rec(), a207 = rec(), a208 = rec(), a209 = rec(), a210 = rec(), a211 = rec(), a212 = rec(), a213 = rec(), a214 = rec(), a215 = rec();
+  const a216 = rec(), a217 = rec(), a218 = rec(), a219 = rec(), a220 = rec(), a221 = rec(), a222 = rec(), a223 = rec(), a224 = rec(), a225 = rec(), a226 = rec(), a227 = rec(), a228 = rec(), a229 = rec(), a230 = rec(), a231 = rec(), a232 = rec(), a233 = rec(), a234 = rec(), a235 = rec(), a236 = rec(), a237 = rec(), a238 = rec(), a239 = rec();
+  const a240 = rec(), a241 = rec(), a242 = rec(), a243 = rec(), a244 = rec(), a245 = rec(), a246 = rec(), a247 = rec(), a248 = rec(), a249 = rec(), a250 = rec(), a251 = rec(), a252 = rec(), a253 = rec(), a254 = rec(), a255 = rec(), a256 = rec(), a257 = rec(), a258 = rec(), a259 = rec(), a260 = rec(), a261 = rec(), a262 = rec(), a263 = rec();
+  const a264 = rec(), a265 = rec(), a266 = rec(), a267 = rec(), a268 = rec(), a269 = rec(), a270 = rec(), a271 = rec(), a272 = rec(), a273 = rec(), a274 = rec(), a275 = rec(), a276 = rec(), a277 = rec(), a278 = rec(), a279 = rec(), a280 = rec(), a281 = rec(), a282 = rec(), a283 = rec(), a284 = rec(), a285 = rec(), a286 = rec(), a287 = rec();
+  const a288 = rec(), a289 = rec(), a290 = rec(), a291 = rec(), a292 = rec(), a293 = rec(), a294 = rec(), a295 = rec(), a296 = rec(), a297 = rec(), a298 = rec(), a299 = rec(), a300 = rec(), a301 = rec(), a302 = rec(), a303 = rec(), a304 = rec(), a305 = rec(), a306 = rec(), a307 = rec(), a308 = rec(), a309 = rec(), a310 = rec(), a311 = rec();
+  const a312 = rec(), a313 = rec(), a314 = rec(), a315 = rec(), a316 = rec(), a317 = rec(), a318 = rec(), a319 = rec(), a320 = rec(), a321 = rec(), a322 = rec(), a323 = rec(), a324 = rec(), a325 = rec(), a326 = rec(), a327 = rec(), a328 = rec(), a329 = rec(), a330 = rec(), a331 = rec(), a332 = rec(), a333 = rec(), a334 = rec(), a335 = rec();
+  const a336 = rec(), a337 = rec(), a338 = rec(), a339 = rec(), a340 = rec(), a341 = rec(), a342 = rec(), a343 = rec(), a344 = rec(), a345 = rec(), a346 = rec(), a347 = rec(), a348 = rec(), a349 = rec(), a350 = rec(), a351 = rec(), a352 = rec(), a353 = rec(), a354 = rec(), a355 = rec(), a356 = rec(), a357 = rec(), a358 = rec(), a359 = rec();
+  const a360 = rec(), a361 = rec(), a362 = rec(), a363 = rec(), a364 = rec(), a365 = rec(), a366 = rec(), a367 = rec(), a368 = rec(), a369 = rec(), a370 = rec(), a371 = rec(), a372 = rec(), a373 = rec(), a374 = rec(), a375 = rec(), a376 = rec(), a377 = rec(), a378 = rec(), a379 = rec(), a380 = rec(), a381 = rec(), a382 = rec(), a383 = rec();
+  const a384 = rec(), a385 = rec(), a386 = rec(), a387 = rec(), a388 = rec(), a389 = rec(), a390 = rec(), a391 = rec(), a392 = rec(), a393 = rec(), a394 = rec(), a395 = rec(), a396 = rec(), a397 = rec(), a398 = rec(), a399 = rec(), a400 = rec(), a401 = rec(), a402 = rec(), a403 = rec(), a404 = rec(), a405 = rec(), a406 = rec(), a407 = rec();
+  const a408 = rec(), a409 = rec(), a410 = rec(), a411 = rec(), a412 = rec(), a413 = rec(), a414 = rec(), a415 = rec(), a416 = rec(), a417 = rec(), a418 = rec(), a419 = rec(), a420 = rec(), a421 = rec(), a422 = rec(), a423 = rec(), a424 = rec(), a425 = rec(), a426 = rec(), a427 = rec(), a428 = rec(), a429 = rec(), a430 = rec(), a431 = rec();
+  const a432 = rec(), a433 = rec(), a434 = rec(), a435 = rec(), a436 = rec(), a437 = rec(), a438 = rec(), a439 = rec(), a440 = rec(), a441 = rec(), a442 = rec(), a443 = rec(), a444 = rec(), a445 = rec(), a446 = rec(), a447 = rec(), a448 = rec(), a449 = rec(), a450 = rec(), a451 = rec(), a452 = rec(), a453 = rec(), a454 = rec(), a455 = rec();
+  const a456 = rec(), a457 = rec(), a458 = rec(), a459 = rec(), a460 = rec(), a461 = rec(), a462 = rec(), a463 = rec(), a464 = rec(), a465 = rec(), a466 = rec(), a467 = rec(), a468 = rec(), a469 = rec(), a470 = rec(), a471 = rec(), a472 = rec(), a473 = rec(), a474 = rec(), a475 = rec(), a476 = rec(), a477 = rec(), a478 = rec(), a479 = rec();
+  const a480 = rec(), a481 = rec(), a482 = rec(), a483 = rec(), a484 = rec(), a485 = rec(), a486 = rec(), a487 = rec(), a488 = rec(), a489 = rec(), a490 = rec(), a491 = rec(), a492 = rec(), a493 = rec(), a494 = rec(), a495 = rec(), a496 = rec(), a497 = rec(), a498 = rec(), a499 = rec(), a500 = rec(), a501 = rec(), a502 = rec(), a503 = rec();
+  const a504 = rec(), a505 = rec(), a506 = rec(), a507 = rec(), a508 = rec(), a509 = rec(), a510 = rec(), a511 = rec();
+  let caught = 0;
+  try { await fails(rec()); } catch (e) { caught = (e as Rec).n; }
+  return sum([
+    a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23, a24, a25, a26, a27, a28, a29, a30, a31, a32, a33, a34, a35, a36, a37, a38, a39,
+    a40, a41, a42, a43, a44, a45, a46, a47, a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, a62, a63, a64, a65, a66, a67, a68, a69, a70, a71, a72, a73, a74, a75, a76, a77, a78, a79,
+    a80, a81, a82, a83, a84, a85, a86, a87, a88, a89, a90, a91, a92, a93, a94, a95, a96, a97, a98, a99, a100, a101, a102, a103, a104, a105, a106, a107, a108, a109, a110, a111, a112, a113, a114, a115, a116, a117, a118, a119,
+    a120, a121, a122, a123, a124, a125, a126, a127, a128, a129, a130, a131, a132, a133, a134, a135, a136, a137, a138, a139, a140, a141, a142, a143, a144, a145, a146, a147, a148, a149, a150, a151, a152, a153, a154, a155, a156, a157, a158, a159,
+    a160, a161, a162, a163, a164, a165, a166, a167, a168, a169, a170, a171, a172, a173, a174, a175, a176, a177, a178, a179, a180, a181, a182, a183, a184, a185, a186, a187, a188, a189, a190, a191, a192, a193, a194, a195, a196, a197, a198, a199,
+    a200, a201, a202, a203, a204, a205, a206, a207, a208, a209, a210, a211, a212, a213, a214, a215, a216, a217, a218, a219, a220, a221, a222, a223, a224, a225, a226, a227, a228, a229, a230, a231, a232, a233, a234, a235, a236, a237, a238, a239,
+    a240, a241, a242, a243, a244, a245, a246, a247, a248, a249, a250, a251, a252, a253, a254, a255, a256, a257, a258, a259, a260, a261, a262, a263, a264, a265, a266, a267, a268, a269, a270, a271, a272, a273, a274, a275, a276, a277, a278, a279,
+    a280, a281, a282, a283, a284, a285, a286, a287, a288, a289, a290, a291, a292, a293, a294, a295, a296, a297, a298, a299, a300, a301, a302, a303, a304, a305, a306, a307, a308, a309, a310, a311, a312, a313, a314, a315, a316, a317, a318, a319,
+    a320, a321, a322, a323, a324, a325, a326, a327, a328, a329, a330, a331, a332, a333, a334, a335, a336, a337, a338, a339, a340, a341, a342, a343, a344, a345, a346, a347, a348, a349, a350, a351, a352, a353, a354, a355, a356, a357, a358, a359,
+    a360, a361, a362, a363, a364, a365, a366, a367, a368, a369, a370, a371, a372, a373, a374, a375, a376, a377, a378, a379, a380, a381, a382, a383, a384, a385, a386, a387, a388, a389, a390, a391, a392, a393, a394, a395, a396, a397, a398, a399,
+    a400, a401, a402, a403, a404, a405, a406, a407, a408, a409, a410, a411, a412, a413, a414, a415, a416, a417, a418, a419, a420, a421, a422, a423, a424, a425, a426, a427, a428, a429, a430, a431, a432, a433, a434, a435, a436, a437, a438, a439,
+    a440, a441, a442, a443, a444, a445, a446, a447, a448, a449, a450, a451, a452, a453, a454, a455, a456, a457, a458, a459, a460, a461, a462, a463, a464, a465, a466, a467, a468, a469, a470, a471, a472, a473, a474, a475, a476, a477, a478, a479,
+    a480, a481, a482, a483, a484, a485, a486, a487, a488, a489, a490, a491, a492, a493, a494, a495, a496, a497, a498, a499, a500, a501, a502, a503, a504, a505, a506, a507, a508, a509, a510, a511,
+  ]) + ":" + caught;
+}
+async function keeps513(): Promise<string> {
+  const a0 = rec(), a1 = rec(), a2 = rec(), a3 = rec(), a4 = rec(), a5 = rec(), a6 = rec(), a7 = rec(), a8 = rec(), a9 = rec(), a10 = rec(), a11 = rec(), a12 = rec(), a13 = rec(), a14 = rec(), a15 = rec(), a16 = rec(), a17 = rec(), a18 = rec(), a19 = rec(), a20 = rec(), a21 = rec(), a22 = rec(), a23 = rec();
+  const a24 = rec(), a25 = rec(), a26 = rec(), a27 = rec(), a28 = rec(), a29 = rec(), a30 = rec(), a31 = rec(), a32 = rec(), a33 = rec(), a34 = rec(), a35 = rec(), a36 = rec(), a37 = rec(), a38 = rec(), a39 = rec(), a40 = rec(), a41 = rec(), a42 = rec(), a43 = rec(), a44 = rec(), a45 = rec(), a46 = rec(), a47 = rec();
+  const a48 = rec(), a49 = rec(), a50 = rec(), a51 = rec(), a52 = rec(), a53 = rec(), a54 = rec(), a55 = rec(), a56 = rec(), a57 = rec(), a58 = rec(), a59 = rec(), a60 = rec(), a61 = rec(), a62 = rec(), a63 = rec(), a64 = rec(), a65 = rec(), a66 = rec(), a67 = rec(), a68 = rec(), a69 = rec(), a70 = rec(), a71 = rec();
+  const a72 = rec(), a73 = rec(), a74 = rec(), a75 = rec(), a76 = rec(), a77 = rec(), a78 = rec(), a79 = rec(), a80 = rec(), a81 = rec(), a82 = rec(), a83 = rec(), a84 = rec(), a85 = rec(), a86 = rec(), a87 = rec(), a88 = rec(), a89 = rec(), a90 = rec(), a91 = rec(), a92 = rec(), a93 = rec(), a94 = rec(), a95 = rec();
+  const a96 = rec(), a97 = rec(), a98 = rec(), a99 = rec(), a100 = rec(), a101 = rec(), a102 = rec(), a103 = rec(), a104 = rec(), a105 = rec(), a106 = rec(), a107 = rec(), a108 = rec(), a109 = rec(), a110 = rec(), a111 = rec(), a112 = rec(), a113 = rec(), a114 = rec(), a115 = rec(), a116 = rec(), a117 = rec(), a118 = rec(), a119 = rec();
+  const a120 = rec(), a121 = rec(), a122 = rec(), a123 = rec(), a124 = rec(), a125 = rec(), a126 = rec(), a127 = rec(), a128 = rec(), a129 = rec(), a130 = rec(), a131 = rec(), a132 = rec(), a133 = rec(), a134 = rec(), a135 = rec(), a136 = rec(), a137 = rec(), a138 = rec(), a139 = rec(), a140 = rec(), a141 = rec(), a142 = rec(), a143 = rec();
+  const a144 = rec(), a145 = rec(), a146 = rec(), a147 = rec(), a148 = rec(), a149 = rec(), a150 = rec(), a151 = rec(), a152 = rec(), a153 = rec(), a154 = rec(), a155 = rec(), a156 = rec(), a157 = rec(), a158 = rec(), a159 = rec(), a160 = rec(), a161 = rec(), a162 = rec(), a163 = rec(), a164 = rec(), a165 = rec(), a166 = rec(), a167 = rec();
+  const a168 = rec(), a169 = rec(), a170 = rec(), a171 = rec(), a172 = rec(), a173 = rec(), a174 = rec(), a175 = rec(), a176 = rec(), a177 = rec(), a178 = rec(), a179 = rec(), a180 = rec(), a181 = rec(), a182 = rec(), a183 = rec(), a184 = rec(), a185 = rec(), a186 = rec(), a187 = rec(), a188 = rec(), a189 = rec(), a190 = rec(), a191 = rec();
+  const a192 = rec(), a193 = rec(), a194 = rec(), a195 = rec(), a196 = rec(), a197 = rec(), a198 = rec(), a199 = rec(), a200 = rec(), a201 = rec(), a202 = rec(), a203 = rec(), a204 = rec(), a205 = rec(), a206 = rec(), a207 = rec(), a208 = rec(), a209 = rec(), a210 = rec(), a211 = rec(), a212 = rec(), a213 = rec(), a214 = rec(), a215 = rec();
+  const a216 = rec(), a217 = rec(), a218 = rec(), a219 = rec(), a220 = rec(), a221 = rec(), a222 = rec(), a223 = rec(), a224 = rec(), a225 = rec(), a226 = rec(), a227 = rec(), a228 = rec(), a229 = rec(), a230 = rec(), a231 = rec(), a232 = rec(), a233 = rec(), a234 = rec(), a235 = rec(), a236 = rec(), a237 = rec(), a238 = rec(), a239 = rec();
+  const a240 = rec(), a241 = rec(), a242 = rec(), a243 = rec(), a244 = rec(), a245 = rec(), a246 = rec(), a247 = rec(), a248 = rec(), a249 = rec(), a250 = rec(), a251 = rec(), a252 = rec(), a253 = rec(), a254 = rec(), a255 = rec(), a256 = rec(), a257 = rec(), a258 = rec(), a259 = rec(), a260 = rec(), a261 = rec(), a262 = rec(), a263 = rec();
+  const a264 = rec(), a265 = rec(), a266 = rec(), a267 = rec(), a268 = rec(), a269 = rec(), a270 = rec(), a271 = rec(), a272 = rec(), a273 = rec(), a274 = rec(), a275 = rec(), a276 = rec(), a277 = rec(), a278 = rec(), a279 = rec(), a280 = rec(), a281 = rec(), a282 = rec(), a283 = rec(), a284 = rec(), a285 = rec(), a286 = rec(), a287 = rec();
+  const a288 = rec(), a289 = rec(), a290 = rec(), a291 = rec(), a292 = rec(), a293 = rec(), a294 = rec(), a295 = rec(), a296 = rec(), a297 = rec(), a298 = rec(), a299 = rec(), a300 = rec(), a301 = rec(), a302 = rec(), a303 = rec(), a304 = rec(), a305 = rec(), a306 = rec(), a307 = rec(), a308 = rec(), a309 = rec(), a310 = rec(), a311 = rec();
+  const a312 = rec(), a313 = rec(), a314 = rec(), a315 = rec(), a316 = rec(), a317 = rec(), a318 = rec(), a319 = rec(), a320 = rec(), a321 = rec(), a322 = rec(), a323 = rec(), a324 = rec(), a325 = rec(), a326 = rec(), a327 = rec(), a328 = rec(), a329 = rec(), a330 = rec(), a331 = rec(), a332 = rec(), a333 = rec(), a334 = rec(), a335 = rec();
+  const a336 = rec(), a337 = rec(), a338 = rec(), a339 = rec(), a340 = rec(), a341 = rec(), a342 = rec(), a343 = rec(), a344 = rec(), a345 = rec(), a346 = rec(), a347 = rec(), a348 = rec(), a349 = rec(), a350 = rec(), a351 = rec(), a352 = rec(), a353 = rec(), a354 = rec(), a355 = rec(), a356 = rec(), a357 = rec(), a358 = rec(), a359 = rec();
+  const a360 = rec(), a361 = rec(), a362 = rec(), a363 = rec(), a364 = rec(), a365 = rec(), a366 = rec(), a367 = rec(), a368 = rec(), a369 = rec(), a370 = rec(), a371 = rec(), a372 = rec(), a373 = rec(), a374 = rec(), a375 = rec(), a376 = rec(), a377 = rec(), a378 = rec(), a379 = rec(), a380 = rec(), a381 = rec(), a382 = rec(), a383 = rec();
+  const a384 = rec(), a385 = rec(), a386 = rec(), a387 = rec(), a388 = rec(), a389 = rec(), a390 = rec(), a391 = rec(), a392 = rec(), a393 = rec(), a394 = rec(), a395 = rec(), a396 = rec(), a397 = rec(), a398 = rec(), a399 = rec(), a400 = rec(), a401 = rec(), a402 = rec(), a403 = rec(), a404 = rec(), a405 = rec(), a406 = rec(), a407 = rec();
+  const a408 = rec(), a409 = rec(), a410 = rec(), a411 = rec(), a412 = rec(), a413 = rec(), a414 = rec(), a415 = rec(), a416 = rec(), a417 = rec(), a418 = rec(), a419 = rec(), a420 = rec(), a421 = rec(), a422 = rec(), a423 = rec(), a424 = rec(), a425 = rec(), a426 = rec(), a427 = rec(), a428 = rec(), a429 = rec(), a430 = rec(), a431 = rec();
+  const a432 = rec(), a433 = rec(), a434 = rec(), a435 = rec(), a436 = rec(), a437 = rec(), a438 = rec(), a439 = rec(), a440 = rec(), a441 = rec(), a442 = rec(), a443 = rec(), a444 = rec(), a445 = rec(), a446 = rec(), a447 = rec(), a448 = rec(), a449 = rec(), a450 = rec(), a451 = rec(), a452 = rec(), a453 = rec(), a454 = rec(), a455 = rec();
+  const a456 = rec(), a457 = rec(), a458 = rec(), a459 = rec(), a460 = rec(), a461 = rec(), a462 = rec(), a463 = rec(), a464 = rec(), a465 = rec(), a466 = rec(), a467 = rec(), a468 = rec(), a469 = rec(), a470 = rec(), a471 = rec(), a472 = rec(), a473 = rec(), a474 = rec(), a475 = rec(), a476 = rec(), a477 = rec(), a478 = rec(), a479 = rec();
+  const a480 = rec(), a481 = rec(), a482 = rec(), a483 = rec(), a484 = rec(), a485 = rec(), a486 = rec(), a487 = rec(), a488 = rec(), a489 = rec(), a490 = rec(), a491 = rec(), a492 = rec(), a493 = rec(), a494 = rec(), a495 = rec(), a496 = rec(), a497 = rec(), a498 = rec(), a499 = rec(), a500 = rec(), a501 = rec(), a502 = rec(), a503 = rec();
+  const a504 = rec(), a505 = rec(), a506 = rec(), a507 = rec(), a508 = rec(), a509 = rec(), a510 = rec(), a511 = rec(), a512 = rec();
+  let caught = 0;
+  try { await fails(rec()); } catch (e) { caught = (e as Rec).n; }
+  return sum([
+    a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23, a24, a25, a26, a27, a28, a29, a30, a31, a32, a33, a34, a35, a36, a37, a38, a39,
+    a40, a41, a42, a43, a44, a45, a46, a47, a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, a62, a63, a64, a65, a66, a67, a68, a69, a70, a71, a72, a73, a74, a75, a76, a77, a78, a79,
+    a80, a81, a82, a83, a84, a85, a86, a87, a88, a89, a90, a91, a92, a93, a94, a95, a96, a97, a98, a99, a100, a101, a102, a103, a104, a105, a106, a107, a108, a109, a110, a111, a112, a113, a114, a115, a116, a117, a118, a119,
+    a120, a121, a122, a123, a124, a125, a126, a127, a128, a129, a130, a131, a132, a133, a134, a135, a136, a137, a138, a139, a140, a141, a142, a143, a144, a145, a146, a147, a148, a149, a150, a151, a152, a153, a154, a155, a156, a157, a158, a159,
+    a160, a161, a162, a163, a164, a165, a166, a167, a168, a169, a170, a171, a172, a173, a174, a175, a176, a177, a178, a179, a180, a181, a182, a183, a184, a185, a186, a187, a188, a189, a190, a191, a192, a193, a194, a195, a196, a197, a198, a199,
+    a200, a201, a202, a203, a204, a205, a206, a207, a208, a209, a210, a211, a212, a213, a214, a215, a216, a217, a218, a219, a220, a221, a222, a223, a224, a225, a226, a227, a228, a229, a230, a231, a232, a233, a234, a235, a236, a237, a238, a239,
+    a240, a241, a242, a243, a244, a245, a246, a247, a248, a249, a250, a251, a252, a253, a254, a255, a256, a257, a258, a259, a260, a261, a262, a263, a264, a265, a266, a267, a268, a269, a270, a271, a272, a273, a274, a275, a276, a277, a278, a279,
+    a280, a281, a282, a283, a284, a285, a286, a287, a288, a289, a290, a291, a292, a293, a294, a295, a296, a297, a298, a299, a300, a301, a302, a303, a304, a305, a306, a307, a308, a309, a310, a311, a312, a313, a314, a315, a316, a317, a318, a319,
+    a320, a321, a322, a323, a324, a325, a326, a327, a328, a329, a330, a331, a332, a333, a334, a335, a336, a337, a338, a339, a340, a341, a342, a343, a344, a345, a346, a347, a348, a349, a350, a351, a352, a353, a354, a355, a356, a357, a358, a359,
+    a360, a361, a362, a363, a364, a365, a366, a367, a368, a369, a370, a371, a372, a373, a374, a375, a376, a377, a378, a379, a380, a381, a382, a383, a384, a385, a386, a387, a388, a389, a390, a391, a392, a393, a394, a395, a396, a397, a398, a399,
+    a400, a401, a402, a403, a404, a405, a406, a407, a408, a409, a410, a411, a412, a413, a414, a415, a416, a417, a418, a419, a420, a421, a422, a423, a424, a425, a426, a427, a428, a429, a430, a431, a432, a433, a434, a435, a436, a437, a438, a439,
+    a440, a441, a442, a443, a444, a445, a446, a447, a448, a449, a450, a451, a452, a453, a454, a455, a456, a457, a458, a459, a460, a461, a462, a463, a464, a465, a466, a467, a468, a469, a470, a471, a472, a473, a474, a475, a476, a477, a478, a479,
+    a480, a481, a482, a483, a484, a485, a486, a487, a488, a489, a490, a491, a492, a493, a494, a495, a496, a497, a498, a499, a500, a501, a502, a503, a504, a505, a506, a507, a508, a509, a510, a511, a512,
+  ]) + ":" + caught;
+}
+async function keeps1100(): Promise<string> {
+  const a0 = rec(), a1 = rec(), a2 = rec(), a3 = rec(), a4 = rec(), a5 = rec(), a6 = rec(), a7 = rec(), a8 = rec(), a9 = rec(), a10 = rec(), a11 = rec(), a12 = rec(), a13 = rec(), a14 = rec(), a15 = rec(), a16 = rec(), a17 = rec(), a18 = rec(), a19 = rec(), a20 = rec(), a21 = rec(), a22 = rec(), a23 = rec();
+  const a24 = rec(), a25 = rec(), a26 = rec(), a27 = rec(), a28 = rec(), a29 = rec(), a30 = rec(), a31 = rec(), a32 = rec(), a33 = rec(), a34 = rec(), a35 = rec(), a36 = rec(), a37 = rec(), a38 = rec(), a39 = rec(), a40 = rec(), a41 = rec(), a42 = rec(), a43 = rec(), a44 = rec(), a45 = rec(), a46 = rec(), a47 = rec();
+  const a48 = rec(), a49 = rec(), a50 = rec(), a51 = rec(), a52 = rec(), a53 = rec(), a54 = rec(), a55 = rec(), a56 = rec(), a57 = rec(), a58 = rec(), a59 = rec(), a60 = rec(), a61 = rec(), a62 = rec(), a63 = rec(), a64 = rec(), a65 = rec(), a66 = rec(), a67 = rec(), a68 = rec(), a69 = rec(), a70 = rec(), a71 = rec();
+  const a72 = rec(), a73 = rec(), a74 = rec(), a75 = rec(), a76 = rec(), a77 = rec(), a78 = rec(), a79 = rec(), a80 = rec(), a81 = rec(), a82 = rec(), a83 = rec(), a84 = rec(), a85 = rec(), a86 = rec(), a87 = rec(), a88 = rec(), a89 = rec(), a90 = rec(), a91 = rec(), a92 = rec(), a93 = rec(), a94 = rec(), a95 = rec();
+  const a96 = rec(), a97 = rec(), a98 = rec(), a99 = rec(), a100 = rec(), a101 = rec(), a102 = rec(), a103 = rec(), a104 = rec(), a105 = rec(), a106 = rec(), a107 = rec(), a108 = rec(), a109 = rec(), a110 = rec(), a111 = rec(), a112 = rec(), a113 = rec(), a114 = rec(), a115 = rec(), a116 = rec(), a117 = rec(), a118 = rec(), a119 = rec();
+  const a120 = rec(), a121 = rec(), a122 = rec(), a123 = rec(), a124 = rec(), a125 = rec(), a126 = rec(), a127 = rec(), a128 = rec(), a129 = rec(), a130 = rec(), a131 = rec(), a132 = rec(), a133 = rec(), a134 = rec(), a135 = rec(), a136 = rec(), a137 = rec(), a138 = rec(), a139 = rec(), a140 = rec(), a141 = rec(), a142 = rec(), a143 = rec();
+  const a144 = rec(), a145 = rec(), a146 = rec(), a147 = rec(), a148 = rec(), a149 = rec(), a150 = rec(), a151 = rec(), a152 = rec(), a153 = rec(), a154 = rec(), a155 = rec(), a156 = rec(), a157 = rec(), a158 = rec(), a159 = rec(), a160 = rec(), a161 = rec(), a162 = rec(), a163 = rec(), a164 = rec(), a165 = rec(), a166 = rec(), a167 = rec();
+  const a168 = rec(), a169 = rec(), a170 = rec(), a171 = rec(), a172 = rec(), a173 = rec(), a174 = rec(), a175 = rec(), a176 = rec(), a177 = rec(), a178 = rec(), a179 = rec(), a180 = rec(), a181 = rec(), a182 = rec(), a183 = rec(), a184 = rec(), a185 = rec(), a186 = rec(), a187 = rec(), a188 = rec(), a189 = rec(), a190 = rec(), a191 = rec();
+  const a192 = rec(), a193 = rec(), a194 = rec(), a195 = rec(), a196 = rec(), a197 = rec(), a198 = rec(), a199 = rec(), a200 = rec(), a201 = rec(), a202 = rec(), a203 = rec(), a204 = rec(), a205 = rec(), a206 = rec(), a207 = rec(), a208 = rec(), a209 = rec(), a210 = rec(), a211 = rec(), a212 = rec(), a213 = rec(), a214 = rec(), a215 = rec();
+  const a216 = rec(), a217 = rec(), a218 = rec(), a219 = rec(), a220 = rec(), a221 = rec(), a222 = rec(), a223 = rec(), a224 = rec(), a225 = rec(), a226 = rec(), a227 = rec(), a228 = rec(), a229 = rec(), a230 = rec(), a231 = rec(), a232 = rec(), a233 = rec(), a234 = rec(), a235 = rec(), a236 = rec(), a237 = rec(), a238 = rec(), a239 = rec();
+  const a240 = rec(), a241 = rec(), a242 = rec(), a243 = rec(), a244 = rec(), a245 = rec(), a246 = rec(), a247 = rec(), a248 = rec(), a249 = rec(), a250 = rec(), a251 = rec(), a252 = rec(), a253 = rec(), a254 = rec(), a255 = rec(), a256 = rec(), a257 = rec(), a258 = rec(), a259 = rec(), a260 = rec(), a261 = rec(), a262 = rec(), a263 = rec();
+  const a264 = rec(), a265 = rec(), a266 = rec(), a267 = rec(), a268 = rec(), a269 = rec(), a270 = rec(), a271 = rec(), a272 = rec(), a273 = rec(), a274 = rec(), a275 = rec(), a276 = rec(), a277 = rec(), a278 = rec(), a279 = rec(), a280 = rec(), a281 = rec(), a282 = rec(), a283 = rec(), a284 = rec(), a285 = rec(), a286 = rec(), a287 = rec();
+  const a288 = rec(), a289 = rec(), a290 = rec(), a291 = rec(), a292 = rec(), a293 = rec(), a294 = rec(), a295 = rec(), a296 = rec(), a297 = rec(), a298 = rec(), a299 = rec(), a300 = rec(), a301 = rec(), a302 = rec(), a303 = rec(), a304 = rec(), a305 = rec(), a306 = rec(), a307 = rec(), a308 = rec(), a309 = rec(), a310 = rec(), a311 = rec();
+  const a312 = rec(), a313 = rec(), a314 = rec(), a315 = rec(), a316 = rec(), a317 = rec(), a318 = rec(), a319 = rec(), a320 = rec(), a321 = rec(), a322 = rec(), a323 = rec(), a324 = rec(), a325 = rec(), a326 = rec(), a327 = rec(), a328 = rec(), a329 = rec(), a330 = rec(), a331 = rec(), a332 = rec(), a333 = rec(), a334 = rec(), a335 = rec();
+  const a336 = rec(), a337 = rec(), a338 = rec(), a339 = rec(), a340 = rec(), a341 = rec(), a342 = rec(), a343 = rec(), a344 = rec(), a345 = rec(), a346 = rec(), a347 = rec(), a348 = rec(), a349 = rec(), a350 = rec(), a351 = rec(), a352 = rec(), a353 = rec(), a354 = rec(), a355 = rec(), a356 = rec(), a357 = rec(), a358 = rec(), a359 = rec();
+  const a360 = rec(), a361 = rec(), a362 = rec(), a363 = rec(), a364 = rec(), a365 = rec(), a366 = rec(), a367 = rec(), a368 = rec(), a369 = rec(), a370 = rec(), a371 = rec(), a372 = rec(), a373 = rec(), a374 = rec(), a375 = rec(), a376 = rec(), a377 = rec(), a378 = rec(), a379 = rec(), a380 = rec(), a381 = rec(), a382 = rec(), a383 = rec();
+  const a384 = rec(), a385 = rec(), a386 = rec(), a387 = rec(), a388 = rec(), a389 = rec(), a390 = rec(), a391 = rec(), a392 = rec(), a393 = rec(), a394 = rec(), a395 = rec(), a396 = rec(), a397 = rec(), a398 = rec(), a399 = rec(), a400 = rec(), a401 = rec(), a402 = rec(), a403 = rec(), a404 = rec(), a405 = rec(), a406 = rec(), a407 = rec();
+  const a408 = rec(), a409 = rec(), a410 = rec(), a411 = rec(), a412 = rec(), a413 = rec(), a414 = rec(), a415 = rec(), a416 = rec(), a417 = rec(), a418 = rec(), a419 = rec(), a420 = rec(), a421 = rec(), a422 = rec(), a423 = rec(), a424 = rec(), a425 = rec(), a426 = rec(), a427 = rec(), a428 = rec(), a429 = rec(), a430 = rec(), a431 = rec();
+  const a432 = rec(), a433 = rec(), a434 = rec(), a435 = rec(), a436 = rec(), a437 = rec(), a438 = rec(), a439 = rec(), a440 = rec(), a441 = rec(), a442 = rec(), a443 = rec(), a444 = rec(), a445 = rec(), a446 = rec(), a447 = rec(), a448 = rec(), a449 = rec(), a450 = rec(), a451 = rec(), a452 = rec(), a453 = rec(), a454 = rec(), a455 = rec();
+  const a456 = rec(), a457 = rec(), a458 = rec(), a459 = rec(), a460 = rec(), a461 = rec(), a462 = rec(), a463 = rec(), a464 = rec(), a465 = rec(), a466 = rec(), a467 = rec(), a468 = rec(), a469 = rec(), a470 = rec(), a471 = rec(), a472 = rec(), a473 = rec(), a474 = rec(), a475 = rec(), a476 = rec(), a477 = rec(), a478 = rec(), a479 = rec();
+  const a480 = rec(), a481 = rec(), a482 = rec(), a483 = rec(), a484 = rec(), a485 = rec(), a486 = rec(), a487 = rec(), a488 = rec(), a489 = rec(), a490 = rec(), a491 = rec(), a492 = rec(), a493 = rec(), a494 = rec(), a495 = rec(), a496 = rec(), a497 = rec(), a498 = rec(), a499 = rec(), a500 = rec(), a501 = rec(), a502 = rec(), a503 = rec();
+  const a504 = rec(), a505 = rec(), a506 = rec(), a507 = rec(), a508 = rec(), a509 = rec(), a510 = rec(), a511 = rec(), a512 = rec(), a513 = rec(), a514 = rec(), a515 = rec(), a516 = rec(), a517 = rec(), a518 = rec(), a519 = rec(), a520 = rec(), a521 = rec(), a522 = rec(), a523 = rec(), a524 = rec(), a525 = rec(), a526 = rec(), a527 = rec();
+  const a528 = rec(), a529 = rec(), a530 = rec(), a531 = rec(), a532 = rec(), a533 = rec(), a534 = rec(), a535 = rec(), a536 = rec(), a537 = rec(), a538 = rec(), a539 = rec(), a540 = rec(), a541 = rec(), a542 = rec(), a543 = rec(), a544 = rec(), a545 = rec(), a546 = rec(), a547 = rec(), a548 = rec(), a549 = rec(), a550 = rec(), a551 = rec();
+  const a552 = rec(), a553 = rec(), a554 = rec(), a555 = rec(), a556 = rec(), a557 = rec(), a558 = rec(), a559 = rec(), a560 = rec(), a561 = rec(), a562 = rec(), a563 = rec(), a564 = rec(), a565 = rec(), a566 = rec(), a567 = rec(), a568 = rec(), a569 = rec(), a570 = rec(), a571 = rec(), a572 = rec(), a573 = rec(), a574 = rec(), a575 = rec();
+  const a576 = rec(), a577 = rec(), a578 = rec(), a579 = rec(), a580 = rec(), a581 = rec(), a582 = rec(), a583 = rec(), a584 = rec(), a585 = rec(), a586 = rec(), a587 = rec(), a588 = rec(), a589 = rec(), a590 = rec(), a591 = rec(), a592 = rec(), a593 = rec(), a594 = rec(), a595 = rec(), a596 = rec(), a597 = rec(), a598 = rec(), a599 = rec();
+  const a600 = rec(), a601 = rec(), a602 = rec(), a603 = rec(), a604 = rec(), a605 = rec(), a606 = rec(), a607 = rec(), a608 = rec(), a609 = rec(), a610 = rec(), a611 = rec(), a612 = rec(), a613 = rec(), a614 = rec(), a615 = rec(), a616 = rec(), a617 = rec(), a618 = rec(), a619 = rec(), a620 = rec(), a621 = rec(), a622 = rec(), a623 = rec();
+  const a624 = rec(), a625 = rec(), a626 = rec(), a627 = rec(), a628 = rec(), a629 = rec(), a630 = rec(), a631 = rec(), a632 = rec(), a633 = rec(), a634 = rec(), a635 = rec(), a636 = rec(), a637 = rec(), a638 = rec(), a639 = rec(), a640 = rec(), a641 = rec(), a642 = rec(), a643 = rec(), a644 = rec(), a645 = rec(), a646 = rec(), a647 = rec();
+  const a648 = rec(), a649 = rec(), a650 = rec(), a651 = rec(), a652 = rec(), a653 = rec(), a654 = rec(), a655 = rec(), a656 = rec(), a657 = rec(), a658 = rec(), a659 = rec(), a660 = rec(), a661 = rec(), a662 = rec(), a663 = rec(), a664 = rec(), a665 = rec(), a666 = rec(), a667 = rec(), a668 = rec(), a669 = rec(), a670 = rec(), a671 = rec();
+  const a672 = rec(), a673 = rec(), a674 = rec(), a675 = rec(), a676 = rec(), a677 = rec(), a678 = rec(), a679 = rec(), a680 = rec(), a681 = rec(), a682 = rec(), a683 = rec(), a684 = rec(), a685 = rec(), a686 = rec(), a687 = rec(), a688 = rec(), a689 = rec(), a690 = rec(), a691 = rec(), a692 = rec(), a693 = rec(), a694 = rec(), a695 = rec();
+  const a696 = rec(), a697 = rec(), a698 = rec(), a699 = rec(), a700 = rec(), a701 = rec(), a702 = rec(), a703 = rec(), a704 = rec(), a705 = rec(), a706 = rec(), a707 = rec(), a708 = rec(), a709 = rec(), a710 = rec(), a711 = rec(), a712 = rec(), a713 = rec(), a714 = rec(), a715 = rec(), a716 = rec(), a717 = rec(), a718 = rec(), a719 = rec();
+  const a720 = rec(), a721 = rec(), a722 = rec(), a723 = rec(), a724 = rec(), a725 = rec(), a726 = rec(), a727 = rec(), a728 = rec(), a729 = rec(), a730 = rec(), a731 = rec(), a732 = rec(), a733 = rec(), a734 = rec(), a735 = rec(), a736 = rec(), a737 = rec(), a738 = rec(), a739 = rec(), a740 = rec(), a741 = rec(), a742 = rec(), a743 = rec();
+  const a744 = rec(), a745 = rec(), a746 = rec(), a747 = rec(), a748 = rec(), a749 = rec(), a750 = rec(), a751 = rec(), a752 = rec(), a753 = rec(), a754 = rec(), a755 = rec(), a756 = rec(), a757 = rec(), a758 = rec(), a759 = rec(), a760 = rec(), a761 = rec(), a762 = rec(), a763 = rec(), a764 = rec(), a765 = rec(), a766 = rec(), a767 = rec();
+  const a768 = rec(), a769 = rec(), a770 = rec(), a771 = rec(), a772 = rec(), a773 = rec(), a774 = rec(), a775 = rec(), a776 = rec(), a777 = rec(), a778 = rec(), a779 = rec(), a780 = rec(), a781 = rec(), a782 = rec(), a783 = rec(), a784 = rec(), a785 = rec(), a786 = rec(), a787 = rec(), a788 = rec(), a789 = rec(), a790 = rec(), a791 = rec();
+  const a792 = rec(), a793 = rec(), a794 = rec(), a795 = rec(), a796 = rec(), a797 = rec(), a798 = rec(), a799 = rec(), a800 = rec(), a801 = rec(), a802 = rec(), a803 = rec(), a804 = rec(), a805 = rec(), a806 = rec(), a807 = rec(), a808 = rec(), a809 = rec(), a810 = rec(), a811 = rec(), a812 = rec(), a813 = rec(), a814 = rec(), a815 = rec();
+  const a816 = rec(), a817 = rec(), a818 = rec(), a819 = rec(), a820 = rec(), a821 = rec(), a822 = rec(), a823 = rec(), a824 = rec(), a825 = rec(), a826 = rec(), a827 = rec(), a828 = rec(), a829 = rec(), a830 = rec(), a831 = rec(), a832 = rec(), a833 = rec(), a834 = rec(), a835 = rec(), a836 = rec(), a837 = rec(), a838 = rec(), a839 = rec();
+  const a840 = rec(), a841 = rec(), a842 = rec(), a843 = rec(), a844 = rec(), a845 = rec(), a846 = rec(), a847 = rec(), a848 = rec(), a849 = rec(), a850 = rec(), a851 = rec(), a852 = rec(), a853 = rec(), a854 = rec(), a855 = rec(), a856 = rec(), a857 = rec(), a858 = rec(), a859 = rec(), a860 = rec(), a861 = rec(), a862 = rec(), a863 = rec();
+  const a864 = rec(), a865 = rec(), a866 = rec(), a867 = rec(), a868 = rec(), a869 = rec(), a870 = rec(), a871 = rec(), a872 = rec(), a873 = rec(), a874 = rec(), a875 = rec(), a876 = rec(), a877 = rec(), a878 = rec(), a879 = rec(), a880 = rec(), a881 = rec(), a882 = rec(), a883 = rec(), a884 = rec(), a885 = rec(), a886 = rec(), a887 = rec();
+  const a888 = rec(), a889 = rec(), a890 = rec(), a891 = rec(), a892 = rec(), a893 = rec(), a894 = rec(), a895 = rec(), a896 = rec(), a897 = rec(), a898 = rec(), a899 = rec(), a900 = rec(), a901 = rec(), a902 = rec(), a903 = rec(), a904 = rec(), a905 = rec(), a906 = rec(), a907 = rec(), a908 = rec(), a909 = rec(), a910 = rec(), a911 = rec();
+  const a912 = rec(), a913 = rec(), a914 = rec(), a915 = rec(), a916 = rec(), a917 = rec(), a918 = rec(), a919 = rec(), a920 = rec(), a921 = rec(), a922 = rec(), a923 = rec(), a924 = rec(), a925 = rec(), a926 = rec(), a927 = rec(), a928 = rec(), a929 = rec(), a930 = rec(), a931 = rec(), a932 = rec(), a933 = rec(), a934 = rec(), a935 = rec();
+  const a936 = rec(), a937 = rec(), a938 = rec(), a939 = rec(), a940 = rec(), a941 = rec(), a942 = rec(), a943 = rec(), a944 = rec(), a945 = rec(), a946 = rec(), a947 = rec(), a948 = rec(), a949 = rec(), a950 = rec(), a951 = rec(), a952 = rec(), a953 = rec(), a954 = rec(), a955 = rec(), a956 = rec(), a957 = rec(), a958 = rec(), a959 = rec();
+  const a960 = rec(), a961 = rec(), a962 = rec(), a963 = rec(), a964 = rec(), a965 = rec(), a966 = rec(), a967 = rec(), a968 = rec(), a969 = rec(), a970 = rec(), a971 = rec(), a972 = rec(), a973 = rec(), a974 = rec(), a975 = rec(), a976 = rec(), a977 = rec(), a978 = rec(), a979 = rec(), a980 = rec(), a981 = rec(), a982 = rec(), a983 = rec();
+  const a984 = rec(), a985 = rec(), a986 = rec(), a987 = rec(), a988 = rec(), a989 = rec(), a990 = rec(), a991 = rec(), a992 = rec(), a993 = rec(), a994 = rec(), a995 = rec(), a996 = rec(), a997 = rec(), a998 = rec(), a999 = rec(), a1000 = rec(), a1001 = rec(), a1002 = rec(), a1003 = rec(), a1004 = rec(), a1005 = rec(), a1006 = rec(), a1007 = rec();
+  const a1008 = rec(), a1009 = rec(), a1010 = rec(), a1011 = rec(), a1012 = rec(), a1013 = rec(), a1014 = rec(), a1015 = rec(), a1016 = rec(), a1017 = rec(), a1018 = rec(), a1019 = rec(), a1020 = rec(), a1021 = rec(), a1022 = rec(), a1023 = rec(), a1024 = rec(), a1025 = rec(), a1026 = rec(), a1027 = rec(), a1028 = rec(), a1029 = rec(), a1030 = rec(), a1031 = rec();
+  const a1032 = rec(), a1033 = rec(), a1034 = rec(), a1035 = rec(), a1036 = rec(), a1037 = rec(), a1038 = rec(), a1039 = rec(), a1040 = rec(), a1041 = rec(), a1042 = rec(), a1043 = rec(), a1044 = rec(), a1045 = rec(), a1046 = rec(), a1047 = rec(), a1048 = rec(), a1049 = rec(), a1050 = rec(), a1051 = rec(), a1052 = rec(), a1053 = rec(), a1054 = rec(), a1055 = rec();
+  const a1056 = rec(), a1057 = rec(), a1058 = rec(), a1059 = rec(), a1060 = rec(), a1061 = rec(), a1062 = rec(), a1063 = rec(), a1064 = rec(), a1065 = rec(), a1066 = rec(), a1067 = rec(), a1068 = rec(), a1069 = rec(), a1070 = rec(), a1071 = rec(), a1072 = rec(), a1073 = rec(), a1074 = rec(), a1075 = rec(), a1076 = rec(), a1077 = rec(), a1078 = rec(), a1079 = rec();
+  const a1080 = rec(), a1081 = rec(), a1082 = rec(), a1083 = rec(), a1084 = rec(), a1085 = rec(), a1086 = rec(), a1087 = rec(), a1088 = rec(), a1089 = rec(), a1090 = rec(), a1091 = rec(), a1092 = rec(), a1093 = rec(), a1094 = rec(), a1095 = rec(), a1096 = rec(), a1097 = rec(), a1098 = rec(), a1099 = rec();
+  let caught = 0;
+  try { await fails(rec()); } catch (e) { caught = (e as Rec).n; }
+  return sum([
+    a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23, a24, a25, a26, a27, a28, a29, a30, a31, a32, a33, a34, a35, a36, a37, a38, a39,
+    a40, a41, a42, a43, a44, a45, a46, a47, a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, a62, a63, a64, a65, a66, a67, a68, a69, a70, a71, a72, a73, a74, a75, a76, a77, a78, a79,
+    a80, a81, a82, a83, a84, a85, a86, a87, a88, a89, a90, a91, a92, a93, a94, a95, a96, a97, a98, a99, a100, a101, a102, a103, a104, a105, a106, a107, a108, a109, a110, a111, a112, a113, a114, a115, a116, a117, a118, a119,
+    a120, a121, a122, a123, a124, a125, a126, a127, a128, a129, a130, a131, a132, a133, a134, a135, a136, a137, a138, a139, a140, a141, a142, a143, a144, a145, a146, a147, a148, a149, a150, a151, a152, a153, a154, a155, a156, a157, a158, a159,
+    a160, a161, a162, a163, a164, a165, a166, a167, a168, a169, a170, a171, a172, a173, a174, a175, a176, a177, a178, a179, a180, a181, a182, a183, a184, a185, a186, a187, a188, a189, a190, a191, a192, a193, a194, a195, a196, a197, a198, a199,
+    a200, a201, a202, a203, a204, a205, a206, a207, a208, a209, a210, a211, a212, a213, a214, a215, a216, a217, a218, a219, a220, a221, a222, a223, a224, a225, a226, a227, a228, a229, a230, a231, a232, a233, a234, a235, a236, a237, a238, a239,
+    a240, a241, a242, a243, a244, a245, a246, a247, a248, a249, a250, a251, a252, a253, a254, a255, a256, a257, a258, a259, a260, a261, a262, a263, a264, a265, a266, a267, a268, a269, a270, a271, a272, a273, a274, a275, a276, a277, a278, a279,
+    a280, a281, a282, a283, a284, a285, a286, a287, a288, a289, a290, a291, a292, a293, a294, a295, a296, a297, a298, a299, a300, a301, a302, a303, a304, a305, a306, a307, a308, a309, a310, a311, a312, a313, a314, a315, a316, a317, a318, a319,
+    a320, a321, a322, a323, a324, a325, a326, a327, a328, a329, a330, a331, a332, a333, a334, a335, a336, a337, a338, a339, a340, a341, a342, a343, a344, a345, a346, a347, a348, a349, a350, a351, a352, a353, a354, a355, a356, a357, a358, a359,
+    a360, a361, a362, a363, a364, a365, a366, a367, a368, a369, a370, a371, a372, a373, a374, a375, a376, a377, a378, a379, a380, a381, a382, a383, a384, a385, a386, a387, a388, a389, a390, a391, a392, a393, a394, a395, a396, a397, a398, a399,
+    a400, a401, a402, a403, a404, a405, a406, a407, a408, a409, a410, a411, a412, a413, a414, a415, a416, a417, a418, a419, a420, a421, a422, a423, a424, a425, a426, a427, a428, a429, a430, a431, a432, a433, a434, a435, a436, a437, a438, a439,
+    a440, a441, a442, a443, a444, a445, a446, a447, a448, a449, a450, a451, a452, a453, a454, a455, a456, a457, a458, a459, a460, a461, a462, a463, a464, a465, a466, a467, a468, a469, a470, a471, a472, a473, a474, a475, a476, a477, a478, a479,
+    a480, a481, a482, a483, a484, a485, a486, a487, a488, a489, a490, a491, a492, a493, a494, a495, a496, a497, a498, a499, a500, a501, a502, a503, a504, a505, a506, a507, a508, a509, a510, a511, a512, a513, a514, a515, a516, a517, a518, a519,
+    a520, a521, a522, a523, a524, a525, a526, a527, a528, a529, a530, a531, a532, a533, a534, a535, a536, a537, a538, a539, a540, a541, a542, a543, a544, a545, a546, a547, a548, a549, a550, a551, a552, a553, a554, a555, a556, a557, a558, a559,
+    a560, a561, a562, a563, a564, a565, a566, a567, a568, a569, a570, a571, a572, a573, a574, a575, a576, a577, a578, a579, a580, a581, a582, a583, a584, a585, a586, a587, a588, a589, a590, a591, a592, a593, a594, a595, a596, a597, a598, a599,
+    a600, a601, a602, a603, a604, a605, a606, a607, a608, a609, a610, a611, a612, a613, a614, a615, a616, a617, a618, a619, a620, a621, a622, a623, a624, a625, a626, a627, a628, a629, a630, a631, a632, a633, a634, a635, a636, a637, a638, a639,
+    a640, a641, a642, a643, a644, a645, a646, a647, a648, a649, a650, a651, a652, a653, a654, a655, a656, a657, a658, a659, a660, a661, a662, a663, a664, a665, a666, a667, a668, a669, a670, a671, a672, a673, a674, a675, a676, a677, a678, a679,
+    a680, a681, a682, a683, a684, a685, a686, a687, a688, a689, a690, a691, a692, a693, a694, a695, a696, a697, a698, a699, a700, a701, a702, a703, a704, a705, a706, a707, a708, a709, a710, a711, a712, a713, a714, a715, a716, a717, a718, a719,
+    a720, a721, a722, a723, a724, a725, a726, a727, a728, a729, a730, a731, a732, a733, a734, a735, a736, a737, a738, a739, a740, a741, a742, a743, a744, a745, a746, a747, a748, a749, a750, a751, a752, a753, a754, a755, a756, a757, a758, a759,
+    a760, a761, a762, a763, a764, a765, a766, a767, a768, a769, a770, a771, a772, a773, a774, a775, a776, a777, a778, a779, a780, a781, a782, a783, a784, a785, a786, a787, a788, a789, a790, a791, a792, a793, a794, a795, a796, a797, a798, a799,
+    a800, a801, a802, a803, a804, a805, a806, a807, a808, a809, a810, a811, a812, a813, a814, a815, a816, a817, a818, a819, a820, a821, a822, a823, a824, a825, a826, a827, a828, a829, a830, a831, a832, a833, a834, a835, a836, a837, a838, a839,
+    a840, a841, a842, a843, a844, a845, a846, a847, a848, a849, a850, a851, a852, a853, a854, a855, a856, a857, a858, a859, a860, a861, a862, a863, a864, a865, a866, a867, a868, a869, a870, a871, a872, a873, a874, a875, a876, a877, a878, a879,
+    a880, a881, a882, a883, a884, a885, a886, a887, a888, a889, a890, a891, a892, a893, a894, a895, a896, a897, a898, a899, a900, a901, a902, a903, a904, a905, a906, a907, a908, a909, a910, a911, a912, a913, a914, a915, a916, a917, a918, a919,
+    a920, a921, a922, a923, a924, a925, a926, a927, a928, a929, a930, a931, a932, a933, a934, a935, a936, a937, a938, a939, a940, a941, a942, a943, a944, a945, a946, a947, a948, a949, a950, a951, a952, a953, a954, a955, a956, a957, a958, a959,
+    a960, a961, a962, a963, a964, a965, a966, a967, a968, a969, a970, a971, a972, a973, a974, a975, a976, a977, a978, a979, a980, a981, a982, a983, a984, a985, a986, a987, a988, a989, a990, a991, a992, a993, a994, a995, a996, a997, a998, a999,
+    a1000, a1001, a1002, a1003, a1004, a1005, a1006, a1007, a1008, a1009, a1010, a1011, a1012, a1013, a1014, a1015, a1016, a1017, a1018, a1019, a1020, a1021, a1022, a1023, a1024, a1025, a1026, a1027, a1028, a1029, a1030, a1031, a1032, a1033, a1034, a1035, a1036, a1037, a1038, a1039,
+    a1040, a1041, a1042, a1043, a1044, a1045, a1046, a1047, a1048, a1049, a1050, a1051, a1052, a1053, a1054, a1055, a1056, a1057, a1058, a1059, a1060, a1061, a1062, a1063, a1064, a1065, a1066, a1067, a1068, a1069, a1070, a1071, a1072, a1073, a1074, a1075, a1076, a1077, a1078, a1079,
+    a1080, a1081, a1082, a1083, a1084, a1085, a1086, a1087, a1088, a1089, a1090, a1091, a1092, a1093, a1094, a1095, a1096, a1097, a1098, a1099,
+  ]) + ":" + caught;
+}
+async function main(): Promise<void> {
+  made = 0; console.log(500, await keeps500());
+  made = 0; console.log(512, await keeps512());
+  made = 0; console.log(513, await keeps513());
+  made = 0; console.log(1100, await keeps1100());
+  made = 0; console.log((await Promise.all([keeps513(), keeps1100(), keeps513()])).join(" "));
+}
+main();
+//// native-rejection-async-frames.ts
+// An error that native code creates to reject a promise has no call stack: its frames are the async functions that await the promise.
+import { promises } from "node:fs";
+const missing = "/nonexistent-path/does-not-exist.txt";
+Error.stackTraceLimit = 10;
+////= names
+function describe(error: unknown): string {
+  const { code, message } = error as NodeJS.ErrnoException;
+  return (code ?? message) + ": " + (names(error) || "no frames");
+}
+
+type Source = "node:fs" | "Bun.file";
+function read(source: Source): Promise<unknown> {
+  return source === "node:fs" ? promises.readFile(missing) : Bun.file(missing).text();
+}
+async function innermost(source: Source): Promise<unknown> {
+  if (source === "node:fs") return await promises.readFile(missing);
+  return await Bun.file(missing).text();
+}
+async function middle(source: Source): Promise<unknown> {
+  const result = await innermost(source);
+  return result;
+}
+////= lines-10	outermost	source	Source	unknown	await	middle
+////= lines	returnsPromise	source	Source	unknown	read
+////= lines-10	awaitsReturnedPromise	source	Source	unknown	await	returnsPromise
+function caughtByHandler(source: Source): Promise<unknown> {
+  return new Promise(resolve => void read(source).catch(resolve));
+}
+async function rejectsWithOwnError(): Promise<unknown> {
+  return await Promise.reject(new Error("own stack"));
+}
+async function readsFailingStream(): Promise<unknown> {
+  const error = new Error("own stack through a stream");
+  const stream = new ReadableStream({ start: controller => void setTimeout(() => controller.error(error), 0) });
+  return await stream.getReader().read();
+}
+async function rejection(run: () => Promise<unknown>): Promise<string> {
+  try {
+    await run();
+    return "fulfilled";
+  } catch (error) {
+    return describe(error);
+  }
+}
+
+async function main(): Promise<void> {
+  for (const source of ["node:fs", "Bun.file"] as const) {
+    console.log(source + " awaited: " + (await rejection(() => outermost(source))));
+    console.log(source + " returned: " + (await rejection(() => awaitsReturnedPromise(source))));
+    for (const limit of [0, 1, 2]) {
+      Error.stackTraceLimit = limit;
+      console.log(source + " limit " + limit + ": " + (await rejection(() => outermost(source))));
+    }
+    Error.stackTraceLimit = 10;
+    console.log(source + " catch handler only: " + describe(await caughtByHandler(source)));
+  }
+  console.log(await rejection(rejectsWithOwnError));
+  console.log(await rejection(readsFailingStream));
+}
+main();
+//// nested-and-parallel-streams.ts
+// Async generators consumed inside the loops of other consumers, side by side, through yield*, by next() written out and by `for await` in turn:
+// what one stream's step or end says must never show in another's.
+const lines: string[] = [];
+////= outside
+async function* count(label: string, n: number): AsyncGenerator<string, string> {
+    for (let i = 0; i < n; i++) yield label + i;
+    return label + " is over";
+}
+async function* countSlowly(label: string, n: number): AsyncGenerator<string> {
+    for (let i = 0; i < n; i++) { if (i % 2) await outside(); yield label + i; }
+}
+async function* none(): AsyncGenerator<string> {}
+async function* nested(depth: number): AsyncGenerator<string> {
+    if (!depth) { yield "leaf"; return; }
+    for await (const inner of nested(depth - 1)) { yield depth + ">" + inner; yield depth + "<" + inner; }
+}
+async function* delegates(): AsyncGenerator<string, string> {
+    const first = yield* count("d", 2);
+    yield "between: " + first;
+    yield* none();
+    const second = yield* count("e", 1);
+    return "delegates is over behind " + second;
+}
+async function* zip(a: AsyncGenerator<string>, b: AsyncGenerator<string>): AsyncGenerator<string> {
+    for (;;) {
+        const x = await a.next();
+        const y = await b.next();
+        if (x.done || y.done) { yield "zip ends: " + x.done + " " + y.done + " " + x.value + " " + y.value; return; }
+        yield x.value + "+" + y.value;
+    }
+}
+async function inside(): Promise<void> {
+    const seen: string[] = [];
+    for await (const x of count("a", 3)) {
+        for await (const y of count("b", 2)) seen.push(x + y);
+        for await (const _ of none()) seen.push("never");
+        seen.push(x + " goes on");
+    }
+    lines.push("inside: " + seen.join(" "));
+}
+async function insideSlow(): Promise<void> {
+    const seen: string[] = [];
+    for await (const x of countSlowly("a", 4)) {
+        for await (const y of count("b", 2)) seen.push(x + y);
+        for await (const y of countSlowly("c", 3)) seen.push(x + y);
+    }
+    lines.push("inside, slowly: " + seen.join(" "));
+}
+async function broken(): Promise<void> {
+    const seen: string[] = [];
+    for await (const x of count("a", 5)) {
+        for await (const y of count("b", 5)) { if (y === "b1") break; seen.push(x + y); }
+        if (x === "a2") break;
+    }
+    for await (const x of count("c", 2)) seen.push(x);
+    lines.push("broken off: " + seen.join(" "));
+}
+async function kept(): Promise<void> {
+    const steps: IteratorResult<string, string>[] = [];
+    const source = count("k", 2);
+    steps.push(await source.next());
+    for await (const x of count("m", 2)) steps.push({ done: false, value: x });
+    steps.push(await source.next());
+    steps.push(await source.next());
+    steps.push(await source.next());
+    lines.push("kept: " + JSON.stringify(steps));
+}
+async function inTurn(): Promise<void> {
+    const seen: string[] = [];
+    const source = count("t", 6);
+    seen.push(JSON.stringify(await source.next()));
+    for await (const x of source) { seen.push(x); if (x === "t2") break; }
+    seen.push(JSON.stringify(await source.next()));
+    lines.push("in turn: " + seen.join(" "));
+}
+async function collect(label: string, source: AsyncIterable<string>): Promise<void> {
+    const seen: string[] = [];
+    for await (const x of source) seen.push(x);
+    lines.push(label + ": " + seen.join(" "));
+}
+////= resumed
+const scenes: (() => Promise<void>)[] = [
+    inside, insideSlow, broken, kept, inTurn,
+    () => collect("nested", nested(3)),
+    () => collect("delegates", delegates()),
+    () => collect("zip", zip(count("x", 3), count("y", 2))),
+    () => collect("zip of slow ones", zip(countSlowly("x", 3), count("y", 4))),
+    () => collect("none", none()),
+];
+for (const scene of scenes) await scene();
+lines.push("--- resumed");
+for (const scene of scenes) await resumed(scene);
+lines.push("--- all at once");
+await Promise.all(scenes.map(scene => scene()));
+lines.push("--- all at once, resumed");
+await Promise.all(scenes.map(scene => resumed(scene)));
+console.log(lines.join("\n"));
+//// nested-drain-immediate-resume.ts
+// An async function that was resumed directly by the function it awaited, with no trip through the microtask queue, drains the queue itself: every async function that finishes inside the nested drain resumes its awaiter before drainMicrotasks() returns, as in plain Bun.
+import { drainMicrotasks } from "bun:jsc";
+
+type Start = (label: string) => Promise<string>;
+const log: string[] = [];
+
+function afterTimer(): Promise<void> {
+  return new Promise<void>(resolve => setTimeout(resolve, 0));
+}
+////= lines-16	finishesAfterTimer	afterTimer
+async function finishesAfterOneJob(label: string): Promise<string> {
+  await null;
+  log.push(label + ": callee finishes");
+  return label;
+}
+
+async function awaitsVariable(label: string): Promise<string> {
+  const pending = finishesAfterOneJob(label);
+  const result = await pending;
+  log.push(label + ": awaiter resumed");
+  return result;
+}
+async function awaitsCall(label: string): Promise<string> {
+  const result = await finishesAfterOneJob(label);
+  log.push(label + ": awaiter resumed");
+  return result;
+}
+async function awaitsChain(label: string, depth: number): Promise<string> {
+  const pending = depth ? awaitsChain(label, depth - 1) : finishesAfterOneJob(label);
+  const result = await pending;
+  log.push(label + ": awaiter " + depth + " resumed");
+  return result;
+}
+
+// The timer's job finds an empty queue, so finishesAfterTimer() resumes its only awaiter directly.
+async function drains(label: string, start: Start): Promise<void> {
+  const pending = finishesAfterTimer();
+  await pending;
+  log.push(label + ": starts");
+  void start(label).then(result => log.push(result + ": settled"));
+  drainMicrotasks();
+  log.push(label + ": drained");
+}
+async function doesNotDrain(label: string, start: Start): Promise<void> {
+  const pending = finishesAfterTimer();
+  await pending;
+  log.push(label + ": starts");
+  void start(label).then(result => log.push(result + ": settled"));
+  log.push(label + ": returns");
+}
+
+const starts: [string, Start][] = [
+  ["variable", awaitsVariable],
+  ["call", awaitsCall],
+  ["chain", label => awaitsChain(label, 3)],
+];
+
+async function main(): Promise<void> {
+  for (const [name, start] of starts) {
+    for (const run of [drains, doesNotDrain]) {
+      const label = run.name + ", " + name;
+      const pending = run(label, start);
+      await pending;
+      log.push(label + ": caller resumed");
+      await afterTimer();
+    }
+  }
+  console.log(log.join("\n"));
+}
+void main();
+//// next-requests-raced-or-forwarded.ts
+// The promise that next() of an async generator hands back, given to the engine's own machinery and not awaited where it is made: Promise.race against a promise that never settles or
+// settles first, Promise.all, allSettled and any over several streams, an async function or method that returns it (`return inner.next()`), resolve(it) of a new promise, finally();
+// over sources that wait, do not wait, and forward by `yield*`; alone, beside other jobs with a ticker that shows every turn, and two at once.
+let log: string[] = [];
+////= note-2
+type Stream = AsyncGenerator<unknown, unknown, unknown>;
+type Step = IteratorResult<unknown, unknown>;
+async function* forwards(inner: Stream): Stream { return yield* inner; }
+const sources: [string, () => Stream][] = [
+    ["waits", async function* () { for (let i = 0; i < 3; i++) { await outside(); yield { n: i }; } return "waits is over"; }],
+    ["does not wait", async function* () { yield 1; yield { n: 2 }; return "does not wait is over"; }],
+    ["forwarded, waits", () => forwards((async function* () { for (let i = 0; i < 2; i++) { await outside(); yield { n: i }; } return "inner is over"; })())],
+    ["forwarded twice", () => forwards(forwards((async function* () { yield "a"; await outside(); yield "b"; return "inner is over"; })()))],
+    ["throws", async function* () { await outside(); yield 1; await outside(); throw new Error("thrown by the source"); }],
+];
+function show(step: Step): string {
+    return (step.done ? "done " : "step ") + JSON.stringify(step.value);
+}
+const never = new Promise<never>(() => undefined);
+function tooLate(): Promise<never> {
+    return outside().then(outside).then(outside).then(outside).then(() => { throw new Error("too late"); });
+}
+async function drive(pull: () => Promise<Step | string>): Promise<void> {
+    try {
+        for (let i = 0; i < 8; i++) {
+            const step = await pull();
+            if (typeof step === "string") { note(step); continue; }
+            note(show(step));
+            if (step.done) return;
+        }
+    } catch (error) {
+        note("caught " + (error as Error).message);
+    }
+}
+class Wrapper implements AsyncIterableIterator<unknown> {
+    constructor(private inner: Stream) {}
+    async next(): Promise<Step> { return this.inner.next(); }
+    [Symbol.asyncIterator](): this { return this; }
+}
+class PlainWrapper implements AsyncIterableIterator<unknown> {
+    constructor(private inner: Stream) {}
+    next(): Promise<Step> { return this.inner.next(); }
+    [Symbol.asyncIterator](): this { return this; }
+}
+////= lines-39	loopOver(iterable: AsyncIterable<unknown>	iterable
+const ways: [string, (make: () => Stream) => Promise<void>][] = [
+    ["raced against never", make => { const s = make(); return drive(() => Promise.race([s.next(), never])); }],
+    ["raced, never first", make => { const s = make(); return drive(() => Promise.race([never, s.next()])); }],
+    ["raced against a job", make => { const s = make(); let pending: Promise<Step> | null = null; return drive(async () => { pending ??= s.next(); const won = await Promise.race([pending, Promise.resolve("the job won")]); if (typeof won !== "string") pending = null; return won; }); }],
+    ["raced against a wait", make => { const s = make(); let pending: Promise<Step> | null = null; return drive(async () => { pending ??= s.next(); const won = await Promise.race([pending, outside().then(() => "the wait won")]); if (typeof won !== "string") pending = null; return won; }); }],
+    ["all of two streams", async make => { const a = make(), b = make(); try { for (let i = 0; i < 5; i++) { const [x, y] = await Promise.all([a.next(), b.next()]); note(show(x) + " & " + show(y)); if (x.done) return; } } catch (error) { note("caught " + (error as Error).message); } }],
+    ["allSettled of two streams", async make => { const a = make(), b = make(); for (let i = 0; i < 5; i++) { const both = await Promise.allSettled([a.next(), b.next()]); note(both.map(one => one.status === "fulfilled" ? show(one.value) : "rejected " + one.reason.message).join(" & ")); if (both.some(one => one.status === "rejected" || one.value.done)) return; } }],
+    ["any", make => { const s = make(); return drive(() => Promise.any([s.next(), tooLate()])); }],
+    ["returned by an async function", make => { const s = make(); return drive(async () => s.next()); }],
+    ["returned behind an await", make => { const s = make(); return drive(async () => { await outside(); return s.next(); }); }],
+    ["given to resolve", make => { const s = make(); return drive(() => new Promise<Step>(resolve => resolve(s.next()))); }],
+    ["Promise.resolve of it", make => { const s = make(); return drive(() => Promise.resolve(s.next())); }],
+    ["finally", make => { const s = make(); return drive(() => s.next().finally(() => note("finally"))); }],
+    ["a wrapper with an async next", make => loopOver(new Wrapper(make()))],
+    ["a wrapper with a plain next", make => loopOver(new PlainWrapper(make()))],
+    ["yield* of a wrapper", make => loopOver((async function* () { yield* new PlainWrapper(make()); })())],
+];
+const lines: string[] = [];
+////= scene
+for (const [way, go] of ways) {
+    for (const [kind, make] of sources) {
+        await scene(way + ", " + kind, () => go(make));
+        await scene(way + ", " + kind + ", beside jobs", () => Promise.all([ticker("t", 18), go(make)]));
+        await scene(way + ", " + kind + ", two at once", () => Promise.all([go(make), go(make)]));
+    }
+}
+console.log(lines.join("\n"));

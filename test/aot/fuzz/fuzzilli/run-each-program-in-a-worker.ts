@@ -12,7 +12,8 @@ for (const index of indexes) {
   const bytesBefore = process.memoryUsage.rss();
   const group = new URL(`./group-${Math.floor(Number(index) / Number(programsInGroup))}.${extension}`, import.meta.url)
     .href;
-  const worker = new Worker(group, { env: { ...process.env, BATCH_PROGRAM: index } });
+  // This file is built with the programs, under their tsconfig.json (run-batch.ts, --options-of-the-project). One without Bun's types knows no `env` among the options of a Worker.
+  const worker = new Worker(group, { env: { ...process.env, BATCH_PROGRAM: index } } as WorkerOptions);
   let stoppedBy = "";
   const stop = (reason: string) => {
     stoppedBy ||= reason;

@@ -152,6 +152,16 @@ enum SigParent {
     Lone(FileId, FnId),
 }
 
+/// An entry of `Checker::resolved_meanwhile`.
+#[derive(Copy, Clone)]
+pub(super) struct ResolvedMeanwhile {
+    pub(super) file: FileId,
+    pub(super) call: ExprId,
+    resolved: ResolvedCall,
+    /// What `Checker::resolved_meanwhile_of_class` held for the class of the call when this was pushed.
+    next_of_class: u32,
+}
+
 /// The index of a call in `Checker::resolved_meanwhile_of_class`.
 fn class_of_call(file: FileId, call: ExprId) -> usize {
     (crate::util::fx_hash(&(file, call)) >> 56) as usize
@@ -375,27 +385,30 @@ impl<'p, 's> Checker<'p, 's> {
         resolved: ResolvedCall,
     ) {
         let innermost = &mut self.resolved_meanwhile_of_class[class_of_call(file, call)];
-        self.resolved_meanwhile_next_of_class.push(*innermost);
-        self.resolved_meanwhile.push((file, call, resolved));
+        self.resolved_meanwhile.push(ResolvedMeanwhile {
+            file,
+            call,
+            resolved,
+            next_of_class: *innermost,
+        });
         *innermost = self.resolved_meanwhile.len() as u32;
     }
 
     pub(super) fn pop_resolved_meanwhile(&mut self) {
-        let (file, call, _) = self.resolved_meanwhile.pop().unwrap();
-        self.resolved_meanwhile_of_class[class_of_call(file, call)] =
-            self.resolved_meanwhile_next_of_class.pop().unwrap();
+        let entry = self.resolved_meanwhile.pop().unwrap();
+        self.resolved_meanwhile_of_class[class_of_call(entry.file, entry.call)] =
+            entry.next_of_class;
     }
 
     /// Returns what the innermost entry of `resolved_meanwhile` for the call holds.
     fn find_resolved_meanwhile(&self, file: FileId, call: ExprId) -> Option<ResolvedCall> {
         let mut next = self.resolved_meanwhile_of_class[class_of_call(file, call)];
         while next != 0 {
-            let at = next as usize - 1;
-            let entry = self.resolved_meanwhile[at];
-            if entry.0 == file && entry.1 == call {
-                return Some(entry.2);
+            let entry = self.resolved_meanwhile[next as usize - 1];
+            if entry.file == file && entry.call == call {
+                return Some(entry.resolved);
             }
-            next = self.resolved_meanwhile_next_of_class[at];
+            next = entry.next_of_class;
         }
         None
     }

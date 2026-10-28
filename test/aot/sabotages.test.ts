@@ -101,6 +101,15 @@ const noticedBy: Record<string, Row | Row[]> = {
       flags: [],
       programs: ["a-function-that-a-loop-calls-reads-a-method-of-objects-of-two-classes-one-after-the-other.js"],
     },
+    // The cell that the closure table has for a function goes by the rule of the slots.
+    {
+      folder: "claims-to-the-back-end",
+      flags: ["--aot-limit=MaxWarmCodeValues:1"],
+      programs: [
+        "a-function-that-a-loop-calls-hands-back-a-declared-function-that-nobody-has-asked-for-yet-1.ts",
+        "a-function-that-a-loop-calls-hands-back-a-declared-function-that-nobody-has-asked-for-yet-2.ts",
+      ],
+    },
   ],
   FieldsNeverChange: toldTheBackEnd(
     "--aot-check=ClaimsToBackEnd",
@@ -290,6 +299,11 @@ const noticedBy: Record<string, Row | Row[]> = {
   FramesAlwaysFit: conditionOfAPass(
     "a-mark-is-taken-away-ahead-of-a-call-at-every-depth-close-to-the-end-of-the-stack.mjs",
   ),
+  CallsThatThrowHaveNoSite: {
+    folder: "errors",
+    flags: ["--aot-validate"],
+    programs: ["what-the-run-time-throws-for-an-operator-or-a-literal-is-caught-around-it.mjs"],
+  },
   // The build stops: ./a-flow-analysis-that-is-given-more-finds-no-less.test.ts holds it to the line that names the place.
   WhatIsGivenTakesThePlaceOfWhatComes: {
     ...conditionOfAPass("a-read-finds-what-was-stored.ts"),
@@ -300,6 +314,7 @@ const noticedBy: Record<string, Row | Row[]> = {
     flags: [],
     programs: ["strided-indexes-into-typed-arrays-and-lists.ts"],
   },
+  SumsOfNumbersAreWhole: { folder: "arrays", flags: [], programs: ["elements-are-added-up.ts"] },
   LanesHoldWhateverIsComputed: { folder: "arrays", flags: [], programs: ["elements-are-kept-between-two-limits.ts"] },
   VectorTurnsMeetNoOtherAccess: [
     { folder: "arrays", flags: [], programs: ["elements-copied-one-by-one-between-views-of-one-buffer.ts"] },
@@ -372,6 +387,8 @@ const noticedByTheEngineTestsAlone: Record<string, string> = {
   WordsReadAgainOutlastWrites: "merged-tests-of-bits-tell-the-log-of-the-word-read-again",
   // A variable that a loop reads again at the end of each turn, out of memory that the turn stores to under another address: what a program is compiled to reads such a variable by more than a load.
   VariablesReadAgainInLoopsOutlastWrites: "variable-read-again-in-loop-is-held-against-what-stands-for-it",
+  // The bound of a loop is read twice ahead of the loop with a store between: where a list is made shorter its storage is read anew, so the two reads have other addresses.
+  BoundsReadTwiceOutlastWrites: "bound-read-twice-is-held-against-what-stands-for-it",
   // Two neighboring words are read into two registers at once (arm64). In what a program is compiled to, a test or a mark for the collector stands between two reads with a store between them.
   PairedLoadsOutlastWrites: "loads-are-not-paired-across-store-that-may-lie-over-them",
 };

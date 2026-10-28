@@ -17,6 +17,8 @@ pub(in crate::modules) struct CommonJsNames {
     targets: FxHashMap<(ModuleRef, Atom), Resolution>,
     /// Of those, the names that an ES importer can tell from what they stand for: it holds what the getter answered when the file was linked, or under `default` the value of the module.
     copied: FxHashSet<(ModuleRef, Atom)>,
+    /// Of those, the names whose getter reads a name of a CommonJS module off an ES module, which holds what that module had when it was linked.
+    read_off_es_modules: FxHashSet<(ModuleRef, Atom)>,
     /// The names with a getter that returns a name of another module or a binding and that no loop over the object sees.
     hidden: FxHashSet<(ModuleRef, Atom)>,
     is_refused: Vec<bool>,
@@ -33,6 +35,10 @@ impl CommonJsNames {
     /// An ES importer has a copy of the name itself, not of what the name stands for.
     pub(in crate::modules) fn is_copied(&self, module: ModuleRef, name: Atom) -> bool {
         self.copied.contains(&(module, name))
+    }
+
+    pub(in crate::modules) fn is_read_off_es_module(&self, module: ModuleRef, name: Atom) -> bool {
+        self.read_off_es_modules.contains(&(module, name))
     }
 
     /// No loop over the object sees the name, so the namespace object lacks it. An import statement is still bound to what the name stands for.
@@ -113,6 +119,8 @@ struct Resolver<'a, 's> {
     tables: &'a ExportTables,
     names: CommonJsNames,
     states: Vec<State>,
+    /// Whether the last name that was resolved is read off an ES module.
+    is_read_off_es_module: bool,
 }
 
 impl Resolver<'_, '_> {
@@ -132,14 +140,17 @@ impl Resolver<'_, '_> {
                 return None;
             }
             let own = Resolution::Synthetic { module, name };
+            self.is_read_off_es_module = self.names.is_read_off_es_module(module, name);
             return Some(self.names.find(module, name).unwrap_or(own));
         }
         let file = self.es_module_file(module)?;
+        self.is_read_off_es_module = false;
         match self.tables.resolve(self.modules, file, name).resolution {
             Resolution::Variable(symbol) => Some(Resolution::Variable(symbol)),
             // The ES module holds the copy, or the value of the module, which no name of a CommonJS module stands for.
             Resolution::Synthetic { module, name } => {
                 let target = self.resolve_name(module, name);
+                self.is_read_off_es_module = true;
                 let names = &self.names;
                 target
                     .filter(|_| !names.is_copied(module, name) && names.shows_member(module, name))
@@ -171,6 +182,7 @@ impl Resolver<'_, '_> {
         let module = self.names.entries[index].module;
         for position in 0..self.names.entries[index].names.len() {
             let entry = self.names.entries[index].names[position];
+            self.is_read_off_es_module = false;
             let target = match entry.target {
                 None => continue,
                 Some(AliasTarget::Binding(symbol)) => Some(Resolution::Variable(symbol)),
@@ -182,6 +194,10 @@ impl Resolver<'_, '_> {
             let Some(target) = target else {
                 return false;
             };
+            if self.is_read_off_es_module && matches!(target, Resolution::Synthetic { .. }) {
+                let read = &mut self.names.read_off_es_modules;
+                read.insert((module, entry.name));
+            }
             let is_found_by_import =
                 self.names.shows_member(module, entry.name) && self.is_found_by_import(target);
             if !entry.is_enumerable && (!is_found_by_import || entry.name == known::default) {
@@ -235,11 +251,13 @@ pub(super) fn resolve_commonjs_names(
             entries,
             targets: FxHashMap::default(),
             copied: FxHashSet::default(),
+            read_off_es_modules: FxHashSet::default(),
             hidden,
             is_refused: vec![false; count],
             refused: Vec::new(),
         },
         states: vec![State::Unvisited; count],
+        is_read_off_es_module: false,
     };
     for index in 0..count {
         resolver.visit(index);

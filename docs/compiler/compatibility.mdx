@@ -47,6 +47,7 @@ Some of these take a slow path: a `Proxy` used as an array, and an array with ho
 | [Type errors](/compiler/aot#type-errors-stop-the-build)                                   | `bun build` ignores them                                         | They stop the build                                                                                                                                                                                                                     |
 | [The version of TypeScript](#type-errors-are-typescript-7s)                               | Types are never checked                                          | TypeScript 7's errors, whichever version you have installed                                                                                                                                                                             |
 | [A `.ts` file without `import` or `export`](#files-without-import-or-export)              | Its variables aren't global. Another file that reads one throws  | The other file is a type error, also where `tsc` takes the file for a script                                                                                                                                                            |
+| `"useDefineForClassFields"` in the `tsconfig.json` of a subfolder or a package            | Every file follows the `tsconfig.json` where you start Bun       | Each file follows the `tsconfig.json` nearest to it, as with `tsc` and `bun build --compile`                                                                                                                                            |
 | [Built-in objects](#built-in-objects-are-read-only)                                       | Can be changed                                                   | Can be extended. Their existing members can't be replaced                                                                                                                                                                               |
 | [Seven Bun classes](#request-response-and-five-other-classes)                             | Their prototypes can be changed                                  | Their prototypes are read-only. Subclasses work                                                                                                                                                                                         |
 | [Code from strings](#code-from-strings)                                                   | The JIT compiles it                                              | Bun interprets it                                                                                                                                                                                                                       |
@@ -1424,9 +1425,11 @@ Bun itself looks at five properties of `process`: `noDeprecation`, `throwDepreca
 
 `bun compile` compiles for arm64 and x64, on the platform that runs the build.
 
-| Platform                                        | State                            |
-| ----------------------------------------------- | -------------------------------- |
-| Linux x64, glibc                                | Tested                           |
-| Linux arm64, Linux musl, macOS arm64, macOS x64 | Tested. Some tests still fail    |
-| Windows x64, Windows arm64                      | Tested. Many tests still fail    |
-| FreeBSD, Android                                | Bun builds there. Not tested yet |
+| Platform                 | What Bun's CI runs when the compiler changes |
+| ------------------------ | -------------------------------------------- |
+| Linux x64, glibc         | Every test                                   |
+| Linux arm64, glibc       | Nearly every test                            |
+| macOS arm64              | Half of the test files                       |
+| Linux musl, Windows x64  | One test file in eight                       |
+| macOS x64, Windows arm64 | One test file in ten                         |
+| FreeBSD, Android         | Nothing yet. Bun builds there                |

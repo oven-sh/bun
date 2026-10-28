@@ -1,7 +1,7 @@
 // programs/run-each-in-a-worker.ts writes a line behind what each Worker has printed. Its streams are sockets, which no longer block once a Worker has printed, and whoever reads them may
 // be behind. Here a Worker fills its stream to the last byte while nobody reads.
 import { expect } from "bun:test";
-import { copyFileSync } from "fs";
+import { copyFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { test } from "./supported";
@@ -49,7 +49,7 @@ test("the line stands behind the output of a Worker that has left no room for it
     { way: "compiled", cmd: [executable], program: "./fills.ts" },
   ].map(({ way, cmd, program }) => {
     const tasks = join(folder, `tasks-${way}.json`);
-    Bun.write(tasks, JSON.stringify([{ program, cwd: folder }]));
+    writeFileSync(tasks, JSON.stringify([{ program, cwd: folder }]));
     const env = { ...bunEnv, AOT_TASKS: tasks, AOT_MARK: mark };
     return { way, proc: Bun.spawn({ cmd, cwd: folder, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" }) };
   });

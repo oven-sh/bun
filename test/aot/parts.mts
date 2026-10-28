@@ -477,6 +477,7 @@ export const rows: Row[] = [
   ["aot/engine-tests-ir", 0, "./engine-test-commands", "runIRTests", ["engine"]],
   ["aot/engine-tests-ir-of-bun", 0, "./engine-test-commands", "runIRTests", ["bun"]],
   ["aot/engine-tests-native", 16, "./engine-test-commands", "runNativeTests"],
+  ["aot/engine-tests-flow-under-other-schedules", 4, "./engine-test-commands", "runFlowTestsUnderOtherSchedules"],
   ["aot/generated-cases-three-ways", 8, "./three-ways/made-cases", "madeCasesOfAllTopics"],
   ["aot/generated-fresh-seeds", 3, "./generated/fresh-seeds", "freshSeeds"],
   ["aot/global-names", 3, "./global-names-cases", "globalNames"],

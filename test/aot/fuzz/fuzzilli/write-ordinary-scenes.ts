@@ -3996,6 +3996,140 @@ class Scenes {
     this.emit(1, `printValue("steps of the language ${number}", out);`);
     this.lines.push("}");
   }
+
+  /**
+   * TypeScript. A file in a folder of its own, beside a tsconfig.json with an option that changes what a transpiler writes. In it a class below a base whose prototype has a setter, a getter or a member
+   * that can't be written, with fields of the same names, a field under a key in brackets that only the run knows, and a field without a value. In JavaScript the scene is one of class factories.
+   *
+   * With `bun run` every file follows the tsconfig.json where Bun is started, and in an executable each file follows the one nearest to it. So run-batch.ts holds a program of this scene against the
+   * executable that `bun build --compile` makes without --aot (saysInAFolderOfItsOwnHowFieldsAreMade there).
+   * The folder lies two deep: a tsconfig.json one folder below a program makes that folder the project that run-batch.ts checks in the program's place.
+   */
+  sceneOfFieldsUnderOptionsOfTheTranspiler() {
+    if (!this.isTypeScript) return this.sceneOfClassesOutOfFactories();
+    const number = ++this.count;
+    const tag = this.nameOfItsOwn("o");
+    const options = this.pick([
+      `{ "useDefineForClassFields": false }`,
+      `{ "useDefineForClassFields": false }`,
+      `{ "useDefineForClassFields": false }`,
+      `{ "useDefineForClassFields": true }`,
+      `{ "target": "ES2020" }`,
+      `{ "target": "ES2021", "useDefineForClassFields": true }`,
+      `{ "target": "ESNext" }`,
+      `{ "useDefineForClassFields": false, "experimentalDecorators": true }`,
+      `{ "useDefineForClassFields": false, "verbatimModuleSyntax": true }`,
+      `{}`,
+    ]);
+    const lines: string[] = [
+      `let out = "";`,
+      `function note(value: any): void { out += (typeof value === "object" && value !== null ? JSON.stringify(value) : String(value)) + ";"; }`,
+    ];
+    for (let index = this.pick([1, 2, 2, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const above = this.pick([
+        `Object.defineProperty(Base${id}.prototype, "y", { set(v) { note("setter ran " + v); }, configurable: true });`,
+        `Object.defineProperty(Base${id}.prototype, "y", { set(v) { note("setter ran " + v); }, configurable: true });`,
+        `Object.defineProperty(Base${id}.prototype, "y", { get() { return "got"; }, configurable: true });`,
+        `Object.defineProperty(Base${id}.prototype, "y", { value: "fixed", writable: false, configurable: true });`,
+        `Object.defineProperty(Base${id}.prototype, "opt", { set(v) { note("opt set " + v); }, configurable: true });`,
+        `Object.defineProperty(Base${id}.prototype, "name", { set(v) { note("name set " + v); }, configurable: true });`,
+      ]);
+      // A key that a transpiler can work out ahead is left out: beside one, the executable built without --aot defines the fields whatever the tsconfig.json says, so there is nothing to hold the program against.
+      const key = this.pick([
+        `late${id}`,
+        `late${id}`,
+        "Symbol.iterator",
+        `String("called")`,
+        `late${id} + "r"`,
+        `[late${id}].join()`,
+      ]);
+      lines.push(`let late${id} = "late";`, `class Base${id} {}`, above);
+      lines.push(
+        `// @ts-ignore`,
+        `class D${id} extends Base${id} { ${this.pick([`[${key}] = 1; y = 2; opt?: number;`, `[${key}] = 1; y = 2; opt?: number;`, `y = 2; [${key}] = 1; opt?: number;`, `opt?: number; y = 2; [${key}] = 1;`, `[${key}] = 1; declare y: number; opt?: number;`, `static [${key}] = 1; y = 2; opt!: number;`, `[${key}]: number; y = 2;`, `y = 2; opt?: number;`, `y = 2; opt?: number;`, `opt?: number; y = 2; name = 1;`, `declare y: number; opt = 1;`])} }`,
+      );
+      lines.push(
+        `try { const made: any = new D${id}(); note(Reflect.ownKeys(made).map(String).join("+")); note(made.y); note(Object.prototype.hasOwnProperty.call(made, "opt")); note(Reflect.ownKeys(D${id}).map(String).join("+")); } catch (error) { note("threw " + (error as any)?.name); }`,
+      );
+    }
+    lines.push(`export const said${number} = out;`, "");
+    this.files.push([`./options-${tag}/sources/tsconfig.json`, `{ "compilerOptions": ${options} }\n`]);
+    this.files.push([`./options-${tag}/sources/part.ts`, lines.join("\n")]);
+    this.imports.push(`// @ts-ignore\nimport { said${number} } from "./options-${tag}/sources/part.ts";`);
+    this.lines.push(`printValue("options ${number}", said${number});`);
+  }
+
+  /**
+   * TypeScript. Classes below a base whose prototype has a setter, a getter or a member that can't be written, with fields of the same names, a field without a value, and a field under a key in brackets
+   * that a transpiler can work out ahead: a constant, a signed number, a sum of literals, a member of an enum. Whether the fields are assigned or defined goes by the tsconfig.json where Bun is started
+   * (run-batch.ts, --options-of-the-project). In JavaScript the scene is one of class factories.
+   */
+  sceneOfFieldsBesideKeysThatAreWorkedOutAhead() {
+    if (!this.isTypeScript) return this.sceneOfClassesOutOfFactories();
+    const number = ++this.count;
+    this.lines.push("{");
+    // A constant is replaced by its value where its declaration stands first in its block.
+    this.emit(
+      1,
+      `const KEY${number} = "name";`,
+      `let out = "";`,
+      `function note(value: any): void { out += (typeof value === "object" && value !== null ? JSON.stringify(value) : String(value)) + ";"; }`,
+      `enum En${number} { A = "ea", C = 3 }`,
+    );
+    for (let index = this.pick([1, 2, 2, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const above = this.pick([
+        `Object.defineProperty(Base${id}.prototype, "y", { set(v) { note("setter ran " + v); }, configurable: true });`,
+        `Object.defineProperty(Base${id}.prototype, "y", { set(v) { note("setter ran " + v); }, configurable: true });`,
+        `Object.defineProperty(Base${id}.prototype, "y", { get() { return "got"; }, configurable: true });`,
+        `Object.defineProperty(Base${id}.prototype, "y", { value: "fixed", writable: false, configurable: true });`,
+        `Object.defineProperty(Base${id}.prototype, "opt", { set(v) { note("opt set " + v); }, configurable: true });`,
+        `Object.defineProperty(Base${id}.prototype, "name", { set(v) { note("name set " + v); }, configurable: true });`,
+      ]);
+      const key = this.pick([
+        `KEY${number}`,
+        `KEY${number}`,
+        "-1",
+        "+1",
+        "-0",
+        "NaN",
+        "Infinity",
+        `("a")`,
+        `"a" as string`,
+        `"a"!`,
+        "1 + 2",
+        `"a" + "b"`,
+        "`a${1}`",
+        "typeof 1",
+        "~1",
+        `1 ? "a" : "b"`,
+        `0 || "a"`,
+        `(0, "a")`,
+        `+"1"`,
+        `"abc".length`,
+        `"abc"[1]`,
+        `-En${number}.C`,
+        `En${number}.A`,
+        "1n",
+        "Symbol.iterator",
+        `late${id}`,
+        `String("called")`,
+      ]);
+      this.emit(1, `let late${id} = "late";`, `class Base${id} {}`, above);
+      this.emit(
+        1,
+        `// @ts-ignore`,
+        `class D${id} extends Base${id} { ${this.pick([`[${key}] = 1; y = 2; opt?: number;`, `[${key}] = 1; y = 2; opt?: number;`, `y = 2; [${key}] = 1; opt?: number;`, `opt?: number; y = 2; [${key}] = 1;`, `[${key}] = 1; declare y: number; opt?: number;`, `static [${key}] = 1; y = 2; opt!: number;`, `[${key}]: number; y = 2;`, `y = 2; opt?: number;`])} }`,
+      );
+      this.emit(
+        1,
+        `try { const made: any = new D${id}(); note(Reflect.ownKeys(made).map(String).join("+")); note(made.y); note(Object.prototype.hasOwnProperty.call(made, "opt")); note(Reflect.ownKeys(D${id}).map(String).join("+")); } catch (error) { note("threw " + (error as any)?.name); }`,
+      );
+    }
+    this.emit(1, `printValue("fields ahead ${number}", out);`);
+    this.lines.push("}");
+  }
 }
 
 /**
@@ -4017,6 +4151,12 @@ export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: 
         () => scenes.sceneOfWalks(),
         () => scenes.sceneOfWalks(),
         () => scenes.sceneOfIdioms(),
+        () => scenes.sceneOfFieldsBesideKeysThatAreWorkedOutAhead(),
+        () => scenes.sceneOfFieldsBesideKeysThatAreWorkedOutAhead(),
+        () => scenes.sceneOfFieldsBesideKeysThatAreWorkedOutAhead(),
+        () => scenes.sceneOfFieldsUnderOptionsOfTheTranspiler(),
+        () => scenes.sceneOfFieldsUnderOptionsOfTheTranspiler(),
+        () => scenes.sceneOfFieldsUnderOptionsOfTheTranspiler(),
         () => scenes.sceneOfProxiesWhoseTrapsAreStoredLater(),
         () => scenes.sceneOfProxiesWhoseTrapsAreStoredLater(),
         () => scenes.sceneOfProxiesWhoseTrapsAreStoredLater(),

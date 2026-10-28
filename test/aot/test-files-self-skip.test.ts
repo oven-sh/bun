@@ -26,6 +26,7 @@ const files = [...testFiles("")]
 
 // These pass where `bun build --compile --aot` and `bun run --aot` are refused.
 const needNoCompiler = [
+  "aot/any-two-sources-of-the-compiler-can-share-a-translation-unit.test.ts",
   "aot/emitters-append-in-the-order-written.test.ts",
   "aot/engine-types-are-defined-once.test.ts",
   "aot/the-compiler-reads-no-environment-variable.test.ts",

@@ -26,6 +26,7 @@ const rows: Row[] = [
     "a class of its own file",
     "a class out of a required file",
     5,
+    10.5,
   ],
   [
     "beside-a-file-that-requires-through-its-module-object/main.cjs",
@@ -33,8 +34,16 @@ const rows: Row[] = [
     "a class of its own file",
     "a class out of a required file",
     5,
+    10.2,
   ],
-  ["beside-a-file-with-a-direct-eval/main.cjs", [], "a class of its own file", "a class out of a required file", 5],
+  [
+    "beside-a-file-with-a-direct-eval/main.cjs",
+    [],
+    "a class of its own file",
+    "a class out of a required file",
+    5,
+    8.9,
+  ],
   ["imported-by-default/main.mjs", [], "out of a module", "out of a CommonJS file", 3],
   ["pieces-of-two-characters.ts", [], "slices of three characters", "slices of two characters", 1.3],
   ["pieces-of-two-characters.ts", erased, "slices of three characters", "slices of two characters", 1.3],
@@ -165,6 +174,12 @@ const rows: Row[] = [
       ]),
     ),
   ),
+  ...["integers past 2 ** 32", "fractions", "negative zeros"].flatMap((kind): Row[] => [
+    ["numbers-out-of-a-request/without-types.js", [], "make small integers", `make ${kind}`, 3, 20.3],
+    ["numbers-out-of-a-request/without-types.js", [], "read small integers", `read ${kind}`, 3, 11.6],
+  ]),
+  ["a-sum-in-a-cell-without-room.ts", [], "under 2 ** 31", "past 2 ** 31", 3, 10.5],
+  ["a-sum-in-a-cell-without-room.ts", erased, "under 2 ** 31", "past 2 ** 31", 3, 11.9],
 ];
 const [few, many] = [100_000, 400_000];
 

@@ -322,9 +322,12 @@ built-ins-alone/array-from-over-maps-sets-and-their-iterators
 built-ins-alone/array-is-array-of-callable-proxies-behind-typeof-function
 built-ins-alone/array-is-array-of-callable-proxies-where-the-type-says-function
 built-ins-alone/built-ins-that-take-only-objects-are-handed-everything
+built-ins-alone/concat-asks-every-kind-of-object-whether-it-is-spread
 built-ins-alone/object-prototype-to-string-of-proxies-that-have-been-revoked
+built-ins-alone/reflect-construct-is-handed-undefined-or-null-for-its-list
 built-ins-alone/reflect-get-and-set-run-inherited-accessors-with-another-receiver
 built-ins-alone/reflect-get-prototype-of-meets-a-proxy-whose-trap-is-a-number
+built-ins-alone/regexp-test-and-search-call-the-exec-of-a-receiver-that-is-no-regexp
 built-ins-alone/replace-with-a-callback-on-short-and-long-texts
 built-ins-alone/the-callback-of-replace-reads-the-last-match-of-regexp-in-short-and-long-texts
 built-ins-alone/the-iso-text-of-a-date-is-the-same-on-every-way-to-the-built-in
@@ -622,6 +625,8 @@ calls/what-one-call-reaches-through-call-or-through-a-bound-built-in-makes-what-
 claims-to-the-back-end/a-field-is-read-through-undefined-right-in-front-of-the-return
 claims-to-the-back-end/a-field-is-tested-in-front-of-a-store-and-a-maximum-is-taken-behind-it
 claims-to-the-back-end/a-function-calls-itself-in-tail-position-behind-the-tests-of-its-parameter
+claims-to-the-back-end/a-function-that-a-loop-calls-hands-back-a-declared-function-that-nobody-has-asked-for-yet-1
+claims-to-the-back-end/a-function-that-a-loop-calls-hands-back-a-declared-function-that-nobody-has-asked-for-yet-2
 claims-to-the-back-end/a-function-that-a-loop-calls-reads-a-method-of-objects-of-two-classes-one-after-the-other
 claims-to-the-back-end/a-list-written-in-the-text-is-stored-to-in-a-loop-that-asks-for-its-length-on-every-turn
 claims-to-the-back-end/a-loop-reads-every-second-element-of-a-view-also-past-its-end
@@ -715,9 +720,11 @@ classes-below-functions/a-class-is-constructed-for-a-plain-function-in-a-loop
 classes-below-functions/a-class-is-constructed-for-itself-and-for-a-plain-function-in-turns
 classes-below-functions/a-class-made-in-a-function-below-a-constructor-function-whose-prototype-was-replaced
 classes-below-functions/a-class-two-levels-below-a-function-whose-prototype-object-was-replaced-calls-super
+classes-below-functions/a-getter-deleted-from-the-prototype-of-a-function-is-read-through-super
 classes-below-functions/a-getter-reads-super-below-a-function-whose-prototype-object-was-replaced-after-it-made-an-object
 classes-below-functions/a-helper-constructs-a-class-for-itself-and-then-for-a-plain-function
 classes-below-functions/a-method-calls-super-below-a-function-whose-prototype-object-was-replaced-after-it-made-an-object
+classes-below-functions/a-method-deleted-from-the-prototype-of-a-function-is-called-through-super
 classes-below-functions/a-prototype-that-would-close-a-cycle-is-refused
 classes-below-functions/a-prototype-that-would-close-a-cycle-is-refused-in-typed-code
 classes-below-functions/a-read-through-super-above-a-function-that-makes-no-object-comes-before-the-getter
@@ -957,6 +964,7 @@ closed-world/typed-array-map-constructs-the-function-constructor-as-its-species
 closed-world/typed-array-subarray-constructs-the-function-constructor-as-its-species
 closure-factories/a-class-from-a-factory-keeps-private-state-in-a-weak-map-declared-outside
 closure-factories/a-factory-is-called-before-its-variable-is-filled
+closure-factories/a-factory-is-called-by-a-file-that-the-file-of-the-factory-requires-before-it-fills-the-variable
 closure-factories/a-factory-that-can-tell-its-closures-apart
 closure-factories/a-helper-object-changes-between-the-links-of-a-chain
 closure-factories/a-helper-object-defines-members-under-written-names
@@ -1075,6 +1083,7 @@ commonjs/a-file-with-a-default-of-its-own-is-imported-inside-its-require
 commonjs/a-function-is-given-members-by-object-define-property
 commonjs/a-function-of-a-bundle-in-the-commonjs-format-of-bun-build-has-a-strict-directive
 commonjs/a-function-stored-as-push-on-the-list-of-children-is-called-for-each-file-required
+commonjs/a-getter-that-reads-a-name-off-an-es-module-answers-what-that-module-holds
 commonjs/a-job-of-an-imported-file-requires-an-es-module-that-imports-a-module-of-the-graph-being-loaded
 commonjs/a-job-of-an-imported-file-requires-an-es-module-while-the-graph-is-loaded
 commonjs/a-microtask-of-an-imported-file-runs-before-a-file-of-a-deeper-module
@@ -1505,7 +1514,9 @@ enums/the-namespace-of-a-file-that-exports-every-name-of-the-file-of-an-enum-is-
 enums/the-namespace-of-the-file-of-an-enum-is-handed-to-a-function
 errors/a-call-of-an-object-that-is-not-a-function-names-the-callee
 errors/a-call-under-a-string-in-brackets-names-the-callee
+errors/a-callback-stores-the-answer-of-a-call-that-never-returns-into-a-captured-variable
 errors/a-definition-by-descriptor-that-is-refused
+errors/a-function-stores-the-answer-of-a-call-that-never-returns-into-a-variable-of-the-module
 errors/a-function-that-calls-nothing-and-keeps-many-values-ends-in-a-read-through-undefined
 errors/a-method-called-on-more-than-names-is-named-alone
 errors/a-proxy-of-what-is-no-function-is-called
@@ -1515,6 +1526,7 @@ errors/a-read-through-super-under-a-null-prototype-quotes-the-expression
 errors/a-refused-apply-names-the-member-that-was-called
 errors/a-refused-call-names-a-member-of-import-meta
 errors/a-refused-call-names-the-member-that-was-called
+errors/an-error-nobody-catches-is-printed-under-the-name-that-the-literal-above-it-holds
 errors/an-error-with-a-joined-message-is-thrown-into-a-catch-that-reads-nothing-and-every-pass-is-verified
 errors/call-sites-and-frames-of-text-that-eval-is-given-as-a-constant
 errors/call-sites-and-limits-of-stack-traces-that-list-a-built-in-function
@@ -1702,10 +1714,12 @@ errors/stack-positions-of-variables-used-once-behind-reads-of-globals
 errors/stack-positions-of-variables-with-uses-in-dropped-code
 errors/stack-positions-of-what-a-class-extends
 errors/stack-trace-limits-where-tail-calls-remove-frames
+errors/the-first-line-of-a-stack-names-what-the-object-above-the-error-holds
 errors/the-right-side-of-instanceof-is-an-object-that-is-not-a-function
 errors/traces-of-many-places-asked-round-after-round
 errors/updates-under-keys-of-undefined-and-null
 errors/what-a-program-can-ask-about-a-stack
+errors/what-the-run-time-throws-for-an-operator-or-a-literal-is-caught-around-it
 escape-analysis/a-call-throws-while-a-slice-that-a-builder-takes-over-is-not-yet-made
 escape-analysis/a-call-throws-while-a-slice-that-a-builder-takes-over-is-not-yet-made-in-a-very-large-program
 escape-analysis/a-call-throws-while-a-slice-that-a-builder-takes-over-is-not-yet-made-in-hot-code
@@ -1998,6 +2012,8 @@ initializers-run-at-the-first-read/a-function-that-an-initializer-takes-is-also-
 initializers-run-at-the-first-read/a-function-that-runs-once-says-that-a-constant-is-an-object-and-an-inner-function-holds-it
 initializers-run-at-the-first-read/a-function-that-runs-once-takes-again-what-it-made-for-an-inner-function
 initializers-run-at-the-first-read/a-list-that-an-initializer-takes-is-also-named-by-a-function-that-nobody-calls
+initializers-run-at-the-first-read/a-literal-takes-a-variable-of-a-file-that-is-still-running-when-a-computed-require-starts-the-file-of-the-literal
+initializers-run-at-the-first-read/a-literal-takes-a-variable-of-a-file-that-is-still-running-when-an-import-call-starts-the-file-of-the-literal
 initializers-run-at-the-first-read/a-loop-starts-at-what-a-function-called-on-the-spot-returns-behind-a-try
 initializers-run-at-the-first-read/a-map-is-made-of-a-list-of-pairs-that-a-number-was-pushed-to
 initializers-run-at-the-first-read/a-map-is-made-of-a-list-of-pairs-that-got-a-hole
@@ -2360,6 +2376,7 @@ modules/a-file-that-threw-before-its-constant-was-stored-is-imported-again
 modules/a-file-under-another-tsconfig-imports-a-package-that-the-entry-point-requires
 modules/a-file-under-another-tsconfig-imports-nothing-where-a-constant-of-the-entry-point-says-so
 modules/a-file-under-another-tsconfig-reads-what-the-entry-point-says-of-itself
+modules/a-file-with-a-top-level-await-that-nothing-reaches-is-an-es-module
 modules/a-file-with-side-effects-hands-on-values-of-a-json-file-behind-files-without
 modules/a-file-with-the-marker-on-an-object-that-only-the-run-knows-exports-a-name-that-is-not-enumerable
 modules/a-file-without-an-extension-lies-beside-a-computed-path
@@ -2473,6 +2490,7 @@ modules/a-require-comes-into-a-cycle-of-modules-that-awaits-while-an-import-is-l
 modules/a-require-comes-into-a-graph-of-modules-that-an-import-is-still-loading
 modules/a-require-is-called-before-create-require-has-made-it
 modules/a-require-links-part-of-a-graph-between-its-import-and-its-link
+modules/a-required-module-of-a-cycle-calls-import-beside-an-earlier-import-call-while-collections-run
 modules/a-required-module-settles-an-awaited-promise-and-throws-after-an-await
 modules/a-shadow-realm-imports-the-modules-that-come-with-the-runtime
 modules/a-shadow-realm-reads-globals-that-the-runtime-fills-from-its-modules
@@ -2909,6 +2927,7 @@ objects/a-field-that-names-a-class-holds-a-record-without-the-name
 objects/a-field-that-names-a-class-holds-an-arrow-function
 objects/a-field-that-names-three-classes-gets-a-record
 objects/a-getter-written-again-in-a-literal-keeps-the-place-of-its-key
+objects/a-heap-snapshot-lists-an-object-that-holds-a-constructor-itself-as-a-plain-object
 objects/a-key-in-brackets-is-converted-before-the-value-beside-it-is-read
 objects/a-large-map-and-set-keep-one-entry-in-a-thousand-in-a-validating-build
 objects/a-list-is-parsed-by-a-type-whose-literal-has-a-lone-setter
@@ -2964,6 +2983,7 @@ objects/accessors-of-every-make-are-read-and-stored-once-and-often-untyped
 objects/an-object-handed-to-object-create-for-nothing-gets-a-proxy-above-it
 objects/an-object-handed-to-object-create-for-nothing-in-a-function-gets-an-indexed-setter
 objects/an-object-handed-to-object-create-for-nothing-is-frozen-with-an-element
+objects/an-object-is-printed-under-the-constructor-that-it-holds-itself
 objects/copies-of-an-object-with-very-many-names-take-time-in-proportion
 objects/defineProperty-creates-hidden-and-read-only-properties-on-instances
 objects/dictionaries-are-built-anew-from-the-same-names-between-collections

@@ -1,6 +1,7 @@
 // The length of an array is set to billions while the array holds three elements. A Worker walks up to that length: without reading, reading by index, with for-of, and with the length
 // as a limit that it tests by itself. The last loops walk far past the end of a short array, so that every turn goes the unlikely way. Each way would take many seconds to end, calls
-// nothing that the program wrote and allocates nothing: only the polls of the loops let the Worker be terminated soon.
+// nothing that the program wrote and allocates nothing: only the polls of the loops let the Worker be terminated inside them. The Worker counts the walks that came to their end
+// where the main thread sees it: terminated inside its first walk, it has counted none.
 let kept = 0;
 
 function countsUpToLength(list: number[], divisor: number): void {
@@ -39,24 +40,24 @@ function walksPastTheEnd(list: number[], turns: number): void {
   kept = sum;
 }
 
-type Order = { way: string; length: number };
+type Order = { way: string; length: number; walksEnded: Int32Array };
 
 if (Bun.isMainThread) {
   for (const way of ["counts up to the length", "reads by index", "reads with for-of", "tests against the length", "walks past the end"]) {
     const worker = new Worker(new URL(import.meta.url));
     const started = new Promise<string>(resolve => (worker.onmessage = event => resolve(event.data)));
     const closed = new Promise<void>(resolve => worker.addEventListener("close", () => resolve()));
-    worker.postMessage({ way, length: 0x7ffffff0 } satisfies Order);
+    const walksEnded = new Int32Array(new SharedArrayBuffer(4));
+    worker.postMessage({ way, length: 0x7ffffff0, walksEnded } satisfies Order);
     console.log("the Worker:", await started);
     await new Promise(resolve => setTimeout(resolve, 50));
-    const asked = performance.now();
     worker.terminate();
     await closed;
-    console.log("the Worker is closed, soon:", performance.now() - asked < 4000, kept);
+    console.log("the Worker is closed, walks that came to their end:", walksEnded[0], kept);
   }
 } else {
   addEventListener("message", (event: MessageEvent<Order>) => {
-    const { way, length } = event.data;
+    const { way, length, walksEnded } = event.data;
     const weights = Int32Array.from({ length: 8 }, (_, k) => k + 3);
     const divisor = (length >>> 20) | 1;
     const short: number[] = [length, length + 1, length + 2.5];
@@ -69,6 +70,7 @@ if (Bun.isMainThread) {
       else if (way === "reads with for-of") readsWithForOf(long, divisor);
       else if (way === "tests against the length") testsAgainstLength(long, length, weights);
       else walksPastTheEnd(short, length >>> 0);
+      walksEnded[0] = round + 1;
     }
     postMessage("kept " + kept);
   });

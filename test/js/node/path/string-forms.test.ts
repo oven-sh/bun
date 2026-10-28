@@ -3,10 +3,23 @@
 // line. So the same characters in 16-bit storage say what the answer is.
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const flat = (text: string) => (text.charCodeAt(0), text);
 const copy = (text: string) => flat(Buffer.from(text, "utf16le").toString("utf16le"));
 const wide = (text: string) => flat("日" + text + "本").slice(1, -1);
+const narrowCopy = (text: string) => Buffer.from(text, "latin1").toString("latin1");
+
+// A string that is looked up as a property key takes the storage of the equal key that is there, of either width, and
+// so do the substrings that were made of it before.
+const keys: Record<string, boolean> = {};
+function substringOfKey(text: string, key: (text: string) => string, base: (text: string) => string) {
+  keys[key(text)] = true;
+  const whole = base(text);
+  const part = whole.slice(2, -3);
+  if (!keys[whole]) throw new Error(`${whole} is not among the keys`);
+  return part;
+}
 
 const forms: Record<string, (text: string) => any> = {
   flat: text => flat(text + ""),
@@ -14,6 +27,8 @@ const forms: Record<string, (text: string) => any> = {
   ropeOfThree: text =>
     text.length < 3 ? text : copy(text.slice(0, 1)) + (copy(text.slice(1, 2)) + copy(text.slice(2))),
   substring: text => flat("<<" + text + ">>>").slice(2, -3),
+  substringOfWhatBecame16Bit: text => substringOfKey("[[" + text + "]]]", copy, narrowCopy),
+  substringOfWhatBecame8Bit: text => substringOfKey("((" + text + ")))", narrowCopy, copy),
   stringObject: text => new String(text),
 };
 
@@ -294,6 +309,76 @@ describe.each(Object.entries(platforms))("path.%s", (_, p) => {
     ] as const) {
       expect([name, p[name].name, p[name].length]).toEqual([name, `bound ${name}`, 1]);
     }
+  });
+});
+
+const { stringObject, ...formsOfStrings } = forms;
+
+test.each(Object.entries(formsOfStrings))("node:url reads a %s as the same characters in 16-bit storage", (_, form) => {
+  const { different, compare } = createComparison();
+  const answerOf = (run: () => unknown) => {
+    try {
+      return run();
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code;
+    }
+  };
+  for (const text of createPaths(2, 1500)) {
+    for (const windows of [false, true]) {
+      compare(
+        [text, windows, "pathToFileURL"],
+        answerOf(() => pathToFileURL(form(text), { windows }).href),
+        answerOf(() => pathToFileURL(wide(text), { windows }).href),
+      );
+      const url = "file:///" + encodeURI(text.replaceAll("\\", "/"));
+      compare(
+        [url, windows, "fileURLToPath"],
+        answerOf(() => fileURLToPath(form(url), { windows })),
+        answerOf(() => fileURLToPath(wide(url), { windows })),
+      );
+    }
+  }
+  expect(different).toEqual([]);
+});
+
+test("the parts of a path that is then looked up among keys in 16-bit storage", () => {
+  // JSON.parse keeps the long strings of a text that has a character above U+00FF in 16 bits.
+  const { report } = JSON.parse('{"title":"\u2603","report":"/var/data/reports/2026/summary.final.csv"}');
+  const visited: Record<string, boolean> = { [report]: true };
+  const resolved = path.posix.resolve(report);
+  const folder = path.posix.dirname(resolved);
+  const name = path.posix.basename(resolved);
+  const nameWithoutSuffix = path.posix.basename(resolved, ".csv");
+  const extension = path.posix.extname(resolved);
+  const below = path.posix.relative("/var/data", resolved);
+  const parsed = path.posix.parse(resolved);
+  expect(visited[resolved]).toBe(true);
+  expect({
+    joined: path.posix.join(folder, "notes.txt"),
+    resolved: path.posix.resolve(folder, ".."),
+    normalized: path.posix.normalize(below),
+    folderOfFolder: path.posix.dirname(folder),
+    folderOfBelow: path.posix.dirname(below),
+    extensionOfName: path.posix.extname(name),
+    extensionOfRest: path.posix.extname(nameWithoutSuffix),
+    nameOfExtension: path.posix.basename(extension),
+    parsedName: path.posix.parse(name),
+    formatted: path.posix.format({ dir: parsed.dir, name: parsed.name, ext: ".txt" }),
+    joinedOnWindows: path.win32.join(parsed.dir, parsed.base),
+    url: pathToFileURL(folder, { windows: false }).href,
+  }).toEqual({
+    joined: "/var/data/reports/2026/notes.txt",
+    resolved: "/var/data/reports",
+    normalized: "reports/2026/summary.final.csv",
+    folderOfFolder: "/var/data/reports",
+    folderOfBelow: "reports/2026",
+    extensionOfName: ".csv",
+    extensionOfRest: ".final",
+    nameOfExtension: ".csv",
+    parsedName: { root: "", dir: "", base: "summary.final.csv", ext: ".csv", name: "summary.final" },
+    formatted: "/var/data/reports/2026/summary.final.txt",
+    joinedOnWindows: "\\var\\data\\reports\\2026\\summary.final.csv",
+    url: "file:///var/data/reports/2026",
   });
 });
 

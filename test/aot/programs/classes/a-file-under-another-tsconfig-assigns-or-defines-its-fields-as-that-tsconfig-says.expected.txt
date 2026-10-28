@@ -1,0 +1,10 @@
+a folder that says assigned: the setter of the class above ran with 2
+a folder that says assigned: own keys: none
+a folder that says assigned, beside a key that is a constant: the setter of the class above ran with 2
+a folder that says assigned, beside a key that is a constant: own keys: name
+a package that says assigned: the setter of the class above ran with 2
+a package that says assigned: own keys: none
+a folder that says defined: own keys: y optional
+a folder that says assigned in one that says defined: the setter of the class above ran with 2
+a folder that says assigned in one that says defined: own keys: none
+the entry point: own keys: y optional

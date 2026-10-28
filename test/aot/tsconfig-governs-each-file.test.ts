@@ -502,7 +502,7 @@ test("bun check --aot passes the decorators that a build compiles", async () => 
     "wrong.ts": `function mark(value: Function, context: ClassDecoratorContext) {}\n@mark\nclass Marked {}\nexport const wrong: string = Marked.length;\n`,
   });
   const outfile = join(String(dir), "out");
-  for (const aot of [[], ["--aot"]]) {
+  for (const aot of [[], ["--aot", "--explain"]]) {
     const built = await run(String(dir), "build", "--compile", ...aot, "./main.ts", "--outfile", outfile);
     expect({ codes: codes(built.said), exitCode: built.exitCode }).toEqual({ codes: [], exitCode: 0 });
     if (aot.length)

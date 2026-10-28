@@ -1,20 +1,29 @@
 // A NaN that native code hands over has no payload. Each way by which a number comes out of native code or out of bytes gets twelve patterns of bits,
 // and what it gives goes into fields that keep a number beside undefined, null and nothing.
+// bun:ffi makes machine code for what it opens, which an executable may be refused. A way that is refused prints one line, and $REFUSED holds the lines of another run, whose ways are left out here too.
 import { cc, dlopen, JSCallback, ptr, read } from "bun:ffi";
 import { deserialize, serialize } from "bun:jsc";
 import { join } from "path";
 const loaded: { exports: any } = { exports: {} };
 process.dlopen(loaded, process.env.ADDON!);
 const raw: any = loaded.exports;
-const library = dlopen(process.env.ADDON!, {
-  number_of_bits: { args: ["u32", "u32"], returns: "f64" },
-  float_of_bits: { args: ["u32"], returns: "f32" },
-  hand_number_of_bits_to: { args: ["function", "u32", "u32"], returns: "f64" },
-});
-const compiled = cc({
-  source: join(process.cwd(), "number-of-bits.c"),
-  symbols: { compiled_number_of_bits: { args: ["u32", "u32"], returns: "f64" } },
-});
+function once<T>(open: () => T) {
+  let opened: T | undefined;
+  return () => (opened ??= open());
+}
+const library = once(() =>
+  dlopen(process.env.ADDON!, {
+    number_of_bits: { args: ["u32", "u32"], returns: "f64" },
+    float_of_bits: { args: ["u32"], returns: "f32" },
+    hand_number_of_bits_to: { args: ["function", "u32", "u32"], returns: "f64" },
+  }),
+);
+const compiled = once(() =>
+  cc({
+    source: join(process.cwd(), "number-of-bits.c"),
+    symbols: { compiled_number_of_bits: { args: ["u32", "u32"], returns: "f64" } },
+  }),
+);
 const patterns = [
   0x7ffa000000000000n,
   0x7ffb000000000000n,
@@ -33,12 +42,15 @@ const upper = (bits: bigint) => Number(bits >> 32n);
 const lower = (bits: bigint) => Number(bits & 0xffffffffn);
 const bytesOf = (bits: bigint) => new Uint8Array(new BigUint64Array([bits]).buffer);
 let handed = 0;
-const keep = new JSCallback(
-  (x: number) => {
-    handed = x;
-    return x;
-  },
-  { args: ["f64"], returns: "f64" },
+const keep = once(
+  () =>
+    new JSCallback(
+      (x: number) => {
+        handed = x;
+        return x;
+      },
+      { args: ["f64"], returns: "f64" },
+    ),
 );
 const serialized = new Uint8Array(serialize(1.5));
 const placeOfNumber = serialized.length - 8;
@@ -57,14 +69,14 @@ const outOfNativeCode: Record<string, (bits: bigint) => number> = {
     );
     return got;
   },
-  "bun:ffi f64": bits => library.symbols.number_of_bits(upper(bits), lower(bits)),
-  "bun:ffi f32": bits => library.symbols.float_of_bits(upper(bits)),
-  "bun:ffi cc()": bits => compiled.symbols.compiled_number_of_bits(upper(bits), lower(bits)),
+  "bun:ffi f64": bits => library().symbols.number_of_bits(upper(bits), lower(bits)),
+  "bun:ffi f32": bits => library().symbols.float_of_bits(upper(bits)),
+  "bun:ffi cc()": bits => compiled().symbols.compiled_number_of_bits(upper(bits), lower(bits)),
   "an argument of a JSCallback": bits => {
-    library.symbols.hand_number_of_bits_to(keep.ptr, upper(bits), lower(bits));
+    library().symbols.hand_number_of_bits_to(keep().ptr, upper(bits), lower(bits));
     return handed;
   },
-  "the result of a JSCallback": bits => library.symbols.hand_number_of_bits_to(keep.ptr, upper(bits), lower(bits)),
+  "the result of a JSCallback": bits => library().symbols.hand_number_of_bits_to(keep().ptr, upper(bits), lower(bits)),
   "read.f64": bits => read.f64(ptr(bytesOf(bits)), 0),
   "read.f32": bits => read.f32(ptr(bytesOf(bits)), 4),
   "deserialize()": bits => {
@@ -123,7 +135,16 @@ function hold(v: number, turn: number) {
   return [describe(byTests), describe(orNothing), describe(optional), describe(storedLater)].join(" | ");
 }
 const bitsOf = (v: number) => new BigUint64Array(new Float64Array([v]).buffer)[0]!.toString(16);
+const refusedElsewhere = (process.env.REFUSED ?? "").split("\n");
 for (const [name, take] of Object.entries(outOfNativeCode)) {
+  const refused = "REFUSED " + name;
+  try {
+    if (refusedElsewhere.includes(refused)) throw new Error(refused);
+    take(patterns[0]!);
+  } catch {
+    console.log(refused);
+    continue;
+  }
   patterns.forEach((bits, turn) => {
     const v = take(bits);
     console.log(name, bits.toString(16), bitsOf(v), hold(v, turn));
@@ -132,6 +153,4 @@ for (const [name, take] of Object.entries(outOfNativeCode)) {
 for (const [name, take] of Object.entries(outOfBytes)) {
   patterns.forEach((bits, turn) => console.log(name, bits.toString(16), hold(take(bits), turn)));
 }
-keep.close();
-library.close();
-compiled.close();
+process.exit(0);

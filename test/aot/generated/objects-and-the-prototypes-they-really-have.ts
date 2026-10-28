@@ -158,3 +158,86 @@ export function oneListTwice(callee: string, list: string, call: string, positio
     text: `function describe() { return [typeof this, this.length, arguments.length].join(); }\nfunction strict() { "use strict"; return [typeof this, this.length, arguments.length, this === arguments[0]].join(); }\n${lists[list].declared.replace("«u»", positions[position].replaceAll("«x»", written))}\nfor (let i = 0; i < 2; i++) console.log(f(1, 2), f(), f(3));\n`,
   };
 }
+
+export const membersThatLeave: Record<string, { define: string; member: string; question: string }> = {
+  "a method": { define: 'F.prototype.x = function () { return "old"; };', member: "«a» return super.x();", question: "attempt(() => new K().go())" },
+  "a getter": { define: 'Object.defineProperty(F.prototype, "x", { get() { return "old"; }, configurable: true });', member: "«a» return super.x;", question: "attempt(() => new K().go())" },
+  "a setter": { define: 'Object.defineProperty(F.prototype, "x", { set(v) { log.push("old" + v); }, configurable: true });', member: "«a» super.x = 1; return Object.keys(this).join() + log.join();", question: "attempt(() => new K().go())" },
+};
+
+export const departures: Record<string, string> = {
+  "delete": "delete F.prototype.x;",
+  "Reflect.deleteProperty": 'Reflect.deleteProperty(F.prototype, "x");',
+  "a delete under a computed key": 'delete F.prototype[["x"].join("")];',
+  "another member in its place": 'Object.defineProperty(F.prototype, "x", { value: () => "other", writable: true, configurable: true });',
+};
+
+/** «c» is the change, «d» defines the class below, «q» is the question. */
+export const momentsOfDeparture: Record<string, string> = {
+  "before the class is defined": "«c»\n«d»",
+  "after the class is defined": "«d»\n«c»",
+  "after the first question": "«d»\nconsole.log(«q»);\n«c»",
+};
+
+export const otherQuestions: Record<string, string> = {
+  "nothing else": "",
+  "Reflect.get": 'Reflect.get(this, "x");',
+  "a helper around Reflect.get": 'read(this, "x");',
+  "Reflect.has": 'Reflect.has(this, "x");',
+  "in": '"x" in this;',
+  "a computed key": 'this[["x"].join("")];',
+};
+
+export const livesOfParent: Record<string, [string, string]> = {
+  "makes no object": ["", ""],
+  "has made an object": ["new F();", ""],
+  "makes an object afterwards": ["", "new F();"],
+};
+
+export function memberLeaves(member: string, departure: string, moment: string, otherQuestion: string, life: string) {
+  const { define, member: body, question } = membersThatLeave[member];
+  const [before, after] = livesOfParent[life];
+  const steps = momentsOfDeparture[moment]
+    .replace("«c»", departures[departure])
+    .replace("«d»", `class K extends F { go() { ${body.replace("«a»", otherQuestions[otherQuestion])} } }`)
+    .replace("«q»", question);
+  return {
+    file: "main.js",
+    text: `${attempt}const log = [];\nconst read = (o, k) => Reflect.get(o, k);\nfunction F() { this.a = 1; }\n${define}\n${before}\n${steps}\n${after}\nfor (let i = 0; i < 2; i++) console.log(${question});\n`,
+  };
+}
+
+/** «f» is the callee, «l» the list. */
+export const listTakers: Record<string, string> = {
+  "Reflect.construct": "Reflect.construct(«f», «l»)",
+  "Reflect.construct with new.target": "Reflect.construct(«f», «l», «f»)",
+  "Reflect.apply": "Reflect.apply(«f», null, «l»)",
+  "apply": "«f».apply(null, «l»)",
+};
+
+export const takenBy: Record<string, string> = { "a class": "Point", "a function": "Plain", "a built-in": "Array" };
+
+export const handedLists: Record<string, string> = {
+  "undefined": "undefined",
+  "null": "null",
+  "a variable that holds nothing": "nothing",
+  "a member that is not there": "options.list",
+  "a parameter that is undefined": "handed(undefined)",
+  "a parameter that is null": "handed(null)",
+  "a number": "1",
+  "a string": '"ab"',
+  "a list": "[1, 2]",
+  "an object with a length": "{ length: 1, 0: 7 }",
+  "a typed array": "new Uint8Array([4, 5])",
+};
+
+export function listIsHanded(taker: string, callee: string, list: string, usesResult: boolean) {
+  const handsOn = handedLists[list].startsWith("handed(");
+  const call = listTakers[taker].replaceAll("«f»", takenBy[callee]).replace("«l»", handsOn ? "list" : handedLists[list]);
+  const body = usesResult ? `return JSON.stringify(${call});` : `${call}; return "done";`;
+  const question = handsOn ? `attempt(() => (list => { ${body} })(${handedLists[list].slice(7, -1)}))` : `attempt(() => { ${body} })`;
+  return {
+    file: "main.js",
+    text: `${attempt}class Point { constructor(x = 0) { this.x = x; } }\nfunction Plain(x) { if (this) this.x = x; return undefined; }\nlet nothing;\nconst options = {};\nfor (let i = 0; i < 2; i++) console.log(${question});\n`,
+  };
+}

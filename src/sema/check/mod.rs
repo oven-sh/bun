@@ -1088,7 +1088,6 @@ impl<'s> Program<'s> {
             in_check_identifier: Vec::new(),
             resolved_meanwhile: Vec::new(),
             resolved_meanwhile_of_class: [0; 256],
-            resolved_meanwhile_next_of_class: Vec::new(),
             tainted_from: None,
             signatures_resolved_within: Vec::new(),
             restrictive_instantiations: Default::default(),
@@ -2110,11 +2109,10 @@ pub struct Checker<'p, 's> {
     in_check_identifier: Vec<(FileId, crate::hir::PatId)>,
     /// `resolvedSignature = result`, while `resolveCall` reports the errors of a call that no
     /// candidate accepts.
-    resolved_meanwhile: Vec<(FileId, ExprId, call::ResolvedCall)>,
-    /// For each class of calls, the position of its innermost entry of `resolved_meanwhile`, plus one, and for each
-    /// entry what that was when it was pushed. As `in_progress` and `QueryFrame::next_of_class`.
+    resolved_meanwhile: Vec<call::ResolvedMeanwhile>,
+    /// For each class of calls, the position of its innermost entry of `resolved_meanwhile`, plus one. As `in_progress`
+    /// and `QueryFrame::next_of_class`.
     resolved_meanwhile_of_class: [u32; 256],
-    resolved_meanwhile_next_of_class: Vec<u32>,
     /// Every frame from the first number up that was pushed by the time `work` was the second number is tainted and
     /// drops what it reported.
     tainted_from: Option<(usize, u64)>,

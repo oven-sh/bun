@@ -56,6 +56,12 @@ const rows: [sabotage: string, flags: string[], program: string, named: string][
     "LoadMayMove",
   ],
   [
+    "SlotsOfSitesStayAsTheyAre",
+    [movedLoads, "--aot-limit=MaxWarmCodeValues:1"],
+    "a-function-that-a-loop-calls-hands-back-a-declared-function-that-nobody-has-asked-for-yet-1.ts",
+    "LoadMayMove",
+  ],
+  [
     "VectorTurnsMeetNoOtherAccess",
     [movedLoads],
     "elements-are-copied-one-by-one-between-views-that-lie-over-each-other.ts",

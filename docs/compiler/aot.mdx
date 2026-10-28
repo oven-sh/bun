@@ -96,10 +96,9 @@ curl localhost:3000/todos/1
 
 ### The typed percentage
 
-After the `compile` line, the build prints how much of your program is typed. These lines are from a larger program.
+Untyped code works, but runs slower. `bun compile --explain` prints how much of your program is typed, in the last lines of its report. These lines are from a larger program.
 
 ```txt
-Untyped code works, but runs slower. Run with --explain to see what to fix.
 Dependencies: 3.1% of property accesses are one load: 210 free, 1,320 tested, 5,244 by name (6,774)
 92.4% of property accesses are one load: 1,204 free, 61 tested, 38 by name (1,303)
 ```
@@ -117,7 +116,7 @@ Code in `node_modules` is counted separately, on its own `Dependencies:` line.
 
 The todo server only has a handful of property accesses, and most of them are of the last kind, so its percentage is low. That doesn't mean much for a program this small. A lookup by name only matters in hot code. There, read the property once and keep the value in a variable.
 
-Under 95%, Bun also prints the hint about `--explain`. `bun compile --explain` lists what's lowering the number, worst first, with a fix for each. [Get more of your program typed](/compiler/explain) explains exactly what is counted and how to work through the list.
+The rest of the report lists what's lowering the number, worst first, with a fix for each. [Get more of your program typed](/compiler/explain) explains exactly what is counted and how to work through the list.
 
 ### Type errors stop the build
 

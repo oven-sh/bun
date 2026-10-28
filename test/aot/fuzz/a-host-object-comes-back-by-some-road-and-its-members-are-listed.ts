@@ -32,10 +32,10 @@ const roads: readonly (Named & { declares?: string })[] = [
   },
   {
     name: "a field of an instance",
-    declares: "class Box { constructor(x) { this.held = x; } }",
-    text: "new Box(H).held",
+    declares: "class Holder { constructor(x) { this.held = x; } }",
+    text: "new Holder(H).held",
   },
-  { name: "a private field", declares: "class Box { #held; constructor(x) { this.#held = x; } get() { return this.#held; } }", text: "new Box(H).get()" }, // prettier-ignore
+  { name: "a private field", declares: "class Holder { #held; constructor(x) { this.#held = x; } get() { return this.#held; } }", text: "new Holder(H).get()" }, // prettier-ignore
   { name: "a getter", text: "({ get held() { return H; } }).held" },
   { name: "a destructured field", declares: "const { held } = { held: H };", text: "held" },
   { name: "a default of a parameter", declares: "function given(x = H) { return x; }", text: "given()" },

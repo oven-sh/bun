@@ -15,10 +15,6 @@ const usesImage = (stdout: string) =>
     },
   }) satisfies BundlerTestInput["run"];
 
-// A build whose program reads or writes properties of its own objects ends with the share of them that is one load.
-const withoutTypedSummary = (stderr: string) =>
-  stderr.replace(/^(?:[\d.]+% of property accesses are one load: .*|Untyped code works, but runs slower\. .*)\n/gm, "");
-
 describe("bundler", () => {
   for (const backend of ["cli", "api"] as const) {
     const itBundled = (id: string, opts: BundlerTestInput) =>
@@ -2153,7 +2149,7 @@ test.each([["without a JIT", { BUN_JSC_useJIT: "0" }, ["--aot"]]])(
         stdout: "ignore",
         stderr: "pipe",
       });
-      expect([withoutTypedSummary(await build.stderr.text()), await build.exited]).toEqual(["", 0]);
+      expect([await build.stderr.text(), await build.exited]).toEqual(["", 0]);
       const { stdout, stderr, exitCode } = await runCommand([join(String(dir), outfile)], undefined, {
         ...bunEnv,
         BUN_AOT_VERBOSE: "1",
@@ -2191,7 +2187,7 @@ test("file imports evaluate to the paths of the embedded files", async () => {
     [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
     String(dir),
   );
-  expect({ buildStderr: withoutTypedSummary(buildStderr), buildExitCode }).toEqual({
+  expect({ buildStderr, buildExitCode }).toEqual({
     buildStderr: "",
     buildExitCode: 0,
   });
@@ -2225,7 +2221,7 @@ test("builds are reproducible", async () => {
         stdout: "ignore",
         stderr: "pipe",
       });
-      expect([withoutTypedSummary(await build.stderr.text()), await build.exited]).toEqual(["", 0]);
+      expect([await build.stderr.text(), await build.exited]).toEqual(["", 0]);
       return Bun.SHA256.hash(await Bun.file(outfile).bytes(), "hex");
     }),
   );
@@ -2283,10 +2279,7 @@ test("run-time RegExps are never compiled, however hot: they run on a flat progr
     stderr: "pipe",
   });
   // The build says of the one place that makes them that its pattern is not known.
-  expect([withoutTypedSummary(await build.stderr.text()), await build.exited]).toEqual([
-    expect.stringContaining("warn: TS100058: "),
-    0,
-  ]);
+  expect([await build.stderr.text(), await build.exited]).toEqual([expect.stringContaining("warn: TS100058: "), 0]);
   const { stdout, stderr, exitCode } = await runCommand([outfile], undefined, {
     ...bunEnv,
     BUN_JSC_dumpCompiledRegExpPatterns: "1",
@@ -2329,7 +2322,7 @@ test.skipIf(isASAN)("crash reports symbolicate compiled frames", async () => {
     stdout: "ignore",
     stderr: "pipe",
   });
-  expect([withoutTypedSummary(await build.stderr.text()), await build.exited]).toEqual(["", 0]);
+  expect([await build.stderr.text(), await build.exited]).toEqual(["", 0]);
   await using run = Bun.spawn({
     cmd: [outfile],
     env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
@@ -2381,7 +2374,7 @@ test("--cpu-prof attributes native time to the calling function", async () => {
     stdout: "ignore",
     stderr: "pipe",
   });
-  expect([withoutTypedSummary(await build.stderr.text()), await build.exited]).toEqual(["", 0]);
+  expect([await build.stderr.text(), await build.exited]).toEqual(["", 0]);
   const { stdout, stderr, exitCode } = await runCommand([outfile], undefined, {
     ...bunEnv,
     BUN_OPTIONS: `--cpu-prof --cpu-prof-dir=${dir} --cpu-prof-name=entry.cpuprofile`,

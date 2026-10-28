@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawned, unsupported } from "../aot/run-programs";
 import {
+  canTrim,
   featureNamed,
   featureOf,
   featuresThatKeep,
@@ -77,7 +78,7 @@ if (isASAN)
     "SKIPPED: compile-trim-capabilities.test.ts: a Bun built with AddressSanitizer can't trim, and calls the sanitizer's own dlopen",
   );
 
-describe.skipIf(isWindows || isASAN)("an executable without what starts programs", () => {
+describe.skipIf(isWindows || isASAN || !canTrim)("an executable without what starts programs", () => {
   test("holds no place that calls a function, or makes a system call, that starts one", async () => {
     using dir = tempDir("compile-trim-capabilities", { "hello.ts": `console.log("hello world");` });
     const folder = String(dir);
@@ -90,7 +91,6 @@ describe.skipIf(isWindows || isASAN)("an executable without what starts programs
     if (isLinux) expect(numbersOf(placesThatMakeSystemCalls(whole.file, startsAProgram.systemCalls))).toContain(435);
 
     const cut = await build(folder, "cut", startsAProgram.features);
-    if (cut.stderr.includes("this build of Bun doesn't support --trim")) return;
     expect(cut).toMatchObject({ exitCode: 0 });
     expect(placesThatCall(cut.file, startsAProgram.functions)).toEqual([]);
     expect(placesThatMakeSystemCalls(cut.file, startsAProgram.systemCalls)).toEqual([]);
@@ -106,15 +106,10 @@ describe.skipIf(isWindows || isASAN)("an executable without what starts programs
     async () => {
       using dir = tempDirForAotBuilds("compile-trim-capabilities", { "hello.ts": `console.log("hello world");` });
       const folder = String(dir);
-      try {
-        await Bun.build({
-          entrypoints: [join(folder, "hello.ts")],
-          compile: { outfile: join(folder, "named"), aot: true, trim: true },
-        });
-      } catch (error) {
-        expect((error as AggregateError).errors[0].message).toContain("this build of Bun doesn't support --trim");
-        return;
-      }
+      await Bun.build({
+        entrypoints: [join(folder, "hello.ts")],
+        compile: { outfile: join(folder, "named"), aot: true, trim: true },
+      });
       const file = readFileSync(join(folder, "named"));
       expect(
         namesOf(placesThatCall(file, startsAProgram.functions)).filter(name => !sendsACrashReport.includes(name)),
@@ -129,7 +124,7 @@ describe.skipIf(isWindows || isASAN)("an executable without what starts programs
   );
 });
 
-describe.skipIf(isWindows || isASAN)("an executable without what loads native code", () => {
+describe.skipIf(isWindows || isASAN || !canTrim)("an executable without what loads native code", () => {
   test("holds no place that calls dlopen", async () => {
     using dir = tempDir("compile-trim-capabilities", { "hello.ts": `console.log("hello world");` });
     const folder = String(dir);
@@ -139,7 +134,6 @@ describe.skipIf(isWindows || isASAN)("an executable without what loads native co
     expect(namesOf(placesThatCall(whole.file, loadsNativeCode.functions))).toEqual(["dlopen"]);
 
     const cut = await build(folder, "cut", loadsNativeCode.features);
-    if (cut.stderr.includes("this build of Bun doesn't support --trim")) return;
     expect(cut).toMatchObject({ exitCode: 0 });
     expect(
       placesThatCall(cut.file, loadsNativeCode.functions).map(place => ({

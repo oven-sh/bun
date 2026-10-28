@@ -64,8 +64,8 @@
     "untyped": 249
   },
   "everyday-arrays/filter-boolean": {
-    "typed": 65,
-    "untyped": 66
+    "typed": 60,
+    "untyped": 60
   },
   "everyday-arrays/filter-map-reduce": {
     "typed": 222,
@@ -364,8 +364,8 @@
     "untyped": 7
   },
   "everyday-classes/symbol-iterator-on-a-class": {
-    "typed": 69,
-    "untyped": 73
+    "typed": 51.8,
+    "untyped": 57.8
   },
   "everyday-classes/virtual-call-of-six-classes": {
     "typed": 34.8,
@@ -752,12 +752,8 @@
     "untyped": 7
   },
   "everyday-downleveled/derived.es5-extends": {
-    "typed": 7.1,
-    "untyped": 7.1
-  },
-  "everyday-downleveled/derived.object-create-prototype": {
-    "typed": 7.1,
-    "untyped": 7.1
+    "typed": 35.1,
+    "untyped": 33.1
   },
   "everyday-downleveled/field.define-property": {
     "typed": 7,
@@ -808,12 +804,12 @@
     "untyped": 24
   },
   "everyday-downleveled/three-derived.inherits-helper-object-create": {
-    "typed": 15,
-    "untyped": 15
+    "typed": 142,
+    "untyped": 128.5
   },
   "everyday-downleveled/three-derived.object-create": {
-    "typed": 15,
-    "untyped": 15
+    "typed": 121.1,
+    "untyped": 114.5
   },
   "everyday-downleveled/three-derived.set-prototype-of": {
     "typed": 13,
@@ -827,33 +823,13 @@
     "typed": 125.4,
     "untyped": 116.9
   },
-  "everyday-downleveled/two-classes.prototype-literal": {
-    "typed": 10,
-    "untyped": 10
-  },
-  "everyday-downleveled/variant.direct-create-with-descriptor": {
-    "typed": 7.1,
-    "untyped": 7.1
-  },
   "everyday-downleveled/variant.direct-plain-create-two-levels": {
-    "typed": 10,
-    "untyped": 10
-  },
-  "everyday-downleveled/variant.helper-create-with-descriptor-one-class": {
-    "typed": 7.1,
-    "untyped": 7.1
-  },
-  "everyday-downleveled/variant.helper-create-with-descriptor-two-classes": {
-    "typed": 10,
-    "untyped": 10
-  },
-  "everyday-downleveled/variant.helper-plain-create-two-classes": {
-    "typed": 10,
-    "untyped": 10
+    "typed": 75.8,
+    "untyped": 73.2
   },
   "everyday-downleveled/variant.helper-plain-create-two-levels": {
-    "typed": 10,
-    "untyped": 10
+    "typed": 76,
+    "untyped": 74.1
   },
   "everyday-emitters/a-class-below-emits-to-itself": {
     "typed": 177,
@@ -1120,8 +1096,8 @@
     "untyped": 105
   },
   "everyday-iteration-and-async/generator-range": {
-    "typed": 101,
-    "untyped": 105
+    "typed": 52,
+    "untyped": 58
   },
   "everyday-iteration-and-async/generator-stepped-by-hand": {
     "typed": 78,
@@ -1228,12 +1204,12 @@
     "untyped": 7711
   },
   "everyday-loops-over-lists-and-typed-arrays/buffer-sum-of-a-thousand": {
-    "typed": 2432,
-    "untyped": 2433
+    "typed": 641,
+    "untyped": 644
   },
   "everyday-loops-over-lists-and-typed-arrays/buffer-values-summed": {
-    "typed": 2441,
-    "untyped": 2444
+    "typed": 643,
+    "untyped": 648
   },
   "everyday-loops-over-lists-and-typed-arrays/data-view-sum-of-floats": {
     "typed": 874,
@@ -1280,8 +1256,8 @@
     "untyped": 519
   },
   "everyday-loops-over-lists-and-typed-arrays/int32-array-sum-of-a-thousand": {
-    "typed": 2434,
-    "untyped": 2433
+    "typed": 1769,
+    "untyped": 1773
   },
   "everyday-loops-over-lists-and-typed-arrays/list-of-fractions-sum-of-a-thousand": {
     "typed": 1406,

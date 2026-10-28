@@ -6,16 +6,15 @@ description: "What the typed percentage counts, how to read bun compile --explai
 
 <Warning>Ahead-of-time compilation is experimental.</Warning>
 
-[`bun compile`](/compiler/aot) ends with the percentage of your program's property accesses that are typed.
+The report of [`bun compile --explain`](/compiler/aot) ends with the percentage of your program's property accesses that are typed. A build without `--explain` doesn't print it.
 
 ```txt
-Untyped code works, but runs slower. Run with --explain to see what to fix.
 75% of property accesses are one load: 6 free, 1 tested, 1 by name (8)
 ```
 
 A typed access is one load or one store at a fixed offset. An untyped access runs a test of its own first, or looks the property up by name at run time. The higher the number, the faster the executable. How much faster depends on the program.
 
-`bun compile --explain` lists what's lowering the number, worst first. Each entry has the line where the missing type begins, a fix, and what hangs on that line: property accesses, indirect calls and untyped operators, with an estimate of how much of the run time they take.
+Above that line, the report lists what's lowering the number, worst first. Each entry has the line where the missing type begins, a fix, and what hangs on that line: property accesses, indirect calls and untyped operators, with an estimate of how much of the run time they take.
 
 ## What is counted
 
@@ -77,7 +76,7 @@ Dependencies: 3.1% of property accesses are one load: 210 free, 1,320 tested, 5,
 92.4% of property accesses are one load: 1,204 free, 61 tested, 38 by name (1,303)
 ```
 
-Bun rounds down, so 100% means every access. `--explain` then has nothing to report about your own code. Bun prints the hint about `--explain` when the number for your own code is under 95%.
+Bun rounds down, so 100% means every access. `--explain` then has nothing to report about your own code.
 
 ## Read an entry
 
@@ -214,14 +213,14 @@ console.log(total);
 ```
 
 ```bash terminal icon="terminal"
-bun compile ./main.ts
+bun compile ./main.ts --explain
 ```
 
 ```txt
 33.3% of property accesses are one load: 1 free, 0 tested, 2 by name (3)
 ```
 
-Every `Item` in the list is now an object literal that the compiler sees, so `item.price` in the loop is free. The two accesses that are left are in `readItem`. It reads `sku` and `price` from the parsed object by name, once for each object that comes in.
+That's the last line of the report. Every `Item` in the list is now an object literal that the compiler sees, so `item.price` in the loop is free. The two accesses that are left are in `readItem`. It reads `sku` and `price` from the parsed object by name, once for each object that comes in.
 
 Fix the first entry, then run the command again. A fix can uncover another cause behind it: if two things keep `Item` untyped, the report shows one of them at a time.
 
@@ -229,7 +228,7 @@ Fix the first entry, then run the command again. A fix can uncover another cause
 
 ## After the entries
 
-The report ends with the numbers behind the percentage. These are from a larger program.
+After the entries come the numbers behind the percentage, then the percentage itself. These are from a larger program.
 
 ```txt
 note: All property accesses, including dependencies:
@@ -246,12 +245,15 @@ Files with the most untyped accesses:
   and 3 more
 Compiler limits hit:
   MaxLayoutsInType = 1,024, hit 2 times (limits object shapes in one inferred type)
+Dependencies: 3.1% of property accesses are one load: 210 free, 1,320 tested, 5,244 by name (6,774)
+92.4% of property accesses are one load: 1,204 free, 61 tested, 38 by name (1,303)
 ```
 
 - **The first three numbers** are the [three ways](#what-is-counted) to compile an access, for your code and your dependencies together.
 - **`Calls`** counts calls of functions and methods, except the built-in functions that Bun resolves at build time. A call is direct if the compiler knows the callee. An indirect call finds it at run time.
 - **`Files with the most untyped accesses`** lists up to five of your own files.
 - **`Compiler limits hit`** lists the limits this build ran into, and how often. Past a limit the compiler assumes less, so some accesses may be untyped because of it. See [limit-reached](#limit-reached).
+- **The last two lines** are the percentage: one line for your dependencies, if they have property accesses, and one for your own code.
 
 ## JSON
 

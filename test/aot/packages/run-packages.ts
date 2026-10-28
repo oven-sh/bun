@@ -29,7 +29,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes } from "harness";
 import { dirname, join } from "path";
-import { built, inShareOfList, slot, spawned, takesWhatIsFixed, told, unsupported } from "../run-programs";
+import { built, inShareOfList, referenceEnv, slot, spawned, takesWhatIsFixed, told, unsupported } from "../run-programs";
 
 export interface Case {
   name: string;
@@ -116,7 +116,7 @@ export function packages(topic: string, part = 1, parts = 1) {
     const executable = join(folder, `program-${executables++}${isWindows ? ".exe" : ""}`);
     const answer = answers[file];
     const plain = async () => {
-      const ran = await spawned([bunExe(), "run", file], folder, bunEnv);
+      const ran = await spawned([bunExe(), "run", file], folder, referenceEnv);
       // Two runs that die of the same accident would compare equal.
       if (!each.fails) expect({ stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
       return result(ran);

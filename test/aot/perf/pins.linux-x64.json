@@ -571,8 +571,8 @@
     "jit": 1174.1
   },
   "text/char-code-at-loop-in-function": {
-    "typed": 89,
-    "untyped": 89,
+    "typed": 66,
+    "untyped": 67,
     "jit": 130.2
   },
   "text/index-loop-in-function": {
@@ -1454,8 +1454,8 @@
     "jit": 268.4
   },
   "closure/getters-of-a-table-that-unknown-code-has-seen": {
-    "typed": 455.9,
-    "untyped": 435,
+    "typed": 395,
+    "untyped": 393.9,
     "jit": 396,
     "best": {
       "typed": 363,

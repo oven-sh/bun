@@ -1,0 +1,3 @@
+{
+  "skipInShell": "it uses Bun.inspect and Bun.deepEquals, which the jsc shell does not have"
+}

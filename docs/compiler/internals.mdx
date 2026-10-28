@@ -473,7 +473,7 @@ bun compile --aot-log-type-mismatches ./dot-declared.ts && ./dot-declared '{"vec
 [aot] type-mismatch d410bc586c26 variable dot-declared.ts:11:31 (module): expected { vec }, got untyped object; continued; count 1
 ```
 
-So the parser checks nothing for you, and the type stays a prediction. The reads behind it are loads from slots, behind tests that pass. The build's summary counts them as `tested`, not as `free`.
+So the parser checks nothing for you, and the type stays a prediction. The reads behind it are loads from slots, behind tests that pass. `--explain` counts them as `tested`, not as `free`.
 
 `JSON.parse(text) as { vec: Vec }` does the same as the annotation, and so does passing the result straight to a typed parameter. The table of built-ins marks the calls that can take a parser this way with `typedResultForm`: `JSON.parse`, the `json()` of a `Request`, a `Response` or a `Blob`, and the rows of a `Bun.sql` query.
 
@@ -1047,6 +1047,7 @@ A wrong effect is a miscompile, so effects aren't taken on faith.
 - An operation that `replaces` others may do no more than they do. `aot/tests/ir/effects/check-replacement*.ir` has the cases.
 - `checkDeclaredEffects()` and `checkEffectSummaries()` compare what the rules compute with the declared bounds in a validating build.
 - With `--aot-validate`, a call of native code that's declared not to collect, not to throw, not to write a heap or not to keep an operand is checked at run time. These are some of the failures it can report, from `aot/ir/schema/runtime-records.def`: `NativeCallChangedOperand`, `NativeCallWroteHeap`, `NativeCallRanCode`, `NativeCallThrew`, `NativeCallCollected`, `NativeCallKeptOperand`, `BarrierWasNeeded`.
+- A call that's said not to throw, not to be terminated and not to run other code has no site, and a handler is found by the site of the call that a throw leaves. With `--aot-validate`, the compiler puts a mark in the code after every call without a site, and a throw that leaves such a call is reported before it's unwound: `CallThrew`, with the function, the value and the operation or stub that was called.
 
 ## Built-ins
 
@@ -2059,7 +2060,7 @@ These flags have no entry in `--help`. They exist for working on the compiler.
 
 | Term                                  | Meaning                                                                                                                     |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Access, `free` / `tested` / `by name` | The three states of a property access in the build's summary: one load, a test and a load, a lookup                         |
+| Access, `free` / `tested` / `by name` | The three states of a property access in the counts of `--explain`: one load, a test and a load, a lookup                   |
 | Cage                                  | The 32 GB reservation that holds the cells of one VM, so that a reference fits in 32 bits                                   |
 | Check                                 | An IR operation that asks for a value to have a type. Flow answers it, or it becomes a type test                            |
 | Closed world                          | The assumption that the image is all the code that will ever run in the process                                             |

@@ -80,8 +80,8 @@
     "untyped": 1963.9
   },
   "everyday-loops-over-lists-and-typed-arrays/buffer-sum-of-a-thousand": {
-    "typed": 2548,
-    "untyped": 2546
+    "typed": 639,
+    "untyped": 638
   },
   "everyday-benchmarks/typed-array-sum-of-a-thousand": {
     "typed": 2540,
@@ -100,8 +100,8 @@
     "untyped": 3525
   },
   "everyday-loops-over-lists-and-typed-arrays/int32-array-sum-of-a-thousand": {
-    "typed": 2677,
-    "untyped": 2671
+    "typed": 1885,
+    "untyped": 1884
   },
   "everyday-loops-over-lists-and-typed-arrays/float64-array-walked-downward": {
     "typed": 2669.9,
@@ -120,7 +120,7 @@
     "untyped": 3047
   },
   "everyday-loops-over-lists-and-typed-arrays/buffer-values-summed": {
-    "typed": 2559,
-    "untyped": 2561.1
+    "typed": 638,
+    "untyped": 649
   }
 }

@@ -1,6 +1,6 @@
-// The line that ends a build says how many of the program's property accesses are one load or store. They are counted in the
-// optimized program, so no count is written down here: a test says whether its program has typed and untyped accesses,
-// and computes the line from the numbers of `--explain=json`.
+// The line that ends the report of `--explain` says how many of the program's property accesses are one load or store. A build
+// without that report prints no such line. They are counted in the optimized program, so no count is written down here: a test
+// says whether its program has typed and untyped accesses, and computes the line from the numbers of `--explain=json`.
 // The read of `console.log` is one of the typed accesses, so only a program that prints nothing has none. An object that never
 // leaves its function is not allocated. So a program that is to be typed keeps its objects in an array.
 import { expect } from "bun:test";
@@ -224,9 +224,9 @@ export default greeting;
   },
 };
 
-const hint = "Untyped code works, but runs slower. Run with --explain to see what to fix.";
 const nothingToExplain = "note: Every property access is typed. Nothing to fix.";
-const summaryLine = /^([\d.]+% of property accesses are one load: |Untyped code works, but runs slower\. Run)/;
+const summaryLine =
+  /^((Dependencies: )?[\d.]+% of property accesses are one load: |Untyped code works, but runs slower\. Run)/;
 const entryLine = /^note: \d+\. [a-z-]+: /;
 const placeInProgram = /^ +at (.*[\\/])?(main\.ts|stock\.ts|helper\.js):\d+:\d+$/;
 const buildTimeout = 300_000;
@@ -242,18 +242,19 @@ async function check(files: Files, ...flags: string[]) {
 }
 
 async function numbersOf(files: Files): Promise<ExplainNumbers> {
-  return parseExplainLines((await check(files, "--explain=json")).stdout).numbers;
+  const { stdout, summary } = await check(files, "--explain=json");
+  expect(summary).toEqual([]);
+  return parseExplainLines(stdout).numbers;
 }
 
 const count = (number: number) => number.toLocaleString("en-US");
 
-function summaryOf({ accesses }: ExplainNumbers, hasTextReport: boolean) {
+function summaryOf({ accesses }: ExplainNumbers) {
   const [typed, total] = [accesses.free, countAccesses(accesses)];
   if (total === 0) return [];
   const tenths = Math.max(Math.floor((typed * 1000) / total), typed > 0 ? 1 : 0);
   const columns = `${count(accesses.free)} free, ${count(accesses.tested)} tested, ${count(accesses.byName)} by name`;
-  const line = `${tenths / 10}% of property accesses are one load: ${columns} (${count(total)})`;
-  return tenths < 950 && !hasTextReport ? [hint, line] : [line];
+  return [`${tenths / 10}% of property accesses are one load: ${columns} (${count(total)})`];
 }
 
 describe.concurrent("typed percentage", () => {
@@ -266,10 +267,10 @@ describe.concurrent("typed percentage", () => {
         const typed = numbers.accesses.free;
         expect({ hasTyped: typed > 0, hasUntyped: typed < countAccesses(numbers.accesses) }).toMatchObject(expected);
         expect(countAccesses(numbers.dependencyAccesses)).toBe(0);
-        expect((await check(files)).summary).toEqual(summaryOf(numbers, false));
+        expect((await check(files)).summary).toEqual([]);
 
         const { lines, summary } = await check(files, "--explain");
-        expect(summary).toEqual(summaryOf(numbers, true));
+        expect(summary).toEqual(summaryOf(numbers));
         expect(lines.includes(nothingToExplain)).toBe(!expected.hasUntyped);
         expect({
           hasEntry: lines.some(line => entryLine.test(line)),

@@ -72,7 +72,12 @@ describe.skipIf(!systemCC || !!unsupported)("compile/aot/napi-addon", () => {
           ),
         );
         const compiled = await spawned([executable], programs, env);
-        const plain = await spawned([bunExe(), "run", join(programs, name + ".ts")], programs, env);
+        // What an executable is refused, the run beside it leaves out.
+        const refused = compiled.stdout.split("\n").filter(line => line.startsWith("REFUSED "));
+        const plain = await spawned([bunExe(), "run", join(programs, name + ".ts")], programs, {
+          ...env,
+          REFUSED: refused.join("\n"),
+        });
         expect({ signal: plain.signal, exitCode: plain.exitCode, stderr: plain.stderr }).toEqual({
           signal: null,
           exitCode: 0,

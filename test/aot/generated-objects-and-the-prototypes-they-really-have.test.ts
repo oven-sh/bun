@@ -1,23 +1,33 @@
 import {
   callees,
   calls,
+  departures,
+  handedLists,
   lastSteps,
   late,
   lateMembers,
+  listIsHanded,
   lists,
+  listTakers,
+  livesOfParent,
   lookups,
   madeFor,
   makers,
+  memberLeaves,
+  membersThatLeave,
+  momentsOfDeparture,
   newPrototypes,
   newTargets,
   oneListTwice,
   orders,
+  otherQuestions,
   parents,
   places,
   positions,
   questions,
   replaced,
   replacements,
+  takenBy,
 } from "./generated/objects-and-the-prototypes-they-really-have";
 import { generated, type Generated } from "./generated/run-generated";
 
@@ -70,6 +80,31 @@ for (const callee of Object.keys(callees))
             ["apply", "Reflect.apply"].includes(call) &&
             ["as an argument", "in a try", "twice"].includes(position),
           () => oneListTwice(callee, list, call, position),
+        );
+
+for (const member of Object.keys(membersThatLeave))
+  for (const departure of Object.keys(departures))
+    for (const moment of Object.keys(momentsOfDeparture))
+      for (const otherQuestion of Object.keys(otherQuestions))
+        for (const life of Object.keys(livesOfParent))
+          add(
+            `${member} leaves the prototype of a function that ${life} by ${departure}, ${moment}; super beside ${otherQuestion}`,
+            life === "makes no object" &&
+              departure !== "another member in its place" &&
+              otherQuestion.endsWith("Reflect.get"),
+            () => memberLeaves(member, departure, moment, otherQuestion, life),
+          );
+
+for (const taker of Object.keys(listTakers))
+  for (const callee of Object.keys(takenBy))
+    for (const list of Object.keys(handedLists))
+      for (const usesResult of [false, true])
+        add(
+          `${taker} of ${callee} is handed ${list}${usesResult ? ", and the result is used" : ""}`,
+          taker.startsWith("Reflect.construct") &&
+            callee !== "a built-in" &&
+            !/number|string|list|length|array/.test(list),
+          () => listIsHanded(taker, callee, list, usesResult),
         );
 
 generated("objects and the prototypes they really have", programs);

@@ -270,7 +270,7 @@ const javascriptOfPackage = (inputs: Iterable<string>) =>
 const executable = (folder: string, name: string) => join(folder, process.platform === "win32" ? name + ".exe" : name);
 
 async function compileAheadOfTime(app: string, entry: string) {
-  const flags = ["--compile", "--aot", entry, "--outfile", "compiled", "--metafile=meta.json"];
+  const flags = ["--compile", "--aot", "--explain", entry, "--outfile", "compiled", "--metafile=meta.json"];
   const built = await slot(() => bun(app, "build", ...flags));
   expect({ said: built.stderr.match(/^(?:warn|error): .*$/gm), exitCode: built.exitCode }).toEqual({
     said: null,

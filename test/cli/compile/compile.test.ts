@@ -66,26 +66,33 @@ describe.concurrent("bun compile", () => {
   });
 
   test.skipIf(!!unsupported)(
-    "says how much is typed, and --explain says why the rest is not",
+    "prints three lines, and --explain says how much is typed and why the rest is not",
     async () => {
       using dir = tempDir("compile-explain", {
         "app.ts": `function first(text: string): number {\n  return JSON.parse(text).head;\n}\nconsole.log(first('{"head":1}'));`,
       });
       const said = ({ stdout, stderr }: { stdout: string; stderr: string }) => (stdout + stderr).split("\n");
-      const hint = "Untyped code works, but runs slower. Run with --explain to see what to fix.";
       const built = await bun(String(dir), "compile", "app.ts");
-      const summary = said(built).filter(line => /^[\d.]+% of property accesses|^Untyped code works/.test(line));
+      expect({ ...built, stdout: built.stdout.split("\n") }).toEqual({
+        stdout: [
+          expect.stringMatching(/^ *\[[\d.]+m?s\]  bundle  1 modules$/),
+          expect.stringMatching(/^ *\[[\d.]+m?s\] compile  \S*app(\.exe)?$/),
+          expect.stringMatching(/^ +build id  [0-9a-f]{32}$/),
+          "",
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+      const explained = await bun(String(dir), "compile", "app.ts", "--explain");
+      const summary = said(explained).filter(line => /of property accesses|^Untyped code works/.test(line));
       expect(summary).toEqual([
-        hint,
         expect.stringMatching(
           /^[\d.]+% of property accesses are one load: \d+ free, \d+ tested, [1-9]\d* by name \(\d+\)$/,
         ),
       ]);
-      const accesses = Number(/(\d+) by name/.exec(summary[1]!)![1]);
-      const explained = await bun(String(dir), "compile", "app.ts", "--explain");
+      const accesses = Number(/(\d+) by name/.exec(summary[0]!)![1]);
       expect(said(explained)).toContainEqual(expect.stringMatching(/^note: 1\. [a-z-]+: /));
       expect(said(explained)).toContain(`note: ${accesses} of ${accesses} untyped access${accesses === 1 ? "" : "es"}`);
-      expect(said(explained)).not.toContain(hint);
       expect(
         said(await bun(String(dir), "build", "--compile", "--aot", "app.ts", "--explain")).filter(
           line => !/\[\d/.test(line),

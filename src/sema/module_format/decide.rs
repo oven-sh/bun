@@ -5,7 +5,7 @@ use super::{
     statement_esm_syntax,
 };
 use crate::bind::{Binding, Bound, CommonJsVariable, Parent};
-use crate::file_analysis::has_live_top_level_await;
+use crate::file_analysis::has_written_top_level_await;
 use crate::fold::{Decisions, FoldError, FoldErrorKind};
 use crate::hir::{
     ExprId, File, FnBody, NodeData, StmtId, StmtKind, find_transpiled_mark, is_marked_as_commonjs,
@@ -41,8 +41,7 @@ pub(crate) fn decide_module_format(
         };
     }
     let is_export = |stmt| statement_esm_syntax(hir, stmt) == EsmSyntax::ExportOrTopLevelAwait;
-    let has_top_level_await = has_live_top_level_await(hir, &Decisions::default());
-    if has_top_level_await || hir.ids(hir.body).any(is_export) {
+    if has_written_top_level_await(hir) || hir.ids(hir.body).any(is_export) {
         return FormatDecision {
             format: ModuleFormat::Esm,
             error: None,

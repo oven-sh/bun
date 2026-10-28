@@ -422,7 +422,7 @@ impl PluginRequests {
 }
 
 // The compiler writes `C:/a/b.ts`. The bundler tells a plugin `C:\a\b.ts`, and a filter may be written for that.
-fn with_separators_of_host(path: &[u8], is_windows: bool) -> Cow<'_, [u8]> {
+pub(super) fn with_separators_of_host(path: &[u8], is_windows: bool) -> Cow<'_, [u8]> {
     if !is_windows || !strings::contains_char(path, b'/') {
         return Cow::Borrowed(path);
     }

@@ -6,6 +6,7 @@
 //   TEST_PART=aot/engine-tests-ir-of-bun bun test test/aot/parts.test.ts     those of ./engine-tests, which name entries of Bun's table
 //   TEST_PART=aot/engine-tests-native-3 bun test test/aot/parts.test.ts      one part of the native tests
 //   TEST_PART=aot/engine-tests-native bun test test/aot/parts.test.ts        all of them
+//   TEST_PART=aot/engine-tests-flow-under-other-schedules-2 bun test test/aot/parts.test.ts   flow's IR text tests under a quarter of the other orders of its rules
 import { expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { isArm64, isASAN, isMacOS, isWindows } from "harness";
@@ -106,6 +107,49 @@ export function runNativeTests(part: number, parts: number) {
     `the engine's native tests pass: part ${part} of ${parts}`,
     async () => {
       await expectEveryTestPassed(await run("native", `--part=${part}/${parts}`));
+    },
+    limit,
+  );
+}
+
+// What flow finds may not hang on the order in which its rules run. `testing=DelayFlowRules:<n>` is one of 256 other valid orders: about half of the rules that are due in a round
+// wait for a later one, and the number says which half. The numbers are fixed, so a red test is red again: `testaot run <file> --option=testing=DelayFlowRules:<n>`.
+const numberOfSchedules = 32;
+// These still answer otherwise under some of the orders. Each is owed a cure and goes out of the list with it. A test that is not listed and fails here has lost something: it is not added.
+const followTheOrderOfTheRules = [
+  "modules/children-of-a-module-object-are-what-the-module-requires.ir",
+  "modules/parent-and-children-where-the-run-time-answers-the-require.ir",
+  "modules/parent-of-a-module-object-is-a-module-that-requires-it.ir",
+  "modules/read-of-process-under-a-key-nobody-knows-answers-the-main-module-where-a-way-is-named.ir",
+  "placeholders/class-above-an-escaped-instance-is-found-under-constructor-of-the-unknown-object.ir",
+  "placeholders/realm-objects-stay-closed-without-unseen-code.ir",
+  "results/a-literal-gets-fields-for-what-a-spread-source-that-unknown-code-holds-is-born-with.ir",
+  "results/store-written-for-the-instances-lists-no-member-of-the-prototype-object.ir",
+];
+
+export function runFlowTestsUnderOtherSchedules(part: number, parts: number) {
+  (whyEngineTestsSkipped || comeInParts ? test.skip : test)(
+    `flow's IR text tests answer the same under other orders of its rules: part ${part} of ${parts}`,
+    async () => {
+      const failed: string[] = [];
+      for (let number = part - 1; number < numberOfSchedules; number += parts) {
+        const { lines } = await run(
+          "run",
+          join(engineTests!, "valueflow"),
+          `--option=testing=DelayFlowRules:${number}`,
+        );
+        expect({ number, lastLine: lines.at(-1) }).toEqual({
+          number,
+          lastLine: expect.stringMatching(/^[1-9][0-9]* passed, [0-9]+ failed, [0-9]+ todo$/),
+        });
+        const files = new Set(
+          lines.flatMap(line => line.match(/^FAIL (.+?\.ir):\d+: /)?.[1].replaceAll("\\", "/") ?? []),
+        );
+        for (const file of files)
+          if (!followTheOrderOfTheRules.some(listed => file.endsWith("/valueflow/" + listed)))
+            failed.push(`${file} under ${number}`);
+      }
+      expect(failed).toEqual([]);
     },
     limit,
   );

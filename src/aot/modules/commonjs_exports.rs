@@ -350,6 +350,7 @@ impl CommonJsExports {
             exports.look_at(module);
         }
         exports.add_stores_of_other_files(input, imports);
+        exports.look_at_modules_whose_getters_read_copies(tables);
         exports.look_at_modules_that_call_through_their_object();
         exports.look_at_modules_whose_object_importers_see(input, tables, imports);
         if let Some(application) = input.bind.application {
@@ -506,6 +507,22 @@ impl CommonJsExports {
             }
         }
         for module in looked_at {
+            self.look_at(module);
+        }
+    }
+
+    // An ES module that hands on a name of a CommonJS module holds what the name was at the link. A getter that reads it there stands for no variable unless the two cannot be told apart.
+    fn look_at_modules_whose_getters_read_copies(&mut self, tables: &ExportTables) {
+        let reads_copy = |(&(module, name), &target): (&(ModuleRef, Atom), &Target)| match target {
+            Target::Name(owner, owner_name) => {
+                tables.commonjs.is_read_off_es_module(module, name)
+                    && !self.is_import_bound_to_variable(owner, owner_name)
+            }
+            Target::Binding(_) | Target::Nothing => false,
+        };
+        let names = self.targets.iter().filter(|&entry| reads_copy(entry));
+        let modules: Vec<ModuleRef> = names.map(|(&(module, _), _)| module).collect();
+        for module in modules {
             self.look_at(module);
         }
     }

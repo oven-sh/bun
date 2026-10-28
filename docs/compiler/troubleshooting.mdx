@@ -215,7 +215,7 @@ Where `bun run` quotes your source in a message, as in `null is not an object (e
 
 Startup and memory improve for every server in [What to expect](/compiler/aot#what-to-expect). Requests per second go up for some and down for others. Look for these causes, in this order.
 
-**Most of the hot code is untyped code from npm.** The `Dependencies:` line at the end of a build has their share, and `bun compile --explain` lists the causes. The count of an entry that only affects dependencies ends with `in dependencies`.
+**Most of the hot code is untyped code from npm.** `bun compile --explain` lists the causes, and the `Dependencies:` line at the end of the report has their share. The count of an entry that only affects dependencies ends with `in dependencies`.
 
 ```txt
 Dependencies: 0% of property accesses are one load: 0 free, 0 tested, 2 by name (2)

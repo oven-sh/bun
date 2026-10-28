@@ -1490,7 +1490,9 @@ impl StandaloneModuleGraph {
         }
 
         let module_count = modules.count();
-        let started = compiled_program.as_mut().and_then(start_at_named_entry_point);
+        let started = compiled_program
+            .as_mut()
+            .and_then(start_at_named_entry_point);
         let entry_point_id = started.transpose()?.unwrap_or(offsets.entry_point_id);
         // `entry_point()` indexes `files`, which has one entry per name, not one per record.
         if entry_point_id as usize >= module_count {

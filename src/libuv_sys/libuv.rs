@@ -329,7 +329,8 @@ union active_reqs_u {
 #[repr(C)]
 pub struct Loop {
     pub data: *mut c_void,
-    pub active_handles: c_uint,
+    /// A `Cell` because Bun counts its own keep-alive refs here, through a `&Loop`.
+    pub active_handles: Cell<c_uint>,
     pub handle_queue: uv__queue,
     active_reqs: active_reqs_u,
     pub internal_fields: *mut c_void,
@@ -499,24 +500,29 @@ impl Loop {
     /// (avoid underflow during teardown when Bun's virtual keep-alive refs and
     /// libuv's own accounting momentarily disagree).
     #[inline]
-    pub fn sub_active(&mut self, value: u32) {
-        log!("subActive({}) - {}", value, self.active_handles);
-        self.active_handles = self.active_handles.saturating_sub(value);
+    pub fn sub_active(&self, value: u32) {
+        let active_handles = self.active_handles.get();
+        log!("subActive({}) - {}", value, active_handles);
+        self.active_handles
+            .set(active_handles.saturating_sub(value));
     }
     #[inline]
-    pub fn add_active(&mut self, value: u32) {
+    pub fn add_active(&self, value: u32) {
         log!("addActive({})", value);
-        self.active_handles = self.active_handles.saturating_add(value);
+        self.active_handles
+            .set(self.active_handles.get().saturating_add(value));
     }
     #[inline]
-    pub fn inc(&mut self) {
-        log!("inc - {}", self.active_handles.saturating_add(1));
-        self.active_handles = self.active_handles.saturating_add(1);
+    pub fn inc(&self) {
+        let active_handles = self.active_handles.get().saturating_add(1);
+        log!("inc - {}", active_handles);
+        self.active_handles.set(active_handles);
     }
     #[inline]
-    pub fn dec(&mut self) {
+    pub fn dec(&self) {
         log!("dec");
-        self.active_handles = self.active_handles.saturating_sub(1);
+        self.active_handles
+            .set(self.active_handles.get().saturating_sub(1));
     }
     #[inline]
     pub fn stop(&mut self) {

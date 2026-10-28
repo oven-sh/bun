@@ -820,11 +820,38 @@ impl<'a> Near<'a> {
                 return len + differ.trailing_zeros();
             }
             len += 16;
+            if len == 64 {
+                len = self.same_blocks(pos, other, other_pos, len);
+            }
         }
         while let Some(byte) = self.read8(pos + len)
             && other.read8(other_pos + len) == Some(byte)
         {
             len += 1;
+        }
+        len
+    }
+
+    /// `len`, which is how many bytes are known to be the same at `pos` and at `other_pos` in `other`, plus the blocks of
+    /// 64 bytes after them that are the same too. For the matches that are long.
+    #[inline(never)]
+    fn same_blocks(self, pos: u32, other: Near<'_>, other_pos: u32, mut len: u32) -> u32 {
+        while let Some(block) = self.window::<64>(pos + len)
+            && let Some(other_block) = other.window::<64>(other_pos + len)
+        {
+            // A vector.
+            let mut differ = [0u8; 16];
+            let (chunks, other_chunks) =
+                (block.as_chunks::<16>().0, other_block.as_chunks::<16>().0);
+            for (bytes, other_bytes) in chunks.iter().zip(other_chunks) {
+                for ((differ, byte), other_byte) in differ.iter_mut().zip(bytes).zip(other_bytes) {
+                    *differ |= byte ^ other_byte;
+                }
+            }
+            if differ != [0; 16] {
+                break;
+            }
+            len += 64;
         }
         len
     }
@@ -2398,3 +2425,34 @@ impl LdmState {
 }
 
 bun_pod::impl_zeroable!(Match, RawSeq, LdmEntry);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matches_are_counted_up_to_where_they_end() -> Result<()> {
+        const DISTANCE: u32 = 7;
+        let lengths: &[u32] = if cfg!(miri) {
+            &[15, 16, 63, 64, 65, 80, 127, 128, 129, 192, 193]
+        } else {
+            &Vec::from_iter(0..=400)
+        };
+        for &len in lengths {
+            for room in [0, 1, 16, 64, 200] {
+                let mut bytes: Vec<u8> = (0..DISTANCE + len + room)
+                    .map(|n| (n % DISTANCE) as u8)
+                    .collect();
+                if room != 0 {
+                    *bytes.at_mut((DISTANCE + len) as usize)? ^= 1;
+                }
+                assert_eq!(
+                    Near::new(&bytes)?.count(DISTANCE, 0),
+                    len,
+                    "{room} more bytes"
+                );
+            }
+        }
+        Ok(())
+    }
+}

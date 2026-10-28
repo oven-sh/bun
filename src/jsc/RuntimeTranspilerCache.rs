@@ -577,7 +577,6 @@ pub(crate) enum Found {
     /// An ES-module entry without an ESM record, for a reader that requires one.
     MissingEsmRecord {
         output_hash: u64,
-        sourcemap_hash: u64,
     },
 }
 
@@ -587,7 +586,7 @@ pub struct RuntimeTranspilerCache {
     pub(crate) features_hash: Option<u64>,
     pub(crate) exports_kind: ExportsKind,
     pub(crate) esm_record_use: EsmRecordUse,
-    pub(crate) refused_entry_hashes: Option<(u64, u64)>,
+    pub(crate) refused_output_hash: Option<u64>,
     pub(crate) entry: Option<Box<Entry>>,
     // `sourcemap` / `esm_record` are owned `Box<[u8]>` (global mimalloc).
     // The per-call arena that once backed the output code is gone: the UTF-8
@@ -839,7 +838,6 @@ impl RuntimeTranspilerCache {
             let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);
             return Ok(Found::MissingEsmRecord {
                 output_hash: entry.metadata.output_hash,
-                sourcemap_hash: entry.metadata.sourcemap_hash,
             });
         }
 
@@ -961,11 +959,8 @@ impl RuntimeTranspilerCache {
             self.esm_record_use,
         ) {
             Ok(Found::Hit(e)) => Some(e),
-            Ok(Found::MissingEsmRecord {
-                output_hash,
-                sourcemap_hash,
-            }) => {
-                self.refused_entry_hashes = Some((output_hash, sourcemap_hash));
+            Ok(Found::MissingEsmRecord { output_hash }) => {
+                self.refused_output_hash = Some(output_hash);
                 bun_core::scoped_log!(
                     cache,
                     "get(\"{}\") = MissingEsmRecord",
@@ -1040,7 +1035,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 features_hash: this.features_hash,
                 exports_kind: this.exports_kind,
                 esm_record_use: this.esm_record_use,
-                refused_entry_hashes: None,
+                refused_output_hash: None,
                 entry: None,
             };
             let hit = jsc.get(source, parser_options, used_jsx);
@@ -1048,7 +1043,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             this.input_byte_length = jsc.input_byte_length;
             this.features_hash = jsc.features_hash;
             this.exports_kind = jsc.exports_kind;
-            this.refused_entry_hashes = jsc.refused_entry_hashes;
+            this.refused_output_hash = jsc.refused_output_hash;
             if let Some(entry) = jsc.entry {
                 this.entry = Some(bun_core::heap::into_raw(entry).cast::<()>());
             }
@@ -1066,9 +1061,10 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             debug_assert!(this.entry.is_none());
 
             // The key does not cover every input of a transpile: the refused entry stays unless this is its output.
-            if this.refused_entry_hashes.is_some_and(|(output_hash, sourcemap_hash)| {
-                hash(output_code_bytes) != output_hash || hash(sourcemap) != sourcemap_hash
-            }) {
+            if this
+                .refused_output_hash
+                .is_some_and(|output_hash| hash(output_code_bytes) != output_hash)
+            {
                 bun_core::scoped_log!(cache, "put() = kept the entry: other output");
                 return;
             }

@@ -49,8 +49,8 @@ pub struct RuntimeTranspilerCache {
     pub entry: Option<*mut ()>,
     /// Set by the caller before the parse.
     pub esm_record_use: EsmRecordUse,
-    /// Output and sourcemap hash of the entry that `get()` refused for its missing ESM record.
-    pub refused_entry_hashes: Option<(u64, u64)>,
+    /// Output hash of the entry that `get()` refused for its missing ESM record.
+    pub refused_output_hash: Option<u64>,
 
     /// Dispatch slot — `bun_jsc` sets `Some(TranspilerCacheImplKind::Jsc)` at
     /// init. `None` ⇒ caching disabled (e.g. wasm builds, `--no-transpiler-cache`).
@@ -67,7 +67,7 @@ impl Default for RuntimeTranspilerCache {
             output_code: None,
             entry: None,
             esm_record_use: EsmRecordUse::Unused,
-            refused_entry_hashes: None,
+            refused_output_hash: None,
             r#impl: None,
         }
     }

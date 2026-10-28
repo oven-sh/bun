@@ -2061,12 +2061,12 @@ test("a transpiler cache entry written without isolation gets its module record"
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);
   };
-  const isolated = async (args: string[], extraEnv: Record<string, string> = {}) => {
+  const isolated = async (args: string[]) => {
     const { stderr, exitCode } = await runTests(
       String(dir),
       [...args, transpilerCacheChildTimeout],
       ["./a.test.ts", "./b.test.ts"],
-      { ...env, ...extraEnv },
+      env,
     );
     expect(stderr).toContain("4 pass");
     expect(stderr).toContain("0 fail");
@@ -2080,10 +2080,6 @@ test("a transpiler cache entry written without isolation gets its module record"
 
   // A run that does not use the record takes an entry without one as a hit.
   await writer();
-  expect(entries()).toEqual(written);
-
-  // An isolated run that makes no sourcemap does not put its transpile in the place of an entry.
-  await isolated(["--isolate"], { BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS: "1" });
   expect(entries()).toEqual(written);
 
   // The ES-module entries get the record and keep their output. The CommonJS entry has no

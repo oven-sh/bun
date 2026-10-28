@@ -1558,7 +1558,8 @@ test("lazy error-info materialization does not store an empty stack value when t
 // A collection that finds a frame of an unread trace dead turns the frames into a string before they are
 // lost (ErrorInstance::reconcileWeakReferencesAtGCEnd), and `.stack` must then read as it does when it
 // is materialized on access. Known exceptions: an installed Error.prepareStackTrace (it needs the
-// trace), a SyntaxError's "at <parse>" line, and the positions of node:vm frames in a transpiled file.
+// trace), the "at <parse>" line of a SyntaxError that has a source, and the positions of node:vm frames
+// in a transpiled file.
 //
 // Whether the collection materializes a given stack is not up to the test, so each shape makes several
 // errors, each under its own functions that are garbage once they return, and each with a twin: a plain
@@ -1603,6 +1604,7 @@ test.concurrent("a stack that a collection materializes reads the same as one ma
     const shapes = {
       // How the name and the message are joined.
       "TypeError with a message": () => new TypeError("boom"),
+      "SyntaxError without a source": () => new SyntaxError("boom"),
       "no message": () => new Error(),
       "empty own name": () => Object.assign(new Error("boom"), { name: "" }),
       // They are read when the stack is first read, whichever way the frames were formatted.
@@ -1701,6 +1703,7 @@ test.concurrent("a stack that a collection materializes reads the same as one ma
   const row = (header, frames = []) => ({ materializedByACollection: true, header, frames, sameText: true });
   const expectedRows = {
     "TypeError with a message": row("TypeError: boom"),
+    "SyntaxError without a source": row("SyntaxError: boom"),
     "no message": row("Error"),
     "empty own name": row("boom"),
     "message is a Symbol": row("throws Cannot convert a symbol to a string"),
@@ -2182,4 +2185,107 @@ test("a SyntaxError gets an `at <parse>` line only if it has a source", async ()
   using dir = tempDir("syntax-error-parse-line", { "bad-regex.cjs": `/* line 1 */\n"".test(/[a-0]/);\n` });
   const file = join(String(dir), "bad-regex.cjs");
   expect(thrownBy(() => require(file)).stack.split("\n")[1]).toBe(`    at <parse> (${file}:2)`);
+});
+
+test("Error.captureStackTrace adds an `at <parse>` line only to a SyntaxError that still has a source", () => {
+  const thrownBy = fn => {
+    try {
+      fn();
+    } catch (e) {
+      return e;
+    }
+  };
+  const frameHere = expect.stringMatching(/^    at .*capture-stack-trace\.test\.js:\d+:\d+\)?$/);
+
+  // The lazy getter formats an error whose stack was not read.
+  const unread = new SyntaxError("m");
+  Error.captureStackTrace(unread);
+  // Math.max is not on the stack, so no frame is captured.
+  const withoutFrames = new SyntaxError("m");
+  Error.captureStackTrace(withoutFrames, Math.max);
+  // An error whose stack was read gets the new one at once.
+  const alreadyRead = new SyntaxError("m");
+  void alreadyRead.stack;
+  Error.captureStackTrace(alreadyRead);
+  // A read moves the source of a parser error from the error to its own properties.
+  using dir = tempDir("syntax-error-recapture", { "bad-regex.cjs": `/* line 1 */\n"".test(/[a-0]/);\n` });
+  const parserErrorAlreadyRead = thrownBy(() => require(join(String(dir), "bad-regex.cjs")));
+  void parserErrorAlreadyRead.stack;
+  Error.captureStackTrace(parserErrorAlreadyRead);
+
+  expect({
+    unread: unread.stack.split("\n").slice(0, 2),
+    withoutFrames: withoutFrames.stack,
+    alreadyRead: alreadyRead.stack.split("\n").slice(0, 2),
+    parserErrorAlreadyRead: parserErrorAlreadyRead.stack.split("\n").slice(0, 2),
+  }).toEqual({
+    unread: ["SyntaxError: m", frameHere],
+    withoutFrames: "SyntaxError: m",
+    alreadyRead: ["SyntaxError: m", frameHere],
+    parserErrorAlreadyRead: [expect.stringMatching(/^SyntaxError: /), frameHere],
+  });
+});
+
+test("a SyntaxError from node:vm has an `at <parse>` line only if the source has a filename", () => {
+  const vm = require("node:vm");
+  const parseLineOf = fn => {
+    try {
+      fn();
+    } catch (e) {
+      return e.stack.split("\n").find(line => line.includes("<parse>"));
+    }
+  };
+  expect({
+    script: parseLineOf(() => new vm.Script("\n\n/[a-0]/", { filename: "my-script.js" })),
+    scriptWithoutAFilename: parseLineOf(() => new vm.Script("\n\n/[a-0]/")),
+    compileFunction: parseLineOf(() => vm.compileFunction("{", [], { filename: "named.js" })),
+    compileFunctionWithoutAFilename: parseLineOf(() => vm.compileFunction("{")),
+  }).toEqual({
+    script: "    at <parse> (my-script.js:3)",
+    scriptWithoutAFilename: undefined,
+    compileFunction: "    at <parse> (named.js:1)",
+    compileFunctionWithoutAFilename: undefined,
+  });
+});
+
+test("a SyntaxError from import() keeps its `at <parse>` line, with and without captured frames", async () => {
+  // Bun's transpiler accepts these modules and JavaScriptCore's parser rejects the regular expression.
+  // A top-level `await import()` fails with no JavaScript frame on the stack, so each error has only the
+  // frames that Error.captureStackTrace gives it.
+  const badModule = `module.exports = 1;\n"".match(/[a-0]/);\n`;
+  using dir = tempDir("syntax-error-import", {
+    "bad-a.cjs": badModule,
+    "bad-b.cjs": badModule,
+    "index.mjs": `
+      const a = await import("./bad-a.cjs").catch(e => e);
+      const b = await import("./bad-b.cjs").catch(e => e);
+      // Math.max is not on the stack, so no frame is captured.
+      Error.captureStackTrace(a, Math.max);
+      Error.captureStackTrace(b);
+      console.log(JSON.stringify({ withoutFrames: a.stack.split("\\n"), withFrames: b.stack.split("\\n").slice(0, 3) }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+    stdout: {
+      withoutFrames: [
+        expect.stringMatching(/^SyntaxError: /),
+        expect.stringMatching(/^    at <parse> \(.*bad-a\.cjs:\d+\)$/),
+      ],
+      withFrames: [
+        expect.stringMatching(/^SyntaxError: /),
+        expect.stringMatching(/^    at <parse> \(.*bad-b\.cjs:\d+\)$/),
+        expect.stringMatching(/^    at .*index\.mjs:\d+:\d+\)?$/),
+      ],
+    },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
 });

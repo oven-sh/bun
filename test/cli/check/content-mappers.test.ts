@@ -766,11 +766,17 @@ ${withoutPlace}`,
     await expectNotStarted({}, [], { BUN_OPTIONS: "check --runExternalCode" });
   });
 
-  test.each(["--env-file", "--preload", "--define"])("in BUN_OPTIONS, after `check` as the value of %s", async flag => {
+  test.each(["--env-file", "--preload"])("in BUN_OPTIONS, after `check` as the value of %s", async flag => {
     // `check`, as it's typed, is then also a path to check.
     const files = { "check/x.ts": `import "../App.vue";\n` };
     const stdout = await expectNotStarted({ files }, [], { BUN_OPTIONS: `${flag} check --runExternalCode` });
     expect(stdout).toContain("error TS18068");
+  });
+
+  test("in BUN_OPTIONS, after `check` as the value of --define", async () => {
+    // `bun check` takes --define only with --aot, so nothing is checked.
+    const files = { "check/x.ts": `import "../App.vue";\n` };
+    expect(await expectNotStarted({ files }, [], { BUN_OPTIONS: "--define check --runExternalCode" })).toBe("");
   });
 
   test("typed, with `check` in BUN_OPTIONS, it counts", async () => {

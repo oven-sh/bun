@@ -386,14 +386,18 @@ describe("mock()", () => {
     expect(fn).toHaveBeenCalledWith(43);
   });
   test("a call that a node:vm timeout stops keeps its incomplete result", () => {
-    let started = false;
+    let outcome;
     let fn;
-    // A timeout can pass before the implementation starts. The next turn has a longer one.
-    for (let timeout = 50; timeout <= 6400 && !started; timeout *= 2) {
+    // A timeout can pass before the implementation starts, or too late. The next turn has a longer one.
+    for (let timeout = 50; timeout <= 400 && outcome !== "stopped"; timeout *= 2) {
+      let started = false;
+      let returned = false;
       fn = jest.fn(() => {
         started = true;
-        // The loop has an end, so a timeout that does not work fails this test and does not hang it.
-        for (const end = Date.now() + 10_000; Date.now() < end;);
+        // The implementation waits here, off-CPU, when the timeout passes, and the run stops it in this call.
+        // A loop that spins can run to its end and return: the run then ends with the timeout error all the same.
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, timeout + 250);
+        returned = true;
       });
       let code;
       try {
@@ -401,9 +405,10 @@ describe("mock()", () => {
       } catch (error) {
         code = error.code;
       }
-      expect(code).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT");
+      outcome = !started ? "not started" : returned ? "returned" : "stopped";
+      if (outcome !== "returned") expect(code).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT");
     }
-    expect(started).toBe(true);
+    expect(outcome).toBe("stopped");
     // What stops the run is not a value that the implementation threw.
     expect(fn.mock.results).toEqual([{ type: "incomplete", value: undefined }]);
   });

@@ -307,16 +307,17 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
           finallyRan = true;
         }
       };
-      const state = (globalThis.state = { started: false, done: false });
-      // The loop has an end, so a timeout that does not work fails the test and leaves no process that spins.
-      const spin = "for (const end = Date.now() + 10_000; !globalThis.state.done && Date.now() < end;);";
+      const state = (globalThis.state = { started: false, returned: false });
       let code;
-      // A timeout can pass before the module body starts. The next attempt has a longer one and a new file.
-      // A run that ends in another way is not tried again.
-      for (let timeout = 100; timeout <= 6400 && !state.started; timeout *= 2) {
-        const file = path.join(__dirname, "spin-" + timeout + ".mjs");
-        fs.writeFileSync(file, "globalThis.state.started = true; " + spin);
-        state.done = false;
+      let outcome;
+      // The module waits off-CPU when the timeout passes, and the run stops it in that wait. A loop that spins can
+      // run to its end and return. A timeout can also pass before the module body starts, or too late: the next
+      // attempt has a longer one and a new file.
+      for (let timeout = 100; timeout <= 800 && outcome !== "stopped"; timeout *= 2) {
+        const file = path.join(__dirname, "wait-" + timeout + ".mjs");
+        const wait = "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, " + (timeout + 250) + ");";
+        fs.writeFileSync(file, "globalThis.state.started = true; " + wait + " globalThis.state.returned = true;");
+        state.started = state.returned = false;
         calls = 0;
         try {
           vm.runInContext("load()", vm.createContext({ load: () => require(file) }), { timeout });
@@ -324,11 +325,12 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
         } catch (e) {
           code = e?.code ?? String(e);
         }
-        state.done = true;
-        if (code !== "ERR_SCRIPT_EXECUTION_TIMEOUT") break;
+        outcome = !state.started ? "not started" : state.returned ? "returned" : "stopped";
+        // A run that ends in another way is not tried again.
+        if (outcome !== "returned" && code !== "ERR_SCRIPT_EXECUTION_TIMEOUT") break;
       }
       const caughtText = caught === nothing ? "nothing" : String(caught);
-      console.log(JSON.stringify({ code, started: state.started, calls, caught: caughtText, finallyRan }));
+      console.log(JSON.stringify({ code, outcome, calls, caught: caughtText, finallyRan }));
     `,
     "throws.js": `export default 1;\nthrow new Error("boom");\n`,
     "throws.ts": `export default 1 as number;\nthrow new Error("boom");\n`,
@@ -397,7 +399,7 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
 
   // What stops a vm run is not an error of the module: no script can catch it, as in Node.
   test("a handler's catch and finally do not run for a module that a vm timeout stops", async () => {
-    const stopped = { code: "ERR_SCRIPT_EXECUTION_TIMEOUT", started: true, calls: 1 };
+    const stopped = { code: "ERR_SCRIPT_EXECUTION_TIMEOUT", outcome: "stopped", calls: 1 };
     expect(await run("stopped-fixture.cjs")).toEqual({
       stdout: JSON.stringify({ ...stopped, caught: "nothing", finallyRan: false }),
       stderr: "",

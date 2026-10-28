@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-import { Stats, statSync } from "node:fs";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { Stats, statSync, utimesSync } from "node:fs";
+import path from "node:path";
 
 // Node.js's Stats constructor signature (deprecated, DEP0180):
 //   Stats(dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs, mtimeMs, ctimeMs, birthtimeMs)
@@ -242,6 +243,43 @@ describe("Stats date getters convert *Ms by its type", () => {
     // @ts-expect-error a Symbol does not convert to a number
     symbol.ctimeMs = Symbol("x");
     expect(() => symbol.ctime).toThrow(TypeError);
+  });
+
+  // Node.js rounds before it makes the Date: `new Date(MathRound(Number(ms)))`. The Date constructor truncates.
+  test("a real stat rounds the fraction of *Ms", () => {
+    using dir = tempDir("stats-date", { "file.txt": "x" });
+    const file = path.join(String(dir), "file.txt");
+    utimesSync(file, 1700000000.7896, 1700000000.7896);
+
+    const stats = statSync(file);
+    const bigint = statSync(file, { bigint: true });
+    // The stored fraction depends on the timestamp resolution of the filesystem
+    // (789.5999 with nanoseconds on Linux, 789.6 with 100 ns on Windows).
+    expect(stats.mtimeMs).toBeGreaterThanOrEqual(1700000000789.5);
+    expect(stats.mtimeMs).toBeLessThan(1700000000790);
+    expect({
+      mtime: stats.mtime.getTime(),
+      atime: stats.atime.getTime(),
+      bigintMtimeMs: bigint.mtimeMs,
+      bigintMtime: bigint.mtime.getTime(),
+    }).toEqual({
+      mtime: 1700000000790,
+      atime: 1700000000790,
+      // The BigInt division truncates, and a whole number does not round.
+      bigintMtimeMs: 1700000000789n,
+      bigintMtime: 1700000000789,
+    });
+  });
+
+  test.each(classes)("%s rounds a Number *Ms like Math.round", name => {
+    const inputs = [0.5, 1.4999, -0.5, -1.5, -1.6, -5.5, 8.64e15 + 0.4, 8.64e15 + 0.6, Infinity, NaN];
+    const results = inputs.map(ms => {
+      const stats = stat[name]();
+      // @ts-expect-error Node.js converts a value of any type
+      stats.atimeMs = ms;
+      return stats.atime.getTime();
+    });
+    expect(results).toEqual([1, 1, 0, -1, -2, -5, 8.64e15, NaN, NaN, NaN]);
   });
 
   test("both classes share one getter and one setter for each date field", () => {

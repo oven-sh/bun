@@ -243,7 +243,7 @@ inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::Encoded
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    // Node.js: `Number(ms)` for both classes, then Math.round, which Bun leaves out. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L459-L469
+    // Node.js: `new Date(MathRound(Number(ms)))` for both classes. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L459-L469
     double internalNumber;
     if (auto exact = JSBigInt::tryExtractDouble(value)) [[likely]] {
         internalNumber = *exact;
@@ -253,7 +253,7 @@ inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::Encoded
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    JSValue result = JSC::DateInstance::create(vm, globalObject->dateStructure(), internalNumber);
+    JSValue result = JSC::DateInstance::create(vm, globalObject->dateStructure(), JSC::jsRound(internalNumber));
     if (!thisObject->structure()->mayBePrototype()) {
         putDirectOrThrow(globalObject, thisObject, propertyName, result, 0);
         RETURN_IF_EXCEPTION(scope, {});

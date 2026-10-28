@@ -1,8 +1,8 @@
-// Writes any valid PNG file around samples that are chosen first, and says what RGBA those samples stand for.
+// Writes a valid PNG file around samples that are chosen first, and says what RGBA those samples stand for.
 // So what a test expects comes from the specification and not from a decoder.
 //
-// Thousands of files are made with this in a test, and a debug build runs JavaScript some fifty times slower. Hence
-// the plain loops over typed arrays.
+// Many files are made with this in a test, and a debug build runs JavaScript some fifty times slower. Hence the plain
+// loops over typed arrays.
 
 export const GRAY = 0;
 export const RGB = 2;
@@ -29,7 +29,7 @@ export const formats = [
   [RGBA, 16],
 ] as const;
 
-export const channelsOf = (colorType: number) => [1, 0, 3, 1, 2, 0, 4][colorType];
+const channelsOf = (colorType: number) => [1, 0, 3, 1, 2, 0, 4][colorType];
 
 /** Of each pass of Adam7: the first column and row, then the steps between columns and rows. */
 const adam7 = [
@@ -45,48 +45,23 @@ const notInterlaced = [[0, 0, 1, 1]];
 
 export const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
-/** Writes a chunk into `file` at `at` and returns where it ends. */
-function putChunk(file: Uint8Array, at: number, type: string, data: ArrayLike<number>) {
-  const length = data.length;
-  file[at] = length >>> 24;
-  file[at + 1] = length >>> 16;
-  file[at + 2] = length >>> 8;
-  file[at + 3] = length;
-  for (let i = 0; i < 4; i++) file[at + 4 + i] = type.charCodeAt(i);
-  file.set(data, at + 8);
-  const crc = Bun.hash.crc32(file.subarray(at + 4, at + 8 + length));
-  file[at + 8 + length] = crc >>> 24;
-  file[at + 9 + length] = crc >>> 16;
-  file[at + 10 + length] = crc >>> 8;
-  file[at + 11 + length] = crc;
-  return at + 12 + length;
-}
-
 export function chunk(type: string, data: Uint8Array | number[] | string = []) {
   const body = typeof data === "string" ? Buffer.from(data, "latin1") : data;
   const out = Buffer.allocUnsafe(12 + body.length);
-  putChunk(out, 0, type, body);
+  out.writeUInt32BE(body.length);
+  out.write(type, 4, "latin1");
+  out.set(body, 8);
+  out.writeUInt32BE(Bun.hash.crc32(out.subarray(4, 8 + body.length)), 8 + body.length);
   return out;
 }
 
-const headerOf = (width: number, height: number, depth: number, colorType: number, interlace: number) => [
-  width >>> 24,
-  (width >>> 16) & 255,
-  (width >>> 8) & 255,
-  width & 255,
-  height >>> 24,
-  (height >>> 16) & 255,
-  (height >>> 8) & 255,
-  height & 255,
-  depth,
-  colorType,
-  0,
-  0,
-  interlace,
-];
-
-export const ihdr = (width: number, height: number, depth: number, colorType: number, interlace = 0) =>
-  chunk("IHDR", headerOf(width, height, depth, colorType, interlace));
+export function ihdr(width: number, height: number, depth: number, colorType: number, interlace = 0) {
+  const data = Buffer.alloc(13);
+  data.writeUInt32BE(width);
+  data.writeUInt32BE(height, 4);
+  data.set([depth, colorType, 0, 0, interlace], 8);
+  return chunk("IHDR", data);
+}
 
 export const iend = chunk("IEND");
 export const png = (...chunks: Buffer[]) => Buffer.concat([signature, ...chunks]);
@@ -107,28 +82,20 @@ export type Picture = {
   transparency?: number[];
 };
 
-export type Layout = {
+type Layout = {
   interlaced?: boolean;
   /** The filter type of a row of a pass. None if left out. */
   filter?: (row: number, pass: number) => number;
-  /** For the bits of a row's last byte that no pixel uses. */
-  padding?: () => number;
-  /** Chunks for the three places where there may be some. */
-  beforePalette?: Uint8Array[];
-  beforeData?: Uint8Array[];
-  afterData?: Uint8Array[];
-  /** From what `filteredLines` gives to a zlib stream. */
-  deflate?: (lines: Uint8Array) => Uint8Array;
-  /** The data of each IDAT. */
-  split?: (stream: Uint8Array) => Uint8Array[];
+  /** Chunks to come behind IHDR. */
+  beforePalette?: Buffer[];
 };
 
 /**
- * The 8-bit RGBA that the samples stand for, each row behind a zero: what Bun.Image writes at level 0.
+ * The 8-bit RGBA that the samples stand for.
  * https://www.w3.org/TR/png-3/#13Decoders: sample depth scaling, tRNS, and black for an index PLTE does not have.
  */
-export function rgbaLinesOf({ width, height, colorType, depth, samples, palette, transparency }: Picture) {
-  const out = Buffer.alloc(height * (1 + width * 4));
+export function rgbaOf({ width, height, colorType, depth, samples, palette, transparency }: Picture) {
+  const out = Buffer.alloc(height * width * 4);
   const channels = channelsOf(colorType);
   const shift = depth === 16 ? 8 : 0;
   const scale = depth < 8 ? 255 / ((1 << depth) - 1) : 1;
@@ -136,39 +103,26 @@ export function rgbaLinesOf({ width, height, colorType, depth, samples, palette,
   const hasAlpha = channels === 2 || channels === 4;
   const [t0, t1, t2] = transparency ?? [-1, -1, -1];
   let [at, to] = [0, 0];
-  for (let y = 0; y < height; y++) {
-    to++;
-    for (let x = 0; x < width; x++, at += channels, to += 4) {
-      if (colorType === INDEXED) {
-        const index = samples[at];
-        if (index * 3 < palette!.length) {
-          out[to] = palette![index * 3];
-          out[to + 1] = palette![index * 3 + 1];
-          out[to + 2] = palette![index * 3 + 2];
-        }
-        out[to + 3] = transparency && index < transparency.length ? transparency[index] : 255;
-        continue;
+  for (; to < out.length; at += channels, to += 4) {
+    if (colorType === INDEXED) {
+      const index = samples[at];
+      if (index * 3 < palette!.length) {
+        out[to] = palette![index * 3];
+        out[to + 1] = palette![index * 3 + 1];
+        out[to + 2] = palette![index * 3 + 2];
       }
-      const r = samples[at];
-      const g = colors === 1 ? r : samples[at + 1];
-      const b = colors === 1 ? r : samples[at + 2];
-      out[to] = (r >> shift) * scale;
-      out[to + 1] = (g >> shift) * scale;
-      out[to + 2] = (b >> shift) * scale;
-      if (hasAlpha) out[to + 3] = samples[at + colors] >> shift;
-      else out[to + 3] = r === t0 && (colors === 1 || (g === t1 && b === t2)) ? 0 : 255;
+      out[to + 3] = transparency && index < transparency.length ? transparency[index] : 255;
+      continue;
     }
+    const r = samples[at];
+    const g = colors === 1 ? r : samples[at + 1];
+    const b = colors === 1 ? r : samples[at + 2];
+    out[to] = (r >> shift) * scale;
+    out[to + 1] = (g >> shift) * scale;
+    out[to + 2] = (b >> shift) * scale;
+    if (hasAlpha) out[to + 3] = samples[at + colors] >> shift;
+    else out[to + 3] = r === t0 && (colors === 1 || (g === t1 && b === t2)) ? 0 : 255;
   }
-  return out;
-}
-
-/** The same without the zeros. */
-export function rgbaOf(picture: Picture) {
-  const lines = rgbaLinesOf(picture);
-  const stride = picture.width * 4;
-  const out = Buffer.alloc(picture.height * stride);
-  for (let y = 0; y < picture.height; y++)
-    out.set(lines.subarray(y * (1 + stride) + 1, (y + 1) * (1 + stride)), y * stride);
   return out;
 }
 
@@ -181,7 +135,7 @@ export function paeth(a: number, b: number, c: number) {
 }
 
 /** What IDAT holds before it is compressed: of each pass, each row behind its filter type. */
-export function filteredLines(picture: Picture, { interlaced, filter, padding }: Layout = {}) {
+export function filteredLines(picture: Picture, { interlaced, filter }: Layout = {}) {
   const { width, height, colorType, depth, samples } = picture;
   const channels = channelsOf(colorType);
   const bitsPerPixel = channels * depth;
@@ -199,7 +153,6 @@ export function filteredLines(picture: Picture, { interlaced, filter, padding }:
     const [columns, rows] = [Math.ceil((width - x0) / dx), Math.ceil((height - y0) / dy)];
     if (columns <= 0 || rows <= 0) continue;
     const length = Math.ceil((columns * bitsPerPixel) / 8);
-    const unused = 0xff >> ((columns * bitsPerPixel) % 8 || 8);
     let above = new Uint8Array(length);
     let row = new Uint8Array(length);
     for (let y = 0; y < rows; y++) {
@@ -214,7 +167,6 @@ export function filteredLines(picture: Picture, { interlaced, filter, padding }:
           } else row[(i * depth) >> 3] |= samples[at] << (8 - depth - ((i * depth) & 7));
         }
       }
-      if (padding) row[length - 1] |= padding() & unused;
       const type = filter ? filter(y, pass) : 0;
       out[to++] = type;
       if (type === 0) out.set(row, to);
@@ -225,9 +177,7 @@ export function filteredLines(picture: Picture, { interlaced, filter, padding }:
           const b = above[i];
           if (type === 1) out[to + i] = row[i] - a;
           else if (type === 3) out[to + i] = row[i] - ((a + b) >> 1);
-          else {
-            out[to + i] = row[i] - paeth(a, b, i < bpp ? 0 : above[i - bpp]);
-          }
+          else out[to + i] = row[i] - paeth(a, b, i < bpp ? 0 : above[i - bpp]);
         }
       }
       to += length;
@@ -237,67 +187,31 @@ export function filteredLines(picture: Picture, { interlaced, filter, padding }:
   return out;
 }
 
-/** A zlib stream of these pieces of deflate, which inflate to `data`. `window` is the CINFO field: 256 << window bytes. */
-export function zlibStream(data: Uint8Array, pieces: Uint8Array[], window = 7) {
-  let size = 6;
-  for (const piece of pieces) size += piece.length;
-  const out = Buffer.allocUnsafe(size);
-  out[0] = (window << 4) | 8;
-  out[1] = 31 - ((out[0] << 8) % 31);
-  let at = 2;
-  for (const piece of pieces) {
-    out.set(piece, at);
-    at += piece.length;
-  }
-  const sum = Bun.hash.adler32(data);
-  out[at] = sum >>> 24;
-  out[at + 1] = sum >>> 16;
-  out[at + 2] = sum >>> 8;
-  out[at + 3] = sum;
+/** A zlib stream. `deflateSync()` of node:zlib takes twice as long in a debug build. */
+function deflate(data: Uint8Array) {
+  const body = Bun.deflateSync(data);
+  const out = Buffer.allocUnsafe(2 + body.length + 4);
+  out.set([0x78, 0x01]);
+  out.set(body, 2);
+  out.writeUInt32BE(Bun.hash.adler32(data), 2 + body.length);
   return out;
 }
 
-const deflate = (lines: Uint8Array) => zlibStream(lines, [Bun.deflateSync(lines)]);
+export const iccp = (name: string, profile: Uint8Array | string) =>
+  chunk("iCCP", Buffer.concat([Buffer.from(`${name}\0\0`, "latin1"), deflate(Buffer.from(profile))]));
 
-export const iccp = (name: string, profile: Uint8Array | string, compress = deflate) =>
-  chunk("iCCP", Buffer.concat([Buffer.from(`${name}\0\0`, "latin1"), compress(Buffer.from(profile))]));
-
-/** The file, if `lines` is what `filteredLines` gives for it. For many files that differ in something else. */
-export function writeAround(lines: Uint8Array, picture: Omit<Picture, "samples">, layout: Layout = {}) {
+export function write(picture: Picture, layout: Layout = {}) {
   const { width, height, colorType, depth, palette, transparency } = picture;
-  const stream = (layout.deflate ?? deflate)(lines);
-  const parts = layout.split ? layout.split(stream) : [stream];
-  let trns: number[] | undefined = transparency;
-  if (transparency && colorType !== INDEXED) {
-    trns = [];
-    for (const sample of transparency) trns.push(sample >> 8, sample & 255);
-  }
-  const { beforePalette = [], beforeData = [], afterData = [] } = layout;
-  let size = 8 + 25 + 12 + (palette ? 12 + palette.length : 0) + (trns ? 12 + trns.length : 0);
-  for (const list of [beforePalette, beforeData, afterData]) for (const other of list) size += other.length;
-  for (const part of parts) size += 12 + part.length;
-
-  const file = Buffer.allocUnsafe(size);
-  file.set(signature);
-  let at = putChunk(file, 8, "IHDR", headerOf(width, height, depth, colorType, layout.interlaced ? 1 : 0));
-  const putAll = (list: Uint8Array[]) => {
-    for (const other of list) {
-      file.set(other, at);
-      at += other.length;
-    }
-  };
-  putAll(beforePalette);
-  if (palette) at = putChunk(file, at, "PLTE", palette);
-  if (trns) at = putChunk(file, at, "tRNS", trns);
-  putAll(beforeData);
-  for (const part of parts) at = putChunk(file, at, "IDAT", part);
-  putAll(afterData);
-  putChunk(file, at, "IEND", []);
-  return file;
+  const trns = colorType === INDEXED ? transparency : transparency?.flatMap(sample => [sample >> 8, sample & 255]);
+  return png(
+    ihdr(width, height, depth, colorType, layout.interlaced ? 1 : 0),
+    ...(layout.beforePalette ?? []),
+    ...(palette ? [chunk("PLTE", palette)] : []),
+    ...(trns ? [chunk("tRNS", trns)] : []),
+    chunk("IDAT", deflate(filteredLines(picture, layout))),
+    iend,
+  );
 }
-
-export const write = (picture: Picture, layout: Layout = {}) =>
-  writeAround(filteredLines(picture, layout), picture, layout);
 
 /** A picture of noise. Of a few values only if `few`, so that pixels repeat and tRNS has something to match. */
 export function noise(

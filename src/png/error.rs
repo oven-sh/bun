@@ -18,10 +18,6 @@ pub enum Error {
     InvalidPalette,
     #[error("missing PLTE for indexed image")]
     MissingPalette,
-    #[error("too many chunks")]
-    TooManyChunks,
-    #[error("a chunk inflates to too much")]
-    InflatedTooLarge,
     #[error("IDAT stream too short")]
     IdatTooShort,
     #[error("IDAT stream error")]

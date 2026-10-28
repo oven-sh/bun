@@ -76,7 +76,7 @@ pub fn encode(
         out,
     };
 
-    // libspng does not add up a row longer than this, and so leaves it as it is.
+    // A longer row is left as it is. libspng could not add one up in 32 bits. Here it would take six times its memory.
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L1608
     let adaptive = worth_filtering && row_bytes <= (i32::MAX / 128) as usize;
     let mut lines = CandidateLines::new(row_bytes, adaptive)?;
@@ -84,7 +84,7 @@ pub fn encode(
     let mut above = zeros.as_slice();
     for row in image.chunks_exact(row_bytes) {
         idat.write(if adaptive {
-            lines.best(header.bytes_per_pixel(), row, above)
+            lines.best(row, above)
         } else {
             lines.unfiltered(row)
         })?;
@@ -92,6 +92,7 @@ pub fn encode(
     }
     let mut out = idat.finish()?;
     chunk::write(&mut out, chunk::IEND, &[])?;
+    // Or a file of 100 bytes would hold on to the room for two IDAT chunks for as long as JavaScript keeps it.
     out.shrink_to_fit();
     Ok(out)
 }

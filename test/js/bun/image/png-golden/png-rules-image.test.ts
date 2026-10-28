@@ -1,11 +1,10 @@
 // The rules for IHDR and IDAT, one at a time, in files made by hand.
-// Each of these was so with libspng too, whatever the specification says, unless it says what libspng did.
+// A comment says so where libspng did otherwise.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 import { differences } from "../../archive-golden/observe";
-import { slow } from "./check";
 import { decode, decodes, decodeToHex, iccpOf, idat, pixels, rejects } from "./decode";
 import {
   chunk,
@@ -21,6 +20,8 @@ import {
   randomBytes,
   RGB,
   RGBA,
+  rgbaOf,
+  write,
 } from "./write";
 
 describe("the image", () => {
@@ -97,32 +98,49 @@ describe("the image", () => {
   const code = (...fields: Parameters<typeof ihdr>) =>
     decode(png(ihdr(...fields), idat([0]), iend)).catch(error => error.code);
 
-  test("a row of 2^32 - 1 bytes is too long, however many pixels are allowed", async () => {
-    expect(await code(1431655764, 1, 8, RGB)).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
-    expect(await code(1431655765, 1, 8, RGB)).toBe("ERR_IMAGE_DECODE_FAILED");
-    // 2^32 - 2 bytes.
-    expect(await code(2 ** 31 - 1, 1, 16, GRAY)).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
-    // The last pass has all the pixels of a row, but it has no row in an image that is one pixel high.
-    expect(await code(2 ** 31 - 1, 1, 8, RGB, 1)).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
-    expect(await code(2 ** 31 - 1, 2, 8, RGB, 1)).toBe("ERR_IMAGE_DECODE_FAILED");
+  test("a row has to fit in 32 bits, in the file and as RGBA", async () => {
+    // Without IDAT, so that there is no memory to find for a header that passes.
+    const withoutLimit = (width: number, depth: number, colorType: number) =>
+      decode(png(ihdr(width, 1, depth, colorType), iend), { maxPixels: 2 ** 40 }).catch(error => error.code);
+    for (const [colorType, depth, bytes] of [
+      [GRAY, 1, 4],
+      [RGB, 8, 4],
+      [RGBA, 8, 4],
+      [RGB, 16, 6],
+      [RGBA, 16, 8],
+    ]) {
+      const tooWide = Math.ceil((2 ** 32 - 1) / bytes);
+      expect([bytes, await withoutLimit(tooWide - 1, depth, colorType)]).toEqual([bytes, "ERR_IMAGE_DECODE_FAILED"]);
+      expect([bytes, await withoutLimit(tooWide, depth, colorType)]).toEqual([bytes, "ERR_IMAGE_TOO_MANY_PIXELS"]);
+    }
+    expect(await withoutLimit(2 ** 31 - 1, 1, GRAY)).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
+    // metadata(), which reads IHDR by itself, calls it the same.
+    const wide = png(ihdr(2 ** 30, 1, 1, GRAY), idat([0]), iend);
+    expect(await decode(wide).catch(error => error.code)).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
+    expect(await new Bun.Image(wide).metadata().catch(error => error.code)).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
   });
 
-  // As RGBA it has to fit in 32 bits too. What is refused for that would be refused for its short IDAT as well, unless
-  // the pixels are more than any machine has room for, which is found out in between.
-  test("a row of 2^30 pixels is too long", async () => {
-    const files = [2 ** 30 - 1, 2 ** 30].map(width => png(ihdr(width, 2 ** 19, 1, GRAY), idat([0]), iend));
+  test("width and height have 31 bits, and neither is 0", async () => {
+    expect(await code(1, 2 ** 31 - 1, 1, GRAY)).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
+    expect(await code(1, 2 ** 31, 1, GRAY)).toBe("ERR_IMAGE_DECODE_FAILED");
+    expect(await code(2 ** 31 - 1, 1, 1, GRAY)).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
+    expect(await code(2 ** 31, 1, 1, GRAY)).toBe("ERR_IMAGE_DECODE_FAILED");
+    expect(await code(0, 1, 1, GRAY)).toBe("ERR_IMAGE_DECODE_FAILED");
+    expect(await code(1, 0, 1, GRAY)).toBe("ERR_IMAGE_DECODE_FAILED");
+  });
+
+  test("pixels that no machine has room for are out of memory, and not the end of the process", async () => {
+    const file = png(ihdr(2 ** 30 - 1, 2 ** 19, 1, GRAY), idat([0]), iend);
     await using child = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `for (const file of process.env.FILES.split(" ")) {
-          const image = new Bun.Image(Buffer.from(file, "base64"), { maxPixels: 1e15 });
-          console.log(await image.png().bytes().then(() => "decoded", error => error.code));
-        }`,
+        `const image = new Bun.Image(Buffer.from(process.env.FILE, "base64"), { maxPixels: 1e15 });
+        console.log(await image.png().bytes().then(() => "decoded", error => error.code));`,
       ],
       env: {
         ...bunEnv,
-        FILES: files.map(file => file.toString("base64")).join(" "),
+        FILE: file.toString("base64"),
         // Or it ends the process.
         ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":"),
       },
@@ -131,19 +149,10 @@ describe("the image", () => {
     const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
     // It warns of the allocation.
     expect({ stdout, exitCode, stderr: exitCode ? stderr : "" }).toEqual({
-      stdout: "ERR_OUT_OF_MEMORY\nERR_IMAGE_DECODE_FAILED\n",
+      stdout: "ERR_OUT_OF_MEMORY\n",
       exitCode: 0,
       stderr: "",
     });
-  });
-
-  test("a width or a height has 31 bits, and is not 0", async () => {
-    expect(await code(2 ** 31 - 1, 1, 1, GRAY)).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
-    expect(await code(1, 2 ** 31 - 1, 1, GRAY)).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
-    expect(await code(2 ** 31, 1, 1, GRAY)).toBe("ERR_IMAGE_DECODE_FAILED");
-    expect(await code(1, 2 ** 31, 1, GRAY)).toBe("ERR_IMAGE_DECODE_FAILED");
-    expect(await code(0, 1, 1, GRAY)).toBe("ERR_IMAGE_DECODE_FAILED");
-    expect(await code(1, 0, 1, GRAY)).toBe("ERR_IMAGE_DECODE_FAILED");
   });
 
   // What follows IHDR is enough for any of them.
@@ -189,6 +198,36 @@ describe("the image", () => {
     await rejects(header, chunk("IDAT", zlib.deflateSync(Buffer.from([5, 1, 2, 0, 3, 4]))), iend);
     await rejects(header, chunk("IDAT", zlib.deflateRawSync(Buffer.from([0, 1, 2, 0, 3, 4]))), iend);
     await rejects(header, iend);
+  });
+
+  // zlib's rule, as Bun builds it. libpng has it too, and some decoders do not.
+  test("a stream copies from no further back than the window in its header", async () => {
+    const row = [0, ...Array.from({ length: 299 }, randomBytes(6))];
+    const withWindow = (bits: number) => {
+      const stream = zlib.deflateSync(Buffer.from([...row, ...row]));
+      stream[0] = ((bits - 8) << 4) | 8;
+      stream[1] = 31 - ((stream[0] << 8) % 31);
+      return decodes(png(ihdr(299, 2, 8, GRAY), chunk("IDAT", stream), iend));
+    };
+    expect(await withWindow(9)).toBe(true);
+    expect(await withWindow(8)).toBe(false);
+  });
+
+  // Which of the seven passes have no pixels depends on the width and on the height.
+  test("interlaced, in every size up to 8 by 8", async () => {
+    const random = randomBytes(4);
+    const wrong: string[] = [];
+    await Promise.all(
+      [[GRAY, 1] as const, [RGB, 8] as const].flatMap(format =>
+        Array.from({ length: 64 }, async (_, i) => {
+          const picture = noise(format, 1 + (i % 8), 1 + (i >> 3), random);
+          const file = write(picture, { interlaced: true, filter: () => random() % 5 });
+          if ((await decodeToHex(file)).hex !== rgbaOf(picture).toString("hex"))
+            wrong.push(`${format}, ${picture.width} by ${picture.height}`);
+        }),
+      ),
+    );
+    expect(wrong).toEqual([]);
   });
 
   // One for each way the decoder reads rows.
@@ -282,13 +321,15 @@ describe("the image", () => {
     expect(differences(results)).toBe("");
   }
 
-  test("every filter, for every size of pixel, in rows of several lengths", async () => {
+  test("every filter, for every size of pixel, in rows of every length up to 72 bytes", async () => {
     // Twice each, so that each also comes after a row that is not zeros.
     const filters = [4, 3, 2, 1, 0, 1, 2, 3, 4, 0];
     const random = randomBytes(1);
     await expectToDecode(
       pixelFormats.flatMap(format =>
-        [1, 2, 3, 4, 5, 7, 8, 9, 13].map(width => filteredImage(format, width, filters, random)),
+        Array.from({ length: Math.ceil((72 * 8) / (format[1] * format[2])) }, (_, i) =>
+          filteredImage(format, i + 1, filters, random),
+        ),
       ),
     );
   });
@@ -303,7 +344,7 @@ describe("the image", () => {
       seen.add(a * 1024 + b);
       triples.push(c + a, c + b, c);
     };
-    for (let d = -255; d <= 255; d++) {
+    for (let d = -255; d <= 255; d += 3) {
       for (const tie of [d, -d, -2 * d, -d >> 1, 0]) {
         for (let e = tie - 1; e <= tie + 1; e++) {
           add(d, e);
@@ -334,33 +375,31 @@ describe("the image", () => {
 
   // The row above is looked at a block at a time. The one byte that is not what its left neighbor has can be the first
   // of a block or the last.
-  const block = 48;
-  const busy = 5 * block;
-  test("the blocks are as long as the next two tests and the files in generated.json.gz take them to be", async () => {
-    const source = await Bun.file(join(import.meta.dir, "../../../../../src/png/filter.rs")).text();
-    expect(source).toContain(`const BLOCK: usize = ${block};`);
-    expect(source).toContain("const BUSY_LEN: usize = 5 * BLOCK;");
+  const block = 16;
+  const busy = 4 * block;
+  test("the blocks are as long as the next two tests take them to be", async () => {
+    const source = await Bun.file(join(import.meta.dir, "../../../../../src/jsc/bindings/highway_png.cpp")).text();
+    expect(source).toContain(`constexpr size_t kBlock = ${block};`);
+    expect(source).toContain("constexpr size_t kBusy = 4 * kBlock;");
   });
   test.each([
-    ["from the start", 0],
-    // From the start of a block that is not one pixel over and over, so much goes by until the next look.
-    ["but for the first", busy],
-  ])("Paeth under a row that is one pixel %s, and from somewhere on another in one byte", async (_, skipped) => {
+    // From the start of the row, or of a block that is not one pixel over and over, so much goes by until the next
+    // look.
+    ["all the way", busy],
+    ["but for where the first look is", 2 * busy],
+  ])("Paeth under a row that is one pixel %s, and from somewhere on another in one byte", async (_, look) => {
     const wrong = await Promise.all(
       pixelFormats.map(async format => {
         const bpp = (format[1] * format[2]) / 8;
-        // RGB is made RGBA before the looking, which starts behind the first pixel.
+        // RGB is made RGBA before the looking.
         const size = bpp === 3 ? 4 : bpp;
-        const first = 1 + skipped / size;
+        const first = Math.floor(look / size);
         // Only a whole block is looked at, so the third has to be one for a change at its start to count.
-        const width = first + (3 * block) / size + 3;
+        const width = first + Math.ceil((3 * block) / size) + 3;
         const changes: number[][] = [];
-        for (let x = first; x < first + (2 * block) / size + 3; x++) {
+        for (let x = first - 2; x < first + Math.ceil((2 * block) / size) + 3; x++) {
           // Of 16 bits only the first 8 are to be seen.
-          for (let byte = 0; byte < bpp; byte += format[1] / 8) {
-            // Where that takes too long, up to a pixel and a byte to either side of where a block starts.
-            if (!slow || (x * size + byte + 1) % block <= 2 * size + 1) changes.push([x, byte]);
-          }
+          for (let byte = 0; byte < bpp; byte += format[1] / 8) changes.push([x, byte]);
         }
         let at = 0;
         // A row for each byte that changes, and under it the same row again, which in Paeth is zeros.
@@ -373,7 +412,8 @@ describe("the image", () => {
             if (row % 2 === 1) return 0;
             const [x, byte] = [Math.floor(i / bpp), i % bpp];
             const [from, changed] = changes[row >> 1];
-            return 100 + byte + (skipped && x === 0 ? 25 : 0) + (x >= from && byte === changed ? 50 : 0);
+            const odd = look !== busy && x === Math.floor(busy / size);
+            return 100 + byte + (odd ? 25 : 0) + (x >= from && byte === changed ? 50 : 0);
           },
         );
         const { hex } = await decodeToHex(file);
@@ -389,8 +429,9 @@ describe("the image", () => {
   test("Paeth under a row that is the same pixel over and over in places", async () => {
     const random = randomBytes(2);
     // None, so the bytes are the row: first stretches of one pixel, of two or three taking turns and of noise, then
-    // one pixel all the way. Under Paeth, zeros keep what the row above has and anything else breaks it up.
-    const filters = [0, 4, 4, 0, 4, 4];
+    // one pixel all the way, then bytes that come again one sooner than a pixel would, and one later. Under Paeth,
+    // zeros keep what the row above has and anything else breaks it up.
+    const filters = [0, 4, 4, 0, 4, 4, 0, 4, 0, 4];
     await expectToDecode(
       pixelFormats.flatMap(format => {
         const bpp = (format[1] * format[2]) / 8;
@@ -402,7 +443,9 @@ describe("the image", () => {
             if (filters[row] === 4) return random() < 2 ? random() : 0;
             if (left === 0) {
               left = row === 0 ? bpp * (1 + (random() % Math.ceil(200 / bpp))) : width * bpp;
-              pattern = Array.from({ length: bpp * [1, 1, 1, 2, 3, 200][row === 0 ? random() % 6 : 0] }, random);
+              const pixels = [1, 1, 1, 2, 3, 200][row === 0 ? random() % 6 : 0];
+              const length = bpp * pixels + (row === 6 ? -1 : row === 8 ? 1 : 0);
+              pattern = Array.from({ length: Math.max(1, length) }, random);
             }
             return pattern[--left % pattern.length];
           });

@@ -13,13 +13,6 @@ pub(crate) const IDAT: ChunkType = *b"IDAT";
 pub(crate) const IEND: ChunkType = *b"IEND";
 pub(crate) const TRNS: ChunkType = *b"tRNS";
 pub(crate) const ICCP: ChunkType = *b"iCCP";
-pub(crate) const BKGD: ChunkType = *b"bKGD";
-pub(crate) const HIST: ChunkType = *b"hIST";
-pub(crate) const TEXT: ChunkType = *b"tEXt";
-pub(crate) const ZTXT: ChunkType = *b"zTXt";
-pub(crate) const ITXT: ChunkType = *b"iTXt";
-pub(crate) const SPLT: ChunkType = *b"sPLT";
-pub(crate) const EXIF: ChunkType = *b"eXIf";
 
 pub(crate) const fn is_critical(chunk_type: ChunkType) -> bool {
     let [first, ..] = chunk_type;

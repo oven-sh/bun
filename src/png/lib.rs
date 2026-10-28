@@ -1,5 +1,5 @@
-//! PNG to and from 8-bit RGBA, behaving as libspng 0.7.4 did for `Bun.Image` unless a comment says what libspng did.
-//! Parts derive from it (LICENSE.md). DEFLATE comes from zlib through `bun_zlib`.
+//! PNG to and from 8-bit RGBA, for `Bun.Image`. Parts derive from libspng (LICENSE.md). DEFLATE comes from zlib through
+//! `bun_zlib`, and the loops of the scanline filters from src/jsc/bindings/highway_png.cpp through `bun_highway`.
 #![forbid(unsafe_code)]
 // Images come from anywhere and a panic aborts the process.
 #![deny(

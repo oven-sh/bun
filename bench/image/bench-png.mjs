@@ -3,8 +3,8 @@
 //   bun run build:release bench/image/bench-png.mjs
 //
 // There is nothing to compare with in here: run it with the build before a change and the one after. Use release
-// builds. What the compiler makes of the loops in src/png/filter.rs depends on how it is run, and a release build
-// optimizes the crates at link time.
+// builds. What the compiler makes of the loops in src/png depends on how it is run, and a release build optimizes the
+// crates at link time.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";

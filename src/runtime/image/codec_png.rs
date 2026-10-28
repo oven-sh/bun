@@ -7,6 +7,8 @@ use super::quantize;
 fn decode_error(error: bun_png::Error) -> codecs::Error {
     match error {
         bun_png::Error::Alloc(_) => codecs::Error::OutOfMemory,
+        // As `metadata()` calls it, which does not come here. Such a row alone has more pixels than the default limit.
+        bun_png::Error::ImageTooLarge => codecs::Error::TooManyPixels,
         _ => codecs::Error::DecodeFailed,
     }
 }
@@ -22,10 +24,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     let decoder = bun_png::Decoder::new(bytes).map_err(decode_error)?;
     let bun_png::Header { width, height, .. } = decoder.header();
     codecs::guard(width, height, max_pixels)?;
-    // iCCP, zTXt and iTXt may inflate to at most the size of the largest RGBA buffer allowed, but
-    // never less than libpng's default of 8 MB, so a small `maxPixels` still takes any usual profile.
-    let max_inflated = max_pixels.saturating_mul(4).clamp(8 << 20, i32::MAX as u64) as usize;
-    let image = decoder.decode(max_inflated).map_err(decode_error)?;
+    let image = decoder.decode().map_err(decode_error)?;
     Ok(codecs::Decoded {
         rgba: image.rgba,
         width,

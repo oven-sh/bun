@@ -473,17 +473,17 @@ describe("malformed PNG structure", () => {
     expect(meta.width).toBe(8);
   });
 
-  test("maxPixels also bounds what an iCCP chunk inflates to", async () => {
+  test("a color profile that inflates to too much is left out", async () => {
     const withProfile = (size: number) => {
       const iccp = Buffer.concat([Buffer.from("icc\0\0"), zlib.deflateSync(Buffer.alloc(size))]);
       return Buffer.concat([tinyPng.subarray(0, 33), pngChunk("iCCP", iccp), tinyPng.subarray(33)]);
     };
-    const png = withProfile(32 << 20);
-    expect(await rgbaOf(png)).toStrictEqual(await rgbaOf(tinyPng));
-    await expect(new Bun.Image(png, { maxPixels: 64 }).png().bytes()).rejects.toThrow(/decode failed/);
-    // A profile of an ordinary size is fine under any limit.
-    expect(await new Bun.Image(withProfile(1 << 20), { maxPixels: 64 }).metadata()).toMatchObject({ format: "png" });
-    await new Bun.Image(withProfile(1 << 20), { maxPixels: 64 }).png().bytes();
+    const hasProfile = async (png: Uint8Array) =>
+      Buffer.from(await new Bun.Image(png, { maxPixels: 64 }).png().bytes()).includes("iCCP");
+    const tooMuch = withProfile(32 << 20);
+    expect(await rgbaOf(tooMuch)).toStrictEqual(await rgbaOf(tinyPng));
+    expect(await hasProfile(tooMuch)).toBe(false);
+    expect(await hasProfile(withProfile(1 << 20))).toBe(true);
   });
 
   // The largest image the default maxPixels allows, 1 GiB of RGBA, and its first row.
@@ -517,8 +517,8 @@ describe("malformed PNG structure", () => {
     expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 64);
   });
 
-  // It is inflated to see whether it is too much, 448 MiB here. libspng kept it.
-  test.concurrent("nothing is kept of compressed text", async () => {
+  // 448 MiB of it in a file of 450 KB.
+  test.concurrent("a color profile is not inflated beyond its limit", async () => {
     const fixture = `
       const zlib = require("node:zlib");
       const tiny = Buffer.from("${Buffer.from(tinyPng).toString("base64")}", "base64");
@@ -527,7 +527,7 @@ describe("malformed PNG structure", () => {
       const data = Buffer.concat([start, ...Array(448).fill(piece), zlib.deflateRawSync(""), Buffer.alloc(4)]);
       const head = Buffer.alloc(8);
       head.writeUInt32BE(data.length);
-      head.write("zTXt", 4);
+      head.write("iCCP", 4);
       const png = Buffer.concat([tiny.subarray(0, 33), head, data, Buffer.alloc(4), tiny.subarray(33)]);
       console.log(JSON.stringify(await new Bun.Image(png).png().bytes().then(() => "decoded", e => e.code)));
     `;

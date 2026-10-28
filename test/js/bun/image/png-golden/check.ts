@@ -1,37 +1,8 @@
-// Gives PNG files to Bun.Image. Of those made with write.ts it says where the result is not what the samples stand for.
+// Gives a PNG file to Bun.Image, and takes apart what comes back.
 import { isASAN, isDebug } from "harness";
-import { filteredLines, rgbaLinesOf, writeAround, type Layout, type Picture } from "./write";
 
 /** These builds run JavaScript and zlib many times slower, so they get a part of what the others get. */
 export const slow = isDebug || isASAN;
-
-export type Case = {
-  name: string;
-  file: Uint8Array;
-  width: number;
-  height: number;
-  /** What `rgbaLinesOf` gives. */
-  expected: Buffer;
-  profile?: Uint8Array;
-  maxPixels?: number;
-};
-
-/** For many files of one picture, filtered and interlaced in one way, that differ in something else. */
-export function maker(picture: Picture, shared: Layout = {}) {
-  const lines = filteredLines(picture, shared);
-  const expected = rgbaLinesOf(picture);
-  return (name: string, layout: Layout = {}, profile?: Uint8Array): Case => ({
-    name,
-    file: writeAround(lines, picture, { ...shared, ...layout }),
-    width: picture.width,
-    height: picture.height,
-    expected,
-    profile,
-  });
-}
-
-export const make = (name: string, picture: Picture, layout?: Layout, profile?: Uint8Array) =>
-  maker(picture, layout)(name, undefined, profile);
 
 const IDAT = 0x49444154;
 const ICCP = 0x69434350;
@@ -65,28 +36,6 @@ function parse(out: Uint8Array) {
   return { width, height, lines, profile };
 }
 
-/** The pixels as `rgbaLinesOf` gives them, and the profile. */
+/** The pixels as RGBA, each row behind a zero, and the profile. */
 export const decoded = async (file: Uint8Array, maxPixels?: number) =>
   parse(await new Bun.Image(file, { maxPixels }).png({ compressionLevel: 0 }).bytes());
-
-async function mistake({ name, file, width, height, expected, profile, maxPixels }: Case) {
-  let out: ReturnType<typeof parse>;
-  try {
-    out = await decoded(file, maxPixels);
-  } catch (error: any) {
-    return `${name}: ${error.code ?? error}`;
-  }
-  if (out.width !== width || out.height !== height) return `${name}: ${out.width} x ${out.height}`;
-  if (profile ? !out.profile || !Buffer.from(profile).equals(out.profile) : out.profile) {
-    return `${name}: a profile of ${out.profile?.length} bytes`;
-  }
-  if (expected.equals(out.lines)) return;
-  const at = expected.findIndex((byte, i) => byte !== out.lines[i]);
-  const [x, y] = [((at % (1 + width * 4)) - 1) >> 2, Math.floor(at / (1 + width * 4))];
-  const hex = (from: Uint8Array) =>
-    Buffer.from(from).toString("hex", at - ((at - y - 1) % 4), at - ((at - y - 1) % 4) + 4);
-  return `${name}: at ${x}, ${y} ${hex(out.lines)} and not ${hex(expected)}`;
-}
-
-/** What is wrong with how each file decodes. Nothing, one hopes. */
-export const mistakes = async (cases: Case[]) => (await Promise.all(cases.map(mistake))).filter(Boolean);

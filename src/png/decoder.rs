@@ -1,6 +1,6 @@
 //! PNG to 8-bit RGBA. No checksum is looked at: not a chunk's CRC, not a zlib stream's Adler-32.
 
-use bun_core::strings::{index_of_char_usize, split_once_char};
+use bun_core::strings::index_of_char_usize;
 use bun_zlib::{InflateDecoder, ReturnCode};
 
 use crate::chunk::{self, ChunkType, Reader};
@@ -8,8 +8,8 @@ use crate::error::{Error, Result};
 use crate::filter;
 use crate::header::{ColorType, Header, IHDR_LEN};
 
-// https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L32
-const MAX_COUNTED_CHUNKS: u32 = 1000;
+/// What a JPEG file has room for, in 255 segments. A few KB of iCCP can inflate to a thousand times as much.
+const MAX_ICC_PROFILE_LEN: usize = 255 * 65_519;
 
 type Rgba = [u8; 4];
 
@@ -46,11 +46,9 @@ impl<'a> Decoder<'a> {
         self.header
     }
 
-    /// `max_inflated` bounds what an iCCP, zTXt or iTXt chunk may inflate to, rounded down as `inflate` says.
-    /// One that needs more fails the decode.
-    pub fn decode(self, max_inflated: usize) -> Result<Image> {
+    pub fn decode(self) -> Result<Image> {
         let Self { header, mut reader } = self;
-        let mut chunks = Chunks::new(header, max_inflated);
+        let mut chunks = Chunks::new(header);
         let first_idat_len = chunks.read_until_idat(&mut reader)?;
         let expander = Expander::new(&chunks);
         let mut idat = Idat::new(reader, first_idat_len)?;
@@ -63,42 +61,31 @@ impl<'a> Decoder<'a> {
 
 /// What the chunks between IHDR and the first IDAT leave behind.
 ///
-/// An ancillary chunk that breaks a rule is passed over. A critical one fails the decode. The rules are
-/// libspng's, which are not always the specification's, unless a comment says what libspng did.
+/// An ancillary chunk that breaks a rule is passed over, and so is a PLTE that no pixel refers to. Any other critical
+/// chunk that breaks one fails the decode.
 struct Chunks<'a> {
     header: Header,
-    max_inflated: usize,
-    /// Of the last PLTE. Empty: there was none.
+    /// Of an indexed image. Empty: there was no PLTE yet.
     palette: &'a [[u8; 3]],
     /// The data of a tRNS chunk of the right length for the color type.
     transparency: Option<&'a [u8]>,
-    /// No PLTE may follow: there was a bKGD or hIST chunk, or the PLTE of an indexed image.
-    palette_is_final: bool,
     /// Also set by an iCCP chunk that was passed over.
     seen_iccp: bool,
-    seen_exif: bool,
     icc_profile: Option<Vec<u8>>,
-    /// The tEXt, zTXt, iTXt, sPLT and eXIf chunks so far. libspng kept them, up to a limit.
-    counted_chunks: u32,
 }
 
 impl<'a> Chunks<'a> {
-    fn new(header: Header, max_inflated: usize) -> Self {
+    fn new(header: Header) -> Self {
         Self {
             header,
-            max_inflated,
             palette: &[],
             transparency: None,
-            palette_is_final: false,
             seen_iccp: false,
-            seen_exif: false,
             icc_profile: None,
-            counted_chunks: 0,
         }
     }
 
     /// Leaves `reader` behind the header of the first IDAT and returns that chunk's length.
-    // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L2358
     fn read_until_idat(&mut self, reader: &mut Reader<'a>) -> Result<usize> {
         loop {
             let (len, chunk_type) = reader.next_chunk_header()?;
@@ -113,37 +100,30 @@ impl<'a> Chunks<'a> {
                 chunk::PLTE => self.on_plte(data)?,
                 chunk::IHDR | chunk::IEND => return Err(Error::ChunkOutOfPlace),
                 _ if chunk::is_critical(chunk_type) => return Err(Error::UnknownCriticalChunk),
+                // Not the first of its kind either.
                 _ if data.is_empty() => {}
                 chunk::TRNS => self.on_trns(data),
-                chunk::BKGD => self.on_bkgd(data),
-                chunk::HIST => self.on_hist(data),
                 chunk::ICCP => self.on_iccp(data)?,
-                chunk::TEXT | chunk::ZTXT | chunk::ITXT => self.on_text(chunk_type, data)?,
-                chunk::SPLT => self.count_chunk()?,
-                chunk::EXIF if !self.seen_exif => {
-                    self.seen_exif = true;
-                    self.count_chunk()?;
-                }
                 _ => {}
             }
         }
     }
 
     fn on_plte(&mut self, data: &'a [u8]) -> Result<()> {
-        if self.transparency.is_some() || self.palette_is_final {
+        // Elsewhere it suggests colors to a viewer that cannot show them all.
+        if self.header.color_type != ColorType::Indexed {
+            return Ok(());
+        }
+        if !self.palette.is_empty() {
             return Err(Error::ChunkOutOfPlace);
         }
         let (entries, remainder) = data.as_chunks::<3>();
-        let max = match self.header.color_type {
-            ColorType::Indexed => 1 << self.header.bit_depth,
-            _ => 256,
-        };
-        if !remainder.is_empty() || entries.is_empty() || entries.len() > max {
+        if !remainder.is_empty() || entries.is_empty() || entries.len() > 256 {
             return Err(Error::InvalidPalette);
         }
-        self.palette = entries;
-        // libspng let a second PLTE replace as many colors of the first as it had.
-        self.palette_is_final = self.header.color_type == ColorType::Indexed;
+        // No index reaches further. As in libpng, a tRNS that does is too long.
+        let reachable = 1 << self.header.bit_depth;
+        self.palette = entries.get(..reachable).unwrap_or(entries);
         Ok(())
     }
 
@@ -159,148 +139,48 @@ impl<'a> Chunks<'a> {
         }
     }
 
-    fn on_bkgd(&mut self, data: &[u8]) {
-        self.palette_is_final |= match self.header.color_type {
-            ColorType::Grayscale | ColorType::GrayscaleAlpha => data.len() == 2,
-            ColorType::Truecolor | ColorType::TruecolorAlpha => data.len() == 6,
-            // Its PLTE is final as soon as it is there, and before that no index is valid.
-            ColorType::Indexed => false,
-        };
-    }
-
-    fn on_hist(&mut self, data: &[u8]) {
-        self.palette_is_final |= !self.palette.is_empty() && data.len() / 2 == self.palette.len();
-    }
-
     fn on_iccp(&mut self, data: &[u8]) -> Result<()> {
-        if !self.palette.is_empty() || self.seen_iccp {
+        // Only the first is inflated, or a file full of them would cost a thousand times its size in time.
+        if self.seen_iccp {
             return Ok(());
         }
         self.seen_iccp = true;
-        let name_field = data.get(..80).unwrap_or(data);
-        let Some(name_len) = index_of_char_usize(name_field, 0) else {
-            return Ok(());
-        };
-        let (name, after_name) = data.split_at_checked(name_len).unwrap_or_default();
-        // The name's terminator, then compression method 0.
-        let (true, [0, 0, compressed @ ..]) = (is_keyword(name), after_name) else {
-            return Ok(());
-        };
-        self.icc_profile = inflate(compressed, self.max_inflated, Keep::Yes)?;
-        Ok(())
-    }
-
-    /// Nothing is kept of the text, but libspng kept it, so one that inflates to too much fails the decode.
-    // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L2761
-    fn on_text(&mut self, chunk_type: ChunkType, data: &[u8]) -> Result<()> {
-        self.count_chunk()?;
-        // All the fields in front of the text have to be in here.
-        let window = data.get(..256).unwrap_or(data);
-        let Some(keyword_len) = index_of_char_usize(data.get(..80).unwrap_or(data), 0) else {
-            return Ok(());
-        };
-        let after_keyword = window.get(keyword_len + 1..).unwrap_or_default();
-        let window_after_fields = match (chunk_type, after_keyword) {
-            // Compression method 0 and at least a byte.
-            (chunk::ZTXT, [0, text @ ..]) if !text.is_empty() => text.len(),
-            // Compressed, compression method 0, a language tag, a translated keyword.
-            (chunk::ITXT, [1, 0, after_method @ ..]) => {
-                let after_language = split_once_char(after_method, 0).map(|(_, after)| after);
-                let Some((_, text)) = after_language.and_then(|after| split_once_char(after, 0))
-                else {
-                    return Ok(());
-                };
-                text.len()
-            }
-            _ => return Ok(()),
-        };
-        let compressed_at = window.len() - window_after_fields;
-        let compressed = data.get(compressed_at..).unwrap_or_default();
-        // libspng put a terminator behind the text.
-        let max = self
-            .max_inflated
-            .checked_sub(1)
-            .ok_or(Error::InflatedTooLarge)?;
-        inflate(compressed, max, Keep::No)?;
-        Ok(())
-    }
-
-    fn count_chunk(&mut self) -> Result<()> {
-        self.counted_chunks += 1;
-        if self.counted_chunks > MAX_COUNTED_CHUNKS {
-            return Err(Error::TooManyChunks);
+        // A name of 1 to 79 bytes, which is for people, its terminator, compression method 0.
+        if let Some(name_len @ 1..) = index_of_char_usize(data.get(..80).unwrap_or(data), 0)
+            && let Some([0, 0, compressed @ ..]) = data.get(name_len..)
+        {
+            self.icc_profile = inflate_icc_profile(compressed)?;
         }
         Ok(())
     }
 }
 
-/// 1 to 79 printable Latin-1 characters. Spaces only inside, one at a time.
-// https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L2206
-fn is_keyword(name: &[u8]) -> bool {
-    let mut after_space = true;
-    for &c in name {
-        if !matches!(c, 32..=126 | 161..) || (c == b' ' && after_space) {
-            return false;
-        }
-        after_space = c == b' ';
-    }
-    !after_space && name.len() <= 79
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Keep {
-    Yes,
-    No,
-}
-
-/// Inflates the zlib stream of an ancillary chunk. `None`: the stream is damaged, cut short, empty or not kept.
-///
-/// libspng inflated into a buffer of 8 KiB that it doubled when full, unless that made it larger than `max`.
-/// So the limit on the output is the largest `8 KiB << n` that `max` allows.
-///
-/// Not the same for a `max` of 256 KiB or less: libspng gave zlib the first 81 or 256 bytes of the chunk apart
-/// from the rest, and refused a stream whose output filled the last buffer before its end was in sight.
-// https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L1244
-fn inflate(mut input: &[u8], max: usize, keep: Keep) -> Result<Option<Vec<u8>>> {
-    const DISCARDED_AT_ONCE: usize = 64 * 1024;
-
+/// `None`: the stream is damaged, cut short, empty, or inflates to more than `MAX_ICC_PROFILE_LEN`.
+fn inflate_icc_profile(mut input: &[u8]) -> Result<Option<Vec<u8>>> {
     let mut inflater = new_inflater()?;
     let mut out = Vec::new();
-    let mut capacity = 8 * 1024;
-    let mut total = 0usize;
+    // Nobody looks at the Adler-32, so a stream that comes without one, as some do, is lent one.
+    let mut lent: Option<&[u8]> = Some(&[0; 4]);
     loop {
-        let mut room = capacity - total;
-        if keep == Keep::No {
-            out.clear();
-            room = room.min(DISCARDED_AT_ONCE);
-        }
-        let before = out.len();
+        // As much again, up to one byte too many.
+        let room = out.len().max(8 * 1024);
+        let room = room.min((MAX_ICC_PROFILE_LEN + 1).saturating_sub(out.len()));
+        let full = out.len() + room;
         let (used, code) = inflater.step_limited(input, &mut out, room);
         input = input.get(used..).unwrap_or_default();
-        let produced = out.len() - before;
-        total += produced;
         match code {
             ReturnCode::StreamEnd => break,
-            ReturnCode::Ok | ReturnCode::BufError => {}
             ReturnCode::MemError => return Err(Error::Alloc(bun_alloc::AllocError)),
+            ReturnCode::Ok | ReturnCode::BufError if out.len() < full => match lent.take() {
+                Some(adler32) => input = adler32,
+                None => return Ok(None),
+            },
+            ReturnCode::Ok | ReturnCode::BufError if full <= MAX_ICC_PROFILE_LEN => {}
             _ => return Ok(None),
         }
-        // There was room left, so it is the input that ran out.
-        if produced < room {
-            return Ok(None);
-        }
-        if total == capacity {
-            if capacity > max / 2 {
-                return Err(Error::InflatedTooLarge);
-            }
-            capacity *= 2;
-        }
     }
-    if total == 0 || keep == Keep::No {
-        return Ok(None);
-    }
-    out.shrink_to_fit();
-    Ok(Some(out))
+    let fits = !out.is_empty() && out.len() <= MAX_ICC_PROFILE_LEN;
+    Ok(fits.then_some(out))
 }
 
 /// One that does not look at the Adler-32.
@@ -557,12 +437,6 @@ fn read_rgb8(
 
 // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L3618
 fn read_pixels(header: Header, expander: &Expander, idat: &mut Idat) -> Result<Vec<u8>> {
-    if header
-        .passes()
-        .any(|pass| pass.width * 4 > u32::MAX as usize)
-    {
-        return Err(Error::ImageTooLarge);
-    }
     let stride = header.width as usize * 4;
     let size = stride
         .checked_mul(header.height as usize)

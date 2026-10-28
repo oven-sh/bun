@@ -8,15 +8,18 @@ import { slow } from "./check";
 import { chunksOf, linesOf, type PngOptions } from "./observe";
 import { read } from "./read";
 import {
+  chunk,
   filteredLines,
   formats,
   iccp,
+  iend,
+  ihdr,
   noise,
+  png,
   randomBytes,
   RGBA,
   rgbaOf,
   write,
-  writeAround,
   type Picture,
 } from "./write";
 
@@ -191,11 +194,10 @@ describe("RGBA", () => {
       [0, 1, 255],
       [0, 64, 128, 192],
     ]) {
-      for (let i = 0; i < (slow ? 8 : 200); i++) {
-        pictures.push(
-          fill(1 + (random() % 6), 1 + (random() % 3), () => [0, 0, 0, 0].map(() => values[random() % values.length])),
-        );
-      }
+      const few = () => [0, 0, 0, 0].map(() => values[random() % values.length]);
+      for (let i = 0; i < (slow ? 8 : 200); i++) pictures.push(fill(1 + (random() % 6), 1 + (random() % 3), few));
+      // Rows are filtered and added up many bytes at a time, and what is left over at the end on its own.
+      for (let width = 7; width <= 18; width++) pictures.push(fill(width, 3, few));
     }
 
     const met = new Set<string>();
@@ -228,7 +230,7 @@ describe("RGBA", () => {
     );
   });
 
-  // libspng added up the bytes of a filtered row in 32 bits, and did not try with rows that could be too much for that.
+  // Choosing takes six buffers as long as the row. libspng had the same limit, for adding up a row in 32 bits.
   test.skipIf(slow)("the longest row that is filtered, and the shortest that is not", async () => {
     for (const [width, filter] of [
       [4194303, 1],
@@ -239,11 +241,7 @@ describe("RGBA", () => {
       for (let i = 1; i <= 4096; i++) line[i] = i >> 2;
       for (let have = 4096; have < width * 4; have *= 2)
         line.copyWithin(1 + have, 1, 1 + Math.min(have, width * 4 - have));
-      const file = writeAround(
-        line,
-        { width, height: 1, colorType: RGBA, depth: 8 },
-        { deflate: lines => zlib.deflateSync(lines, { level: 0 }) },
-      );
+      const file = png(ihdr(width, 1, 8, RGBA), chunk("IDAT", zlib.deflateSync(line, { level: 0 })), iend);
       const [, first] = chunksOf(await new Bun.Image(file).png({ compressionLevel: 1 }).bytes());
       expect([width, zlib.inflateSync(first.data, { finishFlush: zlib.constants.Z_SYNC_FLUSH })[0]]).toEqual([
         width,

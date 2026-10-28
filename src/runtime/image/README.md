@@ -21,7 +21,7 @@ compiles away. On macOS/Windows the backend is tried first; it returns
 a `BackendUnavailable` error for anything it can't do (palette PNG, lossless
 WebP, dlopen miss) and the static path takes over.
 
-The JPEG and WebP codecs are vendored via `scripts/build/deps/{libjpeg-turbo,libwebp}.ts`. PNG is `src/png`, in Rust.
+The JPEG and WebP codecs are vendored via `scripts/build/deps/{libjpeg-turbo,libwebp}.ts`. PNG is `src/png`, in Rust, on the kernels in `src/jsc/bindings/highway_png.cpp`.
 `patches/libjpeg-turbo/` carries the 8-bit-only patch + the j12/j16 stub overlay, and
 `fatal-clears-warning.patch`: after `tj3DecompressHeader` and `tj3Decompress8`, TurboJPEG's warning
 flag stays set only when the call ran to completion. `codec_jpeg.rs` accepts a decode on that signal

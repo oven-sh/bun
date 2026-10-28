@@ -9762,12 +9762,15 @@ declare module "bun" {
      *   on this *machine* (HEIC/AVIF without the OS codec, TIFF on Linux).
      *   Catch this to fall back to a portable format.
      * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
-     *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
+     *   exceed `maxPixels`, a row of a PNG takes 4 GiB or more, or a
+     *   path-backed input is over the 256 MiB cap.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
      *   A damaged JPEG that libjpeg-turbo decodes with only a warning (stray
      *   bytes, a missing end marker, truncated scan data) does not reject.
      *   Blocks with no data come back flat grey.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
+     * - `ERR_OUT_OF_MEMORY` — there is no memory for a buffer the size of the
+     *   image.
      * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
      *   construction and the terminal call.
      * - File-backed inputs surface the underlying syscall code (`ENOENT`,
@@ -9779,6 +9782,7 @@ declare module "bun" {
       | "ERR_IMAGE_DECODE_FAILED"
       | "ERR_IMAGE_ENCODE_FAILED"
       | "ERR_IMAGE_UNKNOWN_FORMAT"
+      | "ERR_OUT_OF_MEMORY"
       | "ERR_INVALID_STATE";
 
     /**
@@ -9805,8 +9809,6 @@ declare module "bun" {
        * Reject inputs whose `width × height` exceeds this many pixels. The
        * check runs after the header is read but before any pixel buffer is
        * allocated, so a tiny file claiming a huge canvas is refused cheaply.
-       * A lower limit also lowers how much a compressed PNG chunk, such as an
-       * ICC profile, may inflate to before the image is refused.
        * @default 268402689 // 0x3FFF * 0x3FFF, same as Sharp
        */
       maxPixels?: number;
@@ -9859,7 +9861,8 @@ declare module "bun" {
    *
    * The source ICC colour profile (Display P3, Adobe RGB, Jpegli XYB, etc.)
    * is preserved through re-encode to JPEG, PNG, and WebP so non-sRGB
-   * images don't shift colour.
+   * images don't shift colour. Bun leaves out the profile of a PNG if it is
+   * damaged or inflates to more than a JPEG has room for (16,707,345 bytes).
    *
    * @example
    * ```ts

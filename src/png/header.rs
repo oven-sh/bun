@@ -109,8 +109,6 @@ impl Header {
         if !depth_fits {
             return Err(Error::InvalidHeader);
         }
-        // With its filter type a row has to fit in 32 bits.
-        // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L563
         let header = Self {
             width,
             height,
@@ -118,10 +116,9 @@ impl Header {
             color_type,
             interlaced,
         };
-        if header
-            .passes()
-            .any(|pass| pass.row_bytes >= u32::MAX as usize)
-        {
+        // A row has to fit in 32 bits, behind its filter type as well as expanded to RGBA.
+        let width = width as usize;
+        if header.row_bytes(width).max(width * 4) >= u32::MAX as usize {
             return Err(Error::ImageTooLarge);
         }
         Ok(header)

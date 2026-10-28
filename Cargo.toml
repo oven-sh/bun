@@ -513,7 +513,7 @@ bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }
 
 # Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
-# checks stay on. scripts/build/flags.ts does the same for highway_json.cpp and highway_xml.cpp.
+# checks stay on. scripts/build/flags.ts does the same for highway_png.cpp.
 [profile.dev.package.bun_png]
 opt-level = 3
 

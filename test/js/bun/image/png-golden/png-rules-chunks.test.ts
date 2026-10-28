@@ -1,8 +1,9 @@
 // The rules for the chunks in front of IDAT, one at a time, in files made by hand.
-// Each of these was so with libspng too, whatever the specification says, unless it says what libspng did.
+// A comment says so where libspng did otherwise.
 import { describe, expect, test } from "bun:test";
 import zlib from "node:zlib";
-import { decode, decodes, iccpOf, idat, pixels, profile, rejects } from "./decode";
+import { slow } from "./check";
+import { decode, iccpOf, idat, pixels, profile, rejects } from "./decode";
 import { chunk, GRAY, GRAY_ALPHA, iend, ihdr, INDEXED, png, RGB, RGBA } from "./write";
 
 describe("chunks before the image", () => {
@@ -28,19 +29,29 @@ describe("chunks before the image", () => {
     expect(await pixels(indexed, palette, indices, iend)).toEqual(["0a0b0cff", "141516ff", "000000ff", "000000ff"]);
   });
 
-  test("an indexed image needs PLTE, with no more entries than the depth can index", async () => {
+  test("an indexed image needs PLTE, of 1 to 256 colors", async () => {
     await rejects(indexed, indices, iend);
-    await rejects(indexed, chunk("PLTE", Buffer.alloc(5 * 3)), indices, iend);
-    await rejects(indexed, chunk("PLTE", Buffer.alloc(4)), indices, iend);
     await rejects(indexed, chunk("PLTE"), indices, iend);
-    expect(await pixels(rgbaHeader, chunk("PLTE", Buffer.alloc(256 * 3)), rgbaData, iend)).toEqual(["01020304"]);
-    await rejects(rgbaHeader, chunk("PLTE", Buffer.alloc(257 * 3)), rgbaData, iend);
-    // Whatever the depth.
-    for (const colorType of [GRAY, RGB, GRAY_ALPHA, RGBA]) {
-      const [first, data] = [ihdr(1, 1, 16, colorType), idat(Array(8).fill(1))];
-      expect(await pixels(first, chunk("PLTE", Buffer.alloc(256 * 3)), data, iend)).toHaveLength(1);
-      await rejects(first, chunk("PLTE", Buffer.alloc(257 * 3)), data, iend);
-    }
+    await rejects(indexed, chunk("PLTE", Buffer.alloc(4)), indices, iend);
+    await rejects(indexed, chunk("PLTE", Buffer.alloc(257 * 3)), indices, iend);
+    expect(await pixels(indexed, chunk("PLTE", Buffer.alloc(256 * 3, 9)), indices, iend)).toEqual(
+      Array(4).fill("090909ff"),
+    );
+  });
+
+  // libspng refused such a file. This is what libpng does.
+  test("the colors that the depth cannot index are not there", async () => {
+    const five = chunk("PLTE", [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5]);
+    const opaque = ["010101ff", "020202ff", "030303ff", "040404ff"];
+    expect(await pixels(indexed, five, indices, iend)).toEqual(opaque);
+    expect(await pixels(indexed, five, chunk("tRNS", [6, 7, 8, 9]), indices, iend)).toEqual([
+      "01010106",
+      "02020207",
+      "03030308",
+      "04040409",
+    ]);
+    // So a tRNS for all five is too long, and is passed over.
+    expect(await pixels(indexed, five, chunk("tRNS", [6, 7, 8, 9, 10]), indices, iend)).toEqual(opaque);
   });
 
   // libspng let it replace as many entries of the first as it had.
@@ -51,63 +62,32 @@ describe("chunks before the image", () => {
     expect(await pixels(rgbaHeader, first, palette, rgbaData, iend)).toEqual(["01020304"]);
   });
 
-  test("PLTE may not follow tRNS, bKGD or hIST, unless they were passed over", async () => {
-    const [rgbHeader, rgbData] = [ihdr(1, 1, 8, RGB), idat([1, 2, 3])];
-    for (const [type, good, bad, goodIfIndexed] of [
-      ["tRNS", [0, 9, 0, 9, 0, 9], [0, 9, 0, 9, 0], [7]],
-      ["bKGD", [0, 9, 0, 9, 0, 9], [0, 9, 0, 9, 0, 9, 0], [0]],
-      ["hIST", [0, 1, 0, 2], [0, 1], [0, 1, 0, 2]],
-    ] as const) {
-      await rejects(rgbHeader, palette, chunk(type, [...good]), palette, rgbData, iend);
-      expect(await pixels(rgbHeader, palette, chunk(type, [...bad]), palette, rgbData, iend)).toEqual(["010203ff"]);
-      // With no palette yet to refer to, they are passed over.
-      expect((await pixels(indexed, chunk(type, [...goodIfIndexed]), palette, indices, iend))[0]).toBe("0a0b0cff");
-    }
-    // They have to be as long as a pixel of 16 bits without its alpha. With alpha there is no tRNS, and where the
-    // pixels are indices, neither is any good in front of PLTE.
-    const lengths = [1, 2, 3, 4, 5, 6, 7, 8];
-    for (const [colorType, channels, tRNS, bKGD] of [
-      [GRAY, 1, 2, 2],
-      [GRAY_ALPHA, 2, 0, 2],
-      [RGB, 3, 6, 6],
-      [RGBA, 4, 0, 6],
-      [INDEXED, 1, 0, 0],
+  // libspng held it to the rules for its length, its number and its place, which is in front of tRNS, bKGD and hIST.
+  test("PLTE is not looked at where the pixels are not indices", async () => {
+    for (const [colorType, channels] of [
+      [GRAY, 1],
+      [GRAY_ALPHA, 2],
+      [RGB, 3],
+      [RGBA, 4],
     ]) {
-      for (const [type, right] of [
-        ["tRNS", tRNS],
-        ["bKGD", bKGD],
-      ] as const) {
-        const [first, data] = [ihdr(1, 1, 8, colorType), idat(Array(channels).fill(1))];
-        const found = await Promise.all(
-          lengths.map(length => decodes(png(first, chunk(type, Buffer.alloc(length)), palette, data, iend))),
-        );
-        expect([colorType, type, found]).toEqual([colorType, type, lengths.map(length => length !== right)]);
+      const [first, data] = [ihdr(1, 1, 8, colorType), idat(Array(channels).fill(1))];
+      const expected = await pixels(first, data, iend);
+      for (const before of [
+        [chunk("PLTE")],
+        [chunk("PLTE", Buffer.alloc(4))],
+        [chunk("PLTE", Buffer.alloc(257 * 3))],
+        [palette, palette],
+        // Of the length for the color type, and not the color of the pixel.
+        [chunk("tRNS", Buffer.alloc(channels < 3 ? 2 : 6)), palette],
+        [chunk("bKGD", Buffer.alloc(channels < 3 ? 2 : 6)), palette],
+        [palette, chunk("hIST", [0, 1, 0, 2]), palette],
+      ]) {
+        expect([colorType, await pixels(first, ...before, data, iend)]).toEqual([colorType, expected]);
       }
     }
-    // With alpha, a tRNS that is short enough for the PLTE in front of it is passed over too.
-    for (const first of [ihdr(1, 1, 8, GRAY_ALPHA), rgbaHeader]) {
-      for (const length of [1, 2]) {
-        const file = png(first, palette, chunk("tRNS", Buffer.alloc(length)), palette, rgbaData, iend);
-        expect(await decodes(file)).toBe(true);
-      }
-    }
-    // hIST has to be as long as the last PLTE.
-    const one = chunk("PLTE", [1, 1, 1]);
-    await rejects(rgbHeader, palette, one, chunk("hIST", [0, 1]), palette, rgbData, iend);
-    expect(await pixels(rgbHeader, palette, one, chunk("hIST", [0, 1, 0, 2]), palette, rgbData, iend)).toEqual([
-      "010203ff",
-    ]);
-    // Half an entry more does not count.
-    await rejects(rgbHeader, palette, chunk("hIST", [0, 1, 0, 2, 0]), palette, rgbData, iend);
-    for (const length of [3, 6]) {
-      expect(await pixels(rgbHeader, palette, chunk("hIST", Buffer.alloc(length)), palette, rgbData, iend)).toEqual([
-        "010203ff",
-      ]);
-    }
-    // One byte is no entry, so it does not go with a PLTE of one color.
-    expect(await pixels(rgbHeader, one, chunk("hIST", [1]), palette, rgbData, iend)).toEqual(["010203ff"]);
-    // Without a PLTE it is passed over, though no entries are as many as no colors.
-    expect(await pixels(rgbHeader, chunk("hIST", [1]), palette, rgbData, iend)).toEqual(["010203ff"]);
+    // So it does not undo a tRNS in front of it either, as it did in libpng before 1.6.47.
+    const transparent = chunk("tRNS", [0, 1, 0, 1, 0, 1]);
+    expect(await pixels(ihdr(1, 1, 8, RGB), transparent, palette, idat([1, 1, 1]), iend)).toEqual(["01010100"]);
   });
 
   test("tRNS gives the first palette entries their alpha", async () => {
@@ -147,12 +127,14 @@ describe("chunks before the image", () => {
     expect(await pixels(rgbaHeader, chunk("tRNS", [0, 1, 0, 2, 0, 3]), rgbaData, iend)).toEqual(["01020304"]);
   });
 
-  test("only the first iCCP counts, and only before PLTE", async () => {
+  test("only the first iCCP counts, wherever it is in front of the image", async () => {
     expect(await profile(rgbaHeader, iccpOf("one"), rgbaData, iend)).toBe("one");
     expect(await profile(rgbaHeader, iccpOf("one"), iccpOf("two"), rgbaData, iend)).toBe("one");
-    expect(await profile(rgbaHeader, chunk("PLTE", [1, 2, 3]), iccpOf("one"), rgbaData, iend)).toBe(null);
+    // libspng passed it over behind PLTE.
+    expect(await profile(rgbaHeader, palette, iccpOf("one"), rgbaData, iend)).toBe("one");
+    expect(await profile(indexed, palette, iccpOf("one"), indices, iend)).toBe("one");
     // The first one counts as seen even when it is no good.
-    expect(await profile(rgbaHeader, iccpOf("one", " name"), iccpOf("two"), rgbaData, iend)).toBe(null);
+    expect(await profile(rgbaHeader, iccpOf("one", ""), iccpOf("two"), rgbaData, iend)).toBe(null);
     // An empty one does not.
     expect(await profile(rgbaHeader, chunk("iCCP"), iccpOf("two"), rgbaData, iend)).toBe("two");
   });
@@ -161,10 +143,6 @@ describe("chunks before the image", () => {
     const good = iccpOf("profile").subarray(8, -4);
     for (const [why, data] of [
       ["empty name", iccpOf("profile", "").subarray(8, -4)],
-      ["space before the name", iccpOf("profile", " a").subarray(8, -4)],
-      ["space after the name", iccpOf("profile", "a ").subarray(8, -4)],
-      ["two spaces", iccpOf("profile", "a  b").subarray(8, -4)],
-      ["control character", iccpOf("profile", "a\x7fb").subarray(8, -4)],
       ["80 characters", iccpOf("profile", Buffer.alloc(80, "a").toString()).subarray(8, -4)],
       ["no terminator", Buffer.from("name")],
       ["nothing after the name", Buffer.from("name\0")],
@@ -172,7 +150,6 @@ describe("chunks before the image", () => {
       ["compression method 255", Buffer.concat([Buffer.from("name\0\xff", "latin1"), good.subarray(6)])],
       ["no stream", Buffer.from("name\0\0")],
       ["stream cut short", good.subarray(0, -5)],
-      ["stream without its checksum", good.subarray(0, -4)],
       ["stream damaged", Buffer.concat([good.subarray(0, 6), Buffer.from([0xff, 0xff]), good.subarray(8)])],
       ["stream of nothing", Buffer.concat([Buffer.from("name\0\0"), zlib.deflateSync(Buffer.alloc(0))])],
     ] as const) {
@@ -181,173 +158,60 @@ describe("chunks before the image", () => {
         { pixels: ["01020304"], profile: null },
       ]);
     }
-    for (const name of ["a", "a b", "q q~\xa1", "\xa1\xff", Buffer.alloc(79, "a").toString()]) {
-      expect(await profile(rgbaHeader, iccpOf("profile", name), rgbaData, iend)).toBe("profile");
-    }
-    // The checksum has to be there, not to be right.
+    // The checksum does not have to be right, nor all there. libspng wanted it there.
     const wrongChecksum = Buffer.from(good);
     wrongChecksum[wrongChecksum.length - 1] ^= 0xff;
-    expect(await profile(rgbaHeader, chunk("iCCP", wrongChecksum), rgbaData, iend)).toBe("profile");
+    for (const data of [wrongChecksum, good.subarray(0, -1), good.subarray(0, -4)]) {
+      expect(await profile(rgbaHeader, chunk("iCCP", data), rgbaData, iend)).toBe("profile");
+    }
   });
 
-  // There is room for 8 KiB of what they inflate to, then for twice that, and so on up to the limit.
-  test.each([
-    ["iCCP", 8 << 20],
-    ["zTXt", 4 << 20],
-  ])("%s: a stream that breaks off where the room ends is passed over, but not at the limit", async (type, limit) => {
-    const open = (size: number) => zlib.deflateSync(Buffer.alloc(size), { finishFlush: zlib.constants.Z_SYNC_FLUSH });
-    const decodeWith = (stream: Uint8Array) =>
-      decode(png(rgbaHeader, chunk(type, Buffer.concat([Buffer.from("name\0\0"), stream])), rgbaData, iend), {
-        maxPixels: 64,
+  // libspng wanted printable Latin-1, with spaces only inside and one at a time.
+  test("the name of a profile is 1 to 79 bytes of any kind", async () => {
+    const bytes = Buffer.from(Array.from({ length: 255 }, (_, i) => i + 1)).toString("latin1");
+    for (const name of ["a", " ", " a", "a ", "a  b", ...(bytes.match(/.{1,79}/gs) ?? [])]) {
+      expect([name, await profile(rgbaHeader, iccpOf("profile", name), rgbaData, iend)]).toEqual([name, "profile"]);
+    }
+  });
+
+  // libspng refused the image, and its limit was 4 bytes for each of `maxPixels`, rounded down to a power of two.
+  test("a profile that a JPEG file has no room for is passed over", async () => {
+    const limit = 255 * 65519;
+    const withStream = (stream: Uint8Array) =>
+      decode(png(rgbaHeader, chunk("iCCP", Buffer.concat([Buffer.from("name\0\0"), stream])), rgbaData, iend), {
+        maxPixels: 1,
       });
     const passedOver = { pixels: ["01020304"], profile: null };
-    for (const size of [8190, 8191, 8192, 8193, 16383, 16384, limit - 1]) {
-      expect([size, await decodeWith(open(size))]).toEqual([size, passedOver]);
-    }
-    // With no room left and the end of the stream not in sight, there could be more to come.
-    await expect(decodeWith(open(limit))).rejects.toMatchObject({ code: "ERR_IMAGE_DECODE_FAILED" });
-    // It is not in sight before the checksum.
-    await expect(decodeWith(zlib.deflateSync(Buffer.alloc(limit)).subarray(0, -4))).rejects.toMatchObject({
-      code: "ERR_IMAGE_DECODE_FAILED",
-    });
-    // Damage is found first.
-    expect(await decodeWith(Buffer.concat([open(limit), Buffer.alloc(4, 0xff)]))).toEqual(passedOver);
-  });
-
-  test("the name of a profile is printable Latin-1", async () => {
-    const isPrintable = (byte: number) => (byte >= 32 && byte <= 126) || byte >= 161;
-    const all = Array.from({ length: 256 }, (_, byte) => byte);
-    const edges = [0, 1, 31, 32, 33, 126, 127, 128, 159, 160, 161, 255];
-    // A 0 ends the name early. Then it is empty, or what follows it is not what has to.
-    for (const [where, bytes, name, isAllowed] of [
-      ["in the middle", all, (c: string) => `a${c}b`, isPrintable],
-      ["first", edges, (c: string) => `${c}ab`, (byte: number) => isPrintable(byte) && byte !== 32],
-      ["last", edges, (c: string) => `ab${c}`, (byte: number) => isPrintable(byte) && byte !== 32],
-    ] as const) {
-      const profiles = await Promise.all(
-        bytes.map(byte => profile(rgbaHeader, iccpOf("profile", name(String.fromCharCode(byte))), rgbaData, iend)),
-      );
-      expect([where, bytes.filter((_, i) => profiles[i] === "profile")]).toEqual([where, bytes.filter(isAllowed)]);
+    expect((await withStream(zlib.deflateSync(Buffer.alloc(limit)))).profile?.length).toBe(limit);
+    expect(await withStream(zlib.deflateSync(Buffer.alloc(limit + 1)))).toEqual(passedOver);
+    // One that breaks off there is cut short, like one that breaks off anywhere.
+    const open = (size: number) => zlib.deflateSync(Buffer.alloc(size), { finishFlush: zlib.constants.Z_SYNC_FLUSH });
+    for (const size of [8191, 8192, 8193, 16384, limit]) {
+      expect([size, await withStream(open(size))]).toEqual([size, passedOver]);
     }
   });
 
-  test("1000 chunks of text, suggested palettes and Exif, and no more", async () => {
-    const many = (count: number, ...kinds: Buffer[]) =>
-      png(rgbaHeader, ...Array.from({ length: count }, (_, i) => kinds[i % kinds.length]), rgbaData, iend);
-    const text = chunk("tEXt", "key\0value");
-    const mixed = [text, chunk("zTXt", "not even valid"), chunk("iTXt", "x"), chunk("sPLT", "x")];
-    expect((await decode(many(1000, text))).pixels).toEqual(["01020304"]);
-    await expect(decode(many(1001, text))).rejects.toMatchObject({ code: "ERR_IMAGE_DECODE_FAILED" });
-    expect((await decode(many(1000, ...mixed))).pixels).toEqual(["01020304"]);
-    await expect(decode(many(1001, ...mixed))).rejects.toMatchObject({ code: "ERR_IMAGE_DECODE_FAILED" });
-    // Empty ones do not count, nor any eXIf but the first, nor chunks of other types.
-    expect((await decode(many(3000, chunk("tEXt"), chunk("eXIf", "x"), chunk("teXt", "x")))).pixels).toEqual([
-      "01020304",
+  test.skipIf(slow)("the largest profile that is kept can be written to a JPEG file", async () => {
+    const largest = Buffer.alloc(255 * 65519, "profile").toString();
+    const jpeg = await new Bun.Image(png(rgbaHeader, iccpOf(largest), rgbaData, iend)).jpeg().bytes();
+    expect((await decode(jpeg)).profile === largest).toBe(true);
+  });
+
+  // libspng counted them, refused the image with more than 1000, and inflated compressed text to see how long it was.
+  test("text, sPLT, eXIf, bKGD and hIST are passed over, however many and whatever is in them", async () => {
+    const kinds = ["tEXt", "zTXt", "iTXt", "sPLT", "eXIf", "bKGD", "hIST"].flatMap(type => [
+      chunk(type, "key\0\0not a stream"),
+      chunk(type, "key\0\x01\0\0\0not a stream"),
+      chunk(type, "x"),
+      chunk(type),
     ]);
-    expect((await decode(many(1001, ...Array(999).fill(text), chunk("eXIf", "x"), chunk("eXIf", "x")))).pixels).toEqual(
-      ["01020304"],
-    );
-    // But the first does.
-    await rejects(rgbaHeader, ...Array(1000).fill(text), chunk("eXIf", "x"), rgbaData, iend);
-    await rejects(rgbaHeader, chunk("eXIf", "x"), ...Array(1000).fill(text), rgbaData, iend);
-  });
-
-  test("a profile that inflates to more than the limit costs the image too", async () => {
-    const file = (size: number) => png(rgbaHeader, iccpOf(Buffer.alloc(size, "p").toString()), rgbaData, iend);
-    const over = file((8 << 20) + 1);
-    // 8 MiB is the least the limit can be.
-    expect((await decode(file(8 << 20), { maxPixels: 64 })).profile?.length).toBe(8 << 20);
-    expect(await decodes(over, { maxPixels: 64 })).toBe(false);
-    expect((await decode(over)).profile?.length).toBe((8 << 20) + 1);
-    // Otherwise it is 4 bytes for each of `maxPixels`, rounded down to a power of two.
-    expect(await decodes(over, { maxPixels: (4 << 20) - 1 })).toBe(false);
-    expect((await decode(over, { maxPixels: 4 << 20 })).profile?.length).toBe((8 << 20) + 1);
-  });
-
-  describe("compressed text", () => {
-    // libspng's buffer only ever doubled, and its terminator took a byte of the 8 MiB.
-    const big = zlib.deflateSync(Buffer.alloc((4 << 20) + 1));
-    const small = zlib.deflateSync(Buffer.alloc(4 << 20));
-    const withText = (type: string, before: string, stream: Buffer) =>
-      png(rgbaHeader, chunk(type, Buffer.concat([Buffer.from(before, "latin1"), stream])), rgbaData, iend);
-    /** Whether the text was inflated shows in nothing else. */
-    const isTooMuch = (file: Buffer) =>
-      expect(decode(file, { maxPixels: 64 })).rejects.toMatchObject({ code: "ERR_IMAGE_DECODE_FAILED" });
-
-    test("that inflates to more than the limit costs the image, though none of it is kept", async () => {
-      for (const [type, before] of [
-        ["zTXt", "key\0\0"],
-        ["iTXt", "key\0\x01\0en\0word\0"],
-      ]) {
-        expect((await decode(withText(type, before, big))).pixels).toEqual(["01020304"]);
-        expect((await decode(withText(type, before, small), { maxPixels: 64 })).pixels).toEqual(["01020304"]);
-        await isTooMuch(withText(type, before, big));
-      }
-      // Not compressed, or not well formed up to the stream: not inflated.
-      for (const [type, before] of [
-        ["iTXt", "key\0\0\0en\0word\0"],
-        ["iTXt", "key\0\x02\0en\0word\0"],
-        ["iTXt", "key\0\xff\0en\0word\0"],
-        ["iTXt", "key\0\x01\x01en\0word\0"],
-        ["iTXt", "key\0\x01\xffen\0word\0"],
-        ["zTXt", "key\0\x01"],
-        ["zTXt", "key\0\xff"],
-      ]) {
-        expect((await decode(withText(type, before, big), { maxPixels: 64 })).pixels).toEqual(["01020304"]);
-      }
-    });
-
-    describe("may inflate to a byte less than a profile, rounded down to a power of two", () => {
-      // So many MiB of zeros and one byte more. Nobody looks at the checksum.
-      const piece = zlib.deflateRawSync(Buffer.alloc(1 << 20), { finishFlush: zlib.constants.Z_SYNC_FLUSH });
-      const decodesOver = (mib: number, maxPixels?: number) => {
-        const stream = [
-          Buffer.from([0x78, 0x9c]),
-          ...Array(mib).fill(piece),
-          zlib.deflateRawSync("\0"),
-          Buffer.alloc(4),
-        ];
-        return decodes(withText("zTXt", "key\0\0", Buffer.concat(stream)), { maxPixels });
-      };
-
-      test("of 4 bytes for each of maxPixels", async () => {
-        for (const mib of [4, 8]) {
-          // Twice as many MiB, where a profile of as much is taken.
-          const maxPixels = ((2 * mib) << 20) / 4;
-          expect([mib, await decodesOver(mib, maxPixels)]).toEqual([mib, false]);
-          expect([mib, await decodesOver(mib, maxPixels + 1)]).toEqual([mib, true]);
-        }
-      });
-
-      test("which is 512 MiB by default and 1 GiB at the most", async () => {
-        expect(await decodesOver(256)).toBe(true);
-        expect(await decodesOver(512)).toBe(false);
-        expect(await decodesOver(512, 1e15)).toBe(true);
-        expect(await decodesOver(1024, 1e15)).toBe(false);
-      });
-    });
-
-    test("is inflated only where its own kind has it", async () => {
-      const layouts = ["key\0", "key\0\0", "key\0\x01\0\0\0", "key\0\0\0\0\0", "key\0\x01\0en\0word\0"];
-      for (const [type, ...inflated] of [["tEXt"], ["zTXt", layouts[1]], ["iTXt", layouts[2], layouts[4]]]) {
-        const found = await Promise.all(layouts.map(before => decodes(withText(type, before, big), { maxPixels: 64 })));
-        expect([type, found]).toEqual([type, layouts.map(layout => !inflated.includes(layout))]);
-      }
-    });
-
-    // A keyword has 79 bytes at most, and all that is in front of the stream 256.
-    test.each([
-      ["keyword of a zTXt", "zTXt", (keyword: string) => `${keyword}\0\0`, 79 + 2],
-      ["keyword of an iTXt", "iTXt", (keyword: string) => `${keyword}\0\x01\0\0\0`, 79 + 5],
-      ["language tag", "iTXt", (language: string) => `key\0\x01\0${language}\0\0`, 256],
-      ["translated keyword", "iTXt", (translated: string) => `key\0\x01\0\0${translated}\0`, 256],
-    ] as const)("is not inflated behind a %s that is too long", async (_, type, fields, most) => {
-      const file = (length: number) =>
-        withText(type, fields(Buffer.alloc(length - fields("").length, "x").toString()), big);
-      expect((await decode(file(most))).pixels).toEqual(["01020304"]);
-      await isTooMuch(file(most));
-      expect((await decode(file(most + 1), { maxPixels: 64 })).pixels).toEqual(["01020304"]);
-      expect((await decode(file(most + 2), { maxPixels: 64 })).pixels).toEqual(["01020304"]);
-    });
+    const many = Array.from({ length: 2800 }, (_, i) => kinds[i % kinds.length]);
+    expect(await pixels(rgbaHeader, ...many, rgbaData, iend)).toEqual(["01020304"]);
+    expect(await pixels(indexed, ...many, palette, ...many, indices, iend)).toEqual([
+      "0a0b0cff",
+      "141516ff",
+      "000000ff",
+      "000000ff",
+    ]);
   });
 });

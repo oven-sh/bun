@@ -49,7 +49,7 @@ extern "C" void OnBeforeParseResult__reset(OnBeforeParseResult* result);
 
 /// These are native callbacks to be run after their associated JS version is run
 extern "C" void JSBundlerPlugin__addError(void*, void*, JSC::EncodedJSValue, uint8_t);
-extern "C" void JSBundlerPlugin__onLoadAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
+extern "C" void JSBundlerPlugin__onLoadAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, BundlerPluginExportsShape);
 extern "C" void JSBundlerPlugin__onResolveAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__onDefer(void*, JSC::JSGlobalObject*);
 
@@ -112,7 +112,7 @@ bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, BunString* namespaceStr, 
 static const HashTableValue JSBundlerPluginHashTable[] = {
     { "addFilter"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_addFilter, 3 } },
     { "addError"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_addError, 2 } },
-    { "onLoadAsync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_onLoadAsync, 3 } },
+    { "onLoadAsync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_onLoadAsync, 4 } },
     { "onResolveAsync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_onResolveAsync, 4 } },
     { "onBeforeParse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_onBeforeParse, 4 } },
     { "generateDeferPromise"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_generateDeferPromise, 0 } },
@@ -475,7 +475,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync, (JSC::JSGlobalObje
             UNWRAP_BUNDLER_PLUGIN(callFrame),
             thisObject->plugin.config,
             JSValue::encode(callFrame->argument(1)),
-            JSValue::encode(callFrame->argument(2)));
+            JSValue::encode(callFrame->argument(2)),
+            callFrame->argument(3).isTrue() ? BundlerPluginExportsShape::OwnKeys : BundlerPluginExportsShape::WholeValue);
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());

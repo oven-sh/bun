@@ -561,7 +561,7 @@ impl LinkerContext<'_> {
                 stmts: stmts_eat1!(Stmt::allocate(arena, S::Return { value: Some(value) }, loc,)),
                 loc,
             };
-            properties.push(G::Property {
+            let mut property = G::Property {
                 key: Some(Expr::allocate(
                     arena,
                     // TODO: test emoji work as expected (relevant for WASM exports)
@@ -581,7 +581,11 @@ impl LinkerContext<'_> {
                     loc,
                 )),
                 ..Default::default()
-            });
+            };
+            let key_flags =
+                E::own_key_property_flags(property.key.as_ref().expect("infallible: prop has key"));
+            property.flags = key_flags;
+            properties.push(property);
             if lifted_setter_param.is_valid()
                 && exp_data.source_index.get() == id
                 && self
@@ -613,6 +617,7 @@ impl LinkerContext<'_> {
                     ..Default::default()
                 });
                 setter_properties.push(G::Property {
+                    flags: key_flags,
                     key: Some(Expr::allocate(
                         arena,
                         // SAFETY: as for the getter key above.

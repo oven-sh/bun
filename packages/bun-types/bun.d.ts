@@ -6727,6 +6727,15 @@ declare module "bun" {
   interface OnLoadResultObject {
     /**
      * The object to use as the module
+     *
+     * Each own enumerable string key is one export. The `default` key is the
+     * default export.
+     *
+     * `Bun.build` puts `JSON.stringify(exports)` in the bundle. A value that
+     * JSON cannot represent, such as a function, is not an export of the
+     * bundled module. If there is no `default` key, the default export of the
+     * bundled module is the whole object.
+     *
      * @example
      * ```ts
      * // In your loader

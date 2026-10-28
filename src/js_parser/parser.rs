@@ -1707,6 +1707,19 @@ impl Default for DeferredArrowArgErrors {
     }
 }
 
+/// What a module made from a data value exports.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub enum ExportsShape {
+    /// The value is the default export. Every data-file loader.
+    #[default]
+    WholeValue = 0,
+    /// Each own key of the root object is one export, so its `default` key is the default
+    /// export. A bundler plugin's `loader: "object"` answer, as `createObjectModuleSourceCode`
+    /// (ObjectModule.cpp) does at run time.
+    OwnKeys = 1,
+}
+
 pub fn new_lazy_export_ast<'bump>(
     bump: &'bump bun_alloc::Arena,
     define: &'bump mut Define,
@@ -1725,6 +1738,7 @@ pub fn new_lazy_export_ast<'bump>(
         source,
         runtime_api_call,
         js_ast::symbol::List::new_in(bump),
+        ExportsShape::WholeValue,
     )
 }
 
@@ -1737,6 +1751,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
     source: &'bump bun_ast::Source<'bump>,
     runtime_api_call: &'static [u8],
     symbols: js_ast::symbol::List<'bump>,
+    exports_shape: ExportsShape,
 ) -> crate::CrateResult<Option<js_ast::Ast<'bump>>> {
     let mut temp_log = bun_ast::Log::init();
     // parser.log and lexer.log both store `NonNull<Log>`; copy the lexer's
@@ -1753,7 +1768,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
         log: log_ptr,
         orig_error_count: 0,
     };
-    let result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols) {
+    let result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols, exports_shape) {
         Ok(r) => r,
         Err(err) => {
             let range = parser.lexer.range();
@@ -1769,10 +1784,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
 
     temp_log.append_to(log_to_copy_into);
     match result {
-        crate::Result::Ast(mut ast) => {
-            ast.has_lazy_export = true;
-            Ok(Some(*ast))
-        }
+        crate::Result::Ast(ast) => Ok(Some(*ast)),
         // `to_lazy_export_ast` always returns `Result::Ast` (no parse pass runs).
         _ => unreachable!("to_lazy_export_ast returns Result::Ast"),
     }

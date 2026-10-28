@@ -245,6 +245,27 @@ Bun.build({
 
 This plugin transforms all imports of the form `import env from "env"` into a JavaScript module that exports the current environment variables.
 
+#### Returning an object
+
+The callback can return the exports of the module as an object. Set `loader` to `"object"` and put the object in `exports`.
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+build.onLoad({ filter: /.*/, namespace: "settings" }, () => {
+  return {
+    exports: { default: "production", port: 3000 },
+    loader: "object",
+  };
+});
+
+// import mode, { port } from "settings"
+// mode === "production"
+// port === 3000
+```
+
+Each own enumerable string key of `exports` is one export. The `default` key is the default export.
+
+The bundle contains `JSON.stringify(exports)`. A value that JSON cannot represent, such as a function, is not an export of the bundled module. If `exports` has no `default` key, the default export of the bundled module is the whole object. To make the whole value the default export in every case, return `{ contents: JSON.stringify(value), loader: "json" }`.
+
 #### .defer()
 
 One of the arguments passed to the `onLoad` callback is a `defer` function. It returns a Promise that resolves once Bun has loaded all other modules. Await it when a module's contents depend on other modules.

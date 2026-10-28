@@ -11,8 +11,14 @@
 #include "WriteBarrierList.h"
 #include <wtf/HashMap.h>
 
+// Mirrors `ExportsShape` in src/js_parser/parser.rs.
+enum class BundlerPluginExportsShape : uint8_t {
+    WholeValue = 0,
+    OwnKeys = 1,
+};
+
 typedef void (*JSBundlerPluginAddErrorCallback)(void*, void*, JSC::EncodedJSValue, uint8_t);
-typedef void (*JSBundlerPluginOnLoadAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
+typedef void (*JSBundlerPluginOnLoadAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, BundlerPluginExportsShape);
 typedef void (*JSBundlerPluginOnResolveAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 typedef void (*JSBundlerPluginNativeOnBeforeParseCallback)(const OnBeforeParseArguments*, OnBeforeParseResult*);
 

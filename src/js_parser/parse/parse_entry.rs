@@ -15,8 +15,8 @@ use crate::defines::Define;
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, StatementScope,
-    WrapMode,
+    ExportsShape, Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult,
+    StatementScope, WrapMode,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -681,6 +681,7 @@ impl<'a> Parser<'a> {
         expr: Expr,
         runtime_api_call: &'static [u8],
         symbols: js_ast::symbol::List<'a>,
+        exports_shape: ExportsShape,
     ) -> Result<crate::Result<'a>, Error> {
         // Move lexer/options out and leave inert
         // placeholders so `self` may drop without double-free.
@@ -718,6 +719,22 @@ impl<'a> Parser<'a> {
         // The buffer is already arena-backed, so this is a plain move.
         p.symbols = symbols;
 
+        let own_key_exports = match expr.data {
+            js_ast::ExprData::EObject(object)
+                if exports_shape == ExportsShape::OwnKeys
+                    && runtime_api_call.is_empty()
+                    && own_keys_can_be_exports(&object) =>
+            {
+                // `prepare_for_visit_pass` and the linker read this to know the file is an ES module.
+                p.esm_export_keyword = bun_ast::Range {
+                    loc: expr.loc,
+                    len: 5,
+                };
+                Some(object)
+            }
+            _ => None,
+        };
+
         p.prepare_for_visit_pass()?;
 
         let mut final_expr = expr;
@@ -741,6 +758,18 @@ impl<'a> Parser<'a> {
             can_be_removed_if_unused: true,
             ..Default::default()
         };
+        let mut parts = BumpVec::with_capacity_in(2, p.arena);
+        parts.push(ns_export_part);
+
+        if let Some(object) = own_key_exports {
+            push_own_key_exports(p, &object, &mut parts)?;
+            return Ok(crate::Result::Ast(p.to_ast(
+                &mut parts,
+                js_ast::ExportsKind::Esm,
+                WrapMode::None,
+                b"",
+            )?));
+        }
 
         let lazy_data = js_ast::StoreRef::from_bump(p.arena.alloc(final_expr.data));
         let stmts: &mut [Stmt] = p.arena.alloc_slice_fill_with(1, |_| Stmt {
@@ -752,8 +781,6 @@ impl<'a> Parser<'a> {
             symbol_uses: p.take_symbol_uses()?,
             ..Default::default()
         };
-        let mut parts = BumpVec::with_capacity_in(2, p.arena);
-        parts.push(ns_export_part);
         parts.push(part);
 
         let exports_kind: js_ast::ExportsKind = 'brk: {
@@ -768,13 +795,144 @@ impl<'a> Parser<'a> {
             }
             js_ast::ExportsKind::None
         };
-        Ok(crate::Result::Ast(p.to_ast(
-            &mut parts,
-            exports_kind,
-            WrapMode::None,
-            b"",
-        )?))
+        let mut ast = p.to_ast(&mut parts, exports_kind, WrapMode::None, b"")?;
+        ast.has_lazy_export = true;
+        Ok(crate::Result::Ast(ast))
     }
+}
+
+/// Whether the own keys of `object` can be the exports of a module: there is a `default` key,
+/// and every key is a string that an export name can be. JSON text can spell half of a
+/// surrogate pair, and an export name cannot have one.
+fn own_keys_can_be_exports(object: &E::Object) -> bool {
+    let mut has_default = false;
+    for property in object.properties.slice() {
+        let (Some(key), Some(_)) = (&property.key, &property.value) else {
+            return false;
+        };
+        let js_ast::ExprData::EString(key) = &key.data else {
+            return false;
+        };
+        if !key.is_utf8() || key.next.is_some() || strings::wtf8_has_surrogate(key.slice8()) {
+            return false;
+        }
+        has_default = has_default || key.slice8() == b"default";
+    }
+    has_default
+}
+
+/// The statements of an ES module whose exports are the own keys of `object`:
+/// `export default <value>` for `default`, and `var <local> = <value>; export { <local> as "<key>" }`
+/// for every other key. `__esModule` is not an export, as in a data file. With tree shaking
+/// each key is one part, so a key that nothing imports is dropped.
+fn push_own_key_exports<'a>(
+    p: &mut JavaScriptParser<'a>,
+    object: &E::Object,
+    parts: &mut BumpVec<'a, js_ast::Part>,
+) -> Result<(), Error> {
+    let one_part_per_key = p.options.tree_shaking;
+    let mut all_stmts = BumpVec::<Stmt>::new_in(p.arena);
+    let mut all_declared_symbols = js_ast::DeclaredSymbolList::default();
+
+    for property in object.properties.slice() {
+        let (Some(key), Some(value)) = (property.key, property.value) else {
+            continue;
+        };
+        let js_ast::ExprData::EString(key_str) = key.data else {
+            continue;
+        };
+        let alias: &'a [u8] = key_str.string(p.arena)?;
+        if alias == b"__esModule" {
+            continue;
+        }
+
+        let (ref_, stmts): (js_ast::Ref, [Option<Stmt>; 2]) = if alias == b"default" {
+            let default_name = p.create_default_name(key.loc);
+            let stmt = p.s(
+                S::ExportDefault {
+                    default_name,
+                    value: js_ast::StmtOrExpr::Expr(value),
+                },
+                key.loc,
+            );
+            (default_name.ref_, [Some(stmt), None])
+        } else {
+            let local_name = own_key_local_name(p.arena, alias)?;
+            let ref_ = p.generate_temp_ref(Some(local_name));
+            let binding = p.b(B::Identifier { r#ref: ref_ }, key.loc);
+            let local = p.s(
+                S::Local {
+                    decls: G::DeclList::init_one(G::Decl {
+                        binding,
+                        value: Some(value),
+                    }),
+                    ..Default::default()
+                },
+                key.loc,
+            );
+            let items: &mut [js_ast::ClauseItem] =
+                p.arena.alloc_slice_fill_with(1, |_| js_ast::ClauseItem {
+                    alias: js_ast::StoreStr::new(alias),
+                    alias_loc: key.loc,
+                    name: js_ast::LocRef { loc: key.loc, ref_ },
+                    original_name: js_ast::StoreStr::new(local_name),
+                });
+            let clause = p.s(
+                S::ExportClause {
+                    items: bun_ast::StoreSlice::new_mut(items),
+                    is_single_line: true,
+                },
+                key.loc,
+            );
+            (ref_, [Some(local), Some(clause)])
+        };
+        let declared = DeclaredSymbol {
+            ref_,
+            is_top_level: true,
+        };
+
+        if one_part_per_key {
+            let stmts = bun_alloc::vec_from_iter_in(stmts.into_iter().flatten(), p.arena);
+            parts.push(js_ast::Part {
+                stmts: bun_ast::StoreSlice::from_bump(stmts),
+                declared_symbols: js_ast::DeclaredSymbolList::from_slice(&[declared])?,
+                can_be_removed_if_unused: true,
+                ..Default::default()
+            });
+        } else {
+            all_stmts.extend(stmts.into_iter().flatten());
+            all_declared_symbols.append(declared)?;
+        }
+    }
+
+    if !one_part_per_key {
+        parts.push(js_ast::Part {
+            stmts: bun_ast::StoreSlice::from_bump(all_stmts),
+            declared_symbols: all_declared_symbols,
+            can_be_removed_if_unused: true,
+            ..Default::default()
+        });
+    }
+    Ok(())
+}
+
+/// A name that module code can declare for the value of the export `key`.
+fn own_key_local_name<'a>(arena: &'a Arena, key: &'a [u8]) -> Result<&'a [u8], Error> {
+    let cannot_be_declared = |name: &[u8]| {
+        matches!(name, b"await" | b"eval" | b"arguments")
+            || js_lexer::keyword(name).is_some()
+            || js_lexer::is_strict_mode_reserved_word(name)
+    };
+    if js_lexer::is_identifier(key) && !cannot_be_declared(key) {
+        return Ok(key);
+    }
+    let name = bun_core::MutableString::ensure_valid_identifier(key)?;
+    let mut local = BumpVec::<u8>::with_capacity_in(name.len() + 1, arena);
+    if cannot_be_declared(&name) {
+        local.push(b'_');
+    }
+    local.extend_from_slice(&name);
+    Ok(local.into_bump_slice())
 }
 
 /// A container queued by `lower_date_time_literals`' worklist.

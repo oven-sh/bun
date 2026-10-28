@@ -1907,6 +1907,11 @@ pub(crate) mod js_bundler {
     pub(crate) use bun_bundler::bundle_v2::api::JSBundler::{
         Load, LoadDeferred, LoadSuccess, LoadValue, Resolve, ResolveSuccess, ResolveValue,
     };
+    use bun_js_parser::ExportsShape;
+
+    // Crosses FFI by value to `JSBundlerPlugin__onLoadAsync`
+    // (C++: `enum class BundlerPluginExportsShape : uint8_t`, `JSBundlerPlugin.h`).
+    bun_core::assert_ffi_discr!(ExportsShape, u8; WholeValue = 0, OwnKeys = 1);
 
     use bun_bundler::bundle_v2::api::JSBundler::RequestOwner;
 
@@ -2088,6 +2093,7 @@ pub(crate) mod js_bundler {
         _unused: *mut c_void,
         source_code_value: JSValue,
         loader_as_int: JSValue,
+        exports_shape: ExportsShape,
     ) {
         jsc::mark_binding();
         // As `onResolveAsync`: the request's one answer.
@@ -2105,6 +2111,7 @@ pub(crate) mod js_bundler {
                 Ok(source_code) => LoadValue::Success(LoadSuccess {
                     loader: bun_ast::Loader::from_api(loader),
                     source_code: source_code.into(),
+                    exports_shape,
                 }),
                 // Flattening a `contents` string can still throw.
                 Err(err) => {

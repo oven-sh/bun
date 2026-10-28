@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { writeFileSync } from "node:fs";
 import path, { dirname, join, resolve } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -2091,5 +2092,424 @@ describe("bundler", () => {
       receivers: Array(6).fill("ERR_INVALID_THIS"),
     });
     expect(exitCode).toBe(0);
+  });
+
+  // `loader: "object"`: the plugin returns the exports of a module as an object. At run time
+  // (ObjectModule.cpp) each own key is one export, so the `default` key is the default export.
+  // A bundle must bind the same way. It used to make the whole object the default export, as
+  // for a JSON file.
+  describe("plugin/loader object", () => {
+    // Answers the import of `objdiv:<name>` with `{ exports: modules[name], loader: "object" }`.
+    const objectModules = (modules: Record<string, unknown>) => ({
+      name: "objdiv",
+      setup(b: any) {
+        b.onResolve({ filter: /^objdiv:/ }, (a: any) => ({ path: a.path.slice(7), namespace: "objdiv" }));
+        b.onLoad({ filter: /.*/, namespace: "objdiv" }, (a: any) => ({ exports: modules[a.path], loader: "object" }));
+      },
+    });
+
+    const run = async (file: string) => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), file], env: bunEnv, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout);
+    };
+
+    // Bundles `entry`, runs the bundle, and returns the one JSON value that it prints.
+    const bundleAndRun = async (
+      modules: Record<string, unknown>,
+      entry: string,
+      config: Partial<Bun.BuildConfig> = {},
+      files: Record<string, string> = {},
+    ) => {
+      using dir = tempDir("plugin-loader-object", { "entry.ts": entry, ...files });
+      const build = await Bun.build({
+        entrypoints: [join(String(dir), "entry.ts")],
+        ...config,
+        plugins: [objectModules(modules), ...(config.plugins ?? [])],
+      });
+      expect(build.success).toBe(true);
+      const out = join(String(dir), config.format === "cjs" ? "out.cjs" : "out.mjs");
+      writeFileSync(out, await build.outputs[0].text());
+      return await run(out);
+    };
+
+    const outputs = [
+      { format: "esm", minify: false },
+      { format: "esm", minify: true },
+      { format: "cjs", minify: true },
+      { format: "iife", minify: false },
+    ] as const;
+
+    test.concurrent("the default import is exports.default", async () => {
+      const result = await bundleAndRun(
+        {
+          text: { default: "DEF", named: "NAMED" },
+          object: { default: { a: 1, b: 2 }, named: "NAMED" },
+          zero: { default: 0 },
+          null: { default: null },
+          empty: { default: "" },
+          marked: { default: "DEF", named: "NAMED", __esModule: true },
+        },
+        `import text, { named } from "objdiv:text";
+         import * as textNamespace from "objdiv:text";
+         import object from "objdiv:object";
+         import zero from "objdiv:zero";
+         import nothing from "objdiv:null";
+         import empty from "objdiv:empty";
+         import marked, * as markedNamespace from "objdiv:marked";
+         console.log(JSON.stringify({
+           text,
+           named,
+           textNamespace,
+           object,
+           falsy: [zero, nothing, empty],
+           marked,
+           markedKeys: Object.keys(markedNamespace).sort(),
+         }));`,
+      );
+      expect(result).toEqual({
+        text: "DEF",
+        named: "NAMED",
+        textNamespace: { default: "DEF", named: "NAMED" },
+        object: { a: 1, b: 2 },
+        falsy: [0, null, ""],
+        marked: "DEF",
+        // `__esModule` is not an export, as in a data file.
+        markedKeys: ["default", "named"],
+      });
+    });
+
+    // `JSON.parse` defines `__proto__` as an own property. The bundle must keep it one: in an
+    // object literal of JS source, a plain `"__proto__": value` sets the prototype instead.
+    test.concurrent.each(outputs)(
+      "an own __proto__ key stays an own key ($format, minify: $minify)",
+      async ({ format, minify }) => {
+        const withOwnProto = () => JSON.parse('{"__proto__":{"admin":true},"name":"n"}');
+        const result = await bundleAndRun(
+          {
+            // in the data
+            data: {
+              default: { name: "DEF", user: withOwnProto(), list: [withOwnProto()] },
+              user: withOwnProto(),
+              nulled: JSON.parse('{"__proto__":null}'),
+              primitive: JSON.parse('{"__proto__":"p"}'),
+            },
+            // as the name of an export
+            name: JSON.parse('{"default":"DEF","__proto__":{"admin":true},"name":"n"}'),
+          },
+          `import d, { user, nulled, primitive } from "objdiv:data";
+           import byName, { __proto__ as viaNamed, name } from "objdiv:name";
+           import * as ns from "objdiv:name";
+           const dataShape = o => ({
+             keys: Object.keys(o),
+             own: Object.hasOwn(o, "__proto__"),
+             plain: Object.getPrototypeOf(o) === Object.prototype,
+             admin: o.admin === true,
+           });
+           const exportsShape = o => ({
+             keys: Object.keys(o).sort(),
+             own: Object.hasOwn(o, "__proto__"),
+             admin: o.admin === true,
+           });
+           import("objdiv:name").then(imported => {
+             console.log(JSON.stringify({
+               data: {
+                 name: d.name,
+                 inDefault: dataShape(d.user),
+                 inArray: dataShape(d.list[0]),
+                 inNamed: dataShape(user),
+                 nulled: dataShape(nulled),
+                 primitive: dataShape(primitive),
+               },
+               exports: {
+                 byName,
+                 viaNamed,
+                 name,
+                 namespace: exportsShape(ns),
+                 required: exportsShape(require("objdiv:name")),
+                 imported: exportsShape(imported),
+               },
+             }));
+           });`,
+          { format, minify },
+        );
+        const keptData = { keys: ["__proto__", "name"], own: true, plain: true, admin: false };
+        const keptAlone = { keys: ["__proto__"], own: true, plain: true, admin: false };
+        const keptExport = { keys: ["__proto__", "default", "name"], own: true, admin: false };
+        expect(result).toEqual({
+          data: {
+            name: "DEF",
+            inDefault: keptData,
+            inArray: keptData,
+            inNamed: keptData,
+            nulled: keptAlone,
+            primitive: keptAlone,
+          },
+          exports: {
+            byName: "DEF",
+            viaNamed: { admin: true },
+            name: "n",
+            namespace: keptExport,
+            required: keptExport,
+            imported: keptExport,
+          },
+        });
+      },
+    );
+
+    test.concurrent.each(outputs)(
+      "every way to load the module sees the same exports ($format, minify: $minify)",
+      async ({ format, minify }) => {
+        const result = await bundleAndRun(
+          { x: { default: "DEF", named: "NAMED" } },
+          `import d, { named } from "objdiv:x";
+           import * as star from "./reexport.ts";
+           const required = require("objdiv:x");
+           const shape = o => ({ keys: Object.keys(o).sort(), default: o.default, named: o.named });
+           import("objdiv:x").then(imported => {
+             console.log(JSON.stringify({
+               d,
+               named,
+               star: { keys: Object.keys(star).sort(), named: star.named, renamed: star.renamed },
+               required: shape(required),
+               imported: shape(imported),
+             }));
+           });`,
+          { format, minify },
+          { "reexport.ts": `export * from "objdiv:x"; export { default as renamed } from "objdiv:x";` },
+        );
+        const own = { keys: ["default", "named"], default: "DEF", named: "NAMED" };
+        expect(result).toEqual({
+          d: "DEF",
+          named: "NAMED",
+          star: { keys: ["named", "renamed"], named: "NAMED", renamed: "DEF" },
+          required: own,
+          imported: own,
+        });
+      },
+    );
+
+    test.concurrent("a dynamic import in its own chunk sees exports.default", async () => {
+      using dir = tempDir("plugin-loader-object-splitting", {
+        "entry.ts": `import("objdiv:x").then(m => console.log(JSON.stringify({ keys: Object.keys(m).sort(), default: m.default, named: m["not-an-identifier"] })));`,
+      });
+      const build = await Bun.build({
+        entrypoints: [join(String(dir), "entry.ts")],
+        outdir: join(String(dir), "out"),
+        splitting: true,
+        plugins: [objectModules({ x: { default: "DEF", "not-an-identifier": "NAMED" } })],
+      });
+      expect(build.outputs.map(output => output.kind).sort()).toEqual(["chunk", "entry-point"]);
+      expect(await run(build.outputs.find(output => output.kind === "entry-point")!.path)).toEqual({
+        keys: ["default", "not-an-identifier"],
+        default: "DEF",
+        named: "NAMED",
+      });
+    });
+
+    test.concurrent.each(["esm", "cjs"] as const)("an object module as the %s entry point", async format => {
+      using dir = tempDir("plugin-loader-object-entry-point", {
+        "data.objdiv": "",
+        "load.mjs": `import * as m from "./out.mjs"; console.log(JSON.stringify({ keys: Object.keys(m).sort(), default: m.default, named: m.named }));`,
+        "load.cjs": `const m = require("./out.cjs"); console.log(JSON.stringify({ keys: Object.keys(m).sort(), default: m.default, named: m.named }));`,
+      });
+      const build = await Bun.build({
+        entrypoints: [join(String(dir), "data.objdiv")],
+        format,
+        plugins: [
+          {
+            name: "objdiv-entry",
+            setup(b) {
+              b.onLoad({ filter: /\.objdiv$/ }, () => ({
+                exports: { default: "DEF", named: "NAMED" },
+                loader: "object",
+              }));
+            },
+          },
+        ],
+      });
+      const ext = format === "cjs" ? "cjs" : "mjs";
+      writeFileSync(join(String(dir), "out." + ext), await build.outputs[0].text());
+      expect(await run(join(String(dir), "load." + ext))).toEqual({
+        keys: ["default", "named"],
+        default: "DEF",
+        named: "NAMED",
+      });
+    });
+
+    test.concurrent.each([false, true])("a key that is not a binding name is an export (minify: %p)", async minify => {
+      const exports = {
+        default: "DEF",
+        await: 1,
+        eval: 2,
+        arguments: 3,
+        class: 4,
+        let: 5,
+        static: 6,
+        undefined: 7,
+        "not-an-identifier": 8,
+        "1": 9,
+        "": 10,
+        "a-b": 11,
+        a_b: 12,
+      };
+      const result = await bundleAndRun(
+        { x: exports },
+        `import d, {
+           await as a, eval as e, arguments as args, class as c, let as l, static as s, undefined as u,
+           "not-an-identifier" as n, "1" as one, "" as empty, "a-b" as dashed, a_b as underscored,
+         } from "objdiv:x";
+         console.log(JSON.stringify({
+           d,
+           named: [a, e, args, c, l, s, u, n, one, empty, dashed, underscored],
+           required: require("objdiv:x"),
+           undefinedIsIntact: undefined === void 0,
+         }));`,
+        { minify },
+      );
+      expect(result).toEqual({
+        d: "DEF",
+        named: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        required: exports,
+        undefinedIsIntact: true,
+      });
+    });
+
+    test.concurrent("what JSON.stringify drops or rewrites is what the module exports", async () => {
+      const dropped = { default: "DEF", named: "NAMED", fn: () => 1, undef: undefined, sym: Symbol("s") };
+      const result = await bundleAndRun(
+        {
+          dropped,
+          // The `default` key is dropped too, so this is an answer without a `default` key.
+          droppedDefault: { default: () => 1, named: "NAMED" },
+          rewritten: { default: "NOT_USED", toJSON: () => ({ default: "DEF", named: "NAMED" }) },
+        },
+        `import dropped, * as droppedNamespace from "objdiv:dropped";
+         import droppedDefault from "objdiv:droppedDefault";
+         import rewritten, * as rewrittenNamespace from "objdiv:rewritten";
+         console.log(JSON.stringify({
+           dropped,
+           droppedKeys: Object.keys(droppedNamespace).sort(),
+           droppedDefault,
+           rewritten,
+           rewrittenKeys: Object.keys(rewrittenNamespace).sort(),
+         }));`,
+      );
+      expect(result).toEqual({
+        dropped: "DEF",
+        droppedKeys: ["default", "named"],
+        droppedDefault: { named: "NAMED" },
+        rewritten: "DEF",
+        rewrittenKeys: ["default", "named"],
+      });
+
+      // A key that is not an export cannot be imported by name.
+      using dir = tempDir("plugin-loader-object-dropped", {
+        "entry.ts": `import { fn } from "objdiv:dropped"; console.log(fn);`,
+      });
+      const build = await Bun.build({
+        entrypoints: [join(String(dir), "entry.ts")],
+        plugins: [objectModules({ dropped })],
+        throw: false,
+      });
+      expect(build.success).toBe(false);
+      expect(build.logs.map(log => log.message)).toEqual(['No matching export in "objdiv:dropped" for import "fn"']);
+    });
+
+    test.concurrent("the whole value stays the default export without a default key", async () => {
+      const json = JSON.stringify({ default: "DEF", named: "NAMED" });
+      const result = await bundleAndRun(
+        {
+          withDefault: { default: "DEF", named: "NAMED" },
+          withoutDefault: { named: "NAMED", other: 42 },
+          // An export name cannot have half of a surrogate pair, so this one is not an ES module.
+          loneSurrogate: { default: "DEF", "\ud800": 1 },
+        },
+        `import withDefault from "objdiv:withDefault";
+         import withoutDefault, { named, other } from "objdiv:withoutDefault";
+         import loneSurrogate from "objdiv:loneSurrogate";
+         import jsonLoader from "jsontext:x";
+         import jsonFile from "./data.json";
+         console.log(JSON.stringify({
+           withDefault,
+           withoutDefault,
+           named,
+           other,
+           loneSurrogate: { default: loneSurrogate.default, units: Object.keys(loneSurrogate).map(key => key.charCodeAt(0)) },
+           jsonLoader,
+           jsonFile,
+         }));`,
+        {
+          plugins: [
+            {
+              name: "jsontext",
+              setup(b) {
+                b.onResolve({ filter: /^jsontext:/ }, a => ({ path: a.path, namespace: "jsontext" }));
+                b.onLoad({ filter: /.*/, namespace: "jsontext" }, () => ({ contents: json, loader: "json" }));
+              },
+            },
+          ],
+        },
+        { "data.json": json },
+      );
+      expect(result).toEqual({
+        withDefault: "DEF",
+        withoutDefault: { named: "NAMED", other: 42 },
+        named: "NAMED",
+        other: 42,
+        loneSurrogate: { default: "DEF", units: ["d".charCodeAt(0), 0xd800] },
+        // JSON text is a data file, with or without a plugin: the `default` key is a key of the value.
+        jsonLoader: { default: "DEF", named: "NAMED" },
+        jsonFile: { default: "DEF", named: "NAMED" },
+      });
+    });
+
+    test.concurrent("a key that nothing imports is not in the bundle", async () => {
+      using dir = tempDir("plugin-loader-object-tree-shaking", {
+        "entry.ts": `import d, { used } from "objdiv:x"; console.log(d, used);`,
+      });
+      const build = await Bun.build({
+        entrypoints: [join(String(dir), "entry.ts")],
+        plugins: [objectModules({ x: { default: "DEFAULT_VALUE", used: "USED_VALUE", unused: "UNUSED_VALUE" } })],
+      });
+      const text = await build.outputs[0].text();
+      expect(text).toContain("DEFAULT_VALUE");
+      expect(text).toContain("USED_VALUE");
+      expect(text).not.toContain("UNUSED_VALUE");
+    });
+
+    test.concurrent("an answer that is not usable is a build error", async () => {
+      using dir = tempDir("plugin-loader-object-errors", { "entry.ts": `import d from "objdiv:x"; console.log(d);` });
+      const messages = async (answer: object) => {
+        const build = await Bun.build({
+          entrypoints: [join(String(dir), "entry.ts")],
+          throw: false,
+          plugins: [
+            {
+              name: "objdiv",
+              setup(b: any) {
+                b.onResolve({ filter: /^objdiv:/ }, (a: any) => ({ path: a.path, namespace: "objdiv" }));
+                b.onLoad({ filter: /.*/, namespace: "objdiv" }, () => answer);
+              },
+            },
+          ],
+        });
+        expect(build.success).toBe(false);
+        return build.logs.map(log => log.message);
+      };
+      const cyclic: Record<string, unknown> = { default: "DEF" };
+      cyclic.self = cyclic;
+      expect({
+        missing: await messages({ loader: "object" }),
+        cyclic: await messages({ exports: cyclic, loader: "object" }),
+      }).toEqual({
+        missing: ['onLoad plugin returning loader: "object" must have "exports" property'],
+        cyclic: [
+          expect.stringContaining("When using Bun.build, onLoad plugin must return a JSON-serializable object: "),
+        ],
+      });
+    });
   });
 });

@@ -843,11 +843,16 @@ declare namespace $Node {
     onResolve: Map<string, [RegExp, BundlerPlugin.OnResolveCallback][]> | undefined;
     promises: Promise<unknown>[] | undefined;
     $onEndCallbacks: BundlerPlugin.OnEndCallback[] | undefined;
-    /** `internalID`: the address of the native request, as a double. */
+    /**
+     * `internalID`: the address of the native request, as a double.
+     * `ownKeysAreExports`: `sourceCode` is the JSON text of a `loader: "object"` answer, so each
+     * own key of its root object is one export.
+     */
     onLoadAsync(
       internalID: number,
       sourceCode: string | ArrayBufferView | ArrayBuffer | null,
       loaderKey: number | null,
+      ownKeysAreExports?: boolean,
     ): void;
     onResolveAsync(
       internalID: number,

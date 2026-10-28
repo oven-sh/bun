@@ -1250,6 +1250,7 @@ pub mod bv2_impl {
             pub struct LoadSuccess {
                 pub source_code: Box<[u8]>,
                 pub loader: Loader,
+                pub exports_shape: bun_js_parser::ExportsShape,
             }
             /// Mirrors `JSBundler.Load.Value` (`union(enum)`).
             #[derive(Default)]
@@ -5126,6 +5127,7 @@ pub mod bv2_impl {
                     };
                     let parse_task = load.parse_task_mut();
                     parse_task.loader = Some(code.loader);
+                    parse_task.exports_shape = code.exports_shape;
                     parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
                     this.graph.pool().schedule(parse_task);
 

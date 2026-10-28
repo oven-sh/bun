@@ -114,6 +114,9 @@ pub struct ParseTask<'a> {
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
     pub(crate) is_entry_point: bool,
+    /// What the module exports when the loader makes it from a data value. A plugin's
+    /// `loader: "object"` answer sets `OwnKeys`.
+    pub(crate) exports_shape: js_parser::ExportsShape,
 }
 
 pub enum ParseTaskStage {
@@ -310,6 +313,7 @@ impl<'a> ParseTask<'a> {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             is_entry_point: false,
+            exports_shape: js_parser::ExportsShape::WholeValue,
         }
     }
 
@@ -351,6 +355,7 @@ impl Default for ParseTask<'_> {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            exports_shape: js_parser::ExportsShape::WholeValue,
         }
     }
 }
@@ -642,6 +647,7 @@ pub mod parse_worker {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            exports_shape: js_parser::ExportsShape::WholeValue,
         };
         let source = Source {
             path: bun_paths::fs::Path {
@@ -831,6 +837,7 @@ pub mod parse_worker {
         resolver: *mut Resolver,
         source: &'static Source<'static>,
         loader: Loader,
+        exports_shape: js_parser::ExportsShape,
         unique_key_prefix: u64,
         unique_key_for_additional_file: &mut FileLoaderHash,
         has_any_css_locals: &AtomicU32,
@@ -884,7 +891,7 @@ pub mod parse_worker {
                     .parse_json(log, source, mode)?
                     .unwrap_or_else(|| Expr::init(E::Object::default(), Loc::EMPTY));
                 return Ok(JSAst::init(
-                    js_parser::new_lazy_export_ast(
+                    js_parser::new_lazy_export_ast_impl(
                         bump,
                         &mut topts.define,
                         opts,
@@ -892,6 +899,8 @@ pub mod parse_worker {
                         root,
                         source,
                         b"",
+                        ast::symbol::List::new_in(bump),
+                        exports_shape,
                     )?
                     .ok_or(AnyError::ParserError)?,
                 ));
@@ -1361,6 +1370,7 @@ pub mod parse_worker {
                     source,
                     b"",
                     symbols,
+                    js_parser::ExportsShape::WholeValue,
                 );
                 temp_log.append_to(log);
                 let mut ast = JSAst::init(lazy?.ok_or(AnyError::ParserError)?);
@@ -2709,6 +2719,7 @@ pub mod parse_worker {
                     resolver,
                     source,
                     loader,
+                    task.exports_shape,
                     task_ctx.unique_key,
                     &mut unique_key_for_additional_file,
                     &task_ctx.linker.has_any_css_locals,

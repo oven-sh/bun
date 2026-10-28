@@ -579,7 +579,8 @@ export function runOnLoadPlugins(
         }
 
         var { contents, loader = defaultLoader } = result as any;
-        if ((loader as any) === "object") {
+        const ownKeysAreExports = (loader as any) === "object";
+        if (ownKeysAreExports) {
           if (!("exports" in result)) {
             throw new TypeError('onLoad plugin returning loader: "object" must have "exports" property');
           }
@@ -604,7 +605,7 @@ export function runOnLoadPlugins(
           throw new TypeError(`Loader ${loader} is not supported.`);
         }
 
-        this.onLoadAsync(internalID, contents as any, chosenLoader);
+        this.onLoadAsync(internalID, contents as any, chosenLoader, ownKeysAreExports);
         return null;
       }
     }

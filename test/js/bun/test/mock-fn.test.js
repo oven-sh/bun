@@ -1098,6 +1098,15 @@ describe("spyOn", () => {
       obj.original;
       expect(fn).not.toHaveBeenCalled();
     });
+
+    test.each(["$", "sql", "postgres", "SQL"])("spyOn works on Bun.%s", name => {
+      const fn = spyOn(Bun, name).mockImplementation(() => "mocked");
+      expect(Bun[name]).toBe(fn);
+      expect(Bun[name]()).toBe("mocked");
+      fn.mockRestore();
+      expect(Bun[name]).not.toBe(fn);
+      expect(Bun[name]).toBeFunction();
+    });
   }
 
   test("spyOn throws on a WebAssembly GC object", () => {

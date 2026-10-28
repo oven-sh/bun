@@ -312,7 +312,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let hir = self.hir(file);
                 if let Decl::Expando(e) | Decl::ThisProperty(e) = decl
                     && let ExprKind::Assign { target, .. } = hir[e].kind
-                    && let ExprKind::Index { index, .. } = hir[target].kind
+                    && let ExprKind::Index { index, .. } = hir.checked_kind(target)
                 {
                     let bound = self.bound(file);
                     let flags = bound.symbol(bound.symbol_of_declaration(decl)).flags;

@@ -1,0 +1,1139 @@
+////: lines
+function «1»(target) {
+  try {
+    Object.definePropert«2» });
+    return "defined";
+  } catch (error) {
+    return error.name;
+  }
+}
+//// a-bound-function-that-is-a-getter-throws-where-the-language-reads-the-property.mjs
+// A getter may be a bound function. What it throws goes to whoever reads the property, also where the language itself reads it: Symbol.species, Symbol.toPrimitive, Symbol.iterator, then, toJSON, constructor.
+let calls = 0;
+const thrower = function () { calls++; throw new RangeError("getter ran"); }.bind();
+const counter = function () { calls++; return 7; }.bind();
+function tryIt(name, run) { try { console.log(name, run(), calls); } catch (e) { console.log(name, e.name, calls); } }
+const a = {}; Object.defineProperty(a, "x", { get: thrower });
+tryIt("named read", () => a.x);
+tryIt("keyed read", () => a["x".trim()]);
+const b = {}; Object.defineProperty(b, "x", { get: counter });
+tryIt("named read of a counter", () => b.x);
+const c = {}; Object.defineProperty(c, Symbol.toPrimitive, { get: thrower });
+tryIt("toPrimitive", () => `${c}`);
+const d = {}; Object.defineProperty(d, Symbol.iterator, { get: thrower });
+tryIt("iterator", () => [...d]);
+const e = {}; Object.defineProperty(e, "then", { get: thrower });
+tryIt("then, by resolve", () => (Promise.resolve(e).catch(() => {}), "resolved"));
+try { console.log("then, awaited", await e, calls); } catch (x) { console.log("then, awaited", x.name, calls); }
+const f = []; f.constructor = {}; Object.defineProperty(f.constructor, Symbol.species, { get: thrower });
+tryIt("array species, map", () => f.map(x => x).length);
+const g = Promise.resolve(1); g.constructor = {}; Object.defineProperty(g.constructor, Symbol.species, { get: thrower });
+tryIt("promise species, then", () => typeof g.then());
+const h = Promise.resolve(1); h.constructor = {}; Object.defineProperty(h.constructor, Symbol.species, { get: counter });
+tryIt("promise species, a counter", () => typeof h.then());
+const i = /a/; i.constructor = {}; Object.defineProperty(i.constructor, Symbol.species, { get: thrower });
+tryIt("regexp species, split", () => "bab".split(i).length);
+const j = {}; Object.defineProperty(j, "toJSON", { get: thrower });
+tryIt("toJSON", () => JSON.stringify(j));
+const k = {}; Object.defineProperty(k, "constructor", { get: thrower }); Object.setPrototypeOf(k, Promise.prototype);
+tryIt("constructor getter on a promise-like", () => { try { return Promise.prototype.then.call(k); } catch (x) { return x.name; } });
+const l = Promise.resolve(1); Object.defineProperty(l, "constructor", { get: thrower });
+tryIt("promise constructor getter, then", () => typeof l.then());
+try { console.log("promise constructor getter, awaited", await l, calls); } catch (x) { console.log("promise constructor getter, awaited", x.name, calls); }
+//// a-class-with-accessors-is-stored-to.js
+// A class of an untyped file has accessors, and one of them is stored to: the store runs the setter and adds no property.
+class State {
+  constructor() { this.bits = 0; }
+  get flowing() { return (this.bits & 1) !== 0; }
+  set flowing(value) { if (value) this.bits |= 1; else this.bits &= ~1; }
+  get ended() { return (this.bits & 2) !== 0; }
+}
+const state = new State();
+state.flowing = true;
+console.log(state.flowing, state.ended, state.bits);
+//// a-computed-name-among-the-written-names-of-a-map.js
+// Object.defineProperties(F.prototype, { [key]: {..}, sent: {..}, .. }): a map of descriptors in which one name is computed and the others are written. The accessors and values under the written
+// names are read, stored to and called in functions that anybody may call. The computed name is a symbol, a string nobody else uses, or one of the written names, in front of it or behind it.
+const lines = [];
+function show(name, run) {
+  const seen = [];
+  for (let turn = 0; turn < 3; turn++) {
+    try {
+      seen.push(String(JSON.stringify(run(turn)) ?? "undefined"));
+    } catch (error) {
+      seen.push(error.constructor.name);
+    }
+  }
+  lines.push(name + ": " + seen.join(" | "));
+}
+const kContext = Symbol("context");
+const kHidden = Symbol("hidden");
+const named = text => text + "";
+
+function Reply(raw, request) { this.raw = raw; this.request = request; this[kHidden] = false; this.code = 200; }
+Object.defineProperties(Reply.prototype, {
+  [kContext]: { get() { return this.request[kContext]; } },
+  sent: { enumerable: true, get() { return (this[kHidden] || this.raw.ended) === true; } },
+  statusCode: { get() { return this.code; }, set(value) { this.code = value; } },
+  server: { get() { return this.request[kContext].server; } },
+  kind: { value: "reply", writable: false },
+  describe: { value() { return "reply " + this.code; } },
+});
+function Request(context) { this[kContext] = context; this.id = 1; }
+
+function Before() {}
+Object.defineProperties(Before.prototype, { [named("size")]: { get() { return "computed"; }, configurable: true }, size: { get() { return "written"; }, configurable: true } });
+function Behind() {}
+Object.defineProperties(Behind.prototype, { size: { get() { return "written"; }, configurable: true }, [named("size")]: { get() { return "computed"; }, configurable: true } });
+function Other() {}
+Object.defineProperties(Other.prototype, { [named("extra")]: { value: "under the computed name" }, size: { value: 3, writable: true }, [named("more")]: { get() { return "a second computed name"; } } });
+const made = Object.create({ inherited: true }, { [kHidden]: { value: "symbol" }, shown: { value: "written", enumerable: true }, [named("late")]: { get() { return "computed"; } } });
+const plain = Object.defineProperties({}, { [kContext]: { value: 1 }, a: { value: 2, enumerable: true }, b: { get() { return this.a + 1; }, enumerable: true } });
+
+const users = {
+  sent: reply => reply.sent,
+  guard(reply, request) { if (reply.sent === true) return "already"; return [request.id, reply.kind, reply.statusCode]; },
+  context: reply => reply[kContext],
+  server: reply => reply.server,
+  setCode(reply, value) { reply.statusCode = value; return [reply.statusCode, reply.code]; },
+  setSent(reply) { "use strict"; reply.sent = true; return reply.sent; },
+  setSentSloppily(reply) { reply.sent = true; return reply.sent; },
+  setKind(reply) { "use strict"; reply.kind = "other"; return reply.kind; },
+  describe: reply => reply.describe(),
+  size: object => object.size,
+  has: object => ["sent" in object, "statusCode" in object, kContext in object, "absent" in object, Object.hasOwn(object, "sent")],
+  keys(object) { const all = []; for (const key in object) all.push(key); return all; },
+};
+globalThis.usersForAnybody = users;
+const use = (name, ...all) => globalThis.usersForAnybody[name](...all);
+const fresh = (ended = false) => new Reply({ ended }, new Request({ server: "the server" }));
+
+show("sent", turn => [use("sent", fresh()), use("sent", fresh(true)), use("sent", fresh(turn === 1))]);
+show("sent once the hidden mark is set", () => { const reply = fresh(); reply[kHidden] = true; return use("sent", reply); });
+show("guard", turn => use("guard", fresh(turn === 2), new Request(null)));
+show("the accessor under the symbol", () => use("context", fresh()));
+show("an accessor that uses it", () => use("server", fresh()));
+show("a store that finds the setter", turn => use("setCode", fresh(), 400 + turn));
+show("a strict store that finds no setter", () => use("setSent", fresh()));
+show("a sloppy store that finds no setter", () => use("setSentSloppily", fresh()));
+show("a strict store to a value that may not be written", () => use("setKind", fresh()));
+show("a method defined by a value", () => use("describe", fresh()));
+show("names asked for", () => use("has", fresh()));
+show("names walked", () => use("keys", fresh()));
+show("an own property over the accessor", () => use("sent", Object.defineProperty(fresh(), "sent", { value: "own" })));
+show("an heir", () => { function Heir(...all) { Reply.apply(this, all); } Object.setPrototypeOf(Heir.prototype, Reply.prototype); const heir = new Heir({ ended: true }, new Request({ server: "heir's" })); return [use("sent", heir), use("server", heir), use("describe", heir)]; });
+show("strangers", () => [use("sent", { sent: "a field" }), use("sent", { get sent() { return "own getter"; } }), use("sent", "text"), use("sent", 1)]);
+show("nothing", () => use("sent", null));
+show("the computed name is a written name, in front of it", () => use("size", new Before()));
+show("the computed name is a written name, behind it", () => use("size", new Behind()));
+show("two computed names", () => { const other = new Other(); return [use("size", other), other.extra, other.more, Object.getOwnPropertyNames(Other.prototype).sort()]; });
+show("Object.create with such a map", () => [made.shown, made.late, made[kHidden], made.inherited, use("keys", made), Object.keys(made)]);
+show("an ordinary object", () => [plain.a, plain.b, plain[kContext], Object.keys(plain), JSON.stringify(plain)]);
+show("what the descriptors say afterwards", () => ["sent", "statusCode", "kind", "describe", kContext].map(key => { const d = Object.getOwnPropertyDescriptor(Reply.prototype, key); return [typeof d.get, typeof d.set, typeof d.value, d.enumerable, d.configurable, d.writable]; }));
+show("a definition over one that is not configurable", () => Object.defineProperty(Reply.prototype, "statusCode", { configurable: true, get() { return "never"; } }));
+show("and everything is as it was", turn => [use("setCode", fresh(), turn), use("sent", fresh(true)), use("server", fresh())]);
+console.log(lines.join("\n"));
+//// a-descriptor-finds-its-getter-elsewhere-than-in-its-own-field.js
+// A descriptor literal leaves `get` out, and native code that asks it for `get` finds one all the same: above the descriptor, behind an accessor that runs code of the program, or in a property that left and came back.
+// Other literals of the same shape hold a getter, so the field is one whose function is made on demand.
+function honest(target, answer) {
+  return Object.defineProperty(target, "x", { get() { return answer; }, configurable: true });
+}
+let rounds = 0;
+for (let i = 0; i < 3000; i++) rounds += honest({}, i).x;
+console.log("3000 honest rounds", rounds);
+
+function attempt(label, run) {
+  try {
+    console.log(label, "->", run());
+  } catch (error) {
+    console.log(label, "threw", error.constructor.name);
+  }
+}
+
+function inherited(box) {
+  const descriptor = { configurable: true };
+  Object.setPrototypeOf(descriptor, { get() { return box.held + 100; } });
+  const target = Object.defineProperty({}, "x", descriptor);
+  return target.x + " " + typeof descriptor.get + " " + Object.hasOwn(descriptor, "get");
+}
+attempt("a getter above the descriptor", () => inherited({ held: 1 }));
+
+function behindAnAccessor(box) {
+  const descriptor = { configurable: true };
+  Object.setPrototypeOf(descriptor, {
+    get get() {
+      box.held = 50;
+      box.extra = "added";
+      return () => box.held + 1;
+    },
+  });
+  const before = box.held;
+  const target = Object.defineProperty({}, "x", descriptor);
+  return before + " " + box.held + " " + box.extra + " " + target.x;
+}
+attempt("an accessor above the descriptor changes an object in the middle", () => behindAnAccessor({ held: 2 }));
+for (let i = 0; i < 500; i++) behindAnAccessor({ held: i });
+attempt("the same once it is hot", () => behindAnAccessor({ held: 3 }));
+
+function ownAccessor(box) {
+  const descriptor = { configurable: true };
+  Object.defineProperty(descriptor, "get", { get() { box.held *= 2; return () => box.held; } });
+  const before = box.held;
+  const target = Object.defineProperty({}, "x", descriptor);
+  return before + " " + box.held + " " + target.x;
+}
+attempt("an own accessor under the name", () => ownAccessor({ held: 4 }));
+
+function deletedAndBack(answer) {
+  const descriptor = { get() { return answer; }, configurable: true };
+  const first = descriptor.get;
+  delete descriptor.get;
+  const without = Object.defineProperty({}, "x", descriptor);
+  descriptor.extra = 1;
+  descriptor.get = () => answer + 1;
+  const withIt = Object.defineProperty({}, "x", descriptor);
+  return without.x + " " + withIt.x + " " + (first === descriptor.get) + " " + Object.keys(descriptor).join();
+}
+attempt("deleted, then stored again", () => deletedAndBack(6));
+
+function storedLater(answer) {
+  const descriptor = { configurable: true };
+  const empty = Object.defineProperty({}, "x", descriptor);
+  descriptor.get = function () { return answer; };
+  const filled = Object.defineProperty({}, "x", descriptor);
+  return empty.x + " " + filled.x + " " + (Object.getOwnPropertyDescriptor(filled, "x").get === descriptor.get);
+}
+attempt("left out, then stored", () => storedLater(7));
+
+function notAFunction(value) {
+  const descriptor = { configurable: true };
+  descriptor.get = value;
+  return Object.defineProperty({}, "x", descriptor).x;
+}
+attempt("a number under the name", () => notAFunction(3));
+attempt("undefined under the name", () => notAFunction(undefined));
+attempt("a value beside a getter", () => Object.defineProperty({}, "x", { value: 1, get() { return 2; } }).x);
+
+function frozen(answer) {
+  const descriptor = Object.freeze({ get() { return answer; }, configurable: true });
+  const target = Object.defineProperty({}, "x", descriptor);
+  return target.x + " " + (Object.getOwnPropertyDescriptor(target, "x").get === descriptor.get) + " " + Object.isFrozen(descriptor);
+}
+attempt("a frozen descriptor", () => frozen(8));
+//// a-descriptor-of-constants-alone.js
+// `Object.defineProperty(this, "x", { enumerable: true, configurable: true, writable: true, value: 1 })`, as TypeScript writes a class field for older targets: a descriptor that says constants alone defines what any other does.
+class Fields {
+  constructor() {
+    Object.defineProperty(this, "a", { enumerable: true, configurable: true, writable: true, value: 1 });
+    Object.defineProperty(this, "b", { enumerable: true, configurable: true, writable: true, value: void 0 });
+    Object.defineProperty(this, "c", { enumerable: false, configurable: true, writable: true, value: "c" });
+    Object.defineProperty(this, "d", { enumerable: true, configurable: false, writable: false, value: null });
+    Object.defineProperty(this, "e", { value: 5 });
+    Object.defineProperty(this, "f", {});
+    Object.defineProperty(this, 0, { enumerable: true, value: "zero" });
+  }
+}
+class Heir extends Fields {
+  constructor() {
+    super();
+    Object.defineProperty(this, "a", { enumerable: true, configurable: true, writable: true, value: 2 });
+    Object.defineProperty(this, "g", { enumerable: true, configurable: true, writable: true, value: true });
+  }
+}
+function describe(object) {
+  return Reflect.ownKeys(object).map(key => {
+    const d = Object.getOwnPropertyDescriptor(object, key);
+    return `${String(key)}:${"value" in d ? JSON.stringify(d.value) ?? "undefined" : "accessor"}${d.enumerable ? "e" : "-"}${d.configurable ? "c" : "-"}${d.writable ? "w" : "-"}`;
+  }).join(" ");
+}
+function attempt(work) {
+  try { return String(work()); } catch (error) { return error.constructor.name; }
+}
+let sum = 0;
+for (let i = 0; i < 300; i++) { const made = i & 1 ? new Heir() : new Fields(); made.a += i; sum += made.a + made.e + Object.keys(made).length; }
+console.log(sum, describe(new Fields()), "|", describe(new Heir()), JSON.stringify(new Heir()));
+
+const made = new Fields();
+console.log(attempt(() => { "use strict"; made.d = 1; }), attempt(() => { "use strict"; made.e = 1; }), attempt(() => delete made.c), attempt(() => { "use strict"; return delete made.d; }), describe(made));
+console.log(attempt(() => Object.defineProperty(made, "d", { value: 1 })), attempt(() => Object.defineProperty(made, "d", { value: null }) === made), attempt(() => Object.defineProperty(made, "e", { enumerable: true })),
+  attempt(() => Reflect.defineProperty(made, "e", { enumerable: true })), attempt(() => Reflect.defineProperty(made, "h", { value: 8, writable: true })), describe(made));
+
+const withSetter = { set s(v) { this.seen = v; }, get s() { return 1; } };
+Object.defineProperty(withSetter, "s", { value: 3 });
+const belowSetter = Object.create({ set t(v) { throw new Error("the setter ran"); } });
+Object.defineProperty(belowSetter, "t", { enumerable: true, configurable: true, writable: true, value: 4 });
+console.log(describe(withSetter), describe(belowSetter), belowSetter.t);
+
+console.log(attempt(() => Object.defineProperty(Object.freeze({}), "x", { value: 1 })), attempt(() => Object.defineProperty(Object.preventExtensions({ x: 0 }), "x", { value: 1 }).x), attempt(() => Reflect.defineProperty(Object.freeze({}), "x", { value: 1 })),
+  attempt(() => Object.defineProperty(1, "x", { value: 1 })), attempt(() => Object.defineProperty(undefined, "x", { value: 1 })), attempt(() => Reflect.defineProperty(null, "x", { value: 1 })));
+
+const list = [1, 2, 3];
+Object.defineProperty(list, "length", { value: 1 });
+Object.defineProperty(list, 4, { enumerable: true, configurable: true, writable: true, value: 9 });
+console.log(JSON.stringify(list), list.length, attempt(() => Object.defineProperty(list, "length", { value: -1 })), attempt(() => Object.defineProperty(Object.freeze([1]), 0, { value: 2 })));
+
+const logged = [];
+const watched = new Proxy({}, { defineProperty(target, key, descriptor) { logged.push(key + ":" + Object.keys(descriptor).sort().join()); return Reflect.defineProperty(target, key, descriptor); } });
+Object.defineProperty(watched, "p", { enumerable: true, value: 1 });
+Object.defineProperty(watched, "q", {});
+console.log(logged.join(" "), describe(watched));
+
+function order() {
+  const steps = [];
+  Object.defineProperty((steps.push("object"), {}), (steps.push("key"), { toString() { steps.push("key to text"); return "k"; } }), { value: 1 });
+  return steps.join();
+}
+console.log(order(), attempt(() => Object.defineProperty({}, "x", { value: 1, get: undefined })), attempt(() => Object.defineProperty({}, "x", { get: 1 })), attempt(() => describe(Object.defineProperty({}, "x", { get: undefined, enumerable: true }))));
+const marked = {};
+Object.defineProperty(marked, "__esModule", { value: true });
+Object.defineProperty(marked, Symbol.toStringTag, { value: "Module" });
+console.log(describe(marked), String(marked), marked.__esModule);
+//// a-getter-written-in-a-descriptor-is-a-new-function-each-time.js
+function report(x) { try { return Reflect.defineProperty(x, "k", { get() {} }); } catch (e) { return "threw"; } }
+function make() {}
+const o = make;
+console.log(report(o), report(o));
+const p = {};
+console.log(report(p), report(p));
+function define(x) { try { Object.defineProperty(x, "j", { get() { return 1; } }); return "defined"; } catch (e) { return "threw " + e.name; } }
+console.log(define(p), define(p));
+function value(x) { return Reflect.defineProperty(x, "f", { value() {} }); }
+console.log(value(p), value(p));
+function fresh() { return () => {}; }
+console.log(fresh() === fresh(), new Set([fresh(), fresh(), fresh()]).size);
+const seen = new WeakSet(); function once() { const f = function () {}; const had = seen.has(f); seen.add(f); return had; }
+console.log(once(), once());
+//// a-store-to-an-accessor-of-a-literal-calls-whatever-setter-is-there.ts
+// A literal with `get` and `set` under one name, stored to again and again, while the program changes what lies under the name.
+const lines: string[] = [];
+const say = (...parts: unknown[]) => lines.push(parts.join(" "));
+const attempt = (name: string, action: () => unknown) => {
+  try {
+    say(name, action());
+  } catch (error) {
+    say(name, (error as Error).constructor.name, (error as Error).message);
+  }
+};
+
+function make(start: number) {
+  return {
+    held: start,
+    calls: 0,
+    get value(): number {
+      return this.held;
+    },
+    set value(next: number) {
+      this.calls++;
+      this.held = next * 2;
+    },
+  };
+}
+type Made = ReturnType<typeof make>;
+
+function store(object: Made, times: number): number {
+  let sum = 0;
+  for (let i = 0; i < times; i++) {
+    object.value = i & 7;
+    sum += object.value;
+  }
+  return sum;
+}
+
+const plain = make(1);
+say("as written", store(plain, 100), plain.calls, plain.held);
+say("the value of the assignment", (plain.value = 21), plain.held);
+plain.value += 1;
+say("compound", plain.held);
+plain.value++;
+say("increment", plain.held, plain.calls);
+
+// Another setter, the same getter.
+const other = make(2);
+Object.defineProperty(other, "value", {
+  set(this: Made, next: number) {
+    this.held = next + 1000;
+  },
+});
+say("another setter", store(other, 100), other.calls, other.held);
+
+// A setter that is no function of the program.
+const bound = make(3);
+const target = { seen: 0 };
+Object.defineProperty(bound, "value", {
+  set: function (this: typeof target, next: number) {
+    this.seen += next;
+  }.bind(target),
+});
+say("a bound setter", store(bound, 100), bound.calls, target.seen);
+
+const native = make(4);
+const list: number[] = [];
+Object.defineProperty(native, "value", { set: Array.prototype.push.bind(list) });
+say("a setter of the engine", store(native, 10), list.join());
+
+const trapped = make(5);
+const applied: string[] = [];
+Object.defineProperty(trapped, "value", {
+  set: new Proxy(function () {}, {
+    apply(_target, receiver, args) {
+      applied.push(`${receiver === trapped}:${args.length}:${args[0]}`);
+    },
+  }),
+});
+say("a proxy", store(trapped, 3), applied.join());
+
+// No setter any more.
+const without = make(6);
+Object.defineProperty(without, "value", { set: undefined });
+attempt("no setter", () => store(without, 100));
+say("no setter left", without.calls, without.held, typeof Object.getOwnPropertyDescriptor(without, "value")!.get);
+
+// No accessor any more.
+const deleted = make(7);
+delete (deleted as Partial<Made>).value;
+say("deleted", store(deleted, 100), deleted.calls, deleted.held, JSON.stringify(Object.getOwnPropertyDescriptor(deleted, "value")));
+
+const data = make(8);
+Object.defineProperty(data, "value", { value: 5, writable: true });
+say("a value", store(data, 100), data.calls, JSON.stringify(Object.getOwnPropertyDescriptor(data, "value")));
+
+const fixed = make(9);
+Object.defineProperty(fixed, "value", { value: 5, writable: false });
+attempt("a value nobody writes", () => store(fixed, 100));
+
+// Integrity levels leave an accessor what it is.
+const frozen = Object.freeze(make(10));
+attempt("frozen", () => store(frozen, 100));
+say("frozen", frozen.calls, frozen.held);
+const sealed = Object.seal(make(11));
+say("sealed", store(sealed, 100), sealed.calls, sealed.held);
+
+// The setter changes what lies under its own name.
+const lazy = {
+  computed: 0,
+  get value(): number {
+    return -1;
+  },
+  set value(next: number) {
+    this.computed++;
+    Object.defineProperty(this, "value", { value: next, writable: true, configurable: true, enumerable: true });
+  },
+};
+let lazySum = 0;
+for (let i = 0; i < 50; i++) {
+  lazy.value = i;
+  lazySum += lazy.value;
+}
+say("a setter that replaces itself", lazySum, lazy.computed);
+
+// The setter throws.
+const refusing = {
+  accepted: 0,
+  get value(): number {
+    return this.accepted;
+  },
+  set value(next: number) {
+    if (next > 3) throw new RangeError(`too much: ${next}`);
+    this.accepted = next;
+  },
+};
+attempt("a setter that throws", () => {
+  for (let i = 0; i < 10; i++) refusing.value = i;
+});
+say("accepted", refusing.accepted);
+
+// From below, the receiver is the heir.
+const heir: Made = Object.create(make(12));
+say("an heir", store(heir, 100), Object.keys(heir).join(), heir.calls, Object.getPrototypeOf(heir).calls);
+
+// What the setter is given.
+const counting = {
+  given: "",
+  get value(): number {
+    return 0;
+  },
+  set value(next: number) {
+    this.given = `${arguments.length}:${next}:${this === counting}`;
+  },
+};
+counting.value = 4;
+say("arguments", counting.given);
+
+// Two literals of one shape with setters of their own.
+function either(first: boolean) {
+  return first
+    ? {
+        held: 0,
+        get value(): number {
+          return this.held;
+        },
+        set value(next: number) {
+          this.held = next + 1;
+        },
+      }
+    : {
+        held: 0,
+        get value(): number {
+          return this.held;
+        },
+        set value(next: number) {
+          this.held = next - 1;
+        },
+      };
+}
+let eitherSum = 0;
+for (let i = 0; i < 100; i++) {
+  const object = either((i & 1) === 0);
+  object.value = i;
+  eitherSum += object.value;
+}
+say("two literals", eitherSum);
+
+// One of the shape has the getter alone.
+function maybeSettable(settable: boolean): { held: number; value: number } {
+  if (settable)
+    return {
+      held: 0,
+      get value(): number {
+        return this.held;
+      },
+      set value(next: number) {
+        this.held = next;
+      },
+    };
+  return {
+    held: 7,
+    get value(): number {
+      return this.held;
+    },
+  } as { held: number; value: number };
+}
+function storeInto(object: { held: number; value: number }) {
+  object.value = 3;
+  return object.value;
+}
+for (let i = 0; i < 20; i++) storeInto(maybeSettable(true));
+attempt("the getter alone", () => storeInto(maybeSettable(false)));
+
+// Object.defineProperty with both halves.
+const defined: { value: number; inner: number } = Object.defineProperty({ inner: 3 } as any, "value", {
+  get(this: any) {
+    return this.inner;
+  },
+  set(this: any, next: number) {
+    this.inner = next * 3;
+  },
+});
+let definedSum = 0;
+for (let i = 0; i < 100; i++) {
+  defined.value = i & 3;
+  definedSum += defined.value;
+}
+say("defined", definedSum, Object.keys(defined).join(), JSON.stringify(Object.getOwnPropertyDescriptor(defined, "value")));
+
+// An accessor that each instance gets in its constructor.
+class Cell {
+  inner = 0;
+  declare value: number;
+  constructor(step: number) {
+    Object.defineProperty(this, "value", {
+      get: () => this.inner,
+      set: (next: number) => {
+        this.inner = next + step;
+      },
+      enumerable: true,
+      configurable: true,
+    });
+  }
+}
+const cells = [new Cell(1), new Cell(10)];
+let cellSum = 0;
+for (let i = 0; i < 100; i++) {
+  const cell = cells[i & 1]!;
+  cell.value = i;
+  cellSum += cell.value;
+}
+say("in the constructor", cellSum);
+
+// The store stands in front of the definition.
+const late: { value?: number; held: number } = { held: 0 };
+late.value = 1;
+say("before", JSON.stringify(late));
+Object.defineProperty(late, "value", {
+  get(this: { held: number }) {
+    return this.held;
+  },
+  set(this: { held: number }, next: number) {
+    this.held = next + 5;
+  },
+  configurable: true,
+  enumerable: true,
+});
+late.value = 1;
+say("behind", JSON.stringify(late));
+
+console.log(lines.join("\n"));
+//// a-store-to-an-accessor-without-a-setter-is-ignored-in-sloppy-code.cjs
+// Sloppy code: a store to an accessor that has lost its setter, or never had one, does nothing.
+function make(start) {
+  return {
+    held: start,
+    calls: 0,
+    get value() {
+      return this.held;
+    },
+    set value(next) {
+      this.calls++;
+      this.held = next * 2;
+    },
+  };
+}
+function store(object, times) {
+  var sum = 0;
+  for (var i = 0; i < times; i++) {
+    object.value = i & 7;
+    sum += object.value;
+  }
+  return sum;
+}
+function storeStrictly(object, times) {
+  "use strict";
+  var sum = 0;
+  for (var i = 0; i < times; i++) {
+    object.value = i & 7;
+    sum += object.value;
+  }
+  return sum;
+}
+var plain = make(1);
+console.log(store(plain, 100), plain.calls, storeStrictly(plain, 100), plain.calls);
+var without = make(6);
+Object.defineProperty(without, "value", { set: undefined });
+console.log(store(without, 100), without.calls, without.held);
+try {
+  console.log(storeStrictly(without, 100));
+} catch (error) {
+  console.log(error.constructor.name, error.message);
+}
+var frozen = Object.freeze(make(3));
+console.log(store(frozen, 100), frozen.calls, frozen.held);
+var primitive = make(4);
+Object.defineProperty(primitive, "value", {
+  set: function (next) {
+    this.held = typeof this + next;
+  },
+});
+console.log(store(primitive, 2), primitive.held);
+//// define-properties-attributes-are-kept.ts
+// What the descriptors say of attributes holds at run time: neither listed, nor defined anew, nor deleted.
+function Meter(this: any) { this.value = 1; }
+Object.defineProperties(Meter.prototype, { twice: { enumerable: false, get(this: any) { return this.value * 2; } } });
+const meter = new (Meter as any)();
+let score = 0;
+for (const name in meter) if (name === "twice") score += 1;
+try { Object.defineProperty(Meter.prototype, "twice", { value: 9 }); score += 10; } catch { score += 100; }
+if (!Reflect.deleteProperty(Meter.prototype, "twice")) score += 1000;
+console.log(score + meter.twice * 10000);
+//// define-properties-descriptors-from-a-helper.ts
+// As in Node.js' streams: the map is a literal, each descriptor comes out of one helper and closes over its bit.
+const kFlags = Symbol("kFlags");
+function makeBitDescriptor(bit: number) {
+  return {
+    enumerable: false,
+    get(this: any) { return (this[kFlags] & bit) !== 0; },
+    set(this: any, value: unknown) { if (value) this[kFlags] |= bit; else this[kFlags] &= ~bit; },
+  };
+}
+function State(this: any) { this[kFlags] = 1 | 4; this.length = 0; }
+Object.defineProperties(State.prototype, {
+  first: makeBitDescriptor(1),
+  second: makeBitDescriptor(2),
+  third: makeBitDescriptor(4),
+  total: { __proto__: null, enumerable: false, get(this: any) { return this[kFlags]; } } as PropertyDescriptor,
+});
+const state = new (State as any)();
+state.second = process.argv.length < 99;
+state.third = false;
+console.log((state.first ? 1 : 0) + (state.second ? 10 : 0) + (state.third ? 100 : 0) + state.total * 1000);
+//// define-properties-literal-descriptors.ts
+// The map is a literal and so is each descriptor.
+function Gauge(this: any, level: number) { this.level = level; this.reads = 0; }
+Object.defineProperties(Gauge.prototype, {
+  doubled: { enumerable: false, get(this: any) { this.reads++; return this.level * 2; } },
+  shifted: { enumerable: false, get(this: any) { return this.level + 100; }, set(this: any, value: number) { this.level = value - 100; } },
+  label: { value: "gauge", writable: false },
+});
+const gauge = new (Gauge as any)(process.argv.length > 99 ? 0 : 3);
+gauge.shifted = 107;
+console.log(gauge.doubled * 1000 + gauge.shifted + gauge.reads * 100000 + gauge.label.length * 1000000);
+//// define-properties-on-the-prototype-of-a-constructor-function.js
+// Object.defineProperties puts two accessors and a data property on the prototype object of a constructor function; one accessor is stored to.
+function State() {
+  this.bits = 0;
+}
+Object.defineProperties(State.prototype, {
+  flowing: {
+    get() { return (this.bits & 1) !== 0; },
+    set(value) { if (value) this.bits |= 1; else this.bits &= ~1; },
+  },
+  ended: {
+    enumerable: false,
+    get() { return (this.bits & 2) !== 0; },
+  },
+  kind: { value: "state" },
+});
+const state = new State();
+state.flowing = true;
+console.log(state.flowing, state.ended, state.kind, state.bits);
+//// define-properties-the-map-is-not-a-literal.ts
+// Nobody knows the names: every reader of every name may meet either getter.
+function Box(this: any) { this.inside = 5; }
+const map: PropertyDescriptorMap = {};
+for (const [index, name] of ["al" + "pha", "be" + "ta"].entries()) map[name] = { get(this: any) { return this.inside + index; } };
+Object.defineProperties(Box.prototype, map);
+const box = new (Box as any)();
+console.log(box.alpha * 10 + box.beta);
+//// define-property-on-the-prototype-of-a-constructor-function.js
+// Object.defineProperty, one name at a time, puts two accessors and a data property on the prototype object of a constructor function.
+function State() {
+  this.bits = 0;
+}
+Object.defineProperty(State.prototype, "flowing", {
+  get() { return (this.bits & 1) !== 0; },
+  set(value) { if (value) this.bits |= 1; else this.bits &= ~1; },
+});
+Object.defineProperty(State.prototype, "ended", {
+  enumerable: false,
+  get() { return (this.bits & 2) !== 0; },
+});
+Object.defineProperty(State.prototype, "kind", { value: "state" });
+const state = new State();
+state.flowing = true;
+console.log(state.flowing, state.ended, state.kind, state.bits);
+//// descriptors-that-leave-the-getter-out-beside-descriptors-that-hold-one.js
+// Descriptors written as literals. Some hold a getter or a setter, some leave both out, and to the compiler all of them are records of one shape.
+// The functions in them are made when somebody asks for them, and the one who asks here is native code.
+const changes = [
+  point => void Object.defineProperty(point, "x", { writable: false }),
+  point => void Object.defineProperty(point, "x", { get: () => 3.5, configurable: true }),
+  point => void Object.defineProperty(point, "x", { value: "defined" }),
+  point => void Object.defineProperty(point, "x", { set(value) { this.y = value; }, configurable: true }),
+  point => void Object.defineProperty(point, "x", { enumerable: false }),
+];
+for (const change of changes) {
+  const point = { x: 1, y: 2 };
+  change(point);
+  try {
+    point.x = 5;
+  } catch (error) {
+    console.log(error.constructor.name);
+  }
+  console.log(point.x, point.y, Object.keys(point).join());
+}
+
+function defineValue(target, value) {
+  return Object.defineProperty(target, "size", { value, writable: true, configurable: true });
+}
+function defineGetter(target, answer) {
+  return Object.defineProperty(target, "size", { get() { return answer * 2; }, configurable: true });
+}
+function defineBoth(target, box) {
+  return Object.defineProperty(target, "size", { get: () => box.held, set: value => { box.held = value % 7; }, configurable: true, enumerable: true });
+}
+function defineWith(target, descriptor) {
+  const before = descriptor.get;
+  Object.defineProperty(target, "size", descriptor);
+  const found = Object.getOwnPropertyDescriptor(target, "size");
+  return [typeof before, before === descriptor.get, found.get === descriptor.get, found.set === descriptor.set, "get" in descriptor, "value" in descriptor].join();
+}
+
+let sum = 0;
+for (let i = 0; i < 3000; i++) {
+  const target = { held: i };
+  defineValue(target, i);
+  sum += target.size;
+  defineGetter(target, i);
+  sum += target.size;
+  const box = { held: 1 };
+  defineBoth(target, box);
+  target.size = i;
+  sum += target.size + box.held;
+  defineValue(target, 1);
+  sum += target.size;
+}
+console.log("3000 rounds", sum);
+
+const target = {};
+console.log(defineWith(target, { value: 4, configurable: true }), target.size);
+console.log(defineWith(target, { get() { return 5; }, configurable: true }), target.size);
+console.log(defineWith(target, { set(value) { sum = value; }, configurable: true }), target.size);
+target.size = 11;
+console.log(sum);
+console.log(defineWith(target, { get: undefined, set: undefined, configurable: true }), target.size);
+console.log(defineWith(target, { configurable: true }), target.size);
+
+const many = Object.defineProperties({}, {
+  plain: { value: 1, enumerable: true },
+  computed: { get() { return this.plain + 1; }, enumerable: true },
+  stored: { get() { return sum; }, set(value) { sum = value * 3; }, enumerable: true },
+});
+many.stored = 5;
+console.log(JSON.stringify(many), Reflect.defineProperty(many, "plain", { get() { return 9; } }), many.plain);
+const created = Object.create({ above: 1 }, { own: { value: 2, enumerable: true }, asked: { get() { return this.own + this.above; } } });
+console.log(created.own, created.asked, Object.keys(created).join());
+//// each-evaluation-of-a-function-under-value-in-a-descriptor-is-another-function.js
+// A definition compares the value that it is handed with the one that is there where the property can be neither written nor configured: the same value is let through, another one is refused.
+// Each evaluation of a function expression makes another function, so the second definition is refused. See each-evaluation-of-a-getter-in-a-descriptor-is-another-function.js for `get` and `set`.
+function define(target) {
+  return Reflect.defineProperty(target, "k", { value: () => 11, enumerable: true });
+}
+const o = {};
+console.log(define(o), define(o), define({}));
+
+////= lines	strict	y(target, "k", { value: function () {}, enumerable: true
+const p = {};
+console.log(strict(p), strict(p));
+
+////= lines	many	ies(target, { k: { value: () => 1 }, l: { value: class {} }
+const q = {};
+console.log(many(q), many(q));
+
+function sameOne(target, value) {
+  return Reflect.defineProperty(target, "k", { value });
+}
+const kept = () => 2;
+const r = {};
+console.log(sameOne(r, kept), sameOne(r, kept), sameOne(r, () => 2));
+
+function created() {
+  return Object.create(null, { k: { value: () => 3 } });
+}
+console.log(created().k === created().k, Reflect.defineProperty(created(), "k", { value: () => 3 }));
+//// each-evaluation-of-a-getter-in-a-descriptor-is-another-function.js
+// Each evaluation of `{ get() {} }` makes a new function. An accessor that cannot be configured takes no other getter or setter, so the second definition fails: Object.defineProperty throws, Reflect.defineProperty answers false.
+function tell(run) {
+  try {
+    return String(run());
+  } catch (error) {
+    return "threw " + error.name;
+  }
+}
+
+function defineGetter(object) {
+  return tell(() => (Object.defineProperty(object, "a", { get() { return 1; } }), "defined"));
+}
+function defineSetter(object) {
+  return tell(() => (Object.defineProperty(object, "b", { set(value) {} }), "defined"));
+}
+function reflectGetter(object) {
+  return tell(() => Reflect.defineProperty(object, "c", { get() {} }));
+}
+function defineArrow(object) {
+  return tell(() => (Object.defineProperty(object, "d", { get: () => 2 }), "defined"));
+}
+function defineMany(object) {
+  return tell(() => (Object.defineProperties(object, { e: { get() { return 3; } }, f: { set(value) {} } }), "defined"));
+}
+function describe() {
+  return { get() { return 4; }, enumerable: true };
+}
+function defineDescribed(object) {
+  return tell(() => (Object.defineProperty(object, "g", describe()), "defined"));
+}
+function defineOldStyle(object) {
+  Object.defineProperty(object, "h", { get() { return 5; }, configurable: false });
+  return tell(() => (object.__defineGetter__("h", function () { return 5; }), "defined"));
+}
+const shared = { get() { return 6; } };
+function defineShared(object) {
+  return tell(() => (Object.defineProperty(object, "i", shared), "defined"));
+}
+function defineConfigurable(object) {
+  return tell(() => (Object.defineProperty(object, "j", { get() { return 7; }, configurable: true }), "defined"));
+}
+function defineValue(object) {
+  return tell(() => Reflect.defineProperty(object, "k", { value() {} }));
+}
+
+for (const target of [{}, function () {}, []]) {
+  for (const define of [defineGetter, defineSetter, reflectGetter, defineArrow, defineMany, defineDescribed, defineShared, defineConfigurable, defineValue])
+    console.log(define.name, define(target), define(target), define(target));
+}
+console.log(defineOldStyle.name, defineOldStyle({}));
+
+const first = Object.getOwnPropertyDescriptor(Object.defineProperty({}, "a", describe()), "a").get;
+const second = Object.getOwnPropertyDescriptor(Object.defineProperty({}, "a", describe()), "a").get;
+console.log(first === second, first(), second());
+//// names-and-other-properties-defined-on-functions.js
+const lines = [];
+const show = value => (typeof value === "symbol" ? value.toString() : typeof value === "function" ? "function " + value.name : JSON.stringify(value));
+
+function describe(label, target, inAnyOrder = false) {
+  const parts = [];
+  for (const key of Reflect.ownKeys(target)) {
+    const d = Object.getOwnPropertyDescriptor(target, key);
+    const flags = (d.writable ? "w" : "-") + (d.enumerable ? "e" : "-") + (d.configurable ? "c" : "-");
+    parts.push(String(key) + ":" + flags + ":" + ("value" in d ? (key === "prototype" ? "object" : show(d.value)) : "accessor"));
+  }
+  lines.push(label + " | " + (inAnyOrder ? parts.sort() : parts).join(" "));
+}
+
+function attempt(label, action) {
+  try {
+    lines.push(label + " -> " + show(action()));
+  } catch (error) {
+    lines.push(label + " threw " + error.constructor.name);
+  }
+}
+
+// What a library of schemas does for each kind of schema.
+function makeConstructor(name, initializer, params) {
+  function init(instance, definition) {
+    instance.traits ??= new Set();
+    instance.traits.add(name);
+    initializer(instance, definition);
+  }
+  const Parent = params?.Parent ?? Object;
+  class Definition extends Parent {}
+  Object.defineProperty(Definition, "name", { value: name });
+  function made(definition) {
+    const instance = params?.Parent ? new Definition() : this;
+    init(instance, definition);
+    return instance;
+  }
+  Object.defineProperty(made, "init", { value: init });
+  Object.defineProperty(made, Symbol.hasInstance, { value: instance => !!instance?.traits?.has(name) });
+  Object.defineProperty(made, "name", { value: name });
+  return { made, Definition };
+}
+
+const kinds = [];
+for (const name of ["First", "Second", "Third", "made", "Definition", ""]) kinds.push(makeConstructor(name, (instance, definition) => void (instance.definition = definition), name === "Second" ? { Parent: Map } : undefined));
+for (const { made, Definition } of kinds) {
+  describe("made", made);
+  describe("class", Definition);
+  const instance = new made(made.name.length);
+  lines.push([made.name, Definition.name, instance instanceof made, {} instanceof made, instance.definition, instance.constructor.name, Object.getPrototypeOf(Definition) === (made.name === "Second" ? Map : Object)].join(" | "));
+  lines.push([String(made).slice(0, 13), String(Definition).slice(0, 16), new Definition() instanceof Definition, Definition.prototype.constructor === Definition].join(" | "));
+}
+lines.push(kinds[0].made.init === kinds[1].made.init, kinds[0].Definition === kinds[1].Definition);
+
+// Every kind of function, told a name.
+const functions = {
+  declared: function declared() {},
+  arrow: () => 1,
+  method: { method() {} }.method,
+  getter: Object.getOwnPropertyDescriptor({ get getter() { return 1; } }, "getter").get,
+  asynchronous: async function asynchronous() {},
+  generator: function* generator() {},
+  bound: function target() {}.bind(null),
+  classObject: class Plain {},
+  withStaticMethod: class WithStaticMethod { static name() { return "called"; } },
+  withStaticField: class WithStaticField { static name = "field"; },
+  withOtherField: class WithOtherField { static other = 1; static more() {} },
+  anonymous: (() => class {})(),
+  heir: class Heir extends Array {},
+  native: Math.max,
+};
+for (const [label, target] of Object.entries(functions)) {
+  describe(label + " at birth", target);
+  attempt(label + " string", () => Object.defineProperty(target, "name", { value: "told" }).name);
+  describe(label + " told", target);
+  attempt(label + " again", () => Object.defineProperty(target, "name", { value: "told twice" }).name);
+  attempt(label + " number", () => Object.defineProperty(target, "name", { value: 7 }).name);
+  attempt(label + " symbol", () => Object.defineProperty(target, "name", { value: Symbol.iterator }).name);
+  attempt(label + " written", () => { "use strict"; target.name = "written"; return target.name; });
+  attempt(label + " writable", () => Object.defineProperty(target, "name", { value: "open", writable: true }).name);
+  attempt(label + " written now", () => { "use strict"; target.name = "written"; return target.name; });
+  attempt(label + " deleted", () => delete target.name);
+  describe(label + " without", target);
+  attempt(label + " defined anew", () => Object.defineProperty(target, "name", { value: "anew" }).name);
+  // The engine puts a name that comes back where it was.
+  describe(label + " anew", target, true);
+  attempt(label + " cannot change", () => Object.defineProperty(target, "name", { value: "other" }).name);
+  attempt(label + " same value", () => Object.defineProperty(target, "name", { value: "anew" }).name);
+}
+
+// The name that it has already, and the names that frames show.
+function keepsItsName() { return new Error("here").stack.split("\n")[1].trim().split(" ")[1]; }
+attempt("restated", () => Object.defineProperty(keepsItsName, "name", { value: "keepsItsName" }).name);
+describe("restated", keepsItsName);
+lines.push(keepsItsName());
+function renamed() { return new Error("here").stack.split("\n")[1].trim().split(" ")[1]; }
+Object.defineProperty(renamed, "name", { value: "shownInFrames" });
+lines.push(renamed());
+class Thrower { static raise() { return new Thrower(); } constructor() { this.frame = new Error("here").stack.split("\n")[1].trim().split(" ").slice(1, 3).join(" "); } }
+Object.defineProperty(Thrower, "name", { value: "RenamedThrower" });
+lines.push(Thrower.raise().frame, Thrower.name);
+
+// Functions that cannot take it.
+for (const close of [Object.preventExtensions, Object.seal, Object.freeze]) {
+  for (const make of [() => function plain() {}, () => () => 1, () => class Closed {}, () => class ClosedWithMembers { static member() {} }]) {
+    const target = close(make());
+    attempt(close.name + " name", () => Object.defineProperty(target, "name", { value: "late" }).name);
+    attempt(close.name + " other", () => Object.defineProperty(target, "other", { value: 1 }).other);
+    describe(close.name, target);
+  }
+}
+
+// Other names, every shape of descriptor.
+const descriptors = [{ value: 1 }, { value: 2, writable: true }, { value: 3, enumerable: true }, { value: 4, configurable: true }, { value: 5, writable: true, enumerable: true, configurable: true }, {}, { get() { return 6; } }, { set(v) {} }, { get() { return 7; }, set(v) {}, enumerable: true, configurable: true }, { writable: true }];
+for (const make of [() => function plain(a, b) {}, () => x => x, () => class Target { static member() {} }, () => class Bare {}, () => ({ m() {} }).m, () => function target() {}.bind(null)]) {
+  const target = make();
+  descriptors.forEach((descriptor, index) => attempt("key" + index, () => Object.defineProperty(target, "key" + index, descriptor)["key" + index]));
+  for (const key of ["length", "prototype", "displayName", "0", "caller", Symbol.hasInstance, Symbol.toStringTag, "member", "constructor", "__proto__"]) attempt(String(key), () => Object.defineProperty(target, key, { value: "defined" })[key]);
+  describe("all", target);
+  attempt("instanceof", () => ({}) instanceof target);
+}
+
+// A function that other objects inherit from: what reads have found absent appears.
+function parent() {}
+const heir = Object.create(parent);
+class Below extends parent {}
+let seen = "";
+for (let round = 0; round < 6; round++) {
+  seen += [heir.late, Below.late, "late" in heir, heir.name, Below.init].join() + ";";
+  if (round === 2) Object.defineProperty(parent, "late", { value: "now" });
+  if (round === 3) Object.defineProperty(parent, "name", { value: "renamed parent" });
+  if (round === 4) Object.defineProperty(parent, "init", { get() { return "got by " + this.name; } });
+}
+lines.push(seen);
+
+console.log(lines.join("\n"));
+//// object-create-with-a-map-of-descriptors.js
+// Object.create with a map of descriptors: the old way to inherit, an object with accessors, a map that is no literal, attributes, and getters in the map and in a descriptor.
+function Animal(name) { this.name = name; }
+Animal.prototype.speak = function () { return this.name + " makes a sound"; };
+function Dog(name) { Animal.call(this, name); }
+Dog.prototype = Object.create(Animal.prototype, {
+  constructor: { value: Dog, enumerable: false, writable: true, configurable: true },
+  bark: { value() { return this.name + " barks"; } },
+});
+const dog = new Dog("Rex");
+console.log(dog.speak(), dog.bark(), dog.constructor === Dog, dog instanceof Animal, Object.keys(Dog.prototype).length);
+
+let reads = 0;
+const meter = Object.create(null, {
+  level: { value: 3, writable: true, enumerable: true },
+  doubled: { get() { reads++; return this.level * 2; }, enumerable: false },
+  fixed: { value: "fixed" },
+});
+meter.level = 5;
+try { "use strict"; meter.fixed = "changed"; } catch { console.log("threw"); }
+console.log(meter.level, meter.doubled, reads, meter.fixed, Object.keys(meter).join(), "toString" in meter);
+
+const map = {};
+for (const name of ["al" + "pha", "be" + "ta"]) map[name] = { value: name.length, enumerable: true };
+const computed = Object.create({ inherited: 1 }, map);
+console.log(computed.alpha, computed.beta, computed.inherited, JSON.stringify(computed));
+
+const order = [];
+const watched = Object.create({}, {
+  get first() { order.push("first"); return { value: 1 }; },
+  second: { get value() { order.push("value of second"); return 2; } },
+});
+console.log(watched.first, watched.second, order.join());
+
+class Item { constructor(size) { this.size = size; } double() { return this.size * 2; } }
+const holder = Object.create(null, { item: { value: new Item(4) } });
+console.log(holder.item.double());
+try { Object.create({}, { broken: 1 }); } catch (error) { console.log(error instanceof TypeError); }
+console.log(Object.getOwnPropertyNames(Object.create({}, undefined)).length);
+//// reflect-define-property-and-define-property-under-constant-names.js
+// Reflect.defineProperty and Object.defineProperty under constant names, on an instance, on a prototype object and on a literal.
+function Gauge() { this.level = 2; }
+console.log(Reflect.defineProperty(Gauge.prototype, "doubled", { get() { return this.level * 2; } }));
+console.log(Reflect.defineProperty(Gauge.prototype, "label", { value: "gauge" }));
+const gauge = new Gauge();
+Object.defineProperty(gauge, "own", { value: 7, writable: false });
+console.log(Reflect.set(gauge, "own", 8));
+gauge.level = 4;
+console.log(gauge.doubled, gauge.label, gauge.own, Object.keys(gauge).join());
+const record = { kept: 1 };
+Object.defineProperty(record, "kept", { get() { return "by the getter"; } });
+console.log(record.kept, Reflect.defineProperty(Object.freeze({}), "x", { value: 1 }));
+//// the-species-of-a-promise-is-a-bound-getter-that-throws.mjs
+// Promise.prototype.then reads Symbol.species of the constructor. The getter is a bound function that throws, then the same function unbound: the promise is rejected both times.
+function withConstructor(constructor) { const promise = Promise.resolve(1); promise.constructor = constructor; return promise; }
+const o = {};
+Object.defineProperty(o, Symbol.species, { get: function () { nowhere; }.bind(), configurable: true });
+async function run(x) { let kind; try { kind = await withConstructor(x).then(); } catch (e) { kind = e.name; } return kind; }
+console.log(await run(o));
+const p = {};
+Object.defineProperty(p, Symbol.species, { get: function () { nowhere; }, configurable: true });
+console.log(await run(p));
+//// the-species-of-a-promise-is-a-bound-getter-that-throws-three-calls-deep.mjs
+function report(list) {
+  console.log("promise-species.then--bound-getter--closure-before--deep-use--reads-late-const-function", ...list);
+}
+const state = 0, shared = 0;
+function readOwn() {}
+function show() {}
+function promiseOf(constructor) {
+  const promise = Promise.resolve(1);
+  promise.constructor = constructor;
+  return promise;
+}
+const o = {};
+Object.defineProperty(o, Symbol.species, { get: function() {
+  lateFunctionPromise;
+}.bind(), configurable: !0 });
+async function run(x, s) {
+  const before = s.n, ownBefore = readOwn(), firstBefore = [0], lengthBefore = shared;
+  let r, kind;
+  try {
+    r = await promiseOf(x).then();
+    kind = r;
+  } catch (e) {}
+  return show + kind;
+}
+function runThird(x, s) {
+  return run(x, s);
+}
+function runSecond(x, s) {
+  return runThird(x, s);
+}
+function runFirst(x, s) {
+  return runSecond(x, s);
+}
+report(await runFirst(o, state));
+//// where-errors-of-the-two-calls-come-from.js
+// Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) on one line: an error says which of the two calls it comes from, whether
+// the function itself throws it or code of the program that runs inside.
+function place(error) {
+  const found = /:(\d+):(\d+)\)?$/.exec(String(error.stack).split("\n").filter(line => /mergeOnOneLine/.test(line))[0] || "");
+  return error.constructor.name + " " + (found ? found[1] + ":" + found[2] : "nowhere");
+}
+// The outer call is no tail call: the frame of this function is there when it throws.
+let merges = 0;
+function mergeOnOneLine(target, source) { const merged = Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)); merges++; return merged; }
+function placeOfError(target, source) {
+  try {
+    mergeOnOneLine(target, source);
+    return "no error";
+  } catch (error) {
+    return place(error);
+  }
+}
+const thrower = trap => ({ [trap]() { throw new RangeError(trap); } });
+console.log("the inner call refuses its operand:", placeOfError({}, undefined), "|", placeOfError({}, null));
+console.log("a trap of the source throws:", placeOfError({}, new Proxy({ a: 1 }, thrower("ownKeys"))), "|", placeOfError({}, new Proxy({ a: 1 }, thrower("getOwnPropertyDescriptor"))));
+console.log("the outer call refuses its operand:", placeOfError(undefined, { a: 1 }), "|", placeOfError(null, { a: 1 }), "|", placeOfError(7, { a: 1 }), "|", placeOfError("text", { a: 1 }));
+console.log("both refuse:", placeOfError(null, null), "|", placeOfError(undefined, new Proxy({}, thrower("ownKeys"))));
+console.log("a trap of the target throws:", placeOfError(new Proxy({}, thrower("defineProperty")), { a: 1 }));
+console.log("the target refuses a property:", placeOfError(Object.freeze({}), { a: 1 }), "|", placeOfError(Object.freeze({ a: 1 }), { a: 2 }), "|", placeOfError(Object.preventExtensions({ a: 1 }), { a: 2, b: 3 }));
+console.log("the target refuses the second of two:", placeOfError(Object.defineProperty({}, "b", { value: 1 }), { a: 1, b: 2 }));
+console.log("an array refuses its length:", placeOfError([], { length: -1 }));
+console.log("nobody refuses:", placeOfError({}, { a: 1 }), "|", placeOfError({}, "ab"), "|", placeOfError({}, 7), "|", placeOfError(new Proxy({}, {}), new Proxy({ a: 1 }, {})));
+for (const target of [null, undefined, 7]) {
+  let result = "nothing";
+  try {
+    result = mergeOnOneLine(target, { a: 1 });
+  } catch (error) {
+    result = "caught " + error.name;
+  } finally {
+    console.log("behind the call:", String(target), String(result));
+  }
+}
+console.log("merges that returned:", merges);

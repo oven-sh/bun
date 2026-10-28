@@ -1,0 +1,78 @@
+# Without a handler the function called in a loop at start is the hottest code, and hot. A callback that a timer or the microtask queue calls once stays cold, and what the module body calls once runs once
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat
+# RUN: pipeline EstimateHeat
+# CHECK: f0 RunsOnce 23 1
+# CHECK-NEXT: f1 RunsOnce 0 1
+# CHECK-NEXT: f2 RunsOnce 0 1
+# CHECK-NEXT: f3 RunsOnce 0 1
+# CHECK-NEXT: f4 Hot 76 10
+# CHECK-NEXT: f5 Cold 0 1
+# CHECK-NEXT: f6 Cold 0 1
+# CHECK-NEXT: hottest: f4 f0 f1 f2 f3 f5 f6
+# CHECK-NEXT: thresholds: cold=1 hot=10
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    v2 = CallDirect v0 function=f1
+    v3 = NewClosure function=f5
+    v4 = Builtin builtin=QueueMicrotask
+    v5 = Call v4, -, v3
+    v6 = NewClosure function=f6
+    v7 = Builtin builtin=SetTimeout
+    v8 = Integer integer=16
+    v9 = Call v7, -, v6, v8
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v11 = CallDirect v0 function=f4
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return
+}
+
+function f1 name="fetch" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect function=f2
+    Return v1
+}
+
+function f2 name="route" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f3
+    Return v0
+}
+
+function f3 name="respond" results=[{type=undefined}] {
+  b0():
+    Return
+}
+
+function f4 name="register" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    v2 = LogicalNot v1
+    v3 = LogicalNot v2
+    v4 = LogicalNot v3
+    v5 = LogicalNot v4
+    v6 = LogicalNot v5
+    Return v6
+}
+
+function f5 name="job" results=[{type=undefined}] {
+  b0():
+    Return
+}
+
+function f6 name="onTimeout" results=[{type=undefined}] {
+  b0():
+    Return
+}

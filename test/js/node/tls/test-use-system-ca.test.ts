@@ -1,6 +1,6 @@
-import { spawn } from "bun";
+import { listen, serve, spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tls as localhost, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { X509Certificate } from "node:crypto";
 import { closeSync, constants, existsSync, openSync, readFileSync, symlinkSync, writeSync } from "node:fs";
@@ -374,5 +374,241 @@ describe.skipIf(isWindows)("default store and OpenSSL's default paths", () => {
   ] as const)("a CA in the $SSL_CERT_DIR hash directory as %s -> %s", async (name, expected) => {
     using dir = tempDir("default-ca-dir", { [name]: ca1 });
     expect(await connectWith({ SSL_CERT_DIR: String(dir) })).toBe(expected);
+  });
+});
+
+describe.concurrent("--use-openssl-ca", () => {
+  const flag = "--use-openssl-ca";
+  const ca1 = join(import.meta.dir, "../test/fixtures/keys/ca1-cert.pem");
+
+  async function run(cmd: string[], env: Record<string, string | undefined> = {}, cwd?: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd,
+      env: {
+        ...bunEnv,
+        NODE_USE_SYSTEM_CA: undefined,
+        NODE_EXTRA_CA_CERTS: undefined,
+        SSL_CERT_FILE: "",
+        SSL_CERT_DIR: "",
+        ...env,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // `openssl x509 -subject_hash` of it is 607986c7.
+  const bundledRoot = rootCertificates.find(pem =>
+    new X509Certificate(pem).subject.endsWith("DigiCert Global Root G2"),
+  );
+
+  // Answers a ClientHello with the ServerHello, Certificate and ServerHelloDone of TLS 1.2, which takes no private key, so
+  // the certificate can be a bundled root. The client verifies it next. One that trusts the root then fails on something
+  // else: the root is not for 127.0.0.1, and may not be used for the key exchange.
+  function serveBundledRoot() {
+    const uint = (size: number, value: number) => {
+      const bytes = Buffer.alloc(size);
+      bytes.writeUIntBE(value, 0, size);
+      return bytes;
+    };
+    const message = (type: number, ...fields: Buffer[]) => {
+      const body = Buffer.concat(fields);
+      return Buffer.concat([uint(1, type), uint(3, body.length), body]);
+    };
+    const certificate = new X509Certificate(bundledRoot!).raw;
+    const messages = Buffer.concat([
+      // version 1.2, random, no session id, TLS_RSA_WITH_AES_128_GCM_SHA256, no compression
+      message(2, uint(2, 0x0303), Buffer.alloc(32), uint(1, 0), uint(2, 0x009c), uint(1, 0)),
+      message(11, uint(3, certificate.length + 3), uint(3, certificate.length), certificate),
+      message(14),
+    ]);
+    const answer = Buffer.concat([uint(1, 22), uint(2, 0x0303), uint(2, messages.length), messages]);
+    return listen<{ received: Buffer; answered: boolean }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { received: Buffer.alloc(0), answered: false };
+        },
+        data(socket, chunk) {
+          const state = socket.data;
+          if (state.answered) return;
+          state.received = Buffer.concat([state.received, chunk]);
+          if (state.received.length < 5 || state.received.length < 5 + state.received.readUInt16BE(3)) return;
+          state.answered = true;
+          socket.write(answer);
+        },
+      },
+    });
+  }
+  const untrusted = "DEPTH_ZERO_SELF_SIGNED_CERT";
+
+  const clients = {
+    fetch: {
+      trusted: "ERR_TLS_CERT_ALTNAME_INVALID",
+      connect: (port: number) => `fetch("https://127.0.0.1:${port}")`,
+    },
+    "tls.connect": {
+      trusted: "ERR_SSL_KEY_USAGE_BIT_INCORRECT",
+      connect: (port: number) => `new Promise((resolve, reject) => require("node:tls").connect({
+        host: "127.0.0.1", port: ${port}, maxVersion: "TLSv1.2", checkServerIdentity() {},
+      }).on("error", reject))`,
+    },
+  };
+
+  test.each([
+    ["fetch", [], undefined, true],
+    ["fetch", [flag], undefined, false],
+    ["fetch", [], "BUN_OPTIONS", false],
+    ["fetch", [flag], "SSL_CERT_FILE", true],
+    ["fetch", [flag], "SSL_CERT_DIR", true],
+    ["fetch", [flag], "NODE_EXTRA_CA_CERTS", true],
+    ["tls.connect", [], undefined, true],
+    ["tls.connect", [flag], undefined, false],
+  ] as const)("%s with %j and %p: a bundled root is trusted: %p", async (client, flags, variable, trusted) => {
+    expect(bundledRoot).toBeDefined();
+    using dir = tempDir("use-openssl-ca", { "root.pem": bundledRoot!, "hashed/607986c7.0": bundledRoot! });
+    using server = serveBundledRoot();
+    const values = {
+      BUN_OPTIONS: flag,
+      SSL_CERT_FILE: join(String(dir), "root.pem"),
+      SSL_CERT_DIR: join(String(dir), "hashed"),
+      NODE_EXTRA_CA_CERTS: join(String(dir), "root.pem"),
+    };
+    expect(
+      await run(
+        [...flags, "-e", `${clients[client].connect(server.port)}.catch(error => console.log(error.code));`],
+        variable && { [variable]: values[variable] },
+      ),
+    ).toEqual({ stdout: (trusted ? clients[client].trusted : untrusted) + "\n", stderr: "", exitCode: 0 });
+  });
+
+  async function manifestFails(cmd: string[], name: string, expected: string, extraEnv: Record<string, string> = {}) {
+    expect(bundledRoot).toBeDefined();
+    using server = serveBundledRoot();
+    using dir = tempDir("use-openssl-ca-install", {
+      "project/package.json": JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }),
+      "project/App.tsx": `export default () => <div />;`,
+      "home/.bun-create/local-template/package.json": JSON.stringify({
+        name: "local-template",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    });
+    const home = join(String(dir), "home");
+    const env = {
+      BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+      BUN_CONFIG_REGISTRY: `https://127.0.0.1:${server.port}/`,
+      BUN_INSTALL_CACHE_DIR: join(home, "cache"),
+      BUN_TMPDIR: home,
+      TMPDIR: home,
+      TEMP: home,
+      TMP: home,
+      HOME: home,
+      USERPROFILE: home,
+      ...extraEnv,
+    };
+    expect(await run(cmd, env, join(String(dir), "project"))).toEqual({
+      stdout: expect.any(String),
+      stderr: expect.stringContaining(`error: ${expected} downloading package manifest ${name}`),
+      // `bun init` has written the project by then.
+      exitCode: cmd[0] === "init" ? 0 : 1,
+    });
+  }
+
+  // All but `bun install` leave the download to a `bun add` or `bun install` that they spawn.
+  test.each([
+    [["install"], "no-deps", "ERR_TLS_CERT_ALTNAME_INVALID"],
+    [["install", flag], "no-deps", untrusted],
+    [[flag, "install"], "no-deps", untrusted],
+    [["x", "no-deps"], "no-deps", "ERR_TLS_CERT_ALTNAME_INVALID"],
+    [["x", flag, "no-deps"], "no-deps", untrusted],
+    [["create", flag, "no-deps"], "create-no-deps", untrusted],
+    [["create", "local-template", "destination", flag], "no-deps", untrusted],
+    [["init", "-y", flag], "@types/bun", untrusted],
+    [["init", "--react", flag, "react-app"], "react", untrusted],
+  ])("bun %j: the manifest of %s from a registry with a bundled root fails with %s", manifestFails);
+
+  // A todo on Windows like the tests of `bun create <component>` in create-jsx.test.ts. It exits with the failed
+  // install while the bundler's threads are alive, and LeakSanitizer reports what they hold.
+  test.todoIf(isWindows)("bun create ./App.tsx passes the flag on to its install", async () => {
+    await manifestFails(["create", flag, "./App.tsx"], "react", untrusted, {
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+    });
+  });
+
+  test.each([
+    [["build"], rootCertificates.length],
+    [["build", flag], 0],
+  ])("a macro of bun %j has %d default certificates", async (cmd, count) => {
+    using dir = tempDir("use-openssl-ca-macro", {
+      "macro.ts": `import { getCACertificates } from "node:tls";\nexport const count = () => getCACertificates("default").length;`,
+      "entry.ts": `import { count } from "./macro.ts" with { type: "macro" };\nconsole.log(count());`,
+    });
+    expect(await run([...cmd, "entry.ts"], {}, String(dir))).toEqual({
+      stdout: expect.stringContaining(`console.log(${count});`),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a request succeeds with the server's CA in $SSL_CERT_FILE", async () => {
+    using dir = tempDir("use-openssl-ca-localhost", { "ca.pem": localhost.cert });
+    using server = serve({ port: 0, tls: localhost, fetch: () => new Response("hello") });
+    expect(
+      await run([flag, "-e", `console.log(await (await fetch("https://localhost:${server.port}")).text());`], {
+        SSL_CERT_FILE: join(String(dir), "ca.pem"),
+      }),
+    ).toEqual({ stdout: "hello\n", stderr: "", exitCode: 0 });
+  });
+
+  // Only the system store has a file of $SSL_CERT_DIR that is not named after the certificate's hash.
+  test.skipIf(!isLinux).each([
+    [[], "hello"],
+    [[flag], untrusted],
+  ])(
+    "with NODE_USE_SYSTEM_CA=1 and %j, a request to a server with its CA in the system store gives %s",
+    async (flags, expected) => {
+      using dir = tempDir("use-openssl-ca-system", { "ca.pem": localhost.cert });
+      using server = serve({ port: 0, tls: localhost, fetch: () => new Response("hello") });
+      const script = `console.log(await fetch("https://localhost:${server.port}").then(response => response.text(), error => error.code));`;
+      expect(await run([...flags, "-e", script], { NODE_USE_SYSTEM_CA: "1", SSL_CERT_DIR: String(dir) })).toEqual({
+        stdout: expected + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // $SSL_CERT_FILE is there to be left out: as in Node, the list has nothing from OpenSSL's default paths. On Linux it
+  // is also what the system store holds.
+  test.each([
+    ["nothing", {}, {}, 0],
+    ["nothing with NODE_USE_SYSTEM_CA=1", { NODE_USE_SYSTEM_CA: "1" }, {}, 0],
+    ["nothing with NODE_USE_SYSTEM_CA=1 in .env", {}, { ".env": "NODE_USE_SYSTEM_CA=1" }, 0],
+    ["only $NODE_EXTRA_CA_CERTS", { NODE_EXTRA_CA_CERTS: ca1 }, {}, 1],
+  ])("tls.getCACertificates('default') lists %s", async (_, env, files, count) => {
+    using dir = tempDir("use-openssl-ca-list", files);
+    const script = `const tls = require("node:tls");
+      const list = tls.getCACertificates("default");
+      console.log(JSON.stringify({
+        default: list.length,
+        isExtra: Bun.deepEquals(list, tls.getCACertificates("extra")),
+        bundled: tls.getCACertificates("bundled").length,
+        rootCertificates: tls.rootCertificates.length,
+      }));`;
+    const { stdout, stderr, exitCode } = await run([flag, "-e", script], { SSL_CERT_FILE: ca1, ...env }, String(dir));
+    expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: {
+        default: count,
+        isExtra: true,
+        bundled: rootCertificates.length,
+        rootCertificates: rootCertificates.length,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

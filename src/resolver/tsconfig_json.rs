@@ -51,7 +51,7 @@ impl JsonCache {
         let mut temp_log = bun_ast::Log::init();
         let bump = self.bump.get_or_insert_with(bun_alloc::Arena::new);
         let result = func(source, &mut temp_log, bump).ok();
-        let _ = temp_log.append_to_maybe_recycled(log, source);
+        temp_log.append_to(log);
         Ok(result)
     }
 
@@ -67,7 +67,7 @@ impl JsonCache {
     ) -> Result<Option<json_parser::ParsedJson>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
         let result = func(source, &mut temp_log).ok();
-        let _ = temp_log.append_to_maybe_recycled(log, source);
+        temp_log.append_to(log);
         Ok(result)
     }
 
@@ -163,6 +163,7 @@ pub struct TSConfigJSON {
     pub experimental_decorators: bool,
     /// `None` = unset (keeps native [[Define]] class-field semantics).
     pub use_define_for_class_fields: Option<bool>,
+    pub(crate) has_compiler_options: bool,
 }
 
 impl Default for TSConfigJSON {
@@ -179,6 +180,7 @@ impl Default for TSConfigJSON {
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: None,
+            has_compiler_options: false,
         }
     }
 }
@@ -307,11 +309,13 @@ impl TSConfigJSON {
         Ok(Box::from(&written[..len]))
     }
 
+    #[inline(never)]
     pub fn parse(
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         json_cache: &mut JsonCache,
     ) -> Result<Option<Box<TSConfigJSON>>, crate::Error> {
+        bun_removable_features::removable_definition!(PackageFiles, Self::parse);
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
         // format that appears to be defined by the implementation details of the
         // TypeScript compiler.
@@ -369,6 +373,7 @@ impl TSConfigJSON {
 
         // Parse "compilerOptions"
         if let Some(compiler_opts) = compiler_opts {
+            result.has_compiler_options = true;
             // Single pass over `compilerOptions`' properties; first occurrence
             // of each key wins (matching `asProperty`).
             let mut base_url_v: Option<&bun_ast::E::JsonValue> = None;

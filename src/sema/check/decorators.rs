@@ -21,6 +21,13 @@ pub(super) struct DecoratorSpan {
     is_parenthesized: bool,
 }
 
+/// The source span of the part of a decorator that the grammar of decorators doesn't allow.
+#[derive(Copy, Clone)]
+pub(super) struct InvalidDecoratorSyntax {
+    pub(super) from: u32,
+    pub(super) to: u32,
+}
+
 impl<'p, 's> Checker<'p, 's> {
     fn class_of_decorated(
         &self,
@@ -506,14 +513,20 @@ impl<'p, 's> Checker<'p, 's> {
                         && matches!(hir[m].key, PropKey::Private(_))
                 })
             {
-                self.error_at((file, at_sign, decorator_span.end), 18036, &[]);
+                self.error_at((file, at_sign, decorator_span.end), 18036, &[])
+                    .class = DiagnosticClass::TypeScriptGrammar;
             }
             if !hir.has_parse_diagnostics
                 && !decorator_span.is_parenthesized
-                && let Some((from, to)) = self.invalid_syntax_in_decorator(file, e)
+                && let Some(invalid) = self.invalid_syntax_in_decorator(file, e)
             {
-                self.error_at((file, decorator_span.start, decorator_span.end), 1497, &[])
-                    .add_related_info(Reported::bare((file, from, to), 1498));
+                let diagnostic =
+                    self.error_at((file, decorator_span.start, decorator_span.end), 1497, &[]);
+                diagnostic.class = DiagnosticClass::early_error_if(
+                    !hir.legacy_decorators,
+                    DiagnosticClass::TypeScriptGrammar,
+                );
+                diagnostic.add_related_info(Reported::bare((file, invalid.from, invalid.to), 1498));
             }
             self.check_decorator(file, owner, e, decorator_span);
         }
@@ -521,20 +534,27 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Returns the span of `checkGrammarDecorator`'s `errorNode`: the first part of `e` that isn't a name, `a.b.c`, or
     /// a call of either. For a `?.` it's the token, not the node containing it.
-    fn invalid_syntax_in_decorator(&self, file: FileId, e: ExprId) -> Option<(u32, u32)> {
+    pub(super) fn invalid_syntax_in_decorator(
+        &self,
+        file: FileId,
+        e: ExprId,
+    ) -> Option<InvalidDecoratorSyntax> {
         let hir = self.hir(file);
         let question_dot_after = |before: ExprId| {
-            let at = self.skip_trivia_from(file, self.end_of_expr(file, before));
-            (at, at + 2)
+            let from = self.skip_trivia_from(file, self.end_of_expr(file, before));
+            InvalidDecoratorSyntax { from, to: from + 2 }
         };
         // Reads the source text, so it's only computed for the reported node.
-        let whole = |node: ExprId| (self.start_of(file, node), self.end_of_expr(file, node));
+        let whole = |node: ExprId| InvalidDecoratorSyntax {
+            from: self.start_of(file, node),
+            to: self.end_of_expr(file, node),
+        };
         let (mut node, mut can_have_call, mut found) = (e, true, None);
         loop {
             if node != e && is_parenthesized(hir, node) {
                 return Some(whole(node));
             }
-            match hir[node].kind {
+            match hir.checked_kind(node) {
                 ExprKind::Instantiation { expr: inner, .. } | ExprKind::NonNull(inner) => {
                     node = inner
                 }

@@ -1,0 +1,341 @@
+////: attempt
+function attempt(what, run) {
+  try {
+    const answer = run();
+    console.log(what, typeof answer === "object" || typeof answer === "function" ? typeof answer : String(answer));
+  } catch (error) {
+    console.log(what, "threw " + told(error));
+  }
+}
+//// a-free-name-is-compared-with-its-built-in-object-before-anybody-asked-for-the-object.ts
+// A store to the global object under a key that nobody knows: every free name may have been replaced, so each use tests whether the name still holds the built-in object.
+// The first test of each name comes before anybody has asked for that object, and later the names hold values of every kind.
+const hide = new Function("v", "return v" + String(process.argv[9] ?? "").slice(99)) as <T>(v: T) => T;
+const globals = globalThis as unknown as Record<string, unknown>;
+globals[hide("nobodyReadsThis")] = hide<unknown>(1);
+hide(navigator); hide(console); hide(Date); hide(Intl); hide(Buffer); hide(Error); hide(Promise); hide(URL);
+
+function agentIsText(): unknown { return typeof navigator.userAgent; }
+function platformIsText(): unknown { return typeof navigator.platform; }
+function logIsFunction(): unknown { return typeof console.log; }
+function nowIsNumber(): unknown { return typeof Date.now(); }
+function formats(): unknown { return typeof Intl.NumberFormat; }
+function bytes(text: string): unknown { return Buffer.byteLength(text); }
+function isError(value: unknown): unknown { return value instanceof Error; }
+function resolves(): unknown { return typeof Promise.resolve(1).then; }
+function parses(text: string): unknown { return URL.canParse(text); }
+function notANumber(value: number): unknown { return isNaN(value); }
+function whole(text: string): unknown { return parseInt(text, 10); }
+function sameObject(value: unknown): unknown { return [value === navigator, value === console, value === Intl, value === Date, value === Buffer]; }
+
+const uses: [string, () => unknown][] = [
+    ["navigator", () => agentIsText()], ["navigator", () => platformIsText()], ["console", () => logIsFunction()], ["Date", () => nowIsNumber()], ["Intl", () => formats()],
+    ["Buffer", () => bytes("abc")], ["Error", () => isError(new TypeError("t"))], ["Promise", () => resolves()], ["URL", () => parses("http://a/")], ["isNaN", () => notANumber(NaN)], ["parseInt", () => whole("12px")],
+];
+const print = console.log.bind(console);
+function attempt(label: string, run: () => unknown) {
+    try {
+        print(label, globalsText(run()));
+    } catch (error) {
+        print(label, "throws", String((error as { name?: unknown }).name));
+    }
+}
+const stringify = JSON.stringify;
+function globalsText(value: unknown): string { return typeof value === "symbol" ? "symbol" : typeof value === "bigint" ? "bigint" : String(stringify(value)); }
+
+for (const [name, run] of uses) attempt("as the realm made it, " + name + ":", run);
+for (const value of [navigator, console, Intl, Date, Buffer, {}, null, undefined, 0, "navigator"]) attempt("the same object:", () => sameObject(hide(value)));
+
+const replacements: [string, unknown][] = [
+    ["an object of the program", { userAgent: 7, platform: 7, log: 7, now: () => "mine", NumberFormat: 7, byteLength: () => "mine", resolve: () => ({ then: 7 }), canParse: () => "mine" }],
+    ["undefined", undefined], ["null", null], ["zero", 0], ["a negative number", -1.5], ["NaN", NaN], ["an empty string", ""], ["true", true], ["false", false],
+    ["a symbol", Symbol("s")], ["a bigint", 10n], ["a function", function () { return 1; }], ["another built-in object", Reflect], ["the built-in object of another name", Intl],
+];
+for (const [kind, replacement] of replacements) {
+    for (const [name, run] of uses) {
+        const original = globals[hide(name)];
+        globals[hide(name)] = hide(replacement);
+        attempt(name + " holds " + kind + ":", run);
+        globals[hide(name)] = original;
+        attempt(name + " holds the built-in object again:", run);
+    }
+}
+//// bound-functions-arguments-keep-their-positions.mjs
+// Targets of the program and of the language, bound without arguments, with arguments, twice, through call and through a spread.
+function minus(a, b, c) { return [this === undefined ? "none" : this.tag, a, b, c].join(); }
+const holder = { tag: "held" };
+const plain = minus.bind(holder);
+const withOne = minus.bind(holder, 1);
+const twice = minus.bind(holder).bind({ tag: "ignored" });
+const throughCall = Function.prototype.bind.call(minus, holder, 7);
+const list = [holder, 8, 9];
+const spread = minus.bind(...list);
+console.log(plain(5, 3), withOne(5, 3), twice(5, 3), throughCall(5, 3), spread(5, 3), plain(), plain(1, 2, 3, 4));
+const uncurry = Function.prototype.call.bind(Array.prototype.map);
+console.log(uncurry([1, 2, 3], (value, index) => value * 10 + index).join());
+const has = Function.prototype.call.bind(Object.prototype.hasOwnProperty);
+console.log(has({ a: 1 }, "a"), has({ a: 1 }, "b"));
+const push = Array.prototype.push.bind([]);
+console.log(push(1), push(2, 3));
+const Bound = (function Made(a) { this.a = a; }).bind(null);
+console.log(new Bound(4).a);
+//// bound-functions-built-ins-that-let-in-code.mjs
+// A built-in that lets in code is called through a bound function that binds no argument: the text runs, the module is loaded, and what they reach is there.
+const evaluate = eval.bind(null);
+const make = Function.bind(null);
+globalThis.reachedByText = () => "reached";
+console.log(evaluate("reachedByText() + ' by eval'"));
+console.log(make("return reachedByText() + ' by Function'")());
+const load = process.getBuiltinModule.bind(process);
+console.log(typeof load(["node:", "path"].join("")).join);
+const apply = Reflect.apply.bind(Reflect);
+console.log(apply(eval, null, ["reachedByText() + ' by Reflect.apply'"]));
+const call = Function.prototype.call.bind(eval);
+console.log(call(null, "reachedByText() + ' by call'"));
+//// bound-functions-what-a-bound-built-in-is-handed-is-followed.mjs
+// What goes in through a bound built-in comes out again, and callbacks are called.
+const assign = Object.assign.bind(Object);
+const target = { a: 1 };
+const made = assign(target, { b: { deep: 2 } }, { c: () => "called" });
+console.log(made === target, target.b.deep, target.c());
+const from = Array.from.bind(Array);
+console.log(from({ length: 2 }, (_, index) => ({ index })).map((entry) => entry.index).join());
+const entries = Object.entries.bind(Object);
+for (const [key, value] of entries({ x: { y: 1 } })) console.log(key, value.y);
+const apply = Reflect.apply.bind(Reflect);
+console.log(apply(function (a) { return this.t + a; }, { t: 1 }, [2]));
+const then = Promise.prototype.then.bind(Promise.resolve({ v: 3 }));
+then((result) => console.log(result.v));
+//// define-properties-under-written-keys.js
+// Object.defineProperties is handed a literal, so the keys that it defines under are written in the program. Each row defines a member that the host makes when it is first looked for.
+// None of them is read by its name, and the three objects go nowhere else.
+// How a TypeError of the language names what is no function is not what is tested here.
+const told = error => error.constructor.name + (error instanceof TypeError && !/compiled/.test(error.message) ? "" : ": " + error.message);
+////= attempt
+const anew = value => ({ value, writable: true, enumerable: true, configurable: true });
+attempt("two names", () => Object.defineProperties(process, { allowedNodeEnvironmentFlags: anew(1), finalization: anew(2) }) === process);
+attempt("a name of the program, then a key in quotes", () => Object.defineProperties(process, { markOfThisProgram: anew(3), 0: anew(4), "stdin": anew(5) }) === process);
+attempt("a key in brackets", () => Object.defineProperties(console, { ["_stdout"]: anew(6) }) === console);
+attempt("a descriptor out of a getter", () => Object.defineProperties(console, { get _stderr() { return anew(7); } }) === console);
+attempt("a member that takes no new definition", () => Object.defineProperties(Bun, { $: { enumerable: false } }) === Bun);
+attempt("members that are there from the start", () => Object.defineProperties(process, { config: { enumerable: false }, features: { enumerable: false } }) === process);
+attempt("no key", () => Object.defineProperties(process, {}) === process);
+attempt("no second operand", () => Object.defineProperties(process));
+const listed = [...Object.keys(process), ...Object.keys(console), ...Object.keys(Bun)];
+for (const name of ["allowedNodeEnvironmentFlags", "finalization", "markOfThisProgram", "0", "stdin", "_stdout", "_stderr", "$", "config", "features"]) {
+  console.log(name, listed.includes(name));
+}
+attempt("console.log", () => console.log("prints"));
+//// members-of-bun-named-on-a-parameter-that-holds-bun.js
+// Bun is in unknown hands and may have been written to. What `await import("bun")` answers is handed to a function, and only that function names the member.
+console.log(Reflect.set(Bun, "color", 1, {}));
+function take(bun) {
+  return bun.peek(Promise.resolve(6));
+}
+console.log(take(await import("bun")));
+//// members-of-bun-named-on-an-awaited-import.js
+// Bun is in unknown hands and may have been written to. A member that the program names only on `await import("bun")` is still in the executable: in a pattern, behind a test, on the awaited value itself.
+console.log(Reflect.set(Bun, "color", 1, {}));
+const later = async () => {
+  const { peek, nanoseconds } = await import("bun");
+  return typeof peek === "function" ? [peek(Promise.resolve(7)), typeof nanoseconds()] : "none";
+};
+console.log(String(await later()));
+console.log((await import("bun")).stringWidth("four"));
+const bun = await import("bun");
+console.log(bun.escapeHTML("<b>"), typeof bun.version);
+//// members-of-bun-named-on-an-awaited-import-are-handed-on-before-they-are-called.js
+// Bun is in unknown hands and may have been written to. Functions that the program names only on `await import("bun")` are not called where they are read: they go through call, apply, bind, Reflect.apply, and to a built-in as a callback.
+console.log(Reflect.set(Bun, "color", 1, {}));
+function attempt(label, run) {
+  try {
+    console.log(label, String(run()));
+  } catch (error) {
+    console.log(label, "THROWS", String(error.message).slice(0, 60));
+  }
+}
+const { peek, nanoseconds } = await import("bun");
+attempt("call", () => peek.call(undefined, 1));
+attempt("apply", () => typeof nanoseconds.apply(undefined, []));
+const bun = await import("bun");
+attempt("bind", () => typeof bun.which.bind(undefined, "a-program-that-is-not-there")());
+attempt("Reflect.apply", () => Reflect.apply(bun.sleepSync, undefined, [0]));
+attempt("a callback", () => [[1]].every(bun.deepEquals));
+async function later() {
+  const inside = await import("bun");
+  return inside.randomUUIDv7.call(undefined).length;
+}
+attempt("in an async function", await later().then(length => () => length, error => () => { throw error; }));
+//// members-of-bun-named-on-an-awaited-import-in-an-async-function-are-called-through-call.js
+// Bun is in unknown hands and may have been written to. An async function names a member only on `await import("bun")` and calls it through call.
+Reflect.set(Bun, "color", 1, {});
+async function later() {
+  const bun = await import("bun");
+  return bun.peek.call(undefined, 1);
+}
+console.log(String(await later()));
+//// process-define-properties-from-an-object-made-elsewhere.js
+// What Object.defineProperties takes its keys from was made elsewhere and has got a key since.
+// How a TypeError of the language names what is no function is not what is tested here.
+const told = error => error.constructor.name + (error instanceof TypeError && !/compiled/.test(error.message) ? "" : ": " + error.message);
+////= attempt
+const anew = value => ({ value, writable: true, enumerable: true, configurable: true });
+const descriptors = { markOfThisProgram: anew(1) };
+descriptors[["final", "ization"].join("")] = anew(2);
+attempt("the definition", () => Object.defineProperties(process, descriptors) === process);
+attempt("console.log", () => console.log("prints"));
+//// process-define-properties-under-a-computed-key.js
+// One key that Object.defineProperties defines under is computed, so the program does not say which members of process are looked for.
+// How a TypeError of the language names what is no function is not what is tested here.
+const told = error => error.constructor.name + (error instanceof TypeError && !/compiled/.test(error.message) ? "" : ": " + error.message);
+////= attempt
+const anew = value => ({ value, writable: true, enumerable: true, configurable: true });
+const name = ["final", "ization"].join("");
+attempt("the definition", () => Object.defineProperties(process, { markOfThisProgram: anew(1), [name]: anew(2) }) === process);
+attempt("console.log", () => console.log("prints"));
+//// process-define-properties-under-keys-out-of-a-spread.js
+// The keys that Object.defineProperties defines under come out of a spread, so the program does not say which members of process are looked for.
+// How a TypeError of the language names what is no function is not what is tested here.
+const told = error => error.constructor.name + (error instanceof TypeError && !/compiled/.test(error.message) ? "" : ": " + error.message);
+////= attempt
+const anew = value => ({ value, writable: true, enumerable: true, configurable: true });
+const more = { allowedNodeEnvironmentFlags: anew(1), finalization: anew(2) };
+attempt("the definition", () => Object.defineProperties(process, { markOfThisProgram: anew(3), ...more }) === process);
+attempt("console.log", () => console.log("prints"));
+//// process-define-properties-under-written-keys-behind-a-type-assertion.ts
+// The literal that Object.defineProperties takes its keys from stands behind a type assertion.
+// How a TypeError of the language names what is no function is not what is tested here.
+const told = (error: any) => error.constructor.name + (error instanceof TypeError && !/compiled/.test(error.message) ? "" : ": " + error.message);
+function attempt(what: string, run: () => unknown) {
+  try {
+    const answer = run();
+    console.log(what, typeof answer === "object" || typeof answer === "function" ? typeof answer : String(answer));
+  } catch (error) {
+    console.log(what, "threw " + told(error));
+  }
+}
+const anew = (value: unknown) => ({ value, writable: true, enumerable: true, configurable: true });
+attempt("the definition", () => Object.defineProperties(process, { finalization: anew(1), allowedNodeEnvironmentFlags: anew(2) } as PropertyDescriptorMap) === process);
+attempt("console.log", () => console.log("prints"));
+//// the-global-object-a-definition-through-a-bound-define-property-under-a-registered-symbol.mjs
+// The shape of signal-exit: Object.defineProperty bound to Object, called with the global object and a registered symbol.
+const define = Object.defineProperty.bind(Object);
+const key = Symbol.for("witness emitter");
+const global = globalThis;
+class Emitter {
+  constructor() {
+    if (global[key]) return global[key];
+    define(global, key, { value: this, writable: false, enumerable: false, configurable: false });
+  }
+}
+const first = new Emitter();
+console.log(new Emitter() === first, typeof process.pid, typeof console.log);
+//// the-global-object-a-key-that-is-a-symbol-or-a-text.cjs
+// The key may be a text at run time: the store replaces a built-in global, and every read behind it sees that.
+var few = process.argv.length < 100;
+var key = few ? "navigator" : Symbol.for("never");
+var kept = navigator;
+globalThis[key] = { hardwareConcurrency: "replaced" };
+console.log(typeof navigator.hardwareConcurrency, navigator.hardwareConcurrency, kept === navigator);
+globalThis.navigator = kept;
+console.log(typeof navigator.hardwareConcurrency);
+//// the-global-object-a-registered-symbol-made-of-a-version.cjs
+// The shape of @opentelemetry/api global-utils.js: a store to the global object under a symbol that is made at run time.
+var major = "1.9.0".split(".")[0];
+var KEY = Symbol.for("witness.api." + major);
+var _global = typeof globalThis === "object" ? globalThis : global;
+function register(type, instance) {
+  var api = (_global[KEY] = _global[KEY] !== undefined ? _global[KEY] : { version: "1.9.0" });
+  api[type] = instance;
+  return true;
+}
+register("trace", { id: 1 });
+console.log(typeof process.pid, JSON.stringify(_global[KEY]), typeof console.log);
+//// the-global-object-a-symbol-made-at-run-time-among-other-receivers.cjs
+// A symbol that is made at run time, stored to the global object among other receivers, read back through other names of the same object.
+var few = process.argv.length < 100;
+var key = Symbol.for("attack." + (few ? "a" : "b"));
+var receiver = few ? globalThis : { other: 1 };
+receiver[key] = { value: 7 };
+console.log(global[Symbol.for("attack.a")].value, key in globalThis, Object.getOwnPropertySymbols(globalThis).includes(key), typeof process.pid, typeof console.log);
+console.log(delete receiver[key], key in global, globalThis[key]);
+Object.defineProperty(receiver, key, { get: function () { return this === globalThis; }, configurable: true });
+console.log(receiver[key]);
+//// the-global-object-a-symbol-nobody-knows-that-names-a-member-of-the-program.cjs
+// The same store hits an object of the program under a symbol that the program also spells out.
+var few = process.argv.length < 100;
+var tag = Symbol("tag");
+var keys = [tag, Symbol.toPrimitive];
+var key = keys[few ? 0 : 1];
+var own = { [tag]: 1, plain: 2 };
+var receiver = few ? own : globalThis;
+receiver[key] = 5;
+console.log(own[tag], own.plain, typeof process.pid);
+var second = keys[few ? 1 : 0];
+receiver[second] = function () { return 9; };
+console.log(own + 1);
+//// the-global-object-as-this-closures-and-handlers-behind-the-test.cjs
+// Closures that capture `this`, and a handler, all behind the test.
+function Guarded(options) {
+  if (!(this instanceof Guarded)) return new Guarded(options);
+  var self = this;
+  try {
+    Object.keys(options).forEach((key) => { this[key] = options[key]; });
+    if (options.fail) throw new Error("x");
+  } catch (error) {
+    self[error.message] = "caught";
+  }
+}
+var a = Guarded({ process: 1, fail: true });
+console.log(a.process, a.x, typeof process.pid, a instanceof Guarded);
+//// the-global-object-as-this-of-a-constructor-function-that-tests-for-its-own-instance.cjs
+// The shape of graceful-fs/legacy-streams.js: a sloppy constructor function that may be called without `new`.
+function ReadStream(path, options) {
+  if (!(this instanceof ReadStream)) return new ReadStream(path, options);
+  this.path = path;
+  options = options || {};
+  var keys = Object.keys(options);
+  for (var index = 0, length = keys.length; index < length; index++) {
+    var key = keys[index];
+    this[key] = options[key];
+  }
+}
+var a = ReadStream("a", JSON.parse('{"flags":"r","mode":438}'));
+var b = new ReadStream("b", { start: 1 });
+console.log(a.path, a.flags, a.mode, b.path, b.start, typeof process.pid, JSON.stringify(Object.keys(a)));
+//// the-global-object-as-this-the-failing-arm-falls-through.cjs
+// The arm that fails goes on into the same code.
+var notes = [];
+function Falls(options) {
+  if (!(this instanceof Falls)) notes.push("called without new");
+  for (var key in options) this[key] = options[key];
+}
+var kept = navigator;
+Falls({ navigator: { hardwareConcurrency: "replaced" } });
+console.log(notes.join(), navigator.hardwareConcurrency);
+globalThis.navigator = kept;
+console.log(typeof navigator.hardwareConcurrency, new Falls({ a: 1 }).a);
+//// the-global-object-as-this-the-name-of-the-function-is-assigned.cjs
+// The binding that the test reads is given another function.
+function Named(options) {
+  if (!(this instanceof Named)) return "not an instance";
+  for (var key in options) this[key] = options[key];
+  return "written";
+}
+var original = Named;
+Named = Object;
+var kept = navigator;
+console.log(original({ navigator: { hardwareConcurrency: "replaced" } }), navigator.hardwareConcurrency);
+globalThis.navigator = kept;
+console.log(typeof navigator.hardwareConcurrency);
+//// the-global-object-as-this-the-test-names-another-function.cjs
+// The global object is an instance of Object.
+function Other(options) {
+  if (!(this instanceof Object)) return new Other(options);
+  for (var key in options) this[key] = options[key];
+}
+var kept = navigator;
+Other({ navigator: { hardwareConcurrency: "replaced" } });
+console.log(navigator.hardwareConcurrency);
+globalThis.navigator = kept;
+console.log(typeof navigator.hardwareConcurrency);

@@ -1,0 +1,1 @@
+{ "skipInShell": "it uses what Bun provides and the jsc shell does not: Request, Response, Headers, URL, AbortSignal, node:net, Bun.serve", "alone": "what it prints hangs on what else the executable holds: which modules and members were compiled in, and whether anything evaluates text" }

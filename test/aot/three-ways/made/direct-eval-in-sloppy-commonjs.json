@@ -1,0 +1,5 @@
+{
+ "callee-alone": "as bun run",
+ "callee-and-an-eval-elsewhere": "as bun run",
+ "eval-require": "as bun run"
+}

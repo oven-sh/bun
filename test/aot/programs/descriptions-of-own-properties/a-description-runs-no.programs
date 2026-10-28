@@ -1,0 +1,190 @@
+//// a-description-runs-no-getter-and-hands-out-the-function.js
+// Object.getOwnPropertyDescriptor and Reflect.getOwnPropertyDescriptor describe a property and call nothing. What they hand out under `get` and `set` runs when the program calls it.
+const log = [];
+const holder = {
+  get first() {
+    log.push("first runs");
+    return 1;
+  },
+  get second() {
+    log.push("second runs");
+    return 2;
+  },
+  set second(value) {
+    log.push("second is set to " + value);
+  },
+  plain: 3,
+};
+const keys = globalThis.neverSet ? ["none"] : Object.keys(holder);
+const descriptors = [];
+for (const key of keys) {
+  descriptors.push(Object.getOwnPropertyDescriptor(holder, key));
+  descriptors.push(Reflect.getOwnPropertyDescriptor(holder, key));
+}
+console.log("after describing:", JSON.stringify(log));
+for (const descriptor of descriptors) {
+  console.log(typeof descriptor.get, typeof descriptor.set, descriptor.value, descriptor.enumerable, descriptor.configurable, descriptor.writable);
+  if (descriptor.get) console.log(descriptor.get.call(holder));
+  if (descriptor.set) descriptor.set.call(holder, 7);
+}
+console.log(JSON.stringify(log));
+//// a-proxy-is-asked-for-the-description.js
+// The trap of a proxy is the one code of the program that a description runs.
+const asked = [];
+const target = {
+  get computed() {
+    asked.push("the getter of the target runs");
+    return 1;
+  },
+  plain: 2,
+};
+const proxy = new Proxy(target, {
+  getOwnPropertyDescriptor(object, key) {
+    asked.push("asked for " + String(key));
+    return Reflect.getOwnPropertyDescriptor(object, key);
+  },
+});
+for (const key of globalThis.neverSet ? [] : ["computed", "plain", "missing"]) {
+  const descriptor = Object.getOwnPropertyDescriptor(proxy, key);
+  console.log(key, descriptor && typeof descriptor.get, descriptor && descriptor.value);
+}
+console.log(Reflect.getOwnPropertyDescriptor(proxy, "plain").value, Object.keys(proxy).join());
+console.log(JSON.stringify(asked));
+//// accessors-move-to-another-object-by-their-descriptions.js
+// The mixin loop: each own property of the source is described and defined on the target. The getters run on the target, by name and under a key.
+class Source {
+  constructor() {
+    this.count = 0;
+  }
+  get doubled() {
+    return this.count * 2;
+  }
+  set doubled(value) {
+    this.count = value / 2;
+  }
+  get label() {
+    return "count " + this.count;
+  }
+  bump() {
+    this.count++;
+    return this;
+  }
+  static get made() {
+    return "made by " + this.name;
+  }
+}
+function Target() {
+  this.count = 5;
+}
+for (const key of Reflect.ownKeys(Source.prototype)) {
+  if (key === "constructor") continue;
+  Object.defineProperty(Target.prototype, key, Object.getOwnPropertyDescriptor(Source.prototype, key));
+}
+for (const key of Object.getOwnPropertyNames(Source)) {
+  const descriptor = Reflect.getOwnPropertyDescriptor(Source, key);
+  if (descriptor.get) Reflect.defineProperty(Target, key, descriptor);
+}
+const target = new Target();
+console.log(target.doubled, target.label, target.bump().doubled, Target.made);
+target.doubled = 40;
+console.log(target.count, target.label);
+for (const key of ["doubled", "label"].slice(globalThis.neverSet ? 1 : 0)) console.log(key, target[key]);
+console.log(Object.keys(target), Object.getOwnPropertyNames(Target.prototype).sort().join());
+//// members-of-host-objects-come-out-of-their-descriptions.js
+// A member of an object of the host that is described under a key from enumeration is used: what comes out under `value` or `get` works like the member itself.
+// Not so on Bun: a key that is put together at run time names no member of Bun. So this program also calls the one of them that is written in JavaScript by its name.
+let functions = 0;
+let getters = 0;
+let others = 0;
+const failures = [];
+for (const [name, holder] of [["Bun", Bun], ["process", process], ["console", console], ["Buffer", Buffer], ["Math", Math]]) {
+  for (const key of Object.getOwnPropertyNames(holder)) {
+    const descriptor = Object.getOwnPropertyDescriptor(holder, key);
+    if (!descriptor) {
+      failures.push(name + "." + key + " has no description");
+      continue;
+    }
+    if (descriptor.get) getters++;
+    else if (typeof descriptor.value === "function") functions++;
+    else others++;
+  }
+}
+console.log(functions > 100, getters >= 0, others > 10, failures.join());
+const take = (holder, key) => Reflect.getOwnPropertyDescriptor(holder, key).value;
+const names = process.argv.length > 100 ? [] : ["peek", "inspect", "deepEquals", "nanoseconds", "escapeHTML", "stringWidth"];
+if (Bun.peek(Promise.resolve(4)) !== 4) failures.push("Bun.peek");
+const taken = Object.fromEntries(names.map(name => [name, take(Bun, name)]));
+console.log(taken.peek(Promise.resolve(4)), taken.inspect({ a: 1 }), taken.deepEquals([1], [1]), typeof taken.nanoseconds(), taken.escapeHTML("<a>"), taken.stringWidth("four"));
+const ofProcess = process.argv.length > 100 ? [] : ["cwd", "hrtime", "uptime", "memoryUsage", "emitWarning", "nextTick"];
+for (const name of ofProcess) console.log(name, typeof take(process, name));
+console.log(typeof take(process, "cwd").call(process), typeof take(process, "hrtime").bigint(), typeof take(process, "memoryUsage")().rss);
+take(process, "nextTick")(() => console.log("the tick has come"));
+const streams = process.argv.length > 100 ? [] : ["stdout", "stderr", "stdin"];
+for (const name of streams) {
+  const descriptor = Object.getOwnPropertyDescriptor(process, name);
+  const stream = descriptor.get ? descriptor.get.call(process) : descriptor.value;
+  console.log(name, typeof stream.on, stream.fd);
+}
+console.log(take(Math, "max")(1, 2), take(console, "log") === console.log, take(Buffer, "from")("hi").toString("hex"));
+//// self-define-getter.mjs
+// globalThis.self is an accessor, as in a browser: the getter answers the global object, and a store puts a data property in its place.
+Object.defineProperty(globalThis, "self", { get() { return "mine"; }, configurable: true }); console.log(self, globalThis.self);
+//// self-delete-late.mjs
+// globalThis.self is an accessor, as in a browser: the getter answers the global object, and a store puts a data property in its place.
+function kind() { return typeof self; } console.log(kind()); delete globalThis.self; console.log(kind());
+//// self-in-keys.mjs
+// globalThis.self is an accessor, as in a browser: the getter answers the global object, and a store puts a data property in its place.
+console.log("self" in globalThis, Object.keys(globalThis).includes("self"), Object.hasOwn(globalThis, "self"), globalThis.propertyIsEnumerable("self"));
+//// self-inherited.mjs
+// globalThis.self is an accessor, as in a browser: the getter answers the global object, and a store puts a data property in its place.
+const o = Object.create(globalThis); console.log(o.self === globalThis, o.self === o);
+//// self-lookup.mjs
+// globalThis.self is an accessor, as in a browser: the getter answers the global object, and a store puts a data property in its place.
+console.log(typeof globalThis.__lookupGetter__("self"), typeof globalThis.__lookupSetter__("self"));
+//// self-store.mjs
+// globalThis.self is an accessor, as in a browser: the getter answers the global object, and a store puts a data property in its place.
+self = 5; console.log(self, globalThis.self, typeof self, Object.keys(Object.getOwnPropertyDescriptor(globalThis, "self")).join());
+//// self-store-helper.mjs
+// globalThis.self is an accessor, as in a browser: the getter answers the global object, and a store puts a data property in its place.
+function put(o, v) { o.self = v; } put(globalThis, 9); console.log(self, globalThis.self);
+//// self-store-late.mjs
+// globalThis.self is an accessor, as in a browser: the getter answers the global object, and a store puts a data property in its place.
+function read() { return self; } console.log(read() === globalThis); globalThis.self = 7; console.log(read(), self);
+//// self-umd.mjs
+// globalThis.self is an accessor, as in a browser: the getter answers the global object, and a store puts a data property in its place.
+const root = typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : typeof global !== "undefined" ? global : this; console.log(root === globalThis, typeof root.setTimeout);
+//// the-handlers-of-the-global-object-describe-themselves-as-data-properties.mjs
+// globalThis.onmessage and globalThis.onerror: native code answers a read and takes a store, and a descriptor shows a data property.
+const a = Object.getOwnPropertyDescriptor(globalThis, "onmessage");
+console.log("onmessage", "get" in a, "value" in a, a.writable, typeof a.get, typeof a.set, a.value);
+const b = Object.getOwnPropertyDescriptor(globalThis, "onerror");
+console.log("onerror", "get" in b, "value" in b, b.writable, typeof b.get, b.value);
+console.log(typeof globalThis.__lookupGetter__("onmessage"), typeof globalThis.__lookupSetter__("onerror"), Reflect.getOwnPropertyDescriptor(globalThis, "onmessage").enumerable);
+onmessage = function handler() {};
+console.log(typeof onmessage, typeof globalThis.onmessage, onmessage?.name, typeof Object.getOwnPropertyDescriptor(globalThis, "onmessage").value);
+onmessage = 5;
+console.log(onmessage, globalThis.onmessage);
+onerror = null;
+console.log(onerror, Object.keys(Object.getOwnPropertyDescriptor(globalThis, "onerror")).join());
+//// the-streams-of-node-keep-their-accessors.js
+// internal/streams/duplex takes nine accessors of Writable.prototype by their descriptions. They answer on a Duplex, on a Transform and on a socket.
+const { Duplex, Transform, PassThrough, Writable, Readable } = require("node:stream");
+const net = require("node:net");
+const names = ["writable", "writableHighWaterMark", "writableObjectMode", "writableBuffer", "writableLength", "writableFinished", "writableCorked", "writableEnded", "writableNeedDrain", "destroyed"];
+for (const [label, stream] of [["Duplex", new Duplex({ read() {}, write(chunk, encoding, done) { done(); } })], ["Transform", new Transform()], ["PassThrough", new PassThrough()], ["Socket", new net.Socket()]]) {
+  console.log(label, names.map(name => JSON.stringify(stream[name])).join(" "));
+}
+for (const name of names) {
+  const own = Object.getOwnPropertyDescriptor(Duplex.prototype, name);
+  const source = Object.getOwnPropertyDescriptor(Writable.prototype, name);
+  console.log(name, typeof own.get, name === "destroyed" ? own.get !== source.get : own.get === source.get);
+}
+const through = new PassThrough();
+through.cork();
+through.write("held");
+console.log(through.writableCorked, through.writableLength, through.readableLength, through.readableFlowing, through.readable);
+through.uncork();
+through.end();
+through.on("data", chunk => console.log("data", String(chunk)));
+through.on("end", () => console.log("end", through.writableFinished, through.writableEnded, through.readableEnded));
+console.log(Object.keys(Readable.prototype).length > 10, Object.keys(Writable.prototype).length > 5);

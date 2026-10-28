@@ -1,0 +1,1 @@
+{ "skipInShell": "needs Workers", "skipInVariants": "a build that validates compares the operands of a native call before and behind it, and here another thread grows the buffer in between" }

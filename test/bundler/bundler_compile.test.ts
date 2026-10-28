@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
@@ -1668,9 +1668,6 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
     // __BUN filesize (32 KB) exceeds the 256-byte file: the bounds check must reject this
     // before the growth `reserve()` (which would otherwise see a negative size_diff).
     ["filesize-past-eof", machoTemplate({ bunFileOff: 0, bunFileSize: 0x8000, fileSize: 256 }), "OffsetOutOfRange"],
-    // __BUN filesize (32 KB) is in-bounds but larger than the 16 KB aligned bundle slot;
-    // write_section only grows, so a template that would require shrinking is rejected.
-    ["filesize-needs-shrink", machoTemplate({ bunFileSize: 0x8000, fileSize: 0xc100 }), "InvalidObject"],
   ] as const) {
     const badTemplate = join(cwd, `template-${name}`);
     await Bun.write(badTemplate, bytes);
@@ -1728,6 +1725,59 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
     expect(stderr).not.toContain("OffsetOutOfRange");
     const outBytes = Buffer.from(await Bun.file(outGood).arrayBuffer());
     expect(outBytes.includes("compiled-from-template")).toBe(true);
+    expect(exitCode).toBe(0);
+  }
+
+  // __BUN filesize (32 KB) is in-bounds but larger than the 16 KB aligned bundle slot, as in a
+  // template that is itself a compiled executable. write_section only grows, so the segment
+  // keeps its size, nothing behind it moves, and what the bundle leaves of the slot is zeroed.
+  const largerTemplate = join(cwd, "template-larger-slot");
+  const largerBytes = machoTemplate({ bunFileSize: 0x8000, fileSize: 0xc100 });
+  largerBytes.fill(0xaa, 0x4000, 0xc000);
+  await Bun.write(largerTemplate, largerBytes);
+  const outLarger = join(cwd, "out-larger-slot");
+  {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--target=bun-darwin-x64",
+        "--compile-executable-path",
+        largerTemplate,
+        join(cwd, "entry.js"),
+        "--outfile",
+        outLarger,
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stderr).not.toContain("InvalidObject");
+    const outBytes = Buffer.from(await Bun.file(outLarger).arrayBuffer());
+    const bundleSize = Number(outBytes.readBigUInt64LE(0x4000));
+    const segment = 32; // LC_SEGMENT_64 __BUN
+    const section = segment + 72;
+    const linkedit = section + 80;
+    expect({
+      vmsize: Number(outBytes.readBigUInt64LE(segment + 32)),
+      fileoff: Number(outBytes.readBigUInt64LE(segment + 40)),
+      filesize: Number(outBytes.readBigUInt64LE(segment + 48)),
+      sectionSize: Number(outBytes.readBigUInt64LE(section + 40)),
+      linkeditFileOff: Number(outBytes.readBigUInt64LE(linkedit + 40)),
+    }).toEqual({
+      vmsize: 0x8000,
+      fileoff: 0x4000,
+      filesize: 0x8000,
+      sectionSize: 8 + bundleSize,
+      linkeditFileOff: 0xc000,
+    });
+    expect(bundleSize).toBeLessThan(0x4000);
+    expect(outBytes.subarray(0x4008, 0x4008 + bundleSize).includes("compiled-from-template")).toBe(true);
+    expect(outBytes.subarray(0x4008 + bundleSize, 0xc000).every(byte => byte === 0)).toBe(true);
     expect(exitCode).toBe(0);
   }
 }, 60_000);
@@ -1922,4 +1972,76 @@ test("a standalone executable does not run a synchronous full GC after loading i
   expect(stderr).toMatch(/\[GC<(0x)?[0-9a-fA-F]+>: starting /); // %p: "0x7f…" on POSIX, "00007FF6…" on Windows
   expect(stderr).not.toContain("FullCollection");
   expect(exitCode).toBe(0);
+});
+
+describe.skipIf(!isMacOS)("compile/SystemCACertificates", () => {
+  const files = {
+    "images.js": `
+      import { dlopen } from "bun:ffi";
+      const { symbols } = dlopen("/usr/lib/libSystem.B.dylib", {
+        _dyld_image_count: { args: [], returns: "u32" },
+        _dyld_get_image_name: { args: ["u32"], returns: "cstring" },
+      });
+      export function securityIsLoaded() {
+        for (let i = 0, n = symbols._dyld_image_count(); i < n; i++)
+          if (String(symbols._dyld_get_image_name(i)).endsWith("/Security.framework/Versions/A/Security")) return true;
+        return false;
+      }
+    `,
+    "names.js": `
+      import tls from "node:tls";
+      import { securityIsLoaded } from "./images.js";
+      if (process.argv.includes("--version")) {
+        console.log("1.0.0");
+        process.exit(0);
+      }
+      await Bun.sleep(500);
+      const before = securityIsLoaded();
+      const list = process.argv.includes("--list") ? tls.getCACertificates("system") : [];
+      console.log(JSON.stringify({ before, list }));
+    `,
+    "silent.js": `
+      import tls from "node:tls";
+      import { securityIsLoaded } from "./images.js";
+      await Bun.sleep(500);
+      console.log(JSON.stringify({ before: securityIsLoaded(), list: [tls.rootCertificates.length > 0] }));
+    `,
+  };
+  const run = async (cwd: string, cmd: string[]) => {
+    await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+  const compile = async (cwd: string, name: string) => {
+    const { stderr, exitCode } = await run(cwd, [bunExe(), "build", "--compile", name + ".js", "--outfile", name]);
+    expect([stderr, exitCode]).toEqual([expect.not.stringContaining("error"), 0]);
+  };
+
+  test("a program that names getCACertificates has them loaded before it asks, and gets the same list", async () => {
+    using dir = tempDir("compile-system-ca-named", files);
+    const cwd = String(dir);
+    await compile(cwd, "names");
+    const compiled = await run(cwd, [join(cwd, "names"), "--list"]);
+    const notCompiled = await run(cwd, [bunExe(), "names.js", "--list"]);
+    expect([compiled.exitCode, notCompiled.exitCode]).toEqual([0, 0]);
+    expect(JSON.parse(compiled.stdout)).toEqual({ before: true, list: JSON.parse(notCompiled.stdout).list });
+    expect(JSON.parse(notCompiled.stdout).before).toBe(false);
+  });
+
+  test("a program that does not name it loads nothing", async () => {
+    using dir = tempDir("compile-system-ca-silent", files);
+    const cwd = String(dir);
+    await compile(cwd, "silent");
+    const { stdout, exitCode } = await run(cwd, [join(cwd, "silent")]);
+    expect(JSON.parse(stdout)).toEqual({ before: false, list: [true] });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a program that exits at once exits cleanly", async () => {
+    using dir = tempDir("compile-system-ca-exit", files);
+    const cwd = String(dir);
+    await compile(cwd, "names");
+    for (let i = 0; i < 20; i++)
+      expect(await run(cwd, [join(cwd, "names"), "--version"])).toEqual({ stdout: "1.0.0\n", stderr: "", exitCode: 0 });
+  });
 });

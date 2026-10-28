@@ -5,34 +5,63 @@ const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const { validateString, validateOneOf } = require("internal/validators");
 const { isDataView, isAnyArrayBuffer } = require("node:util/types");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
-const { isStringOneByteRepresentation, startGCProfiler, stopGCProfiler, discardGCProfiler } = $cpp(
-  "NodeV8.cpp",
-  "Bun::createNodeV8Binding",
-);
+interface GCEvent {
+  isFullCollection: boolean;
+  cost: number;
+  usedBefore: number;
+  capacityBefore: number;
+  externalBefore: number;
+  usedAfter: number;
+  capacityAfter: number;
+  externalAfter: number;
+}
+
+const {
+  isStringOneByteRepresentation,
+  startGCProfiler,
+  stopGCProfiler,
+  discardGCProfiler,
+}: {
+  isStringOneByteRepresentation(content: string): boolean;
+  /** The session's id. */
+  startGCProfiler(): number;
+  stopGCProfiler(session: number): GCEvent[];
+  discardGCProfiler(session: number): void;
+} = $cpp("NodeV8.cpp", "Bun::createNodeV8Binding");
 
 const DateNow = Date.now;
-const FunctionPrototypeCall = Function.prototype.call;
-const uncurryThis = func => FunctionPrototypeCall.bind(func);
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const Uint8ArrayCtor = Uint8Array;
 const BufferAllocUnsafe = Buffer.allocUnsafe;
 const TypedArrayProto = Object.getPrototypeOf(Uint8ArrayCtor.prototype);
-const TypedArrayPrototypeGetBuffer = uncurryThis(ObjectGetOwnPropertyDescriptor(TypedArrayProto, "buffer")!.get);
-const TypedArrayPrototypeGetByteOffset = uncurryThis(
-  ObjectGetOwnPropertyDescriptor(TypedArrayProto, "byteOffset")!.get,
-);
-const TypedArrayPrototypeGetByteLength = uncurryThis(
-  ObjectGetOwnPropertyDescriptor(TypedArrayProto, "byteLength")!.get,
-);
-const TypedArrayPrototypeSet = uncurryThis(TypedArrayProto.set);
-const DataViewPrototypeGetBuffer = uncurryThis(ObjectGetOwnPropertyDescriptor(DataView.prototype, "buffer")!.get);
-const DataViewPrototypeGetByteOffset = uncurryThis(
-  ObjectGetOwnPropertyDescriptor(DataView.prototype, "byteOffset")!.get,
-);
-const DataViewPrototypeGetByteLength = uncurryThis(
-  ObjectGetOwnPropertyDescriptor(DataView.prototype, "byteLength")!.get,
-);
-const Uint8ArrayPrototypeSubarray = uncurryThis(Uint8ArrayCtor.prototype.subarray);
+type ViewGetter<T> = (this: ArrayBufferView) => T;
+const TypedArrayPrototypeGetBuffer: ViewGetter<ArrayBufferLike> = ObjectGetOwnPropertyDescriptor(
+  TypedArrayProto,
+  "buffer",
+)!.get!;
+const TypedArrayPrototypeGetByteOffset: ViewGetter<number> = ObjectGetOwnPropertyDescriptor(
+  TypedArrayProto,
+  "byteOffset",
+)!.get!;
+const TypedArrayPrototypeGetByteLength: ViewGetter<number> = ObjectGetOwnPropertyDescriptor(
+  TypedArrayProto,
+  "byteLength",
+)!.get!;
+const TypedArrayPrototypeSet: (this: Uint8Array, array: ArrayLike<number>, offset?: number) => void =
+  TypedArrayProto.set;
+const DataViewPrototypeGetBuffer: ViewGetter<ArrayBufferLike> = ObjectGetOwnPropertyDescriptor(
+  DataView.prototype,
+  "buffer",
+)!.get!;
+const DataViewPrototypeGetByteOffset: ViewGetter<number> = ObjectGetOwnPropertyDescriptor(
+  DataView.prototype,
+  "byteOffset",
+)!.get!;
+const DataViewPrototypeGetByteLength: ViewGetter<number> = ObjectGetOwnPropertyDescriptor(
+  DataView.prototype,
+  "byteLength",
+)!.get!;
+const Uint8ArrayPrototypeSubarray = Uint8ArrayCtor.prototype.subarray;
 
 function notimpl(message) {
   throwNotImplemented("node:v8 " + message);
@@ -146,7 +175,7 @@ function cachedDataVersionTag() {
   versionTag ??= Bun.hash.crc32(`bun ${Bun.version}-${Bun.revision}${versionTagFlags}`);
   return versionTag;
 }
-var HeapSnapshotReadable_;
+var HeapSnapshotReadable_: (new () => $Node.Readable) | undefined;
 function getHeapSnapshot() {
   if (!HeapSnapshotReadable_) {
     const Readable = require("node:stream").Readable;
@@ -275,10 +304,10 @@ function getCppHeapStatistics(type = "detailed") {
 // with bare SSV output; Buffer-free payloads stay bare SSV so older readers keep working.
 const kBufferEnvelopeMagic = [0xff, 0x42, 0x55, 0x4e, 0x01]; // 0xFF "BUN" v1
 
-function hasBufferEnvelopeMagic(view) {
+function hasBufferEnvelopeMagic(view: Uint8Array) {
   // In-bounds integer-indexed reads on a typed array never consult the
   // prototype chain, so the indexing is tamper-proof as-is.
-  if (TypedArrayPrototypeGetByteLength(view) < kBufferEnvelopeMagic.length) return false;
+  if (TypedArrayPrototypeGetByteLength.$call(view) < kBufferEnvelopeMagic.length) return false;
   for (let i = 0; i < kBufferEnvelopeMagic.length; i++) {
     if (view[i] !== kBufferEnvelopeMagic[i]) return false;
   }
@@ -286,20 +315,20 @@ function hasBufferEnvelopeMagic(view) {
 }
 
 function deserialize(value) {
-  let view;
+  let view: Uint8Array;
   if ($isTypedArrayView(value)) {
     view = new Uint8ArrayCtor(
-      TypedArrayPrototypeGetBuffer(value),
-      TypedArrayPrototypeGetByteOffset(value),
-      TypedArrayPrototypeGetByteLength(value),
+      TypedArrayPrototypeGetBuffer.$call(value),
+      TypedArrayPrototypeGetByteOffset.$call(value),
+      TypedArrayPrototypeGetByteLength.$call(value),
     );
   } else if (isDataView(value)) {
     // $isTypedArrayView excludes DataView, whose accessors live on its own
     // prototype rather than %TypedArray%.prototype.
     view = new Uint8ArrayCtor(
-      DataViewPrototypeGetBuffer(value),
-      DataViewPrototypeGetByteOffset(value),
-      DataViewPrototypeGetByteLength(value),
+      DataViewPrototypeGetBuffer.$call(value),
+      DataViewPrototypeGetByteOffset.$call(value),
+      DataViewPrototypeGetByteLength.$call(value),
     );
   } else if (isAnyArrayBuffer(value)) {
     view = new Uint8ArrayCtor(value);
@@ -308,10 +337,10 @@ function deserialize(value) {
     return jsc.deserialize(value);
   }
   if (hasBufferEnvelopeMagic(view)) {
-    const envelope = jsc.deserialize(Uint8ArrayPrototypeSubarray(view, kBufferEnvelopeMagic.length));
+    const envelope = jsc.deserialize(Uint8ArrayPrototypeSubarray.$call(view, kBufferEnvelopeMagic.length));
     return require("internal/serialization_buffers").restoreBuffers(envelope);
   }
-  return jsc.deserialize(value);
+  return jsc.deserialize(value as ArrayBuffer);
 }
 function takeCoverage() {
   notimpl("takeCoverage");
@@ -325,9 +354,9 @@ function serialize(arg1) {
     return jsc.serialize(arg1, { binaryType: "nodebuffer" });
   }
   const payload = jsc.serialize(tagged, { binaryType: "nodebuffer" });
-  const framed = BufferAllocUnsafe(kBufferEnvelopeMagic.length + TypedArrayPrototypeGetByteLength(payload));
+  const framed = BufferAllocUnsafe(kBufferEnvelopeMagic.length + TypedArrayPrototypeGetByteLength.$call(payload));
   for (let i = 0; i < kBufferEnvelopeMagic.length; i++) framed[i] = kBufferEnvelopeMagic[i];
-  TypedArrayPrototypeSet(framed, payload, kBufferEnvelopeMagic.length);
+  TypedArrayPrototypeSet.$call(framed, payload, kBufferEnvelopeMagic.length);
   return framed;
 }
 
@@ -348,8 +377,6 @@ function getDefaultHeapSnapshotPath() {
   return `Heap-${yyyy}${mm}${dd}-${hh}${MM}${ss}-${process.pid}-${thread_id}.heapsnapshot`;
 }
 
-let fs;
-
 function writeHeapSnapshot(path, _options) {
   if (path !== undefined) {
     if (typeof path !== "string") {
@@ -363,10 +390,7 @@ function writeHeapSnapshot(path, _options) {
     path = getDefaultHeapSnapshotPath();
   }
 
-  if (!fs) {
-    fs = require("node:fs");
-  }
-  fs.writeFileSync(path, Bun.generateHeapSnapshot("v8"), "utf-8");
+  require("node:fs").writeFileSync(path, Bun.generateHeapSnapshot("v8"), "utf-8");
 
   return path;
 }

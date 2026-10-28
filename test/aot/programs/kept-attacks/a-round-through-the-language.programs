@@ -1,0 +1,944 @@
+////: show-3
+function show(label: string, f: () => unknown) {
+  try { console.log(label, String(f())); } catch (e) { console.log(label, "threw", (e as any)?.name ?? String(e)); }
+}
+//// a-round-through-the-language/a1-call-apply-bind.ts
+// A round through the language: call apply bind. It prints what plain Bun prints.
+type P = { x: number; y: number };
+////= show-3
+function sum(p: P, n: number): number { return p.x + p.y + n; }
+function len(s: string): number { return s.length; }
+function twice(n: number): number { return n * 2; }
+const anySum: any = sum, anyLen: any = len, anyTwice: any = twice;
+show("typed", () => sum({ x: 1, y: 2 }, 3));
+show("any-1", () => anySum("str", {}));
+show("any-2", () => anySum({ x: "a", y: [] }, "z"));
+show("any-3", () => anySum({ y: 1 }, 2));
+show("call", () => sum.call(null, 5 as any, "q" as any));
+show("apply", () => sum.apply(null, [{ x: {}, y: 1 }, null] as any));
+show("reflect", () => Reflect.apply(sum, undefined, [{ x: 1.5, y: "2" }, 3n]));
+show("bind-1", () => (sum.bind(null, { x: "b", y: "c" } as any) as any)("d"));
+show("bind-2", () => (anySum.bind(null))("s", 1));
+show("len-1", () => anyLen(12));
+show("len-2", () => anyLen({ length: "seven" }));
+show("len-3", () => anyLen([1, 2, 3]));
+show("len-4", () => len.call(null, (() => 1) as any));
+show("twice-1", () => anyTwice("4"));
+show("twice-2", () => anyTwice({ valueOf() { return 21; } }));
+show("twice-3", () => anyTwice(undefined));
+show("twice-4", () => anyTwice());
+show("twice-5", () => anyTwice(10n));
+for (let i = 0; i < 3; i++) show("loop" + i, () => anySum(i & 1 ? { x: 1, y: 2 } : { x: "1", y: 2 }, i));
+//// a-round-through-the-language/a2-this.ts
+// A round through the language, one probe of many. It prints what plain Bun prints.
+////= show-3
+class A {
+  x = 1; name = "a";
+  m(): number { return this.x + 1; }
+  n(k: number): string { return this.name + k; }
+  get g(): number { return this.x * 2; }
+  set s(v: number) { this.x = v + 1; }
+  static make(v: number): A { const a = new A(); a.x = v; return a; }
+}
+class B extends A { y = "why"; m(): number { return super.m() + this.y.length; } }
+const a = new A(), b = new B();
+show("m", () => a.m());
+show("m-call-obj", () => A.prototype.m.call({ x: "s" } as any));
+show("m-call-num", () => A.prototype.m.call(5 as any));
+show("m-call-undef", () => A.prototype.m.call(undefined as any));
+show("m-detached", () => { const m = a.m; return m(); });
+show("m-reflect", () => Reflect.apply(A.prototype.m, "str", []));
+show("m-bind", () => a.m.bind({ x: [7] } as any)());
+show("n-call", () => A.prototype.n.call({ name: 4 } as any, "k" as any));
+show("B.m-on-A", () => B.prototype.m.call(a as any));
+show("B.m-on-obj", () => B.prototype.m.call({ x: 1, y: 5 } as any));
+const gd = Object.getOwnPropertyDescriptor(A.prototype, "g")!;
+const sd = Object.getOwnPropertyDescriptor(A.prototype, "s")!;
+show("getter-call", () => gd.get!.call({ x: "q" }));
+show("getter-call-2", () => gd.get!.call(3));
+show("setter-call", () => { const o: any = { x: 0 }; sd.set!.call(o, "w"); return o.x; });
+show("setter-any", () => { (a as any).s = "v"; return a.x; });
+show("after", () => a.m());
+show("proto-obj", () => { const o = Object.create(A.prototype); return o.m() + "|" + o.g + "|" + o.n(1); });
+show("proto-obj-2", () => { const o = Object.create(A.prototype); o.x = "text"; o.name = 9; return o.m() + "|" + o.g + "|" + o.n(1); });
+show("borrow", () => { const o: any = { x: "bx", m: A.prototype.m }; return o.m(); });
+show("static", () => (A.make as any)("nope").m());
+show("setproto", () => { const o: any = { x: {} }; Object.setPrototypeOf(o, B.prototype); return o.m(); });
+//// a-round-through-the-language/a3-construct.ts
+// A round through the language, one probe of many. It prints what plain Bun prints.
+////= show-3
+class P {
+  constructor(public a: number, public b: string) {}
+  d(): string { return this.b + ":" + (this.a + 1); }
+}
+class S extends P { constructor(v: any, w: any) { super(v, w); } }
+class T extends P { z: number; constructor(v: any) { super(v, v); this.z = v; } zz(): number { return this.z + this.a; } }
+class Other { q = 1; }
+const C: any = P;
+show("typed", () => new P(1, "s").d());
+show("any", () => new C("x", 1).d());
+show("any-none", () => new C().d());
+show("reflect", () => Reflect.construct(P, [{}, []]).d());
+show("reflect-nt", () => { const o = Reflect.construct(P, ["a", 2], Other); return Object.getPrototypeOf(o) === Other.prototype ? JSON.stringify(o) : "bad"; });
+show("reflect-nt-d", () => { const o = Reflect.construct(P, ["a", 2], Other); return P.prototype.d.call(o); });
+show("sub", () => new S("m", 2).d());
+show("sub-2", () => new S(undefined, null).d());
+show("sub-t", () => new T("t").zz());
+show("sub-t-2", () => new T({ valueOf() { return 2; } }).zz());
+show("call-ctor", () => C(1, "s"));
+function Old(this: any, a: number, b: string) { this.a = a; this.b = b; }
+Old.prototype.d = function (this: { a: number; b: string }): string { return this.b + "/" + (this.a + 1); };
+const O: any = Old;
+show("old", () => new O(1, "s").d());
+show("old-any", () => new O("x", 1).d());
+show("old-call", () => { const t: any = {}; O.call(t, [], {}); return O.prototype.d.call(t); });
+show("bound-new", () => new (C.bind(null, "bb"))(3).d());
+show("spread-new", () => new C(...["sp", 9]).d());
+const classes: any[] = [P, S, T];
+for (const K of classes) show("by-value-" + K.name, () => new K("k", 8).d());
+//// a-round-through-the-language/a4-rest-spread-default.ts
+// A round through the language: rest spread default. It prints what plain Bun prints.
+////= show-3
+function total(...xs: number[]): number { let s = 0; for (const x of xs) s += x; return s; }
+function total2(first: number, ...xs: number[]): number { let s = first; for (let i = 0; i < xs.length; i++) s += xs[i]; return s; }
+function names(...ps: { n: string }[]): string { let s = ""; for (const p of ps) s += p.n.length; return s; }
+function dflt(a: number = 5, b: string = "x"): string { return b + (a + 1); }
+function three(a: number, b: number, c: number): number { return a + b + c; }
+const T: any = total, T2: any = total2, N: any = names, D: any = dflt, H: any = three;
+show("total", () => total(1, 2, 3));
+show("total-any", () => T("a", {}, 1));
+show("total-spread", () => total(...(["a", "b"] as any)));
+show("total-apply", () => total.apply(null, ["x", 2] as any));
+show("total-call", () => total.call(null, null as any, undefined as any));
+show("total2-any", () => T2(1, "b", [3]));
+show("total2-any2", () => T2("f", 1, 2));
+show("total2-spread", () => total2(1, ...([{}, "z"] as any)));
+show("names", () => names({ n: "ab" }, { n: "c" }));
+show("names-any", () => N({ n: 5 }, { n: [1, 2] }));
+show("names-any2", () => N("str", 4));
+show("names-bind", () => N.bind(null, { n: { length: "L" } })({ n: "q" }));
+show("dflt", () => dflt());
+show("dflt-any", () => D(undefined, 7));
+show("dflt-any2", () => D("z"));
+show("dflt-any3", () => D(null, null));
+show("three-spread", () => three(...([1, "2", 3] as any as [number, number, number])));
+show("three-spread2", () => H(...[1]));
+show("three-spread3", () => H(...["a", "b", "c", "d"]));
+show("three-iter", () => H(...new Set(["q", 1, {}])));
+//// a-round-through-the-language/a5-callbacks.ts
+// A round through the language, one probe of many. It prints what plain Bun prints.
+////= show-3
+type P = { x: number };
+const dbl = (n: number): number => n * 2;
+const slen = (s: string): number => s.length;
+const px = (p: P): number => p.x + 1;
+const cmp = (a: P, b: P): number => a.x - b.x;
+const mixed: any[] = ["a", 1, { x: 3 }, null, [4]];
+show("map-dbl", () => mixed.map(dbl));
+show("map-slen", () => { try { return mixed.map(slen); } catch (e) { return "T:" + (e as any).name; } });
+show("map-px", () => { try { return mixed.map(px); } catch (e) { return "T:" + (e as any).name; } });
+show("as-number[]", () => (JSON.parse('["a",{},2]') as number[]).map(dbl));
+show("as-P[]", () => (JSON.parse('[{"x":"s"},{"y":1},{"x":2}]') as P[]).map(px));
+show("chain", () => (JSON.parse('["7",{},2,null]') as number[]).map(dbl).filter((n: number): boolean => n > 3).map((n: number): string => "v" + (n + 1)));
+show("chain-2", () => (JSON.parse('[{"x":"s"},{"x":2}]') as P[]).filter((p: P): boolean => p.x > 1).map(px));
+show("sort", () => JSON.stringify((JSON.parse('[{"x":"b"},{"x":3},{"x":"a"},{"x":1}]') as P[]).sort(cmp)));
+show("reduce", () => (mixed as number[]).reduce((a: number, n: number): number => a + n, 0));
+show("forEach", () => { let s = 0; (mixed as number[]).forEach((n: number) => { s += n; }); return s; });
+show("find", () => JSON.stringify((mixed as P[]).find((p: P): boolean => p != null && p.x === 3)));
+show("from", () => Array.from({ length: 2 }, slen as any));
+show("from-iter", () => Array.from(new Set<any>(["ab", 5]), slen));
+show("replace", () => "a1b2".replace(/\d/g, dbl as any));
+show("reviver", () => JSON.stringify(JSON.parse('{"a":"1","b":2}', ((k: string, v: number): number => v * 2) as any)));
+show("map-forEach", () => { let s = ""; new Map<any, any>([["k", 1], [2, "v"]]).forEach((v: number, k: string) => { s += (v + 1) + k.length; }); return s; });
+show("flatMap", () => (mixed as string[]).flatMap((s: string): number[] => [s == null ? -1 : s.length]));
+show("every", () => (mixed as number[]).every((n: number): boolean => n + 1 > 0));
+await Promise.resolve("str" as any).then(dbl).then((v) => console.log("then", v));
+await Promise.resolve({ x: "px" } as any).then(px).then((v) => console.log("then-px", v));
+await Promise.reject(7).catch(slen as any).then((v) => console.log("catch", v));
+await new Promise<void>((r) => setTimeout(((s: string) => { console.log("timeout", s.length); r(); }) as any, 0, 55));
+//// a-round-through-the-language/b1-untyped-hidden-calls.js
+// A round through the language: untyped hidden calls. It prints what plain Bun prints.
+function show(label, f) {
+  try { console.log(label, String(f())); } catch (e) { console.log(label, "threw", e?.name ?? String(e)); }
+}
+// Each function has one plain call with one kind of argument, and one call that arrives some other way.
+function viaReflect(p) { return p.x + 1; }
+show("reflect-0", () => viaReflect({ x: 1 }));
+show("reflect-1", () => Reflect.apply(viaReflect, null, ["str"]));
+function viaCall(p) { return p.x + 1; }
+show("call-0", () => viaCall({ x: 1 }));
+show("call-1", () => viaCall.call(null, 7));
+function viaApply(p) { return p.x + 1; }
+show("apply-0", () => viaApply({ x: 1 }));
+show("apply-1", () => viaApply.apply(null, [[1, 2]]));
+function viaBind(p, q) { return p.x + q.y; }
+show("bind-0", () => viaBind({ x: 1 }, { y: 2 }));
+show("bind-1", () => viaBind.bind(null, "s")(3));
+show("bind-2", () => viaBind.bind(null).bind(null, { x: "a" })({ y: [] }));
+function viaCallCall(p) { return p.x + 1; }
+show("callcall-0", () => viaCallCall({ x: 1 }));
+show("callcall-1", () => Function.prototype.call.call(viaCallCall, null, "zz"));
+show("callcall-2", () => Function.prototype.apply.call(viaCallCall, null, [true]));
+function viaArray(p) { return p.x + 1; }
+show("array-0", () => viaArray({ x: 1 }));
+show("array-1", () => [viaArray][0]("el"));
+function viaObject(p) { return p.x + 1; }
+show("object-0", () => viaObject({ x: 1 }));
+show("object-1", () => { const o = { f: viaObject }; const k = "f"; return o[k + ""](12); });
+function viaGlobal(p) { return p.x + 1; }
+show("global-0", () => viaGlobal({ x: 1 }));
+show("global-1", () => { globalThis.hidden = viaGlobal; return globalThis["hid" + "den"]("g"); });
+function viaSort(a, b) { return a.x - b.x; }
+show("sort-0", () => viaSort({ x: 1 }, { x: 2 }));
+show("sort-1", () => [3, 1, 2].sort(viaSort));
+function viaMap(p) { return p.x + 1; }
+show("map-0", () => viaMap({ x: 1 }));
+show("map-1", () => ["a", 2].map(viaMap));
+function viaToString() { return this.x + "!"; }
+show("tostring-0", () => viaToString.call({ x: 1 }));
+show("tostring-1", () => "" + { toString: viaToString, x: { toString() { return "in"; } } });
+function viaValueOf() { return this.v * 2; }
+show("valueof-0", () => viaValueOf.call({ v: 2 }));
+show("valueof-1", () => 1 + { valueOf: viaValueOf, v: "8" });
+function viaGetter() { return this.x + 1; }
+show("getter-0", () => viaGetter.call({ x: 1 }));
+show("getter-1", () => Object.defineProperty({ x: "gx" }, "g", { get: viaGetter }).g);
+show("getter-2", () => { const o = Object.create(Object.defineProperty({}, "g", { get: viaGetter })); return Reflect.get(o, "g", "receiver"); });
+function viaSetter(v) { this.got = v.x; }
+show("setter-0", () => { const o = {}; viaSetter.call(o, { x: 1 }); return o.got; });
+show("setter-1", () => { const o = Object.defineProperty({}, "s", { set: viaSetter }); o.s = "sv"; return o.got; });
+function viaToJSON(k) { return k.length + this.x; }
+show("tojson-0", () => viaToJSON.call({ x: 1 }, "ab"));
+show("tojson-1", () => JSON.stringify([{ toJSON: viaToJSON, x: "j" }]));
+function viaProxy(t, k) { return t.x + k.length; }
+show("proxy-0", () => viaProxy({ x: 1 }, "ab"));
+show("proxy-1", () => new Proxy(function () {}, { get: viaProxy })[Symbol.iterator] === undefined);
+function viaTag(s, v) { return s.x + v; }
+show("tag-0", () => viaTag({ x: 1 }, 2));
+show("tag-1", () => viaTag`a${"b"}c`);
+function viaIter() { return { next: viaNext }; }
+function viaNext(v) { return { done: true, value: v }; }
+show("iter-0", () => viaNext({ x: 1 }).value.x);
+show("iter-1", () => [...{ [Symbol.iterator]: viaIter }].length);
+function viaThen(res, rej) { return res.x; }
+show("then-0", () => viaThen({ x: 1 }, { x: 2 }));
+await Promise.resolve({ then: viaThen }).then(() => 0, () => 0).constructor;
+function viaNew(p) { this.v = p.x; }
+show("new-0", () => new viaNew({ x: 1 }).v);
+show("new-1", () => Reflect.construct(viaNew, ["c"]).v);
+show("new-2", () => new (viaNew.bind(null, 5))().v);
+function viaHasInstance(v) { return v.x === 1; }
+show("hasinstance-0", () => viaHasInstance({ x: 1 }));
+show("hasinstance-1", () => 5 instanceof { [Symbol.hasInstance]: viaHasInstance });
+function viaTimer(p) { console.log("timer", String(p.x)); }
+viaTimer({ x: 1 });
+await new Promise((r) => setTimeout((a) => { viaTimer(a); r(); }, 0, "t"));
+await new Promise((r) => { setTimeout(viaTimer, 0, 9); setTimeout(r, 1); });
+//// a-round-through-the-language/b2-more-hidden-calls.js
+// A round through the language: more hidden calls. It prints what plain Bun prints.
+function show(label, f) {
+  try { console.log(label, String(f())); } catch (e) { console.log(label, "threw", e?.name ?? String(e)); }
+}
+const O = { x: 1 };
+// Each function is called once in the open with { x: 1 } (or on it), then reached some other way.
+class ViaConstructorProperty { constructor(p) { this.v = p.x; } }
+show("ctorprop-0", () => new ViaConstructorProperty(O).v);
+show("ctorprop-1", () => new (new ViaConstructorProperty(O).constructor)("s").v);
+class ViaParent { constructor(p) { this.v = p.x; } }
+class ViaChild extends ViaParent { constructor() { super(O); } }
+show("parent-0", () => new ViaChild().v);
+show("parent-1", () => new (Object.getPrototypeOf(ViaChild))(5).v);
+class ViaNames { m(p) { return p.x; } }
+show("names-0", () => new ViaNames().m(O));
+show("names-1", () => Object.getOwnPropertyNames(ViaNames.prototype).map((k) => k === "constructor" ? "c" : ViaNames.prototype[k]("n")));
+function viaValues(p) { return p.x; }
+show("values-0", () => viaValues(O));
+show("values-1", () => Object.values({ viaValues }).map((f) => f("v")));
+function viaEntries(p) { return p.x; }
+show("entries-0", () => viaEntries(O));
+show("entries-1", () => Object.entries({ viaEntries }).map(([, f]) => f(1)));
+function viaForIn(p) { return p.x; }
+show("forin-0", () => viaForIn(O));
+show("forin-1", () => { const h = { viaForIn }; let r; for (const k in h) r = h[k](true); return r; });
+function viaLookupGetter() { return this.x; }
+show("lookup-0", () => viaLookupGetter.call(O));
+show("lookup-1", () => Object.defineProperty({}, "g", { get: viaLookupGetter, configurable: true }).__lookupGetter__("g").call("LG"));
+function viaDescriptors() { return this.x; }
+show("descs-0", () => viaDescriptors.call(O));
+show("descs-1", () => Object.getOwnPropertyDescriptors(Object.defineProperty({}, "g", { get: viaDescriptors, enumerable: true })).g.get.call(3));
+function viaStringProto() { return typeof this + this.x; }
+show("strproto-0", () => viaStringProto.call(O));
+show("strproto-1", () => { String.prototype.viaSP = viaStringProto; const r = "abc".viaSP(); delete String.prototype.viaSP; return r; });
+function viaNumberGetter() { "use strict"; return typeof this + this.x; }
+show("numgetter-0", () => viaNumberGetter.call(O));
+show("numgetter-1", () => { Object.defineProperty(Number.prototype, "viaNG", { get: viaNumberGetter, configurable: true }); const r = (5).viaNG; delete Number.prototype.viaNG; return r; });
+class ViaSpecies extends Array { constructor(n) { super(typeof n === "number" ? n : 0); this.seen = typeof n; } }
+show("species-0", () => new ViaSpecies(O).seen);
+show("species-1", () => new ViaSpecies(O).map((v) => v).seen);
+show("species-2", () => ViaSpecies.from([1, 2]).seen + ViaSpecies.of(1, 2, 3).seen);
+class ViaPromise extends Promise { constructor(ex) { super(typeof ex === "function" ? ex : (r) => r(ex.x)); ViaPromise.seen = typeof ex; } }
+show("promise-0", () => { new ViaPromise(O); return ViaPromise.seen; });
+show("promise-1", () => { new ViaPromise(O).then(() => 0); return ViaPromise.seen; });
+function viaExecutor(res, rej) { return res.x; }
+show("executor-0", () => viaExecutor(O, O));
+show("executor-1", () => typeof new Promise(viaExecutor));
+function viaFinally(v) { console.log("finally", arguments.length, String(v)); }
+viaFinally(O.x);
+await Promise.resolve(1).finally(viaFinally);
+function viaReplacer(k, v) { return k.x === 1 ? "open" : v; }
+show("replacer-0", () => viaReplacer(O, 1));
+show("replacer-1", () => JSON.stringify({ a: 1 }, viaReplacer));
+function viaReplaceAll(m) { return m.x + "!"; }
+show("replaceall-0", () => viaReplaceAll(O));
+show("replaceall-1", () => "a-a".replaceAll("a", viaReplaceAll));
+function viaGroupBy(v) { return v.x; }
+show("groupby-0", () => viaGroupBy(O));
+show("groupby-1", () => Object.keys(Object.groupBy([1, "s"], viaGroupBy)));
+show("groupby-2", () => Map.groupBy([null === 0, 2n], viaGroupBy).size);
+function viaTypedMap(v) { return v.x === undefined ? v + 1 : -1; }
+show("typedmap-0", () => viaTypedMap(O));
+show("typedmap-1", () => new Uint8Array([1, 2]).map(viaTypedMap));
+function viaToSorted(a, b) { return a.x === undefined ? a - b : 0; }
+show("tosorted-0", () => viaToSorted(O, O));
+show("tosorted-1", () => [3, 1, 2].toSorted(viaToSorted));
+function viaExec(s) { return s.x === undefined ? null : [1]; }
+show("exec-0", () => viaExec(O));
+show("exec-1", () => { const r = /a/; r.exec = viaExec; return r.test("aaa"); });
+function viaSplit(s, l) { return [typeof s, typeof l, s.x]; }
+show("split-0", () => viaSplit(O, O));
+show("split-1", () => "a,b".split({ [Symbol.split]: viaSplit }, 3));
+function viaMatch(s) { return typeof s + s.x; }
+show("match-0", () => viaMatch(O));
+show("match-1", () => "zz".match({ [Symbol.match]: viaMatch }));
+function viaJoin(sep) { return "joined" + typeof sep + this.x; }
+show("join-0", () => viaJoin.call(O, O));
+show("join-1", () => Array.prototype.toString.call({ join: viaJoin, x: "J" }));
+function viaToISO() { return "iso" + this.x; }
+show("toiso-0", () => viaToISO.call(O));
+show("toiso-1", () => Date.prototype.toJSON.call({ toISOString: viaToISO, x: "D" }));
+function viaLocale() { return "loc" + this.x; }
+show("locale-0", () => viaLocale.call(O));
+show("locale-1", () => Object.prototype.toLocaleString.call({ toString: viaLocale, x: "L" }));
+function viaPushSetter(v) { this.got = typeof v + v.x; }
+show("pushset-0", () => { const t = {}; viaPushSetter.call(t, O); return t.got; });
+show("pushset-1", () => { const t = Object.defineProperty({ length: 0 }, "0", { set: viaPushSetter }); Array.prototype.push.call(t, "pushed"); return t.got; });
+function viaAssignSetter(v) { this.got = typeof v + v.x; }
+show("assignset-0", () => { const t = {}; viaAssignSetter.call(t, O); return t.got; });
+show("assignset-1", () => { const t = Object.defineProperty({}, "k", { set: viaAssignSetter }); Object.assign(t, { k: 12 }); return t.got; });
+function viaSpreadGetter() { return typeof this + this.x; }
+show("spreadget-0", () => viaSpreadGetter.call(O));
+show("spreadget-1", () => ({ ...Object.defineProperty({ x: "SG" }, "g", { get: viaSpreadGetter, enumerable: true }) }).g);
+function viaReflectSet(v) { this.got = typeof this + typeof v; }
+show("reflectset-0", () => { const t = { x: 1 }; viaReflectSet.call(t, O); return t.got; });
+show("reflectset-1", () => { const r = []; Reflect.set(Object.defineProperty({}, "k", { set: viaReflectSet }), "k", 1, r); return r.got; });
+function viaApplyTrap(t, th, args) { return typeof t + typeof th + args.x; }
+show("applytrap-0", () => viaApplyTrap(O, O, O));
+show("applytrap-1", () => new Proxy(function () {}, { apply: viaApplyTrap })(1, 2));
+function viaConstructTrap(t, args, nt) { return { r: typeof t + args.x + typeof nt }; }
+show("constructtrap-0", () => viaConstructTrap(O, O, O).r);
+show("constructtrap-1", () => new (new Proxy(function () {}, { construct: viaConstructTrap }))(1).r);
+function viaHasTrap(t, k) { return k.x === undefined; }
+show("hastrap-0", () => viaHasTrap(O, O));
+show("hastrap-1", () => "k" in new Proxy({}, { has: viaHasTrap }));
+function viaReturn(v) { console.log("return", arguments.length, typeof v); return {}; }
+viaReturn(O);
+for (const v of { [Symbol.iterator]() { return { next() { return { done: false, value: 1 }; }, return: viaReturn }; } }) break;
+function viaDispose() { console.log("dispose", typeof this, String(this.x)); }
+viaDispose.call(O);
+{ using d = { [Symbol.dispose]: viaDispose, x: "disp" }; }
+function viaToPrimitive(hint) { return hint.x === undefined ? hint.length : -1; }
+show("toprim-0", () => viaToPrimitive(O));
+show("toprim-1", () => `${{ [Symbol.toPrimitive]: viaToPrimitive }}` + +{ [Symbol.toPrimitive]: viaToPrimitive });
+function viaMicrotask() { console.log("microtask", arguments.length, typeof this); }
+viaMicrotask.call(O, O);
+queueMicrotask(viaMicrotask);
+await null;
+function viaNextTick(a, b) { console.log("tick", typeof a, typeof b, String(a.x)); }
+viaNextTick(O, O);
+process.nextTick(viaNextTick, "t", 2);
+await new Promise((r) => setImmediate(r));
+function viaImmediate(a) { console.log("immediate", typeof a, String(a.x)); }
+viaImmediate(O);
+await new Promise((r) => { setImmediate(viaImmediate, 4); setImmediate(r); });
+function viaRegistry(h) { return h.x; }
+show("registry-0", () => viaRegistry(O));
+show("registry-1", () => typeof new FinalizationRegistry(viaRegistry));
+function viaFromAsync(v) { return typeof v + v.x; }
+show("fromasync-0", () => viaFromAsync(O));
+console.log("fromasync-1", String(await Array.fromAsync([1, "a"], viaFromAsync)));
+function viaIterMap(v) { return typeof v + v.x; }
+show("itermap-0", () => viaIterMap(O));
+show("itermap-1", () => [1, "b"].values().map(viaIterMap).toArray());
+function viaWeakRef(p) { return p.x; }
+show("weakref-0", () => viaWeakRef(O));
+show("weakref-1", () => new WeakRef(viaWeakRef).deref()("wr"));
+function viaMapValue(p) { return p.x; }
+show("mapvalue-0", () => viaMapValue(O));
+show("mapvalue-1", () => new Map([["k", viaMapValue]]).get("k")("mv"));
+show("mapvalue-2", () => [...new Set([viaMapValue])][0](0));
+function viaSymbolKey(p) { return p.x; }
+show("symkey-0", () => viaSymbolKey(O));
+show("symkey-1", () => { const s = Symbol(); const h = { [s]: viaSymbolKey }; return h[Object.getOwnPropertySymbols(h)[0]]("sk"); });
+function viaStructured(p) { return p.x; }
+show("emitter-0", () => viaStructured(O));
+const { EventEmitter } = await import("node:events");
+show("emitter-1", () => { const e = new EventEmitter(); let r; e.on("x", (v) => { r = viaStructured(v); }); e.on("y", viaStructured); e.emit("x", "ev"); e.emit("y", 7); return r; });
+const target = new EventTarget();
+function viaListener(ev) { console.log("listener", typeof ev, String(ev.x), ev.type); }
+viaListener({ x: 1, type: "open" });
+target.addEventListener("ping", viaListener);
+target.dispatchEvent(new Event("ping"));
+//// a-round-through-the-language/c1-derived.ts
+// A round through the language, one probe of many. It prints what plain Bun prints.
+////= show-3
+// A parent constructor that returns another object.
+class Ret { constructor(x: any) { if (x) return x; } }
+class Sub extends Ret { y = 1; z: string = "z"; constructor(x: any) { super(x); } sum(): string { return this.z + (this.y + 1); } }
+show("ret-none", () => new Sub(null).sum());
+show("ret-obj", () => { const o: any = new Sub({ foo: 1 }); return JSON.stringify(o) + (o instanceof Sub); });
+show("ret-arr", () => { const o: any = new Sub([1, 2]); return JSON.stringify(o) + o.y + o.z; });
+show("ret-fn", () => { const o: any = new Sub(function () {}); return typeof o + o.y + o.z; });
+show("ret-frozen", () => new Sub(Object.freeze({})));
+show("ret-sum", () => Sub.prototype.sum.call(new Sub({ y: "q" }) as any));
+// A typed parent under an untyped child, with wrong arguments through super().
+class Base { a: number; b: string; constructor(a: number, b: string) { this.a = a; this.b = b; } d(): string { return this.b + (this.a + 1); } }
+class Mid extends Base { c: number; constructor(a: any, b: any, c: number) { super(a, b); this.c = c; } e(): string { return this.d() + this.c; } }
+class Leaf extends Mid { constructor(...r: any[]) { super(r[0], r[1], r[2]); } }
+show("super-ok", () => new Mid(1, "b", 2).e());
+show("super-bad", () => new Mid("a", 2, 3).e());
+show("super-bad2", () => new Mid({}, [], "c" as any).e());
+show("leaf", () => new Leaf("x", {}, null).e());
+show("leaf-ok", () => new Leaf(1, "s", 2).e());
+// ES5 constructor functions with typed parameters.
+function Point(this: any, x: number, y: number) { this.x = x; this.y = y; }
+Point.prototype.len = function (this: { x: number; y: number }): number { return this.x * this.x + this.y * this.y; };
+const PointAny: any = Point;
+show("es5-ok", () => new PointAny(1, 2).len());
+show("es5-bad", () => new PointAny("3", {}).len());
+show("es5-bad2", () => new PointAny().len());
+for (const args of [[1, 2], ["a", "b"], [{}, 1]]) show("es5-loop", () => new PointAny(...args).len());
+// Arrow functions in fields capture the object.
+class Handlers { n = 2; h = (k: number): number => this.n * k; g = (): string => "g" + this.n; }
+const hs = new Handlers();
+show("field-arrow", () => hs.h(3) + hs.g());
+show("field-arrow-any", () => (hs as any).h("4"));
+show("field-arrow-detached", () => { const { h } = hs; return (h as any)({ valueOf: () => 5 }); });
+show("field-arrow-call", () => hs.h.call({ n: 100 } as any, 2));
+show("field-arrow-copied", () => { const o: any = Object.assign({}, hs); o.n = "other"; return o.h(2) + o.g(); });
+show("field-arrow-proto", () => { const o: any = Object.create(hs); o.n = 50; return o.h(2); });
+class SubHandlers extends Handlers { extra = "e"; }
+show("field-arrow-sub", () => new SubHandlers().h(7));
+// Bound functions with bound arguments of the wrong type.
+function three(a: number, b: string, c: { k: number }): string { return b + (a + c.k); }
+show("bound-ok", () => three.bind(null, 1, "s")({ k: 2 }));
+show("bound-bad", () => (three as any).bind(null, "1", 2)({ k: "3" }));
+show("bound-bad2", () => (three as any).bind(null, {}, {}, {})());
+show("bound-this", () => Base.prototype.d.bind({ a: "A", b: 1 } as any)());
+const bounds: any[] = [three.bind(null, 1), (three as any).bind(null, "x")];
+for (const b of bounds) show("bound-loop", () => b("m", { k: 1 }));
+//// a-round-through-the-language/c2-async-generators.ts
+// A round through the language: async generators. It prints what plain Bun prints.
+type P = { x: number };
+async function show(label: string, f: () => unknown) {
+  try { console.log(label, String(await f())); } catch (e) { console.log(label, "threw", (e as any)?.name ?? String(e)); }
+}
+async function plain(p: P, n: number): Promise<number> { return p.x + n; }
+async function waits(p: P, n: number): Promise<number> { await null; return p.x + n; }
+async function awaitsTyped(v: Promise<number>): Promise<number> { const n = await v; return n + 1; }
+async function returnsAny(v: any): Promise<number> { return v; }
+async function usesResult(v: any): Promise<string> { const n: number = await returnsAny(v); return "r" + (n + 1); }
+async function usesPlain(v: any, w: any): Promise<string> { const n = await (plain as any)(v, w); return "p" + n; }
+function* gen(a: number, p: P): Generator<number, string, number> { const got = yield a + p.x; const more = yield got * 2; return "end" + (more + 1); }
+async function* agen(a: number): AsyncGenerator<number, void, string> { const s = yield a + 1; yield s.length; }
+const A: any = { plain, waits, awaitsTyped, gen, agen };
+await show("plain", () => plain({ x: 1 }, 2));
+await show("plain-bad", () => A.plain("s", {}));
+await show("plain-bad2", () => A.plain({ x: "a" }, "b"));
+await show("plain-bad3", () => A.plain(null, 1));
+await show("waits-bad", () => A.waits({ x: [] }, {}));
+await show("waits-bad2", () => A.waits(undefined, 1));
+await show("awaitsTyped", () => awaitsTyped(Promise.resolve(1)));
+await show("awaitsTyped-bad", () => A.awaitsTyped(Promise.resolve("s")));
+await show("awaitsTyped-bad2", () => A.awaitsTyped("not a promise"));
+await show("awaitsTyped-bad3", () => A.awaitsTyped({ then(r: any) { r({ valueOf: () => 4 }); } }));
+await show("usesResult", () => usesResult(1));
+await show("usesResult-bad", () => usesResult("one"));
+await show("usesResult-bad2", () => usesResult(Promise.resolve({})));
+await show("usesResult-bad3", () => usesResult({ then(r: any) { r("thenable"); } }));
+await show("usesPlain", () => usesPlain({ x: 1 }, 2));
+await show("usesPlain-bad", () => usesPlain({ x: "q" }, null));
+await show("gen", () => { const g = gen(1, { x: 2 }); return [g.next().value, g.next(3).value, g.next(4).value]; });
+await show("gen-bad", () => { const g = A.gen("1", { x: "2" }); return [g.next().value, g.next("3").value, g.next({}).value]; });
+await show("gen-bad2", () => { const g = A.gen(1, null); return g.next().value; });
+await show("gen-next-bad", () => { const g: any = gen(1, { x: 2 }); return [g.next("ignored").value, g.next("x").value, g.next([9]).value]; });
+await show("agen", async () => { const g = agen(1); return [(await g.next()).value, (await g.next("abc")).value]; });
+await show("agen-bad", async () => { const g = A.agen("z"); return [(await g.next()).value, (await g.next(55)).value]; });
+await show("agen-bad2", async () => { const g = A.agen({}); return [(await g.next()).value, (await g.next(null)).value]; });
+await show("all", () => Promise.all([A.plain({ x: 1 }, 1), A.plain({ x: "1" }, 1), A.waits({ x: 1 }, "1")]));
+for (const v of [1, "2", { x: 3 }, null]) await show("loop", () => A.waits({ x: v }, v));
+//// a-round-through-the-language/c3-function-types.ts
+// A round through the language: function types. It prints what plain Bun prints.
+////= show-3
+type P = { x: number };
+type NumFn = (n: number) => number;
+function run(cb: NumFn, v: number): number { return cb(v) + 1; }
+const inc: NumFn = (n) => n + 1;
+const sq: NumFn = (n) => n * n;
+const px = (p: P): number => p.x;
+const len = (s: string): number => s.length;
+const retStr = (n: number): any => "s" + n;
+show("run", () => run(inc, 1) + run(sq, 3));
+show("run-wrong-callee", () => run(px as any, 4));
+show("run-wrong-callee2", () => run(len as any, 5));
+show("run-wrong-result", () => run(retStr, 6));
+show("run-wrong-arg", () => run(inc, "7" as any));
+show("run-not-fn", () => run({} as any, 1));
+show("run-builtin", () => run(Math.abs, -3) + run(parseInt as any, 8) + run(String as any, 9));
+show("run-bound", () => run(px.bind(null, { x: 10 }) as any, 0));
+show("run-class", () => run(class { } as any, 0));
+class Holder { cb: NumFn; constructor(cb: NumFn) { this.cb = cb; } go(v: number): number { return this.cb(v) * 2; } }
+show("holder", () => new Holder(inc).go(1));
+show("holder-wrong", () => new Holder(px as any).go(2));
+show("holder-wrong2", () => { const h = new Holder(inc); (h as any).cb = len; return h.go(3); });
+show("holder-wrong3", () => { const h = new Holder(inc); (h as any).cb = "nope"; return h.go(3); });
+show("holder-this", () => { const h = new Holder(function (this: Holder, n: number) { return this === h ? n : -1; } as any); return h.go(4); });
+// Many members: a group call.
+const many: NumFn[] = [(n) => n + 1, (n) => n + 2, (n) => n + 3, (n) => n + 4, (n) => n + 5, (n) => n + 6, (n) => n + 7, (n) => n + 8, (n) => n + 9, (n) => n + 10, (n) => n + 11, (n) => n + 12];
+function pick(i: number): NumFn { return many[i % many.length]; }
+show("group", () => { let s = 0; for (let i = 0; i < 24; i++) s += run(pick(i), i); return s; });
+many.push(px as any, len as any, retStr);
+show("group-wrong", () => { let s: any = 0; for (let i = 0; i < 15; i++) s += run(pick(i), i); return s; });
+show("group-wrong-arg", () => { let s: any = 0; for (let i = 0; i < 15; i++) s += run(pick(i), ("a" + i) as any); return s; });
+// Methods through an interface.
+interface Shape { area(k: number): number }
+class Sq implements Shape { constructor(public s: number) {} area(k: number): number { return this.s * this.s * k; } }
+class Ci implements Shape { constructor(public r: number) {} area(k: number): number { return this.r * 3 * k; } }
+function total(shapes: Shape[], k: number): number { let t = 0; for (const s of shapes) t += s.area(k); return t; }
+show("iface", () => total([new Sq(2), new Ci(1)], 2));
+show("iface-literal", () => total([{ area: (k: number) => k }, new Sq(1)], 3));
+show("iface-wrong", () => total([{ area: len } as any, new Sq(1)], 3));
+show("iface-wrong2", () => total([new Sq("2" as any), new Ci({} as any)], "2" as any));
+show("iface-wrong3", () => total([{ area: Sq.prototype.area, s: "str" } as any], 2));
+show("iface-wrong4", () => total([Object.create(Sq.prototype)], 2));
+show("iface-wrong5", () => total(["str", 5, null] as any, 2));
+//// a-round-through-the-language/c4-this-of-constructors.ts
+// A round through the language: this of constructors. It prints what plain Bun prints.
+////= show-3
+class Ret { constructor(x: any) { if (x) return x; } }
+class SubArrow extends Ret {
+  n = 2; s: string = "s";
+  h = (k: number): number => this.n * k;
+  t = (): string => this.s + this.n;
+  constructor(x: any) { super(x); }
+  m(): number { return this.n + 1; }
+}
+class Other { o = 1; }
+show("own", () => { const v = new SubArrow(null); return v.h(3) + v.t() + v.m(); });
+show("plain", () => { const v: any = new SubArrow({ n: "str", extra: 1 }); return v.h(3) + v.t() + Object.keys(v); });
+show("plain-changed", () => { const v: any = new SubArrow({}); v.n = "x"; v.s = 5; return v.h(3) + v.t(); });
+show("array", () => { const v: any = new SubArrow([1, 2]); return v.h(2) + v.t() + v.length; });
+show("function", () => { const v: any = new SubArrow(function () {}); return v.h(2) + v.t() + typeof v; });
+show("proxy", () => { const v: any = new SubArrow(new Proxy({}, {})); return v.h(2) + v.t(); });
+show("other-instance", () => { const v: any = new SubArrow(new Other()); return v.h(2) + v.t() + v.o + (v instanceof Other); });
+show("same-class", () => { const first = new SubArrow(null); const v: any = new SubArrow(first); return (v === first) + "" + v.h(2) + v.m(); });
+show("frozen", () => new SubArrow(Object.freeze({})));
+show("new-target", () => { const v: any = Reflect.construct(SubArrow, [null], Other); return v.h(2) + v.t() + (v instanceof Other) + (v instanceof SubArrow) + typeof v.m; });
+show("new-target-fn", () => { const v: any = Reflect.construct(SubArrow, [null], function () {}); return v.h(2) + v.t() + typeof v.m; });
+show("new-target-base", () => { const v: any = Reflect.construct(Ret, [null], SubArrow); return typeof v.h + v.m(); });
+show("new-target-proto-null", () => { function N() {} N.prototype = null as any; const v: any = Reflect.construct(SubArrow, [null], N); return v.h(2) + (Object.getPrototypeOf(v) === Object.prototype); });
+function make(tag: string) { return class K { t = tag; m(): string { return this.t + "!"; } a = (): string => this.t + "?"; }; }
+const KA = make("a"), KB = make("b");
+show("factory", () => new KA().m() + new KB().m() + new KA().a());
+show("factory-cross", () => KA.prototype.m.call(new KB()) + (new KA() instanceof KB));
+show("factory-new-target", () => { const v: any = Reflect.construct(KA, [], KB); return v.m() + v.a() + (v instanceof KB); });
+const Mix = (Base: any) => class extends Base { z = 1; getZ(): number { return this.z + 1; } az = (): number => this.z * 2; };
+show("mixin-object", () => { const v = new (Mix(Object))(); return v.getZ() + v.az(); });
+show("mixin-array", () => { const v: any = new (Mix(Array) as any)(3); return v.getZ() + v.az() + v.length; });
+show("mixin-map", () => { const v: any = new (Mix(Map) as any)([[1, 2]]); return v.getZ() + v.az() + v.size; });
+show("mixin-returns", () => { const v: any = new (Mix(class { constructor() { return [9]; } }))(); return v.getZ === undefined ? "no method" + v.az() + v.z : "method"; });
+show("mixin-es5", () => { function Old(this: any) { this.old = 1; } const v: any = new (Mix(Old))(); return v.getZ() + v.az() + v.old; });
+show("mixin-twice", () => { const v: any = new (Mix(Mix(Object)))(); return v.getZ() + v.az(); });
+show("mixin-null", () => new (Mix(null))());
+class Swapped { v = 1; get(): number { return this.v; } }
+class Parent1 { p = "one"; }
+class Parent2 { p = 2; q = []; constructor() { return { fake: true } as any; } }
+class Child extends Parent1 { c = 3; sum(): string { return this.p + this.c; } }
+show("child", () => new Child().sum());
+Object.setPrototypeOf(Child, Parent2);
+show("child-swapped", () => { const v: any = new Child(); return JSON.stringify(v) + typeof v.sum; });
+Object.setPrototypeOf(Child, Swapped);
+show("child-swapped-2", () => { const v: any = new Child(); return JSON.stringify(v) + v.sum(); });
+//// a-round-through-the-language/r1-tainted-results.ts
+// A round through the language: tainted results. It prints what plain Bun prints.
+////= show-3
+type P = { x: number; y: string };
+function same(n: number): number { return n; }
+function plus(n: number): number { return n + 1; }
+function text(s: string): string { return s; }
+function obj(p: P): P { return p; }
+function pick(p: P): number { return p.x; }
+function either(c: boolean, n: number): number { return c ? n : 0; }
+function viaLocal(n: number): number { const m = n; let k = m; return k; }
+function viaCall(n: number): number { return same(n); }
+function viaField(n: number): number { const o = { v: n }; return o.v; }
+function viaArray(n: number): number { const a = [n]; return a[0]; }
+function viaClosure(n: number): number { const g = () => n; return g(); }
+const A: any = { same, plus, text, obj, pick, either, viaLocal, viaCall, viaField, viaArray, viaClosure };
+show("same", () => { const r = A.same("s"); return typeof r + r; });
+show("same-math", () => A.same("7") * 2);
+show("same-obj", () => { const r = A.same({ k: 1 }); return typeof r + JSON.stringify(r); });
+show("plus", () => { const r = A.plus("s"); return typeof r + r; });
+show("text", () => { const r = A.text(42); return typeof r + (r + 1); });
+show("text-len", () => A.text([1, 2, 3]).length);
+show("obj", () => { const r = A.obj("str"); return typeof r + r.length; });
+show("obj-x", () => A.obj({ x: "X", y: 1 }).x + 1);
+show("pick", () => { const r = A.pick({ x: "px" }); return typeof r + r; });
+show("either", () => { const r = A.either(true, "e"); return typeof r + r; });
+show("either-c", () => { const r = A.either("", 5); return typeof r + r; });
+show("viaLocal", () => { const r = A.viaLocal("l"); return typeof r + r; });
+show("viaCall", () => { const r = A.viaCall("c"); return typeof r + r; });
+show("viaField", () => { const r = A.viaField("f"); return typeof r + r; });
+show("viaArray", () => { const r = A.viaArray("a"); return typeof r + r; });
+show("viaClosure", () => { const r = A.viaClosure("cl"); return typeof r + r; });
+// The same functions also have well-typed direct callers that rely on the result.
+function typedUser(n: number): string { const a = same(n) + plus(n) + viaCall(n); return "t" + (a * 2); }
+show("typedUser", () => typedUser(1));
+show("typedUser-bad", () => (typedUser as any)("1"));
+function mixedUser(v: any): string { const a = same(v); const b = plus(v); return typeof a + typeof b + (a + b); }
+show("mixedUser", () => mixedUser(2));
+show("mixedUser-bad", () => mixedUser("2"));
+show("mixedUser-bad2", () => mixedUser({ valueOf() { return 3; } }));
+function storesResult(v: any): string { const box: { n: number } = { n: same(v) }; return typeof box.n + box.n; }
+show("storesResult", () => storesResult(4));
+show("storesResult-bad", () => storesResult("four"));
+let kept: number = 0;
+function keepsResult(v: any): string { kept = same(v); return typeof kept + kept; }
+show("keepsResult", () => keepsResult(5));
+show("keepsResult-bad", () => keepsResult("five"));
+show("kept-after", () => typeof kept + (kept + 1));
+class Acc { total = 0; add(n: number): number { this.total += n; return this.total; } get(): number { return this.total; } }
+const acc = new Acc();
+show("acc", () => acc.add(1) + acc.get());
+show("acc-bad", () => { const r = (acc as any).add("x"); return typeof r + r; });
+show("acc-after", () => { const r = acc.get(); return typeof r + r + (acc.add(1)); });
+//// a-round-through-the-language/r1a-results.ts
+// A round through the language, one probe of many. It prints what plain Bun prints.
+////= show-3
+type P = { x: number; y: string };
+function same(n: number): number { return n; }
+function plus(n: number): number { return n + 1; }
+function text(s: string): string { return s; }
+function obj(p: P): P { return p; }
+function pick(p: P): number { return p.x; }
+function either(c: boolean, n: number): number { return c ? n : 0; }
+function viaLocal(n: number): number { const m = n; let k = m; return k; }
+function viaCall(n: number): number { return same(n); }
+function viaField(n: number): number { const o = { v: n }; return o.v; }
+function viaArray(n: number): number { const a = [n]; return a[0]; }
+function viaClosure(n: number): number { const g = () => n; return g(); }
+const A: any = { same, plus, text, obj, pick, either, viaLocal, viaCall, viaField, viaArray, viaClosure };
+show("same", () => { const r = A.same("s"); return typeof r + r; });
+show("same-math", () => A.same("7") * 2);
+show("same-obj", () => { const r = A.same({ k: 1 }); return typeof r + JSON.stringify(r); });
+show("plus", () => { const r = A.plus("s"); return typeof r + r; });
+show("text", () => { const r = A.text(42); return typeof r + (r + 1); });
+show("text-len", () => A.text([1, 2, 3]).length);
+show("obj", () => { const r = A.obj("str"); return typeof r + r.length; });
+show("obj-x", () => A.obj({ x: "X", y: 1 }).x + 1);
+show("pick", () => { const r = A.pick({ x: "px" }); return typeof r + r; });
+show("either", () => { const r = A.either(true, "e"); return typeof r + r; });
+show("either-c", () => { const r = A.either("", 5); return typeof r + r; });
+show("viaLocal", () => { const r = A.viaLocal("l"); return typeof r + r; });
+show("viaCall", () => { const r = A.viaCall("c"); return typeof r + r; });
+show("viaField", () => { const r = A.viaField("f"); return typeof r + r; });
+show("viaArray", () => { const r = A.viaArray("a"); return typeof r + r; });
+show("viaClosure", () => { const r = A.viaClosure("cl"); return typeof r + r; });
+// The same functions also have well-typed direct callers that rely on the result.
+function typedUser(n: number): string { const a = same(n) + plus(n) + viaCall(n); return "t" + (a * 2); }
+show("typedUser", () => typedUser(1));
+show("typedUser-bad", () => (typedUser as any)("1"));
+function mixedUser(v: any): string { const a = same(v); const b = plus(v); return typeof a + typeof b + (a + b); }
+show("mixedUser", () => mixedUser(2));
+show("mixedUser-bad", () => mixedUser("2"));
+show("mixedUser-bad2", () => mixedUser({ valueOf() { return 3; } }));
+function storesResult(v: any): string { const box: { n: number } = { n: same(v) }; return typeof box.n + box.n; }
+show("storesResult", () => storesResult(4));
+show("storesResult-bad", () => storesResult("four"));
+//// a-round-through-the-language/r1b-kept-variable.ts
+// A round through the language: kept variable. It prints what plain Bun prints.
+////= show-3
+type P = { x: number; y: string };
+function same(n: number): number { return n; }
+let kept: number = 0;
+function keepsResult(v: any): string { kept = same(v); return typeof kept + kept; }
+show("keepsResult", () => keepsResult(5));
+show("keepsResult-bad", () => keepsResult("five"));
+show("kept-after", () => typeof kept + (kept + 1));
+//// a-round-through-the-language/r1c-accumulator.ts
+// A round through the language, one probe of many. It prints what plain Bun prints.
+////= show-3
+type P = { x: number; y: string };
+class Acc { total = 0; add(n: number): number { this.total += n; return this.total; } get(): number { return this.total; } }
+const acc = new Acc();
+show("acc", () => acc.add(1) + acc.get());
+show("acc-bad", () => { const r = (acc as any).add("x"); return typeof r + r; });
+show("acc-after", () => { const r = acc.get(); return typeof r + r + (acc.add(1)); });
+//// a-round-through-the-language/r2-tainted-stores.ts
+// A round through the language: tainted stores. It prints what plain Bun prints.
+////= show-3
+type P = { x: number; y: string };
+const bad: any[] = ["str", { k: 1 }, null, undefined, 10n, [7], true];
+let modNum: number = 0;
+function setMod(n: number): void { modNum = n; }
+function readMod(): string { const v = modNum; return typeof v + (v + 1); }
+function counter() { let c: number = 0; return { set(n: number): void { c = n; }, get(): string { return typeof c + (c * 2); } }; }
+class Box { v: number = 0; set(n: number): void { this.v = n; } get(): string { return typeof this.v + (this.v + 1); } }
+class Stat { static s: number = 0; static set(n: number): void { Stat.s = n; } static get(): string { return typeof Stat.s + (Stat.s + 1); } }
+class Priv { #v: number = 0; set(n: number): void { this.#v = n; } get(): string { return typeof this.#v + (this.#v + 1); } }
+const xs: number[] = [];
+function push(n: number): void { xs.push(n); }
+function last(): string { const v = xs[xs.length - 1]; return typeof v + (v + 1); }
+const table = new Map<string, number>();
+function put(n: number): void { table.set("k", n); }
+function got(): string { const v = table.get("k")!; return typeof v + (v + 1); }
+function mk(n: number): () => string { return () => typeof n + (n + 1); }
+function inner(m: number): string { return typeof m + (m * 2); }
+function outer(n: number): string { return inner(n); }
+function mkP(x: number): P { return { x, y: "s" }; }
+function readP(p: P): string { return typeof p.x + (p.x + 1) + p.y; }
+function rejoin(n: number, p: P): string { const a = n + 1; console.log("side"); return typeof a + a + (p.x + 1); }
+function loop(n: number): string { let t = 0; for (let i = 0; i < n; i++) t += i; return typeof t + t; }
+function tries(n: number): string { let r: number = 0; try { r = n; if (n > 1) throw n; } catch (e) { r = e as number; } finally { r = r; } return typeof r + r; }
+function switches(n: number): string { switch (n) { case 1: return "one"; case 2: return "two"; default: return typeof n; } }
+function ternary(n: number, m: number): string { const r = n > m ? n : m; return typeof r + r; }
+function compound(n: number): string { let r = 1; r += n; r *= 2; return typeof r + r; }
+function spreadIn(n: number): string { const o = { ...{ a: n } }; const [b] = [n]; return typeof o.a + typeof b; }
+function templ(n: number): string { return `${n}|${n + 1}`; }
+function nested(n: number): string { const f = (k: number): number => k + n; const r = f(1); return typeof r + r; }
+const c = counter(), box = new Box(), priv = new Priv();
+const setters: [string, (v: any) => void, () => string][] = [
+  ["mod", setMod, readMod], ["captured", c.set, c.get], ["field", (v) => box.set(v), () => box.get()], ["static", Stat.set, Stat.get],
+  ["private", (v) => priv.set(v), () => priv.get()], ["array", push, last], ["map", put, got],
+];
+for (const [name, set, get] of setters) {
+  show(name + "-ok", () => { set(1); return get(); });
+  for (let i = 0; i < bad.length; i++) show(name + "#" + i, () => { set(bad[i]); return get(); });
+  show(name + "-again", () => { set(2); return get(); });
+}
+const callers: [string, (v: any) => unknown][] = [
+  ["closure", (v) => mk(v)()], ["passed-on", outer], ["literal", (v) => readP(mkP(v))], ["rejoin", (v) => rejoin(v, { x: 1, y: "y" })],
+  ["rejoin-p", (v) => rejoin(1, v)], ["loop", loop], ["tries", tries], ["switches", switches], ["ternary", (v) => ternary(v, 1)], ["compound", compound],
+  ["spread", spreadIn], ["template", templ], ["nested", nested],
+];
+for (const [name, call] of callers) {
+  show(name + "-ok", () => call(3));
+  for (let i = 0; i < bad.length; i++) show(name + "#" + i, () => call(bad[i]));
+}
+show("inner-typed", () => inner(4));
+show("readP-typed", () => readP({ x: 5, y: "z" }));
+//// a-round-through-the-language/r3-plain-statements.ts
+// A round through the language: plain statements. It prints what plain Bun prints.
+type P = { x: number; y: string };
+function same(n: number): number { return n; }
+function plus(n: number): number { return n + 1; }
+function text(s: string): string { return s; }
+function pick(p: P): number { return p.x; }
+function viaCall(n: number): number { return same(n); }
+function viaField(n: number): number { const o = { v: n }; return o.v; }
+function viaArray(n: number): number { const a = [n]; return a[0]; }
+function times(n: number, m: number): number { return n * m; }
+function typedUser(n: number): string { const a = same(n) + plus(n) + viaCall(n) + times(n, 2); return "t" + (a * 2); }
+function mixedUser(v: any): string { const a = same(v); const b = plus(v); const c = times(v, v); return typeof a + typeof b + typeof c + (a + b) + c; }
+const A: any = { same, plus, text, pick, viaCall, viaField, viaArray, times, typedUser };
+const r1 = A.same("s"); console.log("same", typeof r1, r1);
+const r2 = A.plus("s"); console.log("plus", typeof r2, r2);
+const r3 = A.text(42); console.log("text", typeof r3, r3 + 1);
+const r4 = A.pick({ x: "px" }); console.log("pick", typeof r4, r4);
+const r5 = A.viaCall("c"); console.log("viaCall", typeof r5, r5);
+const r6 = A.viaField("f"); console.log("viaField", typeof r6, r6);
+const r7 = A.viaArray("a"); console.log("viaArray", typeof r7, r7);
+const r8 = A.times(3n, 4n); console.log("times", typeof r8, String(r8));
+const r9 = A.times("3", "4"); console.log("times-str", typeof r9, r9);
+console.log("typedUser", typedUser(1), A.typedUser("1"));
+console.log("mixedUser", mixedUser(2), mixedUser("2"));
+console.log("same-math", A.same("7") * 2, A.same({ valueOf() { return 4; } }) * 2);
+//// a-round-through-the-language/r4-small-closed.ts
+// A round through the language: small closed. It prints what plain Bun prints.
+function same(n: number): number { return n; }
+function plus(n: number): number { return n + 1; }
+function times(n: number, m: number): number { return n * m; }
+function viaCall(n: number): number { return same(n); }
+function text(s: string): string { return s; }
+function typedUser(n: number): number { return (same(n) + plus(n) + viaCall(n) + times(n, 2)) * 2; }
+const r1 = (same as any)("s");
+console.log(typeof r1);
+const r2 = (plus as any)("s");
+console.log(typeof r2);
+const r3 = (times as any)(3n, 4n);
+console.log(typeof r3);
+const r4 = (viaCall as any)("c");
+console.log(typeof r4);
+const r5 = (text as any)(42);
+console.log(typeof r5);
+console.log(typedUser(1));
+const r6 = (typedUser as any)("1");
+console.log(typeof r6);
+console.log(r1 + "|" + r2 + "|" + r4 + "|" + (r5 + 1) + "|" + r6);
+//// a-round-through-the-language/t1-stores.ts
+// A round through the language, one probe of many. It prints what plain Bun prints.
+function say(label: string, v: unknown): void { console.log(label + " " + typeof v + " " + String(v)); }
+type P = { x: number; y: string };
+let modNum: number = 0;
+function setMod(n: number): void { modNum = n; }
+function readMod(): number { return modNum + 1; }
+function counter() { let c: number = 0; return { set(n: number): void { c = n; }, get(): number { return c * 2; } }; }
+class Box { v: number = 0; set(n: number): void { this.v = n; } get(): number { return this.v + 1; } }
+class Stat { static s: number = 0; static set(n: number): void { Stat.s = n; } static get(): number { return Stat.s + 1; } }
+class Priv { #v: number = 0; set(n: number): void { this.#v = n; } get(): number { return this.#v + 1; } }
+const xs: number[] = [];
+function push(n: number): void { xs.push(n); }
+function last(): number { return xs[xs.length - 1] + 1; }
+const table = new Map<string, number>();
+function put(n: number): void { table.set("k", n); }
+function got(): number { return table.get("k")! + 1; }
+function mk(n: number): () => number { return () => n + 1; }
+function inner(m: number): number { return m * 2; }
+function outer(n: number): number { return inner(n); }
+function mkP(x: number): P { return { x, y: "s" }; }
+function readP(p: P): number { return p.x + 1; }
+function ternary(n: number, m: number): number { return n > m ? n : m; }
+function compound(n: number): number { let r = 1; r += n; return r; }
+function loop(n: number): number { let t = 0; for (let i = 0; i < n; i++) t += i; return t; }
+const c = counter(), box = new Box(), priv = new Priv();
+setMod(1); say("mod", readMod()); (setMod as any)("m"); say("mod-bad", readMod()); setMod(2); say("mod-again", readMod());
+c.set(1); say("captured", c.get()); (c.set as any)("3"); say("captured-bad", c.get()); (c.set as any)("x"); say("captured-bad2", c.get());
+box.set(1); say("field", box.get()); (box as any).set("f"); say("field-bad", box.get()); (box as any).v = "direct"; say("field-bad2", box.get()); box.set(5); say("field-again", box.get());
+Stat.set(1); say("static", Stat.get()); (Stat.set as any)("st"); say("static-bad", Stat.get());
+priv.set(1); say("private", priv.get()); (priv as any).set("p"); say("private-bad", priv.get());
+push(1); say("array", last()); (push as any)("a"); say("array-bad", last());
+put(1); say("map", got()); (put as any)("mp"); say("map-bad", got());
+say("closure", mk(1)()); say("closure-bad", (mk as any)("c")());
+say("passed-on", outer(2)); say("passed-on-bad", (outer as any)("4")); say("passed-on-bad2", (outer as any)("z")); say("inner", inner(3));
+say("literal", readP(mkP(1))); say("literal-bad", readP((mkP as any)("L"))); say("literal-typed", readP({ x: 5, y: "z" }));
+say("ternary", ternary(1, 2)); say("ternary-bad", (ternary as any)("b", "a"));
+say("compound", compound(1)); say("compound-bad", (compound as any)("c"));
+say("loop", loop(3)); say("loop-bad", (loop as any)("3"));
+//// a-round-through-the-language/t2-hidden-calls.ts
+// A round through the language: hidden calls. It prints what plain Bun prints.
+function say(label: string, v: unknown): void { console.log(label + " " + typeof v + " " + String(v)); }
+type P = { x: number };
+function sum(p: P, n: number): number { return p.x + n; }
+function len(s: string): number { return s.length; }
+class A { x = 1; m(k: number): number { return this.x + k; } get g(): number { return this.x * 2; } set s(v: number) { this.x = v + 1; } }
+const a = new A();
+say("sum", sum({ x: 1 }, 2));
+say("call", sum.call(null, { x: "a" } as any, "b" as any));
+say("apply", sum.apply(null, [{ x: 2 }, "c"] as any));
+say("reflect", Reflect.apply(sum, undefined, [{ x: "r" }, 1]));
+say("bind", (sum.bind(null, { x: "bound" } as any) as any)("d"));
+say("bind-ok", sum.bind(null, { x: 3 })(4));
+say("len", len("abc")); say("len-arr", (len as any)([1, 2])); say("len-num", (len as any)(5)); say("len-call", len.call(null, { length: "L" } as any));
+say("m", a.m(1)); say("m-call", A.prototype.m.call({ x: "o" } as any, 2)); say("m-num", A.prototype.m.call(7 as any, 2)); say("m-arg", (a as any).m("k"));
+say("m-bind", a.m.bind({ x: "bx" } as any)(1)); say("m-reflect", Reflect.apply(A.prototype.m, "str", [1]));
+const gd = Object.getOwnPropertyDescriptor(A.prototype, "g")!, sd = Object.getOwnPropertyDescriptor(A.prototype, "s")!;
+say("getter", a.g); say("getter-call", gd.get!.call({ x: "q" })); say("getter-num", gd.get!.call(3));
+const o: any = { x: 0 }; sd.set!.call(o, "w"); say("setter-call", o.x);
+(a as any).s = "v"; say("setter-any", a.x); say("after", a.m(1)); say("after-g", a.g);
+const borrowed: any = { x: "bor", m: A.prototype.m }; say("borrowed", borrowed.m(1));
+const made: any = Object.create(A.prototype); say("created", made.m(1)); made.x = "cx"; say("created-2", made.m(1));
+say("map", ["a", "bc"].map(len).join()); say("map-bad", ([1, [2, 3], "x"] as any[]).map(len).join());
+say("sort", [{ x: 2 }, { x: 1 }].sort((p: P, q: P): number => p.x - q.x).map((p: P): number => p.x).join());
+say("sort-bad", ([{ x: "b" }, { x: "a" }, 3] as any[]).sort((p: P, q: P): number => p.x - q.x).length);
+say("reduce-bad", (["a", 1] as any[]).reduce((t: number, n: number): number => t + n, 0));
+//// a-round-through-the-language/t2a-call-apply-bind.ts
+// A round through the language: call apply bind. It prints what plain Bun prints.
+function say(label: string, v: unknown): void { console.log(label + " " + typeof v + " " + String(v)); }
+type P = { x: number };
+function sum(p: P, n: number): number { return p.x + n; }
+function len(s: string): number { return s.length; }
+class A { x = 1; m(k: number): number { return this.x + k; } get g(): number { return this.x * 2; } set s(v: number) { this.x = v + 1; } }
+const a = new A();
+say("sum", sum({ x: 1 }, 2));
+say("call", sum.call(null, { x: "a" } as any, "b" as any));
+say("apply", sum.apply(null, [{ x: 2 }, "c"] as any));
+say("reflect", Reflect.apply(sum, undefined, [{ x: "r" }, 1]));
+say("bind", (sum.bind(null, { x: "bound" } as any) as any)("d"));
+say("bind-ok", sum.bind(null, { x: 3 })(4));
+say("len", len("abc")); say("len-arr", (len as any)([1, 2])); say("len-num", (len as any)(5)); say("len-call", len.call(null, { length: "L" } as any));
+say("m", a.m(1)); say("m-call", A.prototype.m.call({ x: "o" } as any, 2)); say("m-num", A.prototype.m.call(7 as any, 2)); say("m-arg", (a as any).m("k"));
+//// a-round-through-the-language/t2b-methods.ts
+// A round through the language, one probe of many. It prints what plain Bun prints.
+function say(label: string, v: unknown): void { console.log(label + " " + typeof v + " " + String(v)); }
+type P = { x: number };
+function sum(p: P, n: number): number { return p.x + n; }
+function len(s: string): number { return s.length; }
+class A { x = 1; m(k: number): number { return this.x + k; } get g(): number { return this.x * 2; } set s(v: number) { this.x = v + 1; } }
+const a = new A();
+say("sum", sum({ x: 1 }, 2));
+say("m-bind", a.m.bind({ x: "bx" } as any)(1)); say("m-reflect", Reflect.apply(A.prototype.m, "str", [1]));
+const gd = Object.getOwnPropertyDescriptor(A.prototype, "g")!, sd = Object.getOwnPropertyDescriptor(A.prototype, "s")!;
+//// a-round-through-the-language/t2c-descriptors.ts
+// A round through the language, one probe of many. It prints what plain Bun prints.
+function say(label: string, v: unknown): void { console.log(label + " " + typeof v + " " + String(v)); }
+type P = { x: number };
+function sum(p: P, n: number): number { return p.x + n; }
+function len(s: string): number { return s.length; }
+class A { x = 1; m(k: number): number { return this.x + k; } get g(): number { return this.x * 2; } set s(v: number) { this.x = v + 1; } }
+const a = new A();
+say("sum", sum({ x: 1 }, 2));
+const gd = Object.getOwnPropertyDescriptor(A.prototype, "g")!, sd = Object.getOwnPropertyDescriptor(A.prototype, "s")!;
+say("getter", a.g); say("getter-call", gd.get!.call({ x: "q" })); say("getter-num", gd.get!.call(3));
+const o: any = { x: 0 }; sd.set!.call(o, "w"); say("setter-call", o.x);
+(a as any).s = "v"; say("setter-any", a.x); say("after", a.m(1)); say("after-g", a.g);
+//// a-round-through-the-language/t2d-borrowed.ts
+// A round through the language, one probe of many. It prints what plain Bun prints.
+function say(label: string, v: unknown): void { console.log(label + " " + typeof v + " " + String(v)); }
+type P = { x: number };
+function sum(p: P, n: number): number { return p.x + n; }
+function len(s: string): number { return s.length; }
+class A { x = 1; m(k: number): number { return this.x + k; } get g(): number { return this.x * 2; } set s(v: number) { this.x = v + 1; } }
+const a = new A();
+say("sum", sum({ x: 1 }, 2));
+const made: any = Object.create(A.prototype); say("created", made.m(1)); made.x = "cx"; say("created-2", made.m(1));
+say("map", ["a", "bc"].map(len).join()); say("map-bad", ([1, [2, 3], "x"] as any[]).map(len).join());
+//// a-round-through-the-language/t2e-callbacks.ts
+// A round through the language, one probe of many. It prints what plain Bun prints.
+function say(label: string, v: unknown): void { console.log(label + " " + typeof v + " " + String(v)); }
+type P = { x: number };
+function sum(p: P, n: number): number { return p.x + n; }
+function len(s: string): number { return s.length; }
+class A { x = 1; m(k: number): number { return this.x + k; } get g(): number { return this.x * 2; } set s(v: number) { this.x = v + 1; } }
+const a = new A();
+say("sum", sum({ x: 1 }, 2));
+say("sort", [{ x: 2 }, { x: 1 }].sort((p: P, q: P): number => p.x - q.x).map((p: P): number => p.x).join());
+say("sort-bad", ([{ x: "b" }, { x: "a" }, 3] as any[]).sort((p: P, q: P): number => p.x - q.x).length);
+say("reduce-bad", (["a", 1] as any[]).reduce((t: number, n: number): number => t + n, 0));
+
+//// a-round-through-the-language/t3-constructors.ts
+// A round through the language, one probe of many. It prints what plain Bun prints.
+function say(label: string, v: unknown): void { console.log(label + " " + typeof v + " " + String(v)); }
+class Pt { constructor(public a: number, public b: string) {} d(): string { return this.b + ":" + (this.a + 1); } }
+class Sub extends Pt { constructor(v: any, w: any) { super(v, w); } }
+class Other { q = 1; }
+class Ret { constructor(x: any) { if (x) return x; } }
+class Arrow extends Ret { n = 2; h = (k: number): number => this.n * k; constructor(x: any) { super(x); } m(): number { return this.n + 1; } }
+const C: any = Pt;
+say("typed", new Pt(1, "s").d()); say("any", new C("x", 1).d()); say("none", new C().d());
+say("reflect", Reflect.construct(Pt, [{}, []]).d());
+const nt: any = Reflect.construct(Pt, ["a", 2], Other);
+say("new-target", (Object.getPrototypeOf(nt) === Other.prototype) + "" + nt.a + nt.b + typeof nt.d); say("new-target-d", Pt.prototype.d.call(nt));
+say("sub", new Sub("m", 2).d()); say("sub-ok", new Sub(1, "k").d()); say("sub-none", new Sub(undefined, null).d());
+say("bound-new", new (C.bind(null, "bb"))(3).d()); say("spread-new", new C(...["sp", 9]).d());
+say("ctor-prop", new (new Pt(1, "s") as any).constructor("cp", 0).d());
+say("arrow-own", new Arrow(null).h(3) + new Arrow(null).m());
+const plain: any = new Arrow({ n: "str", extra: 1 }); say("arrow-plain", plain.h(3) + "|" + Object.keys(plain).join() + "|" + typeof plain.m);
+plain.n = "x"; say("arrow-plain-changed", plain.h(3));
+const arr: any = new Arrow([1, 2]); say("arrow-array", arr.h(2) + "|" + arr.length);
+const viaOther: any = Reflect.construct(Arrow, [null], Other); say("arrow-new-target", viaOther.h(2) + "|" + (viaOther instanceof Other) + typeof viaOther.m);
+say("arrow-m-on-plain", Arrow.prototype.m.call(plain));
+function Old(this: any, a: number, b: number) { this.a = a; this.b = b; }
+Old.prototype.len = function (this: { a: number; b: number }): number { return this.a * this.b; };
+const O: any = Old;
+say("es5", new O(2, 3).len()); say("es5-bad", new O("4", "5").len()); say("es5-bad2", new O("x", {}).len()); say("es5-none", new O().len());
+const t: any = {}; O.call(t, 6, "7"); say("es5-call", O.prototype.len.call(t));
+say("es5-reflect", typeof (Reflect.construct(O, [1, 2], Other) as any).len);

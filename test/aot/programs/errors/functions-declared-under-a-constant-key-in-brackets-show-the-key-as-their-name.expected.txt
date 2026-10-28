@@ -1,0 +1,4 @@
+["method","stored","arrow","waits","method","fixed"]
+["bound method","bound stored","bound arrow","bound waits","bound method","bound fixed"]
+in at method | in at stored | in at arrow | in at get getter | in at waits | in at method | in at fixed
+["method","method"]

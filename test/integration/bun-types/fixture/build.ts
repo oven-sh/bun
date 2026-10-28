@@ -24,6 +24,55 @@ Bun.build({
 
 Bun.build({
   entrypoints: ["hey"],
+  compile: { aot: true, aotLogTypeMismatches: true, aotExplain: ["guards", "guards-json"] },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  compile: { aot: true, aotLogTypeMismatches: false, aotExplain: "guards-json" },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  compile: { aot: true, aotExplain: ["missed-optimizations", "guards"] },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  // @ts-expect-error
+  compile: { aot: true, aotExplain: "decline" },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  // @ts-expect-error
+  compile: { aot: true, aotTypeErrors: "warn" },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  compile: { aot: true, aotDisable: ["flow-results", "pass:InlineCalls"], aotHeat: "everything-is-cold" },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  compile: { aot: true, aotDisable: "flow-results,pass:InlineCalls" },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  // @ts-expect-error
+  compile: { aot: true, aotHeat: "lukewarm" },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  // @ts-expect-error
+  compile: { aot: true, aotDisable: [1] },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
   plugins: [
     {
       name: "my-terrible-plugin",

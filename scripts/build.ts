@@ -62,8 +62,8 @@ async function main(): Promise<void> {
 
   // Windows: re-exec inside the VS dev shell if not already there.
   // The shell provides PATH (mt.exe, rc.exe, cl.exe), INCLUDE, LIB,
-  // WindowsSdkDir — things clang-cl can mostly self-detect but nested
-  // cmake projects can't. Cheap: VSINSTALLDIR check short-circuits on
+  // WindowsSdkDir — things clang-cl can mostly self-detect but msbuild
+  // (local WebKit's ICU) can't. Cheap: VSINSTALLDIR check short-circuits on
   // subsequent runs in the same terminal.
   if (process.platform === "win32" && !process.env.VSINSTALLDIR) {
     const vsShell = join(import.meta.dirname, "vs-shell.ps1");
@@ -240,10 +240,9 @@ async function main(): Promise<void> {
     }
     // FD 3 sideband — only when interactive. stream.ts (wrapping deps and
     // the cargo plan) writes live output there, bypassing ninja's per-job buffering.
-    // A human watching a terminal wants to see cmake configure spew and
-    // cargo's download progress in real time. A log file (CI) doesn't —
-    // that live output is noise (hundreds of `-- Looking for header.h`
-    // lines from cmake). When FD 3 isn't set up, stream.ts falls back to
+    // A human watching a terminal wants to see fetches and cargo's download
+    // progress in real time. A log file (CI) doesn't — that live output is
+    // noise. When FD 3 isn't set up, stream.ts falls back to
     // stdout which ninja buffers per-job: deps stay quiet until they
     // finish or fail, failure logs stay compact.
     //
@@ -284,7 +283,6 @@ async function main(): Promise<void> {
 
     if (args.execArgs.length === 0) {
       // Closing line on success: when restat prunes most of the graph
-      // (local WebKit no-op shows `[1/555] build WebKit` then silence),
       // it's not obvious ninja finished vs. stalled. This disambiguates.
       // Targets named when explicit so it's clear what was actually built.
       const what = args.ninjaTargets.length > 0 ? ` ${args.ninjaTargets.map(t => nameColor(t)).join(", ")}` : "";
@@ -438,6 +436,10 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   buildType: "string",
   mode: "string",
   lto: "boolean",
+  trimmable: "boolean",
+  jit: "boolean",
+  aot: "boolean",
+  relr: "boolean",
   pgoGenerate: "string",
   pgoUse: "string",
   asan: "boolean",
@@ -450,13 +452,25 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   tinycc: "boolean",
   valgrind: "boolean",
   fuzzilli: "boolean",
+  fuzzilliCompilerOnly: "boolean",
   hardened: "boolean",
+  requireMdwe: "boolean",
+  lockEnvironment: "boolean",
+  guardedPages: "boolean",
+  executeOnlyStart: "boolean",
   socketFaultInjection: "boolean",
   codeGenerationFromStrings: "boolean",
   webAssembly: "boolean",
+  shadowRealm: "boolean",
+  ffi: "boolean",
   unifiedSources: "boolean",
   archiveDeps: "boolean",
   timeTrace: "boolean",
+  rustCodegenUnits: "number",
+  rustIncremental: "boolean",
+  rustLto: "boolean",
+  debugInfo: "string",
+  linkerMap: "boolean",
   ci: "boolean",
   buildkite: "boolean",
   webkit: "string",
@@ -655,15 +669,23 @@ Options:
                                     from a non-Windows host)
   --<field>=<value>       Override a config field. Boolean fields take
                           on/off/true/false/yes/no/1/0.
-                          Fields: asan, lto, assertions, logs, baseline,
-                                  canary, valgrind, hardened,
+                          Fields: asan, lto, relr, assertions, logs, baseline,
+                                  canary, valgrind, hardened, requireMdwe,
+                                  lockEnvironment, guardedPages,
+                                  executeOnlyStart,
                                   webkit (prebuilt|local),
                                   local-deps (name=path[,name=path] — build a
                                   vendored dep from a local checkout),
                                   package-manager (bun|npm, installs the
                                   package.json files the build needs),
                                   buildDir, mode (full|codegen),
-                                  unifiedSources, timeTrace, os, arch, abi,
+                                  unifiedSources, timeTrace, rustCodegenUnits
+                                  (codegen units a crate), rustIncremental and
+                                  rustLto (off: the crates are linked as machine
+                                  code), for faster rebuilds,
+                                  debugInfo (full|lines|none) and linkerMap,
+                                  for faster compiles and links,
+                                  os, arch, abi,
                                   winsysroot (Windows cross-compile SDK root)
   --target=<name>         Build a specific ninja target (repeatable)
   --configure-only        Emit build.ninja, don't run it

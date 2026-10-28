@@ -1,0 +1,99 @@
+////: CallbacksOfARegistry
+const sleep = ms => new Promise(done => setTimeout(done, ms));
+async function collect() {
+  for (let round = 0; round < 8; round++) {
+    await sleep(1);
+    Bun.gc(true);
+  }
+}
+let called = 0;
+function makeRegistry() {
+  const registry = new FinalizationRegistry(() => called++);
+  for (let i = 0; i < 100; i++) registry.register({ i }, i);
+  return registry;
+}
+////: RequestSeenByItsServer
+const sleep = ms => new Promise(done => setTimeout(done, ms));
+async function collect() {
+  for (let round = 0; round < 8; round++) {
+    await sleep(1);
+    Bun.gc(true);
+  }
+}
+let aborted = 0;
+const server = Bun.serve({
+  port: 0,
+  fetch(request) {
+    request.signal.addEventListener("abort", () => aborted++);
+    return new Response(
+      new ReadableStream({
+        async pull(controller) {
+          await sleep(5);
+          controller.enqueue(new TextEncoder().encode("x".repeat(1024)));
+        },
+      }),
+    );
+  },
+});
+//// members-of-live-objects-a-literal-read-in-part-behind-an-await-holds-its-registry.mjs
+// A local object holds a registry and a number. Only the number is read behind the await, and the registry still calls back.
+////= CallbacksOfARegistry
+async function run() {
+  const context = { registry: makeRegistry(), n: 7 };
+  await collect();
+  console.log("callbacks ran", called > 50, context.n);
+}
+await run();
+//// members-of-live-objects-a-list-read-in-part-behind-an-await-holds-its-registry.mjs
+// A local list holds a registry and a number. Only the number is read behind the await.
+////= CallbacksOfARegistry
+async function run() {
+  const context = [makeRegistry(), 7];
+  await collect();
+  console.log("callbacks ran", called > 50, context[1]);
+}
+await run();
+//// members-of-live-objects-an-instance-read-in-part-behind-an-await-holds-its-registry.mjs
+// An instance holds a registry and a number: as a local of an async function, as a constant of the module and in a list.
+////= CallbacksOfARegistry
+class Holder {
+  constructor(registry) {
+    this.registry = registry;
+    this.n = 7;
+  }
+}
+async function run() {
+  const holder = new Holder(makeRegistry());
+  await collect();
+  console.log("local: callbacks ran", called > 50, holder.n);
+}
+await run();
+called = 0;
+const holder = new Holder(makeRegistry());
+await collect();
+console.log("constant: callbacks ran", called > 50, holder.n);
+called = 0;
+const holders = [];
+holders.push(new Holder(makeRegistry()));
+await collect();
+console.log("list: callbacks ran", called > 50, holders[0].n);
+//// members-of-live-objects-an-object-in-an-object-holds-its-registry.mjs
+// The registry is held by an object that the local object holds. Only a number of the outer object is read behind the await.
+////= CallbacksOfARegistry
+async function run() {
+  const context = { inner: { registry: makeRegistry() }, n: 7 };
+  await collect();
+  console.log("callbacks ran", called > 50, context.n);
+}
+await run();
+//// members-of-live-objects-a-response-nobody-reads-keeps-its-request-open.mjs
+// A local object holds the response of a request whose body is still arriving. Only a number is read behind the await, and the server sees no abort.
+////= RequestSeenByItsServer
+async function run() {
+  const context = { response: await fetch("http://127.0.0.1:" + server.port), n: 7 };
+  await collect();
+  await sleep(60);
+  console.log("aborted at the server", aborted, context.n);
+}
+await run();
+process.exit(0);

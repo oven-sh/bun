@@ -1,0 +1,572 @@
+int32s, a literal, nothing, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, frozen, in the last comparison: threw TypeError
+int32s, a literal, sealed, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, not extensible, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, shrunk to 2, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, shrunk to 0, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, shrunk to 1, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, grown, in the last comparison: [1,2,3,4,5,9,9,9] 8 01234567true
+int32s, a literal, grown far, in the last comparison: [1,2,3,4,5,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null] 50 01234true
+int32s, a literal, emptied and refilled, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, filled with 0, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, filled with texts, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, filled with doubles, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, filled with objects, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, one double stored, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, one text stored, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, NaN stored, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, undefined stored, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, a hole made, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, a hole at 0, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, made sparse, in the last comparison: [1,2,3,4,5,null x 99995,1] 100001 01234100000true
+int32s, a literal, element 2 read-only, in the last comparison: threw TypeError
+int32s, a literal, element 0 read-only, in the last comparison: threw TypeError
+int32s, a literal, element 2 an accessor, in the last comparison: [1,2,"set:3",4,5] 5 01234true
+int32s, a literal, length read-only, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, a property of its own, in the last comparison: [1,2,3,4,5] 5 01234extratrue
+int32s, a literal, another prototype, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, sorted again, the other way, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, reversed, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, spliced, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, unshifted, in the last comparison: [1,2,3,4,5,2] 6 012345true
+int32s, a literal, shifted, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, a literal, copyWithin, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, nothing, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, frozen, in the last comparison: threw TypeError
+int32s, built, sealed, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, not extensible, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, shrunk to 2, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, shrunk to 0, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, shrunk to 1, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, grown, in the last comparison: [1,2,3,4,5,9,9,9] 8 01234567true
+int32s, built, grown far, in the last comparison: [1,2,3,4,5,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null] 50 01234true
+int32s, built, emptied and refilled, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, filled with 0, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, filled with texts, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, filled with doubles, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, filled with objects, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, one double stored, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, one text stored, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, NaN stored, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, undefined stored, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, a hole made, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, a hole at 0, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, made sparse, in the last comparison: [1,2,3,4,5,null x 99995,1] 100001 01234100000true
+int32s, built, element 2 read-only, in the last comparison: threw TypeError
+int32s, built, element 0 read-only, in the last comparison: threw TypeError
+int32s, built, element 2 an accessor, in the last comparison: [1,2,"set:3",4,5] 5 01234true
+int32s, built, length read-only, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, a property of its own, in the last comparison: [1,2,3,4,5] 5 01234extratrue
+int32s, built, another prototype, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, sorted again, the other way, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, reversed, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, spliced, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, unshifted, in the last comparison: [1,2,3,4,5,2] 6 012345true
+int32s, built, shifted, in the last comparison: [1,2,3,4,5] 5 01234true
+int32s, built, copyWithin, in the last comparison: [1,2,3,4,5] 5 01234true
+doubles, a literal, nothing, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, frozen, in the last comparison: threw TypeError
+doubles, a literal, sealed, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, not extensible, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, shrunk to 2, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, shrunk to 0, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, shrunk to 1, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, grown, in the last comparison: [1.5,2.5,3.5,4.5,5.5,9,9,9] 8 01234567true
+doubles, a literal, grown far, in the last comparison: [1.5,2.5,3.5,4.5,5.5,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null] 50 01234true
+doubles, a literal, emptied and refilled, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, filled with 0, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, filled with texts, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, filled with doubles, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, filled with objects, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, one double stored, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, one text stored, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, NaN stored, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, undefined stored, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, a hole made, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, a hole at 0, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, made sparse, in the last comparison: [1.5,2.5,3.5,4.5,5.5,null x 99995,1] 100001 01234100000true
+doubles, a literal, element 2 read-only, in the last comparison: threw TypeError
+doubles, a literal, element 0 read-only, in the last comparison: threw TypeError
+doubles, a literal, element 2 an accessor, in the last comparison: [1.5,2.5,"set:3.5",4.5,5.5] 5 01234true
+doubles, a literal, length read-only, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, a property of its own, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234extratrue
+doubles, a literal, another prototype, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, sorted again, the other way, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, reversed, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, spliced, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, unshifted, in the last comparison: [1.5,2.5,3.5,4.5,5.5,2.5] 6 012345true
+doubles, a literal, shifted, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, a literal, copyWithin, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, nothing, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, frozen, in the last comparison: threw TypeError
+doubles, built, sealed, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, not extensible, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, shrunk to 2, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, shrunk to 0, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, shrunk to 1, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, grown, in the last comparison: [1.5,2.5,3.5,4.5,5.5,9,9,9] 8 01234567true
+doubles, built, grown far, in the last comparison: [1.5,2.5,3.5,4.5,5.5,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null] 50 01234true
+doubles, built, emptied and refilled, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, filled with 0, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, filled with texts, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, filled with doubles, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, filled with objects, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, one double stored, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, one text stored, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, NaN stored, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, undefined stored, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, a hole made, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, a hole at 0, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, made sparse, in the last comparison: [1.5,2.5,3.5,4.5,5.5,null x 99995,1] 100001 01234100000true
+doubles, built, element 2 read-only, in the last comparison: threw TypeError
+doubles, built, element 0 read-only, in the last comparison: threw TypeError
+doubles, built, element 2 an accessor, in the last comparison: [1.5,2.5,"set:3.5",4.5,5.5] 5 01234true
+doubles, built, length read-only, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, a property of its own, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234extratrue
+doubles, built, another prototype, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, sorted again, the other way, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, reversed, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, spliced, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, unshifted, in the last comparison: [1.5,2.5,3.5,4.5,5.5,2.5] 6 012345true
+doubles, built, shifted, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+doubles, built, copyWithin, in the last comparison: [1.5,2.5,3.5,4.5,5.5] 5 01234true
+texts, a literal, nothing, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, frozen, in the last comparison: threw TypeError
+texts, a literal, sealed, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, not extensible, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, shrunk to 2, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, shrunk to 0, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, shrunk to 1, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, grown, in the last comparison: ["a","b","c","d","e",9,9,9] 8 01234567true
+texts, a literal, grown far, in the last comparison: ["a","b","c","d","e",null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null] 50 01234true
+texts, a literal, emptied and refilled, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, filled with 0, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, filled with texts, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, filled with doubles, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, filled with objects, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, one double stored, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, one text stored, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, NaN stored, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, undefined stored, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, a hole made, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, a hole at 0, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, made sparse, in the last comparison: ["a","b","c","d","e",null x 99995,1] 100001 01234100000true
+texts, a literal, element 2 read-only, in the last comparison: threw TypeError
+texts, a literal, element 0 read-only, in the last comparison: threw TypeError
+texts, a literal, element 2 an accessor, in the last comparison: ["a","b","set:\"c\"","d","e"] 5 01234true
+texts, a literal, length read-only, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, a property of its own, in the last comparison: ["a","b","c","d","e"] 5 01234extratrue
+texts, a literal, another prototype, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, sorted again, the other way, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, reversed, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, spliced, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, unshifted, in the last comparison: ["a","b","c","d","e","b"] 6 012345true
+texts, a literal, shifted, in the last comparison: ["a","b","c","d","e"] 5 01234true
+texts, a literal, copyWithin, in the last comparison: ["a","b","c","d","e"] 5 01234true
+objects, nothing, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, frozen, in the last comparison: threw TypeError
+objects, sealed, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, not extensible, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, shrunk to 2, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, shrunk to 0, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, shrunk to 1, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, grown, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5},9,9,9] 8 01234567true
+objects, grown far, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5},null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null] 50 01234true
+objects, emptied and refilled, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, filled with 0, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, filled with texts, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, filled with doubles, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, filled with objects, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, one double stored, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, one text stored, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, NaN stored, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, undefined stored, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, a hole made, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, a hole at 0, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, made sparse, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5},null x 99995,1] 100001 01234100000true
+objects, element 2 read-only, in the last comparison: threw TypeError
+objects, element 0 read-only, in the last comparison: threw TypeError
+objects, element 2 an accessor, in the last comparison: [{"v":1},{"v":2},"set:{\"v\":3}",{"v":4},{"v":5}] 5 01234true
+objects, length read-only, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, a property of its own, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234extratrue
+objects, another prototype, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, sorted again, the other way, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, reversed, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, spliced, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, unshifted, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5},{"v":2}] 6 012345true
+objects, shifted, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+objects, copyWithin, in the last comparison: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234true
+mixed numbers, nothing, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, frozen, in the last comparison: threw TypeError
+mixed numbers, sealed, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, not extensible, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, shrunk to 2, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, shrunk to 0, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, shrunk to 1, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, grown, in the last comparison: [1.5,2,3.5,4,5,9,9,9] 8 01234567true
+mixed numbers, grown far, in the last comparison: [1.5,2,3.5,4,5,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null] 50 01234true
+mixed numbers, emptied and refilled, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, filled with 0, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, filled with texts, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, filled with doubles, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, filled with objects, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, one double stored, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, one text stored, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, NaN stored, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, undefined stored, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, a hole made, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, a hole at 0, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, made sparse, in the last comparison: [1.5,2,3.5,4,5,null x 99995,1] 100001 01234100000true
+mixed numbers, element 2 read-only, in the last comparison: threw TypeError
+mixed numbers, element 0 read-only, in the last comparison: threw TypeError
+mixed numbers, element 2 an accessor, in the last comparison: [1.5,2,"set:3.5",4,5] 5 01234true
+mixed numbers, length read-only, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, a property of its own, in the last comparison: [1.5,2,3.5,4,5] 5 01234extratrue
+mixed numbers, another prototype, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, sorted again, the other way, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, reversed, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, spliced, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, unshifted, in the last comparison: [1.5,2,3.5,4,5,2] 6 012345true
+mixed numbers, shifted, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+mixed numbers, copyWithin, in the last comparison: [1.5,2,3.5,4,5] 5 01234true
+in order already, nothing, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, frozen, in the last comparison: threw TypeError
+in order already, sealed, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, not extensible, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, shrunk to 2, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, shrunk to 0, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, shrunk to 1, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, grown, in the last comparison: [1,2,3,4,5,9,9,9] 8 01234567true
+in order already, grown far, in the last comparison: [1,2,3,4,5,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null] 50 01234true
+in order already, emptied and refilled, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, filled with 0, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, filled with texts, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, filled with doubles, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, filled with objects, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, one double stored, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, one text stored, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, NaN stored, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, undefined stored, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, a hole made, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, a hole at 0, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, made sparse, in the last comparison: [1,2,3,4,5,null x 99995,1] 100001 01234100000true
+in order already, element 2 read-only, in the last comparison: threw TypeError
+in order already, element 0 read-only, in the last comparison: threw TypeError
+in order already, element 2 an accessor, in the last comparison: [1,2,"set:3",4,5] 5 01234true
+in order already, length read-only, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, a property of its own, in the last comparison: [1,2,3,4,5] 5 01234extratrue
+in order already, another prototype, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, sorted again, the other way, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, reversed, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, spliced, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, unshifted, in the last comparison: [1,2,3,4,5,5] 6 012345true
+in order already, shifted, in the last comparison: [1,2,3,4,5] 5 01234true
+in order already, copyWithin, in the last comparison: [1,2,3,4,5] 5 01234true
+with undefined and a hole, nothing, in the last comparison: [1,3,5,null,null] 5 0123true
+with undefined and a hole, frozen, in the last comparison: threw TypeError
+with undefined and a hole, sealed, in the last comparison: threw TypeError
+with undefined and a hole, not extensible, in the last comparison: threw TypeError
+with undefined and a hole, shrunk to 2, in the last comparison: [1,3,5,null] 4 0123true
+with undefined and a hole, shrunk to 0, in the last comparison: [1,3,5,null] 4 0123true
+with undefined and a hole, shrunk to 1, in the last comparison: [1,3,5,null] 4 0123true
+with undefined and a hole, grown, in the last comparison: [1,3,5,null,null,9,9,9] 8 0123567true
+with undefined and a hole, grown far, in the last comparison: [1,3,5,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null] 50 0123true
+with undefined and a hole, emptied and refilled, in the last comparison: [1,3,5,null,null] 5 0123true
+with undefined and a hole, filled with 0, in the last comparison: [1,3,5,null,null] 5 0123true
+with undefined and a hole, filled with texts, in the last comparison: [1,3,5,null,null] 5 0123true
+with undefined and a hole, filled with doubles, in the last comparison: [1,3,5,null,null] 5 0123true
+with undefined and a hole, filled with objects, in the last comparison: [1,3,5,null,null] 5 0123true
+with undefined and a hole, one double stored, in the last comparison: [1,3,5,null,null] 5 0123true
+with undefined and a hole, one text stored, in the last comparison: [1,3,5,null,null] 5 0123true
+with undefined and a hole, NaN stored, in the last comparison: [1,3,5,null,null] 5 0123true
+with undefined and a hole, undefined stored, in the last comparison: [1,3,5,null,null] 5 0123true
+with undefined and a hole, a hole made, in the last comparison: [1,3,5,null,null] 5 0123true
+with undefined and a hole, a hole at 0, in the last comparison: [1,3,5,null,null] 5 0123true
+with undefined and a hole, made sparse, in the last comparison: [1,3,5,null x 99997,1] 100001 0123100000true
+with undefined and a hole, element 2 read-only, in the last comparison: threw TypeError
+with undefined and a hole, element 0 read-only, in the last comparison: threw TypeError
+with undefined and a hole, element 2 an accessor, in the last comparison: [1,3,"set:5",null,null] 5 0123true
+with undefined and a hole, length read-only, in the last comparison: [1,3,5,null,null] 5 0123true
+with undefined and a hole, a property of its own, in the last comparison: [1,3,5,null,null] 5 0123extratrue
+with undefined and a hole, another prototype, in the last comparison: [1,3,5,null,null] 5 0123true
+with undefined and a hole, sorted again, the other way, in the last comparison: [1,3,5,null,null] 5 0123true
+with undefined and a hole, reversed, in the last comparison: [1,3,5,null,null] 5 0123true
+with undefined and a hole, spliced, in the last comparison: [1,3,5,null] 4 0123true
+with undefined and a hole, unshifted, in the last comparison: [1,3,5,null,null,1] 6 01235true
+with undefined and a hole, shifted, in the last comparison: [1,3,5,null] 4 0123true
+with undefined and a hole, copyWithin, in the last comparison: [1,3,5,null,null] 5 0123true
+int32s, a literal, nothing, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, nothing, in a setter on element 0: [1,2,3,4,5] 5 01234 1
+int32s, a literal, frozen, in the valueOf of the last: threw TypeError
+int32s, a literal, frozen, in a setter on element 0: threw TypeError
+int32s, a literal, sealed, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, sealed, in a setter on element 0: [1,2,3,4,5] 5 01234 1
+int32s, a literal, not extensible, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, not extensible, in a setter on element 0: [1,2,3,4,5] 5 01234 1
+int32s, a literal, shrunk to 2, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, shrunk to 2, in a setter on element 0: [1,2,3,4,5] 5 01234 1
+int32s, a literal, shrunk to 0, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, shrunk to 0, in a setter on element 0: [null,2,3,4,5] 5 1234 1
+int32s, a literal, shrunk to 1, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, shrunk to 1, in a setter on element 0: [1,2,3,4,5] 5 01234 1
+int32s, a literal, grown, in the valueOf of the last: [1,2,3,4,5,9,9,9] 8 01234567
+int32s, a literal, grown, in a setter on element 0: [1,2,3,4,5,9,9,9] 8 01234567 1
+int32s, a literal, grown far, in the valueOf of the last: [1,2,3,4,5,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null] 50 01234
+int32s, a literal, grown far, in a setter on element 0: [1,2,3,4,5,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null] 50 01234 1
+int32s, a literal, emptied and refilled, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, emptied and refilled, in a setter on element 0: [0,2,3,4,5] 5 01234 1
+int32s, a literal, filled with 0, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, filled with 0, in a setter on element 0: [0,2,3,4,5] 5 01234 1
+int32s, a literal, filled with texts, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, filled with texts, in a setter on element 0: ["t",2,3,4,5] 5 01234 1
+int32s, a literal, filled with doubles, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, filled with doubles, in a setter on element 0: [0.5,2,3,4,5] 5 01234 1
+int32s, a literal, filled with objects, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, filled with objects, in a setter on element 0: [{"v":0},2,3,4,5] 5 01234 1
+int32s, a literal, one double stored, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, one double stored, in a setter on element 0: [1,2,3,4,5] 5 01234 1
+int32s, a literal, one text stored, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, one text stored, in a setter on element 0: [1,2,3,4,5] 5 01234 1
+int32s, a literal, NaN stored, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, NaN stored, in a setter on element 0: [1,2,3,4,5] 5 01234 1
+int32s, a literal, undefined stored, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, undefined stored, in a setter on element 0: [1,2,3,4,5] 5 01234 1
+int32s, a literal, a hole made, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, a hole made, in a setter on element 0: [1,2,3,4,5] 5 01234 1
+int32s, a literal, a hole at 0, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, a hole at 0, in a setter on element 0: [null,2,3,4,5] 5 1234 1
+int32s, a literal, made sparse, in the valueOf of the last: [1,2,3,4,5,null x 99995,1] 100001 01234100000
+int32s, a literal, made sparse, in a setter on element 0: [1,2,3,4,5,null x 99995,1] 100001 01234100000 1
+int32s, a literal, element 2 read-only, in the valueOf of the last: threw TypeError
+int32s, a literal, element 2 read-only, in a setter on element 0: threw TypeError
+int32s, a literal, element 0 read-only, in the valueOf of the last: threw TypeError
+int32s, a literal, element 0 read-only, in a setter on element 0: [1,2,3,4,5] 5 01234 1
+int32s, a literal, element 2 an accessor, in the valueOf of the last: [1,2,"set:3",4,5] 5 01234
+int32s, a literal, element 2 an accessor, in a setter on element 0: [1,2,"set:3",4,5] 5 01234 1
+int32s, a literal, length read-only, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, length read-only, in a setter on element 0: [1,2,3,4,5] 5 01234 1
+int32s, a literal, a property of its own, in the valueOf of the last: [1,2,3,4,5] 5 01234extra
+int32s, a literal, a property of its own, in a setter on element 0: [1,2,3,4,5] 5 01234extra 1
+int32s, a literal, another prototype, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, another prototype, in a setter on element 0: [1,2,3,4,5] 5 01234 1
+int32s, a literal, sorted again, the other way, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, sorted again, the other way, in a setter on element 0: [4,2,3,4,5] 5 01234 1
+int32s, a literal, reversed, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, reversed, in a setter on element 0: [2,2,3,4,5] 5 01234 1
+int32s, a literal, spliced, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, spliced, in a setter on element 0: [1,2,3,4,5] 5 01234 1
+int32s, a literal, unshifted, in the valueOf of the last: [1,2,3,4,5,2] 6 012345
+int32s, a literal, unshifted, in a setter on element 0: [7,2,3,4,5,2] 6 012345 1
+int32s, a literal, shifted, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, shifted, in a setter on element 0: [3,2,3,4,5] 5 01234 1
+int32s, a literal, copyWithin, in the valueOf of the last: [1,2,3,4,5] 5 01234
+int32s, a literal, copyWithin, in a setter on element 0: [4,2,3,4,5] 5 01234 1
+doubles, built, nothing, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, nothing, in a setter on element 0: [1.5,2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, frozen, in the valueOf of the last: threw TypeError
+doubles, built, frozen, in a setter on element 0: threw TypeError
+doubles, built, sealed, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, sealed, in a setter on element 0: [1.5,2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, not extensible, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, not extensible, in a setter on element 0: [1.5,2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, shrunk to 2, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, shrunk to 2, in a setter on element 0: [1.5,2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, shrunk to 0, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, shrunk to 0, in a setter on element 0: [null,2.5,3.5,4.5,5.5] 5 1234 1.5
+doubles, built, shrunk to 1, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, shrunk to 1, in a setter on element 0: [1.5,2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, grown, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5,9,9,9] 8 01234567
+doubles, built, grown, in a setter on element 0: [1.5,2.5,3.5,4.5,5.5,9,9,9] 8 01234567 1.5
+doubles, built, grown far, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null] 50 01234
+doubles, built, grown far, in a setter on element 0: [1.5,2.5,3.5,4.5,5.5,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null] 50 01234 1.5
+doubles, built, emptied and refilled, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, emptied and refilled, in a setter on element 0: [0,2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, filled with 0, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, filled with 0, in a setter on element 0: [0,2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, filled with texts, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, filled with texts, in a setter on element 0: ["t",2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, filled with doubles, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, filled with doubles, in a setter on element 0: [0.5,2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, filled with objects, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, filled with objects, in a setter on element 0: [{"v":0},2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, one double stored, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, one double stored, in a setter on element 0: [1.5,2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, one text stored, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, one text stored, in a setter on element 0: [1.5,2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, NaN stored, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, NaN stored, in a setter on element 0: [1.5,2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, undefined stored, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, undefined stored, in a setter on element 0: [1.5,2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, a hole made, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, a hole made, in a setter on element 0: [1.5,2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, a hole at 0, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, a hole at 0, in a setter on element 0: [null,2.5,3.5,4.5,5.5] 5 1234 1.5
+doubles, built, made sparse, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5,null x 99995,1] 100001 01234100000
+doubles, built, made sparse, in a setter on element 0: [1.5,2.5,3.5,4.5,5.5,null x 99995,1] 100001 01234100000 1.5
+doubles, built, element 2 read-only, in the valueOf of the last: threw TypeError
+doubles, built, element 2 read-only, in a setter on element 0: threw TypeError
+doubles, built, element 0 read-only, in the valueOf of the last: threw TypeError
+doubles, built, element 0 read-only, in a setter on element 0: [1.5,2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, element 2 an accessor, in the valueOf of the last: [1.5,2.5,"set:3.5",4.5,5.5] 5 01234
+doubles, built, element 2 an accessor, in a setter on element 0: [1.5,2.5,"set:3.5",4.5,5.5] 5 01234 1.5
+doubles, built, length read-only, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, length read-only, in a setter on element 0: [1.5,2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, a property of its own, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234extra
+doubles, built, a property of its own, in a setter on element 0: [1.5,2.5,3.5,4.5,5.5] 5 01234extra 1.5
+doubles, built, another prototype, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, another prototype, in a setter on element 0: [1.5,2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, sorted again, the other way, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, sorted again, the other way, in a setter on element 0: [4.5,2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, reversed, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, reversed, in a setter on element 0: [2.5,2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, spliced, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, spliced, in a setter on element 0: [1.5,2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, unshifted, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5,2.5] 6 012345
+doubles, built, unshifted, in a setter on element 0: [7,2.5,3.5,4.5,5.5,2.5] 6 012345 1.5
+doubles, built, shifted, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, shifted, in a setter on element 0: [3.5,2.5,3.5,4.5,5.5] 5 01234 1.5
+doubles, built, copyWithin, in the valueOf of the last: [1.5,2.5,3.5,4.5,5.5] 5 01234
+doubles, built, copyWithin, in a setter on element 0: [4.5,2.5,3.5,4.5,5.5] 5 01234 1.5
+objects, nothing, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, nothing, in a setter on element 0: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, frozen, in the valueOf of the last: threw TypeError
+objects, frozen, in a setter on element 0: threw TypeError
+objects, sealed, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, sealed, in a setter on element 0: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, not extensible, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, not extensible, in a setter on element 0: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, shrunk to 2, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, shrunk to 2, in a setter on element 0: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, shrunk to 0, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, shrunk to 0, in a setter on element 0: [null,{"v":2},{"v":3},{"v":4},{"v":5}] 5 1234 {"v":1}
+objects, shrunk to 1, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, shrunk to 1, in a setter on element 0: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, grown, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5},9,9,9] 8 01234567
+objects, grown, in a setter on element 0: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5},9,9,9] 8 01234567 {"v":1}
+objects, grown far, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5},null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null] 50 01234
+objects, grown far, in a setter on element 0: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5},null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null] 50 01234 {"v":1}
+objects, emptied and refilled, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, emptied and refilled, in a setter on element 0: [0,{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, filled with 0, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, filled with 0, in a setter on element 0: [0,{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, filled with texts, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, filled with texts, in a setter on element 0: ["t",{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, filled with doubles, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, filled with doubles, in a setter on element 0: [0.5,{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, filled with objects, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, filled with objects, in a setter on element 0: [{"v":0},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, one double stored, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, one double stored, in a setter on element 0: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, one text stored, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, one text stored, in a setter on element 0: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, NaN stored, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, NaN stored, in a setter on element 0: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, undefined stored, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, undefined stored, in a setter on element 0: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, a hole made, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, a hole made, in a setter on element 0: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, a hole at 0, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, a hole at 0, in a setter on element 0: [null,{"v":2},{"v":3},{"v":4},{"v":5}] 5 1234 {"v":1}
+objects, made sparse, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5},null x 99995,1] 100001 01234100000
+objects, made sparse, in a setter on element 0: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5},null x 99995,1] 100001 01234100000 {"v":1}
+objects, element 2 read-only, in the valueOf of the last: threw TypeError
+objects, element 2 read-only, in a setter on element 0: threw TypeError
+objects, element 0 read-only, in the valueOf of the last: threw TypeError
+objects, element 0 read-only, in a setter on element 0: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, element 2 an accessor, in the valueOf of the last: [{"v":1},{"v":2},"set:{\"v\":3}",{"v":4},{"v":5}] 5 01234
+objects, element 2 an accessor, in a setter on element 0: [{"v":1},{"v":2},"set:{\"v\":3}",{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, length read-only, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, length read-only, in a setter on element 0: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, a property of its own, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234extra
+objects, a property of its own, in a setter on element 0: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234extra {"v":1}
+objects, another prototype, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, another prototype, in a setter on element 0: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, sorted again, the other way, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, sorted again, the other way, in a setter on element 0: [{"v":4},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, reversed, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, reversed, in a setter on element 0: [{"v":2},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, spliced, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, spliced, in a setter on element 0: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, unshifted, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5},{"v":2}] 6 012345
+objects, unshifted, in a setter on element 0: [7,{"v":2},{"v":3},{"v":4},{"v":5},{"v":2}] 6 012345 {"v":1}
+objects, shifted, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, shifted, in a setter on element 0: [{"v":3},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+objects, copyWithin, in the valueOf of the last: [{"v":1},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234
+objects, copyWithin, in a setter on element 0: [{"v":4},{"v":2},{"v":3},{"v":4},{"v":5}] 5 01234 {"v":1}
+texts, a literal, nothing, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, nothing, in a setter on element 0: ["a","b","c","d","e"] 5 01234 "a"
+texts, a literal, frozen, in the valueOf of the last: threw TypeError
+texts, a literal, frozen, in a setter on element 0: threw TypeError
+texts, a literal, sealed, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, sealed, in a setter on element 0: ["a","b","c","d","e"] 5 01234 "a"
+texts, a literal, not extensible, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, not extensible, in a setter on element 0: ["a","b","c","d","e"] 5 01234 "a"
+texts, a literal, shrunk to 2, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, shrunk to 2, in a setter on element 0: ["a","b","c","d","e"] 5 01234 "a"
+texts, a literal, shrunk to 0, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, shrunk to 0, in a setter on element 0: [null,"b","c","d","e"] 5 1234 "a"
+texts, a literal, shrunk to 1, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, shrunk to 1, in a setter on element 0: ["a","b","c","d","e"] 5 01234 "a"
+texts, a literal, grown, in the valueOf of the last: ["a","b","c","d","e",9,9,9] 8 01234567
+texts, a literal, grown, in a setter on element 0: ["a","b","c","d","e",9,9,9] 8 01234567 "a"
+texts, a literal, grown far, in the valueOf of the last: ["a","b","c","d","e",null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null] 50 01234
+texts, a literal, grown far, in a setter on element 0: ["a","b","c","d","e",null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null] 50 01234 "a"
+texts, a literal, emptied and refilled, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, emptied and refilled, in a setter on element 0: [0,"b","c","d","e"] 5 01234 "a"
+texts, a literal, filled with 0, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, filled with 0, in a setter on element 0: [0,"b","c","d","e"] 5 01234 "a"
+texts, a literal, filled with texts, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, filled with texts, in a setter on element 0: ["t","b","c","d","e"] 5 01234 "a"
+texts, a literal, filled with doubles, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, filled with doubles, in a setter on element 0: [0.5,"b","c","d","e"] 5 01234 "a"
+texts, a literal, filled with objects, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, filled with objects, in a setter on element 0: [{"v":0},"b","c","d","e"] 5 01234 "a"
+texts, a literal, one double stored, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, one double stored, in a setter on element 0: ["a","b","c","d","e"] 5 01234 "a"
+texts, a literal, one text stored, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, one text stored, in a setter on element 0: ["a","b","c","d","e"] 5 01234 "a"
+texts, a literal, NaN stored, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, NaN stored, in a setter on element 0: ["a","b","c","d","e"] 5 01234 "a"
+texts, a literal, undefined stored, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, undefined stored, in a setter on element 0: ["a","b","c","d","e"] 5 01234 "a"
+texts, a literal, a hole made, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, a hole made, in a setter on element 0: ["a","b","c","d","e"] 5 01234 "a"
+texts, a literal, a hole at 0, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, a hole at 0, in a setter on element 0: [null,"b","c","d","e"] 5 1234 "a"
+texts, a literal, made sparse, in the valueOf of the last: ["a","b","c","d","e",null x 99995,1] 100001 01234100000
+texts, a literal, made sparse, in a setter on element 0: ["a","b","c","d","e",null x 99995,1] 100001 01234100000 "a"
+texts, a literal, element 2 read-only, in the valueOf of the last: threw TypeError
+texts, a literal, element 2 read-only, in a setter on element 0: threw TypeError
+texts, a literal, element 0 read-only, in the valueOf of the last: threw TypeError
+texts, a literal, element 0 read-only, in a setter on element 0: ["a","b","c","d","e"] 5 01234 "a"
+texts, a literal, element 2 an accessor, in the valueOf of the last: ["a","b","set:\"c\"","d","e"] 5 01234
+texts, a literal, element 2 an accessor, in a setter on element 0: ["a","b","set:\"c\"","d","e"] 5 01234 "a"
+texts, a literal, length read-only, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, length read-only, in a setter on element 0: ["a","b","c","d","e"] 5 01234 "a"
+texts, a literal, a property of its own, in the valueOf of the last: ["a","b","c","d","e"] 5 01234extra
+texts, a literal, a property of its own, in a setter on element 0: ["a","b","c","d","e"] 5 01234extra "a"
+texts, a literal, another prototype, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, another prototype, in a setter on element 0: ["a","b","c","d","e"] 5 01234 "a"
+texts, a literal, sorted again, the other way, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, sorted again, the other way, in a setter on element 0: ["d","b","c","d","e"] 5 01234 "a"
+texts, a literal, reversed, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, reversed, in a setter on element 0: ["b","b","c","d","e"] 5 01234 "a"
+texts, a literal, spliced, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, spliced, in a setter on element 0: ["a","b","c","d","e"] 5 01234 "a"
+texts, a literal, unshifted, in the valueOf of the last: ["a","b","c","d","e","b"] 6 012345
+texts, a literal, unshifted, in a setter on element 0: [7,"b","c","d","e","b"] 6 012345 "a"
+texts, a literal, shifted, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, shifted, in a setter on element 0: ["c","b","c","d","e"] 5 01234 "a"
+texts, a literal, copyWithin, in the valueOf of the last: ["a","b","c","d","e"] 5 01234
+texts, a literal, copyWithin, in a setter on element 0: ["d","b","c","d","e"] 5 01234 "a"
+the elements live on, 8, filled with 0: 8 of 8
+the elements live on, 8, shrunk and grown: 8 of 8
+the elements live on, 8, left alone: 8 of 8
+the elements live on, 64, filled with 0: 64 of 64
+the elements live on, 64, shrunk and grown: 64 of 64
+the elements live on, 64, left alone: 64 of 64
+the elements live on, 500, filled with 0: 500 of 500
+the elements live on, 500, shrunk and grown: 500 of 500
+the elements live on, 500, left alone: 500 of 500
+hot: 45164
+a literal sorted twice is a fresh literal each time: [1,2,3] 3 012 [3,1,2] 3 012

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { join } from "path";
-import { itBundled } from "./expectBundled";
+import { itBundled, type BundlerTestInput } from "./expectBundled";
 
 describe("bundler", () => {
   // --- Explicit mode (optimizeImports list) ---
@@ -2194,6 +2195,506 @@ describe("bundler", () => {
       api.expectFile("/out/entry.js").toContain("a = 1");
     },
   });
+
+  // --- A name read through `export *` into a lazily loaded module ---
+  //
+  // A module that `import()` (without splitting) or `require()` loads is
+  // printed as `var init_lib = __esm(() => {...})`. A static import has to
+  // call `init_lib()` before it reads an export. For `export * from "./lib.js"`
+  // that call belongs to the `export *` statement. A package with
+  // `"sideEffects": false` drops the statement when nothing uses it. So it
+  // counts as used when a name is read through it, and only then.
+  {
+    const pkg = (index: string, more: Record<string, string> = {}, sideEffects: false | string[] = false) => ({
+      "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", sideEffects }),
+      "/node_modules/pkg/index.js": index,
+      "/node_modules/pkg/lib.js": `
+        (globalThis.ran ??= []).push("lib");
+        export const computed = [500].pop();
+        export function get() { return computed; }
+      `,
+      "/node_modules/pkg/other.js": `
+        (globalThis.ran ??= []).push("other");
+        export const other = [1].pop();
+      `,
+      ...more,
+    });
+    const star = pkg(`export * from "./lib.js";`);
+    const read = `console.log(computed, get());`;
+    const lazyImport = `import("pkg/lib.js");`;
+    const namedImport = { "/entry.js": `import { computed, get } from "pkg";\n${read}\n${lazyImport}`, ...star };
+
+    // Each of these printed `undefined undefined`.
+    const fixed: Record<string, Partial<BundlerTestInput> & Pick<BundlerTestInput, "files">> = {
+      NamedImport: { files: namedImport },
+      NamedImportCLI: { files: namedImport, backend: "cli" },
+      NamedImportFormatCjs: { files: namedImport, format: "cjs" },
+      NamedImportFormatIife: { files: namedImport, format: "iife" },
+      NamedImportTargetBun: { files: namedImport, target: "bun" },
+      NamedImportBytecode: { files: namedImport, bytecode: true },
+      NamedImportCompileBytecode: { files: namedImport, target: "bun", format: "esm", bytecode: true, compile: true },
+      NamedImportMinified: {
+        files: namedImport,
+        minifySyntax: true,
+        minifyIdentifiers: true,
+        minifyWhitespace: true,
+      },
+      TwoHops: {
+        files: {
+          "/entry.js": `import { computed, get } from "pkg";\n${read}\n${lazyImport}`,
+          ...pkg(`export * from "./mid.js";`, { "/node_modules/pkg/mid.js": `export * from "./lib.js";` }),
+        },
+      },
+      // The lazily loaded file is itself a barrel: the call belongs to the
+      // statement that enters it, for every name below it.
+      LazyMiddleBarrel: {
+        files: {
+          "/entry.js": `import { computed, get } from "pkg";\n${read}\nimport("pkg/mid.js");`,
+          ...pkg(`export * from "./mid.js";`, { "/node_modules/pkg/mid.js": `export * from "./lib.js";` }),
+        },
+      },
+      LazyMiddleBarrelSecondStar: {
+        files: {
+          "/entry.js": `import { computed, get } from "pkg";\n${read}\nimport("pkg/mid.js");`,
+          ...pkg(`export * from "./mid.js";`, {
+            "/node_modules/pkg/mid.js": `export * from "./other.js";\nexport * from "./lib.js";`,
+          }),
+        },
+      },
+      LazyMiddleBarrelOfThree: {
+        files: {
+          "/entry.js": `import { computed, get } from "pkg";\n${read}\nglobalThis.later = () => require("pkg/mid.js");`,
+          ...pkg(`export * from "./mid.js";`, {
+            "/node_modules/pkg/mid.js": `export * from "./deep.js";`,
+            "/node_modules/pkg/deep.js": `export * from "./lib.js";`,
+          }),
+        },
+      },
+      NamespaceProperty: {
+        files: {
+          "/entry.js": `import * as ns from "pkg";\nconsole.log(ns.computed, ns.get());\n${lazyImport}`,
+          ...star,
+        },
+      },
+      ExportStarAsInAnotherFile: {
+        files: {
+          "/entry.js": `import { ns } from "./mid.js";\nconsole.log(ns.computed, ns.get());\n${lazyImport}`,
+          "/mid.js": `export * as ns from "pkg";`,
+          ...star,
+        },
+      },
+      DefaultExportOfNamespace: {
+        files: {
+          "/entry.js": `import ns from "./mid.js";\nconsole.log(ns.computed, ns.get());\n${lazyImport}`,
+          "/mid.js": `import * as ns from "pkg";\nexport default ns;`,
+          ...star,
+        },
+      },
+      NamedReExportOfBarrel: {
+        files: {
+          "/entry.js": `import { computed, get } from "pkg/top.js";\n${read}\n${lazyImport}`,
+          ...pkg(`export * from "./lib.js";`, {
+            "/node_modules/pkg/top.js": `export { computed, get } from "./index.js";`,
+          }),
+        },
+      },
+      NamespaceValueAboveBarrel: {
+        files: {
+          "/entry.js": `import * as ns from "pkg/top.js";\nconst keep = ns;\nconsole.log(keep.computed, keep.get());\n${lazyImport}`,
+          ...pkg(`export * from "./lib.js";`, { "/node_modules/pkg/top.js": `export * from "./index.js";` }),
+        },
+      },
+      RequireIsTheLazyEdge: {
+        files: {
+          "/entry.js": `import { computed, get } from "pkg";\n${read}\nglobalThis.later = () => require("pkg/lib.js");`,
+          ...star,
+        },
+      },
+      LazyModuleImportsIt: {
+        files: {
+          "/entry.js": `import { computed, get } from "pkg";\n${read}\nimport("./page.js");`,
+          "/page.js": `import { get } from "pkg/lib.js";\nexport const page = get;`,
+          ...star,
+        },
+      },
+      LazyEdgeIsNeverCalled: {
+        files: {
+          "/entry.js": `import { computed, get } from "pkg";\n${read}\nfunction unused() { return ${lazyImport} }`,
+          ...star,
+        },
+      },
+    };
+    for (const [name, options] of Object.entries(fixed)) {
+      itBundled(`barrel/ExportStarOfLazyModule${name}`, { run: { stdout: "500 500" }, ...options });
+    }
+
+    // The `import()` is in an export that nothing uses, so it is not in the
+    // bundle. The module is a lazily loaded one all the same.
+    itBundled("barrel/ExportStarOfLazyModuleLazyEdgeIsDropped", {
+      files: {
+        "/entry.js": `import { computed, get } from "pkg";\nimport { used } from "routes";\nconsole.log(computed, get(), used);`,
+        "/node_modules/routes/package.json": JSON.stringify({ name: "routes", sideEffects: false }),
+        "/node_modules/routes/index.js": `export const used = "used";\nexport const unused = () => ${lazyImport}`,
+        ...star,
+      },
+      run: { stdout: "500 500 used" },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").not.toContain("Promise.resolve");
+      },
+    });
+
+    // The `import()` is in another entry point of the same build.
+    itBundled("barrel/ExportStarOfLazyModuleLazyEdgeInAnotherEntryPoint", {
+      files: {
+        "/a.js": `import { computed, get } from "pkg";\n${read}`,
+        "/b.js": lazyImport,
+        ...star,
+      },
+      entryPoints: ["/a.js", "/b.js"],
+      outdir: "/out",
+      run: { file: "/out/a.js", stdout: "500 500" },
+    });
+
+    // The entry point is the `export *`, and a consumer of the bundle reads the names.
+    itBundled("barrel/ExportStarOfLazyModuleFromEntryPoint", {
+      files: {
+        "/entry.js": `export * from "pkg";\nglobalThis.later = () => ${lazyImport}`,
+        ...star,
+      },
+      runtimeFiles: {
+        "/consumer.js": `import { computed, get } from "./out.js";\n${read}`,
+      },
+      run: { file: "/consumer.js", stdout: "500 500" },
+    });
+
+    // The module runs where the `export *` statement is: after "a", before "c".
+    itBundled("barrel/ExportStarOfLazyModuleRunsInImportOrder", {
+      files: {
+        "/entry.js": `
+          import "./a.js";
+          import { computed } from "pkg";
+          import "./c.js";
+          console.log(globalThis.ran.join(" "), computed);
+          ${lazyImport}
+        `,
+        "/a.js": `(globalThis.ran ??= []).push("a");`,
+        "/c.js": `(globalThis.ran ??= []).push("c");`,
+        ...star,
+      },
+      run: { stdout: "a lib c 500" },
+    });
+
+    // If the module throws, the bundle throws where node does: at load.
+    itBundled("barrel/ExportStarOfLazyModuleThrowsAtLoad", {
+      files: {
+        "/entry.js": `
+          import { get } from "pkg";
+          console.log("not reached", typeof get);
+          try { await ${lazyImport} } catch {}
+        `,
+        ...pkg(`export * from "./lib.js";`, {
+          "/node_modules/pkg/lib.js": `export const computed = (() => { throw new Error("boom"); })();\nexport function get() {}`,
+        }),
+      },
+      run: { error: "error: boom" },
+    });
+
+    // Only the statement that a name is read through runs its module. Each
+    // barrel below has a second lazily loaded module that nothing reads, and
+    // it stays lazy, whatever else the barrel holds.
+    const onlyLibRuns: Record<string, [index: string, options?: Partial<BundlerTestInput>, sideEffects?: string[]]> = {
+      StarsOnly: [`export * from "./other.js";\nexport * from "./lib.js";`],
+      UnreadNamedReExport: [
+        `export * from "./other.js";\nexport * from "./lib.js";\nexport { named } from "./named.js";`,
+      ],
+      UnreadNamedReExportSideEffectsArray: [
+        `export * from "./other.js";\nexport * from "./lib.js";\nexport { named } from "./named.js";`,
+        {},
+        ["*.css"],
+      ],
+      Directive: [`"use client";\nexport * from "./other.js";\nexport * from "./lib.js";`],
+      DirectiveMinifySyntax: [
+        `"use client";\nexport * from "./other.js";\nexport * from "./lib.js";`,
+        { minifySyntax: true },
+      ],
+      Banner: [`/*! banner */\nexport * from "./other.js";\nexport * from "./lib.js";`],
+      UnusedOwnStatement: [`export * from "./other.js";\nexport * from "./lib.js";\nexport const VERSION = String(1);`],
+      UnusedExportStarAs: [
+        `export * from "./other.js";\nexport * from "./lib.js";\nexport * as names from "./named.js";`,
+      ],
+    };
+    for (const [name, [index, options, sideEffects]] of Object.entries(onlyLibRuns)) {
+      itBundled(`barrel/ExportStarOfLazyModuleLeavesSiblingLazy${name}`, {
+        files: {
+          "/entry.js": `
+            import { computed } from "pkg";
+            console.log(computed, globalThis.ran.join(" "));
+            import("pkg/lib.js");
+            await import("pkg/other.js");
+            console.log(globalThis.ran.join(" "));
+          `,
+          ...pkg(index, { "/node_modules/pkg/named.js": `export const named = "named";` }, sideEffects ?? false),
+        },
+        run: { stdout: "500 lib\nlib other" },
+        ...options,
+      });
+    }
+
+    // Without tree shaking a file is one part, so a name that is read through
+    // one statement keeps the whole barrel, as node runs it.
+    itBundled("barrel/ExportStarOfLazyModuleTreeShakingOff", {
+      files: {
+        "/entry.js": `
+          import { computed } from "pkg";
+          console.log(computed, globalThis.ran.join(" "));
+          import("pkg/lib.js");
+          import("pkg/other.js");
+        `,
+        ...pkg(`export * from "./other.js";\nexport * from "./lib.js";`),
+      },
+      treeShaking: false,
+      backend: "api",
+      run: { stdout: "500 other lib" },
+    });
+
+    // A barrel that a name is read through is in the bundle, so its other
+    // statements with an effect run too: a listed side-effect import, and an
+    // `export *` of an external module, which is then loaded.
+    itBundled("barrel/ExportStarOfLazyModuleRunsSideEffectImportOfBarrel", {
+      files: {
+        "/entry.js": `
+          import { computed } from "pkg";
+          console.log(computed, globalThis.ran.join(" "));
+          import("pkg/lib.js");
+          import("pkg/other.js");
+        `,
+        ...pkg(
+          `import "./setup.js";\nexport * from "./other.js";\nexport * from "./lib.js";`,
+          { "/node_modules/pkg/setup.js": `(globalThis.ran ??= []).push("setup");` },
+          ["./setup.js"],
+        ),
+      },
+      run: { stdout: "500 setup lib" },
+    });
+    itBundled("barrel/ExportStarOfLazyModuleLoadsExternalExportStarOfBarrel", {
+      files: {
+        "/entry.js": `import { computed, get } from "pkg";\n${read}\n${lazyImport}`,
+        ...pkg(`export * from "node:path";\nexport * from "./lib.js";`),
+      },
+      target: "node",
+      run: { stdout: "500 500" },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("node:path");
+      },
+    });
+
+    // With splitting, `require()` still makes a lazily loaded module. The
+    // sibling that only the `import()` chunk needs stays in it.
+    for (const [name, options] of Object.entries({
+      TargetNode: { target: "node" },
+      TargetBrowser: { target: "browser" },
+      TargetBunNoSplitRequire: { target: "bun", splitRequire: false },
+    } as const)) {
+      itBundled(`barrel/ExportStarOfLazyModuleSplitting${name}`, {
+        files: {
+          "/entry.js": `
+            import { computed } from "pkg";
+            console.log(computed, globalThis.ran.join(" "));
+            globalThis.later = () => require("pkg/lib.js");
+            const page = await import("./page.js");
+            console.log(page.big(), globalThis.ran.join(" "));
+          `,
+          "/page.js": `export function big() { return require("pkg/big.js").big; }`,
+          ...pkg(`export * from "./lib.js";\nexport * from "./big.js";`, {
+            "/node_modules/pkg/big.js": `(globalThis.ran ??= []).push("big");\nexport const big = ["BIG_MODULE"].pop();`,
+          }),
+        },
+        splitting: true,
+        outdir: "/out",
+        ...options,
+        run: { file: "/out/entry.js", stdout: "500 lib\nBIG_MODULE lib big" },
+        onAfterBundle(api) {
+          const chunksWithBig = readdirSync(api.outdir).filter(name =>
+            api.readFile(`/out/${name}`).includes("BIG_MODULE"),
+          );
+          expect(chunksWithBig).toEqual([expect.stringMatching(/^page/)]);
+        },
+      });
+    }
+
+    // The default for `--target=bun`: a `require()` in a CommonJS file loads a
+    // chunk (`import.meta.require`). The module is a lazily loaded one there too.
+    itBundled("barrel/ExportStarOfLazyModuleSplittingTargetBun", {
+      files: {
+        "/entry.js": `
+          import { computed } from "pkg";
+          import later from "./later.cjs";
+          console.log(computed, globalThis.ran.join(" "));
+          globalThis.later = later;
+          const page = await import("./page.js");
+          console.log(page.big(), globalThis.ran.join(" "));
+        `,
+        "/later.cjs": `module.exports = () => require("pkg/lib.js");`,
+        "/page.js": `export function big() { return require("pkg/big.js").big; }`,
+        ...pkg(`export * from "./lib.js";\nexport * from "./big.js";`, {
+          "/node_modules/pkg/big.js": `(globalThis.ran ??= []).push("big");\nexport const big = ["BIG_MODULE"].pop();`,
+        }),
+      },
+      splitting: true,
+      outdir: "/out",
+      target: "bun",
+      run: { file: "/out/entry.js", stdout: "500 lib\nBIG_MODULE lib big" },
+      onAfterBundle(api) {
+        const names = readdirSync(api.outdir);
+        expect(names.some(name => api.readFile(`/out/${name}`).includes("import.meta.require("))).toBe(true);
+        const chunksWithBig = names.filter(name => api.readFile(`/out/${name}`).includes("BIG_MODULE"));
+        expect(chunksWithBig).toEqual([expect.stringMatching(/^big/)]);
+      },
+    });
+
+    // With splitting, the statement can be in another chunk than the reader.
+    // The reader's chunk has to load that chunk first. Here "/shared.js" is in a
+    // chunk of the entry points a and b, and the barrel in a chunk of a, b and c.
+    const sharedReader = {
+      "/a.js": `import "./shared.js";\nglobalThis.later = () => require("pkg/lib.js");\nconsole.log("a");`,
+      "/b.js": `import "./shared.js";\nconsole.log("b");`,
+      "/c.js": `import { computed } from "pkg";\nconsole.log("c", computed);`,
+      "/shared.js": `import "./first.js";\nimport { computed, get } from "pkg";\nconsole.log("shared", computed, get());`,
+      "/first.js": `console.log("first");`,
+    };
+    const sharedReaderRuns = [
+      { file: "/out/a.js", stdout: "first\nshared 500 500\na" },
+      { file: "/out/b.js", stdout: "first\nshared 500 500\nb" },
+      { file: "/out/c.js", stdout: "c 500" },
+    ];
+    itBundled("barrel/ExportStarOfLazyModuleSplittingReaderInSharedChunk", {
+      files: { ...sharedReader, ...star },
+      entryPoints: ["/a.js", "/b.js", "/c.js"],
+      splitting: true,
+      outdir: "/out",
+      target: "node",
+      run: sharedReaderRuns,
+    });
+    // The same with an own export of the barrel that a and b use. This one is
+    // right without the statement's dependency, for a and b.
+    itBundled("barrel/ExportStarOfLazyModuleSplittingReaderInSharedChunkOwnExport", {
+      files: {
+        ...sharedReader,
+        "/a.js": `import "./shared.js";\nimport { own } from "pkg";\nglobalThis.later = () => require("pkg/lib.js");\nconsole.log("a", own);`,
+        "/b.js": `import "./shared.js";\nimport { own } from "pkg";\nconsole.log("b", own);`,
+        ...pkg(`export * from "./lib.js";\nexport const own = "own";`),
+      },
+      entryPoints: ["/a.js", "/b.js", "/c.js"],
+      splitting: true,
+      outdir: "/out",
+      target: "node",
+      run: [
+        { file: "/out/a.js", stdout: "first\nshared 500 500\na own" },
+        { file: "/out/b.js", stdout: "first\nshared 500 500\nb own" },
+        { file: "/out/c.js", stdout: "c 500" },
+      ],
+    });
+
+    // A barrel that is in the bundle for one of its own exports does not run a
+    // lazily loaded module that nothing reads a name of. `export { x } from`
+    // does the same.
+    itBundled("barrel/ExportStarOfLazyModuleStaysLazyBesideOwnExportOfBarrel", {
+      files: {
+        "/entry.js": `
+          import { own } from "pkg";
+          console.log(own, String(globalThis.ran));
+          await ${lazyImport}
+          console.log(globalThis.ran.join(" "));
+        `,
+        ...pkg(`export * from "./lib.js";\nexport const own = "own";`),
+      },
+      run: { stdout: "own undefined\nlib" },
+    });
+
+    // A run-time `export *` beside it: one name of each is read.
+    itBundled("barrel/ExportStarOfLazyModuleBesideCommonJSExportStar", {
+      files: {
+        "/entry.js": `import { computed, dynamic } from "pkg";\nconsole.log(computed, dynamic);\n${lazyImport}`,
+        ...pkg(`export * from "./lib.js";\nexport * from "./dynamic.cjs";`, {
+          "/node_modules/pkg/dynamic.cjs": `exports.dynamic = "dynamic";`,
+        }),
+      },
+      run: { stdout: "500 dynamic" },
+    });
+
+    // These are right without the statement's dependency and must not change.
+
+    // Nothing reads a name of the lazily loaded module: it stays lazy.
+    itBundled("barrel/ExportStarOfLazyModuleUnreadStaysLazy", {
+      files: {
+        "/entry.js": `
+          import { plain } from "pkg";
+          console.log(plain, String(globalThis.ran));
+          await ${lazyImport}
+          console.log(globalThis.ran.join(" "));
+        `,
+        ...pkg(`export * from "./lib.js";\nexport * from "./plain.js";`, {
+          "/node_modules/pkg/plain.js": `export const plain = "plain";`,
+        }),
+      },
+      run: { stdout: "plain undefined\nlib" },
+    });
+    itBundled("barrel/ExportStarOfLazyModuleOwnExportAndStarName", {
+      files: {
+        "/entry.js": `import { own, computed, get } from "pkg";\nconsole.log(own, computed, get());\n${lazyImport}`,
+        ...pkg(`export * from "./lib.js";\nexport const own = "own";`),
+      },
+      run: { stdout: "own 500 500" },
+    });
+    itBundled("barrel/ExportStarOfLazyModuleNamespaceValue", {
+      files: {
+        "/entry.js": `import * as ns from "pkg";\nconst keep = ns;\nconsole.log(keep.computed, keep.get());\n${lazyImport}`,
+        ...star,
+      },
+      run: { stdout: "500 500" },
+    });
+    itBundled("barrel/ExportStarOfLazyModuleRequireOfBarrel", {
+      files: {
+        "/entry.js": `const { computed, get } = require("pkg");\n${read}\n${lazyImport}`,
+        ...star,
+      },
+      run: { stdout: "500 500" },
+    });
+    // The barrel is the entry point.
+    itBundled("barrel/ExportStarOfLazyModuleEntryPointIsBarrel", {
+      files: {
+        "/node_modules/pkg/entry.js": `export * from "./lib.js";\nexport const later = () => import("./lib.js");`,
+        ...star,
+      },
+      entryPoints: ["/node_modules/pkg/entry.js"],
+      runtimeFiles: {
+        "/consumer.js": `import { computed, get } from "./out.js";\n${read}`,
+      },
+      run: { file: "/consumer.js", stdout: "500 500" },
+    });
+    // A barrel with side effects runs each module it re-exports, read or not.
+    itBundled("barrel/ExportStarOfLazyModuleBarrelWithSideEffects", {
+      files: {
+        "/entry.js": `import "./barrel.js";\nconsole.log(String(globalThis.ran));\n${lazyImport}`,
+        "/barrel.js": `export * from "pkg/lib.js";`,
+        ...star,
+      },
+      run: { stdout: "lib" },
+    });
+    // A lazily loaded module that only declares has no `init_fns()` to call.
+    itBundled("barrel/ExportStarOfLazyModuleDeclarationOnly", {
+      files: {
+        "/entry.js": `import { add } from "pkg";\nconsole.log(add(1, 2));\nglobalThis.later = () => require("pkg/fns.js");`,
+        ...pkg(`export * from "./fns.js";`, {
+          "/node_modules/pkg/fns.js": `export function add(a, b) { return a + b; }`,
+        }),
+      },
+      run: { stdout: "3" },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").not.toContain("init_fns");
+      },
+    });
+  }
 
   // The barrel deferral must produce the same output no matter in which order
   // the parse tasks finish. When a request un-defers a barrel record, every

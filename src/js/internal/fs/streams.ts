@@ -437,8 +437,7 @@ function close(stream: FileStream, err: Error | null | undefined, cb: ErrorCallb
     return;
   }
 
-  // A raw descriptor 0 is left open, as in node: process.stdin over a file is such a stream.
-  // A FileHandle gets its ref back whatever its number is.
+  // A raw fd 0 stays open, as in node (process.stdin over a file). A FileHandle always gets its ref back.
   if (stream[kHandle] ? stream.fd == null : !stream.fd) {
     cb(err);
   } else if (stream.flush) {

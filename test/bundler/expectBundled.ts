@@ -1910,7 +1910,7 @@ for (const [key, blob] of build.outputs) {
               const match = /at (?:<[^>]+> \()?([^)]+):(\d+):(\d+)\)?$/.exec(stackTraceLine);
               if (match) {
                 const line = readFileSync(match[1], "utf-8").split("\n")[+match[2] - 1];
-                if (!run.errorLineMatch.test(line)) {
+                if (!new RegExp(run.errorLineMatch).test(line)) {
                   throw new Error(`${prefix}Source code "${line}" does not match expression ${run.errorLineMatch}`);
                 }
               } else {
@@ -1952,14 +1952,14 @@ for (const [key, blob] of build.outputs) {
             }
             expect(result).toBe(expected);
           } else {
-            // A copy: test() moves `lastIndex` of a global or sticky expression, and toMatch() starts there.
+            // Copies: a match moves `lastIndex` of a global or sticky expression, and the next match starts there.
             if (!new RegExp(expected).test(result)) {
               console.log(`runtime failed file: ${file}`);
               console.log(`${name} output:`);
               console.log(result);
               console.log(`---`);
             }
-            expect(result).toMatch(expected);
+            expect(result).toMatch(new RegExp(expected));
           }
         }
 

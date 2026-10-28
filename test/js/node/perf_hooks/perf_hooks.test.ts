@@ -330,6 +330,97 @@ test("timerify and AsyncResource.bind survive Object.prototype.get pollution", a
   expect(exitCode).toBe(0);
 });
 
+// Performance Timeline, observe() step 7.5: with { buffered: true } the entries
+// there are join the observer buffer, and a task delivers them. The callback
+// does not run inside observe(), which is what WPT
+// performance-timeline/buffered-does-not-sync-invoke.html checks.
+// Verified against Node v26.3.0.
+test("observe({type, buffered: true}) buffers synchronously and delivers as one deferred batch", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { performance, PerformanceObserver } = require("node:perf_hooks");
+       const names = list => list.getEntries().map(entry => entry.name);
+       (async () => {
+         const out = {};
+
+         // The callback does not run inside observe(). takeRecords() right
+         // after it returns the buffered entries and the entry queued since.
+         performance.mark("pre1"); performance.mark("pre2");
+         let calledInsideObserve = false;
+         const oA = new PerformanceObserver(() => { calledInsideObserve = true; });
+         oA.observe({ type: "mark", buffered: true });
+         out.calledInsideObserve = calledInsideObserve;
+         performance.mark("post1");
+         out.takeRecords = oA.takeRecords().map(entry => entry.name);
+         oA.disconnect(); performance.clearMarks();
+
+         // The buffered entry and an entry queued before the delivery arrive
+         // in one list.
+         performance.mark("b1");
+         const batches = [];
+         const delivered = Promise.withResolvers();
+         const oB = new PerformanceObserver(list => { batches.push(names(list)); delivered.resolve(); });
+         oB.observe({ type: "mark", buffered: true });
+         performance.mark("b2");
+         await delivered.promise;
+         oB.disconnect(); performance.clearMarks();
+         out.batches = batches;
+
+         // disconnect() before the delivery drops the buffered entries. A mark
+         // made after it is delivered no earlier than they would be, so once
+         // the second observer has its list the first one was not called.
+         performance.mark("c1");
+         const late = [];
+         const oC = new PerformanceObserver(list => late.push(names(list)));
+         oC.observe({ type: "mark", buffered: true });
+         oC.disconnect();
+         const later = Promise.withResolvers();
+         const oD = new PerformanceObserver(() => later.resolve());
+         oD.observe({ type: "mark" });
+         performance.mark("c2");
+         await later.promise;
+         oD.disconnect(); performance.clearMarks();
+         out.afterDisconnect = late;
+
+         // A buffered observe() appends to what the observer already holds.
+         // It does not merge the two by start time.
+         performance.mark("e1", { startTime: 10 });
+         performance.mark("e2", { startTime: 30 });
+         performance.measure("e3", { start: 20, end: 25 });
+         const oE = new PerformanceObserver(() => {});
+         oE.observe({ type: "mark", buffered: true });
+         oE.observe({ type: "measure", buffered: true });
+         out.appended = oE.takeRecords().map(entry => entry.name);
+         oE.disconnect(); performance.clearMarks(); performance.clearMeasures();
+
+         // The delivery is the only work left, and the process waits for it.
+         performance.mark("d1");
+         new PerformanceObserver((list, observer) => {
+           observer.disconnect();
+           out.last = names(list);
+           console.log(JSON.stringify(out));
+         }).observe({ type: "mark", buffered: true });
+       })();`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    calledInsideObserve: false,
+    takeRecords: ["pre1", "pre2", "post1"],
+    batches: [["b1", "b2"]],
+    afterDisconnect: [],
+    appended: ["e1", "e2", "e3"],
+    last: ["d1"],
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("net entries are instanceof PerformanceEntry", async () => {
   const { promise, resolve } = Promise.withResolvers<PerformanceNodeEntry>();
   const observer = new PerformanceObserver(list => resolve(list.getEntries()[0] as PerformanceNodeEntry));
@@ -431,7 +522,7 @@ test("PerformanceObserver delivers entries to a callback created in a node:vm co
              perfHooksClass: await fromTheHost(perfHooks.PerformanceObserver, { entryTypes: ["mark"] }, () =>
                performance.mark("perf_hooks"),
              ),
-             // observe({ buffered: true }) delivers before it returns, not from a task.
+             // observe({ buffered: true }) queues the entries there are. The callback gets them later.
              buffered: await fromTheHost(PerformanceObserver, { type: "measure", buffered: true }),
            }),
          );

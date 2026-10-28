@@ -105,6 +105,7 @@ public:
     // A Bun.ModuleGraph's context stopped: the observers its script made observe nothing more
     // (they are registered with the realm's Performance, which would keep them and their graph).
     void disconnectObserversOf(const ScriptExecutionContext&);
+    void scheduleTaskIfNeeded();
 
     static Seconds reduceTimeResolution(Seconds);
 
@@ -128,7 +129,6 @@ private:
     void derefEventTarget() final { deref(); }
 
     void queueEntry(PerformanceEntry&);
-    void scheduleTaskIfNeeded();
 
     // mutable RefPtr<PerformanceNavigation> m_navigation;
     mutable RefPtr<PerformanceTiming> m_timing;

@@ -657,6 +657,19 @@ const throwingGetter = `{
   },
 }`;
 
+// The same getter behind util.deprecate(): the accessor's getter is then a function of Bun's own (compiled from
+// src/js) that calls the user's function, and it is just as much user code.
+const deprecatedThrowingGetter = `{
+  enumerable: true,
+  configurable: true,
+  get: require("node:util").deprecate(function () {
+    try {
+      require("./Q.mjs");
+    } catch {}
+    throw new Error("getter throws");
+  }, "userDefined is deprecated"),
+}`;
+
 const linkReentrancyCases: {
   name: string;
   install: string;
@@ -692,6 +705,18 @@ const linkReentrancyCases: {
   {
     name: "node:fs, an accessor on the exports object of a src/js builtin",
     install: `Object.defineProperty(require("node:fs"), "userDefined", ${throwingGetter});`,
+    exportName: "userDefined",
+    importFrom: "node:fs",
+  },
+  {
+    name: "node:process, an accessor whose getter is util.deprecate() of a user function",
+    install: `process.noDeprecation = true;\nObject.defineProperty(process, "userDefined", ${deprecatedThrowingGetter});`,
+    exportName: "userDefined",
+    importFrom: "node:process",
+  },
+  {
+    name: "node:fs, an accessor whose getter is util.deprecate() of a user function",
+    install: `process.noDeprecation = true;\nObject.defineProperty(require("node:fs"), "userDefined", ${deprecatedThrowingGetter});`,
     exportName: "userDefined",
     importFrom: "node:fs",
   },

@@ -187,7 +187,7 @@ function normalizePath(path: string | URL | Bun.BunFile | undefined) {
     } else {
       // This is mostly for import.meta.resolve()
       // https://github.com/oven-sh/bun/issues/10304
-      path = require("internal/url").toPathIfFileURL(path);
+      path = require("internal/url").toPathIfFileURL(path) as string;
     }
   }
 

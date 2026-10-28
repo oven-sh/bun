@@ -7,7 +7,8 @@
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js
 require("internal/stream");
 const { Stream } = require("internal/streams/legacy");
-const { isUint8Array, validateString } = require("internal/validators");
+const { validateString } = require("internal/validators");
+const { isUint8Array } = require("node:util/types");
 const { deprecate } = require("internal/util/deprecate");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
 const http = require("internal/http");

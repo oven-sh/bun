@@ -194,7 +194,7 @@ async function request(
     if (!(url instanceof URL)) {
       // TODO: Parse undici UrlObject
       if (!require("internal/url").isURL(url)) throw new Error("not implemented");
-      url = new URL(url.href);
+      url = new URL((url as URL).href);
     }
   } else throw new TypeError("url must be a string, URL, or UrlObject");
 

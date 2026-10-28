@@ -3939,7 +3939,7 @@ function emitStreamErrorNT(
       if (stream instanceof ServerHttp2Stream && !stream.readableDidRead && stream.readableFlowing === null)
         stream.resume();
       else stream.read(0);
-      if (destroy_self) self.destroy();
+      if (destroy_self) self!.destroy();
       return;
     }
     if (stream.readable) {
@@ -6098,7 +6098,7 @@ class ClientHttp2Session extends Http2Session {
         if (destroysSocket) {
           // See the client session: end first, destroy a tick later (node's
           // finishSessionClose Windows-ECONNRESET avoidance).
-          endThenDestroySessionSocket(socket, error);
+          endThenDestroySessionSocket(socket, error ?? undefined);
         } else {
           // See the client session's destroy: Node's finishSessionClose resumes
           // the socket on a graceful close so unread inbound bytes cannot turn

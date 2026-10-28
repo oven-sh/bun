@@ -20,7 +20,7 @@ const {
 const { parseUniqueHeadersOption, OutgoingMessage } = require("node:_http_outgoing");
 const http = require("internal/http");
 const Agent = require("node:_http_agent");
-const { urlToHttpOptions } = require("internal/url");
+const { isURL, urlToHttpOptions } = require("internal/url");
 const { checkShouldUseProxy } = http;
 // A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
 const kSkipPendingData: typeof http.kSkipPendingData = http.kSkipPendingData;
@@ -105,10 +105,6 @@ function closeRequest(req: $Node.ClientRequest) {
   if (req[kClientAsyncContext] !== undefined) req[kClientAsyncContext] = undefined;
   req._closed = true;
   req.emit("close");
-}
-
-function isURLInstance(input: unknown): input is URL {
-  return input != null && typeof input === "object" && input instanceof URL;
 }
 
 // When proxying a HTTP request, the following needs to be done:
@@ -290,7 +286,7 @@ function ClientRequest(
   if (typeof input === "string") {
     const urlStr = input;
     input = urlToHttpOptions(new URL(urlStr));
-  } else if (isURLInstance(input)) {
+  } else if (isURL(input)) {
     // url.URL instance
     input = urlToHttpOptions(input);
   } else {

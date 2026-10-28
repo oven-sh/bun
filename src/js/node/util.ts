@@ -57,6 +57,7 @@ interface UtilModule {
   TextEncoder: typeof TextEncoder;
   MIMEType: typeof MIMEType;
   MIMEParams: typeof MIMEParams;
+  diff: typeof diff;
   isArray: typeof $isArray;
   isBoolean: typeof isBoolean;
   isBuffer: typeof isBuffer;

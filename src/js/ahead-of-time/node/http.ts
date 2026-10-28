@@ -15,10 +15,6 @@ const { METHODS, STATUS_CODES, setMaxHTTPHeaderSize, getMaxHTTPHeaderSize } = re
 
 if (process.env.NODE_DEBUG) require("node:util").debuglog("http");
 
-const WebSocket = globalThis.WebSocket;
-const CloseEvent = globalThis.CloseEvent;
-const MessageEvent = globalThis.MessageEvent;
-
 type ServerParameters = Parameters<typeof Server>;
 type ClientRequestParameters = Parameters<typeof ClientRequest>;
 

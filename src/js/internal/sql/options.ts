@@ -263,7 +263,7 @@ function resolveTarget(
 ] {
   let target: string | URL | null = null;
   // An options object can have its own `href` and `protocol`. A URL inherits them as accessors.
-  if (typeof first === "object" && first && !Object.hasOwn(first, "href")) first = textOfForeignURL(first);
+  if (typeof first === "object" && first && !ObjectHasOwn(first, "href")) first = textOfForeignURL(first);
   if (typeof first === "string" || first instanceof URL) {
     target = first;
     first = undefined;

@@ -36,6 +36,7 @@ interface StdioWriteStream extends $Node.Writable {
   fd: number;
   _type: "tty" | "fs";
   _isStdio: boolean;
+  _handle?: { fd: number; setBlocking(blocking: boolean): number };
   /** `tty.WriteStream` only. */
   _refreshSize(): void;
   destroySoon: $Node.Writable["destroy"];

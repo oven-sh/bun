@@ -322,7 +322,7 @@ function createJSDOM(requireFromTest: NodeJS.Require, exports: any, options: any
   // Named by their property key, since the bundler renames a class declaration that shadows a global.
   const compat = {
     Request: class extends NativeRequest {
-      constructor(input: any, init?: RequestInit) {
+      constructor(input: any, init?: ConstructorParameters<typeof NativeRequest>[1]) {
         const body = init?.body;
         if (body instanceof win.Blob) init = { ...init, body: toNativeBlob(body) };
         else if (body instanceof win.FormData) init = { ...init, body: toNativeFormData(body) };

@@ -384,11 +384,8 @@ impl<T: DirEntryIterator + ?Sized> DirEntryIterator for &T {
     }
 }
 
-/// The names `Resolver::dir_info_uncached` looks up in a directory's own
-/// listing. A listing built from probes of these names (`complete == false`)
-/// is enough to build the `DirInfo` of an ancestor directory without reading
-/// every entry of it. `get_comptime_query` and `has_comptime_query` assert
-/// that a probe-only listing is only ever asked about one of these names.
+/// The only names `Resolver::dir_info_uncached` looks up in a directory's own
+/// listing. A probe-only listing holds these and nothing else.
 const DIR_INFO_PROBE_NAMES: [&bun_core::ZStr; 4] = [
     bun_core::zstr!("package.json"),
     bun_core::zstr!("tsconfig.json"),
@@ -402,18 +399,13 @@ pub struct DirEntry {
     pub dir: &'static [u8],
     pub fd: Fd,
     pub(crate) generation: Generation,
-    /// `false` while `data` holds only the names that were probed one by one
-    /// (`add_probed_entry`), not every entry of the directory. Every accessor
-    /// that hands the listing out for a general lookup or an iteration reads
-    /// the directory in full first, the same way a stale `generation` is
-    /// refreshed.
+    /// `false` while `data` holds only `DIR_INFO_PROBE_NAMES`. Accessors
+    /// refresh such a listing in full, like a stale `generation`.
     pub(crate) complete: bool,
     pub data: dir_entry::EntryMap,
 }
 
 impl DirEntry {
-    /// `false` for a probe-only listing of an ancestor directory; see the
-    /// field.
     #[inline]
     pub fn is_complete(&self) -> bool {
         self.complete
@@ -429,9 +421,7 @@ impl DirEntry {
         }
     }
 
-    /// Maps what `readdir` or `lstat` says about a name to the kind stored in
-    /// the entry. `None` means the kind is found out later by `stat`. Device,
-    /// pipe and socket entries are not part of a listing at all.
+    /// `None`: not listed. `Some(None)`: the kind needs a later `stat`.
     fn entry_kind_to_store(kind: bun_sys::FileKind) -> Option<Option<EntryKind>> {
         use bun_sys::FileKind as DK;
         match kind {
@@ -455,9 +445,8 @@ impl DirEntry {
         }
     }
 
-    /// Fills a fresh listing with the names `Resolver::dir_info_uncached`
-    /// asks about, one `lstat` each, and marks it probe-only. `dir_fd` is an
-    /// open handle on `self.dir`.
+    /// Fills a fresh listing with `DIR_INFO_PROBE_NAMES`, one `lstat` each,
+    /// and marks it probe-only. `dir_fd` is an open handle on `self.dir`.
     pub(crate) fn probe_dir_info_names(&mut self, dir_fd: Fd) -> crate::CrateResult<()> {
         debug_assert!(self.data.count() == 0);
         self.complete = false;
@@ -468,10 +457,8 @@ impl DirEntry {
         Ok(())
     }
 
-    /// Looks up `base` in this listing. In a probe-only listing a miss is
-    /// answered with one `lstat` of `self.dir/base`, which adds the entry
-    /// when it exists. This is how a child directory finds itself in a
-    /// probe-only parent listing to resolve its real path.
+    /// `get`, except that a miss in a probe-only listing is answered with one
+    /// `lstat` of `self.dir/base`, which adds the entry when it exists.
     pub(crate) fn get_or_probe(
         &mut self,
         base: &[u8],
@@ -500,10 +487,8 @@ impl DirEntry {
         Ok(self.lookup(base))
     }
 
-    /// Adds one name to a probe-only listing, from an `lstat` of
-    /// `dir_fd/name` (`Fd::INVALID` makes `name` relative to the process cwd,
-    /// so an absolute path works too). A name that does not exist, or that
-    /// `readdir` would not list either, adds nothing.
+    /// Adds the basename of `name` from an `lstat` of `dir_fd/name`
+    /// (`Fd::INVALID` for an absolute `name`). A missing name adds nothing.
     fn add_probed_entry(
         &mut self,
         dir_fd: Fd,

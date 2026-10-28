@@ -252,10 +252,7 @@ impl DirInfo {
     }
 
     /// [`get_entries_ref_locked`](Self::get_entries_ref_locked) that hands
-    /// out a probe-only listing as it is, mutably, so the caller can probe
-    /// one more name into it (`DirEntry::get_or_probe`). Same lock
-    /// contract; the `&'static mut` is the sole reference while the lock is
-    /// held.
+    /// out a probe-only listing as it is, for `DirEntry::get_or_probe`.
     pub(crate) fn get_entries_mut_locked_allow_partial(
         &self,
         generation: Generation,
@@ -292,9 +289,7 @@ impl DirInfo {
     }
 
     /// As-cached listing access with no generation check. The caller must
-    /// hold `entries_mutex` (a concurrent stale-generation re-read rewrites
-    /// the `.data` map in place under it). A probe-only listing of an
-    /// ancestor directory (`DirEntry::complete`) is read in full first.
+    /// hold `entries_mutex`. A probe-only listing is read in full first.
     pub fn get_entries_const(&self) -> Option<&fs::DirEntry> {
         fs::FileSystem::instance()
             .fs

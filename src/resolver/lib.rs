@@ -1104,9 +1104,6 @@ pub mod fs {
                     // while the first is on the borrow stack (Stacked Borrows hygiene).
                     match unsafe { &mut *cached_ptr } {
                         EntriesOption::Entries(e) if e.generation < generation || !e.complete => {
-                            // A probe-only listing of an ancestor directory
-                            // (see `DirEntry::complete`) is read in full here,
-                            // in place, so every lookup below sees every entry.
                             generation = generation.max(e.generation);
                             in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
                         }
@@ -1157,9 +1154,8 @@ pub mod fs {
                 DirnameStore::instance().append_slice(dir)?
             };
 
-            // Cache miss: read the directory entries. The entries of a
-            // probe-only listing are named after the lookups that probed
-            // them, not after the directory, so they are not carried over.
+            // Cache miss: read the directory entries. A probe-only listing's
+            // entries carry the lookup's spelling, so they are not reused.
             let prev = in_place
                 .filter(|p| {
                     // SAFETY: BSSMap-owned, no aliasing here (entries_mutex held).
@@ -1481,9 +1477,7 @@ pub mod fs {
         }
 
         /// [`entries_at_locked`](Self::entries_at_locked) that hands out a
-        /// probe-only listing (`DirEntry::complete == false`) as it is. Only
-        /// for a caller that looks up one name and probes it itself when the
-        /// listing does not have it (`Resolver::dir_info_uncached`).
+        /// probe-only listing as it is, for `DirEntry::get_or_probe`.
         pub(crate) fn entries_at_locked_allow_partial(
             &mut self,
             index: bun_alloc::IndexType,
@@ -1527,16 +1521,12 @@ pub mod fs {
                         let _ = bun_sys::close(h);
                     });
                     // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
-                    // A probe-only listing's entries are not carried over (see
-                    // `read_directory_with_iterator`).
                     let prev = unsafe { (*e_ptr).complete }.then(|| unsafe { &mut (*e_ptr).data });
                     match self.readdir(false, prev, dir, generation, handle, ()) {
                         Ok(mut new_entry) => {
                             // SAFETY: see above.
                             unsafe {
-                                // A listing fd kept for `bun run` stays valid
-                                // across the re-read: `openat` callers use it
-                                // as a base directory, not for iteration.
+                                // The stored fd is an `openat` base, still valid.
                                 new_entry.fd = (*e_ptr).fd;
                                 (*e_ptr).data.clear();
                                 *e_ptr = new_entry;

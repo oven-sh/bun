@@ -3786,8 +3786,7 @@ impl RunCommand {
                     .ok()
                     .flatten()
                 {
-                    // `.data` iteration must hold `entries_mutex`
-                    // (uncontended on this single-threaded CLI path).
+                    // `.data` iteration must hold `entries_mutex`.
                     let _entries_lock = bun_resolver::fs::FileSystem::instance()
                         .fs
                         .entries_mutex
@@ -3848,8 +3847,7 @@ impl RunCommand {
                 .ok()
                 .flatten()
             {
-                // `.data` iteration must hold `entries_mutex`
-                // (uncontended on this single-threaded CLI path).
+                // `.data` iteration must hold `entries_mutex`.
                 let _entries_lock = bun_resolver::fs::FileSystem::instance()
                     .fs
                     .entries_mutex

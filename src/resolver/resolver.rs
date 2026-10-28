@@ -4665,15 +4665,10 @@ impl<'a> Resolver<'a> {
                 core::ptr::null_mut();
             let mut needs_iter = true;
             let mut in_place: Option<*mut Fs::file_system::DirEntry> = None;
-            // Queue index 0 is the directory that was asked for. Everything
-            // above it is only visited to build its `DirInfo`, which needs a
-            // few fixed names and nothing else. A directory at or below the
-            // working directory is read in full anyway: files are resolved
-            // in it later, and a listing answers every extension probe at
-            // once. So is a `node_modules` directory, which `load_as_file`
-            // reads in full on the first bare import. What is left are the
-            // ancestors of the working directory (`/`, `$HOME`, `/tmp`),
-            // whose size has nothing to do with the program.
+            // Queue index 0 is the requested directory. An ancestor above the
+            // working directory only needs a few fixed names for its
+            // `DirInfo`. Directories below the cwd and `node_modules` are
+            // resolved in later, so they are read in full now.
             let is_ancestor = queue_slice_len > 0;
             let probe_only = is_ancestor
                 && bun_paths::resolve_path::is_parent_or_equal(
@@ -4710,9 +4705,7 @@ impl<'a> Resolver<'a> {
                     self.generation,
                 );
 
-                // A re-read of an existing listing (`in_place`) is always a
-                // full one, so a complete listing never turns into a
-                // probe-only one.
+                // A re-read (`in_place`) is always a full one.
                 let probe_only = probe_only && in_place.is_none();
                 if !probe_only {
                     // Pre-size `data` so the per-entry inserts below skip the
@@ -4727,9 +4720,8 @@ impl<'a> Resolver<'a> {
                 if probe_only && open_dir.is_valid() {
                     new_entry.probe_dir_info_names(open_dir)?;
                 } else if open_dir.is_valid() {
-                    // The entries of a probe-only listing are named after
-                    // the lookup that probed them, not after the directory.
-                    // Do not carry them into the full listing.
+                    // A probe-only listing's entries are not reused (see
+                    // `read_directory_with_iterator`).
                     // SAFETY: see block-wide note above.
                     let prev_map = in_place.filter(|existing| unsafe { (**existing).complete });
                     let mut dir_iterator = bun_sys::iterate_dir(open_dir);
@@ -6389,9 +6381,6 @@ impl<'a> Resolver<'a> {
                 if let Some(parent_entries) =
                     parent_.get_entries_mut_locked_allow_partial(self.generation)
                 {
-                    // A probe-only parent listing does not know its children.
-                    // `get_or_probe` adds this one name with one `lstat`
-                    // instead of reading the parent in full.
                     if let Some(lookup) = parent_entries.get_or_probe(base)? {
                         let entries_fd = entries!().fd;
                         if entries_fd.is_valid()

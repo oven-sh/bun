@@ -7306,9 +7306,8 @@ pub(crate) fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
     let path = bun_paths::string_paths::to_nt_path16(&mut wbuf.0[..], sub).as_slice();
     exists_at_type_nt(dir, path)
 }
-/// Kind of the entry `sub` itself: a symlink (a reparse point on Windows) is
-/// reported as `FileKind::SymLink` and not followed. This is what one
-/// `readdir` record would say about the same name.
+/// Kind of the entry `sub` itself. A symlink (a reparse point on Windows) is
+/// `FileKind::SymLink`, not followed, like a `readdir` record.
 pub fn entry_kind_at(dir: Fd, sub: &ZStr) -> Maybe<FileKind> {
     #[cfg(unix)]
     {

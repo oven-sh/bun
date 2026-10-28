@@ -165,7 +165,8 @@ for (const [name, copy] of copyForms) {
         const from = join(dir, "from");
         setTimes(from, entries, past);
 
-        await copy(from, join(dir, "to"), { recursive: true });
+        // With no filter, Bun on macOS clones a new destination (clonefile(2)), and a clone keeps every time.
+        await copy(from, join(dir, "to"), { recursive: true, filter: () => true });
         await copy(from, join(dir, "existing"), { recursive: true });
 
         const directories = ["to", "to/a", "to/a/b", "to/empty", "existing", "existing/a", "existing/a/b"];

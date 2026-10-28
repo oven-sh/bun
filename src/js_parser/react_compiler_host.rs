@@ -33,11 +33,24 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     fn import_records(&self) -> &[js_ast::ImportRecord<'_>] {
         self.p.import_records.items()
     }
-    fn namespace_of_import_item(&self, item: js_ast::Ref) -> Option<js_ast::Ref> {
-        let symbol = self.p.symbols.get(item.inner_index() as usize)?;
-        let name = symbol.original_name.slice();
-        let mut all = self.p.import_items_for_namespace.iter();
-        all.find_map(|(namespace, items)| (items.get(name)?.ref_ == item).then_some(*namespace))
+    fn namespace_member(&self, item: js_ast::Ref) -> Option<bun_react_compiler::NamespaceMember> {
+        let p = &*self.p;
+        let symbol = p.symbols.get(item.inner_index() as usize)?;
+        if symbol.import_item_status != js_ast::ImportItemStatus::Generated {
+            return None;
+        }
+        let namespace = *p.react_compiler_namespace_of_item.get(&item)?;
+        let import_record = match &symbol.namespace_alias {
+            Some(alias) => Some(alias.import_record_index),
+            None => (p.imports_to_convert_from_require.iter())
+                .find(|import| import.namespace.ref_ == namespace)
+                .map(|import| import.import_record_id),
+        };
+        Some(bun_react_compiler::NamespaceMember {
+            namespace,
+            name: symbol.original_name,
+            import_record,
+        })
     }
     fn source(&self) -> &[u8] {
         &self.p.source.contents

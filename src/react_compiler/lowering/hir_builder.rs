@@ -18,11 +18,11 @@ use crate::hir::cfg_utils::remove_dead_do_while_statements;
 use crate::hir::cfg_utils::remove_unnecessary_try_catch;
 use crate::hir::cfg_utils::remove_unreachable_for_updates;
 use crate::hir::cfg_utils::reverse_postorder_blocks;
-use crate::hir::environment::Environment;
+use crate::hir::environment::{Environment, is_hook_name};
 use crate::hir::*;
 use bun_ast::{self as ast, E, G, Loc, Ref, Symbol, symbol};
 
-use crate::program::Host;
+use crate::program::{Host, NamespaceMember};
 use std::rc::Rc;
 
 // ---------------------------------------------------------------------------
@@ -385,6 +385,38 @@ impl<'h> HirBuilder<'h> {
 
     pub(crate) fn import_bindings(&self) -> &'h IndexMap<Ref, VariableBinding> {
         self.import_bindings
+    }
+
+    /// See [`Host::namespace_member`].
+    pub(crate) fn namespace_member(&self, item: Ref) -> Option<NamespaceMember> {
+        self.host.namespace_member(self.resolve_ref(item))
+    }
+
+    /// What the namespace of `member` is bound to, where that is an import of a module that is known here.
+    pub(crate) fn namespace_kind(&self, member: &NamespaceMember) -> Option<NonLocalKind> {
+        let (name, module, is_import) = match self.import_bindings.get(&member.namespace) {
+            Some(VariableBinding::ImportNamespace { name, module }) => (*name, *module, true),
+            _ => {
+                let records = self.host.import_records();
+                let record = records.get(member.import_record? as usize)?;
+                let name = self.symbol(member.namespace)?.original_name;
+                (name, StoreStr::new(record.path.text), false)
+            }
+        };
+        let is_react = self.env.is_known_react_module(module.slice());
+        let is_hook = is_hook_name(member.name.slice()) || member.name.slice() == b"use";
+        Some(
+            if is_react && is_hook && self.env.config.react_is_known_by_its_module {
+                // A hook of React is React's under whatever name the namespace has.
+                let name = StoreStr::new(b"React");
+                NonLocalKind::ImportNamespace { name, module }
+            } else if is_react && !is_import {
+                // To upstream what `require()` or `import()` gave is a local, which has no type.
+                NonLocalKind::ModuleLocal { name }
+            } else {
+                NonLocalKind::ImportNamespace { name, module }
+            },
+        )
     }
 
     pub(crate) fn function_scope(&self) -> &'h ast::Scope {
@@ -975,6 +1007,16 @@ impl<'h> HirBuilder<'h> {
                 return Ok(VariableBinding::Global { name });
             }
             Sk::Import => {
+                // The item of `ns.member` is no binding: what reads it lowers the member.
+                if sym.import_item_status == ast::ImportItemStatus::Generated
+                    && self.namespace_member(ref_).is_some()
+                {
+                    return Err(crate::diagnostics::cold_invariant(
+                        "Expected the import item of a namespace member to be lowered as a member expression",
+                        None,
+                        loc,
+                    ));
+                }
                 if let Some(alias) = &sym.namespace_alias {
                     if let Some(record) = self
                         .host
@@ -1006,16 +1048,6 @@ impl<'h> HirBuilder<'h> {
                 // declarations below.
                 if let Some(binding) = self.import_bindings.get(&ref_) {
                     return Ok(binding.clone());
-                }
-                if let Some(namespace) = self.host.namespace_of_import_item(ref_)
-                    && let Some(VariableBinding::ImportNamespace { module, .. }) =
-                        self.import_bindings.get(&namespace)
-                {
-                    return Ok(VariableBinding::ImportSpecifier {
-                        name,
-                        module: *module,
-                        imported: name,
-                    });
                 }
                 return Ok(VariableBinding::Global { name });
             }

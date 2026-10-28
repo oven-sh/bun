@@ -233,6 +233,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         .put(name, new_item)
                                         .expect("unreachable");
                                     p.is_import_item.insert(new_ref, ());
+                                    if p.options.features.react_compiler.is_enabled() {
+                                        p.react_compiler_namespace_of_item.insert(new_ref, id.ref_);
+                                    }
 
                                     let symbol = &mut p.symbols[new_ref.inner_index() as usize];
 
@@ -283,26 +286,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.symbols[ref_.inner_index() as usize].set_called_as_method(true);
                             }
 
-                            return Some(
-                                p.handle_identifier(
-                                    name_loc,
-                                    E::Identifier {
-                                        ref_,
-                                        ..Default::default()
-                                    },
-                                    Some(name),
-                                    IdentifierOpts::new()
-                                        .with_assign_target(identifier_opts.assign_target())
-                                        .with_is_call_target(identifier_opts.is_call_target())
-                                        .with_is_delete_target(identifier_opts.is_delete_target())
-                                        .with_is_property_access_target(
-                                            identifier_opts.is_property_access_target(),
-                                        )
-                                        // If this expression is used as the target of a call expression, make
-                                        // sure the value of "this" is preserved.
-                                        .with_was_originally_identifier(false),
-                                ),
+                            let mut item = p.handle_identifier(
+                                name_loc,
+                                E::Identifier {
+                                    ref_,
+                                    ..Default::default()
+                                },
+                                Some(name),
+                                IdentifierOpts::new()
+                                    .with_assign_target(identifier_opts.assign_target())
+                                    .with_is_call_target(identifier_opts.is_call_target())
+                                    .with_is_delete_target(identifier_opts.is_delete_target())
+                                    .with_is_property_access_target(
+                                        identifier_opts.is_property_access_target(),
+                                    )
+                                    // If this expression is used as the target of a call expression, make
+                                    // sure the value of "this" is preserved.
+                                    .with_was_originally_identifier(false),
                             );
+                            if identifier_opts.is_call_target()
+                                && p.options.features.react_compiler.is_enabled()
+                                && let js_ast::ExprData::EImportIdentifier(item) = &mut item.data
+                            {
+                                item.set_is_member_call_target(true);
+                            }
+                            return Some(item);
                         }
                     }
 

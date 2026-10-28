@@ -169,3 +169,28 @@ overlap in arity, so lowering tells them apart by the callee
 The callee is not an operand of the HIR `JsxExpression`: codegen resolves the
 classic factory again (`Host::jsx_classic_factory`). Lowering rejects a factory
 that is a local of the function, because the compiler would drop it as unused.
+
+In a bundle the visit pass also replaces a member of a namespace, `ns.member`,
+with an import item: a symbol of its own that the linker binds to the export,
+so that no namespace object is made. That is the case for `import * as ns`, for
+a module-level local that holds what `require()` or `import()` gave, and for a
+`require()` of a package that the bundler unwraps. To upstream a member is not
+a named import: `React.createElement` has a type, two namespaces can have a
+member of one name, and a read of a member is not a constant. So lowering reads
+the item as the member it stands for (`Host::namespace_member`): a `LoadGlobal`
+of the namespace, a `PropertyLoad`, and a `MethodCall` where the source has
+`ns.member()`. The visit pass can leave the same item of `(0, ns.member)()`,
+which is a call of a value, so it marks the item of a method call
+(`E::ImportIdentifier::is_member_call_target`). Codegen prints the item again
+for the pair (`Environment::namespace_members`) and never the namespace, which
+the source did not read as a value: where upstream compares the namespace for a
+memo block, the block here depends on the member.
+
+The namespace has the type that upstream gives it, which is that of `React` for
+an import with that name. What `require()` or `import()` gave is a local to
+upstream and has no type. A hook of React is React's under any name and as such
+a local (`react_is_known_by_its_module`). `ns["member"]` is the same item, so
+its key is a name to the compiler, as it is not to upstream. `ns?.member` is no
+item to the visit pass. A member of any other import, `X.name`, is no item
+either: codegen prints it anew, without the mark that the visit pass gave it
+(`E::Dot::is_import_property_use`), so the linker keeps all of what `X` names.

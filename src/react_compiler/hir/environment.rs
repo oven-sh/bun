@@ -85,6 +85,9 @@ pub struct Environment {
     // Binding name -> next `_N` to try. Valid because an error in a nested function ends all lowering.
     pub(crate) binding_names: HashMap<StoreStr, u32>,
 
+    // Not in upstream. The import item of each `ns.member`, by the temporary of its `ns`: codegen prints the item.
+    pub(crate) namespace_members: HashMap<DeclarationId, bun_ast::Expr>,
+
     // Node IDs of identifiers that are actual references to bindings.
     // Used by codegen to filter type annotation renames — only rename identifiers
     // whose node_id is in this set (type labels like ObjectTypeIndexer params
@@ -203,6 +206,7 @@ impl Environment {
             hook_guard_name: None,
             renames: AstAlloc::vec(),
             binding_names: HashMap::default(),
+            namespace_members: HashMap::default(),
             reference_node_ids: HashSet::default(),
             hoisted_identifiers: HashSet::default(),
             validate_preserve_existing_memoization_guarantees: config
@@ -707,7 +711,7 @@ impl Environment {
         module_type
     }
 
-    fn is_known_react_module(&self, module_name: &[u8]) -> bool {
+    pub(crate) fn is_known_react_module(&self, module_name: &[u8]) -> bool {
         module_name.eq_ignore_ascii_case(b"react") || module_name.eq_ignore_ascii_case(b"react-dom")
     }
 

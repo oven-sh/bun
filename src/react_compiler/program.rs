@@ -51,6 +51,16 @@ pub enum JsxImportKind {
     CreateElement,
 }
 
+/// `ns.member`, which the parser's visit pass replaces with an import item in a bundle: see `DESIGN.md`.
+#[derive(Clone, Copy)]
+pub struct NamespaceMember {
+    /// Bound outside of every function, also for a `require()` in one that the bundler makes an import statement of.
+    pub namespace: Ref,
+    pub name: crate::hir::StoreStr,
+    /// The module of `namespace`, where that is not a namespace import: what `require()` or `import()` gave.
+    pub import_record: Option<u32>,
+}
+
 /// Parser-side state the React Compiler needs. Implemented by `P` at the
 /// hook site so this crate stays free of a `bun_js_parser` dependency.
 ///
@@ -78,8 +88,8 @@ pub trait Host {
         &[]
     }
 
-    /// The namespace import that `item` is a member of. The parser makes an import of its own of `ns.member`.
-    fn namespace_of_import_item(&self, _item: Ref) -> Option<Ref> {
+    /// The `ns.member` that the parser's visit pass made the import `item` of.
+    fn namespace_member(&self, _item: Ref) -> Option<NamespaceMember> {
         None
     }
 
@@ -675,14 +685,23 @@ fn import_ref_name<'a>(host: &'a dyn Host, ref_: Ref) -> &'a [u8] {
 fn expr_is_hook(host: &dyn Host, expr: &Expr) -> bool {
     match &expr.data {
         ExprData::EIdentifier(id) => is_hook_name(host.ref_name(id.ref_)),
-        ExprData::EImportIdentifier(id) => is_hook_name(import_ref_name(host, id.ref_)),
+        // The import item of `ns.member` is the member expression below.
+        ExprData::EImportIdentifier(id) => {
+            is_hook_name(import_ref_name(host, id.ref_))
+                && host
+                    .namespace_member(id.ref_)
+                    .is_none_or(|member| is_component_name(host.ref_name(member.namespace)))
+        }
         ExprData::EDot(member) => {
             if !is_hook_name(member.name.slice()) {
                 return false;
             }
             match &member.target.data {
                 ExprData::EIdentifier(obj) => is_component_name(host.ref_name(obj.ref_)),
-                ExprData::EImportIdentifier(obj) => is_component_name(host.ref_name(obj.ref_)),
+                ExprData::EImportIdentifier(obj) => {
+                    host.namespace_member(obj.ref_).is_none()
+                        && is_component_name(host.ref_name(obj.ref_))
+                }
                 _ => false,
             }
         }

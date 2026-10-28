@@ -10,9 +10,9 @@ use bun_ast::{self as ast, E, Expr, G, Loc, OpCode, Ref, StoreRef, symbol};
 use super::function::{lower_function_to_value, lower_object_method};
 use super::helpers::{
     AssignmentStyle, MemberProperty, build_temporary_place, expression_type_name, lower_arguments,
-    lower_assignment, lower_expression_to_temporary, lower_identifier, lower_member_expression,
-    lower_object_property_key, lower_optional_call_expression, lower_optional_member_expression,
-    lower_value_to_temporary,
+    lower_assignment, lower_expression_to_temporary, lower_identifier, lower_member_callee,
+    lower_member_expression, lower_namespace_member, lower_object_property_key,
+    lower_optional_call_expression, lower_optional_member_expression, lower_value_to_temporary,
 };
 use super::jsx::lower_jsx_call;
 use crate::lowering::FunctionNode;
@@ -29,7 +29,10 @@ pub(crate) fn lower_expression(
     match &expr.data {
         Data::EObjectJSON(_) | Data::EArrayJSON(_) => Ok(unsupported_node("JSONValue", loc)),
         Data::EIdentifier(ident) => lower_identifier_reference(builder, ident.ref_, loc),
-        Data::EImportIdentifier(ident) => lower_identifier_reference(builder, ident.ref_, loc),
+        Data::EImportIdentifier(ident) => match builder.namespace_member(ident.ref_) {
+            Some(member) => Ok(lower_namespace_member(builder, expr, member, loc)?.value),
+            None => lower_identifier_reference(builder, ident.ref_, loc),
+        },
         Data::ENull(_) => Ok(InstructionValue::Primitive {
             value: PrimitiveValue::Null,
             loc,
@@ -71,15 +74,7 @@ pub(crate) fn lower_expression(
                 return lower_optional_call_expression(builder, expr);
             }
             // Check if callee is a MemberExpression => MethodCall
-            let is_member = matches!(
-                &call.target.data,
-                Data::EDot(d) if d.optional_chain.is_none()
-            ) || matches!(
-                &call.target.data,
-                Data::EIndex(i) if i.optional_chain.is_none()
-            );
-            if is_member {
-                let lowered = lower_member_expression(builder, &call.target, None)?;
+            if let Some(lowered) = lower_member_callee(builder, &call.target)? {
                 let property = lower_value_to_temporary(builder, lowered.value)?;
                 let args = AstAlloc::vec_from_iter(lower_arguments(builder, &call.args)?);
                 Ok(InstructionValue::MethodCall {

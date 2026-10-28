@@ -13,7 +13,10 @@ use bun_ast::expr::Data as ExprData;
 use bun_ast::{E, Expr, G, Loc, Ref};
 
 use super::expr::lower_expression;
-use super::helpers::{lower_expression_to_temporary, lower_identifier, lower_value_to_temporary};
+use super::helpers::{
+    lower_expression_to_temporary, lower_identifier, lower_namespace_member,
+    lower_value_to_temporary,
+};
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 use crate::program::JsxImportKind;
 
@@ -34,7 +37,7 @@ fn lower_jsx_element_name(builder: &mut HirBuilder, tag: &Expr) -> Result<JsxTag
             Ok(JsxTag::Place(temp))
         }
         ExprData::EImportIdentifier(id) => {
-            let temp = lower_tag_identifier(builder, id.ref_, loc, loc)?;
+            let temp = lower_tag_import(builder, tag, id.ref_, loc, loc)?;
             Ok(JsxTag::Place(temp))
         }
         ExprData::EString(s) => {
@@ -106,7 +109,7 @@ fn lower_jsx_member_expression(
         }
         ExprData::EImportIdentifier(id) => {
             let id_loc = convert_loc(expr.target.loc);
-            lower_tag_identifier(builder, id.ref_, id_loc, expr_loc)?
+            lower_tag_import(builder, &expr.target, id.ref_, id_loc, expr_loc)?
         }
         ExprData::EDot(inner) => lower_jsx_member_expression(builder, &inner, expr.target.loc)?,
         _ => {
@@ -167,6 +170,23 @@ fn lower_tag_identifier(
             lower_value_to_temporary(builder, load_value)
         }
         _ => lower_identifier(builder, ref_, id_loc),
+    }
+}
+
+/// An import as a tag, or as the object of one. The import item of `ns.Member` is that member expression.
+fn lower_tag_import(
+    builder: &mut HirBuilder,
+    import: &Expr,
+    ref_: Ref,
+    id_loc: Option<SourceLocation>,
+    instr_loc: Option<SourceLocation>,
+) -> Result<Place, CompilerError> {
+    match builder.namespace_member(ref_) {
+        Some(member) => {
+            let lowered = lower_namespace_member(builder, import, member, instr_loc)?;
+            lower_value_to_temporary(builder, lowered.value)
+        }
+        None => lower_tag_identifier(builder, ref_, id_loc, instr_loc),
     }
 }
 

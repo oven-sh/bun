@@ -367,6 +367,54 @@ describe("FileHandle", () => {
     reader.releaseLock();
   });
 
+  it("FileHandle#readableWebStream BYOB reads into views at offsets of one ArrayBuffer", async () => {
+    using dir = tempDir("fh-readablewebstream-byob", { "data.txt": "ABCDEFGHIJ" });
+    await using fh = await fs.promises.open(join(String(dir), "data.txt"));
+    const reader = fh.readableWebStream().getReader({ mode: "byob" });
+
+    // Each read transfers the buffer, so the next view goes over the returned one.
+    let buffer = new ArrayBuffer(20);
+    let offset = 4;
+    const reads: { byteOffset: number; text: string }[] = [];
+    while (true) {
+      const { value, done } = await reader.read(new Uint8Array(buffer, offset, 3));
+      buffer = value!.buffer;
+      if (done) break;
+      reads.push({ byteOffset: value!.byteOffset, text: Buffer.from(value!).toString() });
+      offset += value!.byteLength;
+    }
+
+    expect(reads).toEqual([
+      { byteOffset: 4, text: "ABC" },
+      { byteOffset: 7, text: "DEF" },
+      { byteOffset: 10, text: "GHI" },
+      { byteOffset: 13, text: "J" },
+    ]);
+    expect(Buffer.from(buffer).toString("latin1")).toBe("\0\0\0\0ABCDEFGHIJ\0\0\0\0\0\0");
+  });
+
+  it("FileHandle#readableWebStream BYOB reads into a DataView at an offset", async () => {
+    using dir = tempDir("fh-readablewebstream-byob", { "data.txt": "ABCDEFGHIJ" });
+    await using fh = await fs.promises.open(join(String(dir), "data.txt"));
+    const reader = fh.readableWebStream().getReader({ mode: "byob" });
+
+    const { value, done } = await reader.read(new DataView(new ArrayBuffer(16), 8, 4));
+    expect({
+      done,
+      type: value!.constructor.name,
+      byteOffset: value!.byteOffset,
+      byteLength: value!.byteLength,
+      bytes: Buffer.from(value!.buffer).toString("latin1"),
+    }).toEqual({
+      done: false,
+      type: "DataView",
+      byteOffset: 8,
+      byteLength: 4,
+      bytes: "\0\0\0\0\0\0\0\0ABCD\0\0\0\0",
+    });
+    await reader.cancel();
+  });
+
   it("FileHandle#createReadStream", async () => {
     await using fd = await fs.promises.open(__filename);
     const readable = fd.createReadStream();

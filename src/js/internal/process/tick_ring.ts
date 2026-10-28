@@ -136,15 +136,20 @@ function pushWithInitHooks(cb: TickCallback, args: unknown[] | undefined, frame:
   const count = tickInitHooks.length;
   const hooks = $newArrayWithSize<(typeof tickInitHooks)[number]>(count);
   for (let i = 0; i < count; i++) $putByValDirect(hooks, i, tickInitHooks[i]);
-  for (let i = 0; i < count; i++) {
-    try {
-      hooks[i](asyncId, "TickObject", 0, tock);
-    } catch (err: any) {
+  asyncHooksTick.beginHookDispatch();
+  try {
+    for (let i = 0; i < count; i++) {
       try {
-        console.error(typeof err?.stack === "string" ? err.stack : err);
-      } catch {}
-      tickingProcess.exit(1);
+        hooks[i](asyncId, "TickObject", 0, tock);
+      } catch (err: any) {
+        try {
+          console.error(typeof err?.stack === "string" ? err.stack : err);
+        } catch {}
+        tickingProcess.exit(1);
+      }
     }
+  } finally {
+    asyncHooksTick.endHookDispatch();
   }
   pushTickObject(tock);
 }

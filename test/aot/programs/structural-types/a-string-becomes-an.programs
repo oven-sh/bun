@@ -2380,12 +2380,12 @@ export {};
 //// a-text-file-is-declared-as-something-else/answer.number
 42
 //// a-text-file-is-declared-as-something-else/declarations.d.ts
-declare module "*.number" {
+declare module "*.number" with { type: "text" } {
   const value: number;
   export default value;
 }
 
-declare module "*.point" {
+declare module "*.point" with { type: "text" } {
   const value: { x: number; y: number };
   export default value;
 }

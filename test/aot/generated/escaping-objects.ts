@@ -50,7 +50,7 @@ export const roads: [string, string][] = [
   ["JSON[\"parse\"]", "JSON[\"parse\"](T)"],
   ["parse taken out of JSON by a pattern", "(({ parse }) => parse(T))(JSON)"],
   ["JSON.parse kept in a variable", "kept(T)"],
-  ["JSON.parse.call", "JSON.parse.call(JSON, T)"],
+  ["JSON.parse.call", "(JSON.parse as (text: string) => any).call(JSON, T)"],
   ["Reflect.apply of JSON.parse", "Reflect.apply(JSON.parse, JSON, [T])"],
   ["JSON.parse in a callback of map", "[T].map(text => JSON.parse(text))[0]"],
   ["JSON.parse in a function of the program", "parsed(T)"],

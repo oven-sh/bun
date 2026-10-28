@@ -331,6 +331,7 @@ export function generate(
         mayAwait,
         loads: early + loads,
         mayOmitNames: hasMore,
+        isMts: path.endsWith(".mts"),
       },
     });
     texts[path] = written.text;

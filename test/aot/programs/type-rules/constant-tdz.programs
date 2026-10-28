@@ -780,10 +780,10 @@ attempt("a number stored through any", () => { (handler as any).run = 5; return 
 attempt("and a typed read of it", () => readRun(handler));
 //// functions-written-for-typeof-json-parse.ts
 // A function can be written for `typeof globalThis.JSON.parse`: it writes the types of its parameters.
-type Reviver = (this: any, key: string, value: any) => any;
-const parse: typeof globalThis.JSON.parse = (text: string, reviver?: Reviver) => globalThis.JSON.parse(text.trim(), reviver);
+type Reviver = (this: any, key: string, value: any, context: { source?: string }) => any;
+const parse: typeof globalThis.JSON.parse = (text: string, reviver?: Reviver) => (reviver ? globalThis.JSON.parse(text.trim(), reviver) : globalThis.JSON.parse(text.trim()));
 const first: typeof globalThis.JSON.parse = (text: string) => globalThis.JSON.parse(text.slice(0, 1));
-const holder: { read: typeof globalThis.JSON.parse } = { read: (text: string, reviver?: Reviver) => globalThis.JSON.parse(text, reviver) };
+const holder: { read: typeof globalThis.JSON.parse } = { read: (text: string, reviver?: Reviver) => (reviver ? globalThis.JSON.parse(text, reviver) : globalThis.JSON.parse(text)) };
 const write: typeof JSON.stringify = (value: unknown) => JSON.stringify(value);
 type Parsed = ReturnType<typeof globalThis.JSON.parse>;
 const parsed: Parsed = parse("[7]");

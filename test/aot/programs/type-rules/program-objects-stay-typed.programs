@@ -1100,7 +1100,7 @@ try { Object.setPrototypeOf(plain, null); console.log("no prototype: no error") 
 console.log(Object.getPrototypeOf(plain) === Object.prototype, plain.a, "toString" in plain)
 //// typeof-json-parse-types-the-parameters.ts
 // A function expression under `typeof globalThis.JSON.parse` gets its parameter types from it.
-export const parse: typeof globalThis.JSON.parse = (text, reviver) => globalThis.JSON.parse(text, reviver);
+export const parse: typeof globalThis.JSON.parse = (text, reviver) => (reviver ? globalThis.JSON.parse(text, reviver) : globalThis.JSON.parse(text));
 
 console.log(parse("[1]"));
 console.log(parse('{"a":1,"b":2}', (key, value) => (key === "a" ? undefined : value)));

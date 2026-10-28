@@ -1607,7 +1607,7 @@ function frames(error: unknown): string {
 
 const boundParse = JSON.parse.bind(JSON);
 const boundTwice = boundParse.bind(null);
-const boundWithArgument = JSON.parse.bind(JSON, "{");
+const boundWithArgument = (JSON.parse as (text: string) => any).bind(JSON, "{");
 const sourceGetter = Object.getOwnPropertyDescriptor(RegExp.prototype, "source")!.get!;
 const notARegExp: any = Object.create(RegExp.prototype);
 const subject: any = "x";
@@ -1622,7 +1622,7 @@ const throwers: Record<string, () => unknown> = {
   "getter called": () => { const result = sourceGetter.call({}); return [result]; },
   "getter read by name": () => { const result = notARegExp.source; return [result]; },
   "Reflect.apply": () => { const result = Reflect.apply(JSON.parse, null, ["{"]); return [result]; },
-  "Function.prototype.call": () => { const result = JSON.parse.call(null, "{"); return [result]; },
+  "Function.prototype.call": () => { const result = (JSON.parse as (text: string) => any).call(null, "{"); return [result]; },
   "constructor": () => { const result = new Intl.NumberFormat("not a locale"); return [result]; },
   "BigInt": () => { const result = BigInt("x"); return [result]; },
   "callback of replace": () => { const result = subject.replace(/x/, function callback() { const inner = boundParse("{"); return String(inner); }); return [result]; },

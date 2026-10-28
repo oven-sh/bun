@@ -75,7 +75,7 @@ const otherWays: (() => unknown)[] = [
   () => JSON.parse('{"a":1,"b":2}', 5 as any),
   () => JSON.parse('{"a":1,"b":2}', (key, value) => (key === "a" ? undefined : value)),
   () => parse('{"a":1,"b":2}'),
-  () => parse.call(null, '{"a":1,"b":2}'),
+  () => (parse as (text: string) => any).call(null, '{"a":1,"b":2}'),
   () => Reflect.apply(parse, undefined, ['{"a":1,"b":2}']),
   () => ['{"a":1,"b":2}', "[1]"].map(text => JSON.parse(text)),
   () => JSON.parse({ toString: () => '{"a":1,"b":2}' } as any),

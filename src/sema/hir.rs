@@ -1124,18 +1124,28 @@ pub struct ExprsByKind {
 
 impl ExprsByKind {
     pub fn new(file: &File) -> ExprsByKind {
+        // The tags of `File::checked_kind`. FOR SPEED: a loop that only stores the tag compiles to a table lookup. One
+        // that counts by it compiles to a jump per node, because `JsxText` has the tag of another kind.
+        let tags: Vec<u8> = (file.exprs.iter())
+            .map(|e| match e.kind {
+                ExprKind::Dot {
+                    name_before_end: FAR_IN_BRACKETS,
+                    ..
+                } if !file.is_js => ExprTag::Index as u8,
+                ref kind => kind.tag() as u8,
+            })
+            .collect();
         let mut starts = [0u32; ExprTag::COUNT + 1];
-        let tag_of = |i: usize| file.checked_kind(ExprId(i as u32)).tag();
-        for i in 0..file.exprs.len() {
-            starts[tag_of(i) as usize + 1] += 1;
+        for &tag in &tags {
+            starts[tag as usize + 1] += 1;
         }
         for i in 0..ExprTag::COUNT {
             starts[i + 1] += starts[i];
         }
         let mut next = starts;
-        let mut ids = vec![ExprId::NONE; file.exprs.len()];
-        for i in 0..file.exprs.len() {
-            let at = &mut next[tag_of(i) as usize];
+        let mut ids = vec![ExprId::NONE; tags.len()];
+        for (i, &tag) in tags.iter().enumerate() {
+            let at = &mut next[tag as usize];
             ids[*at as usize] = ExprId(i as u32);
             *at += 1;
         }

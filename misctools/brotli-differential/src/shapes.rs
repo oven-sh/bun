@@ -910,3 +910,92 @@ pub fn run_race(seed0: u64, iters: u64, max_len: usize, qualities: u64, corpus: 
     assert!(refused == 0, "seed {seed0}: the encoder failed {refused} times");
     println!("ok: {encoded} streams encoded, {decoded} decoded, {failed} of them with an error");
 }
+
+/// The table of the hashers of qualities 5 to 9 changes while a stream goes on: it gets room for all buckets after 1 KiB,
+/// and at qualities 5 and 6 a block for every bucket after 16 and 32 KiB. That shows only in streams with flushes before
+/// that point. Here the start of the input fills few, many or nearly all buckets, and what follows is made of pieces of it,
+/// each of which is found only if its bucket still has its own block.
+pub fn run_dense(seed0: u64, iters: u64, qualities: u64) {
+    let qs = crate::args::qualities(qualities, 5..10);
+    let (mut total_in, mut total_out) = (0usize, 0usize);
+    for it in 0..iters {
+        let seed = seed0.wrapping_add(it);
+        let mut rng = Rng(seed);
+        let q = *rng.pick(&qs);
+        let mark = match q {
+            5 | 6 if rng.chance(3, 4) => 16384 << (q - 5),
+            _ => 1024,
+        };
+        let before = match rng.below(4) {
+            0 => mark - rng.below(8),
+            1 => mark - rng.below(200),
+            2 => mark + rng.below(8),
+            _ => rng.range(8, mark),
+        };
+        let kind = rng.below(5);
+        let mut first: Vec<u8> = Vec::with_capacity(before);
+        let symbols = rng.range(2, 6) as u64;
+        let mut used = vec![false; 1 << 14];
+        while first.len() < before {
+            let byte = match kind {
+                // Few buckets.
+                0 => b'a' + (rng.next() % symbols) as u8,
+                // A new bucket with every position, while there are any.
+                1 | 2 if first.len() >= 3 => {
+                    let start = rng.next() as u8;
+                    let low = u32::from_le_bytes([first[first.len() - 3], first[first.len() - 2], first[first.len() - 1], 0]);
+                    let bucket = |b: u8| ((low | u32::from(b) << 24).wrapping_mul(0x1E35_A7BD) >> 18) as usize;
+                    let b = (0..=255u8).map(|i| start.wrapping_add(i)).find(|&b| !used[bucket(b)]).unwrap_or(start);
+                    used[bucket(b)] = true;
+                    b
+                }
+                _ => rng.next() as u8,
+            };
+            first.push(byte);
+        }
+        let mut data = first.clone();
+        let more = if rng.chance(1, 4) { rng.range(1, 300) } else { rng.range(300, 3 * mark.max(8192)) };
+        let sorted = rng.chance(1, 4);
+        let mut at = 0;
+        while data.len() < before + more {
+            let n = rng.range(4, 24).min(before);
+            at = if sorted { (at + n + rng.below(8)) % (before - n + 1) } else { rng.below(before - n + 1) };
+            data.extend_from_slice(&first[at..at + n]);
+            data.extend((0..rng.below(3)).map(|_| rng.next() as u8));
+        }
+        let mut params = vec![(1, q), (2, rng.range(17, 24) as u32)];
+        if rng.chance(1, 8) {
+            params.push((5, *rng.pick(&[data.len() as u32, mark as u32])));
+        }
+        for _ in 0..3 {
+            let style = rng.below(4);
+            let (mut steps, mut pos) = (Vec::new(), 0usize);
+            while pos < data.len() && steps.len() < 4000 {
+                let to_mark = mark.saturating_sub(pos);
+                let n = match style {
+                    _ if pos.abs_diff(mark) < 10 => rng.range(1, 4),
+                    // All that comes before the mark at once.
+                    0 if to_mark > 0 => to_mark.saturating_sub(rng.below(10)).max(1),
+                    1 => rng.range(1, 400),
+                    2 => rng.range(1, 5000),
+                    _ => rng.range(1, mark),
+                }
+                .min(data.len() - pos);
+                pos += n;
+                steps.push(enc::Step { op: i32::from(rng.chance(7, 8)), n });
+            }
+            let case = EncCase { data: data.clone(), params: params.clone(), dicts: Vec::new(), schedule: if rng.chance(1, 2) { 0 } else { rng.next() | 1 }, misuse: false };
+            match enc::compare_steps(&case, &steps).and_then(|out| enc::round_trip(&out, &data, &[], false, 0).map(|()| out)) {
+                Ok(out) => {
+                    total_in += data.len();
+                    total_out += out.len();
+                }
+                Err(e) => {
+                    let head: Vec<_> = steps.iter().take(12).map(|s| (s.op, s.n)).collect();
+                    panic!("seed {seed}: {e}\nmark {mark}, {before} bytes of kind {kind}, then {more}; params {params:?} schedule {} steps {} {head:?}", case.schedule, steps.len());
+                }
+            }
+        }
+    }
+    println!("ok: {iters} iterations, {total_in} -> {total_out}");
+}

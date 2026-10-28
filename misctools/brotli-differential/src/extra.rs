@@ -250,6 +250,7 @@ pub fn run(args: &[String]) -> bool {
         Some("enc-parts") => shapes::run_parts(num(2, 1), num(3, 1000), num(4, 1 << 19) as usize, num(5, 0xFFF), &corpus()),
         Some("enc-flint") => shapes::run_flint(num(2, 0xFFF)),
         Some("race") => shapes::run_race(num(2, 1), num(3, 200), num(4, 300_000) as usize, num(5, 0xFFF), &corpus()),
+        Some("enc-dense") => shapes::run_dense(num(2, 1), num(3, 1000), num(4, 0x3E0)),
         Some("enc-states") => shapes::run_states(num(2, 1), num(3, 1000), num(4, 0xFFF)),
         Some("enc-select") => shapes::run_select(num(2, 1), num(3, 200_000) as usize, &corpus()),
         Some("enc-big") => big::run(num(2, 1), num(3, 6 << 30), args::params(args::rest(args, 4)), &corpus()),

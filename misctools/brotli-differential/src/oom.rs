@@ -95,6 +95,8 @@ struct Case {
     params: Vec<(u32, u32)>,
     dict: Option<Vec<u8>>,
     chunk: usize,
+    /// After every piece.
+    flush: bool,
     cap: usize,
 }
 
@@ -112,10 +114,18 @@ fn encode(c: &Case) -> Option<Vec<u8>> {
             return None;
         }
     }
-    let mut pieces = c.data.chunks(c.chunk.max(1)).peekable();
+    // With flushes, every other piece is 40 times as long: from the start of a stream to well into it in one step.
+    let mut rest = &c.data[..];
+    let mut long = true;
+    let mut pieces = std::iter::from_fn(|| {
+        long = !long && c.flush;
+        let piece = rest.split_off(..c.chunk.max(1).saturating_mul(if long { 40 } else { 1 }).min(rest.len()))?;
+        (!piece.is_empty()).then_some(piece)
+    })
+    .peekable();
     loop {
         let piece = pieces.next().unwrap_or(&[]);
-        let op = if pieces.peek().is_none() { EncoderOperation::Finish } else { EncoderOperation::Process };
+        let op = if pieces.peek().is_none() { EncoderOperation::Finish } else if c.flush { EncoderOperation::Flush } else { EncoderOperation::Process };
         let mut input = piece;
         loop {
             let mut o: &mut [u8] = &mut buf;
@@ -280,14 +290,17 @@ pub fn run(seed0: u64, iters: u64, max_len: usize, corpus: &r#gen::Corpus) {
     for it in 0..iters {
         let seed = seed0.wrapping_add(it);
         let mut rng = Rng(seed);
-        let len = r#gen::length(&mut rng, max_len);
+        // One in 16: at qualities 5 and 6, a flush within the first KiB and then more than 32 KiB at once. The table gets a
+        // block for every bucket while it has room for a few.
+        let jump = seed % 16 == 0;
+        let len = if jump { rng.range(40_000, 60_000) } else { r#gen::length(&mut rng, max_len) };
         let data = r#gen::data(&mut rng, corpus, len);
-        let q = rng.below(12) as u32;
+        let q = if jump { rng.range(5, 6) } else { rng.below(12) } as u32;
         let mut params = vec![(1, q)];
-        if rng.chance(2, 3) {
+        if !jump && rng.chance(2, 3) {
             params.push((2, rng.range(10, 24) as u32));
         }
-        if rng.chance(1, 6) {
+        if !jump && rng.chance(1, 6) {
             params.push((6, 1));
             params.push((2, rng.range(10, 27) as u32));
         }
@@ -301,8 +314,11 @@ pub fn run(seed0: u64, iters: u64, max_len: usize, corpus: &r#gen::Corpus) {
             params.push((0, rng.below(3) as u32));
         }
         let dict = rng.chance(1, 4).then(|| { let n = rng.range(1, 20000); r#gen::data(&mut rng, corpus, n) });
-        let case = Case { data, params, dict, chunk: *rng.pick(&[usize::MAX, 1 << 16, 5000, 100_000]), cap: *rng.pick(&[1 << 22, 1 << 16, 700]) };
-        let describe = format!("seed {seed} len {len} params {:?} dict {:?} chunk {} cap {}", case.params, case.dict.as_ref().map(Vec::len), case.chunk, case.cap);
+        // With flushes the tables of the hashers grow and change while they are in use.
+        let flush = jump || rng.chance(1, 4);
+        let chunk = if jump { 900 } else if flush { *rng.pick(&[300, 900, 5000, 15000]) } else { *rng.pick(&[usize::MAX, 1 << 16, 5000, 100_000]) };
+        let case = Case { data, params, dict, chunk, flush, cap: *rng.pick(&[1 << 22, 1 << 16, 700]) };
+        let describe = format!("seed {seed} len {len} params {:?} dict {:?} chunk {} flush {flush} cap {}", case.params, case.dict.as_ref().map(Vec::len), case.chunk, case.cap);
         COUNT.store(0, Relaxed);
         let stream = encode(&case).unwrap_or_else(|| panic!("{describe}: failed without a failure"));
         let n_enc = COUNT.load(Relaxed) as i64;

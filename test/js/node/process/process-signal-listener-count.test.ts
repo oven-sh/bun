@@ -304,20 +304,27 @@ describe("process counts listener registrations like node:events", () => {
     process.on(event, a);
     process.on(event, a);
     process.on(event, b);
-    expect([
-      process.listenerCount(event),
-      process.listenerCount(event, b),
-      process.listenerCount(event, a),
-      process.listenerCount(event, () => {}),
-      process.listenerCount(event, undefined),
-      process.listenerCount(event, null),
-    ]).toEqual([3, 1, 2, 0, 3, 3]);
-
     const ee = new EventEmitter();
     ee.on(event, a);
     ee.on(event, a);
     ee.on(event, b);
-    expect([ee.listenerCount(event), ee.listenerCount(event, b), ee.listenerCount(event, a)]).toEqual([3, 1, 2]);
+
+    // undefined and null mean "no filter". Any other value that is not a registered function matches nothing.
+    const counts = (emitter: EventEmitter) => [
+      emitter.listenerCount(event),
+      emitter.listenerCount(event, b),
+      emitter.listenerCount(event, a),
+      emitter.listenerCount(event, () => {}),
+      emitter.listenerCount(event, undefined),
+      emitter.listenerCount(event, null as any),
+      emitter.listenerCount(event, "a" as any),
+      emitter.listenerCount(event, 0 as any),
+      emitter.listenerCount(event, false as any),
+    ];
+    expect({ process: counts(process), emitter: counts(ee) }).toEqual({
+      process: [3, 1, 2, 0, 3, 3, 0, 0, 0],
+      emitter: [3, 1, 2, 0, 3, 3, 0, 0, 0],
+    });
   });
 
   test("'exit' listener added twice runs twice", async () => {

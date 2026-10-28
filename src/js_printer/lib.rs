@@ -1321,6 +1321,8 @@ pub struct Options<'a> {
     /// `__preload`: when set, an `import()` of a chunk is printed as `(__preload(chunkId), import(path))`.
     pub module_preload_ref: Ref,
     pub require_ref: Option<Ref>,
+    /// The bundle's `require` when `require_ref` is the file's variable. `Some(None)`: no symbol.
+    pub bundle_require_ref: Option<Option<Ref>>,
     pub import_meta_ref: Ref,
     pub hmr_ref: Ref,
     pub indent: Indentation,
@@ -1383,6 +1385,22 @@ pub struct Options<'a> {
 }
 
 impl<'a> Options<'a> {
+    /// The `require` that the files of the bundle share.
+    #[inline]
+    pub(crate) fn bundle_require_ref(&self) -> Option<Ref> {
+        self.bundle_require_ref.unwrap_or(self.require_ref)
+    }
+
+    /// For `.main` and `.resolve`. In dev server output the bound `hmr.require` has neither.
+    #[inline]
+    pub(crate) fn require_ref_for_property(&self) -> Option<Ref> {
+        if self.module_type == bundle_opts::Format::InternalBakeDev {
+            self.bundle_require_ref()
+        } else {
+            self.require_ref
+        }
+    }
+
     pub(crate) fn require_or_import_meta_for_source(
         &self,
         id: u32,
@@ -1408,6 +1426,7 @@ impl<'a> Default for Options<'a> {
             to_esm_ref: Ref::NONE,
             module_preload_ref: Ref::NONE,
             require_ref: None,
+            bundle_require_ref: None,
             import_meta_ref: Ref::NONE,
             hmr_ref: Ref::NONE,
             indent: Indentation::default(),
@@ -2959,10 +2978,18 @@ pub(crate) mod __gated_printer {
                         mi.flags.contains_import_meta = true;
                     }
                     self.print(b"import.meta.require");
-                } else if let Some(ref_) = self.options.require_ref {
-                    self.print_symbol(ref_);
                 } else {
-                    self.print(b"require");
+                    let require_ref = if record.kind == ImportKind::Require || was_unwrapped_require
+                    {
+                        self.options.require_ref
+                    } else {
+                        // A lowered `import` runs before the file's own variable has its value.
+                        self.options.bundle_require_ref()
+                    };
+                    match require_ref {
+                        Some(ref_) => self.print_symbol(ref_),
+                        None => self.print(b"require"),
+                    }
                 }
 
                 self.print(b"(");
@@ -3348,7 +3375,9 @@ pub(crate) mod __gated_printer {
                         self.print_space_before_identifier();
                         self.add_source_mapping(expr.loc);
 
-                        if let Some(require) = self.options.require_ref {
+                        // `import.meta.main` is not a read of the file's `require`.
+                        let bundle_require = self.options.bundle_require_ref();
+                        if let Some(require) = bundle_require {
                             self.print_symbol(require);
                         } else {
                             self.print(b"require");
@@ -3362,7 +3391,7 @@ pub(crate) mod __gated_printer {
 
                         if self.options.target == bun_ast::Target::Node {
                             // "__require.module"
-                            if let Some(require) = self.options.require_ref {
+                            if let Some(require) = bundle_require {
                                 self.print_symbol(require);
                                 self.print(b".module");
                             } else {
@@ -3561,7 +3590,7 @@ pub(crate) mod __gated_printer {
                     self.print_space_before_identifier();
                     self.add_source_mapping(expr.loc);
 
-                    if let Some(require_ref) = self.options.require_ref {
+                    if let Some(require_ref) = self.options.require_ref_for_property() {
                         self.print_symbol(require_ref);
                         self.print(b".main");
                     } else if self.options.module_type == bundle_opts::Format::InternalBakeDev {
@@ -3587,7 +3616,7 @@ pub(crate) mod __gated_printer {
                     self.print_space_before_identifier();
                     self.add_source_mapping(expr.loc);
 
-                    if let Some(require_ref) = self.options.require_ref {
+                    if let Some(require_ref) = self.options.require_ref_for_property() {
                         self.print_symbol(require_ref);
                         self.print(b".resolve");
                     } else if self.options.module_type == bundle_opts::Format::InternalBakeDev {
@@ -3617,7 +3646,7 @@ pub(crate) mod __gated_printer {
                     self.print_space_before_identifier();
                     self.add_source_mapping(expr.loc);
 
-                    if let Some(require_ref) = self.options.require_ref {
+                    if let Some(require_ref) = self.options.require_ref_for_property() {
                         self.print_symbol(require_ref);
                         self.print(b".resolve");
                     } else if self.options.module_type == bundle_opts::Format::InternalBakeDev {

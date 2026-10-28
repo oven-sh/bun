@@ -150,6 +150,8 @@ bitflags::bitflags! {
         const USES_MODULE_REF = 1 << 1;
         // const USES_REQUIRE_REF = 1 << 2;
         const USES_EXPORT_KEYWORD = 1 << 2;
+        /// See `Ast::owns_require_ref`.
+        const OWNS_REQUIRE_REF = 1 << 3;
         const FORCE_CJS_TO_ESM = 1 << 4;
         const HAS_LAZY_EXPORT = 1 << 5;
         const COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED = 1 << 6;
@@ -252,6 +254,7 @@ impl<'arena> BundledAst<'arena> {
             uses_exports_ref: self.flags.contains(Flags::USES_EXPORTS_REF),
             uses_module_ref: self.flags.contains(Flags::USES_MODULE_REF),
             // uses_require_ref: ast.uses_require_ref,
+            owns_require_ref: self.flags.contains(Flags::OWNS_REQUIRE_REF),
             export_keyword: bun_ast::Range {
                 len: if self.flags.contains(Flags::USES_EXPORT_KEYWORD) {
                     1
@@ -284,6 +287,7 @@ impl<'arena> BundledAst<'arena> {
         flags.set(Flags::USES_EXPORTS_REF, ast.uses_exports_ref);
         flags.set(Flags::USES_MODULE_REF, ast.uses_module_ref);
         // flags.set(Flags::USES_REQUIRE_REF, ast.uses_require_ref);
+        flags.set(Flags::OWNS_REQUIRE_REF, ast.owns_require_ref);
         flags.set(Flags::USES_EXPORT_KEYWORD, ast.export_keyword.len > 0);
         flags.set(Flags::FORCE_CJS_TO_ESM, ast.force_cjs_to_esm);
         flags.set(Flags::COMMONJS_LIFTED_TO_ESM, ast.commonjs_lifted_to_esm);

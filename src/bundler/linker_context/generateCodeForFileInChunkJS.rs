@@ -248,6 +248,22 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
     let output_format = c.options.output_format;
 
+    // In cjs output the entry point is the output file: it assigns `require` for the whole bundle.
+    let entry_point_shares_require = output_format == OutputFormat::Cjs
+        && ast.flags.contains(AstFlags::OWNS_REQUIRE_REF)
+        && chunk.is_entry_point_file(source_index as u32);
+    if entry_point_shares_require {
+        ast.flags.remove(AstFlags::OWNS_REQUIRE_REF);
+    }
+    // The loop over the other parts starts here, after the variable that such an entry point drops.
+    const _: () =
+        assert!(bun_ast::OWN_REQUIRE_PART_INDEX == bun_ast::NAMESPACE_EXPORT_PART_INDEX + 1);
+    let first_other_part_index = if entry_point_shares_require {
+        bun_ast::OWN_REQUIRE_PART_INDEX + 1
+    } else {
+        namespace_export_part_index + 1
+    };
+
     // The top-level directive must come first (the non-wrapped case is handled
     // by the chunk generation code, although only for the entry point)
     if flags.wrap != WrapKind::None
@@ -337,7 +353,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         // SAFETY: index in bounds.
         let part: &Part = unsafe { &(*parts)[index_] };
 
-        if index == namespace_export_part_index {
+        if index < first_other_part_index {
             // Skip the namespace export part because we already handled it above
             continue;
         }
@@ -734,6 +750,12 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                 let mut inner_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
 
+                // In an import cycle a hoisted function runs before the wrapper: keep this value.
+                let own_require_ref = ast
+                    .flags
+                    .contains(AstFlags::OWNS_REQUIRE_REF)
+                    .then_some(ast.require_ref);
+
                 // Hoist all top-level "var" and "function" declarations out of the closure
                 {
                     let mut end: usize = 0;
@@ -756,8 +778,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 for decl in local.decls.slice() {
                                     if let Some(initializer) = decl.value {
                                         // Keep in sync with `needs_wrapper_ref` in the parser.
-                                        if initializer.can_be_moved()
-                                            && matches!(decl.binding.data, B::B::BIdentifier(_))
+                                        if matches!(decl.binding.data, B::B::BIdentifier(id)
+                                            if initializer.can_be_moved()
+                                                || own_require_ref == Some(id.get().r#ref))
                                         {
                                             // ie `const main = class { static main() {} }` => `var main = class { static main() {} }`
                                             hoist.decls.push(G::Decl {

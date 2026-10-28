@@ -288,6 +288,7 @@ impl<'a> Options<'a> {
                 set_breakpoint_on_first_line: f.set_breakpoint_on_first_line,
                 trim_unused_imports: f.trim_unused_imports,
                 auto_polyfill_require: f.auto_polyfill_require,
+                per_file_require: f.per_file_require,
                 replace_exports: Default::default(),
                 dont_bundle_twice: f.dont_bundle_twice,
                 code_coverage: f.code_coverage,
@@ -773,6 +774,7 @@ impl<'a> Parser<'a> {
             exports_kind,
             WrapMode::None,
             b"",
+            None,
         )?))
     }
 }
@@ -1358,6 +1360,16 @@ impl<'a> Parser<'a> {
                 uses_filename = false;
             }
         }
+
+        // Node gives each CommonJS module its own `require`: an assignment is for that file alone.
+        let own_require_ref = if p.assigns_free_require && p.options.features.per_file_require {
+            let (ref_, part) = p.declare_own_require()?;
+            // Ahead of the imports: in an import cycle another file can call into this one first.
+            before.insert(js_ast::OWN_REQUIRE_PART_INDEX as usize, part);
+            Some(ref_)
+        } else {
+            None
+        };
 
         // Finalize referenced-export tracking for `import("str")` /
         // `require("str")`. Several namespace refs may exist for one import
@@ -2497,7 +2509,13 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
+        let ast = p.to_ast(
+            &mut parts,
+            exports_kind,
+            wrap_mode,
+            hashbang,
+            own_require_ref,
+        )?;
 
         if reject_import_statements {
             // An empty range marks a parser-generated record, like the JSX runtime import.

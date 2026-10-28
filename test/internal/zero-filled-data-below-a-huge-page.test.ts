@@ -9,42 +9,27 @@
 //
 // When this fails, allocate a large table at its first use instead of declaring it zero-filled.
 import { expect, test } from "bun:test";
-import { bunExe, isASAN, isDebug, isLinux } from "harness";
-import { closeSync, openSync, readSync, realpathSync } from "node:fs";
+import { bunExe, isASAN, isDebug, isLinux, readElf64ProgramHeaders } from "harness";
 
-const smallestPage = 4096;
+const smallestPage = 4096n;
 const hugePage = 2 * 1024 * 1024;
 
 // The anonymous mappings that the kernel makes for an ELF executable: what each writable PT_LOAD segment has in memory
 // past the last page of its data in the file.
 function sizesOfZeroFilledMappings(path: string) {
-  const fd = openSync(path, "r");
-  try {
-    const header = Buffer.alloc(64);
-    readSync(fd, header, 0, header.length, 0);
-    const [PT_LOAD, PF_W] = [1, 2];
-    const [entrySize, count] = [header.readUInt16LE(54), header.readUInt16LE(56)];
-    const table = Buffer.alloc(entrySize * count);
-    readSync(fd, table, 0, table.length, Number(header.readBigUInt64LE(32)));
-    const pageUp = (address: number) => Math.ceil(address / smallestPage) * smallestPage;
-    return Array.from({ length: count }, (_, index) => table.subarray(index * entrySize))
-      .filter(segment => segment.readUInt32LE(0) === PT_LOAD && (segment.readUInt32LE(4) & PF_W) !== 0)
-      .map(segment => {
-        const address = Number(segment.readBigUInt64LE(16));
-        const [fileSize, memorySize] = [Number(segment.readBigUInt64LE(32)), Number(segment.readBigUInt64LE(40))];
-        return pageUp(address + memorySize) - pageUp(address + fileSize);
-      })
-      .filter(size => size > 0);
-  } finally {
-    closeSync(fd);
-  }
+  const [PT_LOAD, PF_W] = [1, 2];
+  const pageUp = (address: bigint) => ((address + smallestPage - 1n) / smallestPage) * smallestPage;
+  return readElf64ProgramHeaders(path)
+    .filter(segment => segment.type === PT_LOAD && (segment.flags & PF_W) !== 0)
+    .map(segment => Number(pageUp(segment.vaddr + segment.memsz) - pageUp(segment.vaddr + segment.filesz)))
+    .filter(size => size > 0);
 }
 
 // A debug build and AddressSanitizer make .bss several times larger, and nobody measures their memory.
 test.skipIf(!isLinux || isDebug || isASAN)(
   "the executable's zero-filled data is smaller than a transparent huge page",
   () => {
-    const sizes = sizesOfZeroFilledMappings(realpathSync(bunExe()));
+    const sizes = sizesOfZeroFilledMappings(bunExe());
     expect(sizes.length).toBeGreaterThan(0);
     expect(Math.max(...sizes)).toBeLessThan(hugePage);
   },

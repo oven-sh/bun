@@ -258,6 +258,7 @@ const nativeFiles = [
   "NodeURL.cpp",
   "NodeUtilTypesModule.cpp",
   "NodeV8.cpp",
+  "NodeVMSourceBuffer.cpp",
   "ProcessBindingTTYWrap.cpp",
   "StructuredClone.cpp",
   "Undici.cpp",

@@ -1,12 +1,6 @@
-//! `fetch({ compress })`: option parsing and the one-shot compression of a
-//! buffered request body.
-//!
-//! The body is compressed before the request is handed to the HTTP thread, so
-//! that thread (which serves every fetch socket in the process) only ever
-//! sees final bytes. A small body at a fast level is compressed inline on the
-//! JS thread. Everything else runs as a [`jsc::Job`] on the work pool and
-//! queues the request from the job's completion. Only buffered bodies reach
-//! this: streams and sendfile are filtered out in `fetch_impl`.
+//! `fetch({ compress })`: option parsing and one-shot compression of a buffered
+//! request body, before the HTTP thread sees it. Small bodies at a fast level
+//! compress inline on the JS thread; the rest on the work pool as a [`jsc::Job`].
 
 use core::cell::RefCell;
 use core::ptr::NonNull;
@@ -46,10 +40,8 @@ pub(crate) const DEFAULT_DEFLATE_LEVEL: i32 = 6;
 pub(crate) const DEFAULT_BROTLI_QUALITY: i32 = 6;
 pub(crate) const DEFAULT_ZSTD_LEVEL: i32 = 3;
 
-/// Bodies up to this size at a fast level are compressed on the JS thread.
-/// gzip-6 or zstd-3 on 64 KiB takes 0.3 to 0.6 ms there, the pause judged
-/// acceptable. The pool hop itself is cheap (50 to 130 us) and is skipped
-/// only to save the two boxes, the queue entry and the loop wake per request.
+/// Up to this size a fast level compresses inline: gzip-6 or zstd-3 on 64 KiB
+/// is 0.3 to 0.6 ms on the JS thread.
 const INLINE_MAX_LEN: usize = 64 * 1024;
 
 bun_core::comptime_string_map! {
@@ -160,21 +152,16 @@ impl CompressError {
     }
 }
 
-/// Levels above this allocate an 8.6 MiB near-optimal compressor, so they are
-/// never cached. Levels 1 to 9 allocate 200 to 668 KiB.
+/// Levels 10 to 12 allocate an 8.6 MiB compressor; levels 1 to 9 up to 668 KiB.
 const MAX_CACHED_DEFLATE_LEVEL: i32 = 9;
 
 thread_local! {
-    /// The libdeflate compressor this thread used last, with its level, so
-    /// requests at the same level reuse one per thread instead of allocating
-    /// each time. Only levels up to `MAX_CACHED_DEFLATE_LEVEL` land here.
+    /// The libdeflate compressor this thread used last, with its level.
     static DEFLATE_COMPRESSOR: RefCell<Option<(i32, libdeflate::OwnedCompressor)>> =
         const { RefCell::new(None) };
 }
 
-/// One-shot compression of `input`. Runs on any thread. The output holds no
-/// spare capacity: the body keeps it for the whole request, and a codec's
-/// worst-case bound can be many times the output (brotli: 4 MiB for 111 KiB).
+/// One-shot compression of `input`, on any thread. The output is trimmed.
 pub(crate) fn compress(input: &[u8], opt: &CompressOption) -> Result<Vec<u8>, CompressError> {
     let mut out = match opt.encoding {
         CompressEncoding::Gzip | CompressEncoding::Deflate => {
@@ -199,8 +186,7 @@ fn compress_libdeflate(input: &[u8], gzip: bool, level: i32) -> Result<Vec<u8>, 
     let encoding = if gzip {
         libdeflate::Encoding::Gzip
     } else {
-        // HTTP "deflate" is the zlib-wrapped DEFLATE stream (RFC 9110
-        // §8.4.1.2); libdeflate's `Deflate` is the raw stream.
+        // HTTP "deflate" is the zlib-wrapped stream (RFC 9110 8.4.1.2).
         libdeflate::Encoding::Zlib
     };
     let run = |compressor: &mut libdeflate::Compressor| {
@@ -231,23 +217,20 @@ fn compress_libdeflate(input: &[u8], gzip: bool, level: i32) -> Result<Vec<u8>, 
     })
 }
 
-/// `BUN_FEATURE_FLAG_NO_LIBDEFLATE=1`: streaming zlib `deflate(Z_FINISH)` into
-/// a Vec that grows in 64 KiB steps.
+/// The `BUN_FEATURE_FLAG_NO_LIBDEFLATE=1` path: zlib `deflate(Z_FINISH)`.
 fn compress_zlib(input: &[u8], gzip: bool, level: i32) -> Result<Vec<u8>, CompressError> {
     use bun_zlib::{DeflateEncoder, FlushValue, ReturnCode};
 
-    // gzip wrapper: +16; HTTP "deflate" is the zlib-wrapped stream
-    // (RFC 9110 §8.4.1.2): plain 15.
+    // +16 selects the gzip wrapper; 15 alone is the zlib-wrapped stream.
     let window_bits = if gzip { 15 + 16 } else { 15 };
-    // libdeflate accepts 0..=12; zlib only 0..=9.
+    // zlib stops at 9 where libdeflate goes to 12.
     let level = level.min(9);
     let mut encoder = DeflateEncoder::new(level, window_bits, 8, 0).map_err(|err| match err {
         bun_zlib::ZlibError::OutOfMemory => CompressError::OutOfMemory,
         _ => CompressError::Failed,
     })?;
 
-    // `avail_in` is `c_uint`; `step()` clamps to u32::MAX per call so a
-    // >= 4 GiB body is not truncated: loop until `remaining` is empty.
+    // `step()` consumes at most u32::MAX per call, so loop.
     let mut out = Vec::new();
     let mut remaining = input;
     loop {
@@ -281,8 +264,7 @@ fn compress_brotli(input: &[u8], level: Option<i32>) -> Result<Vec<u8>, Compress
     let window = c::BROTLI_DEFAULT_WINDOW;
     let mode = c::BrotliEncoderMode::generic;
 
-    // `BrotliEncoderMaxCompressedSize` returns 0 when the bound would overflow
-    // `size_t`; `encode_append` grows the output itself in that case.
+    // A bound of 0 means overflow; `encode_append` then grows the output.
     let bound = c::BrotliEncoderMaxCompressedSize(input.len());
     let cap = if bound != 0 {
         bound
@@ -312,10 +294,7 @@ fn compress_zstd(input: &[u8], level: Option<i32>) -> Result<Vec<u8>, CompressEr
     }
 }
 
-/// Whether a body of `len` bytes at `opt` is cheap enough to compress on the
-/// JS thread. gzip, deflate and zstd at or below their default level
-/// compress 64 KiB in 0.3 to 0.6 ms. Brotli never qualifies: its default
-/// quality takes about 1.2 ms at that size, twice gzip-6.
+/// Cheap enough for the JS thread. Brotli never is: 1.2 ms at 64 KiB.
 fn is_cheap_inline(len: usize, opt: &CompressOption) -> bool {
     if len > INLINE_MAX_LEN {
         return false;
@@ -329,16 +308,13 @@ fn is_cheap_inline(len: usize, opt: &CompressOption) -> bool {
     }
 }
 
-/// The fetch that waits for its body to be compressed. Owns the body the
-/// pool thread reads in place, so the bytes stay valid for the whole trip.
+/// The fetch that waits for its body. Owns the bytes the pool reads in place.
 pub(crate) struct PendingFetch {
     fetch_options: FetchOptions,
     promise: jsc::JSPromiseStrong,
 }
 
-// SAFETY: `FetchOptions` and `JSPromiseStrong` hold GC handles and blob refs
-// that are used and dropped only on the owning JS thread; the `Job` carrier
-// touches its `Js` half there and nowhere else.
+// SAFETY: every field is used and dropped on the owning JS thread only.
 unsafe impl bun_jsc::job::JsAffine for PendingFetch {}
 
 /// Work pool half of the job: the input bytes and the result.
@@ -355,8 +331,7 @@ impl jsc::JobContext for CompressRequestBody {
 
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         if done.ticket().script_allowed() {
-            // SAFETY: the job's `Js` half owns the body these bytes belong to,
-            // and nothing touches that body until `then` runs.
+            // SAFETY: the `Js` half owns the body; nothing touches it until `then`.
             let input: &[u8] = unsafe { this.input.under_ticket(done.ticket()) };
             this.out = compress(input, &this.opt);
         }
@@ -368,8 +343,7 @@ impl jsc::JobContext for CompressRequestBody {
             mut fetch_options,
             mut promise,
         } = *js;
-        // The signal fired while the body was on the pool: reject the way a
-        // pre-aborted signal does, before any connection exists.
+        // Aborted while on the pool: reject before any connection exists.
         if let Some(sig) = &fetch_options.signal
             && sig.aborted()
         {
@@ -382,8 +356,7 @@ impl jsc::JobContext for CompressRequestBody {
     }
 }
 
-/// Swap the compressed bytes in for the original body and queue the request,
-/// or reject the fetch when compression failed.
+/// Swap the compressed bytes in and queue, or reject the fetch.
 fn finish(
     cx: &jsc::JsThread<'_>,
     mut fetch_options: FetchOptions,
@@ -405,9 +378,7 @@ fn finish(
     }
 }
 
-/// Compress `fetch_options.body` with `opt`, then queue the request. Small
-/// bodies at a fast level are compressed here. Larger ones go through the
-/// work pool and are queued from the job's completion.
+/// Compress `fetch_options.body` with `opt`, inline or on the pool, then queue.
 pub(crate) fn compress_then_queue(
     cx: &jsc::JsThread<'_>,
     opt: CompressOption,
@@ -419,8 +390,7 @@ pub(crate) fn compress_then_queue(
         let out = compress(input, &opt);
         return finish(cx, fetch_options, promise, out);
     }
-    // SAFETY: the slice borrows the body that `PendingFetch` owns for the job's
-    // lifetime; the job is freed on this thread after the pool posts back.
+    // SAFETY: `PendingFetch` owns the body for the job's whole lifetime.
     let input = unsafe { bun_jsc::JsPtr::new(NonNull::from(input)) };
     jsc::Job::<CompressRequestBody>::schedule(
         cx,

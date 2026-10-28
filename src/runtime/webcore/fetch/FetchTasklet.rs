@@ -2793,8 +2793,7 @@ pub(crate) struct FetchOptions {
     pub(crate) upgraded_connection: bool,
     pub(crate) forced_protocol: Option<http::Protocol>,
     pub(crate) is_node_http_client: bool,
-    /// Scheduled in `fetch()`'s frame, so the inspector's async stack points
-    /// at the caller even when the body is compressed first.
+    /// Scheduled in `fetch()`'s frame, before any body compression.
     pub(crate) tracker: AsyncTaskTracker,
     pub(crate) pool: http::PoolOptions,
     pub(crate) bypass_pool: bool,

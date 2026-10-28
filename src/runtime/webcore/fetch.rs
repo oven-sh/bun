@@ -1656,12 +1656,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
-    // Automatic request-body compression. Only buffered bodies (Blob bytes,
-    // ArrayBuffer/TypedArray, string) are handled; ReadableStream and sendfile
-    // are skipped. S3 destinations replace the header set with a signed one,
-    // so compression is skipped there too. Here we only commit to it by
-    // appending Content-Encoding; `compress_body::compress_then_queue` swaps
-    // the compressed bytes in before the request is queued.
+    // `compress` applies to buffered bodies only, and not to S3 (it signs its
+    // own header set). Commit here with Content-Encoding; `compress_then_queue`
+    // swaps the bytes in.
     if let Some(compress_opt) = &compress
         && let HTTPRequestBody::AnyBlob(_) = &body
         && !url.is_s3()
@@ -1967,9 +1964,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         session_check_server_identity,
     };
 
-    // Pass the Strong value instead of creating a new one, or else we
-    // will leak it
-    // see https://github.com/oven-sh/bun/issues/2985
+    // The promise's `Strong` moves in; a second one would leak it (#2985).
     match compress {
         Some(opt) => compress_body::compress_then_queue(
             &global_this.js_thread(context),

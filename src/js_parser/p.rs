@@ -3190,55 +3190,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub(crate) fn prepare_for_visit_pass(&mut self) -> Result<(), crate::Error> {
-        {
-            // The wrapper stores only the arena and a non-capturing
-            // fn-pointer trampoline; the `*mut P` context is supplied *at call
-            // time* (see `Binding::to_expr`) so the raw pointer's provenance is
-            // a child of the live `&mut P` at the call site rather than a stale
-            // tag captured here. The transposer shims need no wiring at all —
-            // call sites invoke `P::maybe_transpose_if_*` etc. directly.
-            self.to_expr_wrapper_namespace =
-                bun_ast::binding::ToExprWrapper::new(self.arena, |ctx, loc, ref_| {
-                    // SAFETY: `ctx` was derived from the caller's live `&mut P`
-                    // immediately before `Binding::to_expr`; no other `&mut P`
-                    // borrow is active for the duration of this call.
-                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
-                    p.wrap_identifier_namespace(loc, ref_)
-                });
-            self.to_expr_wrapper_hoisted =
-                bun_ast::binding::ToExprWrapper::new(self.arena, |ctx, loc, ref_| {
-                    // SAFETY: same as above.
-                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
-                    p.wrap_identifier_hoisting(loc, ref_)
-                });
-        }
-
-        {
-            // Compact `scopes_in_order` (parse pass leaves None holes from
-            // popAndDiscardScope) into a dense bump-slice for the visit pass.
-            let mut buf =
-                BumpVec::<ScopeOrder<'a>>::with_capacity_in(self.scopes_in_order.len(), self.arena);
-            for item_ in self.scopes_in_order.iter().flatten() {
-                buf.push(*item_);
-            }
-            // `into_bump_slice()` leaks the BumpVec into the arena and returns
-            // a `&'a [T]` for that allocation.
-            self.scope_order_to_visit = buf.into_bump_slice();
-        }
-
-        self.is_file_considered_to_have_esm_exports = !self.top_level_await_keyword.is_empty()
-            || !self.esm_export_keyword.is_empty()
-            || self.options.module_type == options::ModuleType::Esm;
-
-        self.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, loc_module_scope)?;
-        self.fn_or_arrow_data_visit.is_outside_fn_or_arrow = true;
-        self.module_scope = self.current_scope;
-        self.has_es_module_syntax = self.has_es_module_syntax
-            || self.esm_import_keyword.len > 0
-            || self.esm_export_keyword.len > 0
-            || self.top_level_await_keyword.len > 0;
-
+    /// Applies the `@jsx*` pragmas of the file to `options.jsx`. The visit pass
+    /// and the scan pass both call it, so both see the same runtime and import source.
+    pub(crate) fn apply_jsx_pragmas(&mut self) {
         if let Some(factory) = self.lexer.jsx_pragma.jsx() {
             // `Span.text` is a `StoreStr` into lexer-owned source; valid for 'a.
             let text = factory.text.slice();
@@ -3295,6 +3249,58 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
             }
         }
+    }
+
+    pub(crate) fn prepare_for_visit_pass(&mut self) -> Result<(), crate::Error> {
+        {
+            // The wrapper stores only the arena and a non-capturing
+            // fn-pointer trampoline; the `*mut P` context is supplied *at call
+            // time* (see `Binding::to_expr`) so the raw pointer's provenance is
+            // a child of the live `&mut P` at the call site rather than a stale
+            // tag captured here. The transposer shims need no wiring at all —
+            // call sites invoke `P::maybe_transpose_if_*` etc. directly.
+            self.to_expr_wrapper_namespace =
+                bun_ast::binding::ToExprWrapper::new(self.arena, |ctx, loc, ref_| {
+                    // SAFETY: `ctx` was derived from the caller's live `&mut P`
+                    // immediately before `Binding::to_expr`; no other `&mut P`
+                    // borrow is active for the duration of this call.
+                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
+                    p.wrap_identifier_namespace(loc, ref_)
+                });
+            self.to_expr_wrapper_hoisted =
+                bun_ast::binding::ToExprWrapper::new(self.arena, |ctx, loc, ref_| {
+                    // SAFETY: same as above.
+                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
+                    p.wrap_identifier_hoisting(loc, ref_)
+                });
+        }
+
+        {
+            // Compact `scopes_in_order` (parse pass leaves None holes from
+            // popAndDiscardScope) into a dense bump-slice for the visit pass.
+            let mut buf =
+                BumpVec::<ScopeOrder<'a>>::with_capacity_in(self.scopes_in_order.len(), self.arena);
+            for item_ in self.scopes_in_order.iter().flatten() {
+                buf.push(*item_);
+            }
+            // `into_bump_slice()` leaks the BumpVec into the arena and returns
+            // a `&'a [T]` for that allocation.
+            self.scope_order_to_visit = buf.into_bump_slice();
+        }
+
+        self.is_file_considered_to_have_esm_exports = !self.top_level_await_keyword.is_empty()
+            || !self.esm_export_keyword.is_empty()
+            || self.options.module_type == options::ModuleType::Esm;
+
+        self.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, loc_module_scope)?;
+        self.fn_or_arrow_data_visit.is_outside_fn_or_arrow = true;
+        self.module_scope = self.current_scope;
+        self.has_es_module_syntax = self.has_es_module_syntax
+            || self.esm_import_keyword.len > 0
+            || self.esm_export_keyword.len > 0
+            || self.top_level_await_keyword.len > 0;
+
+        self.apply_jsx_pragmas();
 
         // ECMAScript modules are always interpreted as strict mode. This has to be
         // done before "hoistSymbols" because strict mode can alter hoisting (!).

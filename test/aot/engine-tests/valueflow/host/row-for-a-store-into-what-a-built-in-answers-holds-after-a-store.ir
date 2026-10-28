@@ -1,11 +1,11 @@
-# `process.env.NAME = value` may warn about the value. The table does not describe the object, so any store into an object nobody knows counts: here through a second name of it (runtimefunction 65574)
+# `process.env.NAME = value` may warn about the value. The table does not describe the object, so any store into an object nobody knows counts: here through a second name of it (runtimefunction 65577)
 # LIBRARY: own
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=65574 function=f1
+runtimefunction id=65577 function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=Process
@@ -13,7 +13,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v2 = CallDirect v1 function=f2
     Return v2
 }
-function f1 name="createOnWarning" role=Library enclosingRuntimeFunction=65574 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="createOnWarning" role=Library enclosingRuntimeFunction=65577 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
     Return v0
 }

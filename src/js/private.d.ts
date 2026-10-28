@@ -2595,7 +2595,7 @@ declare namespace $Node {
     instantiate(): void;
     /** A promise for a source text module. */
     evaluate(timeout: number, breakOnSigint: boolean): unknown;
-    link(specifiers: string[], modules: NodeVMModule[], scriptFetcher: number): void;
+    link(modules: NodeVMModule[]): void;
     createCachedData(): Buffer;
     setExport(name: string, value: unknown): void;
     createModuleRecord(): { specifier: string; attributes: object }[];

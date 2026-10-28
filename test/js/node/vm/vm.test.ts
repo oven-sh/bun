@@ -2439,8 +2439,8 @@ test("node:vm native Module prototype methods reject non-module receivers", asyn
 });
 
 test("node:vm SourceTextModule.link() rejects non-module entries in the moduleNatives array", async () => {
-  // The native link(specifiers, moduleNatives, scriptFetcher) entry point validates
-  // that the two arguments are arrays but must also validate every element of
+  // The native link(moduleNatives) entry point validates that its argument is
+  // an array but must also validate every element of
   // moduleNatives. A plain object whose inline property storage holds caller-chosen
   // doubles must produce a clean TypeError instead of being reinterpreted as a
   // native Module and having those doubles read back as internal pointers.
@@ -2454,7 +2454,7 @@ test("node:vm SourceTextModule.link() rejects non-module entries in the moduleNa
 
     const results = [];
     try {
-      native.link(["x"], [{ a: 1.1, b: 2.2, c: 3.3, d: 4.4 }], 0);
+      native.link([{ a: 1.1, b: 2.2, c: 3.3, d: 4.4 }]);
       results.push("link(plain object): returned");
     } catch (e) {
       results.push("link(plain object): " + (e instanceof TypeError ? "TypeError " + e.code : "unexpected " + e));
@@ -2465,7 +2465,7 @@ test("node:vm SourceTextModule.link() rejects non-module entries in the moduleNa
     const dep = new vm.SourceTextModule("export const x = 1;");
     const depNative = dep[kNative];
     depNative.createModuleRecord();
-    native.link(["x"], [depNative], 0);
+    native.link([depNative]);
     results.push("status after valid link: " + native.getStatus());
     console.log(results.join("\\n"));
   `;
@@ -2489,9 +2489,9 @@ test("node:vm SourceTextModule.link() rejects non-module entries in the moduleNa
 });
 
 test("node:vm SourceTextModule.link() rejects holey and mismatched argument arrays", async () => {
-  // Holes in the argument arrays surface as empty JSValues from getDirectIndex,
+  // Holes in the argument array surface as empty JSValues,
   // which pass isCell() with a null cell — link() must reject them (and a
-  // specifiers/moduleNatives length mismatch) instead of crashing.
+  // list that does not have one module for each request) instead of crashing.
   const fixture = `
     const vm = require("node:vm");
     const mod = new vm.SourceTextModule('import { z } from "x"; export const w = z;');
@@ -2500,9 +2500,9 @@ test("node:vm SourceTextModule.link() rejects holey and mismatched argument arra
     native.createModuleRecord();
 
     const results = [];
-    const attempt = (label, specifiers, moduleNatives) => {
+    const attempt = (label, moduleNatives) => {
       try {
-        native.link(specifiers, moduleNatives, 0);
+        native.link(moduleNatives);
         results.push(label + ": returned");
       } catch (e) {
         results.push(label + ": " + (e instanceof TypeError ? "TypeError" : e.constructor.name) + " " + e.code);
@@ -2513,13 +2513,10 @@ test("node:vm SourceTextModule.link() rejects holey and mismatched argument arra
     const depNative = dep[kNative];
     depNative.createModuleRecord();
 
-    attempt("holey both", new Array(1), new Array(1));
-    attempt("holey specifiers", new Array(1), [depNative]);
-    attempt("holey moduleNatives", ["x"], new Array(1));
-    attempt("length mismatch", ["x"], []);
-    attempt("non-string specifier", [42], [depNative]);
+    attempt("holey moduleNatives", new Array(1));
+    attempt("length mismatch", []);
     results.push("status: " + native.getStatus());
-    attempt("valid", ["x"], [depNative]);
+    attempt("valid", [depNative]);
     results.push("status: " + native.getStatus());
     console.log(results.join("\\n"));
   `;
@@ -2535,16 +2532,256 @@ test("node:vm SourceTextModule.link() rejects holey and mismatched argument arra
 
   expect(stderr).toBe("");
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
-    "holey both: TypeError ERR_INVALID_ARG_TYPE
-    holey specifiers: TypeError ERR_INVALID_ARG_TYPE
-    holey moduleNatives: TypeError ERR_INVALID_THIS
+    "holey moduleNatives: TypeError ERR_INVALID_THIS
     length mismatch: TypeError ERR_INVALID_ARG_VALUE
-    non-string specifier: TypeError ERR_INVALID_ARG_TYPE
     status: unlinked
     valid: returned
     status: unlinked"
   `);
   expect(exitCode).toBe(0);
+});
+
+// What only Bun has of the modules that link() gives a SourceTextModule: the native link() behind the kNative symbol,
+// `import defer`, and inputs that ended a process. The tests that Node.js runs too are in
+// vm-module-linked-modules.test.ts.
+describe.concurrent("node:vm SourceTextModule linked modules", () => {
+  async function run(fixture: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+
+  const prelude = `
+    const vm = require("node:vm");
+    const kNative = Object.getOwnPropertySymbols(new vm.SourceTextModule("")).find(s => s.description === "kNative");
+    const results = [];
+    const ran = [];
+    globalThis.ran = ran;
+    const code = run => {
+      try {
+        run();
+        return "returned";
+      } catch (e) {
+        return (e instanceof TypeError ? "TypeError " : "") + (e.code ?? e.name);
+      }
+    };
+    const make = (identifier, source) => new vm.SourceTextModule(source, { identifier });
+    const synthetic = (identifier, value) =>
+      new vm.SyntheticModule(["default"], function () { ran.push(identifier); this.setExport("default", value); }, { identifier });
+  `;
+
+  test("the native link() takes one module for each module request, by index", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      ${prelude}
+      const importer = () => make("importer", 'import x from "p"; import y from "q"; export const r = [x, y];');
+      const a = synthetic("a", 1)[kNative];
+      const b = synthetic("b", 2)[kNative];
+      const c = synthetic("c", 3)[kNative];
+
+      results.push("fewer modules than requests: " + code(() => importer()[kNative].link([a])));
+      results.push("more modules than requests: " + code(() => importer()[kNative].link([a, b, c])));
+
+      // An element that is not plain data is not read: link() runs no JS.
+      let getterCalls = 0;
+      const withGetter = [a, b];
+      Object.defineProperty(withGetter, 0, { get() { getterCalls++; return a; } });
+      results.push("a getter for a module: " + code(() => importer()[kNative].link(withGetter)) + ", " + getterCalls + " calls");
+
+      (async () => {
+        // The getter that was at index 5 moved every element out of the fast storage of the array.
+        const sparse = [a, b];
+        Object.defineProperty(sparse, 5, { get() {}, configurable: true });
+        sparse.length = 2;
+        const module = importer();
+        results.push("plain elements in sparse storage: " + code(() => module[kNative].link(sparse)));
+        module.instantiate();
+        await module.evaluate();
+        results.push("ran " + ran + ", r = " + JSON.stringify(module.namespace.r));
+        console.log(results.join("\\n"));
+      })();
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toEqual([
+      "fewer modules than requests: TypeError ERR_INVALID_ARG_VALUE",
+      "more modules than requests: TypeError ERR_INVALID_ARG_VALUE",
+      "a getter for a module: TypeError ERR_INVALID_THIS, 0 calls",
+      "plain elements in sparse storage: returned",
+      "ran a,b, r = [1,2]",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a link() that throws leaves the module with the modules it had", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      ${prelude}
+      const dependency = name => {
+        const module = make(name, 'ran.push("' + name + '"); export const v = "' + name + '";');
+        module.linkRequests([]);
+        return module;
+      };
+      const deferAndImport = 'import defer * as ns from "dep"; import { v } from "dep"; export const r = v;';
+      (async () => {
+        {
+          const [x, y, z] = ["x1", "y1", "z1"].map(dependency);
+          const root = make("root1", deferAndImport);
+          root.linkRequests([z, z]);
+          const second = code(() => root.linkRequests([x, y]));
+          root.instantiate();
+          await root.evaluate();
+          results.push("after a list: " + second + ", r = " + root.namespace.r + ", x y z: " + [x.status, y.status, z.status]);
+        }
+        {
+          const [x, y] = ["x2", "y2"].map(dependency);
+          const root = make("root2", deferAndImport);
+          const first = code(() => root.linkRequests([x, y]));
+          results.push("without a list: " + first + ", instantiate() " + code(() => root.instantiate()) + ", x y: " + [x.status, y.status]);
+        }
+        {
+          const [a, b, c] = ["a3", "b3", "c3"].map(dependency);
+          const root = make("root3", 'import { v as x } from "p"; import { v as y } from "q"; export const r = [x, y];');
+          root.linkRequests([a, b]);
+          const second = code(() => root[kNative].link([c[kNative], {}]));
+          root.instantiate();
+          await root.evaluate();
+          results.push("a module, then an object: " + second + ", r = " + root.namespace.r + ", c: " + c.status);
+        }
+        results.push("ran " + ran);
+        console.log(results.join("\\n"));
+      })();
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toEqual([
+      "after a list: TypeError ERR_MODULE_LINK_MISMATCH, r = z1, x y z: unlinked,unlinked,evaluated",
+      "without a list: TypeError ERR_MODULE_LINK_MISMATCH, instantiate() ERR_VM_MODULE_LINK_FAILURE, x y: unlinked,unlinked",
+      "a module, then an object: TypeError ERR_INVALID_THIS, r = a3,b3, c: unlinked",
+      "ran z1,a3,b3",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("`import defer` and `import` of one specifier link to one module", async () => {
+    // JSC keeps the two as two module requests and one imported module of the record. Node has the same rule for
+    // two requests that are equal (ERR_MODULE_LINK_MISMATCH). It does not parse `import defer` in a vm module.
+    const { stdout, stderr, exitCode } = await run(`
+      ${prelude}
+      const source = 'import defer * as ns from "dep"; import { v } from "dep"; export const r = [ns.v, v];';
+      (async () => {
+        {
+          const x = make("x", 'export const v = "x";');
+          const root = make("root", source);
+          x.linkRequests([]);
+          root.linkRequests([x, x]);
+          root.instantiate();
+          await root.evaluate();
+          results.push("one module: " + JSON.stringify(root.namespace.r));
+        }
+        {
+          // A linker that makes a new module for each call gives the two requests two modules.
+          let made = 0;
+          const root = make("root", source);
+          const error = await root.link(() => make("dep" + ++made, 'export const v = 1;')).then(() => undefined, e => e);
+          results.push("a module for each call: " + error?.code + ", " + error?.message + ", " + root.status);
+        }
+        console.log(results.join("\\n"));
+      })();
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toEqual([
+      `one module: ["x","x"]`,
+      "a module for each call: ERR_MODULE_LINK_MISMATCH, Module request 'dep' at index 1 must be linked to the same module requested at index 0, errored",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("createModuleRecord() keeps the module record that importers link to", async () => {
+    // Only the constructor calls the native createModuleRecord(). A second call gave the module a new record, also
+    // when the module was linked: evaluate() of the first module then read a module environment that was not there.
+    const { stdout, stderr, exitCode } = await run(`
+      ${prelude}
+      (async () => {
+        {
+          const module = new vm.SourceTextModule("export const x = import.meta.k;", {
+            initializeImportMeta(meta) { meta.k = 1; },
+          });
+          module.linkRequests([]);
+          module.instantiate();
+          module[kNative].createModuleRecord();
+          await module.evaluate();
+          results.push("SourceTextModule: " + module.status + " " + module.namespace.x);
+        }
+        {
+          const dependency = synthetic("dependency", 1);
+          const importer = make("importer", 'import x from "s"; export const r = x;');
+          await importer.link(() => dependency);
+          dependency[kNative].createModuleRecord();
+          await importer.evaluate();
+          results.push("SyntheticModule: " + importer.namespace.r + " " + dependency.namespace.default);
+        }
+        console.log(results.join("\\n"));
+      })();
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toEqual(["SourceTextModule: evaluated 1", "SyntheticModule: 1 1"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("evaluate() of a chain of imports that does not fit on the stack rejects before it is too deep", async () => {
+    // evaluate() runs the modules that a module imports before the module, so native code recurses once for each
+    // module of the chain. It starts 600 frames above the deepest JS frame, where the chain does not fit. Without
+    // a check in that recursion, native code went on to the end of the chain, far below the limit for JS.
+    const { stdout, stderr, exitCode } = await run(`
+      ${prelude}
+      const chain = [];
+      for (let i = 0; i < 800; i++) chain.push(make("m" + i, i ? 'import "next";' : "export {};"));
+      // 100 modules for each Link(): it has a limit for the depth of a graph too.
+      for (let i = 0; i < chain.length; i++) {
+        chain[i].linkRequests(i ? [chain[i - 1]] : []);
+        if (i % 100 === 0) chain[i].instantiate();
+      }
+      const last = chain.at(-1);
+      if (last.status === "unlinked") last.instantiate();
+
+      let deepest = 0;
+      let evaluated;
+      (function dive(depth) {
+        try {
+          dive(depth + 1);
+        } catch {
+          deepest ||= depth;
+        }
+        if (depth === deepest - 600) evaluated = last.evaluate();
+      })(1);
+      evaluated.then(
+        () => console.log("evaluated"),
+        error => console.log(error.name + ": " + error.message + " The end of the chain is " + chain[0].status + "."),
+      );
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toEqual(["RangeError: Maximum call stack size exceeded. The end of the chain is linked."]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a subclass of vm.Module that is not a SourceTextModule or a SyntheticModule", async () => {
+    // Such a module has a native object that the constructors of the two classes did not finish: no module record
+    // for a source text, no evaluation steps for export names.
+    const { stdout, stderr, exitCode } = await run(`
+      ${prelude}
+      class Bare extends vm.Module {}
+      (async () => {
+        const withSource = new Bare({ sourceText: 'import "a";', lineOffset: 0, columnOffset: 0 });
+        results.push("link() of one with a source text: " + code(() => withSource[kNative].link([synthetic("a", 1)[kNative]])));
+
+        results.push("one with export names and no steps: " + code(() => new Bare({ syntheticExportNames: ["default"] })));
+        console.log(results.join("\\n"));
+      })();
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toEqual([
+      "link() of one with a source text: returned",
+      "one with export names and no steps: TypeError ERR_INVALID_ARG_TYPE",
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("node:vm SourceTextModule cyclic graph linking", () => {

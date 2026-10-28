@@ -189,6 +189,10 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // A module without requests has no array to return again. Its record is still made once: importers link to it.
+    if (JSModuleRecord* record = m_moduleRecord.get(); record && record->requestedModules().isEmpty())
+        RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr, 0));
+
     std::unique_ptr<ModuleProgramNode> node;
     JSModuleRecord* moduleRecord = analyzeSourceText(globalObject, node);
     RETURN_IF_EXCEPTION(scope, {});
@@ -307,17 +311,29 @@ AbstractModuleRecord* NodeVMSourceTextModule::moduleRecord(JSGlobalObject* globa
     return m_moduleRecord.get();
 }
 
-JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives, JSValue scriptFetcher)
+// An own element of `array` that is plain data, read without running JS. Empty for a hole and for an accessor.
+static JSValue ownDataElement(JSGlobalObject* globalObject, JSArray* array, unsigned index)
 {
-    const unsigned length = specifiers->getArrayLength();
+    if (array->canGetIndexQuickly(index))
+        return array->getIndexQuickly(index);
 
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    PropertySlot slot(array, PropertySlot::InternalMethodType::GetOwnProperty);
+    bool hasSlot = array->methodTable()->getOwnPropertySlotByIndex(array, globalObject, index, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!hasSlot || !slot.isValue())
+        return {};
+    RELEASE_AND_RETURN(scope, slot.getValue(globalObject, index));
+}
+
+JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* moduleNatives)
+{
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (length != moduleNatives->getArrayLength()) {
-        Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "moduleNatives"_s, moduleNatives, "must have the same length as \"specifiers\""_str);
-        return {};
-    }
+    // Only the constructor of SourceTextModule makes the record: the native object of another subclass of vm.Module has none.
+    ensureModuleRecord(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (m_status != Status::Unlinked) {
         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module must be unlinked before linking"_s);
@@ -332,72 +348,59 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
         return jsUndefined();
     }
 
-    if (length != 0) {
-        const auto& requested = record->requestedModules();
+    const auto& requested = record->requestedModules();
+    const unsigned length = moduleNatives->getArrayLength();
+    if (length != requested.size()) {
+        Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "moduleNatives"_s, moduleNatives, "must have one module for each module request"_str);
+        return {};
+    }
+
+    // Made at the first module that differs: every importer of a module that is not linked yet links it again with the modules it has.
+    JSCellButterfly* linkedModules = nullptr;
+    bool hasDeferredRequest = false;
+    for (unsigned i = 0; i < length; i++) {
+        JSValue moduleNativeValue = ownDataElement(globalObject, moduleNatives, i);
+        RETURN_IF_EXCEPTION(scope, {});
+        // An empty JSValue passes isCell() with a null cell, so it must be rejected before any use.
+        NodeVMModule* moduleNative = moduleNativeValue.isEmpty() ? nullptr : dynamicDowncast<NodeVMModule>(moduleNativeValue);
+        if (!moduleNative) {
+            Bun::ERR::INVALID_THIS(scope, globalObject, "Module"_s);
+            return {};
+        }
+        hasDeferredRequest |= requested[i].m_phase == AbstractModuleRecord::ModulePhase::Defer;
+
+        if (!linkedModules) {
+            if (m_linkedModules && linkedModule(i) == moduleNative)
+                continue;
+            linkedModules = JSCellButterfly::tryCreate(vm, CopyOnWriteArrayWithContiguous, length);
+            if (!linkedModules) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            for (unsigned j = 0; j < i; j++)
+                linkedModules->setIndex(vm, j, linkedModule(j));
+        }
+        linkedModules->setIndex(vm, i, moduleNative);
+    }
+
+    // `import defer` and `import` of one specifier are two requests and one imported module of the record.
+    if (linkedModules && hasDeferredRequest) [[unlikely]] {
+        ModuleMap<unsigned> firstRequestOfKey;
         for (unsigned i = 0; i < length; i++) {
-            JSValue specifierValue = specifiers->getDirectIndex(globalObject, i);
-            RETURN_IF_EXCEPTION(scope, {});
-            JSValue moduleNativeValue = moduleNatives->getDirectIndex(globalObject, i);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            // getDirectIndex returns an empty JSValue for holes; empty passes
-            // isCell() with a null cell, so it must be rejected before any use.
-            if (specifierValue.isEmpty() || !specifierValue.isString()) {
-                Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "specifiers"_str, "Array<string>"_str, specifierValue.isEmpty() ? jsUndefined() : specifierValue);
-                return {};
-            }
-
-            WTF::String specifier = specifierValue.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            NodeVMModule* moduleNative = moduleNativeValue.isEmpty() ? nullptr : dynamicDowncast<NodeVMModule>(moduleNativeValue);
-            if (!moduleNative) {
-                Bun::ERR::INVALID_THIS(scope, globalObject, "Module"_s);
-                return {};
-            }
-            AbstractModuleRecord* resolvedRecord = moduleNative->moduleRecord(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            // innerModuleLinking asserts every visited cyclic record is past
-            // Status::New. Records produced by node:vm never go through the
-            // loader's continueModuleLoading (which is what flips New ->
-            // Unlinked for the whole graph), so do it for each dependency as
-            // we wire it in.
-            if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(resolvedRecord); cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::New)
-                cyclic->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
-
-            // specifiers/moduleNatives were built from requestedModules() in
-            // [kLink], so the indices line up — pass the original ModuleRequest
-            // (specifier + attributes) so a `with { type: "json" }` /
-            // HostDefined import ends up in the right (specifier, type) bucket
-            // for innerModuleLinking's typed lookup.
-            if (i < requested.size()) [[likely]]
-                record->setImportedModule(globalObject, requested[i], resolvedRecord);
-            else
-                record->setImportedModule(globalObject, JSC::AbstractModuleRecord::ModuleRequest { Identifier::fromString(vm, specifier), nullptr }, resolvedRecord);
-            RETURN_IF_EXCEPTION(scope, {});
-            {
-                // NodeVMModule::visitChildrenImpl iterates m_resolveCache.values()
-                // on the GC thread under cellLock(); take the same lock here so a
-                // set()-triggered rehash can't free the bucket array mid-iteration.
-                WTF::Locker locker { cellLock() };
-                m_resolveCache.set(WTF::move(specifier), WriteBarrier<JSObject> { vm, this, moduleNative });
-            }
-            RETURN_IF_EXCEPTION(scope, {});
+            auto added = firstRequestOfKey.add(ModuleMapKey { requested[i].m_specifier.impl(), requested[i].type() }, i);
+            if (added.isNewEntry || linkedModules->get(added.iterator->value) == linkedModules->get(i))
+                continue;
+            // The specifier comes from the module's source, so from JS.
+            MessageBuilder message;
+            message.append("Module request '"_s, requested[i].m_specifier.string(), "' at index "_s, i, " must be linked to the same module requested at index "_s, added.iterator->value);
+            throwError(globalObject, scope, ErrorCode::ERR_MODULE_LINK_MISMATCH, message);
+            return {};
         }
     }
 
-    // CyclicModuleRecord::link asserts every visited record is past
-    // Status::New. Records built directly here never go through the loader's
-    // continueModuleLoading (which is what flips New -> Unlinked for the
-    // graph), so move this one off New manually. The actual record->link()
-    // call is deferred to instantiate(): we are inside a recursive [kLink]
-    // walk and the parent's loadedModules are not populated yet, so calling
-    // innerModuleLinking now would walk into a record whose loadedModules()
-    // are still empty (cyclic case).
-    if (record->status() == JSC::CyclicModuleRecord::Status::New)
-        record->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
+    if (linkedModules)
+        m_linkedModules.set(vm, this, linkedModules);
 
-    UNUSED_PARAM(scriptFetcher);
     m_linkCalled = true;
     // Status stays Unlinked: matching Node, only instantiate() flips a
     // SourceTextModule to "linked" (linkRequests() alone must leave the
@@ -405,93 +408,68 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
     return jsUndefined();
 }
 
-// JSC's record->link() walks the whole dependency graph via innerModuleLinking,
-// which calls JSModuleLoader::getImportedModule() for every request of every
-// reachable record and asserts the request is present in that record's
-// loadedModules() (populated by setImportedModule() during link()). When a
-// module is linked *and evaluated* from inside the linker callback of a cyclic
-// graph, instantiate() can run while a dependency is still mid-link(): its
-// loadedModules() is empty, so getImportedModule() would dereference end() —
-// an assert in debug, a segfault in release. Pre-walk the graph the same way
-// and throw a catchable ERR_VM_MODULE_LINK_FAILURE (matching Node) instead.
-//
-// The walk is iterative (an explicit worklist) rather than recursive: a deep
-// linear import chain has graph depth proportional to its length, and we must
-// not add an unguarded native recursion that would overflow the stack before
-// record->link()'s own isSafeToRecurse() guard throws a catchable RangeError.
-static bool isModuleGraphLinked(AbstractModuleRecord* root, String& missingSpecifier)
-{
-    WTF::HashSet<AbstractModuleRecord*> visited;
-    WTF::Vector<AbstractModuleRecord*, 16> worklist;
-    worklist.append(root);
-
-    while (!worklist.isEmpty()) {
-        AbstractModuleRecord* record = worklist.takeLast();
-        if (!visited.add(record).isNewEntry)
-            continue;
-
-        const auto& loaded = record->loadedModules();
-        for (const auto& request : record->requestedModules()) {
-            if (AbstractModuleRecord* dependency = record->prelinkedRequestedModule(request)) {
-                worklist.append(dependency);
-                continue;
-            }
-            auto iter = loaded.find(JSC::ModuleMapKey { request.m_specifier.impl(), request.type() });
-            if (iter == loaded.end()) {
-                missingSpecifier = request.m_specifier.string();
-                return false;
-            }
-            if (AbstractModuleRecord* dependency = iter->value.m_module.get())
-                worklist.append(dependency);
-        }
-    }
-
-    return true;
-}
-
-// A failed Link() leaves environments, namespace objects and resolved exports on the records that did not link, all
-// made for the modules those records had. link() can give such a module other modules, as in Node, so each of them
-// starts over with a new record.
-void NodeVMSourceTextModule::replaceUnlinkedRecords(JSGlobalObject* globalObject)
+// A failed Link() leaves environments, namespace objects and resolved exports on the records that did not link, all made for the modules those records had.
+void NodeVMSourceTextModule::renewRecordAfterFailedLink(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    WTF::HashMap<AbstractModuleRecord*, NodeVMSourceTextModule*> modules;
+    // Only bindLinkedModules() moves a record from New to Unlinked, immediately before Link().
+    if (m_moduleRecord->status() != JSC::CyclicModuleRecord::Status::Unlinked)
+        return;
+
+    std::unique_ptr<ModuleProgramNode> node;
+    JSModuleRecord* record = analyzeSourceText(globalObject, node);
+    RETURN_IF_EXCEPTION(scope, );
+    m_moduleRecord.set(vm, this, record);
+}
+
+// Link() reads the imported modules of every record that is not linked yet, and dereferences end() for a request that has none (https://github.com/oven-sh/bun/issues/31623).
+bool NodeVMSourceTextModule::bindLinkedModules(JSGlobalObject* globalObject, String& missingSpecifier)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Iterative: a chain of imports is as deep as it is long, and Link() has its own stack check with a catchable RangeError.
+    WTF::HashSet<NodeVMSourceTextModule*> bound;
     WTF::Vector<NodeVMSourceTextModule*, 16> worklist;
+
+    renewRecordAfterFailedLink(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
     worklist.append(this);
+
     while (!worklist.isEmpty()) {
         NodeVMSourceTextModule* module = worklist.takeLast();
         JSModuleRecord* record = module->m_moduleRecord.get();
-        if (!record || record->status() != JSC::CyclicModuleRecord::Status::Unlinked || !modules.add(record, module).isNewEntry)
+        // Link() does not read the requests of a record that is linked already.
+        if (record->status() != JSC::CyclicModuleRecord::Status::New || !bound.add(module).isNewEntry)
             continue;
-        for (const auto& dependency : module->m_resolveCache.values()) {
-            if (auto* dependencyModule = dynamicDowncast<NodeVMSourceTextModule>(dependency.get()))
-                worklist.append(dependencyModule);
+
+        const auto& requested = record->requestedModules();
+        if (module->linkedModuleCount() != requested.size()) {
+            missingSpecifier = requested.first().m_specifier.string();
+            return false;
+        }
+
+        for (unsigned i = 0; i < requested.size(); ++i) {
+            NodeVMModule* dependency = module->linkedModule(i);
+            AbstractModuleRecord* dependencyRecord = dependency->moduleRecord(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (auto* sourceTextDependency = dynamicDowncast<NodeVMSourceTextModule>(dependency)) {
+                // Before any importer takes the record: the one a module has now is what Node's ResolveModuleCallback returns too.
+                sourceTextDependency->renewRecordAfterFailedLink(globalObject);
+                RETURN_IF_EXCEPTION(scope, false);
+                dependencyRecord = sourceTextDependency->m_moduleRecord.get();
+                worklist.append(sourceTextDependency);
+            }
+            record->setImportedModule(globalObject, requested[i], dependencyRecord);
         }
     }
 
-    MarkedArgumentBuffer replacedRecords;
-    for (auto& [replaced, module] : modules) {
-        replacedRecords.append(replaced);
-        std::unique_ptr<ModuleProgramNode> node;
-        JSModuleRecord* record = module->analyzeSourceText(globalObject, node);
-        RETURN_IF_EXCEPTION(scope, );
-        record->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
-        module->m_moduleRecord.set(vm, module, record);
-    }
-
-    for (auto& [replaced, module] : modules) {
-        for (const auto& request : replaced->loadedModules().values()) {
-            AbstractModuleRecord* imported = request.m_module.get();
-            if (!imported)
-                continue;
-            if (NodeVMSourceTextModule* importedModule = modules.get(imported))
-                imported = importedModule->m_moduleRecord.get();
-            module->m_moduleRecord->setImportedModule(globalObject, request, imported);
-            RETURN_IF_EXCEPTION(scope, );
-        }
-    }
+    // Link() asserts that every record it visits is past New. Unlinked from here on means that a Link() has run on the record.
+    for (NodeVMSourceTextModule* module : bound)
+        module->m_moduleRecord->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
+    return true;
 }
 
 JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
@@ -499,8 +477,7 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSModuleRecord* record = m_moduleRecord.get();
-    if (!record)
+    if (!m_moduleRecord)
         return jsUndefined();
 
     if (!m_linkCalled) {
@@ -515,7 +492,9 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
         globalObject = nodeVmGlobalObject;
 
     String missingSpecifier;
-    if (!isModuleGraphLinked(record, missingSpecifier)) {
+    bool isBound = bindLinkedModules(callerGlobalObject, missingSpecifier);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isBound) {
         // The specifier comes from the module's source, so from JS.
         MessageBuilder message;
         message.append("request for '"_s, missingSpecifier, "' is not in cache"_s);
@@ -523,22 +502,8 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
         return {};
     }
 
-    // A record that never went through link() (e.g. a module with no
-    // dependencies instantiated directly) is still Status::New; record->link
-    // asserts the record is past New, and only the loader's
-    // continueModuleLoading would normally flip it.
-    if (record->status() == JSC::CyclicModuleRecord::Status::New)
-        record->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
-
-    record->link(globalObject, nullptr);
-    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
-        if (!scope.tryClearException())
-            return {};
-        replaceUnlinkedRecords(callerGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        scope.throwException(globalObject, exception);
-        return {};
-    }
+    m_moduleRecord->link(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
 
     status(Status::Linked);
     propagateLinked();

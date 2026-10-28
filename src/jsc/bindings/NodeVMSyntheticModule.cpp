@@ -46,14 +46,12 @@ NodeVMSyntheticModule* NodeVMSyntheticModule::create(VM& vm, JSGlobalObject* glo
     }
 
     JSValue syntheticEvaluationStepsValue = args.at(3);
-    if (!syntheticEvaluationStepsValue.isUndefined()) {
-        if (!syntheticEvaluationStepsValue.isCallable()) {
-            throwArgumentTypeError(*globalObject, scope, 3, "syntheticEvaluationSteps"_s, "Module"_s, "Module"_s, "function"_s);
-            return nullptr;
-        }
-
-        syntheticEvaluationStepsValue = AsyncContextFrame::withAsyncContextIfNeeded(globalObject, syntheticEvaluationStepsValue);
+    if (!syntheticEvaluationStepsValue.isCallable()) {
+        throwArgumentTypeError(*globalObject, scope, 3, "syntheticEvaluationSteps"_s, "Module"_s, "Module"_s, "function"_s);
+        return nullptr;
     }
+
+    syntheticEvaluationStepsValue = AsyncContextFrame::withAsyncContextIfNeeded(globalObject, syntheticEvaluationStepsValue);
 
     JSValue moduleWrapperValue = args.at(4);
     if (!moduleWrapperValue.isObject()) {

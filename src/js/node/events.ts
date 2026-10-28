@@ -47,7 +47,7 @@ const kCapture: typeof shared.kCapture = shared.kCapture;
 // writes `undefined` instead of `delete`, keeping one shared JSC Structure
 // so the (StructureID, name)-keyed megamorphic cache stays hot.
 const kShapeMode: typeof shared.kShapeMode = shared.kShapeMode;
-const kErrorMonitor = Symbol.for("events.errorMonitor");
+const kErrorMonitor = Symbol("events.errorMonitor");
 const kMaxEventTargetListeners = Symbol("events.maxEventTargetListeners");
 const kMaxEventTargetListenersWarned = Symbol("events.maxEventTargetListenersWarned");
 const kWatermarkData = Symbol.for("nodejs.watermarkData");

@@ -3,6 +3,14 @@
 
 #![feature(adt_const_params)]
 
+mod tidy;
+pub use tidy::{
+    ParsedPosixLatin1, RelativePosixLatin1, basename_posix_latin1,
+    basename_without_suffix_posix_latin1, dirname_posix_latin1, extname_posix_latin1, is_ascii,
+    is_resolved_ascii_posix, is_tidy_ascii_posix, normalize_posix_latin1, parse_posix_latin1,
+    relative_posix_latin1, resolve_absolute_posix_latin1,
+};
+
 #[cfg(windows)]
 use bun_core::strings::CodeUnitsMut;
 use bun_core::strings::{self, CodeUnits};
@@ -176,18 +184,30 @@ fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
     Ok(cwd)
 }
 
+/// What [`resolve_posix_t`] puts in front of a path that is not absolute, where the system's own paths are POSIX paths.
+#[cfg(not(windows))]
+#[inline]
+pub fn posix_working_directory() -> &'static [u8] {
+    working_directory()
+}
+
+fn working_directory() -> &'static [u8] {
+    match bun_core::working_directory_in_executable() {
+        Some(directory) => directory,
+        None => {
+            without_trailing_slash_native(bun_paths::fs::FileSystem::instance().top_level_dir())
+        }
+    }
+}
+
 fn get_cwd_u8(buf: &mut [u8]) -> MaybeBuf<'_, u8> {
-    let cached_cwd =
-        without_trailing_slash_native(bun_paths::fs::FileSystem::instance().top_level_dir());
+    let cached_cwd = working_directory();
     buf[0..cached_cwd.len()].copy_from_slice(cached_cwd);
     Ok(&mut buf[0..cached_cwd.len()])
 }
 
 fn get_cwd_u16(buf: &mut [u16]) -> MaybeBuf<'_, u16> {
-    let result = strings::convert_utf8_to_utf16_in_buffer(
-        buf,
-        without_trailing_slash_native(bun_paths::fs::FileSystem::instance().top_level_dir()),
-    );
+    let result = strings::convert_utf8_to_utf16_in_buffer(buf, working_directory());
     Ok(result)
 }
 

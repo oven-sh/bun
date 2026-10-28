@@ -270,7 +270,9 @@ impl HotReloadEvent {
     /// `WatcherAtomics`. `(*first).owner` is either the live owning
     /// `DevServer` or null (set by `Drop for DevServer` while this event was
     /// still queued). Must run on the DevServer thread.
+    #[inline(never)]
     pub(crate) unsafe fn run(first: *mut HotReloadEvent) {
+        bun_removable_features::removable_definition!(Bundler, Self::run);
         // SAFETY: caller contract — `first` is a live slot in a heap
         // `WatcherAtomics`; `owner` is either the live DevServer or null.
         let dev: *mut DevServer = unsafe { (*first).owner };

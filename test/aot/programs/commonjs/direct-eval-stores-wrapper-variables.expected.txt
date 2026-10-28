@@ -1,0 +1,16 @@
+module.exports.b: 2 {"a":1,"b":2}
+a function reads the stored object: true
+stored by an eval in a function: stored in a function stored in a function object
+read by a later eval: stored in a function
+module after eval: {"exports":"replaced"} false
+module at the start of iteration 0: {"exports":"replaced"}
+module at the start of iteration 1: 0
+module after the loop: 1 object
+require after eval: no function function
+paths at the start: string string true
+paths after eval: file directory
+paths read by an arrow: file,directory!
+arguments after eval: 1
+arguments stored through an arrow: arrow
+arguments read by an arrow: seen
+strict code rejects the text: SyntaxError, 2

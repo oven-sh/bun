@@ -1,0 +1,11 @@
+{
+  "throws-twice.require_only.cjs": {
+    "output": "require threw evaluation 1\nrequire threw evaluation 1\nrequire threw evaluation 1\nrequire threw evaluation 1\nevaluations 1\n"
+  },
+  "throws-twice.require_only.ts": {
+    "output": "require threw evaluation 1\nrequire threw evaluation 1\nrequire threw evaluation 1\nrequire threw evaluation 1\nevaluations 1\n"
+  },
+  "throws-twice.require_then_import.ts": {
+    "output": "require threw evaluation 1\nimport() threw evaluation 1\nrequire threw evaluation 1\nimport() threw evaluation 1\nimport() threw evaluation 1\nevaluations 1\n"
+  }
+}

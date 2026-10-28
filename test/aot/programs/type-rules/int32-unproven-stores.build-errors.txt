@@ -1,0 +1,38 @@
+error: TS100031: Property 'column' of 'Cursor' is declared 'int32', but 'given[0]' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'given[0] | 0'.
+error: TS100031: Parameter 'start' of 'Cursor' is declared 'int32', but 'given[1]' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'given[1] | 0'.
+error: TS100031: Property 'line' of 'Cursor' is declared 'int32', but 'this.line += by' might not be an int32: it can be anything from -4294967296 to 4294967294. Write 'this.line = (this.line + by) | 0'.
+error: TS100031: The return value of 'move' is declared 'int32', but 'this.line + by' might not be an int32: it can be anything from -4294967296 to 4294967294. Write '(this.line + by) | 0'.
+error: TS100031: The return value of 'add' is declared 'int32', but 'a + b' might not be an int32: it can be anything from -4294967296 to 4294967294. Write '(a + b) | 0'.
+error: TS100031: The return value of 'subtract' is declared 'int32', but 'a - b' might not be an int32: it can be anything from -4294967295 to 4294967295. Write '(a - b) | 0'.
+error: TS100031: The return value of 'times' is declared 'int32', but 'a * b' might not be an int32: a product can be too large to be exact, and it can be -0. Write 'Math.imul(a, b)'.
+error: TS100031: The return value of 'half' is declared 'int32', but 'a / 2' might not be an int32: a division can produce a fraction. Write '(a / 2) | 0'.
+error: TS100031: The return value of 'negative' is declared 'int32', but '-a' might not be an int32: the negative of 0 is -0, which is not an int32. Write '-a | 0'.
+error: TS100031: The return value of 'rest' is declared 'int32', but 'a % b' might not be an int32: a remainder can be -0 or NaN. Write '(a % b) | 0'.
+error: TS100031: The return value of 'power' is declared 'int32', but 'a ** 2' might not be an int32: a power can be out of range or have a fraction. Write '(a ** 2) | 0'.
+error: TS100031: The return value of 'unsigned' is declared 'int32', but 'a >>> 0' might not be an int32: it can be anything from 0 to 4294967295. Write '(a >>> 0) | 0'.
+error: TS100031: The return value of 'code' is declared 'int32', but 'text.charCodeAt(i)' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'text.charCodeAt(i) | 0'.
+error: TS100031: The return value of 'size' is declared 'int32', but 'list.length' might not be an int32: it can be anything from 0 to 4294967295. Write 'list.length | 0'.
+error: TS100031: The return value of 'floor' is declared 'int32', but 'Math.floor(n)' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'Math.floor(n) | 0'.
+error: TS100031: The return value of 'plain' is declared 'int32', but 'n' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'n | 0'.
+error: TS100031: 'i' is declared 'int32', but 'i++' might not be an int32: it can be anything from -2147483647 to 2147483648. Write 'i = (i + 1) | 0'.
+error: TS100031: 'i' is declared 'int32', but 'i += 2' might not be an int32: it can be anything from -2147483646 to 2147483648. Write 'i = (i + 2) | 0'.
+error: TS100031: 'turns' is declared 'int32', but 'turns++' might not be an int32: it can be anything from -2147483647 to 2147483648. Write 'turns = (turns + 1) | 0'.
+error: TS100031: 'kept' is declared 'int32', but 'given[0]' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'given[0] | 0'.
+error: TS100031: 'kept' is declared 'int32', but 'loose' might not be an int32: its type is 'any'. Write 'loose | 0'.
+error: TS100031: 'kept' is declared 'int32', but 'given[1] + 1' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write '(given[1] + 1) | 0'.
+error: TS100031: 'kept' is declared 'int32', but 'kept += 1' might not be an int32: it can be anything from -2147483647 to 2147483648. Write 'kept = (kept + 1) | 0'.
+error: TS100031: 'kept' is declared 'int32', but 'kept -= given[0]' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'kept = (kept - given[0]) | 0'.
+error: TS100031: 'kept' is declared 'int32', but 'kept *= 3' might not be an int32: it can be anything from -6442450944 to 6442450941. Write 'kept = Math.imul(kept, 3)'.
+error: TS100031: 'kept' is declared 'int32', but 'kept /= 2' might not be an int32: a division can produce a fraction. Write 'kept = (kept / 2) | 0'.
+error: TS100031: 'kept' is declared 'int32', but 'kept >>>= 0' might not be an int32: it can be anything from 0 to 4294967295. Write 'kept = (kept >>> 0) | 0'.
+error: TS100031: 'kept' is declared 'int32', but 'kept--' might not be an int32: it can be anything from -2147483649 to 2147483646. Write 'kept = (kept - 1) | 0'.
+error: TS100031: 'kept' is declared 'int32', but the value assigned to 'kept' might not be an int32: a value assigned by destructuring, or by a 'for...of' or 'for...in' loop, cannot be checked. Assign it to a 'number' variable first, then convert that with '| 0'.
+error: TS100031: Parameter 'start' of 'Cursor' is declared 'int32', but 'given[0]' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'given[0] | 0'.
+error: TS100031: Property 'line' of 'Cursor' is declared 'int32', but 'given[0]' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'given[0] | 0'.
+error: TS100031: Property 'column' of 'Cursor' is declared 'int32', but 'given[1]' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'given[1] | 0'.
+error: TS100031: Property 'line' of 'Cursor' is declared 'int32', but 'cursor.line++' might not be an int32: it can be anything from -2147483647 to 2147483648. Write 'cursor.line = (cursor.line + 1) | 0'.
+error: TS100031: Parameter 'by' of 'move' is declared 'int32', but 'given[1]' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'given[1] | 0'.
+error: TS100031: Parameter 'b' of 'add' is declared 'int32', but 'given[0]' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'given[0] | 0'.
+error: TS100031: Parameter 'a' of 'add' is declared 'int32', but the value passed by this spread might not be an int32: the elements of a spread argument cannot be checked. Pass it as a separate argument.
+error: TS100031: Property 'x' of 'Point' is declared 'int32', but 'given[0]' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'given[0] | 0'.
+error: TS100031: Property 'y' of 'Point' is declared 'int32', but 'loose' might not be an int32: its type is 'any'. Write 'loose | 0'.

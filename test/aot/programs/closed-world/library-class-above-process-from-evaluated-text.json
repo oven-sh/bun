@@ -1,0 +1,1 @@
+{"skipInShell": "it uses Buffer, process and node:events, which the jsc shell does not have"}

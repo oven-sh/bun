@@ -1,6 +1,15 @@
 import fs from "fs";
 import path from "path";
-import { readdirRecursive, resolveSyncOrNull } from "./helpers";
+import { cap, readdirRecursive, resolveSyncOrNull } from "./helpers";
+
+export function idToEnumName(id: string) {
+  return id
+    .replace(/\.[mc]?[tj]s$/, "")
+    .replace(/[^a-zA-Z0-9]+/g, " ")
+    .split(" ")
+    .map(x => (["jsc", "ffi", "vm", "tls", "os", "ws", "fs", "dns"].includes(x) ? x.toUpperCase() : cap(x)))
+    .join("");
+}
 
 export function createInternalModuleRegistry(basedir: string) {
   const moduleList = ["bun", "node", "thirdparty", "internal"]

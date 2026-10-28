@@ -1,0 +1,90 @@
+//// console-streams-are-found-by-name.js
+// console._stdout and console._stderr are not enumerable. A read that names one finds the stream.
+const out = console._stdout;
+const { _stderr: err } = console;
+console.log(out === process.stdout, err === process.stderr);
+console.log(typeof out.write, typeof err.write, out.fd, err.fd);
+console.log("_stdout" in console, Object.hasOwn(console, "_stderr"), console.propertyIsEnumerable("_stdout"));
+out.write("written through console._stdout\n");
+//// console-streams-are-found-through-descriptors-and-own-names.js
+// The functions that list every own name, and those that answer descriptors, come by what is not enumerable.
+const one = Object.getOwnPropertyDescriptor(console, "_stdout");
+console.log(one.enumerable, one.configurable, (one.value ?? one.get.call(console)) === process.stdout);
+
+const all = Object.getOwnPropertyDescriptors(console);
+console.log(all._stderr.enumerable, (all._stderr.value ?? all._stderr.get.call(console)) === process.stderr);
+
+const names = Object.getOwnPropertyNames(console).filter(name => name.startsWith("_std")).sort();
+console.log(names.join(" "), names.map(name => console[name] === process[name.slice(1)]).join(" "));
+
+const keys = Reflect.ownKeys(console).filter(name => typeof name === "string" && name.startsWith("_std")).sort();
+console.log(keys.map(name => typeof console[name].write).join(" "));
+
+const copy = Object.defineProperties({}, all);
+console.log(copy._stdout === process.stdout, Object.keys(copy).includes("_stdout"));
+//// console-streams-are-found-under-a-computed-key.js
+// The key is put together at run time, on the object itself and on a value that nobody follows.
+const tail = process.argv.length > 100 ? "in" : "out";
+const key = "_std" + tail;
+console.log(console[key] === process.stdout);
+
+function pick(holder, name) {
+  return holder[name];
+}
+const holders = [{ _stdout: 1 }, console, new Map()];
+const chosen = holders[process.argv.length > 100 ? 0 : 1];
+console.log(pick(chosen, key) === process.stdout, pick(holders[0], key), pick(holders[2], key));
+console.log(Reflect.get(console, "_std" + (tail === "out" ? "err" : "x")) === process.stderr);
+
+const parsed = JSON.parse('{"a":1}', function (name, value) {
+  return name === "a" ? console : value;
+});
+console.log(parsed.a[key] === process.stdout, parsed.a._stderr === process.stderr);
+//// console-streams-behind-a-proxy-and-a-prototype.js
+// The streams are found through an object that forwards to console, and through one that inherits from it.
+const forwarded = new Proxy(console, {});
+console.log(forwarded._stdout === process.stdout, Reflect.has(forwarded, "_stderr"));
+
+const asked = [];
+const watched = new Proxy(console, {
+  get(target, name, receiver) {
+    asked.push(String(name));
+    return Reflect.get(target, name, receiver);
+  },
+});
+console.log(watched._stderr === process.stderr, asked.join(" "));
+
+const heir = Object.create(console);
+console.log(heir._stdout === process.stdout, Object.keys(heir).length);
+class Logger {
+  constructor() {
+    return Object.setPrototypeOf(this, console);
+  }
+}
+console.log(new Logger()._stderr === process.stderr);
+//// the-formatter-of-the-host-shows-the-streams-of-console.js
+// Bun's own formatter, behind console.log and Bun.inspect, shows properties that are not enumerable. So it reads console._stdout, and nothing else in this program does.
+const text = Bun.inspect(console);
+console.log(text.includes("_stdout: WriteStream"), text.includes("_stderr: WriteStream"), text.includes("fd: 1"), text.includes("fd: 2"));
+//// walks-over-console-pass-its-streams-by.js
+// Whoever goes over the enumerable properties of console never sees _stdout and _stderr. Bun's own formatter shows them.
+import util from "node:util";
+
+const seen = name => name === "_stdout" || name === "_stderr";
+console.log(Object.keys(console).some(seen), Object.entries(console).some(([name]) => seen(name)));
+console.log(Object.values(console).includes(process.stdout), Object.values(console).every(value => typeof value === "function"));
+
+const spread = { ...console };
+const assigned = Object.assign({}, console);
+console.log(spread._stdout, assigned._stderr, typeof spread.log, typeof assigned.Console);
+
+let inLoop = false;
+for (const name in console) inLoop ||= seen(name);
+console.log(inLoop);
+
+console.log(JSON.stringify(console), JSON.stringify({ console }));
+console.log(util.inspect(console).includes("_stdout"), util.inspect({ deep: { console } }, { depth: 4 }).includes("_stderr"));
+console.log(util.inspect(console, { showHidden: true }).includes("_stdout"));
+console.log(Bun.inspect(console).includes("_stdout"));
+console.log(Bun.deepEquals(console, console), util.isDeepStrictEqual({ ...console }, { ...console }));
+spread.log("the copy of log still prints");

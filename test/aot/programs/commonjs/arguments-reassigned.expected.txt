@@ -1,0 +1,125 @@
+compoundStore(): "[object Arguments]!"
+compoundStore(1): "[object Arguments]!"
+compoundStore(1,2): "[object Arguments]!"
+compoundStore("a",{"b":1},[3]): "[object Arguments]!"
+compoundStore(null,null): "[object Arguments]!"
+declaredWithInitializer(): [null,null]
+declaredWithInitializer(1): [1,1]
+declaredWithInitializer(1,2): [1,1]
+declaredWithInitializer("a",{"b":1},[3]): ["a","a"]
+declaredWithInitializer(null,null): [null,null]
+declaredWithoutInitializer(): ["arguments object"]
+declaredWithoutInitializer(1): ["arguments object",1]
+declaredWithoutInitializer(1,2): ["arguments object",1,2]
+declaredWithoutInitializer("a",{"b":1},[3]): ["arguments object","a",{"b":1},[3]]
+declaredWithoutInitializer(null,null): ["arguments object",null,null]
+destructured(): [[null],null]
+destructured(1): [[1],1]
+destructured(1,2): [[1],1]
+destructured("a",{"b":1},[3]): [["a"],"a"]
+destructured(null,null): [[null],null]
+forInTarget(): "key"
+forInTarget(1): "key"
+forInTarget(1,2): "key"
+forInTarget("a",{"b":1},[3]): "key"
+forInTarget(null,null): "key"
+forOfTarget(): 2
+forOfTarget(1): 2
+forOfTarget(1,2): 2
+forOfTarget("a",{"b":1},[3]): 2
+forOfTarget(null,null): 2
+incremented(): "NaN"
+incremented(1): "NaN"
+incremented(1,2): "NaN"
+incremented("a",{"b":1},[3]): "NaN"
+incremented(null,null): "NaN"
+mappedAfterArrowStore(): ["arrow",null]
+mappedAfterArrowStore(1): ["arrow","mapped"]
+mappedAfterArrowStore(1,2): ["arrow","mapped"]
+mappedAfterArrowStore("a",{"b":1},[3]): ["arrow","mapped"]
+mappedAfterArrowStore(null,null): ["arrow","mapped"]
+mappedAfterEvalStore(): [5,null]
+mappedAfterEvalStore(1): [5,"mapped"]
+mappedAfterEvalStore(1,2): [5,"mapped"]
+mappedAfterEvalStore("a",{"b":1},[3]): [5,"mapped"]
+mappedAfterEvalStore(null,null): [5,"mapped"]
+objectOutlivesStore(): undefined
+objectOutlivesStore(1): 5
+objectOutlivesStore(1,2): 5
+objectOutlivesStore("a",{"b":1},[3]): 5
+objectOutlivesStore(null,null): 5
+parameterStoreReachesObject(): [["arguments object"],1]
+parameterStoreReachesObject(1): [["arguments object","stored"],1]
+parameterStoreReachesObject(1,2): [["arguments object","stored",2],1]
+parameterStoreReachesObject("a",{"b":1},[3]): [["arguments object","stored",{"b":1},[3]],1]
+parameterStoreReachesObject(null,null): [["arguments object","stored",null],1]
+readAfterLoop(): 2
+readAfterLoop(1): 2
+readAfterLoop(1,2): 2
+readAfterLoop("a",{"b":1},[3]): 2
+readAfterLoop(null,null): 2
+readBeforeStoreInLoop(): [["arguments object"],0,1]
+readBeforeStoreInLoop(1): [["arguments object",1],0,1]
+readBeforeStoreInLoop(1,2): [["arguments object",1,2],0,1]
+readBeforeStoreInLoop("a",{"b":1},[3]): [["arguments object","a",{"b":1},[3]],0,1]
+readBeforeStoreInLoop(null,null): [["arguments object",null,null],0,1]
+readByArrowAfterStore(): "outer"
+readByArrowAfterStore(1): "outer"
+readByArrowAfterStore(1,2): "outer"
+readByArrowAfterStore("a",{"b":1},[3]): "outer"
+readByArrowAfterStore(null,null): "outer"
+readByEval(): 1
+readByEval(1): 1
+readByEval(1,2): 1
+readByEval("a",{"b":1},[3]): 1
+readByEval(null,null): 1
+returnedFromLoop(): 7
+returnedFromLoop(1): 7
+returnedFromLoop(1,2): 7
+returnedFromLoop("a",{"b":1},[3]): 7
+returnedFromLoop(null,null): 7
+storeKeepsParameter(): undefined
+storeKeepsParameter(1): 1
+storeKeepsParameter(1,2): 1
+storeKeepsParameter("a",{"b":1},[3]): "a"
+storeKeepsParameter(null,null): undefined
+storedByArrow(): ["arrow",null]
+storedByArrow(1): ["arrow",1]
+storedByArrow(1,2): ["arrow",1]
+storedByArrow("a",{"b":1},[3]): ["arrow","a"]
+storedByArrow(null,null): ["arrow",null]
+storedByEval(): 5
+storedByEval(1): 5
+storedByEval(1,2): 5
+storedByEval("a",{"b":1},[3]): 5
+storedByEval(null,null): 5
+storedByEvalInLoop(): [["arguments object"],0]
+storedByEvalInLoop(1): [["arguments object",1],0]
+storedByEvalInLoop(1,2): [["arguments object",1,2],0]
+storedByEvalInLoop("a",{"b":1},[3]): [["arguments object","a",{"b":1},[3]],0]
+storedByEvalInLoop(null,null): [["arguments object",null,null],0]
+storedInFinally(): ["arguments object"]
+storedInFinally(1): ["arguments object",1]
+storedInFinally(1,2): ["arguments object",1,2]
+storedInFinally("a",{"b":1},[3]): ["arguments object","a",{"b":1},[3]]
+storedInFinally(null,null): ["arguments object",null,null]
+storedInInnerLoop(): [["arguments object"],"0,1"]
+storedInInnerLoop(1): [["arguments object",1],"0,1"]
+storedInInnerLoop(1,2): [["arguments object",1,2],"0,1"]
+storedInInnerLoop("a",{"b":1},[3]): [["arguments object","a",{"b":1},[3]],"0,1"]
+storedInInnerLoop(null,null): [["arguments object",null,null],"0,1"]
+storedInTry(): "try"
+storedInTry(1): "try"
+storedInTry(1,2): "try"
+storedInTry("a",{"b":1},[3]): "try"
+storedInTry(null,null): "try"
+storedOnOneBranch(): ["arguments object"]
+storedOnOneBranch(1): 1
+storedOnOneBranch(1,2): 1
+storedOnOneBranch("a",{"b":1},[3]): 1
+storedOnOneBranch(null,null): ["arguments object",null,null]
+storedValueIsRead(): [null]
+storedValueIsRead(1): [1]
+storedValueIsRead(1,2): [1]
+storedValueIsRead("a",{"b":1},[3]): ["a"]
+storedValueIsRead(null,null): [null]

@@ -1,0 +1,5 @@
+{
+  "env": {
+    "BUN_JSC_slowPathAllocsBetweenGCs": "3"
+  }
+}

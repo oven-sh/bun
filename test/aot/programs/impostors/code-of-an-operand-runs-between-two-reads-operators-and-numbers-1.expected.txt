@@ -1,0 +1,125 @@
+strict: true
++t with a number -> "same same same / same same same", ran 0 times, now same same same
++t with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
++t with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
++t with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+-t with a number -> "same same same / same same same", ran 0 times, now same same same
+-t with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+-t with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+-t with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+~t with a number -> "same same same / same same same", ran 0 times, now same same same
+~t with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+~t with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+~t with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+t + "" with a number -> "same same same / same same same", ran 0 times, now same same same
+t + "" with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+t + "" with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+t + "" with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+`${t}` with a number -> "same same same / same same same", ran 0 times, now same same same
+`${t}` with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+`${t}` with a proxy -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+`${t}` with a proxy of a function -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+t * 2 with a number -> "same same same / same same same", ran 0 times, now same same same
+t * 2 with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+t * 2 with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+t * 2 with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+2 / t with a number -> "same same same / same same same", ran 0 times, now same same same
+2 / t with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+2 / t with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+2 / t with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+t % 2 with a number -> "same same same / same same same", ran 0 times, now same same same
+t % 2 with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+t % 2 with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+t % 2 with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+t ** 2 with a number -> "same same same / same same same", ran 0 times, now same same same
+t ** 2 with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+t ** 2 with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+t ** 2 with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+t | 0 with a number -> "same same same / same same same", ran 0 times, now same same same
+t | 0 with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+t | 0 with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+t | 0 with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+t >>> 0 with a number -> "same same same / same same same", ran 0 times, now same same same
+t >>> 0 with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+t >>> 0 with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+t >>> 0 with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+t << 1 with a number -> "same same same / same same same", ran 0 times, now same same same
+t << 1 with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+t << 1 with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+t << 1 with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+t < 1 with a number -> "same same same / same same same", ran 0 times, now same same same
+t < 1 with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+t < 1 with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+t < 1 with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+1 >= t with a number -> "same same same / same same same", ran 0 times, now same same same
+1 >= t with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+1 >= t with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+1 >= t with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+t == 1 with a number -> "same same same / same same same", ran 0 times, now same same same
+t == 1 with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+t == 1 with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+t == 1 with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"1" != t with a number -> "same same same / same same same", ran 0 times, now same same same
+"1" != t with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"1" != t with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"1" != t with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+({})[t] with a number -> "same same same / same same same", ran 0 times, now same same same
+({})[t] with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+({})[t] with a proxy -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+({})[t] with a proxy of a function -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+({ [t]: 1 }) with a number -> "same same same / same same same", ran 0 times, now same same same
+({ [t]: 1 }) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+({ [t]: 1 }) with a proxy -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+({ [t]: 1 }) with a proxy of a function -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+t in {} with a number -> "same same same / same same same", ran 0 times, now same same same
+t in {} with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+t in {} with a proxy -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+t in {} with a proxy of a function -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+"k" in t with a number -> threw TypeError, ran 0 times, now same same same
+"k" in t with methods -> "same same same / same same same", ran 0 times, now same same same
+"k" in t with a proxy -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"k" in t with a proxy of a function -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+t.k with a number -> "same same same / same same same", ran 0 times, now same same same
+t.k with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+t.k with a proxy -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+t.k with a proxy of a function -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+t?.k with a number -> "same same same / same same same", ran 0 times, now same same same
+t?.k with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+t?.k with a proxy -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+t?.k with a proxy of a function -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+t.k = 1 with a number -> threw TypeError, ran 0 times, now same same same
+t.k = 1 with methods -> threw TypeError, ran 0 times, now same same same
+t.k = 1 with a proxy -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+t.k = 1 with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+delete t.k with a number -> "same same same / same same same", ran 0 times, now same same same
+delete t.k with methods -> "same same same / same same same", ran 0 times, now same same same
+delete t.k with a proxy -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+delete t.k with a proxy of a function -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+t instanceof Object with a number -> "same same same / same same same", ran 0 times, now same same same
+t instanceof Object with methods -> "same same same / same same same", ran 0 times, now same same same
+t instanceof Object with a proxy -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+t instanceof Object with a proxy of a function -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+[...t] with a number -> threw TypeError, ran 0 times, now same same same
+[...t] with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+[...t] with a proxy -> threw TypeError, ran 1 times, now changed changed changed
+[...t] with a proxy of a function -> threw TypeError, ran 1 times, now changed changed changed
+Math.max(...t) with a number -> threw TypeError, ran 0 times, now same same same
+Math.max(...t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+Math.max(...t) with a proxy -> threw TypeError, ran 1 times, now changed changed changed
+Math.max(...t) with a proxy of a function -> threw TypeError, ran 1 times, now changed changed changed
+(([first]) => first)(t) with a number -> threw TypeError, ran 0 times, now same same same
+(([first]) => first)(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+(([first]) => first)(t) with a proxy -> threw TypeError, ran 1 times, now changed changed changed
+(([first]) => first)(t) with a proxy of a function -> threw TypeError, ran 1 times, now changed changed changed
+({ ...t }) with a number -> "same same same / same same same", ran 0 times, now same same same
+({ ...t }) with methods -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+({ ...t }) with a proxy -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+({ ...t }) with a proxy of a function -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+(({ k }) => k)(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+(({ k }) => k)(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+(({ k }) => k)(t) with a proxy -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+(({ k }) => k)(t) with a proxy of a function -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+(() => { for (const k in t) return k; })() with a number -> "same same same / same same same", ran 0 times, now same same same
+(() => { for (const k in t) return k; })() with methods -> "same same same / same same same", ran 0 times, now same same same
+(() => { for (const k in t) return k; })() with a proxy -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+(() => { for (const k in t) return k; })() with a proxy of a function -> "same same same / changed changed changed", ran 5 times, now changed changed changed

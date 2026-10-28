@@ -31,12 +31,13 @@ fn read_valid_ncount(
     max_symbol_value: u32,
     header: &[u8],
 ) -> Option<NCount> {
-    /// The bits from `position` on, from the lowest on: 57 of them or more, then zeroes.
+    /// The bits from `position` on, from the lowest on: `MIN_LOADED` of them or more, then zeroes.
     #[inline(always)]
     fn load(header: &[u8], position: usize) -> Option<u64> {
         let bytes = header.get(position / 8..position / 8 + 8)?;
         Some(u64::from_le_bytes(bytes.try_into().ok()?) >> (position % 8))
     }
+    const MIN_LOADED: u32 = 57;
     /// After how many bits more are loaded. The 17 that are left are enough for a count.
     const MAX_USED: u32 = 40;
 
@@ -57,50 +58,55 @@ fn read_valid_ncount(
     let mut threshold = 1i32 << table_log;
     let mut nb_bits = table_log + 1;
     let mut symbol = 0usize;
-    let mut previous0 = false;
 
-    while remaining > 1 {
-        if previous0 {
-            // Each pair of set bits stands for three more symbols of count 0.
-            loop {
-                position += used as usize;
-                used = 0;
-                bits = load(header, position)?;
-                let repeats = ((!bits).trailing_zeros() / 2).min(24);
-                symbol += 3 * repeats as usize;
-                bits >>= 2 * repeats;
-                used += 2 * repeats;
-                if repeats < 24 {
-                    break;
-                }
-            }
-            symbol += (bits & 3) as usize;
-            bits >>= 2;
-            used += 2;
-        }
+    loop {
         if used > MAX_USED {
             position += used as usize;
             used = 0;
             bits = load(header, position)?;
         }
 
-        let max = 2 * threshold - 1 - remaining;
+        // With `max` for `2 * threshold - 1 - remaining`: a value below `max` is stored with a bit less, and one from
+        // `threshold + max` on stands for `max` less. Written so that little has to wait for `remaining`.
         let low = bits as i32 & (threshold - 1);
         let all = bits as i32 & (2 * threshold - 1);
-        let is_short = low < max;
-        let long = all - if all >= threshold { max } else { 0 };
-        // The stored value is the count plus one, and a count of -1 takes one slot.
-        let count = if is_short { low } else { long } - 1;
-        let count_bits = nb_bits - u32::from(is_short);
+        let count_bits = nb_bits - u32::from(low + remaining < 2 * threshold - 1);
         bits >>= count_bits;
         used += count_bits;
-        remaining -= count.abs();
+        // The stored value is the count plus one, and a count of -1 takes one slot.
+        let count;
+        if all + remaining >= 3 * threshold - 1 {
+            count = all + remaining - 2 * threshold;
+            remaining = 2 * threshold - all;
+        } else {
+            count = low - 1;
+            remaining -= count.abs();
+        }
         *counts.get_mut(symbol)? = count as i16;
         symbol += 1;
-        previous0 = count == 0;
-        if remaining < threshold && remaining > 1 {
+        if remaining < threshold {
+            if remaining <= 1 {
+                break;
+            }
             nb_bits = remaining.ilog2() + 1;
             threshold = 1 << (nb_bits - 1);
+        }
+
+        if count == 0 {
+            // Each pair of set bits stands for three more symbols of count 0.
+            let mut repeats = (!bits).trailing_zeros() / 2;
+            if 2 * repeats + 2 > MIN_LOADED - used {
+                position += used as usize;
+                used = 0;
+                bits = load(header, position)?;
+                repeats = (!bits).trailing_zeros() / 2;
+                if 3 * repeats as usize > counts.len() {
+                    return None;
+                }
+            }
+            symbol += 3 * repeats as usize + (bits >> (2 * repeats) & 3) as usize;
+            bits >>= 2 * repeats + 2;
+            used += 2 * repeats + 2;
         }
     }
     if remaining != 1 {
@@ -374,4 +380,60 @@ pub(crate) fn huf_read_stats_wksp(
         nb_symbols: o_size as u32 + 1,
         table_log,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compress::fse::write_ncount;
+
+    #[test]
+    fn the_quick_way_reads_what_the_careful_way_reads() -> Result<()> {
+        let mut state = 1u64;
+        let mut random = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let nb_headers = if cfg!(miri) { 300 } else { 100_000 };
+        let mut nb_quick = 0;
+        for index in 0..nb_headers {
+            let max_symbol_value = [35, 52, 31, 255, 7].at(index % 5)?;
+            let mut header = [0u8; 48];
+            for byte in &mut header {
+                *byte = random() as u8;
+            }
+            if index % 2 == 0 {
+                header[0] = header[0] & 0xF0 | (random() % 8) as u8;
+            } else {
+                // A few symbols, far from each other.
+                let table_log = 5 + random() as u32 % 5;
+                let mut counts = [0i16; 64];
+                let mut left = 1i16 << table_log;
+                while left > 0 {
+                    let count = 1 + (random() % left as u64) as i16;
+                    *counts.at_mut(random() as usize % (max_symbol_value.min(63) + 1))? += count;
+                    left -= count;
+                }
+                let last = counts.iter().rposition(|&count| count != 0).unwrap_or(0);
+                write_ncount(&mut header, &counts, last as u32, table_log)?;
+            }
+            let max_symbol_value = max_symbol_value as u32;
+            let (mut quick, mut careful) = ([1i16; 256], [1i16; 256]);
+            let Some(read) = read_valid_ncount(&mut quick, max_symbol_value, &header) else {
+                continue;
+            };
+            nb_quick += 1;
+            let expected = read_any_ncount(&mut careful, max_symbol_value, &header)?;
+            assert_eq!(
+                (read.size, read.max_symbol_value, read.table_log),
+                (expected.size, expected.max_symbol_value, expected.table_log)
+            );
+            let nb_symbols = read.max_symbol_value as usize + 1;
+            assert_eq!(quick.sub(..nb_symbols)?, careful.sub(..nb_symbols)?);
+        }
+        assert!(nb_quick > nb_headers / 4);
+        Ok(())
+    }
 }

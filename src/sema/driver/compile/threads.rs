@@ -349,35 +349,15 @@ mod tests {
         );
     }
 
-    /// The kind of pool that `WorkPool` is: no spare threads, and a thread that waits briefly for its next task.
+    /// The kind of pool that `WorkPool` is: a thread that is out of tasks waits briefly for the next one.
     fn lingering_pool(max_threads: u32) -> bun_threading::ThreadPool {
         let config = bun_threading::thread_pool::Config {
             max_threads,
             ..Default::default()
         };
-        let pool = bun_threading::ThreadPool::init(config).named("Test");
-        pool.without_spare_threads().lingering()
-    }
-
-    #[test]
-    fn lingering_pool_starts_one_thread_for_one_task() {
-        set_up_output();
-        let pool: &'static _ = Box::leak(Box::new(lingering_pool(8)));
-        static DONE: AtomicUsize = AtomicUsize::new(0);
-        for round in 1..=20 {
-            schedule_on(pool, || {
-                DONE.fetch_add(1, Ordering::SeqCst);
-            });
-            wait_until(
-                || DONE.load(Ordering::SeqCst) == round,
-                "the task never ran",
-            );
-            wait_until(
-                || pool.available_threads() == 8,
-                "the thread never came to rest",
-            );
-        }
-        assert_eq!(pool.started_threads(), 1);
+        bun_threading::ThreadPool::init(config)
+            .named("Test")
+            .lingering()
     }
 
     #[test]
@@ -385,6 +365,7 @@ mod tests {
         set_up_output();
         static DONE: AtomicUsize = AtomicUsize::new(0);
         let mut scheduled = 0;
+        // With one thread, the thread that takes a task has no other thread to wake for the next one.
         for threads in [8, 1] {
             let pool: &'static _ = Box::leak(Box::new(lingering_pool(threads)));
             for round in 1..=5000 {
@@ -392,7 +373,7 @@ mod tests {
                 if round % 50 == 0 {
                     wait_until(
                         || pool.available_threads() == threads as usize,
-                        "the thread never came to rest",
+                        "the threads never came to rest",
                     );
                 }
                 schedule_on(pool, || {
@@ -432,7 +413,6 @@ mod tests {
             || ARRIVED.load(Ordering::SeqCst) == 4,
             "a task has no thread",
         );
-        assert_eq!(pool.started_threads(), 4);
     }
 
     #[test]

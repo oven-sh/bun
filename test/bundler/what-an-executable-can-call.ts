@@ -186,6 +186,9 @@ function placesIn(elf: Image, wanted: (name: string) => boolean): Place[] {
           if (((use >>> 5) & 31) !== (word & 31)) continue;
           if ((use & 0xffc00000) >>> 0 === 0xf9400000) found(nameAt(page + ((use >>> 10) & 0xfff) * 8), here);
           else if ((use & 0xffc00000) >>> 0 === 0x91000000) found(nameAt(page + ((use >>> 10) & 0xfff)), here);
+          else continue;
+          // It wrote to the register, which no longer holds the page: `adrp x0, page; add x0, x0, 0x530; ldr x1, [x0]`.
+          if ((use & 31) === (word & 31)) break;
         }
       }
       continue;

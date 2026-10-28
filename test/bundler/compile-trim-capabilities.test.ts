@@ -92,7 +92,12 @@ describe.skipIf(isWindows || isASAN)("an executable without what starts programs
     const cut = await build(folder, "cut", startsAProgram.features);
     if (cut.stderr.includes("this build of Bun doesn't support --trim")) return;
     expect(cut).toMatchObject({ exitCode: 0 });
-    expect(placesThatCall(cut.file, startsAProgram.functions)).toEqual([]);
+    expect(
+      placesThatCall(cut.file, startsAProgram.functions).map(place => ({
+        ...place,
+        keptBy: featuresThatKeep(place.address, startsAProgram.features),
+      })),
+    ).toEqual([]);
     expect(placesThatMakeSystemCalls(cut.file, startsAProgram.systemCalls)).toEqual([]);
     expect(await spawned([join(folder, "cut")], folder, bunEnv)).toMatchObject({
       stdout: "hello world\n",

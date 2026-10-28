@@ -4532,17 +4532,18 @@ describe("direct stream contract", () => {
       // Read before `dir` is disposed at the end of this scope.
       return await Bun.file(file).text();
     },
-    "Bun.spawn({ stdin: s })": async s => {
+    // How the echo child ended goes to `child`: observe() turns a throw in here into a result the error shapes ignore.
+    "Bun.spawn({ stdin: s })": async (s, child) => {
       await using proc = Bun.spawn({
-        // The echo uses Bun.stdin and Bun.stdout. process.stdin and process.stdout are node:stream objects, and to
-        // load them costs a debug build about 0.8s of CPU in each of these children.
+        // process.stdin and process.stdout would load node:stream: about 0.8s of CPU in each child on a debug build.
         cmd: [bunExe(), "-e", "for await (const chunk of Bun.stdin.stream()) await Bun.write(Bun.stdout, chunk);"],
         env: bunEnv,
         stdin: s,
         stdout: "pipe",
-        stderr: "inherit",
+        stderr: "pipe",
       });
-      const [out] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [out, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      Object.assign(child, { stderr, exitCode, signalCode: proc.signalCode });
       return out;
     },
   };
@@ -4552,7 +4553,10 @@ describe("direct stream contract", () => {
     const shape = directShapes[shapeName];
     const cells = Object.keys(consumers).filter(name => !(shape.oneShotOnly && directReaderConsumers.has(name)));
     test.concurrent.each(cells)("%s", async consumerName => {
-      const got = await directObserve(shape, consumers[consumerName]);
+      const child = {};
+      const got = await directObserve(shape, s => consumers[consumerName](s, child));
+      // Bun.spawn() throws when pull() throws in the same call: that cell has no child.
+      if ("exitCode" in child) expect(child).toEqual({ stderr: "", exitCode: 0, signalCode: null });
       if ("error" in shape.expect && cannotSurfaceErrors.has(consumerName)) {
         expect({ pulls: got.pulls, cancels: got.cancels }).toEqual({ pulls: 1, cancels: 0 });
         return;

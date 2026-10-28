@@ -1,0 +1,2883 @@
+//// values-found-under-a-key-from-a-captured-variable-read-before-its-store-1.js
+// Each table is read under a key that comes from a captured variable that is read before its store: the first read uses the key undefined, the second one "a".
+// What the table holds under "undefined" differs from what it holds under "a" in a way its use can tell. Each line prints both uses and what they left behind.
+// call
+const T0 = { a: () => 1, undefined: () => 'late' };
+function outer0() { const probe = () => { const v = T0[k]; return v(); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first0, second0] = outer0();
+console.log('call', String(first0), typeof first0, String(second0), String(0));
+// call-writes-variable
+let once1 = 1;
+const T1 = { a: () => 1, undefined: () => { once1 = 2; return 0; } };
+function outer1() { const probe = () => { const v = T1[k]; return v(); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first1, second1] = outer1();
+console.log('call-writes-variable', String(first1), typeof first1, String(second1), String(once1 + 1));
+// call-argument
+const T2 = { a: x => x + 1, undefined: x => x + 's' };
+function outer2() { const probe = () => { const v = T2[k]; return v(1); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first2, second2] = outer2();
+console.log('call-argument', String(first2), typeof first2, String(second2), String(0));
+// new
+const T3 = { a: class { constructor() { this.tag = 1; } }, undefined: class { constructor() { this.other = 0; this.tag = 'late'; } } };
+function outer3() { const probe = () => { const v = T3[k]; return new v().tag; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first3, second3] = outer3();
+console.log('new', String(first3), typeof first3, String(second3), String(0));
+// method
+const T4 = { a: { m() { return 1; } }, undefined: { z: 0, m() { return 'late'; } } };
+function outer4() { const probe = () => { const v = T4[k]; return v.m(); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first4, second4] = outer4();
+console.log('method', String(first4), typeof first4, String(second4), String(0));
+// getter
+let side5 = 0;
+const T5 = { a: { g: 1 }, undefined: { get g() { side5++; return 'late'; } } };
+function outer5() { const probe = () => { const v = T5[k]; return v.g; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first5, second5] = outer5();
+console.log('getter', String(first5), typeof first5, String(second5), String(side5));
+// setter
+let side6 = 0;
+const T6 = { a: { s: 1 }, undefined: { set s(x) { side6 = x; } } };
+function outer6() { const probe = () => { const v = T6[k]; v.s = 5; return 0; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first6, second6] = outer6();
+console.log('setter', String(first6), typeof first6, String(second6), String(side6 + 1));
+// slot
+const T7 = { a: { x: 1 }, undefined: { y: 0, w: 2, x: 'late' } };
+function outer7() { const probe = () => { const v = T7[k]; return v.x; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first7, second7] = outer7();
+console.log('slot', String(first7), typeof first7, String(second7), String(0));
+// slot-number
+const T8 = { a: { x: 1 }, undefined: { y: 0, x: 1.5 } };
+function outer8() { const probe = () => { const v = T8[k]; return v.x + 1; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first8, second8] = outer8();
+console.log('slot-number', String(first8), typeof first8, String(second8), String(0));
+// for-of
+const T9 = { a: [1, 2], undefined: { *[Symbol.iterator]() { yield 'late'; } } };
+function outer9() { const probe = () => { const v = T9[k]; let r = ''; for (const x of v) r += x; return r; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first9, second9] = outer9();
+console.log('for-of', String(first9), typeof first9, String(second9), String(0));
+// for-of-set
+const T10 = { a: [1, 2], undefined: new Set(['late']) };
+function outer10() { const probe = () => { const v = T10[k]; let r = ''; for (const x of v) r += x; return r; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first10, second10] = outer10();
+console.log('for-of-set', String(first10), typeof first10, String(second10), String(0));
+// for-of-string
+const T11 = { a: [1, 2], undefined: 'late' };
+function outer11() { const probe = () => { const v = T11[k]; let r = ''; for (const x of v) r += x + '.'; return r; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first11, second11] = outer11();
+console.log('for-of-string', String(first11), typeof first11, String(second11), String(0));
+// for-of-return
+let side12 = 0;
+const T12 = { a: [1, 2], undefined: { [Symbol.iterator]() { return { next() { return { done: false, value: 'late' }; }, return() { side12++; return {}; } }; } } };
+function outer12() { const probe = () => { const v = T12[k]; for (const x of v) return x; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first12, second12] = outer12();
+console.log('for-of-return', String(first12), typeof first12, String(second12), String(side12));
+// spread
+const T13 = { a: [1, 2], undefined: new Set(['late']) };
+function outer13() { const probe = () => { const v = T13[k]; return [...v].join(); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first13, second13] = outer13();
+console.log('spread', String(first13), typeof first13, String(second13), String(0));
+// spread-call
+const T14 = { a: [1, 2], undefined: { *[Symbol.iterator]() { yield 'la'; yield 'te'; } } };
+function outer14() { const probe = () => { const v = T14[k]; return ((a, b) => a + b)(...v); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first14, second14] = outer14();
+console.log('spread-call', String(first14), typeof first14, String(second14), String(0));
+// destructure-array
+const T15 = { a: [1, 2], undefined: 'late' };
+function outer15() { const probe = () => { const v = T15[k]; const [a, b] = v; return a + b; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first15, second15] = outer15();
+console.log('destructure-array', String(first15), typeof first15, String(second15), String(0));
+// destructure-object
+const T16 = { a: { p: 1 }, undefined: { q: 0, get p() { return 'late'; } } };
+function outer16() { const probe = () => { const v = T16[k]; const { p } = v; return p; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first16, second16] = outer16();
+console.log('destructure-object', String(first16), typeof first16, String(second16), String(0));
+// to-primitive
+let side17 = 0;
+const T17 = { a: 1, undefined: { valueOf() { side17++; return 'late'; } } };
+function outer17() { const probe = () => { const v = T17[k]; return v + 1; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first17, second17] = outer17();
+console.log('to-primitive', String(first17), typeof first17, String(second17), String(side17));
+// to-primitive-symbol
+const T18 = { a: 1, undefined: { [Symbol.toPrimitive]() { return 'late'; } } };
+function outer18() { const probe = () => { const v = T18[k]; return `${v}`; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first18, second18] = outer18();
+console.log('to-primitive-symbol', String(first18), typeof first18, String(second18), String(0));
+// to-string
+const T19 = { a: 'e', undefined: { toString() { return 'late'; } } };
+function outer19() { const probe = () => { const v = T19[k]; return String(v); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first19, second19] = outer19();
+console.log('to-string', String(first19), typeof first19, String(second19), String(0));
+// to-number
+const T20 = { a: 1, undefined: { valueOf() { return 2.5; } } };
+function outer20() { const probe = () => { const v = T20[k]; return v * 2; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first20, second20] = outer20();
+console.log('to-number', String(first20), typeof first20, String(second20), String(0));
+// to-json
+const T21 = { a: { a: 1 }, undefined: { toJSON() { return 'late'; } } };
+function outer21() { const probe = () => { const v = T21[k]; return JSON.stringify(v); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first21, second21] = outer21();
+console.log('to-json', String(first21), typeof first21, String(second21), String(0));
+// to-key
+let side22 = 0;
+const T22 = { a: 'p', undefined: { toString() { side22++; return 'q'; } } };
+function outer22() { const probe = () => { const v = T22[k]; return ({ p: 1, q: 'late' })[v]; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first22, second22] = outer22();
+console.log('to-key', String(first22), typeof first22, String(second22), String(side22));
+// instanceof-right
+let side23 = 0;
+const T23 = { a: class A23 {}, undefined: { [Symbol.hasInstance]() { side23++; return true; } } };
+function outer23() { const probe = () => { const v = T23[k]; return ({}) instanceof v; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first23, second23] = outer23();
+console.log('instanceof-right', String(first23), typeof first23, String(second23), String(side23));
+// instanceof-left
+class A24 {} class B24 {}
+const T24 = { a: new A24(), undefined: new B24() };
+function outer24() { const probe = () => { const v = T24[k]; return v instanceof A24; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first24, second24] = outer24();
+console.log('instanceof-left', String(first24), typeof first24, String(second24), String(0));
+// extends
+const T25 = { a: class { tag() { return 1; } }, undefined: class { tag() { return 'late'; } } };
+function outer25() { const probe = () => { const v = T25[k]; class X extends v {} return new X().tag(); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first25, second25] = outer25();
+console.log('extends', String(first25), typeof first25, String(second25), String(0));
+// extends-constructor
+const T26 = { a: class { constructor() { this.t = 1; } }, undefined: class { constructor() { this.u = 0; this.t = 'late'; } } };
+function outer26() { const probe = () => { const v = T26[k]; class X extends v { constructor() { super(); this.z = 3; } } return new X().t; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first26, second26] = outer26();
+console.log('extends-constructor', String(first26), typeof first26, String(second26), String(0));
+// object-create
+const T27 = { a: { tag: 1 }, undefined: { get tag() { return 'late'; } } };
+function outer27() { const probe = () => { const v = T27[k]; return Object.create(v).tag; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first27, second27] = outer27();
+console.log('object-create', String(first27), typeof first27, String(second27), String(0));
+// set-prototype
+const T28 = { a: { tag: 1 }, undefined: { tag: 'late' } };
+function outer28() { const probe = () => { const v = T28[k]; const o = {}; Object.setPrototypeOf(o, v); return o.tag; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first28, second28] = outer28();
+console.log('set-prototype', String(first28), typeof first28, String(second28), String(0));
+// proto-literal
+const T29 = { a: { tag: 1 }, undefined: { tag: 'late' } };
+function outer29() { const probe = () => { const v = T29[k]; return ({ __proto__: v }).tag; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first29, second29] = outer29();
+console.log('proto-literal', String(first29), typeof first29, String(second29), String(0));
+// reflect-get
+const T30 = { a: { g: 1 }, undefined: { get g() { return 'late'; } } };
+function outer30() { const probe = () => { const v = T30[k]; return Reflect.get(v, 'g'); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first30, second30] = outer30();
+console.log('reflect-get', String(first30), typeof first30, String(second30), String(0));
+// reflect-apply
+const T31 = { a: () => 1, undefined: () => 'late' };
+function outer31() { const probe = () => { const v = T31[k]; return Reflect.apply(v, null, []); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first31, second31] = outer31();
+console.log('reflect-apply', String(first31), typeof first31, String(second31), String(0));
+// reflect-construct
+const T32 = { a: class { constructor() { this.t = 1; } }, undefined: class { constructor() { this.t = 'late'; } } };
+function outer32() { const probe = () => { const v = T32[k]; return Reflect.construct(v, []).t; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first32, second32] = outer32();
+console.log('reflect-construct', String(first32), typeof first32, String(second32), String(0));
+// map-callback
+const T33 = { a: x => x, undefined: x => 'late' + x };
+function outer33() { const probe = () => { const v = T33[k]; return [1, 2].map(v).join(); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first33, second33] = outer33();
+console.log('map-callback', String(first33), typeof first33, String(second33), String(0));
+// foreach-callback
+let side34 = 0;
+const T34 = { a: x => {}, undefined: x => { side34 += x; } };
+function outer34() { const probe = () => { const v = T34[k]; [1, 2].forEach(v); return 0; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first34, second34] = outer34();
+console.log('foreach-callback', String(first34), typeof first34, String(second34), String(side34));
+// sort-callback
+const T35 = { a: (a, b) => a - b, undefined: (a, b) => b - a };
+function outer35() { const probe = () => { const v = T35[k]; return [1, 3, 2].sort(v).join(); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first35, second35] = outer35();
+console.log('sort-callback', String(first35), typeof first35, String(second35), String(0));
+// reduce-callback
+const T36 = { a: (a, b) => a + b, undefined: (a, b) => a + 's' + b };
+function outer36() { const probe = () => { const v = T36[k]; return [1, 2].reduce(v); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first36, second36] = outer36();
+console.log('reduce-callback', String(first36), typeof first36, String(second36), String(0));
+// filter-callback
+const T37 = { a: x => true, undefined: x => x > 1 };
+function outer37() { const probe = () => { const v = T37[k]; return [1, 2].filter(v).length; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first37, second37] = outer37();
+console.log('filter-callback', String(first37), typeof first37, String(second37), String(0));
+// find-callback
+const T38 = { a: x => x == 1, undefined: x => x == 2 };
+function outer38() { const probe = () => { const v = T38[k]; return [1, 2].find(v); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first38, second38] = outer38();
+console.log('find-callback', String(first38), typeof first38, String(second38), String(0));
+// array-from-callback
+const T39 = { a: x => x, undefined: x => 'late' };
+function outer39() { const probe = () => { const v = T39[k]; return Array.from([1], v)[0]; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first39, second39] = outer39();
+console.log('array-from-callback', String(first39), typeof first39, String(second39), String(0));
+//// values-found-under-a-key-from-a-captured-variable-read-before-its-store-2.js
+// Each table is read under a key that comes from a captured variable that is read before its store: the first read uses the key undefined, the second one "a".
+// What the table holds under "undefined" differs from what it holds under "a" in a way its use can tell. Each line prints both uses and what they left behind.
+// map-foreach-callback
+let side0 = 0;
+const T0 = { a: () => {}, undefined: (val, key) => { side0 = val; } };
+function outer0() { const probe = () => { const v = T0[k]; new Map([[1, 'late']]).forEach(v); return 0; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first0, second0] = outer0();
+console.log('map-foreach-callback', String(first0), typeof first0, String(second0), String(side0));
+// replace-callback
+const T1 = { a: () => 'e', undefined: () => 'late' };
+function outer1() { const probe = () => { const v = T1[k]; return 'ab'.replace(/a/, v); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first1, second1] = outer1();
+console.log('replace-callback', String(first1), typeof first1, String(second1), String(0));
+// json-reviver
+const T2 = { a: (k, x) => x, undefined: (k, x) => typeof x == 'number' ? 'late' : x };
+function outer2() { const probe = () => { const v = T2[k]; return JSON.parse('[1]', v)[0]; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first2, second2] = outer2();
+console.log('json-reviver', String(first2), typeof first2, String(second2), String(0));
+// promise-executor
+let side3 = 0;
+const T3 = { a: r => {}, undefined: r => { side3 = 'late'; } };
+function outer3() { const probe = () => { const v = T3[k]; new Promise(v); return 0; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first3, second3] = outer3();
+console.log('promise-executor', String(first3), typeof first3, String(second3), String(side3));
+// function-call
+const T4 = { a: function () { return 1; }, undefined: function () { return 'late'; } };
+function outer4() { const probe = () => { const v = T4[k]; return v.call(null); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first4, second4] = outer4();
+console.log('function-call', String(first4), typeof first4, String(second4), String(0));
+// function-apply
+const T5 = { a: function (a) { return a; }, undefined: function (a) { return 'late' + a; } };
+function outer5() { const probe = () => { const v = T5[k]; return v.apply(null, [1]); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first5, second5] = outer5();
+console.log('function-apply', String(first5), typeof first5, String(second5), String(0));
+// function-bind
+const T6 = { a: function () { return 1; }, undefined: function () { return 'late'; } };
+function outer6() { const probe = () => { const v = T6[k]; return v.bind(null)(); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first6, second6] = outer6();
+console.log('function-bind', String(first6), typeof first6, String(second6), String(0));
+// yield-star
+const T7 = { a: [1], undefined: { *[Symbol.iterator]() { yield 'late'; } } };
+function outer7() { const probe = () => { const v = T7[k]; function* g() { yield* v; } return g().next().value; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first7, second7] = outer7();
+console.log('yield-star', String(first7), typeof first7, String(second7), String(0));
+// for-in
+const T8 = { a: { a: 1 }, undefined: { late: 1, more: 2 } };
+function outer8() { const probe = () => { const v = T8[k]; let r = ''; for (const k in v) r += k; return r; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first8, second8] = outer8();
+console.log('for-in', String(first8), typeof first8, String(second8), String(0));
+// keys
+const T9 = { a: { a: 1 }, undefined: { late: 1, more: 2 } };
+function outer9() { const probe = () => { const v = T9[k]; return Object.keys(v).join(); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first9, second9] = outer9();
+console.log('keys', String(first9), typeof first9, String(second9), String(0));
+// values
+const T10 = { a: { a: 1 }, undefined: { b: 'late' } };
+function outer10() { const probe = () => { const v = T10[k]; return Object.values(v)[0]; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first10, second10] = outer10();
+console.log('values', String(first10), typeof first10, String(second10), String(0));
+// entries
+const T11 = { a: { a: 1 }, undefined: { get b() { return 'late'; } } };
+function outer11() { const probe = () => { const v = T11[k]; return Object.entries(v)[0][1]; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first11, second11] = outer11();
+console.log('entries', String(first11), typeof first11, String(second11), String(0));
+// assign
+const T12 = { a: { a: 1 }, undefined: { get a() { return 'late'; } } };
+function outer12() { const probe = () => { const v = T12[k]; return Object.assign({}, v).a; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first12, second12] = outer12();
+console.log('assign', String(first12), typeof first12, String(second12), String(0));
+// object-spread
+const T13 = { a: { a: 1 }, undefined: { get a() { return 'late'; } } };
+function outer13() { const probe = () => { const v = T13[k]; return ({ ...v }).a; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first13, second13] = outer13();
+console.log('object-spread', String(first13), typeof first13, String(second13), String(0));
+// in-proxy
+let side14 = 0;
+const T14 = { a: { x: 1 }, undefined: new Proxy({}, { has() { side14++; return false; } }) };
+function outer14() { const probe = () => { const v = T14[k]; return 'x' in v; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first14, second14] = outer14();
+console.log('in-proxy', String(first14), typeof first14, String(second14), String(side14));
+// proxy-handler
+const T15 = { a: {}, undefined: { get() { return 'late'; } } };
+function outer15() { const probe = () => { const v = T15[k]; return new Proxy({ foo: 1 }, v).foo; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first15, second15] = outer15();
+console.log('proxy-handler', String(first15), typeof first15, String(second15), String(0));
+// tagged-template
+const T16 = { a: () => 1, undefined: s => 'late' + s[0] };
+function outer16() { const probe = () => { const v = T16[k]; return v`x`; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first16, second16] = outer16();
+console.log('tagged-template', String(first16), typeof first16, String(second16), String(0));
+// typeof
+const T17 = { a: 1, undefined: 'late' };
+function outer17() { const probe = () => { const v = T17[k]; return typeof v; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first17, second17] = outer17();
+console.log('typeof', String(first17), typeof first17, String(second17), String(0));
+// typeof-function
+const T18 = { a: () => 1, undefined: {} };
+function outer18() { const probe = () => { const v = T18[k]; return typeof v === 'function'; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first18, second18] = outer18();
+console.log('typeof-function', String(first18), typeof first18, String(second18), String(0));
+// is-array
+const T19 = { a: [1], undefined: { length: 1 } };
+function outer19() { const probe = () => { const v = T19[k]; return Array.isArray(v); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first19, second19] = outer19();
+console.log('is-array', String(first19), typeof first19, String(second19), String(0));
+// identity
+const same20 = { x: 1 };
+const T20 = { a: same20, undefined: { x: 1 } };
+function outer20() { const probe = () => { const v = T20[k]; return v === same20; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first20, second20] = outer20();
+console.log('identity', String(first20), typeof first20, String(second20), String(0));
+// nullish
+const T21 = { a: 1, undefined: null };
+function outer21() { const probe = () => { const v = T21[k]; return v ?? 'late'; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first21, second21] = outer21();
+console.log('nullish', String(first21), typeof first21, String(second21), String(0));
+// truthy
+const T22 = { a: 1, undefined: 0 };
+function outer22() { const probe = () => { const v = T22[k]; return v ? 'e' : 'late'; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first22, second22] = outer22();
+console.log('truthy', String(first22), typeof first22, String(second22), String(0));
+// optional-call
+const T23 = { a: () => 1, undefined: undefined };
+function outer23() { const probe = () => { const v = T23[k]; return v?.(); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first23, second23] = outer23();
+console.log('optional-call', String(first23), typeof first23, String(second23), String(0));
+// constructor-identity
+class A24 {} class B24 {}
+const T24 = { a: new A24(), undefined: new B24() };
+function outer24() { const probe = () => { const v = T24[k]; return v.constructor === A24; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first24, second24] = outer24();
+console.log('constructor-identity', String(first24), typeof first24, String(second24), String(0));
+// prototype-identity
+class A25 {} class B25 {}
+const T25 = { a: new A25(), undefined: new B25() };
+function outer25() { const probe = () => { const v = T25[k]; return Object.getPrototypeOf(v) === A25.prototype; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first25, second25] = outer25();
+console.log('prototype-identity', String(first25), typeof first25, String(second25), String(0));
+// has-own
+const T26 = { a: { x: 1 }, undefined: { y: 1 } };
+function outer26() { const probe = () => { const v = T26[k]; return Object.hasOwn(v, 'x'); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first26, second26] = outer26();
+console.log('has-own', String(first26), typeof first26, String(second26), String(0));
+// in
+const T27 = { a: { x: 1 }, undefined: { y: 1 } };
+function outer27() { const probe = () => { const v = T27[k]; return 'x' in v; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first27, second27] = outer27();
+console.log('in', String(first27), typeof first27, String(second27), String(0));
+// store-alias
+const aliased28 = { x: 1 };
+const T28 = { a: { x: 1 }, undefined: aliased28 };
+function outer28() { const probe = () => { const v = T28[k]; v.x = 's'; return 0; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first28, second28] = outer28();
+console.log('store-alias', String(first28), typeof first28, String(second28), String(aliased28.x + 1));
+// element-store-alias
+const aliased29 = [1, 2];
+const T29 = { a: [1], undefined: aliased29 };
+function outer29() { const probe = () => { const v = T29[k]; v[0] = 's'; return 0; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first29, second29] = outer29();
+console.log('element-store-alias', String(first29), typeof first29, String(second29), String(aliased29[0] + 1));
+// delete-alias
+const aliased30 = { x: 1 };
+const T30 = { a: { x: 1 }, undefined: aliased30 };
+function outer30() { const probe = () => { const v = T30[k]; delete v.x; return 0; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first30, second30] = outer30();
+console.log('delete-alias', String(first30), typeof first30, String(second30), String(aliased30.x));
+// freeze-alias
+const aliased31 = { x: 1 };
+const T31 = { a: { x: 1 }, undefined: aliased31 };
+function outer31() { const probe = () => { const v = T31[k]; Object.freeze(v); return 0; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first31, second31] = outer31();
+console.log('freeze-alias', String(first31), typeof first31, String(second31), String((() => { try { aliased31.x = 2; } catch { return 'threw'; } return aliased31.x; })()));
+// define-alias
+const aliased32 = { x: 1 };
+const T32 = { a: { x: 1 }, undefined: aliased32 };
+function outer32() { const probe = () => { const v = T32[k]; Object.defineProperty(v, 'x', { get() { return 'late'; } }); return 0; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first32, second32] = outer32();
+console.log('define-alias', String(first32), typeof first32, String(second32), String(aliased32.x));
+// length-alias
+const aliased33 = [1, 2];
+const T33 = { a: [1], undefined: aliased33 };
+function outer33() { const probe = () => { const v = T33[k]; v.length = 0; return 0; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first33, second33] = outer33();
+console.log('length-alias', String(first33), typeof first33, String(second33), String(aliased33.length + ':' + aliased33[0]));
+// push-alias
+const aliased34 = [1, 2];
+const T34 = { a: [1], undefined: aliased34 };
+function outer34() { const probe = () => { const v = T34[k]; v.push('s'); return 0; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first34, second34] = outer34();
+console.log('push-alias', String(first34), typeof first34, String(second34), String(aliased34[2] + 1));
+// map-set-alias
+const aliased35 = new Map([['k', 1]]);
+const T35 = { a: new Map(), undefined: aliased35 };
+function outer35() { const probe = () => { const v = T35[k]; v.set('k', 's'); return 0; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first35, second35] = outer35();
+console.log('map-set-alias', String(first35), typeof first35, String(second35), String(aliased35.get('k') + 1));
+// add-property-alias
+const aliased36 = { x: 1 };
+const T36 = { a: { x: 1 }, undefined: aliased36 };
+function outer36() { const probe = () => { const v = T36[k]; v.added = 's'; return 0; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first36, second36] = outer36();
+console.log('add-property-alias', String(first36), typeof first36, String(second36), String(Object.keys(aliased36).join() + aliased36.added));
+// set-prototype-alias
+const aliased37 = { x: 1 };
+const T37 = { a: { x: 1 }, undefined: aliased37 };
+function outer37() { const probe = () => { const v = T37[k]; Object.setPrototypeOf(v, { inherited: 'late' }); return 0; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first37, second37] = outer37();
+console.log('set-prototype-alias', String(first37), typeof first37, String(second37), String(aliased37.inherited));
+// static-count
+class Late38 { static n = 1; }
+const T38 = { a: class { static n = 1; }, undefined: Late38 };
+function outer38() { const probe = () => { const v = T38[k]; v.n += 's'; return 0; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first38, second38] = outer38();
+console.log('static-count', String(first38), typeof first38, String(second38), String(Late38.n + 1));
+// prototype-method-store
+class Late39 { m() { return 1; } }
+const T39 = { a: class { m() { return 1; } }, undefined: Late39 };
+function outer39() { const probe = () => { const v = T39[k]; v.prototype.m = () => 'late'; return 0; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first39, second39] = outer39();
+console.log('prototype-method-store', String(first39), typeof first39, String(second39), String(new Late39().m()));
+//// values-found-under-a-key-from-a-captured-variable-read-before-its-store-3.js
+// Each table is read under a key that comes from a captured variable that is read before its store: the first read uses the key undefined, the second one "a".
+// What the table holds under "undefined" differs from what it holds under "a" in a way its use can tell. Each line prints both uses and what they left behind.
+// throw
+const T0 = { a: 1, undefined: { tag: 'late' } };
+function outer0() { const probe = () => { const v = T0[k]; try { throw v; } catch (e) { return typeof e === 'number' ? e : e.tag; } }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first0, second0] = outer0();
+console.log('throw', String(first0), typeof first0, String(second0), String(0));
+// number-double
+const T1 = { a: 1, undefined: 1.5 };
+function outer1() { const probe = () => { const v = T1[k]; return v + 1; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first1, second1] = outer1();
+console.log('number-double', String(first1), typeof first1, String(second1), String(0));
+// number-large
+const T2 = { a: 1, undefined: 2 ** 40 };
+function outer2() { const probe = () => { const v = T2[k]; return v + 1; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first2, second2] = outer2();
+console.log('number-large', String(first2), typeof first2, String(second2), String(0));
+// number-negative-zero
+const T3 = { a: 1, undefined: -0 };
+function outer3() { const probe = () => { const v = T3[k]; return 1 / v; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first3, second3] = outer3();
+console.log('number-negative-zero', String(first3), typeof first3, String(second3), String(0));
+// number-nan
+const T4 = { a: 1, undefined: NaN };
+function outer4() { const probe = () => { const v = T4[k]; return v === v; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first4, second4] = outer4();
+console.log('number-nan', String(first4), typeof first4, String(second4), String(0));
+// number-bigint
+const T5 = { a: 1, undefined: 1n };
+function outer5() { const probe = () => { const v = T5[k]; return typeof (v * v); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first5, second5] = outer5();
+console.log('number-bigint', String(first5), typeof first5, String(second5), String(0));
+// number-string
+const T6 = { a: 1, undefined: 's' };
+function outer6() { const probe = () => { const v = T6[k]; return v + 1; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first6, second6] = outer6();
+console.log('number-string', String(first6), typeof first6, String(second6), String(0));
+// number-bitor
+const T7 = { a: 1, undefined: 2 ** 32 + 5.5 };
+function outer7() { const probe = () => { const v = T7[k]; return v | 0; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first7, second7] = outer7();
+console.log('number-bitor', String(first7), typeof first7, String(second7), String(0));
+// number-index
+const T8 = { a: 0, undefined: 'length' };
+function outer8() { const probe = () => { const v = T8[k]; return [7, 8][v]; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first8, second8] = outer8();
+console.log('number-index', String(first8), typeof first8, String(second8), String(0));
+// number-index-negative
+const T9 = { a: 0, undefined: -1 };
+function outer9() { const probe = () => { const v = T9[k]; return [7, 8][v]; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first9, second9] = outer9();
+console.log('number-index-negative', String(first9), typeof first9, String(second9), String(0));
+// number-index-far
+const T10 = { a: 0, undefined: 5 };
+function outer10() { const probe = () => { const v = T10[k]; return [7, 8][v]; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first10, second10] = outer10();
+console.log('number-index-far', String(first10), typeof first10, String(second10), String(0));
+// string-length
+const T11 = { a: 'a', undefined: 5 };
+function outer11() { const probe = () => { const v = T11[k]; return v.length; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first11, second11] = outer11();
+console.log('string-length', String(first11), typeof first11, String(second11), String(0));
+// string-method
+const T12 = { a: 'a', undefined: { charCodeAt() { return 'late'; } } };
+function outer12() { const probe = () => { const v = T12[k]; return v.charCodeAt(0); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first12, second12] = outer12();
+console.log('string-method', String(first12), typeof first12, String(second12), String(0));
+// boolean
+const T13 = { a: true, undefined: 'late' };
+function outer13() { const probe = () => { const v = T13[k]; return v === true; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first13, second13] = outer13();
+console.log('boolean', String(first13), typeof first13, String(second13), String(0));
+// arguments-object
+const T14 = { a: () => 1, undefined: () => 'late' };
+function outer14() { const probe = () => { const v = T14[k]; return (function () { return arguments[0](); })(v); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first14, second14] = outer14();
+console.log('arguments-object', String(first14), typeof first14, String(second14), String(0));
+// rest
+const T15 = { a: () => 1, undefined: () => 'late' };
+function outer15() { const probe = () => { const v = T15[k]; return ((...r) => r[0]())(v); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first15, second15] = outer15();
+console.log('rest', String(first15), typeof first15, String(second15), String(0));
+// default-parameter
+const T16 = { a: 1, undefined: undefined };
+function outer16() { const probe = () => { const v = T16[k]; return ((a = 'late') => a)(v); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first16, second16] = outer16();
+console.log('default-parameter', String(first16), typeof first16, String(second16), String(0));
+// closure-state
+let count17 = 0.5;
+const T17 = { a: () => 1, undefined: () => ++count17 };
+function outer17() { const probe = () => { const v = T17[k]; return v(); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first17, second17] = outer17();
+console.log('closure-state', String(first17), typeof first17, String(second17), String(count17));
+// array-element
+const T18 = { a: [() => 1], undefined: [() => 'late'] };
+function outer18() { const probe = () => { const v = T18[k]; return v[0](); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first18, second18] = outer18();
+console.log('array-element', String(first18), typeof first18, String(second18), String(0));
+// nested-object
+const T19 = { a: { in: { f() { return 1; } } }, undefined: { in: { f() { return 'late'; } } } };
+function outer19() { const probe = () => { const v = T19[k]; return v.in.f(); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first19, second19] = outer19();
+console.log('nested-object', String(first19), typeof first19, String(second19), String(0));
+// map-value
+const T20 = { a: new Map([['k', () => 1]]), undefined: new Map([['k', () => 'late']]) };
+function outer20() { const probe = () => { const v = T20[k]; return v.get('k')(); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first20, second20] = outer20();
+console.log('map-value', String(first20), typeof first20, String(second20), String(0));
+// symbol-key
+const sym21 = Symbol();
+const T21 = { a: { [sym21]: 1 }, undefined: { [sym21]: 'late' } };
+function outer21() { const probe = () => { const v = T21[k]; return v[sym21]; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first21, second21] = outer21();
+console.log('symbol-key', String(first21), typeof first21, String(second21), String(0));
+// private-field
+class A22 { #p; constructor(p) { this.#p = p; } static read(o) { return o.#p; } }
+const T22 = { a: new A22(1), undefined: new A22('late') };
+function outer22() { const probe = () => { const v = T22[k]; return A22.read(v); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first22, second22] = outer22();
+console.log('private-field', String(first22), typeof first22, String(second22), String(0));
+// private-in
+class A23 { #p = 1; static has(o) { return #p in o; } }
+const T23 = { a: new A23(), undefined: {} };
+function outer23() { const probe = () => { const v = T23[k]; return A23.has(v); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first23, second23] = outer23();
+console.log('private-in', String(first23), typeof first23, String(second23), String(0));
+// regexp
+const T24 = { a: /a/, undefined: { exec() { return null; }, test() { return 'late'; } } };
+function outer24() { const probe = () => { const v = T24[k]; return v.test('a'); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first24, second24] = outer24();
+console.log('regexp', String(first24), typeof first24, String(second24), String(0));
+// date
+const T25 = { a: new Date(0), undefined: { getTime() { return 'late'; } } };
+function outer25() { const probe = () => { const v = T25[k]; return v.getTime(); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first25, second25] = outer25();
+console.log('date', String(first25), typeof first25, String(second25), String(0));
+// typed-array
+const T26 = { a: new Uint8Array([1]), undefined: new Float64Array([1.5]) };
+function outer26() { const probe = () => { const v = T26[k]; return v[0] + 1; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first26, second26] = outer26();
+console.log('typed-array', String(first26), typeof first26, String(second26), String(0));
+// typed-array-or-array
+const T27 = { a: new Uint8Array([1]), undefined: ['late'] };
+function outer27() { const probe = () => { const v = T27[k]; return v[0]; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first27, second27] = outer27();
+console.log('typed-array-or-array', String(first27), typeof first27, String(second27), String(0));
+// array-holes
+const T28 = { a: [1, 2], undefined: [, 2] };
+function outer28() { const probe = () => { const v = T28[k]; return v[0]; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first28, second28] = outer28();
+console.log('array-holes', String(first28), typeof first28, String(second28), String(0));
+// array-doubles
+const T29 = { a: [1, 2], undefined: [1.5, 2] };
+function outer29() { const probe = () => { const v = T29[k]; return v[0] + 1; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first29, second29] = outer29();
+console.log('array-doubles', String(first29), typeof first29, String(second29), String(0));
+// array-length
+const T30 = { a: [1, 2], undefined: { length: 'late' } };
+function outer30() { const probe = () => { const v = T30[k]; return v.length; }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first30, second30] = outer30();
+console.log('array-length', String(first30), typeof first30, String(second30), String(0));
+// second-level-leak
+let innerSink31, inner31 = 'none'; class Inner31 { constructor() { innerSink31 = this; inner31 = typeof innerSink31.f; this.f = 1; } }
+const T31 = { a: () => 1, undefined: () => { new Inner31(); return inner31; } };
+function outer31() { const probe = () => { const v = T31[k]; return v(); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first31, second31] = outer31();
+console.log('second-level-leak', String(first31), typeof first31, String(second31), String(typeof innerSink31.f));
+// second-level-variable
+const T32 = { a: () => 1, undefined: () => typeof laterVariable32 };
+function outer32() { const probe = () => { const v = T32[k]; return v(); }; const first = probe(); var k = 'a'; return [first, probe()]; }
+const [first32, second32] = outer32();
+var laterVariable32 = 1;
+console.log('second-level-variable', String(first32), typeof first32, String(second32), String(typeof laterVariable32));
+//// values-found-under-a-key-from-a-captured-variable-read-before-its-store-async.js
+// Each table is read under a key that comes from a captured variable that is read before its store: the first read uses the key undefined, the second one "a".
+// What the table holds under "undefined" differs from what it holds under "a" in a way its use can tell. Each line prints both uses and what they left behind.
+// await
+const T0 = { a: Promise.resolve(1), undefined: { then(r) { r('late'); } } };
+async function outer0() { const probe = async () => { const v = T0[k]; return await v; }; const first = await probe(); var k = 'a'; return [first, await probe()]; }
+const [first0, second0] = await outer0();
+console.log('await', String(first0), typeof first0, String(second0), String(0));
+// await-primitive
+const T1 = { a: Promise.resolve(1), undefined: 'late' };
+async function outer1() { const probe = async () => { const v = T1[k]; return await v; }; const first = await probe(); var k = 'a'; return [first, await probe()]; }
+const [first1, second1] = await outer1();
+console.log('await-primitive', String(first1), typeof first1, String(second1), String(0));
+// await-rejected
+const T2 = { a: Promise.resolve(1), undefined: Promise.reject('late') };
+async function outer2() { const probe = async () => { const v = T2[k]; try { return await v; } catch (e) { return 'caught ' + e; } }; const first = await probe(); var k = 'a'; return [first, await probe()]; }
+const [first2, second2] = await outer2();
+console.log('await-rejected', String(first2), typeof first2, String(second2), String(0));
+// then
+const T3 = { a: Promise.resolve(1), undefined: { then(r) { r('late'); } } };
+async function outer3() { const probe = async () => { const v = T3[k]; return Promise.resolve(v).then(x => x + 1); }; const first = await probe(); var k = 'a'; return [first, await probe()]; }
+const [first3, second3] = await outer3();
+console.log('then', String(first3), typeof first3, String(second3), String(0));
+// then-callback
+const T4 = { a: x => x, undefined: x => 'late' };
+async function outer4() { const probe = async () => { const v = T4[k]; return Promise.resolve(1).then(v); }; const first = await probe(); var k = 'a'; return [first, await probe()]; }
+const [first4, second4] = await outer4();
+console.log('then-callback', String(first4), typeof first4, String(second4), String(0));
+// async-return
+const T5 = { a: 1, undefined: { then(r) { r('late'); } } };
+async function outer5() { const probe = async () => { const v = T5[k]; return v; }; const first = await probe(); var k = 'a'; return [first, await probe()]; }
+const [first5, second5] = await outer5();
+console.log('async-return', String(first5), typeof first5, String(second5), String(0));
+// promise-all
+const T6 = { a: [Promise.resolve(1)], undefined: [{ then(r) { r('late'); } }] };
+async function outer6() { const probe = async () => { const v = T6[k]; return (await Promise.all(v))[0]; }; const first = await probe(); var k = 'a'; return [first, await probe()]; }
+const [first6, second6] = await outer6();
+console.log('promise-all', String(first6), typeof first6, String(second6), String(0));
+// for-await
+const T7 = { a: [1], undefined: { async *[Symbol.asyncIterator]() { yield 'late'; } } };
+async function outer7() { const probe = async () => { const v = T7[k]; let r = ''; for await (const x of v) r += x; return r; }; const first = await probe(); var k = 'a'; return [first, await probe()]; }
+const [first7, second7] = await outer7();
+console.log('for-await', String(first7), typeof first7, String(second7), String(0));
+// for-await-sync
+const T8 = { a: [1], undefined: [Promise.resolve('late')] };
+async function outer8() { const probe = async () => { const v = T8[k]; let r = ''; for await (const x of v) r += x; return r; }; const first = await probe(); var k = 'a'; return [first, await probe()]; }
+const [first8, second8] = await outer8();
+console.log('for-await-sync', String(first8), typeof first8, String(second8), String(0));
+// async-callee
+const T9 = { a: async () => 1, undefined: async () => 'late' };
+async function outer9() { const probe = async () => { const v = T9[k]; return await v(); }; const first = await probe(); var k = 'a'; return [first, await probe()]; }
+const [first9, second9] = await outer9();
+console.log('async-callee', String(first9), typeof first9, String(second9), String(0));
+// microtask
+let side10 = 0;
+const T10 = { a: () => {}, undefined: () => { side10 = 'late'; } };
+async function outer10() { const probe = async () => { const v = T10[k]; queueMicrotask(v); await null; return side10; }; const first = await probe(); var k = 'a'; return [first, await probe()]; }
+const [first10, second10] = await outer10();
+console.log('microtask', String(first10), typeof first10, String(second10), String(0));
+//// values-found-under-a-key-from-a-field-read-before-its-store-1.js
+// Each table is read under a key that comes from a field that is read before the constructor stores it: the first read uses the key undefined, the second one "a".
+// What the table holds under "undefined" differs from what it holds under "a" in a way its use can tell. Each line prints both uses and what they left behind.
+// call
+const T0 = { a: () => 1, undefined: () => 'late' };
+let sink0;
+function probe0() { const v = T0[sink0.k]; return v(); }
+class K0 { constructor() { sink0 = this; this.r = probe0(); this.k = 'a'; } }
+const first0 = new K0().r;
+console.log('call', String(first0), typeof first0, String(probe0()), String(0));
+// call-writes-variable
+let once1 = 1;
+const T1 = { a: () => 1, undefined: () => { once1 = 2; return 0; } };
+let sink1;
+function probe1() { const v = T1[sink1.k]; return v(); }
+class K1 { constructor() { sink1 = this; this.r = probe1(); this.k = 'a'; } }
+const first1 = new K1().r;
+console.log('call-writes-variable', String(first1), typeof first1, String(probe1()), String(once1 + 1));
+// call-argument
+const T2 = { a: x => x + 1, undefined: x => x + 's' };
+let sink2;
+function probe2() { const v = T2[sink2.k]; return v(1); }
+class K2 { constructor() { sink2 = this; this.r = probe2(); this.k = 'a'; } }
+const first2 = new K2().r;
+console.log('call-argument', String(first2), typeof first2, String(probe2()), String(0));
+// new
+const T3 = { a: class { constructor() { this.tag = 1; } }, undefined: class { constructor() { this.other = 0; this.tag = 'late'; } } };
+let sink3;
+function probe3() { const v = T3[sink3.k]; return new v().tag; }
+class K3 { constructor() { sink3 = this; this.r = probe3(); this.k = 'a'; } }
+const first3 = new K3().r;
+console.log('new', String(first3), typeof first3, String(probe3()), String(0));
+// method
+const T4 = { a: { m() { return 1; } }, undefined: { z: 0, m() { return 'late'; } } };
+let sink4;
+function probe4() { const v = T4[sink4.k]; return v.m(); }
+class K4 { constructor() { sink4 = this; this.r = probe4(); this.k = 'a'; } }
+const first4 = new K4().r;
+console.log('method', String(first4), typeof first4, String(probe4()), String(0));
+// getter
+let side5 = 0;
+const T5 = { a: { g: 1 }, undefined: { get g() { side5++; return 'late'; } } };
+let sink5;
+function probe5() { const v = T5[sink5.k]; return v.g; }
+class K5 { constructor() { sink5 = this; this.r = probe5(); this.k = 'a'; } }
+const first5 = new K5().r;
+console.log('getter', String(first5), typeof first5, String(probe5()), String(side5));
+// setter
+let side6 = 0;
+const T6 = { a: { s: 1 }, undefined: { set s(x) { side6 = x; } } };
+let sink6;
+function probe6() { const v = T6[sink6.k]; v.s = 5; return 0; }
+class K6 { constructor() { sink6 = this; this.r = probe6(); this.k = 'a'; } }
+const first6 = new K6().r;
+console.log('setter', String(first6), typeof first6, String(probe6()), String(side6 + 1));
+// slot
+const T7 = { a: { x: 1 }, undefined: { y: 0, w: 2, x: 'late' } };
+let sink7;
+function probe7() { const v = T7[sink7.k]; return v.x; }
+class K7 { constructor() { sink7 = this; this.r = probe7(); this.k = 'a'; } }
+const first7 = new K7().r;
+console.log('slot', String(first7), typeof first7, String(probe7()), String(0));
+// slot-number
+const T8 = { a: { x: 1 }, undefined: { y: 0, x: 1.5 } };
+let sink8;
+function probe8() { const v = T8[sink8.k]; return v.x + 1; }
+class K8 { constructor() { sink8 = this; this.r = probe8(); this.k = 'a'; } }
+const first8 = new K8().r;
+console.log('slot-number', String(first8), typeof first8, String(probe8()), String(0));
+// for-of
+const T9 = { a: [1, 2], undefined: { *[Symbol.iterator]() { yield 'late'; } } };
+let sink9;
+function probe9() { const v = T9[sink9.k]; let r = ''; for (const x of v) r += x; return r; }
+class K9 { constructor() { sink9 = this; this.r = probe9(); this.k = 'a'; } }
+const first9 = new K9().r;
+console.log('for-of', String(first9), typeof first9, String(probe9()), String(0));
+// for-of-set
+const T10 = { a: [1, 2], undefined: new Set(['late']) };
+let sink10;
+function probe10() { const v = T10[sink10.k]; let r = ''; for (const x of v) r += x; return r; }
+class K10 { constructor() { sink10 = this; this.r = probe10(); this.k = 'a'; } }
+const first10 = new K10().r;
+console.log('for-of-set', String(first10), typeof first10, String(probe10()), String(0));
+// for-of-string
+const T11 = { a: [1, 2], undefined: 'late' };
+let sink11;
+function probe11() { const v = T11[sink11.k]; let r = ''; for (const x of v) r += x + '.'; return r; }
+class K11 { constructor() { sink11 = this; this.r = probe11(); this.k = 'a'; } }
+const first11 = new K11().r;
+console.log('for-of-string', String(first11), typeof first11, String(probe11()), String(0));
+// for-of-return
+let side12 = 0;
+const T12 = { a: [1, 2], undefined: { [Symbol.iterator]() { return { next() { return { done: false, value: 'late' }; }, return() { side12++; return {}; } }; } } };
+let sink12;
+function probe12() { const v = T12[sink12.k]; for (const x of v) return x; }
+class K12 { constructor() { sink12 = this; this.r = probe12(); this.k = 'a'; } }
+const first12 = new K12().r;
+console.log('for-of-return', String(first12), typeof first12, String(probe12()), String(side12));
+// spread
+const T13 = { a: [1, 2], undefined: new Set(['late']) };
+let sink13;
+function probe13() { const v = T13[sink13.k]; return [...v].join(); }
+class K13 { constructor() { sink13 = this; this.r = probe13(); this.k = 'a'; } }
+const first13 = new K13().r;
+console.log('spread', String(first13), typeof first13, String(probe13()), String(0));
+// spread-call
+const T14 = { a: [1, 2], undefined: { *[Symbol.iterator]() { yield 'la'; yield 'te'; } } };
+let sink14;
+function probe14() { const v = T14[sink14.k]; return ((a, b) => a + b)(...v); }
+class K14 { constructor() { sink14 = this; this.r = probe14(); this.k = 'a'; } }
+const first14 = new K14().r;
+console.log('spread-call', String(first14), typeof first14, String(probe14()), String(0));
+// destructure-array
+const T15 = { a: [1, 2], undefined: 'late' };
+let sink15;
+function probe15() { const v = T15[sink15.k]; const [a, b] = v; return a + b; }
+class K15 { constructor() { sink15 = this; this.r = probe15(); this.k = 'a'; } }
+const first15 = new K15().r;
+console.log('destructure-array', String(first15), typeof first15, String(probe15()), String(0));
+// destructure-object
+const T16 = { a: { p: 1 }, undefined: { q: 0, get p() { return 'late'; } } };
+let sink16;
+function probe16() { const v = T16[sink16.k]; const { p } = v; return p; }
+class K16 { constructor() { sink16 = this; this.r = probe16(); this.k = 'a'; } }
+const first16 = new K16().r;
+console.log('destructure-object', String(first16), typeof first16, String(probe16()), String(0));
+// to-primitive
+let side17 = 0;
+const T17 = { a: 1, undefined: { valueOf() { side17++; return 'late'; } } };
+let sink17;
+function probe17() { const v = T17[sink17.k]; return v + 1; }
+class K17 { constructor() { sink17 = this; this.r = probe17(); this.k = 'a'; } }
+const first17 = new K17().r;
+console.log('to-primitive', String(first17), typeof first17, String(probe17()), String(side17));
+// to-primitive-symbol
+const T18 = { a: 1, undefined: { [Symbol.toPrimitive]() { return 'late'; } } };
+let sink18;
+function probe18() { const v = T18[sink18.k]; return `${v}`; }
+class K18 { constructor() { sink18 = this; this.r = probe18(); this.k = 'a'; } }
+const first18 = new K18().r;
+console.log('to-primitive-symbol', String(first18), typeof first18, String(probe18()), String(0));
+// to-string
+const T19 = { a: 'e', undefined: { toString() { return 'late'; } } };
+let sink19;
+function probe19() { const v = T19[sink19.k]; return String(v); }
+class K19 { constructor() { sink19 = this; this.r = probe19(); this.k = 'a'; } }
+const first19 = new K19().r;
+console.log('to-string', String(first19), typeof first19, String(probe19()), String(0));
+// to-number
+const T20 = { a: 1, undefined: { valueOf() { return 2.5; } } };
+let sink20;
+function probe20() { const v = T20[sink20.k]; return v * 2; }
+class K20 { constructor() { sink20 = this; this.r = probe20(); this.k = 'a'; } }
+const first20 = new K20().r;
+console.log('to-number', String(first20), typeof first20, String(probe20()), String(0));
+// to-json
+const T21 = { a: { a: 1 }, undefined: { toJSON() { return 'late'; } } };
+let sink21;
+function probe21() { const v = T21[sink21.k]; return JSON.stringify(v); }
+class K21 { constructor() { sink21 = this; this.r = probe21(); this.k = 'a'; } }
+const first21 = new K21().r;
+console.log('to-json', String(first21), typeof first21, String(probe21()), String(0));
+// to-key
+let side22 = 0;
+const T22 = { a: 'p', undefined: { toString() { side22++; return 'q'; } } };
+let sink22;
+function probe22() { const v = T22[sink22.k]; return ({ p: 1, q: 'late' })[v]; }
+class K22 { constructor() { sink22 = this; this.r = probe22(); this.k = 'a'; } }
+const first22 = new K22().r;
+console.log('to-key', String(first22), typeof first22, String(probe22()), String(side22));
+// instanceof-right
+let side23 = 0;
+const T23 = { a: class A23 {}, undefined: { [Symbol.hasInstance]() { side23++; return true; } } };
+let sink23;
+function probe23() { const v = T23[sink23.k]; return ({}) instanceof v; }
+class K23 { constructor() { sink23 = this; this.r = probe23(); this.k = 'a'; } }
+const first23 = new K23().r;
+console.log('instanceof-right', String(first23), typeof first23, String(probe23()), String(side23));
+// instanceof-left
+class A24 {} class B24 {}
+const T24 = { a: new A24(), undefined: new B24() };
+let sink24;
+function probe24() { const v = T24[sink24.k]; return v instanceof A24; }
+class K24 { constructor() { sink24 = this; this.r = probe24(); this.k = 'a'; } }
+const first24 = new K24().r;
+console.log('instanceof-left', String(first24), typeof first24, String(probe24()), String(0));
+// extends
+const T25 = { a: class { tag() { return 1; } }, undefined: class { tag() { return 'late'; } } };
+let sink25;
+function probe25() { const v = T25[sink25.k]; class X extends v {} return new X().tag(); }
+class K25 { constructor() { sink25 = this; this.r = probe25(); this.k = 'a'; } }
+const first25 = new K25().r;
+console.log('extends', String(first25), typeof first25, String(probe25()), String(0));
+// extends-constructor
+const T26 = { a: class { constructor() { this.t = 1; } }, undefined: class { constructor() { this.u = 0; this.t = 'late'; } } };
+let sink26;
+function probe26() { const v = T26[sink26.k]; class X extends v { constructor() { super(); this.z = 3; } } return new X().t; }
+class K26 { constructor() { sink26 = this; this.r = probe26(); this.k = 'a'; } }
+const first26 = new K26().r;
+console.log('extends-constructor', String(first26), typeof first26, String(probe26()), String(0));
+// object-create
+const T27 = { a: { tag: 1 }, undefined: { get tag() { return 'late'; } } };
+let sink27;
+function probe27() { const v = T27[sink27.k]; return Object.create(v).tag; }
+class K27 { constructor() { sink27 = this; this.r = probe27(); this.k = 'a'; } }
+const first27 = new K27().r;
+console.log('object-create', String(first27), typeof first27, String(probe27()), String(0));
+// set-prototype
+const T28 = { a: { tag: 1 }, undefined: { tag: 'late' } };
+let sink28;
+function probe28() { const v = T28[sink28.k]; const o = {}; Object.setPrototypeOf(o, v); return o.tag; }
+class K28 { constructor() { sink28 = this; this.r = probe28(); this.k = 'a'; } }
+const first28 = new K28().r;
+console.log('set-prototype', String(first28), typeof first28, String(probe28()), String(0));
+// proto-literal
+const T29 = { a: { tag: 1 }, undefined: { tag: 'late' } };
+let sink29;
+function probe29() { const v = T29[sink29.k]; return ({ __proto__: v }).tag; }
+class K29 { constructor() { sink29 = this; this.r = probe29(); this.k = 'a'; } }
+const first29 = new K29().r;
+console.log('proto-literal', String(first29), typeof first29, String(probe29()), String(0));
+// reflect-get
+const T30 = { a: { g: 1 }, undefined: { get g() { return 'late'; } } };
+let sink30;
+function probe30() { const v = T30[sink30.k]; return Reflect.get(v, 'g'); }
+class K30 { constructor() { sink30 = this; this.r = probe30(); this.k = 'a'; } }
+const first30 = new K30().r;
+console.log('reflect-get', String(first30), typeof first30, String(probe30()), String(0));
+// reflect-apply
+const T31 = { a: () => 1, undefined: () => 'late' };
+let sink31;
+function probe31() { const v = T31[sink31.k]; return Reflect.apply(v, null, []); }
+class K31 { constructor() { sink31 = this; this.r = probe31(); this.k = 'a'; } }
+const first31 = new K31().r;
+console.log('reflect-apply', String(first31), typeof first31, String(probe31()), String(0));
+// reflect-construct
+const T32 = { a: class { constructor() { this.t = 1; } }, undefined: class { constructor() { this.t = 'late'; } } };
+let sink32;
+function probe32() { const v = T32[sink32.k]; return Reflect.construct(v, []).t; }
+class K32 { constructor() { sink32 = this; this.r = probe32(); this.k = 'a'; } }
+const first32 = new K32().r;
+console.log('reflect-construct', String(first32), typeof first32, String(probe32()), String(0));
+// map-callback
+const T33 = { a: x => x, undefined: x => 'late' + x };
+let sink33;
+function probe33() { const v = T33[sink33.k]; return [1, 2].map(v).join(); }
+class K33 { constructor() { sink33 = this; this.r = probe33(); this.k = 'a'; } }
+const first33 = new K33().r;
+console.log('map-callback', String(first33), typeof first33, String(probe33()), String(0));
+// foreach-callback
+let side34 = 0;
+const T34 = { a: x => {}, undefined: x => { side34 += x; } };
+let sink34;
+function probe34() { const v = T34[sink34.k]; [1, 2].forEach(v); return 0; }
+class K34 { constructor() { sink34 = this; this.r = probe34(); this.k = 'a'; } }
+const first34 = new K34().r;
+console.log('foreach-callback', String(first34), typeof first34, String(probe34()), String(side34));
+// sort-callback
+const T35 = { a: (a, b) => a - b, undefined: (a, b) => b - a };
+let sink35;
+function probe35() { const v = T35[sink35.k]; return [1, 3, 2].sort(v).join(); }
+class K35 { constructor() { sink35 = this; this.r = probe35(); this.k = 'a'; } }
+const first35 = new K35().r;
+console.log('sort-callback', String(first35), typeof first35, String(probe35()), String(0));
+// reduce-callback
+const T36 = { a: (a, b) => a + b, undefined: (a, b) => a + 's' + b };
+let sink36;
+function probe36() { const v = T36[sink36.k]; return [1, 2].reduce(v); }
+class K36 { constructor() { sink36 = this; this.r = probe36(); this.k = 'a'; } }
+const first36 = new K36().r;
+console.log('reduce-callback', String(first36), typeof first36, String(probe36()), String(0));
+// filter-callback
+const T37 = { a: x => true, undefined: x => x > 1 };
+let sink37;
+function probe37() { const v = T37[sink37.k]; return [1, 2].filter(v).length; }
+class K37 { constructor() { sink37 = this; this.r = probe37(); this.k = 'a'; } }
+const first37 = new K37().r;
+console.log('filter-callback', String(first37), typeof first37, String(probe37()), String(0));
+// find-callback
+const T38 = { a: x => x == 1, undefined: x => x == 2 };
+let sink38;
+function probe38() { const v = T38[sink38.k]; return [1, 2].find(v); }
+class K38 { constructor() { sink38 = this; this.r = probe38(); this.k = 'a'; } }
+const first38 = new K38().r;
+console.log('find-callback', String(first38), typeof first38, String(probe38()), String(0));
+// array-from-callback
+const T39 = { a: x => x, undefined: x => 'late' };
+let sink39;
+function probe39() { const v = T39[sink39.k]; return Array.from([1], v)[0]; }
+class K39 { constructor() { sink39 = this; this.r = probe39(); this.k = 'a'; } }
+const first39 = new K39().r;
+console.log('array-from-callback', String(first39), typeof first39, String(probe39()), String(0));
+//// values-found-under-a-key-from-a-field-read-before-its-store-2.js
+// Each table is read under a key that comes from a field that is read before the constructor stores it: the first read uses the key undefined, the second one "a".
+// What the table holds under "undefined" differs from what it holds under "a" in a way its use can tell. Each line prints both uses and what they left behind.
+// map-foreach-callback
+let side0 = 0;
+const T0 = { a: () => {}, undefined: (val, key) => { side0 = val; } };
+let sink0;
+function probe0() { const v = T0[sink0.k]; new Map([[1, 'late']]).forEach(v); return 0; }
+class K0 { constructor() { sink0 = this; this.r = probe0(); this.k = 'a'; } }
+const first0 = new K0().r;
+console.log('map-foreach-callback', String(first0), typeof first0, String(probe0()), String(side0));
+// replace-callback
+const T1 = { a: () => 'e', undefined: () => 'late' };
+let sink1;
+function probe1() { const v = T1[sink1.k]; return 'ab'.replace(/a/, v); }
+class K1 { constructor() { sink1 = this; this.r = probe1(); this.k = 'a'; } }
+const first1 = new K1().r;
+console.log('replace-callback', String(first1), typeof first1, String(probe1()), String(0));
+// json-reviver
+const T2 = { a: (k, x) => x, undefined: (k, x) => typeof x == 'number' ? 'late' : x };
+let sink2;
+function probe2() { const v = T2[sink2.k]; return JSON.parse('[1]', v)[0]; }
+class K2 { constructor() { sink2 = this; this.r = probe2(); this.k = 'a'; } }
+const first2 = new K2().r;
+console.log('json-reviver', String(first2), typeof first2, String(probe2()), String(0));
+// promise-executor
+let side3 = 0;
+const T3 = { a: r => {}, undefined: r => { side3 = 'late'; } };
+let sink3;
+function probe3() { const v = T3[sink3.k]; new Promise(v); return 0; }
+class K3 { constructor() { sink3 = this; this.r = probe3(); this.k = 'a'; } }
+const first3 = new K3().r;
+console.log('promise-executor', String(first3), typeof first3, String(probe3()), String(side3));
+// function-call
+const T4 = { a: function () { return 1; }, undefined: function () { return 'late'; } };
+let sink4;
+function probe4() { const v = T4[sink4.k]; return v.call(null); }
+class K4 { constructor() { sink4 = this; this.r = probe4(); this.k = 'a'; } }
+const first4 = new K4().r;
+console.log('function-call', String(first4), typeof first4, String(probe4()), String(0));
+// function-apply
+const T5 = { a: function (a) { return a; }, undefined: function (a) { return 'late' + a; } };
+let sink5;
+function probe5() { const v = T5[sink5.k]; return v.apply(null, [1]); }
+class K5 { constructor() { sink5 = this; this.r = probe5(); this.k = 'a'; } }
+const first5 = new K5().r;
+console.log('function-apply', String(first5), typeof first5, String(probe5()), String(0));
+// function-bind
+const T6 = { a: function () { return 1; }, undefined: function () { return 'late'; } };
+let sink6;
+function probe6() { const v = T6[sink6.k]; return v.bind(null)(); }
+class K6 { constructor() { sink6 = this; this.r = probe6(); this.k = 'a'; } }
+const first6 = new K6().r;
+console.log('function-bind', String(first6), typeof first6, String(probe6()), String(0));
+// yield-star
+const T7 = { a: [1], undefined: { *[Symbol.iterator]() { yield 'late'; } } };
+let sink7;
+function probe7() { const v = T7[sink7.k]; function* g() { yield* v; } return g().next().value; }
+class K7 { constructor() { sink7 = this; this.r = probe7(); this.k = 'a'; } }
+const first7 = new K7().r;
+console.log('yield-star', String(first7), typeof first7, String(probe7()), String(0));
+// for-in
+const T8 = { a: { a: 1 }, undefined: { late: 1, more: 2 } };
+let sink8;
+function probe8() { const v = T8[sink8.k]; let r = ''; for (const k in v) r += k; return r; }
+class K8 { constructor() { sink8 = this; this.r = probe8(); this.k = 'a'; } }
+const first8 = new K8().r;
+console.log('for-in', String(first8), typeof first8, String(probe8()), String(0));
+// keys
+const T9 = { a: { a: 1 }, undefined: { late: 1, more: 2 } };
+let sink9;
+function probe9() { const v = T9[sink9.k]; return Object.keys(v).join(); }
+class K9 { constructor() { sink9 = this; this.r = probe9(); this.k = 'a'; } }
+const first9 = new K9().r;
+console.log('keys', String(first9), typeof first9, String(probe9()), String(0));
+// values
+const T10 = { a: { a: 1 }, undefined: { b: 'late' } };
+let sink10;
+function probe10() { const v = T10[sink10.k]; return Object.values(v)[0]; }
+class K10 { constructor() { sink10 = this; this.r = probe10(); this.k = 'a'; } }
+const first10 = new K10().r;
+console.log('values', String(first10), typeof first10, String(probe10()), String(0));
+// entries
+const T11 = { a: { a: 1 }, undefined: { get b() { return 'late'; } } };
+let sink11;
+function probe11() { const v = T11[sink11.k]; return Object.entries(v)[0][1]; }
+class K11 { constructor() { sink11 = this; this.r = probe11(); this.k = 'a'; } }
+const first11 = new K11().r;
+console.log('entries', String(first11), typeof first11, String(probe11()), String(0));
+// assign
+const T12 = { a: { a: 1 }, undefined: { get a() { return 'late'; } } };
+let sink12;
+function probe12() { const v = T12[sink12.k]; return Object.assign({}, v).a; }
+class K12 { constructor() { sink12 = this; this.r = probe12(); this.k = 'a'; } }
+const first12 = new K12().r;
+console.log('assign', String(first12), typeof first12, String(probe12()), String(0));
+// object-spread
+const T13 = { a: { a: 1 }, undefined: { get a() { return 'late'; } } };
+let sink13;
+function probe13() { const v = T13[sink13.k]; return ({ ...v }).a; }
+class K13 { constructor() { sink13 = this; this.r = probe13(); this.k = 'a'; } }
+const first13 = new K13().r;
+console.log('object-spread', String(first13), typeof first13, String(probe13()), String(0));
+// in-proxy
+let side14 = 0;
+const T14 = { a: { x: 1 }, undefined: new Proxy({}, { has() { side14++; return false; } }) };
+let sink14;
+function probe14() { const v = T14[sink14.k]; return 'x' in v; }
+class K14 { constructor() { sink14 = this; this.r = probe14(); this.k = 'a'; } }
+const first14 = new K14().r;
+console.log('in-proxy', String(first14), typeof first14, String(probe14()), String(side14));
+// proxy-handler
+const T15 = { a: {}, undefined: { get() { return 'late'; } } };
+let sink15;
+function probe15() { const v = T15[sink15.k]; return new Proxy({ foo: 1 }, v).foo; }
+class K15 { constructor() { sink15 = this; this.r = probe15(); this.k = 'a'; } }
+const first15 = new K15().r;
+console.log('proxy-handler', String(first15), typeof first15, String(probe15()), String(0));
+// tagged-template
+const T16 = { a: () => 1, undefined: s => 'late' + s[0] };
+let sink16;
+function probe16() { const v = T16[sink16.k]; return v`x`; }
+class K16 { constructor() { sink16 = this; this.r = probe16(); this.k = 'a'; } }
+const first16 = new K16().r;
+console.log('tagged-template', String(first16), typeof first16, String(probe16()), String(0));
+// typeof
+const T17 = { a: 1, undefined: 'late' };
+let sink17;
+function probe17() { const v = T17[sink17.k]; return typeof v; }
+class K17 { constructor() { sink17 = this; this.r = probe17(); this.k = 'a'; } }
+const first17 = new K17().r;
+console.log('typeof', String(first17), typeof first17, String(probe17()), String(0));
+// typeof-function
+const T18 = { a: () => 1, undefined: {} };
+let sink18;
+function probe18() { const v = T18[sink18.k]; return typeof v === 'function'; }
+class K18 { constructor() { sink18 = this; this.r = probe18(); this.k = 'a'; } }
+const first18 = new K18().r;
+console.log('typeof-function', String(first18), typeof first18, String(probe18()), String(0));
+// is-array
+const T19 = { a: [1], undefined: { length: 1 } };
+let sink19;
+function probe19() { const v = T19[sink19.k]; return Array.isArray(v); }
+class K19 { constructor() { sink19 = this; this.r = probe19(); this.k = 'a'; } }
+const first19 = new K19().r;
+console.log('is-array', String(first19), typeof first19, String(probe19()), String(0));
+// identity
+const same20 = { x: 1 };
+const T20 = { a: same20, undefined: { x: 1 } };
+let sink20;
+function probe20() { const v = T20[sink20.k]; return v === same20; }
+class K20 { constructor() { sink20 = this; this.r = probe20(); this.k = 'a'; } }
+const first20 = new K20().r;
+console.log('identity', String(first20), typeof first20, String(probe20()), String(0));
+// nullish
+const T21 = { a: 1, undefined: null };
+let sink21;
+function probe21() { const v = T21[sink21.k]; return v ?? 'late'; }
+class K21 { constructor() { sink21 = this; this.r = probe21(); this.k = 'a'; } }
+const first21 = new K21().r;
+console.log('nullish', String(first21), typeof first21, String(probe21()), String(0));
+// truthy
+const T22 = { a: 1, undefined: 0 };
+let sink22;
+function probe22() { const v = T22[sink22.k]; return v ? 'e' : 'late'; }
+class K22 { constructor() { sink22 = this; this.r = probe22(); this.k = 'a'; } }
+const first22 = new K22().r;
+console.log('truthy', String(first22), typeof first22, String(probe22()), String(0));
+// optional-call
+const T23 = { a: () => 1, undefined: undefined };
+let sink23;
+function probe23() { const v = T23[sink23.k]; return v?.(); }
+class K23 { constructor() { sink23 = this; this.r = probe23(); this.k = 'a'; } }
+const first23 = new K23().r;
+console.log('optional-call', String(first23), typeof first23, String(probe23()), String(0));
+// constructor-identity
+class A24 {} class B24 {}
+const T24 = { a: new A24(), undefined: new B24() };
+let sink24;
+function probe24() { const v = T24[sink24.k]; return v.constructor === A24; }
+class K24 { constructor() { sink24 = this; this.r = probe24(); this.k = 'a'; } }
+const first24 = new K24().r;
+console.log('constructor-identity', String(first24), typeof first24, String(probe24()), String(0));
+// prototype-identity
+class A25 {} class B25 {}
+const T25 = { a: new A25(), undefined: new B25() };
+let sink25;
+function probe25() { const v = T25[sink25.k]; return Object.getPrototypeOf(v) === A25.prototype; }
+class K25 { constructor() { sink25 = this; this.r = probe25(); this.k = 'a'; } }
+const first25 = new K25().r;
+console.log('prototype-identity', String(first25), typeof first25, String(probe25()), String(0));
+// has-own
+const T26 = { a: { x: 1 }, undefined: { y: 1 } };
+let sink26;
+function probe26() { const v = T26[sink26.k]; return Object.hasOwn(v, 'x'); }
+class K26 { constructor() { sink26 = this; this.r = probe26(); this.k = 'a'; } }
+const first26 = new K26().r;
+console.log('has-own', String(first26), typeof first26, String(probe26()), String(0));
+// in
+const T27 = { a: { x: 1 }, undefined: { y: 1 } };
+let sink27;
+function probe27() { const v = T27[sink27.k]; return 'x' in v; }
+class K27 { constructor() { sink27 = this; this.r = probe27(); this.k = 'a'; } }
+const first27 = new K27().r;
+console.log('in', String(first27), typeof first27, String(probe27()), String(0));
+// store-alias
+const aliased28 = { x: 1 };
+const T28 = { a: { x: 1 }, undefined: aliased28 };
+let sink28;
+function probe28() { const v = T28[sink28.k]; v.x = 's'; return 0; }
+class K28 { constructor() { sink28 = this; this.r = probe28(); this.k = 'a'; } }
+const first28 = new K28().r;
+console.log('store-alias', String(first28), typeof first28, String(probe28()), String(aliased28.x + 1));
+// element-store-alias
+const aliased29 = [1, 2];
+const T29 = { a: [1], undefined: aliased29 };
+let sink29;
+function probe29() { const v = T29[sink29.k]; v[0] = 's'; return 0; }
+class K29 { constructor() { sink29 = this; this.r = probe29(); this.k = 'a'; } }
+const first29 = new K29().r;
+console.log('element-store-alias', String(first29), typeof first29, String(probe29()), String(aliased29[0] + 1));
+// delete-alias
+const aliased30 = { x: 1 };
+const T30 = { a: { x: 1 }, undefined: aliased30 };
+let sink30;
+function probe30() { const v = T30[sink30.k]; delete v.x; return 0; }
+class K30 { constructor() { sink30 = this; this.r = probe30(); this.k = 'a'; } }
+const first30 = new K30().r;
+console.log('delete-alias', String(first30), typeof first30, String(probe30()), String(aliased30.x));
+// freeze-alias
+const aliased31 = { x: 1 };
+const T31 = { a: { x: 1 }, undefined: aliased31 };
+let sink31;
+function probe31() { const v = T31[sink31.k]; Object.freeze(v); return 0; }
+class K31 { constructor() { sink31 = this; this.r = probe31(); this.k = 'a'; } }
+const first31 = new K31().r;
+console.log('freeze-alias', String(first31), typeof first31, String(probe31()), String((() => { try { aliased31.x = 2; } catch { return 'threw'; } return aliased31.x; })()));
+// define-alias
+const aliased32 = { x: 1 };
+const T32 = { a: { x: 1 }, undefined: aliased32 };
+let sink32;
+function probe32() { const v = T32[sink32.k]; Object.defineProperty(v, 'x', { get() { return 'late'; } }); return 0; }
+class K32 { constructor() { sink32 = this; this.r = probe32(); this.k = 'a'; } }
+const first32 = new K32().r;
+console.log('define-alias', String(first32), typeof first32, String(probe32()), String(aliased32.x));
+// length-alias
+const aliased33 = [1, 2];
+const T33 = { a: [1], undefined: aliased33 };
+let sink33;
+function probe33() { const v = T33[sink33.k]; v.length = 0; return 0; }
+class K33 { constructor() { sink33 = this; this.r = probe33(); this.k = 'a'; } }
+const first33 = new K33().r;
+console.log('length-alias', String(first33), typeof first33, String(probe33()), String(aliased33.length + ':' + aliased33[0]));
+// push-alias
+const aliased34 = [1, 2];
+const T34 = { a: [1], undefined: aliased34 };
+let sink34;
+function probe34() { const v = T34[sink34.k]; v.push('s'); return 0; }
+class K34 { constructor() { sink34 = this; this.r = probe34(); this.k = 'a'; } }
+const first34 = new K34().r;
+console.log('push-alias', String(first34), typeof first34, String(probe34()), String(aliased34[2] + 1));
+// map-set-alias
+const aliased35 = new Map([['k', 1]]);
+const T35 = { a: new Map(), undefined: aliased35 };
+let sink35;
+function probe35() { const v = T35[sink35.k]; v.set('k', 's'); return 0; }
+class K35 { constructor() { sink35 = this; this.r = probe35(); this.k = 'a'; } }
+const first35 = new K35().r;
+console.log('map-set-alias', String(first35), typeof first35, String(probe35()), String(aliased35.get('k') + 1));
+// add-property-alias
+const aliased36 = { x: 1 };
+const T36 = { a: { x: 1 }, undefined: aliased36 };
+let sink36;
+function probe36() { const v = T36[sink36.k]; v.added = 's'; return 0; }
+class K36 { constructor() { sink36 = this; this.r = probe36(); this.k = 'a'; } }
+const first36 = new K36().r;
+console.log('add-property-alias', String(first36), typeof first36, String(probe36()), String(Object.keys(aliased36).join() + aliased36.added));
+// set-prototype-alias
+const aliased37 = { x: 1 };
+const T37 = { a: { x: 1 }, undefined: aliased37 };
+let sink37;
+function probe37() { const v = T37[sink37.k]; Object.setPrototypeOf(v, { inherited: 'late' }); return 0; }
+class K37 { constructor() { sink37 = this; this.r = probe37(); this.k = 'a'; } }
+const first37 = new K37().r;
+console.log('set-prototype-alias', String(first37), typeof first37, String(probe37()), String(aliased37.inherited));
+// static-count
+class Late38 { static n = 1; }
+const T38 = { a: class { static n = 1; }, undefined: Late38 };
+let sink38;
+function probe38() { const v = T38[sink38.k]; v.n += 's'; return 0; }
+class K38 { constructor() { sink38 = this; this.r = probe38(); this.k = 'a'; } }
+const first38 = new K38().r;
+console.log('static-count', String(first38), typeof first38, String(probe38()), String(Late38.n + 1));
+// prototype-method-store
+class Late39 { m() { return 1; } }
+const T39 = { a: class { m() { return 1; } }, undefined: Late39 };
+let sink39;
+function probe39() { const v = T39[sink39.k]; v.prototype.m = () => 'late'; return 0; }
+class K39 { constructor() { sink39 = this; this.r = probe39(); this.k = 'a'; } }
+const first39 = new K39().r;
+console.log('prototype-method-store', String(first39), typeof first39, String(probe39()), String(new Late39().m()));
+//// values-found-under-a-key-from-a-field-read-before-its-store-3.js
+// Each table is read under a key that comes from a field that is read before the constructor stores it: the first read uses the key undefined, the second one "a".
+// What the table holds under "undefined" differs from what it holds under "a" in a way its use can tell. Each line prints both uses and what they left behind.
+// throw
+const T0 = { a: 1, undefined: { tag: 'late' } };
+let sink0;
+function probe0() { const v = T0[sink0.k]; try { throw v; } catch (e) { return typeof e === 'number' ? e : e.tag; } }
+class K0 { constructor() { sink0 = this; this.r = probe0(); this.k = 'a'; } }
+const first0 = new K0().r;
+console.log('throw', String(first0), typeof first0, String(probe0()), String(0));
+// number-double
+const T1 = { a: 1, undefined: 1.5 };
+let sink1;
+function probe1() { const v = T1[sink1.k]; return v + 1; }
+class K1 { constructor() { sink1 = this; this.r = probe1(); this.k = 'a'; } }
+const first1 = new K1().r;
+console.log('number-double', String(first1), typeof first1, String(probe1()), String(0));
+// number-large
+const T2 = { a: 1, undefined: 2 ** 40 };
+let sink2;
+function probe2() { const v = T2[sink2.k]; return v + 1; }
+class K2 { constructor() { sink2 = this; this.r = probe2(); this.k = 'a'; } }
+const first2 = new K2().r;
+console.log('number-large', String(first2), typeof first2, String(probe2()), String(0));
+// number-negative-zero
+const T3 = { a: 1, undefined: -0 };
+let sink3;
+function probe3() { const v = T3[sink3.k]; return 1 / v; }
+class K3 { constructor() { sink3 = this; this.r = probe3(); this.k = 'a'; } }
+const first3 = new K3().r;
+console.log('number-negative-zero', String(first3), typeof first3, String(probe3()), String(0));
+// number-nan
+const T4 = { a: 1, undefined: NaN };
+let sink4;
+function probe4() { const v = T4[sink4.k]; return v === v; }
+class K4 { constructor() { sink4 = this; this.r = probe4(); this.k = 'a'; } }
+const first4 = new K4().r;
+console.log('number-nan', String(first4), typeof first4, String(probe4()), String(0));
+// number-bigint
+const T5 = { a: 1, undefined: 1n };
+let sink5;
+function probe5() { const v = T5[sink5.k]; return typeof (v * v); }
+class K5 { constructor() { sink5 = this; this.r = probe5(); this.k = 'a'; } }
+const first5 = new K5().r;
+console.log('number-bigint', String(first5), typeof first5, String(probe5()), String(0));
+// number-string
+const T6 = { a: 1, undefined: 's' };
+let sink6;
+function probe6() { const v = T6[sink6.k]; return v + 1; }
+class K6 { constructor() { sink6 = this; this.r = probe6(); this.k = 'a'; } }
+const first6 = new K6().r;
+console.log('number-string', String(first6), typeof first6, String(probe6()), String(0));
+// number-bitor
+const T7 = { a: 1, undefined: 2 ** 32 + 5.5 };
+let sink7;
+function probe7() { const v = T7[sink7.k]; return v | 0; }
+class K7 { constructor() { sink7 = this; this.r = probe7(); this.k = 'a'; } }
+const first7 = new K7().r;
+console.log('number-bitor', String(first7), typeof first7, String(probe7()), String(0));
+// number-index
+const T8 = { a: 0, undefined: 'length' };
+let sink8;
+function probe8() { const v = T8[sink8.k]; return [7, 8][v]; }
+class K8 { constructor() { sink8 = this; this.r = probe8(); this.k = 'a'; } }
+const first8 = new K8().r;
+console.log('number-index', String(first8), typeof first8, String(probe8()), String(0));
+// number-index-negative
+const T9 = { a: 0, undefined: -1 };
+let sink9;
+function probe9() { const v = T9[sink9.k]; return [7, 8][v]; }
+class K9 { constructor() { sink9 = this; this.r = probe9(); this.k = 'a'; } }
+const first9 = new K9().r;
+console.log('number-index-negative', String(first9), typeof first9, String(probe9()), String(0));
+// number-index-far
+const T10 = { a: 0, undefined: 5 };
+let sink10;
+function probe10() { const v = T10[sink10.k]; return [7, 8][v]; }
+class K10 { constructor() { sink10 = this; this.r = probe10(); this.k = 'a'; } }
+const first10 = new K10().r;
+console.log('number-index-far', String(first10), typeof first10, String(probe10()), String(0));
+// string-length
+const T11 = { a: 'a', undefined: 5 };
+let sink11;
+function probe11() { const v = T11[sink11.k]; return v.length; }
+class K11 { constructor() { sink11 = this; this.r = probe11(); this.k = 'a'; } }
+const first11 = new K11().r;
+console.log('string-length', String(first11), typeof first11, String(probe11()), String(0));
+// string-method
+const T12 = { a: 'a', undefined: { charCodeAt() { return 'late'; } } };
+let sink12;
+function probe12() { const v = T12[sink12.k]; return v.charCodeAt(0); }
+class K12 { constructor() { sink12 = this; this.r = probe12(); this.k = 'a'; } }
+const first12 = new K12().r;
+console.log('string-method', String(first12), typeof first12, String(probe12()), String(0));
+// boolean
+const T13 = { a: true, undefined: 'late' };
+let sink13;
+function probe13() { const v = T13[sink13.k]; return v === true; }
+class K13 { constructor() { sink13 = this; this.r = probe13(); this.k = 'a'; } }
+const first13 = new K13().r;
+console.log('boolean', String(first13), typeof first13, String(probe13()), String(0));
+// arguments-object
+const T14 = { a: () => 1, undefined: () => 'late' };
+let sink14;
+function probe14() { const v = T14[sink14.k]; return (function () { return arguments[0](); })(v); }
+class K14 { constructor() { sink14 = this; this.r = probe14(); this.k = 'a'; } }
+const first14 = new K14().r;
+console.log('arguments-object', String(first14), typeof first14, String(probe14()), String(0));
+// rest
+const T15 = { a: () => 1, undefined: () => 'late' };
+let sink15;
+function probe15() { const v = T15[sink15.k]; return ((...r) => r[0]())(v); }
+class K15 { constructor() { sink15 = this; this.r = probe15(); this.k = 'a'; } }
+const first15 = new K15().r;
+console.log('rest', String(first15), typeof first15, String(probe15()), String(0));
+// default-parameter
+const T16 = { a: 1, undefined: undefined };
+let sink16;
+function probe16() { const v = T16[sink16.k]; return ((a = 'late') => a)(v); }
+class K16 { constructor() { sink16 = this; this.r = probe16(); this.k = 'a'; } }
+const first16 = new K16().r;
+console.log('default-parameter', String(first16), typeof first16, String(probe16()), String(0));
+// closure-state
+let count17 = 0.5;
+const T17 = { a: () => 1, undefined: () => ++count17 };
+let sink17;
+function probe17() { const v = T17[sink17.k]; return v(); }
+class K17 { constructor() { sink17 = this; this.r = probe17(); this.k = 'a'; } }
+const first17 = new K17().r;
+console.log('closure-state', String(first17), typeof first17, String(probe17()), String(count17));
+// array-element
+const T18 = { a: [() => 1], undefined: [() => 'late'] };
+let sink18;
+function probe18() { const v = T18[sink18.k]; return v[0](); }
+class K18 { constructor() { sink18 = this; this.r = probe18(); this.k = 'a'; } }
+const first18 = new K18().r;
+console.log('array-element', String(first18), typeof first18, String(probe18()), String(0));
+// nested-object
+const T19 = { a: { in: { f() { return 1; } } }, undefined: { in: { f() { return 'late'; } } } };
+let sink19;
+function probe19() { const v = T19[sink19.k]; return v.in.f(); }
+class K19 { constructor() { sink19 = this; this.r = probe19(); this.k = 'a'; } }
+const first19 = new K19().r;
+console.log('nested-object', String(first19), typeof first19, String(probe19()), String(0));
+// map-value
+const T20 = { a: new Map([['k', () => 1]]), undefined: new Map([['k', () => 'late']]) };
+let sink20;
+function probe20() { const v = T20[sink20.k]; return v.get('k')(); }
+class K20 { constructor() { sink20 = this; this.r = probe20(); this.k = 'a'; } }
+const first20 = new K20().r;
+console.log('map-value', String(first20), typeof first20, String(probe20()), String(0));
+// symbol-key
+const sym21 = Symbol();
+const T21 = { a: { [sym21]: 1 }, undefined: { [sym21]: 'late' } };
+let sink21;
+function probe21() { const v = T21[sink21.k]; return v[sym21]; }
+class K21 { constructor() { sink21 = this; this.r = probe21(); this.k = 'a'; } }
+const first21 = new K21().r;
+console.log('symbol-key', String(first21), typeof first21, String(probe21()), String(0));
+// private-field
+class A22 { #p; constructor(p) { this.#p = p; } static read(o) { return o.#p; } }
+const T22 = { a: new A22(1), undefined: new A22('late') };
+let sink22;
+function probe22() { const v = T22[sink22.k]; return A22.read(v); }
+class K22 { constructor() { sink22 = this; this.r = probe22(); this.k = 'a'; } }
+const first22 = new K22().r;
+console.log('private-field', String(first22), typeof first22, String(probe22()), String(0));
+// private-in
+class A23 { #p = 1; static has(o) { return #p in o; } }
+const T23 = { a: new A23(), undefined: {} };
+let sink23;
+function probe23() { const v = T23[sink23.k]; return A23.has(v); }
+class K23 { constructor() { sink23 = this; this.r = probe23(); this.k = 'a'; } }
+const first23 = new K23().r;
+console.log('private-in', String(first23), typeof first23, String(probe23()), String(0));
+// regexp
+const T24 = { a: /a/, undefined: { exec() { return null; }, test() { return 'late'; } } };
+let sink24;
+function probe24() { const v = T24[sink24.k]; return v.test('a'); }
+class K24 { constructor() { sink24 = this; this.r = probe24(); this.k = 'a'; } }
+const first24 = new K24().r;
+console.log('regexp', String(first24), typeof first24, String(probe24()), String(0));
+// date
+const T25 = { a: new Date(0), undefined: { getTime() { return 'late'; } } };
+let sink25;
+function probe25() { const v = T25[sink25.k]; return v.getTime(); }
+class K25 { constructor() { sink25 = this; this.r = probe25(); this.k = 'a'; } }
+const first25 = new K25().r;
+console.log('date', String(first25), typeof first25, String(probe25()), String(0));
+// typed-array
+const T26 = { a: new Uint8Array([1]), undefined: new Float64Array([1.5]) };
+let sink26;
+function probe26() { const v = T26[sink26.k]; return v[0] + 1; }
+class K26 { constructor() { sink26 = this; this.r = probe26(); this.k = 'a'; } }
+const first26 = new K26().r;
+console.log('typed-array', String(first26), typeof first26, String(probe26()), String(0));
+// typed-array-or-array
+const T27 = { a: new Uint8Array([1]), undefined: ['late'] };
+let sink27;
+function probe27() { const v = T27[sink27.k]; return v[0]; }
+class K27 { constructor() { sink27 = this; this.r = probe27(); this.k = 'a'; } }
+const first27 = new K27().r;
+console.log('typed-array-or-array', String(first27), typeof first27, String(probe27()), String(0));
+// array-holes
+const T28 = { a: [1, 2], undefined: [, 2] };
+let sink28;
+function probe28() { const v = T28[sink28.k]; return v[0]; }
+class K28 { constructor() { sink28 = this; this.r = probe28(); this.k = 'a'; } }
+const first28 = new K28().r;
+console.log('array-holes', String(first28), typeof first28, String(probe28()), String(0));
+// array-doubles
+const T29 = { a: [1, 2], undefined: [1.5, 2] };
+let sink29;
+function probe29() { const v = T29[sink29.k]; return v[0] + 1; }
+class K29 { constructor() { sink29 = this; this.r = probe29(); this.k = 'a'; } }
+const first29 = new K29().r;
+console.log('array-doubles', String(first29), typeof first29, String(probe29()), String(0));
+// array-length
+const T30 = { a: [1, 2], undefined: { length: 'late' } };
+let sink30;
+function probe30() { const v = T30[sink30.k]; return v.length; }
+class K30 { constructor() { sink30 = this; this.r = probe30(); this.k = 'a'; } }
+const first30 = new K30().r;
+console.log('array-length', String(first30), typeof first30, String(probe30()), String(0));
+// second-level-leak
+let innerSink31, inner31 = 'none'; class Inner31 { constructor() { innerSink31 = this; inner31 = typeof innerSink31.f; this.f = 1; } }
+const T31 = { a: () => 1, undefined: () => { new Inner31(); return inner31; } };
+let sink31;
+function probe31() { const v = T31[sink31.k]; return v(); }
+class K31 { constructor() { sink31 = this; this.r = probe31(); this.k = 'a'; } }
+const first31 = new K31().r;
+console.log('second-level-leak', String(first31), typeof first31, String(probe31()), String(typeof innerSink31.f));
+// second-level-variable
+const T32 = { a: () => 1, undefined: () => typeof laterVariable32 };
+let sink32;
+function probe32() { const v = T32[sink32.k]; return v(); }
+class K32 { constructor() { sink32 = this; this.r = probe32(); this.k = 'a'; } }
+const first32 = new K32().r;
+var laterVariable32 = 1;
+console.log('second-level-variable', String(first32), typeof first32, String(probe32()), String(typeof laterVariable32));
+//// values-found-under-a-key-from-a-field-read-before-its-store-async.js
+// Each table is read under a key that comes from a field that is read before the constructor stores it: the first read uses the key undefined, the second one "a".
+// What the table holds under "undefined" differs from what it holds under "a" in a way its use can tell. Each line prints both uses and what they left behind.
+// await
+const T0 = { a: Promise.resolve(1), undefined: { then(r) { r('late'); } } };
+let sink0;
+async function probe0() { const v = T0[sink0.k]; return await v; }
+class K0 { constructor() { sink0 = this; this.r = probe0(); this.k = 'a'; } }
+const first0 = await new K0().r;
+console.log('await', String(first0), typeof first0, String(await probe0()), String(0));
+// await-primitive
+const T1 = { a: Promise.resolve(1), undefined: 'late' };
+let sink1;
+async function probe1() { const v = T1[sink1.k]; return await v; }
+class K1 { constructor() { sink1 = this; this.r = probe1(); this.k = 'a'; } }
+const first1 = await new K1().r;
+console.log('await-primitive', String(first1), typeof first1, String(await probe1()), String(0));
+// await-rejected
+const T2 = { a: Promise.resolve(1), undefined: Promise.reject('late') };
+let sink2;
+async function probe2() { const v = T2[sink2.k]; try { return await v; } catch (e) { return 'caught ' + e; } }
+class K2 { constructor() { sink2 = this; this.r = probe2(); this.k = 'a'; } }
+const first2 = await new K2().r;
+console.log('await-rejected', String(first2), typeof first2, String(await probe2()), String(0));
+// then
+const T3 = { a: Promise.resolve(1), undefined: { then(r) { r('late'); } } };
+let sink3;
+async function probe3() { const v = T3[sink3.k]; return Promise.resolve(v).then(x => x + 1); }
+class K3 { constructor() { sink3 = this; this.r = probe3(); this.k = 'a'; } }
+const first3 = await new K3().r;
+console.log('then', String(first3), typeof first3, String(await probe3()), String(0));
+// then-callback
+const T4 = { a: x => x, undefined: x => 'late' };
+let sink4;
+async function probe4() { const v = T4[sink4.k]; return Promise.resolve(1).then(v); }
+class K4 { constructor() { sink4 = this; this.r = probe4(); this.k = 'a'; } }
+const first4 = await new K4().r;
+console.log('then-callback', String(first4), typeof first4, String(await probe4()), String(0));
+// async-return
+const T5 = { a: 1, undefined: { then(r) { r('late'); } } };
+let sink5;
+async function probe5() { const v = T5[sink5.k]; return v; }
+class K5 { constructor() { sink5 = this; this.r = probe5(); this.k = 'a'; } }
+const first5 = await new K5().r;
+console.log('async-return', String(first5), typeof first5, String(await probe5()), String(0));
+// promise-all
+const T6 = { a: [Promise.resolve(1)], undefined: [{ then(r) { r('late'); } }] };
+let sink6;
+async function probe6() { const v = T6[sink6.k]; return (await Promise.all(v))[0]; }
+class K6 { constructor() { sink6 = this; this.r = probe6(); this.k = 'a'; } }
+const first6 = await new K6().r;
+console.log('promise-all', String(first6), typeof first6, String(await probe6()), String(0));
+// for-await
+const T7 = { a: [1], undefined: { async *[Symbol.asyncIterator]() { yield 'late'; } } };
+let sink7;
+async function probe7() { const v = T7[sink7.k]; let r = ''; for await (const x of v) r += x; return r; }
+class K7 { constructor() { sink7 = this; this.r = probe7(); this.k = 'a'; } }
+const first7 = await new K7().r;
+console.log('for-await', String(first7), typeof first7, String(await probe7()), String(0));
+// for-await-sync
+const T8 = { a: [1], undefined: [Promise.resolve('late')] };
+let sink8;
+async function probe8() { const v = T8[sink8.k]; let r = ''; for await (const x of v) r += x; return r; }
+class K8 { constructor() { sink8 = this; this.r = probe8(); this.k = 'a'; } }
+const first8 = await new K8().r;
+console.log('for-await-sync', String(first8), typeof first8, String(await probe8()), String(0));
+// async-callee
+const T9 = { a: async () => 1, undefined: async () => 'late' };
+let sink9;
+async function probe9() { const v = T9[sink9.k]; return await v(); }
+class K9 { constructor() { sink9 = this; this.r = probe9(); this.k = 'a'; } }
+const first9 = await new K9().r;
+console.log('async-callee', String(first9), typeof first9, String(await probe9()), String(0));
+// microtask
+let side10 = 0;
+const T10 = { a: () => {}, undefined: () => { side10 = 'late'; } };
+let sink10;
+async function probe10() { const v = T10[sink10.k]; queueMicrotask(v); await null; return side10; }
+class K10 { constructor() { sink10 = this; this.r = probe10(); this.k = 'a'; } }
+const first10 = await new K10().r;
+console.log('microtask', String(first10), typeof first10, String(await probe10()), String(0));
+//// values-found-under-a-key-from-a-static-field-read-before-its-store-1.js
+// Each table is read under a key that comes from a static field that is read before it is defined: the first read uses the key undefined, the second one "a".
+// What the table holds under "undefined" differs from what it holds under "a" in a way its use can tell. Each line prints both uses and what they left behind.
+// call
+const T0 = { a: () => 1, undefined: () => 'late' };
+function probe0(c) { const v = T0[c.k]; return v(); }
+class S0 { static r = probe0(this); static k = 'a'; }
+const first0 = S0.r;
+console.log('call', String(first0), typeof first0, String(probe0(S0)), String(0));
+// call-writes-variable
+let once1 = 1;
+const T1 = { a: () => 1, undefined: () => { once1 = 2; return 0; } };
+function probe1(c) { const v = T1[c.k]; return v(); }
+class S1 { static r = probe1(this); static k = 'a'; }
+const first1 = S1.r;
+console.log('call-writes-variable', String(first1), typeof first1, String(probe1(S1)), String(once1 + 1));
+// call-argument
+const T2 = { a: x => x + 1, undefined: x => x + 's' };
+function probe2(c) { const v = T2[c.k]; return v(1); }
+class S2 { static r = probe2(this); static k = 'a'; }
+const first2 = S2.r;
+console.log('call-argument', String(first2), typeof first2, String(probe2(S2)), String(0));
+// new
+const T3 = { a: class { constructor() { this.tag = 1; } }, undefined: class { constructor() { this.other = 0; this.tag = 'late'; } } };
+function probe3(c) { const v = T3[c.k]; return new v().tag; }
+class S3 { static r = probe3(this); static k = 'a'; }
+const first3 = S3.r;
+console.log('new', String(first3), typeof first3, String(probe3(S3)), String(0));
+// method
+const T4 = { a: { m() { return 1; } }, undefined: { z: 0, m() { return 'late'; } } };
+function probe4(c) { const v = T4[c.k]; return v.m(); }
+class S4 { static r = probe4(this); static k = 'a'; }
+const first4 = S4.r;
+console.log('method', String(first4), typeof first4, String(probe4(S4)), String(0));
+// getter
+let side5 = 0;
+const T5 = { a: { g: 1 }, undefined: { get g() { side5++; return 'late'; } } };
+function probe5(c) { const v = T5[c.k]; return v.g; }
+class S5 { static r = probe5(this); static k = 'a'; }
+const first5 = S5.r;
+console.log('getter', String(first5), typeof first5, String(probe5(S5)), String(side5));
+// setter
+let side6 = 0;
+const T6 = { a: { s: 1 }, undefined: { set s(x) { side6 = x; } } };
+function probe6(c) { const v = T6[c.k]; v.s = 5; return 0; }
+class S6 { static r = probe6(this); static k = 'a'; }
+const first6 = S6.r;
+console.log('setter', String(first6), typeof first6, String(probe6(S6)), String(side6 + 1));
+// slot
+const T7 = { a: { x: 1 }, undefined: { y: 0, w: 2, x: 'late' } };
+function probe7(c) { const v = T7[c.k]; return v.x; }
+class S7 { static r = probe7(this); static k = 'a'; }
+const first7 = S7.r;
+console.log('slot', String(first7), typeof first7, String(probe7(S7)), String(0));
+// slot-number
+const T8 = { a: { x: 1 }, undefined: { y: 0, x: 1.5 } };
+function probe8(c) { const v = T8[c.k]; return v.x + 1; }
+class S8 { static r = probe8(this); static k = 'a'; }
+const first8 = S8.r;
+console.log('slot-number', String(first8), typeof first8, String(probe8(S8)), String(0));
+// for-of
+const T9 = { a: [1, 2], undefined: { *[Symbol.iterator]() { yield 'late'; } } };
+function probe9(c) { const v = T9[c.k]; let r = ''; for (const x of v) r += x; return r; }
+class S9 { static r = probe9(this); static k = 'a'; }
+const first9 = S9.r;
+console.log('for-of', String(first9), typeof first9, String(probe9(S9)), String(0));
+// for-of-set
+const T10 = { a: [1, 2], undefined: new Set(['late']) };
+function probe10(c) { const v = T10[c.k]; let r = ''; for (const x of v) r += x; return r; }
+class S10 { static r = probe10(this); static k = 'a'; }
+const first10 = S10.r;
+console.log('for-of-set', String(first10), typeof first10, String(probe10(S10)), String(0));
+// for-of-string
+const T11 = { a: [1, 2], undefined: 'late' };
+function probe11(c) { const v = T11[c.k]; let r = ''; for (const x of v) r += x + '.'; return r; }
+class S11 { static r = probe11(this); static k = 'a'; }
+const first11 = S11.r;
+console.log('for-of-string', String(first11), typeof first11, String(probe11(S11)), String(0));
+// for-of-return
+let side12 = 0;
+const T12 = { a: [1, 2], undefined: { [Symbol.iterator]() { return { next() { return { done: false, value: 'late' }; }, return() { side12++; return {}; } }; } } };
+function probe12(c) { const v = T12[c.k]; for (const x of v) return x; }
+class S12 { static r = probe12(this); static k = 'a'; }
+const first12 = S12.r;
+console.log('for-of-return', String(first12), typeof first12, String(probe12(S12)), String(side12));
+// spread
+const T13 = { a: [1, 2], undefined: new Set(['late']) };
+function probe13(c) { const v = T13[c.k]; return [...v].join(); }
+class S13 { static r = probe13(this); static k = 'a'; }
+const first13 = S13.r;
+console.log('spread', String(first13), typeof first13, String(probe13(S13)), String(0));
+// spread-call
+const T14 = { a: [1, 2], undefined: { *[Symbol.iterator]() { yield 'la'; yield 'te'; } } };
+function probe14(c) { const v = T14[c.k]; return ((a, b) => a + b)(...v); }
+class S14 { static r = probe14(this); static k = 'a'; }
+const first14 = S14.r;
+console.log('spread-call', String(first14), typeof first14, String(probe14(S14)), String(0));
+// destructure-array
+const T15 = { a: [1, 2], undefined: 'late' };
+function probe15(c) { const v = T15[c.k]; const [a, b] = v; return a + b; }
+class S15 { static r = probe15(this); static k = 'a'; }
+const first15 = S15.r;
+console.log('destructure-array', String(first15), typeof first15, String(probe15(S15)), String(0));
+// destructure-object
+const T16 = { a: { p: 1 }, undefined: { q: 0, get p() { return 'late'; } } };
+function probe16(c) { const v = T16[c.k]; const { p } = v; return p; }
+class S16 { static r = probe16(this); static k = 'a'; }
+const first16 = S16.r;
+console.log('destructure-object', String(first16), typeof first16, String(probe16(S16)), String(0));
+// to-primitive
+let side17 = 0;
+const T17 = { a: 1, undefined: { valueOf() { side17++; return 'late'; } } };
+function probe17(c) { const v = T17[c.k]; return v + 1; }
+class S17 { static r = probe17(this); static k = 'a'; }
+const first17 = S17.r;
+console.log('to-primitive', String(first17), typeof first17, String(probe17(S17)), String(side17));
+// to-primitive-symbol
+const T18 = { a: 1, undefined: { [Symbol.toPrimitive]() { return 'late'; } } };
+function probe18(c) { const v = T18[c.k]; return `${v}`; }
+class S18 { static r = probe18(this); static k = 'a'; }
+const first18 = S18.r;
+console.log('to-primitive-symbol', String(first18), typeof first18, String(probe18(S18)), String(0));
+// to-string
+const T19 = { a: 'e', undefined: { toString() { return 'late'; } } };
+function probe19(c) { const v = T19[c.k]; return String(v); }
+class S19 { static r = probe19(this); static k = 'a'; }
+const first19 = S19.r;
+console.log('to-string', String(first19), typeof first19, String(probe19(S19)), String(0));
+// to-number
+const T20 = { a: 1, undefined: { valueOf() { return 2.5; } } };
+function probe20(c) { const v = T20[c.k]; return v * 2; }
+class S20 { static r = probe20(this); static k = 'a'; }
+const first20 = S20.r;
+console.log('to-number', String(first20), typeof first20, String(probe20(S20)), String(0));
+// to-json
+const T21 = { a: { a: 1 }, undefined: { toJSON() { return 'late'; } } };
+function probe21(c) { const v = T21[c.k]; return JSON.stringify(v); }
+class S21 { static r = probe21(this); static k = 'a'; }
+const first21 = S21.r;
+console.log('to-json', String(first21), typeof first21, String(probe21(S21)), String(0));
+// to-key
+let side22 = 0;
+const T22 = { a: 'p', undefined: { toString() { side22++; return 'q'; } } };
+function probe22(c) { const v = T22[c.k]; return ({ p: 1, q: 'late' })[v]; }
+class S22 { static r = probe22(this); static k = 'a'; }
+const first22 = S22.r;
+console.log('to-key', String(first22), typeof first22, String(probe22(S22)), String(side22));
+// instanceof-right
+let side23 = 0;
+const T23 = { a: class A23 {}, undefined: { [Symbol.hasInstance]() { side23++; return true; } } };
+function probe23(c) { const v = T23[c.k]; return ({}) instanceof v; }
+class S23 { static r = probe23(this); static k = 'a'; }
+const first23 = S23.r;
+console.log('instanceof-right', String(first23), typeof first23, String(probe23(S23)), String(side23));
+// instanceof-left
+class A24 {} class B24 {}
+const T24 = { a: new A24(), undefined: new B24() };
+function probe24(c) { const v = T24[c.k]; return v instanceof A24; }
+class S24 { static r = probe24(this); static k = 'a'; }
+const first24 = S24.r;
+console.log('instanceof-left', String(first24), typeof first24, String(probe24(S24)), String(0));
+// extends
+const T25 = { a: class { tag() { return 1; } }, undefined: class { tag() { return 'late'; } } };
+function probe25(c) { const v = T25[c.k]; class X extends v {} return new X().tag(); }
+class S25 { static r = probe25(this); static k = 'a'; }
+const first25 = S25.r;
+console.log('extends', String(first25), typeof first25, String(probe25(S25)), String(0));
+// extends-constructor
+const T26 = { a: class { constructor() { this.t = 1; } }, undefined: class { constructor() { this.u = 0; this.t = 'late'; } } };
+function probe26(c) { const v = T26[c.k]; class X extends v { constructor() { super(); this.z = 3; } } return new X().t; }
+class S26 { static r = probe26(this); static k = 'a'; }
+const first26 = S26.r;
+console.log('extends-constructor', String(first26), typeof first26, String(probe26(S26)), String(0));
+// object-create
+const T27 = { a: { tag: 1 }, undefined: { get tag() { return 'late'; } } };
+function probe27(c) { const v = T27[c.k]; return Object.create(v).tag; }
+class S27 { static r = probe27(this); static k = 'a'; }
+const first27 = S27.r;
+console.log('object-create', String(first27), typeof first27, String(probe27(S27)), String(0));
+// set-prototype
+const T28 = { a: { tag: 1 }, undefined: { tag: 'late' } };
+function probe28(c) { const v = T28[c.k]; const o = {}; Object.setPrototypeOf(o, v); return o.tag; }
+class S28 { static r = probe28(this); static k = 'a'; }
+const first28 = S28.r;
+console.log('set-prototype', String(first28), typeof first28, String(probe28(S28)), String(0));
+// proto-literal
+const T29 = { a: { tag: 1 }, undefined: { tag: 'late' } };
+function probe29(c) { const v = T29[c.k]; return ({ __proto__: v }).tag; }
+class S29 { static r = probe29(this); static k = 'a'; }
+const first29 = S29.r;
+console.log('proto-literal', String(first29), typeof first29, String(probe29(S29)), String(0));
+// reflect-get
+const T30 = { a: { g: 1 }, undefined: { get g() { return 'late'; } } };
+function probe30(c) { const v = T30[c.k]; return Reflect.get(v, 'g'); }
+class S30 { static r = probe30(this); static k = 'a'; }
+const first30 = S30.r;
+console.log('reflect-get', String(first30), typeof first30, String(probe30(S30)), String(0));
+// reflect-apply
+const T31 = { a: () => 1, undefined: () => 'late' };
+function probe31(c) { const v = T31[c.k]; return Reflect.apply(v, null, []); }
+class S31 { static r = probe31(this); static k = 'a'; }
+const first31 = S31.r;
+console.log('reflect-apply', String(first31), typeof first31, String(probe31(S31)), String(0));
+// reflect-construct
+const T32 = { a: class { constructor() { this.t = 1; } }, undefined: class { constructor() { this.t = 'late'; } } };
+function probe32(c) { const v = T32[c.k]; return Reflect.construct(v, []).t; }
+class S32 { static r = probe32(this); static k = 'a'; }
+const first32 = S32.r;
+console.log('reflect-construct', String(first32), typeof first32, String(probe32(S32)), String(0));
+// map-callback
+const T33 = { a: x => x, undefined: x => 'late' + x };
+function probe33(c) { const v = T33[c.k]; return [1, 2].map(v).join(); }
+class S33 { static r = probe33(this); static k = 'a'; }
+const first33 = S33.r;
+console.log('map-callback', String(first33), typeof first33, String(probe33(S33)), String(0));
+// foreach-callback
+let side34 = 0;
+const T34 = { a: x => {}, undefined: x => { side34 += x; } };
+function probe34(c) { const v = T34[c.k]; [1, 2].forEach(v); return 0; }
+class S34 { static r = probe34(this); static k = 'a'; }
+const first34 = S34.r;
+console.log('foreach-callback', String(first34), typeof first34, String(probe34(S34)), String(side34));
+// sort-callback
+const T35 = { a: (a, b) => a - b, undefined: (a, b) => b - a };
+function probe35(c) { const v = T35[c.k]; return [1, 3, 2].sort(v).join(); }
+class S35 { static r = probe35(this); static k = 'a'; }
+const first35 = S35.r;
+console.log('sort-callback', String(first35), typeof first35, String(probe35(S35)), String(0));
+// reduce-callback
+const T36 = { a: (a, b) => a + b, undefined: (a, b) => a + 's' + b };
+function probe36(c) { const v = T36[c.k]; return [1, 2].reduce(v); }
+class S36 { static r = probe36(this); static k = 'a'; }
+const first36 = S36.r;
+console.log('reduce-callback', String(first36), typeof first36, String(probe36(S36)), String(0));
+// filter-callback
+const T37 = { a: x => true, undefined: x => x > 1 };
+function probe37(c) { const v = T37[c.k]; return [1, 2].filter(v).length; }
+class S37 { static r = probe37(this); static k = 'a'; }
+const first37 = S37.r;
+console.log('filter-callback', String(first37), typeof first37, String(probe37(S37)), String(0));
+// find-callback
+const T38 = { a: x => x == 1, undefined: x => x == 2 };
+function probe38(c) { const v = T38[c.k]; return [1, 2].find(v); }
+class S38 { static r = probe38(this); static k = 'a'; }
+const first38 = S38.r;
+console.log('find-callback', String(first38), typeof first38, String(probe38(S38)), String(0));
+// array-from-callback
+const T39 = { a: x => x, undefined: x => 'late' };
+function probe39(c) { const v = T39[c.k]; return Array.from([1], v)[0]; }
+class S39 { static r = probe39(this); static k = 'a'; }
+const first39 = S39.r;
+console.log('array-from-callback', String(first39), typeof first39, String(probe39(S39)), String(0));
+//// values-found-under-a-key-from-a-static-field-read-before-its-store-2.js
+// Each table is read under a key that comes from a static field that is read before it is defined: the first read uses the key undefined, the second one "a".
+// What the table holds under "undefined" differs from what it holds under "a" in a way its use can tell. Each line prints both uses and what they left behind.
+// map-foreach-callback
+let side0 = 0;
+const T0 = { a: () => {}, undefined: (val, key) => { side0 = val; } };
+function probe0(c) { const v = T0[c.k]; new Map([[1, 'late']]).forEach(v); return 0; }
+class S0 { static r = probe0(this); static k = 'a'; }
+const first0 = S0.r;
+console.log('map-foreach-callback', String(first0), typeof first0, String(probe0(S0)), String(side0));
+// replace-callback
+const T1 = { a: () => 'e', undefined: () => 'late' };
+function probe1(c) { const v = T1[c.k]; return 'ab'.replace(/a/, v); }
+class S1 { static r = probe1(this); static k = 'a'; }
+const first1 = S1.r;
+console.log('replace-callback', String(first1), typeof first1, String(probe1(S1)), String(0));
+// json-reviver
+const T2 = { a: (k, x) => x, undefined: (k, x) => typeof x == 'number' ? 'late' : x };
+function probe2(c) { const v = T2[c.k]; return JSON.parse('[1]', v)[0]; }
+class S2 { static r = probe2(this); static k = 'a'; }
+const first2 = S2.r;
+console.log('json-reviver', String(first2), typeof first2, String(probe2(S2)), String(0));
+// promise-executor
+let side3 = 0;
+const T3 = { a: r => {}, undefined: r => { side3 = 'late'; } };
+function probe3(c) { const v = T3[c.k]; new Promise(v); return 0; }
+class S3 { static r = probe3(this); static k = 'a'; }
+const first3 = S3.r;
+console.log('promise-executor', String(first3), typeof first3, String(probe3(S3)), String(side3));
+// function-call
+const T4 = { a: function () { return 1; }, undefined: function () { return 'late'; } };
+function probe4(c) { const v = T4[c.k]; return v.call(null); }
+class S4 { static r = probe4(this); static k = 'a'; }
+const first4 = S4.r;
+console.log('function-call', String(first4), typeof first4, String(probe4(S4)), String(0));
+// function-apply
+const T5 = { a: function (a) { return a; }, undefined: function (a) { return 'late' + a; } };
+function probe5(c) { const v = T5[c.k]; return v.apply(null, [1]); }
+class S5 { static r = probe5(this); static k = 'a'; }
+const first5 = S5.r;
+console.log('function-apply', String(first5), typeof first5, String(probe5(S5)), String(0));
+// function-bind
+const T6 = { a: function () { return 1; }, undefined: function () { return 'late'; } };
+function probe6(c) { const v = T6[c.k]; return v.bind(null)(); }
+class S6 { static r = probe6(this); static k = 'a'; }
+const first6 = S6.r;
+console.log('function-bind', String(first6), typeof first6, String(probe6(S6)), String(0));
+// yield-star
+const T7 = { a: [1], undefined: { *[Symbol.iterator]() { yield 'late'; } } };
+function probe7(c) { const v = T7[c.k]; function* g() { yield* v; } return g().next().value; }
+class S7 { static r = probe7(this); static k = 'a'; }
+const first7 = S7.r;
+console.log('yield-star', String(first7), typeof first7, String(probe7(S7)), String(0));
+// for-in
+const T8 = { a: { a: 1 }, undefined: { late: 1, more: 2 } };
+function probe8(c) { const v = T8[c.k]; let r = ''; for (const k in v) r += k; return r; }
+class S8 { static r = probe8(this); static k = 'a'; }
+const first8 = S8.r;
+console.log('for-in', String(first8), typeof first8, String(probe8(S8)), String(0));
+// keys
+const T9 = { a: { a: 1 }, undefined: { late: 1, more: 2 } };
+function probe9(c) { const v = T9[c.k]; return Object.keys(v).join(); }
+class S9 { static r = probe9(this); static k = 'a'; }
+const first9 = S9.r;
+console.log('keys', String(first9), typeof first9, String(probe9(S9)), String(0));
+// values
+const T10 = { a: { a: 1 }, undefined: { b: 'late' } };
+function probe10(c) { const v = T10[c.k]; return Object.values(v)[0]; }
+class S10 { static r = probe10(this); static k = 'a'; }
+const first10 = S10.r;
+console.log('values', String(first10), typeof first10, String(probe10(S10)), String(0));
+// entries
+const T11 = { a: { a: 1 }, undefined: { get b() { return 'late'; } } };
+function probe11(c) { const v = T11[c.k]; return Object.entries(v)[0][1]; }
+class S11 { static r = probe11(this); static k = 'a'; }
+const first11 = S11.r;
+console.log('entries', String(first11), typeof first11, String(probe11(S11)), String(0));
+// assign
+const T12 = { a: { a: 1 }, undefined: { get a() { return 'late'; } } };
+function probe12(c) { const v = T12[c.k]; return Object.assign({}, v).a; }
+class S12 { static r = probe12(this); static k = 'a'; }
+const first12 = S12.r;
+console.log('assign', String(first12), typeof first12, String(probe12(S12)), String(0));
+// object-spread
+const T13 = { a: { a: 1 }, undefined: { get a() { return 'late'; } } };
+function probe13(c) { const v = T13[c.k]; return ({ ...v }).a; }
+class S13 { static r = probe13(this); static k = 'a'; }
+const first13 = S13.r;
+console.log('object-spread', String(first13), typeof first13, String(probe13(S13)), String(0));
+// in-proxy
+let side14 = 0;
+const T14 = { a: { x: 1 }, undefined: new Proxy({}, { has() { side14++; return false; } }) };
+function probe14(c) { const v = T14[c.k]; return 'x' in v; }
+class S14 { static r = probe14(this); static k = 'a'; }
+const first14 = S14.r;
+console.log('in-proxy', String(first14), typeof first14, String(probe14(S14)), String(side14));
+// proxy-handler
+const T15 = { a: {}, undefined: { get() { return 'late'; } } };
+function probe15(c) { const v = T15[c.k]; return new Proxy({ foo: 1 }, v).foo; }
+class S15 { static r = probe15(this); static k = 'a'; }
+const first15 = S15.r;
+console.log('proxy-handler', String(first15), typeof first15, String(probe15(S15)), String(0));
+// tagged-template
+const T16 = { a: () => 1, undefined: s => 'late' + s[0] };
+function probe16(c) { const v = T16[c.k]; return v`x`; }
+class S16 { static r = probe16(this); static k = 'a'; }
+const first16 = S16.r;
+console.log('tagged-template', String(first16), typeof first16, String(probe16(S16)), String(0));
+// typeof
+const T17 = { a: 1, undefined: 'late' };
+function probe17(c) { const v = T17[c.k]; return typeof v; }
+class S17 { static r = probe17(this); static k = 'a'; }
+const first17 = S17.r;
+console.log('typeof', String(first17), typeof first17, String(probe17(S17)), String(0));
+// typeof-function
+const T18 = { a: () => 1, undefined: {} };
+function probe18(c) { const v = T18[c.k]; return typeof v === 'function'; }
+class S18 { static r = probe18(this); static k = 'a'; }
+const first18 = S18.r;
+console.log('typeof-function', String(first18), typeof first18, String(probe18(S18)), String(0));
+// is-array
+const T19 = { a: [1], undefined: { length: 1 } };
+function probe19(c) { const v = T19[c.k]; return Array.isArray(v); }
+class S19 { static r = probe19(this); static k = 'a'; }
+const first19 = S19.r;
+console.log('is-array', String(first19), typeof first19, String(probe19(S19)), String(0));
+// identity
+const same20 = { x: 1 };
+const T20 = { a: same20, undefined: { x: 1 } };
+function probe20(c) { const v = T20[c.k]; return v === same20; }
+class S20 { static r = probe20(this); static k = 'a'; }
+const first20 = S20.r;
+console.log('identity', String(first20), typeof first20, String(probe20(S20)), String(0));
+// nullish
+const T21 = { a: 1, undefined: null };
+function probe21(c) { const v = T21[c.k]; return v ?? 'late'; }
+class S21 { static r = probe21(this); static k = 'a'; }
+const first21 = S21.r;
+console.log('nullish', String(first21), typeof first21, String(probe21(S21)), String(0));
+// truthy
+const T22 = { a: 1, undefined: 0 };
+function probe22(c) { const v = T22[c.k]; return v ? 'e' : 'late'; }
+class S22 { static r = probe22(this); static k = 'a'; }
+const first22 = S22.r;
+console.log('truthy', String(first22), typeof first22, String(probe22(S22)), String(0));
+// optional-call
+const T23 = { a: () => 1, undefined: undefined };
+function probe23(c) { const v = T23[c.k]; return v?.(); }
+class S23 { static r = probe23(this); static k = 'a'; }
+const first23 = S23.r;
+console.log('optional-call', String(first23), typeof first23, String(probe23(S23)), String(0));
+// constructor-identity
+class A24 {} class B24 {}
+const T24 = { a: new A24(), undefined: new B24() };
+function probe24(c) { const v = T24[c.k]; return v.constructor === A24; }
+class S24 { static r = probe24(this); static k = 'a'; }
+const first24 = S24.r;
+console.log('constructor-identity', String(first24), typeof first24, String(probe24(S24)), String(0));
+// prototype-identity
+class A25 {} class B25 {}
+const T25 = { a: new A25(), undefined: new B25() };
+function probe25(c) { const v = T25[c.k]; return Object.getPrototypeOf(v) === A25.prototype; }
+class S25 { static r = probe25(this); static k = 'a'; }
+const first25 = S25.r;
+console.log('prototype-identity', String(first25), typeof first25, String(probe25(S25)), String(0));
+// has-own
+const T26 = { a: { x: 1 }, undefined: { y: 1 } };
+function probe26(c) { const v = T26[c.k]; return Object.hasOwn(v, 'x'); }
+class S26 { static r = probe26(this); static k = 'a'; }
+const first26 = S26.r;
+console.log('has-own', String(first26), typeof first26, String(probe26(S26)), String(0));
+// in
+const T27 = { a: { x: 1 }, undefined: { y: 1 } };
+function probe27(c) { const v = T27[c.k]; return 'x' in v; }
+class S27 { static r = probe27(this); static k = 'a'; }
+const first27 = S27.r;
+console.log('in', String(first27), typeof first27, String(probe27(S27)), String(0));
+// store-alias
+const aliased28 = { x: 1 };
+const T28 = { a: { x: 1 }, undefined: aliased28 };
+function probe28(c) { const v = T28[c.k]; v.x = 's'; return 0; }
+class S28 { static r = probe28(this); static k = 'a'; }
+const first28 = S28.r;
+console.log('store-alias', String(first28), typeof first28, String(probe28(S28)), String(aliased28.x + 1));
+// element-store-alias
+const aliased29 = [1, 2];
+const T29 = { a: [1], undefined: aliased29 };
+function probe29(c) { const v = T29[c.k]; v[0] = 's'; return 0; }
+class S29 { static r = probe29(this); static k = 'a'; }
+const first29 = S29.r;
+console.log('element-store-alias', String(first29), typeof first29, String(probe29(S29)), String(aliased29[0] + 1));
+// delete-alias
+const aliased30 = { x: 1 };
+const T30 = { a: { x: 1 }, undefined: aliased30 };
+function probe30(c) { const v = T30[c.k]; delete v.x; return 0; }
+class S30 { static r = probe30(this); static k = 'a'; }
+const first30 = S30.r;
+console.log('delete-alias', String(first30), typeof first30, String(probe30(S30)), String(aliased30.x));
+// freeze-alias
+const aliased31 = { x: 1 };
+const T31 = { a: { x: 1 }, undefined: aliased31 };
+function probe31(c) { const v = T31[c.k]; Object.freeze(v); return 0; }
+class S31 { static r = probe31(this); static k = 'a'; }
+const first31 = S31.r;
+console.log('freeze-alias', String(first31), typeof first31, String(probe31(S31)), String((() => { try { aliased31.x = 2; } catch { return 'threw'; } return aliased31.x; })()));
+// define-alias
+const aliased32 = { x: 1 };
+const T32 = { a: { x: 1 }, undefined: aliased32 };
+function probe32(c) { const v = T32[c.k]; Object.defineProperty(v, 'x', { get() { return 'late'; } }); return 0; }
+class S32 { static r = probe32(this); static k = 'a'; }
+const first32 = S32.r;
+console.log('define-alias', String(first32), typeof first32, String(probe32(S32)), String(aliased32.x));
+// length-alias
+const aliased33 = [1, 2];
+const T33 = { a: [1], undefined: aliased33 };
+function probe33(c) { const v = T33[c.k]; v.length = 0; return 0; }
+class S33 { static r = probe33(this); static k = 'a'; }
+const first33 = S33.r;
+console.log('length-alias', String(first33), typeof first33, String(probe33(S33)), String(aliased33.length + ':' + aliased33[0]));
+// push-alias
+const aliased34 = [1, 2];
+const T34 = { a: [1], undefined: aliased34 };
+function probe34(c) { const v = T34[c.k]; v.push('s'); return 0; }
+class S34 { static r = probe34(this); static k = 'a'; }
+const first34 = S34.r;
+console.log('push-alias', String(first34), typeof first34, String(probe34(S34)), String(aliased34[2] + 1));
+// map-set-alias
+const aliased35 = new Map([['k', 1]]);
+const T35 = { a: new Map(), undefined: aliased35 };
+function probe35(c) { const v = T35[c.k]; v.set('k', 's'); return 0; }
+class S35 { static r = probe35(this); static k = 'a'; }
+const first35 = S35.r;
+console.log('map-set-alias', String(first35), typeof first35, String(probe35(S35)), String(aliased35.get('k') + 1));
+// add-property-alias
+const aliased36 = { x: 1 };
+const T36 = { a: { x: 1 }, undefined: aliased36 };
+function probe36(c) { const v = T36[c.k]; v.added = 's'; return 0; }
+class S36 { static r = probe36(this); static k = 'a'; }
+const first36 = S36.r;
+console.log('add-property-alias', String(first36), typeof first36, String(probe36(S36)), String(Object.keys(aliased36).join() + aliased36.added));
+// set-prototype-alias
+const aliased37 = { x: 1 };
+const T37 = { a: { x: 1 }, undefined: aliased37 };
+function probe37(c) { const v = T37[c.k]; Object.setPrototypeOf(v, { inherited: 'late' }); return 0; }
+class S37 { static r = probe37(this); static k = 'a'; }
+const first37 = S37.r;
+console.log('set-prototype-alias', String(first37), typeof first37, String(probe37(S37)), String(aliased37.inherited));
+// static-count
+class Late38 { static n = 1; }
+const T38 = { a: class { static n = 1; }, undefined: Late38 };
+function probe38(c) { const v = T38[c.k]; v.n += 's'; return 0; }
+class S38 { static r = probe38(this); static k = 'a'; }
+const first38 = S38.r;
+console.log('static-count', String(first38), typeof first38, String(probe38(S38)), String(Late38.n + 1));
+// prototype-method-store
+class Late39 { m() { return 1; } }
+const T39 = { a: class { m() { return 1; } }, undefined: Late39 };
+function probe39(c) { const v = T39[c.k]; v.prototype.m = () => 'late'; return 0; }
+class S39 { static r = probe39(this); static k = 'a'; }
+const first39 = S39.r;
+console.log('prototype-method-store', String(first39), typeof first39, String(probe39(S39)), String(new Late39().m()));
+//// values-found-under-a-key-from-a-static-field-read-before-its-store-3.js
+// Each table is read under a key that comes from a static field that is read before it is defined: the first read uses the key undefined, the second one "a".
+// What the table holds under "undefined" differs from what it holds under "a" in a way its use can tell. Each line prints both uses and what they left behind.
+// throw
+const T0 = { a: 1, undefined: { tag: 'late' } };
+function probe0(c) { const v = T0[c.k]; try { throw v; } catch (e) { return typeof e === 'number' ? e : e.tag; } }
+class S0 { static r = probe0(this); static k = 'a'; }
+const first0 = S0.r;
+console.log('throw', String(first0), typeof first0, String(probe0(S0)), String(0));
+// number-double
+const T1 = { a: 1, undefined: 1.5 };
+function probe1(c) { const v = T1[c.k]; return v + 1; }
+class S1 { static r = probe1(this); static k = 'a'; }
+const first1 = S1.r;
+console.log('number-double', String(first1), typeof first1, String(probe1(S1)), String(0));
+// number-large
+const T2 = { a: 1, undefined: 2 ** 40 };
+function probe2(c) { const v = T2[c.k]; return v + 1; }
+class S2 { static r = probe2(this); static k = 'a'; }
+const first2 = S2.r;
+console.log('number-large', String(first2), typeof first2, String(probe2(S2)), String(0));
+// number-negative-zero
+const T3 = { a: 1, undefined: -0 };
+function probe3(c) { const v = T3[c.k]; return 1 / v; }
+class S3 { static r = probe3(this); static k = 'a'; }
+const first3 = S3.r;
+console.log('number-negative-zero', String(first3), typeof first3, String(probe3(S3)), String(0));
+// number-nan
+const T4 = { a: 1, undefined: NaN };
+function probe4(c) { const v = T4[c.k]; return v === v; }
+class S4 { static r = probe4(this); static k = 'a'; }
+const first4 = S4.r;
+console.log('number-nan', String(first4), typeof first4, String(probe4(S4)), String(0));
+// number-bigint
+const T5 = { a: 1, undefined: 1n };
+function probe5(c) { const v = T5[c.k]; return typeof (v * v); }
+class S5 { static r = probe5(this); static k = 'a'; }
+const first5 = S5.r;
+console.log('number-bigint', String(first5), typeof first5, String(probe5(S5)), String(0));
+// number-string
+const T6 = { a: 1, undefined: 's' };
+function probe6(c) { const v = T6[c.k]; return v + 1; }
+class S6 { static r = probe6(this); static k = 'a'; }
+const first6 = S6.r;
+console.log('number-string', String(first6), typeof first6, String(probe6(S6)), String(0));
+// number-bitor
+const T7 = { a: 1, undefined: 2 ** 32 + 5.5 };
+function probe7(c) { const v = T7[c.k]; return v | 0; }
+class S7 { static r = probe7(this); static k = 'a'; }
+const first7 = S7.r;
+console.log('number-bitor', String(first7), typeof first7, String(probe7(S7)), String(0));
+// number-index
+const T8 = { a: 0, undefined: 'length' };
+function probe8(c) { const v = T8[c.k]; return [7, 8][v]; }
+class S8 { static r = probe8(this); static k = 'a'; }
+const first8 = S8.r;
+console.log('number-index', String(first8), typeof first8, String(probe8(S8)), String(0));
+// number-index-negative
+const T9 = { a: 0, undefined: -1 };
+function probe9(c) { const v = T9[c.k]; return [7, 8][v]; }
+class S9 { static r = probe9(this); static k = 'a'; }
+const first9 = S9.r;
+console.log('number-index-negative', String(first9), typeof first9, String(probe9(S9)), String(0));
+// number-index-far
+const T10 = { a: 0, undefined: 5 };
+function probe10(c) { const v = T10[c.k]; return [7, 8][v]; }
+class S10 { static r = probe10(this); static k = 'a'; }
+const first10 = S10.r;
+console.log('number-index-far', String(first10), typeof first10, String(probe10(S10)), String(0));
+// string-length
+const T11 = { a: 'a', undefined: 5 };
+function probe11(c) { const v = T11[c.k]; return v.length; }
+class S11 { static r = probe11(this); static k = 'a'; }
+const first11 = S11.r;
+console.log('string-length', String(first11), typeof first11, String(probe11(S11)), String(0));
+// string-method
+const T12 = { a: 'a', undefined: { charCodeAt() { return 'late'; } } };
+function probe12(c) { const v = T12[c.k]; return v.charCodeAt(0); }
+class S12 { static r = probe12(this); static k = 'a'; }
+const first12 = S12.r;
+console.log('string-method', String(first12), typeof first12, String(probe12(S12)), String(0));
+// boolean
+const T13 = { a: true, undefined: 'late' };
+function probe13(c) { const v = T13[c.k]; return v === true; }
+class S13 { static r = probe13(this); static k = 'a'; }
+const first13 = S13.r;
+console.log('boolean', String(first13), typeof first13, String(probe13(S13)), String(0));
+// arguments-object
+const T14 = { a: () => 1, undefined: () => 'late' };
+function probe14(c) { const v = T14[c.k]; return (function () { return arguments[0](); })(v); }
+class S14 { static r = probe14(this); static k = 'a'; }
+const first14 = S14.r;
+console.log('arguments-object', String(first14), typeof first14, String(probe14(S14)), String(0));
+// rest
+const T15 = { a: () => 1, undefined: () => 'late' };
+function probe15(c) { const v = T15[c.k]; return ((...r) => r[0]())(v); }
+class S15 { static r = probe15(this); static k = 'a'; }
+const first15 = S15.r;
+console.log('rest', String(first15), typeof first15, String(probe15(S15)), String(0));
+// default-parameter
+const T16 = { a: 1, undefined: undefined };
+function probe16(c) { const v = T16[c.k]; return ((a = 'late') => a)(v); }
+class S16 { static r = probe16(this); static k = 'a'; }
+const first16 = S16.r;
+console.log('default-parameter', String(first16), typeof first16, String(probe16(S16)), String(0));
+// closure-state
+let count17 = 0.5;
+const T17 = { a: () => 1, undefined: () => ++count17 };
+function probe17(c) { const v = T17[c.k]; return v(); }
+class S17 { static r = probe17(this); static k = 'a'; }
+const first17 = S17.r;
+console.log('closure-state', String(first17), typeof first17, String(probe17(S17)), String(count17));
+// array-element
+const T18 = { a: [() => 1], undefined: [() => 'late'] };
+function probe18(c) { const v = T18[c.k]; return v[0](); }
+class S18 { static r = probe18(this); static k = 'a'; }
+const first18 = S18.r;
+console.log('array-element', String(first18), typeof first18, String(probe18(S18)), String(0));
+// nested-object
+const T19 = { a: { in: { f() { return 1; } } }, undefined: { in: { f() { return 'late'; } } } };
+function probe19(c) { const v = T19[c.k]; return v.in.f(); }
+class S19 { static r = probe19(this); static k = 'a'; }
+const first19 = S19.r;
+console.log('nested-object', String(first19), typeof first19, String(probe19(S19)), String(0));
+// map-value
+const T20 = { a: new Map([['k', () => 1]]), undefined: new Map([['k', () => 'late']]) };
+function probe20(c) { const v = T20[c.k]; return v.get('k')(); }
+class S20 { static r = probe20(this); static k = 'a'; }
+const first20 = S20.r;
+console.log('map-value', String(first20), typeof first20, String(probe20(S20)), String(0));
+// symbol-key
+const sym21 = Symbol();
+const T21 = { a: { [sym21]: 1 }, undefined: { [sym21]: 'late' } };
+function probe21(c) { const v = T21[c.k]; return v[sym21]; }
+class S21 { static r = probe21(this); static k = 'a'; }
+const first21 = S21.r;
+console.log('symbol-key', String(first21), typeof first21, String(probe21(S21)), String(0));
+// private-field
+class A22 { #p; constructor(p) { this.#p = p; } static read(o) { return o.#p; } }
+const T22 = { a: new A22(1), undefined: new A22('late') };
+function probe22(c) { const v = T22[c.k]; return A22.read(v); }
+class S22 { static r = probe22(this); static k = 'a'; }
+const first22 = S22.r;
+console.log('private-field', String(first22), typeof first22, String(probe22(S22)), String(0));
+// private-in
+class A23 { #p = 1; static has(o) { return #p in o; } }
+const T23 = { a: new A23(), undefined: {} };
+function probe23(c) { const v = T23[c.k]; return A23.has(v); }
+class S23 { static r = probe23(this); static k = 'a'; }
+const first23 = S23.r;
+console.log('private-in', String(first23), typeof first23, String(probe23(S23)), String(0));
+// regexp
+const T24 = { a: /a/, undefined: { exec() { return null; }, test() { return 'late'; } } };
+function probe24(c) { const v = T24[c.k]; return v.test('a'); }
+class S24 { static r = probe24(this); static k = 'a'; }
+const first24 = S24.r;
+console.log('regexp', String(first24), typeof first24, String(probe24(S24)), String(0));
+// date
+const T25 = { a: new Date(0), undefined: { getTime() { return 'late'; } } };
+function probe25(c) { const v = T25[c.k]; return v.getTime(); }
+class S25 { static r = probe25(this); static k = 'a'; }
+const first25 = S25.r;
+console.log('date', String(first25), typeof first25, String(probe25(S25)), String(0));
+// typed-array
+const T26 = { a: new Uint8Array([1]), undefined: new Float64Array([1.5]) };
+function probe26(c) { const v = T26[c.k]; return v[0] + 1; }
+class S26 { static r = probe26(this); static k = 'a'; }
+const first26 = S26.r;
+console.log('typed-array', String(first26), typeof first26, String(probe26(S26)), String(0));
+// typed-array-or-array
+const T27 = { a: new Uint8Array([1]), undefined: ['late'] };
+function probe27(c) { const v = T27[c.k]; return v[0]; }
+class S27 { static r = probe27(this); static k = 'a'; }
+const first27 = S27.r;
+console.log('typed-array-or-array', String(first27), typeof first27, String(probe27(S27)), String(0));
+// array-holes
+const T28 = { a: [1, 2], undefined: [, 2] };
+function probe28(c) { const v = T28[c.k]; return v[0]; }
+class S28 { static r = probe28(this); static k = 'a'; }
+const first28 = S28.r;
+console.log('array-holes', String(first28), typeof first28, String(probe28(S28)), String(0));
+// array-doubles
+const T29 = { a: [1, 2], undefined: [1.5, 2] };
+function probe29(c) { const v = T29[c.k]; return v[0] + 1; }
+class S29 { static r = probe29(this); static k = 'a'; }
+const first29 = S29.r;
+console.log('array-doubles', String(first29), typeof first29, String(probe29(S29)), String(0));
+// array-length
+const T30 = { a: [1, 2], undefined: { length: 'late' } };
+function probe30(c) { const v = T30[c.k]; return v.length; }
+class S30 { static r = probe30(this); static k = 'a'; }
+const first30 = S30.r;
+console.log('array-length', String(first30), typeof first30, String(probe30(S30)), String(0));
+// second-level-leak
+let innerSink31, inner31 = 'none'; class Inner31 { constructor() { innerSink31 = this; inner31 = typeof innerSink31.f; this.f = 1; } }
+const T31 = { a: () => 1, undefined: () => { new Inner31(); return inner31; } };
+function probe31(c) { const v = T31[c.k]; return v(); }
+class S31 { static r = probe31(this); static k = 'a'; }
+const first31 = S31.r;
+console.log('second-level-leak', String(first31), typeof first31, String(probe31(S31)), String(typeof innerSink31.f));
+// second-level-variable
+const T32 = { a: () => 1, undefined: () => typeof laterVariable32 };
+function probe32(c) { const v = T32[c.k]; return v(); }
+class S32 { static r = probe32(this); static k = 'a'; }
+const first32 = S32.r;
+var laterVariable32 = 1;
+console.log('second-level-variable', String(first32), typeof first32, String(probe32(S32)), String(typeof laterVariable32));
+//// values-found-under-a-key-from-a-static-field-read-before-its-store-async.js
+// Each table is read under a key that comes from a static field that is read before it is defined: the first read uses the key undefined, the second one "a".
+// What the table holds under "undefined" differs from what it holds under "a" in a way its use can tell. Each line prints both uses and what they left behind.
+// await
+const T0 = { a: Promise.resolve(1), undefined: { then(r) { r('late'); } } };
+async function probe0(c) { const v = T0[c.k]; return await v; }
+class S0 { static r = probe0(this); static k = 'a'; }
+const first0 = await S0.r;
+console.log('await', String(first0), typeof first0, String(await probe0(S0)), String(0));
+// await-primitive
+const T1 = { a: Promise.resolve(1), undefined: 'late' };
+async function probe1(c) { const v = T1[c.k]; return await v; }
+class S1 { static r = probe1(this); static k = 'a'; }
+const first1 = await S1.r;
+console.log('await-primitive', String(first1), typeof first1, String(await probe1(S1)), String(0));
+// await-rejected
+const T2 = { a: Promise.resolve(1), undefined: Promise.reject('late') };
+async function probe2(c) { const v = T2[c.k]; try { return await v; } catch (e) { return 'caught ' + e; } }
+class S2 { static r = probe2(this); static k = 'a'; }
+const first2 = await S2.r;
+console.log('await-rejected', String(first2), typeof first2, String(await probe2(S2)), String(0));
+// then
+const T3 = { a: Promise.resolve(1), undefined: { then(r) { r('late'); } } };
+async function probe3(c) { const v = T3[c.k]; return Promise.resolve(v).then(x => x + 1); }
+class S3 { static r = probe3(this); static k = 'a'; }
+const first3 = await S3.r;
+console.log('then', String(first3), typeof first3, String(await probe3(S3)), String(0));
+// then-callback
+const T4 = { a: x => x, undefined: x => 'late' };
+async function probe4(c) { const v = T4[c.k]; return Promise.resolve(1).then(v); }
+class S4 { static r = probe4(this); static k = 'a'; }
+const first4 = await S4.r;
+console.log('then-callback', String(first4), typeof first4, String(await probe4(S4)), String(0));
+// async-return
+const T5 = { a: 1, undefined: { then(r) { r('late'); } } };
+async function probe5(c) { const v = T5[c.k]; return v; }
+class S5 { static r = probe5(this); static k = 'a'; }
+const first5 = await S5.r;
+console.log('async-return', String(first5), typeof first5, String(await probe5(S5)), String(0));
+// promise-all
+const T6 = { a: [Promise.resolve(1)], undefined: [{ then(r) { r('late'); } }] };
+async function probe6(c) { const v = T6[c.k]; return (await Promise.all(v))[0]; }
+class S6 { static r = probe6(this); static k = 'a'; }
+const first6 = await S6.r;
+console.log('promise-all', String(first6), typeof first6, String(await probe6(S6)), String(0));
+// for-await
+const T7 = { a: [1], undefined: { async *[Symbol.asyncIterator]() { yield 'late'; } } };
+async function probe7(c) { const v = T7[c.k]; let r = ''; for await (const x of v) r += x; return r; }
+class S7 { static r = probe7(this); static k = 'a'; }
+const first7 = await S7.r;
+console.log('for-await', String(first7), typeof first7, String(await probe7(S7)), String(0));
+// for-await-sync
+const T8 = { a: [1], undefined: [Promise.resolve('late')] };
+async function probe8(c) { const v = T8[c.k]; let r = ''; for await (const x of v) r += x; return r; }
+class S8 { static r = probe8(this); static k = 'a'; }
+const first8 = await S8.r;
+console.log('for-await-sync', String(first8), typeof first8, String(await probe8(S8)), String(0));
+// async-callee
+const T9 = { a: async () => 1, undefined: async () => 'late' };
+async function probe9(c) { const v = T9[c.k]; return await v(); }
+class S9 { static r = probe9(this); static k = 'a'; }
+const first9 = await S9.r;
+console.log('async-callee', String(first9), typeof first9, String(await probe9(S9)), String(0));
+// microtask
+let side10 = 0;
+const T10 = { a: () => {}, undefined: () => { side10 = 'late'; } };
+async function probe10(c) { const v = T10[c.k]; queueMicrotask(v); await null; return side10; }
+class S10 { static r = probe10(this); static k = 'a'; }
+const first10 = await S10.r;
+console.log('microtask', String(first10), typeof first10, String(await probe10(S10)), String(0));
+//// values-found-under-a-key-from-a-variable-read-before-its-store-1.js
+// Each table is read under a key that comes from a variable that is read before its store: the first read uses the key undefined, the second one "a".
+// What the table holds under "undefined" differs from what it holds under "a" in a way its use can tell. Each line prints both uses and what they left behind.
+// call
+const T0 = { a: () => 1, undefined: () => 'late' };
+function probe0() { const v = T0[k0]; return v(); }
+const first0 = probe0();
+var k0 = 'a';
+console.log('call', String(first0), typeof first0, String(probe0()), String(0));
+// call-writes-variable
+let once1 = 1;
+const T1 = { a: () => 1, undefined: () => { once1 = 2; return 0; } };
+function probe1() { const v = T1[k1]; return v(); }
+const first1 = probe1();
+var k1 = 'a';
+console.log('call-writes-variable', String(first1), typeof first1, String(probe1()), String(once1 + 1));
+// call-argument
+const T2 = { a: x => x + 1, undefined: x => x + 's' };
+function probe2() { const v = T2[k2]; return v(1); }
+const first2 = probe2();
+var k2 = 'a';
+console.log('call-argument', String(first2), typeof first2, String(probe2()), String(0));
+// new
+const T3 = { a: class { constructor() { this.tag = 1; } }, undefined: class { constructor() { this.other = 0; this.tag = 'late'; } } };
+function probe3() { const v = T3[k3]; return new v().tag; }
+const first3 = probe3();
+var k3 = 'a';
+console.log('new', String(first3), typeof first3, String(probe3()), String(0));
+// method
+const T4 = { a: { m() { return 1; } }, undefined: { z: 0, m() { return 'late'; } } };
+function probe4() { const v = T4[k4]; return v.m(); }
+const first4 = probe4();
+var k4 = 'a';
+console.log('method', String(first4), typeof first4, String(probe4()), String(0));
+// getter
+let side5 = 0;
+const T5 = { a: { g: 1 }, undefined: { get g() { side5++; return 'late'; } } };
+function probe5() { const v = T5[k5]; return v.g; }
+const first5 = probe5();
+var k5 = 'a';
+console.log('getter', String(first5), typeof first5, String(probe5()), String(side5));
+// setter
+let side6 = 0;
+const T6 = { a: { s: 1 }, undefined: { set s(x) { side6 = x; } } };
+function probe6() { const v = T6[k6]; v.s = 5; return 0; }
+const first6 = probe6();
+var k6 = 'a';
+console.log('setter', String(first6), typeof first6, String(probe6()), String(side6 + 1));
+// slot
+const T7 = { a: { x: 1 }, undefined: { y: 0, w: 2, x: 'late' } };
+function probe7() { const v = T7[k7]; return v.x; }
+const first7 = probe7();
+var k7 = 'a';
+console.log('slot', String(first7), typeof first7, String(probe7()), String(0));
+// slot-number
+const T8 = { a: { x: 1 }, undefined: { y: 0, x: 1.5 } };
+function probe8() { const v = T8[k8]; return v.x + 1; }
+const first8 = probe8();
+var k8 = 'a';
+console.log('slot-number', String(first8), typeof first8, String(probe8()), String(0));
+// for-of
+const T9 = { a: [1, 2], undefined: { *[Symbol.iterator]() { yield 'late'; } } };
+function probe9() { const v = T9[k9]; let r = ''; for (const x of v) r += x; return r; }
+const first9 = probe9();
+var k9 = 'a';
+console.log('for-of', String(first9), typeof first9, String(probe9()), String(0));
+// for-of-set
+const T10 = { a: [1, 2], undefined: new Set(['late']) };
+function probe10() { const v = T10[k10]; let r = ''; for (const x of v) r += x; return r; }
+const first10 = probe10();
+var k10 = 'a';
+console.log('for-of-set', String(first10), typeof first10, String(probe10()), String(0));
+// for-of-string
+const T11 = { a: [1, 2], undefined: 'late' };
+function probe11() { const v = T11[k11]; let r = ''; for (const x of v) r += x + '.'; return r; }
+const first11 = probe11();
+var k11 = 'a';
+console.log('for-of-string', String(first11), typeof first11, String(probe11()), String(0));
+// for-of-return
+let side12 = 0;
+const T12 = { a: [1, 2], undefined: { [Symbol.iterator]() { return { next() { return { done: false, value: 'late' }; }, return() { side12++; return {}; } }; } } };
+function probe12() { const v = T12[k12]; for (const x of v) return x; }
+const first12 = probe12();
+var k12 = 'a';
+console.log('for-of-return', String(first12), typeof first12, String(probe12()), String(side12));
+// spread
+const T13 = { a: [1, 2], undefined: new Set(['late']) };
+function probe13() { const v = T13[k13]; return [...v].join(); }
+const first13 = probe13();
+var k13 = 'a';
+console.log('spread', String(first13), typeof first13, String(probe13()), String(0));
+// spread-call
+const T14 = { a: [1, 2], undefined: { *[Symbol.iterator]() { yield 'la'; yield 'te'; } } };
+function probe14() { const v = T14[k14]; return ((a, b) => a + b)(...v); }
+const first14 = probe14();
+var k14 = 'a';
+console.log('spread-call', String(first14), typeof first14, String(probe14()), String(0));
+// destructure-array
+const T15 = { a: [1, 2], undefined: 'late' };
+function probe15() { const v = T15[k15]; const [a, b] = v; return a + b; }
+const first15 = probe15();
+var k15 = 'a';
+console.log('destructure-array', String(first15), typeof first15, String(probe15()), String(0));
+// destructure-object
+const T16 = { a: { p: 1 }, undefined: { q: 0, get p() { return 'late'; } } };
+function probe16() { const v = T16[k16]; const { p } = v; return p; }
+const first16 = probe16();
+var k16 = 'a';
+console.log('destructure-object', String(first16), typeof first16, String(probe16()), String(0));
+// to-primitive
+let side17 = 0;
+const T17 = { a: 1, undefined: { valueOf() { side17++; return 'late'; } } };
+function probe17() { const v = T17[k17]; return v + 1; }
+const first17 = probe17();
+var k17 = 'a';
+console.log('to-primitive', String(first17), typeof first17, String(probe17()), String(side17));
+// to-primitive-symbol
+const T18 = { a: 1, undefined: { [Symbol.toPrimitive]() { return 'late'; } } };
+function probe18() { const v = T18[k18]; return `${v}`; }
+const first18 = probe18();
+var k18 = 'a';
+console.log('to-primitive-symbol', String(first18), typeof first18, String(probe18()), String(0));
+// to-string
+const T19 = { a: 'e', undefined: { toString() { return 'late'; } } };
+function probe19() { const v = T19[k19]; return String(v); }
+const first19 = probe19();
+var k19 = 'a';
+console.log('to-string', String(first19), typeof first19, String(probe19()), String(0));
+// to-number
+const T20 = { a: 1, undefined: { valueOf() { return 2.5; } } };
+function probe20() { const v = T20[k20]; return v * 2; }
+const first20 = probe20();
+var k20 = 'a';
+console.log('to-number', String(first20), typeof first20, String(probe20()), String(0));
+// to-json
+const T21 = { a: { a: 1 }, undefined: { toJSON() { return 'late'; } } };
+function probe21() { const v = T21[k21]; return JSON.stringify(v); }
+const first21 = probe21();
+var k21 = 'a';
+console.log('to-json', String(first21), typeof first21, String(probe21()), String(0));
+// to-key
+let side22 = 0;
+const T22 = { a: 'p', undefined: { toString() { side22++; return 'q'; } } };
+function probe22() { const v = T22[k22]; return ({ p: 1, q: 'late' })[v]; }
+const first22 = probe22();
+var k22 = 'a';
+console.log('to-key', String(first22), typeof first22, String(probe22()), String(side22));
+// instanceof-right
+let side23 = 0;
+const T23 = { a: class A23 {}, undefined: { [Symbol.hasInstance]() { side23++; return true; } } };
+function probe23() { const v = T23[k23]; return ({}) instanceof v; }
+const first23 = probe23();
+var k23 = 'a';
+console.log('instanceof-right', String(first23), typeof first23, String(probe23()), String(side23));
+// instanceof-left
+class A24 {} class B24 {}
+const T24 = { a: new A24(), undefined: new B24() };
+function probe24() { const v = T24[k24]; return v instanceof A24; }
+const first24 = probe24();
+var k24 = 'a';
+console.log('instanceof-left', String(first24), typeof first24, String(probe24()), String(0));
+// extends
+const T25 = { a: class { tag() { return 1; } }, undefined: class { tag() { return 'late'; } } };
+function probe25() { const v = T25[k25]; class X extends v {} return new X().tag(); }
+const first25 = probe25();
+var k25 = 'a';
+console.log('extends', String(first25), typeof first25, String(probe25()), String(0));
+// extends-constructor
+const T26 = { a: class { constructor() { this.t = 1; } }, undefined: class { constructor() { this.u = 0; this.t = 'late'; } } };
+function probe26() { const v = T26[k26]; class X extends v { constructor() { super(); this.z = 3; } } return new X().t; }
+const first26 = probe26();
+var k26 = 'a';
+console.log('extends-constructor', String(first26), typeof first26, String(probe26()), String(0));
+// object-create
+const T27 = { a: { tag: 1 }, undefined: { get tag() { return 'late'; } } };
+function probe27() { const v = T27[k27]; return Object.create(v).tag; }
+const first27 = probe27();
+var k27 = 'a';
+console.log('object-create', String(first27), typeof first27, String(probe27()), String(0));
+// set-prototype
+const T28 = { a: { tag: 1 }, undefined: { tag: 'late' } };
+function probe28() { const v = T28[k28]; const o = {}; Object.setPrototypeOf(o, v); return o.tag; }
+const first28 = probe28();
+var k28 = 'a';
+console.log('set-prototype', String(first28), typeof first28, String(probe28()), String(0));
+// proto-literal
+const T29 = { a: { tag: 1 }, undefined: { tag: 'late' } };
+function probe29() { const v = T29[k29]; return ({ __proto__: v }).tag; }
+const first29 = probe29();
+var k29 = 'a';
+console.log('proto-literal', String(first29), typeof first29, String(probe29()), String(0));
+// reflect-get
+const T30 = { a: { g: 1 }, undefined: { get g() { return 'late'; } } };
+function probe30() { const v = T30[k30]; return Reflect.get(v, 'g'); }
+const first30 = probe30();
+var k30 = 'a';
+console.log('reflect-get', String(first30), typeof first30, String(probe30()), String(0));
+// reflect-apply
+const T31 = { a: () => 1, undefined: () => 'late' };
+function probe31() { const v = T31[k31]; return Reflect.apply(v, null, []); }
+const first31 = probe31();
+var k31 = 'a';
+console.log('reflect-apply', String(first31), typeof first31, String(probe31()), String(0));
+// reflect-construct
+const T32 = { a: class { constructor() { this.t = 1; } }, undefined: class { constructor() { this.t = 'late'; } } };
+function probe32() { const v = T32[k32]; return Reflect.construct(v, []).t; }
+const first32 = probe32();
+var k32 = 'a';
+console.log('reflect-construct', String(first32), typeof first32, String(probe32()), String(0));
+// map-callback
+const T33 = { a: x => x, undefined: x => 'late' + x };
+function probe33() { const v = T33[k33]; return [1, 2].map(v).join(); }
+const first33 = probe33();
+var k33 = 'a';
+console.log('map-callback', String(first33), typeof first33, String(probe33()), String(0));
+// foreach-callback
+let side34 = 0;
+const T34 = { a: x => {}, undefined: x => { side34 += x; } };
+function probe34() { const v = T34[k34]; [1, 2].forEach(v); return 0; }
+const first34 = probe34();
+var k34 = 'a';
+console.log('foreach-callback', String(first34), typeof first34, String(probe34()), String(side34));
+// sort-callback
+const T35 = { a: (a, b) => a - b, undefined: (a, b) => b - a };
+function probe35() { const v = T35[k35]; return [1, 3, 2].sort(v).join(); }
+const first35 = probe35();
+var k35 = 'a';
+console.log('sort-callback', String(first35), typeof first35, String(probe35()), String(0));
+// reduce-callback
+const T36 = { a: (a, b) => a + b, undefined: (a, b) => a + 's' + b };
+function probe36() { const v = T36[k36]; return [1, 2].reduce(v); }
+const first36 = probe36();
+var k36 = 'a';
+console.log('reduce-callback', String(first36), typeof first36, String(probe36()), String(0));
+// filter-callback
+const T37 = { a: x => true, undefined: x => x > 1 };
+function probe37() { const v = T37[k37]; return [1, 2].filter(v).length; }
+const first37 = probe37();
+var k37 = 'a';
+console.log('filter-callback', String(first37), typeof first37, String(probe37()), String(0));
+// find-callback
+const T38 = { a: x => x == 1, undefined: x => x == 2 };
+function probe38() { const v = T38[k38]; return [1, 2].find(v); }
+const first38 = probe38();
+var k38 = 'a';
+console.log('find-callback', String(first38), typeof first38, String(probe38()), String(0));
+// array-from-callback
+const T39 = { a: x => x, undefined: x => 'late' };
+function probe39() { const v = T39[k39]; return Array.from([1], v)[0]; }
+const first39 = probe39();
+var k39 = 'a';
+console.log('array-from-callback', String(first39), typeof first39, String(probe39()), String(0));
+//// values-found-under-a-key-from-a-variable-read-before-its-store-2.js
+// Each table is read under a key that comes from a variable that is read before its store: the first read uses the key undefined, the second one "a".
+// What the table holds under "undefined" differs from what it holds under "a" in a way its use can tell. Each line prints both uses and what they left behind.
+// map-foreach-callback
+let side0 = 0;
+const T0 = { a: () => {}, undefined: (val, key) => { side0 = val; } };
+function probe0() { const v = T0[k0]; new Map([[1, 'late']]).forEach(v); return 0; }
+const first0 = probe0();
+var k0 = 'a';
+console.log('map-foreach-callback', String(first0), typeof first0, String(probe0()), String(side0));
+// replace-callback
+const T1 = { a: () => 'e', undefined: () => 'late' };
+function probe1() { const v = T1[k1]; return 'ab'.replace(/a/, v); }
+const first1 = probe1();
+var k1 = 'a';
+console.log('replace-callback', String(first1), typeof first1, String(probe1()), String(0));
+// json-reviver
+const T2 = { a: (k, x) => x, undefined: (k, x) => typeof x == 'number' ? 'late' : x };
+function probe2() { const v = T2[k2]; return JSON.parse('[1]', v)[0]; }
+const first2 = probe2();
+var k2 = 'a';
+console.log('json-reviver', String(first2), typeof first2, String(probe2()), String(0));
+// promise-executor
+let side3 = 0;
+const T3 = { a: r => {}, undefined: r => { side3 = 'late'; } };
+function probe3() { const v = T3[k3]; new Promise(v); return 0; }
+const first3 = probe3();
+var k3 = 'a';
+console.log('promise-executor', String(first3), typeof first3, String(probe3()), String(side3));
+// function-call
+const T4 = { a: function () { return 1; }, undefined: function () { return 'late'; } };
+function probe4() { const v = T4[k4]; return v.call(null); }
+const first4 = probe4();
+var k4 = 'a';
+console.log('function-call', String(first4), typeof first4, String(probe4()), String(0));
+// function-apply
+const T5 = { a: function (a) { return a; }, undefined: function (a) { return 'late' + a; } };
+function probe5() { const v = T5[k5]; return v.apply(null, [1]); }
+const first5 = probe5();
+var k5 = 'a';
+console.log('function-apply', String(first5), typeof first5, String(probe5()), String(0));
+// function-bind
+const T6 = { a: function () { return 1; }, undefined: function () { return 'late'; } };
+function probe6() { const v = T6[k6]; return v.bind(null)(); }
+const first6 = probe6();
+var k6 = 'a';
+console.log('function-bind', String(first6), typeof first6, String(probe6()), String(0));
+// yield-star
+const T7 = { a: [1], undefined: { *[Symbol.iterator]() { yield 'late'; } } };
+function probe7() { const v = T7[k7]; function* g() { yield* v; } return g().next().value; }
+const first7 = probe7();
+var k7 = 'a';
+console.log('yield-star', String(first7), typeof first7, String(probe7()), String(0));
+// for-in
+const T8 = { a: { a: 1 }, undefined: { late: 1, more: 2 } };
+function probe8() { const v = T8[k8]; let r = ''; for (const k in v) r += k; return r; }
+const first8 = probe8();
+var k8 = 'a';
+console.log('for-in', String(first8), typeof first8, String(probe8()), String(0));
+// keys
+const T9 = { a: { a: 1 }, undefined: { late: 1, more: 2 } };
+function probe9() { const v = T9[k9]; return Object.keys(v).join(); }
+const first9 = probe9();
+var k9 = 'a';
+console.log('keys', String(first9), typeof first9, String(probe9()), String(0));
+// values
+const T10 = { a: { a: 1 }, undefined: { b: 'late' } };
+function probe10() { const v = T10[k10]; return Object.values(v)[0]; }
+const first10 = probe10();
+var k10 = 'a';
+console.log('values', String(first10), typeof first10, String(probe10()), String(0));
+// entries
+const T11 = { a: { a: 1 }, undefined: { get b() { return 'late'; } } };
+function probe11() { const v = T11[k11]; return Object.entries(v)[0][1]; }
+const first11 = probe11();
+var k11 = 'a';
+console.log('entries', String(first11), typeof first11, String(probe11()), String(0));
+// assign
+const T12 = { a: { a: 1 }, undefined: { get a() { return 'late'; } } };
+function probe12() { const v = T12[k12]; return Object.assign({}, v).a; }
+const first12 = probe12();
+var k12 = 'a';
+console.log('assign', String(first12), typeof first12, String(probe12()), String(0));
+// object-spread
+const T13 = { a: { a: 1 }, undefined: { get a() { return 'late'; } } };
+function probe13() { const v = T13[k13]; return ({ ...v }).a; }
+const first13 = probe13();
+var k13 = 'a';
+console.log('object-spread', String(first13), typeof first13, String(probe13()), String(0));
+// in-proxy
+let side14 = 0;
+const T14 = { a: { x: 1 }, undefined: new Proxy({}, { has() { side14++; return false; } }) };
+function probe14() { const v = T14[k14]; return 'x' in v; }
+const first14 = probe14();
+var k14 = 'a';
+console.log('in-proxy', String(first14), typeof first14, String(probe14()), String(side14));
+// proxy-handler
+const T15 = { a: {}, undefined: { get() { return 'late'; } } };
+function probe15() { const v = T15[k15]; return new Proxy({ foo: 1 }, v).foo; }
+const first15 = probe15();
+var k15 = 'a';
+console.log('proxy-handler', String(first15), typeof first15, String(probe15()), String(0));
+// tagged-template
+const T16 = { a: () => 1, undefined: s => 'late' + s[0] };
+function probe16() { const v = T16[k16]; return v`x`; }
+const first16 = probe16();
+var k16 = 'a';
+console.log('tagged-template', String(first16), typeof first16, String(probe16()), String(0));
+// typeof
+const T17 = { a: 1, undefined: 'late' };
+function probe17() { const v = T17[k17]; return typeof v; }
+const first17 = probe17();
+var k17 = 'a';
+console.log('typeof', String(first17), typeof first17, String(probe17()), String(0));
+// typeof-function
+const T18 = { a: () => 1, undefined: {} };
+function probe18() { const v = T18[k18]; return typeof v === 'function'; }
+const first18 = probe18();
+var k18 = 'a';
+console.log('typeof-function', String(first18), typeof first18, String(probe18()), String(0));
+// is-array
+const T19 = { a: [1], undefined: { length: 1 } };
+function probe19() { const v = T19[k19]; return Array.isArray(v); }
+const first19 = probe19();
+var k19 = 'a';
+console.log('is-array', String(first19), typeof first19, String(probe19()), String(0));
+// identity
+const same20 = { x: 1 };
+const T20 = { a: same20, undefined: { x: 1 } };
+function probe20() { const v = T20[k20]; return v === same20; }
+const first20 = probe20();
+var k20 = 'a';
+console.log('identity', String(first20), typeof first20, String(probe20()), String(0));
+// nullish
+const T21 = { a: 1, undefined: null };
+function probe21() { const v = T21[k21]; return v ?? 'late'; }
+const first21 = probe21();
+var k21 = 'a';
+console.log('nullish', String(first21), typeof first21, String(probe21()), String(0));
+// truthy
+const T22 = { a: 1, undefined: 0 };
+function probe22() { const v = T22[k22]; return v ? 'e' : 'late'; }
+const first22 = probe22();
+var k22 = 'a';
+console.log('truthy', String(first22), typeof first22, String(probe22()), String(0));
+// optional-call
+const T23 = { a: () => 1, undefined: undefined };
+function probe23() { const v = T23[k23]; return v?.(); }
+const first23 = probe23();
+var k23 = 'a';
+console.log('optional-call', String(first23), typeof first23, String(probe23()), String(0));
+// constructor-identity
+class A24 {} class B24 {}
+const T24 = { a: new A24(), undefined: new B24() };
+function probe24() { const v = T24[k24]; return v.constructor === A24; }
+const first24 = probe24();
+var k24 = 'a';
+console.log('constructor-identity', String(first24), typeof first24, String(probe24()), String(0));
+// prototype-identity
+class A25 {} class B25 {}
+const T25 = { a: new A25(), undefined: new B25() };
+function probe25() { const v = T25[k25]; return Object.getPrototypeOf(v) === A25.prototype; }
+const first25 = probe25();
+var k25 = 'a';
+console.log('prototype-identity', String(first25), typeof first25, String(probe25()), String(0));
+// has-own
+const T26 = { a: { x: 1 }, undefined: { y: 1 } };
+function probe26() { const v = T26[k26]; return Object.hasOwn(v, 'x'); }
+const first26 = probe26();
+var k26 = 'a';
+console.log('has-own', String(first26), typeof first26, String(probe26()), String(0));
+// in
+const T27 = { a: { x: 1 }, undefined: { y: 1 } };
+function probe27() { const v = T27[k27]; return 'x' in v; }
+const first27 = probe27();
+var k27 = 'a';
+console.log('in', String(first27), typeof first27, String(probe27()), String(0));
+// store-alias
+const aliased28 = { x: 1 };
+const T28 = { a: { x: 1 }, undefined: aliased28 };
+function probe28() { const v = T28[k28]; v.x = 's'; return 0; }
+const first28 = probe28();
+var k28 = 'a';
+console.log('store-alias', String(first28), typeof first28, String(probe28()), String(aliased28.x + 1));
+// element-store-alias
+const aliased29 = [1, 2];
+const T29 = { a: [1], undefined: aliased29 };
+function probe29() { const v = T29[k29]; v[0] = 's'; return 0; }
+const first29 = probe29();
+var k29 = 'a';
+console.log('element-store-alias', String(first29), typeof first29, String(probe29()), String(aliased29[0] + 1));
+// delete-alias
+const aliased30 = { x: 1 };
+const T30 = { a: { x: 1 }, undefined: aliased30 };
+function probe30() { const v = T30[k30]; delete v.x; return 0; }
+const first30 = probe30();
+var k30 = 'a';
+console.log('delete-alias', String(first30), typeof first30, String(probe30()), String(aliased30.x));
+// freeze-alias
+const aliased31 = { x: 1 };
+const T31 = { a: { x: 1 }, undefined: aliased31 };
+function probe31() { const v = T31[k31]; Object.freeze(v); return 0; }
+const first31 = probe31();
+var k31 = 'a';
+console.log('freeze-alias', String(first31), typeof first31, String(probe31()), String((() => { try { aliased31.x = 2; } catch { return 'threw'; } return aliased31.x; })()));
+// define-alias
+const aliased32 = { x: 1 };
+const T32 = { a: { x: 1 }, undefined: aliased32 };
+function probe32() { const v = T32[k32]; Object.defineProperty(v, 'x', { get() { return 'late'; } }); return 0; }
+const first32 = probe32();
+var k32 = 'a';
+console.log('define-alias', String(first32), typeof first32, String(probe32()), String(aliased32.x));
+// length-alias
+const aliased33 = [1, 2];
+const T33 = { a: [1], undefined: aliased33 };
+function probe33() { const v = T33[k33]; v.length = 0; return 0; }
+const first33 = probe33();
+var k33 = 'a';
+console.log('length-alias', String(first33), typeof first33, String(probe33()), String(aliased33.length + ':' + aliased33[0]));
+// push-alias
+const aliased34 = [1, 2];
+const T34 = { a: [1], undefined: aliased34 };
+function probe34() { const v = T34[k34]; v.push('s'); return 0; }
+const first34 = probe34();
+var k34 = 'a';
+console.log('push-alias', String(first34), typeof first34, String(probe34()), String(aliased34[2] + 1));
+// map-set-alias
+const aliased35 = new Map([['k', 1]]);
+const T35 = { a: new Map(), undefined: aliased35 };
+function probe35() { const v = T35[k35]; v.set('k', 's'); return 0; }
+const first35 = probe35();
+var k35 = 'a';
+console.log('map-set-alias', String(first35), typeof first35, String(probe35()), String(aliased35.get('k') + 1));
+// add-property-alias
+const aliased36 = { x: 1 };
+const T36 = { a: { x: 1 }, undefined: aliased36 };
+function probe36() { const v = T36[k36]; v.added = 's'; return 0; }
+const first36 = probe36();
+var k36 = 'a';
+console.log('add-property-alias', String(first36), typeof first36, String(probe36()), String(Object.keys(aliased36).join() + aliased36.added));
+// set-prototype-alias
+const aliased37 = { x: 1 };
+const T37 = { a: { x: 1 }, undefined: aliased37 };
+function probe37() { const v = T37[k37]; Object.setPrototypeOf(v, { inherited: 'late' }); return 0; }
+const first37 = probe37();
+var k37 = 'a';
+console.log('set-prototype-alias', String(first37), typeof first37, String(probe37()), String(aliased37.inherited));
+// static-count
+class Late38 { static n = 1; }
+const T38 = { a: class { static n = 1; }, undefined: Late38 };
+function probe38() { const v = T38[k38]; v.n += 's'; return 0; }
+const first38 = probe38();
+var k38 = 'a';
+console.log('static-count', String(first38), typeof first38, String(probe38()), String(Late38.n + 1));
+// prototype-method-store
+class Late39 { m() { return 1; } }
+const T39 = { a: class { m() { return 1; } }, undefined: Late39 };
+function probe39() { const v = T39[k39]; v.prototype.m = () => 'late'; return 0; }
+const first39 = probe39();
+var k39 = 'a';
+console.log('prototype-method-store', String(first39), typeof first39, String(probe39()), String(new Late39().m()));

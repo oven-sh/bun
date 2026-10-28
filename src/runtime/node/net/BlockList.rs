@@ -1,38 +1,11 @@
 use core::ffi::c_void;
 
-// ─── non-JSC helpers (real) ───────────────────────────────────────────────
-// `Rule` and the IP-compare helpers depend on `sockaddr` from the sibling
-// `socket_address` module (lives in `crate::socket`, not `super::`), so they
-// stay gated below. Only the structured-clone byte-shuffling is JSC-free and
-// dependency-free.
-
-struct StructuredCloneWriter {
-    ctx: *mut c_void,
-    // callconv(jsc.conv) → codegen `WriteBytesFn` typedef (cfg-splits to
-    // `"sysv64"` on Windows-x64).
-    impl_: crate::generated_classes::WriteBytesFn,
-}
-
-impl bun_io::Write for StructuredCloneWriter {
-    #[inline]
-    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
-        // SAFETY: `ctx` and `impl_` were supplied together by the C++
-        // SerializedScriptValue writer; the callback only reads `len` bytes
-        // from `ptr`, both of which we derive from a single `&[u8]`.
-        unsafe { (self.impl_)(self.ctx, bytes.as_ptr(), bytes.len() as u32) };
-        Ok(())
-    }
-}
-
-// ─── JsClass payload + host fns ───────────────────────────────────────────
-// `BlockList` is the `m_ctx` payload for a `.classes.ts` wrapper; every method
-// is a `#[bun_jsc::host_fn]` and the struct itself carries `#[bun_jsc::JsClass]`.
-
 use core::cmp::Ordering;
 use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 use bun_core::{String as BunString, ZStr};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _};
+use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::{CloneSerializer, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _};
 use bun_threading::{Guarded, Mutex};
 
 /// `(serialize_nonce, address)` of `BlockList` instances currently embedded in
@@ -56,9 +29,21 @@ fn z(s: &ZStr) -> &str {
     unsafe { core::str::from_utf8_unchecked(s.as_bytes()) }
 }
 
-/// `.classes.ts`-backed payload (`m_ctx`) for `JSBlockList`.
-/// `fromJS` / `toJS` are provided by the codegen via `#[bun_jsc::JsClass]`.
-#[bun_jsc::JsClass]
+/// The address of a `SocketAddress`, or of an address string in `family`.
+fn sockaddr_from_js(
+    global: &JSGlobalObject,
+    value: JSValue,
+    name: &str,
+    family: JSValue,
+) -> JsResult<sockaddr> {
+    if let Some(sa) = value.as_class_ref::<SocketAddress>() {
+        return Ok(sa._addr);
+    }
+    validators::validate_string(global, value, name)?;
+    validators::validate_string(global, family, "family")?;
+    Ok(SocketAddress::init_from_addr_family(global, value, family)?._addr)
+}
+
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub(crate) struct BlockList {
     // Intrusive thread-safe refcount.
@@ -98,10 +83,8 @@ impl BlockList {
         unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
     }
 
-    // NOTE: no `#[bun_jsc::host_fn]` — the `#[bun_jsc::JsClass]` derive emits
-    // the `${T}Class__construct` C-ABI shim that calls `<Self>::constructor`.
-    pub(crate) fn constructor(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
-        let ptr = bun_core::heap::into_raw(Box::new(Self {
+    pub(crate) fn constructor() -> *mut Self {
+        bun_ptr::RefPtr::new(Self {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             da_rules: JsCell::new(Vec::new()),
             mutex: Mutex::default(),
@@ -111,76 +94,51 @@ impl BlockList {
                 bun_boringssl_sys::rand_bytes(&mut n);
                 u64::from_ne_bytes(n)
             },
-        }));
-        Ok(ptr)
+        })
+        .into_raw()
     }
 
     /// May be called from any thread.
     pub(crate) fn estimated_size(&self) -> usize {
-        (core::mem::size_of::<Self>() + self.estimated_size.load(AtomicOrdering::SeqCst) as usize)
+        self.estimated_size.load(AtomicOrdering::SeqCst) as usize
             / (self.ref_count.get().max(1) as usize)
     }
 
-    // NOTE: no `#[bun_jsc::host_fn]` — receiver-less assoc fns aren't supported
-    // by the Free-kind shim (it emits a bare `fn_name(...)` call). The
-    // `.classes.ts` codegen owns the static-method link name and calls
-    // `<Self>::is_block_list` directly.
-    pub(crate) fn is_block_list(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let [value] = frame.arguments_as_array::<1>();
-        Ok(JSValue::from(value.as_::<Self>().is_some()))
+    pub(crate) fn is_block_list(value: JsLocal<'_>) -> bool {
+        value.to_js().as_::<Self>().is_some()
     }
 
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn add_address(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [address_js, mut family_js] = frame.arguments_as_array::<2>();
+        &self,
+        cx: &mut JsScope<'_>,
+        address: JsLocal<'_>,
+        family: JsLocal<'_>,
+    ) -> JsResult<()> {
+        let global = cx.global();
+        let (address_js, mut family_js) = (address.to_js(), family.to_js());
         if family_js.is_undefined() {
             family_js = global.common_strings().ipv4_lower();
         }
-        let address = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {
-            sa._addr
-        } else {
-            validators::validate_string(global, address_js, format_args!("address"))?;
-            validators::validate_string(global, family_js, format_args!("family"))?;
-            SocketAddress::init_from_addr_family(global, address_js, family_js)?._addr
-        };
+        let address = sockaddr_from_js(global, address_js, "address", family_js)?;
 
-        let _guard = this.mutex.lock_guard();
-        this.da_rules.with_mut(|r| r.insert(0, Rule::Addr(address)));
-        this.estimated_size.fetch_add(
-            u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
-            AtomicOrdering::Relaxed,
-        );
-        Ok(JSValue::UNDEFINED)
+        self.add_rule(Rule::Addr(address));
+        Ok(())
     }
 
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn add_range(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [start_js, end_js, mut family_js] = frame.arguments_as_array::<3>();
+        &self,
+        cx: &mut JsScope<'_>,
+        start: JsLocal<'_>,
+        end: JsLocal<'_>,
+        family: JsLocal<'_>,
+    ) -> JsResult<()> {
+        let global = cx.global();
+        let (start_js, end_js, mut family_js) = (start.to_js(), end.to_js(), family.to_js());
         if family_js.is_undefined() {
             family_js = global.common_strings().ipv4_lower();
         }
-        let start = if let Some(sa) = start_js.as_class_ref::<SocketAddress>() {
-            sa._addr
-        } else {
-            validators::validate_string(global, start_js, format_args!("start"))?;
-            validators::validate_string(global, family_js, format_args!("family"))?;
-            SocketAddress::init_from_addr_family(global, start_js, family_js)?._addr
-        };
-        let end = if let Some(sa) = end_js.as_class_ref::<SocketAddress>() {
-            sa._addr
-        } else {
-            validators::validate_string(global, end_js, format_args!("end"))?;
-            validators::validate_string(global, family_js, format_args!("family"))?;
-            SocketAddress::init_from_addr_family(global, end_js, family_js)?._addr
-        };
+        let start = sockaddr_from_js(global, start_js, "start", family_js)?;
+        let end = sockaddr_from_js(global, end_js, "end", family_js)?;
         if let Some(ord) = compare(&start, &end) {
             if ord == Ordering::Greater {
                 return Err(global.throw_invalid_argument_value_custom(
@@ -190,33 +148,24 @@ impl BlockList {
                 ));
             }
         }
-        let _guard = this.mutex.lock_guard();
-        this.da_rules
-            .with_mut(|r| r.insert(0, Rule::Range { start, end }));
-        this.estimated_size.fetch_add(
-            u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
-            AtomicOrdering::Relaxed,
-        );
-        Ok(JSValue::UNDEFINED)
+        self.add_rule(Rule::Range { start, end });
+        Ok(())
     }
 
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn add_subnet(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [network_js, prefix_js, mut family_js] = frame.arguments_as_array::<3>();
+        &self,
+        cx: &mut JsScope<'_>,
+        network: JsLocal<'_>,
+        prefix: JsLocal<'_>,
+        family: JsLocal<'_>,
+    ) -> JsResult<()> {
+        let global = cx.global();
+        let (network_js, prefix_js, mut family_js) =
+            (network.to_js(), prefix.to_js(), family.to_js());
         if family_js.is_undefined() {
             family_js = global.common_strings().ipv4_lower();
         }
-        let network = if let Some(sa) = network_js.as_class_ref::<SocketAddress>() {
-            sa._addr
-        } else {
-            validators::validate_string(global, network_js, format_args!("network"))?;
-            validators::validate_string(global, family_js, format_args!("family"))?;
-            SocketAddress::init_from_addr_family(global, network_js, family_js)?._addr
-        };
+        let network = sockaddr_from_js(global, network_js, "network", family_js)?;
         let mut prefix: u8 = 0;
         let fam = network.family_raw();
         if fam == AF_INET as inet::sa_family_t {
@@ -238,23 +187,27 @@ impl BlockList {
             )?)
             .unwrap();
         }
-        let _guard = this.mutex.lock_guard();
-        this.da_rules
-            .with_mut(|r| r.insert(0, Rule::Subnet { network, prefix }));
-        this.estimated_size.fetch_add(
+        self.add_rule(Rule::Subnet { network, prefix });
+        Ok(())
+    }
+
+    fn add_rule(&self, rule: Rule) {
+        let _guard = self.mutex.lock_guard();
+        self.da_rules.with_mut(|r| r.insert(0, rule));
+        self.estimated_size.fetch_add(
             u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
             AtomicOrdering::Relaxed,
         );
-        Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn check(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [address_js, mut family_js] = frame.arguments_as_array::<2>();
+        &self,
+        cx: &mut JsScope<'_>,
+        address: JsLocal<'_>,
+        family: JsLocal<'_>,
+    ) -> JsResult<bool> {
+        let global = cx.global();
+        let (address_js, mut family_js) = (address.to_js(), family.to_js());
         if family_js.is_undefined() {
             family_js = global.common_strings().ipv4_lower();
         }
@@ -272,11 +225,11 @@ impl BlockList {
                 Err(err) => {
                     debug_assert!(err == bun_jsc::JsError::Thrown);
                     global.clear_exception();
-                    return Ok(JSValue::FALSE);
+                    return Ok(false);
                 }
             }
         };
-        Ok(JSValue::js_boolean(this.check_sockaddr(address)))
+        Ok(self.check_sockaddr(address))
     }
 
     pub(crate) fn check_sockaddr(&self, address: &sockaddr) -> bool {
@@ -362,10 +315,10 @@ impl BlockList {
         false
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn rules(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let _guard = this.mutex.lock_guard();
-        let rules = this.da_rules.get();
+    pub(crate) fn get_rules(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
+        let _guard = self.mutex.lock_guard();
+        let rules = self.da_rules.get();
         // GC must be able to visit
         let array = JSValue::create_empty_array(global, rules.len())?;
 
@@ -403,100 +356,73 @@ impl BlockList {
         }
         Ok(array)
     }
-
-    pub(crate) fn on_structured_clone_serialize(
-        this: &Self,
-        _global: &JSGlobalObject,
-        ctx: *mut c_void,
-        // codegen `WriteBytesFn` typedef (jsc.conv).
-        write_bytes: crate::generated_classes::WriteBytesFn,
-    ) {
-        use bun_io::Write as _;
-        let _guard = this.mutex.lock_guard();
-        this.ref_();
-        let addr = std::ptr::from_ref::<Self>(this) as usize;
-        SERIALIZED_REFS.lock().push((this.serialize_nonce, addr));
-        let mut writer = StructuredCloneWriter {
-            ctx,
-            impl_: write_bytes,
-        };
-        // The writer is infallible, so no `?` needed.
-        // Only the nonce is serialized; deserialize maps it back to `*mut Self`
-        // through `SERIALIZED_REFS` and never forms `&mut Self` (only `ref_()` +
-        // `to_js_ptr`, both `&self`/raw-ptr), so `from_ref` provenance is fine.
-        _ = writer.write_int_le(this.serialize_nonce);
-    }
-
-    /// `Ok(None)`: the bytes are not a valid record (the deserializer reports its usual error).
-    pub(crate) fn on_structured_clone_deserialize(
-        global: &JSGlobalObject,
-        ptr: *mut *mut u8,
-        end: *const u8,
-    ) -> JsResult<Option<JSValue>> {
-        // SAFETY: `*ptr` and `end` bound a contiguous byte buffer owned by the
-        // caller (C++ SerializedScriptValue); `end >= *ptr`. `ptr` itself is a
-        // non-null out-param the caller expects us to advance.
-        let start: *mut u8 = unsafe { *ptr };
-        let total_length: usize = (end as usize) - (start as usize);
-        // SAFETY: `start` through `end` is the contiguous C++-owned deserialization
-        // buffer (see above); `total_length = end - start`, so the resulting slice
-        // is exactly that buffer and stays valid for the lifetime of `r`.
-        let mut r =
-            bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(start, total_length) });
-
-        let Ok(nonce) = r.read_int_le::<u64>() else {
-            return Ok(None);
-        };
-
-        // Advance the caller's cursor by the number of bytes consumed
-        // SAFETY: `r.pos <= total_length` (`read_exact` bounds-checks via
-        // `checked_add`); `ptr` is the caller's live out-param (see above).
-        unsafe { *ptr = start.add(r.pos) };
-
-        // A single SerializedScriptValue can be deserialized multiple times
-        // (e.g. BroadcastChannel fan-out), so each wrapper must own its own ref
-        // instead of adopting the one taken in serialize. The serialize ref is
-        // what keeps the backing alive while its entry sits in `SERIALIZED_REFS`
-        // and is released by `~SerializedScriptValue` via the destroy hook below.
-        let this: *mut Self = {
-            let refs = SERIALIZED_REFS.lock();
-            let Some(addr) = refs.iter().find_map(|&(n, a)| (n == nonce).then_some(a)) else {
-                return Ok(None);
-            };
-            let this = addr as *mut Self;
-            // SAFETY: the entry was pushed by `on_structured_clone_serialize`
-            // from a live `*mut Self` whose ref was bumped at serialize time
-            // (paired `ref_()`/`deref()`); that ref is only released by the
-            // destroy hook after it takes this lock and removes the entry, so
-            // `this` is live while the guard is held and we ref it first.
-            unsafe { (*this).ref_() };
-            this
-        };
-        // SAFETY: ownership of the ref taken above transfers to the C++ wrapper
-        // (released via `finalize` → `deref`). `to_js_ptr` is the
-        // `#[bun_jsc::JsClass]`-generated `${T}__create` shim.
-        Ok(Some(unsafe { Self::to_js_ptr(this, global) }))
-    }
 }
 
-bun_jsc::jsc_host_abi! {
-    /// Called from `~SerializedScriptValue` for each BlockList pointer that was
-    /// written into the wire buffer. Releases the `+1` taken by
-    /// [`BlockList::on_structured_clone_serialize`].
-    #[unsafe(no_mangle)]
-    pub(crate) unsafe fn BlockList__onStructuredCloneDestroy(ptr: *mut c_void) -> () {
-        let addr = ptr as usize;
-        {
-            let mut refs = SERIALIZED_REFS.lock();
-            if let Some(i) = refs.iter().position(|&(_, a)| a == addr) {
-                refs.swap_remove(i);
-            }
+/// Takes the `+1` that [`BlockList__onStructuredCloneDestroy`] releases.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn BlockList__onStructuredCloneSerialize(
+    this: &BlockList,
+    serializer: &mut CloneSerializer,
+) {
+    use bun_io::Write as _;
+    let _guard = this.mutex.lock_guard();
+    this.ref_();
+    let addr = std::ptr::from_ref::<BlockList>(this) as usize;
+    SERIALIZED_REFS.lock().push((this.serialize_nonce, addr));
+    // Deserialize only calls `ref_()` and `to_js_ptr` on `addr`, so `from_ref` provenance is fine.
+    _ = serializer.write_int_le(this.serialize_nonce);
+}
+
+/// `JSValue::ZERO`: the bytes are not a valid record (the deserializer reports its usual error).
+///
+/// # Safety
+/// `[*ptr, end)` is the unread part of the `SerializedScriptValue`'s buffer.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn BlockList__onStructuredCloneDeserialize(
+    global: &JSGlobalObject,
+    ptr: &mut *const u8,
+    end: *const u8,
+) -> JSValue {
+    let start = *ptr;
+    let total_length: usize = (end as usize) - (start as usize);
+    // SAFETY: `[start, end)` spans `total_length` bytes (fn contract).
+    let mut r =
+        bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(start, total_length) });
+
+    let Ok(nonce) = r.read_int_le::<u64>() else {
+        return JSValue::ZERO;
+    };
+
+    // SAFETY: `r.pos <= total_length`, so the advanced cursor stays within `[start, end]`.
+    *ptr = unsafe { start.add(r.pos) };
+
+    // One SerializedScriptValue can be deserialized many times (BroadcastChannel): a ref per wrapper.
+    let this: *mut BlockList = {
+        let refs = SERIALIZED_REFS.lock();
+        let Some(addr) = refs.iter().find_map(|&(n, a)| (n == nonce).then_some(a)) else {
+            return JSValue::ZERO;
+        };
+        let this = addr as *mut BlockList;
+        // SAFETY: the destroy hook removes this entry under the lock before it drops the serialize ref.
+        unsafe { (*this).ref_() };
+        this
+    };
+    // SAFETY: the wrapper adopts the ref taken above.
+    unsafe { BlockList::to_js_ptr(this, global) }
+}
+
+/// `~SerializedScriptValue` releases the ref that [`BlockList__onStructuredCloneSerialize`] took.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn BlockList__onStructuredCloneDestroy(ptr: *mut c_void) {
+    let addr = ptr as usize;
+    {
+        let mut refs = SERIALIZED_REFS.lock();
+        if let Some(i) = refs.iter().position(|&(_, a)| a == addr) {
+            refs.swap_remove(i);
         }
-        // SAFETY: `ptr` is the same `*mut BlockList` passed to
-        // `on_structured_clone_serialize`; it stayed alive because that path
-        // bumped the refcount. Dropping that ref here may free the box.
-        unsafe { BlockList::deref(ptr.cast::<BlockList>()) };
     }
+    // SAFETY: `ptr` is the `&BlockList` serialize was given, kept alive by the ref it took.
+    unsafe { BlockList::deref(ptr.cast::<BlockList>()) };
 }
 
 pub(crate) enum Rule {

@@ -1,0 +1,559 @@
+//// a-binding-taken-out-of-an-object-that-lacks-the-property.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+function take(holder: { point: Point; name: string }): string { const { point, name } = holder; return [point === undefined, name === undefined, point?.x ?? "no x", typeof name].join(); }
+function takeAndRead({ point }: { point: Point }): number { return point.x; }
+function first([head]: Point[]): number { return head.x; }
+attempt("take", () => take({} as any)); attempt("take", () => take({ point: origin, name: "n" })); attempt("take", () => take({ point: null, name: null } as any));
+attempt("read", () => takeAndRead({} as any)); attempt("read", () => takeAndRead({ point: origin })); attempt("first", () => first([])); attempt("first", () => first([origin]));
+//// a-closure-made-after-none-arrived-is-called-later.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+function reader(point: Point): () => string { return () => point === null ? "null" : point === undefined ? "undefined" : "x " + point.x; }
+function thrower(point: Point): () => number { return () => point.x; }
+const readers = ([origin, null, undefined, { x: 4, y: 5 }] as Point[]).map(point => [reader(point), thrower(point)] as const);
+for (const [read, fail] of readers) { attempt("read", read); attempt("fail", fail); }
+//// a-default-and-an-optional-parameter.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+function withDefault(point: Point = origin): number { return point.x; }
+function optional(point?: Point): string { return point === undefined ? "none" : "x " + point.x; }
+function both(first: Point, second: Point = first): number { return second.y; }
+attempt("default", () => withDefault()); attempt("default", () => withDefault(undefined)); attempt("default null", () => withDefault(null as any)); attempt("default", () => withDefault({ x: 9, y: 9 }));
+attempt("optional", () => optional()); attempt("optional", () => optional(origin)); attempt("optional null", () => optional(null as any));
+attempt("both", () => both(origin)); attempt("both", () => both(undefined as any)); attempt("both", () => both(origin, null as any));
+//// a-field-declared-and-never-made-is-read-in-a-callback-of-a-function-called-twice.ts
+class Inner {
+  depth = 1;
+}
+class Point {
+  declare inner: Inner;
+}
+function probe(v: Point) {
+  const list = [v];
+  [0].forEach(() => list[0].inner.depth);
+  return "read";
+}
+function attempt() {
+  try {
+    console.log(probe(new Point()));
+  } catch (error) {
+    console.log((error as Error).name);
+  }
+}
+attempt();
+attempt();
+//// a-field-is-read-before-its-initializer-has-run.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+class Base { seen: string; constructor() { this.seen = this.look(); } look(): string { return "base"; } }
+class Derived extends Base { point: Point = origin; name: string = "n"; look(): string { return [this.point === undefined, typeof this.point, this.name === undefined, this.point?.x ?? "no x"].join(); } }
+class Throwing extends Base { point: Point = origin; look(): string { return String(this.point.x); } }
+console.log(new Derived().seen, new Derived().look());
+attempt("throwing", () => new Throwing().seen);
+//// a-field-that-is-asserted-to-be-assigned-never-is.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+class Holder { point!: Point; name!: string; run!: () => number; read(): number { return this.point.x; } tested(): string { return [this.point === undefined, this.name === undefined, typeof this.run, "point" in this, Object.keys(this).length].join(); } }
+const holder = new Holder();
+attempt("read", () => holder.read()); attempt("tested", () => holder.tested()); attempt("run", () => holder.run()); attempt("length", () => holder.name.length);
+holder.point = origin; holder.name = "n"; holder.run = () => 3;
+attempt("read", () => holder.read()); attempt("tested", () => holder.tested()); attempt("run", () => holder.run());
+//// a-function-parameter-gets-null-and-undefined.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+function call(run: () => number): number { return run(); }
+function tested(run: () => number): string { return [run === null, run === undefined, typeof run, run?.() ?? "none"].join(); }
+for (const value of [() => 7, null, undefined, () => 8]) { attempt("call", () => call(value as any)); attempt("tested", () => tested(value as any)); }
+//// a-getter-and-a-method-give-none.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+class Box { #point: Point | undefined; constructor(point?: Point) { this.#point = point; } get point(): Point { return this.#point as Point; } take(): Point { return this.#point!; } }
+function read(box: Box): number { return box.point.x + box.take().y; }
+function test(box: Box): string { return [box.point === undefined, box.take() === undefined, box.point?.x ?? "none"].join(); }
+for (const box of [new Box(origin), new Box(), new Box(origin)]) { attempt("read", () => read(box)); attempt("test", () => test(box)); }
+//// a-key-that-a-map-and-a-record-do-not-have.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+const map = new Map<string, Point>([["a", origin]]);
+const record: Record<string, Point> = { a: origin };
+const byNumber: { [index: number]: string } = { 1: "one" };
+function fromMap(key: string): Point { return map.get(key)!; }
+function fromRecord(key: string): Point { return record[key]; }
+function text(index: number): string { return byNumber[index]; }
+for (const key of ["a", "b", "a"]) { attempt("map", () => fromMap(key).x); attempt("map none", () => fromMap(key) === undefined); attempt("record", () => fromRecord(key).y); attempt("record none", () => typeof fromRecord(key)); }
+for (const index of [1, 2]) { attempt("text", () => text(index).length); attempt("text none", () => text(index) === undefined); }
+//// a-literal-holds-none-under-a-required-name.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+interface Line { from: Point; to: Point }
+function make(what: number): Line { return { from: origin, to: (what === 0 ? origin : what === 1 ? null : undefined) as any }; }
+function span(line: Line): number { return line.to.x - line.from.x; }
+function test(line: Line): string { return [line.to === null, line.to === undefined, "to" in line, Object.keys(line).join("+"), JSON.stringify(line)].join(); }
+for (const what of [0, 1, 2, 0]) { attempt("span", () => span(make(what))); attempt("test", () => test(make(what))); }
+//// a-loop-that-ends-at-the-element-past-the-end.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+const list: Point[] = [origin, { x: 3, y: 4 }, { x: 5, y: 6 }];
+function sumUntilNone(points: Point[]): number { let sum = 0, index = 0, point: Point; while ((point = points[index++])) sum += point.x; return sum; }
+function lastBeforeNone(points: Point[]): number { let index = 0; let last: Point = points[0]; for (let next: Point = points[0]; next !== undefined; next = points[++index]) last = next; return last.y; }
+const texts: string[] = ["a", "bc", "def"];
+function lengths(all: string[]): number { let sum = 0, index = 0, text: string; while ((text = all[index++]) !== undefined) sum += text.length; return sum; }
+console.log(sumUntilNone(list), lastBeforeNone(list), lengths(texts), sumUntilNone([]), lengths([]));
+//// a-non-null-assertion-on-what-is-none.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+function maybe(give: boolean): Point | undefined { return give ? origin : undefined; }
+function orNull(give: boolean): Point | null { return give ? origin : null; }
+function read(give: boolean): number { const point = maybe(give)!; return point.x; }
+function tested(give: boolean): string { const point: Point = orNull(give)!; return [point === null, point == undefined, typeof point, point?.y ?? "none"].join(); }
+function passedOn(give: boolean): string { return describe(maybe(give)!); }
+function describe(point: Point): string { return point === undefined ? "none arrived" : "x " + point.x; }
+for (const give of [true, false, true]) { attempt("read", () => read(give)); attempt("tested", () => tested(give)); attempt("passed on", () => passedOn(give)); }
+//// a-parameter-gets-null-and-undefined.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+function readX(point: Point): number { return point.x; }
+function isNone(point: Point): string { return [point === null, point === undefined, point == null, point == undefined, !point, typeof point].join(); }
+function orOrigin(point: Point): number { return (point ?? origin).x + (point?.y ?? 40); }
+for (const value of [origin, null, origin, undefined, origin]) {
+  attempt("read", () => readX(value as any));
+  attempt("none", () => isNone(value as any));
+  attempt("or", () => orOrigin(value as any));
+}
+//// a-parameter-is-assigned-none-inside-the-function.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+function cleared(point: Point): string { const before = point.x; point = null as any; return [before, point === null, typeof point, point?.x ?? "none"].join(); }
+function clearedThenRead(point: Point): number { point = undefined as any; return point.x; }
+function inLoop(point: Point, rounds: number): number { let sum = 0; for (let index = 0; index < rounds; index++) { if (point == null) { sum += 100; point = origin; } else { sum += point.x; point = (index % 2 ? null : undefined) as any; } } return sum; }
+function captured(point: Point): string { const look = () => point === null ? "null" : "x " + point.x; const first = look(); point = null as any; return first + " " + look(); }
+attempt("cleared", () => cleared(origin)); attempt("then read", () => clearedThenRead(origin)); attempt("in loop", () => inLoop(origin, 7)); attempt("captured", () => captured(origin));
+//// a-parameter-is-left-out-of-the-call.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+function sum(first: Point, second: Point): number { return first.x + second.y; }
+function count(first: Point, second: Point): string { return [arguments.length, second === undefined, typeof second].join(); }
+attempt("both", () => sum(origin, origin));
+attempt("one", () => (sum as any)(origin));
+attempt("none", () => (sum as any)());
+attempt("count", () => (count as any)(origin));
+attempt("both again", () => sum(origin, origin));
+//// a-promise-is-fulfilled-with-none.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+async function give(what: number): Promise<Point> { return (what === 0 ? origin : what === 1 ? null : undefined) as any; }
+async function use(what: number): Promise<string> { const point: Point = await give(what); try { return "x " + point.x; } catch (error) { return (error as Error).constructor.name + " " + (point === null) + " " + (point === undefined); } }
+for (const what of [0, 1, 2, 0]) console.log(await use(what));
+console.log((await Promise.all([give(0), give(1), give(2)])).map(point => point === null ? "null" : point === undefined ? "undefined" : point.x).join());
+//// a-result-that-is-none-where-the-type-says-an-object.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+function give(what: number): Point { return (what === 0 ? origin : what === 1 ? null : undefined) as any; }
+function giveText(what: number): string { return (what === 0 ? "t" : what === 1 ? null : undefined) as any; }
+function use(what: number): number { return give(what).x; }
+function test(what: number): string { const point = give(what), text = giveText(what); return [point === null, point === undefined, typeof point, text === null, text === undefined, text + "", point?.x ?? "none"].join(); }
+for (const what of [0, 1, 2, 0]) { attempt("use", () => use(what)); attempt("test", () => test(what)); attempt("length", () => giveText(what).length); }
+//// a-static-field-is-read-before-its-initializer.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+class Registry { static early: string = Registry.look(); static point: Point = origin; static look(): string { return [Registry.point === undefined, typeof Registry.point, Registry.point?.x ?? "none"].join(); } }
+console.log(Registry.early, Registry.look());
+attempt("throws", () => { class Other { static early: number = Other.read(); static point: Point = origin; static read(): number { return Other.point.x; } } return Other.early; });
+//// a-string-parameter-gets-null-and-undefined.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+function length(text: string): number { return text.length; }
+function joined(text: string): string { return text + "|" + `${text}` + "|" + [text].join() + "|" + String(text) + "|" + JSON.stringify({ text }); }
+function tested(text: string): string { return [text === null, text === undefined, text == null, !text, typeof text, text === "", text ?? "other"].join(); }
+for (const value of ["ab", null, "", undefined, "c"]) { attempt("length", () => length(value as any)); attempt("joined", () => joined(value as any)); attempt("tested", () => tested(value as any)); }
+//// a-tuple-shorter-than-its-type.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+type Pair = [Point, Point];
+function second(pair: Pair): number { return pair[1].x; }
+function test([first, other]: Pair): string { return [first === undefined, other === undefined, other?.y ?? "none"].join(); }
+attempt("second", () => second([origin, origin])); attempt("second", () => second([origin] as any)); attempt("test", () => test([origin] as any)); attempt("test", () => test([] as any)); attempt("test", () => test([origin, null] as any));
+//// a-type-argument-stands-for-an-object-and-none-arrives.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+function same<T>(value: T): T { return value; }
+function firstOf<T>(values: T[]): T { return values[0]; }
+class Cell<T> { constructor(public value: T) {} get(): T { return this.value; } }
+function read(point: Point): string { return point === undefined ? "undefined" : point === null ? "null" : "x " + point.x; }
+attempt("same", () => read(same<Point>(null as any))); attempt("same", () => read(same<Point>(origin))); attempt("first", () => read(firstOf<Point>([]))); attempt("first x", () => firstOf<Point>([]).x);
+attempt("cell", () => read(new Cell<Point>(undefined as any).get())); attempt("cell x", () => new Cell<Point>(null as any).get().x); attempt("cell", () => new Cell<Point>(origin).get().x);
+//// a-typed-function-is-called-through-call-apply-and-reflect.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+function readX(point: Point, other: Point): string { return point.x + ":" + (other === undefined ? "u" : other === null ? "n" : other.y); }
+attempt("call", () => readX.call(undefined, origin, null as any)); attempt("call", () => readX.call(undefined, null as any, origin)); attempt("apply", () => readX.apply(undefined, [origin] as any)); attempt("apply", () => readX.apply(undefined, [] as any));
+attempt("reflect", () => Reflect.apply(readX, undefined, [origin, undefined])); attempt("reflect", () => Reflect.apply(readX, undefined, [undefined, origin])); attempt("right", () => readX(origin, origin));
+//// a-union-of-strings-gets-none.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+type Kind = "circle" | "square";
+function sides(kind: Kind): number { switch (kind) { case "circle": return 0; case "square": return 4; } }
+function named(kind: Kind): string { return kind === "circle" ? "round" : kind === "square" ? "angular" : "neither " + kind; }
+function upper(kind: Kind): string { return kind.toUpperCase(); }
+for (const kind of ["circle", null, "square", undefined]) { attempt("sides", () => sides(kind as any)); attempt("named", () => named(kind as any)); attempt("upper", () => upper(kind as any)); }
+//// a-variable-is-read-by-a-closure-before-it-is-assigned.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+let current: Point; let name: string;
+function read(): number { return current.x; }
+function tested(): string { return [current === undefined, typeof current, name === undefined, current?.y ?? "none"].join(); }
+attempt("read", read); attempt("tested", tested);
+current = origin; name = "n";
+attempt("read", read); attempt("tested", tested);
+function inner(): string { var late: Point; const look = () => late === undefined ? "none" : "x " + late.x; const before = look(); late = origin; return before + " " + look(); }
+console.log(inner());
+//// an-element-past-the-end-and-a-hole.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+const list: Point[] = [origin, { x: 3, y: 4 }];
+const holes: Point[] = new Array<Point>(3); holes[1] = origin;
+const sparse: Point[] = [origin, , origin] as Point[];
+function at(points: Point[], index: number): Point { return points[index]; }
+function readAt(points: Point[], index: number): number { const point: Point = points[index]; return point.x; }
+function testAt(points: Point[], index: number): string { const point: Point = points[index]; return [point === undefined, typeof point, point?.x ?? "none"].join(); }
+for (const points of [list, holes, sparse]) for (const index of [0, 1, 2, 5, -1]) { attempt("at", () => JSON.stringify(at(points, index))); attempt("read", () => readAt(points, index)); attempt("test", () => testAt(points, index)); }
+let total = 0; for (const point of holes) total += point === undefined ? 100 : point.x; console.log(total);
+attempt("for of", () => { let sum = 0; for (const point of sparse) sum += point.x; return sum; });
+//// an-import-is-read-before-its-module-has-assigned-it/main.ts
+import { early, look } from "./reader.ts";
+export let current: { x: number } = { x: 1 };
+export var hoisted: { x: number } = { x: 2 };
+console.log(early, look());
+//// an-import-is-read-before-its-module-has-assigned-it/reader.ts
+import { current, hoisted } from "./main.ts";
+export function look(): string { let first: string; try { first = String(current.x); } catch (error) { first = (error as Error).constructor.name; } let second: string; try { second = String(hoisted.x); } catch (error) { second = (error as Error).constructor.name; } return first + " " + second + " " + (hoisted === undefined); }
+export const early = look();
+//// an-object-made-without-its-constructor.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+class Holder { point: Point = origin; name: string = "n"; read(): number { return this.point.x; } test(): string { return [this.point === undefined, this.name === undefined, Object.keys(this).length].join(); } }
+const bare: Holder = Object.create(Holder.prototype);
+attempt("read", () => bare.read()); attempt("test", () => bare.test()); attempt("is", () => bare instanceof Holder);
+function use(holder: Holder): number { return holder.point.y; }
+attempt("use", () => use(bare)); attempt("use", () => use(new Holder())); attempt("use", () => use({ __proto__: Holder.prototype, point: null } as any));
+//// every-kind-of-value-where-an-object-of-a-known-shape-is-expected.ts
+// A member is read from, stored to and called on a value that unseen code handed over. The shape that the types name is tested for; undefined and null throw; every other value goes by name.
+interface Item { weight: number; label: string; next: Item | null; grow(by: number): number }
+const launder = new Function("v", "return v" + String(process.argv[9] ?? "").slice(99)) as <V>(v: V) => V;
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+function make(weight: number, next: Item | null): Item { return launder({ weight, label: "item " + weight, next, grow(by: number) { return (this.weight += by); } }); }
+function read(item: Item): number { return item.weight; }
+function readTwice(item: Item): string { return item.label + item.weight; }
+function store(item: Item): number { item.weight = 5; return item.weight; }
+function call(item: Item): number { return item.grow(2); }
+function readInsideTry(item: Item): string { try { return "read " + item.weight; } catch (error) { return "caught " + (error as Error).constructor.name; } finally { seen++; } }
+function total(head: Item | null): number { let sum = 0; for (let item = head; item !== null; item = item.next) sum += item.weight; return sum; }
+function secondWeight(item: Item): number { return item.next!.weight; }
+let seen = 0;
+let held: Item = make(1, null);
+function readHeld(): number { return held.weight + held.label.length; }
+const chain = make(3, make(2, make(1, null)));
+const others: unknown[] = [undefined, null, 0, -0, 1.5, NaN, "text", "", true, false, Symbol.iterator, 10n, [1, 2], { weight: 7 }, { label: "no weight" }, Object.create({ weight: 9 }), Object.create(null),
+    () => 1, new Map(), new Proxy({}, { get: (_, key) => "proxied " + String(key), set: () => true }), Object.freeze({ weight: 4, label: "frozen", next: null }), chain];
+for (let round = 0; round < 3; round++) {
+    for (const other of others) {
+        const item = launder(other) as Item;
+        attempt("read", () => read(item)); attempt("twice", () => readTwice(item)); attempt("store", () => store(item)); attempt("call", () => call(item));
+        attempt("try", () => readInsideTry(item)); attempt("total", () => total(item)); attempt("second", () => secondWeight(item));
+        held = item; attempt("held", readHeld);
+    }
+}
+attempt("ends in undefined", () => total(make(1, launder(undefined) as unknown as Item)));
+attempt("ends in a number", () => total(make(1, launder(5) as unknown as Item)));
+console.log(seen, total(chain));
+//// many-right-calls-then-one-with-none-then-right-ones.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+function weigh(point: Point, text: string): number { return point.x * 2 + point.y + text.length; }
+let total = 0; const thrown: string[] = [];
+for (let index = 0; index < 3000; index++) { const odd = index === 1500 || index === 2999; try { total += weigh(odd ? (null as any) : { x: index, y: 1 }, index === 2000 ? (undefined as any) : "ab"); } catch (error) { thrown.push(index + (error as Error).constructor.name); } }
+console.log(total, thrown.join());
+//// native-code-hands-none-to-a-typed-callback.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+const mixed = [origin, null, undefined, { x: 3, y: 4 }] as Point[];
+attempt("for each", () => { const seen: string[] = []; mixed.forEach((point: Point) => seen.push(point === null ? "null" : point === undefined ? "undefined" : "x" + point.x)); return seen.join(); });
+attempt("map", () => mixed.map((point: Point) => point?.x ?? "none").join());
+attempt("map throws", () => mixed.map((point: Point) => point.x).join());
+attempt("filter", () => mixed.filter((point: Point) => point != null).length);
+attempt("find", () => mixed.find((point: Point) => point == null) === null);
+attempt("reduce", () => mixed.reduce((sum: number, point: Point) => sum + (point ? point.x : 100), 0));
+attempt("sort", () => (["b", undefined, "a", null] as string[]).sort((left: string, right: string) => String(left).localeCompare(String(right))).join("|"));
+attempt("replace", () => "abc".replace(/(x)?b/, (all: string, group: string) => all + (group === undefined) + typeof group));
+//// none-arrives-in-a-recursion-and-in-two-functions-that-call-each-other.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+interface Tree { value: number; left: Tree; right: Tree }
+function leaf(value: number): Tree { return { value, left: null as any, right: undefined as any }; }
+function total(tree: Tree): number { return tree == null ? 0 : tree.value + total(tree.left) + total(tree.right); }
+function depth(tree: Tree): number { if (!tree) return 0; return 1 + Math.max(depth(tree.left), depth(tree.right)); }
+function even(tree: Tree): number { return tree === null || tree === undefined ? 0 : tree.value + odd(tree.left); }
+function odd(tree: Tree): number { return tree ? even(tree.right) - tree.value : 0; }
+function broken(tree: Tree): number { return tree.value + broken(tree.left); }
+const tree: Tree = { value: 1, left: { value: 2, left: leaf(3), right: leaf(4) }, right: leaf(5) };
+console.log(total(tree), depth(tree), even(tree), odd(tree)); attempt("broken", () => broken(tree));
+//// none-comes-out-of-a-field-and-goes-into-a-parameter.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+class Holder { point: Point = origin; next: Holder | undefined; }
+function readX(point: Point): number { return point.x; }
+function viaTwo(point: Point): number { return readX(point) + 1; }
+function isNone(point: Point): boolean { return point === null || point === undefined; }
+function use(holder: Holder): string { return [isNone(holder.point), viaTwo(holder.point)].join(); }
+const holder = new Holder();
+attempt("use", () => use(holder)); holder.point = null as any; attempt("use", () => use(holder)); attempt("none", () => isNone(holder.point));
+holder.point = undefined as any; attempt("use", () => use(holder)); attempt("none", () => isNone(holder.point)); holder.point = { x: 7, y: 8 }; attempt("use", () => use(holder));
+//// none-comes-out-of-a-list-a-map-and-a-call-and-goes-into-a-parameter.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+const list: Point[] = [origin]; const map = new Map<string, Point>([["a", origin]]);
+function give(ok: boolean): Point { return (ok ? origin : null) as any; }
+function readY(point: Point): number { return point.y; }
+function kind(point: Point): string { return point === undefined ? "undefined" : point === null ? "null" : "point"; }
+for (const index of [0, 1]) { attempt("list", () => readY(list[index])); attempt("list kind", () => kind(list[index])); }
+for (const key of ["a", "b"]) { attempt("map", () => readY(map.get(key)!)); attempt("map kind", () => kind(map.get(key)!)); }
+for (const ok of [true, false]) { attempt("call", () => readY(give(ok))); attempt("call kind", () => kind(give(ok))); }
+//// none-goes-into-a-parameter-of-every-kind-of-function.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+class Shape { point: Point; constructor(point: Point) { this.point = point; } static make(point: Point): number { return point.x; } method(point: Point): number { return point.x + this.point.x; } set moved(point: Point) { this.point = { x: point.x, y: 0 }; } }
+const arrow = (point: Point): number => point.x;
+async function later(point: Point): Promise<number> { return point.x; }
+function* many(point: Point): Generator<number> { yield point.x; yield point.y; }
+const bound = function (this: Point, point: Point): number { return this.x + point.x; }.bind(origin);
+const literal = { method(point: Point): number { return point.y; } };
+for (const value of [origin, null, undefined, origin] as Point[]) {
+  attempt("constructor", () => new Shape(value).point === value); attempt("static", () => Shape.make(value)); attempt("method", () => new Shape(origin).method(value));
+  attempt("setter", () => { const shape = new Shape(origin); shape.moved = value; return shape.point.x; }); attempt("arrow", () => arrow(value)); attempt("generator", () => [...many(value)].join());
+  attempt("bound", () => bound(value)); attempt("literal", () => literal.method(value));
+  console.log("async", await later(value).then(String, error => error.constructor.name));
+}
+//// none-goes-round-a-loop-in-a-typed-variable.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+interface Node { value: number; next: Node }
+function chain(length: number): Node { let head: Node = undefined as any; for (let index = length; index > 0; index--) head = { value: index, next: head }; return head; }
+function sum(head: Node): number { let total = 0; for (let node: Node = head; node; node = node.next) total += node.value; return total; }
+function sumUntilNull(head: Node): number { let total = 0, node: Node = head; while (node != null) { total += node.value; node = node.next; } return total; }
+function last(head: Node): number { let node = head; while (node.next !== undefined) node = node.next; return node.value; }
+console.log(sum(chain(5)), sumUntilNull(chain(4)), last(chain(3)), sum(chain(0)), sumUntilNull(chain(0))); attempt("last of none", () => last(chain(0)));
+//// none-in-a-symbol-a-bigint-and-a-regular-expression.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+function describe(mark: symbol): string { return mark.description ?? "no description"; }
+function double(big: bigint): bigint { return big * 2n; }
+function matches(pattern: RegExp): boolean { return pattern.test("abc"); }
+function day(date: Date): number { return date.getTime(); }
+for (const none of [null, undefined]) { attempt("symbol", () => describe(none as any)); attempt("bigint", () => double(none as any)); attempt("regexp", () => matches(none as any)); attempt("date", () => day(none as any)); }
+attempt("symbol", () => describe(Symbol("s"))); attempt("bigint", () => double(4n)); attempt("regexp", () => matches(/b/)); attempt("date", () => day(new Date(5)));
+//// none-is-compared-and-converted-in-every-way.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+function all(point: Point, text: string, run: () => void, list: number[]): string {
+  const out: unknown[] = [];
+  for (const value of [point, text, run, list] as unknown[]) out.push(value === null, value === undefined, value == null, typeof value, String(value), `${value}`, value + "", !value, !!value, value ?? "d", Object.is(value, null), Object.is(value, undefined), [value].join(), JSON.stringify([value]), value instanceof Object);
+  out.push(point === (null as any), text === (undefined as any), point == (text as any), Object.is(point, run));
+  return out.join(" ");
+}
+console.log(all(null as any, null as any, null as any, null as any)); console.log(all(undefined as any, undefined as any, undefined as any, undefined as any)); console.log(all(null as any, undefined as any, null as any, undefined as any)); console.log(all(origin, "t", () => {}, [1]).length);
+//// none-is-stored-into-a-field-afterwards.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+class Holder { point: Point = origin; name: string = "n"; read(): number { return this.point.x + this.name.length; } test(): string { return [this.point === null, this.point === undefined, this.name === null, typeof this.name].join(); } }
+const holder = new Holder(); attempt("read", () => holder.read());
+holder.point = null as any; attempt("read", () => holder.read()); attempt("test", () => holder.test());
+holder.point = origin; holder.name = undefined as any; attempt("read", () => holder.read()); attempt("test", () => holder.test());
+holder.name = "nn"; attempt("read", () => holder.read());
+(holder as any).point = undefined; attempt("test", () => holder.test()); delete (holder as any).point; attempt("test", () => holder.test() + ("point" in holder)); attempt("read", () => holder.read());
+//// one-parameter-is-right-and-the-other-is-none.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+function mix(first: Point, text: string, second: Point, run: () => number): string { const parts: unknown[] = []; parts.push(first === null, text === undefined, second == null, typeof run); if (first) parts.push(first.x); if (text) parts.push(text.length); if (second) parts.push(second.y); if (run) parts.push(run()); return parts.join(); }
+const values: [Point, string, Point, () => number] = [origin, "ab", { x: 3, y: 4 }, () => 9];
+for (let mask = 0; mask < 16; mask++) { const given = values.map((value, index) => (mask >> index) & 1 ? (index % 2 ? undefined : null) : value) as typeof values; attempt("mix " + mask, () => mix(...given)); }
+//// parsed-data-holds-null-where-the-type-says-an-object.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+interface Line { from: Point; to: Point; label: string }
+const lines: Line[] = JSON.parse('[{"from":{"x":1,"y":2},"to":null,"label":"a"},{"from":null,"to":{"x":3,"y":4}},{"from":{"x":5,"y":6},"to":{"x":7,"y":8},"label":null}]');
+function span(line: Line): number { return line.to.x - line.from.x; }
+function label(line: Line): string { return line.label + ":" + (line.label === undefined) + ":" + (line.label === null) + ":" + (line.label?.length ?? "none"); }
+for (const line of lines) { attempt("span", () => span(line)); attempt("label", () => label(line)); attempt("to", () => [line.to === null, line.from === null, line.to == undefined].join()); }
+//// spread-and-rest-carry-none.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+function three(first: Point, second: Point, third: Point): string { return [first, second, third].map(point => point === undefined ? "u" : point === null ? "n" : point.x).join(); }
+function rest(...points: Point[]): string { return points.length + ":" + points.map(point => point?.x ?? "none").join(); }
+const holes = [origin, , origin] as Point[];
+attempt("three", () => three(...(holes as [Point, Point, Point]))); attempt("rest", () => rest(...holes)); attempt("rest", () => rest(null as any, undefined as any)); attempt("copy", () => JSON.stringify({ ...({ point: null } as unknown as { point: Point }) }));
+attempt("read", () => ((first: Point, second: Point) => second.x)(...(holes as [Point, Point])));
+//// the-length-of-a-field-that-holds-undefined-or-null.ts
+// `p.name.length`, `p.list[0]`, `p.name.charCodeAt(0)`, `p.list.length = 0`: the field is declared to hold a string or an array and holds undefined or null:
+// the access throws the engine's own TypeError at its own place in the order of things, caught or not. (A compiled program does not quote the source text behind "evaluating".)
+class Record {
+  name: string;
+  list: number[];
+  next: Record;
+  constructor(name: string, list: number[]) {
+    this.name = name;
+    this.list = list;
+    this.next = this;
+  }
+}
+const log: string[] = [];
+function wordsOf(error: unknown): string {
+  return (error as Error).message.replace(/ \(evaluating .*\)$/, "");
+}
+function note<T>(what: string, value: T): T {
+  log.push(what);
+  return value;
+}
+function lengthOfName(p: Record): number {
+  return p.name.length;
+}
+function lengthOfList(p: Record): number {
+  return p.list.length;
+}
+function firstOfList(p: Record): number {
+  return p.list[0]!;
+}
+function elementOfList(p: Record, index: number): number {
+  return p.list[note("index", index)]!;
+}
+function codeOfName(p: Record): number {
+  return p.name.charCodeAt(note("position", 0));
+}
+function startOfName(p: Record): boolean {
+  return p.name.startsWith("a");
+}
+function storeIntoList(p: Record): number {
+  p.list[0] = note("stored value", 7);
+  return p.list[0]!;
+}
+function cutList(p: Record): number {
+  p.list.length = note("new length", 0);
+  return p.list.length;
+}
+function twoLengths(p: Record): number {
+  return p.name.length + p.next.name.length + p.next.list.length;
+}
+function lengthOrNothing(p: Record): number | undefined {
+  return p.name?.length;
+}
+function caught(p: Record): string {
+  try {
+    return "length " + p.name.length;
+  } catch (error) {
+    return "caught " + wordsOf(error);
+  } finally {
+    log.push("finally");
+  }
+}
+function lengthInLoop(records: Record[]): number {
+  let total = 0;
+  for (const record of records) total += record.name.length + record.list.length;
+  return total;
+}
+
+function attempt(what: string, run: () => unknown) {
+  log.length = 0;
+  let answer: string;
+  try {
+    answer = String(run());
+  } catch (error) {
+    answer = (error as Error).constructor.name + ": " + wordsOf(error);
+  }
+  console.log(what, "|", answer, "|", log.join(","));
+}
+
+const whole = new Record("abc", [1, 2, 3]);
+const holders: [string, Record][] = [["whole", whole]];
+for (const nothing of [undefined, null]) {
+  const noName = new Record("x", [4]);
+  (noName as any).name = nothing;
+  const noList = new Record("yz", [5]);
+  (noList as any).list = nothing;
+  const far = new Record("far", [6, 7]);
+  far.next = noName;
+  holders.push([`name ${nothing}`, noName], [`list ${nothing}`, noList], [`next's name ${nothing}`, far]);
+}
+for (let round = 0; round < 3; round++) {
+  for (const [what, record] of holders) {
+    attempt(what + " lengthOfName", () => lengthOfName(record));
+    attempt(what + " lengthOfList", () => lengthOfList(record));
+    attempt(what + " firstOfList", () => firstOfList(record));
+    attempt(what + " elementOfList", () => elementOfList(record, 1));
+    attempt(what + " codeOfName", () => codeOfName(record));
+    attempt(what + " startOfName", () => startOfName(record));
+    attempt(what + " twoLengths", () => twoLengths(record));
+    attempt(what + " lengthOrNothing", () => lengthOrNothing(record));
+    attempt(what + " caught", () => caught(record));
+    attempt(what + " lengthInLoop", () => lengthInLoop([whole, record, whole]));
+  }
+}
+for (const [what, record] of holders) {
+  attempt(what + " storeIntoList", () => storeIntoList(record));
+  attempt(what + " cutList", () => cutList(record));
+}
+attempt("no record", () => lengthOfName(undefined as any));
+attempt("null for a record", () => lengthOfList(null as any));
+// What is no string and no array, and neither undefined nor null, is read as what it is.
+const odd = new Record("odd", []);
+(odd as any).name = 12;
+(odd as any).list = { length: "long", 0: "first" };
+attempt("a number for a name", () => lengthOfName(odd));
+attempt("an object for a list", () => [lengthOfList(odd), firstOfList(odd)]);
+//// this-is-none-in-a-method.ts
+interface Point { x: number; y: number }
+function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())); } catch (error) { console.log(what, (error as Error).constructor.name); } }
+const origin: Point = { x: 1, y: 2 };
+class Meter { value = 5; read(): number { return this.value; } test(): string { return [this === undefined, this === null, typeof this].join(); } }
+const meter = new Meter(); const { read, test } = meter;
+attempt("read", () => meter.read()); attempt("loose read", () => read()); attempt("loose test", () => test());
+attempt("call null", () => meter.read.call(null as any)); attempt("test null", () => meter.test.call(null as any)); attempt("test undefined", () => meter.test.call(undefined as any));
+function typed(this: Point): number { return this.x; }
+attempt("typed", () => typed.call(origin)); attempt("typed null", () => typed.call(null as any)); attempt("typed loose", () => (typed as any)());

@@ -1,0 +1,12 @@
+const holder = process;
+const log = [];
+globalThis.note = text => log.push(text);
+const show = what => { console.log(what + ":", log.join(" ") || "nothing"); log.length = 0; };
+const attempt = async (what, run) => { try { console.log(what, await run()); } catch (error) { console.log(what, "throws", error.name, String(error.message).slice(0, 70)); } show(what); };
+
+holder.custom = function () { "use strict"; return this === holder ? "the holder" : typeof this; };
+let file;
+try { file = await import("./reads.mjs"); show("import"); } catch (error) { console.log("import throws", error.name, String(error.message).slice(0, 90)); show("import"); }
+if (file) {
+await attempt("read", () => file.read());
+}

@@ -1,0 +1,27 @@
+in a declaration: true 1 above
+ahead of super < above < a < behind super | 10 above
+two accessors: true 1 2
+above < a < b | 10 above
+under a computed key: true 1 4
+above < a < computed | 10 above
+without a value: true undefined
+above | 10 above
+as an argument: 1 above
+above < a < argument | 10 above
+in a branch: 1 above
+above < a | 10 above
+in a branch: 1 above
+late < above < a | 10 above
+above < a | 10 above
+a static accessor beside it: true 1 3
+above < a | 10 above
+a private accessor beside it: true 1 6
+above < a < #hidden | 10 above
+as a statement: 1 above
+ahead of super < above < a < behind super | 10 above
+above < a < behind the branch | 10 above
+behind the branch | ReferenceError
+behind a decorated accessor: true 1 2
+above < a < added by a < b | 10 above
+beside a decorated method: true 1
+above < added by method < a | 10 above

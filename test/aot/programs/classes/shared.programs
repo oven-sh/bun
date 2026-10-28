@@ -1,0 +1,22 @@
+////: attempt-3
+function attempt(label: string, run: () => unknown): void {
+  try {
+    note(label, run());
+  } catch (error) {
+    note(label, "throws " + (error as Error).constructor.name);
+  }
+}
+////: lines
+class «1» extends «2» {
+  «3» = «4»;
+}
+////: lines-5
+«1».prototype.«2» = function () {
+  return «3»;
+};
+////: lines-6
+class «1» extends «2» {
+  «3»() {
+    return «4»;
+  }
+}

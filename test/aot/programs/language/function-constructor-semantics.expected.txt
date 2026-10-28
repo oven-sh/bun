@@ -1,0 +1,8 @@
+GeneratorFunction(): writable true, a store holds: true, Reflect.set: true 5
+GeneratorFunction with a body: writable true, a store holds: true, Reflect.set: true 5
+AsyncGeneratorFunction(): writable true, a store holds: true, Reflect.set: true 5
+a class that extends GeneratorFunction: writable true, a store holds: true, Reflect.set: true 5
+a generator function out of Function(): writable true, a store holds: true, Reflect.set: true 5
+a generator function out of an indirect eval: writable true, a store holds: true, Reflect.set: true 5
+caller and arguments, both made of text: object,true,object,
+not running: null null

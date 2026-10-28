@@ -1,0 +1,299 @@
+////: bytesOf
+function bytesOf(text: string): Uint8Array<ArrayBuffer> {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const bytes: number[] = [];
+  let bits = 0;
+  let count = 0;
+  for (const character of text) {
+    if (character === "=") break;
+    bits = ((bits << 6) | alphabet.indexOf(character)) & 0xffffff;
+    count += 6;
+    if (count >= 8) {
+      count -= 8;
+      bytes.push((bits >> count) & 255);
+    }
+  }
+  return new Uint8Array(bytes);
+}
+////: outcomeOf
+function outcomeOf(run: () => unknown): string {
+  try {
+    return String(run());
+  } catch (error) {
+    const kind = error instanceof WebAssembly.RuntimeError ? "WebAssembly.RuntimeError" : (error as Error).name;
+    const message = (error as Error).message;
+    const hint = message.indexOf(" (evaluating");
+    return kind + ": " + (hint < 0 ? message : message.slice(0, hint));
+  }
+}
+//// gc-array-length-block-test.ts
+// The two classes are the only layouts, so their layout set can get a block test, which compares two bytes of the shape word. No length of a WebAssembly GC array passes it.
+interface Shape { side: number; }
+class Circle implements Shape { side = 1; }
+class Square implements Shape { side = 2; }
+
+function readSide(s: Shape) { return s.side; }
+
+const circle = new Circle();
+const square = new Square();
+let sideSum = 0;
+for (let i = 0; i < 1000; i++) sideSum += readSide(i & 1 ? square : circle);
+console.log("side", sideSum);
+
+// (type $b (array (mut i8)))
+// (func (export "makeBytes") (param i32) (result (ref $b)) local.get 0 array.new_default $b)
+const gcModule = new WebAssembly.Module(
+  new Uint8Array([
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    0x01, 0x0a, 0x02, 0x5e, 0x78, 0x01, 0x60, 0x01, 0x7f, 0x01, 0x64, 0x00,
+    0x03, 0x02, 0x01, 0x01,
+    0x07, 0x0d, 0x01, 0x09, 0x6d, 0x61, 0x6b, 0x65, 0x42, 0x79, 0x74, 0x65, 0x73, 0x00, 0x00,
+    0x0a, 0x09, 0x01, 0x07, 0x00, 0x20, 0x00, 0xfb, 0x07, 0x00, 0x0b,
+  ]),
+);
+const { makeBytes } = new WebAssembly.Instance(gcModule, {}).exports as any;
+
+let mismatches = 0;
+for (const length of [0x00ff0000, 0x00ff8000, 0x00ffff00, 0x00ffffff, 0x01ffff80]) {
+  if (readSide(makeBytes(length)) !== undefined) mismatches++;
+}
+console.log("mismatches", mismatches);
+console.log(readSide(square));
+//// gc-object-shape-word.ts
+// A WebAssembly GC struct or array never passes a shape test, whatever its fields, its elements and its length are.
+class Point { x = 1; y = 2; }
+class Named { name = "n"; then = 3; }
+class Size { width = 4; height = 5; }
+class Interval { start = 6; end = 7; x = 8; }
+class Pair { first = 9; second = 10; then = 11; }
+class Entry { x = 12; then = 13; }
+
+interface Shape { side: number; }
+class Circle implements Shape { side = 35; }
+class Square implements Shape { side = 36; }
+
+const samples: any[] = [
+  new Point(),
+  new Named(),
+  new Size(),
+  new Interval(),
+  new Pair(),
+  new Entry(),
+  { x: 14 },
+  { then: 15 },
+  { x: 16, then: 17 },
+  { y: 18 },
+  { y: 19, x: 20 },
+  { name: "m" },
+  { name: "m", x: 21 },
+  { width: 22 },
+  { width: 23, then: 24 },
+  { first: 25 },
+  { first: 26, second: 27 },
+  { first: 28, second: 29, x: 30 },
+  { start: 31 },
+  { start: 32, end: 33, then: 34 },
+];
+const circle = new Circle();
+const square = new Square();
+
+function readX(o: any) { return o.x; }
+function readThen(o: any) { return o.then; }
+function readSide(s: Shape) { return s.side; }
+function keys(o: any) { return Object.keys(o).length; }
+function isPoint(o: unknown) { return o instanceof Point; }
+
+let xSum = 0;
+let thenSum = 0;
+let sideSum = 0;
+let keyCount = 0;
+let pointCount = 0;
+for (let i = 0; i < 1000; i++) {
+  const sample = samples[i % samples.length];
+  xSum += readX(sample) ?? 0;
+  thenSum += readThen(sample) ?? 0;
+  sideSum += readSide(i & 1 ? square : circle);
+  keyCount += keys(sample);
+  if (isPoint(sample)) pointCount++;
+}
+console.log("x", xSum);
+console.log("then", thenSum);
+console.log("side", sideSum);
+console.log("keys", keyCount);
+console.log("points", pointCount);
+
+// (type $s (struct (field i32) (field i32))) (type $a (array (mut i32))) (type $b (array (mut i8)))
+// (func (export "make") (param i32 i32) (result (ref $s)) local.get 0 local.get 1 struct.new $s)
+// (func (export "makeArray") (param i32 i32) (result (ref $a)) local.get 0 local.get 1 array.new $a)
+// (func (export "makeBytes") (param i32) (result (ref $b)) local.get 0 array.new_default $b)
+const gcModule = new WebAssembly.Module(
+  new Uint8Array([
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    0x01, 0x21, 0x06, 0x5f, 0x02, 0x7f, 0x00, 0x7f, 0x00, 0x5e, 0x7f, 0x01, 0x60, 0x02, 0x7f, 0x7f, 0x01, 0x64, 0x00, 0x60, 0x02, 0x7f, 0x7f, 0x01, 0x64, 0x01, 0x5e, 0x78, 0x01, 0x60, 0x01, 0x7f, 0x01, 0x64, 0x04,
+    0x03, 0x04, 0x03, 0x02, 0x03, 0x05,
+    0x07, 0x20, 0x03, 0x04, 0x6d, 0x61, 0x6b, 0x65, 0x00, 0x00, 0x09, 0x6d, 0x61, 0x6b, 0x65, 0x41, 0x72, 0x72, 0x61, 0x79, 0x00, 0x01, 0x09, 0x6d, 0x61, 0x6b, 0x65, 0x42, 0x79, 0x74, 0x65, 0x73, 0x00, 0x02,
+    0x0a, 0x1d, 0x03, 0x09, 0x00, 0x20, 0x00, 0x20, 0x01, 0xfb, 0x00, 0x00, 0x0b, 0x09, 0x00, 0x20, 0x00, 0x20, 0x01, 0xfb, 0x06, 0x01, 0x0b, 0x07, 0x00, 0x20, 0x00, 0xfb, 0x07, 0x04, 0x0b,
+  ]),
+);
+const { make, makeArray, makeBytes } = new WebAssembly.Instance(gcModule, {}).exports as any;
+
+function countMismatches(o: any) {
+  let count = 0;
+  if (readX(o) !== undefined) count++;
+  if (readThen(o) !== undefined) count++;
+  if (readSide(o) !== undefined) count++;
+  if (keys(o) !== 0) count++;
+  if (isPoint(o)) count++;
+  if (typeof o !== "object") count++;
+  if (Object.getPrototypeOf(o) !== null) count++;
+  if ("x" in o) count++;
+  return count;
+}
+
+const retained: any[] = [];
+let mismatches = 0;
+for (let k = 1; k <= 64; k++) {
+  const s = make(7, -k);
+  const a = makeArray(-k, 1);
+  mismatches += countMismatches(s) + countMismatches(a);
+  retained.push(s, a);
+}
+for (const length of [0x00ff0000, 0x00ff8000, 0x00ffff00, 0x00ffffff, 0x01ffff80]) {
+  const bytes = makeBytes(length);
+  mismatches += countMismatches(bytes);
+  retained.push(bytes);
+}
+Bun.gc(true);
+for (const o of retained) mismatches += countMismatches(o);
+console.log("mismatches", mismatches);
+console.log(readX(new Point()));
+console.log(readSide(circle));
+//// module-compiled-at-runtime.ts
+// Bytes that nobody saw when the program was built are a module all the same: it is interpreted.
+////= bytesOf
+
+////= outcomeOf
+
+const numbers = [85, 52, 38, 56, 84, 85, 85, 85, 84, 82, 84, 53, 87, 42, 42, 84, 42, 86, 87, 84, 85, 82, 82, 84, 86, 52, 49, 49, 85, 85, 95, 92, 84, 82, 85, 117, 85, 117, 84, 63, 94];
+const bytes = new Uint8Array(numbers.length);
+for (let i = 0; i < numbers.length; i++) bytes[i] = numbers[i] ^ 0x55;
+const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes), {});
+console.log((instance.exports.add as (a: number, b: number) => number)(20, 22));
+console.log(outcomeOf(() => new WebAssembly.Module(bytesOf("AGFzbQEAAAABBwFgAn9/AX8DAgEABwcBA2FkZAAACgkBBwAgACABag=="))).slice(0, 40));
+//// module-in-base64-text.ts
+// A module whose bytes stand in the program as base64 text is compiled when the program is built, however the program decodes the text and whichever call makes the module: no function of it is interpreted.
+// Text that only starts as a module does gets no code, and text of under 64 characters is not looked at: that module is interpreted. Each of them behaves as in plain Bun.
+// STATISTIC: WebAssemblyModulesFoundInText = 3
+// STATISTIC: WebAssemblyModulesInTextDeclined = 1
+// STATISTIC: WasmFunctionsCompiled = 6
+// STATISTIC: WasmFunctionsInterpreted = 0
+////= bytesOf
+
+////= outcomeOf
+
+type Unary = (n: number) => number;
+type Binary = (a: number, b: number) => number;
+
+// (func (export "add") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add)
+// (func (export "divide") (param i32 i32) (result i32) local.get 0 local.get 1 i32.div_s)
+// (func (export "sumTo") (param $n i32) (result i32) (local $sum i32) ..): $n + ($n - 1) + .. + 1 in a loop
+const arithmetic = "AGFzbQEAAAABDAJgAn9/AX9gAX8BfwMEAwAAAQcYAwNhZGQAAAZkaXZpZGUAAQVzdW1UbwACCjMDBwAgACABagsHACAAIAFtCyEBAX8CQANAIABFDQEgASAAaiEBIABBAWshAAwACwsgAQs=";
+const first = new WebAssembly.Instance(new WebAssembly.Module(bytesOf(arithmetic)), {}).exports;
+const add = first.add as Binary;
+const divide = first.divide as Binary;
+const sumTo = first.sumTo as Unary;
+console.log("add", add(2, 3), add(-1, 1), add(2147483647, 1), add(1.9, 2.9));
+console.log("divide", divide(7, 2), divide(-7, 2), outcomeOf(() => divide(1, 0)), divide(9, 3));
+console.log("sumTo", sumTo(0), sumTo(10), sumTo(100000));
+let sum = 0;
+for (let i = 0; i < 100000; i++) sum = add(sum, i);
+console.log("many", sum);
+
+const decoded = Uint8Array.fromBase64(arithmetic);
+console.log("fromBase64", (new WebAssembly.Instance(new WebAssembly.Module(decoded), {}).exports.add as Binary)(19, 23));
+console.log("instantiate", ((await WebAssembly.instantiate(decoded, {})).instance.exports.add as Binary)(20, 23));
+console.log("compile", (new WebAssembly.Instance(await WebAssembly.compile(decoded.buffer), {}).exports.add as Binary)(21, 23));
+
+// (memory (export "memory") 1)
+// (func (export "fibonacci") (param i32) (result i32) ..): calls itself twice
+// (func (export "half") (param f64) (result f64) local.get 0 f64.const 0.5 f64.mul)
+// (func (export "exchange") (param $address i32) (param $value i32) (result i32) ..): stores the value and returns what was there
+const recursion = "AGFzbQEAAAABEQNgAX8Bf2ABfAF8YAJ/fwF/AwQDAAECBQMBAAEHKAQJZmlib25hY2NpAAAEaGFsZgABCGV4Y2hhbmdlAAIGbWVtb3J5AgAKQgMcACAAQQJIBH8gAAUgAEEBaxAAIABBAmsQAGoLCw4AIABEAAAAAAAA4D+iCxQBAX8gACgCACECIAAgATYCACACCw==";
+const second = new WebAssembly.Instance(new WebAssembly.Module(bytesOf(recursion)), {}).exports;
+const fibonacci = second.fibonacci as Unary;
+const half = second.half as Unary;
+const exchange = second.exchange as Binary;
+const memory = second.memory as WebAssembly.Memory;
+console.log("fibonacci", fibonacci(0), fibonacci(1), fibonacci(10), fibonacci(24));
+console.log("half", half(3), half(0.1), Object.is(half(-0), -0), half(NaN), half(1e308));
+console.log("exchange", exchange(0, 7), exchange(0, 9), exchange(65532, 1), outcomeOf(() => exchange(65533, 1)), outcomeOf(() => exchange(-4, 1)), exchange(65532, 2));
+console.log("memory", new Uint32Array(memory.buffer)[0], memory.buffer.byteLength);
+
+const truncated = "AGFzbQEAAAABDAJgAn9/AX9gAX8BfwMEAwAAAQcYAwNhZGQAAAZkaXZpZGUAAQVzdW1UbwACCjMDBwAgACABagsHACAA";
+console.log("truncated", truncated.length, outcomeOf(() => new WebAssembly.Module(bytesOf(truncated))).slice(0, 12));
+
+const sentence = "AGFzbQEAAA is how the base64 text of every WebAssembly module starts, and this text goes on as none does.";
+console.log("sentence", sentence.length, outcomeOf(() => Uint8Array.fromBase64(sentence)).slice(0, 11));
+
+// (func (export "add") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add)
+const shortText = "AGFzbQEAAAABBwFgAn9/AX8DAgEABwcBA2FkZAAACgkBBwAgACABags=";
+console.log("short", shortText.length, (new WebAssembly.Instance(new WebAssembly.Module(bytesOf(shortText)), {}).exports.add as Binary)(22, 23));
+export {};
+//// module-in-data-url.ts
+// A module whose bytes stand in the program as a data: URL is compiled when the program is built, however the program gets the bytes out of the URL: no function of it is interpreted.
+// The same bytes behind several heads are one module, compiled once. The run time finds its code by the bytes, so also for a URL that the build does not look at: one whose head ends behind the 64th character, one that does not start with a small d.
+// STATISTIC: WebAssemblyModulesFoundInText = 2
+// STATISTIC: WebAssemblyModulesInTextDeclined = 0
+// STATISTIC: WasmFunctionsCompiled = 6
+// STATISTIC: WasmFunctionsInterpreted = 0
+////= bytesOf
+
+type Unary = (n: number) => number;
+type Binary = (a: number, b: number) => number;
+
+function textOf(url: string): string {
+  return url.slice(url.indexOf(",") + 1);
+}
+
+function exportsOf(bytes: BufferSource): Bun.WebAssembly.Exports {
+  return new WebAssembly.Instance(new WebAssembly.Module(bytes), {}).exports;
+}
+
+// (func $multiply (export "multiply") (param i32 i32) (result i32) local.get 0 local.get 1 i32.mul)
+// (func (export "square") (param i32) (result i32) local.get 0 local.get 0 call $multiply)
+// (func (export "negate") (param i32) (result i32) i32.const 0 local.get 0 i32.sub)
+const products = "data:application/wasm;base64,AGFzbQEAAAABDAJgAn9/AX9gAX8BfwMEAwABAQceAwhtdWx0aXBseQAABnNxdWFyZQABBm5lZ2F0ZQACChoDBwAgACABbAsIACAAIAAQAAsHAEEAIABrCw==";
+const first = exportsOf(bytesOf(textOf(products)));
+const multiply = first.multiply as Binary;
+const square = first.square as Unary;
+const negate = first.negate as Unary;
+console.log("multiply", multiply(6, 7), multiply(-3, 5), multiply(65536, 65536), multiply(2.9, 3.9));
+console.log("square", square(12), square(-12), square(46341));
+console.log("negate", negate(5), negate(-5), negate(-2147483648), Object.is(negate(0), 0));
+let product = 1;
+for (let i = 1; i < 100000; i += 2) product = multiply(product, i);
+console.log("many", product);
+
+console.log("Buffer", (exportsOf(Buffer.from(textOf(products), "base64")).multiply as Binary)(6, 8));
+console.log("atob", (exportsOf(Uint8Array.from(atob(textOf(products)), character => character.charCodeAt(0))).multiply as Binary)(6, 9));
+console.log("fetch", (exportsOf(await (await fetch(products)).arrayBuffer()).multiply as Binary)(6, 10));
+
+const sameBytes = "data:application/octet-stream;base64,AGFzbQEAAAABDAJgAn9/AX9gAX8BfwMEAwABAQceAwhtdWx0aXBseQAABnNxdWFyZQABBm5lZ2F0ZQACChoDBwAgACABbAsIACAAIAAQAAsHAEEAIABrCw==";
+console.log("other head", (exportsOf(bytesOf(textOf(sameBytes))).square as Unary)(11), textOf(sameBytes) === textOf(products));
+
+// (func (export "add") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add)
+// (func (export "divide") (param i32 i32) (result i32) local.get 0 local.get 1 i32.div_s)
+// (func (export "sumTo") (param $n i32) (result i32) (local $sum i32) ..): $n + ($n - 1) + .. + 1 in a loop
+const arithmetic = "data:application/wasm;base64,AGFzbQEAAAABDAJgAn9/AX9gAX8BfwMEAwAAAQcYAwNhZGQAAAZkaXZpZGUAAQVzdW1UbwACCjMDBwAgACABagsHACAAIAFtCyEBAX8CQANAIABFDQEgASAAaiEBIABBAWshAAwACwsgAQs=";
+const second = (await WebAssembly.instantiate(bytesOf(textOf(arithmetic)), {})).instance.exports;
+console.log("second module", (second.add as Binary)(40, 2), (second.divide as Binary)(85, 2), (second.sumTo as Unary)(1000));
+
+const longHead = "data:application/wasm;name=a-module-with-a-rather-long-name-in-its-head;base64,AGFzbQEAAAABDAJgAn9/AX9gAX8BfwMEAwABAQceAwhtdWx0aXBseQAABnNxdWFyZQABBm5lZ2F0ZQACChoDBwAgACABbAsIACAAIAAQAAsHAEEAIABrCw==";
+console.log("long head", longHead.indexOf("base64,"), (exportsOf(bytesOf(textOf(longHead))).negate as Unary)(20));
+
+const capitals = "DATA:application/wasm;base64,AGFzbQEAAAABDAJgAn9/AX9gAX8BfwMEAwAAAQcYAwNhZGQAAAZkaXZpZGUAAQVzdW1UbwACCjMDBwAgACABagsHACAAIAFtCyEBAX8CQANAIABFDQEgASAAaiEBIABBAWshAAwACwsgAQs=";
+console.log("capitals", (exportsOf(bytesOf(textOf(capitals))).sumTo as Unary)(20));
+
+const sentence = "data:text/plain;base64,VGhpcyBpcyBubyBtb2R1bGU6IGl0IGlzIGEgc2VudGVuY2UgdGhhdCBpcyBsb25nIGVub3VnaCB0byBiZSBsb29rZWQgYXQu";
+console.log("other data", await (await fetch(sentence)).text());
+export {};

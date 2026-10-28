@@ -1,0 +1,21 @@
+// A module that is required while its body is still running answers its partly filled exports object, which is the object that its later stores fill. What the other module stores, creates and deletes there in the meantime is what the first module reads afterwards. The entry point is such a module too.
+const { describe } = require("../describe-object.cjs");
+exports.early = "stored by the entry point";
+const a = require("./a.cjs");
+const b = require("./b.cjs");
+describe("a", a);
+describe("b", b);
+console.log(a.absent === undefined, b.a === a, a.b === b, b.keysOfAWhenRequired, b.earlyOfA, b.lateOfAWhenRequired, b.readLateOfA());
+console.log(a.early, a.late, a.changedByB, a.deletedByB, a.createdByB, a.storedByB, a.addedByCall, a.afterB, a.readItself());
+console.log(b.bOfAWhenRequired, b.aReadItself, b.deleted, b.keysOfAAfterCall);
+const self = require("./requires-itself.cjs");
+describe("requires itself", self);
+console.log(self.self === self, self.same, JSON.stringify(self.keysAtFirst), self.keysAtRequire, self.storedThroughItself, self.readBack);
+const replaced = require("./replaces-in-a-cycle.cjs");
+const partner = require("./partner.cjs");
+console.log(typeof replaced, replaced.name, Object.keys(replaced).join(), replaced.early, replaced.afterwards, replaced.partner === partner);
+console.log(partner.sawType, partner.sawKeys, partner.readAgain() === replaced, partner.readFirst());
+describe("partner", partner);
+exports.late = "stored by the entry point";
+describe("the entry point", partner.entryPoint);
+console.log(partner.entryPoint === exports, module.exports === exports, partner.keysOfTheEntryPoint, exports.storedByPartner);

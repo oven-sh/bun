@@ -1,0 +1,3 @@
+error: TS1161: Unterminated regular expression literal.
+error: TS1005: ',' expected.
+error: TS1109: Expression expected.

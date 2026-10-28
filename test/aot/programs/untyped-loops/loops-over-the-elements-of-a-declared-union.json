@@ -1,0 +1,1 @@
+{ "runWithASAN": "views are shrunk, grown and detached inside loops that read and store their elements" }

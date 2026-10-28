@@ -611,7 +611,7 @@ impl StatWatcher {
 
     /// Stops file watching but does not free the instance.
     ///
-    /// Always runs on the JS thread (`do_close`, its context stopping,
+    /// Always runs on the JS thread (`close`, its context stopping,
     /// `shutdown_for_exit`), so this is where the watcher leaves its context —
     /// `deinit` can fire on the work-pool thread.
     pub(crate) fn close(&self) {

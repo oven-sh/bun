@@ -1,0 +1,258 @@
+////: lines-36
+function «1»(n: number): number {
+  let c = 0;
+  for (let i = 0; i < n; i++) if (typeof «2» === «3») c++;
+  return c;
+}
+////: testsAbsent
+function testsAbsent(n: number): number {
+  let c = 0;
+  for (let i = 0; i < n; i++) {
+    if (typeof window !== "undefined") c++;
+    if (typeof document === "undefined") c += 2;
+  }
+  return c;
+}
+////: testsPresent
+function testsPresent(n: number): number {
+  let c = 0;
+  for (let i = 0; i < n; i++) {
+    if (typeof process !== "undefined") c += 1;
+    if (typeof Bun !== "undefined") c += 2;
+    if (typeof setTimeout === "function") c += 4;
+  }
+  return c;
+}
+//// built-ins-assorted/a-await.ts
+// Built ins assorted: a await. It prints what plain Bun prints.
+const v = await Promise.resolve(1);
+console.log(v);
+//// built-ins-assorted/crash-a.ts
+// Built ins assorted: crash a. It prints what plain Bun prints.
+console.log(typeof (globalThis as any).nope);
+//// built-ins-assorted/crash-b.ts
+// Built ins assorted: crash b. It prints what plain Bun prints.
+console.log((globalThis as any).nope);
+console.log(1, (globalThis as any).nope, 2);
+//// built-ins-assorted/crash-c.ts
+// Built ins assorted: crash c. It prints what plain Bun prints.
+declare var shared: number;
+(globalThis as any).shared = 3;
+function storesShared(n: number): void {
+  for (let i = 0; i < n; i++) shared = i;
+}
+storesShared(10);
+console.log(shared);
+//// built-ins-assorted/crash-d.ts
+// Built ins assorted: crash d. It prints what plain Bun prints.
+const x: unknown = Math.random() > 2 ? 1 : undefined;
+console.log(typeof x);
+console.log(1, typeof x);
+//// built-ins-assorted/direct-bench.ts
+// Built ins assorted: direct bench. It prints what plain Bun prints.
+import { getSystemErrorName } from "node:util";
+import net from "node:net";
+const word = process.argv[2], rounds = Number(process.argv[3]);
+let sum = 0;
+if (word === "none") for (let i = 0; i < rounds; ++i) sum += i & 1;
+else if (word === "family") for (let i = 0; i < rounds; ++i) sum += net.getDefaultAutoSelectFamily() ? 1 : 2;
+else if (word === "errorName") for (let i = 0; i < rounds; ++i) sum += getSystemErrorName(-2 - (i & 1)).length;
+else if (word === "sleep") for (let i = 0; i < rounds; ++i) Bun.sleepSync(0);
+console.log(word, sum);
+//// built-ins-assorted/free-names.ts
+// Built ins assorted: free names. It prints what plain Bun prints.
+declare var shared: number;
+declare var window: unknown;
+declare var document: unknown;
+
+////= testsAbsent
+
+////= testsPresent
+
+function readsShared(n: number): number {
+  let s = 0;
+  for (let i = 0; i < n; i++) s += shared;
+  return s;
+}
+
+function storesShared(n: number): void {
+  for (let i = 0; i < n; i++) shared = i;
+}
+
+function readsMembers(n: number): number {
+  let s = 0;
+  for (let i = 0; i < n; i++) {
+    if (process.platform === "linux") s += 1;
+    if (process.env.NOT_SET_ANYWHERE === undefined) s += 2;
+    s += Math.PI > 3 ? 4 : 0;
+  }
+  return s;
+}
+
+(globalThis as any).shared = 3;
+console.log(testsAbsent(1000), testsPresent(1000), readsShared(1000));
+storesShared(10);
+console.log(shared, readsMembers(1000), (globalThis as any).nope, typeof (globalThis as any).nope);
+//// built-ins-assorted/from-entries-2.ts
+// Built ins assorted: from entries. It prints what plain Bun prints.
+function run(): string {
+  const pairs: [string, number][] = [["first", 1]];
+  return JSON.stringify(Object.fromEntries(pairs));
+}
+console.log(run());
+//// built-ins-assorted/from-entries-3.ts
+// Built ins assorted: from entries. It prints what plain Bun prints.
+function* generated(): Generator<[string | symbol, number]> { yield ["g", 1]; yield [Symbol.iterator, 2]; }
+const iterable = { [Symbol.iterator]() { return ([["i", 1]] as [string, number][])[Symbol.iterator](); } };
+console.log(JSON.stringify(Object.fromEntries([["first", 1], ["second", "two"]])));
+console.log(JSON.stringify(Object.fromEntries(new Map([["a", 1], ["b", 2]]))));
+const made = Object.fromEntries(generated()) as any;
+console.log(made.g, made[Symbol.iterator]);
+console.log(JSON.stringify(Object.fromEntries(iterable)));
+console.log(Object.keys(Object.fromEntries([])).length, Object.getPrototypeOf(Object.fromEntries([])) === Object.prototype);
+console.log(JSON.stringify(Object.fromEntries([[1, "a"], ["0", "b"], [1, "c"]])));
+const grown = Object.fromEntries([["a", 1]]) as any; grown.b = 2; delete grown.a; console.log(JSON.stringify(grown));
+try { Object.fromEntries([1] as any); } catch (e) { console.log((e as Error).name, (e as Error).message); }
+const groups = Object.groupBy([1, 2, 3], n => (n % 2 ? "odd" : "even")); console.log(JSON.stringify(groups), Object.getPrototypeOf(groups));
+//// built-ins-assorted/hot-keys.js
+// Hot reads under names that are made while the program runs: they are cached in the hashed slot table. argv: shapes, names a shape, rounds.
+const shapes = Number(process.argv[2] ?? 20), namesPerShape = Number(process.argv[3] ?? 15), rounds = Number(process.argv[4] ?? 1000);
+const objects = [], names = [];
+for (let n = 0; n < namesPerShape; n++) names.push("made" + n + String.fromCharCode(97 + (n % 26)));
+for (let s = 0; s < shapes; s++) {
+  const object = {};
+  object["shape" + s] = s;
+  for (const name of names) object[name] = s + name.length;
+  objects.push(object);
+}
+let sum = 0;
+for (let round = 0; round < rounds; round++) for (const object of objects) for (const name of names) sum += object[name];
+console.log(sum);
+//// built-ins-assorted/infinity.ts
+// Built ins assorted, one probe of many. It prints what plain Bun prints.
+function least(values: number[]): number {
+  let best = Infinity;
+  for (const value of values) if (value < best) best = value;
+  return best;
+}
+function orNaN(value: number): number {
+  return value > 0 ? value : NaN;
+}
+console.log(least([3, 1, 2]), orNaN(-1), Number.NaN, undefined);
+//// built-ins-assorted/named-bench.ts
+// Built ins assorted: named bench. It prints what plain Bun prints.
+import { isAbsolute, dirname } from "node:path";
+const word = process.argv[2], rounds = Number(process.argv[3]);
+const names: string[] = ["/a/b.txt", "c/d", "/e"];
+let sum = 0;
+if (word === "none") for (let i = 0; i < rounds; ++i) sum += names[i % 3].length;
+else if (word === "isAbsolute") for (let i = 0; i < rounds; ++i) sum += isAbsolute(names[i % 3]) ? 1 : 2;
+else if (word === "dirname") for (let i = 0; i < rounds; ++i) sum += dirname(names[i % 3]).length;
+console.log(word, sum);
+//// built-ins-assorted/named-copies.ts
+// A named import of a built-in module holds what the module's object held when the module was loaded. A store to the object afterward changes the object alone.
+import path, { join } from "node:path";
+import os, { hostname } from "node:os";
+import util, { format } from "node:util";
+import fs, { existsSync } from "node:fs";
+
+const replace = (object: any, name: string) => {
+  object[name] = () => "replaced";
+};
+replace(path, "join");
+replace(os, "hostname");
+replace(util, "format");
+replace(fs, "existsSync");
+console.log(join("a", "b"), hostname() === "replaced", format("%s", 1), existsSync("/"));
+console.log(path.join("a", "b"), os.hostname(), util.format("%s", 1), fs.existsSync("/"));
+//// built-ins-assorted/open-1.ts
+// Built ins assorted, one probe of many. It prints what plain Bun prints.
+declare var window: unknown;
+console.log(typeof window === "undefined" ? 1 : 2);
+//// built-ins-assorted/open-2.ts
+// Built ins assorted, one probe of many. It prints what plain Bun prints.
+console.log(typeof process === "undefined" ? 1 : 2, typeof Bun === "undefined" ? 1 : 2);
+//// built-ins-assorted/open-3.ts
+// Built ins assorted, one probe of many. It prints what plain Bun prints.
+console.log(process.platform === "linux" ? 1 : 2);
+//// built-ins-assorted/open-4.ts
+// Built ins assorted, one probe of many. It prints what plain Bun prints.
+console.log(process.env.NOT_SET_ANYWHERE === undefined ? 1 : 2);
+//// built-ins-assorted/open-5.ts
+// Built ins assorted, one probe of many. It prints what plain Bun prints.
+declare var shared: number;
+(globalThis as any).shared = 3;
+console.log(shared + 1);
+//// built-ins-assorted/open-6.ts
+// Built ins assorted, one probe of many. It prints what plain Bun prints.
+console.log(typeof setTimeout === "function" ? 1 : 2);
+//// built-ins-assorted/open-7.ts
+// Built ins assorted, one probe of many. It prints what plain Bun prints.
+console.log({ a: 1 });
+//// built-ins-assorted/out1.ts
+// Built ins assorted, one probe of many. It prints what plain Bun prints.
+process.stdout.write("x\n");
+process.stderr.write("y\n");
+console.log(typeof process.stdin.on, process.stdout.isTTY === undefined || typeof process.stdout.isTTY === "boolean");
+export {};
+//// built-ins-assorted/sym.ts
+// Built ins assorted, one probe of many. It prints what plain Bun prints.
+const kState: unique symbol = Symbol("kState");
+class Holder {
+  [kState]: number = 1;
+  bump(): number {
+    return ++this[kState];
+  }
+}
+const holder = new Holder();
+let sum = 0;
+for (let i = 0; i < Number(process.argv[2] ?? 3); ++i) sum += holder.bump();
+console.log(sum);
+//// built-ins-assorted/typeof-cost.ts
+// Built ins assorted: typeof cost. It prints what plain Bun prints.
+declare var window: unknown;
+
+////= lines-36	absent	window	"undefined"
+
+////= lines-36	present	process	"object"
+
+function nothing(n: number): number {
+  let c = 0;
+  for (let i = 0; i < n; i++) if ((i & 1023) !== 1024) c++;
+  return c;
+}
+
+const which = process.argv[2];
+const rounds = Number(process.argv[3]);
+(0, eval)(process.argv.length > 99 ? "globalThis.window = 1" : "0");
+console.log(which === "absent" ? absent(rounds) : which === "present" ? present(rounds) : nothing(rounds));
+//// built-ins-assorted/typeof-cost-closed.ts
+// Built ins assorted: typeof cost closed. It prints what plain Bun prints.
+declare var window: unknown;
+
+////= lines-36	absent	window	"undefined"
+
+////= lines-36	present	process	"object"
+
+function nothing(n: number): number {
+  let c = 0;
+  for (let i = 0; i < n; i++) if ((i & 1023) !== 1024) c++;
+  return c;
+}
+
+const which = process.argv[2];
+const rounds = Number(process.argv[3]);
+
+console.log(which === "absent" ? absent(rounds) : which === "present" ? present(rounds) : nothing(rounds));
+//// built-ins-assorted/typeof-open.ts
+// Built ins assorted: typeof open. It prints what plain Bun prints.
+declare var window: unknown;
+declare var document: unknown;
+
+////= testsAbsent
+
+////= testsPresent
+
+console.log(testsAbsent(100000), testsPresent(100000));
+(0, eval)(process.argv.length > 99 ? "1" : "globalThis.window = 1");
+console.log(testsAbsent(100000), testsPresent(100000));

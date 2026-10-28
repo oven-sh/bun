@@ -28,7 +28,6 @@ const collectPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFun
 // Native bindings for inspector.open(): they start Bun's debugger thread with a
 // WebSocket server that speaks the V8 Chrome DevTools Protocol (see
 // internal/debugger.ts and internal/inspector/cdp.ts).
-const openNodeInspector = $newCppFunction("BunDebugger.cpp", "jsFunction_openNodeInspector", 2);
 const waitForNodeInspectorConnection = $newCppFunction(
   "BunDebugger.cpp",
   "jsFunction_waitForNodeInspectorConnection",
@@ -66,7 +65,9 @@ function open(port?: number, host?: string, wait?: boolean) {
     },
   };
 
-  let resolvedUrl: string | null | EvalError;
+  // Created here, so that importing this module is not starting the debugger.
+  const openNodeInspector = $newCppFunction("BunDebugger.cpp", "jsFunction_openNodeInspector", 2);
+  let resolvedUrl: string | null | undefined | EvalError;
   try {
     resolvedUrl = openNodeInspector(requestedUrl, !!wait);
   } catch (e) {
@@ -76,6 +77,10 @@ function open(port?: number, host?: string, wait?: boolean) {
     const prefix = "Failed to start inspector: ";
     const detail = raw.startsWith(prefix) ? raw.slice(prefix.length) : raw;
     process.stderr.write(`Starting inspector on ${hostname}:${portNumber} failed: ${detail}\n`);
+    return disposable;
+  }
+  if (resolvedUrl === undefined) {
+    // An executable that was compiled ahead of time without --compile-inspector has no debugger.
     return disposable;
   }
   if (typeof resolvedUrl === "object" && resolvedUrl !== null) {
@@ -138,7 +143,8 @@ function waitForDebugger() {
 // Set.prototype[Symbol.iterator] cannot make console.log itself throw from
 // inside the hook's for-of loop head.
 const runtimeEnabledSessions: Set<Session> = new SafeSet();
-const hookedConsoleMethods: Array<[string, Function, Function]> = [];
+type ConsoleMethod = (this: unknown, ...args: unknown[]) => unknown;
+const hookedConsoleMethods: Array<[string, ConsoleMethod, ConsoleMethod]> = [];
 
 const CONSOLE_API_TYPES = {
   __proto__: null,
@@ -244,7 +250,7 @@ function emitConsoleAPICalled(type: string, args: unknown[]) {
   }
 }
 
-function makeConsoleHook(type: string, original: Function): Function {
+function makeConsoleHook(type: string, original: ConsoleMethod): ConsoleMethod {
   return function (this: unknown, ...args: unknown[]) {
     emitConsoleAPICalled(type, args);
     return original.$apply(this, args);

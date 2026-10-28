@@ -1,0 +1,18 @@
+store into null: value TypeError
+store a constant into null: TypeError
+read from null: TypeError
+add to null: TypeError
+delete from null: TypeError
+call on null: TypeError
+store into undefined: value TypeError
+store a constant into undefined: TypeError
+read from undefined: TypeError
+add to undefined: TypeError
+delete from undefined: TypeError
+call on undefined: TypeError
+store into [object Object]: value key no error
+store a constant into [object Object]: key no error
+read from [object Object]: key no error
+add to [object Object]: key value no error
+delete from [object Object]: key no error
+call on [object Object]: key value TypeError

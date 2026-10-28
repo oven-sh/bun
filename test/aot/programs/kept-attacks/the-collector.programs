@@ -1,0 +1,77 @@
+//// the-collector/object-below.ts
+// The collector: object below. It prints what plain Bun prints.
+class Below extends Object {
+  tag: number;
+  constructor(value: object, tag: number) {
+    super(value);
+    this.tag = tag;
+  }
+}
+const given = { given: true };
+let same = 0;
+let sum = 0;
+for (let i = 0; i < 300; i++) {
+  const made = new Below(given, i);
+  if ((made as object) === given) same++;
+  sum += made.tag;
+  const reflected = Reflect.construct(Object, [given], Below) as Below;
+  if ((reflected as object) === given) same++;
+  if (reflected instanceof Below) sum++;
+}
+console.log(same, sum, new Object(given) === given, Object(given) === given);
+//// the-collector/object-below-read.js
+// The collector: object below read. It prints what plain Bun prints.
+class Below extends Object {
+  constructor(value, tag) {
+    super(value);
+    this.tag = tag;
+  }
+}
+class Other {}
+const given = { first: 1.5, second: "two", third: [3], fourth: { four: 4 } };
+function viaReflect(target) {
+  return Reflect.construct(Object, [given], target);
+}
+for (let i = 0; i < 3; i++) {
+  const reflected = viaReflect(i % 2 ? Below : Other);
+  console.log(reflected === given, reflected.first, reflected.second, reflected.third, reflected.fourth, Object.keys(reflected).length, Object.getPrototypeOf(reflected) === (i % 2 ? Below : Other).prototype);
+  const direct = Reflect.construct(Object, [given], Other);
+  console.log(direct === given, direct.first, direct.second, direct.third, direct.fourth, Object.keys(direct).length);
+  const same = Reflect.construct(Object, [given], Object);
+  console.log(same === given, same.first, same.second);
+}
+//// the-collector/weak-map-behind-a-throw.ts
+// The collector: weak map behind a throw. It prints what plain Bun prints.
+class Box {
+  #secret = 1;
+  static read(value: any): number {
+    return value.#secret;
+  }
+}
+
+function probe(weak: WeakMap<object, number>, keys: object[], wrong: object): number {
+  let sum = 0;
+  for (let index = 0; index + 1 < keys.length; index++) {
+    sum += weak.get(keys[index])!;
+    try {
+      sum += Box.read(wrong);
+    } catch {
+      sum++;
+    }
+    sum += weak.get(keys[index + 1])!;
+  }
+  return sum;
+}
+
+let total = 0;
+for (let round = 0; round < 40; round++) {
+  const weak = new WeakMap<object, number>();
+  const keys: object[] = [];
+  for (let index = 0; index < 400; index++) {
+    const key = { index };
+    weak.set(key, index);
+    if (index % 20 === 0) keys.push(key);
+  }
+  total += probe(weak, keys, {});
+}
+console.log(total);

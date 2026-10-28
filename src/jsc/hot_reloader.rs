@@ -338,8 +338,7 @@ unsafe extern "C" {
 // before the watcher thread starts.
 static CLEAR_SCREEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-/// The most watched files that the event of one deleted folder reloads on kqueue.
-/// `Watcher::remove_at_index` writes to a list of a fixed length.
+/// One deleted folder reloads at most this many files: the eviction list has a fixed length.
 #[cfg(not(windows))]
 const MAX_GONE_FILES_PER_EVENT: usize = 128;
 
@@ -820,8 +819,7 @@ where
                 if !is_present && self.main.hash != 0 && self.main.hash == hashes[file] {
                     continue;
                 }
-                // The reload watches the file again when it imports it. A file that is gone
-                // keeps its watch, so the event that brings it back finds it.
+                // A file that is gone keeps its watch: the reload cannot watch it again.
                 if is_present {
                     self.stop_watching(&file_paths[file], file, ctx);
                 }

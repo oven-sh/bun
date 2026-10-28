@@ -1102,8 +1102,7 @@ impl fmt::Display for Op {
 
 // ─── WatchList ────────────────────────────────────────────────────────────
 
-/// The watch items. On inotify it also finds the watched files of a folder by name, so a
-/// directory event needs no pass over the list.
+/// The watch items, and on inotify the watched files of each folder by name.
 #[derive(Default)]
 pub struct WatchList {
     items: MultiArrayList<WatchItem>,
@@ -1125,9 +1124,7 @@ impl core::ops::Deref for WatchList {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 const NO_FOLDER: platform::EventListIndex = -1;
 
-/// inotify names a changed entry by the watch descriptor of its folder and its name on disk.
-/// The watchlist has the spelling of the import, which can differ in ASCII letter case on a
-/// mount that ignores it.
+/// The import can spell a name in another ASCII letter case than the disk does.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[inline]
 fn files_by_name_key(folder: platform::EventListIndex, name: &[u8]) -> u64 {
@@ -1225,9 +1222,7 @@ impl WatchList {
         ))
     }
 
-    /// The File items in the folder at `folder` whose name is `name`, whatever the ASCII letter
-    /// case of the import and whatever spelling of the folder the file was imported under.
-    /// Empty where the watcher has no watch descriptors.
+    /// The watched files named `name` in the folder at `folder`. Empty where inotify is not used.
     pub fn files_named<'a>(
         &'a self,
         folder: WatchItemIndex,
@@ -1271,8 +1266,7 @@ pub struct WatchItem {
     pub package_json: Option<&'static PackageJSON>,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub eventlist_index: platform::EventListIndex,
-    /// For a File item, the `eventlist_index` of the Directory item that watches its folder.
-    /// `NO_FOLDER` when no item does, and for a Directory item.
+    /// The `eventlist_index` of the Directory item of a file's folder, or `NO_FOLDER`.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub folder_watch_descriptor: platform::EventListIndex,
 }
@@ -1394,8 +1388,7 @@ mod tests {
         item(path, WatchItemKind::Directory, watch_descriptor, -1)
     }
 
-    /// A file whose own watch descriptor is `watch_descriptor`, in the folder that
-    /// `folder_watch_descriptor` watches.
+    /// A file in the folder that `folder_watch_descriptor` watches.
     fn file(path: &'static [u8], watch_descriptor: i32, folder_watch_descriptor: i32) -> WatchItem {
         item(
             path,

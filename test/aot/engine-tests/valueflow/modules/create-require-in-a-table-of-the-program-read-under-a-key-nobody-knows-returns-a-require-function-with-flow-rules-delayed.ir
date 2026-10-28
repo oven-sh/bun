@@ -1,0 +1,34 @@
+# import Module from "node:module"; table = { load: Module.createRequire, other }; table[globalThis.key]("/app/main.js")(globalThis.name)
+# createRequire loads nothing by itself: a table of the program that holds it hands it out under any key.
+# The call of what createRequire returns loads code by name, and no other call does.
+# OPTIONS: testing=DelayFlowRules
+# RUN: valueflow-solve unseen
+# CHECK: unseen LoadsCodeByName ModuleRequire f0:v14
+# CHECK-NOT: unseen LoadsCodeByName
+# CHECK: unseen-code yes
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0 requests=[{target=m1 completes=true}]
+module m1 path="node:module" displayPath="node:module" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule
+entry module=m0
+layout L0 fields=[{key="load" declared={type=anything}}, {key="other" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="key" [isFreeName]
+    v2 = PropGet v0 key="name" [isFreeName]
+    v3 = Builtin builtin=NodeModule
+    v4 = PropGet v3 key="createRequire"
+    v5 = NewClosure function=f1
+    v6 = NewObject layout=L0
+    PropDefine v6, v4 key="load"
+    PropDefine v6, v5 key="other"
+    v9 = FinishObject v6
+    v10 = ElemGet v9, v1
+    v11 = String string="/app/main.js"
+    v12 = Call v10, v9, v11
+    v13 = Undefined
+    v14 = Call v12, -, v2
+    Return v14
+}
+function f1 name="other" module=m0 kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

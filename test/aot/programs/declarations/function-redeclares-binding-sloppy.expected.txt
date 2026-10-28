@@ -1,0 +1,47 @@
+control: which mode this file is in: sloppy
+the row itself: late
+a const: late
+a class: late
+a var: late
+called ahead of the let: threw ReferenceError late
+called ahead of the var: undefined late
+the let stored to later: firstsecond
+the function stores to the let: 2
+returned and called later: late
+two activations: aba
+another parameter: q
+another parameter, stored to: set
+itself by name: xxx
+the parameter stored to later: late7
+two functions over one parameter: second late
+a parameter in an object pattern: late
+a parameter in an array pattern: late
+a rest parameter: late
+a parameter with a default: late
+an arrow in it: late
+a function in it: late
+arguments shows it, strict: function
+strict: late
+a method: late
+a generator around: late
+a generator over the parameter: late
+a let of a loop: 0,1
+this of the outer by an arrow: this
+over a var with a value: number
+over another function: second late
+over another function, other captures: b
+over another function, called ahead: threw ReferenceError late
+in a block, sloppy, over a parameter: number
+in a block, sloppy, read in it: late
+in a block, sloppy, no parameter: undefined late
+in a block, sloppy, called ahead in the block: threw ReferenceError late
+in a block, strict: number latelate
+in an if, sloppy: number
+in a block, over a let of the function: 1 latelate
+a default's closure sees the parameter: argument late
+a default's closure stores to the parameter: late
+a default reads the parameter: argument late
+a default calls the parameter: the argument's late
+a function in a default of the name: late
+a default's closure, no function over it: argument argument
+a default's closure, a var over it with a value: argument var

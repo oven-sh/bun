@@ -34,6 +34,7 @@ use bun_standalone_graph::StandaloneModuleGraph::{
     CompileErrorReason, CompileResult, Flags as StandaloneFlags, RuntimeOptions,
     target_base_public_path, to_executable,
 };
+use bun_standalone_graph::executable_request::ExecutableAdditions;
 use bun_sys::Dir;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
@@ -45,6 +46,9 @@ use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::node::fs::{self as node_fs, NodeFS, args as fs_args};
 use crate::node::types::{FileSystemFlags, PathLike, PathOrFileDescriptor, StringOrBuffer};
 use crate::server::html_bundle;
+
+#[path = "compile_ahead_of_time.rs"]
+mod compile_ahead_of_time;
 
 /// See module doc for the layering rationale.
 #[derive(bun_ptr::RefCounted)]
@@ -99,6 +103,14 @@ pub(crate) struct JSBundleCompletionTask {
     pub(crate) abort_handle: jsc::AbortHandle,
     /// Armed in the context that called `Bun.build`, when that is a `Bun.ModuleGraph`'s.
     pub(crate) caller: CallerOfTheBuild,
+    pub(crate) declarations: Option<DeclarationOutputs>,
+}
+
+pub(crate) struct DeclarationOutputs {
+    loaders: bun_ast::LoaderHashTable,
+    typed_files_skipped_for: Option<&'static str>,
+    writes_typed_files: bool,
+    drops_source_maps: bool,
 }
 
 /// The build's tie to the script that called `Bun.build`. When that script's context stops (its
@@ -197,6 +209,7 @@ impl JSBundleCompletionTask {
             transpiler: ptr::null_mut(),
             plugins,
             started_at_ns: 0,
+            declarations: None,
         }
     }
 
@@ -275,7 +288,103 @@ fn executable_entry_point_name(executable_path: &[u8]) -> &[u8] {
     basename.strip_suffix(b".exe").unwrap_or(basename)
 }
 
+/// `BundleOptions::type_check`. `Config::from_js` has thrown where the type checker is removed.
+fn check_types(checked: options::TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> bool {
+    bun_removable_features::removable_body!(Check, Abort, {
+        crate::cli::check_command::check_for_bun_build(checked, log)
+    })
+}
+
+fn check_types_and_emit_declarations(
+    checked: options::TypeChecked<'_, '_>,
+    log: &mut bun_ast::Log,
+) -> bool {
+    bun_removable_features::removable_body!(Check, Abort, {
+        crate::cli::check_command::check_and_emit_declarations(checked, log)
+    })
+}
+
+fn write_declarations(outdir: &[u8], output_files: &mut [OutputFile]) -> bun_bundler::Result<()> {
+    let directory = Dir::cwd().make_open_path(outdir, bun_sys::OpenDirOptions::default())?;
+    for file in output_files.iter_mut() {
+        if matches!(file.value, OutputFileValue::Buffer { .. }) {
+            file.write_to_disk(directory.fd)?;
+            file.value = OutputFileValue::Saved(bun_bundler::output_file::SavedFile {});
+        }
+    }
+    Ok(())
+}
+
 impl JSBundleCompletionTask {
+    fn add_declarations(&mut self, declarations: &DeclarationOutputs) {
+        bun_removable_features::removable_body!(Check, Abort, {
+            use crate::cli::{check_command, compile_command};
+            let emitted = check_command::take_declaration_files();
+            let BundleV2Result::Value(build) = &mut self.result else {
+                drop(check_command::take_module_types());
+                return;
+            };
+            let output_files = &mut build.output_files;
+            let config = &self.config;
+            if let Err(error) = compile_command::add_declaration_files(
+                emitted,
+                &config.rootdir.list,
+                true,
+                output_files,
+            ) {
+                drop(check_command::take_module_types());
+                let mut message = Vec::new();
+                error.write_message(&mut message);
+                self.log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!("{}", bstr::BStr::new(&message)),
+                );
+                self.result = BundleV2Result::Err(bun_bundler::Error::BuildFailed);
+                return;
+            }
+            if let Some(option) = declarations.typed_files_skipped_for {
+                check_command::warn_about_skipped_typed_files(option, &mut self.log);
+            }
+            let working_directory = bun_resolver::fs::FileSystem::get().top_level_dir();
+            let outdir = join_abs_string::<platform::Auto>(
+                working_directory,
+                &[&config.dir.list, &config.outdir.list],
+            )
+            .to_vec();
+            if declarations.writes_typed_files {
+                let tsconfig = &config.tsconfig_override.list;
+                let request = compile_command::TypedOutputs {
+                    working_directory,
+                    outdir: &outdir,
+                    tsconfig: (!tsconfig.is_empty()).then_some(&tsconfig[..]),
+                    conditions: config.conditions.keys(),
+                    loaders: &declarations.loaders,
+                    drops_source_maps: declarations.drops_source_maps,
+                    writes_package_json: false,
+                };
+                compile_command::add_typed_files(&request, &mut self.log, output_files);
+            } else {
+                drop(check_command::take_module_types());
+            }
+            if config.outdir.is_empty() {
+                return;
+            }
+            if let Err(error) = write_declarations(&outdir, output_files) {
+                self.log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "{} writing declaration files to {}",
+                        bstr::BStr::new(error.name()),
+                        bstr::BStr::new(&outdir)
+                    ),
+                );
+                self.result = BundleV2Result::Err(bun_bundler::Error::BuildFailed);
+            }
+        })
+    }
+
     /// Returns true if the promises were handled and resolved from
     /// BundlePlugin.ts; false means the caller should resolve immediately.
     fn run_on_end_callbacks(
@@ -364,6 +473,11 @@ impl JSBundleCompletionTask {
             .as_ref()
             .expect("Unexpected: No compile options provided");
 
+        if compile_options.aot.is_some() {
+            // `compile_ahead_of_time` wrote the executable on the bundle thread.
+            return CompileResult::Success;
+        }
+
         let entry_point_index: usize = 'brk: {
             for (i, output_file) in output_files.iter().enumerate() {
                 if output_file.output_kind == OutputKind::EntryPoint
@@ -449,6 +563,22 @@ impl JSBundleCompletionTask {
             flags |= StandaloneFlags::DISABLE_AUTOLOAD_PACKAGE_JSON;
         }
 
+        let trim_plan = match compile_ahead_of_time::plan_bundle_trimming(
+            compile_options,
+            output_files,
+            &mut self.env,
+            flags,
+        ) {
+            Ok(plan) => plan,
+            Err(message) => {
+                return CompileResult::fail_fmt(format_args!("{}", bstr::BStr::new(&message)));
+            }
+        };
+        let mut additions = ExecutableAdditions {
+            trim: trim_plan.as_ref(),
+            ..Default::default()
+        };
+
         let result = match to_executable(
             &compile_options.compile_target,
             output_files,
@@ -476,12 +606,20 @@ impl JSBundleCompletionTask {
             RuntimeOptions {
                 jit_policy: compile_options.jit_policy,
             },
+            &mut additions,
         ) {
             Ok(r) => r,
             Err(err) => {
                 return CompileResult::fail_fmt(format_args!("{}", bstr::BStr::new(err.name())));
             }
         };
+        compile_ahead_of_time::add_notes(
+            &mut self.log,
+            crate::cli::build_command::collect_trim_log_lines(
+                &additions.details,
+                &compile_options.trim,
+            ),
+        );
 
         if matches!(result, CompileResult::Success) {
             let entry = &mut output_files[entry_point_index];
@@ -587,7 +725,9 @@ impl JSBundleCompletionTask {
         result
     }
 
+    #[inline(never)]
     pub(crate) fn on_complete_anytask(ctx: *mut Self) -> bun_event_loop::JsResult<()> {
+        bun_removable_features::removable_definition!(Bundler, Self::on_complete_anytask);
         // SAFETY: `ctx` is the live heap allocation (fn contract).
         unsafe {
             (*ctx).abort_handle.leave();
@@ -784,7 +924,7 @@ impl JSBundleCompletionTask {
                     };
                     let result = output_file.to_js(Some(&path), global_this);
                     if to_assign_on_sourcemap != JSValue::ZERO {
-                        crate::generated_classes::js_BuildArtifact::sourcemap_set_cached(
+                        crate::generated_bindgen::js_bundler::js_BuildArtifact::sourcemap_set_cached(
                             to_assign_on_sourcemap,
                             global_this,
                             result,
@@ -861,11 +1001,6 @@ impl JSBundleCompletionTask {
 // `jsc.conv` — sysv64 on Windows-x64, C elsewhere. `Bun__setupLazyMetafile` is
 // a hand-written C++ symbol from `BundlerMetafile.cpp` (not codegen-emitted),
 // so a local extern block is the correct binding.
-//
-// NOTE: `BuildArtifactPrototype__sourcemapSetCachedValue` is *not* redeclared
-// here — codegen already provides it (and a safe `sourcemap_set_cached`
-// wrapper) in `crate::generated_classes::js_BuildArtifact`; redeclaring would
-// trip `clashing_extern_declarations` once the param types drift.
 bun_jsc::jsc_abi_extern! {
     safe fn Bun__setupLazyMetafile(
         global_this: &JSGlobalObject,
@@ -1067,6 +1202,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.output_dir = Box::from(config.outdir.list.as_slice());
         transpiler.options.root_dir = Box::from(config.rootdir.list.as_slice());
         transpiler.options.minify_syntax = config.minify.syntax;
+        transpiler.options.is_library = config.dts;
         transpiler.options.minify_whitespace = config.minify.whitespace;
         transpiler.options.minify_identifiers = config.minify.identifiers;
         transpiler.options.keep_names = config.minify.keep_names;
@@ -1093,9 +1229,42 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.min_chunk_size = config.min_chunk_size;
         transpiler.options.fold_chunks = config.fold_chunks;
         transpiler.options.module_preload = config.module_preload;
-        transpiler.options.type_check = config
-            .check
-            .then_some(crate::cli::check_command::check_for_bun_build as options::TypeCheck);
+        transpiler.options.type_check = match config.dts {
+            true => Some(check_types_and_emit_declarations as options::TypeCheck),
+            false => config.check.then_some(check_types as options::TypeCheck),
+        };
+        if config.dts {
+            let unsupported = [
+                (config.minify.identifiers, "minify.identifiers"),
+                (
+                    config.format != options::Format::Esm,
+                    "a format other than esm",
+                ),
+                (
+                    config.source_map == options::SourceMapOption::Inline,
+                    "an inline source map",
+                ),
+            ];
+            let has_typescript_entry_point = (config.entry_points.keys().iter()).any(|path| {
+                !matches!(paths::extension(path), b".js" | b".mjs" | b".cjs" | b".jsx")
+            });
+            let typed_files_skipped_for = (unsupported.iter())
+                .find(|it| it.0 && has_typescript_entry_point)
+                .map(|it| it.1);
+            let writes_typed_files =
+                has_typescript_entry_point && typed_files_skipped_for.is_none();
+            let drops_source_maps =
+                writes_typed_files && config.source_map == options::SourceMapOption::None;
+            if drops_source_maps {
+                transpiler.options.source_map = options::SourceMapOption::External;
+            }
+            self.declarations = Some(DeclarationOutputs {
+                loaders: bun_core::UnwrapOrOom::unwrap_or_oom(transpiler.options.loaders.clone()),
+                typed_files_skipped_for,
+                writes_typed_files,
+                drops_source_maps,
+            });
+        }
         let compile_to_standalone_html = 'brk: {
             if config.compile.is_none() || config.target != bun_ast::Target::Browser {
                 break 'brk false;
@@ -1199,6 +1368,9 @@ impl CompletionStruct for JSBundleCompletionTask {
     }
 
     fn complete_on_bundle_thread(&mut self) {
+        if let Some(declarations) = self.declarations.take() {
+            self.add_declarations(&declarations);
+        }
         // The bundle thread's last touch of this task and of the VM's memory:
         // move the ticket out (the JS thread may free `self` once queued),
         // hand it back, drop the ticket.
@@ -1330,6 +1502,10 @@ impl CompletionStruct for JSBundleCompletionTask {
         // never-written-through `&mut` is UB under Stacked Borrows. Keep it raw
         // (`NonNull`) end-to-end; `ThreadPool::init` stores it as `*mut`.
         let worker_pool = NonNull::new(thread_pool);
+
+        if self.compiles_ahead_of_time() {
+            return self.compile_ahead_of_time(transpiler, bump, event_loop, worker_pool);
+        }
 
         // `Graph.heap` is a borrow, so reuse the caller-owned `bump`.
         let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, false, worker_pool, bump)?;

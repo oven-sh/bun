@@ -1,0 +1,3002 @@
+////: for
+for (const name of process.env.NAMES.split(",")) {
+  try {
+    console.log(name, typeof require(name));
+  } catch (error) {
+    console.log(name, error.code);
+  }
+}
+////: for-2
+for (const name of process.env.NAMES.split(",")) {
+  try {
+    console.log(name, typeof «1»(name));
+  } catch (error) {
+    console.log(name, error.code, error instanceof Error);
+  }
+}
+////: lines
+function «1»(name) {
+  try {
+    return require(name);
+  } catch {
+    return null;
+  }
+}
+////: lines-2
+«1».on("listening", () => {
+  console.log("listening");
+  «1».close();
+});
+////: show
+function show(label, ask) {
+  try {
+    console.log(label, typeof ask());
+  } catch (error) {
+    console.log(label, error.name, error.code);
+  }
+}
+//// a-bare-import-keeps-a-module-for-computed-names.js
+// `import "node:dgram"` and nothing else of it: that keeps the module, and every loader finds it under a computed name, with the prefix and without. The output is that of plain Bun.
+import "node:dgram";
+import { createRequire } from "node:module";
+
+const copy = require;
+for (const name of process.env.NAMES.split(",")) {
+  console.log(name, typeof require(name).createSocket, typeof (await import(name)).createSocket, typeof process.getBuiltinModule(name).createSocket);
+  console.log(name, typeof import.meta.require(name).createSocket, typeof createRequire(import.meta.url)(name).createSocket, typeof copy(name).createSocket);
+}
+const socket = require(process.env.NAMES.split(",")[0]).createSocket("udp4");
+console.log(typeof socket.bind);
+socket.close();
+//// a-built-in-module-is-asked-of-process-held-in-a-constant.ts
+type Hooks = { AsyncLocalStorage?: unknown };
+type Held = { process?: { getBuiltinModule?: (specifier: string) => Hooks } };
+
+function ask(label: string, probe: () => unknown) {
+  try {
+    console.log(label, typeof probe());
+  } catch (error) {
+    console.log(label, (error as Error).name);
+  }
+}
+
+const heldProcess = process;
+const heldGlobal = globalThis;
+const retypedGlobal = globalThis as unknown as Held;
+
+ask("process", () => process.getBuiltinModule("node:async_hooks").AsyncLocalStorage);
+ask("a constant that holds process", () => heldProcess.getBuiltinModule("node:dgram").createSocket);
+ask("a constant that holds the global object", () => heldGlobal.process.getBuiltinModule("node:readline").createInterface);
+ask("the global object under another type", () => retypedGlobal.process?.getBuiltinModule?.("node:diagnostics_channel"));
+
+let found: unknown;
+for (const probe of [() => retypedGlobal.process?.getBuiltinModule?.("node:vm")]) {
+  try {
+    found = probe();
+  } catch {}
+  if (found) break;
+}
+console.log("one of a list of probes", typeof found);
+//// a-choice-between-two-constant-names.js
+// `require(flag ? "node:vm" : "node:v8")`: what stands in the parentheses is no plain string, yet each arm is a constant name, and a bundler treats it as two calls. Both modules are in, whichever way the flag falls where the program runs. The output is that of plain Bun.
+for (const flag of process.env.FLAGS.split(",").map(text => text === "1")) {
+  const ways = {
+    require: () => require(flag ? "node:vm" : "node:v8"),
+    import: () => import(flag ? "node:dgram" : "node:zlib"),
+    getBuiltinModule: () => process.getBuiltinModule(flag ? "node:assert" : "node:perf_hooks"),
+    "import.meta.require": () => import.meta.require(flag ? "node:http2" : "node:https"),
+    nested: () => require(flag ? "node:worker_threads" : flag === false ? "node:readline" : "node:repl"),
+  };
+  for (const way in ways) {
+    try {
+      console.log(flag, way, typeof (await ways[way]()));
+    } catch (error) {
+      console.log(flag, way, error.code);
+    }
+  }
+}
+//// a-choice-of-names-passed-to-a-require-made-for-another-file.mjs
+// createRequire() for another file is not the file's own require, but the name of a built-in module means the same from every file, also where the call chooses between two names.
+import { createRequire } from "node:module";
+
+const load = createRequire("/elsewhere/");
+console.log(load(process.argv.length > 99 ? "node:dgram" : "node:querystring").stringify({ a: 1 }));
+console.log(typeof createRequire("/elsewhere/")(process.argv.length > 99 ? "node:querystring" : "dgram").createSocket);
+//// a-constant-name-in-code-that-never-runs.js
+// node:dgram is named in a function that nobody calls, node:zlib in an arm that a constant condition removes, node:readline in a function that is called. Only what the program can reach is in the executable: neither the function that is left out nor the arm that is removed keeps a module. Plain Bun finds all three.
+function nobodyCalls() {
+  return require("node:dgram");
+}
+if (false) require("node:zlib");
+function called() {
+  return require("node:readline");
+}
+console.log(typeof called());
+
+////= for
+//// a-database-in-memory.js
+// bun:sqlite, imported by name: tables, prepared statements with every kind of parameter, all, get, values, run and iterate, transactions that commit and roll back, a class for the rows, blobs, errors with their codes, and serialize.
+import { Database, constants, SQLiteError } from "bun:sqlite";
+
+const db = new Database(":memory:");
+db.run("CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, age INTEGER, data BLOB)");
+const insert = db.prepare("INSERT INTO people (name, age, data) VALUES ($name, $age, $data)");
+console.log(JSON.stringify(insert.run({ $name: "Ada", $age: 36, $data: new Uint8Array([1, 2]) })), JSON.stringify(insert.run({ $name: "Bo", $age: null, $data: null })));
+db.query("INSERT INTO people (name, age) VALUES (?, ?)").run("Cy", 20);
+db.query("INSERT INTO people (name, age) VALUES (?1, ?2)").run("Di", 50);
+console.log(JSON.stringify(db.query("SELECT id, name, age FROM people ORDER BY id").all()));
+console.log(JSON.stringify(db.query("SELECT name FROM people WHERE age > ?").get(40)), db.query("SELECT name FROM people WHERE age > ?").get(99), JSON.stringify(db.query("SELECT name, age FROM people WHERE age IS NOT NULL ORDER BY age").values()));
+console.log([...db.query("SELECT name FROM people ORDER BY name DESC").iterate()].map(row => row.name).join(), db.query("SELECT data FROM people WHERE id = 1").get().data.join(), db.query("SELECT count(*) AS n FROM people").get().n);
+class Person { get shout() { return this.name.toUpperCase(); } }
+console.log(db.query("SELECT name FROM people WHERE id = 1").as(Person).get().shout, db.query("SELECT 1 AS a, 'x' AS b, 1.5 AS c, NULL AS d").get(), db.query("SELECT name FROM people").columnNames.join(), db.query("SELECT ?").paramsCount);
+const addBoth = db.transaction(names => { for (const name of names) db.run("INSERT INTO people (name) VALUES (?)", [name]); return names.length; });
+console.log(addBoth(["Ed", "Fi"]), db.query("SELECT count(*) AS n FROM people").get().n);
+try {
+  addBoth(["Gu", "Ada"]);
+} catch (error) {
+  console.log(error instanceof SQLiteError, error.code, error.errno, error.message);
+}
+console.log(db.query("SELECT count(*) AS n FROM people").get().n, db.inTransaction);
+try {
+  db.query("SELECT * FROM nowhere");
+} catch (error) {
+  console.log(error.name, error.message);
+}
+const copy = Database.deserialize(db.serialize());
+console.log(copy.query("SELECT count(*) AS n FROM people").get().n, typeof constants.SQLITE_OPEN_READONLY, db.filename);
+copy.close();
+db.close();
+try {
+  db.query("SELECT 1").get();
+} catch (error) {
+  console.log(error instanceof Error);
+}
+//// a-dynamic-import-of-a-module-that-mirrors-an-object-makes-none-of-its-members.mjs
+// node:process, bun and node:module each mirror an object that exists without them. An export whose value Bun's own code would make is read off that object when somebody first asks for it:
+// `await import("node:process")` makes no stream and no queue. From the first read on the export keeps its value, whatever the program then stores on the object.
+// writes-to-host-objects/process-next-tick-* have the import with process.nextTick replaced, which throws if the import makes process.stdin.
+const p = await import("node:process");
+console.log(Object.keys(p).length > 50, p.default === process, p.env === process.env, typeof p.versions, "title" in p, p.nothing);
+const before = p.config;
+process.config = 1;
+console.log("an export that was read keeps its value:", p.config === before, process.config);
+process.features = 2;
+console.log("an export that nobody had read gives what is there now:", p.features);
+const b = await import("bun");
+console.log(b.version === Bun.version, typeof b.file, b.argv === Bun.argv);
+const m = await import("node:module");
+console.log(typeof m.createRequire, typeof m.builtinModules);
+//// a-failed-load-leaves-the-loader-as-it-was.js
+// The pattern of an optional dependency: try a name, fall back. After a load has failed, the same name fails the same way again, other names load, and a module that is in is the same object as before.
+import path from "node:path";
+
+////= lines	optional
+const [missing, present] = process.env.NAMES.split(",");
+console.log(optional(missing), optional(missing), optional(present) === path);
+const codes = [];
+for (let i = 0; i < 3; i++) {
+  try {
+    require(missing);
+  } catch (error) {
+    codes.push(error.code);
+  }
+  await import(missing).catch(error => codes.push(error.code));
+}
+console.log(codes.join());
+console.log(optional(present) === path, (await import(present)).default === path);
+//// a-function-that-only-looks-like-a-made-require.mjs
+// What is no createRequire of node:module by its binding, or sits in a variable that is stored to, is followed by nobody. A require that is made for another place finds a library module under a constant name, as from every file. The output is that of plain Bun.
+import { createRequire } from "node:module";
+import "node:path";
+
+function report(label, load) {
+  try {
+    console.log(label, typeof load());
+  } catch (error) {
+    console.log(label, error.code);
+  }
+}
+
+let stored = createRequire(import.meta.url);
+report("stored before", () => stored("node:path"));
+stored = name => "mine " + name;
+report("stored after", () => stored("node:dgram"));
+
+{
+  const createRequire = url => name => [url.length > 0, name];
+  const own = createRequire(import.meta.url);
+  report("own", () => own("node:dgram"));
+}
+
+const elsewhere = createRequire(process.cwd() + "/");
+report("elsewhere in", () => elsewhere("node:path"));
+report("elsewhere out", () => elsewhere("node:dgram"));
+//// a-global-defined-with-define-property.js
+// A package that defines a global of its own hands `globalThis` to Object.defineProperty, which stores under its key and reads no member. That needs nothing of Bun's library.
+// STATISTIC: FunctionsLowered <= 600
+Object.defineProperty(globalThis, "registryOfThisProgram", { value: [], configurable: true });
+Reflect.defineProperty(globalThis, "secondOfThisProgram", { get: () => 2, configurable: true });
+Object.defineProperties(process, { markOfThisProgram: { value: "mark", configurable: true } });
+console.log(globalThis.registryOfThisProgram.length, secondOfThisProgram, process.markOfThisProgram);
+//// a-library-module-is-copied-member-by-member.js
+// What fs-extra, graceful-fs and universalify do: walk over the members of node:fs, copy or wrap each into an object of their own, and hand that out. The program then calls the copies.
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import util from "node:util";
+
+const byKeys = {};
+for (const key of Object.keys(fs)) byKeys[key] = fs[key];
+const byDescriptors = Object.create(Object.getPrototypeOf(fs), Object.getOwnPropertyDescriptors(fs));
+const bySpread = { ...fs };
+const promisified = {};
+for (const key of Object.keys(fs)) {
+  if (typeof fs[key] === "function" && !key.endsWith("Sync") && !/^[A-Z_]|^create|^watch|^unwatch|^exists$|^openAsBlob$|^glob$/.test(key)) promisified[key] = util.promisify(fs[key]);
+}
+
+const folder = byKeys.mkdtempSync(path.join(os.tmpdir(), "library-modules-"));
+const file = path.join(folder, "a.txt");
+byDescriptors.writeFileSync(file, "copied functions");
+console.log(bySpread.readFileSync(file, "utf8"), byKeys.statSync(file).size, byDescriptors.existsSync(file));
+await promisified.appendFile(file, " still work");
+console.log(await promisified.readFile(file, "utf8"), (await promisified.stat(file)).isFile(), (await promisified.readdir(folder)).join(), await promisified.access(path.join(folder, "none")).catch(error => error.code));
+await promisified.rm(folder, { recursive: true });
+console.log(bySpread.existsSync(folder), Object.keys(byKeys).length === Object.keys(fs).length, typeof byKeys.promises.readFile, byKeys.constants === fs.constants);
+//// a-listener-on-process-needs-no-channel.js
+// A listener for an event of `process` that is no message from a parent process needs nothing of the channel to one. The functions of the channel hang node:net and node:dgram behind them.
+// STATISTIC: FunctionsLowered <= 600
+process.on("exit", code => console.log("exit", code));
+process.once("beforeExit", () => console.log("before exit"));
+process.prependListener("exit", () => console.log("first"));
+process.addListener("warning", () => {});
+console.log("ran", process.listenerCount("exit"));
+//// a-loader-that-the-compiler-does-not-follow-is-refused-with-advice.mjs
+// A loader that is read under a computed key is not followed by the compiler. In a program where every import path is a constant the call is refused, also for
+// a module that is in the executable. The error can be caught, and it says what to write instead.
+import { posix } from "node:path";
+console.log(posix.join("a", "b"));
+const name = ["node:", "path"].join("");
+for (const load of [() => process[["get", "Builtin", "Module"].join("")](name)]) {
+  try {
+    console.log(typeof load().basename);
+  } catch (error) {
+    console.log(error.name + ": " + error.message);
+  }
+}
+//// a-member-of-process-that-a-helper-names.js
+// `process` is handed to a function, stored in an object and in an array, and returned. Whoever gets it finds the member it reads.
+function write(target, text) {
+  target.stdout.write(text);
+}
+write(process, "a property of a parameter\n");
+const holder = { it: process };
+const { stderr } = holder.it;
+console.log(typeof stderr.write);
+for (const name of ["stdin"]) console.log(typeof [process][0][name].on);
+const give = () => process;
+console.log(typeof give().allowedNodeEnvironmentFlags.has);
+//// a-member-of-process-under-a-key-built-at-run-time.js
+// `process` is handed to a function that reads a member under a key put together at run time. Nobody can tell which member that is, so all of them work.
+function read(object, key) {
+  return object[key];
+}
+const stream = read(process, ["std", "out"].join(""));
+console.log(typeof stream, typeof stream.write);
+console.log(typeof read(process, ["p", "id"].join("")));
+//// a-module-that-only-another-library-module-needs.js
+// The program names node:http alone and starts a server, which needs node:net, node:events and node:stream. They are in the executable for that reason, so a computed name finds them. node:repl is needed by none of them.
+import http from "node:http";
+
+const server = http.createServer((request, response) => response.end("ok"));
+await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+console.log(await (await fetch("http://127.0.0.1:" + server.address().port)).text());
+server.close();
+
+////= for
+//// a-name-that-the-program-writes-comes-to-a-loader-by-a-way-of-its-own/elsewhere.mjs
+export const heldElsewhere = process;
+export function askElsewhere(name) {
+  return process.getBuiltinModule(name);
+}
+//// a-name-that-the-program-writes-comes-to-a-loader-by-a-way-of-its-own/main.mjs
+// Each line asks for a built-in module that nothing imports. Its name is written in the program and comes to the loader, or the loader to the name, by a way that is no import by a constant name:
+// a parameter, a property, a list, a binding that is stored to, `call`, `apply`, `bind`. The output is that of plain Bun.
+import { createRequire } from "node:module";
+import processOfNode from "node:process";
+import { askElsewhere, heldElsewhere } from "./elsewhere.mjs";
+
+////= show
+
+function askHolder(holder) {
+  return holder.getBuiltinModule("node:dgram").createSocket;
+}
+function askLoader(load) {
+  return load("node:readline").createInterface;
+}
+function askByName(name) {
+  return process.getBuiltinModule(name);
+}
+function askWithPrefix(name) {
+  return process.getBuiltinModule("node:" + name);
+}
+class Holder {
+  held = process;
+  ask() {
+    return this.held.getBuiltinModule("node:v8").getHeapStatistics;
+  }
+}
+const { getBuiltinModule } = process;
+const { process: destructured } = globalThis;
+const table = { holder: process, name: "node:perf_hooks" };
+const perhaps = typeof process !== "undefined" ? process : undefined;
+let storedLater = null;
+storedLater = process;
+let made;
+function requireLazily(name) {
+  made ??= createRequire(import.meta.url);
+  return made(name);
+}
+const meta = import.meta;
+
+show("a parameter holds process", () => askHolder(process));
+show("a parameter holds the function", () => askLoader(process.getBuiltinModule));
+show("a parameter holds the name", () => askByName("node:vm").runInNewContext);
+show("a parameter holds the rest of the name", () => askWithPrefix("querystring").parse);
+show("a field holds process", () => new Holder().ask());
+show("the function is destructured", () => getBuiltinModule("node:zlib").gzipSync);
+show("process is destructured", () => destructured.getBuiltinModule("node:string_decoder").StringDecoder);
+show("a property holds process", () => table.holder.getBuiltinModule("node:diagnostics_channel").channel);
+show("a property holds the name", () => process.getBuiltinModule(table.name).performance);
+show("an element holds process", () => [process][0].getBuiltinModule("node:punycode").toASCII);
+show("one arm of a choice holds process", () => perhaps?.getBuiltinModule?.("node:async_hooks")?.AsyncLocalStorage);
+show("a binding that is stored to holds process", () => storedLater.getBuiltinModule("node:os").cpus);
+show("call", () => process.getBuiltinModule.call(process, "node:dns").lookup);
+show("apply", () => process.getBuiltinModule.apply(process, ["node:tls"]).connect);
+show("bind", () => process.getBuiltinModule.bind(process)("node:worker_threads").Worker);
+show("Reflect.apply", () => Reflect.apply(process.getBuiltinModule, process, ["node:child_process"]).spawn);
+show("the default export of node:process", () => processOfNode.getBuiltinModule("node:http2").connect);
+show("self", () => self.process.getBuiltinModule("node:domain").create);
+show("a function returns process", () => (() => process)().getBuiltinModule("node:trace_events").createTracing);
+show("another file holds process", () => heldElsewhere.getBuiltinModule("node:wasi").WASI);
+show("another file has the call", () => askElsewhere("node:inspector").Session);
+show("a require that is made at the first call", () => requireLazily("node:cluster").fork);
+show("a constant holds import.meta", () => meta.require("node:repl").start);
+for (const name of ["node:assert", "timers/promises"])
+  show("a list holds " + name, () => process.getBuiltinModule(name));
+show("import() of a parameter", () => (name => import(name))("node:sqlite").then);
+console.log(
+  "import() of a parameter answers",
+  typeof (await (name => import(name))("node:readline/promises")).createInterface,
+);
+show("no such module", () => askByName("node:no-such-module"));
+//// a-name-that-the-program-writes-comes-to-require-by-a-way-of-its-own.cjs
+// As a-name-that-the-program-writes-comes-to-a-loader-by-a-way-of-its-own, for `require`, `module.require` and the loaders of node:module in a CommonJS file. A helper that swallows the error, as packages
+// write it, must not answer null for a module that plain Bun has. The output is that of plain Bun.
+const Module = require("node:module");
+
+////= show
+
+////= lines	tryRequire
+function dynamicRequire(holder, name) {
+  return holder.require(name);
+}
+function askLoader(load) {
+  return load("node:vm").runInNewContext;
+}
+const table = { load: require, names: { first: "node:zlib" } };
+const held = module;
+const { require: ofModule } = module;
+const bound = typeof module !== "undefined" && typeof module.require === "function" && module.require.bind(module);
+
+show("a helper that swallows the error", () => tryRequire("node:dgram")?.createSocket);
+show("the same without the prefix", () => tryRequire("readline")?.createInterface);
+show("a parameter holds module and another the name", () => dynamicRequire(module, "perf_hooks").performance);
+show("a parameter holds require", () => askLoader(require));
+show("a property holds require", () => table.load("node:v8").getHeapStatistics);
+show("a property holds the name", () => require(table.names.first).gzipSync);
+show("a constant holds module", () => held.require("node:querystring").parse);
+show("require is destructured of module", () => ofModule.call(module, "node:string_decoder").StringDecoder);
+show("module.require is bound", () => bound("diagnostics_channel").channel);
+show("Module.prototype.require", () => Module.prototype.require.call(module, "node:punycode").toASCII);
+show(
+  "a require made by an alias of createRequire",
+  () => (make => make(__filename))(Module.createRequire)("node:async_hooks").AsyncLocalStorage,
+);
+show("process.mainModule", () => process.mainModule.require("node:os").cpus);
+show("require.main", () => require.main.require("node:dns").lookup);
+for (const name of ["node:tls", "worker_threads"]) show("a list holds " + name, () => require(name));
+show("no such module", () => tryRequire("node:no-such-module"));
+//// a-name-with-a-constant-start.js
+// "node:" + name, a template and concat(): the constant start names no library module, so it brings none in.
+import "node:path";
+
+for (const name of process.env.NAMES.split(",")) {
+  const ways = {
+    plus: () => require("node:" + name),
+    template: () => require(`node:${name}`),
+    concat: () => require("node:".concat(name)),
+    import: () => import("node:" + name),
+    "import template": () => import(`node:${name}`),
+  };
+  for (const way in ways) {
+    try {
+      console.log(name, way, typeof (await ways[way]()));
+    } catch (error) {
+      console.log(name, way, error.code);
+    }
+  }
+}
+console.log("went on");
+//// a-package-keeps-a-module-for-the-program/main.js
+// The program never names node:dgram; a package it uses requires it by name. That keeps the module, and the program's computed name finds it. The output is that of plain Bun.
+import { socketType } from "uses-dgram";
+
+console.log(socketType());
+console.log(typeof require(process.env.NAME).createSocket);
+//// a-package-keeps-a-module-for-the-program/node_modules/uses-dgram/index.js
+const dgram = require("node:dgram");
+exports.socketType = function () { return typeof dgram.Socket; };
+//// a-package-keeps-a-module-for-the-program/node_modules/uses-dgram/package.json
+{ "name": "uses-dgram", "version": "1.0.0", "main": "index.js" }
+//// a-pipeline-hands-its-stages-one-signal.js
+// stream.pipeline() hands every stage that is a function one AbortSignal, which is aborted when the pipeline ends, well or badly. A pipeline of streams alone hands it to nobody.
+const { pipeline, Readable, Writable, PassThrough } = require("node:stream");
+const log = [];
+function collector(into) {
+  return new Writable({
+    write(chunk, encoding, done) {
+      into.push(String(chunk));
+      done();
+    },
+  });
+}
+function run(label, stages) {
+  return new Promise(resolve => {
+    pipeline(...stages, error => {
+      log.push(label + " ended " + (error ? error.name + " " + error.message : "well"));
+      resolve();
+    });
+  });
+}
+async function main() {
+  const plain = [];
+  await run("streams alone", [Readable.from(["a", "b", "c"]), new PassThrough(), collector(plain)]);
+  log.push("streams alone " + plain.join(""));
+
+  const signals = [];
+  const staged = [];
+  await run("two stages", [
+    async function* ({ signal }) {
+      signals.push(signal);
+      log.push("source sees aborted " + signal.aborted);
+      yield "x";
+      yield "y";
+    },
+    async function* (source, { signal }) {
+      signals.push(signal);
+      for await (const chunk of source) yield String(chunk).toUpperCase();
+    },
+    collector(staged),
+  ]);
+  log.push("two stages " + staged.join("") + " one signal " + (signals[0] === signals[1]) + " is a signal " + (signals[0] instanceof AbortSignal));
+  log.push("afterwards aborted " + signals[0].aborted + " " + signals[0].reason.name);
+
+  let heard = 0;
+  let kept;
+  await run("a stage throws", [
+    Readable.from(["1", "2"]),
+    async function* (source, { signal }) {
+      kept = signal;
+      signal.addEventListener("abort", () => heard++);
+      for await (const chunk of source) {
+        if (chunk === "2") throw new RangeError("two");
+        yield chunk;
+      }
+    },
+    collector([]),
+  ]);
+  log.push("a stage throws: aborted " + kept.aborted + " heard " + heard);
+
+  const outer = new AbortController();
+  run("one that never ends", [
+    new Readable({ read() {} }),
+    async function* (source, { signal }) {
+      kept = signal;
+      for await (const chunk of source) yield chunk;
+    },
+    collector([]),
+  ]);
+  await new Promise(resolve => setImmediate(resolve));
+  log.push("still running: aborted " + kept.aborted);
+  const promised = require("node:stream/promises")
+    .pipeline(new Readable({ read() {} }), collector([]), { signal: outer.signal })
+    .catch(error => log.push("promised pipeline " + error.name));
+  outer.abort();
+  await promised;
+  console.log(log.join("\n"));
+  process.exit(0);
+}
+main();
+//// a-program-that-names-cluster-serves-from-a-worker.mjs
+// A program that names node:cluster and forks itself: the worker's half of listen() is in the executable. The worker serves over node:http and over node:net, and the primary hears of both.
+import cluster from "node:cluster";
+import { createServer } from "node:http";
+import net from "node:net";
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  const heard = [];
+  cluster.on("listening", async (from, address) => {
+    heard.push(address.port);
+    if (heard.length < 2) return;
+    const answer = await fetch("http://127.0.0.1:" + heard[0] + "/a");
+    console.log("over http:", answer.status, await answer.text());
+    const socket = net.connect(heard[1], "127.0.0.1");
+    let text = "";
+    socket.on("data", piece => (text += piece));
+    socket.on("end", () => {
+      console.log("over net:", text);
+      worker.kill();
+    });
+  });
+  cluster.on("exit", from => console.log("the worker left:", from === worker));
+} else {
+  console.log("in the worker:", cluster.isWorker, typeof process.send);
+  createServer((request, response) => response.end("from the worker " + request.url)).listen(0, () => {
+    net.createServer(socket => socket.end("from the worker too")).listen(0);
+  });
+}
+//// a-proxy-that-is-no-url-throws-as-node-http-loads.cjs
+// The proxies of the environment are looked at as the module loads, and one that is no URL throws there, not at the first request.
+try {
+  require("node:http");
+  console.log("loaded");
+} catch (error) {
+  console.log(error.code, error.name);
+}
+//// a-require-made-by-create-require-gets-constant-names/lib/data.cjs
+module.exports = { answer: 42 };
+//// a-require-made-by-create-require-gets-constant-names/main.mjs
+// `createRequire(import.meta.url)` is how an ES module gets a require(). A constant name given to what it returns keeps the library module, and a constant path the file, whether the function is held in a constant, called at once, or comes from the module object. The output is that of plain Bun.
+import { createRequire } from "node:module";
+import * as namespace from "module";
+import moduleObject from "node:module";
+
+const require = createRequire(import.meta.url);
+console.log(require("node:os").EOL === "\n", typeof require("node:zlib").gzipSync, require("url") === require("node:url"));
+console.log(typeof createRequire(import.meta.url)("node:dgram").createSocket);
+console.log(typeof namespace.createRequire(import.meta.url)("node:readline").createInterface);
+
+const other = moduleObject.createRequire(import.meta.url);
+console.log(typeof other("node:vm").runInNewContext, other("./lib/data.cjs").answer, other("./lib/data.cjs") === require("./lib/data.cjs"));
+
+const flag = process.argv.length > 99;
+console.log(typeof require(flag ? "node:http2" : "node:v8").getHeapStatistics);
+console.log(typeof require.resolve, require.resolve("node:os"));
+
+try {
+  early("node:tty");
+} catch (error) {
+  console.log(error.name);
+}
+const early = createRequire(import.meta.url);
+//// a-require-made-in-a-commonjs-file-gets-constant-names.cjs
+// The same in a CommonJS file: createRequire(__filename), from a pattern, from the module object and from the call itself. The output is that of plain Bun.
+const { createRequire } = require("module");
+const moduleObject = require("node:module");
+
+const first = createRequire(__filename);
+const second = moduleObject.createRequire(__filename);
+const third = require("node:module").createRequire(__filename);
+console.log(typeof first("node:os").cpus, typeof second("node:zlib").gzipSync, typeof third("node:dgram").createSocket);
+console.log(first("node:os") === require("node:os"));
+//// a-type-of-the-library-is-declared-in-a-module-that-nothing-loads.mjs
+// The function that makes `console.Console` is written against the type of a writable stream and loads no stream. In a program that loads none either, the file that declares that
+// type is in the build for the type alone.
+console.log(typeof console.Console);
+const attempts = [() => console.Console(), () => console.Console(1), () => console.Console("a", {}), () => new console.Console(), () => new console.Console("a")];
+for (const attempt of attempts) {
+  try {
+    console.log(typeof attempt());
+  } catch (error) {
+    console.log(error.name, error.code);
+  }
+}
+//// a-variable-that-holds-an-imported-stream-class-is-constructed-and-changes.mjs
+import { Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
+import { EventEmitter } from "node:events";
+let Chosen = Readable;
+function make(options) {
+  return new Chosen(options);
+}
+const say = value => console.log(typeof value, value?.constructor?.name, value instanceof Readable, value instanceof Writable, value instanceof EventEmitter);
+for (let i = 0; i < 3; i++) say(make());
+for (const next of [Duplex, Transform, PassThrough, Writable, EventEmitter]) {
+  Chosen = next;
+  say(make());
+}
+class Own { constructor(a) { this.a = a; } }
+Chosen = Own;
+say(make(5)); console.log(make(5).a);
+Chosen = function Plain(a) { this.b = a; };
+say(make(6)); console.log(make(6).b);
+Chosen = function Answers() { return { other: 1 }; };
+console.log(JSON.stringify(make()));
+Chosen = Readable.bind(null);
+say(make());
+Chosen = new Proxy(Readable, { construct(target, list, newTarget) { console.log("trap", list.length, newTarget === Chosen); return Reflect.construct(target, list, target); } });
+say(make({}));
+for (const wrong of [() => 1, null, undefined, 5, "text", {}, Symbol.iterator, async function f() {}, function* g() {}, Math.max]) {
+  Chosen = wrong;
+  try { say(make()); } catch (error) { console.log(error.constructor.name); }
+}
+Chosen = Readable;
+say(make({ read() {} }));
+//// a-walk-over-every-property-of-process.js
+// A walk written in JavaScript asks for the descriptor of every own property of `process`. That makes the values that Bun creates on first use, all of them.
+function walk(value, depth, seen) {
+  if (depth === 0 || value === null || (typeof value !== "object" && typeof value !== "function") || seen.has(value)) return 1;
+  seen.add(value);
+  let count = 1;
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+    if (descriptor && "value" in descriptor) count += walk(descriptor.value, depth - 1, seen);
+  }
+  return count;
+}
+console.log(walk(process, 2, new Set()) > 10);
+//// a-worker-of-a-program-that-never-names-cluster-over-dgram.mjs
+// As a-worker-of-a-program-that-never-names-cluster-over-http, over node:dgram.
+import { createSocket } from "node:dgram";
+const socket = createSocket("udp4");
+socket.on("error", error => console.log("error:", error.code, error.message));
+process.on("uncaughtException", error => {
+  console.log("uncaught:", error.code, error.message);
+  socket.close();
+});
+////= lines-2	socket
+try {
+  socket.bind(0);
+} catch (error) {
+  console.log("threw:", error.code, error.message);
+}
+//// a-worker-of-a-program-that-never-names-cluster-over-http.mjs
+// A program that never names node:cluster holds nothing of a worker. Started as one all the same (another program's setupPrimary({ exec }) sets NODE_UNIQUE_ID), it says so where it would listen,
+// and does not listen as a primary would.
+import { createServer } from "node:http";
+const server = createServer(() => {});
+server.on("error", error => console.log("error:", error.code, error.message));
+////= lines-2	server
+server.listen(0);
+//// a-worker-of-a-program-that-never-names-cluster-over-net.mjs
+// As a-worker-of-a-program-that-never-names-cluster-over-http, over node:net.
+import { createServer } from "node:net";
+const server = createServer(() => {});
+server.on("error", error => console.log("error:", error.code, error.message));
+////= lines-2	server
+try {
+  server.listen(0);
+} catch (error) {
+  console.log("threw:", error.code, error.message);
+}
+//// an-alias-of-require-gets-a-computed-name.js
+// `require` is copied into a constant, passed to a function, and called through (0, require) and .call. Each follows the rules of require(name), and none brings a library module in.
+import "node:path";
+
+const copy = require;
+function through(load, name) {
+  return load(name);
+}
+const ways = {
+  copy: name => copy(name),
+  argument: name => through(require, name),
+  comma: name => (0, require)(name),
+  call: name => require.call(null, name),
+};
+for (const name of process.env.NAMES.split(",")) {
+  for (const way in ways) {
+    try {
+      console.log(name, way, typeof ways[way](name));
+    } catch (error) {
+      console.log(name, way, error.code);
+    }
+  }
+}
+console.log("went on");
+//// an-external-package-loads-modules-that-the-program-never-names/main.js
+// A package marked --external is interpreted, and so is a module of Bun's library that it loads and that the executable does not hold. Such a module requires others that the executable does
+// hold, compiled: node:dgram asks internal/validators for functions that the program itself never calls.
+import take from "outside";
+for (const name of ["node:zlib", "node:dgram", "node:readline", "bun:sqlite", "node:path"]) {
+  try {
+    const whole = take(name);
+    console.log(name, typeof whole, Object.keys(whole).length > 3);
+  } catch (error) {
+    console.log(name, "threw", error.message);
+  }
+}
+console.log(take("node:zlib").gzipSync("a").length > 5);
+const socket = take("node:dgram").createSocket("udp4");
+console.log(typeof socket.bind);
+socket.close();
+//// an-external-package-loads-modules-that-the-program-never-names/node_modules/outside/index.js
+module.exports = name => require(name);
+//// an-external-package-loads-modules-that-the-program-never-names/node_modules/outside/package.json
+{ "name": "outside", "version": "1.0.0", "main": "index.js" }
+//// an-http-server-and-a-client.js
+// node:http on both sides: a server with routes, headers, a body that is read in pieces, a chunked answer and a 404; a client with request(), get(), an agent that keeps the connection, and an error for a closed port.
+import http from "node:http";
+
+const server = http.createServer((request, response) => {
+  if (request.url === "/echo" && request.method === "POST") {
+    const parts = [];
+    request.on("data", part => parts.push(part));
+    request.on("end", () => {
+      response.writeHead(201, { "content-type": "text/plain", "x-length": String(Buffer.concat(parts).length) });
+      response.end(Buffer.concat(parts).toString().toUpperCase());
+    });
+  } else if (request.url === "/chunks") {
+    response.write("one,");
+    response.write("two,");
+    response.end("three");
+  } else if (request.url === "/headers") {
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ custom: request.headers["x-custom"], method: request.method, version: request.httpVersion }));
+  } else {
+    response.statusCode = 404;
+    response.end("nothing at " + request.url);
+  }
+});
+await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+const { port } = server.address();
+const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+
+function send(options, body) {
+  return new Promise((resolve, reject) => {
+    const request = http.request({ host: "127.0.0.1", port, agent, ...options }, response => {
+      let text = "";
+      response.setEncoding("utf8");
+      response.on("data", part => (text += part));
+      response.on("end", () => resolve([response.statusCode, response.statusMessage, response.headers["x-length"], response.headers["transfer-encoding"], text].join(" | ")));
+    });
+    request.on("error", reject);
+    request.end(body);
+  });
+}
+
+console.log(await send({ path: "/echo", method: "POST" }, "hello"));
+console.log(await send({ path: "/chunks" }));
+console.log(await send({ path: "/headers", headers: { "X-Custom": "yes" } }));
+console.log(await send({ path: "/missing" }));
+console.log(await new Promise(resolve => http.get({ host: "127.0.0.1", port, path: "/chunks" }, response => { response.resume(); response.on("end", () => resolve("get " + response.statusCode)); })));
+agent.destroy();
+await new Promise(resolve => server.close(resolve));
+console.log(server.listening, await send({ path: "/", agent: false }).catch(error => error.code));
+//// an-uncaught-load-of-a-module-that-is-not-in-ends-the-program.js
+// Nothing catches the error of require(name) for a module that is not in the executable: the program ends with exit code 1 and the message of the page. Plain Bun finds the module and goes on.
+import "node:path";
+
+console.log("before");
+require(process.env.NAME);
+console.log("after");
+//// assertions.js
+// node:assert and node:assert/strict: what passes, what throws, the code, the operator and the first line of the message of an AssertionError, throws and rejects with every kind of expectation, deep equality of collections, match, ifError and fail.
+import assert, { AssertionError } from "node:assert";
+import strict from "node:assert/strict";
+
+function tell(label, run) {
+  try {
+    run();
+    console.log(label, "passes");
+  } catch (error) {
+    console.log(label, error.name, error.code, error.operator, JSON.stringify(String(error.message).split("\n")[0]), error.generatedMessage);
+  }
+}
+tell("ok", () => assert(1));
+tell("ok of 0", () => assert.ok(0));
+tell("own message", () => assert(false, "my own words"));
+tell("equal", () => assert.equal(1, "1"));
+tell("strictEqual", () => assert.strictEqual(1, "1"));
+tell("notStrictEqual", () => assert.notStrictEqual(1, 1));
+tell("deepEqual", () => assert.deepEqual({ a: [1, "2"] }, { a: ["1", 2] }));
+tell("deepStrictEqual", () => assert.deepStrictEqual({ a: [1, 2] }, { a: [1, 2] }));
+tell("deepStrictEqual fails", () => assert.deepStrictEqual({ a: 1 }, { a: 2 }));
+tell("maps and sets", () => assert.deepStrictEqual(new Map([[1, new Set([2])]]), new Map([[1, new Set([2])]])));
+tell("prototypes", () => assert.deepStrictEqual(new (class A {})(), {}));
+tell("NaN and zeros", () => { assert.deepStrictEqual(NaN, NaN); assert.deepStrictEqual(0, -0); });
+tell("throws", () => assert.throws(() => { throw new TypeError("bad"); }, TypeError));
+tell("throws a pattern", () => assert.throws(() => { throw new Error("bad thing"); }, /thing/));
+tell("throws an object", () => assert.throws(() => { throw new RangeError("r"); }, { name: "RangeError", message: "r" }));
+tell("throws nothing", () => assert.throws(() => {}));
+tell("throws another", () => assert.throws(() => { throw new TypeError("bad"); }, RangeError));
+tell("doesNotThrow", () => assert.doesNotThrow(() => { throw new Error("did"); }));
+tell("match", () => assert.match("abc", /x/));
+tell("doesNotMatch", () => assert.doesNotMatch("abc", /x/));
+tell("ifError of null", () => assert.ifError(null));
+tell("ifError", () => assert.ifError(new Error("given")));
+tell("fail", () => assert.fail("failed on purpose"));
+tell("strict.equal", () => strict.equal(1, "1"));
+tell("an error as the message", () => assert(false, new SyntaxError("thrown as it is")));
+console.log(await assert.rejects(Promise.reject(new Error("no")), /no/), await assert.rejects(Promise.resolve(1)).catch(error => error.code), await assert.doesNotReject(Promise.resolve(1)));
+const made = new AssertionError({ actual: 1, expected: 2, operator: "strictEqual" });
+console.log(made instanceof Error, made.actual, made.expected, made.code, strict.strict === strict, assert.strict === strict, assert.AssertionError === AssertionError);
+//// buffers-decoders-and-query-strings.js
+// node:buffer, node:string_decoder, node:querystring and node:punycode: encodings, reads and writes of numbers, slices that share memory, search, comparison, transcode, Blob and File, characters split over two chunks, and escaping.
+import { Buffer, Blob, File, constants, transcode, isUtf8, isAscii, btoa, atob, kMaxLength } from "node:buffer";
+import { StringDecoder } from "node:string_decoder";
+import querystring from "node:querystring";
+
+process.noDeprecation = true;
+const text = Buffer.from("héllo wörld");
+console.log(text.length, text.toString("hex"), text.toString("base64"), text.toString("base64url"), text.toString("latin1").length, text.toString("utf8", 0, 3), text.toString("ascii").length);
+console.log(Buffer.from("aGk=", "base64").toString(), Buffer.from("6869", "hex").toString(), Buffer.from("hi", "utf16le").length, Buffer.from([256, -1, 1.5]).join(), Buffer.from(new Uint16Array([1, 2]).buffer).length);
+const numbers = Buffer.alloc(16);
+numbers.writeUInt32BE(0xdeadbeef, 0);
+numbers.writeInt16LE(-2, 4);
+numbers.writeDoubleLE(1.5, 6);
+numbers.writeUInt8(255, 14);
+console.log(numbers.readUInt32BE(0).toString(16), numbers.readInt16LE(4), numbers.readDoubleLE(6), numbers.readUInt8(14), numbers.readUInt16BE(0), numbers.readBigUInt64BE(0).toString(16), numbers.readIntBE(0, 3));
+try {
+  numbers.readUInt32BE(14);
+} catch (error) {
+  console.log(error.code, error.name);
+}
+const whole = Buffer.from("abcdef"), part = whole.subarray(1, 3);
+part[0] = 66;
+console.log(whole.toString(), part.toString(), whole.slice(-2).toString(), Buffer.concat([part, part], 3).toString(), Buffer.alloc(3, "xy").toString(), Buffer.allocUnsafe(2).length);
+console.log(whole.indexOf("d"), whole.includes("zz"), whole.lastIndexOf("f"), Buffer.compare(Buffer.from("a"), Buffer.from("b")), whole.equals(Buffer.from("aBcdef")), Buffer.byteLength("é"), Buffer.isBuffer(whole), Buffer.isBuffer(new Uint8Array(1)), Buffer.isEncoding("hex"), Buffer.isEncoding("nope"));
+console.log(JSON.stringify(Buffer.from("hi")), whole.fill("z", 4).toString(), whole.copy(numbers, 0, 0, 2), Buffer.from("0102", "hex").swap16().toString("hex"), [...Buffer.from("ab").entries()].join("|"), whole.write("Q", 0), whole.toString());
+console.log(transcode(Buffer.from("é"), "utf8", "latin1").length, isUtf8(Buffer.from([0xc3, 0x28])), isAscii(Buffer.from("abc")), btoa("hi"), atob("aGk="), kMaxLength === constants.MAX_LENGTH, typeof constants.MAX_STRING_LENGTH);
+const blob = new Blob(["ab", Buffer.from("cd")], { type: "text/plain" });
+console.log(blob.size, blob.type, await blob.text(), await blob.slice(1, 3).text(), new File(["x"], "name.txt").name, Blob === globalThis.Blob);
+
+const decoder = new StringDecoder("utf8");
+const euro = Buffer.from("€");
+console.log(JSON.stringify(decoder.write(euro.subarray(0, 1))), JSON.stringify(decoder.write(euro.subarray(1, 2))), decoder.write(euro.subarray(2)), JSON.stringify(decoder.end()), JSON.stringify(new StringDecoder("utf8").end(euro.subarray(0, 2))), new StringDecoder("hex").write(Buffer.from("hi")), new StringDecoder("base64").write(Buffer.from("h")) + "|" + new StringDecoder("utf16le").write(Buffer.from([104, 0])));
+
+console.log(JSON.stringify(querystring.parse("a=1&a=2&b=x%20y&c&d=%E4")), querystring.stringify({ a: [1, 2], b: "x y", c: "", d: true, e: null }), querystring.escape("a b&c=d/é"), querystring.unescape("a%20b%zz"), querystring.stringify({ a: 1, b: 2 }, ";", ":"), JSON.stringify(querystring.parse("a:1;b:2", ";", ":")), JSON.stringify(querystring.parse("a=1&b=2&c=3", null, null, { maxKeys: 2 })));
+//// built-ins-that-wrap-an-iterator-or-begin-with-an-empty-list.js
+// The engine's own JavaScript for Array.from, Object.groupBy, Map.groupBy, TypedArray.from, Iterator.concat, the iterator helpers and Reflect.apply:
+// each walks a wrapper object whose Symbol.iterator method hands back an iterator that was taken before, or collects into a list that begins empty.
+const log = [];
+function show(title, make) {
+  try {
+    const made = make();
+    log.push(title + ": " + JSON.stringify(made, (key, value) => (value instanceof Map ? [...value] : ArrayBuffer.isView(value) ? [...value] : value)));
+  } catch (error) {
+    log.push(title + ": " + error.constructor.name + " " + error.message);
+  }
+}
+function counted(values) {
+  let asked = 0;
+  return {
+    get [Symbol.iterator]() {
+      asked++;
+      log.push("Symbol.iterator was read " + asked + " times");
+      return function () {
+        return values[Symbol.iterator]();
+      };
+    },
+  };
+}
+show("Array.from of an iterable", () => Array.from(counted([1, 2, 3])));
+show("Array.from with a function", () => Array.from(counted([1, 2, 3]), (value, index) => value * 10 + index));
+show("Array.from of an array-like", () => Array.from({ length: 3, 0: "a", 2: "c" }));
+show("Array.from of a length", () => Array.from({ length: 3 }));
+show("Array.from of a length with a function", () => Array.from({ length: 3 }, (value, index) => index * 2));
+show("Array.from of a length that is no number", () => Array.from({ length: "2" }, (value, index) => index));
+show("Array.from of a string", () => Array.from("a\u{1F600}b"));
+show("Array.from of what is not iterable", () => Array.from({ [Symbol.iterator]: 1 }));
+show("Array.from below another constructor", () => {
+  class List extends Array {}
+  const made = Array.from.call(List, counted([4, 5]));
+  return [made instanceof List, made.length, ...made];
+});
+show("Object.groupBy", () => Object.groupBy(counted([1, 2, 3, 4, 5]), value => (value & 1 ? "odd" : "even")));
+show("Map.groupBy", () => Map.groupBy(counted([1, 2, 3, 4, 5]), value => value % 3));
+show("Object.fromEntries", () => Object.fromEntries(counted([["a", 1], ["b", 2]])));
+show("Int16Array.from of an iterable", () => Int16Array.from(counted([1, 2, 70000])));
+show("Float64Array.from with a function", () => Float64Array.from(counted([1, 2]), value => value / 4));
+show("Uint8Array.from of an array-like", () => Uint8Array.from({ length: 2, 0: 7, 1: 300 }));
+show("Iterator.from", () => [...Iterator.from(counted([1, 2]))]);
+show("Iterator.from of a string", () => [...Iterator.from("ab")]);
+show("flatMap", () => [...[1, 2].values().flatMap(value => counted([value, value * 2]))]);
+show("flatMap over a string", () => [...[1].values().flatMap(() => "ab")]);
+show("map, filter, take, drop", () => [
+  ...[1, 2, 3, 4, 5, 6]
+    .values()
+    .map(value => value * 2)
+    .filter(value => value % 3)
+    .drop(1)
+    .take(2),
+]);
+show("reduce, some, every, find, toArray", () => {
+  const values = () => [1, 2, 3].values();
+  return [values().reduce((sum, value) => sum + value), values().some(value => value > 2), values().every(value => value > 2), values().find(value => value > 1), values().toArray()];
+});
+if (typeof Iterator.concat === "function") show("Iterator.concat", () => [...Iterator.concat(counted([1]), [2, 3], counted([4]))]);
+show("Reflect.apply with an array", () => Reflect.apply(Math.max, undefined, [1, 5, 3]));
+show("Reflect.apply with an array-like", () => Reflect.apply(Math.max, undefined, { length: 2, 0: 9, 1: 4 }));
+show("Reflect.apply with arguments", () => (function () { return Reflect.apply(Math.min, undefined, arguments); })(3, 2, 8));
+show("Reflect.apply with no list", () => Reflect.apply(Math.max, undefined, 1));
+show("an iterator that is closed early", () => {
+  const closed = [];
+  const source = {
+    [Symbol.iterator]() {
+      return { next: () => ({ done: false, value: 1 }), return() { closed.push("closed"); return {}; } };
+    },
+  };
+  try {
+    Object.groupBy(source, () => { throw new RangeError("stop"); });
+  } catch (error) {
+    closed.push(error.message);
+  }
+  return closed;
+});
+(async () => {
+  if (typeof Array.fromAsync === "function") {
+    const made = await Array.fromAsync((async function* () { yield 1; yield 2; })(), value => value + 1);
+    log.push("Array.fromAsync: " + JSON.stringify(made));
+    log.push("Array.fromAsync of an iterable: " + JSON.stringify(await Array.fromAsync(counted([Promise.resolve(3), 4]))));
+  }
+  console.log(log.join("\n"));
+})();
+//// bun-require-helper-in-a-shared-chunk/chunk.mjs
+import { createRequire } from "node:module";
+var __require = /* @__PURE__ */ createRequire(import.meta.url);
+export var metaRequire = import.meta.require;
+export { __require };
+//// bun-require-helper-in-a-shared-chunk/main.mjs
+// `bun build --splitting --target=node` exports `__require = createRequire(import.meta.url)` from a shared chunk.
+import { __require, metaRequire } from "./chunk.mjs";
+
+console.log(__require("node:zlib").gunzipSync(__require("zlib").gzipSync("text")).toString());
+console.log(metaRequire("node:querystring").stringify({ a: 1 }));
+//// child-processes.js
+// node:child_process with programs every system has: spawn with pipes, stdin that is written to, an exit code, a signal, spawnSync, exec, execSync, execFile, an environment, a working directory, and a program that does not exist.
+import { spawn, spawnSync, exec, execSync, execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
+
+function run(command, args, options, input) {
+  return new Promise(resolve => {
+    const child = spawn(command, args, options);
+    let out = "", err = "";
+    child.stdout?.on("data", part => (out += part));
+    child.stderr?.on("data", part => (err += part));
+    child.on("error", error => resolve("error " + error.code));
+    child.on("close", (code, signal) => resolve(JSON.stringify([code, signal, out, err])));
+    if (input !== undefined) child.stdin.end(input);
+  });
+}
+
+console.log(await run("echo", ["hello", "world"]));
+console.log(await run("cat", [], {}, "through stdin"));
+console.log(await run("sh", ["-c", "echo out; echo err >&2; exit 3"]));
+console.log(await run("sh", ["-c", "echo $GREETING; pwd"], { env: { GREETING: "hi", PATH: process.env.PATH }, cwd: "/" }));
+console.log(await run("no-such-program-anywhere", []));
+const sleeper = spawn("sleep", ["30"]);
+console.log(typeof sleeper.pid, sleeper.kill("SIGTERM"), await new Promise(resolve => sleeper.on("exit", (code, signal) => resolve([code, signal].join()))), sleeper.killed);
+
+const sync = spawnSync("sh", ["-c", "cat; exit 2"], { input: "sync input", encoding: "utf8" });
+console.log(sync.status, sync.signal, sync.stdout, JSON.stringify(sync.stderr));
+console.log(spawnSync("no-such-program-anywhere").error.code);
+console.log(execSync("echo from execSync", { encoding: "utf8" }).trim(), execFileSync("echo", ["from execFileSync"]).toString().trim());
+try {
+  execSync("exit 4", { stdio: "pipe" });
+} catch (error) {
+  console.log(error.status);
+}
+console.log((await promisify(exec)("echo from exec")).stdout.trim(), (await promisify(execFile)("echo", ["from execFile"])).stdout.trim());
+console.log(await promisify(exec)("exit 5").catch(error => error.code));
+//// classes-below-an-imported-stream-class-get-another-class-above.mjs
+import { Readable, Writable, Duplex, Transform } from "node:stream";
+import { EventEmitter } from "node:events";
+new Duplex(); new Transform();
+class Below extends Readable {
+  extra = 1;
+  constructor(options) { super(options); this.late = 2; }
+}
+class Implicit extends Readable { field = 3; }
+const say = value => console.log(value.constructor.name, value instanceof Readable, value instanceof Writable, value instanceof EventEmitter, value.extra, value.late, value.field, typeof value._readableState, typeof value._writableState);
+for (let i = 0; i < 3; i++) { say(new Below()); say(new Implicit()); }
+Object.setPrototypeOf(Below, Writable);
+Object.setPrototypeOf(Implicit, Writable);
+say(new Below()); say(new Implicit());
+Object.setPrototypeOf(Below, EventEmitter);
+Object.setPrototypeOf(Implicit, EventEmitter);
+say(new Below()); say(new Implicit());
+class Stranger { constructor() { this.strange = true; } }
+Object.setPrototypeOf(Below, Stranger);
+Object.setPrototypeOf(Implicit, Stranger);
+say(new Below()); say(new Implicit()); console.log(new Below().strange, new Implicit().strange);
+Object.setPrototypeOf(Below, function Answers() { return { swapped: 1 }; });
+console.log(JSON.stringify(new Below()));
+Object.setPrototypeOf(Below, null);
+try { new Below(); } catch (error) { console.log(error.constructor.name); }
+Object.setPrototypeOf(Below, () => 1);
+try { new Below(); } catch (error) { console.log(error.constructor.name); }
+Object.setPrototypeOf(Below, Readable);
+say(new Below());
+say(Reflect.construct(Below, [], Implicit));
+say(Reflect.construct(Readable, [], Below));
+say(Reflect.construct(Below, [], Stranger));
+//// classes-of-the-program-extend-classes-of-the-library.js
+// The library calls methods that the program wrote, by names it knows: _read, _write, _writev, _final, _transform, _flush, _construct, _destroy of streams; createConnection of an agent; emit of an emitter. No code of the program calls them.
+import { Readable, Writable, Transform, Duplex } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { EventEmitter } from "node:events";
+import http from "node:http";
+import net from "node:net";
+import { Console } from "node:console";
+import { AssertionError } from "node:assert";
+
+const log = [];
+class Numbers extends Readable {
+  constructor(limit) { super({ objectMode: true }); this.limit = limit; this.next = 0; }
+  _construct(done) { log.push("_construct"); done(); }
+  _read() { this.push(this.next < this.limit ? this.next++ : null); }
+  _destroy(error, done) { log.push("_destroy of Numbers"); done(error); }
+}
+class Doubler extends Transform {
+  constructor() { super({ objectMode: true }); }
+  _transform(value, encoding, done) { done(null, value * 2); }
+  _flush(done) { this.push("flushed"); done(); }
+}
+class Sink extends Writable {
+  constructor() { super({ objectMode: true }); this.values = []; }
+  _write(value, encoding, done) { this.values.push(value); done(); }
+  _final(done) { log.push("_final"); done(); }
+}
+const sink = new Sink();
+await pipeline(new Numbers(3), new Doubler(), sink);
+console.log(sink.values.join(), log.join());
+
+class Batches extends Writable {
+  batches = [];
+  _writev(chunks, done) { this.batches.push(chunks.map(({ chunk }) => chunk.toString()).join("+")); done(); }
+}
+const batches = new Batches();
+batches.cork();
+batches.write("a");
+batches.write("b");
+batches.uncork();
+batches.end("c");
+await new Promise(resolve => batches.on("finish", resolve));
+console.log(batches.batches.join());
+
+class Echo extends Duplex {
+  _read() {}
+  _write(chunk, encoding, done) { this.push("echo " + chunk); done(); }
+  _final(done) { this.push(null); done(); }
+}
+const echo = new Echo();
+echo.end("duplex");
+console.log((await echo.toArray()).join());
+
+class Loud extends EventEmitter {
+  emit(name, ...args) { log.push("emit " + String(name)); return super.emit(name, ...args); }
+}
+const loud = new Loud();
+loud.on("x", () => {});
+loud.emit("x");
+console.log(log.filter(entry => entry.startsWith("emit")).join());
+
+class CountingAgent extends http.Agent {
+  connections = 0;
+  createConnection(options, callback) { this.connections++; return net.createConnection(options, callback); }
+}
+class Greeter extends http.Server {
+  constructor() { super((request, response) => response.end(this.greeting())); }
+  greeting() { return "from a subclass of Server"; }
+}
+const server = new Greeter();
+await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+const agent = new CountingAgent();
+console.log(await new Promise(resolve => http.get({ host: "127.0.0.1", port: server.address().port, agent }, response => { let text = ""; response.on("data", part => (text += part)).on("end", () => resolve(text)); })), agent.connections);
+agent.destroy();
+server.close();
+
+class Prefixed extends Console {
+  log(...args) { super.log("[prefixed]", ...args); }
+}
+new Prefixed(process.stdout).log("through a subclass of Console");
+class Mine extends AssertionError {
+  constructor() { super({ message: "mine", actual: 1, expected: 2 }); }
+  get name() { return "Mine"; }
+}
+class Address extends URL {
+  get shout() { return this.hostname.toUpperCase(); }
+}
+console.log(new Mine().name, new Mine().code, new Mine() instanceof Error, new Address("http://host.example/").shout);
+//// compression-with-zlib.js
+// node:zlib: gzip, deflate, raw deflate and brotli, each synchronously, with a callback, with promisify and as a stream; options, crc32, a broken input, and constants.
+import zlib from "node:zlib";
+import { promisify } from "node:util";
+import { pipeline } from "node:stream/promises";
+import { Readable, Writable } from "node:stream";
+
+const text = "the quick brown fox ".repeat(50);
+const pairs = [["gzipSync", "gunzipSync"], ["deflateSync", "inflateSync"], ["deflateRawSync", "inflateRawSync"], ["brotliCompressSync", "brotliDecompressSync"]];
+for (const [pack, unpack] of pairs) {
+  const packed = zlib[pack](text);
+  console.log(pack, packed.length < text.length, zlib[unpack](packed).toString() === text);
+}
+console.log(zlib.unzipSync(zlib.gzipSync("either")).toString(), zlib.unzipSync(zlib.deflateSync("form")).toString());
+console.log((await promisify(zlib.gunzip)(await promisify(zlib.gzip)("promisified"))).toString());
+console.log(await new Promise(resolve => zlib.deflate("callback", (error, packed) => zlib.inflate(packed, (error2, plain) => resolve([error, error2, plain].join())))));
+const parts = [];
+await pipeline(Readable.from([text]), zlib.createGzip({ level: 9 }), zlib.createGunzip(), new Writable({ write(chunk, encoding, done) { parts.push(chunk); done(); } }));
+console.log(Buffer.concat(parts).toString() === text);
+const brotli = [];
+await pipeline(Readable.from(["stream of brotli"]), zlib.createBrotliCompress(), zlib.createBrotliDecompress(), new Writable({ write(chunk, encoding, done) { brotli.push(chunk); done(); } }));
+console.log(Buffer.concat(brotli).toString());
+console.log(zlib.gzipSync("a", { level: 0 }).length > zlib.gzipSync("a", { level: 9 }).length - 10, zlib.gzipSync("magic")[0].toString(16), zlib.gzipSync("magic")[1].toString(16));
+try {
+  zlib.gunzipSync(Buffer.from("this is not gzip"));
+} catch (error) {
+  console.log(error.code, error.errno);
+}
+console.log(await promisify(zlib.inflate)(Buffer.from("nor this")).catch(error => error.code));
+console.log(zlib.crc32("hello"), zlib.constants.Z_BEST_COMPRESSION, zlib.constants.BROTLI_PARAM_QUALITY);
+//// computed-require-gets-every-export-of-modules-kept-for-node-http.mjs
+// node:util, node:events, node:stream and node:net are only in the executable because node:http needs them. require() with a computed name finds them, and every export has to work, not only the ones that node:http calls.
+import { createServer } from "node:http";
+
+console.log(typeof createServer);
+const load = name => require(process.env.PREFIX + name);
+
+function Child() {}
+load("util").inherits(Child, Error);
+console.log(Child.super_ === Error, new Child() instanceof Error);
+console.log(load("util").format("%s:%d", "a", 1), load("util").isDeepStrictEqual({ a: [1] }, { a: [1] }));
+console.log(await load("util").promisify(callback => callback(null, "promisified"))());
+console.log(load("events").getEventListeners(new (load("events"))(), "x").length);
+console.log(load("net").isIPv6("::1"), load("net").isIP("1.2.3.4"));
+console.log((await load("stream").Readable.from(["a", "b"]).toArray()).join());
+
+console.log(load("util").callbackify(async () => "called back").length, load("util")._extend({ a: 1 }, { b: 2 }).b);
+console.log(load("util").getSystemErrorName(-2), load("util").types.isDate(new Date(0)), load("util").toUSVString("a\ud800"));
+console.log(load("util").parseArgs({ args: ["--flag"], options: { flag: { type: "boolean" } } }).values.flag);
+console.log(load("util").styleText("bold", "text") === "\x1b[1mtext\x1b[22m", load("util").stripVTControlCharacters("\x1b[1mtext\x1b[22m"));
+console.log(load("events").listenerCount(new (load("events"))(), "x"), load("events").getMaxListeners(new (load("events"))()));
+console.log((await load("events").once(new EventTarget(), "x", { signal: AbortSignal.abort() }).catch(error => error.name)));
+console.log(load("net").isIPv4("1.2.3.4"), new (load("net").BlockList)().check("1.2.3.4"), load("net").getDefaultAutoSelectFamily());
+console.log(load("stream").isReadable(new (load("stream").PassThrough)()), load("stream").getDefaultHighWaterMark(true));
+console.log(await load("stream").promises.pipeline(load("stream").Readable.from(["a"]), new (load("stream").PassThrough)().resume()));
+//// connections-that-fail.js
+// What comes back when nobody answers: tls.connect, https.get, http.get, net.connect and fetch to a port that was just closed; a host name that cannot exist; and a look-up of localhost in every form node:dns has.
+import tls from "node:tls";
+import https from "node:https";
+import http from "node:http";
+import net from "node:net";
+import dns from "node:dns";
+import dnsPromises from "node:dns/promises";
+
+const probe = net.createServer();
+await new Promise(resolve => probe.listen(0, "127.0.0.1", resolve));
+const { port } = probe.address();
+await new Promise(resolve => probe.close(resolve));
+
+const failure = emitter => new Promise(resolve => emitter.on("error", error => resolve(error.code)));
+console.log("tls", await failure(tls.connect({ port, host: "127.0.0.1" })));
+console.log("https", await failure(https.get({ port, host: "127.0.0.1" })));
+console.log("http", await failure(http.get({ port, host: "127.0.0.1" })));
+console.log("net", await failure(net.connect(port, "127.0.0.1")));
+console.log("fetch", await fetch("http://127.0.0.1:" + port).catch(error => error.code));
+
+const local = ["127.0.0.1", "::1"];
+console.log(await new Promise(resolve => dns.lookup("localhost", (error, address, family) => resolve([error, local.includes(address), [4, 6].includes(family)].join()))));
+console.log(await new Promise(resolve => dns.lookup("localhost", { family: 4 }, (error, address, family) => resolve([address, family].join()))));
+console.log(await new Promise(resolve => dns.lookup("localhost", { all: true }, (error, list) => resolve(list.length > 0 && list.every(entry => local.includes(entry.address))))));
+console.log(JSON.stringify(await dnsPromises.lookup("127.0.0.1")), local.includes((await dns.promises.lookup("localhost")).address), dns.promises === dnsPromises);
+console.log(await dnsPromises.lookup("no-such-host.invalid").catch(error => [error.code, error.syscall, error.hostname].join()));
+console.log(await new Promise(resolve => dns.lookupService("127.0.0.1", 80, (error, hostname, service) => resolve([typeof hostname, service].join()))));
+console.log(Array.isArray(dns.getServers()), typeof dns.Resolver, dns.NOTFOUND, typeof dns.setDefaultResultOrder, typeof tls.createSecureContext, tls.DEFAULT_MIN_VERSION, Array.isArray(tls.rootCertificates), tls.getCiphers().length > 0);
+//// consoles-of-ones-own.js
+// node:console: a Console over two streams of the program's own, with groups, tables, counters, assertions, dir with options, formats, and errors that go to the second stream. Then the global console on the real stdout.
+import { Console } from "node:console";
+import { Writable } from "node:stream";
+
+const out = [], err = [];
+const sink = into => new Writable({ write(chunk, encoding, done) { into.push(chunk.toString()); done(); } });
+const own = new Console({ stdout: sink(out), stderr: sink(err), colorMode: false });
+own.log("plain", 1, { a: 1 });
+own.log("%s is %d years and %i, %j %o", "Ada", 36.5, 36.5, { j: 1 }, [1]);
+own.info("info");
+own.debug("debug");
+own.error("error");
+own.warn("warn %s", "formatted");
+own.group("outer");
+own.log("indented");
+own.group();
+own.log("twice\nlines");
+own.groupEnd();
+own.groupEnd();
+own.log("back");
+own.count();
+own.count();
+own.count("label");
+own.countReset();
+own.count();
+own.assert(true, "not printed");
+own.assert(false, "printed %s", "so");
+own.assert(false);
+own.dir({ a: { b: { c: { d: 1 } } } }, { depth: 0 });
+own.table([{ a: 1, b: "x" }, { a: 2, c: true }]);
+own.table([[1, 2], [3, 4]]);
+own.table([{ a: 1, b: 2 }], ["b"]);
+own.table("no table");
+own.trace === undefined || own.log(typeof own.trace, typeof own.time, typeof own.timeEnd, typeof own.timeLog, typeof own.profile);
+console.log(out.join(""));
+console.log("--- the second stream");
+console.log(err.join(""));
+console.log(own instanceof Console, console instanceof Console, typeof console.Console, Object.keys(new Console(process.stdout)).includes("log"));
+console.group("global");
+console.table([{ n: 1 }]);
+console.groupEnd();
+console.log("%c styled", "color: red", "%s left alone");
+//// constant-names-written-in-odd-ways.js
+// Each of these names is a constant, although it is not a plain string in the parentheses. Each module is asked for again under a computed name: it is in. The output is that of plain Bun.
+const viaConstant = "node:readline";
+
+const loaded = [
+  require(("node:dgram")),
+  require(`node:zlib`),
+  require("node:" + "tty"),
+  require(viaConstant),
+  await import("node:dns"),
+  process.getBuiltinModule("node:querystring"),
+  import.meta.require("node:string_decoder"),
+];
+function later() {
+  return require("node:punycode");
+}
+class Holder {
+  method() {
+    return require("node:assert");
+  }
+}
+try {
+  loaded.push(require("node:diagnostics_channel"));
+} catch {}
+loaded.push(later(), new Holder().method());
+console.log(loaded.map(value => typeof value).join());
+
+////= for
+//// create-require-leaves-other-imports-read-by-name/data.json
+{ "name": "data" }
+//// create-require-leaves-other-imports-read-by-name/main.mjs
+// `createRequire(import.meta.url)` is followed like the `require` of a file, so the import that brings it says nothing of loads under unknown names: of the other modules of Bun the program keeps the names that it imports.
+// STATISTIC: FunctionsLowered <= 800
+import { createRequire } from "node:module";
+import { basename } from "node:path";
+import { format } from "node:util";
+import { EventEmitter } from "node:events";
+const load = createRequire(import.meta.url);
+console.log(load("./data.json").name, basename("/a/b.txt"), format("%s", 1), typeof EventEmitter, typeof load.resolve);
+//// create-require-of-a-computed-name.js
+// What createRequire() returns follows the rules of require(name), and having it brings no library module in.
+import "node:path";
+import { createRequire } from "node:module";
+
+const load = createRequire(import.meta.url);
+////= for-2	load
+console.log("went on");
+//// datagrams-on-the-loopback.js
+// node:dgram: two sockets on 127.0.0.1 send each other messages; bind, address, the fields of rinfo, several buffers in one send, connect and disconnect, close, and what is thrown after it.
+import dgram from "node:dgram";
+import { once } from "node:events";
+
+const server = dgram.createSocket("udp4");
+server.bind(0, "127.0.0.1");
+await once(server, "listening");
+const { address, family, port } = server.address();
+console.log(address, family, port > 0);
+
+const client = dgram.createSocket({ type: "udp4" });
+server.on("message", (message, rinfo) => server.send("echo " + message, rinfo.port, rinfo.address));
+client.send("one", port, "127.0.0.1");
+const [first, rinfo] = await once(client, "message");
+console.log(first.toString(), rinfo.address, rinfo.family, rinfo.port === port, rinfo.size);
+console.log(await new Promise(resolve => client.send([Buffer.from("two "), "parts"], port, "127.0.0.1", (error, bytes) => resolve([error, bytes].join()))));
+console.log((await once(client, "message"))[0].toString());
+
+client.connect(port, "127.0.0.1");
+await once(client, "connect");
+console.log(client.remoteAddress().port === port);
+client.send("connected");
+console.log((await once(client, "message"))[0].toString());
+client.disconnect();
+////= lines-3	client.remoteAddress(
+client.close();
+await once(client, "close");
+////= lines-3	client.send("late", port
+await new Promise(resolve => server.close(resolve));
+console.log(typeof dgram.Socket, server instanceof dgram.Socket);
+//// emitters-in-loops-with-none-one-and-several-listeners-and-up-to-five-arguments.js
+// emit() called in loops, where the compiler may take its body in: no listener, one, several; no argument up to five; names that are
+// written, computed and symbols; listeners that add, remove and throw; "error"; rejections that are captured; receivers that are no emitters.
+import { EventEmitter, errorMonitor, captureRejectionSymbol } from "node:events";
+
+const lines = [];
+const say = (...parts) =>
+  lines.push(parts.map(part => (typeof part === "symbol" ? part.toString() : String(part))).join(" "));
+
+function countsOfArguments() {
+  const emitter = new EventEmitter();
+  let seen = "";
+  emitter.on("none", function () {
+    seen += arguments.length + (this === emitter ? "t" : "f");
+  });
+  emitter.on("one", function (a) {
+    seen += arguments.length + ":" + a;
+  });
+  emitter.on("two", function (a, b) {
+    seen += arguments.length + ":" + a + b;
+  });
+  emitter.on("three", function (a, b, c) {
+    seen += arguments.length + ":" + a + b + c;
+  });
+  emitter.on("four", function (a, b, c, d) {
+    seen += arguments.length + ":" + a + b + c + d;
+  });
+  emitter.on("five", function (...all) {
+    seen += all.length + ":" + all.join("");
+  });
+  let heard = 0;
+  for (let i = 0; i < 3; i++) {
+    if (emitter.emit("none")) heard++;
+    if (emitter.emit("one", i)) heard++;
+    if (emitter.emit("two", i, "b")) heard++;
+    if (emitter.emit("three", i, "b", undefined)) heard++;
+    if (emitter.emit("four", i, null, "c", "d")) heard++;
+    if (emitter.emit("five", i, 2, 3, 4, 5)) heard++;
+    if (emitter.emit("nobody", i)) heard++;
+  }
+  say("counts", heard, seen);
+}
+
+function severalListeners() {
+  const emitter = new EventEmitter();
+  let seen = "";
+  for (const mark of ["a", "b", "c"])
+    emitter.on("tick", function (x, y) {
+      seen += mark + arguments.length + (x ?? "-") + (y ?? "-") + (this === emitter ? "" : "!");
+    });
+  for (let i = 0; i < 2; i++) {
+    emitter.emit("tick");
+    emitter.emit("tick", i);
+    emitter.emit("tick", i, i + 1);
+    emitter.emit("tick", i, i + 1, 3, 4, 5, 6);
+  }
+  say("several", seen);
+}
+
+function listenersThatChangeTheList() {
+  const emitter = new EventEmitter();
+  let seen = "";
+  const late = () => {
+    seen += "L";
+  };
+  const first = () => {
+    seen += "1";
+    emitter.on("tick", late);
+  };
+  const second = () => {
+    seen += "2";
+    emitter.off("tick", third);
+  };
+  const third = () => {
+    seen += "3";
+  };
+  emitter.on("tick", first);
+  for (let i = 0; i < 2; i++) {
+    emitter.emit("tick");
+    seen += "|";
+  }
+  emitter.removeAllListeners("tick");
+  emitter.on("tick", second);
+  emitter.on("tick", third);
+  for (let i = 0; i < 2; i++) {
+    emitter.emit("tick");
+    seen += "|";
+  }
+  emitter.once("only", x => {
+    seen += "o" + x;
+  });
+  for (let i = 0; i < 3; i++) {
+    const heard = emitter.emit("only", i);
+    seen += heard ? "T" : "F";
+  }
+  say("changes", seen, emitter.listenerCount("tick"), emitter.listenerCount("only"));
+}
+
+function namesOfEveryKind() {
+  const emitter = new EventEmitter();
+  const key = Symbol("key");
+  const names = ["open", "data", key, "4", "__proto__", "constructor", "error"];
+  let seen = "";
+  for (const name of names)
+    emitter.on(name, x => {
+      seen += String(typeof name === "symbol" ? "sym" : name) + x + ",";
+    });
+  for (let i = 0; i < names.length + 2; i++) {
+    const heard = emitter.emit(names[i % (names.length + 1)], i);
+    if (!heard) seen += "no" + i + ",";
+  }
+  for (let i = 0; i < 2; i++) {
+    const heard = emitter.emit(4, i);
+    if (!heard) seen += "number-no,";
+  }
+  say("names", seen);
+}
+
+function errors() {
+  const emitter = new EventEmitter();
+  for (let i = 0; i < 2; i++) {
+    try {
+      emitter.emit("error", new RangeError("unheard " + i));
+    } catch (error) {
+      say("thrown", error.name, error.message);
+    }
+    try {
+      emitter.emit("error", "text " + i);
+    } catch (error) {
+      say("thrown", error.name, error.code, error.context);
+    }
+    try {
+      emitter.emit("error");
+    } catch (error) {
+      say("thrown", error.name, error.code, error.context);
+    }
+  }
+  emitter.on(errorMonitor, error => say("monitor", error.message));
+  try {
+    emitter.emit("error", new Error("monitored"));
+  } catch (error) {
+    say("thrown", error.message);
+  }
+  emitter.on("error", (error, more) => say("heard", error.message, more));
+  for (let i = 0; i < 2; i++) say("answer", emitter.emit("error", new Error("heard " + i), i));
+  emitter.on("tick", x => {
+    throw new TypeError("from the listener " + x);
+  });
+  for (let i = 0; i < 2; i++) {
+    try {
+      emitter.emit("tick", i);
+    } catch (error) {
+      say("thrown", error.name, error.message);
+    }
+  }
+  emitter.on("tick", () => say("never reached"));
+  for (let i = 0; i < 2; i++) {
+    try {
+      emitter.emit("tick", i);
+    } catch (error) {
+      say("thrown", error.name, error.message);
+    }
+  }
+}
+
+function otherReceivers() {
+  const emit = EventEmitter.prototype.emit;
+  const bare = Object.create(EventEmitter.prototype);
+  const plain = {
+    _events: {
+      tick: function (x) {
+        say("plain", x, this === plain);
+      },
+    },
+  };
+  const odd = { _events: { tick: 5, list: [x => say("first of a list", x), x => say("second of a list", x)] } };
+  for (let i = 0; i < 2; i++) {
+    say("bare", bare.emit("tick", i), emit.call({}, "tick", i), emit.call(plain, "tick", i), emit.call(odd, "list", i));
+    try {
+      say(emit.call(odd, "tick", i));
+    } catch (error) {
+      say("thrown", error.name);
+    }
+    try {
+      say(emit.call(undefined, "tick", i));
+    } catch (error) {
+      say("thrown", error.name);
+    }
+    try {
+      say(emit.call(5, "tick", i));
+    } catch (error) {
+      say("thrown", error.name);
+    }
+  }
+  class Source extends EventEmitter {
+    push(chunk) {
+      return this.emit("data", chunk, this.constructor.name);
+    }
+  }
+  const source = new Source();
+  source.on("data", (chunk, name) => say("source", chunk, name));
+  for (let i = 0; i < 2; i++) say(source.push(i));
+  source.emit = function (name, ...rest) {
+    say("replaced", name, rest.length);
+    return "mine";
+  };
+  for (let i = 0; i < 2; i++) say(source.push(i));
+}
+
+async function capturedRejections() {
+  const emitter = new EventEmitter({ captureRejections: true });
+  emitter.on("error", error => say("captured", error.message));
+  emitter.on("one", async (a, b) => {
+    throw new Error("one " + a + b);
+  });
+  emitter.on("many", async a => {
+    throw new Error("many first " + a);
+  });
+  emitter.on("many", async (a, b, c, d, e) => {
+    throw new Error("many second " + a + b + c + d + e);
+  });
+  for (let i = 0; i < 2; i++) {
+    emitter.emit("one", i, "x");
+    emitter.emit("many", i, 2, 3, 4, 5);
+  }
+  await new Promise(resolve => setTimeout(resolve, 5));
+  const own = new EventEmitter({ captureRejections: true });
+  own[captureRejectionSymbol] = (error, name, ...rest) => say("own", error.message, name, rest.length, rest.join("+"));
+  own.on("tick", async () => {
+    throw new Error("kept");
+  });
+  for (let i = 0; i < 2; i++) own.emit("tick", i, "second", "third");
+  await new Promise(resolve => setTimeout(resolve, 5));
+  const thenable = new EventEmitter({ captureRejections: true });
+  thenable.on("error", error => say("thenable", error));
+  thenable.on("tick", x => ({
+    then(resolve, reject) {
+      reject("refused " + x);
+    },
+  }));
+  for (let i = 0; i < 2; i++) thenable.emit("tick", i);
+  await new Promise(resolve => setTimeout(resolve, 5));
+}
+
+countsOfArguments();
+severalListeners();
+listenersThatChangeTheList();
+namesOfEveryKind();
+errors();
+otherReceivers();
+await capturedRejections();
+console.log(lines.join("\n"));
+//// esbuild-require-shim.mjs
+// esbuild puts this __require in every ES module bundle that contains a CommonJS require() of a built-in module.
+var __require = /* @__PURE__ */ (x =>
+  typeof require !== "undefined"
+    ? require
+    : typeof Proxy !== "undefined"
+      ? new Proxy(x, {
+          get: (a, b) => (typeof require !== "undefined" ? require : a)[b],
+        })
+      : x)(function (x) {
+  if (typeof require !== "undefined") return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x + '" is not supported');
+});
+
+function Child() {}
+__require("util").inherits(Child, Error);
+console.log(Child.super_ === Error);
+const zlib = __require("zlib");
+console.log(zlib.gunzipSync(__require("node:zlib").gzipSync("text")).toString());
+console.log(__require(process.argv.length > 99 ? "node:dgram" : "node:querystring").stringify({ a: 1 }));
+console.log(typeof __require.resolve, __require("path") === __require("node:path"));
+//// esbuild-require-shim-in-a-shared-chunk/chunk.mjs
+import { createRequire } from "node:module";
+globalThis["require"] ??= createRequire(import.meta.url);
+var t=(a=>typeof require<"u"?require:typeof Proxy<"u"?new Proxy(a,{get:(b,c)=>(typeof require<"u"?require:b)[c]}):a)(function(a){if(typeof require<"u")return require.apply(this,arguments);throw Error('Dynamic require of "'+a+'" is not supported')});
+var v=(a,b)=>()=>{try{return b||a((b={exports:{}}).exports,b),b.exports}catch(c){throw b=0,c}};
+export{t as c,v as e};
+//// esbuild-require-shim-in-a-shared-chunk/main.mjs
+// With code splitting, esbuild exports its minified __require from a shared chunk and every other chunk imports it. `ng build` writes an Angular server this way, with the `inherits` package inside.
+import { createRequire } from "node:module";
+globalThis["require"] ??= createRequire(import.meta.url);
+import { c as E, e as v } from "./chunk.mjs";
+import { load } from "./reexport.mjs";
+
+var browser = v((exports, module) => {
+  module.exports = function () {
+    throw new Error("the fallback for browsers ran");
+  };
+});
+var inherits = v((exports, module) => {
+  try {
+    if (((util = E("util")), typeof util.inherits != "function")) throw "";
+    module.exports = util.inherits;
+  } catch {
+    module.exports = browser();
+  }
+  var util;
+});
+
+function Child() {}
+inherits()(Child, Error);
+console.log(Child.super_ === Error);
+console.log(E("zlib").gunzipSync(E("zlib").gzipSync("text")).toString());
+console.log(E("string_decoder").StringDecoder.name, E("querystring").stringify({ a: 1 }), E("os").EOL === "\n");
+console.log(load("node:dgram").createSocket("udp4").constructor.name);
+//// esbuild-require-shim-in-a-shared-chunk/reexport.mjs
+import { c } from "./chunk.mjs";
+export { c as load };
+//// event-emitters.js
+// node:events: on, once, off, prepend, the order of listeners, listeners that remove themselves, the error event with and without a listener, newListener, counts and names, once() and on() as promises and iterators, an AbortSignal, captureRejections, a subclass, and EventTarget helpers.
+import EventEmitter, { once, on, getEventListeners, errorMonitor, setMaxListeners, EventEmitterAsyncResource } from "node:events";
+
+const log = [];
+const emitter = new EventEmitter();
+emitter.on("newListener", name => log.push("new " + String(name)));
+emitter.on("a", value => log.push("first " + value));
+emitter.prependListener("a", value => log.push("prepended " + value));
+emitter.once("a", value => log.push("once " + value));
+console.log(emitter.emit("a", 1), emitter.emit("a", 2), emitter.emit("nobody"));
+console.log(log.join(", "));
+console.log(emitter.listenerCount("a"), emitter.eventNames().join(), emitter.listeners("a").length, emitter.rawListeners("a").length);
+function removable() { log.push("removable"); }
+emitter.on("b", removable).off("b", removable);
+emitter.removeAllListeners("a");
+console.log(emitter.listenerCount("a"), emitter.listenerCount("b"), emitter.getMaxListeners(), EventEmitter.defaultMaxListeners);
+
+try {
+  emitter.emit("error", new RangeError("nobody listens"));
+} catch (error) {
+  console.log("thrown:", error.message);
+}
+////= lines-3	emitter.emit("error", "no error object"
+emitter.on(errorMonitor, error => console.log("monitor:", error.message));
+emitter.on("error", error => console.log("handled:", error.message));
+emitter.emit("error", new Error("somebody listens"));
+
+setImmediate(() => emitter.emit("later", "x", "y"));
+console.log((await once(emitter, "later")).join());
+setImmediate(() => emitter.emit("error", new Error("while waiting")));
+console.log(await once(emitter, "never").catch(error => "rejected: " + error.message));
+const controller = new AbortController();
+setImmediate(() => controller.abort());
+console.log(await once(emitter, "never", { signal: controller.signal }).catch(error => error.name + " " + error.code));
+
+setImmediate(() => { emitter.emit("tick", 1); emitter.emit("tick", 2); emitter.emit("tick", 3); });
+const ticks = [];
+for await (const [value] of on(emitter, "tick")) {
+  ticks.push(value);
+  if (value === 3) break;
+}
+console.log(ticks.join());
+
+const capturing = new EventEmitter({ captureRejections: true });
+const captured = new Promise(resolve => capturing.on("error", error => resolve("captured: " + error.message)));
+capturing.on("go", async () => { throw new Error("from an async listener"); });
+capturing.emit("go");
+console.log(await captured);
+
+class Door extends EventEmitter { open() { return this.emit("open", this); } }
+const door = new Door();
+door.on("open", function (self) { console.log(this === door, self === door, this instanceof EventEmitter); });
+door.open();
+const target = new EventTarget();
+target.addEventListener("x", () => {});
+setMaxListeners(5, target, door);
+console.log(getEventListeners(target, "x").length, getEventListeners(door, "open").length, door.getMaxListeners(), typeof EventEmitterAsyncResource);
+//// every-member-of-what-get-heap-statistics-answers.ts
+// node:v8's getHeapStatistics(): every member read by its name, by a computed name, through Object.entries and JSON.stringify; the members that are constants in the library are what plain Bun answers.
+import { getHeapStatistics } from "node:v8";
+const stats: any = getHeapStatistics();
+const key = process.argv.length > 100 ? "x" : "does_zap_garbage";
+console.log(stats[key], stats.does_zap_garbage, typeof stats[key]);
+console.log(JSON.stringify(stats).includes('"does_zap_garbage":0'), JSON.stringify(Object.entries(stats).filter(([name]) => name.startsWith("does") || name.endsWith("contexts") || name.endsWith("handles_size"))));
+const typed = getHeapStatistics();
+console.log(typed.does_zap_garbage, typed.does_zap_garbage === 0, typed.does_zap_garbage + 1, typed.number_of_detached_contexts, typed.total_global_handles_size === 8192, typed.used_global_handles_size);
+console.log(Object.keys(typed).sort().join(), Object.values(typed).every(value => typeof value === "number"));
+if (typed.does_zap_garbage) console.log("zaps");
+else console.log("does not zap");
+//// file-streams.js
+// fs.createWriteStream and fs.createReadStream alone: write and finish, read whole, read a range, small pieces, append, pipe from one to the other, a file that is not there, a descriptor that is passed in, and the streams of a FileHandle.
+import fs from "node:fs";
+import { open } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { once } from "node:events";
+
+const folder = fs.mkdtempSync(path.join(os.tmpdir(), "library-modules-"));
+const at = name => path.join(folder, name);
+
+const out = fs.createWriteStream(at("a.txt"));
+out.write("alpha ");
+out.write(Buffer.from("beta "));
+out.end("gamma");
+await once(out, "finish");
+console.log(out.bytesWritten, path.basename(out.path), fs.readFileSync(at("a.txt"), "utf8"));
+
+async function read(stream) {
+  const parts = [];
+  for await (const part of stream) parts.push(part.toString());
+  return parts;
+}
+console.log((await read(fs.createReadStream(at("a.txt")))).join("|"));
+console.log((await read(fs.createReadStream(at("a.txt"), { start: 6, end: 9 }))).join("|"));
+console.log((await read(fs.createReadStream(at("a.txt"), { highWaterMark: 6, encoding: "utf8" }))).join("|"));
+
+const more = fs.createWriteStream(at("a.txt"), { flags: "a" });
+more.end(" delta");
+await once(more, "close");
+const copy = fs.createWriteStream(at("b.txt"));
+fs.createReadStream(at("a.txt")).pipe(copy);
+await once(copy, "finish");
+console.log(fs.readFileSync(at("b.txt"), "utf8"));
+
+console.log(await once(fs.createReadStream(at("missing")), "error").then(([error]) => [error.code, error.syscall].join()));
+console.log(await once(fs.createWriteStream(at("no/such/folder.txt")), "error").then(([error]) => error.code));
+
+const descriptor = fs.openSync(at("a.txt"), "r");
+console.log((await read(fs.createReadStream(null, { fd: descriptor, end: 4 }))).join("|"));
+const opened = fs.createReadStream(at("a.txt"));
+const [whenOpen, whenReady] = await Promise.all([once(opened, "open"), once(opened, "ready")]);
+console.log(typeof whenOpen[0], whenReady.length);
+opened.destroy();
+
+const handle = await open(at("c.txt"), "w+");
+const viaHandle = handle.createWriteStream();
+viaHandle.end("through a handle");
+await once(viaHandle, "close");
+console.log(fs.readFileSync(at("c.txt"), "utf8"));
+fs.rmSync(folder, { recursive: true });
+//// files-through-fs-promises.js
+// node:fs/promises in a temporary folder: write, append, read, copy, rename, stat, list, a file handle, a link, access to a file that is not there, and removal.
+import { mkdtemp, writeFile, appendFile, readFile, copyFile, rename, stat, readdir, open, symlink, readlink, realpath, access, rm, mkdir, truncate, utimes, chmod, lstat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, basename } from "node:path";
+
+const folder = await mkdtemp(join(tmpdir(), "library-modules-"));
+const at = name => join(folder, name);
+await writeFile(at("a.txt"), "first\n");
+await appendFile(at("a.txt"), "second\n");
+console.log(JSON.stringify(await readFile(at("a.txt"), "utf8")), (await readFile(at("a.txt"))).length);
+await copyFile(at("a.txt"), at("b.txt"));
+await rename(at("b.txt"), at("c.txt"));
+await mkdir(at("deep/er"), { recursive: true });
+await writeFile(at("deep/er/d.txt"), new Uint8Array([104, 105]));
+const info = await stat(at("c.txt"));
+console.log(info.size, info.isFile(), info.isDirectory(), (await stat(at("deep"))).isDirectory());
+console.log((await readdir(folder)).sort().join(), (await readdir(folder, { recursive: true })).sort().join());
+console.log((await readdir(folder, { withFileTypes: true })).map(entry => entry.name + ":" + entry.isDirectory()).sort().join());
+const handle = await open(at("c.txt"), "r+");
+const buffer = Buffer.alloc(5);
+console.log((await handle.read(buffer, 0, 5, 6)).bytesRead, buffer.toString());
+await handle.write("FIRST", 0);
+await handle.close();
+console.log((await readFile(at("c.txt"), "utf8")).split("\n")[0]);
+await symlink(at("c.txt"), at("link"));
+console.log(basename(await readlink(at("link"))), basename(await realpath(at("link"))), (await lstat(at("link"))).isSymbolicLink());
+await truncate(at("c.txt"), 3);
+await utimes(at("c.txt"), 1, 2);
+await chmod(at("c.txt"), 0o600);
+const changed = await stat(at("c.txt"));
+console.log(changed.size, changed.mtimeMs, (changed.mode & 0o777).toString(8));
+console.log(await access(at("missing")).catch(error => [error.code, error.syscall, error.errno < 0].join()));
+console.log(await readFile(at("deep")).catch(error => error.code));
+await rm(folder, { recursive: true });
+console.log(await stat(folder).catch(error => error.code));
+//// files-through-the-synchronous-and-the-callback-functions.js
+// node:fs without promises: the Sync functions, the callback forms, read and write streams, a descriptor, and errors that are thrown or handed to the callback.
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const folder = fs.mkdtempSync(path.join(os.tmpdir(), "library-modules-"));
+const at = name => path.join(folder, name);
+fs.writeFileSync(at("a.txt"), "alpha beta gamma");
+console.log(fs.existsSync(at("a.txt")), fs.existsSync(at("b.txt")), fs.readFileSync(at("a.txt"), "utf8"), fs.statSync(at("a.txt")).size);
+const descriptor = fs.openSync(at("a.txt"), "r");
+const buffer = Buffer.alloc(4);
+fs.readSync(descriptor, buffer, 0, 4, 6);
+fs.closeSync(descriptor);
+console.log(buffer.toString());
+try {
+  fs.readFileSync(at("missing"));
+} catch (error) {
+  console.log(error.code, error.syscall, error instanceof Error);
+}
+console.log(fs.statSync(at("missing"), { throwIfNoEntry: false }));
+console.log(await new Promise(resolve => fs.readFile(at("a.txt"), "utf8", (error, text) => resolve([error, text.length].join()))));
+console.log(await new Promise(resolve => fs.readFile(at("missing"), error => resolve(error.code))));
+await new Promise((resolve, reject) => {
+  const out = fs.createWriteStream(at("copy.txt"));
+  fs.createReadStream(at("a.txt"), { start: 6, end: 9, encoding: "utf8" }).on("error", reject).pipe(out);
+  out.on("finish", resolve);
+});
+console.log(fs.readFileSync(at("copy.txt"), "utf8"));
+let pieces = 0;
+for await (const piece of fs.createReadStream(at("a.txt"), { highWaterMark: 5 })) pieces += piece.length > 0 ? 1 : 0;
+console.log(pieces);
+fs.mkdirSync(at("x/y"), { recursive: true });
+fs.renameSync(at("copy.txt"), at("x/y/moved.txt"));
+console.log(fs.readdirSync(folder).sort().join(), fs.readdirSync(at("x/y")).join());
+const directory = fs.opendirSync(folder);
+const names = [];
+for (let entry; (entry = directory.readSync()); ) names.push(entry.name);
+directory.closeSync();
+console.log(names.sort().join());
+fs.rmSync(folder, { recursive: true, force: true });
+console.log(fs.existsSync(folder), typeof fs.constants.O_RDONLY, fs.constants.F_OK);
+//// functions-of-a-library-module-under-computed-names.js
+// The modules are imported by constant names; which of their functions is called is decided where the program runs. The names come from the environment, so every function of these modules may be the one.
+import * as path from "node:path";
+import fs from "node:fs";
+import os from "node:os";
+import util from "node:util";
+import zlib from "node:zlib";
+import crypto from "node:crypto";
+const url = require("node:url");
+
+const [pathName, fsName, osName, utilName, zlibName, unzipName, cryptoName, urlName, typeName] = process.env.NAMES.split(",");
+console.log(path[pathName]("/a/b/c.txt"), fs[fsName]("/"), typeof os[osName](), util[utilName]("%s!", "formatted"));
+console.log(zlib[unzipName](zlib[zlibName]("packed")).toString(), crypto[cryptoName]("sha1").update("x").digest("hex").slice(0, 8), url[urlName]("file:///C:/x/y"), util.types[typeName](new Map()));
+const { [pathName]: picked } = path.posix;
+console.log(picked("/p/q"), Reflect.get(path, pathName)("/r/s"), Object.entries(path).find(([name]) => name === pathName)[1]("/t/u"));
+function call(module, name, ...args) {
+  return module[name](...args);
+}
+console.log(call(path, "ext" + "name", "a.b"), call(os, "end" + "ianness").length, call(util, "is" + "DeepStrictEqual", [1], [1]));
+//// functions-of-the-bun-object.js
+// The global Bun, by constant names: files, hashing, compression, globs, versions, escaping, equality, inspection, widths, spawning, sleeping, TOML, paths, colors and the environment.
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const file = join(tmpdir(), "library-modules-" + process.pid + ".txt");
+console.log(await Bun.write(file, "written by Bun"), await Bun.file(file).text(), Bun.file(file).size, await Bun.file(file).exists(), Bun.file(file).type, (await Bun.file(file).arrayBuffer()).byteLength, (await Bun.file(file).bytes()).length);
+const writer = Bun.file(file).writer();
+writer.write("one ");
+writer.write("two");
+await writer.end();
+console.log(await Bun.file(file).text(), await Bun.file(file).slice(4).text());
+await Bun.file(file).delete();
+console.log(await Bun.file(file).exists(), await Bun.file(file).text().catch(error => error.code));
+
+console.log(Bun.hash("abc").toString(16), Bun.hash.crc32("abc"), Bun.hash.adler32("abc"), Bun.hash.wyhash("abc", 1n).toString(16), new Bun.CryptoHasher("sha256").update("abc").digest("hex").slice(0, 16), Bun.SHA1.hash("abc", "hex").slice(0, 8), Bun.CryptoHasher.algorithms.includes("md5"));
+console.log(new TextDecoder().decode(Bun.gunzipSync(Bun.gzipSync("zipped"))), new TextDecoder().decode(Bun.inflateSync(Bun.deflateSync("deflated"))), new TextDecoder().decode(Bun.zstdDecompressSync(Bun.zstdCompressSync("zstd"))));
+console.log(new Bun.Glob("*.{js,ts}").match("a.ts"), new Bun.Glob("**/x/*.js").match("a/b/x/c.js"), new Bun.Glob("a?c").match("abd"));
+console.log(Bun.semver.satisfies("1.2.3", "^1.2.0"), Bun.semver.satisfies("2.0.0", "^1.2.0"), Bun.semver.order("1.0.0", "1.0.1"));
+console.log(Bun.escapeHTML('<a href="x">&</a>'), Bun.deepEquals({ a: [1] }, { a: [1] }), Bun.deepEquals({ a: 1 }, { a: 1, b: undefined }, true), Bun.deepMatch({ a: 1 }, { a: 1, b: 2 }), Bun.stringWidth("日本"), Bun.stringWidth("\u001b[31mred\u001b[0m"), Bun.stripANSI("\u001b[31mred\u001b[0m"));
+console.log(Bun.inspect({ a: new Map([[1, 2]]) }), Bun.inspect("text"), Bun.inspect.table([{ a: 1 }]).split("\n").length, typeof Bun.inspect.custom);
+console.log(JSON.stringify(Bun.TOML.parse('a = 1\n[b]\nc = "d"')), Bun.fileURLToPath("file:///C:/a/b"), Bun.pathToFileURL("/a b").href, Bun.color("red", "hex"), Bun.color("#00f", "css"), JSON.stringify(Bun.color("rgb(1,2,3)", "{rgb}")));
+const child = Bun.spawn(["sh", "-c", "cat; echo err >&2; exit 3"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+child.stdin.write("piped in");
+child.stdin.end();
+console.log(await child.stdout.text(), (await child.stderr.text()).trim(), await child.exited, child.exitCode, child.signalCode, child.killed, typeof child.pid);
+const sync = Bun.spawnSync(["echo", "sync"]);
+console.log(sync.stdout.toString().trim(), sync.exitCode, sync.success, Bun.which("sh") !== null, Bun.which("no-such-program-anywhere"));
+console.log((await Bun.$`echo shell ${"with a space"}`.text()).trim(), (await Bun.$`exit 2`.nothrow().quiet()).exitCode);
+const before = Bun.nanoseconds();
+await Bun.sleep(2);
+Bun.sleepSync(1);
+console.log(Bun.nanoseconds() > before, typeof Bun.version, typeof Bun.revision, Bun.env === process.env, typeof Bun.main, Bun.isMainThread, typeof Bun.gc(true), Bun.peek(Promise.resolve(5)), Bun.peek.status(new Promise(() => {})));
+console.log(await Bun.readableStreamToText(new Response("stream").body), (await Bun.readableStreamToArray(new ReadableStream({ start(c) { c.enqueue(1); c.close(); } }))).join(), Bun.concatArrayBuffers([new Uint8Array([1]), new Uint8Array([2])]).byteLength, Bun.indexOfLine(new TextEncoder().encode("a\nb"), 0), /^[0-9a-f-]{36}$/.test(Bun.randomUUIDv7()));
+//// get-builtin-module-through-the-global-object-gets-constant-names.ts
+// process.getBuiltinModule is reached through `globalThis.process` or `global.process`, through `?.` and through a type assertion, and the name is a constant: each module is in, though nothing else names it. The output is that of plain Bun.
+interface Hooks {
+  AsyncLocalStorage: unknown;
+}
+const hooks = (
+  globalThis as {
+    process?: { getBuiltinModule?: (id: string) => unknown };
+  }
+).process?.getBuiltinModule?.("async_hooks") as Hooks | undefined;
+console.log("assertion and chain:", typeof hooks?.AsyncLocalStorage);
+console.log("plain:", typeof globalThis.process.getBuiltinModule("node:dgram").createSocket);
+console.log("chain:", typeof globalThis.process?.getBuiltinModule?.("node:readline")?.createInterface);
+console.log("global:", typeof global.process.getBuiltinModule("node:querystring").parse);
+console.log("no such module:", globalThis.process.getBuiltinModule("node:no-such-module"));
+
+function shadowed(globalThis: { process: { getBuiltinModule(name: string): string } }) {
+  return globalThis.process.getBuiltinModule("node:tty");
+}
+console.log("a parameter of that name:", shadowed({ process: { getBuiltinModule: name => "mine " + name } }));
+//// hashes-ciphers-and-keys.js
+// node:crypto: hashes and HMACs in several encodings, updates in pieces, key derivation, ciphers with and without authentication, signatures, random values, comparison in constant time, and the web's subtle interface.
+import crypto from "node:crypto";
+
+for (const name of ["md5", "sha1", "sha256", "sha512"]) console.log(name, crypto.createHash(name).update("abc").digest("hex").slice(0, 16));
+console.log(crypto.createHash("sha256").update("a").update(Buffer.from("b")).update(new Uint8Array([99])).digest("base64"));
+console.log(crypto.createHmac("sha256", "key").update("message").digest("hex").slice(0, 16), crypto.hash?.("sha1", "abc").slice(0, 8));
+console.log(crypto.pbkdf2Sync("password", "salt", 1000, 16, "sha256").toString("hex"), crypto.scryptSync("password", "salt", 16, { N: 16 }).toString("hex"));
+console.log((await new Promise(resolve => crypto.pbkdf2("password", "salt", 10, 8, "sha1", (error, key) => resolve(key)))).toString("hex"));
+
+const key = Buffer.alloc(32, 1), iv = Buffer.alloc(16, 2);
+const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
+const secret = Buffer.concat([cipher.update("attack at dawn"), cipher.final()]);
+const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+console.log(secret.toString("hex"), Buffer.concat([decipher.update(secret), decipher.final()]).toString());
+
+const sealed = crypto.createCipheriv("aes-256-gcm", key, iv.subarray(0, 12));
+sealed.setAAD(Buffer.from("header"));
+const box = Buffer.concat([sealed.update("sealed"), sealed.final()]), tag = sealed.getAuthTag();
+const opened = crypto.createDecipheriv("aes-256-gcm", key, iv.subarray(0, 12)).setAAD(Buffer.from("header")).setAuthTag(tag);
+console.log(box.toString("hex"), tag.length, Buffer.concat([opened.update(box), opened.final()]).toString());
+const forged = crypto.createDecipheriv("aes-256-gcm", key, iv.subarray(0, 12)).setAAD(Buffer.from("other")).setAuthTag(tag);
+forged.update(box);
+try {
+  forged.final();
+} catch (error) {
+  console.log("forged:", error instanceof Error);
+}
+
+const pair = crypto.generateKeyPairSync("ed25519");
+const signature = crypto.sign(null, Buffer.from("signed"), pair.privateKey);
+console.log(signature.length, crypto.verify(null, Buffer.from("signed"), pair.publicKey, signature), crypto.verify(null, Buffer.from("changed"), pair.publicKey, signature));
+console.log(pair.publicKey.type, pair.privateKey.asymmetricKeyType, pair.publicKey.export({ type: "spki", format: "pem" }).split("\n")[0]);
+
+console.log(crypto.randomBytes(8).length, /^[0-9a-f-]{36}$/.test(crypto.randomUUID()), crypto.randomInt(5) < 5, crypto.getRandomValues(new Uint8Array(4)).length);
+console.log(crypto.timingSafeEqual(Buffer.from("same"), Buffer.from("same")), crypto.timingSafeEqual(Buffer.from("same"), Buffer.from("diff")));
+console.log(Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("abc"))).toString("hex").slice(0, 16), crypto.webcrypto.subtle === crypto.subtle);
+console.log(crypto.getHashes().includes("sha256"), crypto.getCiphers().includes("aes-256-gcm"));
+try {
+  crypto.createHash("no-such-hash");
+} catch (error) {
+  console.log(error instanceof Error);
+}
+//// http2-without-encryption.js
+// node:http2 over a plain socket: a server with streams, a client session, request and response headers, a body in both directions, several streams on one session, a status of 404, the compatibility interface, and the end of the session.
+import http2 from "node:http2";
+import { once } from "node:events";
+
+const server = http2.createServer();
+server.on("stream", (stream, headers) => {
+  const path = headers[":path"];
+  if (path === "/echo") {
+    stream.respond({ ":status": 200, "x-method": headers[":method"] });
+    return stream.pipe(stream);
+  }
+  if (path === "/missing") return stream.respond({ ":status": 404 }, { endStream: true });
+  stream.respond({ ":status": 200, "content-type": "text/plain" });
+  stream.end("hello " + path);
+});
+server.listen(0, "127.0.0.1");
+await once(server, "listening");
+const session = http2.connect("http://127.0.0.1:" + server.address().port);
+await once(session, "connect");
+
+async function ask(headers, body) {
+  const stream = session.request(headers, { endStream: body === undefined });
+  if (body !== undefined) stream.end(body);
+  const [response] = await once(stream, "response");
+  let text = "";
+  stream.setEncoding("utf8");
+  for await (const part of stream) text += part;
+  return [response[":status"], response["x-method"], response["content-type"], text].join(" | ");
+}
+console.log(await ask({ ":path": "/a" }));
+console.log(await ask({ ":path": "/echo", ":method": "POST" }, "sent up and back"));
+console.log(await ask({ ":path": "/missing" }));
+console.log((await Promise.all([1, 2, 3].map(n => ask({ ":path": "/" + n })))).join(" ; "));
+console.log(session.encrypted, session.closed, session.destroyed, typeof session.localSettings.maxConcurrentStreams, http2.constants.HTTP2_HEADER_STATUS, http2.constants.NGHTTP2_NO_ERROR, typeof http2.getDefaultSettings().initialWindowSize);
+await new Promise(resolve => session.close(resolve));
+console.log(session.closed);
+await new Promise(resolve => server.close(resolve));
+
+const compatible = http2.createServer((request, response) => {
+  response.setHeader("x-version", request.httpVersion);
+  response.end(request.method + " " + request.url);
+});
+compatible.listen(0, "127.0.0.1");
+await once(compatible, "listening");
+const second = http2.connect("http://127.0.0.1:" + compatible.address().port);
+const stream = second.request({ ":path": "/compat" });
+const [headers] = await once(stream, "response");
+let text = "";
+for await (const part of stream) text += part;
+console.log(headers["x-version"], text);
+second.close();
+await new Promise(resolve => compatible.close(resolve));
+//// import-meta-require-of-a-computed-name.js
+// import.meta.require(name) follows the rules of require(name).
+import "node:path";
+
+////= for-2	import.meta.require
+console.log("went on");
+//// import-of-a-computed-name.js
+// import(name): the promise is rejected with ERR_MODULE_NOT_FOUND for a library module that is not in the executable; await in try, .catch and the second argument of .then all get it. Plain Bun finds the module.
+import "node:path";
+
+for (const name of process.env.NAMES.split(",")) {
+  try {
+    console.log(name, typeof (await import(name)));
+  } catch (error) {
+    console.log(name, error.code, error instanceof Error);
+  }
+  console.log(name, await import(name).then(loaded => typeof loaded, error => "rejected " + error.code));
+  console.log(name, await import(name).then(loaded => typeof loaded).catch(error => "caught " + error.code));
+}
+console.log("went on");
+//// imported-function-called-with-a-module-name/log.mjs
+export function log(text) {
+  console.log("log:", text);
+}
+export let swapped = require;
+export function swap() {
+  swapped = log;
+}
+//// imported-function-called-with-a-module-name/main.mjs
+// An export that is reassigned holds `require` at the first call and another function at the second. The program also loads by names that come from outside, so a string that is the name of a built-in module and goes somewhere as a value keeps the module. The output is that of plain Bun.
+import { log, swap, swapped } from "./log.mjs";
+
+log("dgram");
+////= for
+////= lines-3	console.log(typeof swapped("repl")
+swap();
+swapped("repl");
+//// inspect-of-odd-values.js
+// util.inspect and console.log on values that need special care: collections, cycles, classes, symbols, accessors, proxies, typed arrays, boxed primitives, objects without a prototype, promises, errors with causes, options for depth, width and order, and a custom inspect method.
+import util, { inspect } from "node:util";
+
+class Point { constructor() { this.x = 1; } get double() { return 2; } static origin = 0; }
+const cycle = { name: "cycle" };
+cycle.self = cycle;
+const values = [
+  new Map([["a", { b: 1 }], [{ key: 1 }, new Set([1, "two"])]]),
+  cycle,
+  new Point(),
+  Point,
+  class extends Point {},
+  { [Symbol("s")]: Symbol.iterator, "needs quotes": 1, valid_name: 2, 3: 4 },
+  { get only() { return 1; }, set only2(v) {}, get both() { return 1; }, set both(v) {} },
+  new Proxy({ target: 1 }, {}),
+  new Uint8Array([1, 2, 3]),
+  new Float64Array(2),
+  new ArrayBuffer(2),
+  [new Number(1), new String("s"), new Boolean(false), Object(Symbol("boxed")), Object(1n)],
+  Object.create(null),
+  Object.assign(Object.create(null), { a: 1 }),
+  [Promise.resolve(1), new Promise(() => {})],
+  [, 1, , , 2],
+  Object.assign([1, 2], { extra: true }),
+  [function named() {}, () => {}, async function later() {}, function* gen() {}, Math.max],
+  [-0, 0, NaN, 1e21, 123456789n, "it's", 'say "hi"', `both ' and "`],
+  [new Date(0), /re/gi, new WeakMap(), new WeakSet()],
+  [null, undefined, true],
+  { a: { b: { c: { d: { e: 1 } } } } },
+  "x".repeat(20),
+  { [inspect.custom]() { return "custom text"; } },
+  { [inspect.custom](depth, options) { return { depth, hasStylize: typeof options.stylize }; } },
+  Object.assign(() => {}, { property: 1 }),
+  (function () { return arguments; })(1, 2),
+  new (class Empty {})(),
+  new (class extends Map {})([[1, 2]]),
+  { toString() { return "not used"; } },
+];
+for (const value of values) console.log(inspect(value));
+console.log(inspect({ a: { b: { c: {} } } }, { depth: 0 }), inspect({ a: { b: { c: {} } } }, { depth: null }));
+console.log(inspect({ b: 1, a: 2 }, { sorted: true }), inspect({ a: 1, b: [1, 2] }, { compact: false }));
+console.log(inspect("a".repeat(5) + "\n" + "b", { breakLength: 3 }), inspect(Array.from({ length: 120 }, (_, i) => i), { maxArrayLength: 3 }));
+console.log(inspect(new Proxy({ a: 1 }, {}), { showProxy: true }), inspect({ a: 1 }, { colors: true }), inspect("long string", { maxStringLength: 4 }));
+console.log(inspect({ hidden: 1 }, { showHidden: true }), inspect([1], { showHidden: true }), inspect({ get a() { return 5; } }, { getters: true }));
+const error = new RangeError("outer", { cause: new TypeError("inner") });
+console.log(inspect(error).split("\n").filter(line => !line.trim().startsWith("at ")).join("|"));
+console.log(util.format("%s %d %i %f %j %o %O %% %c", "s", "4.5", "4.5", "4.5", { j: 1 }, [1], { O: 1 }, "css"), util.format("extra", 1, { a: 1 }), util.format("%s", { toString() { return "own"; } }));
+//// listeners-on-process-in-a-loop-over-their-names-need-no-channel.js
+// The names of the events stand in a list that a loop goes over. None of them is a message from a parent process, so nothing of the channel to one is needed, as with a name that is written in the call.
+// STATISTIC: FunctionsLowered <= 600
+for (const name of ["SIGINT", "SIGTERM"]) process.on(name, () => console.log("got", name));
+["SIGUSR2", "SIGHUP"].forEach(name => process.once(name, () => console.log("once", name)));
+const last = ["beforeExit", "exit"];
+last.forEach(name => {
+  process.on(name, code => console.log(name, code));
+});
+for (const name of last) process.prependListener(name, () => console.log("first at", name));
+console.log(["SIGINT", "SIGTERM", "SIGUSR2", "SIGHUP", "beforeExit", "exit"].map(name => process.listenerCount(name)).join());
+process.emit("SIGTERM");
+process.emit("SIGHUP");
+process.emit("SIGHUP");
+for (const name of ["SIGINT", "SIGTERM", "SIGUSR2"]) process.removeAllListeners(name);
+//// members-of-library-objects-under-computed-names.js
+// Methods of objects that the library makes, picked by a name that is put together: a logger's console[level], a parser's buffer["read" + kind], an emitter's method of registration, a hash's encoding, a response's method, a stream's event helper.
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import http from "node:http";
+
+const parts = process.env.PARTS.split(",");
+for (const level of parts.slice(0, 3)) console[level]("console." + level);
+const buffer = Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]);
+for (const kind of ["UInt8", "UInt16BE", "Int32LE", "BigUInt64BE", "FloatLE", "DoubleBE"]) console.log(kind, String(buffer["read" + kind](0)).slice(0, 12));
+buffer["write" + parts[3]](0xffff, 0);
+console.log(buffer.toString(parts[4]));
+
+const emitter = new EventEmitter();
+const heard = [];
+for (const method of ["on", "once", "prependListener", "addListener", "prependOnceListener"]) emitter[method]("x", () => heard.push(method));
+emitter[parts[5]]("x");
+emitter[parts[5]]("x");
+console.log(heard.join());
+
+const stream = new PassThrough();
+stream[parts[6]]("written by name");
+stream[parts[7]]();
+console.log(stream[parts[8]]().toString(), stream["readable" + "Ended"], stream["writable" + "Finished"]);
+
+const server = http.createServer((request, response) => {
+  response[parts[9]]("x-set", "by name");
+  response[parts[10]](202);
+  response[parts[7]]("answered");
+});
+await new Promise(resolve => server[parts[11]](0, "127.0.0.1", resolve));
+const answer = await fetch("http://127.0.0.1:" + server[parts[12]]().port);
+console.log(answer.status, answer.headers.get("x-set"), await answer.text());
+server[parts[13]]();
+console.log(process[parts[14]]().length > 0, typeof process[parts[15]](), Bun[parts[16]]("<"), Math[parts[17]](1, 2), JSON[parts[18]]([1]));
+//// members-that-nobody-reads-of-what-a-library-function-answers-in-a-validating-build.ts
+// A function of the library answers a literal with seventeen members, of which the program reads three. A validating build must not stop: the fields that nobody reads are removed, and whoever checks what the members hold must not look for them.
+import { getHeapStatistics } from "node:v8";
+console.log(typeof getHeapStatistics().used_heap_size);
+const stats = getHeapStatistics();
+console.log(stats.does_zap_garbage, typeof stats.does_zap_garbage, stats.number_of_detached_contexts);
+//// module-require-of-a-computed-name.cjs
+// module.require(name) in a CommonJS file follows the rules of require(name).
+require("node:path");
+
+////= for-2	module.require
+console.log("went on");
+//// modules-of-bun-by-computed-names.js
+// The bun: modules follow the rule of the node: modules. bun:jsc is imported by name, bun:sqlite is not. `bun` itself is the global Bun and always there.
+import "bun:jsc";
+
+for (const name of process.env.NAMES.split(",")) {
+  try {
+    console.log(name, typeof require(name));
+  } catch (error) {
+    console.log(name, error.code);
+  }
+  console.log(name, await import(name).then(loaded => typeof loaded, error => error.code));
+}
+console.log(require(process.env.NAMES.split(",")[0]) === Bun);
+//// more-of-the-file-system.js
+// The less common parts of node:fs: cp of a tree, glob, vectors of buffers, an async directory handle, hard links, sync to disk, times through a descriptor, exists and access with callbacks, statfs, a Blob of a file, big integers in stat, and append through a descriptor.
+import fs from "node:fs";
+import fsp from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+const folder = fs.mkdtempSync(path.join(os.tmpdir(), "library-modules-"));
+const at = name => path.join(folder, name);
+fs.mkdirSync(at("tree/inner"), { recursive: true });
+fs.writeFileSync(at("tree/a.js"), "a");
+fs.writeFileSync(at("tree/inner/b.js"), "bb");
+fs.writeFileSync(at("tree/inner/c.txt"), "ccc");
+
+fs.cpSync(at("tree"), at("copy"), { recursive: true });
+await fsp.cp(at("tree"), at("filtered"), { recursive: true, filter: source => !source.endsWith(".txt") });
+console.log(fs.readdirSync(at("copy"), { recursive: true }).sort().join(), fs.readdirSync(at("filtered"), { recursive: true }).sort().join());
+console.log(fs.globSync("**/*.js", { cwd: at("tree") }).sort().join(), (await Array.fromAsync(fsp.glob("*/*.txt", { cwd: at("tree") }))).join());
+
+const descriptor = fs.openSync(at("vector.txt"), "w+");
+console.log(fs.writevSync(descriptor, [Buffer.from("one "), Buffer.from("two")]));
+const first = Buffer.alloc(4), second = Buffer.alloc(3);
+console.log(fs.readvSync(descriptor, [first, second], 0), first.toString() + second.toString());
+fs.appendFileSync(descriptor, " three");
+fs.fsyncSync(descriptor);
+fs.fdatasyncSync(descriptor);
+fs.ftruncateSync(descriptor, 7);
+fs.futimesSync(descriptor, 10, 20);
+console.log(fs.fstatSync(descriptor).size, fs.fstatSync(descriptor).mtimeMs, typeof fs.fstatSync(descriptor, { bigint: true }).size);
+fs.closeSync(descriptor);
+
+const names = [];
+for await (const entry of await fsp.opendir(at("tree"))) names.push(entry.name + (entry.isDirectory() ? "/" : ""));
+console.log(names.sort().join());
+fs.linkSync(at("tree/a.js"), at("hard"));
+console.log(fs.statSync(at("hard")).nlink, fs.statSync(at("hard")).ino === fs.statSync(at("tree/a.js")).ino);
+console.log(await new Promise(resolve => fs.exists(at("hard"), resolve)), await new Promise(resolve => fs.access(at("hard"), fs.constants.R_OK, resolve)), await new Promise(resolve => fs.access(at("none"), error => resolve(error.code))));
+try {
+  fs.accessSync(at("none"));
+} catch (error) {
+  console.log(error.code, path.basename(error.path));
+}
+console.log(Object.keys(fs.statfsSync(folder)).sort().join(), await (await fs.openAsBlob(at("tree/inner/c.txt"))).text());
+console.log(await new Promise(resolve => fs.mkdir(at("tree"), error => resolve(error.code))), await fsp.rmdir(at("tree")).catch(error => error.code), await fsp.unlink(at("tree")).catch(error => ["EPERM", "EISDIR"].includes(error.code)));
+const handle = await fsp.open(at("lines.txt"), "w+");
+await handle.writeFile("l1\nl2\nl3");
+const lines = [];
+for await (const line of (await fsp.open(at("lines.txt"))).readLines()) lines.push(line);
+console.log(lines.join(), (await handle.stat()).size, typeof handle.fd);
+await handle.close();
+console.log(fs.readFileSync(at("lines.txt"), { encoding: "utf8", flag: "r" }).length, fs.lstatSync(at("lines.txt")).isSymbolicLink(), new fs.Stats() instanceof fs.Stats, typeof fs.Dirent, typeof fs.promises.constants.COPYFILE_EXCL);
+fs.rmSync(folder, { recursive: true });
+//// names-without-the-prefix.js
+// `path` and `node:path` are one module: kept under either name, it is found under both. The same for a module that is not kept: both names fail alike, and the message names it with the prefix.
+import "path";
+import "node:os";
+
+for (const name of process.env.NAMES.split(",")) {
+  try {
+    console.log(name, typeof require(name), require(name) === require(name.startsWith("node:") ? name.slice(5) : "node:" + name));
+  } catch (error) {
+    console.log(name, error.code, error.message.split(":")[0] + ":" + error.message.split(":")[1] + ":" + error.message.split(":")[2].split(".")[0]);
+  }
+}
+//// node-events-and-nothing-else.js
+// node:events asks for the prototype of `process` at its top level and only looks at it. That brings in nothing that `process` can do.
+// STATISTIC: FunctionsLowered <= 800
+import { EventEmitter } from "node:events";
+const emitter = new EventEmitter();
+emitter.once("greeting", name => console.log("hello", name));
+console.log(emitter.emit("greeting", "you"), emitter.emit("greeting", "nobody"), process instanceof EventEmitter);
+//// old-style-inheritance-from-the-library.js
+// Packages from before classes: a constructor function calls the library's constructor on `this`, util.inherits or Object.setPrototypeOf joins the prototypes, and methods are stored one by one.
+const util = require("node:util");
+const EventEmitter = require("node:events");
+const { Stream, Readable, Transform, Writable } = require("node:stream");
+
+function Door() {
+  EventEmitter.call(this);
+  this.opened = 0;
+}
+util.inherits(Door, EventEmitter);
+Door.prototype.open = function () {
+  this.opened++;
+  return this.emit("open", this.opened);
+};
+const door = new Door();
+door.on("open", count => console.log("opened", count));
+console.log(door.open(), door instanceof EventEmitter, Door.super_ === EventEmitter);
+
+function Counter(limit) {
+  if (!(this instanceof Counter)) return new Counter(limit);
+  Readable.call(this, { encoding: "utf8" });
+  this.limit = limit;
+  this.count = 0;
+}
+Object.setPrototypeOf(Counter.prototype, Readable.prototype);
+Object.setPrototypeOf(Counter, Readable);
+Counter.prototype._read = function () {
+  this.push(this.count < this.limit ? String(this.count++) : null);
+};
+
+function Brackets() {
+  Transform.call(this);
+}
+util.inherits(Brackets, Transform);
+Brackets.prototype._transform = function (chunk, encoding, done) {
+  done(null, "[" + chunk + "]");
+};
+
+const parts = [];
+const sink = new Writable({ write(chunk, encoding, done) { parts.push(chunk.toString()); done(); } });
+Counter(3).pipe(new Brackets()).pipe(sink).on("finish", () => {
+  console.log(parts.join(""));
+
+  function Legacy() {
+    Stream.call(this);
+    this.readable = true;
+  }
+  util.inherits(Legacy, Stream);
+  const legacy = new Legacy();
+  const seen = [];
+  legacy.pipe(new Writable({ write(chunk, encoding, done) { seen.push(chunk.toString()); done(); }, final(done) { console.log(seen.join()); done(); } }));
+  legacy.emit("data", "from");
+  legacy.emit("data", "a legacy stream");
+  legacy.emit("end");
+});
+//// one-name-is-imported-and-a-made-require-gets-a-computed-name.mjs
+// .. through a require made by createRequire, under a computed name.
+import { createServer } from "node:http";
+import { createRequire } from "node:module";
+const show = m => console.log(typeof m.request, typeof m.get, m.METHODS.length > 10, new m.Agent({ keepAlive: true }).keepAlive, typeof new m.ClientRequest("http://127.0.0.1:1/").on("error", () => {}).abort);
+show(createRequire(import.meta.url)("node:" + (process.argv.length > 99 ? "x" : "http")));
+console.log(typeof createServer);
+//// one-name-is-imported-and-another-file-imports-the-namespace/main.mjs
+// .. through another file of the program that imports the namespace.
+import { createServer } from "node:http";
+import { http } from "./whole/namespace.mjs";
+const show = m => console.log(typeof m.request, typeof m.get, m.METHODS.length > 10, new m.Agent({ keepAlive: true }).keepAlive, typeof new m.ClientRequest("http://127.0.0.1:1/").on("error", () => {}).abort);
+show(http);
+console.log(typeof createServer);
+//// one-name-is-imported-and-another-file-imports-the-namespace/whole/namespace.mjs
+import * as http from "node:http";
+export { http };
+//// one-name-is-imported-and-evaluated-text-loads-the-module.mjs
+// The rest of a module of which one name is imported, found by text that is evaluated at run time. The build does not see the text, so what the program itself never calls is not
+// compiled: the text finds the module and its data, and a call of such a function is refused by name.
+import { createServer } from "node:http";
+const text = "return process.getBuiltinModule(\x27node:http\x27)";
+try {
+  const m = new Function(process.argv.length > 99 ? "" : text)();
+  console.log(typeof m.request, m.METHODS.length > 10, typeof new m.ClientRequest("http://127.0.0.1:1/").on("error", () => {}).abort);
+} catch (error) {
+  console.log(error.name, error.message);
+}
+console.log(typeof createServer);
+//// one-name-is-imported-and-import-gets-a-computed-name.mjs
+// .. through import() of a name that is put together at run time.
+import { createServer } from "node:http";
+const show = m => console.log(typeof m.request, typeof m.get, m.METHODS.length > 10, new m.Agent({ keepAlive: true }).keepAlive, typeof new m.ClientRequest("http://127.0.0.1:1/").on("error", () => {}).abort);
+show(await import("node:" + (process.argv.length > 99 ? "x" : "http")));
+console.log(typeof createServer);
+//// one-name-is-imported-and-import-gets-the-constant-name.mjs
+// .. through import() of the constant name.
+import { createServer } from "node:http";
+const show = m => console.log(typeof m.request, typeof m.get, m.METHODS.length > 10, new m.Agent({ keepAlive: true }).keepAlive, typeof new m.ClientRequest("http://127.0.0.1:1/").on("error", () => {}).abort);
+show(await import("node:http"));
+console.log(typeof createServer);
+//// one-name-is-imported-and-nothing-else-is-used.mjs
+// Only the name that is imported is used: the server answers.
+import { createServer } from "node:http";
+const server = createServer((request, response) => response.end("hello " + request.url));
+server.listen(0, async () => {
+  const answer = await fetch("http://127.0.0.1:" + server.address().port + "/a");
+  console.log(answer.status, await answer.text());
+  server.close();
+});
+//// one-name-is-imported-and-require-under-another-name-goes-through-call-and-apply.mjs
+import { inspect } from "node:util";
+const { call } = Function.prototype; const load = require;
+const name = process.argv.length > 99 ? "node:fs" : "node:util";
+console.log(inspect({ a: 1 }), load.call(undefined, name).format("%s-%d", "a", 1), load.apply(undefined, [name]).isDeepStrictEqual([1], [1]));
+//// one-name-is-imported-and-require-under-another-name-is-called-in-a-function.mjs
+import { basename } from "node:path";
+const load = require;
+function get(name) { return load(name); }
+console.log(basename("/a/b.txt"), get("node:" + "path").join("a", "b"), get("node:pa" + "th").extname("x.js"));
+//// one-name-is-imported-and-require-under-another-name-loads-the-module.mjs
+import { createHash } from "node:crypto";
+const load = require;
+const name = "node:" + ["cry", "pto"].join("");
+console.log(createHash("sha1").update("x").digest("hex").length, load(name).createHmac("sha1", "k").update("x").digest("hex").length, typeof load(name).randomUUID());
+//// one-name-is-imported-and-the-loader-is-taken-as-a-value.mjs
+// The rest of a module of which one name is imported, found through the loader taken as a value.
+import { createServer } from "node:http";
+const show = m => console.log(typeof m.request, typeof m.get, m.METHODS.length > 10, new m.Agent({ keepAlive: true }).keepAlive, typeof new m.ClientRequest("http://127.0.0.1:1/").on("error", () => {}).abort);
+const load = process.getBuiltinModule;
+show(load("node:" + (process.argv.length > 99 ? "x" : "http")));
+console.log(typeof createServer);
+//// one-name-is-imported-beside-a-default-import.mjs
+// .. through a second import of the same file, of the whole module.
+import { createServer } from "node:http";
+import http from "node:http";
+const show = m => console.log(typeof m.request, typeof m.get, m.METHODS.length > 10, new m.Agent({ keepAlive: true }).keepAlive, typeof new m.ClientRequest("http://127.0.0.1:1/").on("error", () => {}).abort);
+show(http);
+console.log(typeof createServer);
+//// one-name-is-imported-beside-the-name-default.mjs
+// .. through the name `default`.
+import { createServer, default as http } from "node:http";
+const show = m => console.log(typeof m.request, typeof m.get, m.METHODS.length > 10, new m.Agent({ keepAlive: true }).keepAlive, typeof new m.ClientRequest("http://127.0.0.1:1/").on("error", () => {}).abort);
+show(http);
+console.log(typeof createServer);
+//// parts-of-the-library-are-replaced-by-the-program.js
+// What test runners, loggers and tracers do: store a function of their own over a member of a library object, call the original from it, and put it back. process.stdout.write, console.log, a method of EventEmitter.prototype, a function of node:fs as other code of the program sees it, a method of one stream, and Date.now left alone.
+import fs from "node:fs";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+
+const captured = [];
+const realWrite = process.stdout.write;
+process.stdout.write = function (chunk, ...rest) { captured.push(String(chunk)); return true; };
+console.log("captured line");
+process.stdout.write("captured write\n");
+process.stdout.write = realWrite;
+console.log(JSON.stringify(captured));
+
+const realLog = console.log;
+console.log = (...args) => realLog("[wrapped]", ...args);
+console.log("through the wrapper");
+console.log = realLog;
+
+const realEmit = EventEmitter.prototype.emit;
+const traced = [];
+EventEmitter.prototype.emit = function (name, ...args) { traced.push(String(name)); return realEmit.call(this, name, ...args); };
+const emitter = new EventEmitter();
+emitter.on("ping", () => {});
+emitter.emit("ping");
+const stream = new PassThrough();
+stream.end("x");
+stream.resume();
+await new Promise(resolve => stream.on("close", resolve));
+EventEmitter.prototype.emit = realEmit;
+console.log(traced.includes("ping"), traced.includes("finish"), traced.includes("end"));
+
+const realExists = fs.existsSync;
+fs.existsSync = path => "replaced for " + path;
+console.log(fs.existsSync("/x"), require("node:fs").existsSync("/y"), (await import("node:fs")).default.existsSync("/z"));
+fs.existsSync = realExists;
+console.log(fs.existsSync("/"));
+
+const one = new PassThrough();
+one.write = function (chunk) { return PassThrough.prototype.write.call(this, String(chunk).toUpperCase()); };
+one.write("only this stream");
+one.end();
+console.log((await one.toArray()).join());
+//// paths-for-both-systems.js
+// node:path: every function, in the posix and the win32 form, whatever system the program runs on.
+import path, { posix, win32 } from "node:path";
+import posixModule from "node:path/posix";
+import win32Module from "node:path/win32";
+
+console.log(posix.join("/a", "../b", "./c", "", "d/"), win32.join("C:\\a", "..\\b", "c/d"));
+console.log(posix.normalize("/a//b/./c/../d/"), win32.normalize("C:/a//b/../c\\"), posix.normalize(""), posix.normalize("../.."));
+console.log(posix.resolve("/a/b", "../c", "d"), posix.resolve("/a", "/b", "c"), win32.resolve("C:\\a", "..\\b", "D:\\c", "d"));
+console.log(posix.relative("/a/b/c", "/a/d"), posix.relative("/a", "/a"), win32.relative("C:\\a\\b", "C:\\a\\c\\d"), win32.relative("C:\\a", "D:\\b"));
+console.log(posix.dirname("/a/b/c.txt"), posix.dirname("c.txt"), posix.dirname("/"), win32.dirname("C:\\a\\b"), win32.dirname("C:\\"));
+console.log(posix.basename("/a/b/c.txt"), posix.basename("/a/b/c.txt", ".txt"), posix.basename("/a/b/"), win32.basename("C:\\a\\b.TXT", ".txt"), posix.basename("a\\b"));
+console.log(posix.extname("a.b.c"), JSON.stringify(posix.extname(".hidden")), JSON.stringify(posix.extname("a.")), JSON.stringify(posix.extname("a")), posix.extname("/a.b/c.d"));
+console.log(posix.isAbsolute("/a"), posix.isAbsolute("a"), win32.isAbsolute("C:\\"), win32.isAbsolute("C:a"), win32.isAbsolute("\\\\server\\share"), win32.isAbsolute("/a"));
+console.log(JSON.stringify(posix.parse("/home/u/file.tar.gz")), JSON.stringify(win32.parse("C:\\dir\\file.txt")), JSON.stringify(posix.parse("")));
+console.log(posix.format({ dir: "/a", name: "b", ext: ".c" }), posix.format({ root: "/", base: "x" }), win32.format({ dir: "C:\\a", base: "b.c" }), posix.format({ name: "n", ext: "e" }));
+console.log(posix.sep, win32.sep, posix.delimiter, win32.delimiter, win32.toNamespacedPath("C:\\a"), posix.toNamespacedPath("/a"));
+console.log(path.posix === posix, path.win32 === win32, posixModule === posix, win32Module === win32, posix.posix === posix, posix.win32 === win32, path === (process.platform === "win32" ? win32 : posix));
+console.log(posix.matchesGlob?.("/a/b.js", "/a/*.js"), posix.matchesGlob?.("/a/b/c.js", "/a/*.js"));
+for (const bad of [null, 1, {}]) {
+  try {
+    posix.join("a", bad);
+  } catch (error) {
+    console.log(error.code, error.name);
+  }
+}
+//// process-handed-to-functions-that-read-constant-names.js
+// `process` is handed to functions of the program, which read constant names off their parameters and hand it on to each other, and it is kept in a variable. Every use of it is in sight, so the executable holds what those members need and no more.
+// STATISTIC: FunctionsLowered <= 600
+function describes(source, separator) {
+  return join(source, separator).length > 0;
+}
+function join(source, separator) {
+  return [source.platform, source.arch, source.cwd()].join(separator);
+}
+const pidOf = source => source.pid;
+console.log(describes(process, " "), typeof pidOf(process));
+let kept;
+kept ??= process;
+console.log(typeof kept.platform, Object.getPrototypeOf(kept) !== null, Object.keys(kept).length > 10);
+const uptime = kept.uptime;
+console.log(typeof uptime.call(kept));
+//// process-in-an-export-that-is-stored-to/a.ts
+export let out = process;
+export function set(other: typeof process) {
+  out = other;
+}
+export let late: typeof process;
+late = process;
+//// process-in-an-export-that-is-stored-to/main.ts
+// An exported binding that holds process and is stored to: another file reads members of process through it, and they are what they are in plain Bun: nothing behind them is left out.
+import { late, out } from "./a";
+console.log(typeof out.allowedNodeEnvironmentFlags.has, out.allowedNodeEnvironmentFlags.has("--no-such-flag"), typeof out.report, typeof out.memoryUsage.rss(), typeof out.hrtime.bigint(), typeof out.resourceUsage().maxRSS);
+console.log(typeof late.allowedNodeEnvironmentFlags.has, typeof late.features.inspector, typeof late.release.name, typeof late.config.variables, typeof late.emitWarning, typeof late.cpuUsage().user);
+//// protocols-of-the-library-under-symbols.js
+// The library looks for members under symbols that it hands out: util.inspect.custom, util.promisify.custom, the rejection handler of an emitter, errorMonitor, Symbol.asyncDispose of a server, Symbol.dispose of a timer and Symbol.asyncIterator of an interface. The program only defines or uses them; the library does the calling.
+import util from "node:util";
+import { EventEmitter, captureRejectionSymbol, errorMonitor } from "node:events";
+import http from "node:http";
+import net from "node:net";
+import readline from "node:readline";
+import { Readable } from "node:stream";
+
+class Money {
+  constructor(amount) { this.amount = amount; }
+  [util.inspect.custom](depth, options, inspect) { return "Money<" + inspect(this.amount, options) + ">"; }
+}
+console.log(new Money(5), [new Money(6)], util.inspect({ price: new Money(7) }), `${util.format("%o", new Money(8))}`);
+console.log({ [Symbol.for("nodejs.util.inspect.custom")]() { return "through Symbol.for"; } });
+
+function legacy(callback) { callback(null, "the callback form"); }
+legacy[util.promisify.custom] = () => Promise.resolve("the custom form");
+console.log(await util.promisify(legacy)());
+
+class Careful extends EventEmitter {
+  constructor() { super({ captureRejections: true }); }
+  [captureRejectionSymbol](error, event, ...args) { console.log("rejection of", event, error.message, args.join()); }
+}
+const careful = new Careful();
+careful.on("job", async () => { throw new Error("failed later"); });
+careful.emit("job", 1, 2);
+await new Promise(resolve => setImmediate(resolve));
+careful.on(errorMonitor, error => console.log("seen first:", error.message));
+careful.on("error", error => console.log("then handled:", error.message));
+careful.emit("error", new Error("an error"));
+
+let port;
+{
+  await using server = http.createServer((request, response) => response.end("disposed later"));
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  port = server.address().port;
+  console.log(await (await fetch("http://127.0.0.1:" + port, { headers: { connection: "close" } })).text());
+}
+console.log(await new Promise(resolve => net.connect(port, "127.0.0.1").on("error", error => resolve(error.code)).on("connect", () => resolve("still open"))));
+{
+  using timer = setTimeout(() => console.log("never fires"), 20);
+  console.log(typeof timer[Symbol.dispose]);
+}
+await new Promise(resolve => setTimeout(resolve, 30));
+const lines = readline.createInterface({ input: Readable.from(["x\ny\n"]) })[Symbol.asyncIterator]();
+console.log((await lines.next()).value, (await lines.next()).value, (await lines.next()).done);
+//// readline-on-a-pipe.js
+// node:readline over streams that are no terminal: line events, the async iterator, question(), a last line without a newline, CRLF, close, and node:readline/promises.
+import readline from "node:readline";
+import { createInterface } from "node:readline/promises";
+import { Readable, PassThrough, Writable } from "node:stream";
+
+const lines = [];
+const first = readline.createInterface({ input: Readable.from(["one\ntw", "o\r\nthree"]) });
+first.on("line", line => lines.push(line));
+await new Promise(resolve => first.on("close", resolve));
+console.log(JSON.stringify(lines));
+
+const iterated = [];
+for await (const line of readline.createInterface({ input: Readable.from(["a\n\nb\n"]), crlfDelay: Infinity })) iterated.push(line);
+console.log(JSON.stringify(iterated));
+
+const written = [];
+const output = new Writable({ write(chunk, encoding, done) { written.push(chunk.toString()); done(); } });
+const input = new PassThrough();
+const asks = readline.createInterface({ input, output, terminal: false });
+const answer = new Promise(resolve => asks.question("name? ", resolve));
+input.write("Ada\n");
+console.log(await answer, JSON.stringify(written));
+asks.close();
+
+const input2 = new PassThrough();
+const promised = createInterface({ input: input2, terminal: false });
+const reply = promised.question("");
+input2.write("from promises\n");
+console.log(await reply);
+promised.close();
+console.log(typeof readline.clearLine, typeof readline.cursorTo, typeof readline.emitKeypressEvents);
+//// secure-servers-and-clients/certificate.json
+{
+  "cert": "-----BEGIN CERTIFICATE-----\nMIID4jCCAsqgAwIBAgIUcaRq6J/YF++Bo01Zc+HeQvCbnWMwDQYJKoZIhvcNAQEL\nBQAwaTELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRYwFAYDVQQHDA1TYW4gRnJh\nbmNpc2NvMQ0wCwYDVQQKDARPdmVuMREwDwYDVQQLDAhUZWFtIEJ1bjETMBEGA1UE\nAwwKc2VydmVyLWJ1bjAeFw0yNTA5MDYwMzAwNDlaFw0zNTA5MDQwMzAwNDlaMGkx\nCzAJBgNVBAYTAlVTMQswCQYDVQQIDAJDQTEWMBQGA1UEBwwNU2FuIEZyYW5jaXNj\nbzENMAsGA1UECgwET3ZlbjERMA8GA1UECwwIVGVhbSBCdW4xEzARBgNVBAMMCnNl\ncnZlci1idW4wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDlYzosgRgX\nHL6vMh1V0ERFhsvlZrtRojSw6tafr3SQBphU793/rGiYZlL/lJ9HIlLkx9JMbuTj\nNm5U2eRwHiTQIeWD4aCIESwPlkdaVYtC+IOj55bJN8xNa7h5GyJwF7PnPetAsKyE\n8DMBn1gKMhaIis7HHOUtk4/K3Y4peU44d04z0yPt6JtY5Sbvi1E7pGX6T/2c9sHs\ndIDeDctWnewpXXs8zkAla0KNWQfpDnpS53wxAfStTA4lSrA9daxC7hZopQlLxFIb\nJk+0BLbEsXtrJ54T5iguHk+2MDVAy4MOqP9XbKV7eGHk73l6+CSwmHyHBxh4ChxR\nQeT5BP0MUTn1AgMBAAGjgYEwfzAdBgNVHQ4EFgQUw7nEnh4uOdZVZUapQzdAUaVa\nAn0wHwYDVR0jBBgwFoAUw7nEnh4uOdZVZUapQzdAUaVaAn0wDwYDVR0TAQH/BAUw\nAwEB/zAsBgNVHREEJTAjgglsb2NhbGhvc3SHBH8AAAGHEAAAAAAAAAAAAAAAAAAA\nAAEwDQYJKoZIhvcNAQELBQADggEBAEA8r1fvDLMSCb8bkAURpFk8chn8pl5MChzT\nYUDaLdCCBjPXJkSXNdyuwS+T/ljAGyZbW5xuDccCNKltawO4CbyEXUEZbYr3w9eq\nj8uqymJPhFf0O1rKOI2han5GBCgHwG13QwKI+4uu7390nD+TlzLOhxFfvOG7OadH\nQNMNLNyldgF4Nb8vWdz0FtQiGUIrO7iq4LFhhd1lCxe0q+FAYSEYcc74WtF/Yo8V\nJQauXuXyoP5FqLzNt/yeNQhceyIXJGKCsjr5/bASBmVlCwgRfsD3jpG37L8YCJs1\nL4WEikcY4Lzb2NF9e94IyZdQsRqd9DFBF5zP013MSUiuhiow32k=\n-----END CERTIFICATE-----\n",
+  "key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDlYzosgRgXHL6v\nMh1V0ERFhsvlZrtRojSw6tafr3SQBphU793/rGiYZlL/lJ9HIlLkx9JMbuTjNm5U\n2eRwHiTQIeWD4aCIESwPlkdaVYtC+IOj55bJN8xNa7h5GyJwF7PnPetAsKyE8DMB\nn1gKMhaIis7HHOUtk4/K3Y4peU44d04z0yPt6JtY5Sbvi1E7pGX6T/2c9sHsdIDe\nDctWnewpXXs8zkAla0KNWQfpDnpS53wxAfStTA4lSrA9daxC7hZopQlLxFIbJk+0\nBLbEsXtrJ54T5iguHk+2MDVAy4MOqP9XbKV7eGHk73l6+CSwmHyHBxh4ChxRQeT5\nBP0MUTn1AgMBAAECggEABtPvC5uVGr0DjQX2GxONsK8cOxoVec7U+C4pUMwBcXcM\nyjxwlHdujpi/IDXtjsm+A2rSPu2vGPdKDfMFanPvPxW/Ne99noc6U0VzHsR8lnP8\nwSB328nyJhzOeyZcXk9KTtgIPF7156gZsJLsZTNL+ej90i3xQWvKxCxXmrLuad5O\nz/TrgZkC6wC3fgj1d3e8bMljQ7tLxbshJMYVI5o6RFTxy84DLI+rlvPkf7XbiMPf\n2lsm4jcJKvfx+164HZJ9QVlx8ncqOHAnGvxb2xHHfqv4JAbz615t7yRvtaw4Paj5\n6kQSf0VWnsVzgxNJWvnUZym/i/Qf5nQafjChCyKOEQKBgQD9f4SkvJrp/mFKWLHd\nkDvRpSIIltfJsa5KShn1IHsQXFwc0YgyP4SKQb3Ckv+/9UFHK9EzM+WlPxZi7ZOS\nhsWhIfkI4c4ORpxUQ+hPi0K2k+HIY7eYyONqDAzw5PGkKBo3mSGMHDXYywSqexhB\nCCMHuHdMhwyHdz4PWYOK3C2VMQKBgQDnpsrHK7lM9aVb8wNhTokbK5IlTSzH/5oJ\nlAVu6G6H3tM5YQeoDXztbZClvrvKU8DU5UzwaC+8AEWQwaram29QIDpAI3nVQQ0k\ndmHHp/pCeADdRG2whaGcl418UJMMv8AUpWTRm+kVLTLqfTHBC0ji4NlCQMHCUCfd\nU8TeUi5QBQKBgQDvJNd7mboDOUmLG7VgMetc0Y4T0EnuKsMjrlhimau/OYJkZX84\n+BcPXwmnf4nqC3Lzs3B9/12L0MJLvZjUSHQ0mJoZOPxtF0vvasjEEbp0B3qe0wOn\nDQ0NRCUJNNKJbJOfE8VEKnDZ/lx+f/XXk9eINwvElDrLqUBQtr+TxjbyYQKBgAxQ\nlZ8Y9/TbajsFJDzcC/XhzxckjyjisbGoqNFIkfevJNN8EQgiD24f0Py+swUChtHK\njtiI8WCxMwGLCiYs9THxRKd8O1HW73fswy32BBvcfU9F//7OW9UTSXY+YlLfLrrq\nP/3UqAN0L6y/kxGMJAfLpEEdaC+IS1Y8yc531/ZxAoGASYiasDpePtmzXklDxk3h\njEw64QAdXK2p/xTMjSeTtcqJ7fvaEbg+Mfpxq0mdTjfbTdR9U/nzAkwS7OoZZ4Du\nueMVls0IVqcNnBtikG8wgdxN27b5JPXS+GzQ0zDSpWFfRPZiIh37BAXr0D1voluJ\nrEHkcals6p7hL98BoxjFIvA=\n-----END PRIVATE KEY-----\n"
+}
+//// secure-servers-and-clients/main.js
+// node:tls and node:https with the certificate of Bun's own tests (certificate.json): a TLS server that echoes, a client that trusts the certificate and one that does not, what both sides say about the connection, an HTTPS server with https.request, https.get, fetch and an agent, and the certificate read by crypto.X509Certificate.
+import tls from "node:tls";
+import https from "node:https";
+import { X509Certificate } from "node:crypto";
+import { once } from "node:events";
+import certificate from "./certificate.json";
+
+const server = tls.createServer({ cert: certificate.cert, key: certificate.key }, socket => {
+  socket.write("welcome " + socket.encrypted + " " + socket.authorized + "\n");
+  socket.on("data", part => socket.end("echo " + part));
+});
+server.listen(0, "127.0.0.1");
+await once(server, "listening");
+const { port } = server.address();
+
+const client = tls.connect({ port, host: "127.0.0.1", ca: certificate.cert, servername: "localhost" });
+await once(client, "secureConnect");
+console.log(client.authorized, client.authorizationError, client.encrypted, /^TLSv1\.[23]$/.test(client.getProtocol()), typeof client.getCipher().name, client.getPeerCertificate().subject.CN, client.servername);
+let text = "";
+client.setEncoding("utf8").on("data", part => (text += part));
+client.write("hello");
+await once(client, "close");
+console.log(JSON.stringify(text));
+
+console.log((await once(tls.connect({ port, host: "127.0.0.1", servername: "localhost" }), "error"))[0].code);
+const careless = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+await once(careless, "secureConnect");
+console.log(careless.authorized, careless.authorizationError);
+careless.destroy();
+await new Promise(resolve => server.close(resolve));
+
+const web = https.createServer({ cert: certificate.cert, key: certificate.key }, (request, response) => {
+  response.setHeader("x-secure", String(request.socket.encrypted));
+  response.end(request.method + " " + request.url);
+});
+web.listen(0, "127.0.0.1");
+await once(web, "listening");
+const options = { host: "127.0.0.1", port: web.address().port, ca: certificate.cert, servername: "localhost" };
+function read(response) {
+  return new Promise(resolve => { let body = ""; response.on("data", part => (body += part)).on("end", () => resolve([response.statusCode, response.headers["x-secure"], body].join(" "))); });
+}
+console.log(await new Promise((resolve, reject) => https.get({ ...options, path: "/get" }, response => resolve(read(response))).on("error", reject)));
+console.log(await new Promise((resolve, reject) => https.request({ ...options, path: "/post", method: "POST", agent: new https.Agent({ keepAlive: false }) }, response => resolve(read(response))).on("error", reject).end("body")));
+console.log(await new Promise(resolve => https.get({ ...options, ca: undefined }, () => resolve("trusted")).on("error", error => resolve(error.code))));
+console.log(await (await fetch("https://localhost:" + options.port + "/fetch", { tls: { ca: certificate.cert } })).text());
+console.log(await fetch("https://localhost:" + options.port + "/fetch").catch(error => error.code));
+web.closeAllConnections();
+await new Promise(resolve => web.close(resolve));
+
+const parsed = new X509Certificate(certificate.cert);
+console.log(parsed.subject.split("\n").at(-1), parsed.ca, parsed.checkHost("localhost"), parsed.checkHost("example.com"), parsed.checkIP("127.0.0.1"), parsed.validTo.slice(-8), parsed.fingerprint256.length, parsed.publicKey.asymmetricKeyType, parsed.verify(parsed.publicKey));
+//// servers-and-clients-mixed.js
+// The two kinds of server and the three kinds of client meet: fetch against node:http, node:http.request against Bun.serve, fetch against Bun.serve; a streamed body in both directions, JSON, form data, a redirect, an abort, and a WebSocket that echoes.
+import http from "node:http";
+
+const nodeServer = http.createServer(async (request, response) => {
+  if (request.url === "/redirect") return response.writeHead(302, { location: "/target" }).end();
+  if (request.url === "/slow") return void setTimeout(() => response.end("too late"), 5_000).unref();
+  let body = "";
+  for await (const part of request) body += part;
+  response.setHeader("x-server", "node");
+  response.end(request.method + " " + request.url + " " + body);
+});
+await new Promise(resolve => nodeServer.listen(0, "127.0.0.1", resolve));
+const nodeUrl = "http://127.0.0.1:" + nodeServer.address().port;
+
+const posted = await fetch(nodeUrl + "/post", { method: "POST", body: "from fetch" });
+console.log(posted.status, posted.headers.get("x-server"), await posted.text());
+const redirected = await fetch(nodeUrl + "/redirect");
+console.log(redirected.redirected, new URL(redirected.url).pathname, await redirected.text());
+console.log((await fetch(nodeUrl + "/redirect", { redirect: "manual" })).status);
+console.log(await fetch(nodeUrl + "/slow", { signal: AbortSignal.timeout(20) }).catch(error => error.name));
+const streamed = new ReadableStream({ start(controller) { controller.enqueue("a"); controller.enqueue("b"); controller.close(); } }).pipeThrough(new TextEncoderStream());
+console.log(await (await fetch(nodeUrl + "/stream", { method: "PUT", body: streamed, duplex: "half" })).text());
+nodeServer.closeAllConnections();
+await new Promise(resolve => nodeServer.close(resolve));
+
+const bunServer = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  routes: { "/route/:id": request => Response.json({ id: request.params.id }) },
+  async fetch(request, server) {
+    const url = new URL(request.url);
+    if (url.pathname === "/socket") return server.upgrade(request) ? undefined : new Response("no upgrade", { status: 400 });
+    if (url.pathname === "/form") return new Response([...(await request.formData()).entries()].join("|"));
+    if (url.pathname === "/json") return Response.json({ got: await request.json() }, { status: 201 });
+    if (url.pathname === "/pieces") return new Response(new ReadableStream({ async pull(controller) { controller.enqueue("piece "); controller.enqueue("by piece"); controller.close(); } }));
+    return new Response("not found", { status: 404 });
+  },
+  websocket: { message(socket, message) { socket.send("echo " + message); }, close() {} },
+});
+const form = new FormData();
+form.append("a", "1");
+form.append("b", "two");
+console.log(await (await fetch(new URL("/form", bunServer.url), { method: "POST", body: form })).text());
+const json = await fetch(new URL("/json", bunServer.url), { method: "POST", body: JSON.stringify([1, 2]) });
+console.log(json.status, JSON.stringify(await json.json()), json.headers.get("content-type"));
+console.log(await (await fetch(new URL("/pieces", bunServer.url))).text(), (await fetch(new URL("/nowhere", bunServer.url))).status, JSON.stringify(await (await fetch(new URL("/route/7", bunServer.url))).json()));
+console.log(await new Promise((resolve, reject) => http.get({ host: "127.0.0.1", port: bunServer.port, path: "/pieces" }, response => { let text = ""; response.on("data", part => (text += part)).on("end", () => resolve(response.statusCode + " " + text)); }).on("error", reject)));
+const socket = new WebSocket("ws://127.0.0.1:" + bunServer.port + "/socket");
+await new Promise(resolve => (socket.onopen = resolve));
+socket.send("over a socket");
+console.log((await new Promise(resolve => (socket.onmessage = resolve))).data, socket.readyState);
+socket.close();
+await new Promise(resolve => (socket.onclose = resolve));
+await bunServer.stop(true);
+//// sockets-of-bun.js
+// Bun.listen and Bun.connect, Bun.udpSocket and Bun.dns: a TCP echo with the handlers in an object, data attached to a socket, the close of both sides, a refused connection, datagrams on the loopback, and a look-up.
+const events = [];
+const server = Bun.listen({
+  hostname: "127.0.0.1",
+  port: 0,
+  data: { role: "server" },
+  socket: {
+    open(socket) { events.push("server open " + socket.data.role); },
+    data(socket, bytes) { socket.write("echo " + bytes); socket.end(); },
+    close() { events.push("server close"); },
+  },
+});
+const received = await new Promise((resolve, reject) => {
+  let text = "";
+  Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    data: { role: "client" },
+    socket: {
+      open(socket) { events.push("client open " + socket.data.role); socket.write("hello"); },
+      data(socket, bytes) { text += bytes; },
+      close() { events.push("client close"); resolve(text); },
+      error(socket, error) { reject(error); },
+    },
+  }).catch(reject);
+});
+await Bun.sleep(5);
+console.log(received, events.sort().join(", "), server.hostname, server.port > 0);
+const port = server.port;
+server.stop(true);
+console.log(await Bun.connect({ hostname: "127.0.0.1", port, socket: { data() {}, open() {}, connectError() {} } }).then(() => "connected", error => error.code));
+
+const heard = Promise.withResolvers();
+const listener = await Bun.udpSocket({ hostname: "127.0.0.1", socket: { data(socket, bytes, fromPort, fromAddress) { heard.resolve(bytes.toString() + " from " + fromAddress + " " + (fromPort > 0)); } } });
+const sender = await Bun.udpSocket({ hostname: "127.0.0.1" });
+sender.send("datagram", listener.port, "127.0.0.1");
+console.log(await heard.promise, listener.address.family, listener.closed);
+listener.close();
+sender.close();
+console.log(listener.closed);
+const found = await Bun.dns.lookup("localhost");
+console.log(found.length > 0, found.every(entry => ["127.0.0.1", "::1"].includes(entry.address)), typeof Bun.dns.getCacheStats().size, typeof Bun.dns.prefetch);
+//// sockets-with-net.js
+// node:net: a server that echoes, a client, the order of the events on both sides, addresses, encodings, half-open ends, several clients, a port nobody listens on, a port that is taken, a socket path, a timeout, and the functions that classify addresses.
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+
+const events = [];
+const server = net.createServer(socket => {
+  events.push("server: connection");
+  socket.setEncoding("utf8");
+  socket.on("data", text => socket.write("echo " + text));
+  socket.on("end", () => { events.push("server: end"); socket.end("bye"); });
+});
+await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+const { port, address, family } = server.address();
+console.log(address, family, port > 0, server.listening);
+
+const client = net.connect({ port, host: "127.0.0.1" });
+const received = [];
+client.on("data", part => received.push(part.toString()));
+await new Promise(resolve => client.on("connect", resolve));
+console.log(client.remoteAddress, client.remotePort === port, client.remoteFamily, client.localPort > 0, client.connecting, client.readyState);
+client.write("one");
+await new Promise(resolve => client.once("data", resolve));
+client.end();
+console.log(await new Promise(resolve => client.on("close", hadError => resolve("closed " + hadError))), received.join("|"), client.destroyed, client.bytesWritten, client.bytesRead);
+console.log(events.join(", "));
+
+const answers = await Promise.all([1, 2, 3].map(n => new Promise(resolve => {
+  const socket = net.createConnection(port, "127.0.0.1", () => socket.write("client " + n));
+  socket.once("data", part => { resolve(part.toString()); socket.destroy(); });
+})));
+console.log(answers.join(", "), await new Promise(resolve => server.getConnections((error, count) => resolve(typeof count))));
+
+const taken = net.createServer();
+console.log(await new Promise(resolve => taken.on("error", error => resolve([error.code, error.syscall].join())).listen(port, "127.0.0.1")));
+await new Promise(resolve => server.close(resolve));
+console.log(await new Promise(resolve => net.connect(port, "127.0.0.1").on("error", error => resolve([error.code, error.syscall, error.port === port].join()))));
+
+const socketPath = path.join(os.tmpdir(), "library-modules-" + process.pid + ".sock");
+const local = net.createServer(socket => socket.end("over a path"));
+await new Promise(resolve => local.listen(socketPath, resolve));
+console.log(local.address() === socketPath, await new Promise(resolve => net.connect(socketPath).on("data", part => resolve(part.toString()))));
+await new Promise(resolve => local.close(resolve));
+
+const quiet = net.createServer(() => {});
+await new Promise(resolve => quiet.listen(0, "127.0.0.1", resolve));
+const idle = net.connect(quiet.address().port, "127.0.0.1");
+idle.setTimeout(5);
+console.log(await new Promise(resolve => idle.on("timeout", () => { idle.destroy(); resolve("timed out"); })));
+quiet.close();
+console.log(net.isIP("127.0.0.1"), net.isIP("::1"), net.isIP("nope"), net.isIPv4("1.2.3.4"), net.isIPv6("1.2.3.4"), new net.BlockList().check("1.1.1.1"), typeof net.SocketAddress);
+//// standard-input-that-is-empty-and-standard-output-as-a-stream.js
+// The tests run a program without standard input. Every way of reading it ends at once with nothing. Standard output is used as a stream: pipe into it, write with a callback, cork and uncork, and the order of console.log and write.
+import fs from "node:fs";
+import { Readable } from "node:stream";
+import { text } from "node:stream/consumers";
+import readline from "node:readline";
+
+let pieces = 0;
+for await (const piece of process.stdin) pieces += piece.length;
+console.log("async iteration:", pieces, process.stdin.readableEnded);
+console.log("Bun.stdin:", JSON.stringify(await Bun.stdin.text()));
+console.log("descriptor 0:", fs.readFileSync(0).length);
+const lines = [];
+for await (const line of readline.createInterface({ input: fs.createReadStream(process.platform === "win32" ? "\\\\.\\nul" : "/dev/null") })) lines.push(line);
+console.log("lines:", lines.length);
+
+process.stdout.write("write, ");
+console.log("then console.log");
+await new Promise(resolve => Readable.from(["piped ", "in ", "pieces\n"]).on("end", resolve).pipe(process.stdout, { end: false }));
+process.stdout.cork();
+process.stdout.write("corked ");
+process.stdout.write("together\n");
+process.stdout.uncork();
+console.log(await new Promise(resolve => process.stdout.write("", () => resolve("an empty write calls back"))), process.stdout.write("x\n"), process.stdout.writableLength >= 0, process.stdout.destroyed);
+process.stderr.write("");
+console.log(await text(Readable.from(["consumed"])), typeof process.stdout.on, typeof process.stdout.once, process.stdout.listenerCount("error") >= 0);
+//// streams-of-every-kind.js
+// node:stream: Readable.from, a Readable with read(), a Writable, a Transform, a Duplex, PassThrough, pipeline with a callback and with promises, finished, object mode, back pressure, an error that travels down a pipeline, and destroy.
+import { Readable, Writable, Transform, Duplex, PassThrough, pipeline, finished, addAbortSignal } from "node:stream";
+import { pipeline as pipelineAsync, finished as finishedAsync } from "node:stream/promises";
+import { text, json, buffer } from "node:stream/consumers";
+
+const upper = () => new Transform({ transform(chunk, encoding, done) { done(null, chunk.toString().toUpperCase()); } });
+function collect(into) {
+  return new Writable({ write(chunk, encoding, done) { into.push(chunk.toString()); done(); } });
+}
+
+const first = [];
+await pipelineAsync(Readable.from(["a", "b", "c"]), upper(), collect(first));
+console.log(first.join());
+
+let count = 0;
+const counter = new Readable({ read() { this.push(count < 3 ? String(count++) : null); } });
+console.log(await text(counter));
+
+const objects = new Transform({ objectMode: true, transform(value, encoding, done) { done(null, { doubled: value.n * 2 }); } });
+const seen = [];
+for await (const value of Readable.from([{ n: 1 }, { n: 2 }]).pipe(objects)) seen.push(value.doubled);
+console.log(seen.join());
+
+console.log(await new Promise(resolve => pipeline(Readable.from(["x"]), new PassThrough(), collect([]), error => resolve("callback " + error))));
+const failing = new Transform({ transform(chunk, encoding, done) { done(new Error("broke in the middle")); } });
+console.log(await pipelineAsync(Readable.from(["x"]), failing, collect([])).catch(error => error.message));
+
+const slow = new Writable({ highWaterMark: 2, write(chunk, encoding, done) { setImmediate(done); } });
+console.log(slow.write("abc"), await new Promise(resolve => slow.once("drain", () => resolve("drained"))));
+slow.end();
+await finishedAsync(slow);
+console.log(slow.writableFinished, slow.writableEnded);
+
+const duplex = new Duplex({ read() {}, write(chunk, encoding, done) { this.push("echo " + chunk); done(); }, final(done) { this.push(null); done(); } });
+duplex.end("hi");
+console.log(await text(duplex));
+console.log(await json(Readable.from(['{"a":', "1}"])), (await buffer(Readable.from([Buffer.from("ab")]))).length);
+
+const destroyed = new Readable({ read() {} });
+const closed = new Promise(resolve => finished(destroyed, error => resolve(error.code)));
+destroyed.destroy();
+console.log(await closed, destroyed.destroyed);
+
+const controller = new AbortController();
+const aborted = addAbortSignal(controller.signal, new Readable({ read() {} }));
+const failure = new Promise(resolve => aborted.on("error", error => resolve(error.name)));
+controller.abort();
+console.log(await failure);
+console.log(Readable.from("abc").readableObjectMode, new PassThrough().readableHighWaterMark > 0, typeof Readable.toWeb, typeof Readable.fromWeb);
+//// subpaths-of-library-modules.js
+// node:fs/promises, node:path/posix and node:util/types are modules of their own. Each is kept by its own name; a subpath that nothing names is not in, even where the module above it is.
+import "node:fs/promises";
+import "node:path";
+import "node:util/types";
+
+////= for
+//// text-tools-of-bun.js
+// Parts of Bun that carry a lot of code with them, each by a constant name: HTMLRewriter, cookies, YAML, passwords with a low cost, CSRF tokens, the transpiler, the router of a folder, an ArrayBufferSink and a heap snapshot.
+const rewritten = new HTMLRewriter()
+  .on("a[href]", { element(element) { element.setAttribute("href", element.getAttribute("href").replace("http:", "https:")); element.append("!", { html: false }); } })
+  .on("p", { text(chunk) { if (chunk.text) chunk.replace(chunk.text.toUpperCase()); } })
+  .on("script", { element(element) { element.remove(); } })
+  .transform(new Response('<p>text</p><a href="http://x.example">link</a><script>bad()</script>'));
+console.log(await rewritten.text());
+
+const cookies = new Bun.CookieMap("a=1; b=two");
+cookies.set("c", "3", { httpOnly: true, path: "/", maxAge: 60 });
+cookies.delete("a");
+console.log(cookies.get("b"), cookies.has("a"), cookies.size, cookies.toSetCookieHeaders().sort().join(" | "));
+const cookie = Bun.Cookie.parse("id=7; Path=/x; Secure; SameSite=Strict");
+console.log(cookie.name, cookie.value, cookie.path, cookie.secure, cookie.sameSite, cookie.isExpired(), new Bun.Cookie("n", "v").serialize());
+
+console.log(JSON.stringify(Bun.YAML.parse("a: 1\nb:\n  - x\n  - y: true\n")), Bun.YAML.stringify({ k: [1, "s"] }).trim().replaceAll("\n", "|"));
+const hashed = Bun.password.hashSync("secret", { algorithm: "bcrypt", cost: 4 });
+console.log(hashed.startsWith("$2"), Bun.password.verifySync("secret", hashed), Bun.password.verifySync("wrong", hashed), await Bun.password.verify("secret", await Bun.password.hash("secret", { algorithm: "argon2id", memoryCost: 8, timeCost: 1 })));
+const token = Bun.CSRF.generate("key");
+console.log(typeof token, Bun.CSRF.verify(token, { secret: "key" }), Bun.CSRF.verify(token, { secret: "other" }));
+
+const sink = new Bun.ArrayBufferSink();
+sink.start({ asUint8Array: true });
+sink.write("ab");
+sink.write(new Uint8Array([99]));
+console.log(new TextDecoder().decode(sink.end()));
+const snapshot = Bun.generateHeapSnapshot();
+console.log(typeof snapshot.version, Array.isArray(snapshot.nodes), snapshot.nodeClassNames.length > 0);
+console.log(Bun.stringWidth("á"), Bun.escapeHTML(5), Bun.inspect(new Bun.CookieMap("q=1")).includes("q"), typeof Bun.FileSystemRouter, typeof Bun.Transpiler, typeof Bun.build, typeof Bun.plugin, typeof Bun.sql, typeof Bun.redis, typeof Bun.s3, typeof Bun.SQL, typeof Bun.S3Client, typeof Bun.RedisClient);
+//// the-engine-seen-from-inside.js
+// bun:jsc, node:v8 and node:vm's harmless parts: what kind of answer each function gives, a value that is serialized and read back, and sizes that are numbers.
+import { heapStats, heapSize, memoryUsage, serialize, deserialize, estimateShallowMemoryUsageOf, gcAndSweep, jscDescribe } from "bun:jsc";
+import v8 from "node:v8";
+
+const stats = heapStats();
+console.log(Object.keys(stats).sort().join(), stats.objectCount > 0, typeof stats.objectTypeCounts.Object, heapSize() > 0, Object.keys(memoryUsage()).sort().join());
+const value = { text: "x", list: [1, 2n, new Date(0)], map: new Map([["k", new Set([1])]]), bytes: new Uint8Array([1, 2]) };
+const copy = deserialize(serialize(value));
+console.log(copy.text, copy.list[1], copy.list[2].getTime(), copy.map.get("k").has(1), copy.bytes.join(), serialize(1) instanceof SharedArrayBuffer || serialize(1) instanceof ArrayBuffer);
+console.log(estimateShallowMemoryUsageOf({ a: 1 }) > 0, typeof gcAndSweep(), typeof jscDescribe({}));
+const viaV8 = v8.deserialize(v8.serialize({ a: [1, "two", null], b: new Map([[1, 2]]) }));
+console.log(JSON.stringify(viaV8.a), viaV8.b.get(1), Buffer.isBuffer(v8.serialize(1)));
+console.log(Object.keys(v8.getHeapStatistics()).sort().join(), v8.getHeapStatistics().total_heap_size > 0, Array.isArray(v8.getHeapSpaceStatistics()), typeof v8.cachedDataVersionTag(), typeof v8.setFlagsFromString, typeof v8.writeHeapSnapshot, typeof v8.isStringOneByteRepresentation?.("a"));
+console.log(JSON.stringify(structuredClone({ nested: { date: new Date(5), re: /x/g.source } })), structuredClone(new Error("cloned")).message);
+//// the-example-of-the-page.js
+// The example of docs/compiler/compatibility.mdx, "Built-in modules": node:path is imported by name, node:dgram is not, and the third name is no module. The names come from the environment. Plain Bun finds node:dgram.
+import "node:path";
+
+for (const name of process.env.NAMES.split(",")) {
+  try {
+    console.log(name, Object.keys(require(name)).length > 0);
+  } catch (error) {
+    console.log(name, error.code, error.message.split(" (bun compile")[0]);
+  }
+}
+//// the-finer-points-of-http.js
+// node:http beyond a plain request: an upgrade to a raw socket, trailers, 100-continue, early hints left aside, a request that times out, one that the client destroys, a response piped from the request, many headers of one name, the tables of codes and methods, header validation, and what the server knows about its connections.
+import http from "node:http";
+import net from "node:net";
+import { once } from "node:events";
+
+const server = http.createServer((request, response) => {
+  if (request.url === "/trailers") {
+    response.writeHead(200, { trailer: "x-sum" });
+    response.write("body");
+    response.addTrailers({ "x-sum": "4" });
+    return response.end();
+  }
+  if (request.url === "/pipe") return request.pipe(response);
+  if (request.url === "/cookies") {
+    response.setHeader("set-cookie", ["a=1", "b=2"]);
+    response.appendHeader("set-cookie", "c=3");
+    return response.end(JSON.stringify([request.headers.cookie, request.headersDistinct["x-many"], request.rawHeaders.filter(name => name.toLowerCase() === "x-many").length, response.getHeaderNames(), response.hasHeader("Set-Cookie")]));
+  }
+  if (request.url === "/never") return;
+  response.end("plain");
+});
+server.on("checkContinue", (request, response) => { response.writeContinue(); request.pipe(response); });
+server.on("upgrade", (request, socket, head) => {
+  socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: echo\r\nConnection: Upgrade\r\n\r\n");
+  socket.on("data", part => socket.end("raw " + part));
+});
+server.listen(0, "127.0.0.1");
+await once(server, "listening");
+const base = { host: "127.0.0.1", port: server.address().port };
+const body = async response => { let text = ""; for await (const part of response) text += part; return text; };
+
+const [trailed] = await once(http.get({ ...base, path: "/trailers" }), "response");
+console.log(await body(trailed), JSON.stringify(trailed.trailers), trailed.complete);
+const piped = http.request({ ...base, path: "/pipe", method: "POST" });
+piped.write("first ");
+piped.end("second");
+console.log(await body((await once(piped, "response"))[0]));
+const many = http.request({ ...base, path: "/cookies", headers: { cookie: "x=y", "x-many": ["1", "2"] } }).end();
+const [cookies] = await once(many, "response");
+console.log(await body(cookies), JSON.stringify(cookies.headers["set-cookie"]));
+const waits = http.request({ ...base, path: "/continue", method: "POST", headers: { expect: "100-continue" } });
+await once(waits, "continue");
+waits.end("sent after continue");
+console.log(await body((await once(waits, "response"))[0]));
+const upgrading = http.request({ ...base, headers: { connection: "Upgrade", upgrade: "echo" } }).end();
+const [answer, socket] = await once(upgrading, "upgrade");
+socket.write("bytes");
+console.log(answer.statusCode, answer.headers.upgrade, (await once(socket, "data"))[0].toString(), socket instanceof net.Socket);
+const slow = http.request({ ...base, path: "/never", timeout: 10 }).end();
+await once(slow, "timeout");
+slow.destroy();
+console.log("timed out", (await once(slow, "error"))[0].code, slow.destroyed);
+const dropped = http.get({ ...base, path: "/never" });
+await once(dropped, "socket");
+dropped.destroy(new Error("dropped by the client"));
+console.log((await once(dropped, "error"))[0].message);
+
+console.log(http.STATUS_CODES[418], http.METHODS.includes("PATCH"), http.METHODS.length > 30, http.maxHeaderSize, typeof http.globalAgent.maxSockets, http.globalAgent instanceof http.Agent, server.keepAliveTimeout, server.requestTimeout, server.headersTimeout, server.maxHeadersCount, server.timeout);
+for (const check of [() => http.validateHeaderName("bad name"), () => http.validateHeaderValue("x", "bad\nvalue"), () => http.request({ ...base, method: "BAD METHOD" }), () => http.request({ ...base, path: "/with space" })]) {
+  try {
+    check();
+    console.log("accepted");
+  } catch (error) {
+    console.log(error.code);
+  }
+}
+console.log(typeof http.IncomingMessage, typeof http.ServerResponse, typeof http.OutgoingMessage, typeof http.ClientRequest, typeof http.Server, server instanceof net.Server);
+server.closeAllConnections();
+await new Promise(resolve => server.close(resolve));
+//// the-global-agent-is-one-object-for-both-modules.cjs
+// The agent that requests use by default is one object for node:http and node:_http_agent. It can be replaced from either, and `undefined` stays once it is stored.
+const http = require("node:http");
+const agents = require("node:_http_agent");
+console.log("names", Object.keys(agents).join());
+console.log("one object", http.globalAgent === agents.globalAgent, http.globalAgent === http.globalAgent, http.globalAgent instanceof http.Agent);
+console.log("its options", http.globalAgent.keepAlive, http.globalAgent.scheduling, http.globalAgent.options.timeout, http.globalAgent.maxSockets, http.globalAgent.proxyEnv);
+const server = http.createServer((request, response) => response.end("hello " + request.url));
+server.listen(0, () => {
+  const { port } = server.address();
+  http.get({ port, path: "/a" }, response => {
+    let text = "";
+    response.on("data", piece => (text += piece));
+    response.on("end", () => {
+      console.log("a request by default", response.statusCode, text, response.req.agent === http.globalAgent);
+      const mine = new http.Agent({ keepAlive: false });
+      http.globalAgent = mine;
+      console.log("replaced through node:http", agents.globalAgent === mine);
+      http.get({ port, path: "/b" }, second => {
+        second.resume();
+        second.on("end", () => {
+          console.log("a request after that", second.statusCode, second.req.agent === mine);
+          agents.globalAgent = undefined;
+          console.log("undefined stays", http.globalAgent, agents.globalAgent);
+          server.close();
+          mine.destroy();
+        });
+      });
+    });
+  });
+});
+//// the-global-agent-is-stored-before-it-is-asked-for.cjs
+// A store before the first read: both modules hold what was stored.
+const agents = require("node:_http_agent");
+const http = require("node:http");
+const mine = new http.Agent();
+agents.globalAgent = mine;
+console.log(http.globalAgent === mine, agents.globalAgent === mine);
+//// the-global-object-kept-in-a-variable.js
+// What TypeScript makes of `globalThis.registry ??= {}`: the global object is stored in a variable, and the variable is only read by constant names. Every use of it is in sight, and none of them needs Bun's library.
+// STATISTIC: FunctionsLowered <= 600
+var _a;
+const registry = (_a = globalThis).__registry_of_this_program ?? (_a.__registry_of_this_program = { entries: [] });
+registry.entries.push("one");
+console.log(globalThis.__registry_of_this_program.entries.join(), typeof _a.process.pid);

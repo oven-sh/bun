@@ -1,0 +1,1407 @@
+////: Pattern
+class Pattern extends RegExp {
+  constructor(source: string, flags?: string) {
+    super(source, flags);
+    log.push("new " + (typeof source === "string" ? "string" : "other") + " " + Object.prototype.toString.call(source) + " " + flags);
+  }
+  exec(text: string | number): RegExpExecArray | null {
+    log.push("exec " + typeof text + " " + this.lastIndex);
+    return super.exec(String(text));
+  }
+}
+////: Safe
+class Safe {
+  #code = 42;
+  static codeOf(safe: Safe): number {
+    return safe.#code;
+  }
+}
+////: for-22
+for (const other of «1») {
+  try {
+    console.log(Safe.codeOf(other));
+  } catch (error) {
+    console.log(error instanceof TypeError);
+  }
+}
+//// species/entries-programs-e1.ts
+// Species: entries programs. It prints what plain Bun prints.
+const textToKeywordObj = { abstract: 128, accessor: 129, any: 133 };
+const textToKeyword = new Map(Object.entries(textToKeywordObj));
+function keywordOf(text: string): number | undefined { return textToKeyword.get(text); }
+console.log(keywordOf("any"), keywordOf("none"));
+//// species/fiber-programs-e2-entries-loop.js
+// Species: fiber programs  entries loop. It prints what plain Bun prints.
+const table = { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8 };
+function total(object) { let sum = 0; for (const [key, value] of Object.entries(object)) sum += value + key.length; return sum; }
+function pairs(object) { let sum = 0; const list = Object.entries(object); for (let i = 0; i < list.length; i++) { const pair = list[i]; sum += pair[1] + pair[0].length + pair.length; } return sum; }
+let sum = 0;
+for (let round = 0; round < 200000; round++) sum += total(table) + pairs(table);
+console.log(sum);
+//// species/fiber-programs-e3-map-numbers-loop.js
+// Species: fiber programs  map numbers loop. It prints what plain Bun prints.
+const counts = new Map();
+function bump(key, by) { const before = counts.get(key); counts.set(key, before === undefined ? by : (before + by) & 1023); }
+function total() { let sum = 0; for (let key = 0; key < 64; key++) { const value = counts.get(key); if (value !== undefined) sum += value * 2 + 1; } return sum; }
+let sum = 0;
+for (let round = 0; round < 300000; round++) { bump(round & 63, round & 7); if ((round & 255) === 0) sum += total(); }
+console.log(sum, counts.size);
+//// species/fiber-programs-e4-spread-loop.js
+// Species: fiber programs  spread loop. It prints what plain Bun prints.
+const base = { a: 1, b: 2, c: 3 };
+function widen(object, extra) { return { ...object, d: extra }; }
+function join(list, tail) { return [...list, tail]; }
+let sum = 0, list = [1, 2, 3];
+for (let round = 0; round < 300000; round++) { const wide = widen(base, round & 15); sum += wide.a + wide.b + wide.c + wide.d; const longer = join(list, round & 3); sum += longer[0] + longer[3] + longer.length; }
+console.log(sum);
+//// species/fiber-programs-e5-length-of-what-a-built-in-answers.js
+// Species: fiber programs  length of what a built in answers. It prints what plain Bun prints.
+const table = { a: 1, b: 2, c: 3 };
+const words = "one,two,three,four";
+const list = [1, 2, 3, 4, 5];
+function lengths(round) {
+  const keys = Object.keys(table), parts = words.split(","), mapped = list.map(x => x + round), kept = list.filter(x => x > 2), cut = list.slice(1), joined = list.concat(cut);
+  return keys.length + parts.length + mapped.length + kept.length + cut.length + joined.length;
+}
+let sum = 0;
+for (let round = 0; round < 100000; round++) sum += lengths(round);
+console.log(sum);
+//// species/fiber-programs-e6-entries-loop-typed.ts
+// Species: fiber programs  entries loop typed. It prints what plain Bun prints.
+declare const console: { log(...values: unknown[]): void };
+type Table = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h: number };
+const table: Table = { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8 };
+function total(object: Table): number { let sum = 0; for (const [key, value] of Object.entries(object)) sum += value + key.length; return sum; }
+function pairs(object: Table): number { let sum = 0; const list: [string, number][] = Object.entries(object); for (let i = 0; i < list.length; i++) { const pair = list[i]; sum += pair[1] + pair[0].length + pair.length; } return sum; }
+let sum = 0;
+for (let round = 0; round < 200000; round++) sum += total(table) + pairs(table);
+console.log(sum);
+//// species/js-programs-j-method-deleted.js
+// Species: js programs j method deleted. It prints what plain Bun prints.
+const log = [];
+class Base { measure() { return "base"; } }
+class Meter extends Base { measure() { return "first"; } }
+const held = JSON.parse("[]");
+held.push(new Meter());
+delete Object.getPrototypeOf(held[0]).measure;
+log.push(new Meter().measure());
+console.log(log.join("; "));
+//// species/js-programs-j-method-replaced-in-a-timer.js
+// Species: js programs j method replaced in a timer. It prints what plain Bun prints.
+const log = [];
+class Meter { measure() { return "first"; } }
+setTimeout(back => {
+  Object.getPrototypeOf(back).measure = function () { return "replaced"; };
+  log.push(new Meter().measure());
+  console.log(log.join("; "));
+}, 1, new Meter());
+//// species/js-programs-j-method-replaced-through-get-prototype-of.js
+// Species: js programs j method replaced through get prototype of. It prints what plain Bun prints.
+const log = [];
+class Meter { measure() { return "first"; } }
+const held = JSON.parse("[]");
+held.push(new Meter());
+Object.getPrototypeOf(held[0]).measure = function () { return "replaced"; };
+log.push(new Meter().measure());
+console.log(log.join("; "));
+//// species/js-programs-j-method-replaced-through-proto.js
+// Species: js programs j method replaced through proto. It prints what plain Bun prints.
+const log = [];
+class Meter { measure() { return "first"; } }
+const held = JSON.parse("[]");
+held.push(new Meter());
+held[0].__proto__.measure = function () { return "replaced"; };
+log.push(new Meter().measure());
+console.log(log.join("; "));
+//// species/programs-claim.ts
+// Species: programs claim. It prints what plain Bun prints.
+let change: () => void = () => {};
+class Other extends Array { static get [Symbol.species]() { change(); return Array; } }
+try { const other: any = new Other(); other.push(1); console.log('made', other.length); console.log(other.map((x: any) => x).length); } catch (e) { console.log('threw', String(e)); }
+//// species/programs-claim-exact.ts
+// Species: programs claim exact. It prints what plain Bun prints.
+let change: () => void = () => {};
+class Other extends Array { static get [Symbol.species]() { change(); return Array; } }
+try { const other: any = new Other(); other.push(1); console.log('made', other.length); console.log(other.map((x: any) => x).length); } catch (e) { console.log('threw', String(e), (e as Error).stack); }
+//// species/programs-each-reader.ts
+// Held from creation: each class here has a static Symbol.species getter that nothing in the program reads: one native method reads it, through `constructor` of an instance. A bit is set for each getter that ran.
+
+let bits = 0;
+
+function attempt(run: () => unknown): void {
+  try {
+    run();
+  } catch {}
+}
+
+class OfMap extends Array<number> { static get [Symbol.species](): any { bits |= 1; return Array; } }
+class OfFilter extends Array<number> { static get [Symbol.species](): any { bits |= 2; return Array; } }
+class OfSlice extends Array<number> { static get [Symbol.species](): any { bits |= 4; return Array; } }
+class OfSplice extends Array<number> { static get [Symbol.species](): any { bits |= 8; return Array; } }
+class OfConcat extends Array<number> { static get [Symbol.species](): any { bits |= 16; return Array; } }
+class OfFlat extends Array<number> { static get [Symbol.species](): any { bits |= 32; return Array; } }
+class OfFlatMap extends Array<number> { static get [Symbol.species](): any { bits |= 64; return Array; } }
+class OfThen extends Promise<number> { static get [Symbol.species](): any { bits |= 128; return Promise; } }
+class OfCatch extends Promise<number> { static get [Symbol.species](): any { bits |= 256; return Promise; } }
+class OfFinally extends Promise<number> { static get [Symbol.species](): any { bits |= 512; return Promise; } }
+class OfTypedSlice extends Uint8Array { static get [Symbol.species](): any { bits |= 1024; return Uint8Array; } }
+class OfTypedMap extends Uint8Array { static get [Symbol.species](): any { bits |= 2048; return Uint8Array; } }
+class OfTypedFilter extends Uint8Array { static get [Symbol.species](): any { bits |= 4096; return Uint8Array; } }
+class OfSubarray extends Uint8Array { static get [Symbol.species](): any { bits |= 8192; return Uint8Array; } }
+class OfBufferSlice extends ArrayBuffer { static get [Symbol.species](): any { bits |= 16384; return ArrayBuffer; } }
+class OfSplit extends RegExp { static get [Symbol.species](): any { bits |= 32768; return RegExp; } }
+class OfMatchAll extends RegExp { static get [Symbol.species](): any { bits |= 65536; return RegExp; } }
+class OfAwait extends Promise<number> { static get [Symbol.species](): any { bits |= 131072; return Promise; } }
+
+attempt(() => OfMap.from([1]).map(one => one));
+attempt(() => OfFilter.from([1]).filter(() => true));
+attempt(() => OfSlice.from([1]).slice());
+attempt(() => OfSplice.from([1]).splice(0));
+attempt(() => OfConcat.from([1]).concat([]));
+attempt(() => OfFlat.from([1]).flat());
+attempt(() => OfFlatMap.from([1]).flatMap(one => one));
+attempt(() => OfThen.resolve(1).then(() => 0));
+attempt(() => OfCatch.resolve(1).catch(() => 0));
+attempt(() => OfFinally.resolve(1).finally(() => 0));
+attempt(() => new OfTypedSlice(1).slice());
+attempt(() => new OfTypedMap(1).map(one => one));
+attempt(() => new OfTypedFilter(1).filter(() => true));
+attempt(() => new OfSubarray(1).subarray(0));
+attempt(() => new OfBufferSlice(2).slice(1));
+attempt(() => "a".split(new OfSplit("a")));
+attempt(() => "a".matchAll(new OfMatchAll("a", "g")));
+attempt(() => (async () => await OfAwait.resolve(1))());
+setTimeout(() => console.log(bits.toString(2)), 5);
+//// species/programs-rx1.ts
+// Species, one probe of many. It prints what plain Bun prints.
+const log: string[] = [];
+////= Pattern
+const comma = new Pattern(",", "g");
+log.push("split"); "a,b,c".split(comma);
+log.push("matchAll"); [..."a,b,c".matchAll(comma)];
+log.push("replace"); "a,b,c".replace(comma, ";");
+log.push("match"); "a,b,c".match(comma);
+log.push("search"); "a,b,c".search(comma);
+log.push("test"); comma.test("x,y");
+console.log(log.join("\n"));
+//// species/programs-rx2-flags-are-no-constant.ts
+// Species: programs  flags are no constant. It prints what plain Bun prints.
+const log: string[] = [];
+////= Pattern
+const comma = new Pattern(",", process.argv.length > 99 ? "gi" : "g");
+log.push("split"); "a,b,c".split(comma);
+log.push("matchAll"); [..."a,b,c".matchAll(comma)];
+log.push("replace"); "a,b,c".replace(comma, ";");
+log.push("match"); "a,b,c".match(comma);
+log.push("search"); "a,b,c".search(comma);
+log.push("test"); comma.test("x,y");
+console.log(log.join("\n"));
+//// species/programs-sc1.ts
+// Species, one probe of many. It prints what plain Bun prints.
+const log: string[] = [];
+class ByMap extends Array<number> { constructor(label: string) { super(); log.push((typeof label !== "string" ? "no string" : "a string") + " " + Object.prototype.toString.call(label)); } static one(): ByMap { const made = new ByMap("mine"); made.push(1); return made; } }
+try { const mapped = ByMap.one().map(one => one); log.push("mapped " + (mapped instanceof ByMap) + " " + mapped.length); } catch (error) { log.push("threw " + String(error).slice(0, 150)); }
+class ByRead extends Array<number> { constructor(label: string) { super(); log.push((typeof label !== "string" ? "no string" : "a string") + " " + Object.prototype.toString.call(label)); } }
+try { new (Reflect.get(new ByRead("mine"), "constructor") as any)(1); } catch (error) { log.push("threw " + String(error).slice(0, 150)); }
+console.log(log.join("; "));
+//// species/programs-sp1.ts
+// Species, one probe of many. It prints what plain Bun prints.
+const log: string[] = [];
+function thrown(value: number): void { log.push("called with " + (typeof value !== "number" ? "no number" : "a number") + " " + Object.prototype.toString.call(value)); }
+thrown(1);
+class Mine extends Array { static get [Symbol.species](): any { log.push("species getter"); throw thrown; } }
+try {
+  const made = Mine.from([1]);
+  log.push("made " + (made instanceof Mine));
+  const mapped = made.map(one => one);
+  log.push("mapped " + (mapped instanceof Mine));
+} catch (caught) {
+  log.push("caught " + typeof caught);
+  (caught as any)("s");
+}
+class Other extends Array { static get [Symbol.species](): any { log.push("species getter 2"); return Array; } }
+const other = Other.from([1]).map(one => one);
+log.push("other " + (other instanceof Other));
+console.log(log.join("; "));
+//// species/programs-v-defined-species.ts
+// The getter is put on the class by Object.defineProperty.
+const log: string[] = [];
+class Mine extends Array<number> {}
+Object.defineProperty(Mine, Symbol.species, { get() { log.push("defined getter"); return Array; } });
+const made = Mine.of(1, 2).concat([3]);
+log.push(String(made instanceof Mine), String(made.length));
+console.log(log.join("; "));
+//// species/programs-v-getter-stays-out.ts
+// No native reader meets an instance: the program prints the same, and the getter need not be compiled.
+class Quiet extends Array<number> { static get [Symbol.species](): any { console.log("never"); return Array; } }
+const quiet = new Quiet(); quiet.push(1, 2);
+console.log(quiet.length, quiet[1], quiet.indexOf(2));
+//// species/programs-v-inherited-species.ts
+// The getter sits on a parent class; the instance is of a child, made by from().
+const log: string[] = [];
+class Parent extends Array<number> { static get [Symbol.species](): any { log.push("parent getter " + (this === Child)); return Array; } }
+class Child extends Parent {}
+const mapped = Child.from([1, 2]).filter(one => one > 1);
+log.push(String(mapped instanceof Child), String(mapped.length));
+console.log(log.join("; "));
+//// species/programs-v-own-constructor-property.ts
+// A plain array gets an own `constructor` whose species is a function of the program that nothing else calls.
+const log: string[] = [];
+function Made(this: any, length: string) { log.push("constructed with " + (typeof length === "string" ? "a string" : "no string") + " " + String(length)); this.length = 0; }
+const list: any = [1, 2];
+list.constructor = { [Symbol.species]: Made };
+const mapped = list.map((one: number) => one + 1);
+log.push(String(mapped instanceof (Made as any)), String(mapped[0]), String(mapped[1]));
+console.log(log.join("; "));
+//// species/programs-v-promise-species-executor.ts
+// then() constructs the species of a promise subclass with a native executor; the constructor says its parameter is a string.
+const log: string[] = [];
+class Mine<T> extends Promise<T> { constructor(executor: any, label?: string) { super(typeof executor === "function" ? executor : () => {}); log.push("new " + typeof executor + " " + typeof label); } }
+const first = new Mine<number>((resolve: (value: number) => void) => resolve(1), "mine");
+const second = first.then(one => one + 1);
+log.push(String(second instanceof Mine));
+second.then(value => { log.push(String(value)); console.log(log.join("; ")); });
+//// species/programs-v-regexp-like-receiver.ts
+// RegExp.prototype[Symbol.split] takes any object as its receiver and constructs the species of its `constructor`.
+const log: string[] = [];
+class Splitter { lastIndex = 0; constructor(pattern: string, flags: number) { log.push("new " + (typeof pattern === "string" ? "string" : "other") + " " + (typeof flags === "number" ? "number" : "other") + " " + String(flags)); } exec(text: number): null { log.push("exec " + typeof text); return null; } }
+new Splitter("x", 1).exec(1);
+const like: any = { constructor: { [Symbol.species]: Splitter }, flags: "u" };
+const parts = (RegExp.prototype as any)[Symbol.split].call(like, "ab");
+log.push(String(parts.length), String(parts[0]));
+console.log(log.join("; "));
+//// species/programs-v-species-is-data.ts
+// The species is a static data property that names another class of the program, whose constructor says `string`.
+const log: string[] = [];
+class Target extends Array<number> { constructor(label: string) { super(); log.push((typeof label === "string" ? "a string" : "no string") + " " + Object.prototype.toString.call(label)); } }
+class Source extends Array<number> { static [Symbol.species]: any = Target; }
+new Target("mine");
+const made = Source.from([1, 2, 3]).slice(1);
+log.push(String(made instanceof Target), String(made.length));
+console.log(log.join("; "));
+//// species/programs-v-static-method-through-constructor.ts
+// Compiled code reaches the class through `constructor` of a value nobody knows: a static method and a construction that nothing else performs.
+const log: string[] = [];
+class Point { x: number; constructor(x: number | string) { this.x = typeof x === "number" ? x : -1; log.push("new " + typeof x); } static origin(label: number): string { return "origin " + typeof label; } }
+const held: any[] = JSON.parse("[]");
+held.push(new Point(1));
+const back: any = held[0];
+log.push(back.constructor.origin("s"));
+log.push(String(new back.constructor("s").x));
+console.log(log.join("; "));
+//// species/programs-v-typed-array-and-buffer.ts
+// Species: programs v typed array and buffer. It prints what plain Bun prints.
+const log: string[] = [];
+class Bytes extends Uint8Array { constructor(first: string | number | ArrayBuffer, ...rest: number[]) { super(first as any, ...rest); log.push("bytes " + Object.prototype.toString.call(first) + " " + rest.length); } }
+class Store extends ArrayBuffer { constructor(size: string | number) { super(size as number); log.push("store " + typeof size); } }
+class Shared extends SharedArrayBuffer { static get [Symbol.species](): any { log.push("shared getter"); return SharedArrayBuffer; } }
+log.push(String(Bytes.from([1, 2, 3]).subarray(1) instanceof Bytes));
+log.push(String(Bytes.of(1, 2).slice(1) instanceof Bytes));
+log.push(String(new Store(4).slice(1) instanceof Store));
+log.push(String(new Shared(4).slice(1).byteLength));
+console.log(log.join("; "));
+//// species/programs-w-constructor-getter.ts
+// Species: programs w constructor getter. It prints what plain Bun prints.
+const log: string[] = [];
+class List extends Array<number> {}
+class Later<T> extends Promise<T> {}
+Object.defineProperty(List.prototype, "constructor", { get() { log.push("list constructor getter"); return Array; } });
+Object.defineProperty(Later.prototype, "constructor", { get() { log.push("later constructor getter"); return Promise; } });
+log.push(String(List.from([1]).map(one => one) instanceof List));
+(async () => { log.push(String(await new Later<number>(resolve => resolve(1)))); console.log(log.join("; ")); })();
+//// species/programs-w-constructor-through-get-prototype-of.ts
+// Species: programs w constructor through get prototype of. It prints what plain Bun prints.
+const log: string[] = [];
+class Point { constructor(x: number) { log.push("new " + (typeof x === "number" ? "a number" : "no number")); } }
+const held: any[] = JSON.parse("[]");
+held.push(new Point(1));
+new (Object.getPrototypeOf(held[0]).constructor)("s");
+new (Object.getOwnPropertyDescriptor(Object.getPrototypeOf(held[0]), "constructor")!.value)("s");
+console.log(log.join("; "));
+//// species/programs-w-method-taken-through-unknown.ts
+// Species: programs w method taken through unknown. It prints what plain Bun prints.
+const log: string[] = [];
+class Meter { size = 1; measure(by: number): string { return (this instanceof Meter ? "a meter" : "no meter") + " " + (typeof by === "number" ? "a number" : "no number"); } }
+log.push(new Meter().measure(1));
+const held: any[] = JSON.parse("[]");
+held.push(new Meter());
+const taken = held[0].measure;
+log.push(taken.call({ size: "s" }, "s"));
+console.log(log.join("; "));
+//// species/programs-w-of-and-from-construct-this.ts
+// Species: programs w of and from construct this. It prints what plain Bun prints.
+const log: string[] = [];
+class ByOf extends Array<number> { constructor(label?: string) { super(); log.push("of " + (label === undefined ? "nothing" : typeof label === "string" ? "a string" : "no string")); } }
+class ByFrom extends Array<number> { constructor(label?: string) { super(); log.push("from " + (label === undefined ? "nothing" : typeof label === "string" ? "a string" : "no string")); } }
+new ByOf("mine"); new ByFrom("mine");
+log.push(String(ByOf.of(1, 2).length));
+log.push(String(ByFrom.from({ length: 2, 0: 1, 1: 2 }).length));
+log.push(String(ByFrom.from([1]).length));
+function Plain(this: any, length: string) { log.push("plain " + (typeof length === "string" ? "a string" : "no string")); }
+Array.of.call(Plain, 1, 2, 3);
+console.log(log.join("; "));
+//// species/programs-w-promise-all-calls-overridden-resolve.ts
+// Species: programs w promise all calls overridden resolve. It prints what plain Bun prints.
+const log: string[] = [];
+class Sub<T> extends Promise<T> { static resolve(value?: any): any { log.push("resolve " + typeof value); return super.resolve(value); } }
+Sub.all(["s", 1]).then(values => { log.push(String(values.length)); console.log(log.join("; ")); });
+//// species/programs-w-setter-through-unknown.ts
+// Species: programs w setter through unknown. It prints what plain Bun prints.
+const log: string[] = [];
+class Box { set value(next: number) { log.push("set " + (typeof next === "number" ? "a number" : "no number")); } }
+new Box().value = 1;
+const held: any[] = JSON.parse("[]");
+held.push(new Box());
+held[0].value = "s";
+console.log(log.join("; "));
+//// species/programs-w-species-constructor-keeps-what-it-gets.ts
+// What the species constructor is given is kept, and used with its declared type later.
+const log: string[] = [];
+let kept: string = "start";
+class Keeps extends Array<number> { constructor(label: string) { super(); kept = label; } static make(): Keeps { const made = new Keeps("mine"); made.push(1, 2); return made; } }
+Keeps.make().filter(() => true);
+log.push(typeof kept === "string" ? "a string" : "no string", String(kept));
+console.log(log.join("; "));
+//// species/programs-w-species-of-an-instance-in-a-field.ts
+// The instance sits in a field of an object that a callback of the library hands back.
+const log: string[] = [];
+class Mine extends Array<number> { static get [Symbol.species](): any { log.push("getter"); return Array; } }
+const holders = [{ list: new Mine() }];
+holders[0].list.push(1);
+setTimeout((holder: { list: number[] }) => { log.push(String(holder.list.map(one => one).length)); console.log(log.join("; ")); }, 1, holders[0]);
+//// species/programs-w-static-name-getter-console-log.ts
+// console.log names the class of what it prints: native code reads `constructor` of the instance and `name` of the class.
+let reads = 0;
+class Named { static get name(): string { reads++; return "Custom"; } }
+console.log(new Named());
+console.log(reads > 0);
+//// species/programs-w-static-name-getter-util-inspect.ts
+// Species: programs w static name getter util inspect. It prints what plain Bun prints.
+import { inspect } from "node:util";
+let reads = 0;
+class Named { static get name(): string { reads++; return "Custom"; } }
+console.log(inspect(new Named()), reads > 0);
+//// species/programs-x-escaped-built-in-reads-the-species.ts
+// Species: programs x escaped built in reads the species. It prints what plain Bun prints.
+const log: string[] = [];
+class Mine extends Array<number> { static get [Symbol.species](): any { log.push("getter"); return Array; } }
+const held: any[] = JSON.parse("[]");
+held.push(Array.prototype.map, new Mine());
+log.push(String(held[0].call(held[1], (one: number) => one).length));
+console.log(log.join("; "));
+//// species/programs-x-object-below-the-prototype-of-a-regexp-subclass.ts
+// Species: programs x object below the prototype of a regexp subclass. It prints what plain Bun prints.
+const log: string[] = [];
+class Pattern extends RegExp { constructor(source: string, flags?: string) { super(typeof source === "string" ? source : "b", flags); log.push("new " + (typeof source === "string" ? "string" : "other") + " " + flags); } }
+const below = Object.create(Pattern.prototype, { flags: { value: "" } });
+log.push(String((RegExp.prototype as any)[Symbol.split].call(below, "abc").length));
+console.log(log.join("; "));
+//// species/programs-x-prototype-set-on-a-plain-array.ts
+// Species: programs x prototype set on a plain array. It prints what plain Bun prints.
+const log: string[] = [];
+class Mine extends Array<number> { constructor(label?: string) { super(); log.push("new " + (label === undefined ? "nothing" : typeof label)); } static get [Symbol.species](): any { log.push("getter"); return this; } }
+const plain: number[] = [1, 2, 3];
+Object.setPrototypeOf(plain, Mine.prototype);
+log.push(String(plain.filter(one => one > 1).length));
+console.log(log.join("; "));
+//// species/programs-x-reflect-construct-for-a-subclass.ts
+// Species: programs x reflect construct for a subclass. It prints what plain Bun prints.
+const log: string[] = [];
+class Mine extends Array<number> { constructor(label?: string) { super(); log.push("new " + (label === undefined ? "nothing" : typeof label)); } static get [Symbol.species](): any { log.push("getter"); return this; } }
+const made = Reflect.construct(Array, [], Mine) as number[];
+made.push(1, 2);
+log.push(String(made instanceof Mine));
+log.push(String(made.map(one => one).length));
+console.log(log.join("; "));
+//// species/programs-x-species-constructor-reads-the-receiver-it-is-given.ts
+// Species: programs x species constructor reads the receiver it is given. It prints what plain Bun prints.
+const log: string[] = [];
+class Pattern extends RegExp { marker: number | string = 7; constructor(source: string | RegExp, flags?: string) { super(source, flags); log.push("marker " + (typeof source === "object" ? typeof (source as Pattern).marker + " " + (source as Pattern).marker : "none")); } }
+const comma = new Pattern(",", "g");
+comma.marker = "set";
+"a,b".split(comma);
+[..."a,b".matchAll(comma)];
+console.log(log.join("; "));
+//// species/programs-x-species-in-a-function-called-twice.ts
+// The class stands inside a function, the instance is captured, and the reader runs in a nested function.
+const log: string[] = [];
+async function stretch(round: number): Promise<void> {
+  class Other extends Array<number> { static get [Symbol.species](): any { log.push("getter " + round); return Array; } }
+  const other = new Other();
+  const read = () => other.map(one => one);
+  await null;
+  log.push(String(read().length));
+}
+stretch(1).then(() => stretch(2)).then(() => console.log(log.join("; ")));
+//// species/programs-y-constructor-compared.ts
+// Species: programs y constructor compared. It prints what plain Bun prints.
+class Point { x = 1; }
+class Other { y = 2; }
+const held: any[] = JSON.parse("[]");
+held.push(new Point(), new Other());
+console.log(held[0].constructor === Point, held[1].constructor === Point, held[1].constructor === Other, held[0].constructor.name);
+//// species/programs-y-instanceof-through-constructor.ts
+// Species: programs y instanceof through constructor. It prints what plain Bun prints.
+class Point { static [Symbol.hasInstance](value: unknown): boolean { return value === 1; } }
+const held: any[] = JSON.parse("[]");
+held.push(new Point());
+console.log((1 as any) instanceof held[0].constructor, ({} as any) instanceof held[0].constructor);
+//// species/programs-y-method-compared-and-tagged.ts
+// Species: programs y method compared and tagged. It prints what plain Bun prints.
+class Meter { measure(): string { return "first"; } }
+const held: any[] = JSON.parse("[]");
+held.push(new Meter());
+const taken = held[0].measure;
+taken.tag = 7;
+console.log(taken === Meter.prototype.measure, (Meter.prototype.measure as any).tag, taken.name, taken.length);
+//// species/programs-y-method-kept-and-called-later.ts
+// Species: programs y method kept and called later. It prints what plain Bun prints.
+const log: string[] = [];
+class Meter { size: number | string = 1; measure(by: number): string { return typeof this.size + " " + typeof by; } }
+log.push(new Meter().measure(1));
+const held: any[] = JSON.parse("[]");
+held.push(new Meter());
+const table: Record<string, any> = { run: held[0].measure };
+log.push(table.run("s"), Reflect.apply(held[0].measure, { size: "s" }, ["s"]), held[0].measure.bind({ size: true })(null));
+console.log(log.join("; "));
+//// species/programs-y-method-replaced-through-constructor.ts
+// Species: programs y method replaced through constructor. It prints what plain Bun prints.
+class Meter { measure(): string { return "first"; } static unit(): string { return "m"; } }
+const held: any[] = JSON.parse("[]");
+held.push(new Meter());
+held[0].constructor.prototype.measure = function (): string { return "replaced"; };
+held[0].constructor.unit = function (): string { return "ft"; };
+console.log(new Meter().measure(), Meter.unit());
+//// species/programs-y-method-replaced-through-get-prototype-of.ts
+// Species: programs y method replaced through get prototype of. It prints what plain Bun prints.
+class Meter { measure(): string { return "first"; } }
+const held: any[] = JSON.parse("[]");
+held.push(new Meter());
+Object.getPrototypeOf(held[0]).measure = function (): string { return "replaced"; };
+console.log(new Meter().measure());
+//// species/programs-y-method-replaced-through-proto.ts
+// Species: programs y method replaced through proto. It prints what plain Bun prints.
+class Meter { measure(): string { return "first"; } }
+const held: any[] = JSON.parse("[]");
+held.push(new Meter());
+held[0].__proto__.measure = function (): string { return "replaced"; };
+console.log(new Meter().measure());
+//// species/programs-y-prototype-compared.ts
+// Species: programs y prototype compared. It prints what plain Bun prints.
+class Point { x = 1; }
+const held: any[] = JSON.parse("[]");
+held.push(new Point());
+console.log(Object.getPrototypeOf(held[0]) === Point.prototype, held[0].__proto__ === Point.prototype, Point.prototype.isPrototypeOf(held[0]));
+//// species/programs-y2-method-deleted-through-get-prototype-of.ts
+// Species: programs  method deleted through get prototype of. It prints what plain Bun prints.
+const log: string[] = [];
+class Base { measure(): string { return "base"; } }
+class Meter extends Base { measure(): string { return "first"; } }
+const held: any[] = JSON.parse("[]");
+held.push(new Meter());
+delete Object.getPrototypeOf(held[0]).measure;
+log.push(new Meter().measure());
+console.log(log.join("; "));
+//// species/programs-y2-method-replaced-through-get-prototype-of.ts
+// Species: programs  method replaced through get prototype of. It prints what plain Bun prints.
+const log: string[] = [];
+class Meter { measure(): string { return "first"; } }
+const held: any[] = JSON.parse("[]");
+held.push(new Meter());
+Object.getPrototypeOf(held[0]).measure = function (): string { return "replaced"; };
+log.push(new Meter().measure());
+console.log(log.join("; "));
+//// species/programs-y2-method-replaced-through-proto.ts
+// Species: programs  method replaced through proto. It prints what plain Bun prints.
+const log: string[] = [];
+class Meter { measure(): string { return "first"; } }
+const held: any[] = JSON.parse("[]");
+held.push(new Meter());
+held[0].__proto__.measure = function (): string { return "replaced"; };
+log.push(new Meter().measure());
+console.log(log.join("; "));
+//// species/programs-y2-method-replaced-through-reflect.ts
+// Species: programs  method replaced through reflect. It prints what plain Bun prints.
+const log: string[] = [];
+class Meter { measure(): string { return "first"; } }
+const held: any[] = JSON.parse("[]");
+held.push(new Meter());
+(Reflect.getPrototypeOf(held[0]) as any).measure = function (): string { return "replaced"; };
+log.push(new Meter().measure());
+console.log(log.join("; "));
+//// species/programs-y2-parent-changed-through-set-prototype-of.ts
+// Species: programs  parent changed through set prototype of. It prints what plain Bun prints.
+const log: string[] = [];
+class Base { measure(): string { return "base"; } }
+class Meter extends Base {}
+const held: any[] = JSON.parse("[]");
+held.push(new Meter());
+Object.setPrototypeOf(Object.getPrototypeOf(held[0]), { measure(): string { return "other"; } });
+log.push(new Meter().measure());
+console.log(log.join("; "));
+//// species/programs-y2-prototype-compared.ts
+// Species: programs  prototype compared. It prints what plain Bun prints.
+const log: string[] = [];
+class Point { x = 1; }
+const held: any[] = JSON.parse("[]");
+held.push(new Point());
+log.push(String(Object.getPrototypeOf(held[0]) === Point.prototype), String(held[0].__proto__ === Point.prototype), String(held[0].constructor === Point));
+console.log(log.join("; "));
+//// species/programs-y3-method-replaced-through-get-prototype-of-a-map-value.ts
+// Species: programs  method replaced through get prototype of a map value. It prints what plain Bun prints.
+const log: string[] = [];
+class Meter { measure(): string { return "first"; } }
+const kept = new Map<string, any>(JSON.parse("[]"));
+kept.set("meter", new Meter());
+for (const back of kept.values()) Object.getPrototypeOf(back).measure = function (): string { return "replaced"; };
+log.push(new Meter().measure());
+console.log(log.join("; "));
+//// species/programs-y3-method-replaced-through-get-prototype-of-in-a-timer.ts
+// Species: programs  method replaced through get prototype of in a timer. It prints what plain Bun prints.
+const log: string[] = [];
+class Meter { measure(): string { return "first"; } }
+setTimeout((back: any) => {
+  Object.getPrototypeOf(back).measure = function (): string { return "replaced"; };
+  log.push(new Meter().measure());
+  console.log(log.join("; "));
+}, 1, new Meter());
+//// species/programs-y3-method-replaced-through-proto-of-a-resolved-value.ts
+// Species: programs  method replaced through proto of a resolved value. It prints what plain Bun prints.
+const log: string[] = [];
+class Meter { measure(): string { return "first"; } }
+Promise.resolve<any>(new Meter()).then(back => {
+  back.__proto__.measure = function (): string { return "replaced"; };
+  log.push(new Meter().measure());
+  console.log(log.join("; "));
+});
+//// species/programs-y4-method-deleted-above-what-a-host-function-hands-back.ts
+// Species: programs  method deleted above what a host function hands back. It prints what plain Bun prints.
+const log: string[] = [];
+class Base { measure(): string { return "base"; } }
+class Meter extends Base { measure(): string { return "first"; } }
+const back: any = Bun.peek(new Meter() as any);
+delete Object.getPrototypeOf(back).measure;
+log.push(new Meter().measure());
+console.log(log.join("; "));
+//// species/programs-y4-method-replaced-above-what-a-host-function-hands-back.ts
+// Species: programs  method replaced above what a host function hands back. It prints what plain Bun prints.
+const log: string[] = [];
+class Meter { measure(): string { return "first"; } }
+const back: any = Bun.peek(new Meter() as any);
+Object.getPrototypeOf(back).measure = function (): string { return "replaced"; };
+log.push(new Meter().measure());
+console.log(log.join("; "));
+//// species/programs-y4-method-replaced-through-proto-above-what-a-host-function-hands-back.ts
+// Species: programs  method replaced through proto above what a host function hands back. It prints what plain Bun prints.
+const log: string[] = [];
+class Meter { measure(): string { return "first"; } }
+const back: any = Bun.peek(new Meter() as any);
+back.__proto__.measure = function (): string { return "replaced"; };
+log.push(new Meter().measure());
+console.log(log.join("; "));
+//// species/programs-z-one-class-for-each-thing-done-above-an-instance-that-came-back.ts
+// Held from creation: an instance of each class here goes into an array that JSON.parse made and comes back as `any`. What lies above the instance was handed to nobody: the class, its static members, the prototype object, its methods. One thing is done to each of them through the value that came back. A bit is set where the program sees it done.
+
+let bits = 0;
+
+function attempt(run: () => unknown): void {
+  try {
+    run();
+  } catch {}
+}
+const held: any[] = JSON.parse("[]");
+function back(instance: object): any {
+  held.push(instance);
+  return held[held.length - 1];
+}
+const patched = (): string => "patched";
+
+class Compared {}
+class Constructed { constructor(label: number) { if (typeof label !== "number") bits |= 2; } }
+class WithStaticMethod { static run(label: number): void { if (typeof label !== "number") bits |= 4; } }
+class WithStaticGetter { static get mark(): number { bits |= 8; return 1; } }
+class WithSpeciesGetter extends Array<number> { static get [Symbol.species](): any { bits |= 16; return Array; } }
+class WithHasInstance { static [Symbol.hasInstance](value: unknown): boolean { bits |= 32; return value === 1; } }
+class PatchedThroughGetPrototypeOf { m(): number | string { return 1; } }
+class PatchedThroughDunderProto { m(): number | string { return 1; } }
+class PatchedThroughConstructor { m(): number | string { return 1; } }
+class WithPatchedStatic { static m(): number | string { return 1; } }
+class WithTakenMethod { m(label: number): void { if (!(this instanceof WithTakenMethod) && typeof label !== "number") bits |= 1024; } }
+class ConstructedBySlice extends Array<number> { constructor(label: string) { super(); if (typeof label !== "string") bits |= 2048; } }
+class ConstructedBySplit extends RegExp { constructor(source: string, flags?: string) { super(source, flags); if (typeof source !== "string") bits |= 4096; } }
+class Parent extends Array<number> { static get [Symbol.species](): any { bits |= 8192; return Array; } }
+class Child extends Parent {}
+
+attempt(() => { if (back(new Compared()).constructor === Compared) bits |= 1; });
+attempt(() => new (back(new Constructed(1)).constructor)("text"));
+WithStaticMethod.run(1);
+attempt(() => back(new WithStaticMethod()).constructor.run("text"));
+attempt(() => back(new WithStaticGetter()).constructor.mark);
+attempt(() => back(new WithSpeciesGetter()).map((one: number) => one));
+attempt(() => (1 as any) instanceof back(new WithHasInstance()).constructor);
+attempt(() => { Object.getPrototypeOf(back(new PatchedThroughGetPrototypeOf())).m = patched; });
+if (new PatchedThroughGetPrototypeOf().m() === "patched") bits |= 64;
+attempt(() => { back(new PatchedThroughDunderProto()).__proto__.m = patched; });
+if (new PatchedThroughDunderProto().m() === "patched") bits |= 128;
+attempt(() => { back(new PatchedThroughConstructor()).constructor.prototype.m = patched; });
+if (new PatchedThroughConstructor().m() === "patched") bits |= 256;
+attempt(() => { back(new WithPatchedStatic()).constructor.m = patched; });
+if (WithPatchedStatic.m() === "patched") bits |= 512;
+new WithTakenMethod().m(1);
+attempt(() => back(new WithTakenMethod()).m.call({}, "text"));
+attempt(() => back(new ConstructedBySlice("mine")).slice());
+attempt(() => "a,b".split(back(new ConstructedBySplit(","))));
+attempt(() => back(new Child()).filter(() => true));
+console.log(bits.toString(2));
+//// species/proxy-programs-g03-a-sloppy-function-and-evaluated-text-put-names-on-the-global-object.js
+// Species: proxy programs  a sloppy function and evaluated text put names on the global object. It prints what plain Bun prints.
+const log = [];
+function sloppy() { this.__fromThis = 1; __implicit = "made by a store to a free name"; }
+sloppy();
+log.push(typeof globalThis.__fromThis, typeof globalThis.__implicit);
+(0, eval)("var __evaluated = { deep: 1 }; globalThis.__stored = 'by text';");
+log.push(typeof globalThis.__evaluated, typeof globalThis.__stored, String(globalThis.__evaluated.deep));
+new Function("globalThis.__byFunction = 7")();
+log.push(typeof globalThis.__byFunction);
+console.log(log.join("; "));
+module.exports = {};
+//// species/proxy-programs-h01-a-url-setter-through-an-unknown-receiver-runs-tostring-of-the-value.js
+// Species: proxy programs  a url setter through an unknown receiver runs tostring of the value. It prints what plain Bun prints.
+const log = [];
+class Tag { constructor() { this.count = 1; } toString() { this.count = "text"; return "#frag"; } twice() { return this.count + this.count; } }
+globalThis.__box = new URL("http://example.com/a");
+const tag = new Tag(); log.push(String(tag.twice()));
+globalThis.__box.hash = tag;
+log.push(String(tag.twice()), globalThis.__box.href, String(new Tag().twice()));
+console.log(log.join("; "));
+//// species/proxy-programs-h02-a-timer-gets-another-callback-through-an-unknown-receiver.js
+// Species: proxy programs  a timer gets another callback through an unknown receiver. It prints what plain Bun prints.
+const log = [];
+class Meter { constructor() { this.total = 0; } add(by) { this.total += by; return this.total; } }
+const meter = new Meter(); meter.add(1);
+function first() { log.push("first"); }
+function second(...rest) { log.push("second " + rest.length + " " + typeof this + " " + meter.add("x")); console.log(log.join("; ")); }
+globalThis.__timer = setTimeout(first, 5);
+globalThis.__timer._onTimeout = second;
+second.call(undefined, 1);
+//// species/proxy-programs-h03-the-error-handler-of-a-zlib-handle-is-called-by-native-code.js
+// Species: proxy programs  the error handler of a zlib handle is called by native code. It prints what plain Bun prints.
+const zlib = require("node:zlib");
+const log = [];
+class Seen { constructor() { this.code = 0; } note(code) { this.code = code; return typeof this.code; } }
+const seen = new Seen(); log.push(seen.note(1));
+const stream = zlib.createGunzip();
+stream.on("error", error => { log.push(seen.note(error.code), String(error.errno), error.constructor.name); console.log(log.join("; ")); });
+stream.end(Buffer.from("this is no gzip stream"));
+//// species/proxy-programs-h04-a-handler-of-performance-is-stored-under-a-computed-key.js
+// Species: proxy programs  a handler of performance is stored under a computed key. It prints what plain Bun prints.
+const log = [];
+class Body { constructor() { this.hits = 1; } step() { return ++this.hits; } }
+const body = new Body(); body.step();
+const key = process.argv.length > 99 ? "x" : "onresourcetimingbufferfull";
+globalThis.__perf = performance;
+globalThis.__perf[key] = function (event) { log.push(typeof event); body.hits = "s"; };
+log.push(typeof performance.onresourcetimingbufferfull, String(body.step()));
+performance.onresourcetimingbufferfull({}); log.push(String(body.step()));
+console.log(log.join("; "));
+//// species/proxy-programs-h05-the-data-of-a-socket-is-stored-and-read-through-unknown-receivers.js
+// Species: proxy programs  the data of a socket is stored and read through unknown receivers. It prints what plain Bun prints.
+const log = [];
+class State { constructor() { this.seen = 0; } more(by) { this.seen += by; return this.seen; } }
+const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: {
+  open(socket) { globalThis.__socket = socket; globalThis.__socket.data = new State(); },
+  data(socket, bytes) { log.push(String(socket.data.more(bytes.length)), String(globalThis.__socket.data.more("!"))); socket.end(); },
+  close() { server.stop(); console.log(log.join("; ")); },
+} });
+const client = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open(socket) { socket.write("abc"); }, data() {}, close() {} } });
+//// species/proxy-programs-h06-a-request-handed-to-a-callback-is-read-through-an-unknown-receiver.js
+// Species: proxy programs  a request handed to a callback is read through an unknown receiver. It prints what plain Bun prints.
+const log = [];
+const server = Bun.serve({ port: 0, fetch(request) { globalThis.__request = request; const seen = globalThis.__request; log.push(typeof seen.url, seen.method, String(seen.headers.get("x-a")), String(seen.signal.aborted)); return new Response("ok"); } });
+const answer = await fetch(`http://127.0.0.1:${server.port}/p`, { headers: { "x-a": "1" } });
+log.push(await answer.text(), String(answer.status), typeof answer.headers.get("date"));
+server.stop(true);
+console.log(log.join("; "));
+//// species/proxy-programs-h07-a-blob-name-is-stored-through-an-unknown-receiver.js
+// Species: proxy programs  a blob name is stored through an unknown receiver. It prints what plain Bun prints.
+const log = [];
+class Name { constructor() { this.reads = 0; } toString() { this.reads = "many"; return "n.txt"; } }
+globalThis.__file = new File(["a"], "first.txt");
+const name = new Name();
+try { globalThis.__file.name = name; } catch (error) { log.push(error.constructor.name); }
+log.push(String(globalThis.__file.name), String(name.reads), String(new Name().reads));
+console.log(log.join("; "));
+//// species/proxy-programs-m01-a-map-made-of-the-entries-of-a-literal.js
+// Species: proxy programs  a map made of the entries of a literal. It prints what plain Bun prints.
+const log = [];
+const words = { abstract: 128, any: 133, as: 130 };
+const byText = new Map(Object.entries(words));
+function kindOf(text) { const kind = byText.get(text); return kind === undefined ? -1 : kind + 1; }
+log.push(kindOf("any"), kindOf("none"), byText.size, [...byText.keys()].join(), typeof [...byText.values()][0]);
+console.log(log.join("; "));
+//// species/proxy-programs-m02-a-pair-is-changed-before-the-map-is-made.js
+// Species: proxy programs  a pair is changed before the map is made. It prints what plain Bun prints.
+const log = [];
+const entries = Object.entries({ a: 1, b: 2 });
+entries[0][1] = "text"; entries[1][0] = 7; entries.push([{ key: true }, null]);
+const map = new Map(entries);
+for (const [key, value] of map) log.push(typeof key + ":" + typeof value);
+log.push(String(map.get("a")).length, map.get(7) + 1);
+console.log(log.join("; "));
+//// species/proxy-programs-m03-built-ins-change-the-pairs-before-the-map-is-made.js
+// Species: proxy programs  built ins change the pairs before the map is made. It prints what plain Bun prints.
+const log = [];
+const entries = Object.entries({ a: 1, b: 2, c: 3 });
+entries[0].reverse(); entries[1].fill("f"); entries[2].push("more"); Object.assign(entries[2], { 1: [9] });
+const map = new Map(entries);
+for (const [key, value] of map) log.push(typeof key + ":" + typeof value);
+console.log(log.join("; "));
+//// species/proxy-programs-m04-the-pairs-come-into-unknown-hands.js
+// Species: proxy programs  the pairs come into unknown hands. It prints what plain Bun prints.
+const log = [];
+const entries = Object.entries({ a: 1, b: 2 });
+const touch = process.argv.length > 99 ? null : { run(list) { list[0][1] = { deep: 1 }; } };
+globalThis.__touch = touch; globalThis.__touch.run(entries);
+const map = new Map(entries);
+log.push(typeof map.get("a"), typeof map.get("b"), map.get("a").deep);
+console.log(log.join("; "));
+//// species/proxy-programs-m05-getters-and-other-values-among-the-own-values.js
+// Species: proxy programs  getters and other values among the own values. It prints what plain Bun prints.
+const log = [];
+class Body { constructor() { this.hits = 1; } }
+const source = { plain: 1, get made() { log.push("getter " + (this === source)); return new Body(); }, text: "t", nothing: undefined, fn() { return 5; } };
+Object.defineProperty(source, "hidden", { value: "no", enumerable: false });
+const map = new Map(Object.entries(source));
+log.push(map.size, map.get("made").hits, typeof map.get("text"), typeof map.get("nothing"), map.get("fn")(), map.has("hidden"));
+console.log(log.join("; "));
+//// species/proxy-programs-m06-entries-of-arrays-strings-proxies-and-instances.js
+// Species: proxy programs  entries of arrays strings proxies and instances. It prints what plain Bun prints.
+const log = [];
+class Point { constructor() { this.x = 1; this.y = "two"; } get sum() { return 3; } }
+log.push(JSON.stringify([...new Map(Object.entries(["a", "b"]))]), JSON.stringify([...new Map(Object.entries("hi"))]), JSON.stringify([...new Map(Object.entries(new Point()))]));
+const proxy = new Proxy({ p: 1 }, { get(target, key) { return key === "p" ? "trapped" : target[key]; }, ownKeys() { return ["p"]; } });
+log.push(JSON.stringify([...new Map(Object.entries(proxy))]), JSON.stringify([...new Map(Object.entries(7))]));
+try { Object.entries(null); } catch (error) { log.push(error.constructor.name); }
+console.log(log.join("; "));
+//// species/proxy-programs-m07-a-class-that-extends-map-gets-the-pairs.js
+// Species: proxy programs  a class that extends map gets the pairs. It prints what plain Bun prints.
+const log = [];
+class Counting extends Map { set(key, value) { log.push(typeof key + ">" + typeof value); return super.set(value, key); } }
+const map = new Counting(Object.entries({ a: 1, b: "two" }));
+log.push(map.get(1), map.get("two"), map.get("a"), map.size);
+console.log(log.join("; "));
+//// species/proxy-programs-m08-the-pairs-go-through-other-arrays-first.js
+// Species: proxy programs  the pairs go through other arrays first. It prints what plain Bun prints.
+const log = [];
+const source = { b: 2, a: 1, c: 3 };
+const sorted = new Map(Object.entries(source).sort(([x], [y]) => (x < y ? -1 : 1)));
+const kept = new Map(Object.entries(source).filter(([, value]) => value > 1));
+const turned = new Map(Object.entries(source).map(([key, value]) => [value, key]));
+const joined = new Map([...Object.entries(source), ...Object.entries({ d: "four" }), [5, 5]]);
+log.push([...sorted.keys()].join(), [...kept.values()].join(), typeof turned.get(1), typeof joined.get("d"), typeof joined.get(5), typeof joined.get("a"));
+console.log(log.join("; "));
+//// species/proxy-programs-m09-two-maps-of-two-literals-keep-their-values-apart.js
+// Species: proxy programs  two maps of two literals keep their values apart. It prints what plain Bun prints.
+const log = [];
+const numbers = new Map(Object.entries({ a: 1 }));
+const texts = new Map(Object.entries({ a: "one" }));
+function double(map, key) { const found = map.get(key); return found + found; }
+log.push(double(numbers, "a"), double(texts, "a"));
+numbers.set("late", "text"); log.push(double(numbers, "late"));
+console.log(log.join("; "));
+//// species/proxy-programs-m10-the-iterator-of-arrays-and-the-pairs-seen-by-a-loop.js
+// Species: proxy programs  the iterator of arrays and the pairs seen by a loop. It prints what plain Bun prints.
+const log = [];
+const source = { a: 1, b: "two" };
+for (const [key, value] of Object.entries(source)) log.push(key + "=" + typeof value);
+for (const pair of Object.entries(source)) { pair[1] = pair[0]; log.push(pair.join("")); }
+const entries = Object.entries(source); const first = entries[0];
+const map = new Map(entries); first[1] = "late";
+log.push(typeof map.get("a"), Array.isArray(first), first.length, entries.length, Object.fromEntries(entries).a);
+console.log(log.join("; "));
+//// species/proxy-programs-n01-a-count-in-a-map-grows-past-int32.js
+// Species: proxy programs  a count in a map grows past int32. It prints what plain Bun prints.
+const log = [];
+const counts = new Map();
+counts.set("a", 2147483600);
+for (let i = 0; i < 100; i++) counts.set("a", counts.get("a") + 1);
+log.push(counts.get("a"), counts.get("a") | 0, counts.get("a") + 1, typeof counts.get("none"));
+console.log(log.join("; "));
+//// species/proxy-programs-n02-a-map-of-entries-with-fractions-and-large-numbers.js
+// Species: proxy programs  a map of entries with fractions and large numbers. It prints what plain Bun prints.
+const log = [];
+const sizes = { small: 1, half: 0.5, large: 4294967296, negative: -2147483649 };
+const map = new Map(Object.entries(sizes));
+function twice(key) { const found = map.get(key); return found === undefined ? "none" : found * 2; }
+log.push(twice("small"), twice("half"), twice("large"), twice("negative"), twice("x"), map.get("large") | 0, map.get("negative") >> 0);
+console.log(log.join("; "));
+//// species/proxy-programs-n03-the-literal-gets-a-large-number-before-its-entries-are-taken.js
+// Species: proxy programs  the literal gets a large number before its entries are taken. It prints what plain Bun prints.
+const log = [];
+const words = { a: 1, b: 2 };
+const key = process.argv.length > 99 ? "a" : "late";
+words[key] = 9007199254740991; words.b = 2147483648;
+const map = new Map(Object.entries(words));
+log.push(map.get("late") - 1, map.get("b") + 1, map.get("a") + 1, (map.get("b") | 0));
+console.log(log.join("; "));
+//// species/proxy-programs-n04-values-of-other-types-come-later.js
+// Species: proxy programs  values of other types come later. It prints what plain Bun prints.
+const log = [];
+const map = new Map(Object.entries({ a: 1, b: 2 }));
+function show(key) { const found = map.get(key); return typeof found === "number" ? found + 1 : String(found) + "!"; }
+log.push(show("a"));
+for (const [key, value] of map) map.set(key, value > 1 ? "text" : value * 1e10);
+[...map.keys()].forEach(key => map.set(key + key, null));
+log.push(show("a"), show("b"), show("aa"), show("zz"), map.size);
+console.log(log.join("; "));
+//// species/proxy-programs-n05-set-is-called-in-ways-that-spell-out-no-value.js
+// Species: proxy programs  set is called in ways that spell out no value. It prints what plain Bun prints.
+const log = [];
+const map = new Map(); map.set("plain", 1);
+Map.prototype.set.call(map, "call", 2147483648);
+Map.prototype.set.apply(map, ["apply", 0.25]);
+Reflect.apply(Map.prototype.set, map, ["reflect", -4294967297]);
+const bound = map.set.bind(map, "bound"); bound(1e300);
+const method = "se" + (process.argv.length > 99 ? "x" : "t"); map[method]("computed", 3000000000);
+[["each", 5000000000]].forEach(([key, value]) => map.set(key, value));
+for (const key of map.keys()) log.push(key + "=" + (map.get(key) + 1) + "|" + (map.get(key) | 0));
+console.log(log.join("; "));
+//// species/proxy-programs-n06-a-spread-and-stores-into-both-objects.js
+// Species: proxy programs  a spread and stores into both objects. It prints what plain Bun prints.
+const log = [];
+const base = { a: 1, b: 2 };
+const more = { ...base, c: 3, ...{ d: 2147483648 } };
+base.a = 6000000000; more.c = 0.125;
+const ofBase = new Map(Object.entries(base)), ofMore = new Map(Object.entries(more));
+log.push(ofBase.get("a") + 1, ofMore.get("a") + 1, ofMore.get("c") * 8, ofMore.get("d") | 0, ofMore.size, ofBase.size);
+console.log(log.join("; "));
+//// species/proxy-programs-n07-getters-and-instances-as-sources-of-entries.js
+// Species: proxy programs  getters and instances as sources of entries. It prints what plain Bun prints.
+const log = [];
+class Sizes { constructor() { this.w = 1; this.h = 2147483647; } grow() { this.h += 1; return this; } }
+const withGetter = { plain: 1, get big() { return 8589934592; } };
+Object.defineProperty(withGetter, "defined", { get() { return 0.5; }, enumerable: true });
+const a = new Map(Object.entries(withGetter)), b = new Map(Object.entries(new Sizes().grow()));
+log.push(a.get("big") + 1, a.get("defined") * 2, a.get("plain") + 1, b.get("h") + 1, b.get("h") | 0, b.get("w"));
+console.log(log.join("; "));
+//// species/proxy-programs-n08-two-maps-through-one-function.js
+// Species: proxy programs  two maps through one function. It prints what plain Bun prints.
+const log = [];
+const small = new Map(Object.entries({ a: 1 })), wide = new Map(); wide.set("a", 1.5); wide.set("b", 2 ** 40);
+function read(map, key) { const found = map.get(key); return found === undefined ? -1 : found + found; }
+log.push(read(small, "a"), read(wide, "a"), read(wide, "b"), read(small, "b"), read(new Map([["a", 2 ** 31]]), "a"));
+console.log(log.join("; "));
+//// species/proxy-programs-n09-a-class-that-extends-map-answers-other-numbers.js
+// Species: proxy programs  a class that extends map answers other numbers. It prints what plain Bun prints.
+const log = [];
+class Scaled extends Map { get(key) { const found = super.get(key); return found === undefined ? found : found * 4294967296; } }
+const scaled = new Scaled(Object.entries({ a: 1, b: 3 })); scaled.set("c", 5);
+const plain = new Map(Object.entries({ a: 1 }));
+for (const map of [scaled, plain]) log.push(map.get("a") + 1, typeof map.get("z"));
+log.push(scaled.get("c") + 1, Map.prototype.get.call(scaled, "b") + 1);
+console.log(log.join("; "));
+//// species/proxy-programs-n10-minus-zero-nan-and-infinity-as-values.js
+// Species: proxy programs  minus zero nan and infinity as values. It prints what plain Bun prints.
+const log = [];
+const map = new Map(Object.entries({ zero: -0, nan: NaN, up: Infinity, one: 1 })); map.set("set", -0);
+log.push(Object.is(map.get("zero"), -0), Object.is(map.get("set"), -0), 1 / map.get("zero"), map.get("nan") !== map.get("nan"), map.get("up") - 1, map.get("one") / map.get("set"), map.get("nan") | 0);
+console.log(log.join("; "));
+//// species/proxy-programs-p01-method-called-on-the-proxy.js
+// Species: proxy programs  method called on the proxy. It prints what plain Bun prints.
+class Body { constructor() { this.hits = 0; this.name = "b"; } step() { this.hits++; return this.hits; } who() { return this instanceof Body ? "body" : "other"; } }
+const b = new Body(); b.step();
+const p = new Proxy(b, {});
+console.log(p.step(), b.hits, p.hits, p.who(), p === b, typeof p, p.name);
+//// species/proxy-programs-p02-store-through-the-proxy.js
+// Species: proxy programs  store through the proxy. It prints what plain Bun prints.
+class Body { constructor() { this.hits = 0; } twice() { return this.hits * 2; } }
+const b = new Body();
+const p = new Proxy(b, {});
+p.hits = "s"; p.extra = 1;
+console.log(typeof b.hits, b.twice(), b.extra, Object.keys(b).join());
+delete p.hits;
+console.log(b.hits, "hits" in b, "hits" in p);
+//// species/proxy-programs-p03-traps-see-the-target.js
+// Species: proxy programs  traps see the target. It prints what plain Bun prints.
+const log = [];
+class Body { constructor() { this.hits = 1; } }
+const b = new Body();
+const p = new Proxy(b, {
+  get(target, key, receiver) { log.push("get " + String(key) + " " + (target === b) + " " + (receiver === p)); return target[key]; },
+  set(target, key, value) { log.push("set " + String(key) + " " + typeof value); target[key] = value; return true; },
+  has(target, key) { log.push("has " + String(key)); return key in target; },
+  deleteProperty(target, key) { log.push("delete " + String(key)); return delete target[key]; },
+  ownKeys(target) { log.push("ownKeys"); return Reflect.ownKeys(target); },
+  getOwnPropertyDescriptor(target, key) { log.push("descriptor " + String(key)); return Reflect.getOwnPropertyDescriptor(target, key); },
+  defineProperty(target, key, descriptor) { log.push("define " + String(key)); return Reflect.defineProperty(target, key, descriptor); },
+  getPrototypeOf(target) { log.push("getPrototypeOf"); return Reflect.getPrototypeOf(target); },
+  setPrototypeOf(target, proto) { log.push("setPrototypeOf"); return Reflect.setPrototypeOf(target, proto); },
+  isExtensible(target) { log.push("isExtensible"); return Reflect.isExtensible(target); },
+  preventExtensions(target) { log.push("preventExtensions"); return Reflect.preventExtensions(target); },
+});
+p.hits; p.hits = "s"; "hits" in p; Object.keys(p); p instanceof Body; Object.defineProperty(p, "x", { value: 1, configurable: true }); delete p.x;
+Object.setPrototypeOf(p, Body.prototype); Object.isExtensible(p); Object.preventExtensions(p);
+console.log(log.join("\n")); console.log(typeof b.hits);
+//// species/proxy-programs-p04-callable-target.js
+// Species: proxy programs  callable target. It prints what plain Bun prints.
+const log = [];
+function add(a, b) { log.push(typeof a + " " + typeof b + " " + (this === undefined ? "none" : typeof this)); return a + b; }
+add(1, 2);
+class Point { constructor(x) { log.push("new " + typeof x); this.x = x; } }
+new Point(1);
+const f = new Proxy(add, {}); const C = new Proxy(Point, {});
+log.push(String(f("a", "b")), String(f.call({}, 1, "c")), String(new C("s").x), String(new C(2) instanceof Point));
+const g = new Proxy(add, { apply(target, self, args) { log.push("apply " + args.length); return target(...args, true); } });
+const D = new Proxy(Point, { construct(target, args, newTarget) { log.push("construct " + (newTarget === D)); return new target(null); } });
+log.push(String(g(1)), String(new D(1).x));
+console.log(log.join("; "));
+//// species/proxy-programs-p05-accessors-get-the-proxy-as-this.js
+// Species: proxy programs  accessors get the proxy as this. It prints what plain Bun prints.
+const log = [];
+class Body { constructor() { this.inner = 1; } get value() { log.push(this instanceof Body ? "get body" : "get other"); return this.inner; } set value(v) { log.push("set " + typeof v); this.inner = v; } }
+const b = new Body(); b.value; b.value = 2;
+const seen = [];
+const p = new Proxy(b, { get(t, k, r) { seen.push(String(k)); return Reflect.get(t, k, r); } });
+log.push(String(p.value)); p.value = "s"; log.push(typeof b.inner, seen.join());
+console.log(log.join("; "));
+//// species/proxy-programs-p06-proxy-changes-prototype-and-defines-accessors.js
+// Species: proxy programs  proxy changes prototype and defines accessors. It prints what plain Bun prints.
+const log = [];
+class Base { kind() { return "base"; } }
+class Body extends Base { constructor() { super(); this.hits = 1; } kind() { return "body"; } }
+const b = new Body();
+const p = new Proxy(b, {});
+Object.setPrototypeOf(p, { kind() { return "replaced"; } });
+log.push(b.kind(), String(b instanceof Body));
+Object.defineProperty(p, "hits", { get() { log.push("getter ran"); return "g"; }, configurable: true });
+log.push(String(b.hits), String(new Body().hits), new Body().kind());
+console.log(log.join("; "));
+//// species/proxy-programs-p07-proxy-handed-to-built-ins.js
+// Species: proxy programs  proxy handed to built ins. It prints what plain Bun prints.
+const log = [];
+class Body { constructor() { this.a = 1; this.b = "x"; } toJSON() { log.push("toJSON " + (this instanceof Body)); return { a: this.a }; } get c() { log.push("getter c"); return 3; } }
+const b = new Body();
+const p = new Proxy(b, {});
+log.push(JSON.stringify(p), Object.keys(p).join(), Object.values(p).join(), JSON.stringify({ ...p }), JSON.stringify(Object.assign({}, p)), String(Array.isArray(new Proxy([1], {}))), String(Reflect.get(p, "c")));
+for (const key in p) log.push("in " + key);
+const list = new Proxy([1, 2, 3], {});
+log.push(String(list.length), list.map(x => x * 2).join(), [...list].join(), String(Math.max(...list)));
+console.log(log.join("; "));
+//// species/proxy-programs-p08-unused-proxy.js
+// Species: proxy programs  unused proxy. It prints what plain Bun prints.
+class Body { constructor() { this.hits = 0; } step() { this.hits++; return this; } }
+const b = new Body();
+new Proxy(b, {});
+console.log(b.step().step().hits);
+//// species/proxy-programs-p09-handler-gets-its-trap-later.js
+// Species: proxy programs  handler gets its trap later. It prints what plain Bun prints.
+const log = [];
+class Body { constructor() { this.hits = 1; } }
+const b = new Body(); const handler = {};
+const p = new Proxy(b, handler);
+log.push(String(p.hits));
+handler.get = function (target, key) { log.push("trap " + String(key) + " " + (target === b)); return 7; };
+log.push(String(p.hits));
+const inherited = Object.create({ has(target, key) { log.push("has " + String(key)); return true; } });
+log.push(String("nothing" in new Proxy(b, inherited)));
+console.log(log.join("; "));
+//// species/proxy-programs-p10-revocable-and-nested.js
+// Species: proxy programs  revocable and nested. It prints what plain Bun prints.
+const log = [];
+class Body { constructor() { this.hits = 1; } step() { return ++this.hits; } }
+const b = new Body();
+const { proxy, revoke } = Proxy.revocable(b, { get(t, k, r) { log.push("outer " + String(k)); return Reflect.get(t, k, r); } });
+const nested = new Proxy(proxy, {});
+log.push(String(nested.step()), String(b.hits));
+revoke();
+try { nested.hits; } catch (error) { log.push(error.constructor.name); }
+console.log(log.join("; "));
+//// species/proxy-programs-p11-proxy-kept-in-a-field-and-read-later.js
+// Species: proxy programs  proxy kept in a field and read later. It prints what plain Bun prints.
+const log = [];
+class Body { constructor(n) { this.hits = n; } }
+class Holder { constructor(view) { this.view = view; } read() { return this.view.hits; } write(v) { this.view.hits = v; } }
+const b = new Body(1);
+const h = new Holder(new Proxy(b, {}));
+log.push(String(h.read())); h.write("s"); log.push(typeof b.hits, String(new Holder(new Body(5)).read()));
+console.log(log.join("; "));
+//// species/proxy-programs-p12-private-fields-and-brands.js
+// Species: proxy programs  private fields and brands. It prints what plain Bun prints.
+const log = [];
+class Body { #secret = 1; static has(o) { return #secret in o; } peek() { return this.#secret; } }
+const b = new Body(); const p = new Proxy(b, {});
+log.push(String(Body.has(b)), String(Body.has(p)));
+try { p.peek(); } catch (error) { log.push(error.constructor.name); }
+try { Map.prototype.get.call(new Proxy(new Map(), {}), 1); } catch (error) { log.push(error.constructor.name); }
+console.log(log.join("; "));
+//// species/proxy-programs-p13-what-a-spread-of-the-proxy-holds.js
+// Species: proxy programs  what a spread of the proxy holds. It prints what plain Bun prints.
+const log = [];
+class Vec { constructor(x) { this.x = x; } len() { return this.x * 2; } }
+class Body { constructor() { this.pos = new Vec(2); this.n = 1; } }
+const b = new Body(); const p = new Proxy(b, {});
+const copy = { ...p }; copy.pos.x = "s";
+log.push(typeof b.pos.x, String(b.pos.len()), String(copy.n));
+const { pos, ...rest } = new Proxy(new Body(), {}); pos.x = null;
+log.push(String(pos.len()), Object.keys(rest).join());
+console.log(log.join("; "));
+//// species/proxy-programs-p14-the-proxy-lies-above-another-object.js
+// Species: proxy programs  the proxy lies above another object. It prints what plain Bun prints.
+const log = [];
+class Vec { constructor(x) { this.x = x; } }
+class Body { constructor() { this.pos = new Vec(2); } get twice() { log.push(this === child ? "this is the child" : "this is another"); return 2; } }
+const b = new Body(); const p = new Proxy(b, {});
+const child = { __proto__: p };
+child.pos.x = "s"; log.push(typeof b.pos.x, String(child.twice));
+const made = Object.create(new Proxy(new Body(), {})); made.pos.x = true; log.push(typeof made.pos.x);
+console.log(log.join("; "));
+//// species/proxy-programs-p15-conversions-iteration-and-await.js
+// Species: proxy programs  conversions iteration and await. It prints what plain Bun prints.
+const log = [];
+class Money { constructor(n) { this.n = n; } valueOf() { log.push("valueOf " + (this instanceof Money)); return this.n; } toString() { return "m" + this.n; } }
+class Bag { constructor() { this.items = [1, 2]; } *[Symbol.iterator]() { log.push("iterate"); yield* this.items; } }
+class Later { then(resolve) { log.push("then"); resolve(7); } }
+const m = new Proxy(new Money(3), {});
+log.push(String(m + 1), `${m}`, String(m > 2));
+log.push([...new Proxy(new Bag(), {})].join());
+for (const x of new Proxy(new Bag(), {})) log.push("x" + x);
+(async () => { log.push(String(await new Proxy(new Later(), {}))); console.log(log.join("; ")); })();
+//// species/proxy-programs-p16-in-instanceof-and-for-in.js
+// Species: proxy programs  in instanceof and for in. It prints what plain Bun prints.
+const log = [];
+class Base { inherited() {} }
+class Body extends Base { constructor() { super(); this.a = 1; } }
+const p = new Proxy(new Body(), {});
+log.push(String("a" in p), String("inherited" in p), String("none" in p), String(p instanceof Body), String(p instanceof Base), String(p instanceof Array));
+for (const k in p) log.push(k);
+log.push(String(Object.getPrototypeOf(p) === Body.prototype), String(p.constructor === Body), String(Reflect.has(p, "a")));
+console.log(log.join("; "));
+//// species/proxy-programs-p17-the-proxy-goes-through-functions-and-containers.js
+// Species: proxy programs  the proxy goes through functions and containers. It prints what plain Bun prints.
+const log = [];
+class Body { constructor(n) { this.hits = n; } bump() { this.hits++; return this; } }
+function pass(x) { return x; }
+function bumpTwice(x) { return x.bump().bump(); }
+const b = new Body(1);
+const list = [pass(new Proxy(b, {}))]; const map = new Map([["k", list[0]]]);
+bumpTwice(map.get("k")); bumpTwice(new Body(10));
+log.push(String(b.hits), String(list[0].hits), String(list[0] === map.get("k")));
+console.log(log.join("; "));
+//// species/proxy-programs-p18-array-target.js
+// Species: proxy programs  array target. It prints what plain Bun prints.
+const log = [];
+const inner = [1, 2, 3]; const p = new Proxy(inner, {});
+p.push("s"); p[0] = null; p.length = 3;
+log.push(JSON.stringify(inner), String(inner.length), String(Array.isArray(p)), typeof inner[0]);
+let sum = 0; for (let i = 0; i < inner.length; i++) sum += inner[i] === null ? 100 : inner[i];
+log.push(String(sum));
+console.log(log.join("; "));
+//// species/proxy-programs-p19-frozen-and-sealed-through-the-proxy.js
+// Species: proxy programs  frozen and sealed through the proxy. It prints what plain Bun prints.
+"use strict";
+const log = [];
+class Body { constructor() { this.hits = 1; } }
+const b = new Body(); const p = new Proxy(b, {});
+Object.freeze(p);
+try { b.hits = 2; } catch (error) { log.push(error.constructor.name); }
+log.push(String(b.hits), String(Object.isFrozen(b)));
+const c = new Body(); Reflect.preventExtensions(new Proxy(c, {}));
+try { c.extra = 1; } catch (error) { log.push(error.constructor.name); }
+console.log(log.join("; "));
+//// species/proxy-programs-p20-trap-keeps-and-changes-the-target.js
+// Species: proxy programs  trap keeps and changes the target. It prints what plain Bun prints.
+const log = [];
+class Vec { constructor(x) { this.x = x; } twice() { return this.x * 2; } }
+class Body { constructor() { this.pos = new Vec(1); this.hits = 0; } step() { this.hits += 1; return this.hits; } }
+let kept;
+const b = new Body();
+const p = new Proxy(b, { get(target, key) { kept = target; target.hits = "text"; target.pos = { x: "o", twice() { return "replaced"; } }; Object.setPrototypeOf(target, { step() { return "other"; } }); return 1; } });
+log.push(String(b.step()), String(b.pos.twice()));
+p.anything;
+log.push(String(b.step()), String(b.pos.twice()), typeof b.hits, String(kept === b), String(new Body().step()));
+console.log(log.join("; "));
+//// species/proxy-programs-p21-a-trap-defines-accessors-on-the-target.js
+// Species: proxy programs  a trap defines accessors on the target. It prints what plain Bun prints.
+const log = [];
+class Body { constructor() { this.hits = 1; this.name = "b"; } twice() { return this.hits * 2; } label() { return this.name + "!"; } }
+const b = new Body(); log.push(String(b.twice()), b.label());
+const p = new Proxy(b, {
+  set(target, key, value) {
+    Object.defineProperty(target, key, { get() { log.push("getter " + String(key) + " " + (this === target)); return value; }, set(next) { log.push("setter " + typeof next); }, configurable: true });
+    return true;
+  },
+  defineProperty(target, key, descriptor) { log.push("define " + String(key)); return Reflect.defineProperty(target, key, descriptor); },
+});
+p.hits = 21; p.name = 5;
+log.push(String(b.twice()), b.label()); b.hits = "x";
+Object.defineProperty(p, "extra", { get() { return "e"; }, configurable: true });
+log.push(String(b.extra), String(new Body().twice()), new Body().label());
+console.log(log.join("; "));
+//// species/proxy-programs-p22-traps-answer-other-things-than-the-target-holds.js
+// Species: proxy programs  traps answer other things than the target holds. It prints what plain Bun prints.
+const log = [];
+class Vec { constructor(x) { this.x = x; } len() { return Math.abs(this.x); } }
+class Body { constructor() { this.pos = new Vec(-2); } far() { return this.pos.len() > 1; } }
+const b = new Body();
+const p = new Proxy(b, {
+  get(target, key, receiver) { if (key === "pos") return { x: "s", len() { return "fake"; } }; const found = Reflect.get(target, key, receiver); return typeof found === "function" ? found.bind(receiver) : found; },
+  has() { return true; },
+  ownKeys() { return ["pos", "made"]; },
+  getOwnPropertyDescriptor(target, key) { return { value: key === "pos" ? target.pos : 1, enumerable: true, configurable: true, writable: true }; },
+  getPrototypeOf() { return Vec.prototype; },
+});
+log.push(String(p.far()), String(b.far()), String("nothing" in p), Object.keys(p).join(), String(p instanceof Vec), String(p instanceof Body), JSON.stringify({ ...p }));
+console.log(log.join("; "));
+//// species/proxy-programs-q01-a-field-first-given-null-gets-values-of-many-kinds.js
+// Species: proxy programs  a field first given null gets values of many kinds. It prints what plain Bun prints.
+const log = [];
+function Node1(tag) { this.tag = tag; this.next = null; this.other = null; }
+class Leaf { constructor() { this.leaf = true; } }
+const a = new Node1(1), b = new Node1(2), c = new Node1(3), d = new Node1(4), e = new Node1(5), f = new Node1(6);
+a.next = b; b.next = new Leaf(); c.next = [1, 2]; d.next = () => 7; e.next = 8.5; f.next = "text";
+const key = process.argv.length > 99 ? "tag" : "other"; a[key] = c; b[key] = Symbol.for("s"); c[key] = 10n;
+for (const node of [a, b, c, d, e, f]) log.push(typeof node.next + ":" + typeof node.other + ":" + (node.next === null) + ":" + (node.next && node.next.tag));
+log.push(a.next.next.leaf, c.next.length, d.next(), e.next * 2, f.next.length, a.other.tag);
+console.log(log.join("; "));
+//// species/proxy-programs-q02-built-ins-store-into-a-field-first-given-null.js
+// Species: proxy programs  built ins store into a field first given null. It prints what plain Bun prints.
+const log = [];
+function Node1() { this.next = null; this.prev = null; this.up = null; this.down = null; }
+const a = new Node1(), b = new Node1();
+a.next = b;
+Object.assign(a, { prev: "assigned" }); Reflect.set(a, "up", 3.5); Object.defineProperty(a, "down", { value: [9], writable: true, enumerable: true, configurable: true });
+Object.assign(b, JSON.parse('{"next":{"parsed":1},"prev":[1]}')); Object.defineProperty(b, "up", { get() { return "getter"; }, configurable: true });
+for (const [key, value] of Object.entries({ down: new Map([[1, 2]]) })) b[key] = value;
+log.push(typeof a.next, a.prev.length, a.up + 1, a.down[0], b.next.parsed, b.prev[0], b.up, b.down.get(1), Object.keys(b).join());
+console.log(log.join("; "));
+//// species/proxy-programs-q03-callbacks-of-native-code-store-into-the-field.js
+// Species: proxy programs  callbacks of native code store into the field. It prints what plain Bun prints.
+const log = [];
+function Node1(v) { this.value = v; this.next = null; }
+const nodes = [new Node1(3), new Node1(1), new Node1(2)];
+nodes.forEach((node, index, all) => { node.next = all[index + 1] ?? index; });
+nodes.sort((x, y) => { x.next = y.value > 1 ? y : "small"; return x.value - y.value; });
+JSON.parse('{"a":1}', function (key, value) { if (key === "a") nodes[0].next = this; return value; });
+"xy".replace(/x/, match => { nodes[1].next = match; return match; });
+Promise.resolve(nodes[2]).then(node => { node.next = new Error("late"); log.push(node.next.message); console.log(log.join("; ")); });
+log.push(typeof nodes[0].next, nodes[0].next.a, nodes[1].next, typeof nodes[2].next);
+//// species/proxy-programs-q04-objects-that-the-constructor-did-not-make.js
+// Species: proxy programs  objects that the constructor did not make. It prints what plain Bun prints.
+const log = [];
+function Node1() { log.push("before " + this.next); this.next = null; this.seen = peek(this); }
+function peek(node) { return node.next === null ? "null" : typeof node.next; }
+class Heir extends Node1 { constructor() { super(); this.next = this; } }
+const plain = {}; Node1.call(plain); plain.next = plain;
+const bare = Object.create(Node1.prototype); const made = Reflect.construct(Node1, [], Heir);
+const heir = new Heir(), node = new Node1(); node.next = heir;
+for (const each of [plain, bare, made, heir, node]) log.push(typeof each.next + ":" + each.seen + ":" + (each instanceof Heir) + ":" + ("next" in each));
+console.log(log.join("; "));
+//// species/proxy-programs-q05-errors-and-results-of-native-code-arrive.js
+// Species: proxy programs  errors and results of native code arrive. It prints what plain Bun prints.
+const log = [];
+function Node1() { this.next = null; }
+const a = new Node1(), b = new Node1(), c = new Node1(), d = new Node1();
+a.next = b;
+try { null.x; } catch (error) { b.next = error; }
+c.next = structuredClone({ deep: [1] }); d.next = new URL("http://h/p");
+log.push(a.next === b, b.next instanceof TypeError, typeof b.next.message, c.next.deep[0], d.next.pathname);
+try { a.next.next.next.next; log.push("read"); a.next.next.next.next.x; } catch (error) { log.push(error.constructor.name); }
+console.log(log.join("; "));
+//// species/proxy-programs-q06-deleted-redefined-frozen-and-inherited.js
+// Species: proxy programs  deleted redefined frozen and inherited. It prints what plain Bun prints.
+const log = [];
+function Node1() { this.next = null; this.kept = null; }
+Node1.prototype.next = "inherited";
+const a = new Node1(), b = new Node1(), c = new Node1();
+a.next = b; a.kept = c; delete a.next; log.push(a.next, "next" in a, Object.keys(a).join());
+a.next = c; log.push(a.next === c, Object.keys(a).join());
+Object.freeze(b); try { "use strict"; b.next = a; } catch (error) { log.push(error.constructor.name); } log.push(b.next);
+Object.defineProperty(c, "next", { set(v) { log.push("set " + typeof v); }, get() { return 5; }, configurable: true }); c.next = a; log.push(c.next);
+console.log(log.join("; "));
+//// species/proxy-programs-q07-variables-first-given-null.js
+// Species: proxy programs  variables first given null. It prints what plain Bun prints.
+const log = [];
+var last = null, current = null; let captured = null;
+function remember(value) { last = value; return () => { captured = value; }; }
+function* walk() { current = { step: 1 }; yield current; current = [2]; yield current; current = null; }
+async function later() { await null; last = new Map([["k", "v"]]); log.push(last.get("k")); console.log(log.join("; ")); }
+log.push(last === null, current, captured);
+remember({ x: 1 })(); log.push(last.x, captured.x);
+remember(function named() { return 3; })(); log.push(last(), captured.name);
+for (const value of walk()) log.push(JSON.stringify(value), current === value);
+log.push(current); remember(4)(); log.push(last + 1, captured + 1); later();
+//// species/proxy-programs-q08-a-list-and-a-tree-are-walked.js
+// Species: proxy programs  a list and a tree are walked. It prints what plain Bun prints.
+function Fiber(tag) { this.tag = tag; this.child = this.sibling = this.return = this.alternate = null; this.flags = 0; }
+function grow(parent, depth) { let previous = null; for (let i = 0; i < 3 && depth > 0; i++) { const fiber = new Fiber(depth * 10 + i); fiber.return = parent; if (previous === null) parent.child = fiber; else previous.sibling = fiber; previous = fiber; grow(fiber, depth - 1); } return parent; }
+function sum(root) { let node = root, total = 0; for (;;) { total += node.tag + node.flags; if (node.child !== null) { node = node.child; continue; } while (node.sibling === null) { if (node.return === null) return total; node = node.return; } node = node.sibling; } }
+const root = grow(new Fiber(0), 6); let total = 0;
+for (let round = 0; round < 50; round++) { total += sum(root); root.child.alternate = round & 1 ? root : null; root.flags = round; }
+console.log(total, root.child.alternate === root, root.child.sibling.return === root);
+//// species/proxy-programs-r01-what-a-species-has-made-keeps-its-own-fields.js
+// Species: proxy programs  what a species has made keeps its own fields. It prints what plain Bun prints.
+const log = [];
+class List extends Array { constructor(...a) { super(...a); this.tag = 1; this.note = "n"; } }
+const list = new List(); list.push([1, [2]], [3], 4);
+for (const made of [list.flat(), list.flat(2), list.slice(1), list.concat([5]), list.map(x => x), list.filter(x => x !== 4), list.splice(0, 1), list.flatMap(x => x)])
+  log.push(made.constructor.name + ":" + made.tag + ":" + made.note + ":" + made.length + ":" + JSON.stringify(made) + ":" + Object.keys(made).join(""));
+console.log(log.join("; "));
+//// species/proxy-programs-r02-a-species-that-is-a-plain-function.js
+// Species: proxy programs  a species that is a plain function. It prints what plain Bun prints.
+const log = [];
+function Made(length) { this.tag = 7; this.given = length; this.next = null; }
+Made.prototype.describe = function () { return this.tag + "/" + this.given + "/" + this.length + "/" + Object.keys(this).join(); };
+const source = [[1], 2, 3]; source.constructor = { [Symbol.species]: Made };
+for (const made of [source.flat(), source.slice(1), source.concat(9), source.map(x => x), source.filter(() => true)]) { log.push(made instanceof Made, made.describe(), made[0] === undefined ? "none" : JSON.stringify(made[0])); made.next = made; log.push(made.next.tag); }
+console.log(log.join("; "));
+//// species/proxy-programs-r03-the-length-of-what-a-species-has-made-has-a-setter.js
+// Species: proxy programs  the length of what a species has made has a setter. It prints what plain Bun prints.
+const log = [];
+class Odd { constructor(n) { log.push("made " + n); this.kept = "k"; } set length(v) { log.push("length=" + v + " on " + this.kept); this.seen = v; } get length() { return 99; } }
+const source = [1, 2, 3]; source.constructor = { [Symbol.species]: Odd };
+const sliced = source.slice(1), joined = source.concat([4]), flat = source.flat();
+log.push(sliced.seen, sliced[0], sliced.length, joined.seen, joined[3], flat.seen, Object.keys(flat).join());
+console.log(log.join("; "));
+//// species/proxy-programs-r04-what-a-species-has-made-refuses-or-redirects-the-elements.js
+// Species: proxy programs  what a species has made refuses or redirects the elements. It prints what plain Bun prints.
+const log = [];
+const attempt = (name, species, run) => { const source = [1, 2]; source.constructor = { [Symbol.species]: species }; try { const made = run(source); log.push(name + " " + typeof made + " " + JSON.stringify(Object.getOwnPropertyDescriptor(made, "0") ?? null)); } catch (error) { log.push(name + " " + error.constructor.name); } };
+attempt("frozen", function () { return Object.freeze({ tag: 1 }); }, s => s.slice());
+attempt("accessor", function () { const o = { tag: 2 }; Object.defineProperty(o, "0", { get() { return "got"; }, configurable: true }); return o; }, s => s.map(x => x * 2));
+attempt("fixed", function () { const o = {}; Object.defineProperty(o, "0", { get() { return "got"; }, configurable: false }); return o; }, s => s.filter(() => true));
+attempt("proxy", function () { return new Proxy({}, { defineProperty(target, key, descriptor) { log.push("define " + String(key)); return Reflect.defineProperty(target, key, descriptor); }, set(target, key, value) { log.push("set " + String(key) + "=" + value); target[key] = value; return true; } }); }, s => s.concat(3));
+attempt("inherited", function () { return Object.create({ set 0(v) { log.push("never"); } }); }, s => s.flat());
+console.log(log.join("; "));
+//// species/proxy-programs-t01-a-parameter-brings-numbers-of-every-size-into-a-field.js
+// Species: proxy programs  a parameter brings numbers of every size into a field. It prints what plain Bun prints.
+const log = [];
+function Node1(tag, weight) { this.tag = tag; this.weight = weight; this.count = 0; }
+class Node2 { constructor(tag, weight = 2147483648) { this.tag = tag; this.weight = weight; this.count = 0; } }
+const made = [new Node1(1, 2), new Node1(2147483647, -2147483648), new Node2(3, 4), new Node2(5)];
+made.push(Reflect.construct(Node1, [4294967296, 0.5]), new (Node1.bind(null, -0))(NaN), Reflect.construct(Node2, [1e21]), new Node2(...[7, -2147483649]));
+Array.from({ length: 2 }, (_, i) => made.push(new Node1(i * 3e9, i - 0.25)));
+const plain = {}; Node1.call(plain, "text", undefined); made.push(plain); Node1.apply(made[0], [Infinity, 1]);
+for (const node of made) log.push(Object.is(node.tag, -0) ? "-0" : String(node.tag + 1), String(node.weight | 0), node.count);
+console.log(log.join("; "));
+//// species/proxy-programs-t02-a-number-grows-from-node-to-node.js
+// Species: proxy programs  a number grows from node to node. It prints what plain Bun prints.
+const log = [];
+function Link(value, previous) { this.value = value; this.previous = previous; }
+function extend(link) { return new Link(link.value * 2 + 1, link); }
+let link = new Link(1, null);
+for (let i = 0; i < 40; i++) link = extend(link);
+let sum = 0, steps = 0; for (let each = link; each !== null; each = each.previous) { sum += each.value; steps++; }
+log.push(link.value, link.value | 0, sum, steps, link.previous.previous.value);
+class Counter { constructor(start) { this.n = start; } next() { return new Counter(this.n + 1073741824); } }
+let counter = new Counter(0); for (let i = 0; i < 5; i++) counter = counter.next(); log.push(counter.n, counter.n | 0);
+console.log(log.join("; "));
+//// species/proxy-programs-t03-variables-results-and-closures-bring-the-number.js
+// Species: proxy programs  variables results and closures bring the number. It prints what plain Bun prints.
+const log = [];
+let shared = 1; var top = 2;
+function pick(i) { return i === 0 ? 1 : i === 1 ? 2147483648 : i === 2 ? 0.5 : -1; }
+function Holder(i) { this.fromResult = pick(i); this.fromVariable = shared; this.fromTop = top; this.fromClosure = (() => shared + top)(); }
+const holders = [];
+for (let i = 0; i < 4; i++) { holders.push(new Holder(i)); shared *= 65536; top -= 0.25; }
+for (const h of holders) log.push(h.fromResult + 1, h.fromVariable | 0, h.fromVariable + 1, h.fromTop * 4, h.fromClosure);
+console.log(log.join("; "));
+//// species/proxy-programs-u02-pairs-of-entries-are-changed-in-every-way.js
+// Species: proxy programs  pairs of entries are changed in every way. It prints what plain Bun prints.
+const log = [];
+const source = { a: 1, b: 2, c: 3 };
+const grown = Object.entries(source); for (const pair of grown) { pair.push(pair[1] * 0.5); pair[5] = "far"; } log.push(JSON.stringify(grown));
+const shrunk = Object.entries(source); for (const pair of shrunk) { pair.length = 1; pair.push(1.5); } log.push(JSON.stringify(shrunk));
+const numbers = Object.entries(source); for (const pair of numbers) { pair[0] = 1; pair[1] = 2; pair.reverse(); } log.push(JSON.stringify(numbers), numbers[0][0] + numbers[0][1]);
+const shifted = Object.entries(source); for (const pair of shifted) { pair.shift(); pair.unshift(0.25, -0); } log.push(JSON.stringify(shifted), Object.is(shifted[1][1], -0));
+const frozen = Object.entries(source).map(Object.freeze); try { "use strict"; frozen[0][0] = "no"; } catch (error) { log.push(error.constructor.name); } log.push(frozen[0][0], Object.isFrozen(frozen[2]));
+const mixed = [...Object.entries(source), [1, 2], [0.5, 1.5], ["s", {}]]; let sum = ""; for (const pair of mixed) sum += typeof pair[0] + typeof pair[1] + pair.length; log.push(sum);
+const deleted = Object.entries(source); delete deleted[0][0]; log.push(0 in deleted[0], deleted[0].length, String(deleted[0][0]));
+const reparented = Object.entries(source); Object.setPrototypeOf(reparented[0], { get 7() { return "seven"; }, length: "not mine" }); log.push(reparented[0][7], reparented[0].length, Array.isArray(reparented[0]), typeof reparented[0].map);
+console.log(log.join(" | "));
+//// species/px-freeze-v1-direct.js
+// Species: px freeze  direct. It prints what plain Bun prints.
+"use strict";
+const log = [];
+class Body { constructor() { this.hits = 1; } }
+const b = new Body();
+Object.freeze(b);
+try { b.hits = 2; } catch (error) { log.push(error.constructor.name); }
+log.push(String(b.hits), String(Object.isFrozen(b)));
+console.log(log.join("; "));
+//// species/px-freeze-v2-through-an-object-from-json.js
+// Species: px freeze  through an object from json. It prints what plain Bun prints.
+"use strict";
+const log = [];
+class Body { constructor() { this.hits = 1; } }
+const b = new Body();
+const holder = JSON.parse("{}"); holder.x = b;
+Object.freeze(holder.x);
+try { b.hits = 2; } catch (error) { log.push(error.constructor.name); }
+log.push(String(b.hits), String(Object.isFrozen(b)));
+console.log(log.join("; "));
+//// species/px-freeze-v3-proxy.js
+// Species: px freeze  proxy. It prints what plain Bun prints.
+"use strict";
+const log = [];
+class Body { constructor() { this.hits = 1; } }
+const b = new Body(); const p = new Proxy(b, {});
+Object.freeze(p);
+try { b.hits = 2; } catch (error) { log.push(error.constructor.name); }
+log.push(String(b.hits), String(Object.isFrozen(b)));
+console.log(log.join("; "));
+//// species/px-freeze-v4-proxy-no-store.js
+// Species: px freeze  proxy no store. It prints what plain Bun prints.
+"use strict";
+const log = [];
+class Body { constructor() { this.hits = 1; } }
+const b = new Body(); const p = new Proxy(b, {});
+Object.freeze(p);
+log.push(String(b.hits), String(Object.isFrozen(b)));
+console.log(log.join("; "));
+//// species/px-freeze-v5-proxy-seal.js
+// Species: px freeze  proxy seal. It prints what plain Bun prints.
+"use strict";
+const log = [];
+class Body { constructor() { this.hits = 1; } }
+const b = new Body(); const p = new Proxy(b, {});
+Object.seal(p);
+b.hits = 2;
+try { delete b.hits; } catch (error) { log.push(error.constructor.name); }
+log.push(String(b.hits), String(Object.isSealed(b)));
+console.log(log.join("; "));
+//// species/px-ice-q1.ts
+// Species: px ice. It prints what plain Bun prints.
+////= Safe
+const other: Safe = JSON.parse("{}");
+console.log(Safe.codeOf(new Safe()));
+////= lines-44	Safe.codeOf(other
+export {};
+//// species/px-ice-q2.ts
+// Species: px ice. It prints what plain Bun prints.
+////= Safe
+const list: any[] = [new Safe(), {}];
+console.log(Safe.codeOf(new Safe()));
+////= for-22	list
+export {};
+//// species/px-ice-q3.ts
+// Species: px ice. It prints what plain Bun prints.
+class Safe {
+  code = 42;
+  static codeOf(safe: Safe): number {
+    return safe.code;
+  }
+}
+const other: Safe = JSON.parse("{}");
+console.log(Safe.codeOf(new Safe()));
+////= lines-44	Safe.codeOf(other
+export {};
+//// species/px-ice-q4.ts
+// A static method with a typed parameter returns a private field of it. Through `any` it also gets an object from JSON.parse, a literal, null and undefined: each of those reads throws a TypeError, as in plain Bun.
+////= Safe
+
+const parsed: Safe = JSON.parse("{}");
+const others: any[] = [new Safe(), parsed, {}, null, undefined];
+console.log(Safe.codeOf(new Safe()));
+////= for-22	others
+
+export {};

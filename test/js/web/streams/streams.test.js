@@ -4555,8 +4555,11 @@ describe("direct stream contract", () => {
     test.concurrent.each(cells)("%s", async consumerName => {
       const child = {};
       const got = await directObserve(shape, s => consumers[consumerName](s, child));
-      // Bun.spawn() throws when pull() throws in the same call: that cell has no child.
-      if ("exitCode" in child) expect(child).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+      if (consumerName === "Bun.spawn({ stdin: s })") {
+        // Bun.spawn() throws the source's error when pull() throws in the same call: only that cell has no child.
+        const spawnThrew = "error" in got && got.error === shape.expect.error;
+        expect(child).toEqual(spawnThrew ? {} : { stderr: "", exitCode: 0, signalCode: null });
+      }
       if ("error" in shape.expect && cannotSurfaceErrors.has(consumerName)) {
         expect({ pulls: got.pulls, cancels: got.cancels }).toEqual({ pulls: 1, cancels: 0 });
         return;

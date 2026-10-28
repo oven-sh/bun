@@ -1,0 +1,1 @@
+{ "skipInShell": "it asks for node:util and node:buffer, which the jsc shell does not provide" }

@@ -118,16 +118,28 @@ pub(crate) mod run_command;
 pub(crate) mod build_command;
 #[path = "bunx_command.rs"]
 pub(crate) mod bunx_command;
+pub(crate) mod compile_command;
+#[path = "compile_options.rs"]
+pub(crate) mod compile_options;
 #[path = "create_command.rs"]
 pub(crate) mod create_command;
 #[path = "exec_command.rs"]
 pub(crate) mod exec_command;
 #[path = "fuzzilli_command.rs"]
 pub(crate) mod fuzzilli_command;
+#[cfg(all(bun_fuzzilli, unix))]
+#[path = "fuzzilli_compile_loop.rs"]
+pub(crate) mod fuzzilli_compile_loop;
+#[cfg(all(bun_fuzzilli, unix))]
+#[path = "fuzzilli_run_comparison.rs"]
+pub(crate) mod fuzzilli_run_comparison;
 #[path = "install_command.rs"]
 pub(crate) mod install_command;
 #[path = "repl_command.rs"]
 pub(crate) mod repl_command;
+#[path = "run_compiled.rs"]
+pub(crate) mod run_compiled;
+pub(crate) mod startup_options;
 #[path = "upgrade_command.rs"]
 pub(crate) mod upgrade_command;
 // MOVE_UP: `--analyze` branch + `Cli.log_` access of
@@ -191,7 +203,7 @@ pub(crate) mod remove_command;
 pub(crate) mod scan_command;
 #[path = "script_or_command.rs"]
 pub(crate) mod script_or_command;
-mod typescript_libs;
+pub(crate) mod typescript_libs;
 #[path = "unlink_command.rs"]
 pub(crate) mod unlink_command;
 #[path = "update_command.rs"]
@@ -479,6 +491,7 @@ pub(crate) mod help_command {
   <b><blue>why<r>       <d>{:<16}<r>     Explain why a package is installed
 
   <b><yellow>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
+  <b><yellow>compile<r>   <d>./cli.ts<r>             Compile TypeScript & JavaScript into a standalone executable
 
   <b><cyan>init<r>                           Start an empty Bun project from a built-in template
   <b><cyan>create<r>    <d>{:<16}<r>     Create a new project from a template <d>(bun c)<r>
@@ -494,6 +507,7 @@ pub(crate) mod help_command {
 
     // Tag/Reason lack `ConstParamTy` in lower-tier crates, so `reason` is a
     // runtime arg.
+    #[inline(never)]
     pub(crate) fn print_with_reason(reason: Reason, show_all_flags: bool) {
         let mut rand = bun_core::rand::DefaultPrng::init(
             u64::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast"),
@@ -554,7 +568,7 @@ Join our Discord community:      <blue>https://bun.com/discord<r>\n"
 
     #[cold]
     fn exec_with_reason(reason: Reason) -> ! {
-        print_with_reason(reason, false);
+        bun_removable_features::call_removable!(Tools, Abort, print_with_reason, reason, false);
         if reason == Reason::InvalidCommand {
             Global::exit(1);
         }
@@ -770,6 +784,12 @@ pub(crate) mod command {
             }
         }
 
+        // `bun --cwd <dir> lint`: `<dir>` is the value of a flag.
+        let starts_with_flag = argv.get(1).is_some_and(|it| it.starts_with(b"-"));
+        if starts_with_flag && let Some(it) = super::script_or_command::command_after_flags() {
+            first_arg_name = it;
+        }
+
         type RootCommandMatcher = strings::ExactSizeMatcher<12>;
         let x = RootCommandMatcher::r#match(first_arg_name);
         // PERF: `if x == const` is a chain of compares rather than a jump
@@ -860,6 +880,12 @@ pub(crate) mod command {
         }
         if x == RootCommandMatcher::case(b"audit") {
             return Tag::AuditCommand;
+        }
+        if x == RootCommandMatcher::case(b"compile") {
+            return match super::script_or_command::is_of_the_project(b"compile") {
+                true => Tag::AutoCommand,
+                false => Tag::CompileCommand,
+            };
         }
         if x == RootCommandMatcher::case(b"check") {
             return match super::script_or_command::is_of_the_project(b"check") {
@@ -990,6 +1016,10 @@ pub(crate) mod command {
     /// `Cli::start` and re-scattering the per-tag tail calls.
     #[inline(never)]
     pub(crate) fn start(log: &mut bun_ast::Log) -> crate::Result<()> {
+        use bun_removable_features::call_removable;
+
+        crate::cli::startup_options::refuse_code_without_interpreter();
+
         // WebView host subprocess entry. Must be before StandaloneModuleGraph,
         // before JSC init, before anything that touches a JS engine. The child
         // runs CFRunLoopRun() as its real main loop — no Bun runtime past this.
@@ -1010,7 +1040,7 @@ pub(crate) mod command {
                     #[link_name = "Bun__WebView__hostMain"]
                     safe fn host_main(fd: i32) -> !;
                 }
-                host_main(fd as i32);
+                bun_removable_features::call_removable!(WebView, Abort, host_main, fd as i32);
             }
         }
 
@@ -1020,6 +1050,10 @@ pub(crate) mod command {
                 // Never taken for a plain `bun` binary; ~2 KB of argv-splice
                 // and ctx-setup code lives behind this cold call.
                 return boot_standalone(graph, log);
+            }
+            // Only `bun build --compile` removes the command line, so this file had a program.
+            if bun_removable_features::is_removed(bun_removable_features::Feature::Tools) {
+                bun_standalone_graph::Graph::exit_without_program();
             }
         }
 
@@ -1094,12 +1128,12 @@ pub(crate) mod command {
                     .map(bun_core::ZStr::as_bytes)
                     .is_some_and(looks_like_run_entrypoint)
                 {
-                    return exec_auto_or_run(Tag::AutoCommand, log);
+                    return call_removable!(Tools, Abort, exec_auto_or_run, Tag::AutoCommand, log);
                 }
             }
         }
 
-        let tag = which();
+        let tag = call_removable!(Tools, Abort, which);
 
         // NOTE: an earlier shim used to scan all of `argv` here for
         // `--version`/`--help`/`--revision` and short-circuit, because
@@ -1109,42 +1143,51 @@ pub(crate) mod command {
         // `bun <bin> --version` by intercepting the flag meant for `<bin>`.
 
         match tag {
-            Tag::AutoCommand | Tag::RunCommand => exec_auto_or_run(tag, log),
+            Tag::AutoCommand | Tag::RunCommand => {
+                call_removable!(Tools, Abort, exec_auto_or_run, tag, log)
+            }
             Tag::HelpCommand => HelpCommand::exec(),
             Tag::ReservedCommand => ReservedCommand::exec(),
-            Tag::DiscordCommand => super::discord_command::DiscordCommand::exec(),
-            Tag::InitCommand => exec_init(),
-            Tag::InstallCompletionsCommand => exec_install_completions(),
-            Tag::PackageManagerCommand => exec_pm(log),
-            Tag::RunAsNodeCommand => exec_run_as_node(log),
-            Tag::InfoCommand => bun_info(log),
-            Tag::BuildCommand => exec_build(log),
-            Tag::InstallCommand => exec_install(log),
-            Tag::AddCommand => exec_add(log),
-            Tag::UpdateCommand => exec_update(log),
-            Tag::PatchCommand => exec_patch(log),
-            Tag::PatchCommitCommand => exec_patch_commit(log),
-            Tag::OutdatedCommand => exec_outdated(log),
-            Tag::UpdateInteractiveCommand => exec_update_interactive(log),
-            Tag::PublishCommand => exec_publish(log),
-            Tag::AuditCommand => exec_audit(log),
-            Tag::CheckCommand => exec_check(log),
-            Tag::LintCommand => exec_lint(log),
-            Tag::FormatCommand => exec_format(log),
-            Tag::DedupeCommand => exec_dedupe(log),
-            Tag::PruneCommand => exec_prune(log),
-            Tag::WhyCommand => exec_why(log),
-            Tag::BunxCommand => exec_bunx(log),
-            Tag::ReplCommand => exec_repl(log),
-            Tag::RemoveCommand => exec_remove(log),
-            Tag::LinkCommand => exec_link(log),
-            Tag::UnlinkCommand => exec_unlink(log),
-            Tag::TestCommand => exec_test(log),
-            Tag::GetCompletionsCommand => bun_getcompletes(log),
-            Tag::CreateCommand => bun_create(log),
-            Tag::UpgradeCommand => exec_upgrade(log),
-            Tag::ExecCommand => exec_exec(log),
-            Tag::FuzzilliCommand => exec_fuzzilli(log),
+            Tag::DiscordCommand => {
+                call_removable!(Tools, Abort, super::discord_command::DiscordCommand::exec)
+            }
+            Tag::InitCommand => call_removable!(Create, Abort, exec_init),
+            Tag::InstallCompletionsCommand => {
+                call_removable!(Tools, Abort, exec_install_completions)
+            }
+            Tag::PackageManagerCommand => call_removable!(Install, Abort, exec_pm, log),
+            Tag::RunAsNodeCommand => call_removable!(Tools, Abort, exec_run_as_node, log),
+            Tag::InfoCommand => call_removable!(Install, Abort, bun_info, log),
+            Tag::BuildCommand => call_removable!(BuildCommand, Abort, exec_build, log),
+            Tag::CompileCommand => call_removable!(AotCompiler, Abort, exec_compile, log),
+            Tag::InstallCommand => call_removable!(Install, Abort, exec_install, log),
+            Tag::AddCommand => call_removable!(Install, Abort, exec_add, log),
+            Tag::UpdateCommand => call_removable!(Install, Abort, exec_update, log),
+            Tag::PatchCommand => call_removable!(Install, Abort, exec_patch, log),
+            Tag::PatchCommitCommand => call_removable!(Install, Abort, exec_patch_commit, log),
+            Tag::OutdatedCommand => call_removable!(Install, Abort, exec_outdated, log),
+            Tag::UpdateInteractiveCommand => {
+                call_removable!(Install, Abort, exec_update_interactive, log)
+            }
+            Tag::PublishCommand => call_removable!(Install, Abort, exec_publish, log),
+            Tag::AuditCommand => call_removable!(Install, Abort, exec_audit, log),
+            Tag::CheckCommand => call_removable!(Check, Abort, exec_check, log),
+            Tag::LintCommand => call_removable!(Lint, Abort, exec_lint, log),
+            Tag::FormatCommand => call_removable!(Fmt, Abort, exec_format, log),
+            Tag::DedupeCommand => call_removable!(Install, Abort, exec_dedupe, log),
+            Tag::PruneCommand => call_removable!(Install, Abort, exec_prune, log),
+            Tag::WhyCommand => call_removable!(Install, Abort, exec_why, log),
+            Tag::BunxCommand => call_removable!(Install, Abort, exec_bunx, log),
+            Tag::ReplCommand => call_removable!(Repl, Abort, exec_repl, log),
+            Tag::RemoveCommand => call_removable!(Install, Abort, exec_remove, log),
+            Tag::LinkCommand => call_removable!(Install, Abort, exec_link, log),
+            Tag::UnlinkCommand => call_removable!(Install, Abort, exec_unlink, log),
+            Tag::TestCommand => call_removable!(TestCommand, Abort, exec_test, log),
+            Tag::GetCompletionsCommand => call_removable!(Tools, Abort, bun_getcompletes, log),
+            Tag::CreateCommand => call_removable!(Create, Abort, bun_create, log),
+            Tag::UpgradeCommand => call_removable!(Upgrade, Abort, exec_upgrade, log),
+            Tag::ExecCommand => call_removable!(Tools, Abort, exec_exec, log),
+            Tag::FuzzilliCommand => call_removable!(Tools, Abort, exec_fuzzilli, log),
         }
     }
 
@@ -1168,6 +1211,25 @@ pub(crate) mod command {
         // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
         // backing storage is process-static (owned by the executable image).
         let graph: &mut bun_standalone_graph::Graph = unsafe { &mut *graph };
+        #[cfg(target_os = "macos")]
+        if graph.flags.contains(
+            bun_standalone_graph::StandaloneModuleGraph::Flags::NAMES_SYSTEM_CA_CERTIFICATES,
+        ) {
+            unsafe extern "C" {
+                safe fn us_prefetch_root_system_certs();
+            }
+            bun_removable_features::call_removable!(
+                SystemCaCertificates,
+                ReturnDefault,
+                us_prefetch_root_system_certs
+            );
+        }
+        #[cfg(bun_hardened)]
+        if bun_resolver::StandaloneModuleGraph::compiled_program(&*graph).is_some() {
+            bun_jsc::compiled_program::deny_write_execute_memory();
+            #[cfg(bun_locked_environment)]
+            bun_jsc::compiled_program::refuse_variables_that_are_never_read();
+        }
         let offset_for_passthrough: usize;
 
         let ctx: &mut ContextData = 'brk: {
@@ -1235,7 +1297,7 @@ pub(crate) mod command {
             .map(|a| a.to_vec().into_boxed_slice())
             .collect();
 
-        let entry_name = graph.entry_point().name.to_vec().into_boxed_slice();
+        let entry_name = graph.main_module_path().to_vec().into_boxed_slice();
         super::run_command::RunCommand::boot_standalone(ctx, entry_name, graph)?;
         Ok(())
     }
@@ -1251,6 +1313,9 @@ pub(crate) mod command {
         // Scripts have no entry point to start from: the project is checked, as by `bun check`.
         let runs_several =
             ctx.parallel || ctx.sequential || !ctx.filters.is_empty() || ctx.workspaces;
+        if runs_several {
+            super::run_compiled::reject(ctx, super::run_compiled::NonFileTarget::SeveralProcesses);
+        }
         if runs_several
             && ctx.runtime_options.check
             && !super::check_command::check_project_before(None)
@@ -1291,7 +1356,7 @@ pub(crate) mod command {
         }
 
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
-            lint_command::read_program_of_script(ctx);
+            lint_command::read_program_from_stdin(ctx);
             return run_command::RunCommand::exec_eval(ctx);
         }
 
@@ -1392,6 +1457,14 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
+    fn exec_compile(log: &mut bun_ast::Log) -> CmdResult {
+        let ctx = init(Tag::CompileCommand, log)?;
+        super::compile_command::CompileCommand::exec_command(ctx)?;
+        Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
     fn exec_check(log: &mut bun_ast::Log) -> CmdResult {
         // CheckCommand parses its own argv.
         init(Tag::CheckCommand, log)?;
@@ -1404,16 +1477,8 @@ pub(crate) mod command {
         argv: &'a [&'static bun_core::ZStr],
         command: &[u8],
     ) -> &'a [&'static bun_core::ZStr] {
-        let mut args = argv.iter().enumerate();
-        while let Some((at, arg)) = args.next() {
-            match arg.as_bytes() {
-                arg if arg == command => return &argv[at + 1..],
-                // `bun --cwd lint lint`
-                b"--cwd" => _ = args.next(),
-                _ => {}
-            }
-        }
-        &[]
+        let at = super::script_or_command::place_of_command(command);
+        at.and_then(|at| argv.get(at + 1..)).unwrap_or_default()
     }
 
     /// The flags of `command` that stand before it, as in `bun --check format` or `bun -c format`, and then what follows it. If
@@ -1429,8 +1494,8 @@ pub(crate) mod command {
             Some((name, _)) => matches!(name, b"--config" | b"-c" | b"--cwd"),
             None => matches!(arg, b"--config" | b"--cwd" | b"--help" | b"--silent"),
         };
-        let before = (argv.iter().skip(1)).take_while(|arg| arg.as_bytes() != command);
-        let mut args: Vec<_> = before
+        let at = super::script_or_command::place_of_command(command).unwrap_or(argv.len());
+        let mut args: Vec<_> = (argv.iter().take(at).skip(1))
             .filter(|arg| arg.as_bytes().starts_with(b"-"))
             .filter(|arg| !is_of_bun(arg.as_bytes()) && knows(arg.as_bytes()))
             .copied()
@@ -1440,9 +1505,9 @@ pub(crate) mod command {
     }
 
     /// `bun --help lint`: prints the help of `command` and exits if `--help` or `-h` is among the flags of `bun`, which precede it.
-    fn print_help_if_asked_before(argv: &[&'static bun_core::ZStr], command: &[u8], tag: Tag) {
-        let mut before = (argv.iter().map(|it| it.as_bytes())).take_while(|arg| *arg != command);
-        if before.any(|arg| matches!(arg, b"--help" | b"-h")) {
+    fn print_help_if_asked_before(command: &[u8], tag: Tag) {
+        let before = super::script_or_command::arguments_before(command);
+        if before.iter().any(|arg| matches!(*arg, b"--help" | b"-h")) {
             tag_print_help(tag, false);
             Global::exit(0);
         }
@@ -1454,7 +1519,7 @@ pub(crate) mod command {
         // LintCommand parses its own argv.
         let ctx = init(Tag::LintCommand, log)?;
         let argv = argv_zslice();
-        print_help_if_asked_before(&argv, b"lint", Tag::LintCommand);
+        print_help_if_asked_before(b"lint", Tag::LintCommand);
         let knows = super::lint_command::LintCommand::has_flag;
         super::lint_command::LintCommand::exec(ctx, &with_own_flags_before(&argv, b"lint", knows))
     }
@@ -1465,7 +1530,7 @@ pub(crate) mod command {
         // FormatCommand parses its own argv.
         let ctx = init(Tag::FormatCommand, log)?;
         let argv = argv_zslice();
-        print_help_if_asked_before(&argv, b"fmt", Tag::FormatCommand);
+        print_help_if_asked_before(b"fmt", Tag::FormatCommand);
         let knows = super::format_command::FormatCommand::has_flag;
         super::format_command::FormatCommand::exec(
             ctx,
@@ -1791,11 +1856,12 @@ To create a project with the official Next.js scaffolding tool, run
 
         if use_bunx {
             let mut bunx_args: Vec<&ZStr> =
-                Vec::with_capacity(2 + args.len() - template_name_start + (dash_dash_bun as usize));
+                Vec::with_capacity(3 + args.len() - template_name_start + (dash_dash_bun as usize));
             bunx_args.push(bun_core::zstr!("bunx"));
             if dash_dash_bun {
                 bunx_args.push(bun_core::zstr!("--bun"));
             }
+            bunx_args.extend(Global::ca_store_flag());
             // `add_create_prefix` returns an owned NUL-terminated buffer.
             // `bun create` is a one-shot CLI subcommand (ends in exec/exit), so
             // the prefixed package name is a process singleton — park the owning
@@ -1827,12 +1893,12 @@ To create a project with the official Next.js scaffolding tool, run
 
         for arg in bun::argv() {
             if arg == b"--hash" {
-                let mut path_buf = bun_paths::path_buffer_pool::get();
-                path_buf[..entry.len()].copy_from_slice(entry);
-                path_buf[entry.len()] = 0;
-                // SAFETY: NUL terminator written at `path_buf[entry.len()]` above.
-                let lockfile_path = bun_core::ZStr::from_buf(&path_buf[..], entry.len());
-                let file = match bun_sys::File::open(lockfile_path, bun_sys::O::RDONLY, 0) {
+                let file = match bun_sys::File::openat(
+                    bun_sys::Fd::cwd(),
+                    &entry[..],
+                    bun_sys::O::RDONLY,
+                    0,
+                ) {
                     Ok(f) => f,
                     Err(err) => {
                         Output::err(err, "failed to open lockfile", ());
@@ -1887,7 +1953,7 @@ To create a project with the official Next.js scaffolding tool, run
     /// Printed at the end of `bun <command> --help` if the project has a script with the same name.
     fn print_note_about_script(command: &str) {
         use crate::cli::script_or_command::{Runs, runs};
-        if runs(command.as_bytes()) == Runs::Script {
+        if matches!(runs(command.as_bytes()), Ok(Runs::Script)) {
             pretty!(
                 "\n<blue>note<r><d>:<r> package.json has a \"{}\" script, so <b>bun {}<r> runs that script\n  Change the script to <b>\"bun {}\"<r> to use the built-in command, or pass <b>--no-script<r>\n",
                 command,
@@ -1898,6 +1964,18 @@ To create a project with the official Next.js scaffolding tool, run
     }
 
     pub(crate) fn tag_print_help(cmd: Tag, show_all_flags: bool) {
+        bun_removable_features::call_removable!(
+            Tools,
+            Abort,
+            print_command_help,
+            cmd,
+            show_all_flags,
+        )
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn print_command_help(cmd: Tag, show_all_flags: bool) {
         // the output of --help uses the following syntax highlighting
         // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
         // use [foo] for multiple arguments or flags for foo.
@@ -1927,7 +2005,11 @@ Flags:
   <cyan>--cwd <blue>\\<path\\><r>            Set the working directory
   <cyan>--env-file <blue>\\<file\\><r>       Load environment variables from the specified file(s)
   <cyan>--minimum-release-age <blue>\\<seconds\\><r>  Only install packages published at least N seconds ago (security feature)
+  <cyan>--registry <blue>\\<url\\><r>        Install from a specific registry
+  <cyan>--ca <blue>\\<cert\\><r>, <cyan>--cafile <blue>\\<path\\><r>  Trust a Certificate Authority signing certificate during installation
+  <cyan>--use-system-ca<r>, <cyan>--use-openssl-ca<r>, <cyan>--use-bundled-ca<r>  Choose the CA store to trust during installation
   <cyan>--trust<r>                Run the lifecycle scripts of the package and of ALL of its dependencies during installation
+  <cyan>--ignore-scripts<r>       Run no lifecycle scripts during installation
   <cyan>--verbose<r>              Enable verbose output during installation
   <cyan>--silent<r>               Suppress output during installation
 
@@ -1963,12 +2045,49 @@ Examples<d>:<r>
   <d>Bundle code to be run in Bun (reduces server startup time)<r>
   <b><green>bun build<r> <cyan>--target=bun --outfile=server.js<r> <blue>./server.ts<r>
 
-  <d>Creating a standalone executable (see https://bun.com/docs/bundler/executables)<r>
+  <d>Creating a standalone executable (see https://bun.com/docs/compiler/executables)<r>
   <b><green>bun build<r> <cyan>--compile --outfile=my-app<r> <blue>./cli.ts<r>
 
 A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
 "
                 );
+                Output::flush();
+            }
+            Tag::CompileCommand => {
+                pretty!(
+                    "\
+<b>Usage<r>: <b><green>bun compile<r> <cyan>[flags]<r> <blue>[\\<entrypoint\\>]<r>
+  Compile TypeScript & JavaScript into a standalone executable, ahead of time.
+
+  Short for <b>bun build --compile --aot<r>. Without an entry point, it compiles the file that \"bin\" in
+  <b>package.json<r> points to, then \"module\", then \"main\", then index.ts, index.tsx, index.mts or index.js.
+
+<b>Flags:<r>"
+                );
+                Output::flush();
+                bun_clap::simple_help(arguments::COMPILE_HELP_PARAMS);
+                pretty!(
+                    "\n\n\
+<b>Examples:<r>
+  <d>Compile a program into a standalone executable<r>
+  <b><green>bun compile<r> <blue>./cli.ts<r>
+
+  <d>Choose the name of the executable<r>
+  <b><green>bun compile<r> <cyan>--outfile=my-app<r> <blue>./cli.ts<r>
+
+  <d>List the code that compiled to a slow path<r>
+  <b><green>bun compile<r> <cyan>--explain<r> <blue>./server.ts<r>
+
+  <d>Remove the Bun and Node.js APIs your code never calls<r>
+  <b><green>bun compile<r> <cyan>--trim<r> <blue>./server.ts<r>
+
+  <d>Build a package to publish: JavaScript, .d.ts files and a package.json in ./dist<r>
+  <b><green>bun compile<r> <cyan>--library<r> <blue>./src/index.ts<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/compiler/aot<r>
+"
+                );
+                print_note_about_script("compile");
                 Output::flush();
             }
             Tag::TestCommand => {
@@ -1995,6 +2114,12 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
 
   <d>Type check the test files and what they import, then run them<r>
   <b><green>bun test<r> <cyan>--check<r>
+
+  <d>Compile the test files ahead of time, then run them<r>
+  <b><green>bun test<r> <cyan>--aot<r>
+
+  <d>The same, and log every value that doesn't match its declared type<r>
+  <b><green>bun test<r> <cyan>--aot-log-type-mismatches<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
 "
@@ -2149,6 +2274,9 @@ Execute a shell script directly from Bun.
   <d>Check a file, then run it<r>
   <b><green>bun<r> <cyan>--check<r> <blue>src/index.ts<r>
 
+  <d>Also report the errors bun compile would report<r>
+  <b><green>bun check<r> <cyan>--aot<r> <blue>src/index.ts<r>
+
 Full documentation is available at <magenta>https://bun.com/docs/runtime/check<r>
 "
                 );
@@ -2229,6 +2357,9 @@ Full documentation is available at <magenta>https://bun.com/docs/lint<r>
   <cyan>-r, --react<r>            Initialize a React project
       <cyan>--react=tailwind<r>   Initialize a React project with TailwindCSS
       <cyan>--react=shadcn<r>     Initialize a React project with @shadcn/ui and TailwindCSS
+      <cyan>--use-system-ca<r>    Use the system's trusted certificate authorities during installation
+      <cyan>--use-openssl-ca<r>   Use OpenSSL's default CA store instead of the bundled one during installation
+      <cyan>--use-bundled-ca<r>   Use bundled CA store during installation
 
 <b>Examples:<r>
   <b><green>bun init<r>
@@ -2290,7 +2421,7 @@ pub(crate) fn print_revision_and_exit() -> ! {
     Global::exit(0);
 }
 
-/// `--check` with `--hot`: nothing runs unchecked, so the process starts again, as under `--watch`.
+/// `--check` or `--aot` with `--hot`: nothing runs unchecked, so the process starts again, as under `--watch`.
 /// Call it before `set_up_watch_restarts`.
 pub(crate) fn watch_instead_of_hot_for_check(ctx: &mut command::ContextData) {
     if ctx.debug.hot_reload == command::HotReload::Hot {
@@ -2321,11 +2452,14 @@ pub(crate) fn set_up_watch_restarts(ctx: &command::ContextData) {
 /// `--no-clear-screen` and `--watch-kill-signal`, once the watch mode is final. Node reads
 /// `--watch-kill-signal` only in watch mode; elsewhere it is accepted and ignored. Matching is
 /// case-insensitive (node uppercases).
-pub(crate) fn apply_watch_mode_flags(ctx: &mut command::ContextData) {
+///
+/// `restarts`: the process can start again on a change, so the kill signal applies. True in watch
+/// mode, and for `bun bake`, which starts again when `bake.config.ts` changes.
+pub(crate) fn apply_watch_mode_flags(ctx: &mut command::ContextData, restarts: bool) {
     if ctx.debug.no_clear_screen && ctx.debug.hot_reload != command::HotReload::None {
         let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
     }
-    if ctx.debug.hot_reload != command::HotReload::Watch {
+    if !restarts {
         return;
     }
     let Some(kill_signal) = ctx.debug.watch_kill_signal_arg.as_deref() else {

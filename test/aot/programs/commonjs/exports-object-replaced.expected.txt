@@ -1,0 +1,258 @@
+before-stores reads: undefined undefined 2 | true 1 undefined
+before-stores:
+  keys literal,added
+  names literal,added
+  symbols 
+  own keys literal,added
+  for-in literal,added
+  entries literal=true,added=1
+  values true,1
+  literal wec true | in true own true listed true alike true
+  added wec 1 | in true own true listed true alike true
+  descriptors literal wec,added wec
+  json {"literal":true,"added":1}
+  json with a replacer {"literal":true,"added":1}
+  spread literal=true,added=1
+  assign literal=true,added=1
+  rest added=1
+  proxy literal,added | literal,added | literal=true,added=1
+  state true false false true [object Object]
+  Bun.inspect { literal: true, added: 1 }
+  Bun.deepEquals true true true true
+  structuredClone literal=true,added=1
+  URLSearchParams literal,added
+  first object false onFirst
+  members true 1 undefined
+after-stores reads: 1 2 | undefined undefined replacement
+after-stores: function replacement 
+  first object false a,b
+  members undefined undefined replacement
+between-stores reads: 1 2 undefined 4 undefined | undefined undefined 3 undefined 5
+between-stores:
+  keys c,e
+  names c,e
+  symbols 
+  own keys c,e
+  for-in c,e
+  entries c=3,e=5
+  values 3,5
+  c wec 3 | in true own true listed true alike true
+  e wec 5 | in true own true listed true alike true
+  descriptors c wec,e wec
+  json {"c":3,"e":5}
+  json with a replacer {"c":3,"e":5}
+  spread c=3,e=5
+  assign c=3,e=5
+  rest e=5
+  proxy c,e | c,e | c=3,e=5
+  state true false false true [object Object]
+  Bun.inspect { c: 3, e: 5 }
+  Bun.deepEquals true true true true
+  structuredClone c=3,e=5
+  URLSearchParams c,e
+  first object false a,b,d
+  members undefined undefined 3 undefined 5
+both-variables reads: true 1 2 | 1 2 | true undefined undefined
+both-variables: function both a,b
+  first object false 
+  members 1 2 both
+by-computed-name reads: 1 2 undefined 4 false | undefined undefined 3 undefined true true
+by-computed-name requires itself: true false undefined undefined 3 undefined true
+by-computed-name:
+  keys computed,c
+  names computed,c
+  symbols 
+  own keys computed,c
+  for-in computed,c
+  entries computed=true,c=3
+  values true,3
+  computed wec true | in true own true listed true alike true
+  c wec 3 | in true own true listed true alike true
+  descriptors computed wec,c wec
+  json {"computed":true,"c":3}
+  json with a replacer {"computed":true,"c":3}
+  spread computed=true,c=3
+  assign computed=true,c=3
+  rest c=3
+  proxy computed,c | computed,c | computed=true,c=3
+  state true false false true [object Object]
+  Bun.inspect { computed: true, c: 3 }
+  Bun.deepEquals true true true true
+  structuredClone computed=true,c=3
+  URLSearchParams computed,c
+  first object false a,b,d
+  members undefined undefined 3 true
+  after a store computed,c,a stored by main 1
+by-other-code replaced by another module: 1 2 undefined | undefined undefined 3 | true false undefined undefined 3
+by-other-code replaced by Reflect.set: 1 2 undefined | of Reflect.set undefined 4 | true false of Reflect.set undefined 4
+by-other-code replaced by Object.defineProperty: 1 2 undefined | of Object.defineProperty undefined 5 | true false of Object.defineProperty undefined 5
+by-other-code replaced by Object.assign: 1 2 undefined | undefined undefined 3 | true false undefined undefined 3
+by-other-code:
+  keys replacedBy,had,c
+  names replacedBy,had,c
+  symbols 
+  own keys replacedBy,had,c
+  for-in replacedBy,had,c
+  entries replacedBy="another module",had="a",c=3
+  values "another module","a",3
+  replacedBy wec "another module" | in true own true listed true alike true
+  had wec "a" | in true own true listed true alike true
+  c wec 3 | in true own true listed true alike true
+  descriptors replacedBy wec,had wec,c wec
+  json {"replacedBy":"another module","had":"a","c":3}
+  json with a replacer {"replacedBy":"another module","had":"a","c":3}
+  spread replacedBy="another module",had="a",c=3
+  assign replacedBy="another module",had="a",c=3
+  rest had="a",c=3
+  proxy replacedBy,had,c | replacedBy,had,c | replacedBy="another module",had="a",c=3
+  state true false false true [object Object]
+  Bun.inspect { replacedBy: "another module", had: "a", c: 3 }
+  Bun.deepEquals true true true true
+  structuredClone replacedBy="another module",had="a",c=3
+  URLSearchParams replacedBy,had,c
+  first object false a,b
+  members undefined undefined 3 another module a
+  after a store replacedBy,had,c,b stored by main 2
+  destructured undefined stored by main 3 a
+with-the-same-object:
+  keys a,b,c,tell,storeLate
+  names a,b,c,tell,storeLate
+  symbols 
+  own keys a,b,c,tell,storeLate
+  for-in a,b,c,tell,storeLate
+  entries a=1,b=2,c=3,tell=function tell,storeLate=function storeLate
+  values 1,2,3,function tell,function storeLate
+  a wec 1 | in true own true listed true alike true
+  b wec 2 | in true own true listed true alike true
+  c wec 3 | in true own true listed true alike true
+  tell wec function tell | in true own true listed true alike true
+  storeLate wec function storeLate | in true own true listed true alike true
+  descriptors a wec,b wec,c wec,tell wec,storeLate wec
+  json {"a":1,"b":2,"c":3}
+  json with a replacer {"a":1,"b":2,"c":3}
+  spread a=1,b=2,c=3,tell=function tell,storeLate=function storeLate
+  assign a=1,b=2,c=3,tell=function tell,storeLate=function storeLate
+  rest b=2,c=3,tell=function tell,storeLate=function storeLate
+  proxy a,b,c,tell,storeLate | a,b,c,tell,storeLate | a=1,b=2,c=3,tell=function tell,storeLate=function storeLate
+  state true false false true [object Object]
+  Bun.inspect { a: 1, b: 2, c: 3, tell: [Function: tell], storeLate: [Function: storeLate] }
+  Bun.deepEquals true true true true
+  structuredClone threw DataCloneError
+  URLSearchParams a,b,c,tell,storeLate
+  first object true a,b,c,tell,storeLate
+  members 1 2 3 told by the module
+with-a-primitive: 42 
+  first object false a,b
+  members undefined undefined undefined 42.0
+  after a store undefined 1
+conditionally reads: true 1 2 undefined | 1 2 undefined
+conditionally:
+  keys a,b
+  names a,b
+  symbols 
+  own keys a,b
+  for-in a,b
+  entries a=1,b=2
+  values 1,2
+  a wec 1 | in true own true listed true alike true
+  b wec 2 | in true own true listed true alike true
+  descriptors a wec,b wec
+  json {"a":1,"b":2}
+  json with a replacer {"a":1,"b":2}
+  spread a=1,b=2
+  assign a=1,b=2
+  rest b=2
+  proxy a,b | a,b | a=1,b=2
+  state true false false true [object Object]
+  Bun.inspect { a: 1, b: 2 }
+  Bun.deepEquals true true true true
+  structuredClone a=1,b=2
+  URLSearchParams a,b
+  first object true a,b
+  members 1 2 undefined
+exports-variable-assigned reads: false undefined 2 undefined true | 1 undefined local,b undefined | true 1 local,b
+exports-variable-assigned:
+  keys a,c
+  names a,c
+  symbols 
+  own keys a,c
+  for-in a,c
+  entries a=1,c="local,b"
+  values 1,"local,b"
+  a wec 1 | in true own true listed true alike true
+  c wec "local,b" | in true own true listed true alike true
+  descriptors a wec,c wec
+  json {"a":1,"c":"local,b"}
+  json with a replacer {"a":1,"c":"local,b"}
+  spread a=1,c="local,b"
+  assign a=1,c="local,b"
+  rest c="local,b"
+  proxy a,c | a,c | a=1,c="local,b"
+  state true false false true [object Object]
+  Bun.inspect { a: 1, c: "local,b" }
+  Bun.deepEquals true true true true
+  structuredClone a=1,c="local,b"
+  URLSearchParams a,c
+  first object true a,c
+  members 1 undefined local,b undefined
+replaced later with 42: true
+  read undefined
+  call threw TypeError
+  store "stored later"
+  the module stores "number undefined"
+replaced later with "text": true
+  read undefined
+  call threw TypeError
+  store "stored later"
+  the module stores "string undefined"
+replaced later with null: true
+  read threw TypeError
+  call threw TypeError
+  store threw TypeError
+  the module stores threw TypeError
+replaced later with undefined: true
+  read threw TypeError
+  call threw TypeError
+  store threw TypeError
+  the module stores threw TypeError
+replaced later with Symbol(replacement): true
+  read undefined
+  call threw TypeError
+  store "stored later"
+  the module stores "symbol undefined"
+replaced later with {a,tell}: true
+  read "of the replacement"
+  call "told by the replacement"
+  store "stored later"
+  the module stores "object undefined"
+replaced later with {a,b,c,tell,storeLate}: true
+  read 1
+  call "told by the module"
+  store "stored later"
+  the module stores "object {a,b,c,tell,storeLate}"
+with-the-same-object in the end:
+  keys a,b,c,tell,storeLate,late
+  names a,b,c,tell,storeLate,late
+  symbols 
+  own keys a,b,c,tell,storeLate,late
+  for-in a,b,c,tell,storeLate,late
+  entries a="stored later",b=2,c=3,tell=function tell,storeLate=function storeLate,late="{a,b,c,tell,storeLate}"
+  values "stored later",2,3,function tell,function storeLate,"{a,b,c,tell,storeLate}"
+  a wec "stored later" | in true own true listed true alike true
+  b wec 2 | in true own true listed true alike true
+  c wec 3 | in true own true listed true alike true
+  tell wec function tell | in true own true listed true alike true
+  storeLate wec function storeLate | in true own true listed true alike true
+  late wec "{a,b,c,tell,storeLate}" | in true own true listed true alike true
+  descriptors a wec,b wec,c wec,tell wec,storeLate wec,late wec
+  json {"a":"stored later","b":2,"c":3,"late":"{a,b,c,tell,storeLate}"}
+  json with a replacer {"a":"stored later","b":2,"c":3,"late":"{a,b,c,tell,storeLate}"}
+  spread a="stored later",b=2,c=3,tell=function tell,storeLate=function storeLate,late="{a,b,c,tell,storeLate}"
+  assign a="stored later",b=2,c=3,tell=function tell,storeLate=function storeLate,late="{a,b,c,tell,storeLate}"
+  rest b=2,c=3,tell=function tell,storeLate=function storeLate,late="{a,b,c,tell,storeLate}"
+  proxy a,b,c,tell,storeLate,late | a,b,c,tell,storeLate,late | a="stored later",b=2,c=3,tell=function tell,storeLate=function storeLate,late="{a,b,c,tell,storeLate}"
+  state true false false true [object Object]
+  Bun.inspect { a: "stored later", b: 2, c: 3, tell: [Function: tell], storeLate: [Function: storeLate], late: "{a,b,c,tell,storeLate}" }
+  Bun.deepEquals true true true true
+  structuredClone threw DataCloneError
+  URLSearchParams a,b,c,tell,storeLate,late

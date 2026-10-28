@@ -1,0 +1,66 @@
+// A module that does not exist at run time: the error that a program can catch and print.
+function say(error) { console.log(error?.constructor?.name, error?.name, error?.code, error?.message, Object.keys(error ?? {}).sort().join()); }
+//// require-optional-dependency
+//@ ext cjs
+try { require("bufferutil"); } catch (error) { say(error); }
+//// require-optional-dependency-esm
+try { require("bufferutil"); } catch (error) { say(error); }
+//// import-optional-dependency
+try { await import("bufferutil"); } catch (error) { say(error); }
+//// import-optional-catch
+import("bufferutil").catch(say);
+//// require-missing-relative
+//@ ext cjs
+try { require("./nothing.js"); } catch (error) { say(error); }
+//// import-missing-relative
+try { await import("./nothing.js"); } catch (error) { say(error); }
+//// require-missing-absolute
+//@ ext cjs
+try { require("/nowhere/nothing.js"); } catch (error) { say(error); }
+//// require-missing-node-builtin
+//@ ext cjs
+try { require("node:nothing"); } catch (error) { say(error); }
+//// import-missing-node-builtin
+try { await import("node:nothing"); } catch (error) { say(error); }
+//// import-missing-bun-builtin
+try { await import("bun:nothing"); } catch (error) { say(error); }
+//// require-resolve-missing
+//@ ext cjs
+try { require.resolve("bufferutil"); } catch (error) { say(error); }
+//// import-meta-resolve-missing
+try { console.log(import.meta.resolve("bufferutil")); } catch (error) { say(error); }
+//// resolveSync-missing
+try { Bun.resolveSync("bufferutil", process.cwd()); } catch (error) { say(error); }
+//// uncaught-require
+//@ exit 1
+//@ ext cjs
+require("bufferutil");
+//// uncaught-import
+//@ exit 1
+await import("bufferutil");
+//// optional-peer-pattern
+//@ exit 1
+//@ ext cjs
+let native = null;
+try { native = require("utf-8-validate"); } catch { native = { isValidUTF8: () => true }; }
+console.log(native.isValidUTF8());
+//// code-check-pattern
+//@ ext cjs
+try { require("pg-native"); } catch (error) { if (error.code !== "MODULE_NOT_FOUND") throw error; console.log("no native bindings"); }
+//// message-check-pattern
+//@ ext cjs
+try { require("pg-native"); } catch (error) { console.log(/Cannot find (module|package)/.test(error.message)); }
+//// file-present-at-run-time
+//@ ext cjs
+//@ file cwd/plugin.js "module.exports = 'plugin ' + typeof HTMLRewriter;"
+try { console.log(require(process.cwd() + "/plugin.js")); } catch (error) { say(error); }
+//// file-present-at-run-time-import
+//@ file cwd/plugin.mjs "export default 'plugin ' + typeof HTMLRewriter;"
+try { console.log((await import(process.cwd() + "/plugin.mjs")).default); } catch (error) { say(error); }
+//// json-present-at-run-time
+//@ ext cjs
+//@ file cwd/config.json "{\"a\": 1}"
+try { console.log(require(process.cwd() + "/config.json")); } catch (error) { say(error); }
+//// literal-absolute-path-present
+//@ ext cjs
+try { console.log(typeof require("/etc/hosts")); } catch (error) { console.log(error.name); }

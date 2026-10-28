@@ -95,6 +95,8 @@ options = { printWidth = 120 }
 
 ## Ignore files
 
+Every `.gitignore` in the repository counts, whichever directory you run `bun fmt` from. Outside a repository, those in the current directory and below it count. With a Prettier config, only the `.gitignore` in the current directory does, because that's the only one Prettier reads.
+
 To skip more than `.gitignore` does, list the files in `bunfig.toml`. A `.prettierignore` file works too.
 
 ```toml bunfig.toml icon="settings"
@@ -146,6 +148,7 @@ import { a, b, c } from "./util";
 - Each group is sorted by path, and the names in `{ }` are sorted too.
 - Two imports from the same module become one.
 - Side-effect imports like `import "./setup"` never move, and nothing moves past one.
+- A comment directly above an import moves with it. Above the first import, comments about the whole file stay at the top: `// @ts-nocheck`, `/// <reference ... />`, `/* eslint-disable */`, `// @flow`, `/** @jsxImportSource ... */`, a license.
 
 To pick your own groups, use a table. See [`format.sortImports`](/runtime/bunfig#format-sortimports).
 
@@ -281,7 +284,9 @@ bun run generate-types | bun fmt --parser typescript > types.ts
 bun fmt --staged
 ```
 
-A file with both staged and unstaged changes isn't written, because staging it again would commit the rest. Bun names the file and exits with code `2`.
+If a file has both staged and unstaged changes, Bun looks at the staged version, which is what the commit gets. It doesn't write such a file, because staging it again would commit the rest. If the staged version needs formatting, Bun names the file and exits with code `2`.
+
+Config files, such as `bunfig.toml` and `.prettierrc`, are read from disk.
 
 `--changed` formats the files that differ from your default branch. Pass a ref to compare with something else.
 
@@ -303,7 +308,7 @@ Already have a `.prettierrc` or an `.oxfmtrc.json`? `bun fmt` reads it and print
 }
 ```
 
-If `package.json` has a `fmt` script, `bun fmt` runs that script. Inside the script, `bun fmt` is the formatter.
+If `package.json` has a `fmt` script, `bun fmt` runs that script. Inside the script, `bun fmt` is the formatter. If `package.json` has `"fmt"` in it but can't be parsed, as in the middle of a merge, `bun fmt` can't tell whether that is a script: it formats nothing and exits with code 2.
 
 Writing a tool that calls Bun in projects you don't control? Pass `--no-script`: `bun fmt --no-script` is always the formatter.
 

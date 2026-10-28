@@ -1,0 +1,6 @@
+an accessor: a < default | 
+an accessor under a computed key: k < default | 
+two accessors: a < k < default | 
+an accessor and a private accessor: a < #p < default | 
+an accessor and a parameter property: a < default | d
+a default that reads the accessor: a < default sees 7 | 

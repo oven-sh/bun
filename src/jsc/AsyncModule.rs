@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::transpiler::ParseResult;
-use bun_core::{EncodedSlice, String as BunString};
+use bun_core::{EncodedSlice, String as BunString, StringView};
 use bun_install::Resolution;
 use bun_io::KeepAlive;
 use bun_resolver::fs as Fs;
@@ -267,7 +267,9 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
 }
 
 impl Queue {
+    #[inline(never)]
     pub fn enqueue(&mut self, global_object: &JSGlobalObject, opts: InitOpts<'_>) {
+        bun_removable_features::removable_definition!(Install, Self::enqueue);
         bun_core::scoped_log!(AsyncModule, "enqueue: {}", bstr::BStr::new(opts.specifier));
         let mut module = AsyncModule::init(opts, global_object).expect("unreachable");
         module.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
@@ -294,7 +296,9 @@ impl Queue {
         }
     }
 
+    #[inline(never)]
     pub fn on_poll(&mut self) {
+        bun_removable_features::removable_definition!(Install, Self::on_poll);
         bun_core::scoped_log!(AsyncModule, "onPoll");
         if self.map.is_empty() {
             // A synchronous auto-install drains its own tasks; here their failures would be lost.
@@ -607,8 +611,8 @@ impl AsyncModule {
             bun_io::AllocatorType::Js,
         ));
         let result = this.resume_loading_module(&mut log);
-        let spec = BunString::borrow_utf8(this.specifier());
-        let referrer = BunString::borrow_utf8(this.referrer());
+        let spec = StringView::borrow_utf8(this.specifier());
+        let referrer = StringView::borrow_utf8(this.referrer());
         Self::fulfill(
             global_this,
             this.promise.get().unwrap(),
@@ -1148,27 +1152,9 @@ impl AsyncModule {
         // the enqueue, and the fd the parse opened may have been closed (and
         // the number recycled) by the transpile frame's fd guard.
 
-        // SAFETY: per-thread VM.
-        if unsafe { (*jsc_vm).is_watcher_enabled() } {
-            // SAFETY: per-thread VM.
-            let mut resolved_source = unsafe {
-                (*jsc_vm).ref_counted_resolved_source(
-                    printer.ctx.get_written(),
-                    &BunString::from_bytes(specifier),
-                    path.text,
-                    None,
-                )
-            };
-
-            resolved_source.is_commonjs_module = is_commonjs_module;
-            resolved_source.is_static = self.is_static;
-
-            return Ok(resolved_source);
-        }
-
         Ok(ResolvedSource {
             source_code: BunString::clone_latin1(printer.ctx.get_written()),
-            source_url: BunString::from_bytes(path.text),
+            source_url: BunString::clone_utf8(path.text),
             is_commonjs_module,
             is_static: self.is_static,
             ..Default::default()

@@ -1,0 +1,121 @@
+Entry points that use the address space that is kept aside.
+
+An allocator interface such as Rust's GlobalAlloc hands every request to one
+function and cannot say which of them can fail. Most of its callers end the
+process when they get NULL.
+
+mi_must_malloc(), mi_must_zalloc(), mi_must_realloc() and their _aligned forms
+are mi_malloc() and so on, but a request that has found no memory asks once
+more as a request that cannot fail (new-uses-address-space-kept-aside.patch).
+They return NULL when that finds no memory either, or where no embedder keeps
+address space aside. A request that pops a free block of a small page runs the
+same instructions as in mi_malloc() | mi_zalloc(): all else is a function of its
+own, reached by a tail call.
+
+--- a/include/mimalloc.h
++++ b/include/mimalloc.h
+@@ -219,6 +219,16 @@
+   void (*end_request_that_cannot_fail)(void);
+ } mi_address_space_keeper_t;
+ mi_decl_export void mi_register_address_space_keeper(const mi_address_space_keeper_t* keeper) mi_attr_noexcept;
++
++// For an interface that cannot say which of its requests can fail, and most of whose callers end the process on NULL.
++// As the functions without `must`, but a request that has found no memory asks once more as one that cannot fail.
++// NULL when that finds no memory either.
++mi_decl_nodiscard mi_decl_export mi_decl_restrict void* mi_must_malloc(size_t size) mi_attr_noexcept mi_attr_malloc mi_attr_alloc_size(1);
++mi_decl_nodiscard mi_decl_export mi_decl_restrict void* mi_must_zalloc(size_t size) mi_attr_noexcept mi_attr_malloc mi_attr_alloc_size(1);
++mi_decl_nodiscard mi_decl_export void* mi_must_realloc(void* p, size_t newsize) mi_attr_noexcept mi_attr_alloc_size(2);
++mi_decl_nodiscard mi_decl_export mi_decl_restrict void* mi_must_malloc_aligned(size_t size, size_t alignment) mi_attr_noexcept mi_attr_malloc mi_attr_alloc_size(1) mi_attr_alloc_align(2);
++mi_decl_nodiscard mi_decl_export mi_decl_restrict void* mi_must_zalloc_aligned(size_t size, size_t alignment) mi_attr_noexcept mi_attr_malloc mi_attr_alloc_size(1) mi_attr_alloc_align(2);
++mi_decl_nodiscard mi_decl_export void* mi_must_realloc_aligned(void* p, size_t newsize, size_t alignment) mi_attr_noexcept mi_attr_alloc_size(2) mi_attr_alloc_align(3);
+ 
+ mi_decl_export void mi_collect(bool force)      mi_attr_noexcept;
+ 
+--- a/src/alloc.c
++++ b/src/alloc.c
+@@ -972,8 +972,85 @@
+   else {
+     return mi_new_realloc(p, total);
+   }
++}
++
++// ------------------------------------------------------
++// Requests of an interface that cannot say which of them can fail
++// ------------------------------------------------------
++
++static mi_decl_noinline void* mi_must_malloc_again(size_t size, size_t alignment, bool zero) mi_attr_noexcept {
++  const mi_address_space_keeper_t* const keeper = mi_new_begin_asking_again(false);
++  if (keeper == NULL) return NULL;
++  void* p;
++  if (alignment == 0) { p = (zero ? mi_zalloc(size) : mi_malloc(size)); }
++                 else { p = (zero ? mi_zalloc_aligned(size,alignment) : mi_malloc_aligned(size,alignment)); }
++  keeper->end_request_that_cannot_fail();
++  return p;
++}
++
++static mi_decl_noinline void* mi_must_realloc_again(void* p, size_t newsize, size_t alignment) mi_attr_noexcept {
++  const mi_address_space_keeper_t* const keeper = mi_new_begin_asking_again(false);
++  if (keeper == NULL) return NULL;
++  void* const q = (alignment == 0 ? mi_realloc(p,newsize) : mi_realloc_aligned(p,newsize,alignment));
++  keeper->end_request_that_cannot_fail();
++  return q;
++}
++
++static mi_decl_noinline void* mi_must_malloc_slow(mi_theap_t* theap, size_t size, bool zero) mi_attr_noexcept {
++  void* const p = _mi_theap_malloc_zero(theap, size, zero, 0, NULL);
++  if mi_unlikely(p == NULL) return mi_must_malloc_again(size, 0, zero);
++  return p;
++}
++
++// A block that is free in a small page is popped as in `mi_malloc`. All else, with the test for NULL behind it, is a function of
++// its own that is reached by a tail call: a test behind a call in here would make every request pay for a frame.
++static mi_decl_forceinline void* mi_must_malloc_zero(size_t size, bool zero) mi_attr_noexcept {
++  mi_theap_t* const theap = _mi_theap_default();
++  #if MI_THEAP_INITASNULL
++  if mi_likely(theap!=NULL && size <= MI_SMALL_SIZE_MAX)
++  #else
++  if mi_likely(size <= MI_SMALL_SIZE_MAX)
++  #endif
++  {
++    if mi_likely(_mi_theap_get_free_small_page(theap, size + MI_PADDING_SIZE, false)->free != NULL) {
++      return mi_theap_nonnull_xmalloc_small_zero(theap, size, false, zero, NULL);
++    }
++  }
++  return mi_must_malloc_slow(theap, size, zero);
++}
++
++mi_decl_nodiscard mi_decl_restrict void* mi_must_malloc(size_t size) mi_attr_noexcept {
++  return mi_must_malloc_zero(size, false);
++}
++
++mi_decl_nodiscard mi_decl_restrict void* mi_must_zalloc(size_t size) mi_attr_noexcept {
++  return mi_must_malloc_zero(size, true);
+ }
+ 
++mi_decl_nodiscard void* mi_must_realloc(void* p, size_t newsize) mi_attr_noexcept {
++  void* const q = mi_realloc(p, newsize);
++  if mi_unlikely(q == NULL) return mi_must_realloc_again(p, newsize, 0);
++  return q;
++}
++
++mi_decl_nodiscard mi_decl_restrict void* mi_must_malloc_aligned(size_t size, size_t alignment) mi_attr_noexcept {
++  void* const p = mi_malloc_aligned(size, alignment);
++  if mi_unlikely(p == NULL) return mi_must_malloc_again(size, alignment, false);
++  return p;
++}
++
++mi_decl_nodiscard mi_decl_restrict void* mi_must_zalloc_aligned(size_t size, size_t alignment) mi_attr_noexcept {
++  void* const p = mi_zalloc_aligned(size, alignment);
++  if mi_unlikely(p == NULL) return mi_must_malloc_again(size, alignment, true);
++  return p;
++}
++
++mi_decl_nodiscard void* mi_must_realloc_aligned(void* p, size_t newsize, size_t alignment) mi_attr_noexcept {
++  void* const q = mi_realloc_aligned(p, newsize, alignment);
++  if mi_unlikely(q == NULL) return mi_must_realloc_again(p, newsize, alignment);
++  return q;
++}
++
+ // ------------------------------------------------------
+ // ensure explicit external inline definitions are emitted!
+ // ------------------------------------------------------

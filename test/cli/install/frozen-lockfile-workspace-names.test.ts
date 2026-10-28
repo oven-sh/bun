@@ -97,8 +97,8 @@ async function lookUp(from: string, name: string) {
 const seenFrom = async (dir: string, from: string, name: string) =>
   (await file(join(await lookUp(join(dir, from), name), "package.json")).json()).version;
 
-// After the install that wrote bun.lock: a second one changes nothing, and frozen installs accept the file over the
-// node_modules that is there, over a wiped root node_modules, and over none at all.
+// After the install that wrote bun.lock, a second one changes nothing, and frozen installs accept the file with the
+// existing node_modules, with the root node_modules wiped, and with no node_modules at all.
 async function expectRoundTrip(dir: string, check: () => Promise<void>) {
   const lock = await lockText(dir);
   await check();
@@ -178,7 +178,7 @@ describe.each(linkers)("%s linker", linker => {
     });
 
     // The workspace's own dependencies are printed below the key the workspace is printed at.
-    test.concurrent("the workspace's own dependency that cannot hoist stays on its version", async () => {
+    test.concurrent("the workspace's own dependency that can't be hoisted keeps its version", async () => {
       const dir = await project(linker, {
         "": root({ dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.2" } }),
         "packages/no-deps": { name: "no-deps", version: "3.0.0", dependencies: { "a-dep": "1.0.1" } },
@@ -254,9 +254,9 @@ describe.each(linkers)("%s linker", linker => {
     });
   });
 
-  // Nobody depends on the workspace, so nothing links it. It stays in bun.lock and what it depends on is installed. What
-  // cannot hoist to the root is in its own node_modules, printed below "./<name>".
-  describe("a workspace stays installed when the root gives its name to a registry version written as", () => {
+  // Nobody depends on the workspace, so nothing links it. It stays in bun.lock, and its dependencies are installed.
+  // Those that can't be hoisted to the root are in its own node_modules, printed below "./<name>".
+  describe("a workspace is still installed when the root gives its name to a registry version written as", () => {
     const member = { name: "no-deps", version: "3.0.0", dependencies: { "a-dep": "1.0.1", "what-bin": "1.0.0" } };
     const unlinked = {
       workspaces: ["", "packages/no-deps"],
@@ -311,7 +311,7 @@ describe.each(linkers)("%s linker", linker => {
     }
 
     // Bun 1.4 and older left such a workspace out of bun.lock: the file they wrote is the one of a root without it.
-    test.concurrent("a range, in a bun.lock of Bun 1.4: it stays as it is until the dependencies change", async () => {
+    test.concurrent("a range, in a bun.lock from Bun 1.4: it isn't changed until the dependencies change", async () => {
       const dependencies = { "no-deps": "1.0.0" };
       const dir = await project(linker, { "": { name: "sandbox", version: "1.0.0", dependencies } });
       await ok(dir, "install", "--lockfile-only");
@@ -337,7 +337,7 @@ describe.each(linkers)("%s linker", linker => {
       await expectRoundTrip(dir, () => check(dir));
     });
 
-    test.concurrent("an alias under its own name, in a bun.lock of Bun 1.4: it stays as it is", async () => {
+    test.concurrent("an alias under its own name, in a bun.lock from Bun 1.4: it isn't changed", async () => {
       const dependencies = { "no-deps": "npm:no-deps@1.0.0" };
       const dir = await project(linker, { "": { name: "sandbox", version: "1.0.0", dependencies } });
       await ok(dir, "install", "--lockfile-only");
@@ -388,7 +388,7 @@ describe.each(linkers)("%s linker", linker => {
       expect(await seenFrom(dir, "packages/no-deps", "what-bin")).toBe("1.0.0");
     });
 
-    test.concurrent("a range, and the install fails on what the workspace cannot get", async () => {
+    test.concurrent("a range, and the install fails if a dependency of the workspace can't be installed", async () => {
       const dir = await project(linker, {
         "": root({ dependencies: { "no-deps": "1.0.0" } }),
         "packages/no-deps": { ...member, dependencies: { "this-package-does-not-exist-in-the-registry": "1.0.0" } },
@@ -414,8 +414,8 @@ describe.each(linkers)("%s linker", linker => {
     });
   });
 
-  // An alias installs in `node_modules/<alias>`: it takes no folder from the workspace, so the workspace and its own
-  // dependencies stay installed, whether or not the workspace has a version.
+  // An alias is installed in `node_modules/<alias>`. It doesn't take a folder from the workspace, so the workspace and
+  // its own dependencies are still installed, whether or not the workspace has a version.
   describe("a root alias of the registry package that has the name of a workspace", () => {
     test.concurrent.each([
       { title: "a version out of the alias's range", version: { version: "3.0.0" }, add: false },
@@ -449,27 +449,358 @@ describe.each(linkers)("%s linker", linker => {
       });
     });
 
-    // Such a file is out of date like any lockfile that misses a workspace.
-    test.concurrent("a bun.lock from a bun that dropped the workspace fails frozen and is repaired", async () => {
-      const dir = await project(linker, {
-        "": root({ dependencies: { published: "npm:no-deps@1.0.0" } }),
-        "packages/no-deps": { name: "no-deps", version: "3.0.0", dependencies: { "a-dep": "1.0.1" } },
-      });
-      await ok(dir, "install");
-      const lock = Bun.JSONC.parse(await lockText(dir)) as Record<"workspaces" | "packages", Record<string, unknown>>;
-      delete lock.workspaces["packages/no-deps"];
-      delete lock.packages["no-deps"];
-      delete lock.packages["a-dep"];
-      expect(Object.keys(lock.packages)).toEqual(["published"]);
-      await write(join(dir, "bun.lock"), JSON.stringify(lock, null, 2));
+    // Bun 1.4 and older wrote such a file and accepted it, so a frozen install still does. It looks the same as the
+    // file of a project whose workspace is new.
+    test.concurrent.each(["a bun that dropped the workspace", "before the workspace was added"])(
+      "a bun.lock from %s passes frozen and is repaired",
+      async from => {
+        const manifest = { name: "no-deps", version: "3.0.0", dependencies: { "a-dep": "1.0.1" } };
+        const dropped = from.includes("dropped");
+        const dir = await project(linker, {
+          "": root({ dependencies: { published: "npm:no-deps@1.0.0" } }),
+          ...(dropped ? { "packages/no-deps": manifest } : {}),
+        });
+        await ok(dir, "install");
+        if (dropped) {
+          const lock = Bun.JSONC.parse(await lockText(dir)) as Record<
+            "workspaces" | "packages",
+            Record<string, unknown>
+          >;
+          delete lock.workspaces["packages/no-deps"];
+          delete lock.packages["no-deps"];
+          delete lock.packages["a-dep"];
+          expect(Object.keys(lock.packages)).toEqual(["published"]);
+          await write(join(dir, "bun.lock"), JSON.stringify(lock, null, 2));
+        } else {
+          await write(join(dir, "packages", "no-deps", "package.json"), JSON.stringify(manifest));
+        }
 
-      const frozen = await bun(dir, "install", "--frozen-lockfile");
-      expect(frozen.stderr).toContain("error: lockfile had changes, but lockfile is frozen");
-      expect(frozen.exitCode).toBe(1);
+        await ok(dir, "install", "--frozen-lockfile");
 
-      await ok(dir, "install");
-      expect((await resolved(dir)).workspaces).toEqual(["", "packages/no-deps"]);
+        await ok(dir, "install");
+        expect((await resolved(dir)).workspaces).toEqual(["", "packages/no-deps"]);
+        expect(await seenFrom(dir, "packages/no-deps", "a-dep")).toBe("1.0.1");
+        await ok(dir, "install", "--frozen-lockfile");
+      },
+    );
+  });
+
+  // Bun 1.4 and older gave the root's entry for a workspace to the root's own dependency on a registry version of that
+  // package, took a tag of its name from the registry, and linked it for a `file:` path to its folder under any name.
+  // These are the lockfiles that 1.4.3 wrote. Nothing changed since, so a frozen install takes them as they are.
+  describe("a lockfile from Bun 1.4 of a root that names its own workspace a second time", () => {
+    const member = { name: "no-deps", version: "3.0.0", dependencies: { "a-dep": "1.0.1" } };
+    const integrity: Record<string, string> = {
+      "no-deps-1.0.0":
+        "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
+      "no-deps-1.1.0":
+        "sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w==",
+      "no-deps-2.0.0":
+        "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
+      "a-dep-1.0.1": "sha512-6nmTaPgO2U/uOODqOhbjbnaB4xHuZ+UB7AjKUA3g2dT4WRWeNxgp0dC8Db4swXSnO5/uLLUdFmUJKINNBO/3wg==",
+    };
+    const fromRegistry = (key: string, name: string, version: string) =>
+      `"${key}": ["${name}@${version}", "${registry.registryUrl()}${name}/-/${name}-${version}.tgz", {}, "${integrity[`${name}-${version}`]}"],`;
+    const memberEntry = `
+    "packages/no-deps": {
+      "name": "no-deps",
+      "version": "3.0.0",
+      "dependencies": {
+        "a-dep": "1.0.1",
+      },
+    },`;
+    const bunLock = (rootEntry: string, members: string, packages: string[]) => `{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "sandbox",${rootEntry}
+    },${members}
+  },
+  "packages": {
+${packages.map(row => `    ${row}\n`).join("\n")}  }
+}
+`;
+
+    // "repaired": the first `bun install` may save the file again, without what the older version got wrong.
+    async function expectAccepted(
+      dir: string,
+      lockfile: "bun.lock" | "bun.lockb",
+      after: "kept" | "repaired",
+      check: () => Promise<void>,
+    ) {
+      const bytes = () => file(join(dir, lockfile)).bytes();
+      const written = await bytes();
       await ok(dir, "install", "--frozen-lockfile");
+      await check();
+      await wipeNodeModules(dir);
+      await ok(dir, "ci");
+      await check();
+      expect(await bytes()).toEqual(written);
+
+      await ok(dir, "install");
+      const saved = await bytes();
+      if (after === "kept") expect(saved).toEqual(written);
+      await ok(dir, "install");
+      if (after === "kept") await check();
+      expect(await bytes()).toEqual(saved);
+      await ok(dir, "install", "--frozen-lockfile");
+    }
+
+    test.concurrent.each<[string, "kept" | "repaired", PackageJson, string, () => string]>([
+      [
+        "by an alias of a published version",
+        "repaired",
+        { dependencies: { published: "npm:no-deps@1.0.0" } },
+        "published@1.0.0",
+        () =>
+          bunLock(
+            `
+      "dependencies": {
+        "published": "npm:no-deps@1.0.0",
+      },`,
+            "",
+            [fromRegistry("published", "no-deps", "1.0.0")],
+          ),
+      ],
+      [
+        "as an optional peer",
+        "repaired",
+        { peerDependencies: { "no-deps": "^1.0.0" }, peerDependenciesMeta: { "no-deps": { optional: true } } },
+        "no-deps@1.1.0",
+        () =>
+          bunLock(
+            `
+      "peerDependencies": {
+        "no-deps": "^1.0.0",
+        "no-deps": "*",
+      },
+      "optionalPeers": [
+        "no-deps",
+      ],`,
+            "",
+            [fromRegistry("no-deps", "no-deps", "1.1.0")],
+          ),
+      ],
+      [
+        "in dependencies and in optionalDependencies",
+        "kept",
+        { dependencies: { "no-deps": "1.0.0" }, optionalDependencies: { "no-deps": "^1.0.0" } },
+        "no-deps@1.1.0",
+        () =>
+          bunLock(
+            `
+      "dependencies": {
+        "no-deps": "1.0.0",
+      },
+      "optionalDependencies": {
+        "no-deps": "^1.0.0",
+      },`,
+            "",
+            [fromRegistry("no-deps", "no-deps", "1.1.0")],
+          ),
+      ],
+      [
+        "by a version and by a tag",
+        "repaired",
+        { dependencies: { "no-deps": "1.0.0" }, devDependencies: { "no-deps": "latest" } },
+        "no-deps@2.0.0",
+        () =>
+          bunLock(
+            `
+      "dependencies": {
+        "no-deps": "1.0.0",
+      },
+      "devDependencies": {
+        "no-deps": "latest",
+      },`,
+            "",
+            [fromRegistry("no-deps", "no-deps", "2.0.0")],
+          ),
+      ],
+      [
+        "by a file: path under another name",
+        "kept",
+        { dependencies: { other: "file:./packages/no-deps" } },
+        "other@3.0.0",
+        () =>
+          bunLock(
+            `
+      "dependencies": {
+        "other": "file:./packages/no-deps",
+      },`,
+            memberEntry,
+            [
+              fromRegistry("a-dep", "a-dep", "1.0.1"),
+              `"no-deps": ["no-deps@workspace:packages/no-deps"],`,
+              `"other": ["no-deps@workspace:packages/no-deps"],`,
+            ],
+          ),
+      ],
+    ])("%s", async (_, after, dependencies, installed, lock) => {
+      const dir = await project(linker, { "": root(dependencies), "packages/no-deps": member });
+      await write(join(dir, "bun.lock"), lock());
+      const [name, version] = installed.split("@");
+
+      await expectAccepted(dir, "bun.lock", after, async () => {
+        expect(await seenFrom(dir, ".", name)).toBe(version);
+        // The workspace itself, not a copy of it.
+        if (version === member.version)
+          expect(await lookUp(dir, name)).toBe(await realpath(join(dir, "packages", "no-deps")));
+      });
+    });
+
+    async function writeLockb(dir: string, fixture: string) {
+      const written = await file(join(import.meta.dir, "fixtures", fixture)).bytes();
+      // Strings are stored by offset and length.
+      const host = new URL(registry.registryUrl()).host;
+      expect(host).toHaveLength("localhost:39073".length);
+      await write(
+        join(dir, "bun.lockb"),
+        Buffer.from(Buffer.from(written).toString("latin1").replaceAll("localhost:39073", host), "latin1"),
+      );
+    }
+
+    // package.json names the workspace twice no longer, or not as the lockfile has it: an edit like any other.
+    describe.each([
+      {
+        optional: "workspace:*",
+        dev: "^1.0.0",
+        fixture: "workspace-name-optional-link.lockb",
+        before: "1.1.0",
+        after: "3.0.0",
+      },
+      {
+        optional: "^1.0.0",
+        dev: "workspace:*",
+        fixture: "workspace-name-optional-range.lockb",
+        before: "3.0.0",
+        after: "1.1.0",
+      },
+    ])("in optionalDependencies ($optional) and in devDependencies ($dev), in bun.lockb", row => {
+      const setUp = async (devDependencies?: PackageJson) => {
+        const dir = await project(
+          linker,
+          {
+            "": root({ optionalDependencies: { "no-deps": row.optional }, devDependencies }),
+            "packages/no-deps": member,
+          },
+          "saveTextLockfile = false\n",
+        );
+        await writeLockb(dir, row.fixture);
+        return dir;
+      };
+
+      test.concurrent("nothing changed", async () => {
+        const dir = await setUp({ "no-deps": row.dev });
+        await expectAccepted(dir, "bun.lockb", "kept", async () => {
+          expect(await seenFrom(dir, ".", "no-deps")).toBe(row.before);
+        });
+      });
+
+      test.concurrent.each([
+        ["is removed", undefined],
+        ["changes", { "no-deps": row.dev === "^1.0.0" ? "~1.0.0" : "workspace:^" }],
+      ])("the one in devDependencies %s", async (_, devDependencies) => {
+        const dir = await setUp(devDependencies);
+        const written = await file(join(dir, "bun.lockb")).bytes();
+
+        await ok(dir, "install");
+        expect(await seenFrom(dir, ".", "no-deps")).toBe(row.after);
+        expect(await file(join(dir, "bun.lockb")).bytes()).not.toEqual(written);
+        await ok(dir, "install", "--frozen-lockfile");
+        expect(await seenFrom(dir, ".", "no-deps")).toBe(row.after);
+      });
+    });
+
+    test.concurrent("by a tag, in bun.lockb", async () => {
+      const dir = await project(
+        linker,
+        { "": root({ dependencies: { "no-deps": "latest" } }), "packages/no-deps": member },
+        "saveTextLockfile = false\n",
+      );
+      await writeLockb(dir, "workspace-name-dist-tag.lockb");
+
+      // The two linkers of Bun 1.4 differed here.
+      await expectAccepted(dir, "bun.lockb", "kept", async () => {
+        expect(await seenFrom(dir, ".", "no-deps")).toBe(linker === "hoisted" ? "3.0.0" : "2.0.0");
+        expect(await seenFrom(dir, "packages/no-deps", "a-dep")).toBe("1.0.1");
+      });
+    });
+
+    // Here the entry that has the range is not optional.
+    test.concurrent("as an optional peer, in bun.lockb", async () => {
+      const dir = await project(
+        linker,
+        {
+          "": root({
+            peerDependencies: { "no-deps": "^1.0.0" },
+            peerDependenciesMeta: { "no-deps": { optional: true } },
+          }),
+          "packages/no-deps": member,
+        },
+        "saveTextLockfile = false\n",
+      );
+      await writeLockb(dir, "workspace-name-optional-peer.lockb");
+
+      await expectAccepted(dir, "bun.lockb", "kept", async () => {
+        expect(await seenFrom(dir, ".", "no-deps")).toBe("1.1.0");
+      });
+    });
+
+    // This one has the workspace without the packages that it depends on.
+    test.concurrent("by a published version, next to a workspace with a peer dependency on it", async () => {
+      const dir = await project(linker, {
+        "": root({ dependencies: { "no-deps": "1.0.0" } }),
+        "packages/no-deps": member,
+        "packages/app": { name: "app", version: "1.0.0", peerDependencies: { "no-deps": "^3.0.0" } },
+      });
+      await write(
+        join(dir, "bun.lock"),
+        bunLock(
+          `
+      "dependencies": {
+        "no-deps": "1.0.0",
+      },`,
+          `
+    "packages/app": {
+      "name": "app",
+      "version": "1.0.0",
+      "peerDependencies": {
+        "no-deps": "^3.0.0",
+      },
+    },${memberEntry}`,
+          [`"app": ["app@workspace:packages/app"],`, fromRegistry("no-deps", "no-deps", "1.0.0")],
+        ),
+      );
+
+      for (let i = 0; i < 2; i++) {
+        expect((await bun(dir, "install")).exitCode).toBe(0);
+        expect(await seenFrom(dir, ".", "no-deps")).toBe("1.0.0");
+      }
+    });
+
+    test.concurrent("the same, and --production doesn't need the workspace's devDependencies", async () => {
+      const dir = await project(linker, {
+        "": root({ dependencies: { "no-deps": "1.0.0" } }),
+        "packages/no-deps": { name: "no-deps", version: "3.0.0", devDependencies: { "a-dep": "1.0.1" } },
+      });
+      await write(
+        join(dir, "bun.lock"),
+        bunLock(
+          `
+      "dependencies": {
+        "no-deps": "1.0.0",
+      },`,
+          memberEntry.replace('"dependencies"', '"devDependencies"'),
+          [fromRegistry("no-deps", "no-deps", "1.0.0")],
+        ),
+      );
+      const written = await lockText(dir);
+
+      await ok(dir, "install", "--production");
+      expect(await seenFrom(dir, ".", "no-deps")).toBe("1.0.0");
+      expect(await lockText(dir)).toBe(written);
     });
   });
 
@@ -539,7 +870,47 @@ describe.each(linkers)("%s linker", linker => {
       });
     });
 
-    // What bun 1.4 wrote for this project, and ignored on every install. One install replaces it.
+    test.concurrent.each(["alpha", "other"])(
+      "%s, a path to a workspace's directory, is a folder once that is no workspace",
+      async name => {
+        const dependencies = { [name]: "file:./packages/alpha" };
+        const dir = await project(linker, {
+          "": root({ dependencies }),
+          "packages/alpha": { name: "alpha", version: "1.0.0" },
+        });
+        await ok(dir, "install");
+        await write(join(dir, "package.json"), JSON.stringify({ name: "sandbox", version: "1.0.0", dependencies }));
+
+        const frozen = await bun(dir, "install", "--frozen-lockfile");
+        expect(frozen.stderr).toContain("error: lockfile had changes, but lockfile is frozen");
+        expect(frozen.exitCode).toBe(1);
+
+        await ok(dir, "install");
+        expect(await resolved(dir)).toEqual({ workspaces: [""], packages: { [name]: "alpha@file:packages/alpha" } });
+        await ok(dir, "install", "--frozen-lockfile");
+      },
+    );
+
+    test.concurrent("a path to a workspace's directory follows the workspace to its new name", async () => {
+      const dir = await project(linker, {
+        "": root({ dependencies: { other: "file:./packages/alpha" } }),
+        "packages/alpha": { name: "alpha", version: "1.0.0" },
+      });
+      await ok(dir, "install");
+      await write(
+        join(dir, "packages", "alpha", "package.json"),
+        JSON.stringify({ name: "renamed", version: "1.0.0" }),
+      );
+      await ok(dir, "install");
+
+      expect(await resolved(dir)).toEqual({
+        workspaces: ["", "packages/alpha"],
+        packages: { "other": "renamed@workspace:packages/alpha", "renamed": "renamed@workspace:packages/alpha" },
+      });
+      await ok(dir, "install", "--frozen-lockfile");
+    });
+
+    // This is what Bun 1.4 wrote for this project, and ignored on every install. One install replaces it.
     test.concurrent("a bun.lock with both keys is replaced", async () => {
       const dir = await project(linker, {
         "": root({ dependencies: { alpha: "file:./vendor/alpha" } }),
@@ -581,6 +952,16 @@ describe.each(linkers)("%s linker", linker => {
       await expectWorkspace(dir);
     });
 
+    test.concurrent("resolves to the workspace that is added after an install without it", async () => {
+      const dir = await project(linker, { "": root({ dependencies: { "no-deps": "latest" } }) });
+      await ok(dir, "install");
+      expect((await resolved(dir)).packages).toEqual({ "no-deps": "no-deps@2.0.0" });
+
+      await write(join(dir, "packages", "no-deps", "package.json"), JSON.stringify(member));
+      await ok(dir, "install");
+      await expectWorkspace(dir);
+    });
+
     test.concurrent.each(["no-deps", "-d -E no-deps@latest"])("bun add %s saves workspace:*", async args => {
       const dir = await project(linker, { "": root({}), "packages/no-deps": member });
       await ok(dir, "install");
@@ -595,7 +976,7 @@ describe.each(linkers)("%s linker", linker => {
   });
 
   // The range of the row accepts the workspace, or names it, and the row is bound to something else.
-  describe("a row that could link a workspace and does not", () => {
+  describe("a dependency that could link to a workspace but doesn't", () => {
     const published = { "no-deps": "^1.0.0" };
     test.concurrent.each([
       ["peerDependenciesMeta", { dependencies: published, peerDependenciesMeta: { "no-deps": { optional: true } } }],
@@ -649,7 +1030,7 @@ describe.each(linkers)("%s linker", linker => {
 
     test.concurrent.each([
       {
-        // The workspace stays installed, without a link: the peer finds the root's copy.
+        // The workspace is still installed, without a link, and the peer finds the root's copy.
         history: "a root dependency takes the name of the workspace",
         root: { workspaces: ["packages/*"], devDependencies: { "no-deps": "1.0.0" } },
         workspaces: ["", "packages/app", "packages/no-deps"],
@@ -740,7 +1121,7 @@ describe.each(linkers)("%s linker", linker => {
       });
       expect(await peer()).toBe(peerVersion);
 
-      // bun.lock installs what the install that wrote it installed
+      // Installing from bun.lock gives the same result as the install that wrote it.
       await wipeNodeModules(dir);
       await ok(dir, "install", "--frozen-lockfile");
       expect(await peer()).toBe(peerVersion);

@@ -219,11 +219,13 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     for failure in dev.bundling_failures.values() {
         other_bytes += failure.data.len();
     }
-    // All entries are owned by the bundler arena, not DevServer, except for `requests`
+    // All entries are owned by the bundler arena, not DevServer, except for the request lists
     // .current_bundle
     if let Some(bundle) = &dev.current_bundle {
         // `SinglyLinkedList::len()` is an O(N) walk; only the node count matters.
         other_bytes += bundle.requests.len() * size_of::<deferred_request::Node>();
+        other_bytes += memory_cost_array_list(&bundle.script_requests);
+        other_bytes += bundle.script_requests.len() * size_of::<DeferredScriptRequest>();
     }
     // .next_bundle
     {
@@ -302,10 +304,14 @@ impl DevServer {
         crate::jsc_hooks::timer_all_mut()
     }
 
-    pub(crate) fn emit_memory_visualizer_message_timer(
-        _timer: &mut EventLoopTimer,
-        _: &bun_core::Timespec,
-    ) {
+    pub(crate) fn emit_memory_visualizer_message_timer(timer: *mut EventLoopTimer) {
+        // SAFETY: `timer` points to the `memory_visualizer_timer` field of a DevServer.
+        let dev: &mut DevServer = unsafe { &mut *DevServer::from_timer_ptr(timer) };
+        debug_assert!(dev.magic == Magic::Valid);
+        dev.emit_memory_visualizer_message();
+        dev.memory_visualizer_timer.state = EventLoopTimerState::FIRED;
+        let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1000);
+        dev.timer_heap().update(timer, &next);
     }
 
     pub(crate) fn emit_memory_visualizer_message_if_needed(&mut self) {}
@@ -327,8 +333,7 @@ impl DevServer {
     ) -> crate::Result<()> {
         let cost = self.memory_cost_detailed();
         let system_total = crate::node::os::totalmem();
-        // Wire format: 10 contiguous native-endian u32s. `[u32; 10]` has no
-        // padding and is `bytemuck::Pod`, so the byte view is safe.
+        // Wire format: 10 contiguous native-endian u32s.
         let fields: [u32; 10] = [
             /* incremental_graph_client */ cost.incremental_graph_client as u32,
             /* incremental_graph_server */ cost.incremental_graph_server as u32,
@@ -343,7 +348,7 @@ impl DevServer {
             /* system_used */ system_total.saturating_sub(crate::node::os::freemem()) as u32,
             /* system_total */ system_total as u32,
         ];
-        payload.extend_from_slice(bytemuck::bytes_of(&fields));
+        payload.extend_from_slice(bun_core::bytes_of(&fields));
 
         // SourceMapStore is easy to leak refs in.
         {

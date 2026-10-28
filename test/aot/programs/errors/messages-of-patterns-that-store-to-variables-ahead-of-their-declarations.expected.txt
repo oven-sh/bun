@@ -1,0 +1,10 @@
+one ReferenceError Cannot access 'a' before initialization.
+two ReferenceError Cannot access 'a' before initialization.
+three ReferenceError Cannot access 'a' before initialization.
+four ReferenceError Cannot access 'a' before initialization.
+five ReferenceError Cannot access 'a' before initialization.
+six ReferenceError Cannot access 'a' before initialization.
+seven ReferenceError Cannot access 'a' before initialization.
+eight ReferenceError Cannot access 'a' before initialization.
+nine ReferenceError Cannot access 'a' before initialization.
+eleven ReferenceError Cannot access 'a' before initialization.

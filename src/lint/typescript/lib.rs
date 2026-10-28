@@ -1,6 +1,6 @@
-//! The rules of typescript-eslint. Each is a port of the rule of the same name in
-//! https://github.com/typescript-eslint/typescript-eslint (Copyright typescript-eslint and other
-//! contributors, MIT License): the same options, the same messages, at the same places.
+//! typescript-eslint's rules. Each is a port of the rule with the same name in
+//! https://github.com/typescript-eslint/typescript-eslint (Copyright typescript-eslint and other contributors, MIT
+//! License), with the same options, the same messages and the same report locations.
 
 #![forbid(unsafe_code)]
 #![deny(clippy::iter_over_hash_type)]

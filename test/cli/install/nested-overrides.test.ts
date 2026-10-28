@@ -33,8 +33,9 @@ async function run(dir: string, ...cmd: string[]) {
 const install = (dir: string, ...args: string[]) => run(dir, "install", ...args);
 const migrate = (dir: string) => run(dir, "pm", "migrate");
 
-// stderr lines that say how far a command got rather than what it found: install progress, "Saved lockfile" (the cases
-// that care assert it on `err` directly) and the package.json excerpt printed under a located warning.
+// Filters out the stderr lines about a command's progress, as opposed to its findings: install progress, "Saved
+// lockfile" (the cases that care assert it on `err` directly), and the package.json excerpt printed under a located
+// warning.
 const stderrNoise =
   /^(?:Resolving dependencies|Resolved, downloaded and extracted \[\d+\]|Saved lockfile|\s*\d+ \| .*|\s*\^|\s+at .*)$/;
 
@@ -46,8 +47,8 @@ function diagnostics(err: string): string[] {
     .map(line => line.replace(/^\[[\d.]+m?s\] /, ""));
 }
 
-// What a successful install prints after its last blank line. A direct dependency that went away adds the "Removed: N"
-// line, or takes the place of the summary when nothing had to be linked.
+// Returns what a successful install prints after its last blank line. A direct dependency that was removed adds the
+// "Removed: N" line, which replaces the summary if nothing had to be linked.
 const installSummary =
   /^(?:\d+ packages? installed(?:\nRemoved: \d+)?|\d+ packages? removed|Checked \d+ installs? across \d+ packages? \(no changes\)|Done! Checked \d+ packages? \(no changes\)|Saved bun\.lock \(\d+ packages?\))$/;
 
@@ -756,8 +757,8 @@ describe.concurrent("version-scoped targets", () => {
     });
   });
 
-  // `intersects` is what npm's semver 7.7.4 answers, and npm applies a rule on that answer. Every rule sets 1.0.0.
-  // `untouched` is what the declared range resolves to without it.
+  // `intersects` is what npm's semver 7.7.4 returns, and npm applies a rule based on that. Every rule sets 1.0.0.
+  // `untouched` is what the declared range resolves to without the rule.
   describe.concurrent.each([
     // #41371. `^1.0.0` ends at `<2.0.0-0`, so a selector that starts at a 2.0.0 prerelease does not intersect it.
     { declared: "^1.0.0", selector: ">=2.0.0-alpha.0 <3", intersects: false, untouched: "1.1.0" },
@@ -842,7 +843,7 @@ describe.concurrent("version-scoped targets", () => {
     { rule: { "no-deps@>=2.0.0-alpha.0 <3": "1.0.0" } },
     { rule: { "no-deps@>=2.0.0-0": "1.0.0" } },
   ])("a selector that starts at the next major %j", ({ rule }) => {
-    test("leaves a transitive ^ edge alone", async () => {
+    test("doesn't change a transitive ^ dependency", async () => {
       const dir = await project({ dependencies: { "one-range-dep": "1.0.0" }, overrides: rule });
       await installOk(dir);
       expect(await versionSeenBy(dir, "one-range-dep", "no-deps")).toBe("1.1.0");
@@ -850,7 +851,7 @@ describe.concurrent("version-scoped targets", () => {
     });
   });
 
-  test("a selector that no version satisfies leaves a * edge alone", async () => {
+  test("a selector that no version satisfies doesn't change a * dependency", async () => {
     // npm applies the rule here: its `*` comparator intersects every comparator, `<0.0.0-0` included.
     // Bun does not, because no version satisfies the selector.
     const dir = await project({ dependencies: { "no-deps": "*" }, overrides: { "no-deps@<x": "1.0.0" } });
@@ -1200,6 +1201,194 @@ describe.concurrent("version-scoped targets", () => {
       await installNoChanges(dir, "--frozen-lockfile");
     });
 
+    // The value of a rule is read under the name in its key, like the specifier of a dependency of that name. For an
+    // alias key that name is the alias, not the package that the alias points at. So a `catalog:` rule takes the
+    // catalog entry of the alias, also when the package that the alias points at has an entry of its own.
+    describe("an alias key with a catalog: value", () => {
+      const aliased = (catalogs: Record<string, unknown>, key: string, value = "catalog:") =>
+        project({
+          workspaces: [],
+          ...catalogs,
+          dependencies: { "my-alias": "npm:no-deps@^1.0.0" },
+          [field]: { [key]: value },
+        });
+
+      test.each([
+        ["a range", "my-alias@npm:no-deps@^1.0.0"],
+        ["no version", "my-alias@npm:no-deps"],
+      ])("with %s takes the catalog entry of the alias", async (_, key) => {
+        const dir = await aliased({ catalog: { "my-alias": "npm:no-deps@1.0.0", "no-deps": "1.0.1" } }, key);
+        await installOk(dir);
+        expect(await packageSeenBy(dir, ".", "my-alias")).toBe("no-deps@1.0.0");
+        expect(overridesSection(await lock(dir))).toBe(`"overrides": {\n  "${key}": {\n    ".": "catalog:",\n  },\n},`);
+        await installNoChanges(dir);
+        await installNoChanges(dir, "--frozen-lockfile");
+      });
+
+      // one-dep pins no-deps@1.0.1, which is also what the catalog has for no-deps. The alias stays on its own entry.
+      test("bun dedupe leaves the alias on the version of its catalog entry", async () => {
+        const dir = await project({
+          workspaces: [],
+          catalog: { "my-alias": "npm:no-deps@1.0.0", "no-deps": "1.0.1" },
+          dependencies: { "my-alias": "npm:no-deps@^1.0.0", "one-dep": "1.0.0" },
+          [field]: { "my-alias@npm:no-deps@^1.0.0": "catalog:" },
+        });
+        await installOk(dir);
+        expect(await packageSeenBy(dir, ".", "my-alias")).toBe("no-deps@1.0.0");
+        expect(await versionSeenBy(dir, "one-dep", "no-deps")).toBe("1.0.1");
+        const locked = await lock(dir);
+        const { out, err, exitCode } = await run(dir, "dedupe", "--check");
+        expect(out).toContain("No duplicates");
+        expect(diagnostics(err)).toEqual([]);
+        expect(exitCode).toBe(0);
+        expect(await lock(dir)).toBe(locked);
+      });
+
+      // The entry of the alias is a plain version, so the rule asks the registry for a package with the name in its
+      // key, as the same version does when the rule has it inline.
+      test.each([
+        ["in the catalog entry of the alias", "catalog:"],
+        ["inline", "1.0.1"],
+      ])("a plain version %s installs the package with the name in the key", async (_, value) => {
+        const dir = await project({
+          workspaces: [],
+          catalog: { "a-dep": "1.0.1", "no-deps": "1.0.0" },
+          dependencies: { "a-dep": "npm:no-deps@^1.0.0" },
+          [field]: { "a-dep@npm:no-deps@^1.0.0": value },
+        });
+        await installOk(dir);
+        expect(await packageSeenBy(dir, ".", "a-dep")).toBe("a-dep@1.0.1");
+        await installNoChanges(dir);
+        await installNoChanges(dir, "--frozen-lockfile");
+      });
+
+      test("takes the entry of the alias in a named catalog", async () => {
+        const dir = await aliased(
+          {
+            catalog: { "my-alias": "npm:no-deps@1.0.0" },
+            catalogs: { pinned: { "my-alias": "npm:no-deps@1.0.1", "no-deps": "2.0.0" } },
+          },
+          "my-alias@npm:no-deps@^1.0.0",
+          "catalog:pinned",
+        );
+        await installOk(dir);
+        expect(await packageSeenBy(dir, ".", "my-alias")).toBe("no-deps@1.0.1");
+        await installNoChanges(dir);
+        await installNoChanges(dir, "--frozen-lockfile");
+      });
+
+      test("scoped to a parent takes the catalog entry of the alias", async () => {
+        const dir = await project(
+          {
+            workspaces: ["packages/*"],
+            catalog: { "my-alias": "npm:no-deps@1.0.0", "no-deps": "1.0.1" },
+            [field]: { "app>my-alias@npm:no-deps@^1.0.0": "catalog:" },
+          },
+          "hoisted",
+          {
+            "packages/app/package.json": JSON.stringify({
+              name: "app",
+              dependencies: { "my-alias": "npm:no-deps@^1.0.0" },
+            }),
+          },
+        );
+        await installOk(dir);
+        expect(await packageSeenBy(dir, "packages/app", "my-alias")).toBe("no-deps@1.0.0");
+        await installNoChanges(dir);
+        await installNoChanges(dir, "--frozen-lockfile");
+      });
+
+      test("does not take the entry of the package that the alias points at", async () => {
+        const dir = await aliased({ catalog: { "no-deps": "1.0.0" } }, "my-alias@npm:no-deps@^1.0.0");
+        const { err, exitCode } = await install(dir);
+        expect(diagnostics(err)).toEqual([
+          "warn: my-alias@catalog: not in catalog",
+          "error: my-alias@npm:no-deps@^1.0.0 failed to resolve",
+        ]);
+        expect(exitCode).toBe(1);
+        expect(existsSync(join(dir, "node_modules", "my-alias"))).toBe(false);
+      });
+    });
+
+    // `workspace:*` has no name of its own. It links the workspace with the name in the key, as it does for a
+    // dependency of that name, and not the workspace with the name of the package that the alias points at.
+    describe.each([
+      ["in the catalog entry of the alias", "catalog:"],
+      ["inline", "workspace:*"],
+    ])("an alias key with workspace:* %s", (_, value) => {
+      const withMembers = (members: Record<string, string>) =>
+        project(
+          {
+            workspaces: ["packages/*"],
+            catalog: { "my-alias": "workspace:*", "no-deps": "1.0.1" },
+            [field]: { "my-alias@npm:no-deps@^1.0.0": value },
+          },
+          "hoisted",
+          {
+            "packages/app/package.json": JSON.stringify({
+              name: "app",
+              dependencies: { "my-alias": "npm:no-deps@^1.0.0" },
+            }),
+            ...members,
+          },
+        );
+      const forAlias = { "packages/my-alias/package.json": `{"name":"my-alias","version":"7.0.0"}` };
+      const forTarget = { "packages/no-deps/package.json": `{"name":"no-deps","version":"3.0.0"}` };
+
+      test.each([
+        ["next to a workspace for the alias target", { ...forAlias, ...forTarget }],
+        ["alone", forAlias],
+      ])("links the workspace with the name in the key, %s", async (_, members) => {
+        const dir = await withMembers(members);
+        await installOk(dir);
+        expect(await packageSeenBy(dir, "packages/app", "my-alias")).toBe("my-alias@7.0.0");
+        await installNoChanges(dir);
+        await installNoChanges(dir, "--frozen-lockfile");
+      });
+
+      test("does not link the workspace of the package that the alias points at", async () => {
+        const dir = await withMembers(forTarget);
+        const { err, exitCode } = await install(dir);
+        expect(err).toContain('error: Workspace dependency "my-alias" not found');
+        expect(exitCode).toBe(1);
+        expect(existsSync(join(dir, "node_modules", "my-alias"))).toBe(false);
+      });
+    });
+
+    // Two dependents wait for one download, and the tarball names its package only when it arrives.
+    test("an alias key with a tarball value installs one package for two dependents", async () => {
+      const tarball = `${registry.registryUrl()}no-deps/-/no-deps-1.0.1.tgz`;
+      const member = (name: string) => JSON.stringify({ name, dependencies: { "my-alias": "npm:no-deps@^1.0.0" } });
+      const dir = await project(
+        { workspaces: ["packages/*"], [field]: { "my-alias@npm:no-deps@^1.0.0": tarball } },
+        "hoisted",
+        { "packages/a/package.json": member("a"), "packages/b/package.json": member("b") },
+      );
+      await installOk(dir);
+      expect(await packageSeenBy(dir, "packages/a", "my-alias")).toBe("no-deps@1.0.1");
+      expect(await packageSeenBy(dir, "packages/b", "my-alias")).toBe("no-deps@1.0.1");
+      const text = await lock(dir);
+      expect(text).toContain(`"my-alias": ["no-deps@${tarball}", {}, "sha512-`);
+      expect(text).not.toContain('/my-alias": [');
+      await installNoChanges(dir);
+      await installNoChanges(dir, "--frozen-lockfile");
+    });
+
+    // An alias of a dist-tag goes by the name of its package, so a rule for that package applies to it. That rule
+    // takes the catalog entry of the name in its key too.
+    test("a catalog: rule for the package of a dist-tag alias takes the catalog entry of that package", async () => {
+      const dir = await project({
+        workspaces: [],
+        catalog: { "my-alias": "npm:no-deps@1.0.0", "no-deps": "1.0.1" },
+        dependencies: { "my-alias": "npm:no-deps@latest" },
+        [field]: { "no-deps": "catalog:" },
+      });
+      await installOk(dir);
+      expect(await packageSeenBy(dir, ".", "my-alias")).toBe("no-deps@1.0.1");
+      await installNoChanges(dir);
+      await installNoChanges(dir, "--frozen-lockfile");
+    });
+
     test.each([
       ["another package", "my-alias@npm:a-dep@^1.0.0"],
       ["another package and no version", "my-alias@npm:a-dep"],
@@ -1215,7 +1404,7 @@ describe.concurrent("version-scoped targets", () => {
       expect(await packageSeenBy(dir, ".", "my-alias")).toBe("no-deps@1.1.0");
     });
 
-    test("an alias key leaves a plain dependency of that name alone", async () => {
+    test("an alias key doesn't change a plain dependency with that name", async () => {
       const dir = await project({
         dependencies: { "no-deps": "^1.0.0" },
         [field]: { "no-deps@npm:no-deps@^1.0.0": "1.0.0" },
@@ -1244,7 +1433,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("linker=%s", linker =
     await expectVersionsSeenBy(dir, "no-deps", { "one-dep": "2.0.0", "one-range-dep": "1.1.0" });
   });
 
-  test("a rule stays recorded while its parent is removed and applies again when the parent comes back", async () => {
+  test("a rule stays recorded while its parent is removed, and applies again when the parent comes back", async () => {
     const dir = await project(npmObjectProject, linker);
     await installOk(dir, "--linker", linker);
     await write(
@@ -2210,7 +2399,7 @@ no-deps@^1.0.0:
     expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("1.0.0");
   });
 
-  // Neither file records the rules: one that was added since shows only in what the file pins.
+  // Neither file records the rules, so a rule that was added since is only visible in what the file pins.
   test.each(["yarn.lock", "package-lock.json"] as const)(
     "a rule that %s does not reflect yet is applied",
     async name => {
@@ -2262,10 +2451,9 @@ one-range-dep@1.0.0:
       });
 
       const frozen = await install(dir, "--frozen-lockfile");
-      expect(diagnostics(frozen.err)).toContain(
-        `note: ${name} has no-deps@1.1.0, overrides in package.json wants 1.0.0`,
-      );
-      expect(frozen.exitCode).toBe(1);
+      expect(frozen.err).not.toContain("error:");
+      expect(frozen.exitCode).toBe(0);
+      expect(await versionSeenBy(dir, "one-range-dep", "no-deps")).toBe("1.1.0");
 
       const { err, exitCode } = await install(dir);
       expect(diagnostics(err)).toEqual([`migrated lockfile from ${name}`]);
@@ -2381,6 +2569,60 @@ snapshots:
     await installOk(dir, "--frozen-lockfile");
     expect(await versionSeenBy(dir, "one-dep", "no-deps")).toBe("2.0.0");
   });
+
+  // pnpm expands a `catalog:` override to the catalog entry of the name in its key, and locks that version.
+  test.each([
+    ["only the alias has a catalog entry", { "my-alias": "npm:no-deps@1.0.0" }],
+    ["the alias target has a catalog entry too", { "my-alias": "npm:no-deps@1.0.0", "no-deps": "1.0.1" }],
+  ])(
+    "pnpm-lock.yaml with a catalog: override for an npm: alias keeps the version pnpm locked: %s",
+    async (_, catalog) => {
+      const entries = Object.entries(catalog).map(([name, range]) => `  ${name}: ${range}\n`);
+      const dir = await project({ dependencies: { "my-alias": "npm:no-deps@^1.0.0" } }, "hoisted", {
+        "pnpm-workspace.yaml": `catalog:\n${entries.join("")}overrides:\n  "my-alias@npm:no-deps@^1.0.0": "catalog:"\n`,
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+overrides:
+  my-alias@npm:no-deps@^1.0.0: npm:no-deps@1.0.0
+
+importers:
+
+  .:
+    dependencies:
+      my-alias:
+        specifier: npm:no-deps@1.0.0
+        version: no-deps@1.0.0
+
+packages:
+
+  no-deps@1.0.0:
+    resolution: {integrity: ${await integrityOf("no-deps", "1.0.0")}}
+
+snapshots:
+
+  no-deps@1.0.0: {}
+`,
+      });
+      const { err, exitCode } = await install(dir);
+      expect(diagnostics(err)).toEqual([
+        "migrated lockfile from pnpm-lock.yaml",
+        "copied pnpm-workspace.yaml to workspaces, copied pnpm-workspace.yaml overrides to overrides in package.json",
+      ]);
+      expect(exitCode).toBe(0);
+      expect(await packageSeenBy(dir, ".", "my-alias")).toBe("no-deps@1.0.0");
+      expect(await file(join(dir, "package.json")).json()).toStrictEqual({
+        name: "nested-overrides",
+        dependencies: { "my-alias": "npm:no-deps@^1.0.0" },
+        workspaces: { catalog },
+        overrides: { "my-alias@npm:no-deps@^1.0.0": "catalog:" },
+      });
+      await installNoChanges(dir, "--frozen-lockfile");
+    },
+  );
 
   test("pnpm.overrides merged into an existing overrides object keeps the file's indentation", async () => {
     const dir = await registry
@@ -2635,6 +2877,29 @@ describe.concurrent("flat override fixes", () => {
       await write(join(dir, "package.json"), withCatalog("1.0.1", deps, overrides));
       await installOk(dir);
       await expectVersionsSeenBy(dir, "no-deps", { "one-dep": "1.0.1", ofd2: "2.0.0" });
+    });
+
+    // The rule follows the entry of the alias. The entry of the package that the alias points at does not change.
+    test("rule for an npm: alias", async () => {
+      const packageJson = (entry: string) =>
+        JSON.stringify({
+          name: "nested-overrides",
+          workspaces: { packages: [], catalog: { "my-alias": entry, "no-deps": "2.0.0" } },
+          dependencies: { "my-alias": "npm:no-deps@^1.0.0" },
+          overrides: { "my-alias@npm:no-deps@^1.0.0": "catalog:" },
+        });
+      const { packageDir: dir } = await registry.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: { "package.json": packageJson("npm:no-deps@1.0.0") },
+      });
+      await installOk(dir);
+      expect(await packageSeenBy(dir, ".", "my-alias")).toBe("no-deps@1.0.0");
+
+      await write(join(dir, "package.json"), packageJson("npm:no-deps@1.0.1"));
+      await installOk(dir);
+      expect(await packageSeenBy(dir, ".", "my-alias")).toBe("no-deps@1.0.1");
+      expect(await lock(dir)).not.toContain("no-deps@1.0.0");
+      await installNoChanges(dir, "--frozen-lockfile");
     });
   });
 

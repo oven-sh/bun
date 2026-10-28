@@ -1116,6 +1116,37 @@ test("--parallel: a test writing garbage to fd 3 gets its worker killed and the 
   expect(exitCode).toBe(1);
 });
 
+// About 1 MB of todo lines overflows the socketpair send buffer, so the worker sends its
+// final RepeatBufs frame from its exit drain loop.
+test("--parallel: worker drains a backpressured final frame under the JSC API lock", async () => {
+  using dir = tempDir("parallel-drain-lock", {
+    "big.test.js": `import {test} from "bun:test";
+      import {socketFaultInjection as fault} from "bun:internal-for-testing";
+      // Short sends on the IPC fd guarantee a backlog on the builds where JSC asserts.
+      if (fault.available()) fault.set({ syscall: "send", action: "short", bytes: 65536, repeat: -1, fd: 3 });
+      const pad = Buffer.alloc(340, "t").toString();
+      for (let i = 0; i < 3000; i++) test.todo(pad + "-" + i);
+      for (let i = 0; i < 25; i++) test("p" + i, () => {});`,
+    "other.test.js": `import {test,expect} from "bun:test"; test("b1",()=>expect(1).toBe(1));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  // The last todo line is streamed live and printed again in the repeat section built from the frame.
+  expect(stderr).toContain("3000 tests todo:");
+  expect(stderr.split("-2999").length - 1).toBe(2);
+  expect(stderr).toContain("3000 todo");
+  expect(stderr).toContain("26 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel --randomize without --seed is reproducible via the printed seed", async () => {
   const mk = (tag: string) =>
     `import {test,expect} from "bun:test";\n` +
@@ -1174,6 +1205,30 @@ test("--parallel forwards --experimental-http2-fetch to workers", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=2", "--experimental-http2-fetch"],
     env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", H2_TLS: JSON.stringify(tls) },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test("--parallel forwards --use-openssl-ca to workers", async () => {
+  const fixture = `import {test,expect} from "bun:test";
+    import {getCACertificates, rootCertificates} from "node:tls";
+    test("no bundled roots", () => expect(getCACertificates("default")).not.toContain(rootCertificates[0]));`;
+  // The workers' environment has what .env sets, which the flag wins over.
+  using dir = tempDir("parallel-use-openssl-ca", {
+    "a.test.js": fixture,
+    "b.test.js": fixture,
+    ".env": "NODE_USE_SYSTEM_CA=1\n",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--use-openssl-ca"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", NODE_USE_SYSTEM_CA: undefined },
     cwd: String(dir),
     stderr: "pipe",
     stdout: "pipe",

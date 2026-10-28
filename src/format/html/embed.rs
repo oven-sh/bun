@@ -1,8 +1,8 @@
-//! Prettier's `language-html/embed.js` and `embed/*.js`: what is in another language.
+//! Prettier's `language-html/embed.js` and `embed/*.js`: code in other languages.
 
 use super::ast::{Attribute, Flags, Id, Kind};
 use super::js::{self, Hug, SourceType, Syntax};
-use super::parse::collapse_white_space;
+use super::map_strings::ends_with_line_suffix;
 use super::printer::Printer;
 use super::utilities::{
     dedent_string, html_split, html_trim_preserve_indentation, is_script_like_tag,
@@ -37,7 +37,14 @@ pub(crate) fn infer_parser_by_type_attribute(kind: &[u8]) -> Option<&'static [u8
     })
 }
 
-/// `String(value)`, for a number that is not negative. `None`: it is written with an exponent.
+/// Returns the classes in `value`, separated by single spaces. HTML splits them at ASCII whitespace. Prettier splits at
+/// JavaScript whitespace, so a class name that contains a no-break space becomes two classes.
+fn class_names(value: &[u8]) -> Vec<u8> {
+    let names = strings::split_any(value, b" \t\n\x0C\r").filter(|name| !name.is_empty());
+    names.collect::<Vec<_>>().join(&b' ')
+}
+
+/// `String(value)` for a non-negative number. Returns `None` if JavaScript would use an exponent.
 fn number_to_string(value: f64) -> Option<Vec<u8>> {
     (value == 0.0 || (1e-6..1e21).contains(&value)).then(|| value.to_string().into_bytes())
 }
@@ -71,7 +78,7 @@ fn is_floating_point(text: &[u8]) -> bool {
     rest.is_empty()
 }
 
-/// A candidate of a `srcset`: the address, and the descriptor with its unit.
+/// A `srcset` candidate: the URL and its descriptors.
 struct Candidate<'v> {
     url: &'v [u8],
     width: Option<f64>,
@@ -79,7 +86,7 @@ struct Candidate<'v> {
     height: Option<f64>,
 }
 
-/// `@prettier/parse-srcset`. `None`: it throws.
+/// `@prettier/parse-srcset`. Returns `None` where it throws.
 fn parse_srcset(input: &[u8]) -> Option<Vec<Candidate<'_>>> {
     let is_space = |byte: u8| matches!(byte, b'\t' | b'\n' | 0x0C | b'\r' | b' ');
     let mut candidates = Vec::new();
@@ -104,7 +111,7 @@ fn parse_srcset(input: &[u8]) -> Option<Vec<Candidate<'_>>> {
                 url = shorter;
             }
         } else {
-            // The descriptor tokenizer. A descriptor is a part of the input.
+            // The descriptor tokenizer. Each descriptor is a slice of the input.
             position += input[position..]
                 .iter()
                 .take_while(|&&byte| is_space(byte))
@@ -172,7 +179,7 @@ fn parse_srcset(input: &[u8]) -> Option<Vec<Candidate<'_>>> {
                 _ => return None,
             }
         }
-        // A density of 0 is as good as none.
+        // A density of 0 counts as no density.
         candidate.density = candidate.density.filter(|&density| density != 0.0);
         candidates.push(candidate);
     }
@@ -181,8 +188,8 @@ fn parse_srcset(input: &[u8]) -> Option<Vec<Candidate<'_>>> {
 impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     // ───────────────────────────── `textToDoc` ─────────────────────────────
 
-    /// The options for a formatter whose text is written with `Writer::printed_text`. `None`: where the lines start is
-    /// not known.
+    /// Returns the options for a formatter whose output is written with `Writer::printed_text`, or `None` if the
+    /// current indentation isn't known.
     fn options_for_printed_text(&self) -> Option<FormatOptions> {
         let width = (self.options.format.line_width.value() as usize)
             .saturating_sub(self.out.indentation_width()?);
@@ -190,14 +197,14 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             line_width: LineWidth(width.clamp(1, u32::MAX as usize) as u32),
             line_ending: LineEnding::Lf,
             is_in_markdown: true,
-            // For the blocks of code in Markdown.
+            // For code blocks in Markdown.
             sort_imports: self.options.format.sort_imports.clone(),
             jsdoc: self.options.format.jsdoc,
             ..js::options_in_html(self.options.format, InHtml::default())
         })
     }
 
-    /// Writes what `format` appends to the vector that it is given, without the line breaks at its end.
+    /// Writes the output that `format` appends to its vector, without trailing line breaks.
     fn write_printed_text(
         &mut self,
         is_markdown: bool,
@@ -210,8 +217,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         if format(&options, &mut printed).is_err() {
             return false;
         }
-        // Where a line break that is part of a text leads is not the same for all that Markdown prints: to the first
-        // column in code, to where the lines start in HTML. Which it is, the text does not say.
+        // A line break inside a text, printed as `\r\n` here, doesn't always lead to the same column in Markdown's
+        // output. It's column 0 in code but the current indentation in HTML, and the printed text doesn't tell which.
         if is_markdown && self.out.indent_level() != Some(0) && strings::contains(&printed, b"\r\n")
         {
             return false;
@@ -224,8 +231,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         true
     }
 
-    /// `textToDoc(code, { parser, __embeddedInHtml: true })`. Returns whether it has written something: if not, Prettier
-    /// throws, or the document is empty.
+    /// `textToDoc(code, { parser, __embeddedInHtml: true })`. Returns true if it wrote something. Otherwise Prettier
+    /// would throw, or the document is empty.
     pub(crate) fn text_to_doc(
         &mut self,
         code: &[u8],
@@ -246,8 +253,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             && self.out.indent_level().is_some()
             && !self.options.has_parent_parser
         {
-            // Nothing in a style sheet depends on what is around it but the width that is left, which is known in a
-            // file of HTML.
+            // A style sheet's output only depends on its surroundings through the remaining width, which is known in an
+            // HTML file.
             let mut scratch = std::mem::take(&mut self.css_scratch);
             let is_written = self.write_printed_text(false, |options, out| {
                 let options = FormatOptions {
@@ -275,7 +282,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             };
         }
         if let Some(parser) = crate::json::Parser::from_name(parser) {
-            // To these parsers, a text with nothing in it is a syntax error.
+            // These parsers treat an empty text as a syntax error.
             return !strings::trim_js_whitespace(code).is_empty()
                 && self.write_printed_text(false, |options, out| {
                     crate::json::format(code, parser, options, &mut Default::default(), out)
@@ -286,7 +293,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         }
         match parser {
             b"babel" => program(Syntax::Babel, self),
-            // oxfmt parses one way, which the file says.
+            // oxfmt parses every script of a file with the same syntax.
             b"typescript" if self.options.script_flavor.is_oxfmt() => match self.has_tsx_script() {
                 true => program(Syntax::Tsx, self),
                 false => program(Syntax::Ts, self),
@@ -366,7 +373,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         by_attributes()
     }
 
-    /// Prettier's `embed`. Returns whether it has written the node.
+    /// Prettier's `embed`. Returns true if it wrote the node.
     pub(crate) fn embed(&mut self, id: Id) -> bool {
         match self.tree[id].kind {
             Kind::FrontMatter => self.embed_front_matter(id),
@@ -388,10 +395,10 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         let language = strings::trim_js_whitespace(&raw[3..first_line_end]);
         let is_toml = language == b"toml" || (language.is_empty() && raw.starts_with(b"+++"));
         let is_yaml = language == b"yaml" || (language.is_empty() && !is_toml);
-        let value = strings::trim_js_whitespace(
+        let value = crate::front_matter::trim_end_to_last_line(strings::trim_js_whitespace_start(
             raw.get(first_line_end..last_line_start).unwrap_or_default(),
-        );
-        // There is no formatter for TOML.
+        ));
+        // There's no TOML formatter.
         if !(is_yaml || (is_toml && value.is_empty()))
             || crate::front_matter::has_indented_delimiter(raw)
         {
@@ -403,14 +410,14 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         self.out.hardline();
         let is_written = value.is_empty() || {
             let is_written = self.text_to_doc(value, b"yaml", SourceType::Unknown);
-            self.out.hardline();
+            self.out.hardline_after(value);
             is_written
         };
         self.out.text(&raw[last_line_start..]);
         self.out.end_attempt(attempt, is_written)
     }
 
-    /// A block of a Vue file that is not HTML.
+    /// A non-HTML block of a Vue file.
     fn embed_element(&mut self, id: Id) -> bool {
         let (tags, node) = (self.tags(), &self.tree[id]);
         if is_script_like_tag(node, self.options)
@@ -424,7 +431,6 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         };
         let content = tags.node_content(id);
         let attempt = self.out.start_attempt();
-        self.out.built_text(|out| tags.opening_tag_prefix(id, out));
         self.out.start_group();
         self.print_opening_tag(id);
         self.out.end_group();
@@ -438,10 +444,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             );
             self.out.hardline();
         }
-        self.out.built_text(|out| {
-            tags.closing_tag(id, out);
-            tags.closing_tag_suffix(id, out);
-        });
+        self.out.built_text(|out| tags.closing_tag(id, out));
         self.out.end_attempt(attempt, is_written)
     }
 
@@ -459,9 +462,11 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             let value = match parser {
                 b"markdown" => {
                     // `.replace(/^[^\S\n]*\n/, "")`
-                    let blank = value.len() - strings::trim_js_whitespace_start(value).len();
+                    let whitespace_len =
+                        value.len() - strings::trim_js_whitespace_start(value).len();
                     let first_line_end =
-                        strings::index_of_char_usize(&value[..blank], b'\n').map_or(0, |at| at + 1);
+                        strings::index_of_char_usize(&value[..whitespace_len], b'\n')
+                            .map_or(0, |at| at + 1);
                     dedented = dedent_string(&value[first_line_end..]);
                     &dedented[..]
                 }
@@ -525,19 +530,19 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
 
     // ───────────────────────────── `embed/attribute.js` ─────────────────────────────
 
-    /// `createAttributePrinter`: writes the attribute with the value that `write_value` writes, unless that returns
-    /// `false` or writes nothing.
+    /// `createAttributePrinter`: writes the attribute with the value that `write_value` writes, unless `write_value`
+    /// returns `false` or writes nothing.
     pub(crate) fn print_attribute_with(
         &mut self,
         attr: &Attribute<'_>,
         write_value: impl FnOnce(&mut Self) -> bool,
     ) -> bool {
-        let attempt = self.out.start_attempt_behind_text();
+        let attempt = self.out.start_attempt_after_text();
         let is_written = write_value(self);
         self.print_attribute_with_attempt(attr, attempt, is_written)
     }
 
-    /// `attempt`: what the value has been written in. `is_written`: it is one.
+    /// `attempt` is the attempt that the value was written in, and `is_written` tells whether that succeeded.
     fn print_attribute_with_attempt(
         &mut self,
         attr: &Attribute<'_>,
@@ -547,6 +552,11 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         let Some(value) = self.out.end_attempt_as_content(attempt, is_written) else {
             return false;
         };
+        // The comment would be printed after the closing quote, as Prettier does with `v-for="a in b // c"`. Leave the
+        // value as is.
+        if ends_with_line_suffix(value, self.out.f) {
+            return false;
+        }
         self.write_raw_name(attr.raw_name());
         self.out.token("=\"");
         self.out.start_group();
@@ -573,7 +583,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         is_written
     }
 
-    /// `printAttribute`. Returns whether it has written the attribute.
+    /// `printAttribute`. Returns true if it wrote the attribute.
     pub(crate) fn embed_attribute(&mut self, element: Id, attr: &'t Attribute<'a>) -> bool {
         let Some(raw_value) = attr.value.filter(|value| !value.is_empty()) else {
             return false;
@@ -596,8 +606,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 b"style" if is_plain => {
                     return self.print_attribute_with(attr, |printer| printer.print_style(value));
                 }
-                // In a Vue file oxfmt takes over the parser `babel`, whatever it is called for: a script like another, and
-                // Prettier, which is not told what is in it, hugs it.
+                // In a Vue file oxfmt replaces the `babel` parser no matter what it's called for, so the handler is
+                // formatted like any script. Prettier, which can't see what's inside, hugs the result.
                 name if is_plain
                     && data::is_event_attribute(name)
                     && self.options.script_flavor.is_oxfmt() =>
@@ -627,7 +637,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 }
                 b"class" if is_plain => {
                     return self.print_attribute_with(attr, |printer| {
-                        printer.out.text(&collapse_white_space(value));
+                        printer.out.text(&class_names(value));
                         true
                     });
                 }
@@ -640,6 +650,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             }
         }
         match self.options.parser {
+            // Under `v-pre`, Vue treats it as a plain attribute, not code. Prettier formats it anyway.
+            Parser::Vue if self.tree[element].has(Flags::IS_IN_V_PRE) => false,
             Parser::Vue => self.embed_vue_attribute(element, attr, value),
             Parser::Angular => self.embed_angular_attribute(element, attr, raw_value, value),
             _ => false,
@@ -742,7 +754,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         };
         let count = directives().count();
         if count == 0 {
-            // An attribute with nothing between its quotes.
+            // Prints the attribute with empty quotes.
             self.out.start_group();
             self.out.end_group();
             return true;

@@ -393,12 +393,12 @@ class QueryBuilder {
   }
 
   undefinedValue(): unknown {
-    return this.adapter.connectionInfo.transform?.undefined;
+    return $getByIdDirect(this.adapter.connectionInfo, "transform")?.undefined;
   }
 
   identifier(name: string | number): string {
     const { quote, connectionInfo } = this.adapter;
-    const to = connectionInfo.transform?.column.to;
+    const to = $getByIdDirect(connectionInfo, "transform")?.column.to;
     name = String(to === undefined ? name : to(String(name)));
     if (name.includes("\0")) {
       throw $ERR_INVALID_ARG_VALUE("name", name, "must not contain null bytes");
@@ -607,6 +607,8 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> exte
 
   isConnected(): boolean;
   get closed(): boolean;
+  /** close({ timeout: 0 }) was called: the caller gave up on what is queued. */
+  readonly closedAtOnce?: boolean;
 
   readonly supportsReservedConnections: boolean;
   /** `true`: `onConnected` was still queued and will never run. */

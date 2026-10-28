@@ -35,7 +35,7 @@ const REPLACE_EMPTY_OBJECT_TYPE: Message =
 
 const REPLACEMENTS: [&str; 2] = ["object", "unknown"];
 
-/// `type Name<Params> = ty` in place of the interface.
+/// Replaces the interface with `type Name<Params> = ty`.
 fn replace_interface<'a>(fixer: Fixer<'a>, interface: Interface<'a>, ty: &[u8]) -> Fix {
     let type_params = interface.type_params().angle_brackets_span().unwrap_or_default();
     let text = [
@@ -50,7 +50,7 @@ fn replace_interface<'a>(fixer: Fixer<'a>, interface: Interface<'a>, ty: &[u8]) 
 }
 
 fn is_merged_with_other_declaration<'a>(statement: Stmt<'a>, interface: Interface<'a>) -> bool {
-    // typescript-eslint looks in the scope of the type parameters if there are any, oxlint where the name is.
+    // typescript-eslint looks in the type parameters' scope if there are any, oxlint in the scope that has the name.
     let (scope, name) = (Node::Stmt(statement).scope(), interface.name().name());
     let symbol = if statement.file().language().is_oxlint { scope.resolve_name(name) } else { scope.get_name(name) };
     let Some(symbol) = symbol else {
@@ -83,12 +83,12 @@ impl NoEmptyObjectType {
         let should_suggest =
             !statement.is_default_export() && !is_merged_with_other_declaration(statement, interface);
         // oxlint points at the braces.
-        let place = if cx.language().is_oxlint { interface.body_span() } else { interface.name().span() };
+        let report_span = if cx.language().is_oxlint { interface.body_span() } else { interface.name().span() };
         let Some(extended) = extends.first() else {
-            let report = cx.report(place, NO_EMPTY_INTERFACE).data("option", "allowInterfaces");
+            let report = cx.report(report_span, NO_EMPTY_INTERFACE).data("option", "allowInterfaces");
             if should_suggest {
                 REPLACEMENTS.into_iter().fold(report, |report, replacement| {
-                    report.suggest_change_of_behavior(
+                    report.suggest_behavior_change(
                         REPLACE_EMPTY_INTERFACE,
                         &[("replacement", replacement.as_bytes())],
                         |fixer| replace_interface(fixer, interface, replacement.as_bytes()),
@@ -97,9 +97,9 @@ impl NoEmptyObjectType {
             }
             return;
         };
-        let report = cx.report(place, NO_EMPTY_INTERFACE_WITH_SUPER);
+        let report = cx.report(report_span, NO_EMPTY_INTERFACE_WITH_SUPER);
         if should_suggest {
-            report.suggest_change_of_behavior(REPLACE_EMPTY_INTERFACE_WITH_SUPER, &[], |fixer| {
+            report.suggest_behavior_change(REPLACE_EMPTY_INTERFACE_WITH_SUPER, &[], |fixer| {
                 replace_interface(fixer, interface, extended.text())
             });
         }
@@ -125,7 +125,7 @@ impl NoEmptyObjectType {
         }
         let report = cx.report(ty, NO_EMPTY_OBJECT).data("option", "allowObjectTypes");
         REPLACEMENTS.into_iter().fold(report, |report, replacement| {
-            report.suggest_change_of_behavior(
+            report.suggest_behavior_change(
                 REPLACE_EMPTY_OBJECT_TYPE,
                 &[("replacement", replacement.as_bytes())],
                 |fixer| fixer.replace(ty, replacement),

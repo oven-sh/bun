@@ -1,0 +1,32 @@
+instances are objects
+Array.prototype: then TypeError, toJSON TypeError, next TypeError, return TypeError, throw TypeError, addedByTheProgram stored
+Map.prototype: then TypeError, toJSON stored, next TypeError, return TypeError, throw TypeError, addedByTheProgram stored
+Set.prototype: then TypeError, toJSON stored, next TypeError, return TypeError, throw TypeError, addedByTheProgram stored
+WeakMap.prototype: then TypeError, toJSON TypeError, next TypeError, return TypeError, throw TypeError, addedByTheProgram stored
+WeakSet.prototype: then TypeError, toJSON TypeError, next TypeError, return TypeError, throw TypeError, addedByTheProgram stored
+ArrayBuffer.prototype: then TypeError, toJSON TypeError, next TypeError, return TypeError, throw TypeError, addedByTheProgram stored
+SharedArrayBuffer.prototype: then TypeError, toJSON TypeError, next TypeError, return TypeError, throw TypeError, addedByTheProgram stored
+DataView.prototype: then TypeError, toJSON TypeError, next TypeError, return TypeError, throw TypeError, addedByTheProgram stored
+the prototype of all typed arrays: then TypeError, toJSON TypeError, next TypeError, return TypeError, throw TypeError, addedByTheProgram stored
+Uint8Array.prototype: then TypeError, toJSON TypeError, next TypeError, return TypeError, throw TypeError, addedByTheProgram stored
+Float64Array.prototype: then TypeError, toJSON TypeError, next TypeError, return TypeError, throw TypeError, addedByTheProgram stored
+Buffer.prototype: then TypeError, toJSON TypeError, next TypeError, return TypeError, throw TypeError, addedByTheProgram stored
+Iterator.prototype: then TypeError, toJSON TypeError, next TypeError, return TypeError, throw TypeError, addedByTheProgram stored
+Date.prototype: then TypeError, toJSON TypeError, next stored, return TypeError, throw TypeError, addedByTheProgram stored
+instances are primitives
+String.prototype: then stored, toJSON stored, next TypeError, return TypeError, throw TypeError, addedByTheProgram stored
+Number.prototype: then stored, toJSON stored, next TypeError, return TypeError, throw TypeError, addedByTheProgram stored
+Boolean.prototype: then stored, toJSON stored, next TypeError, return TypeError, throw TypeError, addedByTheProgram stored
+BigInt.prototype: then stored, toJSON stored, next TypeError, return TypeError, throw TypeError, addedByTheProgram stored
+Symbol.prototype: then stored, toJSON stored, next TypeError, return TypeError, throw TypeError, addedByTheProgram stored
+not locked
+WeakRef.prototype: then stored, toJSON stored, next stored, return stored, throw stored, addedByTheProgram stored
+Error.prototype: then stored, toJSON stored, next stored, return stored, throw stored, addedByTheProgram stored
+RangeError.prototype: then stored, toJSON stored, next stored, return stored, throw stored, addedByTheProgram stored
+a class of the program: then stored, toJSON stored, next stored, return stored, throw stored, addedByTheProgram stored
+a class of the program below Array: then stored, toJSON stored, next stored, return stored, throw stored, addedByTheProgram stored
+text that is evaluated at run time is refused like the program
+strict: TypeError
+sloppy: TypeError
+Reflect.set: false
+Object.defineProperty: TypeError

@@ -1164,6 +1164,8 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const out = api.readFile("/out/entry.js");
       expect(compiledFunctions(out)).toEqual([["Button", 7]]);
+      // The block depends on the two members, each bound to its export.
+      expect(out).toContain("if ($[2] !== pressed || $[3] !== button || $[4] !== title || $[5] !== t4)");
       expect(out).not.toContain("THEME_NOT_READ_SENTINEL");
       expect(out).not.toMatch(/exports_|__export/);
     },
@@ -4853,15 +4855,17 @@ const waysToHaveANamespace = {
   imported: (ns: string, lib: string) => `const ${ns} = await import("./${lib}");`,
 };
 
-test("react-compiler gives these reads of a member of a namespace what the bundle without it gives", async () => {
-  const files: Record<string, string> = {
-    "node_modules/react/package.json": `{"name":"react","type":"module"}`,
-    "node_modules/react/jsx-runtime.js": `export const jsx = (type, props) => ({ type, props }), jsxs = jsx;`,
-    "node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = (type, props) => ({ type, props });`,
-    "node_modules/react/compiler-runtime.js": `
+test.each(Object.keys(waysToHaveANamespace) as (keyof typeof waysToHaveANamespace)[])(
+  "react-compiler gives these reads of a member of a namespace what the bundle without it gives: %s",
+  async way => {
+    const files: Record<string, string> = {
+      "node_modules/react/package.json": `{"name":"react","type":"module"}`,
+      "node_modules/react/jsx-runtime.js": `export const jsx = (type, props) => ({ type, props }), jsxs = jsx;`,
+      "node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = (type, props) => ({ type, props });`,
+      "node_modules/react/compiler-runtime.js": `
       export const c = size => new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
     `,
-    "values.mjs": `
+      "values.mjs": `
       const values = { plain: {}, compiled: {}, minified: {} };
       for (const side of Object.keys(values)) {
         for (const name of process.argv.slice(2)) {
@@ -4870,10 +4874,10 @@ test("react-compiler gives these reads of a member of a namespace what the bundl
       }
       console.log(JSON.stringify(values));
     `,
-  };
-  const reads = Object.keys(readsOfANamespace);
-  const names: string[] = [];
-  for (const [way, have] of Object.entries(waysToHaveANamespace)) {
+    };
+    const have = waysToHaveANamespace[way];
+    const reads = Object.keys(readsOfANamespace);
+    const names: string[] = [];
     for (const [ext, modules] of Object.entries(modulesOfANamespace)) {
       const name = `${way}-${ext}`;
       names.push(name);
@@ -4881,73 +4885,73 @@ test("react-compiler gives these reads of a member of a namespace what the bundl
       files[`${name}/lib.${ext}`] = modules.lib;
       files[`${name}/lib2.${ext}`] = modules.lib2;
       files[`${name}/entry.jsx`] = `
-        ${have("ns", `lib.${ext}`)}
-        ${have("ns2", `lib2.${ext}`)}
-        ${reads.map(read => `function ${read}({ v }) {${readsOfANamespace[read]}}`).join("\n")}
-        const give = (Read, v) => {
-          const { props } = Read({ v });
-          const value = props["data-read"] ? props["data-read"]() : props.children;
-          return JSON.stringify(value, (key, value) => (typeof value === "function" ? "function" : value));
-        };
-        export default { ${reads.map(read => `${read}: [give(${read}, 1), give(${read}, 0)]`).join(", ")} };
-      `;
+      ${have("ns", `lib.${ext}`)}
+      ${have("ns2", `lib2.${ext}`)}
+      ${reads.map(read => `function ${read}({ v }) {${readsOfANamespace[read]}}`).join("\n")}
+      const give = (Read, v) => {
+        const { props } = Read({ v });
+        const value = props["data-read"] ? props["data-read"]() : props.children;
+        return JSON.stringify(value, (key, value) => (typeof value === "function" ? "function" : value));
+      };
+      export default { ${reads.map(read => `${read}: [give(${read}, 1), give(${read}, 0)]`).join(", ")} };
+    `;
     }
-  }
-  using dir = tempDir("react-compiler-namespace", files);
-  const root = String(dir);
+    using dir = tempDir("react-compiler-namespace", files);
+    const root = String(dir);
 
-  const build = async (side: "plain" | "compiled" | "minified") => {
-    const result = await Bun.build({
-      entrypoints: names.map(name => join(root, name, "entry.jsx")),
-      root,
-      outdir: join(root, side),
-      target: "browser",
-      reactCompiler: side !== "plain",
-      minify: { syntax: side === "minified" },
-      metafile: true,
-    });
-    const outputs = Object.entries(result.metafile!.outputs);
-    const bytesOfTheModules: Record<string, number> = {};
-    const compiled: Record<string, string[]> = {};
-    for (const name of names) {
-      const [, output] = outputs.find(([file]) => file.replace(/^\.\//, "") === `${name}/entry.js`)!;
-      for (const [input, { bytesInOutput }] of Object.entries(output.inputs)) {
-        if (/\/lib2?\.c?js$/.test(input)) bytesOfTheModules[`${name}/${basename(input)}`] = bytesInOutput;
+    const build = async (side: "plain" | "compiled" | "minified") => {
+      const result = await Bun.build({
+        entrypoints: names.map(name => join(root, name, "entry.jsx")),
+        root,
+        outdir: join(root, side),
+        target: "browser",
+        reactCompiler: side !== "plain",
+        minify: { syntax: side === "minified" },
+        metafile: true,
+      });
+      const outputs = Object.entries(result.metafile!.outputs);
+      const bytesOfTheModules: Record<string, number> = {};
+      const compiled: Record<string, string[]> = {};
+      for (const name of names) {
+        const [, output] = outputs.find(([file]) => file.replace(/^\.\//, "") === `${name}/entry.js`)!;
+        for (const [input, { bytesInOutput }] of Object.entries(output.inputs)) {
+          if (/\/lib2?\.c?js$/.test(input)) bytesOfTheModules[`${name}/${basename(input)}`] = bytesInOutput;
+        }
+        const text = await Bun.file(join(root, side, name, "entry.js")).text();
+        compiled[name] = Array.from(text.matchAll(/function (\w+)\(t0\) \{\s*let \$ = c\(\d+\)/g), m => m[1]);
       }
-      const text = await Bun.file(join(root, side, name, "entry.js")).text();
-      compiled[name] = Array.from(text.matchAll(/function (\w+)\(t0\) \{\s*let \$ = c\(\d+\)/g), m => m[1]);
-    }
-    return { bytesOfTheModules, compiled };
-  };
-  const plain = await build("plain");
-  const compiled = await build("compiled");
-  const minified = await build("minified");
+      return { bytesOfTheModules, compiled };
+    };
+    const plain = await build("plain");
+    const compiled = await build("compiled");
+    const minified = await build("minified");
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "values.mjs", ...names],
-    env: bunEnv,
-    cwd: root,
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const values = JSON.parse(stdout);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "values.mjs", ...names],
+      env: bunEnv,
+      cwd: root,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const values = JSON.parse(stdout);
 
-  const keepsMore = Object.keys(compiled.bytesOfTheModules).filter(
-    module => compiled.bytesOfTheModules[module] > (plain.bytesOfTheModules[module] ?? 0),
-  );
-  expect({ compiled: values.compiled, minified: values.minified, keepsMore }).toEqual({
-    compiled: values.plain,
-    minified: values.plain,
-    keepsMore: [],
-  });
-  const allButAtTheLimit = Object.fromEntries(names.map(name => [name, reads.filter(read => read !== "AtTheLimit")]));
-  expect({ compiled: compiled.compiled, minified: minified.compiled }).toEqual({
-    compiled: allButAtTheLimit,
-    minified: allButAtTheLimit,
-  });
-  expect(exitCode).toBe(0);
-});
+    const keepsMore = Object.keys(compiled.bytesOfTheModules).filter(
+      module => compiled.bytesOfTheModules[module] > (plain.bytesOfTheModules[module] ?? 0),
+    );
+    expect({ compiled: values.compiled, minified: values.minified, keepsMore }).toEqual({
+      compiled: values.plain,
+      minified: values.plain,
+      keepsMore: [],
+    });
+    const allButAtTheLimit = Object.fromEntries(names.map(name => [name, reads.filter(read => read !== "AtTheLimit")]));
+    expect({ compiled: compiled.compiled, minified: minified.compiled }).toEqual({
+      compiled: allButAtTheLimit,
+      minified: allButAtTheLimit,
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
 // Three passes kept one copy of their work per basic block or per nesting
 // level of a value, so memory grew with the square of the size of a component

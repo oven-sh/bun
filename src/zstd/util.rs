@@ -141,6 +141,20 @@ fn is_slow_to_copy(distance: usize, size: usize) -> bool {
         && distance.wrapping_sub(1) % 4096 < 127
 }
 
+/// `rep movsb` is also slow to write to pages for the first time, as an append to what is new from the system does.
+const NEW_FROM_SYSTEM: usize = 1 << 19;
+/// From there on glibc copies in another way on some processors, faster than in parts.
+const REP_MOVSB_END: usize = 1 << 20;
+
+/// [`is_slow_to_copy`], to the end of `to`.
+#[inline(always)]
+fn is_slow_to_append(to: &Vec<u8>, distance: usize, size: usize) -> bool {
+    is_slow_to_copy(distance, size)
+        || cfg!(all(target_arch = "x86_64", target_env = "gnu"))
+            && (MAX_COPY + 1..REP_MOVSB_END).contains(&size)
+            && to.capacity() >= NEW_FROM_SYSTEM
+}
+
 #[cold]
 #[inline(never)]
 fn copy_in_parts<T: Copy>(to: &mut [T], from: &[T]) {
@@ -168,7 +182,7 @@ pub(crate) fn append(to: &mut Vec<u8>, from: &[u8]) -> Result<()> {
         return Err(BUG);
     }
     let distance = (to.as_ptr_range().end.addr()).wrapping_sub(from.as_ptr().addr());
-    if is_slow_to_copy(distance, from.len()) {
+    if is_slow_to_append(to, distance, from.len()) {
         from.chunks(MAX_COPY)
             .for_each(|part| to.extend_from_slice(part));
     } else {
@@ -184,7 +198,7 @@ pub(crate) fn append_within(to: &mut Vec<u8>, start: usize, len: usize) -> Resul
     if end > to.len() || len > to.capacity() - to.len() {
         return Err(BUG);
     }
-    if is_slow_to_copy(to.len() - start, len) {
+    if is_slow_to_append(to, to.len() - start, len) {
         (start..end)
             .step_by(MAX_COPY)
             .for_each(|part| to.extend_from_within(part..(part + MAX_COPY).min(end)));
@@ -331,6 +345,12 @@ mod tests {
             within.clear();
             (0..3).for_each(|_| within.extend_from_slice(&from));
         }
+
+        // To what is taken to be new from the system, whatever the distance.
+        let mut vec = Vec::with_capacity(NEW_FROM_SYSTEM);
+        append(&mut vec, &from)?;
+        append_within(&mut vec, 1, len)?;
+        assert!(*vec.sub(..from.len())? == *from && vec.sub(from.len()..)? == from.span(1, len)?);
         Ok(())
     }
 }

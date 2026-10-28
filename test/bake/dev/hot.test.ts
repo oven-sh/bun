@@ -1,6 +1,6 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
-import { isWindows } from "harness";
+import { isWindows, waitUntil } from "harness";
 import {
   appendFileSync,
   closeSync,
@@ -624,14 +624,7 @@ const setsText = (id: string, value: string) =>
   `document.getElementById("${id}").textContent = "${value}";\nimport.meta.hot.accept();\n`;
 /** The first step of a save in place. */
 const emptyFile = (path: string) => closeSync(openSync(path, "w"));
-/** Polls `done` until it is true. Fails with `what` after the time limit. */
-async function until(what: string, done: () => boolean) {
-  const deadline = Date.now() + 10_000 * WAIT_MULTIPLIER;
-  while (!done()) {
-    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}`);
-    await Bun.sleep(1);
-  }
-}
+const until = (what: string, done: () => boolean) => waitUntil(what, done, { timeout: 10_000 * WAIT_MULTIPLIER });
 const counterApp = (label: string) => `
   import { useState } from "react";
   export default function App() {

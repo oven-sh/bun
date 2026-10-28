@@ -21,7 +21,7 @@
 //     `assert!(self.root == v)`, or a different timer dropped on a canary build.
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isMacOS, tempDir, waitUntil } from "harness";
 import { closeSync, existsSync, openSync, readFileSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
@@ -499,100 +499,6 @@ test.concurrent.skipIf(!isDebug && !Bun.version_with_sha.includes("-canary"))(
   },
 );
 
-// The dev server holds the file event of a file that a save emptied, and a timer is one of the
-// things that end the hold. `bun --hot` runs no timers after an uncaught error, so it ends every hold then.
-test.concurrent(
-  "a save in place reaches the page of a dev server under --hot, also after an uncaught error",
-  async () => {
-    using dir = tempDir("hmr-hold-under-hot", {
-      "index.html": indexHtml,
-      "entry.ts": `import { text } from "./text.ts";\nconsole.log(text);\nimport.meta.hot.accept();`,
-      "text.ts": `export const text = "t0";`,
-      "server.ts": /* ts */ `
-      import html from "./index.html";
-      const server = Bun.serve({
-        port: 0,
-        development: { hmr: true, console: false },
-        routes: {
-          "/": html,
-          // Leaves a rejection that nothing handles.
-          "/boom": () => {
-            Promise.reject(new Error("boom"));
-            return new Response("sent");
-          },
-        },
-      });
-      console.log("PORT=" + server.port);
-    `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--hot", "--no-clear-screen", "server.ts"],
-      // Longer than this test keeps the file empty.
-      env: { ...bunEnv, BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS: "30000" },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const dev = watchDevServer(proc);
-    const port = await dev.port;
-    const origin = `http://127.0.0.1:${port}`;
-
-    // The dev server watches text.ts once a page has it.
-    const html = await (await fetch(origin + "/")).text();
-    for (const [, src] of html.matchAll(/src="([^"]+)"/g)) await (await fetch(new URL(src, origin))).text();
-
-    // `r` frames with code 5: the dev server holds a file event. `u` frames: a hot update.
-    let held = 0;
-    const updates: string[] = [];
-    using hmr = await connectHmr(
-      port,
-      (id, body) => {
-        if (id === "r" && body[0] === 5) held++;
-        if (id === "u")
-          updates.push(
-            Buffer.from(body)
-              .toString("latin1")
-              .match(/"(t\d)"/)?.[1] ?? "empty",
-          );
-      },
-      () => {},
-    );
-    hmr.ws.send("n/");
-    hmr.ws.send("shr");
-
-    const until = async (what: string, done: () => boolean) => {
-      const deadline = Date.now() + 30_000;
-      while (!done()) {
-        if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}\n${dev.stderr()}`);
-        await Bun.sleep(5);
-      }
-    };
-    /** Empties text.ts, writes `text` once the dev server has reacted, and returns the hot updates of the save. */
-    const saveInPlace = async (text: string) => {
-      const before = { held, updates: updates.length };
-      const fd = openSync(join(String(dir), "text.ts"), "w");
-      try {
-        // The dev server holds the file event, or it bundles the empty file. On kqueue it does
-        // neither: a truncation is no file event there.
-        const deadline = Date.now() + (isMacOS ? 250 : 30_000);
-        while (held === before.held && updates.length === before.updates && Date.now() < deadline) await Bun.sleep(1);
-        writeSync(fd, `export const text = "${text}";`);
-      } finally {
-        closeSync(fd);
-      }
-      await until(`the update with ${text}`, () => updates.includes(text));
-      return updates.slice(before.updates);
-    };
-
-    expect(await saveInPlace("t1")).toEqual(["t1"]);
-
-    await (await fetch(origin + "/boom")).text();
-    await until("the uncaught error", () => dev.stderr().includes("boom"));
-    // No timer can end a hold now, so no hold lasts. The text still reaches the page.
-    expect((await saveInPlace("t2")).at(-1)).toBe("t2");
-  },
-);
-
 /** Starts `server.ts` under `bun --hot`. `waitMs` is the deadline of a hold. */
 function spawnHotServer(dir: string, waitMs: number) {
   return Bun.spawn({
@@ -603,29 +509,36 @@ function spawnHotServer(dir: string, waitMs: number) {
     stderr: "pipe",
   });
 }
-/** Loads the page, so that the dev server watches its files, and records the frames of the HMR socket. */
-async function openPage(proc: Subprocess<"ignore", "pipe", "pipe">) {
+/**
+ * Loads the page, so that the dev server watches its files, and records the frames of the HMR socket.
+ * `onFrame` gets each frame too.
+ */
+async function openPage(
+  proc: Subprocess<"ignore", "pipe", "pipe">,
+  onFrame: (id: string, body: Uint8Array) => void = () => {},
+) {
   const dev = watchDevServer(proc);
   const port = await dev.port;
   const origin = `http://127.0.0.1:${port}`;
   const html = await (await fetch(origin + "/")).text();
   for (const [, src] of html.matchAll(/src="([^"]+)"/g)) await (await fetch(new URL(src, origin))).text();
 
+  // r0: a testing batch started. r1: the batch saw files. r2: the batch was empty. r3, r4: a bundle finished.
   // r5: the dev server holds a file event. r6: the hold ended. u: a hot update. e: the errors of a bundle.
   const frames: string[] = [];
   const hmr = await connectHmr(
     port,
-    (id, body) => void frames.push(id === "r" ? id + body[0] : id),
+    (id, body) => {
+      frames.push(id === "r" ? id + body[0] : id);
+      onFrame(id, body);
+    },
     () => {},
   );
-  const until = async (what: string, done: () => boolean) => {
-    const deadline = Date.now() + 30_000;
-    while (!done()) {
-      if (Date.now() > deadline)
-        throw new Error(`Timed out waiting for ${what}. Frames: ${frames.join(" ")}\n${dev.stderr()}`);
-      await Bun.sleep(5);
-    }
-  };
+  const until = (what: string, done: () => boolean) =>
+    waitUntil(what, done, {
+      timeout: 30_000,
+      context: () => `. Frames: ${frames.join(" ")}\n${dev.stderr()}`,
+    });
   // The reply to SetUrl comes after the dev server has handled the Subscribe frame before it.
   hmr.ws.send("sher");
   hmr.ws.send("n/");
@@ -654,6 +567,58 @@ const hotServer = (sharedImport: string) => /* ts */ `
   });
   console.log("PORT=" + server.port);
 `;
+
+// The dev server holds the file event of a file that a save emptied, and a timer is one of the
+// things that end the hold. `bun --hot` runs no timers after an uncaught error, so it ends every hold then.
+test.concurrent(
+  "a save in place reaches the page of a dev server under --hot, also after an uncaught error",
+  async () => {
+    using dir = tempDir("hmr-hold-under-hot", {
+      "index.html": indexHtml,
+      "entry.ts": `import { text } from "./text.ts";\nconsole.log(text);\nimport.meta.hot.accept();`,
+      "text.ts": `export const text = "t0";`,
+      "server.ts": hotServer(""),
+    });
+    // Longer than this test keeps the file empty.
+    await using proc = spawnHotServer(String(dir), 30_000);
+    // The text of each hot update.
+    const updates: string[] = [];
+    const dev = await openPage(proc, (id, body) => {
+      if (id === "u")
+        updates.push(
+          Buffer.from(body)
+            .toString("latin1")
+            .match(/"(t\d)"/)?.[1] ?? "empty",
+        );
+    });
+    using hmr = dev.hmr;
+    const held = () => dev.frames.filter(frame => frame === "r5").length;
+
+    /** Empties text.ts, writes `text` once the dev server has reacted, and returns the hot updates of the save. */
+    const saveInPlace = async (text: string) => {
+      const before = { held: held(), updates: updates.length };
+      const fd = openSync(join(String(dir), "text.ts"), "w");
+      try {
+        // The dev server holds the file event, or it bundles the empty file. On kqueue it does
+        // neither: a truncation is no file event there.
+        const deadline = Date.now() + (isMacOS ? 250 : 30_000);
+        while (held() === before.held && updates.length === before.updates && Date.now() < deadline) await Bun.sleep(1);
+        writeSync(fd, `export const text = "${text}";`);
+      } finally {
+        closeSync(fd);
+      }
+      await dev.until(`the update with ${text}`, () => updates.includes(text));
+      return updates.slice(before.updates);
+    };
+
+    expect(await saveInPlace("t1")).toEqual(["t1"]);
+
+    await (await fetch(dev.origin + "/boom")).text();
+    await dev.until("the uncaught error", () => dev.stderr().includes("boom"));
+    // No timer can end a hold now, so no hold lasts. The text still reaches the page.
+    expect((await saveInPlace("t2")).at(-1)).toBe("t2");
+  },
+);
 
 test.concurrent("a hold that is open when an uncaught error happens under --hot ends", async () => {
   using dir = tempDir("hmr-hold-open-at-error", {
@@ -710,46 +675,20 @@ test.concurrent("a hold that ends while a testing batch is open puts its files i
     stdout: "pipe",
     stderr: "pipe",
   });
-  const dev = watchDevServer(proc);
-  const port = await dev.port;
-  const origin = `http://127.0.0.1:${port}`;
-  const html = await (await fetch(origin + "/")).text();
-  for (const [, src] of html.matchAll(/src="([^"]+)"/g)) await (await fetch(new URL(src, origin))).text();
-
-  // The testing-synchronization codes, in order: 0 batch started, 1 the batch saw files,
-  // 3/4 a bundle finished, 5 a file event is held, 6 the hold ended.
-  const codes: number[] = [];
-  let subscribed = false;
-  using hmr = await connectHmr(
-    port,
-    (id, body) => {
-      if (id === "n") subscribed = true;
-      if (id === "r") codes.push(body[0]);
-    },
-    () => {},
-  );
-  const until = async (what: string, done: () => boolean) => {
-    const deadline = Date.now() + 30_000;
-    while (!done()) {
-      if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}. Codes: ${codes}\n${dev.stderr()}`);
-      await Bun.sleep(5);
-    }
-  };
-  // The reply to SetUrl comes after the dev server has handled the Subscribe frame before it.
-  hmr.ws.send("sr");
-  hmr.ws.send("n/");
-  await until("the subscription", () => subscribed);
+  const dev = await openPage(proc);
+  using hmr = dev.hmr;
+  const { frames, until } = dev;
 
   emptyOrDelete(join(String(dir), "module.ts"));
-  await until("the hold", () => codes.includes(5));
+  await until("the hold", () => frames.includes("r5"));
   hmr.ws.send("H");
-  await until("the batch", () => codes.includes(0));
+  await until("the batch", () => frames.includes("r0"));
   // The hold ends at its deadline. Its files wait for the end of the batch, as a file event does.
-  await until("the files of the hold in the batch", () => codes.includes(6) && codes.includes(1));
-  expect(codes.filter(code => code === 3 || code === 4)).toEqual([]);
+  await until("the files of the hold in the batch", () => frames.includes("r6") && frames.includes("r1"));
+  expect(frames.filter(frame => frame === "r3" || frame === "r4")).toEqual([]);
 
   hmr.ws.send("H");
-  await until("the bundle of the batch", () => codes.includes(3) || codes.includes(4));
+  await until("the bundle of the batch", () => frames.includes("r3") || frames.includes("r4"));
 });
 
 test.concurrent("a file event that waited behind a bundle does not take a hold out of a testing batch", async () => {
@@ -803,39 +742,13 @@ test.concurrent("a file event that waited behind a bundle does not take a hold o
     stdout: "pipe",
     stderr: "pipe",
   });
-  const dev = watchDevServer(proc);
-  const port = await dev.port;
-  const origin = `http://127.0.0.1:${port}`;
-  const html = await (await fetch(origin + "/")).text();
-  for (const [, src] of html.matchAll(/src="([^"]+)"/g)) await (await fetch(new URL(src, origin))).text();
-
-  // The testing-synchronization codes, in order: 0 batch started, 1 the batch saw files, 2 the batch
-  // was empty, 3/4 a bundle finished, 5 a file event is held, 6 the hold ended.
-  const codes: number[] = [];
-  let subscribed = false;
-  using hmr = await connectHmr(
-    port,
-    (id, body) => {
-      if (id === "n") subscribed = true;
-      if (id === "r") codes.push(body[0]);
-    },
-    () => {},
-  );
-  const until = async (what: string, done: () => boolean) => {
-    const deadline = Date.now() + 30_000;
-    while (!done()) {
-      if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}. Codes: ${codes}\n${dev.stderr()}`);
-      await Bun.sleep(5);
-    }
-  };
-  // The reply to SetUrl comes after the dev server has handled the Subscribe frame before it.
-  hmr.ws.send("sr");
-  hmr.ws.send("n/");
-  await until("the subscription", () => subscribed);
+  const dev = await openPage(proc);
+  using hmr = dev.hmr;
+  const { frames, until } = dev;
 
   emptyOrDelete(join(String(dir), "module.ts"));
-  await until("the hold", () => codes.includes(5));
-  const twoFetch = fetch(origin + "/two");
+  await until("the hold", () => frames.includes("r5"));
+  const twoFetch = fetch(dev.origin + "/two");
   twoFetch.catch(() => {});
   await bundleEntered.promise;
   // The batch opens when the bundle ends.
@@ -847,15 +760,20 @@ test.concurrent("a file event that waited behind a bundle does not take a hold o
   );
   // The deadline of the hold passes while the bundle runs.
   await Bun.sleep(1100);
-  expect(codes).not.toContain(6);
+  expect(frames).not.toContain("r6");
 
   // The file event that waited is bundled at once, as without a hold. The hold ends after that, in the batch.
   bundleRelease.resolve();
-  await until("the files of the hold in the batch", () => codes.includes(0) && codes.includes(6) && codes.includes(1));
-  const before = codes.length;
+  await until(
+    "the files of the hold in the batch",
+    () => frames.includes("r0") && frames.includes("r6") && frames.includes("r1"),
+  );
+  const before = frames.length;
   hmr.ws.send("H");
-  await until("the end of the batch", () => codes.slice(before).some(code => code === 2 || code === 3 || code === 4));
+  await until("the end of the batch", () =>
+    frames.slice(before).some(frame => frame === "r2" || frame === "r3" || frame === "r4"),
+  );
   // Not an empty batch.
-  expect(codes.slice(before)).not.toContain(2);
+  expect(frames.slice(before)).not.toContain("r2");
   expect((await twoFetch).status).toBe(200);
 });

@@ -2135,6 +2135,22 @@ export function waitForFileToExist(path: string, interval_ms: number) {
   }
 }
 
+/**
+ * Polls `done` until it returns true. After `timeout` ms it throws `Timed out waiting for <what>`,
+ * followed by what `context` returns.
+ */
+export async function waitUntil(
+  what: string,
+  done: () => boolean,
+  { timeout, context }: { timeout: number; context?: () => string },
+): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (!done()) {
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}${context?.() ?? ""}`);
+    await Bun.sleep(1);
+  }
+}
+
 export function libcPathForDlopen() {
   switch (process.platform) {
     case "linux":

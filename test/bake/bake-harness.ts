@@ -18,7 +18,7 @@ import os from "node:os";
 import path from "node:path";
 // @ts-ignore
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI, isWindows, mergeWindowEnvs, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isWindows, mergeWindowEnvs, tempDirWithFiles, waitUntil } from "harness";
 import { dedent } from "../bundler/expectBundled.ts";
 import { exitCodeMapStrings } from "./exit-code-map.mjs";
 
@@ -453,13 +453,7 @@ export class Dev extends EventEmitter {
   }
 
   #untilHold(what: string, done: () => boolean): Promise<void> {
-    const promise = (async () => {
-      const deadline = Date.now() + 2000 * WAIT_MULTIPLIER;
-      while (!done()) {
-        if (Date.now() > deadline) throw new Error(`Timeout waiting for the dev server to ${what}`);
-        await Bun.sleep(1);
-      }
-    })();
+    const promise = waitUntil(`the dev server to ${what}`, done, { timeout: 2000 * WAIT_MULTIPLIER });
     // A test registers the wait before the save and awaits it after. If the test fails in between, this rejection has no handler.
     promise.catch(() => {});
     return promise;

@@ -63,23 +63,23 @@ export var __toESM = (mod, isNodeMode, target) => {
     if (cached) return cached;
   }
   target = mod != null ? __create(__getProtoOf(mod)) : {};
-  const to =
-    isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default")
-      ? __defProp(target, "default", { value: mod, enumerable: true })
-      : target;
+  // hasOwnProperty() would read the "default" export, which throws while a required ES module is still evaluating.
+  let keys;
+  if (isNodeMode || !mod || !mod.__esModule || !(keys = __getOwnPropNames(mod)).includes("default"))
+    __defProp(target, "default", { value: mod, enumerable: true });
 
   // A CommonJS module may legitimately set "module.exports" to null,
   // undefined, or a primitive; only objects and functions have named exports.
   if ((mod && typeof mod === "object") || typeof mod === "function")
-    for (let key of __getOwnPropNames(mod))
-      if (!__hasOwnProp.call(to, key))
-        __defProp(to, key, {
+    for (let key of keys || __getOwnPropNames(mod))
+      if (!__hasOwnProp.call(target, key))
+        __defProp(target, key, {
           get: __accessProp.bind(mod, key),
           enumerable: true,
         });
 
-  if (canCache) cache.set(mod, to);
-  return to;
+  if (canCache) cache.set(mod, target);
+  return target;
 };
 
 // Converts the module from ESM to CommonJS. This clones the input module

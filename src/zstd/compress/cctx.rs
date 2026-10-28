@@ -109,6 +109,38 @@ pub(crate) struct Input<'a> {
     pub(crate) cdict: Option<&'a CDict>,
 }
 
+/// Where a frame goes.
+pub(crate) enum Output<'a> {
+    Slice(&'a mut [u8]),
+    /// What is from `start` to `end` in `vec`, which has the capacity for it. Only what is asked for becomes part of its
+    /// length, as zeros: most of the room for a frame is never written to.
+    Spare {
+        vec: &'a mut Vec<u8>,
+        start: usize,
+        end: usize,
+    },
+}
+
+/// The header of a block, and far more than any encoder wants beyond what it writes.
+const ROOM_TO_SPARE: usize = 1024;
+
+impl Output<'_> {
+    /// What there is from `pos` on, or `needed` bytes of it at least.
+    fn from(&mut self, pos: usize, needed: usize) -> Result<&mut [u8]> {
+        match self {
+            Output::Slice(slice) => slice.sub_mut(pos..),
+            Output::Spare { vec, start, end } => {
+                let pos = *start + pos;
+                let len = pos.saturating_add(needed).min(*end);
+                if vec.len() < len {
+                    vec.resize(len, 0);
+                }
+                vec.sub_mut(pos..)
+            }
+        }
+    }
+}
+
 fn window_prefix<'a>(window: &Window, bufs: &Buffers<'a>) -> Prefix<'a> {
     Prefix {
         buf: bufs.get(window.base_buf),
@@ -1635,14 +1667,15 @@ impl FrameCompressor {
     /// `ZSTD_compress_frameChunk`
     fn compress_frame_chunk(
         &mut self,
-        dst: &mut [u8],
+        dst: &mut Output<'_>,
+        start: usize,
         input: &Input<'_>,
         src: Span,
         last_frame_chunk: bool,
     ) -> Result<usize> {
         let bytes = src.bytes(&input.bufs)?;
         let mut ip = src.start;
-        let mut op = 0usize;
+        let mut op = start;
         let max_dist = 1u32 << self.applied_params.c_params.window_log;
         let mut savings = self.consumed_src_size as i64 - self.produced_c_size as i64;
 
@@ -1660,7 +1693,18 @@ impl FrameCompressor {
                 start: ip,
                 end: ip + block_size,
             };
-            let out = dst.sub_mut(op..)?;
+            let in_parts = self.applied_params.target_c_block_size != 0
+                || self.applied_params.post_block_splitter == ParamSwitch::Enable;
+            // A block in one part that comes out no smaller than it went in is stored as it is, so it makes no difference
+            // when an encoder runs out of this much room. Parts, which take long to make anyway, get all there is.
+            let out = dst.from(
+                op,
+                if in_parts {
+                    usize::MAX
+                } else {
+                    block_size + ROOM_TO_SPARE
+                },
+            )?;
 
             if out.len() < ZSTD_BLOCKHEADERSIZE + MIN_CBLOCK_SIZE + 1 {
                 return Err(Error::DstSizeTooSmall);
@@ -1707,16 +1751,16 @@ impl FrameCompressor {
             self.is_first_block = false;
         }
 
-        if last_frame_chunk && op > 0 {
+        if last_frame_chunk && op > start {
             self.stage = CompressionStage::Ending;
         }
-        Ok(op)
+        Ok(op - start)
     }
 
     /// `ZSTD_compressContinue_internal`
     fn compress_continue_internal(
         &mut self,
-        dst: &mut [u8],
+        dst: &mut Output<'_>,
         input: &Input<'_>,
         src: Span,
         last_frame_chunk: bool,
@@ -1728,7 +1772,7 @@ impl FrameCompressor {
 
         if self.stage == CompressionStage::Init {
             fh_size = write_frame_header(
-                dst,
+                dst.from(0, ZSTD_FRAMEHEADERSIZE_MAX)?,
                 &self.applied_params,
                 self.pledged_src_size_plus_one.wrapping_sub(1),
                 self.dict_id,
@@ -1754,8 +1798,7 @@ impl FrameCompressor {
             (self.ldm_state.window).update(src.start_addr(), src.buf, src.len(), false);
         }
 
-        let c_size =
-            self.compress_frame_chunk(dst.sub_mut(fh_size..)?, input, src, last_frame_chunk)?;
+        let c_size = self.compress_frame_chunk(dst, fh_size, input, src, last_frame_chunk)?;
         self.consumed_src_size += src.len() as u64;
         self.produced_c_size += (c_size + fh_size) as u64;
         if self.pledged_src_size_plus_one != 0
@@ -1773,7 +1816,7 @@ impl FrameCompressor {
         input: &Input<'_>,
         src: Span,
     ) -> Result<usize> {
-        self.compress_continue_internal(dst, input, src, false)
+        self.compress_continue_internal(&mut Output::Slice(dst), input, src, false)
     }
 
     /// `ZSTD_writeEpilogue`
@@ -1818,8 +1861,19 @@ impl FrameCompressor {
         input: &Input<'_>,
         src: Span,
     ) -> Result<usize> {
+        self.compress_end_to(&mut Output::Slice(dst), input, src)
+    }
+
+    /// [`Self::compress_end`] to either kind of output.
+    pub(crate) fn compress_end_to(
+        &mut self,
+        dst: &mut Output<'_>,
+        input: &Input<'_>,
+        src: Span,
+    ) -> Result<usize> {
+        const EPILOGUE_SIZE_MAX: usize = ZSTD_BLOCKHEADERSIZE + 4;
         let c_size = self.compress_continue_internal(dst, input, src, true)?;
-        let end_result = self.write_epilogue(dst.sub_mut(c_size..)?)?;
+        let end_result = self.write_epilogue(dst.from(c_size, EPILOGUE_SIZE_MAX)?)?;
         if self.pledged_src_size_plus_one != 0
             && self.pledged_src_size_plus_one != self.consumed_src_size + 1
         {

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use super::cctx::{CDict, FrameCompressor, Input, Span};
+use super::cctx::{CDict, FrameCompressor, Input, Output, Span};
 use super::internal::{BufId, Buffers, CompressedBlockState};
 use super::mt::MtCtx;
 use super::params::{
@@ -477,6 +477,15 @@ impl CCtx {
 
 /// `ZSTD_compress`: returns the size of the frame.
 pub fn compress(dst: &mut [u8], src: &[u8], compression_level: i32) -> Result<usize> {
+    compress_to(&mut Output::Slice(dst), src, compression_level)
+}
+
+/// [`compress`] to either kind of output.
+pub(crate) fn compress_to(
+    dst: &mut Output<'_>,
+    src: &[u8],
+    compression_level: i32,
+) -> Result<usize> {
     let mut frame = FrameCompressor::new();
     let params = get_params_internal(
         compression_level,
@@ -501,7 +510,7 @@ pub fn compress(dst: &mut [u8], src: &[u8], compression_level: i32) -> Result<us
         cdict: None,
     };
     frame.begin(&input, None, &cctx_params, src.len() as u64, false)?;
-    frame.compress_end(
+    frame.compress_end_to(
         dst,
         &input,
         Span {

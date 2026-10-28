@@ -20,8 +20,10 @@ mod util;
 
 pub use common::ZSTD_CONTENTSIZE_ERROR;
 use common::ZSTD_CONTENTSIZE_UNKNOWN;
+use compress::cctx::Output;
 pub use compress::internal::Strategy;
 pub use compress::params::{ZSTD_CLEVEL_DEFAULT, c_param, compress_bound};
+use compress::stream::compress_to;
 pub use compress::stream::{CCtx, EndDirective, compress};
 pub use decompress::{
     DCtx, DDict, FrameExtent, ZSTD_D_WINDOW_LOG_MAX, frame_extent, get_frame_content_size,
@@ -115,17 +117,25 @@ impl Drop for VecOutput<'_> {
 pub fn compress_append(out: &mut Vec<u8>, src: &[u8], level: i32) -> Result {
     let start = out.len();
     let room = (out.capacity() - start).min(compress_bound(src.len()));
-    out.resize(start + room, 0);
-    let result = compress(out.get_mut(start..).unwrap_or_default(), src, level);
+    let result = compress_to(
+        &mut Output::Spare {
+            vec: out,
+            start,
+            end: start + room,
+        },
+        src,
+        level,
+    );
     out.truncate(start + result.unwrap_or(0));
     result
 }
 
 /// [`compress`] to a new buffer.
 pub fn compress_alloc(src: &[u8], level: i32) -> Result<Vec<u8>> {
-    let mut out = util::try_zeroed(compress_bound(src.len()))?;
-    let size = compress(&mut out, src, level)?;
-    out.truncate(size);
+    let mut out = Vec::new();
+    out.try_reserve_exact(compress_bound(src.len()))
+        .map_err(|_| Error::MemoryAllocation)?;
+    compress_append(&mut out, src, level)?;
     Ok(out)
 }
 
@@ -441,6 +451,7 @@ pub fn inflate_embedded_nul(compressed: &'static [u8]) -> Box<[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use util::SliceExt;
 
     #[test]
     fn little_more_is_zeroed_than_is_written() {
@@ -455,5 +466,38 @@ mod tests {
             assert!((STEP..=MOST).contains(&room));
             out.advance(room);
         }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "takes over 10 minutes")]
+    fn room_that_grows_gives_what_room_that_is_there_gives() -> Result<()> {
+        // Blocks that compress well, hardly, and not at all.
+        let mut state = 1u32;
+        let src: Vec<u8> = (0..400_000u32)
+            .map(|i| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                match i >> 17 {
+                    0 => (state % 5) as u8 * (i % 7) as u8,
+                    1 => (state >> 24) as u8,
+                    _ => (state >> 24) as u8 | 1,
+                }
+            })
+            .collect();
+        for level in [1, 3, 6, 13, 16] {
+            let mut whole = vec![0; compress_bound(src.len())];
+            let size = compress(&mut whole, &src, level)?;
+            assert!(compress_alloc(&src, level)? == *whole.sub(..size)?);
+            for capacity in [whole.len() + 1000, size, size - 1, size / 2, 0] {
+                let mut out = Vec::with_capacity(1 + capacity);
+                out.push(7);
+                let room = (out.capacity() - 1).min(whole.len());
+                let appended = compress_append(&mut out, &src, level);
+                assert_eq!(appended, compress(whole.sub_mut(..room)?, &src, level));
+                assert!(out.split_first() == Some((&7, whole.sub(..appended.unwrap_or(0))?)));
+            }
+        }
+        Ok(())
     }
 }

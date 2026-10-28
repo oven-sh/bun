@@ -1219,6 +1219,24 @@ describe("the output is that of zstd 1.5.7", () => {
     expect(`${digest(compress(data))}, ${digest(compress(small))}`).toBe(expected);
   });
 
+  it("where blocks that are stored are between blocks that are compressed", () => {
+    const noise = new Uint8Array(200_000);
+    for (let i = 0, x = 9; i < noise.length; i++) {
+      x ^= x << 13;
+      x ^= x >>> 17;
+      x ^= x << 5;
+      noise[i] = x;
+    }
+    const data = Buffer.concat([large.subarray(0, 150_000), noise, large.subarray(150_000)]);
+    expect([1, 3, 6, 13, 16].map(level => digest(zstdCompressSync(data, { level })))).toEqual([
+      "248567 de53cc88abf776bf",
+      "245529 c13322b7116144a",
+      "245428 8fdcf68c52aa046d",
+      "244844 ad91ca42d335a19",
+      "244843 e1282705ef659832",
+    ]);
+  });
+
   it("with parameters", () => {
     const cases: Record<string, Record<number, number>> = {
       checksum: { [c.ZSTD_c_checksumFlag]: 1 },

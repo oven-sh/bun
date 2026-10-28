@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isRoot, isWindows, tempDir } from "harness";
 import { randomBytes } from "node:crypto";
 import {
   chmodSync,
@@ -1572,39 +1572,42 @@ describe("Bun.Archive", () => {
           },
         );
 
-        // Only its search permission is needed to create something in a directory.
-        test.concurrent.each(["plain", "glob"] as const)("in a directory that cannot be listed (%s)", async mode => {
-          using dir = tempDir("archive-symlinks", fixture);
-          const unlisted = join(String(dir), "0", "dest", "d");
-          using _ = { [Symbol.dispose]: () => existsSync(unlisted) && chmodSync(unlisted, 0o700) };
-          const { list, results } = await extractAll(
-            String(dir),
-            {
-              "unlisted": {
-                archives: [
-                  [
-                    ustarHeader("d/", 0, "5", { mode: Buffer.from("0000300\0") }),
-                    directory("d/e"),
-                    file("d/e/new.txt"),
-                    ustarSymlink("d/link", "e"),
+        // Only its search permission is needed to create something in a directory. Root needs no permission, so it shows nothing there.
+        (isRoot ? test.skip : test.concurrent).each(["plain", "glob"] as const)(
+          "in a directory that cannot be listed (%s)",
+          async mode => {
+            using dir = tempDir("archive-symlinks", fixture);
+            const unlisted = join(String(dir), "0", "dest", "d");
+            using _ = { [Symbol.dispose]: () => existsSync(unlisted) && chmodSync(unlisted, 0o700) };
+            const { list, results } = await extractAll(
+              String(dir),
+              {
+                "unlisted": {
+                  archives: [
+                    [
+                      ustarHeader("d/", 0, "5", { mode: Buffer.from("0000300\0") }),
+                      directory("d/e"),
+                      file("d/e/new.txt"),
+                      ustarSymlink("d/link", "e"),
+                    ],
                   ],
-                ],
+                },
               },
-            },
-            mode,
-            env,
-          );
-          chmodSync(unlisted, 0o700);
-          expect({ results, tree: tree(list[0].dest) }).toEqual({
-            results: { unlisted: [4] },
-            tree: {
-              "d": "directory",
-              [join("d", "e")]: "directory",
-              [join("d", "e", "new.txt")]: "from the archive",
-              [join("d", "link")]: "-> e",
-            },
-          });
-        });
+              mode,
+              env,
+            );
+            chmodSync(unlisted, 0o700);
+            expect({ results, tree: tree(list[0].dest) }).toEqual({
+              results: { unlisted: [4] },
+              tree: {
+                "d": "directory",
+                [join("d", "e")]: "directory",
+                [join("d", "e", "new.txt")]: "from the archive",
+                [join("d", "link")]: "-> e",
+              },
+            });
+          },
+        );
       });
     });
   });

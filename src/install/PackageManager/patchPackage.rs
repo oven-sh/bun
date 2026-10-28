@@ -27,6 +27,7 @@ use crate::package_manager_real::package_manager_directories::{
     compute_cache_dir_and_subpath, get_temporary_directory, is_package_in_cache_at,
 };
 use crate::package_manager_real::populate_package_cache::download_pinned_packages;
+use crate::package_manager_real::workspace_manifests::ScratchManifests;
 use crate::resolution::append_without_url_credentials;
 use crate::{DependencyID, PackageID, PatchTask, Resolution, ResolutionTag, initialize_store};
 
@@ -469,11 +470,14 @@ pub fn do_patch_commit(
     let linker = load_result.node_linker(manager.options.node_linker);
     match load_result {
         lockfile::LoadResult::NotFound => {
-            Output::err_generic(
-                "Cannot find lockfile. Install packages with `<cyan>bun install<r>` before patching them.",
-                (),
-            );
-            Global::crash();
+            let Some(empty) = ScratchManifests::empty_lockfile(manager) else {
+                Output::err_generic(
+                    "Cannot find lockfile. Install packages with `<cyan>bun install<r>` before patching them.",
+                    (),
+                );
+                Global::crash();
+            };
+            *lockfile = empty;
         }
         lockfile::LoadResult::Err(cause) => {
             if log_level != LogLevel::Silent {

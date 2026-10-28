@@ -22,7 +22,6 @@ use bun_url::URL;
 
 use crate::cli::Command;
 use crate::cli::install_command::InstallCommand;
-use crate::cli::package_manager_command::PackageManagerCommand;
 
 struct VulnerabilityInfo {
     severity: Box<[u8]>,
@@ -156,15 +155,7 @@ impl AuditCommand {
             Output::flush();
         }
 
-        {
-            let log_level = manager.options.log_level;
-            let load_lockfile = manager.load_lockfile_from_cwd::<true>();
-            PackageManagerCommand::handle_load_lockfile_errors_for(
-                &load_lockfile,
-                log_level,
-                "audit",
-            );
-        }
+        manager.load_lockfile_from_cwd_or_exit::<true>("nothing to audit");
 
         if fix {
             return Self::audit_fix(
@@ -267,7 +258,7 @@ impl AuditCommand {
 
         // Audit the saved lockfile, which is what the next `bun audit` reads. The copy in memory
         // can contain a package that was not saved.
-        pm.load_lockfile_from_cwd_or_exit("nothing to audit");
+        pm.load_lockfile_from_cwd_or_exit::<true>("nothing to audit");
         let reaudit = audit_for_fix(pm, audit_level, ignore_list, false)?;
         if json_output {
             plan.unaudited = reaudit.unaudited;
@@ -495,6 +486,13 @@ fn collect_packages_for_audit(
         }
     }
 
+    // There is no package to audit, so no registry is asked.
+    if by_name.is_empty() {
+        return Ok(CollectPackagesResult {
+            requests: Vec::new(),
+        });
+    }
+
     let requests = groups
         .into_iter()
         .enumerate()
@@ -616,7 +614,8 @@ fn is_empty_bulk_body(body: &[u8]) -> bool {
 fn merge_bulk_bodies(bodies: &[Box<[u8]>]) -> Box<[u8]> {
     let mut non_empty = bodies.iter().filter(|body| !is_empty_bulk_body(body));
     let Some(first) = non_empty.next() else {
-        return bodies.first().cloned().unwrap_or_default();
+        // Without a body, no request was sent, because there was no package to audit.
+        return (bodies.first().cloned()).unwrap_or_else(|| Box::from(&b"{}"[..]));
     };
     let Some(second) = non_empty.next() else {
         return first.clone();

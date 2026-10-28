@@ -254,7 +254,7 @@ bun pm licenses --json --prod
 
 From a workspace root, Bun lists every workspace's dependencies. From inside a workspace package, Bun lists only that package's dependencies. Use [`bun why`](/pm/cli/why) to find out what pulls in an unexpected package.
 
-Requires both `bun.lock` and `node_modules`. Bun skips packages that are in the lockfile but missing from `node_modules` (e.g. after `bun install --production`) and prints a warning.
+Requires `node_modules`, and `bun.lock` unless the project has no workspaces and no dependencies. Bun skips packages that are in the lockfile but missing from `node_modules` (e.g. after `bun install --production`) and prints a warning.
 
 ## diff
 

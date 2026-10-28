@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { BuildError } from "../../../scripts/build/error.ts";
 import type { Feature, FeatureModel } from "../../../scripts/build/trim/features.ts";
-import { EdgeKind, type PartitionFailure } from "../../../scripts/build/trim/partition.ts";
+import { EdgeKind, partition, type PartitionFailure } from "../../../scripts/build/trim/partition.ts";
 import {
   describeFailures,
   foldedEntryPointsHeading,
@@ -23,6 +23,7 @@ import {
   B,
   C,
   edgeKindOf,
+  graphOf,
   modelOf,
   partitioned,
   tableOutput,
@@ -79,6 +80,45 @@ const sharedEntryPointGuards: Guard[] = [
 ];
 
 describe("the partition", () => {
+  test("COFF unwind references do not enter a built-in as native code", () => {
+    const { graph, node } = graphOf({
+      main: { root: true, to: ["builtin"] },
+      builtin: { to: ["other", "unwind"] },
+      unwind: { to: ["builtin"], output: ".xdata" },
+      other: {},
+    });
+    graph.format = "coff";
+    graph.section[node("unwind")] = ".xdata";
+    const result = partition({
+      graph,
+      model: abc,
+      entryPoints: [
+        {
+          guard: node("main"),
+          entry: node("builtin"),
+          feature: A,
+          stub: "Throw",
+          origin: "Builtin",
+          builtin: 7,
+          entrySection: "toy.o\0builtin",
+        },
+        {
+          guard: node("builtin"),
+          entry: node("other"),
+          feature: B,
+          stub: "Abort",
+          origin: "NativeCode",
+          builtin: undefined,
+          entrySection: "toy.o\0other",
+        },
+      ],
+      isMovable: output => output === ".text",
+      isCode: output => output === ".text",
+    });
+    expect(result.failures).toEqual([]);
+    expect(result.edges).toEqual([{ from: A, to: B, strength: "AbortingGuard", isFollowed: false }]);
+  });
+
   test("only the guarded edge is cut", () => {
     const result = partitioned(oneFeature, oneFeatureGuards);
     expect(result.failures).toEqual([]);

@@ -432,15 +432,10 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
     })
 }
 
-/// JPEG chroma subsampling. Mirrors sharp's `chromaSubsampling` option
-/// (`'4:2:0'` default, `'4:4:4'`).
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum ChromaSubsampling {
-    /// Chroma at half resolution on both axes. Smallest file, visible bleed
-    /// on saturated text and thin lines.
     S420,
-    /// Full-resolution chroma.
     S444,
 }
 

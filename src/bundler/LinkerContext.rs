@@ -3728,6 +3728,24 @@ impl<'a> LinkerContext<'a> {
             };
         }
 
+        // A named import of the empty module of a disabled file is always `undefined`.
+        if self.parse_graph().input_files.items_source()[other_source_index as usize]
+            .path
+            .is_disabled_module
+            && !alias_is_star
+            && alias.is_some_and(|a| a.slice() != b"default")
+        {
+            return ImportTrackerIterator {
+                value: ImportTracker {
+                    source_index: crate::Index::init(other_source_index),
+                    import_ref: Ref::NONE,
+                    ..Default::default()
+                },
+                status: ImportTrackerStatus::CjsWithoutExports,
+                ..Default::default()
+            };
+        }
+
         let flags = ast_flags[other_id as usize];
 
         // Is this a named import of a file without any exports?
@@ -4016,22 +4034,25 @@ impl<'a> LinkerContext<'a> {
                     if status == ImportTrackerStatus::CjsWithoutExports
                         && !self.is_call_record(prev_source_index, named_import.import_record_index)
                     {
+                        // SAFETY: the symbol slot is disjoint from `named_import` (`graph.ast`).
+                        unsafe { self.graph.symbol_mut(tracker.import_ref) }.import_item_status =
+                            ImportItemStatus::Missing;
                         let source = self.get_source(tracker.source_index.get());
+                        let imported = self.get_source(next_tracker.source_index.get());
                         // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
                         let alias = named_import
                             .alias
                             .expect("infallible: alias present")
                             .slice();
-                        // Split-borrow with `named_import` (`&self.graph`) —
-                        // `log_disjoint` returns the disjoint `Transpiler.log` backref.
-                        self.log_disjoint().add_range_warning_fmt(
-                            Some(source),
+                        let message = format_args!(
+                            "Import \"{}\" will always be undefined because the file \"{}\" has no exports",
+                            bstr::BStr::new(alias),
+                            bstr::BStr::new(&imported.path.pretty),
+                        );
+                        self.warn_import_is_undefined(
+                            source,
                             source.range_of_identifier(named_import.alias_loc),
-                            format_args!(
-                                "Import \"{}\" will always be undefined because the file \"{}\" has no exports",
-                                bstr::BStr::new(alias),
-                                bstr::BStr::new(&source.path.pretty),
-                            ),
+                            message,
                         );
                     }
                 }
@@ -4156,6 +4177,17 @@ impl<'a> LinkerContext<'a> {
                             format_args!("Bun's bundler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the transpiler options."),
                             r,
                         );
+                    } else if self
+                        .export_stars_reach_disabled_module(next_tracker.source_index.get())
+                    {
+                        // `export *` from a disabled file gives no name, so the import is `undefined`.
+                        symbol.import_item_status = ImportItemStatus::Missing;
+                        let message = format_args!(
+                            "Import \"{}\" will always be undefined because there is no matching export in \"{}\"",
+                            bstr::BStr::new(alias),
+                            bstr::BStr::new(&next_source.path.pretty),
+                        );
+                        self.warn_import_is_undefined(source, r, message);
                     } else {
                         self.log_disjoint().add_range_error_fmt(
                             Some(source),
@@ -4301,6 +4333,46 @@ impl<'a> LinkerContext<'a> {
         } else {
             b"__exportGetters"
         }
+    }
+
+    /// Like esbuild, a debug message when the importer is inside node_modules: its user cannot fix it.
+    fn warn_import_is_undefined(
+        &self,
+        source: &Source,
+        range: bun_ast::Range,
+        message: core::fmt::Arguments<'_>,
+    ) {
+        if source.path.is_node_module() {
+            self.log_disjoint()
+                .add_debug_fmt(Some(source), range.loc, message);
+        } else {
+            self.log_disjoint()
+                .add_range_warning_fmt(Some(source), range, message);
+        }
+    }
+
+    /// `source_index` re-exports with `export *`, directly or not, from a disabled module.
+    fn export_stars_reach_disabled_module(&self, source_index: crate::IndexInt) -> bool {
+        let sources = self.parse_graph().input_files.items_source();
+        let import_records = self.graph.ast.items_import_records();
+        let export_stars = self.graph.ast.items_export_star_import_records();
+        let mut visited = vec![source_index];
+        let mut next = 0;
+        while let Some(&file) = visited.get(next) {
+            next += 1;
+            for &record_index in export_stars[file as usize].iter() {
+                let target =
+                    import_records[file as usize].as_slice()[record_index as usize].source_index;
+                if !target.is_valid() || visited.contains(&target.get()) {
+                    continue;
+                }
+                if sources[target.get() as usize].path.is_disabled_module {
+                    return true;
+                }
+                visited.push(target.get());
+            }
+        }
+        false
     }
 
     /// Is `ref_` the `exports` object of ES module `source_index` (i.e. an

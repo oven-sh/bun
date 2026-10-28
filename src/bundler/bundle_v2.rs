@@ -6,7 +6,7 @@
 
 use core::ptr::NonNull;
 
-use bun_collections::{ArrayHashMap, StringHashMap};
+use bun_collections::ArrayHashMap;
 use bun_core::ThreadLock;
 
 // `bake_types` / `dispatch` are canonically defined in `bv2_impl` below
@@ -151,7 +151,7 @@ bun_core::declare_scope!(scan_counter, visible);
 
 /// Values are raw `*mut ParseTask` (arena-owned by `graph.heap`); the map only
 /// dedups by path during a single `on_parse_task_complete` pass.
-pub(crate) type ResolveQueue<'a> = StringHashMap<*mut ParseTask<'a>>;
+pub(crate) type ResolveQueue<'a> = crate::PathToSourceIndexMap::PathMap<*mut ParseTask<'a>>;
 
 pub struct BakeOptions<'a> {
     pub framework: bake::Framework,
@@ -596,6 +596,7 @@ pub mod bv2_impl {
                         namespace: b"bun",
                         is_disabled: false,
                         is_symlink: true,
+                        is_disabled_module: false,
                     },
                     index: bun_ast::Index(crate::Index::BAKE_SERVER_DATA.get()),
                     ..Default::default()
@@ -609,6 +610,7 @@ pub mod bv2_impl {
                     namespace: b"bun",
                     is_disabled: false,
                     is_symlink: true,
+                    is_disabled_module: false,
                 },
                 index: bun_ast::Index(crate::Index::BAKE_CLIENT_DATA.get()),
                 ..Default::default()
@@ -2571,9 +2573,12 @@ pub mod bv2_impl {
                     );
                 }
             }
+            // A disabled module is empty in the bundle only. Its file is checked as written.
             let mut entry_points = (named.iter().copied())
                 .filter(|&index| {
-                    loaders[index].is_javascript_like() && sources[index].path.is_file()
+                    loaders[index].is_javascript_like()
+                        && sources[index].path.is_file()
+                        && !sources[index].path.is_disabled_module
                 })
                 .map(|index| sources[index].path.text);
             // The types are those of what is written, as in `bun check`, not of what a plugin makes
@@ -2582,6 +2587,7 @@ pub mod bv2_impl {
                 .filter(|((source, loader), flags)| {
                     loader.is_javascript_like_or_json()
                         && source.path.is_file()
+                        && !source.path.is_disabled_module
                         && !(flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
                             && bun_sys::exists(source.path.text))
                 })
@@ -2762,7 +2768,7 @@ pub mod bv2_impl {
             }
 
             let mut had_busted_dir_cache = false;
-            let resolve_result = loop {
+            let mut resolve_result = loop {
                 // SAFETY: see `transpiler` note above.
                 match unsafe { &mut *transpiler }.resolver.resolve(
                     source_dir,
@@ -2915,7 +2921,13 @@ pub mod bv2_impl {
 
             let out_source_index: Option<Index>;
 
-            let mut path = match resolve_result.path_const() {
+            let importer = import_record.importer_source_index as usize;
+            let importer_loader = self.graph.input_files.items_loader()[importer];
+            let kind = self.graph.ast.items_import_records()[importer].as_slice()
+                [import_record.import_record_index as usize]
+                .kind;
+            let module = self.select_import_module(&mut resolve_result, importer_loader, kind);
+            let mut path = match module {
                 Some(p) => *p,
                 None => {
                     let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
@@ -2950,13 +2962,16 @@ pub mod bv2_impl {
 
             // borrowck: get-then-put (instead of a single get-or-put) so the map
             // borrow doesn't span `enqueue_parse_task` (which needs `&mut self`).
-            if let Some(existing) = self.path_to_source_index_map(target).get(path.text) {
+            if let Some(existing) = self.path_to_source_index_map(target).get_path(&path) {
                 out_source_index = Some(Index::init(existing));
             } else {
                 let path = self
                     .path_with_pretty_initialized(&path, target)
                     .expect("oom");
                 let loader: Loader = 'brk: {
+                    if path.is_disabled_module {
+                        break 'brk Loader::Js;
+                    }
                     let record: &ImportRecord = &self.graph.ast.items_import_records()
                         [import_record.importer_source_index as usize]
                         .as_slice()[import_record.import_record_index as usize];
@@ -2977,14 +2992,14 @@ pub mod bv2_impl {
                 let idx = self
                     .enqueue_parse_task(
                         &resolve_result,
-                        self.parse_task_path(&resolve_result, path),
+                        path,
                         &mut tmp_source,
                         loader,
                         import_record.original_target,
                     )
                     .expect("oom");
                 self.path_to_source_index_map(target)
-                    .put(path.text, idx)
+                    .put_path(&path, idx)
                     .expect("oom");
                 out_source_index = Some(Index::init(idx));
 
@@ -3172,8 +3187,7 @@ pub mod bv2_impl {
                 ..Default::default()
             })?;
             // Arena-owned; freed on heap reset.
-            let task_path = self.parse_task_path(result, path);
-            let task_val = ParseTask::init(result, task_path, source_index, self);
+            let task_val = ParseTask::init(result, path, source_index, self);
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
             let task: &mut ParseTask = self.arena_create(task_val);
             task.loader = Some(loader);
@@ -6381,6 +6395,10 @@ pub mod bv2_impl {
         }
 
         pub(crate) fn enqueue_on_load_plugin_if_needed(&mut self, parse: &mut ParseTask) -> bool {
+            // No plugin loads the file that the empty module stands in for.
+            if parse.path.is_disabled_module {
+                return false;
+            }
             let had_matches = self.enqueue_on_load_plugin_if_needed_impl(parse);
             if had_matches {
                 return true;
@@ -6443,17 +6461,30 @@ pub mod bv2_impl {
             false
         }
 
-        /// A task reads the primary path, also when `active` (`Result::path`) is the secondary one.
-        fn parse_task_path(
+        /// The module that an import of `result` loads, or `None` for a disabled, external record.
+        fn select_import_module<'p, 'r>(
             &self,
-            result: &_resolver::Result<'_>,
-            active: Fs::Path<'a>,
-        ) -> Fs::Path<'a> {
-            if result.path_pair.primary.is_disabled {
-                path_in_arena(&result.path_pair.primary, self.arena())
-            } else {
-                active
+            result: &'p mut _resolver::Result<'r>,
+            importer: Loader,
+            kind: ImportKind,
+        ) -> Option<&'p mut Fs::Path<'r>> {
+            if result.path_const().is_some() {
+                return result.path();
             }
+            let path = &mut result.path_pair.primary;
+            // Bun's stubs for Node.js builtins are in the `node` namespace and stay external.
+            let is_javascript_import = importer.is_javascript_like()
+                && matches!(
+                    kind,
+                    ImportKind::Stmt | ImportKind::Require | ImportKind::Dynamic
+                );
+            if self.dev_server.is_some() || !is_javascript_import || !path.is_file() {
+                return None;
+            }
+            // Like esbuild, the import loads an empty module in place of the file.
+            path.is_disabled = false;
+            path.is_disabled_module = true;
+            Some(path)
         }
 
         fn path_with_pretty_initialized(
@@ -7153,7 +7184,11 @@ pub mod bv2_impl {
                 // would lock the whole struct while the loop body still needs to
                 // read other `resolve_result` fields (`.flags`, `.path_pair`,
                 // `.primary_side_effects_data`, `.jsx`). Detach via raw ptr.
-                let path: &mut Fs::Path<'a> = match resolve_result.path() {
+                let path: &mut Fs::Path<'a> = match self.select_import_module(
+                    &mut resolve_result,
+                    loader,
+                    import_record.kind,
+                ) {
                     // SAFETY: `resolve_result` outlives this borrow; see note above.
                     Some(p) => unsafe { bun_ptr::detach_lifetime_mut::<Fs::Path<'a>>(p) },
                     None => {
@@ -7257,6 +7292,9 @@ pub mod bv2_impl {
                 }
 
                 let import_record_loader = 'brk: {
+                    if path.is_disabled_module {
+                        break 'brk Loader::Js;
+                    }
                     let resolved_loader = import_record.loader.unwrap_or_else(|| {
                         path.loader(&transpiler.options.loaders)
                             .unwrap_or(Loader::File)
@@ -7283,7 +7321,7 @@ pub mod bv2_impl {
                     && target.is_server_side()
                     && self.dev_server.is_none();
 
-                if let Some(id) = self.path_to_source_index_map(target).get(path.text) {
+                if let Some(id) = self.path_to_source_index_map(target).get_path(path) {
                     if self.dev_server.is_some() && loader != Loader::Html {
                         import_record.path =
                             self.graph.input_files.items_source()[id as usize].path;
@@ -7297,7 +7335,7 @@ pub mod bv2_impl {
                     import_record.kind = ImportKind::HtmlManifest;
                 }
 
-                let resolve_entry = resolve_queue.get_or_put(path.text).expect("oom");
+                let resolve_entry = resolve_queue.get_or_put_path(path).expect("oom");
                 if resolve_entry.found_existing {
                     // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                     import_record.path = unsafe { &**resolve_entry.value_ptr }.path;
@@ -7374,7 +7412,7 @@ pub mod bv2_impl {
                     )
                 });
             let dev_server_is_none = self.dev_server.is_none();
-            for (key, value) in resolve_queue.iter() {
+            for value in resolve_queue.values() {
                 let value: *mut ParseTask = *value;
                 // SAFETY: ParseTask was arena-allocated in `resolve_import_records`;
                 // the arena outlives this loop.
@@ -7395,7 +7433,7 @@ pub mod bv2_impl {
                     } else {
                         self.graph.path_to_source_index_map(target)
                     };
-                    let existing = map.get_or_put(key).expect("oom");
+                    let existing = map.get_or_put_path(&value.path).expect("oom");
                     (
                         existing.found_existing,
                         std::ptr::from_mut::<IndexInt>(existing.value_ptr),
@@ -8345,7 +8383,19 @@ pub mod bv2_impl {
         };
         let mut prefixed = Vec::new();
         let mut path_clone: crate::bun_fs::Path<'_> = *path;
-        path_clone.pretty = if path.is_file() || is_node {
+        path_clone.pretty = if path.is_disabled_module {
+            // A disabled bare name has no file. Its name is its path.
+            let rel = if bun_paths::is_absolute(path.text) {
+                bun_paths::resolve_path::relative_platform::<
+                    bun_paths::resolve_path::platform::Loose,
+                    false,
+                >(top_level_dir, path.text)
+            } else {
+                path.text
+            };
+            prefixed = [crate::PathToSourceIndexMap::DISABLED_PRETTY_PREFIX, rel].concat();
+            &prefixed
+        } else if path.is_file() || is_node {
             let rel = bun_paths::resolve_path::relative_platform::<
                 bun_paths::resolve_path::platform::Loose,
                 false,
@@ -8383,6 +8433,7 @@ pub mod bv2_impl {
             namespace: bump.alloc_slice_copy(path.namespace),
             is_disabled: path.is_disabled,
             is_symlink: path.is_symlink,
+            is_disabled_module: path.is_disabled_module,
         }
     }
 

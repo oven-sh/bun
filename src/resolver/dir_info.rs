@@ -91,6 +91,15 @@ impl core::fmt::Debug for DirInfoRef {
     }
 }
 
+/// Two handles are equal when they name the same slot.
+impl PartialEq for DirInfoRef {
+    fn eq(&self, other: &Self) -> bool {
+        core::ptr::eq(self.0.as_ptr(), other.0.as_ptr())
+    }
+}
+
+impl Eq for DirInfoRef {}
+
 pub struct DirInfo {
     // These objects are immutable, so we can just point to the parent directory
     // and avoid having to lock the cache again

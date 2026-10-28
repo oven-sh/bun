@@ -328,6 +328,59 @@ describe("bundler metafile", () => {
     expect(foundExternal).toBe(true);
   });
 
+  // A path that a package.json "browser" map sets to false is an input of its
+  // own, "(disabled):<path>", as in esbuild's metafile. It is in the bundle, so
+  // the import of it is not external.
+  test("metafile lists a module the browser field disables", async () => {
+    using dir = tempDir("metafile-disabled-test", {
+      "index.js": `import pkg from "pkg"; console.log(pkg);`,
+      "node_modules/pkg/package.json": JSON.stringify({ main: "./index.js", browser: { "./node.js": false } }),
+      "node_modules/pkg/index.js": `exports.node = require("./node.js");`,
+      "node_modules/pkg/node.js": `throw new Error("fail");`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.js`],
+      metafile: true,
+      target: "browser",
+    });
+
+    expect(result.success).toBe(true);
+    const metafile = result.metafile as Metafile;
+    const inputPaths = Object.keys(metafile.inputs);
+    const disabled = inputPaths.find(key => key.startsWith("(disabled):"))!;
+    const importer = inputPaths.find(key => key.endsWith("node_modules/pkg/index.js"))!;
+
+    expect(inputPaths).toHaveLength(3);
+    expect(disabled).toEndWith("node_modules/pkg/node.js");
+    expect(metafile.inputs[disabled]).toEqual({ bytes: 0, imports: [], format: "cjs" });
+    expect(metafile.inputs[importer].imports).toEqual([
+      { path: disabled, kind: "require-call", original: "./node.js" },
+    ]);
+    const [output] = Object.values(metafile.outputs);
+    expect(Object.keys(output.inputs)).toContain(disabled);
+  });
+
+  // Bun's own stub for a Node.js builtin in a browser build is not a module in
+  // the bundle. The import of it stays an external import.
+  test("metafile marks a builtin stubbed for the browser as external", async () => {
+    using dir = tempDir("metafile-builtin-stub-test", {
+      "index.js": `import fs from "fs"; console.log(fs);`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.js`],
+      metafile: true,
+      target: "browser",
+    });
+
+    expect(result.success).toBe(true);
+    const metafile = result.metafile as Metafile;
+    const inputs = Object.values(metafile.inputs);
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0].imports).toEqual([{ path: "fs", kind: "import-statement", external: true }]);
+  });
+
   test("metafile with code splitting", async () => {
     using dir = tempDir("metafile-splitting-test", {
       "a.js": `import { shared } from "./shared.js"; console.log("a", shared);`,

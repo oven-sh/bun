@@ -278,9 +278,13 @@ impl<'a> ParseTask<'a> {
         ParseTask {
             ctx: Some(ctx_ref),
             path,
-            contents_or_fd: ContentsOrFd::Fd {
-                dir: resolve_result.dirname_fd,
-                file: resolve_result.file_fd,
+            contents_or_fd: if path.is_disabled_module {
+                ContentsOrFd::Contents(b"")
+            } else {
+                ContentsOrFd::Fd {
+                    dir: resolve_result.dirname_fd,
+                    file: resolve_result.file_fd,
+                }
             },
             side_effects: resolve_result.primary_side_effects_data,
             // D042: resolver-side and bundler-side `jsx::Pragma` are the SAME
@@ -288,7 +292,12 @@ impl<'a> ParseTask<'a> {
             // jsxImportSource/runtime/etc. from tsconfig.json.
             jsx: resolve_result.jsx.clone(),
             source_index,
-            module_type: resolve_result.module_type,
+            // The empty module is `module.exports = {}`, also for an ".mjs" file.
+            module_type: if path.is_disabled_module {
+                options::ModuleType::Cjs
+            } else {
+                resolve_result.module_type
+            },
             emit_decorator_metadata: resolve_result.flags.emit_decorator_metadata(),
             experimental_decorators: resolve_result.flags.experimental_decorators(),
             use_define_for_class_fields: resolve_result.flags.use_define_for_class_fields(),
@@ -650,6 +659,7 @@ pub mod parse_worker {
                 pretty: b"",
                 is_disabled: false,
                 is_symlink: false,
+                is_disabled_module: false,
             },
             contents: std::borrow::Cow::Borrowed(runtime_code),
             // `Source.index` is `bun_ast::Index` (newtype `u32`),
@@ -1640,7 +1650,7 @@ pub mod parse_worker {
                 break 'brk false;
             }
 
-            if file_path.namespace == b"node" {
+            if file_path.namespace == b"node" || file_path.is_disabled_module {
                 break 'brk false;
             }
             true

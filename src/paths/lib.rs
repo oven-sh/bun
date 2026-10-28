@@ -764,6 +764,8 @@ pub mod fs {
         pub namespace: &'a [u8],
         pub is_disabled: bool,
         pub is_symlink: bool,
+        /// The empty module that the bundler loads in place of the disabled file `text`.
+        pub is_disabled_module: bool,
     }
 
     const _: () = assert!(core::mem::size_of::<Path<'static>>() <= 56);
@@ -777,6 +779,7 @@ pub mod fs {
                 namespace: b"",
                 is_disabled: false,
                 is_symlink: false,
+                is_disabled_module: false,
             }
         }
     }
@@ -788,6 +791,7 @@ pub mod fs {
             namespace: b"file",
             is_disabled: false,
             is_symlink: false,
+            is_disabled_module: false,
         };
 
         /// Parsed (dir/base/ext/filename) view of `text`. Computed on demand —
@@ -808,6 +812,7 @@ pub mod fs {
                 namespace: b"file",
                 is_disabled: false,
                 is_symlink: false,
+                is_disabled_module: false,
             }
         }
 
@@ -821,6 +826,7 @@ pub mod fs {
                 namespace: b"file",
                 is_disabled: false,
                 is_symlink: false,
+                is_disabled_module: false,
             }
         }
 
@@ -834,6 +840,7 @@ pub mod fs {
                 namespace,
                 is_disabled: false,
                 is_symlink: false,
+                is_disabled_module: false,
             }
         }
 
@@ -851,6 +858,7 @@ pub mod fs {
                 text,
                 namespace,
                 is_disabled: false,
+                is_disabled_module: false,
             }
         }
 
@@ -870,7 +878,8 @@ pub mod fs {
         /// CI-assert only.
         #[inline]
         pub fn assert_file_path_is_absolute(&self) {
-            if bun_core::Environment::CI_ASSERT && self.is_file() {
+            // A disabled bare name has no file.
+            if bun_core::Environment::CI_ASSERT && self.is_file() && !self.is_disabled_module {
                 debug_assert!(crate::is_absolute(self.text));
             }
         }
@@ -925,6 +934,14 @@ pub mod fs {
             } else {
                 self.pretty
             }
+        }
+
+        /// Copies the flags of `other`: a copy of a path keeps them.
+        #[inline]
+        pub fn copy_flags_from(&mut self, other: &Path<'_>) {
+            self.is_disabled = other.is_disabled;
+            self.is_symlink = other.is_symlink;
+            self.is_disabled_module = other.is_disabled_module;
         }
 
         /// Records the resolved symlink target: `text` becomes `to`, the old

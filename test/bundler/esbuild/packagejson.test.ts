@@ -323,7 +323,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserMapModuleDisabled", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -564,7 +563,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserNodeModulesNoExt", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {value as a} from 'demo-pkg/no-ext'
@@ -599,7 +597,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserNodeModulesIndexNoExt", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {value as a} from 'demo-pkg/no-ext'
@@ -631,6 +628,93 @@ describe("bundler", () => {
         browser
         browser
       `,
+    },
+  });
+  itBundled("packagejson/BrowserNodeModulesSubpathDisabled", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        const ns = require('demo-pkg/disabled')
+        console.log(JSON.stringify([ns.value]))
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "browser": {
+            "./disabled": false
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/disabled.js": `module.exports = {value: 'node'}`,
+    },
+    run: {
+      stdout: "[null]",
+    },
+  });
+  itBundled("packagejson/BrowserNodeModulesSubpathToPackage", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import {value as a} from 'demo-pkg/to-pkg'
+        import {value as b} from 'demo-pkg/to-missing'
+        console.log(a)
+        console.log(b)
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "browser": {
+            "./to-pkg": "other-pkg",
+            "./to-missing": "missing-pkg"
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/to-pkg.js": `export let value = 'node'`,
+      "/Users/user/project/node_modules/demo-pkg/to-missing.js": `export let value = 'node'`,
+      "/Users/user/project/node_modules/other-pkg/package.json": `{"main": "./index.js"}`,
+      "/Users/user/project/node_modules/other-pkg/index.js": `export let value = 'other-pkg'`,
+    },
+    run: {
+      stdout: `
+        other-pkg
+        node
+      `,
+    },
+  });
+  itBundled("packagejson/BrowserNodeModulesSubpathToPackageCycle", {
+    skipOnEsbuild: true, // esbuild overflows its stack on a remap cycle
+    files: {
+      "/Users/user/project/src/entry.js": `import 'pkg-a/x'`,
+      "/Users/user/project/node_modules/pkg-a/package.json": /* json */ `
+        {
+          "name": "pkg-a",
+          "browser": {
+            "./x": "pkg-a/x"
+          }
+        }
+      `,
+    },
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "pkg-a/x". Maybe you need to "bun install"?`],
+    },
+  });
+  itBundled("packagejson/ExportsShadowsBrowserSubpath", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import {value} from 'demo-pkg/sub'
+        console.log(value)
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "exports": {
+            "./sub": "./from-exports.js"
+          },
+          "browser": {
+            "./sub": "./from-browser.js"
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/from-exports.js": `export let value = 'exports'`,
+      "/Users/user/project/node_modules/demo-pkg/from-browser.js": `export let value = 'browser'`,
+    },
+    run: {
+      stdout: "exports",
     },
   });
   itBundled("packagejson/BrowserNoExt", {
@@ -702,7 +786,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserESBuildIssue2002A", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
@@ -721,7 +804,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserESBuildIssue2002B", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
@@ -740,7 +822,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserESBuildIssue2002C", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
@@ -2288,10 +2369,8 @@ describe("bundler", () => {
       stdout: "exact with-ext as-index as-index-ext",
     },
   });
-  // Browser-map keys are normalized at parse time ("./name" -> "name"), so a
-  // "./name" entry also remaps the *package path* "name" imported from within
-  // the same package (Browserify compatibility quirk); the normalized key
-  // matches the package specifier on the checker's first probe.
+  // A "./name" entry also remaps the *package path* "name" imported from within
+  // the same package (Browserify compatibility quirk).
   itBundled("packagejson/BrowserMapDotSlashOverridesPackagePath", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
@@ -2436,6 +2515,65 @@ describe("bundler", () => {
       stdout: "disabled",
     },
   });
+  // A scoped package's "browser" map applies to its subpath imports, the same
+  // as an unscoped package's.
+  itBundled("packagejson/BrowserMapScopedPackageSubpath", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import scoped from '@scope/pkg/x.js'
+        import scopedNoExt from '@scope/pkg/y'
+        import scopedLoadedFile from '@scope/pkg/x'
+        import unscoped from 'pkg/x.js'
+        console.log(scoped, scopedNoExt, scopedLoadedFile, unscoped, JSON.stringify(require('@scope/pkg/node.js')))
+      `,
+      "/Users/user/project/node_modules/@scope/pkg/package.json": `{ "browser": { "./x.js": "./x-browser.js", "./y": "./y-browser.js", "./node.js": false } }`,
+      "/Users/user/project/node_modules/@scope/pkg/x.js": `module.exports = 'scoped-node'`,
+      "/Users/user/project/node_modules/@scope/pkg/x-browser.js": `module.exports = 'scoped-browser'`,
+      "/Users/user/project/node_modules/@scope/pkg/y.js": `module.exports = 'scoped-node'`,
+      "/Users/user/project/node_modules/@scope/pkg/y-browser.js": `module.exports = 'scoped-browser-no-ext'`,
+      "/Users/user/project/node_modules/@scope/pkg/node.js": `throw 'fail'`,
+      "/Users/user/project/node_modules/pkg/package.json": `{ "browser": { "./x.js": "./x-browser.js" } }`,
+      "/Users/user/project/node_modules/pkg/x.js": `module.exports = 'unscoped-node'`,
+      "/Users/user/project/node_modules/pkg/x-browser.js": `module.exports = 'unscoped-browser'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "scoped-browser scoped-browser-no-ext scoped-browser unscoped-browser {}",
+    },
+  });
+  // A package found through NODE_PATH has its "browser" map applied to subpath
+  // imports too. Bun has no "exports" step for NODE_PATH, so a package with
+  // "exports" keeps the plain file lookup there.
+  itBundled("packagejson/BrowserMapNodePathSubpath", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import sub from 'demo-pkg/x.js'
+        import scoped from '@scope/pkg/x'
+        import main from 'demo-pkg'
+        console.log(sub, scoped, main, JSON.stringify(require('demo-pkg/node.js')), require('with-exports/x.js'))
+      `,
+      "/Users/user/global/with-exports/package.json": `{ "exports": { "./x.js": "./x.js" }, "browser": { "./x.js": "./x-browser.js" } }`,
+      "/Users/user/global/with-exports/x.js": `module.exports = 'exports-node'`,
+      "/Users/user/global/with-exports/x-browser.js": `module.exports = 'exports-browser'`,
+      "/Users/user/global/demo-pkg/package.json": `{ "main": "./main.js", "browser": { "./x.js": "./x-browser.js", "./main.js": "./main-browser.js", "./node.js": false } }`,
+      "/Users/user/global/demo-pkg/x.js": `module.exports = 'node'`,
+      "/Users/user/global/demo-pkg/x-browser.js": `module.exports = 'browser'`,
+      "/Users/user/global/demo-pkg/main.js": `module.exports = 'main-node'`,
+      "/Users/user/global/demo-pkg/main-browser.js": `module.exports = 'main-browser'`,
+      "/Users/user/global/demo-pkg/node.js": `throw 'fail'`,
+      "/Users/user/global/@scope/pkg/package.json": `{ "browser": { "./x": "./x-browser.js" } }`,
+      "/Users/user/global/@scope/pkg/x.js": `module.exports = 'scoped-node'`,
+      "/Users/user/global/@scope/pkg/x-browser.js": `module.exports = 'scoped-browser'`,
+    },
+    backend: "cli",
+    target: "browser",
+    env: {
+      NODE_PATH: "{{root}}/Users/user/global",
+    },
+    run: {
+      stdout: "browser scoped-browser main-browser {} exports-node",
+    },
+  });
   // When "main" points at a directory, the implicit "<dir>/index" is checked
   // against the browser map before extension resolution.
   itBundled("packagejson/BrowserMapMainFieldDirIndexNoExt", {
@@ -2459,5 +2597,753 @@ describe("bundler", () => {
     run: {
       stdout: "browser",
     },
+  });
+  // esbuild's TestPackageJsonDisabledTypeModuleIssue3367. The empty module is
+  // CommonJS also when the disabled file is in a "type": "module" package.
+  itBundled("packagejson/DisabledTypeModuleESBuildIssue3367", {
+    skipOnEsbuild: true, // the esbuild of this harness (0.18.6) is older than the fix
+    files: {
+      "/entry.js": /* js */ `
+        import foo from 'foo'
+        console.log(JSON.stringify(foo))
+      `,
+      "/package.json": /* json */ `
+        {
+          "browser": {
+            "foo": false
+          }
+        }
+      `,
+      "/node_modules/foo/package.json": /* json */ `
+        {
+          "type": "module"
+        }
+      `,
+      "/node_modules/foo/index.js": /* js */ `
+        export default function() {}
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("(disabled):node_modules/foo/index.js");
+    },
+    run: {
+      stdout: "{}",
+    },
+  });
+  // esbuild's TestPackageJsonBrowserMatchingTrailingSlashIssue4187, and the same
+  // with a key that names the directory.
+  for (const [name, key] of [
+    ["BrowserMatchingTrailingSlashESBuildIssue4187", "./node/index.js"],
+    ["BrowserMatchingTrailingSlashDirectoryKey", "./node"],
+  ]) {
+    itBundled(`packagejson/${name}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import axios from "axios"
+          console.log(axios.name)
+        `,
+        "/node_modules/axios/package.json": JSON.stringify({ browser: { [key]: "./browser/index.js" } }),
+        "/node_modules/axios/index.js": /* js */ `
+          module.exports = require('./node/');
+        `,
+        "/node_modules/axios/node/index.js": /* js */ `
+          module.exports = { name: 'Node' }
+        `,
+        "/node_modules/axios/browser/index.js": /* js */ `
+          module.exports = { name: 'Browser' }
+        `,
+      },
+      run: {
+        stdout: "Browser",
+      },
+    });
+  }
+  // A disabled "main" with a trailing separator and the same directory as a
+  // subpath are one empty module.
+  itBundled("packagejson/BrowserMapDisabledMainTrailingSlash", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        const main = require('demo-pkg'), sub = require('demo-pkg/lib')
+        console.log(typeof main, typeof sub, main === sub)
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": `{ "main": "./lib/", "browser": { "./lib": false } }`,
+      "/Users/user/project/node_modules/demo-pkg/lib/index.js": `throw 'fail'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "object object true",
+    },
+  });
+  // Bun applies the "browser" map to the file that "exports" or "imports"
+  // resolves to. esbuild does not. Packages depend on it: the first three
+  // packages have the shape of typeorm, yaml@1 and @huggingface/hub.
+  itBundled("packagejson/BrowserMapAppliesToExportsTarget", {
+    skipOnEsbuild: true, // esbuild has no lookup after resolution
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import hubImport from 'hub-shape'
+        import yamlUtil from 'yaml-shape/util'
+        console.log(require('typeorm-shape'), require('yaml-shape'), yamlUtil, hubImport, require('hub-shape'))
+        console.log(JSON.stringify(require('disabled-target/node')), require('imports-target'))
+      `,
+      "/Users/user/project/node_modules/typeorm-shape/package.json": /* json */ `
+        {
+          "main": "./index.js",
+          "module": "./index.mjs",
+          "browser": {
+            "./index.js": "./browser/index.js",
+            "./index.mjs": "./browser/index.js"
+          },
+          "exports": {
+            ".": {
+              "node": { "import": "./index.mjs", "require": "./index.js" },
+              "browser": { "require": "./index.js", "import": "./browser/index.js", "default": "./index.js" }
+            }
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/typeorm-shape/index.js": `module.exports = 'typeorm-node'`,
+      "/Users/user/project/node_modules/typeorm-shape/index.mjs": `export default 'typeorm-node-esm'`,
+      "/Users/user/project/node_modules/typeorm-shape/browser/index.js": `module.exports = 'typeorm-browser'`,
+      "/Users/user/project/node_modules/yaml-shape/package.json": /* json */ `
+        {
+          "main": "./index.js",
+          "browser": {
+            "./index.js": "./browser/index.js",
+            "./util.js": "./browser/util.js"
+          },
+          "exports": {
+            ".": "./index.js",
+            "./util": "./util.js"
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/yaml-shape/index.js": `module.exports = 'yaml-node'`,
+      "/Users/user/project/node_modules/yaml-shape/util.js": `module.exports = 'yaml-util-node'`,
+      "/Users/user/project/node_modules/yaml-shape/browser/index.js": `module.exports = 'yaml-browser'`,
+      "/Users/user/project/node_modules/yaml-shape/browser/util.js": `module.exports = 'yaml-util-browser'`,
+      "/Users/user/project/node_modules/hub-shape/package.json": /* json */ `
+        {
+          "main": "./dist/index.js",
+          "module": "./dist/index.mjs",
+          "exports": {
+            ".": { "require": "./dist/index.js", "import": "./dist/index.mjs" }
+          },
+          "browser": {
+            "./dist/index.js": "./dist/browser/index.js",
+            "./dist/index.mjs": "./dist/browser/index.mjs"
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/hub-shape/dist/index.js": `module.exports = 'hub-node'`,
+      "/Users/user/project/node_modules/hub-shape/dist/index.mjs": `export default 'hub-node-esm'`,
+      "/Users/user/project/node_modules/hub-shape/dist/browser/index.js": `module.exports = 'hub-browser'`,
+      "/Users/user/project/node_modules/hub-shape/dist/browser/index.mjs": `export default 'hub-browser-esm'`,
+      "/Users/user/project/node_modules/disabled-target/package.json": `{"exports":{"./node":"./node.js"},"browser":{"./node.js":false}}`,
+      "/Users/user/project/node_modules/disabled-target/node.js": `throw 'fail'`,
+      "/Users/user/project/node_modules/imports-target/package.json": `{"main":"./main.js","imports":{"#x":"./x.js"},"browser":{"./x.js":"./x-browser.js"}}`,
+      "/Users/user/project/node_modules/imports-target/main.js": `module.exports = require('#x')`,
+      "/Users/user/project/node_modules/imports-target/x.js": `module.exports = 'x-node'`,
+      "/Users/user/project/node_modules/imports-target/x-browser.js": `module.exports = 'x-browser'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "typeorm-browser yaml-browser yaml-util-browser hub-browser-esm hub-browser\n{} x-browser",
+    },
+  });
+  // A file below a nested package.json is remapped by the map of that
+  // package.json, whether a relative import or a package subpath reaches it.
+  itBundled("packagejson/BrowserMapNestedPackageJsonSubpath", {
+    skipOnEsbuild: true, // esbuild has no lookup after resolution
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        console.log(require('demo-pkg/sub/x.js'), require('demo-pkg/sub/x'), require('demo-pkg/sub/node.js'), require('demo-pkg'))
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": `{"main":"./index.js"}`,
+      "/Users/user/project/node_modules/demo-pkg/index.js": `module.exports = require('./sub/x.js')`,
+      "/Users/user/project/node_modules/demo-pkg/sub/package.json": `{"browser":{"./x.js":"./x-browser.js","./node.js":"./browser.js"}}`,
+      "/Users/user/project/node_modules/demo-pkg/sub/x.js": `module.exports = 'x'`,
+      "/Users/user/project/node_modules/demo-pkg/sub/x-browser.js": `module.exports = 'x-browser'`,
+      "/Users/user/project/node_modules/demo-pkg/sub/node.js": `module.exports = 'node'`,
+      "/Users/user/project/node_modules/demo-pkg/sub/browser.js": `module.exports = 'browser'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "x-browser x-browser browser x-browser",
+    },
+  });
+  // A tsconfig "paths" target inside node_modules is remapped by the map of its
+  // package, as on main. esbuild does not remap it. A project file that
+  // "baseUrl" resolves is not matched by name, as in esbuild.
+  itBundled("packagejson/BrowserMapAppliesToTsconfigPathsTarget", {
+    skipOnEsbuild: true, // esbuild has no lookup after resolution
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import server from 'react-dom/server'
+        console.log(server, require('lib/node'), require('lib/node.js'))
+      `,
+      "/Users/user/project/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": ".",
+            "paths": { "react-dom/*": ["./node_modules/react-dom/*"] }
+          }
+        }
+      `,
+      "/Users/user/project/package.json": `{"browser":{"./lib/node.js":"./lib/browser.js"}}`,
+      "/Users/user/project/lib/node.js": `module.exports = 'node'`,
+      "/Users/user/project/lib/browser.js": `module.exports = 'browser'`,
+      "/Users/user/project/node_modules/react-dom/package.json": `{"main":"./index.js","browser":{"./server.js":"./server.browser.js"}}`,
+      "/Users/user/project/node_modules/react-dom/server.js": `module.exports = 'server-node'`,
+      "/Users/user/project/node_modules/react-dom/server.browser.js": `module.exports = 'server-browser'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "server-browser node node",
+    },
+  });
+  // The file that a key picked is final: another key that names it does not apply.
+  itBundled("packagejson/BrowserMapSubpathKeyAppliedOnce", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        console.log(require('demo-pkg/x'), require('demo-pkg/absent'))
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": `{"browser":{"./x":"./a.js","./absent.js":"./a.js","./a.js":"./b.js"}}`,
+      "/Users/user/project/node_modules/demo-pkg/x.js": `module.exports = 'x'`,
+      "/Users/user/project/node_modules/demo-pkg/a.js": `module.exports = 'a'`,
+      "/Users/user/project/node_modules/demo-pkg/b.js": `module.exports = 'b'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "a a",
+    },
+  });
+  // A key with an implicit extension applies to the file that loads. `require`
+  // loads "x.js" here, so the key for "x.mjs" does not apply to it.
+  itBundled("packagejson/BrowserMapKeyNamesTheFileThatLoads", {
+    skipOnEsbuild: true, // esbuild loads "x.js" for the import too
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import viaImport from 'dual/x'
+        console.log(require('dual/x'), viaImport)
+      `,
+      "/Users/user/project/node_modules/dual/package.json": `{"browser":{"./x.mjs":"./browser.js"}}`,
+      "/Users/user/project/node_modules/dual/x.js": `module.exports = 'x.js'`,
+      "/Users/user/project/node_modules/dual/x.mjs": `export default 'x.mjs'`,
+      "/Users/user/project/node_modules/dual/browser.js": `module.exports = 'browser.js'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "x.js browser.js",
+    },
+  });
+  // The "browser" map is for browser builds only.
+  for (const target of ["node", "bun"] as const) {
+    itBundled(`packagejson/BrowserMapSubpathIgnoredForTarget_${target}`, {
+      files: {
+        "/Users/user/project/src/entry.js": /* js */ `
+          console.log(require('demo-pkg/no-ext'), require('demo-pkg/ext'), require('demo-pkg/off'), require('demo-pkg/absent.js'), require('global-pkg/no-ext'))
+        `,
+        "/Users/user/project/node_modules/demo-pkg/package.json": `{"browser":{"./no-ext":"./browser.js","./ext.js":"./browser.js","./off":false,"./absent":"./browser.js"}}`,
+        "/Users/user/project/node_modules/demo-pkg/no-ext.js": `module.exports = 'node'`,
+        "/Users/user/project/node_modules/demo-pkg/ext.js": `module.exports = 'node'`,
+        "/Users/user/project/node_modules/demo-pkg/off.js": `module.exports = 'off'`,
+        "/Users/user/project/node_modules/demo-pkg/absent.js": `module.exports = 'absent'`,
+        "/Users/user/project/node_modules/demo-pkg/browser.js": `module.exports = 'browser'`,
+        "/Users/user/global/global-pkg/package.json": `{"browser":{"./no-ext":"./browser.js"}}`,
+        "/Users/user/global/global-pkg/no-ext.js": `module.exports = 'global-node'`,
+        "/Users/user/global/global-pkg/browser.js": `module.exports = 'browser'`,
+      },
+      backend: "cli",
+      target,
+      env: {
+        NODE_PATH: "{{root}}/Users/user/global",
+      },
+      run: {
+        stdout: "node node off absent global-node",
+      },
+    });
+  }
+  // A target that is a package path can name another entry. The chain is
+  // followed, and a chain that leads back to an entry stops at once, also when
+  // the package has a copy in every node_modules directory on the way up.
+  itBundled("packagejson/BrowserMapSubpathTargetChain", {
+    skipOnEsbuild: true, // esbuild overflows its stack on a remap cycle
+    files: {
+      "/Users/user/project/a/b/src/entry.js": /* js */ `
+        console.log(require('first/x'))
+        try { require('cycle/x') } catch { console.log('cycle is not found') }
+      `,
+      "/Users/user/project/node_modules/first/package.json": `{"browser":{"./x":"second/y"}}`,
+      "/Users/user/project/node_modules/second/package.json": `{"browser":{"./y":"third/z"}}`,
+      "/Users/user/project/node_modules/third/z.js": `module.exports = 'third'`,
+      "/Users/user/project/node_modules/cycle/package.json": `{"browser":{"./x":"cycle/x"}}`,
+      "/Users/user/project/a/node_modules/cycle/package.json": `{"browser":{"./x":"cycle/x"}}`,
+      "/Users/user/project/a/b/node_modules/cycle/package.json": `{"browser":{"./x":"cycle/x"}}`,
+      "/Users/user/project/a/b/src/node_modules/cycle/package.json": `{"browser":{"./x":"cycle/x"}}`,
+    },
+    target: "browser",
+    run: {
+      stdout: "third\ncycle is not found",
+    },
+  });
+  // An extensionless target inside node_modules is one file, whichever import
+  // reaches the key: ".js" comes before ".ts" there, as for any other import.
+  itBundled("packagejson/BrowserMapTargetExtensionOrderInNodeModules", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        console.log(require('demo-pkg'), require('demo-pkg/node.js'))
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": `{"main":"./index.js","browser":{"./node.js":"./browser"}}`,
+      "/Users/user/project/node_modules/demo-pkg/index.js": `module.exports = require('./node.js')`,
+      "/Users/user/project/node_modules/demo-pkg/node.js": `module.exports = 'node'`,
+      "/Users/user/project/node_modules/demo-pkg/browser.js": `module.exports = 'browser.js'`,
+      "/Users/user/project/node_modules/demo-pkg/browser.ts": `module.exports = 'browser.ts'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "browser.js browser.js",
+    },
+  });
+
+  // Test the "browser" field in "package.json". The first 19 cases are esbuild's
+  // end-to-end cases. The target defaults to "browser". A mapped file prints
+  // "works"; the file the map replaces throws, has invalid syntax, or is absent.
+  const works = `console.log('works')`;
+  itBundled("packagejson/BrowserFieldBareToRelativeKeyDotSlash", {
+    files: {
+      "entry.js": `require('foo')`,
+      "package.json": `{ "browser": { "./foo": "./file" } }`,
+      "file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldBareToRelativeKeyBare", {
+    files: {
+      "entry.js": `require('foo')`,
+      "package.json": `{ "browser": { "foo": "./file" } }`,
+      "file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldRelativeToRelativeKeyDotSlash", {
+    files: {
+      "entry.js": `require('./foo')`,
+      "package.json": `{ "browser": { "./foo": "./file" } }`,
+      "file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldRelativeToRelativeKeyBare", {
+    files: {
+      "entry.js": `require('./foo')`,
+      "package.json": `{ "browser": { "foo": "./file" } }`,
+      "file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldSubpathKeyDotSlashFilePresent", {
+    files: {
+      "entry.js": `require('pkg/foo/bar')`,
+      "node_modules/pkg/package.json": `{ "browser": { "./foo/bar": "./file" } }`,
+      "node_modules/pkg/foo/bar.js": `invalid syntax`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldSubpathKeyBareFilePresent", {
+    files: {
+      "entry.js": `require('pkg/foo/bar')`,
+      "node_modules/pkg/package.json": `{ "browser": { "foo/bar": "./file" } }`,
+      "node_modules/pkg/foo/bar.js": `invalid syntax`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldSubpathKeyDotSlashFileAbsent", {
+    files: {
+      "entry.js": `require('pkg/foo/bar')`,
+      "node_modules/pkg/package.json": `{ "browser": { "./foo/bar": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldSubpathKeyBareFileAbsent", {
+    files: {
+      "entry.js": `require('pkg/foo/bar')`,
+      "node_modules/pkg/package.json": `{ "browser": { "foo/bar": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldBareSubpathInsidePackageKeyDotSlash", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "node_modules/pkg/index.js": `require('foo/bar')`,
+      "node_modules/pkg/package.json": `{ "browser": { "./foo/bar": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldBareSubpathInsidePackageKeyBare", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "node_modules/pkg/index.js": `require('foo/bar')`,
+      "node_modules/pkg/package.json": `{ "browser": { "foo/bar": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldIndexKeyWithExtFilePresent", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "node_modules/pkg/index.js": `throw 'fail'`,
+      "node_modules/pkg/package.json": `{ "browser": { "./index.js": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldIndexKeyWithExtFileAbsent", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "node_modules/pkg/package.json": `{ "browser": { "./index.js": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldIndexKeyNoExtFilePresent", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "node_modules/pkg/index.js": `throw 'fail'`,
+      "node_modules/pkg/package.json": `{ "browser": { "./index": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldIndexKeyNoExtFileAbsent", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "node_modules/pkg/package.json": `{ "browser": { "./index": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldMainKeyWithExtFilePresent", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "node_modules/pkg/main.js": `throw 'fail'`,
+      "node_modules/pkg/package.json": `{ "main": "./main",\n  "browser": { "./main.js": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldMainKeyWithExtFileAbsent", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "node_modules/pkg/package.json": `{ "main": "./main",\n  "browser": { "./main.js": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldInnerPackageMapWinsOverOuter", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "package.json": `{ "browser": { "pkg2": "pkg3" } }`,
+      "node_modules/pkg/index.js": `require('pkg2')`,
+      "node_modules/pkg/package.json": `{ "browser": { "pkg2": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldOuterPackageMapAppliesInsideNodeModules", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "package.json": `{ "browser": { "pkg2": "pkg3" } }`,
+      "node_modules/pkg/index.js": `require('pkg2')`,
+      "node_modules/pkg2/index.js": `throw 'fail'`,
+      "node_modules/pkg3/index.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldInnerPackageDotSlashKeyOverridesBarePath", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "package.json": `{ "browser": { "pkg2": "pkg3" } }`,
+      "node_modules/pkg/index.js": `require('pkg2')`,
+      "node_modules/pkg/package.json": `{ "browser": { "./pkg2": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+
+  // The cases from here to the end of the "browser" field block are not esbuild's.
+  // The same matrix through `import` statements.
+  itBundled("packagejson/BrowserFieldImportBareKeyDotSlash", {
+    files: {
+      "entry.js": `import 'foo'`,
+      "package.json": `{ "browser": { "./foo": "./file" } }`,
+      "file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldImportSubpathKeyDotSlashFileAbsent", {
+    files: {
+      "entry.js": `import {value} from 'pkg/foo/bar'; console.log(value)`,
+      "node_modules/pkg/package.json": `{ "browser": { "./foo/bar": "./file" } }`,
+      "node_modules/pkg/file.js": `export const value = 'works'`,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldImportSubpathKeyBareFilePresent", {
+    files: {
+      "entry.js": `import {value} from 'pkg/foo/bar'; console.log(value)`,
+      "node_modules/pkg/package.json": `{ "browser": { "foo/bar": "./file" } }`,
+      "node_modules/pkg/foo/bar.js": `invalid syntax`,
+      "node_modules/pkg/file.js": `export const value = 'works'`,
+    },
+    run: { stdout: "works" },
+  });
+
+  // A key with an implicit extension names a file that does not exist.
+  itBundled("packagejson/BrowserFieldSubpathKeyWithExtFileAbsent", {
+    files: {
+      "entry.js": `require('pkg/foo/bar')`,
+      "node_modules/pkg/package.json": `{ "browser": { "./foo/bar.js": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  // Browserify lets "./pkg" match `require('pkg')` only from the package that
+  // owns the map. A "./pkg2" entry in the project does not reach into a
+  // dependency that requires "pkg2".
+  itBundled("packagejson/BrowserFieldDotSlashKeyDoesNotCrossNodeModules", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "package.json": `{ "browser": { "./pkg2": "./file" } }`,
+      "file.js": `throw 'fail'`,
+      "node_modules/pkg/index.js": `require('pkg2')`,
+      "node_modules/pkg2/index.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  // The "./pkg" spelling is matched without implicit extensions: "./sub.js" does
+  // not remap `require('sub')`, so the real "sub" package is used.
+  itBundled("packagejson/BrowserFieldDotSlashKeyWithExtDoesNotMatchBarePath", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "node_modules/pkg/index.js": `require('sub')`,
+      "node_modules/pkg/package.json": `{ "browser": { "./sub.js": "./file.js" } }`,
+      "node_modules/pkg/file.js": `throw 'fail'`,
+      "node_modules/sub/index.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  // A remap to a package that does not exist falls back to the subpath's own
+  // file. When that is missing too, the lookup moves on to the parent
+  // node_modules, where the other copy of the package resolves the subpath
+  // through "exports". The target has a subpath of its own, so the lookup of
+  // the target must leave the subpath of the import it interrupts intact.
+  itBundled("packagejson/BrowserFieldSubpathRemapToMissingPackage", {
+    files: {
+      "src/entry.js": `require('pkg/foo'); require('pkg2/bar')`,
+      "src/node_modules/pkg/package.json": `{ "browser": { "./foo": "missing-pkg/some/other/subpath" } }`,
+      "src/node_modules/pkg/foo.js": `console.log('fallback')`,
+      "src/node_modules/pkg2/package.json": `{ "browser": { "./bar": "missing-pkg/some/other/subpath" } }`,
+      "node_modules/pkg2/package.json": `{ "exports": { "./bar": "./bar.js" } }`,
+      "node_modules/pkg2/bar.js": `console.log('parent')`,
+    },
+    run: { stdout: "fallback\nparent" },
+  });
+  // A remap target that leads back to the same subpath is a cycle. The remap
+  // stops applying: the subpath's own file is used, or the import fails.
+  itBundled("packagejson/BrowserFieldSubpathRemapCycleToSelf", {
+    skipOnEsbuild: true, // esbuild overflows its stack on a remap cycle
+    files: {
+      "entry.js": `require('pkg-a/x')`,
+      "node_modules/pkg-a/package.json": `{ "browser": { "./x": "pkg-a/x" } }`,
+    },
+    bundleErrors: {
+      "/entry.js": [`Could not resolve: "pkg-a/x"`],
+    },
+  });
+  itBundled("packagejson/BrowserFieldSubpathRemapCycleToSelfWithFile", {
+    skipOnEsbuild: true, // esbuild overflows its stack on a remap cycle
+    files: {
+      "entry.js": `require('pkg-a/x')`,
+      "node_modules/pkg-a/package.json": `{ "browser": { "./x": "pkg-a/x" } }`,
+      "node_modules/pkg-a/x.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("packagejson/BrowserFieldSubpathRemapCycleBetweenPackages", {
+    skipOnEsbuild: true, // esbuild overflows its stack on a remap cycle
+    files: {
+      "entry.js": `import 'pkg-a/x'`,
+      "node_modules/pkg-a/package.json": `{ "browser": { "./x": "pkg-b/y" } }`,
+      "node_modules/pkg-b/package.json": `{ "browser": { "./y": "pkg-a/x" } }`,
+    },
+    bundleErrors: {
+      "/entry.js": [`Could not resolve: "pkg-a/x"`],
+    },
+  });
+  // From a subdirectory of the package, the bare path is matched against the
+  // key spelled relative to the importer's directory.
+  itBundled("packagejson/BrowserFieldBarePathFromSubdirectory", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "node_modules/pkg/package.json": `{ "main": "./sub/foo.js", "browser": { "./sub/sub": "./sub/bar.js", "./sub/nodeonly": false } }`,
+      "node_modules/pkg/sub/foo.js": `require('sub'); console.log(JSON.stringify(require('nodeonly')))`,
+      "node_modules/pkg/sub/bar.js": works,
+      "node_modules/sub/index.js": `throw 'fail'`,
+      "node_modules/nodeonly/index.js": `throw 'fail'`,
+    },
+    run: { stdout: "works\n{}" },
+  });
+
+  // A module disabled with `false` is an empty CommonJS module: `require()`
+  // returns the same `{}` every time and `import` sees its namespace object.
+  itBundled("packagejson/BrowserFieldDisabledModuleIsEmptyObject", {
+    files: {
+      "entry.js": `console.log(JSON.stringify(require('pkg')))`,
+      "node_modules/pkg/package.json": `{ "main": "index.js", "browser": { "./node.js": false, "nodeonly": false, "./missing.js": false } }`,
+      "node_modules/pkg/index.js": `
+        var n = require('./node.js'), m = require('nodeonly'), x = require('./missing.js')
+        module.exports = [typeof n, Object.keys(n).length, typeof m, Object.keys(m).length, typeof x, n === require('./node.js')]
+      `,
+      "node_modules/pkg/node.js": `throw 'fail'`,
+      "node_modules/nodeonly/index.js": `throw 'fail'`,
+    },
+    run: { stdout: `["object",0,"object",0,"object",true]` },
+  });
+  itBundled("packagejson/BrowserFieldDisabledModuleImportForms", {
+    files: {
+      "entry.js": `import {info} from 'pkg'; console.log(JSON.stringify(info))`,
+      "node_modules/pkg/package.json": `{ "main": "index.js", "browser": { "./node.js": false } }`,
+      "node_modules/pkg/index.js": `
+        import * as ns from './node.js'
+        import def, {named} from './node.js'
+        import './node.js'
+        export const info = [typeof ns, Object.keys(ns), typeof def, Object.keys(def).length, typeof named]
+      `,
+      "node_modules/pkg/node.js": `throw 'fail'`,
+    },
+    run: { stdout: `["object",["default"],"object",0,"undefined"]` },
+  });
+  itBundled("packagejson/BrowserFieldDisabledModuleDynamicImport", {
+    files: {
+      "entry.js": `import('pkg').then(pkg => pkg.info).then(info => console.log(JSON.stringify(info)))`,
+      "node_modules/pkg/package.json": `{ "main": "index.js", "browser": { "./node.js": false } }`,
+      "node_modules/pkg/index.js": `export const info = import('./node.js').then(ns => [typeof ns, Object.keys(ns), ns.default])`,
+      "node_modules/pkg/node.js": `throw 'fail'`,
+    },
+    run: { stdout: `["object",["default"],{}]` },
+  });
+  itBundled("packagejson/BrowserFieldDisabledModuleDefaultAndStarMinified", {
+    files: {
+      "entry.js": `import def, * as ns from './node.js'; console.log(JSON.stringify([def, Object.keys(ns)]))`,
+      "package.json": `{ "browser": { "./node.js": false } }`,
+      "node.js": `throw 'fail'`,
+    },
+    minifyWhitespace: true,
+    run: { stdout: `[{},["default"]]` },
+  });
+  // The empty module is CommonJS also when the disabled file is ".mjs" or ".mts".
+  // esbuild treats it as ESM, and fails the build on the default import.
+  itBundled("packagejson/BrowserFieldDisabledModuleWithEsmExtension", {
+    skipOnEsbuild: true,
+    files: {
+      "entry.js": `
+        import mjs from 'pkg/node.mjs'
+        import * as mts from 'pkg/node.mts'
+        console.log(JSON.stringify([mjs, require('pkg/node.mjs'), mts.default, require('pkg/node.mts')]))
+      `,
+      "node_modules/pkg/package.json": `{ "browser": { "./node.mjs": false, "./node.mts": false } }`,
+      "node_modules/pkg/node.mjs": `throw 'fail'`,
+      "node_modules/pkg/node.mts": `throw 'fail'`,
+    },
+    run: { stdout: `[{},{},{},{}]` },
+  });
+  // A re-export from a disabled module. `export *` has nothing to re-export. A
+  // named re-export is undefined, with a warning.
+  const disabledReExport = {
+    "package.json": `{ "browser": { "./node.js": false } }`,
+    "node.js": `throw 'fail'`,
+    "star.js": `export * from './node.js'`,
+    "named.js": `export { named, default as def } from './node.js'; export * as ns from './node.js'`,
+  };
+  itBundled("packagejson/BrowserFieldDisabledModuleReExport", {
+    files: {
+      "entry.js": `
+        import * as star from './star'
+        import { named, def, ns } from './named'
+        console.log(JSON.stringify([Object.keys(star), typeof named, def, Object.keys(ns)]))
+      `,
+      ...disabledReExport,
+    },
+    bundleWarnings: {
+      "/named.js": [
+        `Import "named" will always be undefined because the file "(disabled):node.js" has no exports`,
+        `Import "named" will always be undefined because the file "(disabled):node.js" has no exports`,
+      ],
+    },
+    run: { stdout: `[[],"undefined",{},["default"]]` },
+  });
+  // A name that only `export *` from the disabled module can give is undefined,
+  // with a warning. On main it is a property read at run time. esbuild fails the build.
+  itBundled("packagejson/BrowserFieldDisabledModuleReExportStarMissingName", {
+    skipOnEsbuild: true,
+    files: {
+      "entry.js": `import { x } from './star'; console.log(x)`,
+      ...disabledReExport,
+    },
+    bundleWarnings: {
+      "/entry.js": [`Import "x" will always be undefined because there is no matching export in "star.js"`],
+    },
+    run: { stdout: "undefined" },
+  });
+  // A subpath the package disables is also disabled when imported from outside
+  // the package, and it stays a separate module from the enabled file.
+  itBundled("packagejson/BrowserFieldDisabledSubpathFromOutside", {
+    files: {
+      "entry.js": `
+        import * as ns from 'pkg/node.js'
+        console.log(typeof ns, JSON.stringify(require('pkg/node.js')))
+      `,
+      "node_modules/pkg/package.json": `{ "browser": { "./node.js": false } }`,
+      "node_modules/pkg/node.js": `throw 'fail'`,
+    },
+    run: { stdout: "object {}" },
+  });
+  // A package whose "module" entry is disabled and whose "main" entry is not:
+  // "main" stands in for it, for `import` and for `require`.
+  const disabledModuleEntry = {
+    "node_modules/pkg/package.json": `{ "main": "./main.js", "module": "./module.js", "browser": { "./module.js": false } }`,
+    "node_modules/pkg/main.js": `module.exports = 'main'`,
+    "node_modules/pkg/module.js": `throw 'fail'`,
+  };
+  itBundled("packagejson/BrowserFieldDisabledModuleEntryImport", {
+    skipOnEsbuild: true, // esbuild gives an `import` alone the empty module
+    files: {
+      "entry.js": `import v from 'pkg'; console.log(JSON.stringify([typeof v, v]))`,
+      ...disabledModuleEntry,
+    },
+    run: { stdout: `["string","main"]` },
+  });
+  itBundled("packagejson/BrowserFieldDisabledModuleEntryRequire", {
+    files: {
+      "entry.js": `console.log(require('pkg'))`,
+      ...disabledModuleEntry,
+    },
+    run: { stdout: "main" },
+  });
+  itBundled("packagejson/BrowserFieldDisabledModuleEntryImportAndRequire", {
+    files: {
+      "entry.js": `import v from 'pkg'; console.log(JSON.stringify([typeof v, v]), require('pkg'))`,
+      ...disabledModuleEntry,
+    },
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude("(disabled):");
+    },
+    run: { stdout: `["string","main"] main` },
   });
 });

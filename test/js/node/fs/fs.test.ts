@@ -6,9 +6,11 @@ import {
   getMaxFD,
   isBroken,
   isDebug,
+  isFreeBSD,
   isGlibc,
   isIntelMacOS,
   isLinux,
+  isMacOS,
   isPosix,
   isWindows,
   tempDir,
@@ -3255,6 +3257,158 @@ it.if(isPosix)("realpathSync doesn't block on FIFO", () => {
   mkfifo(path, 0o666);
   realpathSync(path);
   unlinkSync(path);
+});
+
+const realpathVariants = {
+  "realpathSync": fs.realpathSync,
+  "realpath": promisify(fs.realpath),
+  "realpathSync.native": fs.realpathSync.native,
+  "realpath.native": promisify(fs.realpath.native),
+  "promises.realpath": fs.promises.realpath,
+};
+/** What each variant answers for each path: a path relative to `root`, or an error code. */
+async function resolveWithEveryVariant(root: string, paths: string[]) {
+  const results: Record<string, string[]> = {};
+  for (const [variant, realpath] of Object.entries(realpathVariants)) {
+    results[variant] = [];
+    for (const path of paths) {
+      try {
+        results[variant].push(relative(root, await realpath(path)));
+      } catch (e: any) {
+        results[variant].push(e.code);
+      }
+    }
+  }
+  return results;
+}
+const forEveryVariant = (expected: string[]) =>
+  Object.fromEntries(Object.keys(realpathVariants).map(variant => [variant, expected]));
+
+// FreeBSD's realpath still opens the path.
+it.if(isPosix && !isFreeBSD)("realpath does not open what its path leads to", async () => {
+  using dir = tempDir("realpath", { "file": "", "dir/inside": "" });
+  const root = String(dir);
+  using server = Bun.listen({ unix: join(root, "socket"), socket: { data() {} } });
+  const names = ["file", "dir", "socket"];
+  for (const name of names) symlinkSync(name, join(root, "to-" + name));
+  fs.chmodSync(join(root, "file"), 0);
+  fs.chmodSync(join(root, "dir"), 0o100);
+  try {
+    const refusals: Record<string, string> = {
+      "file": "EACCES",
+      "dir": "EACCES",
+      "socket": isMacOS ? "EOPNOTSUPP" : "ENXIO",
+    };
+    // Root can open the file and the directory.
+    for (const name of process.getuid!() === 0 ? ["socket"] : names) {
+      expect(() => closeSync(openSync(join(root, name), "r"))).toThrow(
+        expect.objectContaining({ code: refusals[name] }),
+      );
+    }
+    const paths = [...names.flatMap(name => [name, "to-" + name]), "dir/inside", "to-dir/inside"];
+    expect(
+      await resolveWithEveryVariant(
+        root,
+        paths.map(path => join(root, path)),
+      ),
+    ).toEqual(forEveryVariant(["file", "file", "dir", "dir", "socket", "socket", "dir/inside", "dir/inside"]));
+  } finally {
+    fs.chmodSync(join(root, "dir"), 0o755);
+  }
+});
+
+// Linux needs one for `O_PATH`.
+it.if(isMacOS)("realpath needs no file descriptor", async () => {
+  using dir = tempDir("realpath", { "file": "" });
+  symlinkSync("loop", join(String(dir), "loop"));
+  const script = `
+    const fs = require("node:fs");
+    const { relative } = require("node:path");
+    // getcwd() needs a descriptor on macOS.
+    const cwd = process.cwd();
+    try {
+      for (;;) fs.openSync("/dev/null", "r");
+    } catch (e) {
+      console.log(e.code);
+    }
+    for (const path of ["file", "missing", "file/below", "loop"]) {
+      for (const realpath of [fs.realpathSync, fs.realpathSync.native]) {
+        try {
+          console.log(path, relative(cwd, realpath(path)));
+        } catch (e) {
+          console.log(path, e.code);
+        }
+      }
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: ["/bin/sh", "-c", 'ulimit -n 128 && exec "$@"', "sh", bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n")).toEqual([
+    "EMFILE",
+    "file file",
+    "file file",
+    "missing ENOENT",
+    "missing ENOENT",
+    "file/below ENOTDIR",
+    "file/below ENOTDIR",
+    "loop ELOOP",
+    "loop ELOOP",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
+// FreeBSD only has /dev/fd/0 to 2 unless fdescfs is mounted.
+it.if(isPosix && !isFreeBSD)("realpath leads from /dev/fd to the open file", async () => {
+  using dir = tempDir("realpath", { "file": "" });
+  const fd = openSync(join(String(dir), "file"), "r");
+  try {
+    expect(await resolveWithEveryVariant(String(dir), ["/dev/fd/" + fd])).toEqual(forEveryVariant(["file"]));
+  } finally {
+    closeSync(fd);
+  }
+});
+
+it.if(isMacOS)("realpath resolves what macOS only resolves for open()", async () => {
+  using dir = tempDir("realpath", { "file": "", "forked": "", "denied": "" });
+  const root = String(dir);
+  writeFileSync(join(root, "forked/..namedfork/rsrc"), "fork");
+  const deny = Bun.spawnSync(["/bin/chmod", "+a", "everyone deny readattr", join(root, "denied")]);
+  expect(deny.stderr.toString()).toBe("");
+  expect(deny.exitCode).toBe(0);
+  try {
+    const cases = [
+      [join(root, "forked/..namedfork/rsrc"), "forked/..namedfork/rsrc"],
+      [join(root, "denied"), "denied"],
+    ];
+    // macOS 15.4 is the first with these prefixes.
+    if (existsSync("/.nofollow" + root)) {
+      // 1,020 bytes fit in PATH_MAX, and no longer do after a prefix.
+      let deep = root;
+      while (deep.length < 1020) deep += "/" + Buffer.alloc(Math.min(200, 1019 - deep.length), "d").toString();
+      mkdirSync(deep, { recursive: true });
+      symlinkSync(deep, join(root, "to-deep"));
+      cases.push(
+        ["/.nofollow" + join(root, "file"), "file"],
+        ["/.resolve/1" + join(root, "file"), "file"],
+        ["/.resolve/0" + join(root, "to-deep"), relative(root, deep)],
+      );
+    }
+    expect(
+      await resolveWithEveryVariant(
+        root,
+        cases.map(([path]) => path),
+      ),
+    ).toEqual(forEveryVariant(cases.map(([, expected]) => expected)));
+  } finally {
+    Bun.spawnSync(["/bin/chmod", "-N", join(root, "denied")]);
+  }
 });
 
 // Regression guard for realpathSync on POSIX hosts. On Linux, getFdPath has
@@ -7326,7 +7480,7 @@ it.if(isPosix)("realpath reports ENAMETOOLONG when cwd plus the path exceeds the
 
   // Each relative path is within the per-argument limit and only its absolute
   // form is too long. `longPath` does not exist. `deep` does, so the native
-  // variants open it and find out when they ask for the path of the descriptor.
+  // variants find out when the system has resolved it and cannot say where it is.
   const script = `
     const fs = require("node:fs");
     const longPath = "a".repeat(4090);

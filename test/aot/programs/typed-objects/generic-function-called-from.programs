@@ -1,0 +1,2642 @@
+////: Known
+class Known {
+  x = 1;
+}
+////: Other
+class Other {
+  z = 3;
+}
+////: for
+for (let round = 0; round < 3; round++) {
+  const w = wide<R>({ a: round, b: "x" }, 7);
+  w.g = 8;
+  console.log((w as object) === kept[round], kept[round].g, w.g, w.a, w.b, Object.keys(w).join());
+}
+////: inLoop
+function inLoop(values: any[]) {
+  let known = 0, «1» = 0;
+  for (let i = 0; i < values.length; i++) {
+    if (values[i] instanceof Known) known++;
+    if (values[i] instanceof «2») «1»++;
+  }
+  return known + "/" + «1»;
+}
+////: lines-31
+function «1»(v: «2» | «3»): number {
+  return v.kind === «4» ? v.«5» : v.«6»;
+}
+////: row-2
+function row(name: string, f: () => unknown): void {
+  let said: string;
+  try {
+    said = JSON.stringify(f());
+  } catch (e) {
+    said = "threw " + (e as Error).name;
+  }
+  console.log(name + ": " + said);
+}
+//// generic-function-called-from-untyped-code.ts
+// Typed code hands generic functions and a generic class objects of one class only. Untyped code calls the same functions with everything else and stores everything else into the field that they fill. Every call answers as in plain Bun, and typed code goes on as before.
+////= lines-16	Named	name	string
+
+////= Item
+
+class Box<T> {
+  value: T;
+
+  constructor(value: T) {
+    this.value = value;
+  }
+
+  get(): T {
+    return this.value;
+  }
+
+  replace(value: T): T {
+    const previous = this.value;
+    this.value = value;
+    return previous;
+  }
+}
+
+function identity<T>(value: T): T {
+  return value;
+}
+
+function nameOf<T extends Named>(value: T): string {
+  return value.name;
+}
+
+function rename<T extends Named>(value: T, name: string): T {
+  value.name = name;
+  return value;
+}
+
+function choose<T>(useFirst: boolean, first: T, second: T): T {
+  return useFirst ? first : second;
+}
+
+function apply<T, R>(value: T, change: (value: T) => R): R {
+  return change(value);
+}
+
+function wrap<T>(value: T): Box<T> {
+  return new Box(value);
+}
+
+function unwrap<T>(box: Box<T>): T {
+  return box.value;
+}
+
+function nameInBox(box: Box<Item>): string {
+  return box.value.name;
+}
+
+function countInBox(box: Box<Item>): number {
+  const item = unwrap(box);
+  return item.count;
+}
+
+function show(value: unknown): string {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "symbol") return "symbol " + value.description;
+  if (typeof value === "function") return "function " + value.name;
+  if (value instanceof Item) return "Item " + show(value.name) + " " + show(value.count);
+  if (value instanceof Box) return "Box(" + show(value.value) + ")";
+  if (Array.isArray(value)) return "[" + value.map(element => show(element)).join() + "]";
+  if (typeof value === "object" && value !== null) return "{" + Object.keys(value).join() + "}";
+  return String(value);
+}
+
+////= attempt-5	show
+
+function typedRound(label: string): void {
+  const item = new Item("typed", 1);
+  const other = new Item("other", 2);
+  const box = wrap(item);
+  const answers = [
+    identity(item).name,
+    nameOf(item),
+    rename(other, "renamed").name,
+    choose(false, item, other).name,
+    apply(item, value => value.count + 1),
+    nameInBox(box),
+    countInBox(box),
+    unwrap(box).name,
+    box.replace(other).name,
+    box.get().count,
+    nameInBox(new Box(other)),
+  ];
+  console.log(label + ":", answers.join(" "));
+}
+
+////= lines-11	Stranger	name	"stranger"
+
+function named() {}
+
+const loose: any = { identity, nameOf, rename, choose, apply, wrap, unwrap, nameInBox, countInBox, Box };
+
+function makeStrangers(): any[] {
+  const inherited = Object.create({ name: "inherited" });
+  let uses = 0;
+  const computed = {
+    get name(): string {
+      uses++;
+      return "computed " + uses;
+    },
+    set name(value: string) {
+      uses += 10;
+    },
+  };
+  return [
+    5,
+    -0,
+    0.5,
+    NaN,
+    "text",
+    "",
+    true,
+    7n,
+    Symbol("s"),
+    undefined,
+    null,
+    { name: "plain" },
+    { name: 9, more: 1 },
+    {},
+    JSON.parse('{"name":"parsed","count":8}'),
+    inherited,
+    computed,
+    Object.freeze({ name: "frozen" }),
+    new Stranger(),
+    new Proxy({ name: "target" }, {}),
+    [1, 2],
+    named,
+    new Item("an item after all", 6),
+  ];
+}
+
+typedRound("before");
+
+for (const stranger of makeStrangers()) {
+  const answers = [
+    attempt(() => loose.identity(stranger)),
+    attempt(() => loose.nameOf(stranger)),
+    attempt(() => loose.choose(true, stranger, 1)),
+    attempt(() => loose.choose(false, new Item("first", 0), stranger)),
+    attempt(() => loose.apply(stranger, (value: any) => typeof value)),
+    attempt(() => loose.apply(1, stranger)),
+    attempt(() => loose.wrap(stranger)),
+    attempt(() => loose.unwrap(loose.wrap(stranger))),
+    attempt(() => loose.unwrap(stranger)),
+    attempt(() => loose.nameInBox(loose.wrap(stranger))),
+    attempt(() => loose.nameInBox(stranger)),
+    attempt(() => loose.countInBox(new loose.Box(stranger))),
+  ];
+  console.log(show(stranger) + ":", answers.join(" "));
+}
+
+for (const stranger of makeStrangers()) console.log("renamed", show(stranger) + ":", attempt(() => loose.rename(stranger, "new")), attempt(() => loose.nameOf(stranger)));
+
+typedRound("after the calls");
+
+for (const stranger of makeStrangers()) {
+  const made: Box<Item> = loose.wrap(stranger);
+  const filled = wrap(new Item("filled", 3));
+  (filled as any).value = stranger;
+  const replaced = wrap(new Item("replaced", 4));
+  const before = loose.Box.prototype.replace.call(replaced, stranger);
+  const answers = [
+    attempt(() => nameInBox(made)),
+    attempt(() => countInBox(made)),
+    attempt(() => unwrap(made)),
+    attempt(() => made.get()),
+    attempt(() => nameInBox(filled)),
+    attempt(() => filled.value),
+    attempt(() => filled.replace(new Item("back", 5))),
+    attempt(() => nameInBox(filled)),
+    attempt(() => before),
+    attempt(() => countInBox(replaced)),
+    Object.keys(made).join(),
+    Object.keys(filled).join(),
+  ];
+  console.log("stored", show(stranger) + ":", answers.join(" "));
+}
+
+const altered = wrap(new Item("altered", 7));
+delete (altered as any).value;
+console.log(attempt(() => nameInBox(altered)), attempt(() => unwrap(altered)), Object.keys(altered).length);
+altered.value = new Item("stored again", 8);
+console.log(nameInBox(altered), countInBox(altered), Object.keys(altered).join());
+let reads = 0;
+Object.defineProperty(altered, "value", {
+  get() {
+    reads++;
+    return reads % 2 === 1 ? new Item("from a getter", reads) : reads;
+  },
+  configurable: true,
+});
+console.log(attempt(() => nameInBox(altered)), attempt(() => nameInBox(altered)), attempt(() => countInBox(altered)), attempt(() => countInBox(altered)), reads);
+
+console.log(attempt(() => loose.nameOf()), attempt(() => loose.identity()), attempt(() => loose.wrap()), attempt(() => loose.choose()), attempt(() => loose.identity(1, 2, 3)));
+console.log(attempt(() => Reflect.apply(nameOf, undefined, [{ name: "reflected" }])), attempt(() => (nameOf as any).call(null, 3)), attempt(() => [{ name: "mapped" }, "text", named].map(nameOf as any)));
+console.log(attempt(() => Reflect.construct(Box, [4])), attempt(() => Reflect.construct(Box, [new Item("constructed", 9)])), attempt(() => loose.Box(1)));
+
+let mixed = 0;
+const typed = new Item("typed in a loop", 1);
+for (let i = 0; i < 600; i++) {
+  mixed += nameOf(typed).length + identity(typed).count;
+  if (i % 3 === 0) mixed += loose.nameOf({ name: "ab" }).length + loose.identity(i);
+  if (i % 5 === 0) mixed += loose.unwrap(loose.wrap(i)) + countInBox(wrap(typed));
+}
+console.log(mixed);
+
+typedRound("at the end");
+
+export {};
+//// generic-helper-returns-as-t.ts
+// A generic helper fills an object key by key and returns it with a single `as T`; the caller stores the result in a typed field.
+type WrapMethod = (f: (...args: never[]) => unknown) => (...args: never[]) => unknown;
+function seal<T extends object>(x: T): T { return Object.freeze(x); }
+function wrapAll<T extends object>(noun: T, wrapMethod: WrapMethod): T {
+  const wrapped: Record<string, unknown> = {};
+  for (const key of Object.keys(noun)) {
+    const member: unknown = (noun as Record<string, unknown>)[key];
+    wrapped[key] = typeof member === "function" ? wrapMethod(member as (...args: never[]) => unknown) : member;
+  }
+  return seal(wrapped) as T;
+}
+function uiOf(name: string) { return seal({ notice(text: string) { return name + ":" + text; }, size: 3, resolve(n: number) { return n * 2; } }); }
+function modelOf() { return seal({ ask(q: string) { return q.length; } }); }
+interface Nouns { ui: ReturnType<typeof uiOf>; model: ReturnType<typeof modelOf> }
+function nouns(name: string, wrapMethod: WrapMethod): Nouns {
+  const wrap = <T extends object>(noun: T): T => wrapAll(noun, wrapMethod);
+  return { ui: wrap(uiOf(name)), model: wrap(modelOf()) };
+}
+let calls = 0;
+const n = nouns("p", f => (...a: never[]) => { calls++; return f(...a); });
+console.log(n.ui.notice("hi"), n.ui.size, n.ui.resolve(4), n.model.ask("abc"), calls, Object.isFrozen(n.ui), Object.keys(n.ui).join());
+//// generic-mapped-type-table.ts
+// A table typed by a mapped type over a union of names is filled by spreading the results of a generic helper.
+type Name = "a.one" | "a.two" | "b.one" | "b.two" | "c.one";
+interface Arguments { "a.one": { n: number }; "a.two": { s: string }; "b.one": { n: number; s: string }; "b.two": {}; "c.one": { flag: boolean } }
+interface Entry<E extends Name> { readonly key: E; readonly kind: "plain" | "checked" | "own"; check(args: Arguments[E]): boolean }
+function plainEntry<E extends Name>(key: E): Entry<E> { return { key, kind: "plain", check: () => true }; }
+function checkedEntry<E extends Name>(key: E): Entry<E> { return { key, kind: "checked", check: args => args !== undefined }; }
+function tableOf<K extends Name>(names: readonly K[], make: <E extends K>(key: E) => Entry<E>): { readonly [E in K]: Entry<E> } {
+  const table: { [name: string]: Entry<K> } = {};
+  for (const name of names) table[name] = make(name);
+  return table as { readonly [E in K]: Entry<E> };
+}
+const PLAIN = ["a.one", "a.two"] as const;
+const CHECKED = ["b.one", "b.two"] as const;
+const OWN: Entry<"c.one"> = { key: "c.one", kind: "own", check: args => args.flag };
+export const TABLE: { readonly [E in Name]: Entry<E> } = {
+  ...tableOf(PLAIN, plainEntry),
+  ...tableOf(CHECKED, checkedEntry),
+  "c.one": OWN,
+};
+function entryOf<E extends Name>(key: E): Entry<E> { return TABLE[key]; }
+console.log(Object.keys(TABLE).join(), TABLE["a.two"].key, TABLE["b.one"].kind, entryOf("c.one").check({ flag: true }), entryOf("a.one").check({ n: 1 }));
+//// generic-record-unrelated-instantiations.ts
+// One object made by generic code is read through two instantiations of the same generic record, neither of which is narrower than the other.
+// The value fits both, so both reads are accepted, in either order.
+////= row-2
+
+type Served<Cause, Result> = { cause: Cause; result: Result; number: number };
+type ByCause = Served<"poll", string>;
+type ByResult = Served<string, "status">;
+
+function nested<C, R>(cause: C, result: R): { served: Served<C, R>; n: number } {
+  return { served: { cause, result, number: 2 }, n: 0 };
+}
+const useCause = (s: ByCause): string => s.cause + ":" + s.result.length + s.number;
+const useResult = (s: ByResult): string => s.cause.length + ":" + s.result + s.number;
+
+row("by cause, then by result", () => {
+  const u = nested<"poll", "status">("poll", "status");
+  const a: { served: ByCause } = u, b: { served: ByResult } = u;
+  return [useCause(a.served), useResult(b.served)];
+});
+row("by result, then by cause", () => {
+  const u = nested<"poll", "status">("poll", "status");
+  const a: { served: ByCause } = u, b: { served: ByResult } = u;
+  return [useResult(b.served), useCause(a.served)];
+});
+row("back and forth on the same object", () => {
+  const u = nested<"poll", "status">("poll", "status");
+  const a: { served: ByCause } = u, b: { served: ByResult } = u;
+  return [useCause(a.served), useResult(b.served), useCause(a.served), useResult(b.served), a.served === (b.served as unknown), Object.keys(u.served).join()];
+});
+row("a store through one is seen through the other", () => {
+  const u = nested<"poll", "status">("poll", "status");
+  const a: { served: ByCause } = u, b: { served: ByResult } = u;
+  a.served.number = 7;
+  b.served.number += 1;
+  return [useCause(a.served), useResult(b.served), u.served.number];
+});
+row("in a loop", () => {
+  const out: string[] = [];
+  for (let i = 0; i < 4; i++) {
+    const u = nested<"poll", "status">("poll", "status");
+    const a: { served: ByCause } = u, b: { served: ByResult } = u;
+    out.push(i % 2 ? useCause(a.served) + useResult(b.served) : useResult(b.served) + useCause(a.served));
+  }
+  return out;
+});
+row("only by cause", () => {
+  const u = nested<"poll", string>("poll", "anything");
+  const a: { served: ByCause } = u;
+  return [useCause(a.served), useCause(a.served)];
+});
+//// generic-record-wider-then-narrower.ts
+// One object made by generic code is read through several instantiations of the same generic record.
+// Whatever order the reads come in, a value that fits every one of those types is accepted by all of them.
+////= row-2
+
+type Served<Cause, Result> = { cause: Cause; result: Result; number: number };
+type NearCause = "send" | "poll";
+type NearResult = "status" | "not_found";
+type NearServed = Served<NearCause, NearResult>;
+type One = Served<"poll", "status">;
+type Wide = Served<string, string>;
+
+function nested<C, R>(cause: C, result: R): { served: Served<C, R>; n: number } {
+  return { served: { cause, result, number: 2 }, n: 0 };
+}
+const useOne = (s: One): string => s.cause + s.result + s.number;
+const useNear = (s: NearServed): string => s.cause.toUpperCase() + s.result.length + s.number;
+const useWide = (s: Wide): string => s.cause + "/" + s.result + "/" + s.number;
+
+row("narrowest first", () => {
+  const u = nested<"poll", "status">("poll", "status");
+  const one: { served: One } = u, near: { served: NearServed } = u, wide: { served: Wide } = u;
+  return [useOne(one.served), useNear(near.served), useWide(wide.served)];
+});
+row("widest first", () => {
+  const u = nested<"poll", "status">("poll", "status");
+  const one: { served: One } = u, near: { served: NearServed } = u, wide: { served: Wide } = u;
+  return [useWide(wide.served), useNear(near.served), useOne(one.served)];
+});
+row("middle, then narrowest", () => {
+  const u = nested<"poll", "status">("poll", "status");
+  const one: { served: One } = u, near: { served: NearServed } = u;
+  return [useNear(near.served), useOne(one.served)];
+});
+row("middle, narrowest, middle, widest", () => {
+  const u = nested<"poll", "status">("poll", "status");
+  const one: { served: One } = u, near: { served: NearServed } = u, wide: { served: Wide } = u;
+  return [useNear(near.served), useOne(one.served), useNear(near.served), useWide(wide.served)];
+});
+row("it is the same object every time", () => {
+  const u = nested<"poll", "status">("poll", "status");
+  const one: { served: One } = u, near: { served: NearServed } = u, wide: { served: Wide } = u;
+  const first = wide.served, second = near.served, third = one.served;
+  return [first === second, second === third, u.served === third, Object.keys(third).join()];
+});
+row("a store through the middle type is seen through the others", () => {
+  const u = nested<"poll", "status">("poll", "status");
+  const one: { served: One } = u, near: { served: NearServed } = u, wide: { served: Wide } = u;
+  near.served.number = 5;
+  one.served.number += 1;
+  return [useWide(wide.served), useNear(near.served), useOne(one.served)];
+});
+row("in a loop", () => {
+  const out: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const u = nested<"poll", "status">("poll", "status");
+    const one: { served: One } = u, near: { served: NearServed } = u, wide: { served: Wide } = u;
+    out.push(i % 2 ? useNear(near.served) + useOne(one.served) : useWide(wide.served) + useNear(near.served) + useOne(one.served));
+  }
+  return out;
+});
+row("another value stays the middle type", () => {
+  const u = nested<NearCause, NearResult>("send", "not_found");
+  const near: { served: NearServed } = u, wide: { served: Wide } = u;
+  return [useWide(wide.served), useNear(near.served), useWide(wide.served)];
+});
+//// generic-spread-after-named-property.ts
+// What a generic function makes with a spread of its parameter is one object, wherever the literal stands: a store through one name is seen through the other. One place a program: another place in the same program may open the types to it.
+interface R { a: number; b: string }
+const kept: { g: number }[] = [];
+function id<U>(u: U): U { return u }
+function wide<T extends object>(r: T, i: number): T & { g: number } { const made = id({ g: i, ...r }); kept.push(made); return made }
+////= for
+//// generic-spread-eight-properties.ts
+// What a generic function makes with a spread of its parameter is one object, however many properties it has: a store through one name is seen through the other.
+interface R { a: number; b: string; c: number; d: number; e: number; f: number; h: number }
+const kept: { g: number }[] = [];
+function id<U>(u: U): U { return u }
+function wide<T extends object>(r: T, i: number): T & { g: number } { const made = id({ ...r, g: i }); kept.push(made); return made }
+for (let round = 0; round < 3; round++) {
+  const w = wide<R>({ a: round, b: "x", c: 3, d: 4, e: 5, f: 6, h: 7 }, 7);
+  w.g = 8;
+  console.log((w as object) === kept[round], kept[round].g, w.g, w.a, w.b, w.h, Object.keys(w).join());
+}
+//// generic-spread-for-explicit-intersection.ts
+// What a generic function makes with a spread of its parameter is one object, wherever the literal stands: a store through one name is seen through the other. One place a program: another place in the same program may open the types to it.
+interface R { a: number; b: string }
+const kept: { g: number }[] = [];
+function wide<T extends object>(r: T, i: number): T & { g: number } { const made = ((x: T & { g: number }) => x)({ ...r, g: i }); kept.push(made); return made }
+////= for
+//// generic-spread-into-map.ts
+// What a generic function makes with a spread of its parameter is one object, wherever the literal stands: a store through one name is seen through the other. One place a program: another place in the same program may open the types to it.
+interface R { a: number; b: string }
+const kept: { g: number }[] = [];
+function wide<T extends object>(r: T, i: number): T & { g: number } { const all = new Map<string, T & { g: number }>(); all.set("k", { ...r, g: i }); const made = all.get("k")!; kept.push(made); return made }
+////= for
+//// generic-spread-pushed.ts
+// What a generic function makes with a spread of its parameter is one object, wherever the literal stands: a store through one name is seen through the other. One place a program: another place in the same program may open the types to it.
+interface R { a: number; b: string }
+const kept: { g: number }[] = [];
+function wide<T extends object>(r: T, i: number): T & { g: number } { const all: (T & { g: number })[] = []; all.push({ ...r, g: i }); const made = all[0]; kept.push(made); return made }
+////= for
+//// generic-type-growing-several-ways.ts
+// A generic type that holds larger instantiations of itself in several members. Every path of members is a new type, so the types n members deep
+// number (members)^n: the compiler has to stop giving them layouts long before eight levels of each kind of growth.
+declare const console: { log(...values: unknown[]): void };
+interface Tree<T> { leaf: T; left?: Tree<[T]>; right?: Tree<{ of: T }>; up?: Tree<T[]>; down?: Tree<() => T> }
+type Choice<T> = T extends string
+  ? { text: T; left?: Choice<[T]>; right?: Choice<{ of: T }>; up?: Choice<T[]>; down?: Choice<() => T> }
+  : { other: T; left?: Choice<[T]>; right?: Choice<{ of: T }>; up?: Choice<T[]>; down?: Choice<() => T> };
+
+function size(tree: { left?: unknown; right?: unknown; up?: unknown; down?: unknown } | undefined): number {
+  if (!tree) return 0;
+  return 1 + size(tree.left as typeof tree) + size(tree.right as typeof tree) + size(tree.up as typeof tree) + size(tree.down as typeof tree);
+}
+function keys<T>(seed: T, choice: Choice<T> | undefined): string { return Object.keys(choice ?? {}).join(); }
+
+const tree: Tree<string> = {
+  leaf: "a",
+  left: { leaf: ["b"], right: { leaf: { of: ["c"] }, up: { leaf: [{ of: ["d"] }], down: { leaf: () => [{ of: ["e"] }] } } } },
+  up: { leaf: ["f"], up: { leaf: [["g"]], up: { leaf: [[["h"]]], up: { leaf: [[[["i"]]]], up: { leaf: [[[[["j"]]]]] } } } } },
+};
+console.log(size(tree), tree.left?.right?.leaf.of[0], tree.left?.right?.up?.leaf[0].of[0], tree.left?.right?.up?.down?.leaf()[0].of[0]);
+console.log(tree.up?.up?.up?.up?.up?.leaf[0][0][0][0][0], JSON.stringify(tree.up?.up?.up));
+console.log(keys("s" as string, { text: "x", left: { other: ["y"] } }), keys(1 as number, { other: 2, up: { other: [3], right: { other: { of: [4] } } } }));
+const parsed: Tree<number> = JSON.parse('{"leaf":1,"left":{"leaf":[2],"left":{"leaf":[[3]],"left":{"leaf":[[[4]]],"left":{"leaf":[[[[5]]]],"left":{"leaf":[[[[[6]]]]]}}}}}}');
+console.log(size(parsed), parsed.left?.left?.left?.left?.left?.leaf[0][0][0][0][0]);
+//// getter-literal-in-dead-code.ts
+// An object literal with a getter stands in code that a constant condition cuts. Its type is still named by what is left.
+const enabled = false;
+function make(n: number) {
+  return enabled ? { get value() { return n * 2; }, n } : { value: n, n };
+}
+type Made = ReturnType<typeof make>;
+function show(made: Made): string { return made.value + ":" + made.n; }
+console.log(show(make(2)));
+function other(n: number) {
+  if (false) { const lazy = { get twice() { return n * 2; }, set twice(value: number) { n = value; }, n }; return lazy; }
+  return undefined;
+}
+function use(it: ReturnType<typeof other>): number { return it === undefined ? -1 : it.twice + it.n; }
+console.log(use(other(3)));
+const kept = true;
+function makeKept(n: number) {
+  return kept ? { get value() { return n * 2; }, n } : { value: n, n };
+}
+function showKept(made: ReturnType<typeof makeKept>): string { return made.value + ":" + made.n + ":" + typeof Object.getOwnPropertyDescriptor(made, "value")!.get; }
+console.log(showKept(makeKept(2)));
+//// headers-and-search-params-from-typed.ts
+type Three = { accept: string; "content-type": string; "x-id": string };
+type Mixed = { a: string; b: number; c: boolean; d: null; e: undefined; f?: string };
+function hide(value: unknown): any { return value; }
+let count = 0;
+////= show-2	out = JSON.stringify(make()
+const list = (h: Headers) => [...h];
+const three = (): Three => ({ accept: "*/*", "content-type": "text/plain", "x-id": "1" });
+show("new Headers(typed)", () => list(new Headers(three())));
+show("new Headers(a named constant)", () => { const headers = { "x-b": "2", "x-a": "1" }; return list(new Headers(headers)); });
+show("new Response(body, { headers })", () => { const headers = { "content-type": "application/json", "cache-control": "no-store" }; return list(new Response("b", { headers }).headers); });
+show("new Request(url, { headers })", () => { const headers = { authorization: "t", "x-n": "1" }; return list(new Request("http://localhost/", { headers }).headers); });
+show("new URLSearchParams(typed)", () => { const params = { q: "a b", page: "1", "ключ": "значение" }; return new URLSearchParams(params).toString(); });
+show("values that are no strings", () => { const m: Mixed = { a: "s", b: 1.5, c: true, d: null, e: undefined }; return [list(new Headers(hide(m))), new URLSearchParams(hide(m)).toString()]; });
+show("an optional field absent, then set", () => { const m: Mixed = { a: "s", b: 1, c: false, d: null, e: undefined }; const first = new URLSearchParams(hide(m)).toString(); m.f = "set"; return [first, new URLSearchParams(hide(m)).toString()]; });
+show("a value with toString, which changes a later field", () => { const o: { a: unknown; b: string } = { a: null, b: "before" }; o.a = { toString() { o.b = "after"; return "ran"; } }; return [new URLSearchParams(hide(o)).toString(), list(new Headers(hide({ ...o, a: "x" })))]; });
+show("a value with toString, which deletes a later field", () => { const o: { a: unknown; b?: string } = { a: null, b: "before" }; o.a = { toString() { delete o.b; return "ran"; } }; return new URLSearchParams(hide(o)).toString(); });
+show("a symbol value", () => { const o: { a: unknown } = { a: Symbol("s") }; return new URLSearchParams(hide(o)).toString(); });
+show("an invalid header name, value", () => { const bad = { "a b": "1" }, worse = { a: "x\ny" }; const out: string[] = []; for (const o of [bad, worse]) { try { out.push(JSON.stringify(list(new Headers(o)))); } catch (e) { out.push((e as Error).name + ": " + (e as Error).message); } } return out; });
+show("names that differ in case", () => { const o = { "X-A": "1", "x-a": "2", "x-B": "3" }; return list(new Headers(o)); });
+show("lone surrogates in a key", () => { const o = { "\ud800": "1", "�": "2", plain: "3" }; return new URLSearchParams(o).toString(); });
+show("extras", () => { const o = three(); hide(o)["x-extra"] = "e"; hide(o)[Symbol.for("s")] = "sym"; const out: unknown[] = []; try { out.push(list(new Headers(o))); } catch (e) { out.push((e as Error).name); } return out; });
+show("a non-enumerable extra", () => { const o = three(); Object.defineProperty(hide(o), "x-hidden", { value: "h", enumerable: false }); return list(new Headers(o)); });
+show("a class instance", () => { class H { accept = "*/*"; #secret = "s"; get computed() { return this.#secret; } } return list(new Headers(hide(new H()))); });
+show("frozen", () => list(new Headers(Object.freeze(three()))));
+show("an iterable typed object", () => { const o: { a: string; [Symbol.iterator]?: () => Iterator<[string, string]> } = { a: "1" }; const first = list(new Headers(hide(o))); hide(o)[Symbol.iterator] = function* () { yield ["x-it", "yes"]; }; return [first, list(new Headers(hide(o)))]; });
+show("empty", () => [list(new Headers({} as { o?: string })), new URLSearchParams({} as { o?: string }).toString()]);
+show("many", () => { const o = { a01: "1", a02: "2", a03: "3", a04: "4", a05: "5", a06: "6", a07: "7", a08: "8", a09: "9", a10: "10", a11: "11", a12: "12" }; return new URLSearchParams(o).toString(); });
+//// hook-stores-before-initializers.ts
+// Fields that a method called from the base constructor assigns before their own initializers run.
+class B { s = "s"; constructor() { console.log(JSON.stringify(this)); this.hook() } hook() {} }
+class D extends B { x = 1; y?: number; z: string | undefined; hook() { this.y = 5; this.z = "hook"; console.log(this.y, this.z, JSON.stringify(this)) } }
+const d = new D()
+console.log(Object.keys(d).sort().join(), JSON.stringify(d), d.y, d.z)
+class E { a = this.init(); b?: number; c = 2; init() { this.b = 7; this.c = 9; return 1 } }
+const e = new E()
+console.log(Object.keys(e).sort().join(), e.a, e.b, e.c)
+// A field read before its initializer has run (a hook called by the base constructor) is undefined, whatever it is declared to hold.
+class Base { constructor() { this.hook() } hook() {} }
+class Early extends Base { n = 1; done = false; name = "name"
+  hook() { console.log(this.n, this.done ? "done" : "not done", this.done, this.name, typeof this.n, this.n === undefined) }
+}
+const early = new Early()
+console.log(early.n, early.done, early.name)
+//// host-object-from-any-slot-into-interface.ts
+// What comes out of a place for an Error, a Promise or an ArrayBuffer is a host object as before, and an interface of the program that it enters admits it: by a parameter, a field, an element.
+interface HasMessage { message: string }
+interface Thenable { then(done: (n: number) => void): unknown }
+interface HasTime { getTime(): number }
+interface HasBytes { byteLength: number }
+class Own implements HasMessage { extra = 0; message = "own" }
+class OwnThen implements Thenable { extra = 0; then(done: (n: number) => void): unknown { done(1); return 0 } }
+class OwnTime implements HasTime { extra = 0; getTime(): number { return -1 } }
+class OwnBytes implements HasBytes { extra = 0; byteLength = -1 }
+function show(m: HasMessage): string { return m.message }
+function wait(t: Thenable): string { return typeof t.then }
+function time(t: HasTime): number { return t.getTime() }
+function bytes(b: HasBytes): number { return b.byteLength }
+function viaError(e: Error): string { return show(e) }
+function viaPromise(p: Promise<number>): string { return wait(p) }
+function viaDate(d: Date): number { return time(d) }
+function viaBuffer(b: ArrayBuffer): number { return bytes(b) }
+class Holder { e: Error; p: Promise<number>; d: Date; b: ArrayBuffer; constructor(e: Error, p: Promise<number>, d: Date, b: ArrayBuffer) { this.e = e; this.p = p; this.d = d; this.b = b } }
+const h = new Holder(new RangeError("held"), Promise.resolve(2), new Date(9), new ArrayBuffer(3));
+console.log(show(new Own()), wait(new OwnThen()), time(new OwnTime()), bytes(new OwnBytes()));
+console.log(viaError(new Error("x")), viaError(new TypeError("y")), viaPromise(Promise.resolve(1)), viaDate(new Date(5)), viaBuffer(new ArrayBuffer(7)));
+console.log(show(h.e), wait(h.p), time(h.d), bytes(h.b));
+const list: HasMessage[] = [h.e, new Own()]; const times: HasTime[] = [h.d, new OwnTime()];
+console.log(list.map(show).join(), times.map(time).join());
+//// ill-typed-field-value-paths.ts
+// Every known way by which a field or an element comes to hold a value that its type does not allow: whether the store succeeds, and what later reads see.
+// A store that enters no written type succeeds. The next read through a written type throws, whatever is done with the value. A read through an unannotated variable (5) or through a type that allows the value (17) does not throw, and neither does a missing field (6, 10, 11, 12) or undefined (13).
+function attempt(label: string, f: () => unknown): void { try { console.log(label, String(f())) } catch (e) { console.log(label, (e as Error).constructor.name) } }
+function plusOne(n: number): number { return n + 1 }
+function hide<T>(value: unknown): T { return value as T }
+function key(name: string): string { return name.split("").join("") }
+
+// 1. A field is covariant: the object is looked at through a type whose field takes more.
+interface Narrow { v: number }
+interface Wide { v: number | string }
+const n1: Narrow = { v: 1 }
+const w1: Wide = n1
+attempt("1 store", () => { w1.v = "text"; return "taken" })
+attempt("1 looked at", () => n1.v)
+attempt("1 held", () => plusOne(n1.v))
+
+// 2. The same by a type argument.
+interface Box<T> { value: T }
+const n2: Box<number> = { value: 1 }
+const w2: Box<number | string> = n2
+attempt("2 store", () => { w2.value = "text"; return "taken" })
+attempt("2 looked at", () => n2.value)
+attempt("2 held", () => plusOne(n2.value))
+
+// 3. The same by the constraint of a type parameter.
+function put<T extends { v: unknown }>(o: T, v: unknown): void { o.v = v }
+const n3: Narrow = { v: 1 }
+attempt("3 store", () => { put(n3, "text"); return "taken" })
+attempt("3 looked at", () => n3.v)
+attempt("3 held", () => plusOne(n3.v))
+
+// 4. An index signature: a type literal is assignable to a dictionary.
+type Lit = { v: number }
+const n4: Lit = { v: 1 }
+const w4: { [k: string]: number | string } = n4
+attempt("4 store", () => { w4["v"] = "text"; return "taken" })
+attempt("4 looked at", () => n4.v)
+attempt("4 held", () => plusOne(n4.v))
+
+// 5. A subclass declares the field narrower.
+class Loose { v: number | string = 1 }
+class Strict extends Loose { declare v: number }
+const n5 = new Strict()
+const w5: Loose = n5
+attempt("5 store", () => { w5.v = "text"; return "taken" })
+attempt("5 looked at", () => n5.v)
+attempt("5 held", () => plusOne(n5.v))
+
+// 6. A forced cast somewhere: an object of another type is admitted to the view, and then stands in a field of that type.
+interface A { a: number; shared?: string }
+interface B { b: string; shared?: string }
+interface Holder { item: A }
+const makeB = (): B => ({ b: "b", shared: "s" })
+const h6: Holder = { item: { a: 1 } }
+attempt("6 the cast", () => (makeB() as unknown as A).shared)
+attempt("6 store", () => { h6.item = makeB() as unknown as A; return "taken" })
+attempt("6 looked at", () => h6.item.a)
+attempt("6 held", () => plusOne(h6.item.a))
+
+// 7. Untyped code stores to the field by name.
+const n7: Narrow = { v: 1 }
+attempt("7 store", () => { (n7 as any).v = "text"; return "taken" })
+attempt("7 looked at", () => n7.v)
+attempt("7 held", () => plusOne(n7.v))
+
+// 8. Untyped code stores by a computed key, by Object.assign, by Reflect.set, by defineProperty with a value.
+const n8a: Narrow = { v: 1 }, n8b: Narrow = { v: 1 }, n8c: Narrow = { v: 1 }, n8d: Narrow = { v: 1 }
+attempt("8 by key", () => { (n8a as any)[key("v")] = "text"; return "taken" })
+attempt("8 by key, looked at", () => n8a.v)
+attempt("8 assign", () => { Object.assign(n8b, hide<Narrow>({ v: "text" })); return "taken" })
+attempt("8 assign, looked at", () => n8b.v)
+attempt("8 Reflect.set", () => Reflect.set(n8c, key("v"), "text"))
+attempt("8 Reflect.set, looked at", () => n8c.v)
+attempt("8 define", () => { Object.defineProperty(n8d, key("v"), { value: "text", writable: true, enumerable: true, configurable: true }); return "taken" })
+attempt("8 define, looked at", () => n8d.v)
+
+// 9. An accessor in the field's place.
+const n9: Narrow = { v: 1 }
+attempt("9 define", () => { Object.defineProperty(n9, key("v"), { get() { return "got" }, configurable: true }); return "taken" })
+attempt("9 looked at", () => n9.v)
+attempt("9 held", () => plusOne(n9.v))
+
+// 10. The field is deleted.
+const n10: Narrow = { v: 1 }
+attempt("10 delete", () => delete (n10 as Partial<Narrow>).v)
+attempt("10 looked at", () => n10.v)
+attempt("10 held", () => plusOne(n10.v))
+
+// 11. The object was made as less: a cast gives it a type that has more, and nothing has stored that yet.
+interface More extends Narrow { late: number; ref: Narrow }
+const n11 = { v: 1 } as Narrow as More
+attempt("11 looked at", () => n11.late)
+attempt("11 held", () => plusOne(n11.late))
+attempt("11 a reference", () => n11.ref)
+attempt("11 through it", () => n11.ref.v)
+
+// 12. A class field that no constructor stores.
+class Unset { n!: number; r!: Narrow }
+const n12 = new Unset()
+attempt("12 looked at", () => n12.n)
+attempt("12 held", () => plusOne(n12.n))
+attempt("12 a reference", () => n12.r)
+
+// 13. null or undefined by `!` and by `as`.
+interface Ref { r: Narrow; n: number }
+const n13: Ref = { r: { v: 1 }, n: 1 }
+const nothing: Narrow | undefined = hide<Narrow | undefined>(undefined)
+attempt("13 store !", () => { n13.r = nothing!; return "taken" })
+attempt("13 store as", () => { n13.r = nothing as Narrow; return "taken" })
+attempt("13 looked at", () => n13.r)
+attempt("13 a number as", () => { n13.n = hide<number | undefined>(undefined) as number; return "taken" })
+attempt("13 a number looked at", () => n13.n)
+
+// 14. A member of the view lacks the field, and untyped code has given it a property of that name.
+interface Base14 { a: number }
+interface With14 extends Base14 { extra?: number }
+const n14: Base14 = { a: 1 }
+attempt("14 store", () => { (n14 as any).extra = "text"; return "taken" })
+attempt("14 looked at", () => (n14 as With14).extra)
+attempt("14 held", () => plusOne((n14 as With14).extra ?? 0))
+
+// 15. An optional field that is absent is read from the prototype chain.
+interface Chain15 { a: number; zz15?: number }
+const n15: Chain15 = { a: 1 }
+attempt("15 a name of Object.prototype", () => typeof (n15 as { valueOf?: unknown }).valueOf)
+attempt("15 given a prototype", () => { Object.setPrototypeOf(n15, { zz15: "inherited" }); return "taken" })
+attempt("15 looked at", () => n15.zz15)
+
+// 16. Data from outside under a written type, and under a cast.
+attempt("16 written", () => { const o: Narrow = JSON.parse('{"v":"text"}'); return o.v })
+attempt("16 cast", () => (JSON.parse('{"v":"text"}') as Narrow).v)
+attempt("16 held", () => plusOne((JSON.parse('{"v":"text"}') as Narrow).v))
+attempt("16 within", () => { const o: Holder = JSON.parse('{"item":{"a":"text"}}'); return o.item.a })
+
+// 17. A type guard that lies, and an assertion function.
+function isNarrow(o: Wide): o is Narrow { return true }
+const w17: Wide = { v: "text" }
+attempt("17 looked at", () => isNarrow(w17) ? w17.v : "no")
+attempt("17 held", () => isNarrow(w17) ? plusOne(w17.v) : "no")
+
+// 18. Elements: an array is covariant, a read past the end, a hole.
+const n18: number[] = [1, 2]
+const w18: (number | string)[] = n18
+attempt("18 store", () => { w18.push("text"); return "taken" })
+attempt("18 looked at", () => n18[2])
+attempt("18 held", () => plusOne(n18[2]!))
+attempt("18 past the end", () => n18[9])
+attempt("18 past the end, held", () => plusOne(n18[9]!))
+
+// 19. A literal type, an enum: the field promises the kind, so another number is taken.
+interface Kind19 { kind: 1 | 2 }
+const n19: Kind19 = { kind: 1 }
+attempt("19 store", () => { n19.kind = 3 as 1; return "taken" })
+attempt("19 looked at", () => n19.kind)
+
+// 20. A method's parameter is bivariant: a place, not a field, and from there a field.
+interface Sink { put(v: number | string): void }
+class NumberSink { last = 0; put(v: number): void { this.last = v } }
+const n20 = new NumberSink()
+const w20: Sink = n20
+attempt("20 store", () => { w20.put("text"); return "taken" })
+attempt("20 looked at", () => n20.last)
+//// inherited-interface-keys.ts
+// Object literals with `__proto__`, written plainly and as a computed key.
+interface Base1 { inherited: string }
+const base1: Base1 = { inherited: "yes" }
+const computedProto = { own: 1, ["__proto__"]: base1 }
+console.log(Object.keys(computedProto).join(), Object.getPrototypeOf(computedProto) === Object.prototype, (computedProto as any).inherited)
+const __proto__ = base1
+const shorthand = { own: 1, __proto__ }
+console.log(Object.keys(shorthand).join(), Object.getPrototypeOf(shorthand) === Object.prototype, (shorthand as any).inherited)
+const k: string = "__proto__"
+const dynamic = { own: 1, [k]: base1 }
+console.log(Object.keys(dynamic).join(), Object.getPrototypeOf(dynamic) === Object.prototype, (dynamic as any).inherited)
+const method = { own: 1, __proto__() { return 1 } }
+console.log(Object.keys(method).join(), Object.getPrototypeOf(method) === Object.prototype)
+const quoted = { own: 1, "__proto__": base1 }
+console.log(Object.keys(quoted).join(), Object.getPrototypeOf(quoted) === base1, (quoted as any).inherited)
+const nul = { own: 1, __proto__: null }
+console.log(Object.keys(nul).join(), Object.getPrototypeOf(nul) === null)
+const num = { own: 1, __proto__: 5 }
+console.log(Object.keys(num).join(), Object.getPrototypeOf(num) === Object.prototype)
+class P { __proto__ = 1; x = 2 }
+const p = new P()
+console.log(Object.keys(p).join(), Object.getPrototypeOf(p) === P.prototype)
+//// inspect-typed-objects.ts
+import { inspect, format } from "node:util";
+interface T { a?: number; b: number; c?: string; d?: unknown }
+class Base { constructor(public v: number) {} method() { return 1; } get twice() { return this.v * 2; } set twice(x: number) { this.v = x / 2; } static made = 1; }
+class Heir extends Base { w = "w"; #secret = 1; get secret() { return this.#secret; } own() { return 2; } }
+class Deep3 extends Heir { z = 3; get third() { return 3; } }
+class Tagged { v = 1; get [Symbol.toStringTag]() { return "MyTag"; } }
+class Custom { v = 1; [Symbol.for("nodejs.util.inspect.custom")]() { return "custom!"; } }
+class Empty {}
+function hide(value: unknown): any { return value; }
+let count = 0;
+function show(name: string, make: () => unknown) {
+  let v: unknown;
+  try { v = make(); } catch (e) { console.log(String(++count).padStart(2, "0"), name + ": THROWN", (e as Error).name); return; }
+  const flat = (s: string) => s.replace(/\s+/g, " ");
+  console.log(String(++count).padStart(2, "0"), name + ":", flat(Bun.inspect(v)), "|", flat(inspect(v)), "|", flat(inspect(v, { showHidden: true, depth: 4 })), "|", flat(format("%o %O %j", v, v, typeof v === "object" ? 0 : v)), "|", flat(Bun.inspect(v, { sorted: true, compact: true } as any)));
+  console.log(v);
+}
+const plain = (...entries: [string | symbol, unknown][]): any => { const o = JSON.parse("{}"); for (const [k, w] of entries) o[k] = w; return o; };
+show("a record", () => ({ b: 1 }) as T);
+show("undefined first, in the middle, last", () => [{ a: undefined, b: 1 } as T, { b: 1, c: undefined, d: 2 } as T, { b: 1, d: undefined } as T]);
+show("orders differ", () => { const x: T = { b: 1 }; x.c = "c"; x.a = 1; return x; });
+show("every kind of value", () => ({ b: 1.5, c: "s", d: [null, true, 10n, Symbol("s"), () => 1, new Date(0), /x/g, new Map([[1, { b: 2 } as T]]), new Set([{ b: 3 } as T])] }) as T);
+show("nested four deep", () => ({ b: 1, d: { b: 2, d: { b: 3, d: { b: 4, d: { b: 5 } } } } }) as T);
+show("empty", () => [{} as { o?: number }, { o: undefined } as { o?: number }, new Empty()]);
+show("an instance", () => new Base(1));
+show("an heir: a private field, accessors, methods", () => new Heir(2));
+show("three classes deep", () => new Deep3(3));
+show("a class with a tag", () => new Tagged());
+show("a class with a custom inspector", () => [new Custom(), { b: 1, d: new Custom() } as T]);
+show("the classes themselves", () => [Base, Heir]);
+show("a prototype with an enumerable name", () => Object.setPrototypeOf({ b: 1 } as T, plain(["zz", 1])));
+show("a prototype with an accessor", () => Object.setPrototypeOf({ b: 1 } as T, Object.defineProperty(plain(), "got", { get() { return 1; }, enumerable: true })));
+show("a prototype chain of three plain objects", () => Object.setPrototypeOf({ b: 1 } as T, Object.setPrototypeOf(plain(["p1", 1]), Object.setPrototypeOf(plain(["p2", 2]), plain(["p3", 3])))));
+show("a prototype that owns a name the object has", () => Object.setPrototypeOf({ b: 1 } as T, plain(["b", 2], ["a", 3])));
+show("a typed object as a prototype", () => [Object.create({ b: 1 } as T), Object.setPrototypeOf({ b: 2 } as T, { a: 1, b: 1 } as T)]);
+show("a null prototype", () => Object.setPrototypeOf({ b: 1 } as T, null));
+show("extras: a string, a symbol, an index", () => { const x: T = { b: 1 }; hide(x).zz = 1; hide(x)[Symbol.for("s")] = 2; hide(x)[0] = "zero"; return x; });
+show("extras: non-enumerable, an accessor", () => { const x: T = { b: 1 }; Object.defineProperty(hide(x), "hidden", { value: 1, enumerable: false }); Object.defineProperty(hide(x), "got", { get() { return 1; }, enumerable: true }); return x; });
+show("names: constructor, __proto__, toString as fields", () => ({ constructor: 1, toString: 2, valueOf: 3 }) as { constructor: number; toString: number; valueOf: number });
+show("names that need quotes", () => ({ "a-b": 1, "1x": 2, "": 3, "ключ": 4, "with space": 5 }));
+show("frozen, sealed, closed", () => [Object.freeze({ b: 1 } as T), Object.seal({ b: 2 } as T), Object.preventExtensions({ b: 3 } as T)]);
+show("a cycle", () => { const x: T = { b: 1 }; x.d = x; return x; });
+show("one object twice", () => { const x: T = { b: 1 }; return [x, x, { b: 2, d: x } as T]; });
+show("many fields", () => ({ f01: 1, f02: 2, f03: 3, f04: 4, f05: 5, f06: 6, f07: 7, f08: 8, f09: 9, f10: 10, f11: 11, f12: 12, f13: 13, f14: 14, f15: 15, f16: 16, f17: 17, f18: 18, f19: 19, f20: 20, f21: 21, f22: 22, f23: 23, f24: 24, f25: 25, f26: 26, f27: 27, f28: 28 }));
+show("an array of a hundred and five", () => Array.from({ length: 105 }, (_, i) => ({ b: i }) as T));
+show("console.table's data", () => { console.table([{ b: 1, c: "x" } as T, { a: 2, b: 3 } as T]); return 0; });
+show("an error with typed fields", () => Object.assign(new Error("boom"), { info: { b: 1 } as T }).info);
+//// instanceof-known-class-and-replaced-prototypes.ts
+// Records whose prototype is replaced, some by the prototype of a class: `v instanceof Known` follows the prototype, not the layout. Objects of classes are answered as ever.
+////= Known
+////= lines-3	Heir	Known	y	2
+////= Other
+////= lines-16	Row	lonely	number
+////= lines	Pair	left	number	right	string
+const makeRow = (n: number): Row => ({ lonely: n });
+const makePair = (n: number): Pair => ({ left: n, right: "r" + n });
+const makeKept = (n: number) => ({ kept: n, also: n + 1 });
+function alter(row: Row | Pair, parent: object | null) {
+  Object.setPrototypeOf(row, parent);
+}
+const isKnown = [(v: any) => v instanceof Known][0]!;
+const isHeir = [(v: any) => v instanceof Heir][0]!;
+const isOther = [(v: any) => v instanceof Other][0]!;
+const typedIsKnown = (v: Row | Pair | Known | Other) => v instanceof Known;
+function inLoop(values: any[]) {
+  let known = 0, heir = 0, other = 0;
+  for (let i = 0; i < values.length; i++) {
+    if (values[i] instanceof Known) known++;
+    if (values[i] instanceof Heir) heir++;
+    if (values[i] instanceof Other) other++;
+  }
+  return known + "/" + heir + "/" + other;
+}
+const parents: [string, object | null][] = [
+  ["Known.prototype", Known.prototype],
+  ["Heir.prototype", Heir.prototype],
+  ["Other.prototype", Other.prototype],
+  ["an object of Heir", new Heir()],
+  ["an object under Known.prototype", Object.create(Known.prototype)],
+  ["a plain object", { inherited: 1 }],
+  ["Object.prototype", Object.prototype],
+  ["null", null],
+];
+const all: any[] = [];
+for (const [name, parent] of parents) {
+  const row = makeRow(1), pair = makePair(2);
+  console.log("before " + name + ": " + [isKnown(row), isHeir(row), isOther(row), isKnown(pair), typedIsKnown(row), typedIsKnown(pair)].join(" "));
+  alter(row, parent);
+  alter(pair, parent);
+  console.log("under " + name + ": " + [isKnown(row), isHeir(row), isOther(row), isKnown(pair), isHeir(pair), isOther(pair), typedIsKnown(row), typedIsKnown(pair)].join(" "), row.lonely, pair.right);
+  all.push(row, pair);
+}
+all.push(makeRow(3), makePair(4), makeKept(5), new Known(), new Heir(), new Other(), JSON.parse("{}"), "text", 7, null);
+console.log("in a loop", inLoop(all));
+let yes = 0;
+for (let turn = 0; turn < 200; turn++) {
+  for (let i = 0; i < all.length; i++) {
+    if (isKnown(all[i])) yes++;
+    if (isHeir(all[i])) yes += 100;
+    if (isOther(all[i])) yes += 10000;
+  }
+}
+console.log("many", yes);
+const moved = makeRow(9);
+const answers: boolean[] = [];
+for (const [, parent] of [...parents, ...parents.slice().reverse()]) {
+  alter(moved, parent);
+  answers.push(isKnown(moved), isOther(moved));
+}
+console.log("moved", answers.map(Number).join(""));
+alter(all[0], Other.prototype);
+console.log("at last", isKnown(all[0]), isOther(all[0]), inLoop(all));
+//// instanceof-known-class-and-scattered-replaced-prototypes.ts
+// The records whose prototype may be replaced cannot get consecutive shape numbers here: First and Third are marked, and Second must lie between them, because First | Second and Second | Third are both tested often. `v instanceof Known` still follows the prototype of each. The guard reads `kind` through `as Second`, where it is written "second": for a Third, Fourth or Fifth that typed read gives their own text.
+////= Known
+////= Other
+////= lines	First	kind	"first"	a	number
+////= lines	Second	kind	"second"	b	number
+////= lines	Third	kind	"third"	c	number
+////= lines	Fourth	kind	"fourth"	d	number
+////= lines	Fifth	kind	"fifth"	e	number
+const first = (n: number): First => ({ kind: "first", a: n });
+const second = (n: number): Second => ({ kind: "second", b: n });
+const third = (n: number): Third => ({ kind: "third", c: n });
+const fourth = (n: number): Fourth => ({ kind: "fourth", d: n });
+const fifth = (n: number): Fifth => ({ kind: "fifth", e: n });
+function alter(record: First | Third | Fifth, parent: object | null) {
+  Object.setPrototypeOf(record, parent);
+}
+const isFirstOrSecond = (v: unknown): v is First | Second => (v as First | Second | Third | Fourth | Fifth).kind === "first" || (v as Second).kind === "second";
+////= lines-31	low	First	Second	"first"	a	b
+////= lines-31	middle	Second	Third	"second"	b	c
+////= lines-31	high	Third	Fourth	"third"	c	d
+////= lines-31	top	Fourth	Fifth	"fourth"	d	e
+const pairs: any[] = [first(1), second(2), third(3), fourth(4), fifth(5)];
+let sum = 0;
+for (let turn = 0; turn < 50; turn++) {
+  sum += low(pairs[turn & 1] as First | Second) + middle(pairs[1 + (turn & 1)] as Second | Third) + high(pairs[2 + (turn & 1)] as Third | Fourth) + top(pairs[3 + (turn & 1)] as Fourth | Fifth);
+  try { if (isFirstOrSecond(pairs[turn % 5])) sum++; } catch (e) { console.log("guard", turn % 5, (e as Error).constructor.name); }
+}
+console.log("sum", sum);
+const isKnown = [(v: any) => v instanceof Known][0]!;
+const isOther = [(v: any) => v instanceof Other][0]!;
+////= inLoop	other	Other
+const show = (values: any[]) => values.map(v => (isKnown(v) ? "K" : isOther(v) ? "O" : "-")).join("");
+const made = () => [first(1), second(2), third(3), fourth(4), fifth(5), new Known(), new Other(), JSON.parse("{}"), "text", 7, null] as any[];
+let values = made();
+console.log("as made", show(values), inLoop(values));
+alter(values[0], Known.prototype);
+console.log("first", show(values), inLoop(values));
+alter(values[2], Other.prototype);
+console.log("third", show(values), inLoop(values));
+alter(values[4], Object.create(Known.prototype));
+console.log("fifth", show(values), inLoop(values));
+alter(values[0], null);
+alter(values[2], Known.prototype);
+console.log("again", show(values), inLoop(values), low(values[0]), middle(values[2]), top(values[4]));
+values = made();
+console.log("fresh", show(values), inLoop(values));
+let yes = 0;
+const mixed = [...made(), ...made()];
+alter(mixed[0], Known.prototype);
+alter(mixed[13], Known.prototype);
+alter(mixed[15], Other.prototype);
+for (let turn = 0; turn < 300; turn++) for (let i = 0; i < mixed.length; i++) yes += (isKnown(mixed[i]) ? 1 : 0) + (isOther(mixed[i]) ? 100 : 0);
+console.log("many", yes, inLoop(mixed));
+//// instanceof-known-class-on-any-value.ts
+// `v instanceof Known`, where Known is a class the compiler knows and v is anything: objects of the class, of its heirs, of other classes, objects that no typed code made, and values that are no objects.
+const count = (globalThis as any).aotOperationCount ?? (() => 0);
+////= Known
+////= lines-3	Heir	Known	y	2
+////= lines-3	Leaf	Heir	w	4
+////= Other
+const isKnown = [(v: any) => v instanceof Known][0]!;
+const isHeir = [(v: any) => v instanceof Heir][0]!;
+const isLeaf = [(v: any) => v instanceof Leaf][0]!;
+const isOther = [(v: any) => v instanceof Other][0]!;
+////= inLoop	leaf	Leaf
+let traps = 0;
+const named: [string, any][] = [
+  ["Known", new Known()],
+  ["Heir", new Heir()],
+  ["Leaf", new Leaf()],
+  ["Other", new Other()],
+  ["parsed", JSON.parse('{"x":1}')],
+  ["made from Known.prototype", Object.create(Known.prototype)],
+  ["made from Heir.prototype", Object.create(Heir.prototype)],
+  ["made from Leaf.prototype", Object.create(Leaf.prototype)],
+  ["two levels under Leaf.prototype", Object.create(Object.create(Leaf.prototype))],
+  ["made from an object of Heir", Object.create(new Heir())],
+  ["without a prototype", Object.create(null)],
+  ["under one without a prototype", Object.create(Object.create(null))],
+  ["Known.prototype", Known.prototype],
+  ["Heir.prototype", Heir.prototype],
+  ["the class Known", Known],
+  ["an array", [1]],
+  ["a function", () => 1],
+  ["a map", new Map()],
+  ["an error", new Error("e")],
+  ["a date", new Date(0)],
+  ["a proxy of a Heir", new Proxy(new Heir(), {})],
+  ["a proxy that answers Leaf.prototype", new Proxy({}, { getPrototypeOf() { traps++; return Leaf.prototype; } })],
+  ["under a proxy of a Heir", Object.create(new Proxy(new Heir(), { getPrototypeOf(target) { traps++; return Reflect.getPrototypeOf(target); } }))],
+  ["a string", "text"],
+  ["an empty string", ""],
+  ["a long string", "x".repeat(300) + 1],
+  ["a symbol", Symbol.iterator],
+  ["a big integer", 12345678901234567890n],
+  ["a number", 1.5],
+  ["an integer", 7],
+  ["true", true],
+  ["null", null],
+  ["undefined", undefined],
+];
+for (const [name, value] of named) console.log(name + ": " + [isKnown(value), isHeir(value), isLeaf(value), isOther(value)].join(" "));
+console.log("traps", traps);
+const values = named.map(pair => pair[1]);
+console.log("in a loop", inLoop(values), traps);
+const quiet = values.filter((_, i) => !named[i]![0].includes("proxy"));
+let yes = 0;
+const turn = () => {
+  for (let i = 0; i < quiet.length; i++) {
+    if (isKnown(quiet[i])) yes++;
+    if (isLeaf(quiet[i])) yes++;
+    if (isOther(quiet[i])) yes++;
+  }
+};
+turn();
+const asked = () => count("operationAOTDefaultHasInstance") + count("operationAOTInstanceOfAndCache");
+const before = asked();
+for (let i = 0; i < 300; i++) turn();
+for (let i = 0; i < 300; i++) inLoop(quiet);
+console.log("many", yes, asked() - before < 100);
+const changed: any = Object.create(Leaf.prototype);
+console.log("before", isKnown(changed), isLeaf(changed));
+Object.setPrototypeOf(changed, Other.prototype);
+console.log("after", isKnown(changed), isLeaf(changed), isOther(changed));
+Object.setPrototypeOf(changed, null);
+console.log("at last", isKnown(changed), isLeaf(changed), isOther(changed));
+//// instanceof-known-class-replaced-prototypes-and-extra-properties.ts
+// Records and objects of classes that get another prototype and properties their type does not name, in either order: `v instanceof Known` follows the prototype.
+////= Known
+////= lines-3	Heir	Known	y	2
+////= Other
+////= lines-11	Moved	w	4
+////= lines-16	Row	lonely	number
+const makeRow = (n: number): Row => ({ lonely: n });
+function alter(value: object, parent: object | null) {
+  Object.setPrototypeOf(value, parent);
+}
+function extend(value: any, name: string, stored: number) {
+  value[name] = stored;
+}
+function shrink(value: any, name: string) {
+  delete value[name];
+}
+const isKnown = [(v: any) => v instanceof Known][0]!;
+const isHeir = [(v: any) => v instanceof Heir][0]!;
+const isOther = [(v: any) => v instanceof Other][0]!;
+const isMoved = [(v: any) => v instanceof Moved][0]!;
+const typedIsKnown = (v: Row | Known | Other) => v instanceof Known;
+function narrow(v: Row | Known | Other): string {
+  if (v instanceof Heir) return "heir";
+  if (v instanceof Known) return "known";
+  if (v instanceof Other) return "other";
+  return "row " + v.lonely;
+}
+function inLoop(values: any[]) {
+  let known = 0, heir = 0, other = 0, moved = 0;
+  for (let i = 0; i < values.length; i++) {
+    if (values[i] instanceof Known) known++;
+    if (values[i] instanceof Heir) heir++;
+    if (values[i] instanceof Other) other++;
+    if (values[i] instanceof Moved) moved++;
+  }
+  return [known, heir, other, moved].join("/");
+}
+const say = (label: string, v: Row | Known | Other) => console.log(label, [isKnown(v), isHeir(v), isOther(v), isMoved(v), typedIsKnown(v)].map(Number).join(""), narrow(v), inLoop([v, v]));
+const sayOfMoved = (label: string, v: Moved) => console.log(label, [isKnown(v), isHeir(v), isOther(v), isMoved(v)].map(Number).join(""), inLoop([v, v]));
+const parents: [string, object | null][] = [
+  ["Known.prototype", Known.prototype],
+  ["Heir.prototype", Heir.prototype],
+  ["an object of Other", new Other()],
+  ["a plain object", { inherited: 1 }],
+  ["Object.prototype", Object.prototype],
+  ["null", null],
+];
+const all: any[] = [];
+for (const [name, parent] of parents) {
+  const first = makeRow(1);
+  alter(first, parent);
+  say("altered: " + name, first);
+  extend(first, "extra", 5);
+  say("altered, extended: " + name, first);
+  const second = makeRow(2);
+  extend(second, "extra", 6);
+  say("extended", second);
+  alter(second, parent);
+  say("extended, altered: " + name, second);
+  const third = makeRow(3);
+  alter(third, parent);
+  for (let i = 0; i < 100; i++) extend(third, "p" + i, i);
+  say("altered, a hundred more: " + name, third);
+  for (let i = 0; i < 100; i++) shrink(third, "p" + i);
+  say("and none again: " + name, third);
+  alter(third, Object.prototype);
+  say("and back under Object.prototype", third);
+  console.log(first.lonely, (first as any).extra, second.lonely, (second as any).extra, third.lonely);
+  all.push(first, second, third);
+}
+const kept = makeRow(7);
+say("kept", kept);
+extend(kept, "extra", 1);
+say("kept, extended", kept);
+const moved = new Moved();
+sayOfMoved("an object of Moved", moved);
+extend(moved, "extra", 1);
+sayOfMoved("extended", moved);
+alter(moved, Known.prototype);
+sayOfMoved("under Known.prototype", moved);
+alter(moved, Moved.prototype);
+sayOfMoved("back under Moved.prototype", moved);
+sayOfMoved("another object of Moved", new Moved());
+all.push(kept, moved, new Moved(), new Known(), new Heir(), new Other(), makeRow(8));
+console.log("in a loop", inLoop(all));
+let yes = 0;
+for (let turn = 0; turn < 300; turn++) {
+  for (let i = 0; i < all.length; i++) {
+    if (isKnown(all[i])) yes++;
+    if (isOther(all[i])) yes += 1000;
+    if (!isMoved(all[i]) && all[i] !== moved && narrow(all[i]) === "known") yes += 1000000;
+  }
+}
+console.log("many", yes);
+//// instanceof-object-constructed-for-another-class.ts
+// An object that Reflect.construct makes with the constructor of one class for another class has the fields of the first and the prototype of the second: `instanceof` follows the prototype.
+class Journal {
+  lines: string[] = [];
+  size(): number {
+    return this.lines.length;
+  }
+}
+class Quiet {
+  lines: string[] = [];
+  size(): number {
+    return -1;
+  }
+}
+function louder(Base: any): any {
+  return class extends Base {};
+}
+let current: Journal | null = new Journal();
+function attempt(what: string, run: () => unknown): void {
+  console.log(what, run());
+}
+attempt("a subclass made by value", () => {
+  const Louder = louder(Journal);
+  current = new Louder() as Journal;
+  return current instanceof Journal;
+});
+attempt("constructed for another class", () => {
+  current = Reflect.construct(Journal, [], Quiet) as Journal;
+  return current.size() + " " + (current instanceof Journal);
+});
+//// int32-fields-any-number.ts
+// Number fields that the program only shows small integers for, so that they are kept in four bytes, read and used right away, with every kind of number in them: the odd ones come out of JSON.
+declare const console: { log(...values: unknown[]): void };
+class Span {
+    kind!: number; pos!: number; end!: number; id!: number; next!: number; line!: number; column!: number; depth!: number;
+}
+function makeSpan(kind: number, pos: number, end: number): Span { const n = new Span(); n.kind = kind; n.pos = pos; n.end = end; n.id = 0; n.next = 0; n.line = pos >> 2; n.column = pos & 3; n.depth = kind + 1; return n; }
+const names: string[] = [];
+for (let i = 0; i < 40; i++) names.push("n" + i);
+(names as unknown as Record<string, string>)["1.5"] = "one and a half";
+(names as unknown as Record<string, string>)["-1"] = "minus one";
+(names as unknown as Record<string, string>)["NaN"] = "not a number";
+(names as unknown as Record<string, string>)["Infinity"] = "infinity";
+(names as unknown as Record<string, string>)["4294967296"] = "two to the 32";
+const text = "the quick brown fox jumps over the lazy dog";
+let counter = 100;
+
+function truthy(n: Span): string { return n.pos ? "yes" : "no"; }
+function falsy(n: Span): boolean { return !n.pos; }
+function both(n: Span): number { return n.pos && n.end; }
+function either(n: Span): number { return n.pos || n.end; }
+function nameAt(n: Span): string | undefined { return names[n.pos]; }
+function nameAfter(n: Span): string | undefined { return names[n.pos + 1]; }
+function nameBefore(n: Span): string | undefined { return names[n.pos - 1]; }
+function nameBetween(n: Span): string | undefined { return names[n.end - n.pos]; }
+function nameTwice(n: Span): string | undefined { return names[n.pos * 2]; }
+function width(n: Span): number { return n.end - n.pos; }
+function sum(n: Span): number { return n.end + n.pos; }
+function product(n: Span): number { return n.end * n.pos; }
+function sign(n: Span): number { return 1 / (n.pos * n.kind); }
+function signOfSum(n: Span): number { return 1 / (n.pos + n.end); }
+function signOfDifference(n: Span): number { return 1 / (n.pos - n.end); }
+function isSame(n: Span): boolean { return Object.is(n.pos, n.end); }
+function less(n: Span): boolean { return n.pos < n.end; }
+function lessOrEqual(n: Span): boolean { return n.pos <= n.end; }
+function greater(n: Span): boolean { return n.pos > n.end; }
+function greaterOrEqual(n: Span): boolean { return n.pos >= n.end; }
+function equal(n: Span): boolean { return n.pos === n.end; }
+function unequal(n: Span): boolean { return n.pos !== n.end; }
+function isZero(n: Span): boolean { return n.pos === 0; }
+function isNegative(n: Span): boolean { return n.pos < 0; }
+function atLeastTen(n: Span): boolean { return n.pos >= 10; }
+function notBelowTen(n: Span): boolean { return !(n.pos < 10); }
+function inText(n: Span): boolean { return n.pos < text.length; }
+function contains(n: Span, at: number): boolean { return at >= n.pos && at < n.end; }
+function code(n: Span): number { return text.charCodeAt(n.pos); }
+function codeAfter(n: Span): number { return text.charCodeAt(n.pos + 1); }
+function piece(n: Span): string { return text.substring(n.pos, n.end); }
+function slice(n: Span): string { return text.slice(n.pos, n.end); }
+function masked(n: Span): number { return n.pos & 0xff; }
+function ored(n: Span): number { return n.pos | 0; }
+function unsigned(n: Span): number { return n.pos >>> 0; }
+function shifted(n: Span): number { return n.pos << n.kind; }
+function shiftedBy(n: Span): number { return 1 << n.pos; }
+function inverted(n: Span): number { return ~n.pos; }
+function negated(n: Span): number { return -n.pos; }
+function remainder(n: Span): number { return n.pos % 7; }
+function quotient(n: Span): number { return n.pos / 2; }
+function floored(n: Span): number { return Math.floor(n.pos / 2); }
+function larger(n: Span): number { return Math.max(n.pos, n.end); }
+function smaller(n: Span): number { return Math.min(n.pos, n.end); }
+function asText(n: Span): string { return "" + n.pos; }
+function inTemplate(n: Span): string { return `${n.pos}:${n.end}`; }
+function copy(n: Span): number { n.next = n.pos; return n.next; }
+function copyPlusOne(n: Span): number { n.next = n.pos + 1; return n.next; }
+function copyWidth(n: Span): number { n.next = n.end - n.pos; return n.next; }
+function bump(n: Span): number { n.next = n.pos; n.next++; return n.next; }
+function drop(n: Span): number { n.next = n.pos; --n.next; return n.next; }
+function addTo(n: Span): number { n.next = n.pos; n.next += n.end; return n.next; }
+function idOf(n: Span): number { if (!n.id) { n.id = counter; counter++; } return n.id; }
+function nameOfId(n: Span): string | undefined { n.id = n.pos; const id = idOf(n); return names[id] || (id + "?"); }
+function chosen(n: Span): number { switch (n.pos) { case 0: return 10; case 1: return 11; case -1: return 9; case 2147483647: return 12; default: return -5; } }
+function typeName(n: Span): string { return typeof n.pos; }
+function isWhole(n: Span): boolean { return Number.isInteger(n.pos); }
+function isSafe(n: Span): boolean { return Number.isSafeInteger(n.pos + 1); }
+function keyed(n: Span): string { const m = new Map<number, string>([[0, "zero"], [1, "one"], [1.5, "half"], [NaN, "nan"]]); return m.get(n.pos) ?? "none"; }
+function count(n: Span): number { let t = 0; for (let i = n.pos; i < n.end && t < 5; i++) t++; return t; }
+function countDown(n: Span): number { let t = 0; for (let i = n.end; i > n.pos && t < 5; i--) t++; return t; }
+
+const all: [string, (n: Span) => unknown][] = [
+    ["truthy", truthy], ["falsy", falsy], ["both", both], ["either", either], ["nameAt", nameAt], ["nameAfter", nameAfter], ["nameBefore", nameBefore], ["nameBetween", nameBetween],
+    ["nameTwice", nameTwice], ["width", width], ["sum", sum], ["product", product], ["sign", sign], ["signOfSum", signOfSum], ["signOfDifference", signOfDifference], ["isSame", isSame],
+    ["less", less], ["lessOrEqual", lessOrEqual], ["greater", greater], ["greaterOrEqual", greaterOrEqual], ["equal", equal], ["unequal", unequal], ["isZero", isZero],
+    ["isNegative", isNegative], ["atLeastTen", atLeastTen], ["notBelowTen", notBelowTen], ["inText", inText], ["contains", n => contains(n, 3)], ["containsHalf", n => contains(n, 1.5)],
+    ["code", code], ["codeAfter", codeAfter], ["piece", piece], ["slice", slice], ["masked", masked], ["ored", ored], ["unsigned", unsigned], ["shifted", shifted], ["shiftedBy", shiftedBy],
+    ["inverted", inverted], ["negated", negated], ["remainder", remainder], ["quotient", quotient], ["floored", floored], ["larger", larger], ["smaller", smaller], ["asText", asText],
+    ["inTemplate", inTemplate], ["copy", copy], ["copyPlusOne", copyPlusOne], ["copyWidth", copyWidth], ["bump", bump], ["drop", drop], ["addTo", addTo], ["nameOfId", nameOfId],
+    ["chosen", chosen], ["typeName", typeName], ["isWhole", isWhole], ["isSafe", isSafe], ["keyed", keyed], ["count", count], ["countDown", countDown],
+];
+const numbers: number[] = JSON.parse("[0,1,-1,2,7,39,40,1073741823,1073741824,-1073741823,-1073741824,-1073741825,2147483646,2147483647,2147483648,-2147483647,-2147483648,-2147483649,4294967295,4294967296,9007199254740991,9007199254740992,-9007199254740992,1.5,-1.5,0.5,-0.5,-0,5e-324,1e21,1.7976931348623157e308]");
+for (const name of JSON.parse('["NaN","Infinity","-Infinity"]') as string[]) numbers.push(Number(name));
+function show(value: unknown): string { return typeof value === "number" && Object.is(value, -0) ? "-0" : String(value); }
+const spans: Span[] = [];
+for (let i = 0; i < 64; i++) spans.push(makeSpan(i & 3, i, i + 3));
+for (const [name, f] of all) { let t = ""; for (const n of spans) t = show(f(n)); console.log(name, "warm", t); }
+for (const [name, f] of all) {
+    const row: string[] = [];
+    for (const pos of numbers) {
+        const n = spans[row.length % spans.length];
+        n.kind = row.length % 5 - 1; n.pos = pos; n.end = 5; row.push(show(f(n)));
+        n.pos = 5; n.end = pos; row.push(show(f(n)));
+        n.pos = pos; n.end = pos; row.push(show(f(n)));
+        n.pos = 3; n.end = 8; n.next = 0; n.id = 0;
+    }
+    console.log(name, row.join(" "));
+}
+const through = spans[0] as unknown as Record<string, unknown>;
+for (const odd of JSON.parse("[1.25,-0,1099511627776,0.1]") as number[]) { through["pos"] = odd; through.end = odd; console.log(show(width(spans[0])), truthy(spans[0]), show(nameAt(spans[0])), show(copyPlusOne(spans[0])), less(spans[0]), show(sign(spans[0]))); }
+console.log(spans.map(n => n.line + n.column * 2 + n.depth).join(" "));
+//// int32-fields-at-limits.ts
+// Numbers kept as integers where they can be, taken over every edge: 2^31, 2^32, 2^53, -0, NaN, fractions out of `any`, division, remainders of negatives, shifts by 32 and more, parseInt, Number(), dates, typed arrays, loops that cross 2^31.
+declare const console: { log(...values: unknown[]): void };
+function show(value: unknown): string { return typeof value === "number" && Object.is(value, -0) ? "-0" : String(value); }
+class Cell { a!: number; b!: number; c!: number; d!: number; e!: number; f!: number; g!: number; h!: number; }
+function cell(a: number, b: number): Cell { const x = new Cell(); x.a = a; x.b = b; x.c = 0; x.d = 1; x.e = 2; x.f = 3; x.g = 4; x.h = 5; return x; }
+function arithmetic(x: Cell): string { return [x.a + x.b, x.a - x.b, x.a * x.b, x.a / x.b, x.a % x.b, -x.a, +x.a, x.a ** 2, x.a + 1, x.a - 1, x.a * 2, x.a / 2, x.a % 2, x.a % -3, 1 / x.a].map(show).join(" "); }
+function bits(x: Cell): string { return [x.a | 0, x.a >>> 0, x.a & x.b, x.a | x.b, x.a ^ x.b, ~x.a, x.a << 1, x.a << 31, x.a << 32, x.a << 33, x.a >> 32, x.a >> 63, x.a >>> 32, x.a >>> 31, x.a << x.b, x.a >> x.b, x.a >>> x.b, 1 << x.a].map(show).join(" "); }
+function compared(x: Cell): string { return [x.a < x.b, x.a <= x.b, x.a > x.b, x.a >= x.b, x.a == x.b, x.a === x.b, x.a != x.b, x.a !== x.b, x.a < 0, x.a <= 0, x.a > 0, x.a >= 0, x.a === 0, x.a === x.a, !x.a, !!x.a, x.a < 2147483648, x.a >= -2147483648].map(v => v ? "1" : "0").join(""); }
+function rounded(x: Cell): string { return [Math.floor(x.a / x.b), Math.ceil(x.a / x.b), Math.round(x.a / x.b), Math.trunc(x.a / x.b), (x.a / x.b) | 0, Math.floor(x.a), Math.abs(x.a), Math.sign(x.a), Math.min(x.a, x.b), Math.max(x.a, x.b), Math.imul(x.a, x.b), Math.clz32(x.a), Math.sqrt(x.a), Math.fround(x.a), Math.hypot(x.a, x.b)].map(show).join(" "); }
+function asText(x: Cell): string { return [String(x.a), x.a + "", `${x.a}`, x.a.toString(), x.a.toString(16), x.a.toFixed(2), "" + (x.a + x.b), JSON.stringify([x.a, x.b]), String(Number.isInteger(x.a)), String(Number.isSafeInteger(x.a)), String(Number.isFinite(x.a)), String(isNaN(x.a))].join(" "); }
+function stored(x: Cell): string { x.c = x.a + x.b; x.d = x.a * x.b; x.e = x.a / x.b; x.f = x.a % x.b; x.g = x.a | 0; x.h = -x.a; return [x.c, x.d, x.e, x.f, x.g, x.h].map(show).join(" "); }
+function stepped(x: Cell): string { x.c = x.a; x.c++; const up = x.c; x.c = x.a; x.c--; const down = x.c; x.c = x.a; x.c += x.b; const more = x.c; x.c = x.a; x.c -= x.b; const less = x.c; x.c = x.a; const before = x.c++; return [up, down, more, less, before, x.c].map(show).join(" "); }
+function inArrays(x: Cell): string {
+    const i8 = new Int8Array(2), u8 = new Uint8Array(2), c8 = new Uint8ClampedArray(2), i16 = new Int16Array(2), u16 = new Uint16Array(2), i32 = new Int32Array(2), u32 = new Uint32Array(2), f32 = new Float32Array(2), f64 = new Float64Array(2);
+    i8[0] = x.a; u8[0] = x.a; c8[0] = x.a; i16[0] = x.a; u16[0] = x.a; i32[0] = x.a; u32[0] = x.a; f32[0] = x.a; f64[0] = x.a;
+    x.c = u32[0]; x.d = i32[0]; x.e = f64[0]; x.f = u8[0];
+    return [i8[0], u8[0], c8[0], i16[0], u16[0], i32[0], u32[0], f32[0], f64[0], x.c, x.d, x.e, x.f, u32[0] + 1, i32[0] - 1, u32[0] * 2, i32[x.a], f64[x.b]].map(show).join(" ");
+}
+function parsed(texts: string[]): string { const x = cell(0, 0); const out: string[] = []; for (const text of texts) { x.a = parseInt(text); x.b = Number(text); x.c = parseFloat(text); x.d = parseInt(text, 16); x.e = +text; out.push([x.a, x.b, x.c, x.d, x.e, x.a + 1, x.b | 0, x.a === x.b].map(show).join(",")); } return out.join(" "); }
+function dates(x: Cell): string { const d = new Date(x.a); x.c = d.getTime(); x.d = d.getUTCFullYear(); x.e = d.getUTCDay(); x.f = Date.UTC(1970, 0, 1, 0, 0, 0, x.b); return [x.c, x.d, x.e, x.f, x.c + 1, x.c - x.f, x.c / 1000 | 0, Math.floor(x.c / 86400000)].map(show).join(" "); }
+function crossing(from: number, steps: number, by: number): string { const x = cell(from, by); let last = 0, n = 0; for (let i = from; n < steps; i += by, n++) { x.a = i; last = x.a + x.b; } return show(x.a) + "/" + show(last) + "/" + show(x.a | 0) + "/" + show(x.a === x.a + 1); }
+function counted(limit: number): number { let total = 0; const x = cell(0, 0); for (let i = 0; i < limit; i++) { x.a = i; if (x.a & 1) total += x.a; else total -= x.a >> 1; } return total; }
+const odd: number[] = JSON.parse("[0,1,-1,2,-2,3,7,-7,31,32,33,255,256,65535,65536,1073741823,1073741824,-1073741824,-1073741825,2147483647,2147483648,-2147483648,-2147483649,4294967295,4294967296,-4294967296,9007199254740991,9007199254740992,-9007199254740992,0.5,-0.5,1.5,-1.5,2.5,0.1,-0,1e21,-1e21,1e308,5e-324]");
+for (const name of JSON.parse('["NaN","Infinity","-Infinity"]') as string[]) odd.push(Number(name));
+const others = [1, -1, 2, 3, -3, 0, 32, 2147483647, 0.5];
+for (let i = 0; i < odd.length; i++) {
+    const other = i % 4 === 3 ? odd[(i * 7 + 3) % odd.length] : others[i % others.length];
+    console.log(show(odd[i]), show(other), "|", arithmetic(cell(odd[i], other)), "|", bits(cell(odd[i], other)), "|", compared(cell(odd[i], other)), "|", rounded(cell(odd[i], other)));
+    console.log("  ", asText(cell(odd[i], other)), "|", stored(cell(odd[i], other)), "|", stepped(cell(odd[i], other)), "|", inArrays(cell(odd[i], other)), "|", dates(cell(odd[i], other)));
+}
+console.log(parsed(["0", "1", "-1", "12px", "0x10", "1e3", "  42  ", "", "abc", "2147483648", "-2147483649", "9007199254740993", "1.5", "-0", ".5", "Infinity", "0b101", "1_000"]));
+console.log(crossing(2147483640, 16, 1), crossing(-2147483640, 16, -1), crossing(1073741820, 8, 1), crossing(4294967290, 12, 1), crossing(9007199254740988, 8, 1), crossing(0, 5, 0.25), crossing(10, 12, -1), crossing(0, 3, -0), crossing(1, 4, 1e308));
+console.log(counted(100000), counted(0), counted(1));
+//// int32-math-results.ts
+// What `Math.min`, `Math.max`, `Math.abs`, `Math.sign` and a rounded quotient return is an `int32` by proof where the operands limit it, and so is a counter that several cases of a `switch` advance under the test of a loop. type-rules/int32-unproven-stores has what is not.
+import type { int32 } from "bun";
+
+function least(a: int32, b: int32): int32 { return Math.min(a, b); }
+function greatest(a: int32, b: int32): int32 { return Math.max(a, b, 0); }
+function below(a: int32): int32 { return Math.min(a, 7) + 1; }
+function size(a: int32): int32 { return Math.abs((a & 255) - 128); }
+function sign(a: int32): int32 { return Math.sign(a); }
+function half(a: int32): int32 { return Math.floor(a / 2); }
+function third(a: int32): int32 { return Math.trunc((a & 1023) / 3); }
+function thirdUp(a: int32): int32 { return Math.ceil((a & 1023) / 3); }
+function quarter(a: int32): int32 { return Math.round((a & 1023) / 4); }
+function negativeThird(a: int32): int32 { return Math.trunc(-((a & 1023) + 3) / 3); }
+function middle(a: int32, b: int32): int32 { const sum = (a & 65535) + (b & 65535); return Math.floor(sum / 2); }
+function eitherHalf(a: int32, b: int32): int32 { return Math.floor(a > 0 ? a / 2 : b / 3); }
+function scaled(a: int32): int32 { return ((a & 255) - 128) * 3; }
+function lastBelowHalf(to: int32): int32 { let last: int32 = -1; for (let i: int32 = 0; i < to / 2; i++) last = i; return last; }
+function steps(from: int32, to: int32): int32 {
+  let turns: int32 = 0;
+  let i: int32 = from;
+  while (i < to) {
+    switch (i & 3) {
+      case 0: i++; break;
+      case 1: if (turns > 100) return turns;
+      case 2: i++; break;
+      default: i = (i + 5) | 0; break;
+    }
+    turns = (turns + 1) | 0;
+  }
+  return turns;
+}
+
+const given: number[] = JSON.parse("[-2147483648, -1025, -7, -1, 0, 1, 7, 1026, 2147483647]");
+for (const n of given) {
+  console.log(least(n | 0, 5), greatest(n | 0, -5), below(n | 0), size(n | 0), sign(n | 0), half(n | 0), scaled(n | 0));
+  console.log(third(n | 0), thirdUp(n | 0), quarter(n | 0), negativeThird(n | 0), middle(n | 0, 9), eitherHalf(n | 0, -n | 0));
+}
+console.log(lastBelowHalf(7), lastBelowHalf(8), lastBelowHalf(0), lastBelowHalf(-3), steps(0, 40), steps(-9, 9), steps(5, 5), steps(2147483644, 2147483645));
+//// integers-counted-up-and-down-past-the-ends-of-int32.ts
+// `p.count++`, `p.count -= 3`, `total += 5` on a number that has only ever been a small integer: it is kept in 32 bits and added to where it lies.
+// At either end of int32 the sum no longer fits: it is the same number as in plain Bun, in the field, in the variable, as the value of the expression, and whatever is read next.
+class Counter {
+  count: number;
+  other: number;
+  constructor(count: number) {
+    this.count = count | 0;
+    this.other = 7;
+  }
+}
+function up(p: Counter): Counter {
+  p.count++;
+  return p;
+}
+function down(p: Counter): Counter {
+  p.count--;
+  return p;
+}
+function upBy(p: Counter): Counter {
+  p.count += 1000;
+  p.other += 1;
+  return p;
+}
+function downBy(p: Counter): Counter {
+  p.count -= 1000;
+  p.other -= 1;
+  return p;
+}
+function twice(p: Counter): Counter {
+  p.count++;
+  p.count++;
+  return p;
+}
+function valueBefore(p: Counter): number {
+  return p.count++;
+}
+function valueBehind(p: Counter): number {
+  return ++p.count;
+}
+function both(p: Counter, q: Counter): number {
+  p.count++;
+  q.count--;
+  return p.count + q.count;
+}
+let total = 0;
+function addToTotal(): number {
+  total += 5;
+  return total;
+}
+function counterFrom(start: number) {
+  let n = start | 0;
+  return { next: () => ++n, previous: () => --n, read: () => n };
+}
+
+const ends = [2147483647, 2147483646, 2147482647, 2147482648, 0, -1, -2147483648, -2147483647, -2147483643, -2147483642, -2147483644, -2147482648, -2147482649];
+for (let round = 0; round < 3; round++) {
+  for (const end of ends) {
+    const line: unknown[] = [end];
+    for (const act of [up, down, upBy, downBy, twice]) {
+      const p = act(new Counter(end));
+      line.push(p.count, p.other);
+      act(p);
+      line.push(p.count);
+    }
+    const p = new Counter(end);
+    line.push(valueBefore(p), p.count, valueBehind(p), p.count);
+    const same = new Counter(end);
+    line.push(both(same, same), both(new Counter(end), new Counter(end)));
+    const counter = counterFrom(end);
+    line.push(counter.next(), counter.next(), counter.previous(), counter.previous(), counter.previous(), counter.read());
+    console.log(line.join(" "));
+  }
+}
+total = 2147483640;
+console.log(addToTotal(), addToTotal(), addToTotal(), total);
+total = 1.5;
+console.log(addToTotal(), total);
+
+// What is no longer a small integer, is frozen, or is no field any more is counted as ECMAScript says.
+const fraction = new Counter(1);
+fraction.count = 0.5;
+console.log(up(fraction).count, down(down(fraction)).count, upBy(fraction).count);
+const text = new Counter(1);
+(text as any).count = "9";
+console.log(up(text).count, typeof text.count);
+const nothing = new Counter(1);
+(nothing as any).count = undefined;
+console.log(up(nothing).count);
+const frozen = Object.freeze(new Counter(5));
+try {
+  up(frozen);
+} catch (error) {
+  console.log((error as Error).constructor.name);
+}
+console.log(frozen.count);
+const watched = new Counter(5);
+let reads = 0;
+Object.defineProperty(watched, "count", { get: () => (reads++, 2147483647), set: value => console.log("set", value), configurable: true });
+console.log(up(watched).count, valueBefore(watched), reads);
+const deleted = new Counter(5);
+delete (deleted as any).count;
+console.log(up(deleted).count, "count" in deleted);
+//// interface-optional-fields.ts
+// Optional and nullable fields of interfaces are added, set to null, deleted and read.
+interface Author { nick: string; age?: number }
+interface Doc { id: number; title?: string; author: Author; editor?: Author | null; refs: number[] }
+function make(id: number): Doc { return { id, title: "t" + id, author: { nick: "a" + id }, editor: null, refs: [id] } }
+const states = [make(2), make(2), make(2), make(2)]
+console.log(Object.keys(states[1]).join())
+states[0].editor = undefined; states[1].editor = null; delete states[2].editor; states[3].editor = { nick: "ed" }
+console.log(states.map(d => Object.keys(d).join()).join(" "))
+//// intersection-of-four-unions.ts
+type A = { a: 0; a0?: string } | { a: 1; a1?: string } | { a: 2; a2?: string } | { a: 3; a3?: string };
+type B = { b: 0; b0?: string } | { b: 1; b1?: string } | { b: 2; b2?: string } | { b: 3; b3?: string };
+type C = { c: 0; c0?: string } | { c: 1; c1?: string } | { c: 2; c2?: string } | { c: 3; c3?: string };
+type D = { d: 0; d0?: string } | { d: 1; d1?: string } | { d: 2; d2?: string } | { d: 3; d3?: string };
+type All = A & B & C & D;
+function weigh(it: All): number {
+  return it.a * 64 + it.b * 16 + it.c * 4 + it.d;
+}
+function label(it: All): string {
+  if (it.a === 2 && it.d === 3) return "two and three" + (it.a2 ?? "") + (it.d3 ?? "");
+  return it.b === 1 ? "one" + (it.b1 ?? "") : "other";
+}
+const made: All[] = [
+  { a: 0, b: 0, c: 0, d: 0 },
+  { a: 3, b: 3, c: 3, d: 3, a3: "x" },
+  { a: 2, b: 1, c: 0, d: 3, a2: "!", d3: "?" },
+  { a: 1, b: 1, c: 2, d: 0, b1: "+" },
+];
+const either: All | undefined = made.length > 2 ? made[2] : undefined;
+console.log(made.map(weigh).join(" "), made.map(label).join(" "), either ? weigh(either) : -1);
+//// intersection-types.ts
+// Intersection types: an object created as `A & B` is read and written as `A`, as `B` and as the intersection.
+type HasId = { id: number }
+type HasLabel = { label: string; note?: string }
+type Stamps = { created: number; updated?: number }
+type Entity = HasId & HasLabel
+type Stored = Entity & Stamps
+type Overlap = { id: number; shared: number | string } & { shared: number; extra: boolean }
+interface Walker { legs: number; walk(): string }
+interface Swimmer { fins: number; swim(): string }
+type Amphibian = Walker & Swimmer
+function show(o: object): string { return Object.keys(o).join() + " " + JSON.stringify(o) }
+function idOf(h: HasId): number { return h.id }
+function labelOf(h: HasLabel): string { return h.label + (h.note === undefined ? "" : "/" + h.note) }
+function age(t: Stamps): number { return (t.updated ?? t.created) - t.created }
+const entity: Entity = { label: "e", id: 1 }
+const stored: Stored = { created: 100, id: 2, label: "s" }
+const both: Stored = { updated: 5, note: "n", label: "b", created: 6, id: 3 }
+const ids: HasId[] = [entity, stored, both, { id: 4 }]
+const labels: HasLabel[] = [entity, stored, both, { label: "only" }]
+const stamps: Stamps[] = [stored, both, { created: 1 }]
+console.log(ids.map(idOf).join(), labels.map(labelOf).join(), stamps.map(age).join())
+console.log([entity, stored, both].map(show).join(" ; "))
+const storedAsLabel: HasLabel = stored
+const storedAsStamps: Stamps = stored
+storedAsStamps.updated = 150
+storedAsLabel.note = "late"
+ids[1].id = 20
+console.log(show(stored), stored.id, stored.note, stored.updated, age(stored), labelOf(stored))
+delete storedAsStamps.updated
+storedAsStamps.updated = 101
+console.log(show(stored), "updated" in entity, (entity as Partial<Stored>).updated)
+
+const overlap: Overlap = { shared: 2, id: 1, extra: true }
+const leftHalf: { id: number; shared: number | string } = overlap
+const rightHalf: { shared: number; extra: boolean } = overlap
+rightHalf.shared += 0.5
+console.log(leftHalf.shared, overlap.shared * 2, typeof leftHalf.shared, show(overlap))
+
+const frog: Amphibian = { legs: 4, fins: 0, walk() { return "walk " + this.legs }, swim() { return "swim " + this.fins + "/" + this.legs } }
+const walker: Walker = frog
+const swimmer: Swimmer = frog
+walker.legs = 2
+swimmer.fins = 1
+console.log(frog.walk(), frog.swim(), walker.walk(), swimmer.swim(), Object.keys(swimmer).join())
+
+// The two halves are put together by a generic function.
+function merge<A extends object, B extends object>(x: A, y: B): A & B { return { ...x, ...y } }
+const merged = merge(stored, { extra: [1], id: 77 })
+console.log(show(merged), merged.id, merged.extra.length, merged.created, stored.id, idOf(merged), age(merged))
+// The second half arrives after creation, by Object.assign. (Such an object seen as that half alone, or cast from any: type-rules/intersection-types.)
+function withId<T extends object>(value: T, id: number): T & HasId { return Object.assign(value, { id }) }
+const labelled: HasLabel = { label: "grown" }, direct: HasLabel = { label: "direct" }
+const grown = withId(labelled, 9), grownDirectly: HasLabel & HasId = Object.assign(direct, { id: 8 })
+console.log(grown.id, grown.label, show(labelled), (grown as object) === labelled, grownDirectly.id, show(direct))
+
+// An intersection distributes over a union.
+type Painted = ({ kind: "c"; r: number } | { kind: "s"; side: number }) & { colour: string }
+function paint(p: Painted): string { return p.colour + (p.kind === "c" ? " circle " + p.r : " square " + p.side) }
+const painted: Painted[] = [{ kind: "c", r: 1, colour: "red" }, { colour: "blue", side: 2, kind: "s" }]
+const colours: { colour: string }[] = painted
+colours[0].colour = "green"
+console.log(painted.map(paint).join(), painted.map(show).join(" ; "))
+
+// A branded primitive is a primitive: the object half of the intersection exists in the checker only.
+type Brand<T, B extends string> = T & { readonly __brand: B }
+type UserId = Brand<number, "user">
+type Slug = Brand<string, "slug">
+function userId(n: number): UserId { return n as UserId }
+function slug(s: string): Slug { return s as Slug }
+const users: UserId[] = [userId(5), userId(2.5), userId(-0), userId(NaN)]
+const account: { owner: UserId; path: Slug; previous?: UserId } = { owner: users[0], path: slug("a-b") }
+console.log(users.map(u => typeof u + (u + 1)).join(), account.owner * 2, account.path.length, account.path.toUpperCase(), account.path + "!", show(account), Object.is(users[2], -0))
+account.previous = account.owner
+account.owner = userId(account.owner + 1)
+console.log(account.owner, account.previous, account.owner > account.previous, new Map<UserId, Slug>([[account.owner, account.path]]).get(userId(6)), `${account.path}/${account.owner}`)
+
+let total = 0
+for (let i = 0; i < 3000; i++) total += idOf(ids[i & 3]) + labelOf(labels[i & 3]).length + age(stamps[i % 3])
+console.log(total)
+//// intersections-type-variable-and-empty-member.ts
+interface P0 { p0: number }
+interface P1 { p1: number }
+interface P2 { p2: number }
+interface P3 { p3: number }
+interface P4 { p4: number }
+interface P5 { p5: number }
+interface P6 { p6: number }
+interface P7 { p7: number }
+interface P8 { p8: number }
+interface P9 { p9: number }
+interface P10 { p10: number }
+interface P11 { p11: number }
+interface P12 { p12: number }
+interface P13 { p13: number }
+interface P14 { p14: number }
+interface P15 { p15: number }
+interface P16 { p16: number }
+interface P17 { p17: number }
+type Wide = P0 & P1 & P2 & P3 & P4 & P5 & P6 & P7 & P8 & P9 & P10 & P11 & P12 & P13 & P14 & P15 & P16 & P17;
+type WideAndEmpty = Wide & {};
+function sure<T>(value: T): T & {} { if (value === null || value === undefined) throw new Error("nothing"); return value; }
+function field<T, K extends keyof T>(from: Partial<T>, key: K): Partial<T>[K] & {} { return sure(from[key]); }
+function both<T extends Wide>(value: T & {}): T { return value; }
+function widen(value: Wide): WideAndEmpty { return value; }
+function narrow(value: WideAndEmpty): Wide { return value; }
+const wide: Wide = { p0: 0, p1: 1, p2: 2, p3: 3, p4: 4, p5: 5, p6: 6, p7: 7, p8: 8, p9: 9, p10: 10, p11: 11, p12: 12, p13: 13, p14: 14, p15: 15, p16: 16, p17: 17 };
+console.log(sure(3), sure("s"), field<Wide, "p5">({ p5: 5 }, "p5"), both(wide).p7, narrow(widen(wide)).p17);
+try { sure(undefined); } catch (error) { console.log((error as Error).message); }
+//// json-stringify-after-untyped-code-changed-the-objects/deeds.js
+export const deeds = {
+  nothing: (o) => o,
+  addProperty: (o) => { o.added = "later"; return o; },
+  addNumberedProperty: (o) => { o[3] = "indexed"; return o; },
+  addSymbol: (o) => { o[Symbol("s")] = 1; return o; },
+  removeFirst: (o) => { delete o.id; return o; },
+  removeMiddle: (o) => { delete o.text; return o; },
+  removeAndAddAgain: (o) => { delete o.text; o.text = "after the others"; return o; },
+  getter: (o) => Object.defineProperty(o, "text", { get() { return "from a getter"; }, enumerable: true, configurable: true }),
+  getterWithEffect: (o) => Object.defineProperty(o, "text", { get() { o.id = -1; return "changes id"; }, enumerable: true, configurable: true }),
+  getterFirstChangesLater: (o) => Object.defineProperty(o, "id", { get() { o.text = "changed by the getter of id"; return 0; }, enumerable: true, configurable: true }),
+  extraGetter: (o) => Object.defineProperty(o, "extra", { get() { return "from a getter"; }, enumerable: true, configurable: true }),
+  extraGetterWithEffect: (o) => Object.defineProperty(o, "extra", { get() { o.text = "changed while it was written"; return 1; }, enumerable: true, configurable: true }),
+  extraGetterThatThrows: (o) => Object.defineProperty(o, "extra", { get() { throw new RangeError("thrown by a getter"); }, enumerable: true, configurable: true }),
+  extraHidden: (o) => Object.defineProperty(o, "extra", { value: 1, enumerable: false }),
+  hide: (o) => Object.defineProperty(o, "text", { enumerable: false }),
+  readOnly: (o) => Object.defineProperty(o, "text", { writable: false }),
+  ownToJSON: (o) => { o.toJSON = function () { return { replaced: this.id }; }; return o; },
+  hiddenToJSON: (o) => Object.defineProperty(o, "toJSON", { value() { return "hidden toJSON"; }, enumerable: false }),
+  toJSONThatIsNoFunction: (o) => { o.toJSON = 5; return o; },
+  prototypeWithToJSON: (o) => Object.setPrototypeOf(o, { toJSON() { return "by the prototype"; } }),
+  prototypeTwoUp: (o) => Object.setPrototypeOf(o, Object.create({ toJSON() { return "two steps up"; } })),
+  prototypeWithoutToJSON: (o) => Object.setPrototypeOf(o, { other: 1 }),
+  nullPrototype: (o) => Object.setPrototypeOf(o, null),
+  proxyPrototype: (o) => Object.setPrototypeOf(o, new Proxy({}, { get(target, key) { return key === "toJSON" ? () => "through a proxy" : undefined; } })),
+  freeze: (o) => Object.freeze(o),
+  seal: (o) => Object.seal(o),
+  preventExtensions: (o) => Object.preventExtensions(o),
+  otherKinds: (o) => { o.id = "a text"; o.text = 7; o.on = null; o.ratio = { object: 1 }; return o; },
+  undefinedEverywhere: (o) => { o.id = undefined; o.text = undefined; o.on = undefined; return o; },
+  functionsAndSymbols: (o) => { o.id = () => 1; o.text = Symbol("t"); return o; },
+  bigint: (o) => { o.id = 10n; return o; },
+  itself: (o) => { o.next = o; return o; },
+  itselfInAList: (o) => { o.list = [o]; return o; },
+  wideText: (o) => { o.text = "wide 日本語 😀"; return o; },
+  loneSurrogate: (o) => { o.text = "lone \ud800"; return o; },
+  escapes: (o) => { o.text = "q \" b \\ n \n u \u0001"; return o; },
+  rope: (o) => { let t = "r"; for (let i = 0; i < 9; i++) t = t + "o" + i; o.text = t; return o; },
+  boxed: (o) => { o.id = new Number(5); o.text = new String("boxed"); o.on = new Boolean(false); return o; },
+  date: (o) => { o.next = new Date(0); return o; },
+  listWithHole: (o) => { o.list = [1, , 3]; return o; },
+  listWithToJSON: (o) => { o.list = [1]; o.list.toJSON = () => "list toJSON"; return o; },
+  listOfPlain: (o) => { o.list = [{ p: 1 }, { p: 2 }]; return o; },
+  plainInside: (o) => { o.next = { plain: true, deep: { a: [1, { b: 2 }] } }; return o; },
+  plainWithToJSONInside: (o) => { o.next = { toJSON() { return "inner toJSON"; } }; return o; },
+  numbers: (o) => { o.id = -0; o.ratio = NaN; return o; },
+  moreNumbers: (o) => { o.id = 2147483648.5; o.ratio = -Infinity; return o; },
+  edgeNumbers: (o) => { o.id = -2147483648; o.ratio = 5e-324; return o; },
+};
+//// json-stringify-after-untyped-code-changed-the-objects/main.ts
+// Untyped code changes objects that have a layout (adds, deletes, hides, freezes, gives them toJSON, other prototypes, cycles),
+// and code that does not know their type writes them as JSON. Every change succeeds as in plain Bun, and what is written must be exact.
+// ENV JSC_aotCountsPath=/dev/null
+declare const aotRuntimeCounters: undefined | (() => string);
+const slowPaths = () => (typeof aotRuntimeCounters === "function" ? Number(/(\d+)\tcounter:JSONStringifySlowPaths/.exec(aotRuntimeCounters())?.[1] ?? 0) : 0);
+import { deeds } from "./deeds.js";
+declare const aotOperationCount: undefined | ((name: string) => number);
+const count = (name: string) => (typeof aotOperationCount === "function" ? aotOperationCount(name) : 0);
+const writers: Record<string, (value: unknown) => string> = {
+  write: (value) => { try { return JSON.stringify(value) as string; } catch (error) { return (error as Error).constructor.name; } },
+};
+let coverage = "";
+function write(value: unknown): string {
+  // W: nothing was left to the engine's own writer and nothing handed to the run time.
+  const entered = count("operationAOTJSONAppendValue") + count("operationAOTStringBuilderAppendJSON"), left = slowPaths();
+  const text = writers["write"]!(value);
+  coverage += slowPaths() > left ? "-" : count("operationAOTJSONAppendValue") + count("operationAOTStringBuilderAppendJSON") > entered ? "f" : "W";
+  return text;
+}
+interface Row { id: number; text: string; on: boolean; ratio: number; next: Row | null; list: number[]; maybe?: string }
+interface Holds { value: unknown }
+class Point { x: number; text: string; id: number; constructor(x: number) { this.x = x; this.text = "p" + x; this.id = x; } }
+function row(id: number): Row { return { id, text: "t" + id, on: id % 2 === 0, ratio: id / 8, next: null, list: [id, id + 1] }; }
+function holds(value: unknown): Holds { return { value }; }
+interface Open { id: unknown; text: unknown; on: unknown; ratio: unknown; next: unknown; list: unknown }
+function open(id: number): Open { return { id, text: "t" + id, on: true, ratio: id / 8, next: null, list: [id] }; }
+function attempt(label: string, make: () => unknown): void {
+  let value: unknown;
+  try { value = make(); } catch (error) { coverage += "x"; console.log(label, "the deed is refused:", (error as Error).constructor.name); return; }
+  console.log(label, write(value));
+}
+let turn = 0;
+for (const [name, deed] of Object.entries(deeds as Record<string, (o: unknown) => unknown>)) {
+  const id = ++turn * 10;
+  attempt(name, () => deed(row(id)));
+  attempt(name + " in a list", () => [row(id + 1), deed(row(id + 2)), row(id + 3)]);
+  attempt(name + " held", () => holds(deed(row(id + 4))));
+  attempt(name + " held in a list", () => holds([deed(row(id + 5))]));
+  attempt(name + " of a class", () => deed(new Point(id + 6)));
+  attempt(name + " in an open field", () => deed(open(id + 7)));
+  attempt(name + " afterwards", () => row(id + 8));
+}
+if (typeof aotOperationCount === "function") {
+  const written = coverage.split("W").length - 1;
+  if (written < 100) throw new Error("only " + written + " values were written without the engine's own writer: " + coverage);
+}
+//// json-stringify-any-field.ts
+interface A { i: number; d: number; s: string; t: boolean; n: null; o?: string; p?: number; child?: A | null; list?: A[] }
+interface B { kind: "b"; x: number; y: number }
+interface C { kind: "c"; label: string }
+interface Odd { "quo\"te": number; "back\\slash": number; "tab\there": number; plain: number }
+interface Wide { "ключ": number; plain: string }
+interface Big { f00: number; f01: number; f02: number; f03: number; f04: number; f05: number; f06: number; f07: number; f08: number; f09: number; f10: string; f11: string; f12: string; f13: string; f14: string; f15: string; f16: boolean; f17: boolean; f18: null; f19: number; f20?: number; f21?: string; f22?: number; f23?: string }
+class Point { #hidden = 5; constructor(public x: number, public y: number) {} get sum() { return this.x + this.y + this.#hidden; } norm() { return 0; } static made = 1; }
+class Point3 extends Point { z = 3; }
+class Jsonable { v = 1; toJSON() { return { from: "toJSON", v: this.v }; } }
+class OwnToJSON { toJSON: unknown; v = 2; constructor(f: unknown) { this.toJSON = f; } }
+let count = 0;
+////= show-3	out = String(JSON.stringify(make(), rest[0] as any, rest[1] as any)
+const a = (i: number): A => ({ i, d: i + 0.5, s: "s" + i, t: (i & 1) === 1, n: null });
+show("every kind of field", () => a(1));
+show("negative, zero, large, not an int32", () => [{ ...a(0), i: -1 }, { ...a(0), i: 0 }, { ...a(0), i: 2147483647 }, { ...a(0), i: 2147483648 }, { ...a(0), i: -2147483648 }, { ...a(0), i: 1e21 }] as A[]);
+show("-0, NaN, Infinity in a number field", () => [{ ...a(0), d: -0 }, { ...a(0), d: NaN }, { ...a(0), d: Infinity }, { ...a(0), i: -0 }, { ...a(0), i: NaN }] as A[]);
+show("optional fields absent, one, both, in either order", () => { const w = a(1), x = a(2), y = a(3), z = a(4); x.o = "o"; y.o = "o"; y.p = 1; z.p = 1; z.o = "o"; return [w, x, y, z]; });
+show("optional field set to undefined", () => { const x = a(1); x.o = undefined; x.p = 2; return x; });
+show("optional field deleted", () => { const x = a(1); x.o = "o"; x.p = 2; delete x.o; return x; });
+show("nested", () => { const x = a(1); x.child = a(2); x.child.child = a(3); x.child.child.child = null; return x; });
+show("a list of one shape", () => { const x = a(0); x.list = [a(1), a(2), a(3), a(4)]; return x; });
+show("shapes in turn", () => [{ kind: "b", x: 1, y: 2 } as B, { kind: "c", label: "l" } as C, { kind: "b", x: 3, y: 4 } as B, { kind: "c", label: "m" } as C, a(1), { kind: "b", x: 5, y: 6 } as B]);
+show("one shape, orders in turn", () => { const out: A[] = []; for (let i = 0; i < 6; i++) { const x = a(i); if (i & 1) { x.o = "o"; x.p = i; } else { x.p = i; x.o = "o"; } out.push(x); } return out; });
+show("typed and plain in turn", () => [a(1), JSON.parse('{"i":1,"z":2}'), a(2), {}, a(3), [], a(4)]);
+show("strings that need escaping", () => [{ ...a(0), s: 'q"uote' }, { ...a(0), s: "back\\slash" }, { ...a(0), s: "new\nline" }, { ...a(0), s: "\u0001" }, { ...a(0), s: "\u007f" }, { ...a(0), s: "é" }] as A[]);
+show("16-bit strings, lone surrogates", () => [{ ...a(0), s: "значение" }, { ...a(0), s: "\ud800" }, { ...a(0), s: "😀" }] as A[]);
+show("a long string, a rope, an empty string", () => [{ ...a(0), s: "x".repeat(200) }, { ...a(0), s: "left".repeat(10) + String(count) + "right".repeat(10) }, { ...a(0), s: "" }] as A[]);
+show("field names that need escaping", () => ({ 'quo"te': 1, "back\\slash": 2, "tab\there": 3, plain: 4 }) as Odd);
+show("a 16-bit field name", () => ({ "ключ": 1, plain: "p" }) as Wide);
+show("many fields", () => ({ f00: 0, f01: 1, f02: 2, f03: 3, f04: 4, f05: 5, f06: 6, f07: 7, f08: 8, f09: 9, f10: "a", f11: "b", f12: "c", f13: "d", f14: "e", f15: "f", f16: true, f17: false, f18: null, f19: 19.5 }) as Big);
+show("many fields, the optional ones in another order", () => { const b: Big = { f00: 0, f01: 1, f02: 2, f03: 3, f04: 4, f05: 5, f06: 6, f07: 7, f08: 8, f09: 9, f10: "a", f11: "b", f12: "c", f13: "d", f14: "e", f15: "f", f16: true, f17: false, f18: null, f19: 19.5 }; b.f23 = "z"; b.f20 = 20; b.f22 = 22; b.f21 = "y"; return b; });
+show("a class instance: private field, accessor, method, static", () => new Point(1, 2));
+show("instances of a class and its heir in turn", () => [new Point(1, 2), new Point3(3, 4), new Point(5, 6), new Point3(7, 8)]);
+show("a class with toJSON among others", () => [new Point(1, 2), new Jsonable(), new Point(3, 4)]);
+show("an own field toJSON: callable, not callable", () => [new OwnToJSON(() => "called"), new OwnToJSON(5), new OwnToJSON(undefined)]);
+show("a field that holds a function, a symbol", () => [{ v: 1, f: () => 1 }, { v: 2, f: Symbol("s") }] as { v: number; f: unknown }[]);
+show("a field that holds a bigint", () => ({ v: 1, f: 1n }) as { v: number; f: unknown });
+show("frozen, sealed, not extensible", () => [Object.freeze(a(1)), Object.seal(a(2)), Object.preventExtensions(a(3))]);
+show("the same object twice", () => { const x = a(1); return [x, x, { x }]; });
+show("a cycle", () => { const x = a(1); x.child = x; return x; });
+show("indent 2", () => { const x = a(1); x.list = [a(2)]; return x; }, undefined, 2);
+show("replacer list", () => a(1), ["s", "i"]);
+show("replacer function", () => a(1), (k: string, v: unknown) => (k === "d" ? undefined : v));
+show("longer than the first buffer", () => { const x = a(0); x.list = []; for (let i = 0; i < 300; i++) x.list.push(a(i)); const text = JSON.stringify(x); return text.length + " " + text.slice(8180, 8210) + " " + text.slice(-40); });
+show("longer than the first buffer, 16-bit at the end", () => { const x = a(0); x.list = []; for (let i = 0; i < 300; i++) x.list.push(a(i)); x.list[299]!.s = "конец"; const text = JSON.stringify(x); return text.length + " " + text.slice(-60); });
+show("exactly at the buffer's edge", () => { const out: number[] = []; for (let n = 8150; n < 8200; n++) { const x = a(1); x.s = "y".repeat(n - 50); out.push(JSON.stringify([x, a(2)]).length); } return out.join(); });
+//// json-stringify-arrays-that-unseen-code-has-held.ts
+// Records whose arrays went once through text that is evaluated at run time: nothing is proven of what the arrays hold, and the declared types are all that is known.
+interface Rec { id: number; name: string; ok: boolean; tags: string[] }
+interface Grid { rows: string[][]; sizes: number[]; flags: boolean[] }
+interface Holder { list: Rec[]; last: string }
+interface Mixed { values: (string | number | null)[]; end: number }
+
+const word: string = process.argv[2] ?? "w";
+const launder = new Function("v", "return v" + word.slice(word.length)) as <V>(v: V) => V;
+const change = new Function("v", "f", "f(v); return v" + word.slice(word.length)) as <V>(v: V, f: (v: any) => void) => V;
+
+let count = 0;
+////= show-2	out = String(make()
+
+const rec = (i: number, tags: string[]): Rec => launder({ id: i, name: word + i, ok: (i & 1) === 1, tags });
+function writeRec(r: Rec): string { return JSON.stringify(r); }
+function writeGrid(g: Grid): string { return JSON.stringify(g); }
+function writeHolder(h: Holder): string { return JSON.stringify(h); }
+function writeMixed(m: Mixed): string { return JSON.stringify(m); }
+
+show("two strings", () => writeRec(rec(1, [word, "b"])));
+show("no element", () => writeRec(rec(2, [])));
+show("one element", () => writeRec(rec(3, ["only"])));
+show("strings that need escaping, wide strings, ropes", () => writeRec(rec(4, ['q"', "\\", "\n", "é", "значение", "\ud800", word.repeat(20) + count + word.repeat(20), ""])));
+show("a hole in the middle", () => writeRec(rec(5, change(["a", "b", "c"], v => { delete v[1]; }))));
+show("a hole at the end, by length", () => writeRec(rec(6, change(["a"], v => { v.length = 3; }))));
+show("undefined, a function, a symbol among the elements", () => writeRec(rec(9, change(["a", "b", "c", "d"], v => { v[0] = undefined; v[1] = () => 1; v[2] = Symbol("s"); }))));
+show("numbers, booleans, null in place of strings", () => writeRec(rec(10, change(["a", "b", "c", "d", "e"], v => { v[0] = 1; v[1] = 1.5; v[2] = true; v[3] = null; v[4] = -0; }))));
+show("only integers in place of strings", () => writeRec(rec(11, launder([1, 2, 3] as unknown as string[]))));
+show("only fractions in place of strings", () => writeRec(rec(12, launder([1.5, NaN, Infinity] as unknown as string[]))));
+show("a bigint element", () => writeRec(rec(13, change(["a"], v => { v[0] = 1n; }))));
+show("an element with toJSON, which gets its index", () => writeRec(rec(14, change(["a", "b"], v => { v[1] = { toJSON(k: string) { return typeof k + ":" + k; } }; }))));
+show("an element whose toJSON answers undefined", () => writeRec(rec(15, change(["a", "b"], v => { v[0] = { toJSON() { return undefined; } }; }))));
+show("an element whose toJSON shortens the array", () => {
+  const tags = ["a", "b", "c", "d"];
+  return writeRec(rec(16, change(tags, v => { v[1] = { toJSON() { tags.length = 2; return "cut"; } }; })));
+});
+show("an element whose toJSON lengthens the array", () => {
+  const tags = ["a", "b"];
+  return writeRec(rec(17, change(tags, v => { v[0] = { toJSON() { tags.push("late"); return "grown"; } }; })));
+});
+show("an element whose toJSON turns the strings into numbers", () => {
+  const tags = ["a", "b", "c"];
+  return writeRec(rec(18, change(tags, v => { v[0] = { toJSON() { v[1] = 1.5; v[2] = 7; return "first"; } }; })));
+});
+show("an element whose toJSON changes the record", () => {
+  const r = rec(19, ["a", "b"]);
+  change(r.tags, v => { v[0] = { toJSON() { (r as any).added = 1; delete (r as any).ok; return "x"; } }; });
+  return writeRec(r) + " " + writeRec(r);
+});
+show("String objects among the strings", () => writeRec(rec(20, change(["a", "b"], v => { v[0] = new String("boxed"); v[1] = Object.assign(new String("own"), { toString() { return "by toString"; } }); }))));
+show("a toJSON on String.prototype", () => {
+  (String.prototype as any).toJSON = function () { return "T(" + this + ")"; };
+  try { return writeRec(rec(21, ["a", "b"])); } finally { delete (String.prototype as any).toJSON; }
+});
+show("an own toJSON on the array", () => writeRec(rec(23, change(["a"], v => { v.toJSON = (k: string) => "own " + k; }))));
+show("an own named property on the array", () => writeRec(rec(24, change(["a"], v => { v.extra = 1; }))));
+show("a getter for an index", () => writeRec(rec(25, change(["a", "b"], v => { Object.defineProperty(v, 0, { get() { return "got"; }, enumerable: true, configurable: true }); }))));
+show("a frozen array", () => writeRec(rec(26, Object.freeze(["a", "b"]) as string[])));
+show("a sparse array", () => writeRec(rec(27, change(["a"], v => { v[5000] = "far"; })) ).length);
+class Tags extends Array<string> { label = "l"; }
+show("an instance of a class that extends Array", () => writeRec(rec(28, Tags.from(["a", "b"]) as string[])));
+class TagsWithToJSON extends Array<string> { toJSON() { return "tags:" + this.join("+"); } }
+show("an instance of a class that extends Array and has toJSON", () => writeRec(rec(29, TagsWithToJSON.from(["a", "b"]) as string[])));
+show("a proxy of an array", () => {
+  const seen: string[] = [];
+  const text = writeRec(rec(30, new Proxy(["a", "b"], { get(t, k, r) { seen.push(String(k)); return Reflect.get(t, k, r); } })));
+  return text + " " + seen.join();
+});
+show("a revoked proxy of an array", () => { const p = Proxy.revocable(["a"], {}); p.revoke(); return writeRec(rec(31, p.proxy)); });
+show("an array of another realm's look: arguments, a typed array, an array-like", () => [
+  writeRec(rec(32, (function (..._: string[]) { return arguments; })("a", "b") as unknown as string[])),
+  writeRec(rec(33, new Uint8Array([1, 2]) as unknown as string[])),
+  writeRec(rec(34, { length: 1, 0: "a" } as unknown as string[])),
+].join(" "));
+show("not an array at all", () => [null, undefined, () => 1, new Date(0), new Map([[1, 2]]), /x/, {}].map(v => writeRec(rec(35, v as unknown as string[]))).join(" "));
+show("the array holds itself", () => { const tags: string[] = ["a"]; change(tags, v => { v.push(v); }); return writeRec(rec(36, tags)); });
+show("the array holds the record", () => { const r = rec(37, ["a"]); change(r.tags, v => { v.push(r); }); return writeRec(r); });
+show("the same array in two records", () => { const tags = launder(["s"]); return writeRec(rec(38, tags)) + writeRec(rec(39, tags)); });
+
+show("nested arrays", () => writeGrid(launder({ rows: [[word, "b"], [], ["c"]], sizes: [1, 2.5, -0], flags: [true, false] })));
+show("nested arrays with holes, strangers and arrays in place of strings", () => writeGrid(launder({
+  rows: change([["a", "b"], ["c"], ["d"]], v => { delete v[0][0]; v[1] = "flat"; v[2][0] = ["deeper", [1]]; v.push(undefined, null, {}); }),
+  sizes: change([1, 2, 3], v => { v[0] = "one"; delete v[1]; }),
+  flags: change([true], v => { v[0] = 0; v.push("yes"); }),
+})));
+show("numbers of every storage", () => [[1, 2], [1.5, 2], [1, "x"], [], [2 ** 31], [-(2 ** 31) - 1], [1e21, 1e-7]].map(sizes => writeGrid(launder({ rows: [], sizes: sizes as number[], flags: [] }))).join(" "));
+
+show("records in a list", () => writeHolder(launder({ list: [rec(40, ["a"]), rec(41, [])], last: "z" })));
+show("strangers in a list of records", () => writeHolder(launder({
+  list: change([rec(42, ["a"]), rec(43, ["b"]), rec(44, ["c"])], v => { v[0] = { id: 1 }; v[1] = JSON.parse('{"tags":["p"],"id":2,"z":[{}]}'); delete v[2].name; v.push(7, "s", [rec(45, [])]); }),
+  last: "z",
+})));
+show("a record of the list has toJSON", () => writeHolder(launder({ list: change([rec(46, ["a"]), rec(47, ["b"])], v => { v[0].toJSON = function (k: string) { return [k, this.id]; }; }), last: "z" })));
+
+show("a union of primitives", () => writeMixed(launder({ values: ["a", 1, null, 1.5, "b"], end: 1 })));
+show("a union of primitives with strangers", () => writeMixed(launder({ values: change(["a", 1, null], v => { v.push(true, undefined, {}, [], 2n ** 0n === 1n ? "big" : "small"); }), end: 2 })));
+
+show("many times over", () => {
+  const r = rec(48, [word, "DELETE"]);
+  let total = 0;
+  for (let i = 0; i < 20000; i++) total += writeRec(r).length;
+  r.tags.push("more");
+  for (let i = 0; i < 20000; i++) total += writeRec(r).length;
+  return total;
+});
+//// json-stringify-code-that-runs-inside-a-write.ts
+// While a typed object with undeclared keys is being written, a toJSON method or an accessor of a value below it runs code that writes tens of thousands of other kinds of object, parses, collects, and changes the object that is being written.
+interface Item { id: number }
+interface Holder { first: number; items: Item[]; last: string }
+const host: any = globalThis;
+const collect: () => void = host.Bun ? () => host.Bun.gc(true) : host.gc;
+let serial = 0;
+
+function crowd(count: number): Item[] {
+  const items: string[] = [];
+  for (let at = 0; at < count; at++) items.push('{"id":' + at + ',"k' + ++serial + '":' + at + "}");
+  return JSON.parse("[" + items.join(",") + "]") as Item[];
+}
+const text = '{"a":"before","first":1,"b":{"inner":1},"items":[{"id":1,"x":1}],"c":"behind","last":"l","d":{"e":null},"f":"' + "x".repeat(40) + '"}';
+const expected = (b: string) => text.replace('{"inner":1}', b);
+
+const deeds: [string, (holder: any) => void][] = [
+  ["writes 20,000 kinds", () => { for (const item of crowd(20000)) JSON.stringify(item); }],
+  ["writes 40,000 kinds in one list", () => { JSON.stringify(crowd(40000)); }],
+  ["writes 16,384 kinds, one by one, twice", () => { const items = crowd(16384); for (let round = 0; round < 2; round++) for (const item of items) JSON.stringify(item); }],
+  ["writes the holder itself", holder => { if (depth++ < 3) JSON.stringify(holder); depth--; }],
+  ["parses 20,000 kinds", () => { crowd(20000); }],
+  ["collects", () => { collect(); collect(); }],
+  ["writes, drops and collects", () => { for (const item of crowd(20000)) JSON.stringify(item); collect(); }],
+];
+let depth = 0;
+for (const [label, deed] of deeds) {
+  const answers: string[] = [];
+  {
+    const holder: any = JSON.parse(text) as Holder;
+    for (let round = 0; round < 3; round++) JSON.stringify(holder);
+    holder.b.toJSON = () => { deed(holder); return 7; };
+    answers.push(JSON.stringify(holder) === expected("7") ? "same" : "DIFFERENT");
+    answers.push(JSON.stringify([holder, holder]) === "[" + expected("7") + "," + expected("7") + "]" ? "same" : "DIFFERENT");
+  }
+  {
+    const holder: any = JSON.parse(text) as Holder;
+    for (let round = 0; round < 3; round++) JSON.stringify(holder);
+    Object.defineProperty(holder.b, "inner", { get() { deed(holder); return 8; }, enumerable: true });
+    answers.push(JSON.stringify(holder) === expected('{"inner":8}') ? "same" : "DIFFERENT");
+  }
+  {
+    const holder: any = JSON.parse(text) as Holder;
+    for (let round = 0; round < 3; round++) JSON.stringify(holder);
+    holder.items[0].x = { toJSON() { deed(holder); return 9; } };
+    answers.push(JSON.stringify(holder) === text.replace('"x":1', '"x":9') ? "same" : "DIFFERENT");
+  }
+  console.log("code that " + label + ": " + answers.join(", "));
+}
+
+const changes: [string, (holder: any) => void][] = [
+  ["adds a key", holder => { holder.z = 1; }],
+  ["adds a hundred keys", holder => { for (let at = 0; at < 100; at++) holder["z" + at] = at; }],
+  ["deletes the keys behind", holder => { delete holder.c; delete holder.d; delete holder.f; }],
+  ["deletes a declared member", holder => { delete holder.last; }],
+  ["deletes all undeclared keys", holder => { for (const key of ["a", "b", "c", "d", "f"]) delete holder[key]; }],
+  ["stores another kind of value", holder => { holder.c = { deep: [1] }; holder.f = 5; }],
+  ["empties the list", holder => { holder.items.length = 0; }],
+  ["makes a key an accessor", holder => { Object.defineProperty(holder, "f", { get: () => "got", enumerable: true, configurable: true }); }],
+  ["freezes it", holder => { Object.freeze(holder); }],
+];
+for (const [label, change] of changes) {
+  const make = (parse: (text: string) => any) => {
+    const holder = parse(text);
+    for (let round = 0; round < 3; round++) JSON.stringify(holder);
+    holder.b.toJSON = () => { change(holder); return 7; };
+    return holder;
+  };
+  const typed = JSON.stringify(make(text => JSON.parse(text) as Holder));
+  const plain = JSON.stringify(make(host.JSON.parse));
+  console.log("code that " + label + ": " + (typed === plain ? "same" : "DIFFERENT: " + typed + " | " + plain));
+}
+//// json-stringify-date-fields.ts
+declare const aotRuntimeCounters: undefined | (() => string);
+declare const aotOperationCount: undefined | ((name: string) => number);
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+// The texts that JSON.stringify left to the engine's own writer, and the values that compiled code handed to the run time.
+const leftToTheEngine = () => (counted ? Number(/(\d+)\tcounter:JSONStringifySlowPaths/.exec(aotRuntimeCounters!())?.[1] ?? 0) + counted("operationAOTJSONAppendValue") + counted("operationAOTStringBuilderAppendJSON") : 0);
+const left: string[] = [];
+interface Post { id: number; createdAt: Date; updatedAt: Date | null; deletedAt?: Date }
+interface Log { name: string; at: Date[] }
+class Stamp extends Date { }
+class Loud extends Date { toJSON(): string { return "loud"; } }
+function measure(label: string, run: () => string): void {
+    const before = leftToTheEngine();
+    let text = "";
+    for (let i = 0; i < 100; i++) text = run();
+    if (leftToTheEngine() !== before) left.push(label);
+    console.log(label + ": " + text);
+}
+function post(createdAt: Date, updatedAt: Date | null): Post {
+    return { id: 1, createdAt, updatedAt };
+}
+const usual = post(new Date(1700000000123), new Date(1700000086400));
+const withNull = post(new Date(0), null);
+const invalid = post(new Date(NaN), new Date(Infinity));
+const early = post(new Date(-1), new Date(-62167219200000));
+const beforeYearZero = post(new Date(-62167219200001), new Date(-8640000000000000));
+const late = post(new Date(253402300799999), new Date(253402300800000));
+const last = post(new Date(8640000000000000), new Date(8640000000000001));
+const leap = post(new Date(Date.UTC(2024, 1, 29, 23, 59, 59, 999)), new Date(Date.UTC(1900, 1, 28, 12)));
+const fraction = post(new Date(1.9), new Date(-1.9));
+const deleted: Post = { id: 2, createdAt: new Date(1), updatedAt: null, deletedAt: new Date(2) };
+const log: Log = { name: "log", at: [new Date(1), new Date(2), new Date(NaN)] };
+const ownToJSON = post(new Date(5), null);
+(ownToJSON.createdAt as any).toJSON = () => "mine";
+const ownToISOString = post(new Date(5), null);
+(ownToISOString.createdAt as any).toISOString = () => "mine too";
+const ownOther = post(new Date(5), null);
+(ownOther.createdAt as any).other = 1;
+const subclass = post(new Stamp(6), new Loud(7));
+const changed = post(new Date(8), null);
+changed.createdAt.setTime(9);
+
+measure("two dates", () => JSON.stringify(usual));
+measure("a date and null", () => JSON.stringify(withNull));
+measure("invalid dates", () => JSON.stringify(invalid));
+measure("before 1970 and the first of the year 0", () => JSON.stringify(early));
+measure("before the year 0 and the first date there is", () => JSON.stringify(beforeYearZero));
+measure("the last of the year 9999 and the one behind it", () => JSON.stringify(late));
+measure("the last date there is and one too late", () => JSON.stringify(last));
+measure("a leap day and a year that has none", () => JSON.stringify(leap));
+measure("fractions of a millisecond", () => JSON.stringify(fraction));
+measure("an optional date", () => JSON.stringify(deleted));
+measure("a list of dates", () => JSON.stringify(log));
+measure("set to another time", () => JSON.stringify(changed));
+measure("in a plain literal", () => JSON.stringify({ at: usual.createdAt, none: invalid.createdAt } as any));
+measure("with a toJSON of its own", () => JSON.stringify(ownToJSON));
+measure("with a toISOString of its own", () => JSON.stringify(ownToISOString));
+measure("with another property of its own", () => JSON.stringify(ownOther));
+measure("of classes that extend Date", () => JSON.stringify(subclass));
+measure("a date by itself", () => JSON.stringify(usual.createdAt));
+console.log("needed the engine: " + (counted ? left.join(" | ") : "with a toJSON of its own | with a toISOString of its own | of classes that extend Date"));
+//// json-stringify-deep-values-that-were-parsed-by-a-type.ts
+// Deep values that `JSON.parse(text) as T` made are written, cloned and compared with what plain objects give.
+type Tree = { kids: Tree[] };
+type Chain = { next: Chain | null; name: string };
+type Deep = Deep[];
+const plainParse: (text: string) => any = globalThis.JSON.parse;
+function say(run: () => unknown): string {
+  try {
+    const value = run();
+    return typeof value === "string" ? "text of " + value.length : typeof value;
+  } catch (error: any) {
+    return error.name + ": " + error.message;
+  }
+}
+const roads: [string, (text: string) => unknown, (levels: number) => string][] = [
+  ["Tree", text => JSON.parse(text) as Tree, levels => '{"kids":['.repeat(levels) + "]}".repeat(levels)],
+  ["Tree with undeclared keys", text => JSON.parse(text) as Tree, levels => '{"u":1,"kids":['.repeat(levels) + '],"v":"w"}'.repeat(levels)],
+  ["Chain", text => JSON.parse(text) as Chain, levels => '{"next":'.repeat(levels) + "null" + ',"name":"n"}'.repeat(levels)],
+  ["Deep", text => JSON.parse(text) as Deep, levels => "[".repeat(levels) + "]".repeat(levels)],
+];
+for (const [label, parse, text] of roads) {
+  for (const levels of [10, 47, 48, 49, 50, 100, 1000]) {
+    const given = text(levels);
+    const typed = parse(given);
+    const plain = plainParse(given);
+    const answers = [
+      [say(() => JSON.stringify(typed)), say(() => JSON.stringify(plain))],
+      [say(() => JSON.stringify(typed, null, 1)), say(() => JSON.stringify(plain, null, 1))],
+      [say(() => JSON.stringify([typed, { a: typed }])), say(() => JSON.stringify([plain, { a: plain }]))],
+      [say(() => JSON.stringify(structuredClone(typed))), say(() => JSON.stringify(structuredClone(plain)))],
+    ];
+    console.log(label + ", " + levels + " levels: " + answers.map(([one, other]) => (one === other ? "same" : "DIFFERENT: " + one + " | " + other)).join(", "));
+  }
+  const deep = text(400);
+  const typed = parse(deep);
+  const expected = say(() => JSON.stringify(plainParse(deep)));
+  let frames = 0;
+  let wrong = 0;
+  let written = 0;
+  const dive = (level: number): void => {
+    try {
+      dive(level + 1);
+    } catch {
+      if (frames === 0) frames = level;
+    }
+    if (frames - level > 600) return;
+    const said = say(() => JSON.stringify(typed));
+    if (said === expected) written++;
+    else if (said !== "RangeError: Maximum call stack size exceeded.") wrong++;
+  };
+  dive(0);
+  console.log(label + ", written near the end of the stack: " + wrong + " answers are neither the text nor a RangeError, " + (written ? "some" : "NO") + " texts");
+}
+//// json-stringify-dispatch-by-object.ts
+declare const aotRuntimeCounters: undefined | (() => string);
+declare const aotOperationCount: undefined | ((name: string) => number);
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+// The texts that JSON.stringify left to the engine's own writer, and the values that compiled code handed to the run time.
+const leftToTheEngine = () => (counted ? Number(/(\d+)\tcounter:JSONStringifySlowPaths/.exec(aotRuntimeCounters!())?.[1] ?? 0) + counted("operationAOTJSONAppendValue") + counted("operationAOTStringBuilderAppendJSON") : 0);
+const left: string[] = [];
+let seen = 0;
+interface Address { street: string; city: string }
+interface User { id: number; name: string; address: Address; tags: string[] }
+interface Link { value: number; next: Link | null }
+interface Tree { name: string; children: Tree[] }
+class Point {
+    constructor(public x: number, public y: number) {}
+}
+
+////= hide-2
+
+function send(value: any): string {
+    return JSON.stringify(value);
+}
+
+const reply = {
+    json(value: any): string {
+        return JSON.stringify(value);
+    },
+};
+
+class Context {
+    sent = 0;
+    json = (value: any): string => {
+        this.sent++;
+        return JSON.stringify(value);
+    };
+}
+const context = new Context();
+
+function report(label: string, text: string): void {
+    if (leftToTheEngine() !== seen) left.push(label);
+    seen = leftToTheEngine();
+    console.log(label + ": " + (text.length < 150 ? text : text.length + " characters"));
+}
+
+function measure(label: string, value: unknown): void {
+    let text = "";
+    seen = leftToTheEngine();
+    for (let i = 0; i < 100; i++) text = send(value);
+    report(label + ", through a function", text);
+    for (let i = 0; i < 100; i++) text = reply.json(value);
+    report(label + ", through a method", text);
+    for (let i = 0; i < 100; i++) text = context.json(value);
+    report(label + ", through an arrow function in a field", text);
+}
+
+function user(i: number): User {
+    return { id: i, name: "user " + i, address: { street: i + " Main Street", city: "Springfield" }, tags: ["a" + i, "b"] };
+}
+
+function tree(depth: number): Tree {
+    const made: Tree = { name: "d" + depth, children: [] };
+    for (let i = 0; depth && i < 2; i++) made.children.push(tree(depth - 1));
+    return made;
+}
+
+measure("a record", user(1));
+let chain: Link | null = null;
+for (let i = 0; i < 40; i++) chain = { value: i, next: chain };
+measure("forty records in a chain", chain);
+measure("a tree five levels deep", tree(5));
+const withExtra = user(2);
+hide(withExtra).extra = 1;
+measure("a property that the type does not name", withExtra);
+const withExtraInside = user(3);
+hide(withExtraInside.address).extra = 1;
+measure("such a property one level down", withExtraInside);
+measure("an object without a type", JSON.parse('{"id":7,"name":"seven"}'));
+measure("an object of a class", new Point(1, 2));
+measure("a string", "text");
+console.log("needed the engine: " + (counted ? left.join(" | ") : ""));
+//// json-stringify-early-fallback.ts
+// A JSON.stringify call that falls back to the generic writer before it has written anything has no output to discard: it enters the run time for the text alone.
+// ENV JSC_aotCountsPath=/dev/null
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
+// These make the text, and find a built-in function where it is first called.
+const owed = ["operationAOTStringBuilderBegin", "operationAOTStringBuilderFinish", "operationAOTStringBuilderAppendJSON", "operationAOTJSONAppendString", "operationAOTJSONAppendValue", "operationAOTJSONStringifyPrimitive", "operationAOTBuiltinCell"];
+const isCounted = typeof aotRuntimeCounters === "function";
+
+type Circle = { kind: "circle"; radius: number };
+type Square = { kind: "square"; side: number };
+type Rectangle = { kind: "rectangle"; width: number; height: number };
+type Triangle = { kind: "triangle"; base: number; height: number };
+type Line = { kind: "line"; length: number };
+type Label = { kind: "label"; text: string };
+type Shape = Circle | Square | Rectangle | Triangle | Line | Label;
+type Drawing = { name: string; shapes: Shape[] };
+const rounds = 10;
+
+////= lines-35	stringifyShape	shape	Shape	string	JSON.stringify
+function stringifyUnknown(value: unknown): string | undefined {
+  return JSON.stringify(value);
+}
+////= lines-35	stringifyDrawing	drawing	Drawing	string	JSON.stringify
+
+function count(name: string, expected: number, run: () => string | undefined) {
+  const before = countsSoFar();
+  let text: string | undefined;
+  for (let round = 0; round < rounds; round++) text = run();
+  const counted = callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed);
+  console.log(
+    name,
+    text,
+    !isCounted || counted === expected ? "as expected" : `${counted} calls, expected ${expected}`,
+  );
+}
+
+const shapes: Shape[] = [
+  { kind: "circle", radius: 1 },
+  { kind: "square", side: 2 },
+  { kind: "rectangle", width: 3, height: 4 },
+  { kind: "triangle", base: 5, height: 6 },
+  { kind: "line", length: 7 },
+  { kind: "label", text: "a dash —" },
+];
+for (const shape of shapes) {
+  count("shape", 0, () => stringifyShape(shape));
+  count("unknown, a shape", 0, () => stringifyUnknown(shape));
+}
+
+const values: unknown[] = [
+  "a string",
+  "a dash —",
+  1,
+  1.5,
+  null,
+  true,
+  undefined,
+  10n ** 2n > 1n,
+  Symbol.iterator,
+  [1, "two"],
+  new Map(),
+  new Date(0),
+];
+for (const value of values) count("unknown", 0, () => stringifyUnknown(value));
+
+const replaced: Label = { kind: "label", text: "short" };
+Object.defineProperty(replaced, "toJSON", { value: () => "replaced" });
+const drawing: Drawing = { name: "a dash —", shapes: [shapes[0]!, shapes[5]!, replaced] };
+count("fallback after writing", 0, () => stringifyDrawing(drawing));
+count("shape, after a fallback", 0, () => stringifyShape(shapes[0]!));
+count("16-bit, after a fallback", 0, () => stringifyDrawing({ name: "n", shapes: [shapes[5]!] }));
+count("unknown, after a fallback", 0, () => stringifyUnknown("a string"));
+//// json-stringify-extra-properties.ts
+function hide(value: unknown): any { return value; }
+function set(o: unknown, k: PropertyKey, v: unknown): any { hide(o)[k] = v; return o; }
+function del(o: unknown, k: PropertyKey): any { delete hide(o)[k]; return o; }
+function define(o: unknown, k: PropertyKey, d: PropertyDescriptor): any { Object.defineProperty(hide(o), k, d); return o; }
+function freeze(o: unknown): any { return Object.freeze(hide(o)); }
+function seal(o: unknown): any { return Object.seal(hide(o)); }
+function keys(o: unknown): string { return Object.keys(hide(o)).join(); }
+interface P { a: number; b?: string; c?: P | null; list?: P[] }
+class K { x = 1; y?: string; constructor(public z: number) {} }
+class WithToJSON { v = 1; toJSON() { return "from toJSON " + this.v; } }
+const mk = (a = 1): P => ({ a });
+let count = 0;
+////= show-3	const value = make(); out = String(JSON.stringify(value, rest[0] as any, rest[1] as any)) + (value && typeof value === "object" ? " | " + keys(value) : ""
+show("one extra", () => set(mk(), "z", 1));
+show("an extra, then an optional field", () => { const o = set(mk(), "z", 1) as P; o.b = "later"; return o; });
+show("an optional field, an extra, another field", () => { const o = mk(); o.b = "first"; set(o, "z", 1); o.c = null; return o; });
+show("three extras in order", () => set(set(set(mk(), "z", 1), "m", 2), "aa", 3));
+show("an extra deleted and added again", () => set(del(set(set(mk(), "z", 1), "m", 2), "z"), "z", 3));
+show("every extra deleted", () => del(set(mk(), "z", 1), "z"));
+show("an optional field deleted and set again behind an extra", () => { const o = mk(); o.b = "x"; set(o, "z", 1); del(o, "b"); o.b = "y"; return o; });
+show("extra undefined", () => set(set(mk(), "u", undefined), "z", 1));
+show("extra function", () => set(set(mk(), "f", () => 1), "z", 1));
+show("extra symbol value", () => set(set(mk(), "s", Symbol("s")), "z", 1));
+show("extra symbol key", () => set(set(mk(), Symbol("k"), 1), "z", 1));
+show("extra null, boolean, double, negative zero, NaN", () => set(set(set(set(set(mk(), "n", null), "t", true), "d", 1.5), "nz", -0), "nan", NaN));
+show("extra non-enumerable", () => set(define(mk(), "hidden", { value: 1, enumerable: false, writable: true, configurable: true }), "z", 1));
+show("extra read-only", () => set(define(mk(), "ro", { value: 1, enumerable: true, writable: false, configurable: true }), "z", 1));
+show("extra getter", () => set(define(mk(), "g", { get() { return "got"; }, enumerable: true, configurable: true }), "z", 1));
+show("extra getter that adds a property", () => { const o = mk(); return set(define(o, "g", { get() { set(o, "late", 1); return "got"; }, enumerable: true, configurable: true }), "z", 1); });
+show("extra toJSON, callable", () => set(mk(), "toJSON", () => "own toJSON"));
+show("extra toJSON, not callable", () => set(mk(), "toJSON", 5));
+show("extra toJSON, callable, non-enumerable", () => define(mk(), "toJSON", { value: () => "hidden toJSON", enumerable: false, configurable: true, writable: true }));
+show("extra index keys", () => set(set(set(mk(), "10", "ten"), "z", 1), "2", "two"));
+show("extra __proto__ by define", () => define(mk(), "__proto__", { value: 1, enumerable: true, writable: true, configurable: true }));
+show("extra name that needs escaping", () => set(set(mk(), 'q"uote', 1), "back\\slash", 2));
+show("extra name with a control character", () => set(mk(), "tab\there", 1));
+show("extra 16-bit name", () => set(mk(), "ключ", 1));
+show("extra 16-bit value", () => set(mk(), "z", "значение"));
+show("extra empty name", () => set(mk(), "", 1));
+show("extra bigint", () => set(mk(), "big", 1n));
+show("extra holds a plain object", () => set(mk(), "z", { q: 1, r: [1, 2, { s: 3 }] }));
+show("extra holds a typed object with extras", () => set(mk(1), "z", set(mk(2), "y", set(mk(3), "x", 4))));
+show("extra holds the object itself", () => { const o = mk(); return set(o, "self", o); });
+show("extra holds an object with toJSON", () => set(mk(), "z", new WithToJSON()));
+show("extra holds a Date, a Map, a boxed number", () => set(set(set(mk(), "d", new Date(0)), "m", new Map([[1, 2]])), "n", new Number(5)));
+show("typed field holds a typed object with extras", () => { const o = mk(1); o.c = set(mk(2), "z", 1) as P; return o; });
+show("a list of typed objects, some with extras", () => { const o = mk(0); o.list = [mk(1), set(mk(2), "z", 1) as P, mk(3), set(set(mk(4), "y", 1), "x", 2) as P]; return o; });
+show("in a plain array", () => [set(mk(), "z", 1), mk(), set(mk(), "y", 2)]);
+show("in a plain object", () => ({ first: set(mk(), "z", 1), second: mk() }));
+show("a class instance with extras", () => set(set(new K(3), "extra", 1), "more", "m"));
+show("a class instance, optional field behind an extra", () => { const k = set(new K(3), "extra", 1) as K; k.y = "late"; return k; });
+show("an instance of a class with toJSON, with extras", () => set(new WithToJSON(), "z", 1));
+show("frozen with extras", () => freeze(set(mk(), "z", 1)));
+show("sealed with extras", () => seal(set(mk(), "z", 1)));
+show("indent 2", () => set(set(mk(), "z", { q: [1, set(mk(2), "y", 1)] }), "e", {}), undefined, 2);
+show("indent tab", () => set(mk(), "z", [set(mk(2), "y", 1)]), undefined, "\t");
+show("indent, every extra skipped", () => set(set({ } as P, "u", undefined), "f", () => 1), undefined, 2);
+show("replacer list", () => set(set(mk(), "z", 1), "y", 2), ["z", "a"]);
+show("replacer function", () => set(set(mk(), "z", 1), "y", 2), (k: string, v: unknown) => (k === "y" ? undefined : v));
+show("longer than the first buffer", () => { const o = mk(0); o.list = []; for (let i = 0; i < 400; i++) o.list.push(set(mk(i), "extra" + (i % 7), "value " + i) as P); return JSON.stringify(o).length + " " + JSON.stringify(o).slice(-60); });
+show("longer than the first buffer, 16-bit at the end", () => { const o = mk(0); o.list = []; for (let i = 0; i < 400; i++) o.list.push(set(mk(i), "extra" + (i % 7), i === 399 ? "конец" : "value " + i) as P); return JSON.stringify(o).length + " " + JSON.stringify(o).slice(-60); });
+show("longer than the first buffer, a getter at the end", () => { const o = mk(0); o.list = []; for (let i = 0; i < 400; i++) o.list.push((i === 399 ? define(mk(i), "g", { get() { return "got"; }, enumerable: true }) : set(mk(i), "e", i)) as P); return JSON.stringify(o).length + " " + JSON.stringify(o).slice(-60); });
+show("many extras", () => { const o = mk(); for (let i = 0; i < 40; i++) set(o, "k" + i, i); return o; });
+show("many extras between fields", () => { const o = mk(); for (let i = 0; i < 12; i++) set(o, "k" + i, i); o.b = "b"; for (let i = 12; i < 24; i++) set(o, "k" + i, i); o.c = null; return o; });
+//// json-stringify-generated-records-1.ts
+function parsed(text: string): any { return JSON.parse(text); }
+function nothing(): void {}
+function viaUnknown(value: unknown): string | undefined { return JSON.stringify(value); }
+function viaAny(value: any): string | undefined { return JSON.stringify(value); }
+function show(number: number, run: () => string | undefined): void { let text: string | undefined; try { text = run(); } catch (error) { text = "threw " + (error as Error).constructor.name; } console.log(number + " " + text); }
+interface R0 { held: string; zz: number; value: unknown }
+interface W0 { before?: number; held: R0; after?: string; list: R0[] }
+const spare0: R0 = { held: "\u0001\u001f", zz: (2147483648), value: true };
+interface R1 { count?: string; _x: (number)[]; score: number; tags: R0; $y: boolean | null; a?: (string | number | boolean | null)[]; with_underscore?: Date | null; id?: number }
+interface W1 { before?: number; held: R1; after?: string; list: R1[] }
+const spare1: R1 = { count: "[", _x: [(1.5), (NaN)], score: (123456789012), tags: { held: "\u2028\u2029", zz: (1e21), value: parsed("[{\"w\":\"\u4e2d\"},{\"w\":\"a\"}]") }, $y: true };
+interface R2 { rows: (number | null)[] }
+interface W2 { before?: number; held: R2; after?: string; list: R2[] }
+const spare2: R2 = { rows: [null] };
+interface R3 { _x?: string; c: R2; rows: string; note: string }
+interface W3 { before?: number; held: R3; after?: string; list: R3[] }
+const spare3: R3 = { c: { rows: [null, null] }, rows: "a\u4e2d", note: "," };
+interface R4 { b?: number; rows: string; a?: R0 | null; tags: boolean | null; name?: (unknown)[]; note: number }
+interface W4 { before?: number; held: R4; after?: string; list: R4[] }
+const spare4: R4 = { b: (1e-7), rows: "a\u4e2d", a: { held: "[", zz: (0.1 + 0.2), value: null }, tags: false, note: (123456789012) };
+interface R5 { list: any; _x: unknown; with_underscore: any; camelCase?: Date; tags: boolean | null }
+interface W5 { before?: number; held: R5; after?: string; list: R5[] }
+const spare5: R5 = { list: parsed("{\"a\":1,\"b\":\"\u4e2d\"}"), _x: [(-0.25)], with_underscore: parsed("{\"text\":\"caf\u00e9\"}"), tags: true };
+interface R6 { id?: ((Date)[])[]; c?: Date | null; name: Date; with_underscore: (unknown)[]; held?: Record<string, number>; rows: number; meta: boolean; note: R1 }
+interface W6 { before?: number; held: R6; after?: string; list: R6[] }
+const spare6: R6 = { c: new Date(-62167219200001), name: new Date(-62167219200001), with_underscore: [null, null, parsed("{\"text\":\"caf\u00e9\"}"), parsed("[]"), nothing], held: ({ "\u4e2d": -0, "k 2": 123456789012, "k": 2147483648 } as Record<string, number>), rows: (-0.25), meta: true, note: { count: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", _x: [(1e21), (4294967296), (42)], score: (NaN), tags: spare0, $y: true, a: ["\u4e2d\u6587", (4294967296)], with_underscore: null, id: (0.1 + 0.2) } };
+interface R7 { name: R2; with_underscore?: Date; meta: string; $y?: any }
+interface W7 { before?: number; held: R7; after?: string; list: R7[] }
+const spare7: R7 = { name: { rows: [] }, with_underscore: new Date(NaN), meta: "\u2028\u2029", $y: null };
+interface R8 { a: number; note?: R6 | null; tags: (string)[] }
+interface W8 { before?: number; held: R8; after?: string; list: R8[] }
+const spare8: R8 = { a: (42), note: null, tags: ["\u0001\u001f"] };
+const v1: R0 = { held: "quote \" inside", zz: (0.1 + 0.2), value: null };
+show(1, () => JSON.stringify(v1));
+show(2, () => viaUnknown(v1));
+show(3, () => viaAny(v1));
+show(4, () => JSON.stringify([v1, spare0, v1]));
+show(5, () => JSON.stringify({ a: 1, v: v1, z: "\u0001\u001f" } as any));
+show(6, () => JSON.stringify({ head: undefined, v: v1, inner: { w: v1 }, tail: new Date(8640000000000000) } as any));
+show(7, () => JSON.stringify({ before: 1, held: v1, list: [] } as W0));
+const v2: R0 = { held: "a\u4e2d", zz: (-0), value: new Date(1700000000123) };
+show(8, () => JSON.stringify(v2));
+show(9, () => viaUnknown(v2));
+show(10, () => viaAny(v2));
+show(11, () => JSON.stringify([v2, spare0, v2]));
+show(12, () => JSON.stringify({ a: 1, v: v2, z: "{" } as any));
+show(13, () => JSON.stringify({ head: undefined, v: v2, inner: { w: v2 }, tail: parsed("{\"s\":\"\\\"\"}") } as any));
+show(14, () => JSON.stringify({ before: 1, held: v2, after: "a", list: [v2] } as W0));
+const v3: R0 = { held: "null", zz: (0), value: undefined };
+show(15, () => JSON.stringify(v3));
+show(16, () => viaUnknown(v3));
+show(17, () => viaAny(v3));
+show(18, () => JSON.stringify([v3, spare0, v3]));
+show(19, () => JSON.stringify({ a: 1, v: v3, z: "a" } as any));
+show(20, () => JSON.stringify({ head: undefined, v: v3, inner: { w: v3 }, tail: null } as any));
+show(21, () => JSON.stringify({ held: v3, list: [] } as W0));
+const v4: R0 = { held: ",", zz: (1), value: parsed("{\"s\":\"\\\"\"}") };
+show(22, () => JSON.stringify(v4));
+show(23, () => viaUnknown(v4));
+show(24, () => viaAny(v4));
+show(25, () => JSON.stringify([v4, spare0, v4]));
+show(26, () => JSON.stringify({ a: 1, v: v4, z: "\u00ff" } as any));
+show(27, () => JSON.stringify({ head: undefined, v: v4, inner: { w: v4 }, tail: "\u00ff" } as any));
+show(28, () => JSON.stringify({ held: v4, list: [v4] } as W0));
+const v5: R0 = { held: "\u2028\u2029", zz: (1.5), value: { rows: "quote \" inside", a: undefined, tags: false, note: (1) } };
+show(29, () => JSON.stringify(v5));
+show(30, () => viaUnknown(v5));
+show(31, () => viaAny(v5));
+show(32, () => JSON.stringify([v5, spare0, v5]));
+show(33, () => JSON.stringify({ a: 1, v: v5, z: "a" } as any));
+show(34, () => JSON.stringify({ head: undefined, v: v5, inner: { w: v5 }, tail: { name: spare2, meta: "a\u4e2d" } } as any));
+show(35, () => JSON.stringify({ held: v5, list: [v5, v5] } as W0));
+const v6: R1 = { _x: [(-0.25), (NaN), (NaN), (Infinity), (0)], score: (-2147483648), tags: { held: "\u007f", zz: (4294967296), value: null }, $y: true, id: (1e21) };
+delete v6.with_underscore;
+show(36, () => JSON.stringify(v6));
+show(37, () => viaUnknown(v6));
+show(38, () => viaAny(v6));
+show(39, () => JSON.stringify([v6, spare1, v6]));
+show(40, () => JSON.stringify({ a: 1, v: v6, z: "\"" } as any));
+show(41, () => JSON.stringify({ head: undefined, v: v6, inner: { w: v6 }, tail: { a: (4294967296), tags: ["back\\slash", "\u0001\u001f"] } } as any));
+show(42, () => JSON.stringify({ before: 1, held: v6, after: "a", list: [v6, v6] } as W1));
+const v7: R1 = { count: "new\nline", _x: [], score: (-0.25), tags: { held: "quote \" inside", zz: (0), value: null }, $y: false, a: [null, true, null], with_underscore: undefined, id: (1) };
+show(43, () => JSON.stringify(v7));
+show(44, () => viaUnknown(v7));
+show(45, () => viaAny(v7));
+show(46, () => JSON.stringify([v7, spare1, v7]));
+show(47, () => JSON.stringify({ a: 1, v: v7, z: "\u0001\u001f" } as any));
+show(48, () => JSON.stringify({ head: undefined, v: v7, inner: { w: v7 }, tail: "}" } as any));
+show(49, () => JSON.stringify({ before: 1, held: v7, list: [v7] } as W1));
+const v8: R1 = { _x: [(1e21)], score: (9007199254740993), tags: { held: "\u4e2d\u6587", zz: (0.1 + 0.2), value: [] }, $y: true, a: [(NaN), true, (-1), (-Infinity), true], with_underscore: new Date(1700000000123) };
+(v8 as any).toString = (1.5);
+show(50, () => JSON.stringify(v8));
+show(51, () => viaUnknown(v8));
+show(52, () => viaAny(v8));
+show(53, () => JSON.stringify([v8, spare1, v8]));
+show(54, () => JSON.stringify({ a: 1, v: v8, z: "{" } as any));
+show(55, () => JSON.stringify({ head: undefined, v: v8, inner: { w: v8 }, tail: parsed("[{\"w\":\"\u4e2d\"},{\"w\":\"a\"}]") } as any));
+show(56, () => JSON.stringify({ held: v8, after: "tab\there", list: [v8] } as W1));
+const v9: R1 = { count: "tab\there", _x: [(4294967296)], score: (1e21), tags: { held: "x\udc00y", zz: (42), value: [true, null, (1)] }, $y: false, a: undefined, with_underscore: null, id: (-2147483648) };
+show(57, () => JSON.stringify(v9));
+show(58, () => viaUnknown(v9));
+show(59, () => viaAny(v9));
+show(60, () => JSON.stringify([v9, spare1, v9]));
+show(61, () => JSON.stringify({ a: 1, v: v9, z: "tab\there" } as any));
+show(62, () => JSON.stringify({ head: undefined, v: v9, inner: { w: v9 }, tail: new Date(1700000000123) } as any));
+show(63, () => JSON.stringify({ before: 1, held: v9, list: [v9, v9] } as W1));
+const v10: R1 = { count: "new\nline", _x: [], score: (-0.25), tags: { held: "hello world", zz: (1), value: null }, $y: null, a: [], with_underscore: null, id: (1e-7) };
+Object.seal(v10);
+show(64, () => JSON.stringify(v10));
+show(65, () => viaUnknown(v10));
+show(66, () => viaAny(v10));
+show(67, () => JSON.stringify([v10, spare1, v10]));
+show(68, () => JSON.stringify({ a: 1, v: v10, z: "hello world" } as any));
+show(69, () => JSON.stringify({ head: undefined, v: v10, inner: { w: v10 }, tail: (4294967296) } as any));
+show(70, () => JSON.stringify({ before: 1, held: v10, after: "a\u4e2d", list: [] } as W1));
+const v11: R2 = { rows: [(1)] };
+(v11 as any).extra = "\ud800";
+show(71, () => JSON.stringify(v11));
+show(72, () => viaUnknown(v11));
+show(73, () => viaAny(v11));
+show(74, () => JSON.stringify([v11, spare2, v11]));
+show(75, () => JSON.stringify({ a: 1, v: v11, z: "quote \" inside" } as any));
+show(76, () => JSON.stringify({ head: undefined, v: v11, inner: { w: v11 }, tail: parsed("{\"text\":\"caf\u00e9\"}") } as any));
+show(77, () => JSON.stringify({ held: v11, after: "null", list: [v11] } as W2));
+const v12: R2 = { rows: [null, null, (-Infinity), (-0), null] };
+show(78, () => JSON.stringify(v12));
+show(79, () => viaUnknown(v12));
+show(80, () => viaAny(v12));
+show(81, () => JSON.stringify([v12, spare2, v12]));
+show(82, () => JSON.stringify({ a: 1, v: v12, z: "new\nline" } as any));
+show(83, () => JSON.stringify({ head: undefined, v: v12, inner: { w: v12 }, tail: { name: spare2, meta: "back\\slash" } } as any));
+show(84, () => JSON.stringify({ before: 1, held: v12, after: "</script>", list: [v12] } as W2));
+const v13: R2 = { rows: [null, null] };
+Object.preventExtensions(v13);
+show(85, () => JSON.stringify(v13));
+show(86, () => viaUnknown(v13));
+show(87, () => viaAny(v13));
+show(88, () => JSON.stringify([v13, spare2, v13]));
+show(89, () => JSON.stringify({ a: 1, v: v13, z: "new\nline" } as any));
+show(90, () => JSON.stringify({ head: undefined, v: v13, inner: { w: v13 }, tail: parsed("{\"s\":\"\\\"\"}") } as any));
+show(91, () => JSON.stringify({ before: 1, held: v13, after: "\u4e2d\u6587", list: [] } as W2));
+const v14: R2 = { rows: [null] };
+show(92, () => JSON.stringify(v14));
+show(93, () => viaUnknown(v14));
+show(94, () => viaAny(v14));
+show(95, () => JSON.stringify([v14, spare2, v14]));
+show(96, () => JSON.stringify({ a: 1, v: v14, z: "a" } as any));
+show(97, () => JSON.stringify({ head: undefined, v: v14, inner: { w: v14 }, tail: true } as any));
+show(98, () => JSON.stringify({ held: v14, after: "\u0001\u001f", list: [v14, v14] } as W2));
+const v15: R2 = { rows: [(1e-7)] };
+(v15 as any).toString = "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww";
+show(99, () => JSON.stringify(v15));
+show(100, () => viaUnknown(v15));
+show(101, () => viaAny(v15));
+show(102, () => JSON.stringify([v15, spare2, v15]));
+show(103, () => JSON.stringify({ a: 1, v: v15, z: "x\udc00y" } as any));
+show(104, () => JSON.stringify({ head: undefined, v: v15, inner: { w: v15 }, tail: null } as any));
+show(105, () => JSON.stringify({ before: 1, held: v15, list: [v15] } as W2));
+const v16: R3 = { c: { rows: [null, (2147483648), null, null, null] }, rows: "</script>", note: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll" };
+(v16 as any).extra = true;
+show(106, () => JSON.stringify(v16));
+show(107, () => viaUnknown(v16));
+show(108, () => viaAny(v16));
+show(109, () => JSON.stringify([v16, spare3, v16]));
+show(110, () => JSON.stringify({ a: 1, v: v16, z: "\u007f" } as any));
+show(111, () => JSON.stringify({ head: undefined, v: v16, inner: { w: v16 }, tail: { rows: "\ud83d\ude00", tags: true, note: (4294967296) } } as any));
+show(112, () => JSON.stringify({ held: v16, after: "}", list: [v16] } as W3));
+const v17: R3 = { _x: "", c: { rows: [null, (-2147483648), (2147483647), null, null] }, rows: "a", note: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll" };
+(v17 as any).toString = "\ud800";
+show(113, () => JSON.stringify(v17));
+show(114, () => viaUnknown(v17));
+show(115, () => viaAny(v17));
+show(116, () => JSON.stringify([v17, spare3, v17]));
+show(117, () => JSON.stringify({ a: 1, v: v17, z: "[" } as any));
+show(118, () => JSON.stringify({ head: undefined, v: v17, inner: { w: v17 }, tail: "back\\slash" } as any));
+show(119, () => JSON.stringify({ before: 1, held: v17, after: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", list: [] } as W3));
+const v18: R3 = { _x: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll", c: { rows: [(0), (-0.25), null] }, rows: "hello world", note: "{" };
+(v18 as any).extra = ",";
+show(120, () => JSON.stringify(v18));
+show(121, () => viaUnknown(v18));
+show(122, () => viaAny(v18));
+show(123, () => JSON.stringify([v18, spare3, v18]));
+show(124, () => JSON.stringify({ a: 1, v: v18, z: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww" } as any));
+show(125, () => JSON.stringify({ head: undefined, v: v18, inner: { w: v18 }, tail: (1) } as any));
+show(126, () => JSON.stringify({ before: 1, held: v18, list: [v18] } as W3));
+const v19: R3 = { _x: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", c: { rows: [] }, rows: "tab\there", note: "," };
+Object.freeze(v19);
+show(127, () => JSON.stringify(v19));
+show(128, () => viaUnknown(v19));
+show(129, () => viaAny(v19));
+show(130, () => JSON.stringify([v19, spare3, v19]));
+show(131, () => JSON.stringify({ a: 1, v: v19, z: "a\u4e2d" } as any));
+show(132, () => JSON.stringify({ head: undefined, v: v19, inner: { w: v19 }, tail: Symbol.iterator } as any));
+show(133, () => JSON.stringify({ held: v19, list: [v19, v19] } as W3));
+const v20: R3 = { c: { rows: [(1e-7), (2147483647)] }, rows: "a", note: "\"" };
+v20._x = "\u4e2d\u6587";
+delete v20._x;
+v20._x = "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll";
+show(134, () => JSON.stringify(v20));
+show(135, () => viaUnknown(v20));
+show(136, () => viaAny(v20));
+show(137, () => JSON.stringify([v20, spare3, v20]));
+show(138, () => JSON.stringify({ a: 1, v: v20, z: "\u4e2d\u6587" } as any));
+show(139, () => JSON.stringify({ head: undefined, v: v20, inner: { w: v20 }, tail: parsed("{\"0\":1,\"b\":2,\"1\":3}") } as any));
+show(140, () => JSON.stringify({ before: 1, held: v20, list: [] } as W3));
+const v21: R4 = { rows: "\u4e2d\u6587", tags: true, note: (2147483647) };
+v21.a = { held: "new\nline", zz: (0), value: "quote \" inside" };
+show(141, () => JSON.stringify(v21));
+show(142, () => viaUnknown(v21));
+show(143, () => viaAny(v21));
+show(144, () => JSON.stringify([v21, spare4, v21]));
+show(145, () => JSON.stringify({ a: 1, v: v21, z: "{" } as any));
+show(146, () => JSON.stringify({ head: undefined, v: v21, inner: { w: v21 }, tail: "\ud800" } as any));
+show(147, () => JSON.stringify({ before: 1, held: v21, after: "new\nline", list: [] } as W4));
+const v22: R4 = { b: (NaN), rows: "a", a: undefined, tags: null, name: [undefined, (-2147483648)], note: (-1) };
+show(148, () => JSON.stringify(v22));
+show(149, () => viaUnknown(v22));
+show(150, () => viaAny(v22));
+show(151, () => JSON.stringify([v22, spare4, v22]));
+show(152, () => JSON.stringify({ a: 1, v: v22, z: "a\u4e2d" } as any));
+show(153, () => JSON.stringify({ head: undefined, v: v22, inner: { w: v22 }, tail: nothing } as any));
+show(154, () => JSON.stringify({ before: 1, held: v22, list: [v22] } as W4));
+const v23: R4 = { rows: "{", a: { held: "\ud800", zz: (1.5), value: nothing }, tags: false, note: (-0.25) };
+(v23 as any).toString = null;
+show(155, () => JSON.stringify(v23));
+show(156, () => viaUnknown(v23));
+show(157, () => viaAny(v23));
+show(158, () => JSON.stringify([v23, spare4, v23]));
+show(159, () => JSON.stringify({ a: 1, v: v23, z: "a" } as any));
+show(160, () => JSON.stringify({ head: undefined, v: v23, inner: { w: v23 }, tail: [] } as any));
+show(161, () => JSON.stringify({ held: v23, list: [] } as W4));
+const v24: R4 = { b: undefined, rows: "new\nline", a: null, tags: null, name: [Symbol.iterator], note: (-Infinity) };
+show(162, () => JSON.stringify(v24));
+show(163, () => viaUnknown(v24));
+show(164, () => viaAny(v24));
+show(165, () => JSON.stringify([v24, spare4, v24]));
+show(166, () => JSON.stringify({ a: 1, v: v24, z: "\u4e2d\u6587" } as any));
+show(167, () => JSON.stringify({ head: undefined, v: v24, inner: { w: v24 }, tail: undefined } as any));
+show(168, () => JSON.stringify({ before: 1, held: v24, after: "caf\u00e9", list: [v24, v24] } as W4));
+const v25: R4 = { b: (2147483647), rows: "\ud83d\ude00", a: { held: "[", zz: (1e-7), value: "\"" }, tags: false, name: [{ name: new Date(-1), with_underscore: ["llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll"], rows: (9007199254740993), meta: false, note: { count: ",", _x: [], score: (Infinity), tags: spare0, $y: null, a: [null], with_underscore: undefined, id: (1e21) } }], note: (0) };
+Object.freeze(v25);
+show(169, () => JSON.stringify(v25));
+show(170, () => viaUnknown(v25));
+show(171, () => viaAny(v25));
+show(172, () => JSON.stringify([v25, spare4, v25]));
+show(173, () => JSON.stringify({ a: 1, v: v25, z: "tab\there" } as any));
+show(174, () => JSON.stringify({ head: undefined, v: v25, inner: { w: v25 }, tail: [] } as any));
+show(175, () => JSON.stringify({ held: v25, after: "\u2028\u2029", list: [v25] } as W4));
+const v26: R5 = { list: nothing, _x: (-2147483648), with_underscore: undefined, camelCase: new Date(253402300800000), tags: null };
+show(176, () => JSON.stringify(v26));
+show(177, () => viaUnknown(v26));
+show(178, () => viaAny(v26));
+show(179, () => JSON.stringify([v26, spare5, v26]));
+show(180, () => JSON.stringify({ a: 1, v: v26, z: "quote \" inside" } as any));
+show(181, () => JSON.stringify({ head: undefined, v: v26, inner: { w: v26 }, tail: (1.5) } as any));
+show(182, () => JSON.stringify({ before: 1, held: v26, list: [] } as W5));
+const v27: R5 = { list: parsed("[{\"w\":\"\u4e2d\"},{\"w\":\"a\"}]"), _x: { a: (Infinity), note: null, tags: [] }, with_underscore: parsed("{\"a\":1,\"b\":\"\u4e2d\"}"), tags: null };
+(v27 as any).extra = null;
+show(183, () => JSON.stringify(v27));
+show(184, () => viaUnknown(v27));
+show(185, () => viaAny(v27));
+show(186, () => JSON.stringify([v27, spare5, v27]));
+show(187, () => JSON.stringify({ a: 1, v: v27, z: "\ud800" } as any));
+show(188, () => JSON.stringify({ head: undefined, v: v27, inner: { w: v27 }, tail: [null] } as any));
+show(189, () => JSON.stringify({ before: 1, held: v27, after: "null", list: [v27, v27] } as W5));
+const v28: R5 = { list: parsed("[[],[[]],{}]"), _x: null, with_underscore: new Date(8640000000000000), tags: true };
+Object.seal(v28);
+show(190, () => JSON.stringify(v28));
+show(191, () => viaUnknown(v28));
+show(192, () => viaAny(v28));
+show(193, () => JSON.stringify([v28, spare5, v28]));
+show(194, () => JSON.stringify({ a: 1, v: v28, z: "tab\there" } as any));
+show(195, () => JSON.stringify({ head: undefined, v: v28, inner: { w: v28 }, tail: null } as any));
+show(196, () => JSON.stringify({ held: v28, list: [v28] } as W5));
+const v29: R5 = { list: null, _x: { list: null, _x: parsed("{\"text\":\"caf\u00e9\"}"), with_underscore: [], tags: null }, with_underscore: (1e21), tags: null };
+v29.camelCase = new Date(1700000000123);
+show(197, () => JSON.stringify(v29));
+show(198, () => viaUnknown(v29));
+show(199, () => viaAny(v29));
+show(200, () => JSON.stringify([v29, spare5, v29]));
+show(201, () => JSON.stringify({ a: 1, v: v29, z: "\ud83d\ude00" } as any));
+show(202, () => JSON.stringify({ head: undefined, v: v29, inner: { w: v29 }, tail: nothing } as any));
+show(203, () => JSON.stringify({ held: v29, after: "tab\there", list: [v29] } as W5));
+const v30: R5 = { list: (2147483648), _x: parsed("[[],[[]],{}]"), with_underscore: parsed("{\"0\":1,\"b\":2,\"1\":3}"), tags: null };
+v30.camelCase = new Date(NaN);
+show(204, () => JSON.stringify(v30));
+show(205, () => viaUnknown(v30));
+show(206, () => viaAny(v30));
+show(207, () => JSON.stringify([v30, spare5, v30]));
+show(208, () => JSON.stringify({ a: 1, v: v30, z: "null" } as any));
+show(209, () => JSON.stringify({ head: undefined, v: v30, inner: { w: v30 }, tail: ["\u2028\u2029", null, ""] } as any));
+show(210, () => JSON.stringify({ held: v30, list: [v30, v30] } as W5));
+const v31: R6 = { name: new Date(NaN), with_underscore: [], rows: (2147483648), meta: false, note: { _x: [(Infinity), (1)], score: (2147483648), tags: { held: "null", zz: (1.5), value: ["new\nline", true] }, $y: true, id: (1e21) } };
+delete v31.held;
+show(211, () => JSON.stringify(v31));
+show(212, () => viaUnknown(v31));
+show(213, () => viaAny(v31));
+show(214, () => JSON.stringify([v31, spare6, v31]));
+show(215, () => JSON.stringify({ a: 1, v: v31, z: "}" } as any));
+show(216, () => JSON.stringify({ head: undefined, v: v31, inner: { w: v31 }, tail: parsed("{}") } as any));
+show(217, () => JSON.stringify({ held: v31, list: [] } as W6));
+const v32: R6 = { id: [[new Date(253402300800000)]], c: null, name: new Date(-1), with_underscore: [{ held: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", zz: (-1), value: Symbol.iterator }, new Date(1700000000123)], held: ({ "caf\u00e9": -0, "\u4e2d": 0, "1": NaN } as Record<string, number>), rows: (-0), meta: true, note: { count: "back\\slash", _x: [(NaN), (123456789012), (-0.25), (0.1 + 0.2), (42)], score: (-2147483649), tags: { held: "a", zz: (0), value: true }, $y: null, a: [(9007199254740993), true], with_underscore: null } };
+show(218, () => JSON.stringify(v32));
+show(219, () => viaUnknown(v32));
+show(220, () => viaAny(v32));
+show(221, () => JSON.stringify([v32, spare6, v32]));
+show(222, () => JSON.stringify({ a: 1, v: v32, z: "</script>" } as any));
+show(223, () => JSON.stringify({ head: undefined, v: v32, inner: { w: v32 }, tail: null } as any));
+show(224, () => JSON.stringify({ before: 1, held: v32, after: "null", list: [v32] } as W6));
+const v33: R6 = { c: new Date(253402300800000), name: new Date(1700000000123), with_underscore: [undefined, ["\u0001\u001f", null, "x\udc00y"], new Date(0)], held: ({ "k": -Infinity, "1": Infinity } as Record<string, number>), rows: (2147483648), meta: false, note: { count: "a\u4e2d", _x: [(-0)], score: (-2147483649), tags: { held: "a", zz: (-0.25), value: { id: [[new Date(0), new Date(NaN)]], c: null, name: new Date(-62167219200001), with_underscore: [null, null, undefined], rows: (1), meta: false, note: spare1 } }, $y: true, with_underscore: null, id: (2147483647) } };
+v33.c = new Date(-62167219200001);
+delete v33.id;
+v33.id = [[], [new Date(NaN)], [], [new Date(8640000000000000)], [new Date(1700000000123), new Date(-1), new Date(1700000000123), new Date(-62167219200001), new Date(8640000000000000)]];
+show(225, () => JSON.stringify(v33));
+show(226, () => viaUnknown(v33));
+show(227, () => viaAny(v33));
+show(228, () => JSON.stringify([v33, spare6, v33]));
+show(229, () => JSON.stringify({ a: 1, v: v33, z: "back\\slash" } as any));
+show(230, () => JSON.stringify({ head: undefined, v: v33, inner: { w: v33 }, tail: "a" } as any));
+show(231, () => JSON.stringify({ before: 1, held: v33, list: [v33, v33] } as W6));
+const v34: R6 = { name: new Date(NaN), with_underscore: [undefined], rows: (42), meta: true, note: { count: "{", _x: [], score: (2147483648), tags: { held: "\u4e2d\u6587", zz: (42), value: nothing }, $y: null } };
+v34.id = [];
+v34.c = new Date(-62167219200001);
+v34.held = ({ "1": 0.1 + 0.2, "z": 0.1 + 0.2, "caf\u00e9": 1.5 } as Record<string, number>);
+show(232, () => JSON.stringify(v34));
+show(233, () => viaUnknown(v34));
+show(234, () => viaAny(v34));
+show(235, () => JSON.stringify([v34, spare6, v34]));
+show(236, () => JSON.stringify({ a: 1, v: v34, z: "\ud800" } as any));
+show(237, () => JSON.stringify({ head: undefined, v: v34, inner: { w: v34 }, tail: "</script>" } as any));
+show(238, () => JSON.stringify({ before: 1, held: v34, after: "a\u4e2d", list: [] } as W6));
+const v35: R6 = { name: new Date(-1), with_underscore: [{ b: undefined, rows: "\ud83d\ude00", a: null, tags: false, name: [parsed("{\"text\":\"caf\u00e9\"}"), parsed("{\"deep\":{\"deeper\":{\"deepest\":[true,false]}}}")], note: (1) }], rows: (4294967296), meta: false, note: { _x: [(-0.25)], score: (Infinity), tags: { held: "\u4e2d\u6587", zz: (-0.25), value: parsed("{\"text\":\"caf\u00e9\"}") }, $y: false } };
+(v35 as any).toString = "\u00ff";
+show(239, () => JSON.stringify(v35));
+show(240, () => viaUnknown(v35));
+show(241, () => viaAny(v35));
+show(242, () => JSON.stringify([v35, spare6, v35]));
+show(243, () => JSON.stringify({ a: 1, v: v35, z: "\u007f" } as any));
+show(244, () => JSON.stringify({ head: undefined, v: v35, inner: { w: v35 }, tail: "quote \" inside" } as any));
+show(245, () => JSON.stringify({ before: 1, held: v35, list: [v35, v35] } as W6));
+const v36: R7 = { name: { rows: [(1.5)] }, meta: "\ud800" };
+v36.with_underscore = new Date(8640000000000000);
+v36.$y = "{";
+show(246, () => JSON.stringify(v36));
+show(247, () => viaUnknown(v36));
+show(248, () => viaAny(v36));
+show(249, () => JSON.stringify([v36, spare7, v36]));
+show(250, () => JSON.stringify({ a: 1, v: v36, z: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll" } as any));
+show(251, () => JSON.stringify({ head: undefined, v: v36, inner: { w: v36 }, tail: parsed("[[],[[]],{}]") } as any));
+show(252, () => JSON.stringify({ held: v36, list: [] } as W7));
+const v37: R7 = { name: { rows: [null] }, meta: "a\u4e2d", $y: { a: (0.1 + 0.2), tags: [] } };
+v37.with_underscore = new Date(8640000000000000);
+v37.$y = ["", (1e21)];
+delete v37.$y;
+v37.$y = null;
+show(253, () => JSON.stringify(v37));
+show(254, () => viaUnknown(v37));
+show(255, () => viaAny(v37));
+show(256, () => JSON.stringify([v37, spare7, v37]));
+show(257, () => JSON.stringify({ a: 1, v: v37, z: "\u2028\u2029" } as any));
+show(258, () => JSON.stringify({ head: undefined, v: v37, inner: { w: v37 }, tail: nothing } as any));
+show(259, () => JSON.stringify({ held: v37, after: "\u0001\u001f", list: [] } as W7));
+const v38: R7 = { name: { rows: [] }, meta: "hello world" };
+v38.with_underscore = new Date(1700000000123);
+show(260, () => JSON.stringify(v38));
+show(261, () => viaUnknown(v38));
+show(262, () => viaAny(v38));
+show(263, () => JSON.stringify([v38, spare7, v38]));
+show(264, () => JSON.stringify({ a: 1, v: v38, z: "" } as any));
+show(265, () => JSON.stringify({ head: undefined, v: v38, inner: { w: v38 }, tail: undefined } as any));
+show(266, () => JSON.stringify({ held: v38, after: "</script>", list: [v38] } as W7));
+const v39: R7 = { name: { rows: [(Infinity)] }, meta: "quote \" inside" };
+Object.seal(v39);
+show(267, () => JSON.stringify(v39));
+show(268, () => viaUnknown(v39));
+show(269, () => viaAny(v39));
+show(270, () => JSON.stringify([v39, spare7, v39]));
+show(271, () => JSON.stringify({ a: 1, v: v39, z: "\u0001\u001f" } as any));
+show(272, () => JSON.stringify({ head: undefined, v: v39, inner: { w: v39 }, tail: nothing } as any));
+show(273, () => JSON.stringify({ held: v39, after: "caf\u00e9", list: [v39, v39] } as W7));
+const v40: R7 = { name: { rows: [null] }, meta: "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u4e2dwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww" };
+v40.$y = "x\udc00y";
+show(274, () => JSON.stringify(v40));
+show(275, () => viaUnknown(v40));
+show(276, () => viaAny(v40));
+show(277, () => JSON.stringify([v40, spare7, v40]));
+show(278, () => JSON.stringify({ a: 1, v: v40, z: "\u007f" } as any));
+show(279, () => JSON.stringify({ head: undefined, v: v40, inner: { w: v40 }, tail: "a\u4e2d" } as any));
+show(280, () => JSON.stringify({ before: 1, held: v40, list: [v40, v40] } as W7));
+const v41: R8 = { a: (1.5), tags: [] };
+Object.preventExtensions(v41);
+show(281, () => JSON.stringify(v41));
+show(282, () => viaUnknown(v41));
+show(283, () => viaAny(v41));
+show(284, () => JSON.stringify([v41, spare8, v41]));
+show(285, () => JSON.stringify({ a: 1, v: v41, z: "\"" } as any));
+show(286, () => JSON.stringify({ head: undefined, v: v41, inner: { w: v41 }, tail: null } as any));
+show(287, () => JSON.stringify({ held: v41, list: [v41] } as W8));
+const v42: R8 = { a: (1), note: { id: [[new Date(-62167219200001)], [new Date(253402300800000), new Date(1700000000123)], [new Date(1700000000123)], [new Date(NaN), new Date(0), new Date(0), new Date(-62167219200001), new Date(253402300800000)], []], c: null, name: new Date(1700000000123), with_underscore: [true], held: ({ "caf\u00e9": 2147483648, "1": 4294967296, "k 2": 1.5 } as Record<string, number>), rows: (-0.25), meta: true, note: { count: "\u00ff", _x: [(123456789012), (2147483648), (Infinity)], score: (-0), tags: { held: "caf\u00e9", zz: (2147483648), value: nothing }, $y: null, id: (2147483648) } }, tags: ["new\nline"] };
+Object.freeze(v42);
+show(288, () => JSON.stringify(v42));
+show(289, () => viaUnknown(v42));
+show(290, () => viaAny(v42));
+show(291, () => JSON.stringify([v42, spare8, v42]));
+show(292, () => JSON.stringify({ a: 1, v: v42, z: "\u00ff" } as any));
+show(293, () => JSON.stringify({ head: undefined, v: v42, inner: { w: v42 }, tail: nothing } as any));
+show(294, () => JSON.stringify({ before: 1, held: v42, after: "[", list: [v42, v42] } as W8));
+const v43: R8 = { a: (-2147483648), note: null, tags: ["caf\u00e9"] };
+show(295, () => JSON.stringify(v43));
+show(296, () => viaUnknown(v43));
+show(297, () => viaAny(v43));
+show(298, () => JSON.stringify([v43, spare8, v43]));
+show(299, () => JSON.stringify({ a: 1, v: v43, z: "\u007f" } as any));
+show(300, () => JSON.stringify({ head: undefined, v: v43, inner: { w: v43 }, tail: { rows: "\"", tags: null, note: (2147483647) } } as any));
+show(301, () => JSON.stringify({ before: 1, held: v43, list: [] } as W8));
+const v44: R8 = { a: (2147483648), tags: ["{"] };
+delete v44.note;
+v44.note = { name: new Date(NaN), with_underscore: [undefined], held: ({ "k": -2147483649, "1": 123456789012, "k 2": NaN } as Record<string, number>), rows: (-Infinity), meta: true, note: { _x: [(1e21), (1e-7)], score: (9007199254740993), tags: { held: "new\nline", zz: (-1), value: ["\"", true] }, $y: true } };
+show(302, () => JSON.stringify(v44));
+show(303, () => viaUnknown(v44));
+show(304, () => viaAny(v44));
+show(305, () => JSON.stringify([v44, spare8, v44]));
+show(306, () => JSON.stringify({ a: 1, v: v44, z: "\ud800" } as any));
+show(307, () => JSON.stringify({ head: undefined, v: v44, inner: { w: v44 }, tail: { name: spare2, meta: "}" } } as any));
+show(308, () => JSON.stringify({ held: v44, list: [v44, v44] } as W8));
+const v45: R8 = { a: (4294967296), tags: ["</script>"] };
+(v45 as any).zzz = null;
+show(309, () => JSON.stringify(v45));
+show(310, () => viaUnknown(v45));
+show(311, () => viaAny(v45));
+show(312, () => JSON.stringify([v45, spare8, v45]));
+show(313, () => JSON.stringify({ a: 1, v: v45, z: "\ud83d\ude00" } as any));
+show(314, () => JSON.stringify({ head: undefined, v: v45, inner: { w: v45 }, tail: parsed("{\"text\":\"caf\u00e9\"}") } as any));
+show(315, () => JSON.stringify({ before: 1, held: v45, after: "x\udc00y", list: [v45] } as W8));

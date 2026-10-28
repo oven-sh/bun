@@ -1,0 +1,51 @@
+//// built-ins-getter/programs-getters-found-by-key.js
+// One place reads under a key that is computed at run time, on objects without a class whose getters come from one function. The key is a string of the source, a string put together
+// at run time, a symbol, a number, an object that is converted once; the accessor is replaced, deleted, hidden; `this` is the receiver; a Proxy stands in the chain; the getter throws.
+function getterFor(label) {
+  let calls = 0;
+  return function () { calls++; return label + ":" + calls + ":" + (this === undefined ? "undefined" : this.tag); };
+}
+const mark = Symbol("mark");
+function make(tag, keys) {
+  const made = Object.create(null);
+  made.tag = tag;
+  for (const key of keys) Object.defineProperty(made, key, { get: getterFor(String(key)), configurable: true });
+  return made;
+}
+function read(object, key) { return object[key]; }
+const log = [];
+const object = make("object", ["first", "second", mark, 7, "8"]);
+for (let i = 0; i < 40; i++) { read(object, "first"); read(object, "second"); }
+log.push(read(object, "first"), read(object, "sec" + "ond".slice(0)), read(object, ["fir", "st"].join("")), read(object, mark), read(object, 7), read(object, "7"), read(object, 8), String(read(object, "absent")), read(object, "tag"));
+let conversions = 0;
+const converted = { toString() { conversions++; return "first"; } };
+log.push(read(object, converted), read(object, converted), "conversions " + conversions);
+const throwsWhenConverted = { toString() { throw new RangeError("no key"); } };
+try { read(object, throwsWhenConverted); } catch (error) { log.push(error.constructor.name + " " + error.message); }
+const heir = Object.create(object); heir.tag = "heir";
+for (let i = 0; i < 10; i++) read(heir, "first");
+log.push(read(heir, "first"), read(heir, mark));
+Object.defineProperty(object, "first", { get() { return "another function " + this.tag; }, configurable: true });
+log.push(read(object, "first"), read(heir, "first"));
+Object.defineProperty(object, "first", { value: "a value", configurable: true, writable: true });
+log.push(read(object, "first"), read(heir, "first"));
+object.first = getterFor("a closure as the value");
+log.push(typeof read(object, "first"));
+delete object.first;
+log.push(String(read(object, "first")), String(read(heir, "first")));
+Object.defineProperty(object, "first", { set(value) {}, configurable: true });
+log.push(String(read(object, "first")));
+Object.defineProperty(object, "first", { get: getterFor("back"), configurable: true });
+log.push(read(object, "first"), read(heir, "first"));
+Object.defineProperty(heir, "first", { value: "own", configurable: true });
+log.push(read(heir, "first"));
+const traps = [];
+const proxy = new Proxy(object, { get(target, key, receiver) { traps.push(String(key)); return Reflect.get(target, key, receiver); } });
+const below = Object.create(proxy); below.tag = "below";
+function readBelow(value, key) { return value[key]; }
+log.push(readBelow(below, "second"), readBelow(below, "second"), traps.join());
+const thrower = make("thrower", []);
+Object.defineProperty(thrower, "first", { get() { throw new TypeError("thrown by the getter of " + this.tag); } });
+function readThrower(value, key) { return value[key]; }
+try { readThrower(thrower, "first"); } catch (error) { log.push(error.constructor.name + " " + error.message); }
+console.log(log.join("\n"));

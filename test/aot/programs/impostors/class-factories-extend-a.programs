@@ -1,0 +1,3210 @@
+////: ByBind
+class ByBind {
+  constructor(amount) {
+    this.amount = String(amount);
+    this.origin = "ByBind";
+  }
+  describe() {
+    return "by a bound class " + this.amount;
+  }
+}
+////: ByConstructorMember
+class ByConstructorMember {
+  constructor(amount) {
+    this.amount = amount + 0.5;
+    this.origin = "ByConstructorMember";
+  }
+  describe() {
+    return "by the constructor member " + this.amount;
+  }
+}
+////: ByProxy
+class ByProxy {
+  constructor(amount) {
+    this.amount = amount;
+    this.origin = "ByProxy";
+  }
+  describe() {
+    return "by a proxy " + this.amount;
+  }
+}
+////: ByReflect
+class ByReflect {
+  constructor(amount) {
+    this.origin = "ByReflect";
+    this.amount = amount;
+  }
+  describe() {
+    return "by Reflect.construct " + this.amount;
+  }
+}
+////: BySpecies
+class BySpecies extends Array {
+  describe() {
+    return "by species " + this.length;
+  }
+  get amount() {
+    return this.length;
+  }
+  get origin() {
+    return "BySpecies";
+  }
+}
+////: ByTable
+class ByTable {
+  constructor(amount) {
+    this.extra = true;
+    this.amount = amount;
+    this.origin = "ByTable";
+  }
+  describe() {
+    return "by a table " + this.amount;
+  }
+}
+////: ByThis
+class ByThis {
+  constructor(amount) {
+    this.amount = amount;
+    this.origin = "ByThis";
+  }
+  describe() {
+    return "by new this " + this.amount;
+  }
+  static create(amount) {
+    return new this(amount);
+  }
+}
+////: Plain-2
+class Plain {
+  constructor(amount) {
+    this.amount = amount;
+    this.origin = "Plain";
+  }
+  describe() {
+    return "plain " + this.amount;
+  }
+}
+////: around1
+function around1(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void («1»);
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+////: around13
+function around13(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void («1»));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+////: around14
+function around14(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void («1»));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+////: around28
+function around28(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void («1»);
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+////: around29
+function around29(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void («1»));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+////: around36
+function around36(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void («1»));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+////: for-19
+for (let round = 0; round < 3; round++) {
+  for (const [label, make, Maker] of routes) {
+    const parts = [
+      ["made", () => make(2)],
+      ["amount", () => amountOf(make(2))],
+      ["origin", () => originOf(make(2))],
+      ["describe", () => describe(make(2))],
+      ["amount + 1", () => plusOne(make(2))],
+      ["a store to origin", () => rename(make(2))],
+      ["instanceof its class, Plain", () => [make(2) instanceof Maker, make(2) instanceof Plain]],
+      ["constructor", () => make(2).constructor === Maker],
+    ].map(([name, run]) => {
+      try {
+        return name + " " + show(run());
+      } catch (error) {
+        return name + " threw " + error.constructor.name;
+      }
+    });
+    console.log("round " + round + " | " + label + " | " + parts.join(" | "));
+  }
+  if (round === 0) for (let i = 0; i < 2000; i++) amountOf(new Plain(i)), originOf(new Plain(i)), describe(new Plain(i)), plusOne(new Plain(i)), rename(new Plain(i));
+  if (round === 1) for (let i = 0; i < 300; i++) for (const [, make] of routes) amountOf(make(2)), describe(make(2));
+}
+////: for-35
+for (const key of keys) {
+  attempt("{ [" + key + "]: .. }", () => {
+    const object = literal(make(key));
+    return names(object) + " | prototype kept: " + (Object.getPrototypeOf(object) === Object.prototype);
+  });
+  attempt("between others " + key, () => {
+    const object = literalBetweenOthers(make(key));
+    return names(object) + " | " + JSON.stringify(object);
+  });
+  attempt("destructured " + key, () => {
+    const found = destructured(make(key));
+    return typeof found === "function" ? "function " + found.name : found === Object.prototype ? "Object.prototype" : found;
+  });
+  if (log.length) console.log("log", log.splice(0).join(", "));
+}
+////: lines-100
+function «1»(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (Promise.«2»(t).catch(() => {}));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+////: lines-101
+function «1»(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (new «2»().«3»(t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+////: lines-102
+function «1»(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (new «2»(«3», «4»));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+////: lines-163
+class «1» extends «2» {
+  describe() {
+    return «3» + this.«4»;
+  }
+}
+////: lines-166
+function «1»(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void ((«2»).«3»(t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+////: lines-167
+function «1»(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void ([t].«2»());
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+////: lines-168
+function «1»(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void («2»({ «3»: t }));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+////: lines-19
+function «1»(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void («2»(t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+////: lines-234
+function «1»(p) {
+  return [p.x + p.y, p.sum(), p instanceof Point4];
+}
+////: lines-44
+function «1»(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void («2»(t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+////: lines-46
+function «1»(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void («2»(«3», «4»));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+////: lines-47
+function «1»(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (new «2»(t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+////: lines-57
+function «1»(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void («2».prototype.«3».call(t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+////: lines-63
+function «1»(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void ([1, 2].«2»(t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+////: lines-77
+function «1»(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void ([1, 2].«2»(«3», «4»));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+////: names
+function names(object) {
+  return Reflect.ownKeys(object).map(key => (typeof key === "symbol" ? key.toString() : JSON.stringify(key))).join(" ");
+}
+////: observe
+function observe(label, use, operand) {
+  const o = { x: 1, y: "same" };
+  const a = ["same", 2];
+  shared = "same";
+  let fired = 0;
+  fire = () => {
+    fired++;
+    o.y = "changed";
+    a[0] = "changed";
+    shared = "changed";
+  };
+  const line = outcome(() => use(o, a, operand()));
+  fire = () => {};
+  console.log(label + " -> " + line + ", ran " + fired + " times, now " + [o.y, a[0], shared].join(" "));
+}
+////: show-42
+////= show-9
+
+////= Plain-2
+
+////= ByReflect
+
+////= ByTable
+
+////= ByBind
+
+////= ByConstructorMember
+
+////= ByThis
+////: traps-2
+const traps = new Proxy({}, {
+  get: (handler, trap) => (...list) => {
+    fire();
+    return Reflect[trap](...list);
+  },
+});
+////: withMethods
+const withMethods = () => ({
+  valueOf() {
+    fire();
+    return 1;
+  },
+  toString() {
+    fire();
+    return "1";
+  },
+  toJSON() {
+    fire();
+    return 1;
+  },
+  get length() {
+    fire();
+    return 1;
+  },
+  get 0() {
+    fire();
+    return 1;
+  },
+  get k() {
+    fire();
+    return 1;
+  },
+  get then() {
+    fire();
+    return undefined;
+  },
+  [Symbol.iterator]() {
+    fire();
+    return [[1, 1]][Symbol.iterator]();
+  },
+});
+//// class-factories-extend-a-parent-that-is-a-parameter.js
+////= show-34
+
+const Named = Base =>
+  class extends Base {
+    constructor(...inputs) {
+      super(...inputs);
+      this.title = "named";
+    }
+    describe() {
+      return "named, " + super.describe();
+    }
+  };
+
+const Counted = Base =>
+  class extends Base {
+    count = 0;
+    bump() {
+      return ++this.count;
+    }
+    describe() {
+      return "counted " + this.count + ", " + super.describe();
+    }
+  };
+
+const Quiet = Base => class extends Base {};
+
+////= lines-106	Stores	amount	describe	"stores "
+
+class HasFields {
+  amount = "field amount";
+  extra = "field extra";
+  describe() {
+    return "has fields " + this.amount;
+  }
+}
+
+class CallsOut {
+  constructor(amount) {
+    this.amount = amount;
+    this.early = this.describe();
+  }
+  describe() {
+    return "calls out " + this.amount;
+  }
+}
+
+////= lines-35	Old	amount	this.amount	amount
+////= lines-36	Old	describe	"old "	amount
+
+function ReturnsLiteral(amount) {
+  return { amount, describe: () => "a returned literal " + amount };
+}
+////= lines-58	ReturnsLiteral	describe	"never reached"
+
+////= lines-163	Listed	Array	"listed "	length
+
+////= lines-163	Failed	Error	"failed "	message
+
+const parents = [Stores, HasFields, CallsOut, Old, ReturnsLiteral, Listed, Failed];
+
+const compositions = [
+  ["Named", Base => Named(Base)],
+  ["Counted", Base => Counted(Base)],
+  ["Quiet", Base => Quiet(Base)],
+  ["Named(Counted)", Base => Named(Counted(Base))],
+  ["Counted(Named)", Base => Counted(Named(Base))],
+  ["Quiet(Named(Quiet))", Base => Quiet(Named(Quiet(Base)))],
+];
+
+////= describe-8
+
+////= amountOf
+
+////= lines-5	bump	thing	thing.bump
+
+const Usual = Named(Counted(Stores));
+let length = 0;
+for (let i = 0; i < 2000; i++) {
+  const usual = new Usual(i % 5);
+  length += describe(usual).length + amountOf(usual) + bump(usual);
+}
+console.log("2000 honest rounds", length);
+
+for (const Parent of parents) {
+  for (const [label, compose] of compositions) {
+    const where = label + " of " + Parent.name;
+    let Made;
+    attempt(where + ": define", () => ((Made = compose(Parent)), typeof Made));
+    attempt(where + ": construct", () => { const made = new Made(3); return Array.isArray(made) ? ["a list of " + made.length, Object.keys(made)] : made; });
+    attempt(where + ": describe()", () => describe(new Made(3)));
+    attempt(where + ": amount", () => amountOf(new Made(3)));
+    attempt(where + ": bump()", () => bump(new Made(3)));
+    attempt(where + ": instanceof itself, the parent", () => [new Made(3) instanceof Made, new Made(3) instanceof Parent]);
+  }
+}
+
+attempt("two results of one factory are different classes", () => [Named(Stores) === Named(Stores), new (Named(Stores))(1) instanceof Named(Stores)]);
+attempt("a parent that is null", () => new (Quiet(null))());
+attempt("a parent that is null, with a constructor", () => new (Named(null))());
+attempt("a parent that is undefined", () => Quiet(undefined));
+attempt("a parent that is an arrow function", () => Quiet(() => {}));
+attempt("a parent that is a literal", () => Quiet({}));
+attempt("a parent whose prototype is a number", () => Quiet(Object.assign(function () {}, { prototype: 5 })));
+attempt("a parent that is a bound class", () => describe(new (Named(Stores.bind(null, "bound")))()));
+attempt("a parent that is a proxy", () => describe(new (Counted(new Proxy(Stores, {})))(4)));
+attempt("honest again", () => { const usual = new Usual(2); return [describe(usual), amountOf(usual), bump(usual), Object.keys(usual)]; });
+//// classes-and-literals-share-their-member-names.js
+////= show-7
+
+class Invoice {
+  constructor(customer, amount, paid) {
+    this.customer = customer;
+    this.amount = amount;
+    this.paid = paid;
+  }
+  status() {
+    return this.paid ? "invoice paid" : "invoice open";
+  }
+}
+
+class Receipt {
+  constructor(customer, amount, paid) {
+    this.paid = paid;
+    this.amount = amount;
+    this.customer = customer;
+  }
+  status() {
+    return "receipt for " + this.customer;
+  }
+}
+
+class Quote {
+  amount = "quoted amount";
+  customer = "quoted customer";
+  paid = "quoted paid";
+  status() {
+    return "quote";
+  }
+}
+
+class Refund extends Invoice {
+  constructor(customer, amount) {
+    super(customer, -amount, true);
+    this.reason = "returned";
+  }
+  status() {
+    return "refund, and the parent says " + super.status();
+  }
+}
+
+function Bill(customer, amount, paid) {
+  this.amount = amount;
+  this.customer = customer;
+  this.paid = paid;
+}
+////= lines-36	Bill	status	"bill of "	amount
+
+function makeRecord(customer, amount, paid) {
+  return { customer, amount, paid, status: () => "record" };
+}
+
+function makeRecordTheOtherWayRound(customer, amount, paid) {
+  return { status: () => "backwards record", paid, amount, customer };
+}
+
+////= lines-7	customerOf	paper	paper.customer
+
+////= lines-7	amountOf	paper	paper.amount
+
+////= lines-7	paidOf	paper	paper.paid
+
+function allThree(paper) {
+  return [paper.customer, paper.amount, paper.paid];
+}
+
+////= lines-5	statusOf	paper	paper.status
+
+function settle(paper) {
+  paper.paid = true;
+  paper.amount = 0;
+  return paper;
+}
+
+////= lines-131	totalOf	papers	amount
+
+const makers = [
+  ["Invoice", () => new Invoice("ann", 10, false)],
+  ["Receipt, the fields in the opposite order", () => new Receipt("bob", 20, false)],
+  ["Quote, class fields", () => new Quote()],
+  ["Refund, a subclass", () => new Refund("cat", 30)],
+  ["Bill, a constructor function", () => new Bill("dan", 40, false)],
+  ["a literal", () => makeRecord("eve", 50, false)],
+  ["a literal the other way round", () => makeRecordTheOtherWayRound("fay", 60, false)],
+];
+
+function look(phase) {
+  for (const [label, make] of makers) {
+    console.log(phase + " | " + label + " | customer " + show(customerOf(make())) + " | amount " + show(amountOf(make())) + " | paid " + show(paidOf(make())));
+    console.log(phase + " | " + label + " | all three " + show(allThree(make())) + " | status " + show(statusOf(make())));
+    console.log(phase + " | " + label + " | settled " + show(settle(make())) + " | json " + JSON.stringify(make()));
+  }
+  console.log(phase + " | total of all " + show(totalOf(makers.map(([, make]) => make()))));
+  console.log(phase + " | total of the numbers " + show(totalOf(makers.filter(([label]) => !label.startsWith("Quote")).map(([, make]) => make()))));
+}
+
+look("at first");
+for (const [trained, make] of makers) {
+  let count = 0;
+  for (let i = 0; i < 2000; i++) {
+    const paper = make();
+    if (customerOf(paper) && amountOf(paper) !== undefined && allThree(paper).length === 3 && statusOf(paper) && settle(paper).paid) count++;
+  }
+  console.log("2000 rounds with " + trained, count);
+  look("after " + trained);
+}
+//// classes-below-a-constructor-function-and-one-number-is-printed.js
+////= lines-49	Emitter	limit	this.events	0	limit	limit
+Emitter.prototype.emit = function () {
+  this.events = this.events + 1;
+  return this.events <= this.limit;
+};
+class Stream extends Emitter {
+  constructor(limit, size) {
+    super(limit);
+    this.size = size;
+  }
+  push() {
+    return this.emit() ? this.size : 0;
+  }
+}
+class File extends Stream {
+  constructor(size) {
+    super(3, size);
+    this.open = 1;
+  }
+}
+let sum = 0;
+for (let i = 0; i < 100; i++) {
+  const s = new Stream(2, i);
+  const f = new File(i);
+  const e = new Emitter(1);
+  sum += s.push() + s.push() + s.push() + f.push() + f.open + (e.emit() ? 1 : 0) + e.events + s.events + f.limit;
+}
+console.log(sum);
+//// classes-extend-constructor-functions-and-the-reverse.js
+const log = [];
+
+////= show-41
+
+function Old(size) {
+  this.size = size;
+  this.madeWith = new.target === undefined ? "no new" : new.target === Old ? "Old" : "a child";
+}
+////= lines-36	Old	describe	"old "	size
+Old.count = function () {
+  return "counted by " + this.name;
+};
+
+class Plain extends Old {}
+
+class Adds extends Old {
+  constructor(size) {
+    super(size);
+    this.more = "more";
+  }
+  describe() {
+    return "adds, " + super.describe();
+  }
+}
+
+class HasFields extends Old {
+  more = "field";
+  size = "field over the parent's store";
+}
+
+class HasSetter extends Old {
+  get size() {
+    return "from the getter, kept " + this.kept;
+  }
+  set size(value) {
+    log.push("set size " + value);
+    this.kept = value;
+  }
+}
+
+class HasGetterOnly extends Old {
+  get size() {
+    return "getter only";
+  }
+}
+
+class Modern {
+  constructor(size) {
+    this.size = size;
+    this.madeWith = new.target === Modern ? "Modern" : "a child";
+  }
+  describe() {
+    return "modern " + this.size;
+  }
+}
+
+////= lines-79	CallsTheClass	size	Modern
+CallsTheClass.prototype = Object.create(Modern.prototype);
+
+function ConstructsTheClass(size) {
+  const made = Reflect.construct(Modern, [size], new.target || ConstructsTheClass);
+  made.more = "more";
+  return made;
+}
+Object.setPrototypeOf(ConstructsTheClass.prototype, Modern.prototype);
+Object.setPrototypeOf(ConstructsTheClass, Modern);
+ConstructsTheClass.prototype.describe = function () {
+  return "constructs, " + Modern.prototype.describe.call(this);
+};
+
+////= lines-35	BorrowsOnlyThePrototype	size	this.size	size
+BorrowsOnlyThePrototype.prototype = Object.create(Modern.prototype);
+
+////= lines-136	OnTop	ConstructsTheClass	top	"top"
+
+////= lines-260	make	size
+
+////= describe-8
+
+////= lines-7	sizeOf	thing	thing.size
+
+const makers = [Old, Plain, Adds, HasFields, HasSetter, HasGetterOnly, Modern, CallsTheClass, ConstructsTheClass, BorrowsOnlyThePrototype, OnTop];
+
+function look(phase) {
+  for (const Maker of makers) {
+    attempt(phase + " | new " + Maker.name, () => make(Maker, 3));
+    attempt(phase + " | " + Maker.name + ": describe()", () => describe(make(Maker, 3)));
+    log.length = 0;
+    attempt(phase + " | " + Maker.name + ": size", () => { const made = make(Maker, 3); log.length = 0; return sizeOf(made); });
+    attempt(phase + " | " + Maker.name + ": instanceof itself, Old, Modern", () => { const made = make(Maker, 3); log.length = 0; return [made instanceof Maker, made instanceof Old, made instanceof Modern]; });
+  }
+}
+
+look("at first");
+let length = 0;
+for (let i = 0; i < 2000; i++) length += describe(make(Old, i % 5)).length + describe(make(Adds, i % 5)).length + describe(make(Modern, i % 5)).length + sizeOf(make(Plain, 1));
+console.log("2000 honest rounds", length);
+look("later");
+
+attempt("statics through a class child", () => [Plain.count(), Adds.count(), Object.getPrototypeOf(Plain) === Old]);
+attempt("Old without new", () => Old(1));
+attempt("a class child without new", () => Plain(1));
+attempt("ConstructsTheClass without new", () => ConstructsTheClass(1));
+////= lines-36	Old	describe	"patched old "	size
+attempt("after the parent function's method was patched", () => [describe(make(Plain, 1)), describe(make(Adds, 1))]);
+Old.prototype = { describe: () => "a replaced prototype" };
+attempt("after the parent function's prototype was replaced", () => [describe(make(Old, 1)), describe(make(Plain, 1)), make(Plain, 1) instanceof Old]);
+//// classes-that-are-only-constructed-in-roundabout-ways.js
+////= show-42
+
+////= lines-163	ByNewTarget	Plain	"by new.target "	amount
+
+class ByHiddenCode {
+  constructor(amount) {
+    this.origin = "ByHiddenCode";
+    this.amount = -amount;
+  }
+  describe() {
+    return "by hidden code " + this.amount;
+  }
+}
+
+////= ByProxy
+
+////= BySpecies
+
+////= lines-49	ByCreateAndCall	amount	this.amount	amount	origin	"ByCreateAndCall"
+////= lines-36	ByCreateAndCall	describe	"by Object.create and call "	amount
+
+////= lines-49	ByApplyTrick	amount	this.origin	"ByApplyTrick"	amount	amount
+////= lines-36	ByApplyTrick	describe	"by bind.apply "	amount
+
+function ByIndex(amount) {
+  this.amount = [amount];
+  this.origin = "ByIndex";
+}
+////= lines-36	ByIndex	describe	"by an index "	amount
+
+const table = { ByTable };
+const list = [Plain, ByIndex];
+
+const routes = [
+  ["new, in plain sight", amount => new Plain(amount), Plain],
+  ["Reflect.construct", amount => Reflect.construct(ByReflect, [amount]), ByReflect],
+  ["a table and a joined name", amount => new table[["By", "Table"].join("")](amount), ByTable],
+  ["a bound class", amount => new (ByBind.bind(null))(amount), ByBind],
+  ["the constructor member of the prototype", amount => new ByConstructorMember.prototype.constructor(amount), ByConstructorMember],
+  ["new this in a static method", amount => ByThis.create(amount), ByThis],
+  ["Reflect.construct of the parent for the child", amount => Reflect.construct(Plain, [amount], ByNewTarget), ByNewTarget],
+  ["hidden code", amount => new Function("Maker", "amount", "return new Maker(amount);")(ByHiddenCode, amount), ByHiddenCode],
+  ["a proxy", amount => new (new Proxy(ByProxy, {}))(amount), ByProxy],
+  ["from, then map", amount => BySpecies.from({ length: amount }).map(() => 0), BySpecies],
+  ["Object.create and call", amount => { const made = Object.create(ByCreateAndCall.prototype); ByCreateAndCall.call(made, amount); return made; }, ByCreateAndCall],
+  ["bind.apply", amount => new (Function.prototype.bind.apply(ByApplyTrick, [null, amount]))(), ByApplyTrick],
+  ["an element picked by arithmetic", amount => new list[amount - amount + 1](amount), ByIndex],
+];
+
+////= amountOf
+
+////= lines-7	originOf	thing	thing.origin
+
+////= describe-8
+
+////= lines-148	plusOne	thing	thing.amount
+
+////= lines-60	rename	thing	thing.origin	"renamed"
+
+////= for-19
+//// classes-that-are-only-constructed-in-roundabout-ways-and-no-code-comes-from-strings.js
+////= show-42
+
+////= lines-163	ByNewTarget	Plain	"by new.target "	amount
+
+////= ByProxy
+
+////= BySpecies
+
+////= lines-49	ByCreateAndCall	amount	this.amount	amount	origin	"ByCreateAndCall"
+////= lines-36	ByCreateAndCall	describe	"by Object.create and call "	amount
+
+////= lines-49	ByApplyTrick	amount	this.origin	"ByApplyTrick"	amount	amount
+////= lines-36	ByApplyTrick	describe	"by bind.apply "	amount
+
+function ByIndex(amount) {
+  this.amount = [amount];
+  this.origin = "ByIndex";
+}
+////= lines-36	ByIndex	describe	"by an index "	amount
+
+const table = { ByTable };
+const list = [Plain, ByIndex];
+
+const routes = [
+  ["new, in plain sight", amount => new Plain(amount), Plain],
+  ["Reflect.construct", amount => Reflect.construct(ByReflect, [amount]), ByReflect],
+  ["a table and a joined name", amount => new table[["By", "Table"].join("")](amount), ByTable],
+  ["a bound class", amount => new (ByBind.bind(null))(amount), ByBind],
+  ["the constructor member of the prototype", amount => new ByConstructorMember.prototype.constructor(amount), ByConstructorMember],
+  ["new this in a static method", amount => ByThis.create(amount), ByThis],
+  ["Reflect.construct of the parent for the child", amount => Reflect.construct(Plain, [amount], ByNewTarget), ByNewTarget],
+  ["a proxy", amount => new (new Proxy(ByProxy, {}))(amount), ByProxy],
+  ["from, then map", amount => BySpecies.from({ length: amount }).map(() => 0), BySpecies],
+  ["Object.create and call", amount => { const made = Object.create(ByCreateAndCall.prototype); ByCreateAndCall.call(made, amount); return made; }, ByCreateAndCall],
+  ["bind.apply", amount => new (Function.prototype.bind.apply(ByApplyTrick, [null, amount]))(), ByApplyTrick],
+  ["an element picked by arithmetic", amount => new list[amount - amount + 1](amount), ByIndex],
+];
+
+////= amountOf
+
+////= lines-7	originOf	thing	thing.origin
+
+////= describe-8
+
+////= lines-148	plusOne	thing	thing.amount
+
+////= lines-60	rename	thing	thing.origin	"renamed"
+
+////= for-19
+//// closures-of-one-function-are-told-apart-when-called-like-a-function.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+function adder(k) {
+  return function (x) {
+    return x + k;
+  };
+}
+
+////= lines-82	callWith	f	x	f	x
+
+function pair(k) {
+  function scale(x) {
+    return x * k;
+  }
+  function run(x) {
+    return scale(x) + k;
+  }
+  function replace(f) {
+    scale = f;
+  }
+  function rebase(next) {
+    k = next;
+  }
+  return { run, replace, rebase };
+}
+
+function counter() {
+  let count = 0;
+  return { up: () => ++count, read: () => count, set: value => { count = value; } };
+}
+
+class Scaler {
+  constructor(k) {
+    this.scale = x => x * k;
+    this.k = k;
+  }
+
+  run(x) {
+    return this.scale(x) + this.k;
+  }
+}
+
+function honest(round) {
+  console.log(round, callWith(adder(1), 1), callWith(adder(10), 1), callWith(adder(0.5), 1), callWith(adder(-1), 1), adder(2)(3), adder(20)(3));
+  console.log(round, pair(1).run(2), pair(10).run(2), pair(0.5).run(2), new Scaler(1).run(2), new Scaler(10).run(2));
+}
+
+honest("before");
+const adders = [adder(1), adder(10), adder("s"), adder(1n), adder(null), adder({ valueOf: () => 5 }), adder(undefined), adder(-0)];
+for (const [i, f] of adders.entries()) {
+  attempt("adder number " + i + " of one", () => callWith(f, 1));
+  attempt("adder number " + i + " of negative zero", () => callWith(f, -0));
+}
+for (let i = 0; i < 2000; i++) callWith(adders[0], i);
+for (const [i, f] of adders.entries()) attempt("after 2000 calls of the first, adder number " + i, () => callWith(f, 1));
+
+const one = pair(1);
+const ten = pair(10);
+attempt("two activations", () => [one.run(2), ten.run(2)]);
+ten.replace(x => "replaced " + x);
+attempt("the inner function of one activation was replaced", () => [one.run(2), ten.run(2)]);
+ten.replace(adder(100));
+attempt("by a closure of another function", () => [one.run(2), ten.run(2)]);
+ten.replace(pair(1000).run);
+attempt("by the run of a third activation", () => [one.run(2), ten.run(2)]);
+ten.replace(class {});
+attempt("by a class", () => one.run(2) + " " + ten.run(2));
+ten.replace("text");
+attempt("by a string", () => one.run(2) + " " + ten.run(2));
+attempt("the other activation never changed", () => one.run(2));
+one.rebase("k");
+attempt("the captured number of one activation became a string", () => [one.run(2), pair(3).run(2)]);
+one.rebase(2n);
+attempt("then a BigInt", () => one.run(2));
+attempt("with a BigInt for the argument", () => one.run(2n));
+
+const first = counter();
+const second = counter();
+attempt("two counters", () => [first.up(), first.up(), second.up(), first.read(), second.read()]);
+second.set("5");
+attempt("one of them holds a string now", () => [first.up(), second.up(), second.read()]);
+second.set(2147483647);
+attempt("then the largest small integer", () => [second.up(), second.up(), first.up()]);
+second.set(1n);
+attempt("then a BigInt", () => [second.up(), first.up()]);
+second.set({ valueOf: () => (log.push("valueOf"), 7) });
+attempt("then an object", () => [second.up(), second.up(), first.up()]);
+
+const scalers = [new Scaler(1), new Scaler(10)];
+scalers[1].scale = "not a function";
+attempt("the closure in a field of one instance was replaced", () => scalers[0].run(2) + " " + scalers[1].run(2));
+scalers[1].scale = scalers[0].scale;
+attempt("by the closure of the other instance", () => [scalers[0].run(2), scalers[1].run(2)]);
+attempt("run is borrowed for an object that is no Scaler", () => Scaler.prototype.run.call({ scale: x => "borrowed " + x, k: "!" }, 2));
+
+let factorial = function self(n) {
+  return n <= 1 ? 1 : n * self(n - 1);
+};
+const kept = factorial;
+factorial = null;
+attempt("a function expression calls itself by its own name", () => kept(5));
+let loose = function (n) {
+  return n <= 1 ? 1 : n * loose(n - 1);
+};
+const keptLoose = loose;
+loose = n => "replaced " + n;
+attempt("another calls itself through a variable that was replaced", () => keptLoose(5));
+honest("after");
+//// code-of-an-operand-runs-between-two-reads-arrays-and-typed-arrays-1.js
+"use strict";
+
+const log = [];
+
+////= show-27
+
+let shared = "same";
+let fire = () => {};
+
+////= withMethods
+////= traps-2
+const trapped = () => new Proxy({}, traps);
+const trappedFunction = () => new Proxy(function () {}, traps);
+
+////= observe
+
+////= lines-63	around1	slice
+
+////= lines-77	around2	slice	0	t
+
+////= lines-63	around3	at
+
+////= lines-77	around4	indexOf	1	t
+
+////= lines-77	around5	lastIndexOf	1	t
+
+////= lines-77	around6	includes	1	t
+
+////= lines-77	around7	fill	0	t
+
+////= lines-63	around8	fill
+
+////= lines-63	around9	join
+
+////= lines-63	around10	concat
+
+////= lines-63	around11	splice
+
+////= lines-77	around12	splice	0	t
+
+////= lines-63	around13	toSpliced
+
+////= lines-63	around14	copyWithin
+
+////= lines-63	around15	flat
+
+////= lines-77	around16	with	t	0
+
+////= lines-167	around17	join
+
+////= lines-167	around18	toString
+
+////= lines-167	around19	toLocaleString
+
+function around20(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void ([t, t].sort());
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+function around21(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void ([t, t].toSorted());
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+function around22(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void ([t].includes(1));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+function around23(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void ([t].indexOf(1));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+function around24(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void ([[t]].flat());
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+function around25(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void ([t] + "");
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+function around26(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void ([1, 2][t]);
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+function around27(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void ([1, 2][t] = 0);
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= around28	[1, 2].length = t
+
+////= lines-47	around29	Array
+
+////= lines-19	around30	Array.of
+
+////= lines-19	around31	Array.isArray
+
+////= lines-19	around32	Array.from
+
+////= lines-168	around33	Array.from	length
+
+////= lines-57	around34	Array	slice
+
+function around35(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (Array.prototype.map.call(t, x => x));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= around36	Array.prototype.push.call(t, 1
+
+////= lines-57	around37	Array	pop
+
+////= lines-57	around38	Array	join
+
+console.log("strict:", (function () { return this === undefined; })());
+observe("[1, 2].slice(t)" + " with a number", around1, () => 1);
+observe("[1, 2].slice(t)" + " with methods", around1, withMethods);
+observe("[1, 2].slice(t)" + " with a proxy", around1, trapped);
+observe("[1, 2].slice(t)" + " with a proxy of a function", around1, trappedFunction);
+observe("[1, 2].slice(0, t)" + " with a number", around2, () => 1);
+observe("[1, 2].slice(0, t)" + " with methods", around2, withMethods);
+observe("[1, 2].slice(0, t)" + " with a proxy", around2, trapped);
+observe("[1, 2].slice(0, t)" + " with a proxy of a function", around2, trappedFunction);
+observe("[1, 2].at(t)" + " with a number", around3, () => 1);
+observe("[1, 2].at(t)" + " with methods", around3, withMethods);
+observe("[1, 2].at(t)" + " with a proxy", around3, trapped);
+observe("[1, 2].at(t)" + " with a proxy of a function", around3, trappedFunction);
+observe("[1, 2].indexOf(1, t)" + " with a number", around4, () => 1);
+observe("[1, 2].indexOf(1, t)" + " with methods", around4, withMethods);
+observe("[1, 2].indexOf(1, t)" + " with a proxy", around4, trapped);
+observe("[1, 2].indexOf(1, t)" + " with a proxy of a function", around4, trappedFunction);
+observe("[1, 2].lastIndexOf(1, t)" + " with a number", around5, () => 1);
+observe("[1, 2].lastIndexOf(1, t)" + " with methods", around5, withMethods);
+observe("[1, 2].lastIndexOf(1, t)" + " with a proxy", around5, trapped);
+observe("[1, 2].lastIndexOf(1, t)" + " with a proxy of a function", around5, trappedFunction);
+observe("[1, 2].includes(1, t)" + " with a number", around6, () => 1);
+observe("[1, 2].includes(1, t)" + " with methods", around6, withMethods);
+observe("[1, 2].includes(1, t)" + " with a proxy", around6, trapped);
+observe("[1, 2].includes(1, t)" + " with a proxy of a function", around6, trappedFunction);
+observe("[1, 2].fill(0, t)" + " with a number", around7, () => 1);
+observe("[1, 2].fill(0, t)" + " with methods", around7, withMethods);
+observe("[1, 2].fill(0, t)" + " with a proxy", around7, trapped);
+observe("[1, 2].fill(0, t)" + " with a proxy of a function", around7, trappedFunction);
+observe("[1, 2].fill(t)" + " with a number", around8, () => 1);
+observe("[1, 2].fill(t)" + " with methods", around8, withMethods);
+observe("[1, 2].fill(t)" + " with a proxy", around8, trapped);
+observe("[1, 2].fill(t)" + " with a proxy of a function", around8, trappedFunction);
+observe("[1, 2].join(t)" + " with a number", around9, () => 1);
+observe("[1, 2].join(t)" + " with methods", around9, withMethods);
+observe("[1, 2].join(t)" + " with a proxy", around9, trapped);
+observe("[1, 2].join(t)" + " with a proxy of a function", around9, trappedFunction);
+observe("[1, 2].concat(t)" + " with a number", around10, () => 1);
+observe("[1, 2].concat(t)" + " with methods", around10, withMethods);
+observe("[1, 2].concat(t)" + " with a proxy", around10, trapped);
+observe("[1, 2].concat(t)" + " with a proxy of a function", around10, trappedFunction);
+observe("[1, 2].splice(t)" + " with a number", around11, () => 1);
+observe("[1, 2].splice(t)" + " with methods", around11, withMethods);
+observe("[1, 2].splice(t)" + " with a proxy", around11, trapped);
+observe("[1, 2].splice(t)" + " with a proxy of a function", around11, trappedFunction);
+observe("[1, 2].splice(0, t)" + " with a number", around12, () => 1);
+observe("[1, 2].splice(0, t)" + " with methods", around12, withMethods);
+observe("[1, 2].splice(0, t)" + " with a proxy", around12, trapped);
+observe("[1, 2].splice(0, t)" + " with a proxy of a function", around12, trappedFunction);
+observe("[1, 2].toSpliced(t)" + " with a number", around13, () => 1);
+observe("[1, 2].toSpliced(t)" + " with methods", around13, withMethods);
+observe("[1, 2].toSpliced(t)" + " with a proxy", around13, trapped);
+observe("[1, 2].toSpliced(t)" + " with a proxy of a function", around13, trappedFunction);
+observe("[1, 2].copyWithin(t)" + " with a number", around14, () => 1);
+observe("[1, 2].copyWithin(t)" + " with methods", around14, withMethods);
+observe("[1, 2].copyWithin(t)" + " with a proxy", around14, trapped);
+observe("[1, 2].copyWithin(t)" + " with a proxy of a function", around14, trappedFunction);
+observe("[1, 2].flat(t)" + " with a number", around15, () => 1);
+observe("[1, 2].flat(t)" + " with methods", around15, withMethods);
+observe("[1, 2].flat(t)" + " with a proxy", around15, trapped);
+observe("[1, 2].flat(t)" + " with a proxy of a function", around15, trappedFunction);
+observe("[1, 2].with(t, 0)" + " with a number", around16, () => 1);
+observe("[1, 2].with(t, 0)" + " with methods", around16, withMethods);
+observe("[1, 2].with(t, 0)" + " with a proxy", around16, trapped);
+observe("[1, 2].with(t, 0)" + " with a proxy of a function", around16, trappedFunction);
+observe("[t].join()" + " with a number", around17, () => 1);
+observe("[t].join()" + " with methods", around17, withMethods);
+observe("[t].join()" + " with a proxy", around17, trapped);
+observe("[t].join()" + " with a proxy of a function", around17, trappedFunction);
+observe("[t].toString()" + " with a number", around18, () => 1);
+observe("[t].toString()" + " with methods", around18, withMethods);
+observe("[t].toString()" + " with a proxy", around18, trapped);
+observe("[t].toString()" + " with a proxy of a function", around18, trappedFunction);
+observe("[t].toLocaleString()" + " with a number", around19, () => 1);
+observe("[t].toLocaleString()" + " with methods", around19, withMethods);
+observe("[t].toLocaleString()" + " with a proxy", around19, trapped);
+observe("[t].toLocaleString()" + " with a proxy of a function", around19, trappedFunction);
+observe("[t, t].sort()" + " with a number", around20, () => 1);
+observe("[t, t].sort()" + " with methods", around20, withMethods);
+observe("[t, t].sort()" + " with a proxy", around20, trapped);
+observe("[t, t].sort()" + " with a proxy of a function", around20, trappedFunction);
+observe("[t, t].toSorted()" + " with a number", around21, () => 1);
+observe("[t, t].toSorted()" + " with methods", around21, withMethods);
+observe("[t, t].toSorted()" + " with a proxy", around21, trapped);
+observe("[t, t].toSorted()" + " with a proxy of a function", around21, trappedFunction);
+observe("[t].includes(1)" + " with a number", around22, () => 1);
+observe("[t].includes(1)" + " with methods", around22, withMethods);
+observe("[t].includes(1)" + " with a proxy", around22, trapped);
+observe("[t].includes(1)" + " with a proxy of a function", around22, trappedFunction);
+observe("[t].indexOf(1)" + " with a number", around23, () => 1);
+observe("[t].indexOf(1)" + " with methods", around23, withMethods);
+observe("[t].indexOf(1)" + " with a proxy", around23, trapped);
+observe("[t].indexOf(1)" + " with a proxy of a function", around23, trappedFunction);
+observe("[[t]].flat()" + " with a number", around24, () => 1);
+observe("[[t]].flat()" + " with methods", around24, withMethods);
+observe("[[t]].flat()" + " with a proxy", around24, trapped);
+observe("[[t]].flat()" + " with a proxy of a function", around24, trappedFunction);
+observe("[t] + \"\"" + " with a number", around25, () => 1);
+observe("[t] + \"\"" + " with methods", around25, withMethods);
+observe("[t] + \"\"" + " with a proxy", around25, trapped);
+observe("[t] + \"\"" + " with a proxy of a function", around25, trappedFunction);
+observe("[1, 2][t]" + " with a number", around26, () => 1);
+observe("[1, 2][t]" + " with methods", around26, withMethods);
+observe("[1, 2][t]" + " with a proxy", around26, trapped);
+observe("[1, 2][t]" + " with a proxy of a function", around26, trappedFunction);
+observe("[1, 2][t] = 0" + " with a number", around27, () => 1);
+observe("[1, 2][t] = 0" + " with methods", around27, withMethods);
+observe("[1, 2][t] = 0" + " with a proxy", around27, trapped);
+observe("[1, 2][t] = 0" + " with a proxy of a function", around27, trappedFunction);
+observe("[1, 2].length = t" + " with a number", around28, () => 1);
+observe("[1, 2].length = t" + " with methods", around28, withMethods);
+observe("[1, 2].length = t" + " with a proxy", around28, trapped);
+observe("[1, 2].length = t" + " with a proxy of a function", around28, trappedFunction);
+observe("new Array(t)" + " with a number", around29, () => 1);
+observe("new Array(t)" + " with methods", around29, withMethods);
+observe("new Array(t)" + " with a proxy", around29, trapped);
+observe("new Array(t)" + " with a proxy of a function", around29, trappedFunction);
+observe("Array.of(t)" + " with a number", around30, () => 1);
+observe("Array.of(t)" + " with methods", around30, withMethods);
+observe("Array.of(t)" + " with a proxy", around30, trapped);
+observe("Array.of(t)" + " with a proxy of a function", around30, trappedFunction);
+observe("Array.isArray(t)" + " with a number", around31, () => 1);
+observe("Array.isArray(t)" + " with methods", around31, withMethods);
+observe("Array.isArray(t)" + " with a proxy", around31, trapped);
+observe("Array.isArray(t)" + " with a proxy of a function", around31, trappedFunction);
+observe("Array.from(t)" + " with a number", around32, () => 1);
+observe("Array.from(t)" + " with methods", around32, withMethods);
+observe("Array.from(t)" + " with a proxy", around32, trapped);
+observe("Array.from(t)" + " with a proxy of a function", around32, trappedFunction);
+observe("Array.from({ length: t })" + " with a number", around33, () => 1);
+observe("Array.from({ length: t })" + " with methods", around33, withMethods);
+observe("Array.from({ length: t })" + " with a proxy", around33, trapped);
+observe("Array.from({ length: t })" + " with a proxy of a function", around33, trappedFunction);
+observe("Array.prototype.slice.call(t)" + " with a number", around34, () => 1);
+observe("Array.prototype.slice.call(t)" + " with methods", around34, withMethods);
+observe("Array.prototype.slice.call(t)" + " with a proxy", around34, trapped);
+observe("Array.prototype.slice.call(t)" + " with a proxy of a function", around34, trappedFunction);
+observe("Array.prototype.map.call(t, x => x)" + " with a number", around35, () => 1);
+observe("Array.prototype.map.call(t, x => x)" + " with methods", around35, withMethods);
+observe("Array.prototype.map.call(t, x => x)" + " with a proxy", around35, trapped);
+observe("Array.prototype.map.call(t, x => x)" + " with a proxy of a function", around35, trappedFunction);
+observe("Array.prototype.push.call(t, 1)" + " with a number", around36, () => 1);
+observe("Array.prototype.push.call(t, 1)" + " with methods", around36, withMethods);
+observe("Array.prototype.push.call(t, 1)" + " with a proxy", around36, trapped);
+observe("Array.prototype.push.call(t, 1)" + " with a proxy of a function", around36, trappedFunction);
+observe("Array.prototype.pop.call(t)" + " with a number", around37, () => 1);
+observe("Array.prototype.pop.call(t)" + " with methods", around37, withMethods);
+observe("Array.prototype.pop.call(t)" + " with a proxy", around37, trapped);
+observe("Array.prototype.pop.call(t)" + " with a proxy of a function", around37, trappedFunction);
+observe("Array.prototype.join.call(t)" + " with a number", around38, () => 1);
+observe("Array.prototype.join.call(t)" + " with methods", around38, withMethods);
+observe("Array.prototype.join.call(t)" + " with a proxy", around38, trapped);
+observe("Array.prototype.join.call(t)" + " with a proxy of a function", around38, trappedFunction);
+//// code-of-an-operand-runs-between-two-reads-objects-and-collections-2.js
+"use strict";
+
+const log = [];
+
+////= show-27
+
+let shared = "same";
+let fire = () => {};
+
+////= withMethods
+////= traps-2
+const trapped = () => new Proxy({}, traps);
+const trappedFunction = () => new Proxy(function () {}, traps);
+
+////= observe
+
+////= around1	Object.prototype.propertyIsEnumerable.call({}, t)
+
+function around2(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (Object.prototype.isPrototypeOf.call({}, t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= lines-57	around3	Object	valueOf
+
+////= lines-19	around4	JSON.stringify
+
+////= lines-168	around5	JSON.stringify	k
+
+function around6(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (JSON.stringify([t]));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+function around7(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (JSON.stringify({ a: 1 }, t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+function around8(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (JSON.stringify({ a: 1 }, null, t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= lines-19	around9	JSON.parse
+
+////= lines-46	around10	JSON.parse	"1"	t
+
+////= lines-46	around11	Reflect.get	t	"k"
+
+function around12(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (Reflect.get({}, t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= around13	Reflect.get({ get k() { return this.j; } }, "k", t
+
+////= around14	Reflect.set(t, "k", 1
+
+function around15(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (Reflect.set({}, "k", 1, t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= lines-46	around16	Reflect.has	t	"k"
+
+function around17(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (Reflect.has({}, t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= lines-19	around18	Reflect.ownKeys
+
+////= lines-19	around19	Reflect.getPrototypeOf
+
+////= lines-46	around20	Reflect.setPrototypeOf	t	null
+
+////= lines-19	around21	Reflect.isExtensible
+
+////= lines-19	around22	Reflect.preventExtensions
+
+////= lines-46	around23	Reflect.deleteProperty	t	"k"
+
+function around24(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (Reflect.defineProperty({}, "k", t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= lines-46	around25	Reflect.getOwnPropertyDescriptor	t	"k"
+
+function around26(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (Reflect.apply(Math.max, null, t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= lines-46	around27	Reflect.construct	Object	t
+
+////= around28	Reflect.construct(Object, [], t)
+
+////= around29	Math.max.apply(null, t
+
+function around30(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (Math.max.call(null, t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+function around31(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (Math.max.bind(null, t)());
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= lines-57	around32	Function	bind
+
+////= lines-57	around33	Function	toString
+
+function around34(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (Function.prototype[Symbol.hasInstance].call(Object, t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= lines-47	around35	Map
+
+////= around36	new Map([t]
+
+////= lines-101	around37	Map	get
+
+function around38(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (new Map().set(t, 1));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= lines-47	around39	Set
+
+////= lines-101	around40	Set	add
+
+console.log("strict:", (function () { return this === undefined; })());
+observe("Object.prototype.propertyIsEnumerable.call({}, t)" + " with a number", around1, () => 1);
+observe("Object.prototype.propertyIsEnumerable.call({}, t)" + " with methods", around1, withMethods);
+observe("Object.prototype.propertyIsEnumerable.call({}, t)" + " with a proxy", around1, trapped);
+observe("Object.prototype.propertyIsEnumerable.call({}, t)" + " with a proxy of a function", around1, trappedFunction);
+observe("Object.prototype.isPrototypeOf.call({}, t)" + " with a number", around2, () => 1);
+observe("Object.prototype.isPrototypeOf.call({}, t)" + " with methods", around2, withMethods);
+observe("Object.prototype.isPrototypeOf.call({}, t)" + " with a proxy", around2, trapped);
+observe("Object.prototype.isPrototypeOf.call({}, t)" + " with a proxy of a function", around2, trappedFunction);
+observe("Object.prototype.valueOf.call(t)" + " with a number", around3, () => 1);
+observe("Object.prototype.valueOf.call(t)" + " with methods", around3, withMethods);
+observe("Object.prototype.valueOf.call(t)" + " with a proxy", around3, trapped);
+observe("Object.prototype.valueOf.call(t)" + " with a proxy of a function", around3, trappedFunction);
+observe("JSON.stringify(t)" + " with a number", around4, () => 1);
+observe("JSON.stringify(t)" + " with methods", around4, withMethods);
+observe("JSON.stringify(t)" + " with a proxy", around4, trapped);
+observe("JSON.stringify(t)" + " with a proxy of a function", around4, trappedFunction);
+observe("JSON.stringify({ k: t })" + " with a number", around5, () => 1);
+observe("JSON.stringify({ k: t })" + " with methods", around5, withMethods);
+observe("JSON.stringify({ k: t })" + " with a proxy", around5, trapped);
+observe("JSON.stringify({ k: t })" + " with a proxy of a function", around5, trappedFunction);
+observe("JSON.stringify([t])" + " with a number", around6, () => 1);
+observe("JSON.stringify([t])" + " with methods", around6, withMethods);
+observe("JSON.stringify([t])" + " with a proxy", around6, trapped);
+observe("JSON.stringify([t])" + " with a proxy of a function", around6, trappedFunction);
+observe("JSON.stringify({ a: 1 }, t)" + " with a number", around7, () => 1);
+observe("JSON.stringify({ a: 1 }, t)" + " with methods", around7, withMethods);
+observe("JSON.stringify({ a: 1 }, t)" + " with a proxy", around7, trapped);
+observe("JSON.stringify({ a: 1 }, t)" + " with a proxy of a function", around7, trappedFunction);
+observe("JSON.stringify({ a: 1 }, null, t)" + " with a number", around8, () => 1);
+observe("JSON.stringify({ a: 1 }, null, t)" + " with methods", around8, withMethods);
+observe("JSON.stringify({ a: 1 }, null, t)" + " with a proxy", around8, trapped);
+observe("JSON.stringify({ a: 1 }, null, t)" + " with a proxy of a function", around8, trappedFunction);
+observe("JSON.parse(t)" + " with a number", around9, () => 1);
+observe("JSON.parse(t)" + " with methods", around9, withMethods);
+observe("JSON.parse(t)" + " with a proxy", around9, trapped);
+observe("JSON.parse(t)" + " with a proxy of a function", around9, trappedFunction);
+observe("JSON.parse(\"1\", t)" + " with a number", around10, () => 1);
+observe("JSON.parse(\"1\", t)" + " with methods", around10, withMethods);
+observe("JSON.parse(\"1\", t)" + " with a proxy", around10, trapped);
+observe("JSON.parse(\"1\", t)" + " with a proxy of a function", around10, trappedFunction);
+observe("Reflect.get(t, \"k\")" + " with a number", around11, () => 1);
+observe("Reflect.get(t, \"k\")" + " with methods", around11, withMethods);
+observe("Reflect.get(t, \"k\")" + " with a proxy", around11, trapped);
+observe("Reflect.get(t, \"k\")" + " with a proxy of a function", around11, trappedFunction);
+observe("Reflect.get({}, t)" + " with a number", around12, () => 1);
+observe("Reflect.get({}, t)" + " with methods", around12, withMethods);
+observe("Reflect.get({}, t)" + " with a proxy", around12, trapped);
+observe("Reflect.get({}, t)" + " with a proxy of a function", around12, trappedFunction);
+observe("Reflect.get({ get k() { return this.j; } }, \"k\", t)" + " with a number", around13, () => 1);
+observe("Reflect.get({ get k() { return this.j; } }, \"k\", t)" + " with methods", around13, withMethods);
+observe("Reflect.get({ get k() { return this.j; } }, \"k\", t)" + " with a proxy", around13, trapped);
+observe("Reflect.get({ get k() { return this.j; } }, \"k\", t)" + " with a proxy of a function", around13, trappedFunction);
+observe("Reflect.set(t, \"k\", 1)" + " with a number", around14, () => 1);
+observe("Reflect.set(t, \"k\", 1)" + " with methods", around14, withMethods);
+observe("Reflect.set(t, \"k\", 1)" + " with a proxy", around14, trapped);
+observe("Reflect.set(t, \"k\", 1)" + " with a proxy of a function", around14, trappedFunction);
+observe("Reflect.set({}, \"k\", 1, t)" + " with a number", around15, () => 1);
+observe("Reflect.set({}, \"k\", 1, t)" + " with methods", around15, withMethods);
+observe("Reflect.set({}, \"k\", 1, t)" + " with a proxy", around15, trapped);
+observe("Reflect.set({}, \"k\", 1, t)" + " with a proxy of a function", around15, trappedFunction);
+observe("Reflect.has(t, \"k\")" + " with a number", around16, () => 1);
+observe("Reflect.has(t, \"k\")" + " with methods", around16, withMethods);
+observe("Reflect.has(t, \"k\")" + " with a proxy", around16, trapped);
+observe("Reflect.has(t, \"k\")" + " with a proxy of a function", around16, trappedFunction);
+observe("Reflect.has({}, t)" + " with a number", around17, () => 1);
+observe("Reflect.has({}, t)" + " with methods", around17, withMethods);
+observe("Reflect.has({}, t)" + " with a proxy", around17, trapped);
+observe("Reflect.has({}, t)" + " with a proxy of a function", around17, trappedFunction);
+observe("Reflect.ownKeys(t)" + " with a number", around18, () => 1);
+observe("Reflect.ownKeys(t)" + " with methods", around18, withMethods);
+observe("Reflect.ownKeys(t)" + " with a proxy", around18, trapped);
+observe("Reflect.ownKeys(t)" + " with a proxy of a function", around18, trappedFunction);
+observe("Reflect.getPrototypeOf(t)" + " with a number", around19, () => 1);
+observe("Reflect.getPrototypeOf(t)" + " with methods", around19, withMethods);
+observe("Reflect.getPrototypeOf(t)" + " with a proxy", around19, trapped);
+observe("Reflect.getPrototypeOf(t)" + " with a proxy of a function", around19, trappedFunction);
+observe("Reflect.setPrototypeOf(t, null)" + " with a number", around20, () => 1);
+observe("Reflect.setPrototypeOf(t, null)" + " with methods", around20, withMethods);
+observe("Reflect.setPrototypeOf(t, null)" + " with a proxy", around20, trapped);
+observe("Reflect.setPrototypeOf(t, null)" + " with a proxy of a function", around20, trappedFunction);
+observe("Reflect.isExtensible(t)" + " with a number", around21, () => 1);
+observe("Reflect.isExtensible(t)" + " with methods", around21, withMethods);
+observe("Reflect.isExtensible(t)" + " with a proxy", around21, trapped);
+observe("Reflect.isExtensible(t)" + " with a proxy of a function", around21, trappedFunction);
+observe("Reflect.preventExtensions(t)" + " with a number", around22, () => 1);
+observe("Reflect.preventExtensions(t)" + " with methods", around22, withMethods);
+observe("Reflect.preventExtensions(t)" + " with a proxy", around22, trapped);
+observe("Reflect.preventExtensions(t)" + " with a proxy of a function", around22, trappedFunction);
+observe("Reflect.deleteProperty(t, \"k\")" + " with a number", around23, () => 1);
+observe("Reflect.deleteProperty(t, \"k\")" + " with methods", around23, withMethods);
+observe("Reflect.deleteProperty(t, \"k\")" + " with a proxy", around23, trapped);
+observe("Reflect.deleteProperty(t, \"k\")" + " with a proxy of a function", around23, trappedFunction);
+observe("Reflect.defineProperty({}, \"k\", t)" + " with a number", around24, () => 1);
+observe("Reflect.defineProperty({}, \"k\", t)" + " with methods", around24, withMethods);
+observe("Reflect.defineProperty({}, \"k\", t)" + " with a proxy", around24, trapped);
+observe("Reflect.defineProperty({}, \"k\", t)" + " with a proxy of a function", around24, trappedFunction);
+observe("Reflect.getOwnPropertyDescriptor(t, \"k\")" + " with a number", around25, () => 1);
+observe("Reflect.getOwnPropertyDescriptor(t, \"k\")" + " with methods", around25, withMethods);
+observe("Reflect.getOwnPropertyDescriptor(t, \"k\")" + " with a proxy", around25, trapped);
+observe("Reflect.getOwnPropertyDescriptor(t, \"k\")" + " with a proxy of a function", around25, trappedFunction);
+observe("Reflect.apply(Math.max, null, t)" + " with a number", around26, () => 1);
+observe("Reflect.apply(Math.max, null, t)" + " with methods", around26, withMethods);
+observe("Reflect.apply(Math.max, null, t)" + " with a proxy", around26, trapped);
+observe("Reflect.apply(Math.max, null, t)" + " with a proxy of a function", around26, trappedFunction);
+observe("Reflect.construct(Object, t)" + " with a number", around27, () => 1);
+observe("Reflect.construct(Object, t)" + " with methods", around27, withMethods);
+observe("Reflect.construct(Object, t)" + " with a proxy", around27, trapped);
+observe("Reflect.construct(Object, t)" + " with a proxy of a function", around27, trappedFunction);
+observe("Reflect.construct(Object, [], t)" + " with a number", around28, () => 1);
+observe("Reflect.construct(Object, [], t)" + " with methods", around28, withMethods);
+observe("Reflect.construct(Object, [], t)" + " with a proxy", around28, trapped);
+observe("Reflect.construct(Object, [], t)" + " with a proxy of a function", around28, trappedFunction);
+observe("Math.max.apply(null, t)" + " with a number", around29, () => 1);
+observe("Math.max.apply(null, t)" + " with methods", around29, withMethods);
+observe("Math.max.apply(null, t)" + " with a proxy", around29, trapped);
+observe("Math.max.apply(null, t)" + " with a proxy of a function", around29, trappedFunction);
+observe("Math.max.call(null, t)" + " with a number", around30, () => 1);
+observe("Math.max.call(null, t)" + " with methods", around30, withMethods);
+observe("Math.max.call(null, t)" + " with a proxy", around30, trapped);
+observe("Math.max.call(null, t)" + " with a proxy of a function", around30, trappedFunction);
+observe("Math.max.bind(null, t)()" + " with a number", around31, () => 1);
+observe("Math.max.bind(null, t)()" + " with methods", around31, withMethods);
+observe("Math.max.bind(null, t)()" + " with a proxy", around31, trapped);
+observe("Math.max.bind(null, t)()" + " with a proxy of a function", around31, trappedFunction);
+observe("Function.prototype.bind.call(t)" + " with a number", around32, () => 1);
+observe("Function.prototype.bind.call(t)" + " with methods", around32, withMethods);
+observe("Function.prototype.bind.call(t)" + " with a proxy", around32, trapped);
+observe("Function.prototype.bind.call(t)" + " with a proxy of a function", around32, trappedFunction);
+observe("Function.prototype.toString.call(t)" + " with a number", around33, () => 1);
+observe("Function.prototype.toString.call(t)" + " with methods", around33, withMethods);
+observe("Function.prototype.toString.call(t)" + " with a proxy", around33, trapped);
+observe("Function.prototype.toString.call(t)" + " with a proxy of a function", around33, trappedFunction);
+observe("Function.prototype[Symbol.hasInstance].call(Object, t)" + " with a number", around34, () => 1);
+observe("Function.prototype[Symbol.hasInstance].call(Object, t)" + " with methods", around34, withMethods);
+observe("Function.prototype[Symbol.hasInstance].call(Object, t)" + " with a proxy", around34, trapped);
+observe("Function.prototype[Symbol.hasInstance].call(Object, t)" + " with a proxy of a function", around34, trappedFunction);
+observe("new Map(t)" + " with a number", around35, () => 1);
+observe("new Map(t)" + " with methods", around35, withMethods);
+observe("new Map(t)" + " with a proxy", around35, trapped);
+observe("new Map(t)" + " with a proxy of a function", around35, trappedFunction);
+observe("new Map([t])" + " with a number", around36, () => 1);
+observe("new Map([t])" + " with methods", around36, withMethods);
+observe("new Map([t])" + " with a proxy", around36, trapped);
+observe("new Map([t])" + " with a proxy of a function", around36, trappedFunction);
+observe("new Map().get(t)" + " with a number", around37, () => 1);
+observe("new Map().get(t)" + " with methods", around37, withMethods);
+observe("new Map().get(t)" + " with a proxy", around37, trapped);
+observe("new Map().get(t)" + " with a proxy of a function", around37, trappedFunction);
+observe("new Map().set(t, 1)" + " with a number", around38, () => 1);
+observe("new Map().set(t, 1)" + " with methods", around38, withMethods);
+observe("new Map().set(t, 1)" + " with a proxy", around38, trapped);
+observe("new Map().set(t, 1)" + " with a proxy of a function", around38, trappedFunction);
+observe("new Set(t)" + " with a number", around39, () => 1);
+observe("new Set(t)" + " with methods", around39, withMethods);
+observe("new Set(t)" + " with a proxy", around39, trapped);
+observe("new Set(t)" + " with a proxy of a function", around39, trappedFunction);
+observe("new Set().add(t)" + " with a number", around40, () => 1);
+observe("new Set().add(t)" + " with methods", around40, withMethods);
+observe("new Set().add(t)" + " with a proxy", around40, trapped);
+observe("new Set().add(t)" + " with a proxy of a function", around40, trappedFunction);
+//// code-of-an-operand-runs-between-two-reads-objects-and-collections-3.js
+"use strict";
+
+const log = [];
+
+////= show-27
+
+let shared = "same";
+let fire = () => {};
+
+////= withMethods
+////= traps-2
+const trapped = () => new Proxy({}, traps);
+const trappedFunction = () => new Proxy(function () {}, traps);
+
+////= observe
+
+////= around1	new Set([1]).union(t)
+
+function around2(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (new Set([1]).isSubsetOf(t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= lines-47	around3	WeakMap
+
+////= lines-47	around4	WeakSet
+
+////= lines-47	around5	WeakRef
+
+function around6(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (Map.groupBy(t, x => x));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= lines-47	around7	Date
+
+////= lines-102	around8	Date	2000	t
+
+////= lines-19	around9	Date.UTC
+
+////= lines-19	around10	Date.parse
+
+function around11(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (new Date(0).setFullYear(t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+function around12(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (new Date(0).setTime(t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= around13	new Date(0).toJSON.call(t
+
+////= around14	new Date(0)[Symbol.toPrimitive].call(t, "number"
+
+////= lines-19	around15	Promise.resolve
+
+////= lines-100	around16	reject
+
+////= lines-100	around17	all
+
+function around18(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (Promise.all([t]).catch(() => {}));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= lines-100	around19	race
+
+////= lines-100	around20	allSettled
+
+////= lines-100	around21	any
+
+function around22(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (new Promise(resolve => resolve(t)));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= lines-57	around23	Promise	then
+
+////= lines-19	around24	Iterator.from
+
+function around25(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (Iterator.from(t).next());
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= lines-57	around26	Iterator	toArray
+
+////= lines-44	around27	structuredClone
+
+////= around28	structuredClone(1, t)
+
+////= around29	clearTimeout(setTimeout(() => {}, t)
+
+////= lines-44	around30	clearTimeout
+
+////= lines-101	around31	AbortController	abort
+
+////= lines-19	around32	AbortSignal.any
+
+function around33(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (new Proxy(t, {}));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+function around34(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (new Proxy({}, t).k);
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= lines-19	around35	Bun.inspect
+
+////= around36	Bun.deepEquals(t, {}
+
+function around37(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (Bun.deepEquals({ k: 1 }, t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= lines-19	around38	Bun.escapeHTML
+
+////= lines-19	around39	Bun.stringWidth
+
+function around40(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void ((process.env.IMPOSTOR_OPERAND = t, delete process.env.IMPOSTOR_OPERAND));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+console.log("strict:", (function () { return this === undefined; })());
+observe("new Set([1]).union(t)" + " with a number", around1, () => 1);
+observe("new Set([1]).union(t)" + " with methods", around1, withMethods);
+observe("new Set([1]).union(t)" + " with a proxy", around1, trapped);
+observe("new Set([1]).union(t)" + " with a proxy of a function", around1, trappedFunction);
+observe("new Set([1]).isSubsetOf(t)" + " with a number", around2, () => 1);
+observe("new Set([1]).isSubsetOf(t)" + " with methods", around2, withMethods);
+observe("new Set([1]).isSubsetOf(t)" + " with a proxy", around2, trapped);
+observe("new Set([1]).isSubsetOf(t)" + " with a proxy of a function", around2, trappedFunction);
+observe("new WeakMap(t)" + " with a number", around3, () => 1);
+observe("new WeakMap(t)" + " with methods", around3, withMethods);
+observe("new WeakMap(t)" + " with a proxy", around3, trapped);
+observe("new WeakMap(t)" + " with a proxy of a function", around3, trappedFunction);
+observe("new WeakSet(t)" + " with a number", around4, () => 1);
+observe("new WeakSet(t)" + " with methods", around4, withMethods);
+observe("new WeakSet(t)" + " with a proxy", around4, trapped);
+observe("new WeakSet(t)" + " with a proxy of a function", around4, trappedFunction);
+observe("new WeakRef(t)" + " with a number", around5, () => 1);
+observe("new WeakRef(t)" + " with methods", around5, withMethods);
+observe("new WeakRef(t)" + " with a proxy", around5, trapped);
+observe("new WeakRef(t)" + " with a proxy of a function", around5, trappedFunction);
+observe("Map.groupBy(t, x => x)" + " with a number", around6, () => 1);
+observe("Map.groupBy(t, x => x)" + " with methods", around6, withMethods);
+observe("Map.groupBy(t, x => x)" + " with a proxy", around6, trapped);
+observe("Map.groupBy(t, x => x)" + " with a proxy of a function", around6, trappedFunction);
+observe("new Date(t)" + " with a number", around7, () => 1);
+observe("new Date(t)" + " with methods", around7, withMethods);
+observe("new Date(t)" + " with a proxy", around7, trapped);
+observe("new Date(t)" + " with a proxy of a function", around7, trappedFunction);
+observe("new Date(2000, t)" + " with a number", around8, () => 1);
+observe("new Date(2000, t)" + " with methods", around8, withMethods);
+observe("new Date(2000, t)" + " with a proxy", around8, trapped);
+observe("new Date(2000, t)" + " with a proxy of a function", around8, trappedFunction);
+observe("Date.UTC(t)" + " with a number", around9, () => 1);
+observe("Date.UTC(t)" + " with methods", around9, withMethods);
+observe("Date.UTC(t)" + " with a proxy", around9, trapped);
+observe("Date.UTC(t)" + " with a proxy of a function", around9, trappedFunction);
+observe("Date.parse(t)" + " with a number", around10, () => 1);
+observe("Date.parse(t)" + " with methods", around10, withMethods);
+observe("Date.parse(t)" + " with a proxy", around10, trapped);
+observe("Date.parse(t)" + " with a proxy of a function", around10, trappedFunction);
+observe("new Date(0).setFullYear(t)" + " with a number", around11, () => 1);
+observe("new Date(0).setFullYear(t)" + " with methods", around11, withMethods);
+observe("new Date(0).setFullYear(t)" + " with a proxy", around11, trapped);
+observe("new Date(0).setFullYear(t)" + " with a proxy of a function", around11, trappedFunction);
+observe("new Date(0).setTime(t)" + " with a number", around12, () => 1);
+observe("new Date(0).setTime(t)" + " with methods", around12, withMethods);
+observe("new Date(0).setTime(t)" + " with a proxy", around12, trapped);
+observe("new Date(0).setTime(t)" + " with a proxy of a function", around12, trappedFunction);
+observe("new Date(0).toJSON.call(t)" + " with a number", around13, () => 1);
+observe("new Date(0).toJSON.call(t)" + " with methods", around13, withMethods);
+observe("new Date(0).toJSON.call(t)" + " with a proxy", around13, trapped);
+observe("new Date(0).toJSON.call(t)" + " with a proxy of a function", around13, trappedFunction);
+observe("new Date(0)[Symbol.toPrimitive].call(t, \"number\")" + " with a number", around14, () => 1);
+observe("new Date(0)[Symbol.toPrimitive].call(t, \"number\")" + " with methods", around14, withMethods);
+observe("new Date(0)[Symbol.toPrimitive].call(t, \"number\")" + " with a proxy", around14, trapped);
+observe("new Date(0)[Symbol.toPrimitive].call(t, \"number\")" + " with a proxy of a function", around14, trappedFunction);
+observe("Promise.resolve(t)" + " with a number", around15, () => 1);
+observe("Promise.resolve(t)" + " with methods", around15, withMethods);
+observe("Promise.resolve(t)" + " with a proxy", around15, trapped);
+observe("Promise.resolve(t)" + " with a proxy of a function", around15, trappedFunction);
+observe("Promise.reject(t).catch(() => {})" + " with a number", around16, () => 1);
+observe("Promise.reject(t).catch(() => {})" + " with methods", around16, withMethods);
+observe("Promise.reject(t).catch(() => {})" + " with a proxy", around16, trapped);
+observe("Promise.reject(t).catch(() => {})" + " with a proxy of a function", around16, trappedFunction);
+observe("Promise.all(t).catch(() => {})" + " with a number", around17, () => 1);
+observe("Promise.all(t).catch(() => {})" + " with methods", around17, withMethods);
+observe("Promise.all(t).catch(() => {})" + " with a proxy", around17, trapped);
+observe("Promise.all(t).catch(() => {})" + " with a proxy of a function", around17, trappedFunction);
+observe("Promise.all([t]).catch(() => {})" + " with a number", around18, () => 1);
+observe("Promise.all([t]).catch(() => {})" + " with methods", around18, withMethods);
+observe("Promise.all([t]).catch(() => {})" + " with a proxy", around18, trapped);
+observe("Promise.all([t]).catch(() => {})" + " with a proxy of a function", around18, trappedFunction);
+observe("Promise.race(t).catch(() => {})" + " with a number", around19, () => 1);
+observe("Promise.race(t).catch(() => {})" + " with methods", around19, withMethods);
+observe("Promise.race(t).catch(() => {})" + " with a proxy", around19, trapped);
+observe("Promise.race(t).catch(() => {})" + " with a proxy of a function", around19, trappedFunction);
+observe("Promise.allSettled(t).catch(() => {})" + " with a number", around20, () => 1);
+observe("Promise.allSettled(t).catch(() => {})" + " with methods", around20, withMethods);
+observe("Promise.allSettled(t).catch(() => {})" + " with a proxy", around20, trapped);
+observe("Promise.allSettled(t).catch(() => {})" + " with a proxy of a function", around20, trappedFunction);
+observe("Promise.any(t).catch(() => {})" + " with a number", around21, () => 1);
+observe("Promise.any(t).catch(() => {})" + " with methods", around21, withMethods);
+observe("Promise.any(t).catch(() => {})" + " with a proxy", around21, trapped);
+observe("Promise.any(t).catch(() => {})" + " with a proxy of a function", around21, trappedFunction);
+observe("new Promise(resolve => resolve(t))" + " with a number", around22, () => 1);
+observe("new Promise(resolve => resolve(t))" + " with methods", around22, withMethods);
+observe("new Promise(resolve => resolve(t))" + " with a proxy", around22, trapped);
+observe("new Promise(resolve => resolve(t))" + " with a proxy of a function", around22, trappedFunction);
+observe("Promise.prototype.then.call(t)" + " with a number", around23, () => 1);
+observe("Promise.prototype.then.call(t)" + " with methods", around23, withMethods);
+observe("Promise.prototype.then.call(t)" + " with a proxy", around23, trapped);
+observe("Promise.prototype.then.call(t)" + " with a proxy of a function", around23, trappedFunction);
+observe("Iterator.from(t)" + " with a number", around24, () => 1);
+observe("Iterator.from(t)" + " with methods", around24, withMethods);
+observe("Iterator.from(t)" + " with a proxy", around24, trapped);
+observe("Iterator.from(t)" + " with a proxy of a function", around24, trappedFunction);
+observe("Iterator.from(t).next()" + " with a number", around25, () => 1);
+observe("Iterator.from(t).next()" + " with methods", around25, withMethods);
+observe("Iterator.from(t).next()" + " with a proxy", around25, trapped);
+observe("Iterator.from(t).next()" + " with a proxy of a function", around25, trappedFunction);
+observe("Iterator.prototype.toArray.call(t)" + " with a number", around26, () => 1);
+observe("Iterator.prototype.toArray.call(t)" + " with methods", around26, withMethods);
+observe("Iterator.prototype.toArray.call(t)" + " with a proxy", around26, trapped);
+observe("Iterator.prototype.toArray.call(t)" + " with a proxy of a function", around26, trappedFunction);
+observe("structuredClone(t)" + " with a number", around27, () => 1);
+observe("structuredClone(t)" + " with methods", around27, withMethods);
+observe("structuredClone(t)" + " with a proxy", around27, trapped);
+observe("structuredClone(t)" + " with a proxy of a function", around27, trappedFunction);
+observe("structuredClone(1, t)" + " with a number", around28, () => 1);
+observe("structuredClone(1, t)" + " with methods", around28, withMethods);
+observe("structuredClone(1, t)" + " with a proxy", around28, trapped);
+observe("structuredClone(1, t)" + " with a proxy of a function", around28, trappedFunction);
+observe("clearTimeout(setTimeout(() => {}, t))" + " with a number", around29, () => 1);
+observe("clearTimeout(setTimeout(() => {}, t))" + " with methods", around29, withMethods);
+observe("clearTimeout(setTimeout(() => {}, t))" + " with a proxy", around29, trapped);
+observe("clearTimeout(setTimeout(() => {}, t))" + " with a proxy of a function", around29, trappedFunction);
+observe("clearTimeout(t)" + " with a number", around30, () => 1);
+observe("clearTimeout(t)" + " with methods", around30, withMethods);
+observe("clearTimeout(t)" + " with a proxy", around30, trapped);
+observe("clearTimeout(t)" + " with a proxy of a function", around30, trappedFunction);
+observe("new AbortController().abort(t)" + " with a number", around31, () => 1);
+observe("new AbortController().abort(t)" + " with methods", around31, withMethods);
+observe("new AbortController().abort(t)" + " with a proxy", around31, trapped);
+observe("new AbortController().abort(t)" + " with a proxy of a function", around31, trappedFunction);
+observe("AbortSignal.any(t)" + " with a number", around32, () => 1);
+observe("AbortSignal.any(t)" + " with methods", around32, withMethods);
+observe("AbortSignal.any(t)" + " with a proxy", around32, trapped);
+observe("AbortSignal.any(t)" + " with a proxy of a function", around32, trappedFunction);
+observe("new Proxy(t, {})" + " with a number", around33, () => 1);
+observe("new Proxy(t, {})" + " with methods", around33, withMethods);
+observe("new Proxy(t, {})" + " with a proxy", around33, trapped);
+observe("new Proxy(t, {})" + " with a proxy of a function", around33, trappedFunction);
+observe("new Proxy({}, t).k" + " with a number", around34, () => 1);
+observe("new Proxy({}, t).k" + " with methods", around34, withMethods);
+observe("new Proxy({}, t).k" + " with a proxy", around34, trapped);
+observe("new Proxy({}, t).k" + " with a proxy of a function", around34, trappedFunction);
+observe("Bun.inspect(t)" + " with a number", around35, () => 1);
+observe("Bun.inspect(t)" + " with methods", around35, withMethods);
+observe("Bun.inspect(t)" + " with a proxy", around35, trapped);
+observe("Bun.inspect(t)" + " with a proxy of a function", around35, trappedFunction);
+observe("Bun.deepEquals(t, {})" + " with a number", around36, () => 1);
+observe("Bun.deepEquals(t, {})" + " with methods", around36, withMethods);
+observe("Bun.deepEquals(t, {})" + " with a proxy", around36, trapped);
+observe("Bun.deepEquals(t, {})" + " with a proxy of a function", around36, trappedFunction);
+observe("Bun.deepEquals({ k: 1 }, t)" + " with a number", around37, () => 1);
+observe("Bun.deepEquals({ k: 1 }, t)" + " with methods", around37, withMethods);
+observe("Bun.deepEquals({ k: 1 }, t)" + " with a proxy", around37, trapped);
+observe("Bun.deepEquals({ k: 1 }, t)" + " with a proxy of a function", around37, trappedFunction);
+observe("Bun.escapeHTML(t)" + " with a number", around38, () => 1);
+observe("Bun.escapeHTML(t)" + " with methods", around38, withMethods);
+observe("Bun.escapeHTML(t)" + " with a proxy", around38, trapped);
+observe("Bun.escapeHTML(t)" + " with a proxy of a function", around38, trappedFunction);
+observe("Bun.stringWidth(t)" + " with a number", around39, () => 1);
+observe("Bun.stringWidth(t)" + " with methods", around39, withMethods);
+observe("Bun.stringWidth(t)" + " with a proxy", around39, trapped);
+observe("Bun.stringWidth(t)" + " with a proxy of a function", around39, trappedFunction);
+observe("(process.env.IMPOSTOR_OPERAND = t, delete process.env.IMPOSTOR_OPERAND)" + " with a number", around40, () => 1);
+observe("(process.env.IMPOSTOR_OPERAND = t, delete process.env.IMPOSTOR_OPERAND)" + " with methods", around40, withMethods);
+observe("(process.env.IMPOSTOR_OPERAND = t, delete process.env.IMPOSTOR_OPERAND)" + " with a proxy", around40, trapped);
+observe("(process.env.IMPOSTOR_OPERAND = t, delete process.env.IMPOSTOR_OPERAND)" + " with a proxy of a function", around40, trappedFunction);
+//// code-of-an-operand-runs-between-two-reads-operators-and-numbers-2.js
+"use strict";
+
+const log = [];
+
+////= show-27
+
+let shared = "same";
+let fire = () => {};
+
+////= withMethods
+////= traps-2
+const trapped = () => new Proxy({}, traps);
+const trappedFunction = () => new Proxy(function () {}, traps);
+
+////= observe
+
+////= around1	(() => { for (const x of t) return x; })()
+
+////= lines-44	around2	Number
+
+////= lines-44	around3	BigInt
+
+////= lines-44	around4	Boolean
+
+////= lines-44	around5	parseInt
+
+////= lines-44	around6	parseFloat
+
+////= lines-44	around7	isNaN
+
+////= lines-44	around8	isFinite
+
+////= lines-19	around9	Number.isInteger
+
+////= lines-166	around10	1.5	toFixed
+
+////= lines-166	around11	255	toString
+
+////= lines-166	around12	1.5	toPrecision
+
+////= lines-46	around13	BigInt.asIntN	t	1n
+
+////= lines-19	around14	Math.max
+
+////= lines-46	around15	Math.min	1	t
+
+////= lines-19	around16	Math.floor
+
+////= lines-19	around17	Math.ceil
+
+////= lines-19	around18	Math.round
+
+////= lines-19	around19	Math.trunc
+
+////= lines-19	around20	Math.abs
+
+////= lines-19	around21	Math.sign
+
+////= lines-19	around22	Math.sqrt
+
+////= lines-46	around23	Math.pow	t	2
+
+////= lines-46	around24	Math.pow	2	t
+
+////= lines-46	around25	Math.imul	t	2
+
+////= lines-19	around26	Math.clz32
+
+////= lines-19	around27	Math.fround
+
+////= lines-19	around28	Math.hypot
+
+////= lines-46	around29	Math.atan2	1	t
+
+////= lines-19	around30	Math.log2
+
+////= lines-19	around31	Math.sin
+
+console.log("strict:", (function () { return this === undefined; })());
+observe("(() => { for (const x of t) return x; })()" + " with a number", around1, () => 1);
+observe("(() => { for (const x of t) return x; })()" + " with methods", around1, withMethods);
+observe("(() => { for (const x of t) return x; })()" + " with a proxy", around1, trapped);
+observe("(() => { for (const x of t) return x; })()" + " with a proxy of a function", around1, trappedFunction);
+observe("Number(t)" + " with a number", around2, () => 1);
+observe("Number(t)" + " with methods", around2, withMethods);
+observe("Number(t)" + " with a proxy", around2, trapped);
+observe("Number(t)" + " with a proxy of a function", around2, trappedFunction);
+observe("BigInt(t)" + " with a number", around3, () => 1);
+observe("BigInt(t)" + " with methods", around3, withMethods);
+observe("BigInt(t)" + " with a proxy", around3, trapped);
+observe("BigInt(t)" + " with a proxy of a function", around3, trappedFunction);
+observe("Boolean(t)" + " with a number", around4, () => 1);
+observe("Boolean(t)" + " with methods", around4, withMethods);
+observe("Boolean(t)" + " with a proxy", around4, trapped);
+observe("Boolean(t)" + " with a proxy of a function", around4, trappedFunction);
+observe("parseInt(t)" + " with a number", around5, () => 1);
+observe("parseInt(t)" + " with methods", around5, withMethods);
+observe("parseInt(t)" + " with a proxy", around5, trapped);
+observe("parseInt(t)" + " with a proxy of a function", around5, trappedFunction);
+observe("parseFloat(t)" + " with a number", around6, () => 1);
+observe("parseFloat(t)" + " with methods", around6, withMethods);
+observe("parseFloat(t)" + " with a proxy", around6, trapped);
+observe("parseFloat(t)" + " with a proxy of a function", around6, trappedFunction);
+observe("isNaN(t)" + " with a number", around7, () => 1);
+observe("isNaN(t)" + " with methods", around7, withMethods);
+observe("isNaN(t)" + " with a proxy", around7, trapped);
+observe("isNaN(t)" + " with a proxy of a function", around7, trappedFunction);
+observe("isFinite(t)" + " with a number", around8, () => 1);
+observe("isFinite(t)" + " with methods", around8, withMethods);
+observe("isFinite(t)" + " with a proxy", around8, trapped);
+observe("isFinite(t)" + " with a proxy of a function", around8, trappedFunction);
+observe("Number.isInteger(t)" + " with a number", around9, () => 1);
+observe("Number.isInteger(t)" + " with methods", around9, withMethods);
+observe("Number.isInteger(t)" + " with a proxy", around9, trapped);
+observe("Number.isInteger(t)" + " with a proxy of a function", around9, trappedFunction);
+observe("(1.5).toFixed(t)" + " with a number", around10, () => 1);
+observe("(1.5).toFixed(t)" + " with methods", around10, withMethods);
+observe("(1.5).toFixed(t)" + " with a proxy", around10, trapped);
+observe("(1.5).toFixed(t)" + " with a proxy of a function", around10, trappedFunction);
+observe("(255).toString(t)" + " with a number", around11, () => 1);
+observe("(255).toString(t)" + " with methods", around11, withMethods);
+observe("(255).toString(t)" + " with a proxy", around11, trapped);
+observe("(255).toString(t)" + " with a proxy of a function", around11, trappedFunction);
+observe("(1.5).toPrecision(t)" + " with a number", around12, () => 1);
+observe("(1.5).toPrecision(t)" + " with methods", around12, withMethods);
+observe("(1.5).toPrecision(t)" + " with a proxy", around12, trapped);
+observe("(1.5).toPrecision(t)" + " with a proxy of a function", around12, trappedFunction);
+observe("BigInt.asIntN(t, 1n)" + " with a number", around13, () => 1);
+observe("BigInt.asIntN(t, 1n)" + " with methods", around13, withMethods);
+observe("BigInt.asIntN(t, 1n)" + " with a proxy", around13, trapped);
+observe("BigInt.asIntN(t, 1n)" + " with a proxy of a function", around13, trappedFunction);
+observe("Math.max(t)" + " with a number", around14, () => 1);
+observe("Math.max(t)" + " with methods", around14, withMethods);
+observe("Math.max(t)" + " with a proxy", around14, trapped);
+observe("Math.max(t)" + " with a proxy of a function", around14, trappedFunction);
+observe("Math.min(1, t)" + " with a number", around15, () => 1);
+observe("Math.min(1, t)" + " with methods", around15, withMethods);
+observe("Math.min(1, t)" + " with a proxy", around15, trapped);
+observe("Math.min(1, t)" + " with a proxy of a function", around15, trappedFunction);
+observe("Math.floor(t)" + " with a number", around16, () => 1);
+observe("Math.floor(t)" + " with methods", around16, withMethods);
+observe("Math.floor(t)" + " with a proxy", around16, trapped);
+observe("Math.floor(t)" + " with a proxy of a function", around16, trappedFunction);
+observe("Math.ceil(t)" + " with a number", around17, () => 1);
+observe("Math.ceil(t)" + " with methods", around17, withMethods);
+observe("Math.ceil(t)" + " with a proxy", around17, trapped);
+observe("Math.ceil(t)" + " with a proxy of a function", around17, trappedFunction);
+observe("Math.round(t)" + " with a number", around18, () => 1);
+observe("Math.round(t)" + " with methods", around18, withMethods);
+observe("Math.round(t)" + " with a proxy", around18, trapped);
+observe("Math.round(t)" + " with a proxy of a function", around18, trappedFunction);
+observe("Math.trunc(t)" + " with a number", around19, () => 1);
+observe("Math.trunc(t)" + " with methods", around19, withMethods);
+observe("Math.trunc(t)" + " with a proxy", around19, trapped);
+observe("Math.trunc(t)" + " with a proxy of a function", around19, trappedFunction);
+observe("Math.abs(t)" + " with a number", around20, () => 1);
+observe("Math.abs(t)" + " with methods", around20, withMethods);
+observe("Math.abs(t)" + " with a proxy", around20, trapped);
+observe("Math.abs(t)" + " with a proxy of a function", around20, trappedFunction);
+observe("Math.sign(t)" + " with a number", around21, () => 1);
+observe("Math.sign(t)" + " with methods", around21, withMethods);
+observe("Math.sign(t)" + " with a proxy", around21, trapped);
+observe("Math.sign(t)" + " with a proxy of a function", around21, trappedFunction);
+observe("Math.sqrt(t)" + " with a number", around22, () => 1);
+observe("Math.sqrt(t)" + " with methods", around22, withMethods);
+observe("Math.sqrt(t)" + " with a proxy", around22, trapped);
+observe("Math.sqrt(t)" + " with a proxy of a function", around22, trappedFunction);
+observe("Math.pow(t, 2)" + " with a number", around23, () => 1);
+observe("Math.pow(t, 2)" + " with methods", around23, withMethods);
+observe("Math.pow(t, 2)" + " with a proxy", around23, trapped);
+observe("Math.pow(t, 2)" + " with a proxy of a function", around23, trappedFunction);
+observe("Math.pow(2, t)" + " with a number", around24, () => 1);
+observe("Math.pow(2, t)" + " with methods", around24, withMethods);
+observe("Math.pow(2, t)" + " with a proxy", around24, trapped);
+observe("Math.pow(2, t)" + " with a proxy of a function", around24, trappedFunction);
+observe("Math.imul(t, 2)" + " with a number", around25, () => 1);
+observe("Math.imul(t, 2)" + " with methods", around25, withMethods);
+observe("Math.imul(t, 2)" + " with a proxy", around25, trapped);
+observe("Math.imul(t, 2)" + " with a proxy of a function", around25, trappedFunction);
+observe("Math.clz32(t)" + " with a number", around26, () => 1);
+observe("Math.clz32(t)" + " with methods", around26, withMethods);
+observe("Math.clz32(t)" + " with a proxy", around26, trapped);
+observe("Math.clz32(t)" + " with a proxy of a function", around26, trappedFunction);
+observe("Math.fround(t)" + " with a number", around27, () => 1);
+observe("Math.fround(t)" + " with methods", around27, withMethods);
+observe("Math.fround(t)" + " with a proxy", around27, trapped);
+observe("Math.fround(t)" + " with a proxy of a function", around27, trappedFunction);
+observe("Math.hypot(t)" + " with a number", around28, () => 1);
+observe("Math.hypot(t)" + " with methods", around28, withMethods);
+observe("Math.hypot(t)" + " with a proxy", around28, trapped);
+observe("Math.hypot(t)" + " with a proxy of a function", around28, trappedFunction);
+observe("Math.atan2(1, t)" + " with a number", around29, () => 1);
+observe("Math.atan2(1, t)" + " with methods", around29, withMethods);
+observe("Math.atan2(1, t)" + " with a proxy", around29, trapped);
+observe("Math.atan2(1, t)" + " with a proxy of a function", around29, trappedFunction);
+observe("Math.log2(t)" + " with a number", around30, () => 1);
+observe("Math.log2(t)" + " with methods", around30, withMethods);
+observe("Math.log2(t)" + " with a proxy", around30, trapped);
+observe("Math.log2(t)" + " with a proxy of a function", around30, trappedFunction);
+observe("Math.sin(t)" + " with a number", around31, () => 1);
+observe("Math.sin(t)" + " with methods", around31, withMethods);
+observe("Math.sin(t)" + " with a proxy", around31, trapped);
+observe("Math.sin(t)" + " with a proxy of a function", around31, trappedFunction);
+//// code-of-an-operand-runs-between-two-reads-strings-and-patterns-2.js
+"use strict";
+
+const log = [];
+
+////= show-27
+
+let shared = "same";
+let fire = () => {};
+
+////= withMethods
+////= traps-2
+const trapped = () => new Proxy({}, traps);
+const trappedFunction = () => new Proxy(function () {}, traps);
+
+////= observe
+
+////= around1	"abc" < t
+
+////= lines-19	around2	String.fromCharCode
+
+////= lines-19	around3	String.fromCodePoint
+
+////= lines-168	around4	String.raw	raw
+
+function around5(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (String.raw({ raw: ["a", "b"] }, t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= lines-57	around6	String	trim
+
+////= lines-57	around7	String	toUpperCase
+
+function around8(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (String.prototype.at.call(t, 0));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= lines-47	around9	RegExp
+
+////= lines-102	around10	RegExp	"a"	t
+
+function around11(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (/1/.test(t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+function around12(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (/1/.exec(t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= around13	/1/[Symbol.replace](t, "x"
+
+////= around14	/1/[Symbol.split](t
+
+////= lines-44	around15	encodeURIComponent
+
+////= lines-44	around16	decodeURI
+
+////= lines-44	around17	escape
+
+////= lines-44	around18	btoa
+
+////= lines-44	around19	atob
+
+////= lines-47	around20	Error
+
+////= lines-102	around21	Error	"m"	t
+
+////= lines-47	around22	AggregateError
+
+function around23(o, a, t) {
+  const before = [o.y, a[0], shared].join(" ");
+  void (new AggregateError([], t));
+  return before + " / " + [o.y, a[0], shared].join(" ");
+}
+
+////= lines-101	around24	TextEncoder	encode
+
+////= lines-47	around25	URLSearchParams
+
+////= lines-102	around26	URL	t	"http://localhost"
+
+////= lines-47	around27	Headers
+
+////= lines-101	around28	Headers	get
+
+////= around29	new Blob([t]
+
+////= lines-47	around30	Event
+
+////= lines-102	around31	CustomEvent	"e"	t
+
+console.log("strict:", (function () { return this === undefined; })());
+observe("\"abc\" < t" + " with a number", around1, () => 1);
+observe("\"abc\" < t" + " with methods", around1, withMethods);
+observe("\"abc\" < t" + " with a proxy", around1, trapped);
+observe("\"abc\" < t" + " with a proxy of a function", around1, trappedFunction);
+observe("String.fromCharCode(t)" + " with a number", around2, () => 1);
+observe("String.fromCharCode(t)" + " with methods", around2, withMethods);
+observe("String.fromCharCode(t)" + " with a proxy", around2, trapped);
+observe("String.fromCharCode(t)" + " with a proxy of a function", around2, trappedFunction);
+observe("String.fromCodePoint(t)" + " with a number", around3, () => 1);
+observe("String.fromCodePoint(t)" + " with methods", around3, withMethods);
+observe("String.fromCodePoint(t)" + " with a proxy", around3, trapped);
+observe("String.fromCodePoint(t)" + " with a proxy of a function", around3, trappedFunction);
+observe("String.raw({ raw: t })" + " with a number", around4, () => 1);
+observe("String.raw({ raw: t })" + " with methods", around4, withMethods);
+observe("String.raw({ raw: t })" + " with a proxy", around4, trapped);
+observe("String.raw({ raw: t })" + " with a proxy of a function", around4, trappedFunction);
+observe("String.raw({ raw: [\"a\", \"b\"] }, t)" + " with a number", around5, () => 1);
+observe("String.raw({ raw: [\"a\", \"b\"] }, t)" + " with methods", around5, withMethods);
+observe("String.raw({ raw: [\"a\", \"b\"] }, t)" + " with a proxy", around5, trapped);
+observe("String.raw({ raw: [\"a\", \"b\"] }, t)" + " with a proxy of a function", around5, trappedFunction);
+observe("String.prototype.trim.call(t)" + " with a number", around6, () => 1);
+observe("String.prototype.trim.call(t)" + " with methods", around6, withMethods);
+observe("String.prototype.trim.call(t)" + " with a proxy", around6, trapped);
+observe("String.prototype.trim.call(t)" + " with a proxy of a function", around6, trappedFunction);
+observe("String.prototype.toUpperCase.call(t)" + " with a number", around7, () => 1);
+observe("String.prototype.toUpperCase.call(t)" + " with methods", around7, withMethods);
+observe("String.prototype.toUpperCase.call(t)" + " with a proxy", around7, trapped);
+observe("String.prototype.toUpperCase.call(t)" + " with a proxy of a function", around7, trappedFunction);
+observe("String.prototype.at.call(t, 0)" + " with a number", around8, () => 1);
+observe("String.prototype.at.call(t, 0)" + " with methods", around8, withMethods);
+observe("String.prototype.at.call(t, 0)" + " with a proxy", around8, trapped);
+observe("String.prototype.at.call(t, 0)" + " with a proxy of a function", around8, trappedFunction);
+observe("new RegExp(t)" + " with a number", around9, () => 1);
+observe("new RegExp(t)" + " with methods", around9, withMethods);
+observe("new RegExp(t)" + " with a proxy", around9, trapped);
+observe("new RegExp(t)" + " with a proxy of a function", around9, trappedFunction);
+observe("new RegExp(\"a\", t)" + " with a number", around10, () => 1);
+observe("new RegExp(\"a\", t)" + " with methods", around10, withMethods);
+observe("new RegExp(\"a\", t)" + " with a proxy", around10, trapped);
+observe("new RegExp(\"a\", t)" + " with a proxy of a function", around10, trappedFunction);
+observe("/1/.test(t)" + " with a number", around11, () => 1);
+observe("/1/.test(t)" + " with methods", around11, withMethods);
+observe("/1/.test(t)" + " with a proxy", around11, trapped);
+observe("/1/.test(t)" + " with a proxy of a function", around11, trappedFunction);
+observe("/1/.exec(t)" + " with a number", around12, () => 1);
+observe("/1/.exec(t)" + " with methods", around12, withMethods);
+observe("/1/.exec(t)" + " with a proxy", around12, trapped);
+observe("/1/.exec(t)" + " with a proxy of a function", around12, trappedFunction);
+observe("/1/[Symbol.replace](t, \"x\")" + " with a number", around13, () => 1);
+observe("/1/[Symbol.replace](t, \"x\")" + " with methods", around13, withMethods);
+observe("/1/[Symbol.replace](t, \"x\")" + " with a proxy", around13, trapped);
+observe("/1/[Symbol.replace](t, \"x\")" + " with a proxy of a function", around13, trappedFunction);
+observe("/1/[Symbol.split](t)" + " with a number", around14, () => 1);
+observe("/1/[Symbol.split](t)" + " with methods", around14, withMethods);
+observe("/1/[Symbol.split](t)" + " with a proxy", around14, trapped);
+observe("/1/[Symbol.split](t)" + " with a proxy of a function", around14, trappedFunction);
+observe("encodeURIComponent(t)" + " with a number", around15, () => 1);
+observe("encodeURIComponent(t)" + " with methods", around15, withMethods);
+observe("encodeURIComponent(t)" + " with a proxy", around15, trapped);
+observe("encodeURIComponent(t)" + " with a proxy of a function", around15, trappedFunction);
+observe("decodeURI(t)" + " with a number", around16, () => 1);
+observe("decodeURI(t)" + " with methods", around16, withMethods);
+observe("decodeURI(t)" + " with a proxy", around16, trapped);
+observe("decodeURI(t)" + " with a proxy of a function", around16, trappedFunction);
+observe("escape(t)" + " with a number", around17, () => 1);
+observe("escape(t)" + " with methods", around17, withMethods);
+observe("escape(t)" + " with a proxy", around17, trapped);
+observe("escape(t)" + " with a proxy of a function", around17, trappedFunction);
+observe("btoa(t)" + " with a number", around18, () => 1);
+observe("btoa(t)" + " with methods", around18, withMethods);
+observe("btoa(t)" + " with a proxy", around18, trapped);
+observe("btoa(t)" + " with a proxy of a function", around18, trappedFunction);
+observe("atob(t)" + " with a number", around19, () => 1);
+observe("atob(t)" + " with methods", around19, withMethods);
+observe("atob(t)" + " with a proxy", around19, trapped);
+observe("atob(t)" + " with a proxy of a function", around19, trappedFunction);
+observe("new Error(t)" + " with a number", around20, () => 1);
+observe("new Error(t)" + " with methods", around20, withMethods);
+observe("new Error(t)" + " with a proxy", around20, trapped);
+observe("new Error(t)" + " with a proxy of a function", around20, trappedFunction);
+observe("new Error(\"m\", t)" + " with a number", around21, () => 1);
+observe("new Error(\"m\", t)" + " with methods", around21, withMethods);
+observe("new Error(\"m\", t)" + " with a proxy", around21, trapped);
+observe("new Error(\"m\", t)" + " with a proxy of a function", around21, trappedFunction);
+observe("new AggregateError(t)" + " with a number", around22, () => 1);
+observe("new AggregateError(t)" + " with methods", around22, withMethods);
+observe("new AggregateError(t)" + " with a proxy", around22, trapped);
+observe("new AggregateError(t)" + " with a proxy of a function", around22, trappedFunction);
+observe("new AggregateError([], t)" + " with a number", around23, () => 1);
+observe("new AggregateError([], t)" + " with methods", around23, withMethods);
+observe("new AggregateError([], t)" + " with a proxy", around23, trapped);
+observe("new AggregateError([], t)" + " with a proxy of a function", around23, trappedFunction);
+observe("new TextEncoder().encode(t)" + " with a number", around24, () => 1);
+observe("new TextEncoder().encode(t)" + " with methods", around24, withMethods);
+observe("new TextEncoder().encode(t)" + " with a proxy", around24, trapped);
+observe("new TextEncoder().encode(t)" + " with a proxy of a function", around24, trappedFunction);
+observe("new URLSearchParams(t)" + " with a number", around25, () => 1);
+observe("new URLSearchParams(t)" + " with methods", around25, withMethods);
+observe("new URLSearchParams(t)" + " with a proxy", around25, trapped);
+observe("new URLSearchParams(t)" + " with a proxy of a function", around25, trappedFunction);
+observe("new URL(t, \"http://localhost\")" + " with a number", around26, () => 1);
+observe("new URL(t, \"http://localhost\")" + " with methods", around26, withMethods);
+observe("new URL(t, \"http://localhost\")" + " with a proxy", around26, trapped);
+observe("new URL(t, \"http://localhost\")" + " with a proxy of a function", around26, trappedFunction);
+observe("new Headers(t)" + " with a number", around27, () => 1);
+observe("new Headers(t)" + " with methods", around27, withMethods);
+observe("new Headers(t)" + " with a proxy", around27, trapped);
+observe("new Headers(t)" + " with a proxy of a function", around27, trappedFunction);
+observe("new Headers().get(t)" + " with a number", around28, () => 1);
+observe("new Headers().get(t)" + " with methods", around28, withMethods);
+observe("new Headers().get(t)" + " with a proxy", around28, trapped);
+observe("new Headers().get(t)" + " with a proxy of a function", around28, trappedFunction);
+observe("new Blob([t])" + " with a number", around29, () => 1);
+observe("new Blob([t])" + " with methods", around29, withMethods);
+observe("new Blob([t])" + " with a proxy", around29, trapped);
+observe("new Blob([t])" + " with a proxy of a function", around29, trappedFunction);
+observe("new Event(t)" + " with a number", around30, () => 1);
+observe("new Event(t)" + " with methods", around30, withMethods);
+observe("new Event(t)" + " with a proxy", around30, trapped);
+observe("new Event(t)" + " with a proxy of a function", around30, trappedFunction);
+observe("new CustomEvent(\"e\", t)" + " with a number", around31, () => 1);
+observe("new CustomEvent(\"e\", t)" + " with methods", around31, withMethods);
+observe("new CustomEvent(\"e\", t)" + " with a proxy", around31, trapped);
+observe("new CustomEvent(\"e\", t)" + " with a proxy of a function", around31, trappedFunction);
+//// commonjs-modules-pass-look-alikes-for-texts/honest-callers.cjs
+var tools = require("./text-tools.cjs");
+
+module.exports = function (rounds) {
+  var total = 0;
+  for (var i = 0; i < rounds; i++) {
+    total += tools.hash("hello") + tools.capitalize("hello").length + tools.count({}, "hello").hello + tools.pad("x", 3).length;
+    if (tools.isName("hello")) total++;
+  }
+  return total;
+};
+//// commonjs-modules-pass-look-alikes-for-texts/look-alikes.cjs
+function LookAlike(text) {
+  this.text = text;
+  this.length = text.length;
+}
+
+LookAlike.prototype.charCodeAt = function (index) {
+  return -this.text.charCodeAt(index);
+};
+
+LookAlike.prototype.charAt = function (index) {
+  return new LookAlike(this.text.charAt(index));
+};
+
+LookAlike.prototype.toUpperCase = function () {
+  return "<" + this.text.toUpperCase() + ">";
+};
+
+LookAlike.prototype.slice = function (from) {
+  return "<" + this.text.slice(from) + ">";
+};
+
+////= lines-36	LookAlike	toString	"look alike "	text
+
+module.exports = {
+  lookAlike: new LookAlike("hello"),
+  wrapped: new String("hello"),
+  list: ["h", "e", "l", "l", "o"],
+  bytes: Buffer.from("hello"),
+  number: 12345,
+  nothing: null,
+  missing: undefined,
+  symbol: Symbol("hello"),
+  proto: "__proto__",
+  constructorName: "constructor",
+};
+//// commonjs-modules-pass-look-alikes-for-texts/main.cjs
+////= show-26
+
+var tools = require("./text-tools.cjs");
+var runHonestCallers = require("./honest-callers.cjs");
+var values = require("./look-" + make("'alikes'") + ".cjs");
+
+console.log("honest callers", runHonestCallers(2000));
+
+Object.keys(values).forEach(function (name) {
+  attempt("hash of " + name, function () { return tools.hash(values[name]); });
+  attempt("capitalize " + name, function () { return tools.capitalize(values[name]); });
+  attempt("count " + name, function () {
+    var counts = tools.count(tools.count({}, values[name]), values[name]);
+    return [Reflect.ownKeys(counts).map(String), Object.getPrototypeOf(counts) === Object.prototype];
+  });
+  attempt("is a name " + name, function () { return tools.isName(values[name]); });
+  attempt("pad " + name, function () { return tools.pad(values[name], 7); });
+});
+
+tools.hash = function () { return "replaced from outside"; };
+attempt("an export is replaced from outside", function () { return [require("./text-tools.cjs").hash("hello"), typeof runHonestCallers(1)]; });
+attempt("the module object is used as a table", function () { return [Object.keys(tools), "pad" in tools, tools[make("'p' + 'ad'")]("x", 2)]; });
+//// commonjs-modules-pass-look-alikes-for-texts/text-tools.cjs
+exports.hash = function (text) {
+  var result = 0;
+  for (var i = 0; i < text.length; i++) result = (result * 31 + text.charCodeAt(i)) | 0;
+  return result;
+};
+
+exports.capitalize = function (text) {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+};
+
+exports.count = function (counts, word) {
+  counts[word] = (counts[word] || 0) + 1;
+  return counts;
+};
+
+exports.isName = function (text) {
+  return typeof text === "string" && text.length > 0 && text >= "a" && text <= "z{";
+};
+
+exports.pad = function (text, width) {
+  while (text.length < width) text = " " + text;
+  return text;
+};
+//// computed-keys-in-object-literals-are-not-strings.js
+////= show-26
+
+function literal(key) {
+  return { [key]: "value" };
+}
+
+function literalBetweenOthers(key) {
+  return { b: 1, [key]: 2, a: 3 };
+}
+
+function destructured(key) {
+  const { [key]: found } = { a: "found a", 1: "found 1", null: "found null", "": "found empty", "1,2": "found 1,2", [Symbol.for("a")]: "found the symbol" };
+  return found;
+}
+
+////= names
+
+const log = [];
+globalThis.log = log;
+
+////= keys
+
+////= for-183	literal	"a"	literalBetweenOthers	"c"	destructured
+
+////= for-35
+//// computed-keys-in-object-literals-are-not-strings-with-the-values-in-plain-sight.js
+////= show-36
+
+function literal(key) {
+  return { [key]: "value" };
+}
+
+function literalBetweenOthers(key) {
+  return { b: 1, [key]: 2, a: 3 };
+}
+
+function destructured(key) {
+  const { [key]: found } = { a: "found a", 1: "found 1", null: "found null", "": "found empty", "1,2": "found 1,2", [Symbol.for("a")]: "found the symbol" };
+  return found;
+}
+
+////= names
+
+const log = [];
+globalThis.log = log;
+
+////= keys
+
+////= for-183	literal	"a"	literalBetweenOthers	"c"	destructured
+
+////= for-35
+//// computed-names-of-class-members-are-not-strings.js
+////= show-26
+
+function classWithAMethod(key) {
+  return class {
+    [key]() {
+      return "called";
+    }
+  };
+}
+
+function classWithAField(key) {
+  return class {
+    [key] = "field";
+  };
+}
+
+function classWithAStaticField(key) {
+  return class {
+    static [key] = "static field";
+  };
+}
+
+////= names
+
+const log = [];
+globalThis.log = log;
+
+////= keys
+
+for (let i = 0; i < 200; i++) {
+  classWithAMethod("a");
+  new (classWithAField("a"))();
+  classWithAStaticField("a");
+}
+
+for (const key of keys) {
+  attempt("class method " + key, () => names(classWithAMethod(make(key)).prototype));
+  attempt("class field " + key, () => {
+    const Made = classWithAField(make(key));
+    const before = log.length;
+    const first = names(new Made());
+    const second = names(new Made());
+    return [first, second, log.length - before];
+  });
+  attempt("static field " + key, () => names(classWithAStaticField(make(key))));
+  if (log.length) console.log("log", log.splice(0).join(", "));
+}
+
+attempt("the keys of a class are computed in order, before any field", () => {
+  const order = [];
+  const key = name => ({ toString() { order.push("key " + name); return name; } });
+  const value = name => (order.push("value " + name), name);
+  class Ordered {
+    static [key("a")] = value("a");
+    [key("b")] = value("b");
+    [key("c")]() {}
+    static [key("d")] = value("d");
+  }
+  order.push("made");
+  new Ordered();
+  return order;
+});
+//// computed-names-of-methods-and-accessors-are-not-strings.js
+////= show-26
+
+function literalWithAMethod(key) {
+  return {
+    [key]() {
+      return "called";
+    },
+  };
+}
+
+function literalWithAnAccessor(key) {
+  return {
+    get [key]() {
+      return "got";
+    },
+    set [key](value) {},
+  };
+}
+
+function literalWithAFunction(key) {
+  return { [key]: function () {}, other: () => {} };
+}
+
+////= names
+
+const log = [];
+globalThis.log = log;
+
+////= keys
+
+////= for-183	literalWithAMethod	"a"	literalWithAnAccessor	"a"	literalWithAFunction
+
+for (const key of keys) {
+  attempt("method " + key, () => {
+    const object = literalWithAMethod(make(key));
+    const name = Reflect.ownKeys(object)[0];
+    return [names(object), object[name].name, object[name]()];
+  });
+  attempt("accessor " + key, () => {
+    const object = literalWithAnAccessor(make(key));
+    const name = Reflect.ownKeys(object)[0];
+    const found = Object.getOwnPropertyDescriptor(object, name);
+    return [names(object), found.get.name, found.set.name, object[name]];
+  });
+  attempt("function " + key, () => {
+    const object = literalWithAFunction(make(key));
+    return [names(object), object[Reflect.ownKeys(object).find(name => name !== "other")].name];
+  });
+  if (log.length) console.log("log", log.splice(0).join(", "));
+}
+//// console-log-is-the-only-one-that-lists-the-keys-of-these-objects.js
+////= Entry
+
+////= OldEntry
+////= lines-133	OldEntry	alpha	beta
+
+////= fill-6
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) for (const [, make] of kinds) sum += make("alpha first").alpha + make("gamma first").beta + make("short").alpha;
+console.log("2000 honest rounds", sum);
+
+for (const [kind, make] of kinds) {
+  for (const [history, build] of histories) console.log(kind + " | " + history + " ->", build(make));
+}
+//// constant-expressions-mix-texts-and-other-values.js
+////= show-26
+
+const rows = [
+  ['"5" * "2"', "5" * "2", (a, b) => a * b, "5", "2"],
+  ['"5" + 2', "5" + 2, (a, b) => a + b, "5", 2],
+  ['5 + "2"', 5 + "2", (a, b) => a + b, 5, "2"],
+  ['"5" - 2', "5" - 2, (a, b) => a - b, "5", 2],
+  ['"5" / "0"', "5" / "0", (a, b) => a / b, "5", "0"],
+  ['"-5" % 5', "-5" % 5, (a, b) => a % b, "-5", 5],
+  ['"a" * 1', "a" * 1, (a, b) => a * b, "a", 1],
+  ['"" * 1', "" * 1, (a, b) => a * b, "", 1],
+  ['" " - 0', " " - 0, (a, b) => a - b, " ", 0],
+  ['"0x10" | 0', "0x10" | 0, (a, b) => a | b, "0x10", 0],
+  ['"4294967297" | 0', "4294967297" | 0, (a, b) => a | b, "4294967297", 0],
+  ['"-1" >>> 0', "-1" >>> 0, (a, b) => a >>> b, "-1", 0],
+  ['"1" << "33"', "1" << "33", (a, b) => a << b, "1", "33"],
+  ['"2" ** "10"', "2" ** "10", (a, b) => a ** b, "2", "10"],
+  ['null + "x"', null + "x", (a, b) => a + b, null, "x"],
+  ['undefined + "x"', undefined + "x", (a, b) => a + b, undefined, "x"],
+  ['true + "x"', true + "x", (a, b) => a + b, true, "x"],
+  ['-0 + ""', -0 + "", (a, b) => a + b, -0, ""],
+  ['1e21 + ""', 1e21 + "", (a, b) => a + b, 1e21, ""],
+  ['1e-7 + ""', 1e-7 + "", (a, b) => a + b, 1e-7, ""],
+  ['0.1 + 0.2 + ""', 0.1 + 0.2 + "", (a, b) => a + 0.2 + b, 0.1, ""],
+  ['"" + 0.1 + 0.2', "" + 0.1 + 0.2, (a, b) => a + b + 0.2, "", 0.1],
+  ['1n + "x"', 1n + "x", (a, b) => a + b, 1n, "x"],
+  ['"10" < "9"', "10" < "9", (a, b) => a < b, "10", "9"],
+  ['"10" < 9', "10" < 9, (a, b) => a < b, "10", 9],
+  ['10 < "9"', 10 < "9", (a, b) => a < b, 10, "9"],
+  ['"a" < 1', "a" < 1, (a, b) => a < b, "a", 1],
+  ['"a" >= 1', "a" >= 1, (a, b) => a >= b, "a", 1],
+  ['"" < 1', "" < 1, (a, b) => a < b, "", 1],
+  ['null < "1"', null < "1", (a, b) => a < b, null, "1"],
+  ['undefined < "1"', undefined < "1", (a, b) => a < b, undefined, "1"],
+  ['"2" > 1n', "2" > 1n, (a, b) => a > b, "2", 1n],
+  ['"x" > 1n', "x" > 1n, (a, b) => a > b, "x", 1n],
+  ['"B" < "a"', "B" < "a", (a, b) => a < b, "B", "a"],
+  ['"\\uffff" < "\\ud800\\udc00"', "￿" < "𐀀", (a, b) => a < b, "￿", "𐀀"],
+  ['"1" == 1', "1" == 1, (a, b) => a == b, "1", 1],
+  ['"1.0" == 1', "1.0" == 1, (a, b) => a == b, "1.0", 1],
+  ['"" == 0', "" == 0, (a, b) => a == b, "", 0],
+  ['" \\n" == 0', " \n" == 0, (a, b) => a == b, " \n", 0],
+  ['"0" == false', "0" == false, (a, b) => a == b, "0", false],
+  ['"" == false', "" == false, (a, b) => a == b, "", false],
+  ['"false" == false', "false" == false, (a, b) => a == b, "false", false],
+  ['"null" == null', "null" == null, (a, b) => a == b, "null", null],
+  ['"" == null', "" == null, (a, b) => a == b, "", null],
+  ['"1" == 1n', "1" == 1n, (a, b) => a == b, "1", 1n],
+  ['"1.5" == 1n', "1.5" == 1n, (a, b) => a == b, "1.5", 1n],
+  ['"NaN" == NaN', "NaN" == NaN, (a, b) => a == b, "NaN", NaN],
+  ['"1" === 1', "1" === 1, (a, b) => a === b, "1", 1],
+  ['"a" === "a"', "a" === "a", (a, b) => a === b, "a", "a"],
+  ['"a" && 0', "a" && 0, (a, b) => a && b, "a", 0],
+  ['"" && 1', "" && 1, (a, b) => a && b, "", 1],
+  ['"" || "x"', "" || "x", (a, b) => a || b, "", "x"],
+  ['"" ?? "x"', "" ?? "x", (a, b) => a ?? b, "", "x"],
+  ['"0" || "x"', "0" || "x", (a, b) => a || b, "0", "x"],
+  ['"abc"[1]', "abc"[1], (a, b) => a[b], "abc", 1],
+  ['"abc"["1"]', "abc"["1"], (a, b) => a[b], "abc", "1"],
+  ['"abc"[3]', "abc"[3], (a, b) => a[b], "abc", 3],
+  ['"abc"[-1]', "abc"[-1], (a, b) => a[b], "abc", -1],
+  ['"abc"[1.5]', "abc"[1.5], (a, b) => a[b], "abc", 1.5],
+  ['"abc"["length"]', "abc"["length"], (a, b) => a[b], "abc", "length"],
+  ['"abc".charCodeAt(5)', "abc".charCodeAt(5), (a, b) => a.charCodeAt(b), "abc", 5],
+  ['"abc".charCodeAt("1")', "abc".charCodeAt("1"), (a, b) => a.charCodeAt(b), "abc", "1"],
+  ['"abc".charAt(-1)', "abc".charAt(-1), (a, b) => a.charAt(b), "abc", -1],
+  ['"abc".at(-1)', "abc".at(-1), (a, b) => a.at(b), "abc", -1],
+  ['"abc".slice(-2)', "abc".slice(-2), (a, b) => a.slice(b), "abc", -2],
+  ['"abc".substring(2, 0)', "abc".substring(2, 0), (a, b) => a.substring(b, 0), "abc", 2],
+  ['"abc".indexOf("")', "abc".indexOf(""), (a, b) => a.indexOf(b), "abc", ""],
+  ['"abc".lastIndexOf("")', "abc".lastIndexOf(""), (a, b) => a.lastIndexOf(b), "abc", ""],
+  ['"a1b".indexOf(1)', "a1b".indexOf(1), (a, b) => a.indexOf(b), "a1b", 1],
+  ['"anull".includes(null)', "anull".includes(null), (a, b) => a.includes(b), "anull", null],
+  ['"x".repeat(0)', "x".repeat(0), (a, b) => a.repeat(b), "x", 0],
+  ['"x".repeat("2")', "x".repeat("2"), (a, b) => a.repeat(b), "x", "2"],
+  ['"x".padStart(3, "")', "x".padStart(3, ""), (a, b) => a.padStart(3, b), "x", ""],
+  ['"x".padStart(3, 12)', "x".padStart(3, 12), (a, b) => a.padStart(3, b), "x", 12],
+  ['"\\u00df".toUpperCase()', "ß".toUpperCase(), a => a.toUpperCase(), "ß", 0],
+  ['"\\u0130".toLowerCase().length', "İ".toLowerCase().length, a => a.toLowerCase().length, "İ", 0],
+  ['"\\ud83d\\ude00".length', "😀".length, a => a.length, "😀", 0],
+  ['"\\ud83d\\ude00".codePointAt(1)', "😀".codePointAt(1), (a, b) => a.codePointAt(b), "😀", 1],
+  ['"a-b".replace("-", "$&$&")', "a-b".replace("-", "$&$&"), (a, b) => a.replace("-", b), "a-b", "$&$&"],
+  ['"a,b".split(",").length', "a,b".split(",").length, (a, b) => a.split(b).length, "a,b", ","],
+  ['"".split("").length', "".split("").length, (a, b) => a.split(b).length, "", ""],
+  ['"".split(",").length', "".split(",").length, (a, b) => a.split(b).length, "", ","],
+  ['"a".concat(1, null)', "a".concat(1, null), (a, b) => a.concat(b, null), "a", 1],
+  ['"a".localeCompare("b")', "a".localeCompare("b"), (a, b) => a.localeCompare(b), "a", "b"],
+  ['typeof ("a" + 1)', typeof ("a" + 1), (a, b) => typeof (a + b), "a", 1],
+  ['typeof ("2" * 1)', typeof ("2" * 1), (a, b) => typeof (a * b), "2", 1],
+  ['+"-0"', +"-0", a => +a, "-0", 0],
+  ['-"0"', -"0", a => -a, "0", 0],
+  ['~"5"', ~"5", a => ~a, "5", 0],
+  ['!"0"', !"0", a => !a, "0", 0],
+  ['!""', !"", a => !a, "", 0],
+  ['`${-0}`', `${-0}`, a => `${a}`, -0, 0],
+  ['`${null}${undefined}`', `${null}${undefined}`, (a, b) => `${a}${b}`, null, undefined],
+  ['`${[1, [2]]}`', `${[1, [2]]}`, a => `${a}`, [1, [2]], 0],
+  ['String(-0)', String(-0), a => String(a), -0, 0],
+  ['"length" in Object("a")', "length" in Object("a"), (a, b) => a in Object(b), "length", "a"],
+];
+
+function hidden(value) {
+  return hiddenValues[hiddenValues.push(value) - 1];
+}
+const hiddenValues = [];
+
+let different = 0;
+for (const [label, folded, compute, a, b] of rows) {
+  const computed = compute(hidden(a), hidden(b));
+  const same = Object.is(folded, computed);
+  if (!same) different++;
+  console.log((same ? "" : "WRONG ") + label + " -> " + show(folded) + (same ? "" : " but at run time " + show(computed)));
+}
+console.log("different:", different);
+//// constant-sets-maps-and-lists-of-texts-are-asked-about-other-values.js
+////= show-26
+
+const KEYWORDS = new Set(["if", "else", "for", "1", "null", "undefined", "NaN", "", "true"]);
+const PRIORITY = new Map([["+", 1], ["*", 2], ["1", 3], ["null", 4], ["", 5]]);
+const LIST = ["if", "else", "for", "1", "null", "undefined", "NaN", "", "true"];
+const TABLE = { if: 1, else: 2, for: 3, 1: 4, null: 5, undefined: 6, NaN: 7, "": 8, true: 9 };
+const FROZEN = Object.freeze({ if: 1, else: 2 });
+const LETTERS = "if else for 1 null undefined NaN true";
+
+////= lines-3	isKeyword	word	KEYWORDS.has	word
+
+////= lines-3	priorityOf	word	PRIORITY.get	word
+
+////= lines-3	hasPriority	word	PRIORITY.has	word
+
+////= lines-3	isListed	word	LIST.includes	word
+
+////= lines-3	positionInTheList	word	LIST.indexOf	word
+
+function isListedInALiteral(word) {
+  return ["if", "else", "1", "null"].includes(word);
+}
+
+////= lines-53	isInTheTable	word	word	in	TABLE
+
+////= lines-37	fromTheTable	word	TABLE[word
+
+////= lines-33	ownInTheTable	word	Object.hasOwn	TABLE	word
+
+////= lines-37	fromTheFrozenTable	word	FROZEN[word
+
+////= lines-3	isInTheLetters	word	LETTERS.includes	word
+
+function oneOfThree(word) {
+  return word === "if" || word === "else" || word === "1";
+}
+
+function looselyOneOfThree(word) {
+  return word == "if" || word == "else" || word == "1";
+}
+
+const uses = [
+  ["Set.has", isKeyword],
+  ["Map.get", priorityOf],
+  ["Map.has", hasPriority],
+  ["includes", isListed],
+  ["indexOf", positionInTheList],
+  ["literal includes", isListedInALiteral],
+  ["in", isInTheTable],
+  ["table", fromTheTable],
+  ["hasOwn", ownInTheTable],
+  ["frozen", fromTheFrozenTable],
+  ["text includes", isInTheLetters],
+  ["===", oneOfThree],
+  ["==", looselyOneOfThree],
+];
+
+const values = [
+  "'if'",
+  "'i' + 'f'",
+  "'iffy'.slice(0, 2)",
+  "'if\\u4e16'.slice(0, 2)",
+  "'IF'",
+  "'+'",
+  "''",
+  "'1'",
+  "1",
+  "1n",
+  "1.0",
+  "true",
+  "'true'",
+  "null",
+  "'null'",
+  "undefined",
+  "'undefined'",
+  "NaN",
+  "'NaN'",
+  "new String('if')",
+  "new String('')",
+  "new Number(1)",
+  "['if']",
+  "[1]",
+  "[]",
+  "{ toString() { return 'if'; } }",
+  "Symbol('if')",
+  "'constructor'",
+  "'__proto__'",
+  "'toString'",
+  "'size'",
+  "'length'",
+];
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  for (const [, use] of uses) total += String(use(i % 2 ? "if" : "while")).length;
+}
+console.log("2000 honest rounds", total);
+
+////= outcome-7
+
+////= for-113
+
+KEYWORDS.add(1);
+KEYWORDS.delete("if");
+PRIORITY.set(1, "the number");
+LIST.push(1);
+LIST[0] = new String("if");
+TABLE.while = 10;
+delete TABLE.if;
+console.log("after the collections were changed");
+for (const text of ["'if'", "1", "'1'", "'while'"]) {
+  console.log(text + " -> " + uses.map(([name, use]) => name + " " + outcome(use, text)).join("; "));
+}
+//// constructor-functions-and-classes-are-constructed-for-each-other-and-one-number-is-printed.js
+////= Old
+////= Child
+Child.prototype = Object.create(Old.prototype);
+Child.prototype.constructor = Child;
+function Wide(a) {
+  this.a = a;
+  this.b = a + 1;
+  this.c = a + 2;
+  this.d = a + 3;
+}
+function Forwards(x, y) {
+  return Reflect.construct(Old, [x, y], new.target);
+}
+////= lines-210	Klass	k	40	l	50
+////= lines-138	FromOld	Old	x	y	w	9
+let sum = 0;
+function n(value) {
+  return value === undefined ? 0 : value;
+}
+function note(made, target) {
+  sum = (sum * 19 + Object.keys(made).length * 100000 + n(made.x) * 7 + n(made.y) * 11 + n(made.z) * 13 + n(made.a) * 17 + n(made.b) * 23 + n(made.c) * 29 + n(made.d) * 31 + n(made.k) * 37 + n(made.l) * 41 + n(made.w) * 43 + (Object.getPrototypeOf(made) === target.prototype ? 1 : 0)) % 1000003;
+}
+const bound = Old.bind(null, 5);
+for (let i = 1; i < 4; i++) {
+  note(Reflect.construct(Child, [i, 2], Old), Old);
+  note(Reflect.construct(Old, [i, 2], Child), Child);
+  note(Reflect.construct(Old, [i, 2], Wide), Wide);
+  note(Reflect.construct(Wide, [i], Old), Old);
+  note(Reflect.construct(Wide, [i], Klass), Klass);
+  note(Reflect.construct(Klass, [], Wide), Wide);
+  note(Reflect.construct(FromOld, [i, 2], Wide), Wide);
+  note(Reflect.construct(FromOld, [i, 2], Klass), Klass);
+  note(Reflect.construct(Old, [i, 2], FromOld), FromOld);
+  note(Reflect.construct(Wide, [i], FromOld), FromOld);
+  note(Reflect.construct(bound, [i], Wide), Wide);
+  note(new bound(i), Old);
+  note(new Forwards(i, 2), Forwards);
+  note(Reflect.construct(Forwards, [i, 2], Wide), Wide);
+  note(new Old(i, 2), Old);
+  note(new Child(i, 2), Child);
+  note(new Wide(i), Wide);
+  note(new Klass(), Klass);
+  note(new FromOld(i, 2), FromOld);
+}
+console.log(sum);
+//// constructor-functions-keep-a-text-that-is-not-one.js
+////= show-26
+
+function Token(kind, text) {
+  this.kind = kind;
+  this.text = text;
+}
+
+Token.prototype.firstCode = function () {
+  return this.text.charCodeAt(0);
+};
+
+Token.prototype.size = function () {
+  return this.text.length;
+};
+
+Token.prototype.isKeyword = function () {
+  return this.kind === "keyword";
+};
+
+////= lines-209	Token	label	kind	":"	text
+
+Token.prototype.upper = function () {
+  return this.text.toUpperCase();
+};
+
+function Comment(text) {
+  Token.call(this, "comment", text);
+}
+
+Comment.prototype = Object.create(Token.prototype);
+Comment.prototype.constructor = Comment;
+Comment.prototype.body = function () {
+  return this.text.slice(2).trim();
+};
+
+function describe(token) {
+  const parts = [];
+  for (const name of ["firstCode", "size", "isKeyword", "label", "upper", "body"]) {
+    try {
+      parts.push(name + " " + (typeof token[name] === "function" ? show(token[name]()) : "missing"));
+    } catch (error) {
+      parts.push(name + " threw " + error.constructor.name);
+    }
+  }
+  return parts.join("; ");
+}
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  const token = new Token(i % 2 ? "keyword" : "name", "while");
+  const comment = new Comment("// note");
+  total += token.firstCode() + token.size() + token.label().length + token.upper().length + comment.body().length + comment.size();
+  if (token.isKeyword()) total++;
+}
+console.log("2000 honest rounds", total);
+
+const texts = [
+  "'while'",
+  "''",
+  "new String('while')",
+  "['w', 'h']",
+  "{ length: 2, charCodeAt() { return 'look alike'; }, toUpperCase() { return 'LOOK'; }, slice() { return { trim() { return 'trimmed'; } }; }, toString() { return 'alike'; } }",
+  "5",
+  "null",
+  "undefined",
+  "Symbol('s')",
+  "Buffer.from('// x')",
+];
+
+for (const text of texts) {
+  console.log("new Token('name', " + text + "): " + describe(new Token("name", make(text))));
+  console.log("new Token(" + text + ", 'x'): " + describe(new Token(make(text), "x")));
+  console.log("new Comment(" + text + "): " + describe(new Comment(make(text))));
+}
+
+const changed = new Token("name", "while");
+changed.text = 5;
+console.log("the text is stored over by name: " + describe(changed));
+changed[make("'te' + 'xt'")] = ["a", "b"];
+console.log("the text is stored over by a computed name: " + describe(changed));
+Object.assign(changed, { text: new String("assigned") });
+console.log("the text is stored over by Object.assign: " + describe(changed));
+delete changed.text;
+console.log("the text is deleted: " + describe(changed));
+Token.prototype.text = "inherited";
+console.log("the text is inherited: " + describe(changed));
+delete Token.prototype.text;
+Object.defineProperty(changed, "text", { get: () => "from a getter" });
+console.log("the text is a getter: " + describe(changed));
+
+console.log("not made by the constructor: " + describe(Object.create(Token.prototype)));
+console.log("made by Object.create with members: " + describe(Object.create(Comment.prototype, { text: { value: 7 }, kind: { value: new String("keyword") } })));
+console.log("made from JSON: " + describe(Object.setPrototypeOf(JSON.parse('{ "text": ["j"], "kind": "keyword" }'), Token.prototype)));
+console.log("a borrowed method: " + show(Token.prototype.label.call({ kind: 1, text: 2 })));
+console.log("a borrowed method on a text: " + show(Token.prototype.size.call({ text: { length: -0 } })));
+attempt("the constructor called without new", () => Token("name", "x"));
+console.log("honest again: " + describe(new Token("keyword", "while")));
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// constructor-functions-return-something-else.cjs
+////= show-34
+
+////= lines-67	Other	amount	"other amount"
+////= lines-58	Other	double	"doubled by Other"
+
+const kept = { amount: "kept amount" };
+const answers = {
+  nothing: undefined,
+  number: 5,
+  string: "text",
+  null: null,
+  boolean: false,
+  symbol: Symbol.for("answer"),
+  bigint: 5n,
+  literal: { amount: "literal amount" },
+  kept,
+  other: new Other(),
+  array: [1, 2],
+  function: function answer() {},
+  boxed: new Number(5),
+  bare: Object.create(null),
+};
+
+function Account(amount, answer) {
+  this.amount = amount;
+  return answers[answer];
+}
+////= lines-207	Account	double	amount	2
+
+function Saver(amount, answer) {
+  const result = Account.call(this, amount, answer);
+  this.resultOfParent = typeof result;
+}
+Saver.prototype = Object.create(Account.prototype);
+Saver.prototype.constructor = Saver;
+
+function open(amount, answer) {
+  return new Account(amount, answer);
+}
+
+////= lines-7	amountOf	account	account.amount
+
+////= lines-5	doubleOf	account	account.double
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  const account = open(i % 10, "nothing");
+  sum += amountOf(account) + doubleOf(account);
+}
+console.log("2000 honest constructions", sum);
+
+for (let round = 0; round < 2; round++) {
+  for (const answer of Object.keys(answers)) {
+    const label = "round " + round + ", returns " + answer;
+    let made;
+    attempt(label + ": made", () => ((made = open(21, answer)), typeof made));
+    attempt(label + ": instanceof Account", () => made instanceof Account);
+    attempt(label + ": is what was returned", () => made === answers[answer]);
+    attempt(label + ": amount", () => amountOf(made));
+    attempt(label + ": double()", () => doubleOf(made));
+    attempt(label + ": through a child", () => new Saver(4, answer));
+  }
+  attempt("round " + round + ", honest again", () => doubleOf(open(21, "nothing")));
+}
+
+attempt("two constructions give the kept object twice", () => open(1, "kept") === open(2, "kept"));
+attempt("the kept object was never stored to", () => kept);
+attempt("Reflect.construct follows the same rule", () => Reflect.construct(Account, [1, "literal"]));
+attempt("and for a primitive", () => Reflect.construct(Account, [1, "number"]));
+//// constructors-and-prototypes-make-instances-of-another-kind.js
+"use strict";
+
+const log = [];
+
+////= show-29
+
+console.log("strict:", (function () { return this === undefined; })());
+
+////= List1
+function pushes1(a) {
+  return [a.push(1), a.length, Array.isArray(a)];
+}
+attempt("Array constructed for a subclass", () => pushes1(Reflect.construct(Array, [5, 6], List1)));
+function pushes2(a) {
+  return [a.push(1), a.length, Array.isArray(a)];
+}
+attempt("a subclass constructed for Array", () => pushes2(Reflect.construct(List1, [5, 6], Array)));
+function pushes3(a) {
+  return [a.push(1), a.length, Array.isArray(a)];
+}
+attempt("a subclass constructed for Object", () => pushes3(Reflect.construct(List1, [5, 6], Object)));
+
+////= lines-113	Point4
+////= lines-76	Other4	sum	"the sum of another class"
+////= lines-234	sums4
+attempt("the instance itself", () => sums4(new Point4()));
+attempt("a class constructed for another class", () => sums4(Reflect.construct(Point4, [], Other4)));
+////= lines-234	sums5
+attempt("an instance that gets the prototype of another class", () => sums5(Object.setPrototypeOf(new Point4(), Other4.prototype)));
+////= lines-234	sums6
+attempt("an object made from the prototype alone", () => sums6(Object.create(Point4.prototype)));
+////= lines-234	sums7
+attempt("a proxy of an instance", () => sums7(logged(new Point4())));
+
+class Base8 {
+  constructor(result) {
+    return result;
+  }
+}
+class Derived8 extends Base8 {
+  x = 1;
+  y = 2;
+  sum() {
+    return this.x + this.y;
+  }
+}
+function sums8(p) {
+  return [p.x + p.y, Object.keys(p), p instanceof Derived8, p.sum()];
+}
+attempt("the base constructor returns nothing", () => sums8(new Derived8()));
+attempt("the base constructor returns another object", () => sums8(new Derived8({ y: "kept until the field is defined", z: 3 })));
+attempt("the base constructor returns an array", () => sums8(new Derived8([5, 6])));
+attempt("the base constructor returns a frozen object", () => sums8(new Derived8(Object.freeze({}))));
+
+function Make9(other) {
+  this.x = 1;
+  this.y = 2;
+  return other;
+}
+function adds9(o) {
+  return [o.x + o.y, o instanceof Make9];
+}
+attempt("a constructor function returns nothing", () => adds9(new Make9()));
+attempt("a constructor function returns a number", () => adds9(new Make9(5)));
+attempt("a constructor function returns another object", () => adds9(new Make9({ x: "other", y: "object" })));
+attempt("a constructor function returns a function", () => adds9(new Make9(() => {})));
+
+function Plain10(length) {
+  log.push("Plain10 " + length);
+}
+function pushes10(a) {
+  return [Array.isArray(a), a.length, a[0], a.push(1)];
+}
+attempt("Array.of", () => pushes10(Array.of(5, 6)));
+attempt("Array.of called on another constructor", () => pushes10(Array.of.call(Plain10, 5, 6)));
+function pushes11(a) {
+  return [Array.isArray(a), a.length, a[0], a.push(1)];
+}
+attempt("Array.from called on another constructor", () => pushes11(Array.from.call(Plain10, [5, 6])));
+
+function reads12(s) {
+  return [typeof s, s.charCodeAt(0), s === "abc", s + "", s.length];
+}
+attempt("a text", () => reads12("abc"));
+attempt("Object of a text", () => reads12(Object("abc")));
+function adds13(n) {
+  return [typeof n, n + 1, n | 0, n === 7, n == 7];
+}
+attempt("a number", () => adds13(7));
+attempt("Object of a number", () => adds13(Object(7)));
+function adds14(n) {
+  return [typeof n, n + 1, n | 0];
+}
+attempt("this of a sloppy function called on a number", () => adds14(new Function("return this").call(7)));
+
+function iterates15(a) {
+  const seen = [];
+  for (const x of a) seen.push(x);
+  return [seen, Array.isArray(a), a.length, typeof a.push];
+}
+attempt("an array", () => iterates15([5, 6]));
+attempt("arguments", () => (function () { return iterates15(arguments); })(5, 6));
+
+class Counter16 {
+  static made = 0;
+  constructor() {
+    Counter16.made++;
+  }
+  get value() {
+    return Counter16.made % 2 ? 7 : "7";
+  }
+}
+function adds16(c) {
+  const n = c.value;
+  return [n + 1, n | 0];
+}
+attempt("a getter that answers with a number", () => adds16(new Counter16()));
+attempt("the same getter answers with a text", () => adds16(new Counter16()));
+attempt("and with a number again", () => adds16(new Counter16()));
+//// constructors-are-picked-from-variables-tables-and-computed-names.cjs
+////= show-34
+
+////= lines-35	Circle	size	this.size	size
+Circle.prototype.measure = function () {
+  return "circle " + this.size * 3;
+};
+
+////= lines-49	Ring	size	this.hole	1	size	size
+Ring.prototype.measure = function () {
+  return "ring " + (this.size - this.hole);
+};
+
+////= lines-106	Disk	size	measure	"disk "
+
+const table = {
+  Circle,
+  Ring,
+  Disk,
+  bound: Circle.bind(null, 100),
+  proxy: new Proxy(Ring, {}),
+  trap: new Proxy(Circle, { construct(target, inputs) { return { size: "from the trap", measure: () => "trapped " + inputs[0] }; } }),
+  returnsLiteral: function (size) { return { size, measure() { return "literal " + this.size; } }; },
+  arrow: size => ({ size }),
+  method: { method(size) { this.size = size; } }.method,
+  async: async function (size) { this.size = size; },
+  generator: function* (size) { this.size = size; },
+  getter: Object.getOwnPropertyDescriptor({ get size() { return 1; } }, "size").get,
+  number: 5,
+  literal: { size: 1 },
+  Object,
+  Array,
+  String,
+  Symbol,
+};
+
+////= lines-260	makeFromParameter	size
+
+function makeFromTable(name, size) {
+  return new table[name](size);
+}
+
+function makeFromVariable(name, size) {
+  let Maker = Circle;
+  if (name !== "Circle") Maker = table[name];
+  return new Maker(size);
+}
+
+function makeFromJoinedName(head, tail, size) {
+  return new table[head + tail](size);
+}
+
+////= lines-5	measure	shape	shape.measure
+
+let length = 0;
+for (let i = 0; i < 2000; i++) {
+  length += measure(makeFromParameter(Circle, i % 5)).length;
+  length += measure(makeFromTable("Circle", i % 5)).length;
+  length += measure(makeFromVariable("Circle", i % 5)).length;
+  length += measure(makeFromJoinedName("Cir", "cle", i % 5)).length;
+}
+console.log("2000 circles each way", length);
+
+for (const name of [...Object.keys(table), "missing"]) {
+  const ways = [
+    ["a parameter", () => makeFromParameter(table[name], 4)],
+    ["the table", () => makeFromTable(name, 4)],
+    ["a variable", () => makeFromVariable(name, 4)],
+    ["a joined name", () => makeFromJoinedName(name.slice(0, 2), name.slice(2), 4)],
+  ];
+  for (const [way, make] of ways) {
+    attempt(name + " from " + way, () => {
+      const made = make();
+      let measured;
+      try {
+        measured = measure(made);
+      } catch (error) {
+        measured = "measure threw " + error.constructor.name;
+      }
+      return [typeof made, show(made), measured, made instanceof Circle].join(" | ");
+    });
+  }
+  attempt("a circle again", () => measure(makeFromTable("Circle", 2)));
+}
+//// constructors-arrive-from-eval-and-new-function.cjs
+////= show-34
+
+function Sensor(reading, unit) {
+  this.reading = reading;
+  this.unit = unit;
+}
+////= lines-209	Sensor	format	reading	" "	unit
+////= lines-207	Sensor	doubled	reading	2
+
+////= lines-5	formatOf	sensor	sensor.format
+
+////= lines-7	readingOf	sensor	sensor.reading
+
+////= lines-5	doubledOf	sensor	sensor.doubled
+
+function calibrate(sensor) {
+  sensor.reading += 1;
+  return sensor;
+}
+
+const texts = [
+  ["the same text", "(function Sensor(reading, unit) { this.reading = reading; this.unit = unit; })", "format() { return this.reading + ' ' + this.unit; }, doubled() { return this.reading * 2; }"],
+  ["fields in the other order", "(function Sensor(reading, unit) { this.unit = unit; this.reading = reading; })", "format() { return 'other order ' + this.reading; }, doubled() { return this.reading * 2; }"],
+  ["a string reading", "(function Sensor(reading, unit) { this.reading = String(reading); this.unit = unit; })", "format() { return 'string ' + this.reading; }, doubled() { return this.reading + this.reading; }"],
+  ["a reading on the prototype", "(function Sensor(reading, unit) { this.unit = unit; })", "reading: 7, format() { return 'shared ' + this.reading; }, doubled() { return this.reading * 2; }"],
+  ["a reading that is an accessor", "(function Sensor(reading, unit) { this.kept = reading; this.unit = unit; })", "get reading() { return this.kept * 100; }, set reading(value) { this.kept = value; }, format() { return 'accessor ' + this.reading; }, doubled() { return this.reading * 2; }"],
+  ["a class", "(class Sensor { constructor(reading, unit) { this.reading = reading; this.unit = unit; } })", "format() { return 'class ' + this.reading; }, doubled() { return this.reading * 2; }"],
+  ["no methods", "(function Sensor(reading, unit) { this.reading = reading; this.unit = unit; })", ""],
+];
+
+const arrivals = [
+  ["indirect eval", text => (0, eval)(text)],
+  ["direct eval", text => eval(text)],
+  ["new Function", text => new Function("return " + text + ";")()],
+  ["a reviver", text => JSON.parse(JSON.stringify({ text }), (key, value) => (key === "text" ? (0, eval)(value) : value)).text],
+];
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  const sensor = calibrate(new Sensor(i % 6, "C"));
+  sum += formatOf(sensor).length + readingOf(sensor) + doubledOf(sensor);
+}
+console.log("2000 honest sensors", sum);
+
+for (const [arrival, bring] of arrivals) {
+  for (const [label, constructorText, membersText] of texts) {
+    const Foreign = bring(constructorText);
+    Object.defineProperties(Foreign.prototype, Object.getOwnPropertyDescriptors(bring("({" + membersText + "})")));
+    const where = arrival + ", " + label;
+    attempt(where + ": made", () => new Foreign(5, "F"));
+    attempt(where + ": instanceof the visible Sensor", () => new Foreign(5, "F") instanceof Sensor);
+    attempt(where + ": reading", () => readingOf(new Foreign(5, "F")));
+    attempt(where + ": format()", () => formatOf(new Foreign(5, "F")));
+    attempt(where + ": doubled()", () => doubledOf(new Foreign(5, "F")));
+    attempt(where + ": reading += 1", () => { const sensor = calibrate(new Foreign(5, "F")); return [show(sensor), sensor.reading]; });
+    attempt(where + ": the visible format with it as this", () => Sensor.prototype.format.call(new Foreign(5, "F")));
+    attempt(where + ": the visible constructor with it as this", () => { const sensor = new Foreign(5, "F"); Sensor.call(sensor, 9, "K"); return [show(sensor), sensor.reading]; });
+  }
+  attempt(arrival + ": honest again", () => [formatOf(calibrate(new Sensor(1, "C"))), doubledOf(new Sensor(2, "C"))]);
+}

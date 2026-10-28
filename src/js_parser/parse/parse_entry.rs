@@ -279,6 +279,7 @@ impl<'a> Options<'a> {
                 no_macros: f.no_macros,
                 commonjs_named_exports: f.commonjs_named_exports,
                 minify_syntax: f.minify_syntax,
+                is_library: f.is_library,
                 minify_identifiers: f.minify_identifiers,
                 minify_keep_names: f.minify_keep_names,
                 minify_whitespace: f.minify_whitespace,
@@ -331,8 +332,7 @@ impl<'a> Options<'a> {
                 // this holds the values for the jsx optimizaiton flags, which have both been removed
                 // as the optimizations break newer versions of react, see https://github.com/oven-sh/bun/issues/11025
                 let jsx_optimizations: [bool; 2] = [false, false];
-                // `bool: NoUninit`, `u8: AnyBitPattern`.
-                hasher.update(bytemuck::cast_slice::<bool, u8>(&jsx_optimizations));
+                hasher.update(bun_core::slice_as_bytes(&jsx_optimizations));
             } else {
                 hasher.update(b"NO_JSX");
             }
@@ -358,7 +358,7 @@ impl<'a> Options<'a> {
     // Used to determine if `joinWithComma` should be called in `visitStmts`. We do this
     // to avoid changing line numbers too much to make source mapping more readable
     pub(crate) fn runtime_merge_adjacent_expression_statements(&self) -> bool {
-        self.bundle
+        self.bundle && !self.features.is_library
     }
 
     pub fn init(jsx: options::JSX::Pragma, loader: options::Loader) -> Options<'static> {

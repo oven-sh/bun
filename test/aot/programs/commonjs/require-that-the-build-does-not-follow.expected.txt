@@ -1,0 +1,11 @@
+a parameter: true
+a property: threw Error: Cannot load
+bound: threw Error: Cannot load
+bound, under a name: threw Error: Cannot load
+a variable that is stored to: threw Error: Cannot load
+apply with a list from elsewhere: threw Error: Cannot load
+a path nobody knows: threw Error: Cannot load
+a path nobody knows, another name: threw Error: Cannot load
+a path nobody knows, module.require: threw Error: Cannot load
+the entry point is found: true
+a built-in module is found: function

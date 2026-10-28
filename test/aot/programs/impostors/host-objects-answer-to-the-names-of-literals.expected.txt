@@ -1,0 +1,279 @@
+address | honest | own -> [true, true, true, true]
+address | honest | keys -> ["host", "port", "pathname", "search"]
+address | honest | for-in -> ["host", "port", "pathname", "search"]
+address | honest | spread -> ["host", "port", "pathname", "search"]
+address | honest | by name 0 -> "example.com:8080"
+address | honest | by name 1 -> "8080"
+address | honest | by name 2 -> "/a"
+address | honest | by name 3 -> [9090, "example.com:8080"]
+address | honest | by name 4 -> ["example.com:8080", "8080"]
+address | a URL | own -> [false, false, false, false]
+address | a URL | keys -> []
+address | a URL | for-in -> ["host", "port", "pathname", "search"]
+address | a URL | spread -> []
+address | a URL | by name 0 -> "example.com:8080"
+address | a URL | by name 1 -> "8080"
+address | a URL | by name 2 -> "/a"
+address | a URL | by name 3 -> ["9090", "example.com:9090"]
+address | a URL | by name 4 -> ["example.com:8080", "8080"]
+address | a URL without a port | own -> [false, false, false, false]
+address | a URL without a port | keys -> []
+address | a URL without a port | for-in -> ["host", "port", "pathname", "search"]
+address | a URL without a port | spread -> []
+address | a URL without a port | by name 0 -> "example.com"
+address | a URL without a port | by name 1 -> ""
+address | a URL without a port | by name 2 -> "/"
+address | a URL without a port | by name 3 -> ["9090", "example.com:9090"]
+address | a URL without a port | by name 4 -> ["example.com", ""]
+address | an object that inherits from a URL | own -> [false, false, false, false]
+address | an object that inherits from a URL | keys -> []
+address | an object that inherits from a URL | for-in -> ["host", "port", "pathname", "search"]
+address | an object that inherits from a URL | spread -> []
+address | an object that inherits from a URL | by name 0 -> threw TypeError
+address | an object that inherits from a URL | by name 1 -> threw TypeError
+address | an object that inherits from a URL | by name 2 -> threw TypeError
+address | an object that inherits from a URL | by name 3 -> threw TypeError
+address | an object that inherits from a URL | by name 4 -> threw TypeError
+address | a copy of a URL by spread | own -> [false, false, false, false]
+address | a copy of a URL by spread | keys -> []
+address | a copy of a URL by spread | for-in -> []
+address | a copy of a URL by spread | spread -> []
+address | a copy of a URL by spread | by name 0 -> undefined
+address | a copy of a URL by spread | by name 1 -> undefined
+address | a copy of a URL by spread | by name 2 -> undefined
+address | a copy of a URL by spread | by name 3 -> [9090, undefined]
+address | a copy of a URL by spread | by name 4 -> [undefined, undefined]
+address | a URLSearchParams | own -> [false, false, false, false]
+address | a URLSearchParams | keys -> []
+address | a URLSearchParams | for-in -> []
+address | a URLSearchParams | spread -> []
+address | a URLSearchParams | by name 0 -> undefined
+address | a URLSearchParams | by name 1 -> undefined
+address | a URLSearchParams | by name 2 -> undefined
+address | a URLSearchParams | by name 3 -> [9090, undefined]
+address | a URLSearchParams | by name 4 -> [undefined, undefined]
+address | a string | own -> [false, false, false, false]
+address | a string | keys -> ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24"]
+address | a string | for-in -> []
+address | a string | spread -> ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24"]
+address | a string | by name 0 -> undefined
+address | a string | by name 1 -> undefined
+address | a string | by name 2 -> undefined
+address | a string | by name 3 -> threw TypeError
+address | a string | by name 4 -> [undefined, undefined]
+address | honest again | own -> [true, true, true, true]
+address | honest again | keys -> ["host", "port", "pathname", "search"]
+address | honest again | for-in -> ["host", "port", "pathname", "search"]
+address | honest again | spread -> ["host", "port", "pathname", "search"]
+address | honest again | by name 0 -> "example.com:8080"
+address | honest again | by name 1 -> "8080"
+address | honest again | by name 2 -> "/a"
+address | honest again | by name 3 -> [9090, "example.com:8080"]
+address | honest again | by name 4 -> ["example.com:8080", "8080"]
+upload | honest | own -> [true, true, true]
+upload | honest | keys -> ["size", "type", "name"]
+upload | honest | for-in -> ["size", "type", "name"]
+upload | honest | spread -> ["size", "type", "name"]
+upload | honest | by name 0 -> 3
+upload | honest | by name 1 -> "text/plain"
+upload | honest | by name 2 -> "a.txt"
+upload | honest | by name 3 -> 99
+upload | honest | by name 4 -> [3, "text/plain"]
+upload | a Blob | own -> [false, false, false]
+upload | a Blob | keys -> []
+upload | a Blob | for-in -> ["name", "size", "type"]
+upload | a Blob | spread -> []
+upload | a Blob | by name 0 -> 3
+upload | a Blob | by name 1 -> "text/plain;charset=utf-8"
+upload | a Blob | by name 2 -> undefined
+upload | a Blob | by name 3 -> threw TypeError
+upload | a Blob | by name 4 -> [3, "text/plain;charset=utf-8"]
+upload | a File | own -> [false, false, false]
+upload | a File | keys -> []
+upload | a File | for-in -> ["name", "size", "type"]
+upload | a File | spread -> []
+upload | a File | by name 0 -> 3
+upload | a File | by name 1 -> "text/plain;charset=utf-8"
+upload | a File | by name 2 -> "a.txt"
+upload | a File | by name 3 -> threw TypeError
+upload | a File | by name 4 -> [3, "text/plain;charset=utf-8"]
+upload | a Map | own -> [false, false, false]
+upload | a Map | keys -> []
+upload | a Map | for-in -> []
+upload | a Map | spread -> []
+upload | a Map | by name 0 -> 1
+upload | a Map | by name 1 -> undefined
+upload | a Map | by name 2 -> undefined
+upload | a Map | by name 3 -> threw TypeError
+upload | a Map | by name 4 -> [1, undefined]
+upload | a Set | own -> [false, false, false]
+upload | a Set | keys -> []
+upload | a Set | for-in -> []
+upload | a Set | spread -> []
+upload | a Set | by name 0 -> 2
+upload | a Set | by name 1 -> undefined
+upload | a Set | by name 2 -> undefined
+upload | a Set | by name 3 -> threw TypeError
+upload | a Set | by name 4 -> [2, undefined]
+upload | an Event | own -> [false, false, false]
+upload | an Event | keys -> ["isTrusted"]
+upload | an Event | for-in -> ["type"]
+upload | an Event | spread -> ["isTrusted"]
+upload | an Event | by name 0 -> undefined
+upload | an Event | by name 1 -> "click"
+upload | an Event | by name 2 -> undefined
+upload | an Event | by name 3 -> 99
+upload | an Event | by name 4 -> [undefined, "click"]
+upload | a function | own -> [false, false, true]
+upload | a function | keys -> []
+upload | a function | for-in -> []
+upload | a function | spread -> []
+upload | a function | by name 0 -> undefined
+upload | a function | by name 1 -> undefined
+upload | a function | by name 2 -> "upload"
+upload | a function | by name 3 -> 99
+upload | a function | by name 4 -> [undefined, undefined]
+upload | honest again | own -> [true, true, true]
+upload | honest again | keys -> ["size", "type", "name"]
+upload | honest again | for-in -> ["size", "type", "name"]
+upload | honest again | spread -> ["size", "type", "name"]
+upload | honest again | by name 0 -> 3
+upload | honest again | by name 1 -> "text/plain"
+upload | honest again | by name 2 -> "a.txt"
+upload | honest again | by name 3 -> 99
+upload | honest again | by name 4 -> [3, "text/plain"]
+answer | honest | own -> [true, true, true]
+answer | honest | keys -> ["status", "ok", "statusText"]
+answer | honest | for-in -> ["status", "ok", "statusText"]
+answer | honest | spread -> ["status", "ok", "statusText"]
+answer | honest | by name 0 -> 200
+answer | honest | by name 1 -> true
+answer | honest | by name 2 -> "OK"
+answer | honest | by name 3 -> [500, true]
+answer | honest | by name 4 -> [200, true]
+answer | a Response | own -> [false, false, false]
+answer | a Response | keys -> []
+answer | a Response | for-in -> ["ok", "status", "statusText"]
+answer | a Response | spread -> []
+answer | a Response | by name 0 -> 201
+answer | a Response | by name 1 -> true
+answer | a Response | by name 2 -> "Created"
+answer | a Response | by name 3 -> threw TypeError
+answer | a Response | by name 4 -> [201, true]
+answer | a Response that failed | own -> [false, false, false]
+answer | a Response that failed | keys -> []
+answer | a Response that failed | for-in -> ["ok", "status", "statusText"]
+answer | a Response that failed | spread -> []
+answer | a Response that failed | by name 0 -> 404
+answer | a Response that failed | by name 1 -> false
+answer | a Response that failed | by name 2 -> ""
+answer | a Response that failed | by name 3 -> threw TypeError
+answer | a Response that failed | by name 4 -> [404, false]
+answer | Response.error() | own -> [false, false, false]
+answer | Response.error() | keys -> []
+answer | Response.error() | for-in -> ["ok", "status", "statusText"]
+answer | Response.error() | spread -> []
+answer | Response.error() | by name 0 -> 0
+answer | Response.error() | by name 1 -> false
+answer | Response.error() | by name 2 -> ""
+answer | Response.error() | by name 3 -> threw TypeError
+answer | Response.error() | by name 4 -> [0, false]
+answer | a subclass of Response with its own status | own -> [false, false, false]
+answer | a subclass of Response with its own status | keys -> []
+answer | a subclass of Response with its own status | for-in -> ["ok", "statusText"]
+answer | a subclass of Response with its own status | spread -> []
+answer | a subclass of Response with its own status | by name 0 -> "overridden"
+answer | a subclass of Response with its own status | by name 1 -> true
+answer | a subclass of Response with its own status | by name 2 -> ""
+answer | a subclass of Response with its own status | by name 3 -> threw TypeError
+answer | a subclass of Response with its own status | by name 4 -> ["overridden", true]
+answer | a Request | own -> [false, false, false]
+answer | a Request | keys -> []
+answer | a Request | for-in -> []
+answer | a Request | spread -> []
+answer | a Request | by name 0 -> undefined
+answer | a Request | by name 1 -> undefined
+answer | a Request | by name 2 -> undefined
+answer | a Request | by name 3 -> [500, undefined]
+answer | a Request | by name 4 -> [undefined, undefined]
+answer | honest again | own -> [true, true, true]
+answer | honest again | keys -> ["status", "ok", "statusText"]
+answer | honest again | for-in -> ["status", "ok", "statusText"]
+answer | honest again | spread -> ["status", "ok", "statusText"]
+answer | honest again | by name 0 -> 200
+answer | honest again | by name 1 -> true
+answer | honest again | by name 2 -> "OK"
+answer | honest again | by name 3 -> [500, true]
+answer | honest again | by name 4 -> [200, true]
+failure | honest | own -> [true, true, true]
+failure | honest | keys -> ["name", "message", "code"]
+failure | honest | for-in -> ["name", "message", "code"]
+failure | honest | spread -> ["name", "message", "code"]
+failure | honest | by name 0 -> "Failure"
+failure | honest | by name 1 -> "it failed"
+failure | honest | by name 2 -> 0
+failure | honest | by name 3 -> ["changed", "[object Object]"]
+failure | honest | by name 4 -> ["Failure", "it failed"]
+failure | an Error | own -> [false, true, false]
+failure | an Error | keys -> []
+failure | an Error | for-in -> []
+failure | an Error | spread -> []
+failure | an Error | by name 0 -> "Error"
+failure | an Error | by name 1 -> "it broke"
+failure | an Error | by name 2 -> undefined
+failure | an Error | by name 3 -> ["changed", "Error: changed"]
+failure | an Error | by name 4 -> ["Error", "it broke"]
+failure | a RangeError | own -> [false, true, false]
+failure | a RangeError | keys -> []
+failure | a RangeError | for-in -> []
+failure | a RangeError | spread -> []
+failure | a RangeError | by name 0 -> "RangeError"
+failure | a RangeError | by name 1 -> "out of range"
+failure | a RangeError | by name 2 -> undefined
+failure | a RangeError | by name 3 -> ["changed", "RangeError: changed"]
+failure | a RangeError | by name 4 -> ["RangeError", "out of range"]
+failure | a DOMException | own -> [false, false, false]
+failure | a DOMException | keys -> []
+failure | a DOMException | for-in -> ["code", "name", "message"]
+failure | a DOMException | spread -> []
+failure | a DOMException | by name 0 -> "NotFoundError"
+failure | a DOMException | by name 1 -> "not found"
+failure | a DOMException | by name 2 -> 8
+failure | a DOMException | by name 3 -> threw TypeError
+failure | a DOMException | by name 4 -> ["NotFoundError", "not found"]
+failure | an AggregateError | own -> [false, true, false]
+failure | an AggregateError | keys -> []
+failure | an AggregateError | for-in -> []
+failure | an AggregateError | spread -> []
+failure | an AggregateError | by name 0 -> "AggregateError"
+failure | an AggregateError | by name 1 -> "many"
+failure | an AggregateError | by name 2 -> undefined
+failure | an AggregateError | by name 3 -> ["changed", "AggregateError: changed"]
+failure | an AggregateError | by name 4 -> ["AggregateError", "many"]
+failure | an error with a code | own -> [false, true, true]
+failure | an error with a code | keys -> ["code"]
+failure | an error with a code | for-in -> ["code"]
+failure | an error with a code | spread -> ["code"]
+failure | an error with a code | by name 0 -> "Error"
+failure | an error with a code | by name 1 -> "coded"
+failure | an error with a code | by name 2 -> "ECODE"
+failure | an error with a code | by name 3 -> ["changed", "Error: changed"]
+failure | an error with a code | by name 4 -> ["Error", "coded"]
+failure | a class | own -> [true, false, false]
+failure | a class | keys -> []
+failure | a class | for-in -> []
+failure | a class | spread -> []
+failure | a class | by name 0 -> "Failure"
+failure | a class | by name 1 -> undefined
+failure | a class | by name 2 -> undefined
+failure | a class | by name 3 -> ["changed", "class Failure {}"]
+failure | a class | by name 4 -> ["Failure", undefined]
+failure | honest again | own -> [true, true, true]
+failure | honest again | keys -> ["name", "message", "code"]
+failure | honest again | for-in -> ["name", "message", "code"]
+failure | honest again | spread -> ["name", "message", "code"]
+failure | honest again | by name 0 -> "Failure"
+failure | honest again | by name 1 -> "it failed"
+failure | honest again | by name 2 -> 0
+failure | honest again | by name 3 -> ["changed", "[object Object]"]
+failure | honest again | by name 4 -> ["Failure", "it failed"]

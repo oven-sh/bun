@@ -1,0 +1,104 @@
+//// damage-behind-a-call-variables/a-captured-variable-is-rewritten-below-the-call.ts
+// A function has local variables that a closure captures. It reads them, calls a function that was handed that closure long ago, and reads them again.
+let kept: ((value: any) => void) | null = null;
+let mode = 0;
+function below(): number {
+  if (mode === 1) kept!(1000);
+  else if (mode === 2) kept!("text");
+  else if (mode === 3) kept!(undefined);
+  return 1;
+}
+
+function holder(start: number): string {
+  let total: number = start;
+  kept = value => {
+    total = value;
+  };
+  const before = total + 1;
+  const got = below();
+  const after = total + 1;
+  total = 3;
+  return before + " " + got + " " + after + " " + typeof after + " " + total;
+}
+
+////= for-26	holder(round
+//// damage-behind-a-call-variables/a-function-held-in-a-variable-is-replaced-below-the-call.ts
+// A variable of the module holds a function, which typed code calls. A call in between stores another function, or something that is no function, into the variable.
+let step: (n: number) => number = n => n + 1;
+const original = step;
+let mode = 0;
+const noFunction: any = 5;
+function below(): number {
+  if (mode === 1) step = n => n * 100;
+  else if (mode === 2) step = noFunction;
+  return 1;
+}
+
+function holder(n: number): string {
+  const before = step(n);
+  const got = below();
+  let after: string;
+  try {
+    after = "" + step(n);
+  } catch (error) {
+    after = (error as Error).name;
+  }
+  return before + " " + got + " " + after;
+}
+
+for (let round = 0; round < 300; round++) {
+  mode = round % 100 === 99 ? (round + 1) / 100 : 0;
+  const line = holder(round);
+  step = original;
+  if (mode || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-variables/a-module-variable-is-rewritten-below-the-call.ts
+// A typed function reads variables of the module, makes a call and reads them again. Below the call they get other values: ones that fit their types, from typed code and through a closure that was handed out, and ones that do not.
+let count: number = 0;
+let label: string = "start";
+let flag: boolean = false;
+let mode = 0;
+
+const setters: any = {
+  count: (value: any) => {
+    count = value;
+  },
+  label: (value: any) => {
+    label = value;
+  },
+  flag: (value: any) => {
+    flag = value;
+  },
+};
+
+function below(): number {
+  if (mode === 1) {
+    count = count + 1000;
+    label = "typed";
+    flag = !flag;
+  } else if (mode === 2) {
+    setters.count(7);
+    setters.label("by a closure");
+    setters.flag(true);
+  } else if (mode === 3) {
+    setters.count("seven");
+    setters.label(7);
+    setters.flag("yes");
+  }
+  return 1;
+}
+
+function holder(): string {
+  const before = count + 1 + "," + label.length + "," + (flag ? "on" : "off");
+  const got = below();
+  return before + " " + got + " " + (count + 1) + "," + label.length + "," + (flag ? "on" : "off") + "," + (flag === true);
+}
+
+for (let round = 0; round < 400; round++) {
+  mode = round % 100 === 99 ? (round + 1) / 100 : 0;
+  count = round;
+  label = "start";
+  flag = false;
+  const line = holder();
+  if (mode || round === 0) console.log(round + ": " + line);
+}

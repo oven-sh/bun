@@ -1,0 +1,1 @@
+{ "skipInShell": "it asks for Bun.peek, which the jsc shell does not provide" }

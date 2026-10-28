@@ -1,0 +1,2 @@
+object
+function base base 0

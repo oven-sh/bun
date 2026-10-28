@@ -1,0 +1,24 @@
+import express from "express";
+import jwt from "jsonwebtoken";
+import http from "node:http";
+import passport from "passport";
+import { ExtractJwt, Strategy } from "passport-jwt";
+import { listen } from "./lib_http.ts";
+
+passport.use(new Strategy({ jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(), secretOrKey: "smoke-key" }, (payload: { sub: string }, done) => done(null, payload.sub === "ada" ? { name: payload.sub } : false)));
+const app = express();
+app.use(express.json());
+app.use(passport.initialize());
+app.get("/me", passport.authenticate("jwt", { session: false }), (request, response) => { response.json(request.user); });
+app.post("/echo/:id", (request, response) => { response.status(201).json({ id: request.params.id, body: request.body, query: request.query }); });
+app.use((error: Error, _request: express.Request, response: express.Response, _next: express.NextFunction) => { response.status(500).json({ error: error.message }); });
+const server = http.createServer(app);
+const base = `http://127.0.0.1:${await listen(server)}`;
+const me = (token: string) => fetch(base + "/me", { headers: { authorization: "Bearer " + token } });
+console.log(await (await me(jwt.sign({ sub: "ada" }, "smoke-key"))).text());
+console.log((await me(jwt.sign({ sub: "eve" }, "smoke-key"))).status, (await me(jwt.sign({ sub: "ada" }, "other-key"))).status);
+const echoed = await fetch(base + "/echo/7?a=1&b=2", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ x: [1, 2] }) });
+console.log(echoed.status, await echoed.text());
+console.log((await fetch(base + "/echo/7", { method: "POST", headers: { "content-type": "application/json" }, body: "{broken" })).status);
+server.close();
+console.log("DONE");

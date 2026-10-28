@@ -647,7 +647,7 @@ impl Services<'_, '_, '_> {
     }
 
     /// `getTypeFromTypeNode` for a node that satisfies `isPartOfTypeNode`.
-    fn type_of_part_of_type_node(&mut self, node: NodeRef) -> TypeId {
+    pub(super) fn type_of_part_of_type_node(&mut self, node: NodeRef) -> TypeId {
         let Some((hir, at)) = self.valid(node) else {
             return TypeId::ERROR;
         };

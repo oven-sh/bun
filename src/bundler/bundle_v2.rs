@@ -15,6 +15,7 @@ use bun_core::ThreadLock;
 pub use bv2_impl::api;
 pub use bv2_impl::bake_types;
 pub use bv2_impl::dispatch;
+pub(crate) use bv2_impl::write_metafile_output;
 pub use bv2_impl::{
     CompileResult, CompileResultForSourceMap, CompileResultForSourceMapColumns, ContentHasher,
     EventLoop, ImportTracker, PartRange, StableRef, WrapKind, generic_path_with_pretty_initialized,
@@ -1117,6 +1118,12 @@ pub mod bv2_impl {
                 }
             }
 
+            #[derive(Copy, Clone)]
+            pub enum RequestOwner {
+                Bundle,
+                Waiter(core::ptr::NonNull<crate::aot::plugins::PluginWaiter>),
+            }
+
             /// Both `js_task` and `task`
             /// are the real lower-tier `bun_event_loop` types, so `dispatch()` /
             /// `run_on_js_thread()` are implemented inherently (no T6 hook).
@@ -1124,6 +1131,7 @@ pub mod bv2_impl {
                 pub bv2: *mut BundleV2<'static>,
                 pub import_record: MiniImportRecord,
                 pub value: ResolveValue,
+                pub owner: RequestOwner,
                 /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue.
                 pub(crate) task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
             }
@@ -1133,6 +1141,7 @@ pub mod bv2_impl {
                     bv2: core::ptr::null_mut(),
                     import_record: MiniImportRecord::default(),
                     value: ResolveValue::Pending,
+                    owner: RequestOwner::Bundle,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
                 }
@@ -1183,6 +1192,7 @@ pub mod bv2_impl {
                     bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
                     import_record: record,
                     value: ResolveValue::Pending,
+                    owner: RequestOwner::Bundle,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
                 }
@@ -1266,6 +1276,7 @@ pub mod bv2_impl {
                 pub path: Box<[u8]>,
                 pub(crate) namespace: Box<[u8]>,
                 pub value: LoadValue,
+                pub owner: RequestOwner,
                 pub parse_task: bun_ptr::BackRef<ParseTask<'static>, bun_ptr::Mut>,
                 /// Defer may only be called once.
                 pub called_defer: bool,
@@ -1298,6 +1309,7 @@ pub mod bv2_impl {
                     source_index: parse.source_index,
                     default_loader,
                     value: LoadValue::Pending,
+                    owner: RequestOwner::Bundle,
                     path: parse.path.text.to_vec().into_boxed_slice(),
                     namespace: parse.path.namespace.to_vec().into_boxed_slice(),
                     called_defer: false,
@@ -1425,7 +1437,9 @@ pub mod bv2_impl {
                 }
             }
             impl LoadDeferred {
+                #[inline(never)]
                 pub fn run(&mut self) {
+                    bun_removable_features::removable_definition!(Bundler, Self::run);
                     // SAFETY: `bv2` is a live backref set in `Load::init`.
                     let bv2 = unsafe { &mut *self.0.bv2 };
                     BundleV2::on_notify_defer(&mut self.0, bv2);
@@ -2643,7 +2657,7 @@ pub mod bv2_impl {
         }
 
         /// Callers require an entry point, so none after parsing means one was dropped without an error.
-        fn fail_if_no_entry_points(&self) -> Result<(), Error> {
+        pub(crate) fn fail_if_no_entry_points(&self) -> Result<(), Error> {
             if !self.graph.entry_points.is_empty() {
                 return Ok(());
             }
@@ -3259,7 +3273,10 @@ pub mod bv2_impl {
                 "resolve_entry_point rejects disabled results and FileMap results have a path",
             );
 
-            path.assert_file_path_is_absolute();
+            // The path of a file in memory is its key in `files`, as the caller wrote it.
+            if !self.file_map.is_some_and(|files| files.contains(path.text)) {
+                path.assert_file_path_is_absolute();
+            }
             // borrowck: get-then-put instead of a single get-or-put.
             if self
                 .path_to_source_index_map(target)
@@ -3331,6 +3348,30 @@ pub mod bv2_impl {
 
         /// `heap` is not freed when `deinit`ing the BundleV2
         pub fn init(
+            transpiler: &'a mut Transpiler<'a>,
+            bake_options: Option<BakeOptions<'a>>,
+            alloc: &bun_alloc::Arena,
+            event_loop: EventLoop,
+            cli_watch_flag: bool,
+            thread_pool: Option<NonNull<ThreadPoolLib>>,
+            heap: &'a ThreadLocalArena,
+        ) -> Result<Box<BundleV2<'a>>, Error> {
+            let this = Self::init_without_starting_threads(
+                transpiler,
+                bake_options,
+                alloc,
+                event_loop,
+                cli_watch_flag,
+                thread_pool,
+                heap,
+            )?;
+            // `Graph::pool` wraps the `BackRef` deref; `start()` takes `&self`.
+            this.graph.pool().start();
+            Ok(this)
+        }
+
+        /// Like `init`, for a bundle that may have nothing to parse: the pool starts each thread when there is a task for it.
+        pub fn init_without_starting_threads(
             transpiler: &'a mut Transpiler<'a>,
             bake_options: Option<BakeOptions<'a>>,
             _alloc: &bun_alloc::Arena,
@@ -3568,8 +3609,6 @@ pub mod bv2_impl {
                 // via this extern hook and writes `bun_watcher`.
                 dispatch::enable_hot_module_reloading_for_bundler(core::ptr::from_mut(&mut *this));
             }
-            // `Graph::pool` wraps the `BackRef` deref; `start()` takes `&self`.
-            this.graph.pool().start();
             Ok(this)
         }
 
@@ -3616,7 +3655,12 @@ pub mod bv2_impl {
             self.on_after_decrement_scan_counter();
         }
 
+        #[inline(never)]
         pub(crate) fn on_after_decrement_scan_counter(&mut self) {
+            bun_removable_features::removable_definition!(
+                Bundler,
+                Self::on_after_decrement_scan_counter
+            );
             if self.asynchronous && self.is_done() {
                 let dev = self
                     .dev_server
@@ -3911,7 +3955,7 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        fn clone_ast(&mut self) -> Result<(), Error> {
+        pub(crate) fn clone_ast(&mut self) -> Result<(), Error> {
             let _trace = crate::perf::trace("Bundler.cloneAST");
             self.linker.graph.ast = self.graph.ast.clone()?;
 
@@ -5005,6 +5049,13 @@ pub mod bv2_impl {
         }
 
         pub fn on_load_async(&mut self, load: &mut jsc_api::JSBundler::Load) {
+            if let jsc_api::JSBundler::RequestOwner::Waiter(waiter) = load.owner {
+                let value = load.value.consume();
+                // SAFETY: `aot::plugins` frees no waiter before the build shuts down, and that waits
+                // for this call, the one answer of the request.
+                unsafe { waiter.as_ref() }.answer_load(value);
+                return;
+            }
             // Dispatch to the loop that *owns* `BundleV2`.
             // For `Bun.build` this is a Mini loop running on the bundler thread, so
             // `on_load` must land there — not on the JS plugin loop — or it will
@@ -5041,6 +5092,12 @@ pub mod bv2_impl {
         }
 
         pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
+            if let jsc_api::JSBundler::RequestOwner::Waiter(waiter) = resolve.owner {
+                let value = resolve.value.consume();
+                // SAFETY: as in `on_load_async`.
+                unsafe { waiter.as_ref() }.answer_resolve(value);
+                return;
+            }
             // See `on_load_async` — must dispatch on the bundler's own loop.
             match self.any_loop_mut() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
@@ -5087,7 +5144,13 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
+        #[inline(never)]
         pub(crate) fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
+            bun_removable_features::removable_definition!(Bundler, Self::on_load);
+            debug_assert!(matches!(
+                load.owner,
+                jsc_api::JSBundler::RequestOwner::Bundle
+            ));
             if load.deferred_in.take() == Some(this.graph.defer_epoch) {
                 // Answered while `.defer()`red and before that batch was drained (cancelled, or a plugin
                 // that did not wait): its unit is still parked in `deferred_pending`; move it back so this
@@ -5309,7 +5372,13 @@ pub mod bv2_impl {
             self.graph.pending_items += u32::try_from(scheduled).expect("int cast");
         }
 
+        #[inline(never)]
         pub(crate) fn on_resolve(resolve: &mut jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
+            bun_removable_features::removable_definition!(Bundler, Self::on_resolve);
+            debug_assert!(matches!(
+                resolve.owner,
+                jsc_api::JSBundler::RequestOwner::Bundle
+            ));
             // RAII guard captures `this`
             // as a raw pointer so it does not hold a unique borrow across the body.
             let _dec_guard = this.decrement_scan_counter_on_drop();
@@ -5879,7 +5948,7 @@ pub mod bv2_impl {
 
     /// Writes a metafile (JSON or markdown) to disk and appends it to the output_files list.
     /// Metafile paths are relative to outdir, like all other output files.
-    fn write_metafile_output(
+    pub(crate) fn write_metafile_output(
         output_files: &mut Vec<options::OutputFile>,
         outdir: &[u8],
         file_path: &[u8],
@@ -7721,16 +7790,22 @@ pub mod bv2_impl {
         /// A load handed to the plugins called `.defer()`: its scan-counter unit is parked in
         /// `deferred_pending` until the deferred batch runs or its answer arrives. Bundle thread.
         pub fn on_notify_defer(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
+            debug_assert!(matches!(
+                load.owner,
+                jsc_api::JSBundler::RequestOwner::Bundle
+            ));
             this.thread_lock.assert_locked();
             load.deferred_in = Some(this.graph.defer_epoch);
             this.graph.deferred_pending += 1;
             this.decrement_scan_counter();
         }
 
+        #[inline(never)]
         pub(crate) fn on_parse_task_complete(
             parse_result: &mut parse_task::Result<'a>,
             this: &mut BundleV2<'a>,
         ) {
+            bun_removable_features::removable_definition!(Bundler, Self::on_parse_task_complete);
             let _trace = crate::perf::trace("Bundler.onParseTaskComplete");
             // Borrowck rejects holding a `&this.graph` alias
             // across the `this.*` method calls below (each takes
@@ -8329,7 +8404,7 @@ pub mod bv2_impl {
         }
         pub(crate) fn write_ints(&mut self, i: &[u32]) {
             bun_core::scoped_log!(ContentHasher, "HASH_UPDATE: {:?}\n", i);
-            self.hasher.update(bytemuck::cast_slice::<u32, u8>(i));
+            self.hasher.update(bun_core::slice_as_bytes(i));
         }
         pub(crate) fn digest(&self) -> u64 {
             self.hasher.digest()

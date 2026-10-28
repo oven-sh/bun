@@ -549,6 +549,20 @@ describe("FileHandle", () => {
           for await (const chunk of stream) result.result += chunk.length;
           return result;
         },
+        // graceful-fs replaces open() like this.
+        "fs.createReadStream with its own open()": async () => {
+          const result = { fd: null, result: 0 };
+          const stream = fs.createReadStream("data.txt").on("open", fd => (result.fd = fd));
+          stream.open = function () {
+            fs.open(this.path, this.flags, this.mode, (err, fd) => {
+              if (err) return this.destroy(err);
+              this.fd = fd;
+              this.emit("open", fd);
+            });
+          };
+          for await (const chunk of stream) result.result += chunk.length;
+          return result;
+        },
         "fs.createWriteStream": async () => {
           const result = { fd: null, result: 0 };
           const { promise, resolve, reject } = Promise.withResolvers();
@@ -620,6 +634,7 @@ describe("FileHandle", () => {
         "handle.createReadStream": { fd: 0, result: 4, fd0Afterwards: "EBADF" },
         "handle.createWriteStream": { fd: 0, result: 1, fd0Afterwards: "EBADF" },
         "fs.createReadStream": { fd: 0, result: 4, fd0Afterwards: "EBADF" },
+        "fs.createReadStream with its own open()": { fd: 0, result: 4, fd0Afterwards: "EBADF" },
         "fs.createWriteStream": { fd: 0, result: 1, fd0Afterwards: "EBADF" },
       },
       stderr: "",

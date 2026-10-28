@@ -436,8 +436,12 @@ impl IOReader {
         let interp = s.interp;
         // A delivery that nests in another one (a done starts a `cat` whose reader fails to start) gets its own range.
         let base = s.delivering.len();
-        let mut ended = core::mem::take(&mut s.readers);
-        s.delivering.append(&mut ended);
+        if base == 0 {
+            core::mem::swap(&mut s.delivering, &mut s.readers);
+        } else {
+            let mut ended = core::mem::take(&mut s.readers);
+            s.delivering.append(&mut ended);
+        }
         let end = s.delivering.len();
         let done = |r| dispatch_reader_done(r, err.map(sys::Error::to_shell_system_error), interp);
         let nested = if return_last {

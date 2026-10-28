@@ -152,28 +152,31 @@ pairs, which is what Bun used before this crate.
 |                               | Cascade Lake |      |      | Emerald Rapids |      |      |
 | ----------------------------- | ------------ | ---- | ---- | -------------- | ---- | ---- |
 | value                         | before       | now  | C    | before         | now  | C    |
-| 64 characters of up to 8 bits | 197          | 134  | 180  | 123            | 86   | 132  |
-| 100                           | 283          | 187  | 222  | 184            | 128  | 162  |
-| 200                           | 502          | 313  | 351  | 333            | 215  | 250  |
-| 500                           | 1179         | 709  | 698  | 766            | 473  | 514  |
-| 1000                          | 2361         | 1336 | 1287 | 1500           | 926  | 998  |
-| 4000                          | 9213         | 5118 | 4924 | 5916           | 3553 | 3530 |
-| 300, 1 in 20 of 10 to 15 bits | 780          | 440  | 467  | 538            | 314  | 377  |
-| 1000 printable, at random     | 3292         | 2039 | 2011 | 2383           | 1480 | 1560 |
-| 1000 bytes, sent as they are  | 462          | 467  | 2098 | 340            | 339  | 1601 |
+| 64 characters of up to 8 bits | 198          | 137  | 187  | 123            | 86   | 132  |
+| 100                           | 282          | 185  | 236  | 184            | 128  | 162  |
+| 200                           | 503          | 311  | 352  | 333            | 215  | 250  |
+| 500                           | 1180         | 713  | 711  | 766            | 473  | 514  |
+| 1000                          | 2362         | 1361 | 1329 | 1500           | 926  | 998  |
+| 4000                          | 9221         | 5157 | 5007 | 5916           | 3553 | 3530 |
+| 300, 1 in 20 of 10 to 15 bits | 781          | 452  | 492  | 538            | 314  | 377  |
+| 1000 printable, at random     | 3308         | 2066 | 2081 | 2383           | 1480 | 1560 |
+| 1000 bytes, sent as they are  | 457          | 456  | 1998 | 340            | 339  | 1601 |
 
 Why 64: groups are faster from 21 bytes on if everything is in the cache, by 5 to 15% up to 48 and
-by 30% at 64. They are more code and 6 more cache lines of table. One string literal on Emerald
-Rapids, other strings every time, against the loop alone:
+by 30% at 64. They are more code and 6 more cache lines of table. One string literal, other strings
+every time, against the loop alone:
 
-| characters                               | 64   | 100  | 200  | 500  | 1000 | 4000 |
-| ---------------------------------------- | ---- | ---- | ---- | ---- | ---- | ---- |
-| in a loop                                | 0.69 | 0.62 | 0.63 | 0.59 | 0.59 | 0.58 |
-| 512 KB touched in between (L1 is cold)   | 0.89 | 0.84 | 0.76 | 0.66 | 0.63 | 0.58 |
-| 8 MB touched in between (L2 is cold too) | 1.28 | 1.22 | 1.16 | 1.01 | 0.84 | 0.65 |
+| characters                                        | 64   | 100  | 200  | 500  | 1000 | 4000 |
+| ------------------------------------------------- | ---- | ---- | ---- | ---- | ---- | ---- |
+| Cascade Lake, in a loop                           | 0.71 | 0.70 | 0.67 | 0.67 | 0.64 | 0.64 |
+| 512 KB touched in between (L1 is cold)            | 0.80 | 0.80 | 0.75 | 0.69 | 0.67 | 0.65 |
+| 8 MB touched in between (L2 is cold too)          | 1.05 | 1.01 | 0.93 | 0.85 | 0.76 | 0.66 |
+| Emerald Rapids, in a loop                         | 0.69 | 0.62 | 0.63 | 0.59 | 0.59 | 0.58 |
+| 512 KB touched in between                         | 0.89 | 0.84 | 0.76 | 0.66 | 0.63 | 0.58 |
+| 8 MB touched in between, on a host with a slow L3 | 1.28 | 1.22 | 1.16 | 1.01 | 0.84 | 0.65 |
 
-The last row is 140 to 200 ns, once per string. The C code takes twice as long as the loop there, up
-to 2000 characters: it has a cache miss for every other character.
+The last row is 140 to 200 ns, once per string. The C code takes two to four times as long as the
+loop there, up to 2000 characters: it has a cache miss for every other character.
 
 What else was tried for long strings, 1000 characters, against the loop alone, on Emerald Rapids.
 

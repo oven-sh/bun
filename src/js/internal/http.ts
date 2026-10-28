@@ -120,7 +120,7 @@ function clearServerParserIncoming(parser, req) {
   if (parser.incoming === req) parser.incoming = null;
 }
 // One microtask a request, in their order, and no function object for each.
-const requestsAtTheirEnd: any[] = [];
+let requestsAtTheirEnd;
 function emitEOFOfNextRequest() {
   emitEOFIncomingMessageOuter(requestsAtTheirEnd.shift());
 }
@@ -164,7 +164,7 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
       if (chunk) {
         // Node's parser runs the promise jobs of the last chunk's 'data' listeners before parserOnMessageComplete pushes the EOF.
         this[eofInProgress] = true;
-        requestsAtTheirEnd.push(this);
+        (requestsAtTheirEnd ??= new (require("internal/fifo"))()).push(this);
         queueMicrotask(emitEOFOfNextRequest);
       } else {
         emitEOFIncomingMessage(this);

@@ -1630,6 +1630,8 @@ struct Commands {
     sparse_after: usize,
     /// How many literals without a match it takes for that.
     spree: usize,
+    /// Every 4 bytes in a row so far. Only a copy repeats any, so the table of the encoder finds nothing else.
+    seen: std::collections::HashSet<[u8; 4]>,
 }
 
 impl Commands {
@@ -1647,31 +1649,62 @@ impl Commands {
         position == target
     }
 
-    /// A byte with which no copy from one of the last distances starts or goes on.
+    /// Adds a byte. `false`, and it is taken back, if that repeats 4 bytes and `new` is set.
+    fn push(&mut self, byte: u8, new: bool) -> bool {
+        self.data.push(byte);
+        let Some(&last) = self.data.last_chunk() else { return true };
+        if !self.seen.insert(last) && new {
+            self.data.pop();
+            return false;
+        }
+        true
+    }
+
+    /// Takes back bytes none of which was part of a copy of 4 bytes or more.
+    fn truncate(&mut self, len: usize) {
+        while self.data.len() > len {
+            if let Some(last) = self.data.last_chunk() {
+                self.seen.remove(last);
+            }
+            self.data.pop();
+        }
+    }
+
+    /// A byte with which no copy from one of the last distances, or from up to 3 more or less, starts or goes on.
     fn literal(&mut self, rng: &mut Rng) {
-        let at = self.data.len();
         loop {
             let byte = rng.next() as u8;
-            if self.last.iter().all(|&d| d > at || self.data[at - d] != byte) {
-                self.data.push(byte);
+            if !self.data.iter().rev().take(14).any(|&b| b == byte) && self.push(byte, true) {
                 return;
             }
         }
     }
 
+    /// All of `bytes`, or none of them and `false`.
+    fn word(&mut self, bytes: &[u8]) -> bool {
+        let at = self.data.len();
+        if self.last.iter().any(|&d| self.data[at - d] == bytes[0]) || !bytes.iter().all(|&b| self.push(b, true)) {
+            self.truncate(at);
+            return false;
+        }
+        true
+    }
+
     /// `length` bytes from the last distance, or from the one before. `false`, and nothing is added, if both have the same
-    /// byte there.
+    /// byte there, or if the bytes before and the first ones of the copy were there before.
     fn copy(&mut self, length: usize, second: bool) -> bool {
         let at = self.data.len();
         if at < self.last[0].max(self.last[1]) || self.data[at - self.last[0]] == self.data[at - self.last[1]] {
             return false;
         }
-        if second {
-            self.last.swap(0, 1);
-        }
+        let distance = self.last[usize::from(second)];
         for i in at..at + length {
-            self.data.push(self.data[i - self.last[0]]);
+            if !self.push(self.data[i - distance], i < at + 3) {
+                self.truncate(at);
+                return false;
+            }
         }
+        self.last = [distance, self.last[usize::from(!second)]];
         self.sparse_after = at + 2 * length + self.spree;
         true
     }
@@ -1692,7 +1725,7 @@ pub fn run_commands(seed0: u64, iters: u64, qualities: u64) {
         let mut rng = Rng(seed);
         let q = *rng.pick(&qs);
         let spree = if q < 9 { 64 } else { 512 };
-        let mut c = Commands { data: Vec::new(), last: [4, 11], sparse_after: spree, spree };
+        let mut c = Commands { data: Vec::new(), last: [4, 11], sparse_after: spree, spree, seen: Default::default() };
         // The codes of the insert and the copy length, and whether the distance is the last one. That only makes another
         // symbol of it if both lengths are short.
         let mut plan: Vec<(usize, usize, bool)> = (0..24 * 24).map(|i| (i / 24, i % 24, false)).collect();
@@ -1704,7 +1737,7 @@ pub fn run_commands(seed0: u64, iters: u64, qualities: u64) {
         let first = plan.iter().position(|p| p.0 == 9).unwrap();
         let n = plan.len();
         plan.swap(first, n - 1);
-        let mut with_word = 0;
+        let mut with_word = 0usize;
         let mut failures = 0;
         while let Some((insert, copy, last)) = plan.pop() {
             let start = c.data.len();
@@ -1718,8 +1751,10 @@ pub fn run_commands(seed0: u64, iters: u64, qualities: u64) {
             let length = COPY_BASE[copy] + rng.below(1 << COPY_EXTRA[copy].min(4));
             if !c.copy(length, !last) {
                 // Later, after other bytes.
-                c.data.truncate(start);
-                plan.insert(rng.below(plan.len() + 1), (insert, copy, last));
+                c.truncate(start);
+                // The first one at once: after many literals the encoder has given up on the dictionary.
+                let at = if start == 0 { plan.len() } else { rng.below(plan.len() + 1) };
+                plan.insert(at, (insert, copy, last));
                 // Fewer than 4 literals leave the bytes at both distances as they are. One more command brings others.
                 if plan.iter().all(|p| p.0 < 4) {
                     plan.push((9, 0, false));
@@ -1729,18 +1764,19 @@ pub fn run_commands(seed0: u64, iters: u64, qualities: u64) {
                 continue;
             }
             // While the encoder still looks words up.
-            while with_word < 16 {
+            while with_word < 18 {
                 let at = c.data.len();
                 let &(len, index) = rng.pick(&words[q as usize]);
-                let word = crate::grammar::dictionary_word(len, index, 0);
-                if c.last.iter().any(|&d| c.data[at - d] == word[0]) {
+                if !c.word(&crate::grammar::dictionary_word(len, index, 0)) {
                     continue;
                 }
-                c.data.extend_from_slice(&word);
-                if c.copy(COPY_BASE[with_word] + rng.below(1 << COPY_EXTRA[with_word]), false) {
+                // About 1 word in 16 is not found whole, and a literal is left. The encoder counts up to 5 symbols that it has
+                // not used as used once, but not the first of all, so that one gets three words.
+                let copy = with_word.saturating_sub(2);
+                if c.copy(COPY_BASE[copy] + rng.below(1 << COPY_EXTRA[copy]), false) {
                     with_word += 1;
                 } else {
-                    c.data.truncate(at);
+                    c.truncate(at);
                 }
             }
         }

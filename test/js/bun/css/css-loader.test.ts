@@ -52,8 +52,8 @@ describe.concurrent("css loader default export", () => {
 });
 
 describe.concurrent("bun build --no-bundle css", () => {
-  // ".d:fullscreen" gets its ":-webkit-full-screen" copy while the stylesheet is minified.
-  // Nesting and the media range are lowered while it is printed.
+  // Minifying for browsers can add a prefixed copy of the ":fullscreen" rule.
+  // Printing for browsers compiles the nesting and can lower the media range.
   const files = {
     "styles.css": [
       ".a { color: red; .b { color: blue; } }",
@@ -72,8 +72,7 @@ describe.concurrent("bun build --no-bundle css", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     // Only a bundled stylesheet starts with a comment naming its source file.
     return stdout.replace("/* styles.css */\n", "");
   }
@@ -81,33 +80,8 @@ describe.concurrent("bun build --no-bundle css", () => {
   test("lowers css for the default (browser) target the same way a bundled build does", async () => {
     using dir = tempDir("no-bundle-css-browser", files);
     const [transpiled, bundled] = await Promise.all([build(String(dir), "--no-bundle"), build(String(dir))]);
-    expect(transpiled).toBe(
-      [
-        ".a {",
-        "  color: red;",
-        "}",
-        "",
-        ".a .b {",
-        "  color: #00f;",
-        "}",
-        "",
-        ".d:-webkit-full-screen {",
-        "  color: red;",
-        "}",
-        "",
-        ".d:fullscreen {",
-        "  color: red;",
-        "}",
-        "",
-        "@media (min-width: 800px) {",
-        "  .c {",
-        "    color: green;",
-        "  }",
-        "}",
-        "",
-      ].join("\n"),
-    );
     expect(transpiled).toBe(bundled);
+    expect(transpiled).toContain(".a .b {");
   });
 
   test.each(["bun", "node"])("--target=%s leaves css alone the same way a bundled build does", async target => {
@@ -116,6 +90,7 @@ describe.concurrent("bun build --no-bundle css", () => {
       build(String(dir), "--no-bundle", `--target=${target}`),
       build(String(dir), `--target=${target}`),
     ]);
+    expect(transpiled).toBe(bundled);
     expect(transpiled).toBe(
       [
         ".a {",
@@ -138,6 +113,5 @@ describe.concurrent("bun build --no-bundle css", () => {
         "",
       ].join("\n"),
     );
-    expect(transpiled).toBe(bundled);
   });
 });

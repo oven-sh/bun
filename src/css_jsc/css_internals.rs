@@ -270,7 +270,7 @@ pub(crate) fn attr_test<'a>(
                     minify,
                     ..Default::default()
                 },
-                targets,
+                &targets,
                 Some(ImportRecordHandler::init_outside_of_bundler(
                     &import_records,
                 )),

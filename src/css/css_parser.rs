@@ -2531,7 +2531,7 @@ mod stylesheet_impl {
                 bun_alloc::ArenaVec::new_in(arena),
                 writer,
                 options,
-                self.targets,
+                &self.targets,
                 import_info,
                 local_names,
                 symbols,
@@ -2796,7 +2796,7 @@ mod stylesheet_impl {
             &'a self,
             arena: &'a Bump,
             options: &PrinterOptions<'a>,
-            targets: Targets,
+            targets: &Targets,
             import_info: Option<ImportInfo<'a>>,
         ) -> Result<ToCssResult, PrintErr> {
             // #[cfg(feature = "sourcemap")]

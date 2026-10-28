@@ -1038,7 +1038,7 @@ fn debug_css_order_impl(
                     bun_alloc::ArenaVec::new_in(&arena),
                     &mut writer,
                     &PrinterOptions::default(),
-                    Targets::default(),
+                    &Targets::default(),
                     Some(ImportInfo {
                         import_records: &entry.condition_import_records,
                         ast_urls_for_css,

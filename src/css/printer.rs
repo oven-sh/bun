@@ -256,7 +256,7 @@ impl<'a> Printer<'a> {
         scratchbuf: BumpVec<'a, u8>,
         dest: &'a mut dyn Write,
         options: &PrinterOptions<'a>,
-        targets: Targets,
+        targets: &Targets,
         import_info: Option<ImportInfo<'a>>,
         local_names: Option<&'a css::LocalsResultsMap>,
         symbols: &'a SymbolMap,
@@ -265,7 +265,7 @@ impl<'a> Printer<'a> {
             sources: None,
             dest,
             minify: options.minify,
-            targets,
+            targets: *targets,
             dependencies: if options.analyze_dependencies.is_some() {
                 Some(BumpVec::new_in(arena))
             } else {

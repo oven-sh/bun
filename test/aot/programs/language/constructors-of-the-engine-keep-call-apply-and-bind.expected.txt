@@ -1,0 +1,14 @@
+Error | TypeError, false, TypeError, false, false, TypeError, true | object | false false 1 true
+RangeError | TypeError, false, TypeError, false, false, TypeError, true | object | false false 1 true
+AggregateError | TypeError, false, TypeError, false, false, TypeError, true | object | false false 1 true
+Function | TypeError, false, TypeError, false, false, TypeError, true | function | false false 1 true
+WeakRef | TypeError, false, TypeError, false, false, TypeError, true | TypeError | false false 1 true
+FinalizationRegistry | TypeError, false, TypeError, false, false, TypeError, true | TypeError | false false 1 true
+DataView | TypeError, false, TypeError, false, false, TypeError, true | TypeError | false false 1 true
+Intl.Collator | TypeError, false, TypeError, false, false, TypeError, true | object | false false 1 true
+Iterator | TypeError, false, TypeError, false, false, TypeError, true | TypeError | false false 1 true
+DisposableStack | TypeError, false, TypeError, false, false, TypeError, true | TypeError | false false 1 true
+7
+planted ran 2 true true true
+true
+planted ran a name

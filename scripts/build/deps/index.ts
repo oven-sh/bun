@@ -4,7 +4,7 @@
  * Order matters for two reasons:
  *   1. `fetchDeps` relationships — a dep with fetchDeps must come AFTER the
  *      deps it references, so the referenced .ref stamp node exists in ninja
- *      when we add order-only edges to it. (zlib before libarchive.)
+ *      when we add order-only edges to it. (zlib before libspng.)
  *   2. Link order — when these libs hit the final link line, static linking
  *      resolves left-to-right. Deps that PROVIDE symbols should come after
  *      deps that USE them. This list becomes the link order.
@@ -14,9 +14,7 @@ import type { Dependency } from "../source.ts";
 import { boringssl } from "./boringssl.ts";
 import { brotli } from "./brotli.ts";
 import { cares } from "./cares.ts";
-import { hdrhistogram } from "./hdrhistogram.ts";
 import { highway } from "./highway.ts";
-import { libarchive } from "./libarchive.ts";
 import { libdeflate } from "./libdeflate.ts";
 import { libjpegTurbo } from "./libjpeg-turbo.ts";
 import { libspng } from "./libspng.ts";
@@ -29,6 +27,7 @@ import { lsquic } from "./lsquic.ts";
 import { mimalloc } from "./mimalloc.ts";
 import { nodejsHeaders } from "./nodejs-headers.ts";
 import { picohttpparser } from "./picohttpparser.ts";
+import { rustArgon2 } from "./rust-argon2.ts";
 import { sqlite } from "./sqlite.ts";
 import { tinycc } from "./tinycc.ts";
 import { webkit } from "./webkit.ts";
@@ -38,7 +37,7 @@ import { zstd } from "./zstd.ts";
 /**
  * All deps in dependency-resolution + link order.
  *
- * zlib FIRST — libarchive's fetchDeps references it.
+ * zlib FIRST — libspng's and lsquic's fetchDeps reference it.
  * brotli libs in internal dep order (common last on link line).
  * boringssl near the end — many things depend on crypto/ssl symbols.
  */
@@ -51,16 +50,15 @@ export const allDeps: readonly Dependency[] = [
   zstd,
   brotli,
   libdeflate,
-  libarchive,
   // Image codecs — libspng has fetchDeps:["zlib"], so after zlib.
   libjpegTurbo,
   libspng,
   libwebp,
   cares,
-  hdrhistogram,
   highway,
   libuv,
   lolhtml,
+  rustArgon2,
   lshpack,
   lsqpack,
   mimalloc,
@@ -81,9 +79,7 @@ export {
   boringssl,
   brotli,
   cares,
-  hdrhistogram,
   highway,
-  libarchive,
   libdeflate,
   libjpegTurbo,
   libspng,
@@ -96,6 +92,7 @@ export {
   mimalloc,
   nodejsHeaders,
   picohttpparser,
+  rustArgon2,
   sqlite,
   tinycc,
   webkit,

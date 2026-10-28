@@ -1,0 +1,1 @@
+{"skipInShell": "it uses require(), which the jsc shell does not have"}

@@ -1,0 +1,32 @@
+null.p: TypeError: null is not an object (evaluating 'null.p')
+null[0]: TypeError: null is not an object (evaluating 'null[0]')
+null["k"]: TypeError: null is not an object (evaluating 'null.k')
+null[key]: TypeError: null is not an object
+null.p = 1: TypeError: null is not an object (evaluating 'null.p')
+null?.p: no error, undefined
+null?.[0]: no error, undefined
+undefined.p: TypeError: undefined is not an object (evaluating 'undefined.p')
+undefined[0]: TypeError: undefined is not an object (evaluating 'undefined[0]')
+undefined["k"]: TypeError: undefined is not an object (evaluating 'undefined.k')
+undefined[key]: TypeError: undefined is not an object
+undefined.p = 1: TypeError: undefined is not an object (evaluating 'undefined.p')
+undefined?.p: no error, undefined
+undefined?.[0]: no error, undefined
+null!: no error, null
+undefined!: no error, undefined
+0!: no error, 0
+""!: no error, ""
+pick(0)!: no error, null
+pick(1)!: no error, undefined
+pick(2)!: no error, 0
+pick(3)!: no error, ""
+count = 5 by name: no error, undefined
+typed read of count: no error, 5
+count = "many" by name: no error, undefined
+typed read of count: no error, "many"
+untyped read of count: no error, "many"
+label = "some" by key: no error, undefined
+typed read of label: no error, "some"
+label = 7 by key: no error, undefined
+typed read of label: no error, 7
+untyped read of label: no error, 7

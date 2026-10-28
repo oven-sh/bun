@@ -246,7 +246,7 @@ class Bun.Transpiler {
   transform(code: string, loader?: Loader): Promise<string>
   transformSync(code: string, loader?: Loader): string
 
-  scan(code: string): {exports: string[], imports: Import}
+  scan(code: string): {exports: string[], imports: Import[]}
   scanImports(code: string): Import[]
 }
 

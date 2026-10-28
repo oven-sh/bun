@@ -21,8 +21,14 @@ inputs:
     description: "Space-separated rustup components to add to `toolchain`, e.g. `clippy` or `miri rust-src`."
     default: ""
   ninja-targets:
-    description: "Space-separated ninja targets to build after configure."
-    default: "clone-lolhtml"
+    description: "Space-separated build targets (`bun scripts/build.ts --target=…`)."
+    default: "clone-lolhtml clone-rust-argon2"
+  webkit-generators-only:
+    description: >
+      "1" fetches the code generators of the prebuilt WebKit (half a megabyte)
+      in place of its tarball (440 MB). For a job whose targets compile and
+      link no C++: `codegen` reads nothing else of it.
+    default: "0"
 
 runs:
   using: composite
@@ -34,7 +40,7 @@ runs:
 
     - name: Setup system deps
       # cmake/ninja for `--configure-only`; clang for toolchain detection
-      # (configure resolves cfg.cc/cxx even though nothing here compiles C++).
+      # (configure resolves cfg.cc/cxx). `engine-test-programs` links with AddressSanitizer.
       shell: bash
       env:
         LLVM_VERSION_MAJOR: ${{ inputs.llvm-version }}
@@ -42,7 +48,7 @@ runs:
         wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
         echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${LLVM_VERSION_MAJOR} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
         sudo apt-get update -qq
-        sudo apt-get install -y -qq --no-install-recommends cmake ninja-build clang-${LLVM_VERSION_MAJOR} lld-${LLVM_VERSION_MAJOR} llvm-${LLVM_VERSION_MAJOR}
+        sudo apt-get install -y -qq --no-install-recommends cmake ninja-build nasm clang-${LLVM_VERSION_MAJOR} lld-${LLVM_VERSION_MAJOR} llvm-${LLVM_VERSION_MAJOR} libclang-rt-${LLVM_VERSION_MAJOR}-dev
 
     - name: Setup Rust
       if: inputs.toolchain != ''
@@ -61,17 +67,18 @@ runs:
       shell: bash
       run: echo "::add-matcher::.github/rust-matcher.json"
 
-    - name: Configure
-      # Cargo can't resolve the workspace until `clone-lolhtml` has extracted
-      # the pinned lol-html fork into vendor/lolhtml (the root Cargo.toml
-      # path-deps it) through the same ninja edge the real build uses, and
+    - name: Configure and build the setup targets
+      # Cargo can't resolve the workspace until `clone-lolhtml` and
+      # `clone-rust-argon2` have extracted the vendored path deps into vendor/
+      # through the same ninja edges the real build uses, and
       # bun_core/build.rs needs the build_options.rs that configure writes.
       # `codegen` writes the include!() sources under build/debug/codegen that
       # bun_runtime/bun_jsc/bun_core can't be checked without.
+      # Through build.ts, not a bare `ninja`: it runs the ninja the build pins.
       shell: bash
       env:
         NINJA_TARGETS: ${{ inputs.ninja-targets }}
+        BUN_WEBKIT_GENERATORS_ONLY: ${{ inputs.webkit-generators-only }}
       run: |
         bun install --frozen-lockfile
-        bun scripts/build.ts --configure-only
-        ninja -C build/debug $NINJA_TARGETS
+        bun scripts/build.ts $(printf -- '--target=%s ' $NINJA_TARGETS)

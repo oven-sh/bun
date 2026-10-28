@@ -1,0 +1,154 @@
+whole, error: leaf@15 <anonymous>@1 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+  again: same
+whole, throw: leaf@22 <anonymous>@1 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+  again: same
+whole, native error: <parse> parse leaf@24 <anonymous>@1 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+  again: same
+whole, text error: textThrower@5 leaf@27 <anonymous>@1 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+  again: same
+limit 0, error: (none)
+  again: same
+  frames: 0
+limit 0, throw: (none)
+  again: same
+  frames: 0
+limit 0, capture: leaf@19 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+  again: same
+  frames: 10
+limit 1, error: leaf@15
+  again: same
+  frames: 1
+limit 1, throw: leaf@22
+  again: same
+  frames: 1
+limit 1, capture: leaf@19
+  again: same
+  frames: 1
+limit 2, error: leaf@15 inner@41
+  again: same
+  frames: 2
+limit 2, throw: leaf@22 inner@41
+  again: same
+  frames: 2
+limit 2, capture: leaf@19 inner@41
+  again: same
+  frames: 2
+limit 3, error: leaf@15 inner@41 textMiddle@4
+  again: same
+  frames: 3
+limit 3, throw: leaf@22 inner@41 textMiddle@4
+  again: same
+  frames: 3
+limit 3, capture: leaf@19 inner@41 textMiddle@4
+  again: same
+  frames: 3
+limit 4, error: leaf@15 inner@41 textMiddle@4 middle@46
+  again: same
+  frames: 4
+limit 4, throw: leaf@22 inner@41 textMiddle@4 middle@46
+  again: same
+  frames: 4
+limit 4, capture: leaf@19 inner@41 textMiddle@4 middle@46
+  again: same
+  frames: 4
+limit 5, error: leaf@15 inner@41 textMiddle@4 middle@46 viaNative@50
+  again: same
+  frames: 5
+limit 5, throw: leaf@22 inner@41 textMiddle@4 middle@46 viaNative@50
+  again: same
+  frames: 5
+limit 5, capture: leaf@19 inner@41 textMiddle@4 middle@46 viaNative@50
+  again: same
+  frames: 5
+limit 6, error: leaf@15 inner@41 textMiddle@4 middle@46 viaNative@50 replace
+  again: same
+  frames: 6
+limit 6, throw: leaf@22 inner@41 textMiddle@4 middle@46 viaNative@50 replace
+  again: same
+  frames: 6
+limit 6, capture: leaf@19 inner@41 textMiddle@4 middle@46 viaNative@50 replace
+  again: same
+  frames: 6
+limit 7, error: leaf@15 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55
+  again: same
+  frames: 7
+limit 7, throw: leaf@22 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55
+  again: same
+  frames: 7
+limit 7, capture: leaf@19 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55
+  again: same
+  frames: 7
+limit 8, error: leaf@15 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+  again: same
+  frames: 8
+limit 8, throw: leaf@22 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+  again: same
+  frames: 8
+limit 8, capture: leaf@19 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+  again: same
+  frames: 8
+limit 9, error: leaf@15 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+  again: same
+  frames: 9
+limit 9, throw: leaf@22 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+  again: same
+  frames: 9
+limit 9, capture: leaf@19 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+  again: same
+  frames: 9
+limit 10, error: leaf@15 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+  again: same
+  frames: 10
+limit 10, throw: leaf@22 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+  again: same
+  frames: 10
+limit 10, capture: leaf@19 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+  again: same
+  frames: 10
+limit 50, from leaf: inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+  again: same
+limit 50, from inner: textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+  again: same
+limit 50, from textMiddle: middle@46 viaNative@50 replace outermost@55 ground@59
+  again: same
+limit 50, from middle: viaNative@50 replace outermost@55 ground@59
+  again: same
+limit 50, from viaNative: replace outermost@55 ground@59
+  again: same
+limit 50, from replace: outermost@55 ground@59
+  again: same
+limit 50, from outermost: ground@59
+  again: same
+limit 50, from ground: (none)
+  again: same
+limit 50, from trace: (none)
+  again: same
+limit 2, from leaf: inner@41 textMiddle@4
+  again: same
+limit 2, from inner: textMiddle@4 middle@46
+  again: same
+limit 2, from textMiddle: middle@46 viaNative@50
+  again: same
+limit 2, from middle: viaNative@50 replace
+  again: same
+limit 2, from viaNative: replace outermost@55
+  again: same
+limit 2, from replace: outermost@55 ground@59
+  again: same
+limit 2, from outermost: ground@59
+  again: same
+limit 2, from ground: (none)
+  again: same
+limit 2, from trace: (none)
+  again: same
+limit 50, nested 1: leaf@35 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59 leaf@32 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+  again: same
+limit 50, nested 3: leaf@35 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59 leaf@32 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59 leaf@32 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59 leaf@32 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+  again: same
+limit 12, nested 1: leaf@35 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59 leaf@32 inner@41 textMiddle@4 middle@46
+  again: same
+limit 12, nested 3: leaf@35 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59 leaf@32 inner@41 textMiddle@4 middle@46
+  again: same
+call sites: leaf/////15 //eval///1 inner/////41 textMiddle/////4 middle/////46 viaNative/////50 replace/native////1 outermost/////55 ground/////59
+read late: leaf@15 <anonymous>@1 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+  the other two: same

@@ -25,7 +25,7 @@ There's nothing to install, no `node_modules` to deploy, no build artifacts to c
 
 ## Truly one file
 
-Normally, distributing a web page means managing a folder of assets — the HTML, the JavaScript bundles, the CSS files, the images. Move the HTML without the rest and everything breaks. Browsers have tried to solve this before. Safari's `.webarchive` and `.mhtml` are supposed to save a page as a single file. In practice, they unpack into a folder of loose files on your computer, which defeats the purpose.
+Normally, distributing a web page means managing a folder of assets — the HTML, the JavaScript bundles, the CSS files, the images. Move the HTML without the rest and everything breaks. Browsers have tried to solve this before. Safari's `.webarchive` and Chrome's `.mhtml` save a page as a single file. In practice, only some browsers can open them, which defeats the purpose.
 
 Standalone HTML output is a plain `.html` file: not an archive, not a folder. Bun embeds every image, every font, and every line of CSS and JavaScript directly in the HTML using standard `<style>` tags, `<script>` tags, and `data:` URIs. Any browser can open it and any server can host it.
 

@@ -10,7 +10,6 @@
 #include "JSDOMConstructor.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMConvertBoolean.h"
-#include "JSDOMConvertDate.h"
 #include "JSDOMConvertInterface.h"
 #include "JSDOMConvertNullable.h"
 #include "JSDOMConvertRecord.h"
@@ -65,7 +64,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSCookieMapPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSCookieMapPrototype* ptr = new (NotNull, JSC::allocateCell<JSCookieMapPrototype>(vm)) JSCookieMapPrototype(vm, globalObject, structure);
+        JSCookieMapPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSCookieMapPrototype))) JSCookieMapPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -79,7 +78,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -97,6 +96,7 @@ using JSCookieMapDOMConstructor = JSDOMConstructor<JSCookieMap>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Cookie, JSCookieMapDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSCookieMapDOMConstructor>(callFrame->jsCallee());
@@ -106,10 +106,16 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
 
     std::variant<Vector<Vector<String>>, HashMap<String, String>, String> init;
 
-    if (initValue.isUndefinedOrNull() || (initValue.isString() && initValue.getString(lexicalGlobalObject).isEmpty())) {
+    String initString;
+    if (initValue.isString()) {
+        initString = initValue.getString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+
+    if (initValue.isUndefinedOrNull() || (initValue.isString() && initString.isEmpty())) {
         init = String();
     } else if (initValue.isString()) {
-        init = initValue.getString(lexicalGlobalObject);
+        init = WTF::move(initString);
     } else if (initValue.isObject()) {
         auto* object = initValue.getObject();
 
@@ -139,9 +145,13 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
                 auto second = subArray->getIndex(lexicalGlobalObject, 1);
                 RETURN_IF_EXCEPTION(throwScope, {});
 
-                auto firstStr = first.toString(lexicalGlobalObject)->value(lexicalGlobalObject);
+                auto* firstString = first.toString(lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(throwScope, {});
-                auto secondStr = second.toString(lexicalGlobalObject)->value(lexicalGlobalObject);
+                auto firstStr = firstString->value(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                auto* secondString = second.toString(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                auto secondStr = secondString->value(lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(throwScope, {});
 
                 Vector<String> pair;
@@ -158,14 +168,19 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
             Vector<Vector<String>> seqSeq;
 
             PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-            JSObject::getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Include);
+            if (object->type() == JSC::CompiledObjectType)
+                object->methodTable()->getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Include);
+            else
+                JSObject::getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Include);
             RETURN_IF_EXCEPTION(throwScope, {});
 
             for (const auto& propertyName : propertyNames) {
                 JSValue value = object->get(lexicalGlobalObject, propertyName);
                 RETURN_IF_EXCEPTION(throwScope, {});
 
-                auto valueStr = value.toString(lexicalGlobalObject)->value(lexicalGlobalObject);
+                auto* valueString = value.toString(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                auto valueStr = valueString->value(lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(throwScope, {});
 
                 Vector<String> pair;
@@ -180,6 +195,8 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
         return {};
     }
 
+    auto* structure = structureForNewTarget<CookieMap>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto result_exception = CookieMap::create(WTF::move(init));
     if (result_exception.hasException()) {
         WebCore::propagateException(lexicalGlobalObject, throwScope, result_exception.releaseException());
@@ -187,7 +204,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
     }
     auto result = result_exception.releaseReturnValue();
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, castedThis->globalObject(), WTF::move(result))));
+    return JSValue::encode(createWrapper<CookieMap>(castedThis->globalObject(), structure, WTF::move(result)));
 }
 
 JSC_ANNOTATE_HOST_FUNCTION(JSCookieMapDOMConstructorConstruct, JSCookieMapDOMConstructor::construct);
@@ -201,11 +218,7 @@ template<> JSValue JSCookieMapDOMConstructor::prototypeForStructure(JSC::VM& vm,
 
 template<> void JSCookieMapDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "CookieMap"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSCookieMap::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "CookieMap"_s, JSCookieMap::prototype(vm, globalObject));
 }
 
 static const HashTableValue JSCookieMapPrototypeTableValues[] = {
@@ -228,9 +241,9 @@ const ClassInfo JSCookieMapPrototype::s_info = { "CookieMap"_s, &Base::s_info, n
 void JSCookieMapPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSCookieMap::info(), JSCookieMapPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSCookieMap::info(), JSCookieMapPrototypeTableValues, *this);
     putDirect(vm, vm.propertyNames->iteratorSymbol, getDirect(vm, PropertyName(Identifier::fromString(vm, "entries"_s))), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSCookieMap::s_info = { "CookieMap"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCookieMap) };
@@ -329,7 +342,9 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_toSetCookieHeader
     RETURN_IF_EXCEPTION(throwScope, {});
     size_t i = 0;
     for (auto& item : cookies) {
-        resultArray->putDirectIndex(lexicalGlobalObject, i, jsString(vm, item->toString(vm)));
+        auto header = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, item->toString(vm));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        resultArray->putDirectIndex(lexicalGlobalObject, i, header);
         RETURN_IF_EXCEPTION(throwScope, {});
         i += 1;
     }
@@ -488,13 +503,10 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_deleteBody(JSC::J
     }
 
     if (nameValue && nameValue.isString()) {
-        RETURN_IF_EXCEPTION(throwScope, {});
-
         if (!nameValue.isUndefined() && !nameValue.isNull()) {
             deleteOptions.name = convert<IDLUSVString>(*lexicalGlobalObject, nameValue);
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
-
-        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         return throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Cookie name is required"_s));
     }
@@ -551,17 +563,12 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<CookieMapIterator, UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForCookieMapIterator.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCookieMapIterator = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForCookieMapIterator.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForCookieMapIterator = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<CookieMapIterator, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForCookieMapIterator, m_subspaceForCookieMapIterator));
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static CookieMapIterator* create(JSC::VM& vm, JSC::Structure* structure, JSCookieMap& iteratedObject, IterationKind kind)
@@ -576,6 +583,9 @@ private:
         : Base(structure, iteratedObject, kind)
     {
     }
+};
+template<> struct DOMStructureSlotOf<CookieMapIterator> {
+    static constexpr DOMStructureSlot value = DOMStructureSlot::CookieMapIterator;
 };
 
 using CookieMapIteratorPrototype = JSDOMIteratorPrototype<JSCookieMap, CookieMapIteratorTraits>;
@@ -630,12 +640,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieMapPrototypeFunction_forEach, (JSC::JSGlobalObj
 
 GCClient::IsoSubspace* JSCookieMap::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSCookieMap, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForCookieMap.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCookieMap = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForCookieMap.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCookieMap = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSCookieMap, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForCookieMap, m_subspaceForCookieMap));
 }
 
 void JSCookieMap::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -643,21 +648,6 @@ void JSCookieMap::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = uncheckedDowncast<JSCookieMap>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     Base::analyzeHeap(cell, analyzer);
-}
-
-bool JSCookieMapOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    UNUSED_PARAM(handle);
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-void JSCookieMapOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsCookieMap = static_cast<JSCookieMap*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsCookieMap->wrapped(), jsCookieMap);
 }
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<CookieMap>&& impl)

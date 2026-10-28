@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::VirtualMachineRef as VirtualMachine;
-use bun_core::String as BunString;
+use bun_core::{String as BunString, StringView};
 
 pub struct HTTPServerAgent {
     /// Underlying C++ agent. Set to null when not enabled.
@@ -35,16 +35,17 @@ impl HTTPServerAgent {
 // #region Types
 
 #[repr(C)]
-pub struct Route {
+pub struct Route<'a> {
     pub route_id: RouteId,
-    pub path: BunString,
+    pub path: StringView<'a>,
     pub r#type: RouteType,
     pub script_line: i32,
+    /// Unused; always null/0 (kept for the C++ layout).
     pub param_names: *mut BunString,
     pub param_names_len: usize,
-    pub file_path: BunString,
-    pub script_id: BunString,
-    pub script_url: BunString,
+    pub file_path: StringView<'a>,
+    pub script_id: StringView<'a>,
+    pub script_url: StringView<'a>,
 }
 
 #[repr(u8)]
@@ -56,35 +57,19 @@ pub enum RouteType {
     Static = 4,
 }
 
-impl Default for Route {
+impl Default for Route<'_> {
     fn default() -> Self {
         Self {
             route_id: 0,
-            path: BunString::EMPTY,
+            path: StringView::EMPTY,
             r#type: RouteType::Default,
             script_line: -1,
             param_names: core::ptr::null_mut(),
             param_names_len: 0,
-            file_path: BunString::EMPTY,
-            script_id: BunString::EMPTY,
-            script_url: BunString::EMPTY,
+            file_path: StringView::EMPTY,
+            script_id: StringView::EMPTY,
+            script_url: StringView::EMPTY,
         }
-    }
-}
-
-impl Drop for Route {
-    fn drop(&mut self) {
-        if !self.param_names.is_null() {
-            let slice = core::ptr::slice_from_raw_parts_mut(self.param_names, self.param_names_len);
-            // SAFETY: param_names was allocated via the global (mimalloc) allocator as a
-            // contiguous [BunString; param_names_len]. Reconstructing the Box drops each
-            // element (deref) and frees the backing storage.
-            drop(unsafe { bun_core::heap::take(slice) });
-            self.param_names = core::ptr::null_mut();
-            self.param_names_len = 0;
-        }
-        // path, file_path, script_id, script_url are dropped (deref'd) automatically via
-        // bun_core::String's Drop impl.
     }
 }
 
@@ -151,7 +136,7 @@ impl InspectorHTTPServerAgent {
         agent: *mut InspectorHTTPServerAgent,
         server_id: ServerId,
         hot_reload_id: HotReloadId,
-        routes: &mut [Route],
+        routes: &mut [Route<'_>],
     ) {
         let agent = Self::opaque_mut(agent);
         // SAFETY: `[[ZIG_EXPORT(nothrow)]]` C++ shim; `agent` proven non-null

@@ -12,9 +12,40 @@
  */
 
 import { join } from "node:path";
-import { bunExeName, type Config } from "./config.ts";
+import { bunExeName, linksWithLld, type Config } from "./config.ts";
+import { overridesDarwinAllocator, replacedOperatorNewSymbols } from "./deps/mimalloc.ts";
 import { quote, slash } from "./shell.ts";
+import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
+
+export const safeStackDependencies = [
+  "brotli",
+  "libdeflate",
+  "libjpeg-turbo",
+  "libspng",
+  "libwebp",
+  "lshpack",
+  "zlib",
+  "zstd",
+];
+
+export function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
+  return c.hardened && c.x64 && c.abi === "gnu" && !c.asan;
+}
+
+/** What makes a translation unit report coverage to Fuzzilli: for Bun's own sources and, in an engine built from source, JavaScriptCore's. */
+export function fuzzilliCoverageFlags(cfg: Pick<Config, "cwd" | "fuzzilli" | "fuzzilliCompilerOnly">): string[] {
+  if (!cfg.fuzzilli) return [];
+  const list = join(cfg.cwd, "scripts/build/fuzzilli-compiler-coverage.txt");
+  return [
+    "-fsanitize-coverage=trace-pc-guard",
+    ...(cfg.fuzzilliCompilerOnly ? [`-fsanitize-coverage-allowlist=${list}`] : []),
+  ];
+}
+
+export function safeStackFlags(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">, dependency: string): string[] {
+  return usesSafeStack(c) && safeStackDependencies.includes(dependency) ? ["-fsanitize=safe-stack"] : [];
+}
 
 export type FlagValue = string | string[] | ((cfg: Config) => string | string[]);
 
@@ -37,13 +68,18 @@ export interface Flag {
   lang?: "c" | "cxx";
   /** What this flag does. */
   desc: string;
+  /**
+   * linkerFlags only: part of the toolchain half of the link line (triple +
+   * sysroot, which linker, C++ runtime, PIE policy, deployment target,
+   * sanitizer runtime), which any executable for the target needs, not only
+   * bun. See computeTargetLinkFlags().
+   */
+  toolchain?: true;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CPU TARGET FLAGS
-//   -march/-mcpu/-mtune. Split out so deps that manage their own optimization
-//   and sanitizer flags (WebKit) can still inherit the target arch without
-//   the rest of globalFlags.
+//   -march/-mcpu/-mtune. Split out for computeCpuTargetFlags().
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const cpuTargetFlags: Flag[] = [
@@ -63,9 +99,12 @@ export const cpuTargetFlags: Flag[] = [
     desc: "ARM64 Android: ARMv8-A base + CRC, tuned for Cortex-A78 (common big core)",
   },
   {
-    flag: ["/clang:-march=armv8-a+crc", "/clang:-mtune=ampere1"],
+    // No -mtune: Windows-on-ARM hardware is Snapdragon (Oryon / Cortex-X), and
+    // generic tuning is what MSVC, Chromium and Rust ship there. (ampere1's
+    // tuning pads every function and loop to 64 bytes.)
+    flag: "/clang:-march=armv8-a+crc",
     when: c => c.windows && c.arm64,
-    desc: "ARM64 Windows: clang-cl prefix required (/clang: passes to clang)",
+    desc: "ARM64 Windows: ARMv8-A base + CRC, generic tuning (clang-cl prefix required)",
   },
   {
     flag: "-march=nehalem",
@@ -74,10 +113,32 @@ export const cpuTargetFlags: Flag[] = [
   },
 ];
 
+/**
+ * `--hardened=on`. The same list as `HARDENING` in oven-sh/WebKit's
+ * .github/scripts/lanes.mjs, which the `-hardened` prebuilts are compiled with, but for what `--guarded-pages=on` and
+ * `--execute-only-start=off` add: that list has both, and here each is a flag of its own.
+ */
+export const hardeningFlags = [
+  "-fstack-protector-strong",
+  "-D_FORTIFY_SOURCE=2",
+  "-fstack-clash-protection",
+  "-ftrivial-auto-var-init=zero",
+  "-ftrivial-auto-var-init-max-size=4096",
+  "-fno-delete-null-pointer-checks",
+  "-fno-strict-overflow",
+  "-fno-strict-aliasing",
+  "-fsanitize=array-bounds",
+  "-fsanitize-trap=array-bounds",
+  "-D_GLIBCXX_ASSERTIONS=1",
+  "-fPIE",
+  "-DBUN_HARDENED=1",
+  "-DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1",
+];
+
 // ═══════════════════════════════════════════════════════════════════════════
 // GLOBAL COMPILER FLAGS
-//   Applied to BOTH bun's own sources AND forwarded to vendored deps
-//   via -DCMAKE_C_FLAGS / -DCMAKE_CXX_FLAGS.
+//   Applied to BOTH bun's own sources AND vendored deps
+//   (computeDepFlags).
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const globalFlags: Flag[] = [
@@ -234,9 +295,8 @@ export const globalFlags: Flag[] = [
   // ─── Optimization ───
   {
     // cmake's Release/RelWithDebInfo build types append this to
-    // CMAKE_<LANG>_FLAGS_<TYPE> automatically; nested-cmake deps got it
-    // from there. Direct deps only see globalFlags, so it must be here
-    // too — otherwise every assert() in zstd/boringssl/mimalloc/etc.
+    // CMAKE_<LANG>_FLAGS_<TYPE> automatically. Deps only see globalFlags, so
+    // it must be here — otherwise every assert() in zstd/boringssl/mimalloc/etc.
     // stays live in release. (bun's own NDEBUG in `defines` below is
     // redundant after this, but harmless.)
     flag: "-DNDEBUG",
@@ -301,12 +361,12 @@ export const globalFlags: Flag[] = [
     // Nix LLVM doesn't support zstd — but we target standard distros.
     // Nix users can override via profile if needed.
     flag: ["-g3", "-gz=zstd"],
-    when: c => c.unix && c.debug,
+    when: c => c.unix && c.debug && c.debugInfo === "full",
     desc: "Full debug info, zstd-compressed",
   },
   {
     flag: ["-g", "-gz=zstd"],
-    when: c => c.unix && c.release && !c.lto,
+    when: c => c.unix && c.release && c.debugInfo === "full",
     desc: "Full debug info (types and variables) where no LTO link has to carry it: local release, asan, the non-LTO CI lanes",
   },
   {
@@ -320,14 +380,19 @@ export const globalFlags: Flag[] = [
     // same file is 5.25s), object 9.0 MB -> 5.2 MB. Irrelevant to the LTO
     // builds: line tables (-g1 below) carry no type definitions either way.
     flag: "-fno-standalone-debug",
-    when: c => c.unix && (c.debug || !c.lto),
+    when: c => c.unix && c.debugInfo === "full",
     desc: "Emit each type's debug info once, where it is defined, instead of in every TU",
   },
   {
     // The bitcode carries the debug info through the ThinLTO link, which is the longest step of a CI build; the -lto WebKit prebuilts make the same trade.
     flag: "-g1",
-    when: c => c.unix && c.release && c.lto,
-    desc: "Line tables only for LTO builds (backtraces and symbolication; no types)",
+    when: c => c.unix && c.debugInfo === "lines",
+    desc: "Line tables only (backtraces and symbolication; no types): LTO builds, --debug-info=lines",
+  },
+  {
+    flag: "-g0",
+    when: c => c.unix && c.debugInfo === "none",
+    desc: "No debug info (--debug-info=none: the symbol table still names every function)",
   },
 
   // ─── ASAN (global — passed to deps so they link against the same runtime) ───
@@ -337,6 +402,18 @@ export const globalFlags: Flag[] = [
     flag: "-fsanitize=address",
     when: c => c.asan,
     desc: "AddressSanitizer (also forwarded to deps for ABI consistency)",
+  },
+  {
+    // clang's default, `runtime`, gives every function with an instrumented
+    // local a second prologue that moves the frame to ASAN's heap-backed fake
+    // stack when `detect_stack_use_after_return` is on. JSC's conservative GC
+    // scan cannot see a frame there, so `__asan_default_options`
+    // (src/runtime/bin_entry/mod.rs) turns the option off and that prologue
+    // never runs. `never` does not emit it. rust.ts passes the LLVM option
+    // behind this flag to rustc, which has no flag of its own for it.
+    flag: "-fsanitize-address-use-after-return=never",
+    when: c => c.asan,
+    desc: "ASAN: compile out the fake-stack (stack-use-after-return) instrumentation",
   },
 
   // ─── C++ language behavior ───
@@ -357,10 +434,7 @@ export const globalFlags: Flag[] = [
     desc: "Skip static destructors at exit (JSC assumes this)",
   },
   {
-    // /clang: (not -Xclang): single token survives CMAKE_CXX_FLAGS
-    // re-tokenization in nested dep configures. -Xclang <arg> pair gets
-    // split by cmake's try_compile → "unknown argument". Also more correct:
-    // /clang: passes to the driver, -Xclang to cc1.
+    // /clang: (not -Xclang): /clang: passes to the driver, -Xclang to cc1.
     flag: "/clang:-fno-c++-static-destructors",
     when: c => c.windows,
     lang: "cxx",
@@ -369,6 +443,7 @@ export const globalFlags: Flag[] = [
   {
     flag: "-fno-rtti",
     when: c => c.unix,
+    lang: "cxx",
     desc: "Disable RTTI (no dynamic_cast/typeid)",
   },
   {
@@ -383,17 +458,65 @@ export const globalFlags: Flag[] = [
     when: c => c.unix,
     desc: "Keep frame pointers (for profiling and backtraces)",
   },
+
+  // ─── Hardening policy (stated, so a distro clang's vendor defaults don't decide) ───
   {
-    flag: "/Oy-",
+    // Arch/Alpine/Fedora/Ubuntu package clang with -fstack-protector-strong on
+    // by default; apt.llvm.org (CI) and upstream builds don't. Off: what bun
+    // has always shipped on Linux, FreeBSD and Android, and a canary
+    // load+check in most JSC frames is not free.
+    flag: "-fno-stack-protector",
+    when: c => c.unix && !c.darwin && !c.hardened,
+    desc: "No stack protector (pin the toolchain-independent default)",
+  },
+  {
+    flag: "-DENABLE_AOT=0",
+    when: c => !c.aot,
+    desc: "No ahead-of-time compiler and no run time for its programs (wtf/PlatformEnable.h turns it on wherever the FTL is on)",
+  },
+  {
+    flag: "-DENABLE_AOT_GUARDED_PAGES=1",
+    when: c => c.guardedPages,
+    desc: "What a compiled program maps for good lies between two pages without access, each mapping at a random address of its own",
+  },
+  {
+    flag: "-DBUN_REFUSES_EXECUTE_ONLY_START=1",
+    when: c => !c.executeOnlyStart,
+    desc: "A compiled program that cannot open its own file exits at start, and nothing moves what its loader mapped",
+  },
+  {
+    flag: computeHardeningFlags,
+    when: c => c.hardened,
+    desc: "Stack protector, checked libc calls (in an optimized build without ASan), stack clash protection, zeroed locals up to 4 KB, no assumptions from undefined behavior, traps on an index outside a fixed-size array, libstdc++ assertions, position-independent code",
+  },
+  {
+    // Every clang turns the protector on for a Darwin target (level 1, what
+    // -fstack-protector asks for), the cross-compiling CI one included, so
+    // that is what bun has always shipped on macOS: about 1,250 functions of
+    // bun's own C/C++ and the vendored deps carry a canary there, as the
+    // WebKit prebuilt's do.
+    flag: "-fstack-protector",
+    when: c => c.darwin,
+    desc: "Stack protector on macOS (clang's default for Darwin targets, stated)",
+  },
+  {
+    // clang-cl drops /Oy- on x64 and keeps only non-leaf frames on arm64
+    flag: ["/clang:-fno-omit-frame-pointer", "/clang:-mno-omit-leaf-frame-pointer"],
     when: c => c.windows,
-    desc: "Keep frame pointers",
+    desc: "Keep frame pointers (for profiling and backtraces)",
   },
 
   // ─── Visibility ───
   {
-    flag: ["-fvisibility=hidden", "-fvisibility-inlines-hidden"],
+    flag: "-fvisibility=hidden",
     when: c => c.unix,
     desc: "Hidden symbol visibility (explicit exports only)",
+  },
+  {
+    flag: "-fvisibility-inlines-hidden",
+    when: c => c.unix,
+    lang: "cxx",
+    desc: "Hidden visibility for inline C++ member functions",
   },
 
   // ─── Unwinding / exception tables ───
@@ -434,12 +557,13 @@ export const globalFlags: Flag[] = [
     desc: "One section per data item",
   },
   {
-    // Address-significance table: enables safe ICF at link.
-    // Macos debug mode + this flag breaks libarchive configure ("pid_t doesn't exist").
-    // darwin cross targets get this from their own entry above (debug and
-    // release), so skip them here rather than emit the flag twice.
+    // Address-significance table: what lld's --icf=safe reads. Only where an
+    // lld links the result: darwin cross targets get it from their own entry
+    // above, and a native macOS link goes through Apple's ld, which does no
+    // ICF with it and warns about the section instead ("alignment (1) of
+    // atom 'anon-N' is too small and may result in unaligned pointers").
     flag: "-faddrsig",
-    when: c => (c.debug && c.linux) || (c.release && c.unix && !(c.darwin && c.crossTarget !== undefined)),
+    when: c => (c.debug && c.linux) || (c.release && (c.linux || c.freebsd)),
     desc: "Emit address-significance table (enables safe ICF)",
   },
 
@@ -512,6 +636,18 @@ export const globalFlags: Flag[] = [
     desc: "Thin link-time optimization (clang-cl)",
   },
   {
+    // A `c-function` of src/trim/features is cut where it is defined. ThinLTO inlines a small one into its callers in
+    // other files, also into Rust: then no function is left to cut, and all that it calls stays with the callers.
+    // The attribute has to be in the bitcode: the pipeline that the link runs does not read the option.
+    flag: c =>
+      [...new Set(loadFeatures(c.cwd).features.flatMap(feature => feature.cFunctions ?? []))]
+        .sort()
+        .flatMap(name => ["-mllvm", `-force-attribute=${name}:noinline`]),
+    when: c => c.trimmable && c.lto,
+    lang: "c",
+    desc: "Keep the C functions that trimming cuts as functions",
+  },
+  {
     // Unix only (not windows): on COFF, whole-program vtable opt drops
     // vtable symbols that associative COMDAT sections still name as their
     // parent and the LTO codegen aborts ("Associative COMDAT symbol
@@ -577,6 +713,17 @@ export const globalFlags: Flag[] = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const bunOnlyFlags: Flag[] = [
+  {
+    flag: "-DBUN_LOCKED_ENVIRONMENT=1",
+    when: c => c.lockEnvironment,
+    desc: "Hardened: an executable compiled ahead of time takes a short list of BUN_JSC_* options and starts with no other",
+  },
+  {
+    flag: "-DBUN_SAFE_STACK=1",
+    when: c => usesSafeStack(c),
+    desc: "Hardened: every thread gets the second stack that the libraries compiled with SafeStack keep their arrays on",
+  },
+
   // ─── Build profiling ───
   {
     flag: "-ftime-trace",
@@ -586,14 +733,14 @@ export const bunOnlyFlags: Flag[] = [
   },
 
   // ─── Language standard ───
-  // WebKit uses gnu++ extensions on Linux; if we don't match, the first
-  // memory allocation crashes (ABI mismatch in sized delete).
-  // Not in globalFlags because deps set their own standard.
+  // Not in globalFlags because deps set their own standard (WebKit itself is
+  // -std=c++23, as its cmake builds it; the GNU-extensions dialect differs in
+  // accepted syntax and predefined macros, not ABI).
   {
     flag: "-std=gnu++23",
     when: c => c.linux || c.freebsd,
     lang: "cxx",
-    desc: "C++23 with GNU extensions (required to match WebKit's ABI on Linux/FreeBSD)",
+    desc: "C++23 with GNU extensions",
   },
   {
     flag: "-std=c++23",
@@ -650,7 +797,7 @@ export const bunOnlyFlags: Flag[] = [
     desc: "Undefined-behavior sanitizers",
   },
   {
-    flag: ["-fsanitize-coverage=trace-pc-guard", "-DFUZZILLI_ENABLED"],
+    flag: c => [...fuzzilliCoverageFlags(c), "-DFUZZILLI_ENABLED"],
     when: c => c.fuzzilli,
     desc: "Fuzzilli coverage instrumentation",
   },
@@ -664,7 +811,7 @@ export const bunOnlyFlags: Flag[] = [
   },
   {
     flag: ["-fno-pic", "-fno-pie"],
-    when: c => c.unix && c.abi !== "android",
+    when: c => c.unix && c.abi !== "android" && !c.hardened,
     desc: "No position-independent code (we're a final executable)",
   },
   {
@@ -695,8 +842,9 @@ export const bunOnlyFlags: Flag[] = [
     desc: "Treat most warnings as errors; suppress known-noisy ones",
   },
   {
-    // Debug adds -Werror=unused; release omits it (vars used only in ASSERT)
-    flag: ["-Werror=unused", "-Wno-unused-function"],
+    // Debug adds -Werror=unused; release omits it (vars used only in ASSERT).
+    // unused-lambda-capture: JavaScriptCore's AssemblyHelpers.h captures `this` in generic lambdas.
+    flag: ["-Werror=unused", "-Wno-unused-function", "-Wno-unused-lambda-capture"],
     when: c => c.unix && c.debug,
     desc: "Warn on unused vars in debug (catches dead code)",
   },
@@ -725,7 +873,6 @@ export const defines: Flag[] = [
     flag: [
       "_HAS_EXCEPTIONS=0",
       "LIBUS_USE_OPENSSL=1",
-      "LIBUS_USE_BORINGSSL=1",
       "STATICALLY_LINKED_WITH_JavaScriptCore=1",
       "BUILDING_WITH_CMAKE=1",
       "JSC_OBJC_API_ENABLED=0",
@@ -771,6 +918,26 @@ export const defines: Flag[] = [
     flag: "LIBUS_SOCKET_FAULT_INJECTION=1",
     when: c => c.socketFaultInjection,
     desc: "Compile usockets bsd_* syscall fault-injection hooks (runtime-armed via bun:internal-for-testing)",
+  },
+  {
+    flag: "BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS=1",
+    when: c => !c.codeGenerationFromStrings,
+    desc: "--disallow-code-generation-from-strings=strict as a compile-time constant",
+  },
+  {
+    flag: "BUN_DISABLE_WEBASSEMBLY=1",
+    when: c => !c.webAssembly,
+    desc: "No WebAssembly global: JSC's useWasm option is always false",
+  },
+  {
+    flag: "BUN_DISABLE_SHADOW_REALM=1",
+    when: c => !c.shadowRealm,
+    desc: "No ShadowRealm global: JSC's useShadowRealm option is always false",
+  },
+  {
+    flag: "BUN_DISABLE_FFI=1",
+    when: c => !c.ffi,
+    desc: "bun:ffi calls no native function",
   },
   {
     // slash(): path becomes a C string literal — `\U` would be a unicode escape.
@@ -832,6 +999,7 @@ export const linkerFlags: Flag[] = [
     flag: "-fsanitize=address",
     when: c => c.unix && c.asan,
     desc: "Link ASAN runtime",
+    toolchain: true,
   },
   {
     flag: "-fsanitize=null",
@@ -884,39 +1052,38 @@ export const linkerFlags: Flag[] = [
     desc: "LTO at link time (matches compile-side -flto=thin)",
   },
   {
-    // Without -O at link time, clang's driver defaults LTO codegen to -O2.
-    // CMake implicitly forwarded CMAKE_CXX_FLAGS (incl. -O2) to the link line;
-    // we must do so explicitly. Dropping this cost ~5 MB of .text on linux-x64
-    // (less unrolling/inlining in JSC — measurable in Yarr, DFG, BuiltinNames).
-    // ELF only: the driver forwards this to lld as -plugin-opt=O2. The Darwin
-    // driver forwards no opt-level flag at all — see the next entry.
-    flag: "-O2",
-    when: c => c.unix && !c.darwin && c.lto && c.release && !c.smol,
-    desc: "LTO codegen at -O2 (ELF: forwarded to lld as -plugin-opt=O2)",
-  },
-  {
-    // The Darwin driver drops a bare -O at link time (`clang++ -### …` shows
-    // no opt-level flag reaching the linker), so Mach-O LTO would codegen at
-    // ld64.lld's built-in defaults: --lto-O2 for the IR pipeline and
-    // --lto-CGO2 (CodeGenOptLevel::Default) for instruction selection —
-    // inline threshold 225 and default isel, while the per-TU build codegens
-    // everything at -O3 + CodeGenOptLevel::Aggressive (threshold 275). Pass
-    // ld64.lld's own options so LTO codegen matches the compile side.
-    // Cross links only: --lto-O/--lto-CGO are lld-specific, and only the
-    // darwin cross link uses lld's Mach-O port (ld64.lld). Native darwin
-    // links go through Apple's ld, which rejects unknown double-dash options,
-    // so they keep the driver's default LTO codegen level.
-    // arm64 only: O3 codegen costs +0.3 MB there but +3.1 MB on x64 (the
-    // higher inline threshold is much more expensive in x86-64's
-    // variable-length encoding); x64 stays at lld's default --lto-O2/CGO2.
-    flag: ["-Wl,--lto-O3", "-Wl,--lto-CGO3"],
-    when: c => c.darwin && c.arm64 && c.crossTarget !== undefined && c.lto && c.release && !c.smol,
-    desc: "LTO codegen at -O3 + aggressive isel (Darwin driver forwards no -O to ld64.lld)",
+    // Said to lld itself. A link-line `-O` reaches lld only through the clang driver, only on ELF, and only beside
+    // `-flto` (as -plugin-opt=O<n>), which a link whose LTO covers the Rust crates alone does not pass; the Darwin
+    // driver forwards none at all.
+    flag: c => [`-Wl,--lto-O${ltoLevel(c)}`, `-Wl,--lto-CGO${ltoLevel(c)}`],
+    when: c => c.unix && linkRunsLto(c) && linksWithLld(c) && !c.smol,
+    desc: "LTO level: IR pipeline and code generation (lld)",
   },
   {
     flag: "-Os",
     when: c => c.unix && c.lto && c.smol,
     desc: "LTO codegen at -Os (matches compile-side opt level)",
+  },
+  {
+    // rustc compiles Android's thread-locals as emulated TLS (its target spec: bionic has ELF TLS from API 29 and
+    // bun targets 28). That is an option of rustc's code generator, not something the bitcode carries, and here
+    // the linker generates the crates' code. Without it the Rust thread-locals become a PT_TLS segment and, on
+    // x86_64, calls to __tls_get_addr, which an API 28 device cannot load; the C/C++ side stays emulated, as clang
+    // does for this triple. clang's own spelling for an LTO link is -plugin-opt=-emulated-tls.
+    flag: "-Wl,-mllvm,-emulated-tls",
+    when: c => linkLtoIsRustOnly(c) && c.abi === "android",
+    desc: "Rust-only LTO in the link: emulated TLS, as rustc generates for Android",
+  },
+
+  {
+    flag: c => (icfMode(c) === "safe" ? "/OPT:SAFEICF" : "/OPT:NOICF"),
+    when: c => c.windows,
+    desc: "Identical-code-folding (safe in release)",
+  },
+  {
+    flag: c => [`/opt:lldlto=${ltoLevel(c)}`, `/opt:lldltocgo=${ltoLevel(c)}`],
+    when: c => c.windows && linkRunsLto(c),
+    desc: "LTO level: IR pipeline and code generation (lld-link)",
   },
 
   // ─── PGO (link-side) ───
@@ -942,6 +1109,7 @@ export const linkerFlags: Flag[] = [
     flag: c => `/machine:${c.arm64 ? "arm64" : "x64"}`,
     when: c => c.windows,
     desc: "Target machine type for lld-link (required on arm64; x64 hosts default correctly but explicit is harmless)",
+    toolchain: true,
   },
   {
     // Serviced UCRT overlay: an explicit /libpath: is searched before the
@@ -952,6 +1120,7 @@ export const linkerFlags: Flag[] = [
     flag: c => quote(`/libpath:${ucrtServicingLibDir(c)!}`, false),
     when: c => c.windows && c.host.os !== "windows",
     desc: "Windows cross-compile: serviced Universal CRT static libs (SDK NuGet) override the splat's",
+    toolchain: true,
   },
   {
     // Windows cross-compile: these ldflags go after /link, straight to
@@ -962,6 +1131,7 @@ export const linkerFlags: Flag[] = [
     flag: c => quote(`/winsysroot:${c.winsysroot!}`, false),
     when: c => c.windows && c.winsysroot !== undefined,
     desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",
+    toolchain: true,
   },
   {
     flag: ["/STACK:0x1200000,0x200000", "/errorlimit:0"],
@@ -984,8 +1154,7 @@ export const linkerFlags: Flag[] = [
       // for identity — stay distinct. /OPT:ICF (aggressive) folded
       // callBigIntConstructor with constructBigInt → "not a constructor",
       // and broke expect.any(Constructor); see commit 218430c731. Mirrors
-      // Linux `-Wl,-icf=safe`.
-      "/OPT:SAFEICF",
+      // Linux `--icf=safe`. The mode itself is the entry below.
       // String-literal tail merging (lld-specific; MSVC link.exe has no
       // equivalent). Helps .rdata the same way --icf handles .rodata.cst on ELF.
       "/OPT:lldtailmerge",
@@ -1002,9 +1171,39 @@ export const linkerFlags: Flag[] = [
       "/delayload:ADVAPI32.dll",
       "/delayload:IPHLPAPI.dll",
       "/delayload:CRYPT32.dll",
+      "/delayload:USER32.dll",
+      "/delayload:SHELL32.dll",
+      "/delayload:OLEAUT32.dll",
+      "/delayload:USERENV.dll",
     ],
     when: c => c.windows && c.release,
     desc: "Release link opts + delay-load non-critical DLLs (faster startup)",
+  },
+  {
+    // A PE carries no symbol table — lld-link puts the names in the PDB — so
+    // these two maps stand in for it on the order file's behalf (see
+    // scripts/orderfile/windows-symbols.ts): the MSVC-style one lists every
+    // symbol by final address under the exact name /order takes, and lld's own
+    // says where each input chunk was placed, which is what tells a function
+    // apart from the labels the MSVC CRT leaves on data inside its code. They
+    // ship in the profile zip beside the binary, for the trace-order step
+    // (.buildkite/ci.ts).
+    flag: c => [`/lldmap:${slash(linkerMapPath(c))}`, `/map:${slash(symbolMapPath(c))}`],
+    when: c => c.windows && writesLinkerMap(c),
+    desc: "Linker maps: the order file tracer's symbol table (see windows-symbols.ts)",
+  },
+  {
+    // lld-link's spelling of the symbol ordering file (the Linux entry below
+    // explains it): one COMDAT leader name per line, laid out first in .text.
+    // Every function is its own COMDAT here — /Gy for bun's C++ and for the
+    // WebKit prebuilt, rustc's default function sections for the Rust side, and
+    // LTO output is per-function regardless — so one trace reorders all of
+    // them. /ignore:4037 is --no-warn-symbol-ordering's counterpart: the names
+    // were traced from an earlier build's binary (see usesOrderFile), and each
+    // one that no longer exists would otherwise be an LNK4037 warning.
+    flag: c => [`/order:@${slash(orderFilePath(c))}`, "/ignore:4037"],
+    when: c => c.windows && usesOrderFile(c),
+    desc: "Sort startup-hot functions to the front of .text (cuts resident binary pages)",
   },
 
   // ─── macOS ───
@@ -1052,9 +1251,9 @@ export const linkerFlags: Flag[] = [
     // this is a cross-only divergence (smaller binary than native). The
     // prebuilt WebKit archives are compiled with -faddrsig too, so WebKit
     // code participates in the folding.
-    flag: "-Wl,--icf=safe",
-    when: c => c.darwin && c.crossTarget !== undefined && c.release,
-    desc: "macOS cross-link: fold identical address-insignificant functions",
+    flag: c => `-Wl,--icf=${icfMode(c)}`,
+    when: c => c.darwin && linksWithLld(c),
+    desc: "macOS cross-link: fold identical address-insignificant functions (release)",
   },
   {
     // -ld_new selects Apple's new linker — only meaningful (and only
@@ -1075,6 +1274,7 @@ export const linkerFlags: Flag[] = [
     flag: c => [`--target=${c.crossTarget!}`, "-mlinker-version=705", `--ld-path=${c.ld}`],
     when: c => c.darwin && c.crossTarget !== undefined,
     desc: "macOS cross-link: target triple + ld64.lld + modern linker arg style",
+    toolchain: true,
   },
   {
     // The `__BUN,__bun` standalone-graph placeholder (c-bindings.cpp) is a
@@ -1097,6 +1297,7 @@ export const linkerFlags: Flag[] = [
     flag: c => [`-mmacosx-version-min=${c.osxDeploymentTarget!}`, "-isysroot", c.osxSysroot!],
     when: c => c.darwin && c.osxDeploymentTarget !== undefined && c.osxSysroot !== undefined,
     desc: "macOS deployment target at link (sets LC_BUILD_VERSION minos)",
+    toolchain: true,
   },
   {
     flag: "-Wl,-w",
@@ -1104,7 +1305,7 @@ export const linkerFlags: Flag[] = [
     desc: "Suppress all linker warnings (workaround: no selective suppress for alignment warnings as of 2025-07)",
   },
   {
-    flag: c => ["-dead_strip", "-dead_strip_dylibs", `-Wl,-map,${c.buildDir}/${bunExeName(c)}.linker-map`],
+    flag: c => ["-dead_strip", "-dead_strip_dylibs", `-Wl,-map,${linkerMapPath(c)}`],
     when: c => c.darwin && c.release,
     desc: "Dead-code strip + emit linker map",
   },
@@ -1115,19 +1316,17 @@ export const linkerFlags: Flag[] = [
     // linker deletes after the link, which would leave the debug map dangling
     // and the dSYM empty. -object_path_lto persists the LTO-codegen'd object
     // at a stable path inside the build dir and points the debug map at it.
+    // The link holds bitcode with `lto` off too: the Rust crates (linkLtoIsRustOnly).
     flag: c => `-Wl,-object_path_lto,${c.buildDir}/${bunExeName(c)}.lto.o`,
-    when: c => c.darwin && c.lto,
+    when: c => c.darwin && (c.lto || linkLtoIsRustOnly(c)),
     desc: "Persist the LTO-generated object so dsymutil can extract its DWARF into the dSYM",
   },
   {
     // Mach-O counterpart to lld's --symbol-ordering-file below:
     // <buildDir>/linker.order lists the functions bun actually executes while
-    // starting up, and Apple's linker sorts them to the front of __text. The
-    // file is a build artifact, never committed: configure seeds an empty one
-    // so both link passes share one build.ninja — a release build regenerates
-    // it from its own pass-1 binary and reruns ninja, which relinks and
-    // nothing else. Unknown names are silently skipped, so a stale file only
-    // costs part of the win.
+    // starting up, and Apple's linker sorts them to the front of __text. Where
+    // the file comes from is the same as on linux (see that entry). Unknown
+    // names are silently skipped, so a stale file only costs part of the win.
     flag: c => `-Wl,-order_file,${orderFilePath(c)}`,
     when: c => c.darwin && usesOrderFile(c),
     desc: "Sort startup-hot functions to the front of __text (cuts resident binary pages)",
@@ -1138,6 +1337,7 @@ export const linkerFlags: Flag[] = [
     flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`],
     when: c => c.linux && c.abi !== "android" && c.crossTarget !== undefined && c.sysroot !== undefined,
     desc: "linux sysroot link (gnu: ubuntu:20.04+gcc-13; musl: alpine)",
+    toolchain: true,
   },
   {
     // Wrap glibc symbols whose default version on the sysroot's glibc (2.31)
@@ -1200,14 +1400,25 @@ export const linkerFlags: Flag[] = [
     desc: "Wrap glibc 2.18+ symbols (portable down to glibc 2.17)",
   },
   {
+    // c-bindings.cpp: __wrap_execve records that an exec of this process is in
+    // flight, and __wrap_pthread_create retries the EAGAIN the kernel returns
+    // for clone(CLONE_FS) during that window (the --watch reload). Behavioral,
+    // not a version pin, so it applies to every Linux libc.
+    flag: ["-Wl,--wrap=execve", "-Wl,--wrap=pthread_create"],
+    when: c => c.linux,
+    desc: "Retry pthread_create EAGAIN caused by an in-flight execve",
+  },
+  {
     flag: ["-static-libstdc++", "-static-libgcc"],
     when: c => c.linux && c.abi === "gnu",
     desc: "Static C++ runtime (don't depend on host libstdc++)",
+    toolchain: true,
   },
   {
     flag: ["-lstdc++", "-lgcc"],
     when: c => c.linux && c.abi === "musl",
     desc: "Dynamic C++ runtime on musl (static unavailable)",
+    toolchain: true,
   },
   {
     flag: c => [
@@ -1223,6 +1434,7 @@ export const linkerFlags: Flag[] = [
     ],
     when: c => c.linux && c.abi === "android",
     desc: "Android link: target/sysroot + compiler-rt/libunwind + static libc++",
+    toolchain: true,
   },
   {
     // Paired with compile-side -fno-unwind-tables above.
@@ -1243,29 +1455,36 @@ export const linkerFlags: Flag[] = [
     flag: c => `--ld-path=${c.ld}`,
     when: c => c.linux,
     desc: "Use lld instead of system ld",
+    toolchain: true,
   },
   {
     flag: ["-fno-pic", "-Wl,-no-pie"],
-    when: c => c.linux && c.abi !== "android",
+    when: c => c.linux && c.abi !== "android" && !c.hardened,
     desc: "No PIE (we don't need ASLR; simpler codegen)",
+    toolchain: true,
+  },
+  {
+    flag: ["-fPIE", "-pie"],
+    when: c => c.hardened,
+    desc: "Hardened: position-independent executable",
+    toolchain: true,
   },
   {
     flag: ["-fPIC", "-pie"],
     when: c => c.abi === "android",
     desc: "Android: bionic loader requires PIE",
+    toolchain: true,
   },
   {
-    flag: [
+    flag: c => [
       "-Wl,--as-needed",
       "-Wl,-z,stack-size=12800000",
-      "-Wl,-z,lazy",
-      "-Wl,-z,norelro",
+      ...(c.hardened ? ["-Wl,-z,now", "-Wl,-z,relro", "-Wl,-z,separate-code"] : ["-Wl,-z,lazy", "-Wl,-z,norelro"]),
       // (no --pack-dyn-relocs=relr: DT_RELR needs glibc ≥ 2.36 to load,
       // and we wrap symbols for portability down to 2.17. With -no-pie
       // there are <500 R_*_RELATIVE entries anyway — not worth the compat
       // break.)
       "-Wl,-O2",
-      "-Wl,--gdb-index",
       "-Wl,-z,combreloc",
       // NOTE: --sort-section=name was here historically; lld ignores it
       // for the default `.text` rule. We also deliberately do NOT pass
@@ -1278,7 +1497,27 @@ export const linkerFlags: Flag[] = [
       "-Wl,--build-id=sha1",
     ],
     when: c => c.linux,
-    desc: "Linux linker tuning: lazy binding, large stack, fast gdb loading",
+    desc: "Linux linker tuning: lazy binding, large stack",
+  },
+  {
+    flag: "-Wl,-z,pack-relative-relocs",
+    when: c => c.relr,
+    desc: "Packed relative relocations (DT_RELR): the file then asks for glibc 2.36 or later",
+  },
+  {
+    flag: "-Wl,-z,noexecstack",
+    when: c => c.hardened,
+    desc: "Hardened: the stack is not executable (lld's default, stated)",
+  },
+  {
+    flag: "-Wl,--gdb-index",
+    when: c => c.linux && c.debugInfo !== "none",
+    desc: "Fast gdb loading",
+  },
+  {
+    flag: "-Wl,--strip-debug",
+    when: c => (c.linux || c.freebsd) && c.debugInfo === "none",
+    desc: "Leave out the debug sections of the Rust crates and the prebuilt libraries too",
   },
   {
     flag: "-Wl,--gc-sections",
@@ -1290,12 +1529,17 @@ export const linkerFlags: Flag[] = [
     // with `bun-profile`, so disabling ICF on the profile binary "for perf
     // symbolication" would also bloat the shipped binary's .text — and
     // `perf` symbolicates folded functions fine via the linker-map anyway.
-    flag: c => ["-Wl,-icf=safe", `-Wl,-Map=${c.buildDir}/${bunExeName(c)}.linker-map`],
-    when: c => c.linux && c.release && !c.asan && !c.valgrind,
-    desc: "Identical-code-folding (safe; perf symbolication uses the linker-map)",
+    flag: c => `-Wl,--icf=${icfMode(c)}`,
+    when: c => c.linux || c.freebsd,
+    desc: "Identical-code-folding (safe in release; perf symbolication uses the linker-map)",
   },
   {
-    // When a PGO profile is loaded (`--pgo-use`, e.g. the two-stage `btg`
+    flag: c => `-Wl,-Map=${linkerMapPath(c)}`,
+    when: c => (c.linux || c.freebsd) && writesLinkerMap(c),
+    desc: "Linker map",
+  },
+  {
+    // When a PGO profile is loaded (`--pgo-use`, e.g. the two-stage
     // build driven by scripts/build-pgo.ts) clang AND rustc emit `.text.hot` /
     // `.text.unlikely` section prefixes from *measured* execution counts.
     // Tell lld to keep those prefixes (it merges them into one `.text` by
@@ -1322,10 +1566,10 @@ export const linkerFlags: Flag[] = [
     // Packing them together cuts that by a third for a same-size binary.
     //
     // The file is a build artifact, never committed: configure seeds an empty one
-    // (a no-op for lld) so this flag is unconditional and both link passes share
-    // one build.ninja — a release build regenerates it from its own pass-1 binary
-    // and reruns ninja, which relinks and nothing else. Symbols lld cannot find
-    // are skipped, so a stale file only costs part of the win.
+    // (a no-op for lld) so this flag is unconditional. No build traces its own
+    // binary: a CI build inherits the file an earlier build's trace-order step
+    // published (ci.ts "Symbol ordering file"), and links once. Symbols lld
+    // cannot find are skipped, so a stale file only costs part of the win.
     //
     // A local `bun run build:release` therefore links unordered until you run
     // `bun run orderfile` and build again.
@@ -1343,35 +1587,59 @@ export const linkerFlags: Flag[] = [
     desc: "Exported symbol definition (.def format)",
   },
   {
+    // The exe exports symbols (the .def above), so lld-link also writes an
+    // import library — by default `<output basename>.lib` beside the exe.
+    // Nothing consumes it; park it under obj/.
+    flag: c => `/IMPLIB:${slash(join(c.buildDir, "obj", `${bunExeName(c)}.import.lib`))}`,
+    when: c => c.windows,
+    desc: "Write the exe's import library under obj/",
+  },
+  {
     flag: c => ["-exported_symbols_list", `${c.cwd}/src/symbols.txt`],
     when: c => c.darwin,
     desc: "Exported symbol list",
   },
   {
+    flag: replacedOperatorNewSymbols.map(name => `-Wl,-exported_symbol,_${name}`),
+    when: c => overridesDarwinAllocator(c),
+    desc: "Export operator new/delete so dyld binds libc++.1.dylib to them too",
+  },
+  {
+    // The link exports the names in the version script's `global:` block, and only those. Not `-rdynamic`: that
+    // exports everything and leaves the hiding to the script's `local: *`, which lld applies before LTO generates
+    // code, so a symbol first made there stayed exported (an emulated thread-local's `__emutls_v.` / `__emutls_t.`
+    // pair, on Android).
     flag: c => [
       "-Wl,-Bsymbolic-functions",
-      "-rdynamic",
-      `-Wl,--dynamic-list=${c.cwd}/src/symbols.dyn`,
-      `-Wl,--version-script=${c.cwd}/src/linker.lds`,
+      `-Wl,--export-dynamic-symbol-list=${exportListPath(c)}`,
+      `-Wl,--version-script=${versionScriptPath(c)}`,
     ],
-    when: c => c.linux,
-    desc: "Dynamic symbol list + version script",
+    when: c => c.linux || c.freebsd,
+    desc: "Export list + version script",
+  },
+  {
+    flag: c => `-Wl,--version-script=${libcFunctionsScriptPath(c)}`,
+    when: definesLibcFunctions,
+    desc: "Export the functions of libc that the executable defines, without a version",
   },
   // ─── FreeBSD ───
   {
     flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`, "-stdlib=libc++"],
     when: c => c.freebsd && c.crossTarget !== undefined,
     desc: "FreeBSD cross-link: target/sysroot + libc++ (FreeBSD base ships libc++)",
+    toolchain: true,
   },
   {
     flag: c => `--ld-path=${c.ld}`,
     when: c => c.freebsd,
     desc: "Use lld instead of system ld",
+    toolchain: true,
   },
   {
     flag: ["-fno-pic", "-Wl,-no-pie"],
     when: c => c.freebsd,
     desc: "FreeBSD 13+ clang defaults to PIE; opt out (matches Linux, avoids -fPIC rebuild of WebKit/deps)",
+    toolchain: true,
   },
   {
     flag: [
@@ -1389,47 +1657,71 @@ export const linkerFlags: Flag[] = [
     desc: "FreeBSD linker tuning (same as Linux ELF; here -z stack-size also sizes the main thread's stack)",
   },
   {
-    // rust-lang/llvm-project doesn't enable `LLVM_ENABLE_ZLIB` (or `_ZSTD`) for
-    // the lld they bundle as `rust-lld`, so this flag hard-fails there:
-    //   `rust-lld: error: --compress-debug-sections: LLVM was not built with
-    //   LLVM_ENABLE_ZLIB or did not find zlib at build time`.
-    // We only fall onto rust-lld for cross-language LTO when rustc's LLVM is
-    // newer than the system clang/lld (see config.ts `cfg.ld` selection); in
-    // that case the link-time flag is dropped and llvm-objcopy compresses
-    // post-link instead (shims.ts elfDebugCompressPostlinkCommand) — an
-    // uncompressed bun-profile is ~2x larger and every `--compile` test
+    // An uncompressed bun-profile is ~2x larger and every `--compile` test
     // copies it, so leaving it uncompressed times CI out.
     flag: "-Wl,--compress-debug-sections=zlib",
-    when: c => (c.linux || c.freebsd) && c.ld !== c.rustLld,
-    desc: "Compress ELF debug sections (post-link via llvm-objcopy with rust-lld — built without zlib)",
+    when: c => (c.linux || c.freebsd) && c.debugInfo !== "none",
+    desc: "Compress ELF debug sections",
   },
   {
     flag: "-Wl,--gc-sections",
     when: c => c.freebsd && c.release,
     desc: "Garbage-collect unused sections",
   },
-  {
-    flag: c => [
-      "-Wl,-Bsymbolic-functions",
-      "-rdynamic",
-      `-Wl,--dynamic-list=${c.cwd}/src/symbols.dyn`,
-      `-Wl,--version-script=${c.cwd}/src/linker-freebsd.lds`,
-    ],
-    when: c => c.freebsd,
-    desc: "Dynamic symbol list + version script (FreeBSD adds environ/__progname)",
-  },
 ];
+
+/**
+ * Release Rust reaches the link as ThinLTO bitcode (rust.ts) and the linker optimises it: together with the C/C++
+ * where `lto` is on, by itself where it is off. ASan builds and `--rust-lto=off` link machine code.
+ */
+export function rustLtoInLink(c: Config): boolean {
+  return c.release && !c.asan && c.rustLto;
+}
+
+/** The link optimises bitcode: the C/C++'s (`lto`), the Rust crates', or both. */
+function linkRunsLto(c: Config): boolean {
+  return c.lto || rustLtoInLink(c);
+}
+
+/**
+ * The level of the link's LTO, for the IR pipeline and for code generation. 2 is also lld's default; it is stated so
+ * that no link depends on the default. 3 on the macOS arm64 cross link, where it makes LTO codegen match the -O3
+ * compile side for +0.3 MB; on x64 the same costs +3.1 MB (the higher inline threshold is much more expensive in
+ * x86-64's variable-length encoding).
+ */
+function ltoLevel(c: Config): 2 | 3 {
+  return c.darwin && c.arm64 && c.lto && c.release ? 3 : 2;
+}
+
+/**
+ * Identical-code folding. `safe` folds only functions whose address is never taken, which it reads from the
+ * address-significance table the release objects carry (`-faddrsig`, `-Cllvm-args=-addrsig` for Rust): the crates are
+ * one ThinLTO module each, so the copies of a function several of them instantiate are merged only here. Off outside
+ * release and under ASan and valgrind, where every function should stay what the source says.
+ */
+function icfMode(c: Config): "safe" | "none" {
+  return c.release && !c.asan && !c.valgrind ? "safe" : "none";
+}
+
+/** The link's LTO covers the Rust crates and nothing else: the C/C++ is compiled without LTO. */
+function linkLtoIsRustOnly(c: Config): boolean {
+  return rustLtoInLink(c) && !c.lto;
+}
 
 /**
  * Whether this target links with a symbol ordering file (lld
  * `--symbol-ordering-file` on linux, `-order_file` on darwin, which both Apple
- * ld and ld64.lld take). Only where the startup win is worth a relink: release
- * builds, not under a sanitizer — the tracer swaps `.text` out for a private
- * copy, and nobody measures startup RSS on an ASAN build anyway.
+ * ld and ld64.lld take, lld-link `/order` on windows). Only where the startup
+ * win is worth having: release builds, not under a sanitizer — the tracer
+ * swaps `.text` out for a private copy, and nobody measures startup RSS on an
+ * ASAN build anyway.
  *
- * This says where the order file is CONSUMED, not where it is produced. A
- * cross-compiled lane cannot trace its own binary (`canTraceOrderFile`), so it
- * inherits an earlier build's file instead and still links ordered.
+ * This says where the order file is CONSUMED, not where it is produced. Every
+ * build inherits an earlier build's file; the trace-order step in
+ * .buildkite/ci.ts produces that file on the target's test fleet, after the
+ * build. On windows the tracer is a debugger
+ * (scripts/orderfile/functrace-windows.c), so it needs no preload mechanism,
+ * and it plants INT3 or BRK depending on which architecture it is built for.
  *
  * linux gnu only: musl links statically, so LD_PRELOAD cannot load the tracer,
  * and no musl test host exists to trace on either. android has no order-file
@@ -1439,12 +1731,12 @@ export const linkerFlags: Flag[] = [
  * inherit and linking with an always-empty order file just adds noise.
  */
 export function usesOrderFile(
-  cfg: Pick<Config, "linux" | "darwin" | "abi" | "arm64" | "release" | "asan" | "valgrind">,
+  cfg: Pick<Config, "linux" | "darwin" | "windows" | "abi" | "arm64" | "release" | "asan" | "valgrind">,
 ): boolean {
   if (!cfg.release || cfg.asan || cfg.valgrind) return false;
   if (cfg.linux) return cfg.abi === "gnu";
   if (cfg.darwin) return cfg.arm64;
-  return false;
+  return cfg.windows;
 }
 
 /** The order file lives in the build directory — it is generated, never committed. */
@@ -1453,24 +1745,88 @@ export function orderFilePath(cfg: Pick<Config, "buildDir">): string {
 }
 
 /**
+ * Whether the link writes its map(s); mirrors the map flags above (linux and
+ * freebsd: the `-Map` entry, darwin: `-dead_strip`, windows: `/lldmap` + `/map`).
+ * `linkerMapOutputs()` names them: bun.ts declares those to ninja as the link's
+ * outputs, and ci.ts ships them in the profile zip — on windows the trace-order
+ * step cannot work without them (see the `/lldmap` entry).
+ */
+export function writesLinkerMap(
+  cfg: Pick<Config, "linux" | "darwin" | "windows" | "freebsd" | "release" | "asan" | "valgrind" | "linkerMap">,
+): boolean {
+  if (!cfg.release || !cfg.linkerMap) return false;
+  if (cfg.linux || cfg.freebsd) return !cfg.asan && !cfg.valgrind;
+  return cfg.darwin || cfg.windows;
+}
+
+/** `<buildDir>/bun-profile.linker-map`: the linker's own map — lld's `-Map`, ld64's `-map`, lld-link's `/lldmap`. */
+export function linkerMapPath(cfg: Config): string {
+  return join(cfg.buildDir, `${bunExeName(cfg)}.linker-map`);
+}
+
+/**
+ * `<buildDir>/bun-profile.map`: lld-link's MSVC-style `/map`, every symbol by
+ * address. Windows only; the same name scripts/orderfile/windows-symbols.ts
+ * derives from the binary's.
+ */
+export function symbolMapPath(cfg: Config): string {
+  return join(cfg.buildDir, `${bunExeName(cfg)}.map`);
+}
+
+/** The map files the link writes (see writesLinkerMap), or none. */
+export function linkerMapOutputs(cfg: Config): string[] {
+  if (!writesLinkerMap(cfg)) return [];
+  return cfg.windows ? [linkerMapPath(cfg), symbolMapPath(cfg)] : [linkerMapPath(cfg)];
+}
+
+/**
+ * The ld version script of an ELF link: the names it exports (the `global:` block), their version node, and that
+ * everything else is local. FreeBSD's adds `environ` and `__progname`, which lld would reject as undefined on Linux.
+ */
+export function versionScriptPath(cfg: Pick<Config, "cwd" | "freebsd">): string {
+  return join(cfg.cwd, "src", cfg.freebsd ? "linker-freebsd.lds" : "linker.lds");
+}
+
+/**
+ * Whether BunSignalActions.cpp defines functions of libc: with the ahead-of-time compiler's run time, on glibc and musl.
+ * A sanitizer's run time defines them itself.
+ */
+export function definesLibcFunctions(cfg: Pick<Config, "aot" | "linux" | "abi" | "asan">): boolean {
+  return cfg.aot && cfg.linux && cfg.abi !== "android" && !cfg.asan;
+}
+
+/** A second, anonymous version script: the names in it are exported without a version. */
+export function libcFunctionsScriptPath(cfg: Pick<Config, "cwd">): string {
+  return join(cfg.cwd, "src", "libc-functions.lds");
+}
+
+/** The version scripts of an ELF link. */
+export function versionScriptPaths(cfg: Config): string[] {
+  return definesLibcFunctions(cfg) ? [versionScriptPath(cfg), libcFunctionsScriptPath(cfg)] : [versionScriptPath(cfg)];
+}
+
+/** `<buildDir>/exports.list`: the version scripts' `global:` blocks as lld's export list; configure writes it (bun.ts). */
+export function exportListPath(cfg: Pick<Config, "buildDir">): string {
+  return join(cfg.buildDir, "exports.list");
+}
+
+/**
  * Files the linker reads via flags above. Return as implicit inputs so
  * ninja relinks when exported symbols / version script change.
  * CMake tracks these via set_target_properties LINK_DEPENDS.
+ *
+ * The release symbol ordering file is one of them on every target that uses
+ * it: listing it here is what makes regenerating (or inheriting) it relink, and
+ * only relink.
  */
 export function linkDepends(cfg: Config): string[] {
-  if (cfg.freebsd) return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker-freebsd.lds")];
-  if (cfg.windows) return [join(cfg.cwd, "src/symbols.def")];
-  // The release symbol ordering file: listing it here is what makes
-  // regenerating it relink, and only relink.
-  if (cfg.darwin) {
-    const darwin = [join(cfg.cwd, "src/symbols.txt")];
-    if (usesOrderFile(cfg)) darwin.push(orderFilePath(cfg));
-    return darwin;
-  }
-  // linux: ELF dynamic-list + version script.
-  const linux = [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
-  if (usesOrderFile(cfg)) linux.push(orderFilePath(cfg));
-  return linux;
+  const depends = cfg.windows
+    ? [join(cfg.cwd, "src/symbols.def")]
+    : cfg.darwin
+      ? [join(cfg.cwd, "src/symbols.txt")]
+      : [exportListPath(cfg), ...versionScriptPaths(cfg)];
+  if (usesOrderFile(cfg)) depends.push(orderFilePath(cfg));
+  return depends;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1600,7 +1956,7 @@ export const fileOverrides: FileOverride[] = [
     // disabling the other or clang errors.
     extraFlags: ["-fno-lto", "-fno-whole-program-vtables"],
     when: c => c.linux && c.lto && c.abi === "gnu",
-    desc: "Disable LTO: LLD 21 emits glibc versioned symbols (exp@GLIBC_2.17) into .lto_discard which fails to parse '@'",
+    desc: "Disable LTO: LLD (first seen with 21; not re-checked on 23) emits glibc versioned symbols (exp@GLIBC_2.17) into .lto_discard which fails to parse '@'",
   },
   {
     file: "src/jsc/bindings/windows/rescle.cpp",
@@ -1703,7 +2059,7 @@ export function computeFlags(cfg: Config): ComputedFlags {
 }
 
 /**
- * Flags forwarded to vendored dependencies via -DCMAKE_C_FLAGS/-DCMAKE_CXX_FLAGS.
+ * Flags every vendored dependency is compiled with.
  * This is ONLY the global table — no -Werror, no bun-specific defines, no UBSan.
  */
 export function computeDepFlags(cfg: Config): { cflags: string[]; cxxflags: string[] } {
@@ -1714,10 +2070,27 @@ export function computeDepFlags(cfg: Config): { cflags: string[]; cxxflags: stri
 }
 
 /**
- * Just the -march/-mcpu/-mtune flags. For deps (WebKit) whose own build system
- * sets -O/-g/sanitizer flags but never sets a CPU target, so without this they
- * end up targeting generic x86-64 while the rest of bun targets nehalem.
+ * The link flags of an executable for the target that is not bun (JSC's LLInt
+ * extractors, the jsc shell): the `toolchain` entries of linkerFlags, plus
+ * dropping unreferenced sections. Bun's own link policy (symbol lists, ICF,
+ * stack size, wraps) is left out.
  */
+export function computeTargetLinkFlags(cfg: Config): string[] {
+  const out: string[] = [];
+  for (const f of linkerFlags) {
+    if (!f.toolchain || (f.when && !f.when(cfg))) continue;
+    out.push(...resolveFlagValue(f.flag, cfg));
+  }
+  if (!cfg.windows) out.push(cfg.darwin ? "-Wl,-dead_strip" : "-Wl,--gc-sections");
+  return out;
+}
+
+export function computeHardeningFlags(cfg: Config): string[] {
+  if (!cfg.hardened) return [];
+  return hardeningFlags.filter(flag => (cfg.release && !cfg.asan) || !flag.startsWith("-D_FORTIFY_SOURCE"));
+}
+
+/** Just the -march/-mcpu/-mtune flags: rust.ts translates them into rustc's -Ctarget-cpu so Rust code targets the same CPU as the C++. */
 export function computeCpuTargetFlags(cfg: Config): string[] {
   const out: string[] = [];
   for (const f of cpuTargetFlags) {

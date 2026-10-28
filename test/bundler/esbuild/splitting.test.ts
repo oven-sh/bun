@@ -512,9 +512,10 @@ describe("bundler", () => {
     entryPoints: ["/a.js", "/b.js", "/c.js"],
     splitting: true,
     minifyIdentifiers: true,
+    // `foo` crosses chunks, so it carries one bundle-wide minified name.
     run: [
-      { file: "/out/a.js", stdout: "[Function: f]" },
-      { file: "/out/b.js", stdout: "[Function: f]" },
+      { file: "/out/a.js", stdout: "[Function: o]" },
+      { file: "/out/b.js", stdout: "[Function: o]" },
     ],
   });
   itBundled("splitting/HybridESMAndCJSESBuildIssue617", {

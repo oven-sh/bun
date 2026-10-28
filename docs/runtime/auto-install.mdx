@@ -3,7 +3,7 @@ title: "Auto-install"
 description: "Bun's automatic package installation feature for standalone script execution"
 ---
 
-If Bun finds no `node_modules` directory in the working directory or higher, it abandons Node.js-style module resolution in favor of the **Bun module resolution algorithm**.
+If Bun finds no `node_modules` directory in the directory of the importing file or higher, it abandons Node.js-style module resolution in favor of the **Bun module resolution algorithm**.
 
 Under Bun-style module resolution, Bun auto-installs every imported package on the fly into a [global module cache](/pm/global-cache) during execution. [`bun install`](/pm/cli/install) uses the same cache.
 
@@ -15,15 +15,38 @@ foo();
 
 The first time you run this script, Bun auto-installs `"foo"` and caches it. Later runs use the cached version.
 
+Auto-install is off when a [security scanner](/runtime/bunfig#install-security-scanner) is configured in the global `.bunfig.toml`, or in a `bunfig.toml` from the working directory or the importing file up to the [project root](#project-root). It is also off when one of those files can't be parsed, or when a `package.json` that Bun reads to find the project root can't be read or parsed. `-i` and `--install` do not turn it back on. The import fails and tells you to run `bun install`.
+
+---
+
+## Project root
+
+Auto-install reads the lockfile and the settings of one project, the project of the importing file:
+
+1. The nearest directory, at or above the file, that has a `package.json` with a `name`, `workspaces`, or dependencies. A `package.json` without any of them, such as `{ "type": "commonjs" }`, belongs to the project above it.
+2. The workspace root, if that directory is a member of a workspace.
+3. The topmost directory that has a `package.json`, if none of them has a `name`, `workspaces`, or dependencies.
+4. The directory of the file, if there is no `package.json`.
+
+A file in `node_modules` belongs to the project that the `node_modules` directory is in. Bun reads the lockfile of the project root only. It reads a `.npmrc` and the `[install]` settings of a `bunfig.toml` in each directory from the project root down to the importing file, and in the directory where you started `bun`.
+
+The first import that needs auto-install decides the project for the rest of the process.
+
 ---
 
 ## Version resolution
 
 Bun determines which version to install as follows:
 
-1. Check for a `bun.lock` file in the project root. If it exists, use the version specified in the lockfile.
-2. Otherwise, scan up the tree for a `package.json` that includes `"foo"` as a dependency. If found, use the specified semver version or version range.
-3. Otherwise, use `latest`.
+1. Scan up the tree for a `package.json` that lists `"foo"` in `dependencies`, `devDependencies`, `optionalDependencies`, or `peerDependencies`. If found, use the specified semver version or version range.
+2. Otherwise, use `latest`.
+3. Look for a `bun.lock` file in the [project root](#project-root). If the lockfile has a version of `"foo"` that satisfies the range, use that version.
+
+The dependencies of a package that comes from the lockfile also load the versions in the lockfile.
+
+A `workspace:`, `file:`, or `link:` dependency loads from its folder on disk, and so does a workspace package that a range matches. Nothing is copied. A tarball (a `file:` path or a URL) is extracted into the cache.
+
+Without a lockfile, Bun reads `overrides`, `resolutions`, `catalog`, `catalogs`, and `workspaces` from the `package.json` of the project root. A peer dependency of an auto-installed package loads the version that this `package.json` lists, if it lists one.
 
 ---
 
@@ -33,13 +56,40 @@ Once Bun determines a version or version range, it:
 
 1. Checks the module cache for a compatible version. If one exists, uses it.
 2. When resolving `latest`, checks if `package@latest` was downloaded and cached in the last _24 hours_. If so, uses it.
-3. Otherwise, downloads and installs the appropriate version from the `npm` registry.
+3. Otherwise, downloads and installs the appropriate version from the registry.
+
+With `bun --prefer-offline` (or [`install.prefer = "offline"`](/runtime/bunfig#install-prefer)), Bun resolves versions and tags from the cached registry metadata, however old it is, and only asks the registry for a package that is not in the cache.
+
+The first import of a package that is not in the cache blocks the thread until the download finishes. Timers and other requests' handlers do not run inside `require()`, `import()`, or `Bun.resolveSync()`.
+
+The import fails if the registry sends nothing for about 30 seconds (`BUN_CONFIG_HTTP_IDLE_TIMEOUT` changes that).
+
+When the registry responds that a package doesn't exist (404), Bun doesn't request it again for 5 minutes, or less if the response's `Cache-Control` says so. After any other failure of a lookup or a download, such as a 5xx or a dropped connection, Bun retries the request a few times. If the import still fails, an import in a later turn of the event loop (after a timer or I/O) sends the request again.
+
+When Bun cannot write to the cache, on a read-only file system for example, packages that are already in the cache still load. An import that needs a download throws the same error as an import of a missing package, with the reason as a note.
+
+---
+
+## Registries
+
+Bun downloads packages from the npm registry (`https://registry.npmjs.org/`) unless you configure another one. Auto-install reads the default registry, the scoped registries, and their credentials from [`bunfig.toml`](/runtime/bunfig#install-registry) and from [`.npmrc`](/pm/npmrc).
+
+```ini .npmrc icon="npm"
+@myorg:registry=https://npm.myorg.com/
+//npm.myorg.com/:_authToken=${NPM_TOKEN}
+```
+
+Bun reads the user's `.npmrc`, then the `.npmrc` in the directory where you started `bun`, then each `.npmrc` from the [project root](#project-root) down to the importing file. Then it reads the `[install]` section of each `bunfig.toml` in those same directories, in the same order. Later files override earlier ones, so the file closest to the importing file wins. If you started `bun` from a directory inside the project, that directory's files are read in their normal position instead of first. Other `.npmrc` options, such as `cache`, apply to `bun install` and the other package manager commands only. `install.auto` and `install.prefer` count only in the directory where you started `bun`.
+
+Auto-install replaces `${NAME}` with a variable from the environment of the script, which includes its `.env` files. `bun install` reads `.env.production` where a script reads `.env.development` by default.
 
 ---
 
 ## Installation
 
 Bun installs and caches packages into `<cache>/<pkg>@<version>`, so Bun can cache multiple versions of the same package at once. It also creates a symlink under `<cache>/<pkg>/<version>` to speed up looking up all cached versions of a package.
+
+A package whose tarball ships a `node_modules` folder (`bundledDependencies`) loads the packages in that folder from there, and its other dependencies from the cache.
 
 ---
 
@@ -68,6 +118,9 @@ import { z } from "zod@^3.20.0"; // semver range
 
 - No Intellisense. TypeScript auto-completion in IDEs relies on type declaration files inside `node_modules`. We are investigating solutions to this.
 - No [patch-package](https://github.com/ds300/patch-package) support
+- No git dependencies. Run `bun install` for a dependency on a git URL.
+- An `overrides` or `resolutions` entry applies only if it names a version, a range, a tag, an `npm:` alias, or a `catalog:`. One that points at a folder (`file:`, `link:`), a tarball, or a git repository does not apply. Run `bun install` for those.
+- One project per process. The registries, `overrides`, `resolutions`, and catalogs of another project do not apply to the files that the process imports from it.
 
 ---
 
@@ -81,7 +134,7 @@ import { z } from "zod@^3.20.0"; // semver range
 
     </Accordion>
 
-    <Accordion title="How is this different from Yarn Plug'N'Play does?">
+    <Accordion title="How is this different from what Yarn Plug'N'Play does?">
     With Yarn, you must run `yarn install` before you run a script. By contrast, Bun resolves dependencies on the fly when you run a file; there's no need to run any `install` command ahead of time.
 
     Yarn Plug'N'Play also uses zip files to store dependencies. This makes dependency loading [slower at runtime](https://twitter.com/jarredsumner/status/1458207919636287490), as random access reads on zip files tend to be slower than the equivalent disk lookup.

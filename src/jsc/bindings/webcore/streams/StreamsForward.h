@@ -30,7 +30,13 @@ namespace Zig {
 class GlobalObject;
 }
 
+namespace Bun::Bindgen::Generated {
+class JSReadableSinkController; // a native sink's controller (GeneratedSink.h)
+}
+
 namespace WebCore {
+
+using Bun::Bindgen::Generated::JSReadableSinkController;
 
 class AbortSignal;
 // NOTE: JSDOMGlobalObject is deliberately NOT forward-declared here. In Bun it is not a
@@ -74,7 +80,6 @@ class JSBunStandaloneTextSink; // the standalone Text sink (BunStandaloneTextSin
 class JSOneShotDirectSink; // consumeDirectStreamToArrayBuffer's throwaway controller
 class JSReadableStreamIntoArrayOperation; // the array pump's reader/chunks/result state
 class JSNativeStreamSourceAdapter;
-class JSDirectSinkCloseState;
 class JSAsyncIteratorSourceOperation;
 class JSReadStreamIntoSinkOperation;
 class JSTextEncoderStream;
@@ -124,7 +129,7 @@ enum class SourceKind : uint8_t {
 };
 
 // Which arm runs a writable controller's write/close/abort algorithms.
-// The Bun JSSink layer never uses a WritableStream, so it adds no arm.
+// Bun's native sinks never use a WritableStream, so they add no arm.
 enum class SinkKind : uint8_t {
     JavaScript, // user underlyingSink
     Nothing, // new WritableStream() with no sink
@@ -168,7 +173,7 @@ enum class ControllerKind : uint8_t {
     Default, // JSReadableStreamDefaultController
     Byte, // JSReadableByteStreamController
     Direct, // JSDirectStreamController (Bun `type:"direct"`, JS-consumption path)
-    NativeSink, // a generated JSReadable*Controller JSSink cell (Bun native-sink path)
+    NativeSink, // a JSReadableSinkController (Bun native-sink path)
 };
 
 // Readers & read requests
@@ -199,6 +204,12 @@ enum class ReadRequestKind : uint8_t {
 enum class ReadIntoRequestKind : uint8_t {
     Promise, // public byobReader.read(view): context = the JSPromise
     ByteTee, // the byte tee's BYOB read-into request: context = the JSStreamTeeState
+};
+
+// A step that was already deferred to a microtask passes No, because it has to make progress (see streamLinkMustDefer).
+enum class MayDefer : bool {
+    No,
+    Yes,
 };
 
 // Bun `type:"direct"`

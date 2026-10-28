@@ -1,0 +1,1 @@
+{ "env": { "PARTS": "log,info,debug,UInt16LE,hex,emit,write,end,read,setHeader,writeHead,listen,address,close,cwd,uptime,escapeHTML,max,stringify" }, "skipInShell": "it asks for modules of Bun", "skipInVariant": { "trimmed-runtime": "it calls a member of Bun under a computed key, which names no member: --trim removes it, and the call throws" } }

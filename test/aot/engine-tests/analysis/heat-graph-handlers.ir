@@ -1,0 +1,83 @@
+# The host alone calls a handler, 32768 times in a run, whether the handler is a member of an options object or an operand: the function that registers it has no edge to it and neither has unknown code. A callback called once later has an edge from the function that hands it over
+# FORM: AsRead
+# RUN: heat-graph flow
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" fields=[{key="fetch" declared={type=anything}}]
+variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    v2 = NewClosure function=f1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Builtin builtin=BunServe
+    v5 = Call v4, -, v3
+    v6 = NewClosure function=f5
+    v7 = Builtin builtin=EventEmitterPrototypeOn
+    v8 = Builtin builtin=Process
+    v9 = String string="message"
+    v10 = Call v7, v8, v9, v6
+    v11 = NewClosure function=f6
+    v12 = Builtin builtin=QueueMicrotask
+    v13 = Call v12, -, v11
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v15 = CallDirect v0 function=f4
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return
+}
+function f1 name="fetch" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect function=f2
+    Return v1
+}
+function f2 name="route" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f3
+    Return v0
+}
+function f3 name="respond" results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f4 name="register" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    v2 = LogicalNot v1
+    Return v2
+}
+function f5 name="onMessage" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    Return
+}
+function f6 name="job" results=[{type=undefined}] {
+  b0():
+    Return
+}
+# CHECK: f0 size 20 mass 55.000000:
+# CHECK-NOT: f1*
+# CHECK-NOT: f5*
+# CHECK: f4*10.000000 f6*1.000000
+# CHECK-NOT: f5*
+# CHECK: f1 size 2 mass 2.000000: f2*1.000000
+# CHECK-NEXT: f2 size 2 mass 2.000000: f3*1.000000
+# CHECK: host: f0*1.000000 f1*32768.000000 f5*32768.000000
+# CHECK: unknown:
+# CHECK-NOT: f0*
+# CHECK-NOT: f1*
+# CHECK-NOT: f5*
+# CHECK: activations:
+# CHECK-NEXT: f0 1.000000
+# CHECK-NEXT: f1 32768.000000
+# CHECK-NEXT: f2 32768.000000
+# CHECK-NEXT: f3 32768.000000
+# CHECK-NEXT: f4 10.000000
+# CHECK-NEXT: f5 32768.000000
+# CHECK-NEXT: f6 1.000000

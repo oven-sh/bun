@@ -60,7 +60,37 @@ pub enum JsxImportKind {
 pub trait Host {
     fn symbols(&self) -> &[Symbol];
     fn module_scope(&self) -> &Scope;
-    fn import_records(&self) -> &[ImportRecord];
+    fn import_records(&self) -> &[ImportRecord<'_>];
+
+    /// The operand of each `x as T` with the cast, in the order of the operands. The parser drops casts.
+    fn type_casts(&self) -> &[(Loc, Loc)] {
+        &[]
+    }
+
+    /// The `x` of each `x = d` in a pattern with the whole, in the order of the `x`. The parser has no node for it.
+    fn targets_with_defaults(&self) -> &[(Loc, Loc)] {
+        &[]
+    }
+
+    /// What is in parentheses with the outermost of them, in the order of what is in them. The parser drops them, and so
+    /// does upstream's. For a tree that has a node for them.
+    fn parentheses(&self) -> &[(Loc, Loc)] {
+        &[]
+    }
+
+    /// The namespace import that `item` is a member of. The parser makes an import of its own of `ns.member`.
+    fn namespace_of_import_item(&self, _item: Ref) -> Option<Ref> {
+        None
+    }
+
+    /// Whether `ref_` is bound outside of the function that is compiled, which for the parser is
+    /// in the scope of the module.
+    fn is_module_level(&self, ref_: Ref) -> bool {
+        self.symbols()
+            .get(ref_.inner_index() as usize)
+            .and_then(|sym| self.module_scope().members.get(sym.original_name.slice()))
+            .is_some_and(|member| member.ref_ == ref_)
+    }
     fn source(&self) -> &[u8];
     fn arena(&self) -> &bun_alloc::Arena;
 
@@ -79,13 +109,29 @@ pub trait Host {
     /// post-visit JSX-import emission picks it up.
     fn jsx_import(&mut self, kind: JsxImportKind) -> Ref;
 
+    /// Which JSX runtime symbol `ref_` is, if the visit pass or
+    /// [`Host::jsx_import`] declared it on the parser's `jsx_imports` table.
+    fn jsx_import_kind(&self, ref_: Ref) -> Option<JsxImportKind>;
+
     /// Whether JSX is being compiled in development mode (selects `jsxDEV`
     /// over `jsx`/`jsxs` and emits the trailing dev-only call args).
     fn is_jsx_dev(&self) -> bool {
         false
     }
 
+    /// Whether this file uses the classic JSX runtime: every element is a
+    /// `factory(type, props, ...children)` call and nothing is auto-imported.
+    fn is_jsx_classic(&self) -> bool;
+
+    /// The classic runtime's factory (`React.createElement`, `h`, ...),
+    /// resolved from the current scope the way the visit pass resolves it.
+    fn jsx_classic_factory(&mut self, loc: Loc) -> Expr;
+
+    /// A new symbol for a module-level name, such as an outlined function.
     fn new_generated(&mut self, name: &[u8]) -> Ref;
+
+    /// A new symbol for a name that the compiled function (or one outlined from it) declares.
+    fn new_local(&mut self, name: &[u8]) -> Ref;
 
     fn new_import_item(&mut self, name: &[u8]) -> Ref {
         self.new_generated(name)
@@ -148,11 +194,13 @@ pub fn has_module_scope_opt_out(stmts: &[Stmt]) -> bool {
 /// visit pass — `scan_imports` populates that field only after visiting), so
 /// imported bindings reach `Environment::resolve_module_type` instead of
 /// degrading to `Global`.
+#[inline(never)]
 pub fn collect_import_bindings(
     stmts: &[Stmt],
     records: &[ImportRecord],
     symbols: &[Symbol],
 ) -> IndexMap<Ref, VariableBinding> {
+    bun_removable_features::removable_definition!(ReactCompiler, collect_import_bindings);
     let mut out = IndexMap::new();
     for stmt in stmts {
         let StmtData::SImport(import) = &stmt.data else {
@@ -667,6 +715,10 @@ fn returns_non_node_in_stmts(stmts: &[Stmt]) -> bool {
 }
 
 fn returns_non_node_in_stmt(stmt: &Stmt, result: &mut bool) {
+    if !crate::lowering::thread_has_stack() {
+        return;
+    }
+
     match &stmt.data {
         StmtData::SReturn(ret) => {
             // Visit folds `return undefined` → bare `return;`, so None ≡ undefined here.
@@ -727,6 +779,10 @@ fn calls_hooks_or_creates_jsx_in_stmts(host: &dyn Host, stmts: &[Stmt]) -> bool 
 }
 
 fn calls_hooks_or_creates_jsx_in_stmt(host: &dyn Host, stmt: &Stmt) -> bool {
+    if !crate::lowering::thread_has_stack() {
+        return false;
+    }
+
     match &stmt.data {
         StmtData::SExpr(e) => calls_hooks_or_creates_jsx_in_expr(host, &e.value),
         StmtData::SReturn(ret) => ret
@@ -814,6 +870,10 @@ fn calls_hooks_or_creates_jsx_in_stmt(host: &dyn Host, stmt: &Stmt) -> bool {
 }
 
 fn calls_hooks_or_creates_jsx_in_expr(host: &dyn Host, expr: &Expr) -> bool {
+    if !crate::lowering::thread_has_stack() {
+        return false;
+    }
+
     match &expr.data {
         ExprData::EJsxElement(_) => true,
         ExprData::ECall(call) => {
@@ -982,6 +1042,11 @@ fn get_component_or_hook_like(
     None
 }
 
+/// The part of [`get_component_or_hook_like`] that the binding decides.
+fn is_component_or_hook_like_name(name: Option<&[u8]>, in_react_hoc: bool) -> bool {
+    name.is_some_and(|name| is_component_name(name) || is_hook_name(name)) || in_react_hoc
+}
+
 // -----------------------------------------------------------------------
 // Error handling
 // -----------------------------------------------------------------------
@@ -1106,11 +1171,13 @@ impl ReactCompilerState {
     /// (`ProgramContext::init_from_scope`, restricted-import validation) is
     /// deferred to the first `maybe_compile_*` call so the parser can set
     /// `p.react_compiler = Some(..)` without a `&mut p` borrow conflict.
+    #[inline(never)]
     pub fn new(
         options: ReactCompilerOptions,
         has_module_scope_opt_out: bool,
         import_bindings: IndexMap<Ref, VariableBinding>,
     ) -> Self {
+        bun_removable_features::removable_definition!(ReactCompiler, Self::new);
         bun_core::scoped_log!(
             react_compiler,
             "ReactCompilerState::new opt_out={}",
@@ -1167,6 +1234,46 @@ impl ReactCompilerState {
             }
         }
     }
+
+    /// Whether [`maybe_compile_pending`] can take this function, decided before its body is visited.
+    pub fn may_compile(
+        &self,
+        name: Option<&[u8]>,
+        in_react_hoc: bool,
+        has_react_hooks_suppression: bool,
+        body: &[Stmt],
+    ) -> bool {
+        if self.fatal.is_some()
+            || self.context.has_module_scope_opt_out
+            || has_react_hooks_suppression
+        {
+            return false;
+        }
+        let directives = collect_body_directives(body);
+        if find_directive_disabling_memoization(&directives).is_some() {
+            return false;
+        }
+        // Fixture pragmas set the mode when `lazy_init` reads them.
+        if self.options.parse_test_pragmas && !self.did_lazy_init {
+            return true;
+        }
+        if self.options.output_mode.as_deref() == Some("lint") {
+            return false;
+        }
+        if find_directive_enabling_memoization(&directives).is_some()
+            || (self.options.dynamic_gating.is_some()
+                && directives
+                    .iter()
+                    .any(|d| d.starts_with(DYNAMIC_GATING_DIRECTIVE_PREFIX)))
+        {
+            return true;
+        }
+        match self.options.compilation_mode.as_deref().unwrap_or("infer") {
+            "all" => true,
+            "infer" => is_component_or_hook_like_name(name, in_react_hoc),
+            _ => false,
+        }
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -1201,6 +1308,7 @@ pub struct CompileResult {
 /// new body is returned as a `Vec` for the caller to splice into that buffer
 /// (so the existing mangle phase then runs on it), along with the new
 /// args/flags for `visit_func` / arrow-visit to apply.
+#[inline(never)]
 pub fn maybe_compile_pending(
     state: &mut ReactCompilerState,
     host: &mut dyn Host,
@@ -1208,6 +1316,7 @@ pub fn maybe_compile_pending(
     body: &mut [Stmt],
     name: Option<&[u8]>,
 ) -> Option<(Vec<Stmt>, CompileResult)> {
+    bun_removable_features::removable_definition!(ReactCompiler, maybe_compile_pending);
     let tmp = G::Fn {
         name: None,
         open_parens_loc: pending.args_loc,
@@ -1359,11 +1468,13 @@ fn maybe_compile_node(
 /// `out_stmts` receives the `react/compiler-runtime` import statement
 /// (prepended) plus any outlined function decls (appended). Returns the
 /// summary `CompileOutput`.
+#[inline(never)]
 pub fn finish(
     mut state: ReactCompilerState,
     host: &mut dyn Host,
     out_stmts: &mut Vec<Stmt>,
 ) -> CompileOutput {
+    bun_removable_features::removable_definition!(ReactCompiler, finish);
     if let Some(fatal) = state.fatal.take() {
         return fatal;
     }

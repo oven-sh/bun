@@ -724,21 +724,6 @@ impl Translate {
 // Split out of the parse/to_css `impl Translate` above — these don't depend
 // on Parser/Printer surface and are needed by `TransformHandler`.
 impl Translate {
-    fn to_transform(&self, _bump: &Bump) -> Transform {
-        match self {
-            Translate::None => Transform::Translate3d {
-                x: LengthPercentage::zero(),
-                y: LengthPercentage::zero(),
-                z: Length::zero(),
-            },
-            Translate::Xyz { x, y, z } => Transform::Translate3d {
-                x: x.clone(),
-                y: y.clone(),
-                z: *z,
-            },
-        }
-    }
-
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         // `LengthPercentage` is `Clone`-via-derive; a plain clone suffices.
         self.clone()
@@ -747,15 +732,21 @@ impl Translate {
 
 /// A value for the [rotate](https://drafts.csswg.org/css-transforms-2/#propdef-rotate) property.
 #[derive(Copy, Clone, PartialEq)]
-pub struct Rotate {
-    /// Rotation around the x axis.
-    pub(crate) x: f32,
-    /// Rotation around the y axis.
-    pub(crate) y: f32,
-    /// Rotation around the z axis.
-    pub(crate) z: f32,
-    /// The angle of rotation.
-    pub(crate) angle: Angle,
+pub enum Rotate {
+    /// The "none" keyword. Unlike `0deg`, it creates no stacking context or containing block.
+    None,
+
+    /// A rotation around an axis.
+    Xyz {
+        /// The x component of the axis.
+        x: f32,
+        /// The y component of the axis.
+        y: f32,
+        /// The z component of the axis.
+        z: f32,
+        /// The angle of rotation.
+        angle: Angle,
+    },
 }
 
 impl Rotate {
@@ -764,12 +755,7 @@ impl Rotate {
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
         {
-            return Ok(Rotate {
-                x: 0.0,
-                y: 0.0,
-                z: 1.0,
-                angle: Angle::Deg(0.0),
-            });
+            return Ok(Rotate::None);
         }
 
         let angle = input.try_parse(Angle::parse);
@@ -810,7 +796,7 @@ impl Rotate {
             Err(_) => Angle::parse(input)?,
         };
 
-        Ok(Rotate {
+        Ok(Rotate::Xyz {
             x: xyz.x,
             y: xyz.y,
             z: xyz.z,
@@ -819,41 +805,30 @@ impl Rotate {
     }
 
     pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        if self.x == 0.0 && self.y == 0.0 && self.z == 1.0 && self.angle.is_zero() {
-            dest.write_str("none")?;
-            return Ok(());
-        }
+        let Rotate::Xyz { x, y, z, angle } = *self else {
+            return dest.write_str("none");
+        };
 
-        if self.x == 1.0 && self.y == 0.0 && self.z == 0.0 {
+        if x == 1.0 && y == 0.0 && z == 0.0 {
             dest.write_str("x ")?;
-        } else if self.x == 0.0 && self.y == 1.0 && self.z == 0.0 {
+        } else if x == 0.0 && y == 1.0 && z == 0.0 {
             dest.write_str("y ")?;
-        } else if !(self.x == 0.0 && self.y == 0.0 && self.z == 1.0) {
-            CSSNumberFns::to_css(self.x, dest)?;
+        } else if !(x == 0.0 && y == 0.0 && z == 1.0) {
+            CSSNumberFns::to_css(x, dest)?;
             dest.write_char(b' ')?;
-            CSSNumberFns::to_css(self.y, dest)?;
+            CSSNumberFns::to_css(y, dest)?;
             dest.write_char(b' ')?;
-            CSSNumberFns::to_css(self.z, dest)?;
+            CSSNumberFns::to_css(z, dest)?;
             dest.write_char(b' ')?;
         }
 
-        self.angle.to_css(dest)
+        angle.to_css(dest)
     }
 }
 
 // Split out of the parse/to_css `impl Rotate` above — needed by
 // `TransformHandler`.
 impl Rotate {
-    /// Converts the rotation to a transform function.
-    fn to_transform(&self, _bump: &Bump) -> Transform {
-        Transform::Rotate3d {
-            x: self.x,
-            y: self.y,
-            z: self.z,
-            angle: self.angle,
-        }
-    }
-
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         *self
     }
@@ -928,21 +903,6 @@ impl Scale {
 // Split out of the parse/to_css `impl Scale` above — needed by
 // `TransformHandler`.
 impl Scale {
-    fn to_transform(&self, _bump: &Bump) -> Transform {
-        match self {
-            Scale::None => Transform::Scale3d {
-                x: NumberOrPercentage::Number(1.0),
-                y: NumberOrPercentage::Number(1.0),
-                z: NumberOrPercentage::Number(1.0),
-            },
-            Scale::Xyz { x, y, z } => Transform::Scale3d {
-                x: x.clone(),
-                y: y.clone(),
-                z: z.clone(),
-            },
-        }
-    }
-
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         self.clone()
     }
@@ -983,12 +943,10 @@ impl TransformHandler {
         // Rust cannot index struct fields by string at runtime; use a macro to paste the ident.
         macro_rules! individual_property {
             ($field:ident, $val:expr) => {{
-                if let Some(transform) = &mut self.transform {
-                    transform.0.v.push($val.to_transform(bump));
-                } else {
-                    self.$field = Some($val.deep_clone(bump));
-                    self.has_any = true;
-                }
+                // Individual transforms cascade independently of `transform`. Keep them
+                // separate so declaration order cannot change their composition or resets.
+                self.$field = Some($val.deep_clone(bump));
+                self.has_any = true;
             }};
         }
 
@@ -1017,10 +975,6 @@ impl TransformHandler {
                     self.transform = Some((transform_val.deep_clone(bump), vp));
                     self.has_any = true;
                 }
-
-                self.translate = None;
-                self.rotate = None;
-                self.scale = None;
             }
             Property::Translate(val) => individual_property!(translate, val),
             Property::Rotate(val) => individual_property!(rotate, val),

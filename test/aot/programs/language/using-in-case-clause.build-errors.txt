@@ -1,0 +1,1 @@
+error: TS1547: 'using' declarations are not allowed in 'case' or 'default' clauses unless contained within a block.

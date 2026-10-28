@@ -1,0 +1,14 @@
+process, before: object number
+process, by the free name: TypeError
+process, by globalThis.process: TypeError
+process, under a computed key: TypeError
+process, through a receiver nobody follows: TypeError
+process, by a definition: TypeError
+process, put back: object number true
+fetch, before: function
+fetch, through a receiver nobody follows: hidden
+performance, replaced before the first read: hidden
+navigator, defined before the first read: defined
+structuredClone, deleted: undefined
+queueMicrotask, in a loop that replaces it half way: function | function | replaced in round 1 | replaced in round 1
+Blob, by Object.assign: assigned

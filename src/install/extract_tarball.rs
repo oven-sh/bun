@@ -9,16 +9,16 @@ use bun_paths::{self as path, PathBuffer};
 use bun_semver::Version;
 use bun_sys::{self as sys, Dir, Fd};
 
+use bun_archive::{ArchiveAppender, ExtractOptions};
 use bun_install::install::{self as Install, DependencyID, ExtractData};
 use bun_install::integrity::Integrity;
 use bun_install::npm::{self as Npm};
 use bun_install::package_manager_real::PackageManager;
 use bun_install::package_manager_real::directories;
 use bun_install::resolution::{Resolution, Tag as ResolutionTag};
-use bun_libarchive::{ArchiveAppender, ExtractOptions};
 use bun_resolver::fs::FileSystem;
-#[cfg(windows)]
-use bun_sys::FdDirExt;
+
+use crate::cache_publish::{self, StagedEntry};
 type Error = crate::Error;
 
 pub struct ExtractTarball {
@@ -31,9 +31,13 @@ pub struct ExtractTarball {
     /// story as `cache_dir`).
     pub(crate) temp_dir: Fd,
     pub(crate) dependency_id: DependencyID,
+    /// The value of `PackageManager::skips_verify`, which the cache lookup also uses.
     pub(crate) skip_verify: bool, // = false
     pub(crate) in_trusted_dependencies: bool,
     pub(crate) integrity: Integrity, // = Integrity::default()
+    /// This run can't pin the dependency (see `pins_tarballs`), so the cache entry is named after
+    /// `url`.
+    pub(crate) stays_unpinned: bool,
     pub(crate) url: StringOrTinyString,
     /// The lockfile's bun-tag (`repository.resolved`) for a Github resolution,
     /// copied out because extract workers must not read lockfile buffers. When
@@ -54,34 +58,31 @@ impl ExtractTarball {
                     bun_ast::Loc::EMPTY,
                     format_args!(
                         "Integrity check failed for tarball: {}",
-                        bun_fmt::s(self.name.slice()),
+                        bun_fmt::for_terminal(bstr::BStr::new(self.name.slice())),
                     ),
                 );
                 return Err(crate::Error::IntegrityCheckFailed);
             }
         }
-        let mut result = self.extract(log, bytes)?;
+        let integrity = self.lockfile_integrity(|| Integrity::for_bytes(bytes));
+        let mut result = self.extract(log, bytes, &integrity)?;
+        result.integrity = integrity;
+        Ok(result)
+    }
 
-        // Compute and store SHA-512 integrity hash for GitHub / URL / local tarballs
-        // so the lockfile can pin the exact tarball content. On subsequent installs
-        // the hash stored in the lockfile is forwarded via this.integrity and verified
-        // above, preventing a compromised server from silently swapping the tarball.
+    /// Determined before extracting, because the cache entry of a `file:` or URL tarball is named
+    /// after it.
+    pub(crate) fn lockfile_integrity(&self, compute: impl FnOnce() -> Integrity) -> Integrity {
         match self.resolution.tag {
             ResolutionTag::Github | ResolutionTag::RemoteTarball | ResolutionTag::LocalTarball => {
-                if self.integrity.tag.is_supported() {
-                    // Re-installing with an existing lockfile: integrity was already
-                    // verified above, propagate the known value to ExtractData so that
-                    // the lockfile keeps it on re-serialisation.
-                    result.integrity = self.integrity;
+                if self.integrity.tag.is_supported() || self.stays_unpinned {
+                    self.integrity
                 } else {
-                    // First install (no integrity in the lockfile yet): compute it.
-                    result.integrity = Integrity::for_bytes(bytes);
+                    compute()
                 }
             }
-            _ => {}
+            _ => Integrity::default(),
         }
-
-        Ok(result)
     }
 }
 
@@ -193,23 +194,26 @@ impl ExtractTarball {
         let name: &[u8] = if !self.name.slice().is_empty() {
             self.name.slice()
         } else {
-            // Not sure where this case hits yet.
-            // BUN-2WQ
-            bun_core::warn!(
-                "Extracting nameless packages is not supported yet. Please open an issue on GitHub with reproduction steps.",
-            );
-            debug_assert!(false);
+            // A tarball package from the lockfile whose package.json has no `name`.
             b"unnamed-package"
         };
         let basename: &[u8] = 'brk: {
             let mut tmp = name;
             if strings::has_prefix(tmp, b"https://") || strings::has_prefix(tmp, b"http://") {
+                // A URL name is the placeholder `bun add <url>` uses until package.json is read.
+                if let Some(i) = strings::index_of_any(tmp, b"?#") {
+                    tmp = &tmp[0..i];
+                }
                 tmp = bun_paths::basename(tmp);
                 if strings::ends_with(tmp, b".tgz") {
                     tmp = &tmp[0..tmp.len() - 4];
                 } else if strings::ends_with(tmp, b".tar.gz") {
                     tmp = &tmp[0..tmp.len() - 7];
                 }
+                if !bun_install::dependency::is_safe_install_folder_name(tmp) {
+                    tmp = b"package";
+                }
+                break 'brk tmp;
             } else if tmp[0] == b'@' {
                 if let Some(i) = strings::index_of_char(tmp, b'/') {
                     tmp = &tmp[i as usize + 1..];
@@ -228,7 +232,12 @@ impl ExtractTarball {
         (name, basename)
     }
 
-    fn extract(&self, log: &mut bun_ast::Log, tgz_bytes: &[u8]) -> Result<ExtractData, Error> {
+    fn extract(
+        &self,
+        log: &mut bun_ast::Log,
+        tgz_bytes: &[u8],
+        integrity: &Integrity,
+    ) -> Result<ExtractData, Error> {
         let _tracer = bun_core::perf::trace("ExtractTarball.extract");
 
         let tmpdir = Dir::borrow(&self.temp_dir);
@@ -250,7 +259,7 @@ impl ExtractTarball {
                     bun_ast::Loc::EMPTY,
                     format_args!(
                         "Refusing to install package with invalid name \"{}\"",
-                        bun_fmt::s(name),
+                        bun_fmt::for_terminal(bstr::BStr::new(name)),
                     ),
                 );
                 return Err(crate::Error::InstallFailed);
@@ -259,6 +268,7 @@ impl ExtractTarball {
         let mut resolved: &'static [u8] = b"";
         let tmpname =
             FileSystem::tmpname(tmpname_suffix, &mut tmpname_buf.0, bun_core::fast_random())?;
+        let staging = StagedEntry::new(self.temp_dir, tmpname);
         {
             let extract_destination = match bun_sys::make_path::make_open_path(
                 tmpdir,
@@ -274,14 +284,14 @@ impl ExtractTarball {
                             "{} when create temporary directory named \"{}\" (while extracting \"{}\")",
                             bun_fmt::s(err.name()),
                             bun_fmt::s(tmpname.as_bytes()),
-                            bun_fmt::s(name),
+                            bun_fmt::for_terminal(bstr::BStr::new(name)),
                         ),
                     );
                     return Err(crate::Error::InstallFailed);
                 }
             };
 
-            use bun_libarchive::Archiver;
+            use bun_archive::Archiver;
             let mut zlib_pool = Npm::Registry::BodyPool::get();
             zlib_pool.reset();
             // `defer Npm.Registry.BodyPool.release(zlib_pool)` → PoolGuard's Drop releases.
@@ -292,7 +302,7 @@ impl ExtractTarball {
                 0
             };
 
-            // libarchive gunzips on the fly (`BufferReadStream::open_read`),
+            // `extract_to_dir` gunzips on the fly,
             // so hand it the compressed bytes and never buffer the full tar.
             // Small tarballs still try libdeflate first for speed; the gzip
             // ISIZE trailer (size mod 2^32) is only trusted when small.
@@ -318,7 +328,11 @@ impl ExtractTarball {
                                 &mut zlib_pool.list,
                                 libdeflate::Encoding::Gzip,
                             );
-                            if result.status == libdeflate::Status::Success {
+                            // libdeflate only reads the first gzip member, so a tarball with more
+                            // than one member is left to `extract_to_dir`.
+                            if result.status == libdeflate::Status::Success
+                                && result.read == tgz_bytes.len()
+                            {
                                 decompressed_in_memory = true;
                             }
                         }
@@ -336,7 +350,7 @@ impl ExtractTarball {
             if PackageManager::verbose_install() {
                 bun_core::pretty_errorln!(
                     "[{}] Extract {}<r> ({} tgz file)",
-                    bun_fmt::s(name),
+                    bun_fmt::for_terminal(bstr::BStr::new(name)),
                     bun_fmt::s(tmpname.as_bytes()),
                     bun_core::fmt::size(tgz_bytes.len(), Default::default()),
                 );
@@ -377,6 +391,7 @@ impl ExtractTarball {
                             // for GitHub tarballs, the root dir is always <user>-<repo>-<commit_id>
                             depth_to_skip: 1,
                             log: PackageManager::verbose_install(),
+                            skip_symlinks: true,
                             ..Default::default()
                         },
                     )?;
@@ -442,7 +457,7 @@ impl ExtractTarball {
                     - time_started_for_verbose_logs;
                 bun_core::pretty_errorln!(
                     "[{}] Extracted to {} ({})<r>",
-                    bun_fmt::s(name),
+                    bun_fmt::for_terminal(bstr::BStr::new(name)),
                     bun_fmt::s(tmpname.as_bytes()),
                     bun_core::fmt::fmt_duration_one_decimal(elapsed),
                 );
@@ -450,34 +465,36 @@ impl ExtractTarball {
             }
         }
 
-        self.move_to_cache_directory(log, tmpname, name, basename, resolved)
+        self.move_to_cache_directory(log, staging, name, basename, resolved, integrity)
     }
 
     /// Rename the freshly-extracted temp directory into the cache, read
     /// `package.json` if required, and build the `ExtractData` result. Shared
     /// between the buffered and streaming extraction paths.
+    /// `resolved` names a GitHub cache entry, `integrity` a `file:` / URL tarball's.
     pub(crate) fn move_to_cache_directory(
         &self,
         log: &mut bun_ast::Log,
-        tmpname: &ZStr,
+        staging: StagedEntry<'_>,
         name: &[u8],
         basename: &[u8],
         resolved: &[u8],
+        integrity: &Integrity,
     ) -> Result<ExtractData, Error> {
         let package_manager = self.package_manager.get();
 
-        let tmpdir = Dir::borrow(&self.temp_dir);
+        let tmpname = staging.name();
         TL_BUFS.with_borrow_mut(|bufs| {
             // The entire body lives inside the thread_local borrow closure.
-            let folder_name: &[u8] = match self.resolution.tag {
+            let folder_name_z: &ZStr = match self.resolution.tag {
                 ResolutionTag::Npm => {
-                    if !bun_install::dependency::is_safe_install_folder_name(name) {
+                    if !bun_install::package_installer::alias_is_safe_install_target(name) {
                         log.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!(
                                 "Refusing to install package with invalid name \"{}\"",
-                                bun_fmt::s(name),
+                                bun_fmt::for_terminal(bstr::BStr::new(name)),
                             ),
                         );
                         return Err(crate::Error::InstallFailed);
@@ -489,7 +506,6 @@ impl ExtractTarball {
                         self.resolution.npm().version,
                         None,
                     )
-                    .as_bytes()
                 }
                 ResolutionTag::Github => {
                     if !bun_install::repository::is_safe_resolved_tag(resolved) {
@@ -498,8 +514,8 @@ impl ExtractTarball {
                             bun_ast::Loc::EMPTY,
                             format_args!(
                                 "Refusing to install \"{}\": tarball root directory \"{}\" is not a valid folder name",
-                                bun_fmt::s(name),
-                                bun_fmt::s(resolved),
+                                bun_fmt::for_terminal(bstr::BStr::new(name)),
+                                bun_fmt::escape_control_chars(resolved),
                             ),
                         );
                         return Err(crate::Error::InstallFailed);
@@ -509,187 +525,141 @@ impl ExtractTarball {
                         resolved,
                         None,
                     )
-                    .as_bytes()
                 }
                 ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+                    // A hash computed from these bytes is as good as a checked one.
+                    let unchecked = self.skip_verify && self.integrity.tag.is_supported();
+                    // `.bun-tag` does not claim a hash that `--no-verify` left unchecked.
+                    let tag = if unchecked {
+                        Integrity::default()
+                    } else {
+                        *integrity
+                    };
+                    // Records which bytes a copy in node_modules came from. See
+                    // `PackageInstall::verify`.
+                    let tag_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+                        &mut bufs.json_path_buf.0,
+                        &[tmpname.as_bytes(), b".bun-tag"],
+                    );
+                    if sys::File::openat(
+                        self.temp_dir,
+                        tag_path,
+                        sys::O::WRONLY
+                            | sys::O::CREAT
+                            | sys::O::TRUNC
+                            | if cfg!(windows) { 0 } else { sys::O::NOFOLLOW },
+                        0o664,
+                    )
+                    .and_then(|f| f.write_all(tag.sri(&mut [0; Integrity::MAX_SRI_LEN])))
+                    .is_err()
+                    {
+                        let _ = sys::unlinkat(self.temp_dir, tag_path);
+                    }
                     directories::cached_tarball_folder_name_print(
                         &mut bufs.folder_name_buf,
+                        integrity,
+                        unchecked,
+                        self.resolution.tag,
                         self.url.slice(),
                         None,
                     )
-                    .as_bytes()
                 }
                 _ => unreachable!(),
             };
-            if folder_name.is_empty() || (folder_name.len() == 1 && folder_name[0] == b'/') {
-                panic!("Tried to delete root and stopped it");
-            }
+            let folder_name = folder_name_z.as_bytes();
             let cache_dir = Dir::borrow(&self.cache_dir);
 
             // e.g. @next
             // if it's a namespace package, we need to make sure the @name folder exists
-            let create_subdir = basename.len() != name.len() && !self.resolution.tag.is_git();
-
-            // Now that we've extracted the archive, we rename.
-            #[cfg(windows)]
+            if basename.len() != name.len()
+                && !self.resolution.tag.is_git()
+                && let Some(scope_len) = strings::index_of_char(folder_name, b'/')
             {
-                // Windows EBUSY/SHARING_VIOLATION on `NtSetInformationFile` is
-                // transient when a concurrent process (another `bun install`
-                // sharing the cache, AV, the Search Indexer) is closing its
-                // handle to the destination. Back off briefly between retries.
-                const MAX_RETRIES: u32 = 4;
-                let mut retries: u32 = 0;
-                let mut path2_buf = bun_paths::w_path_buffer_pool::get();
-                let path2 = strings::to_wpath_normalized(&mut path2_buf, folder_name);
-                if create_subdir {
-                    if let Some(folder) = bun_paths::Dirname::dirname_u16(path2) {
-                        let _ = bun_sys::make_path::make_path_u16(cache_dir, folder);
+                let _ =
+                    bun_sys::make_path::make_path(cache_dir, &folder_name[..scope_len as usize]);
+            }
+
+            // Read it in the staging folder, so that a package.json that fails the install never
+            // becomes a cache hit.
+            let needs_json = match self.resolution.tag {
+                // TODO remove extracted files not matching any globs under "files"
+                ResolutionTag::Github
+                | ResolutionTag::LocalTarball
+                | ResolutionTag::RemoteTarball => true,
+                _ => self.in_trusted_dependencies,
+            };
+            let mut json_buf: Option<Vec<u8>> = None;
+            if needs_json {
+                match sys::File::read_from(
+                    self.temp_dir,
+                    path::resolve_path::join_z_buf::<path::platform::Auto>(
+                        &mut bufs.json_path_buf.0,
+                        &[tmpname.as_bytes(), b"package.json"],
+                    )
+                    .as_bytes(),
+                ) {
+                    Ok(buf) => json_buf = Some(buf),
+                    // allow git dependencies without package.json
+                    Err(err)
+                        if self.resolution.tag == ResolutionTag::Github
+                            && err.get_errno() == sys::E::ENOENT => {}
+                    Err(err) => {
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "\"package.json\" for \"{}\" failed to open: {}",
+                                bun_fmt::for_terminal(bstr::BStr::new(name)),
+                                bun_fmt::s(err.name()),
+                            ),
+                        );
+                        return Err(crate::Error::InstallFailed);
                     }
-                }
-
-                let path_to_use = path2;
-
-                loop {
-                    let dir_to_move = match sys::open_dir_at_windows_a(
-                        self.temp_dir,
-                        tmpname.as_bytes(),
-                        sys::WindowsOpenDirOptions {
-                            can_rename_or_delete: true,
-                            iterable: false,
-                            ..Default::default()
-                        },
-                    ) {
-                        Ok(d) => d,
-                        Err(err) => {
-                            // i guess we just
-                            log.add_error_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "moving \"{}\" to cache dir failed\n{}\n From: {}\n   To: {}",
-                                    bun_fmt::s(name),
-                                    err,
-                                    bun_fmt::s(tmpname.as_bytes()),
-                                    bun_fmt::s(folder_name),
-                                ),
-                            );
-                            return Err(crate::Error::InstallFailed);
-                        }
-                    };
-
-                    match bun_sys::windows::move_opened_file_at(
-                        dir_to_move,
-                        Fd::from_std_dir(cache_dir),
-                        path_to_use,
-                        true,
-                    ) {
-                        bun_sys::Result::Err(err) => {
-                            if retries < MAX_RETRIES {
-                                match err.get_errno() {
-                                    sys::Errno::NOTEMPTY
-                                    | sys::Errno::PERM
-                                    | sys::Errno::BUSY
-                                    | sys::Errno::EXIST => {
-                                        // before we attempt to delete the destination, let's close the source dir.
-                                        let _ = sys::close(dir_to_move);
-
-                                        // We tried to move the folder over
-                                        // but it didn't work!
-                                        // so instead of just simply deleting the folder
-                                        // we rename it back into the temp dir
-                                        // and then delete that temp dir
-                                        // The goal is to make it more difficult for an application to reach this folder
-                                        let mut tempdest_buf = bun_paths::path_buffer_pool::get();
-                                        tempdest_buf[0..tmpname.len()]
-                                            .copy_from_slice(tmpname.as_bytes());
-                                        tempdest_buf[tmpname.len()..][0..4]
-                                            .copy_from_slice(&[b't', b'm', b'p', 0]);
-                                        let tempdest =
-                                            ZStr::from_buf(&tempdest_buf, tmpname.len() + 3);
-                                        let mut folder_name_z_buf = bun_paths::path_buffer_pool::get();
-                                        folder_name_z_buf[0..folder_name.len()]
-                                            .copy_from_slice(folder_name);
-                                        folder_name_z_buf[folder_name.len()] = 0;
-                                        let folder_name_z =
-                                            ZStr::from_buf(&folder_name_z_buf, folder_name.len());
-                                        match sys::renameat(
-                                            Fd::from_std_dir(cache_dir),
-                                            folder_name_z,
-                                            Fd::from_std_dir(tmpdir),
-                                            tempdest,
-                                        ) {
-                                            bun_sys::Result::Err(_) => {}
-                                            bun_sys::Result::Ok(_) => {
-                                                let _ = tmpdir.delete_tree(tempdest.as_bytes());
-                                            }
-                                        }
-                                        retries += 1;
-                                        // 10ms, 20ms, 40ms, 80ms — long enough
-                                        // for a concurrent close to land,
-                                        // short enough to not slow a legit
-                                        // failure noticeably.
-                                        std::thread::sleep(std::time::Duration::from_millis(
-                                            10u64 << (retries - 1),
-                                        ));
-                                        continue;
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            let _ = sys::close(dir_to_move);
-                            log.add_error_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "moving \"{}\" to cache dir failed\n{}\n  From: {}\n    To: {}",
-                                    bun_fmt::s(name),
-                                    err,
-                                    bun_fmt::s(tmpname.as_bytes()),
-                                    bun_fmt::s(folder_name),
-                                ),
-                            );
-                            return Err(crate::Error::InstallFailed);
-                        }
-                        bun_sys::Result::Ok(_) => {
-                            let _ = sys::close(dir_to_move);
-                        }
-                    }
-
-                    break;
                 }
             }
-            #[cfg(not(windows))]
-            {
-                // Attempt to gracefully handle duplicate concurrent `bun install` calls
-                //
-                // By:
-                // 1. Rename from temporary directory to cache directory and fail if it already exists
-                // 2a. If the rename fails, swap the cache directory with the temporary directory version
-                // 2b. Delete the temporary directory version ONLY if we're not using a provided temporary directory
-                // 3. If rename still fails, fallback to racily deleting the cache directory version and then renaming the temporary directory version again.
-                //
-
-                if create_subdir {
-                    if let Some(folder) = bun_paths::Dirname::dirname(folder_name) {
-                        let _ = bun_sys::make_path::make_path(cache_dir, folder);
-                    }
-                }
-
-                if let Err(err) = sys::renameat_concurrently_a(
-                    tmpdir.fd(),
-                    tmpname.as_bytes(),
-                    cache_dir.fd(),
-                    folder_name,
-                    sys::RenameatConcurrentlyOptions {
-                        move_fallback: true,
-                    },
+            if let Some(buf) = &json_buf {
+                crate::initialize_mini_store();
+                // Its locations borrow `buf`.
+                let mut json_log = bun_ast::Log::init();
+                if let Err(err) = crate::bun_json::ParsedJson::parse_package_json(
+                    &bun_ast::Source::init_path_string("package.json", &buf[..]),
+                    &mut json_log,
                 ) {
                     log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
+                            "expected \"package.json\" of \"{}\" to be a JSON file: {}: {}",
+                            bun_fmt::for_terminal(bstr::BStr::new(name)),
+                            err.name(),
+                            bun_fmt::escape_control_chars(
+                                json_log
+                                    .msgs
+                                    .first()
+                                    .map_or(&b"syntax error"[..], |msg| &msg.data.text[..]),
+                            ),
+                        ),
+                    );
+                    return Err(crate::Error::InstallFailed);
+                }
+            }
+
+            // Now that we've extracted the archive, we rename.
+            let final_dir = match staging.publish_and_open(self.cache_dir, folder_name_z, &|_| {
+                directories::is_package_in_cache_at(
+                    self.cache_dir,
+                    folder_name_z,
+                    self.resolution.tag,
+                )
+            }) {
+                Ok(d) => d,
+                Err(err) => {
+                    log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
                             "moving \"{}\" to cache dir failed: {}\n  From: {}\n    To: {}",
-                            bun_fmt::s(name),
+                            bun_fmt::for_terminal(bstr::BStr::new(name)),
                             err,
                             bun_fmt::s(tmpname.as_bytes()),
                             bun_fmt::s(folder_name),
@@ -697,28 +667,8 @@ impl ExtractTarball {
                     );
                     return Err(crate::Error::InstallFailed);
                 }
-            }
-
-            // We return a resolved absolute absolute file path to the cache dir.
-            // To get that directory, we open the directory again.
-            let final_dir = match cache_dir
-                .open_at(folder_name)
-                .map_err(crate::Error::from)
-            {
-                Ok(d) => d,
-                Err(err) => {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "failed to verify cache dir for \"{}\": {}",
-                            bun_fmt::s(name),
-                            err.name(),
-                        ),
-                    );
-                    return Err(crate::Error::InstallFailed);
-                }
             };
+            // We return a resolved absolute absolute file path to the cache dir.
             let final_path = match sys::get_fd_path_z(final_dir.fd(), &mut bufs.final_path_buf) {
                 Ok(p) => p,
                 Err(err) => {
@@ -727,7 +677,7 @@ impl ExtractTarball {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "failed to resolve cache dir for \"{}\": {}",
-                            bun_fmt::s(name),
+                            bun_fmt::for_terminal(bstr::BStr::new(name)),
                             bun_fmt::s(err.name()),
                         ),
                     );
@@ -739,131 +689,40 @@ impl ExtractTarball {
                 .dirname_store()
                 .append(self.url.slice())?;
 
-            let mut json_path: &[u8] = b"";
-            let mut json_buf: Vec<u8> = Vec::new();
-            let needs_json = match self.resolution.tag {
-                // TODO remove extracted files not matching any globs under "files"
-                ResolutionTag::Github
-                | ResolutionTag::LocalTarball
-                | ResolutionTag::RemoteTarball => true,
-                _ => self.in_trusted_dependencies,
-            };
-            if needs_json {
-                let read_result = sys::File::read_file_from(
-                    cache_dir.fd(),
-                    path::resolve_path::join_z_buf::<path::platform::Auto>(
-                        &mut bufs.json_path_buf.0,
-                        &[folder_name, b"package.json"],
-                    )
-                    .as_bytes(),
-                );
-                let (json_file, buf) = match read_result {
-                    Ok(pair) => pair,
-                    Err(err) => {
-                        if self.resolution.tag == ResolutionTag::Github
-                            && err.get_errno() == sys::E::ENOENT
-                        {
-                            // allow git dependencies without package.json
-                            return Ok(ExtractData {
-                                url: url.into(),
-                                resolved: resolved.into(),
-                                ..Default::default()
-                            });
-                        }
-
-                        log.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "\"package.json\" for \"{}\" failed to open: {}",
-                                bun_fmt::s(name),
-                                bun_fmt::s(err.name()),
-                            ),
-                        );
-                        return Err(crate::Error::InstallFailed);
-                    }
-                };
-                json_buf = buf;
-                // `defer json_file.close()` → close after resolving path.
-                json_path = match json_file.get_path(&mut bufs.json_path_buf) {
-                    Ok(p) => p,
-                    Err(err) => {
-                        let _ = json_file.close();
-                        log.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "\"package.json\" for \"{}\" failed to resolve: {}",
-                                bun_fmt::s(name),
-                                bun_fmt::s(err.name()),
-                            ),
-                        );
-                        return Err(crate::Error::InstallFailed);
-                    }
-                };
-                let _ = json_file.close();
+            if needs_json && json_buf.is_none() {
+                return Ok(ExtractData {
+                    url: url.into(),
+                    resolved: resolved.into(),
+                    ..Default::default()
+                });
             }
+            let json_path: &[u8] = if needs_json {
+                path::resolve_path::join_z_buf::<path::platform::Auto>(
+                    &mut bufs.json_path_buf.0,
+                    &[final_path.as_bytes(), b"package.json"],
+                )
+                .as_bytes()
+            } else {
+                b""
+            };
 
-            if !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX
-                .get()
-                .unwrap_or(false)
+            // create an index storing each version of a package installed
+            if strings::index_of_char(basename, b'/').is_none()
+                && bun_install::dependency::is_safe_install_folder_name(name)
             {
-                // create an index storing each version of a package installed
-                if strings::index_of_char(basename, b'/').is_none()
-                    && bun_install::dependency::is_safe_install_folder_name(name)
-                {
-                    'create_index: {
-                        let dest_name: &[u8] = match self.resolution.tag {
-                            ResolutionTag::Github => &folder_name[b"@GH@".len()..],
-                            // trim "name@" from the prefix
-                            ResolutionTag::Npm => &folder_name[name.len() + 1..],
-                            _ => folder_name,
-                        };
-
-                        #[cfg(windows)]
-                        {
-                            if bun_sys::make_path::make_path(cache_dir, name).is_err() {
-                                break 'create_index;
-                            }
-
-                            let mut dest_buf = bun_paths::path_buffer_pool::get();
-                            let dest_path = path::resolve_path::join_abs_string_buf_z::<
-                                path::platform::Windows,
-                            >(
-                                // only set once, should be fine to read not on main thread
-                                package_manager.cache_directory_path.as_bytes(),
-                                &mut dest_buf,
-                                &[name, dest_name],
-                            );
-
-                            if sys::sys_uv::symlink_uv(
-                                final_path,
-                                dest_path,
-                                bun_sys::windows::libuv::UV_FS_SYMLINK_JUNCTION,
-                            )
-                            .is_err()
-                            {
-                                break 'create_index;
-                            }
-                        }
-                        #[cfg(not(windows))]
-                        {
-                            let Ok(index_dir) = bun_sys::make_path::make_open_path(
-                                cache_dir,
-                                name,
-                                Default::default(),
-                            ) else {
-                                break 'create_index;
-                            };
-
-                            let mut dest_buf = bun_paths::path_buffer_pool::get();
-                            dest_buf[..dest_name.len()].copy_from_slice(dest_name);
-                            dest_buf[dest_name.len()] = 0;
-                            let dest_z = ZStr::from_buf(&dest_buf, dest_name.len());
-                            let _ = sys::symlinkat(final_path, index_dir.fd(), dest_z);
-                        }
-                    }
-                }
+                cache_publish::create_index_link(
+                    self.cache_dir,
+                    // only set once, should be fine to read not on main thread
+                    package_manager.cache_directory_path.as_bytes(),
+                    name,
+                    match self.resolution.tag {
+                        ResolutionTag::Github => &folder_name[b"@GH@".len()..],
+                        // trim "name@" from the prefix
+                        ResolutionTag::Npm => &folder_name[name.len() + 1..],
+                        _ => folder_name,
+                    },
+                    final_path,
+                );
             }
 
             let ret_json_path = FileSystem::instance().dirname_store().append(json_path)?;
@@ -876,7 +735,7 @@ impl ExtractTarball {
                 resolved: resolved.into(),
                 json: Some(Install::ExtractDataJson {
                     path: ret_json_path.into(),
-                    buf: json_buf,
+                    buf: json_buf.unwrap_or_default(),
                 }),
                 ..Default::default()
             })

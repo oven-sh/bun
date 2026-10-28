@@ -279,9 +279,7 @@ impl Context<'_, '_> {
                 self.verify_with_processor(loaded, it, config, processor)
             }
             (Route::Processor, None) => thrown(no_such_processor(config)),
-            (Route::Unsupported, _) if config.routes_to_eslint(it.path) => {
-                needs_eslint()
-            }
+            (Route::Unsupported, _) if config.routes_to_eslint(it.path) => needs_eslint(),
             // Same as for a file of that kind.
             (Route::Unsupported | Route::Eslint, _) => LintResult::default(),
         }

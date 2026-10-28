@@ -374,8 +374,8 @@ pub(crate) fn lint(
             }
             Route::Unsupported => {
                 not_linted.add(&target.path);
-                lacks_eslint |= target.loaded.flavor == Flavor::Eslint
-                    && config.routes_to_eslint(&target.path);
+                lacks_eslint |=
+                    target.loaded.flavor == Flavor::Eslint && config.routes_to_eslint(&target.path);
             }
             Route::Native | Route::Language | Route::Processor => {
                 files += 1;

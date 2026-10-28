@@ -709,9 +709,7 @@ impl Run<'_> {
                 });
         let (for_eslint, with_processor): (Vec<Target>, Vec<Target>) = (unsupported.into_iter())
             .partition(|it| match &it.status {
-                Status::Matched(config) => {
-                    config.routes_to_eslint(&it.path)
-                }
+                Status::Matched(config) => config.routes_to_eslint(&it.path),
                 _ => false,
             });
         let because: &[u8] = b"only an ESLint config can have a processor";

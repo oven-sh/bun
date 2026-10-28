@@ -951,7 +951,7 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
         let mut map_data = match mapping::parse(
             mappings_vlq,
             None,
-            i32::MAX,
+            i32::try_from(sources_paths.items().len()).unwrap_or(i32::MAX),
             mapping::ParseOptions {
                 allow_names: matches!(
                     hint,

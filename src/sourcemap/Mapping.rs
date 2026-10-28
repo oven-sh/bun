@@ -383,10 +383,6 @@ impl Lookup {
                 }
             }
 
-            if index >= source_map.external_source_names.len() {
-                return None;
-            }
-
             let name: &[u8] = &source_map.external_source_names[index];
 
             let mut buf = bun_paths::path_buffer_pool::get();

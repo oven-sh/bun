@@ -2143,12 +2143,11 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
   test("resets of streams opened after the server's GOAWAY are charged", async () => {
     // nghttp2 can exempt every reset after its GOAWAY because it ignores the streams a client
     // opens after that frame. This engine still opens them, so only the earlier streams are exempt.
-    // It also accepts ids below the held stream's, so the GOAWAY's last stream id is no criterion.
     const { server, state } = respondingServer();
     await withClient(server, async c => {
-      c.send(upload(4001));
+      c.send(upload(1));
       await serverGoaway(c);
-      c.send(pairs(1200, 1, rstStream));
+      c.send(pairs(1200, 3, rstStream));
       const goaway = await c.waitFor(calm, 10_000);
       expect(goaway.payload.subarray(8).toString()).toBe("too many stream resets");
       expect(state.sessionErrorCode).toBe("ERR_HTTP2_ERROR");

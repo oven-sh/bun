@@ -12,10 +12,9 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // is printed once the process has nothing left to do.
 const trace = `globalThis.t = []; process.on("exit", () => console.log(JSON.stringify(t)));`;
 
-// The import()ed file is transpiled on the thread pool by default, so its fetch
-// is still pending when the require() returns. With the thread pool off the
-// fetch has already settled inside the require(), which is the case where the
-// loader used to carry straight on into evaluation.
+// The dependencies of an import() target load after the require() returns: on
+// the thread pool by default, on the main thread with the flag. Both ways must
+// give the same order.
 //
 // Not `test.concurrent`: each test is one CPU-bound child process, and a
 // debug+ASAN build that starts them all at once runs each close to the timeout.
@@ -186,14 +185,41 @@ describe.each([
             t.push("c ends");
           `,
           "e.mjs": `
-            import(${JSON.stringify(target)}).catch(() => {});
+            import(${JSON.stringify(target)}).then(
+              () => t.push("import fulfilled"),
+              e => t.push("import rejected: " + e.name),
+            );
             t.push("e ends");
           `,
         });
 
-        expect(await run(String(dir), "m0.mjs")).toEqual(["e ends", "c ends", "m0 reads v"]);
+        const t = await run(String(dir), "m0.mjs");
+        // The import() settles once its target is loaded, which for c.cjs can
+        // be before or after the entry's body runs.
+        expect(t.filter(e => !e.startsWith("import "))).toEqual(["e ends", "c ends", "m0 reads v"]);
+        expect(t.filter(e => e.startsWith("import "))).toEqual(["import fulfilled"]);
       },
     );
+  });
+
+  // x.cjs names neither module, exports nor require. The import() must get the
+  // CommonJS module that require() makes for the file, not a second copy of it.
+  test.each([
+    ["require(x) first", `require("./x.cjs"); require("./a.mjs");`],
+    ["require(a) first", `require("./a.mjs"); require("./x.cjs");`],
+  ])("require(esm): import() of a side-effect-only .cjs file runs it once (%s)", async (_, requires) => {
+    using dir = tempDir("require-esm-dynamic-import-plain-cjs", {
+      "package.json": `{"name": "r"}`,
+      "main.cjs": `
+        ${trace}
+        ${requires}
+        globalThis.p.then(() => t.push("x.cjs ran " + globalThis.N + " time(s)"));
+      `,
+      "a.mjs": `globalThis.p = import("./x.cjs");`,
+      "x.cjs": `globalThis.N = (globalThis.N ?? 0) + 1;`,
+    });
+
+    expect(await run(String(dir), "main.cjs")).toEqual(["x.cjs ran 1 time(s)"]);
   });
 
   // m.mjs, started by import() inside lib.cjs's require(), imports lib.cjs

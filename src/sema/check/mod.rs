@@ -1388,6 +1388,8 @@ struct QueryFrame {
     reported_from: u32,
     /// Its index in `Checker::in_progress`.
     class: u16,
+    /// `Checker::in_progress` of its class when it was pushed: the next entry of the class further down.
+    below_in_class: u32,
     /// `typeResolutionHasProperty`: this checker has cached a result for the same query since the frame was pushed.
     has_result: bool,
     /// Non-cacheable because an incomplete flow-loop type was read (`taint_from`).
@@ -1448,8 +1450,10 @@ pub struct Checker<'p, 's> {
     stack: Vec<Query>,
     /// One per entry of `stack`.
     frames: Vec<QueryFrame>,
-    /// How many entries of `stack` fall into each class. A query whose class is empty isn't in progress.
-    in_progress: [u16; 1024],
+    /// For each class, the position of its innermost entry of `stack` plus one. 0 if it has none: a query whose class
+    /// is empty isn't in progress. With `QueryFrame::below_in_class` it lists the entries of a class. In a stack of
+    /// thousands of entries no class is empty, and a search from end to end at every query would be quadratic.
+    in_progress: [u32; 1024],
     /// The result of the last `enter`. `leave` and `excessively_deep` reset it to `Entered`.
     last_enter: EnterOutcome,
     /// The patterns whose implied type is being computed as the contextual type of their
@@ -2390,7 +2394,8 @@ impl<'p, 's> Checker<'p, 's> {
             self.reset_instantiation_count_if_idle();
         }
         self.stack.push(q);
-        self.in_progress[class as usize] += 1;
+        let innermost = &mut self.in_progress[class as usize];
+        let below_in_class = std::mem::replace(innermost, self.stack.len() as u32);
         // A query made under a context that a non-cacheable query has pushed is non-cacheable too.
         let tainted = !self.inference_contexts.is_empty() && self.is_innermost_tainted();
         // Diagnostics reported under a loop in progress are kept (`taint_from`).
@@ -2403,6 +2408,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .is_some_and(|frame| frame.incomplete_flow);
         self.frames.push(QueryFrame {
             class,
+            below_in_class,
             serial: self.work,
             entry_depth: self.instantiation_depth,
             tainted,
@@ -2421,11 +2427,20 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
+    /// Returns the positions of `q` in `stack`, innermost first.
+    fn positions_of(&self, q: Query) -> impl Iterator<Item = usize> {
+        let innermost = self.in_progress[(crate::util::fx_hash(&q) >> 54) as usize];
+        let position = |above: u32| (above as usize).checked_sub(1);
+        let below = move |&at: &usize| position(self.frames[at].below_in_class);
+        std::iter::successors(position(innermost), below).filter(move |&at| self.stack[at] == q)
+    }
+
     /// Returns the position of the innermost `q` in `stack[from..]`.
     #[cold]
     #[inline(never)]
     fn position_in_progress(&self, q: Query, from: usize) -> Option<usize> {
-        self.stack[from..].iter().rposition(|x| *x == q)
+        let innermost = self.positions_of(q).next()?;
+        innermost.checked_sub(from)
     }
 
     /// The slow path of the first test in `enter`. Returns false if `q` isn't rejected.
@@ -3165,13 +3180,9 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline(never)]
     fn note_result(&mut self, q: Query) {
         if self.is_resolution(q) {
-            for (frame, _) in self
-                .frames
-                .iter_mut()
-                .zip(&self.stack)
-                .filter(|x| *x.1 == q)
-            {
-                frame.has_result = true;
+            let positions: smallvec::SmallVec<[usize; 4]> = self.positions_of(q).collect();
+            for at in positions {
+                self.frames[at].has_result = true;
             }
         }
     }
@@ -3183,9 +3194,9 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         cold_path();
-        let frames = self.frames.iter_mut().zip(&self.stack);
-        for (frame, _) in frames.filter(|x| *x.1 == q) {
-            frame.is_stored_by_nested_visit = true;
+        let positions: smallvec::SmallVec<[usize; 4]> = self.positions_of(q).collect();
+        for at in positions {
+            self.frames[at].is_stored_by_nested_visit = true;
         }
     }
 
@@ -3569,8 +3580,8 @@ impl<'p, 's> Checker<'p, 's> {
         debug_assert!(popped == Some(q));
         self.last_enter = EnterOutcome::Entered;
         let frame = self.frames.pop().unwrap();
-        self.in_progress[frame.class as usize] -= 1;
-        if self.in_progress[frame.class as usize] != 0 {
+        self.in_progress[frame.class as usize] = frame.below_in_class;
+        if frame.below_in_class != 0 {
             cold_path();
             if !frame.tainted || frame.circular {
                 self.note_result(q);

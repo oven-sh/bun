@@ -3,8 +3,9 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { cssInternals } from "bun:internal-for-testing";
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, runCommandMaxRSS, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -233,6 +234,189 @@ describe("css tests", () => {
       `a{width:calc(6 - 400% - 2 - 4 - 8vh + 3ic)}`,
     ); // ideally -400% - 8vh + 3ic
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
+  });
+  describe("calc sum", () => {
+    // `f` and `g` do not fold. `far` adds to a value of `unit` after a conversion, and `mixed` is their sum.
+    const length = { f: "min(1px,1em)", g: "min(2px,1em)", unit: "px", far: "1in", mixed: "97px", apart: "1em" };
+    const angle = { f: "min(1deg,1%)", g: "min(2deg,1%)", unit: "deg", far: "1turn", mixed: "361deg", apart: "1%" };
+    // Each of the three value types that hold a sum has its own search for a term.
+    const searches = [
+      { ...length, declare: (sum: string) => `width:calc(${sum})` },
+      { ...length, declare: (sum: string) => `outline-width:calc(${sum})` },
+      { ...angle, declare: (sum: string) => `background:conic-gradient(red calc(${sum}),#00f)` },
+    ];
+
+    // A value that is added to a sum adds to the first term that it can add to. The other terms keep their places.
+    for (const { f, g, unit, far, mixed, apart, declare } of searches) {
+      for (const [sum, folded] of [
+        // The term is below the left operand, below the right operand, and two sums down on each side.
+        [`1${unit} + ${f} + 2${unit}`, `3${unit} + ${f}`],
+        [`${f} + 1${unit} + 2${unit}`, `${f} + 3${unit}`],
+        [`1${unit} + ${f} + ${g} + 2${unit}`, `3${unit} + ${f} + ${g}`],
+        [`${f} + (${g} + 1${unit}) + 2${unit}`, `${f} + ${g} + 3${unit}`],
+        // A sum in brackets is the right operand, then both operands.
+        [`2${unit} + (${f} + 1${unit})`, `${f} + 3${unit}`],
+        [`(${f} + 1${unit}) + (${g} + 2${unit})`, `${f} + ${g} + 3${unit}`],
+        [`(1${unit} + ${f}) + (2${unit} + ${g})`, `3${unit} + ${g} + ${f}`],
+        // Two terms can take the value. The first one does.
+        [`(1${unit} + ${apart}) + (${apart} + 2${unit}) - ${apart}`, `3${unit} + ${apart}`],
+        // Two values cancel.
+        [`1${unit} + ${f} - 1${unit}`, f],
+        // A product and a value of another unit add to no term.
+        [`1${unit} + ${f} - ${g}`, `1${unit} + ${f} + -1*${g}`],
+        [`${apart} + ${f} + 1${unit}`, `${apart} + ${f} + 1${unit}`],
+        // Two units add after a conversion, in both orders.
+        [`${far} + ${f} + 1${unit}`, `${mixed} + ${f}`],
+        [`1${unit} + (${f} + ${far})`, `${f} + ${mixed}`],
+      ]) {
+        minify_test(`a{${declare(sum)}}`, `a{${declare(folded)}}`);
+      }
+    }
+    minify_test(`a{width:calc(10% + min(1px,1em) + 5%)}`, `a{width:calc(15% + min(1px,1em))}`);
+    minify_test(`a{width:calc(5% + (min(1px,1em) + 10%))}`, `a{width:calc(min(1px,1em) + 15%)}`);
+    // Safari 14 has no range syntax, so the printer adds a step to the bound of a strict range.
+    prefix_test(
+      `@media (width > calc(1em + 3px)) { a { color: red } }`,
+      `@media (min-width: calc(1em + 3.02px)) { a { color: red; } }`,
+      { safari: 14 << 16 },
+    );
+    prefix_test(
+      `@media (width < calc(1px + min(1px, 1em) + 2px)) { a { color: red } }`,
+      `@media (max-width: calc(2.98px + min(1px, 1em))) { a { color: red; } }`,
+      { safari: 14 << 16 },
+    );
+    test("Bun.color() folds a sum in atan2()", () => {
+      expect(Bun.color("hsl(atan2(1px + 1em - 1em, 1px) 50% 50%)", "css")).toBe("#bf9f40");
+    });
+
+    // Since 1.4.0 a value that was added to a sum made a copy of the sum at each of its levels.
+    const terms = isDebug || isASAN ? 500 : 1_000;
+    const held = 2_000;
+    const repeat = (text: string, count: number) => Buffer.alloc(count * text.length, text).toString();
+    type Declarations = [declaration: string, folded: string][];
+
+    /** A stylesheet with a rule for each declaration, and what `bun build --minify` prints for it. */
+    const fixture = (declarations: Declarations) => ({
+      files: { "a.css": declarations.map(([declaration], i) => `.r${i}{${declaration}}`).join("\n") },
+      cmd: [bunExe(), "build", "a.css", "--minify", "--outdir", "out"],
+      expected: declarations.map(([, folded], i) => `.r${i}{${folded}}`).join("") + "\n",
+    });
+
+    /** The rules are too long to print. A wrong output is reported with the stderr of the build. */
+    async function expectBuilt(
+      dir: string,
+      expected: string,
+      { stderr, exitCode, signalCode }: { stderr: string; exitCode: number | null; signalCode: NodeJS.Signals | null },
+    ) {
+      const file = Bun.file(join(dir, "out", "a.css"));
+      const output = (await file.exists()) ? await file.text() : "";
+      const same = output === expected;
+      expect({ same, length: output.length, stderr: same ? "" : stderr, exitCode, signalCode }).toEqual({
+        same: true,
+        length: expected.length,
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    }
+
+    /** The copies took minutes, so a build that does not end is killed. */
+    async function build(declarations: Declarations) {
+      const { files, cmd, expected } = fixture(declarations);
+      using dir = tempDir("css-calc-sum", files);
+      await using proc = Bun.spawn({
+        cmd,
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 20_000,
+        killSignal: "SIGKILL",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      await expectBuilt(String(dir), expected, { stderr, exitCode, signalCode: proc.signalCode });
+    }
+
+    test(`bun build: ${terms} terms that do not fold, and ${terms} values that fold into one`, () =>
+      build(
+        searches.flatMap(({ f, unit, declare }): Declarations => [
+          [declare(f + repeat(` - ${f}`, terms - 1)), declare(f + repeat(` + -1*${f}`, terms - 1))],
+          [
+            declare(f + repeat(` + 1${unit} + ${f}`, terms)),
+            declare(`${f} + ${terms}${unit}` + repeat(` + ${f}`, terms)),
+          ],
+        ]),
+      ));
+
+    // Each sum in brackets becomes the right operand, so its value finds the term below the right operands.
+    test(`bun build: ${terms} sums in brackets`, () =>
+      build(
+        searches.map(({ f, unit, declare }): Declarations[number] => [
+          declare(f + repeat(` + (${f} + 1${unit})`, terms)),
+          declare(f + repeat(` + ${f}`, terms) + ` + ${terms}${unit}`),
+        ]),
+      ));
+
+    test(`bun build: a value added to a sum of ${held} terms does not copy the sum`, async () => {
+      const { files, cmd, expected } = fixture(
+        searches.map(({ f, apart, declare }): Declarations[number] => {
+          const sum = declare(f + repeat(` + ${f}`, held - 1) + ` + ${apart}`);
+          return [sum, sum];
+        }),
+      );
+      using dir = tempDir("css-calc-sum", files);
+      const { maxRSS, ...result } = await runCommandMaxRSS({ cmd, cwd: String(dir) });
+      await expectBuilt(String(dir), expected, result);
+      // The copies took 445 MB in a release build and 1,495 MB in a debug build with ASAN.
+      expect(maxRSS).toBeLessThan((isDebug || isASAN ? 640 : 256) * 1024 * 1024);
+    });
+
+    test(`Bun.color(): a difference of ${terms} terms in atan2()`, async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const difference = Array(${terms}).fill("min(1px,1em)").join(" - ");
+console.log(Bun.color("hsl(atan2(" + difference + ", 1px) 50% 50%)", "css"));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 20_000,
+        killSignal: "SIGKILL",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr: stdout === "null\n" ? "" : stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: "null\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    // On Linux without ASAN, malloc is mimalloc, so heapStats() counts the nodes of a sum. A debug build takes 0.1 s for each call.
+    test.skipIf(!isLinux || isASAN || isDebug)("the allocations of a sum of twice the terms", () => {
+      const count = (): number => (heapStats() as any).mimalloc.malloc_normal_count;
+      // The fewest of 5 runs: heapStats() and the other threads only add to a count.
+      const mallocs = (declaration: string) => {
+        let fewest = Infinity;
+        for (let i = 0; i < 5; i++) {
+          const before = count();
+          minify_test_with_options(`a{${declaration}}`, "");
+          fewest = Math.min(fewest, count() - before);
+        }
+        return fewest;
+      };
+      for (const { f, unit, apart, declare } of searches) {
+        const growth = (sum: (terms: number) => string) => mallocs(declare(sum(100))) / mallocs(declare(sum(50)));
+        // No term takes the value, so each term costs the same. The copies made these 3.8 and 8.1.
+        expect(growth(terms => f + repeat(` + ${f}`, terms - 1) + ` + ${apart}`)).toBeLessThan(2.5);
+        expect(growth(terms => f + repeat(` - ${f}`, terms - 1))).toBeLessThan(2.5);
+        // Each value passes every term on the way out. The copies made these 7.6 and 7.4.
+        expect(growth(terms => f + repeat(` + 1${unit} + ${f}`, terms))).toBeLessThan(5);
+        expect(growth(terms => f + repeat(` + (${f} + 1${unit})`, terms))).toBeLessThan(5);
+      }
+    });
   });
   describe("border_spacing", () => {
     minify_test(

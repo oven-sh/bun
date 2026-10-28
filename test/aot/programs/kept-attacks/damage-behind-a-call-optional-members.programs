@@ -1,0 +1,173 @@
+//// damage-behind-a-call-optional-members/handed-on-and-changed.ts
+// Literals with different members of one type meet in one place, are copied, frozen, deleted from and compared.
+type Style = { color?: string; size?: number; bold?: boolean; margin?: number; padding?: number; border?: string };
+
+function merge(...styles: Style[]): Style {
+  let merged: Style = {};
+  for (const style of styles) merged = { ...merged, ...style };
+  return merged;
+}
+
+function pick(i: number): Style {
+  switch (i % 6) {
+    case 0: return { color: "red" };
+    case 1: return { size: i };
+    case 2: return { bold: i % 4 === 2 };
+    case 3: return { margin: i / 2, padding: i };
+    case 4: return { border: "1px", color: "blue", size: 1 };
+    default: return {};
+  }
+}
+
+function show(style: Style): string {
+  return `${style.color}|${style.size}|${style.bold}|${style.margin}|${style.padding}|${style.border}|${Object.keys(style)}`;
+}
+
+const all: Style[] = [];
+for (let i = 0; i < 24; i++) all.push(pick(i));
+console.log(all.map(show).join("\n"));
+console.log(show(merge(...all)));
+
+const frozen = Object.freeze(pick(3));
+try {
+  "use strict";
+  (frozen as Record<string, unknown>)["color"] = "no";
+} catch (error) {
+  console.log((error as Error).constructor.name);
+}
+console.log(show(frozen), Object.isFrozen(frozen));
+
+const emptied = pick(4);
+delete emptied.color;
+delete emptied.margin;
+console.log(show(emptied));
+
+const map = new Map<Style, number>();
+for (const style of all) map.set(style, (style.size ?? 0) + (style.padding ?? 0));
+console.log([...map.values()].join(","));
+
+class Box {
+  style: Style = {};
+  other: Style = { bold: true };
+  constructor(public given: Style = { size: 3 }) {}
+  total(): number {
+    return (this.style.size ?? 1) + (this.other.size ?? 2) + (this.given.size ?? 4) + (this.given.margin ?? 8);
+  }
+}
+console.log(new Box().total(), new Box({}).total(), new Box({ margin: 1 }).total(), new Box(pick(1)).total());
+
+function generic<T extends Style>(style: T): T & { seen: boolean } {
+  return { ...style, seen: style.bold ?? false };
+}
+console.log(JSON.stringify(generic({ bold: true })), JSON.stringify(generic({ size: 2 })), JSON.stringify(generic({})));
+console.log(JSON.stringify(all.filter(style => style.size !== undefined).map(style => style.size)));
+console.log(structuredClone(pick(3)), { ...pick(4) });
+//// damage-behind-a-call-optional-members/read-in-every-way.ts
+// What a reader sees of a member that the literal left out: nothing of its own, and whatever the prototypes have.
+interface Options {
+  a?: number;
+  b?: string;
+  c?: boolean;
+  d?: number;
+  e?: { deep?: number };
+  f?: () => number;
+}
+
+const made: Options[] = [];
+made.push({});
+made.push({ a: 1 });
+made.push({ b: "b" });
+made.push({ c: false });
+made.push({ d: 0.25 });
+made.push({ e: {} });
+made.push({ e: { deep: 7 } });
+made.push({ f: () => 3 });
+made.push({ a: 2, f() { return (this.a ?? 0) + 1; } });
+made.push({ a: undefined });
+made.push({ d: -0, c: true });
+
+function read(o: Options): string {
+  const own = ["a", "b", "c", "d", "e", "f"].map(name => (Object.hasOwn(o, name) ? 1 : 0)).join("");
+  const has = [("a" in o), ("b" in o), ("c" in o), ("d" in o), ("e" in o), ("f" in o)].map(Number).join("");
+  const { a = -1, b = "none", c = true, d = -2 } = o;
+  return [o.a, o.b, o.c, Object.is(o.d, -0) ? "-0" : o.d, o.e?.deep, o.f?.(), own, has, a, b, c, Object.is(d, -0) ? "-0" : d, JSON.stringify(o), Object.entries(o).length, o.a === undefined, typeof o.f].join(" ");
+}
+
+for (const o of made) console.log(read(o));
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  const o = made[i % made.length];
+  sum += (o.a ?? 10) + (o.d ?? 100) + (o.b?.length ?? 1000) + (o.c ? 1 : 0);
+}
+console.log(sum);
+
+const above: Options = { d: 42, b: "inherited" };
+for (const o of made) Object.setPrototypeOf(o, above);
+for (const o of made) console.log(read(o));
+for (const o of made) Object.setPrototypeOf(o, Object.prototype);
+for (const o of made) console.log(read(o));
+
+const parent: Options = { a: 5, c: true };
+const child: Options = Object.setPrototypeOf({ b: "own" } as Options, parent);
+console.log(read(child), child.a, child.c);
+//// damage-behind-a-call-optional-members/stored-later-in-ways-nobody-sees.ts
+// A literal leaves out optional members of the type it is written under, and no `o.name = v` in the program stores them. They arrive all the same.
+interface Options {
+  host?: string;
+  port?: number;
+  secure?: boolean;
+  ratio?: number;
+  tags?: string[];
+}
+
+function describe(options: Options): string {
+  return `${options.host} ${options.port} ${options.secure} ${options.ratio} ${options.tags?.join("+")} | ${Object.keys(options).join(",")}`;
+}
+
+function underComputedKey(key: string, value: unknown): Options {
+  const options: Options = { host: "a" };
+  (options as Record<string, unknown>)[key] = value;
+  return options;
+}
+
+function byAssign(more: Options): Options {
+  const options: Options = { port: 1 };
+  Object.assign(options, more);
+  return options;
+}
+
+function byDefinition(): Options {
+  const options: Options = { secure: true };
+  Object.defineProperty(options, "ratio", { value: 0.5, enumerable: true, writable: true, configurable: true });
+  Object.defineProperty(options, "tags", { get: () => ["g"], enumerable: false, configurable: true });
+  return options;
+}
+
+function fill(this: Options, port: number): void {
+  this.port = port;
+  this.ratio = port / 4;
+}
+
+function byThis(): Options {
+  const options: Options = { host: "t" };
+  fill.call(options, 9);
+  return options;
+}
+
+function byReflection(): Options {
+  const options: Options = {};
+  Reflect.set(options, "tags", ["r"]);
+  Reflect.set(options, "secure", false);
+  return options;
+}
+
+for (let round = 0; round < 3; round++) {
+  console.log(describe(underComputedKey("port", 80 + round)));
+  console.log(describe(underComputedKey("tags", ["x", String(round)])));
+  console.log(describe(underComputedKey("other", round)));
+  console.log(describe(byAssign({ host: "h", ratio: 1.5, tags: [] })));
+  console.log(describe(byAssign({})));
+  console.log(describe(byDefinition()));
+  console.log(describe(byThis()));
+  console.log(describe(byReflection()));
+}

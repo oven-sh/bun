@@ -56,6 +56,11 @@ impl Decompressor {
                 *self = Decompressor::Zlib(bun_zlib::InflateDecoder::new(window_bits)?);
             }
             Encoding::Brotli => {
+                if bun_removable_features::is_removed(
+                    bun_removable_features::Feature::BrotliDecoder,
+                ) {
+                    return Err(crate::Error::BrotliFailedToLoad);
+                }
                 *self = Decompressor::Brotli(Box::new(bun_brotli::StreamingDecoder::new()));
             }
             Encoding::Zstd => {

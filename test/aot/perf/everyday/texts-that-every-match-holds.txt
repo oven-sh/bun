@@ -1,0 +1,122 @@
+//// a-line-without-the-character-behind-a-bounded-run
+const lines = ["2026-01-02 10:11:12 info worker-7 finished job 8123 in 41 ms with status ok and no retries left", "2026-01-02 10:11:13 warn cache-2 evicted 17 entries of region eu-west while the queue was draining"];
+const address = /\b([a-z0-9-]{1,64}@[a-z0-9-]+\.example\.invalid)\b/i;
+function turn(i: number): number {
+  return lines[i & 1]!.replace(address, "[address]").length;
+}
+//// a-line-with-the-character-and-without-the-long-text
+const lines = ["2026-01-02 10:11:12 info worker-7 sent mail to ann@mail.example.org and bob@mail.example.org in 41 ms", "2026-01-02 10:11:13 warn cache-2 dropped cy@mail.example.org from region eu-west while the queue drained"];
+const address = /\b([a-z0-9-]{1,64}@[a-z0-9-]+\.example\.invalid)\b/i;
+function turn(i: number): number {
+  return lines[i & 1]!.replace(address, "[address]").length;
+}
+//// a-line-that-holds-the-text-far-behind-its-start
+const lines = ["2026-01-02 10:11:12 info worker-7 finished job 8123 in 41 ms with status ok, told ann@host.example.invalid", "2026-01-02 10:11:13 warn cache-2 evicted 17 entries of region eu-west, told bob-2@host.example.invalid"];
+const address = /\b([a-z0-9-]{1,64}@[a-z0-9-]+\.example\.invalid)\b/i;
+function turn(i: number): number {
+  return lines[i & 1]!.replace(address, "[address]").length;
+}
+//// a-line-without-the-text-between-two-runs
+const lines = ["2026-01-02 10:11:12 info worker-7 finished job 8123 in 41 ms with status ok and no retries left", "2026-01-02 10:11:13 warn cache-2 evicted 17 entries of region eu-west while the queue was draining"];
+const link = /[a-z][a-z0-9+.-]*:\/\/[^\s"']+/;
+function turn(i: number): number {
+  return link.test(lines[i & 1]!) ? 1 : 0;
+}
+//// a-line-without-either-sign-behind-a-key-word
+const lines = ["2026-01-02 10.11.12 info worker-7 finished job 8123 in 41 ms with status ok and no retries left", "2026-01-02 10.11.13 warn cache-2 evicted 17 entries of region eu-west while the queue was draining"];
+const setting = /(?:status|region|worker|queue|entries|retries)\s*[=:]\s*(\S+)/gi;
+function turn(i: number): number {
+  setting.lastIndex = 0;
+  return setting.exec(lines[i & 1]!) ? 1 : 0;
+}
+//// a-16-bit-line-without-the-character-behind-a-bounded-run
+const lines = ["2026-01-02 10:11:12 info worker-7 finished job 8123 in 41 ms \u2014 status ok and no retries left", "2026-01-02 10:11:13 warn cache-2 evicted 17 entries of region eu-west \u2014 the queue was draining"];
+const address = /\b([a-z0-9-]{1,64}@[a-z0-9-]+\.example\.invalid)\b/i;
+function turn(i: number): number {
+  return lines[i & 1]!.replace(address, "[address]").length;
+}
+//// forty-patterns-over-a-short-label
+const labels = ["worker-7 finished job 8123 ok", "cache-2 evicted 17 entries now"];
+const rules = [
+  /\bkey-[a-z0-9]{20}\b/, /\btok_[A-Za-z0-9]{24}\b/, /\b[a-z0-9-]{1,64}@[a-z0-9-]+\.example\.invalid\b/i, /\bid:[0-9a-f]{32}\b/, /-----BEGIN [A-Z ]+-----/,
+  /\bpass(?:word)?\s*[=:]\s*\S+/i, /\bsecret\s*[=:]\s*\S+/i, /\b[A-Z0-9]{20}==\b/, /\bv1\.[a-f0-9]{40}\b/, /\bhttps?:\/\/[^\s@]+@[^\s]+/,
+  /\bxk-[a-zA-Z0-9]{48}(?![a-zA-Z0-9])/, /\bab_live_[0-9a-zA-Z]{24}\b/, /\bgg[pousr]_[A-Za-z0-9]{36}\b/, /\b[0-9]{3}-[0-9]{2}-[0-9]{4}\b/, /\b(?:\d[ -]?){13,16}\b/,
+  /\bey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/, /\bcookie:\s*\S+/i, /\bbearer\s+[a-z0-9._~+\/-]+=*/i, /\bbasic\s+[a-z0-9+\/]+=*/i, /\b[a-f0-9]{64}\b/,
+  /\bsid=[^;\s]+/, /\bapi[_-]?key\s*[=:]\s*\S+/i, /\bprivate[_-]?key\s*[=:]\s*\S+/i, /\baccess[_-]?token\s*[=:]\s*\S+/i, /\brefresh[_-]?token\s*[=:]\s*\S+/i,
+  /\b[\w.+-]+@[\w-]+\.[\w.-]+\b/, /\+\d{1,3}[ -]\d{3}[ -]\d{4}/, /\b\d{1,3}(?:\.\d{1,3}){3}:\d+\b/, /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i, /\bssh-rsa\s+[A-Za-z0-9+\/]+/,
+  /\bmongodb(?:\+srv)?:\/\/\S+/, /\bpostgres(?:ql)?:\/\/\S+/, /\bredis:\/\/\S+/, /\bamqp:\/\/\S+/, /\bftp:\/\/\S+/,
+  /"token"\s*:\s*"[^"]+"/, /"password"\s*:\s*"[^"]+"/, /'secret'\s*:\s*'[^']+'/, /<key>[^<]+<\/key>/, /\$\{[A-Z_]+\}/,
+];
+function turn(i: number): number {
+  const label = labels[i & 1]!;
+  let hits = 0;
+  for (const rule of rules) if (rule.test(label)) hits++;
+  return hits;
+}
+//// forty-patterns-replace-in-a-short-label
+const labels = ["worker-7 finished job 8123 ok", "cache-2 evicted 17 entries now"];
+const rules = [
+  /\bkey-[a-z0-9]{20}\b/g, /\btok_[A-Za-z0-9]{24}\b/g, /\b[a-z0-9-]{1,64}@[a-z0-9-]+\.example\.invalid\b/gi, /\bid:[0-9a-f]{32}\b/g, /-----BEGIN [A-Z ]+-----/g,
+  /\bpass(?:word)?\s*[=:]\s*\S+/gi, /\bsecret\s*[=:]\s*\S+/gi, /\b[A-Z0-9]{20}==\b/g, /\bv1\.[a-f0-9]{40}\b/g, /\bhttps?:\/\/[^\s@]+@[^\s]+/g,
+  /\bxk-[a-zA-Z0-9]{48}(?![a-zA-Z0-9])/g, /\bab_live_[0-9a-zA-Z]{24}\b/g, /\bgg[pousr]_[A-Za-z0-9]{36}\b/g, /\b[0-9]{3}-[0-9]{2}-[0-9]{4}\b/g, /\b(?:\d[ -]?){13,16}\b/g,
+  /\bey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, /\bcookie:\s*\S+/gi, /\bbearer\s+[a-z0-9._~+\/-]+=*/gi, /\bbasic\s+[a-z0-9+\/]+=*/gi, /\b[a-f0-9]{64}\b/g,
+  /\bsid=[^;\s]+/g, /\bapi[_-]?key\s*[=:]\s*\S+/gi, /\bprivate[_-]?key\s*[=:]\s*\S+/gi, /\baccess[_-]?token\s*[=:]\s*\S+/gi, /\brefresh[_-]?token\s*[=:]\s*\S+/gi,
+  /\b[\w.+-]+@[\w-]+\.[\w.-]+\b/g, /\+\d{1,3}[ -]\d{3}[ -]\d{4}/g, /\b\d{1,3}(?:\.\d{1,3}){3}:\d+\b/g, /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, /\bssh-rsa\s+[A-Za-z0-9+\/]+/g,
+  /\bmongodb(?:\+srv)?:\/\/\S+/g, /\bpostgres(?:ql)?:\/\/\S+/g, /\bredis:\/\/\S+/g, /\bamqp:\/\/\S+/g, /\bftp:\/\/\S+/g,
+  /"token"\s*:\s*"[^"]+"/g, /"password"\s*:\s*"[^"]+"/g, /'secret'\s*:\s*'[^']+'/g, /<key>[^<]+<\/key>/g, /\$\{[A-Z_]+\}/g,
+];
+function turn(i: number): number {
+  let label = labels[i & 1]!;
+  for (const rule of rules) label = label.replace(rule, "[hidden]");
+  return label.length;
+}
+//// trim-by-a-written-out-class
+const lines = ["  worker-7 finished job 8123 in 41 ms with status ok and no retries left", "cache-2 evicted 17 entries of region eu-west while the queue was draining  "];
+const ends = /^[ \t\r\n\xa0\u2003\ufeff]+|[ \t\r\n\xa0\u2003\ufeff]+$/g;
+function turn(i: number): number {
+  return lines[i & 1]!.replace(ends, "").length;
+}
+//// trim-a-16-bit-line-by-a-written-out-class
+const lines = ["  worker-7 finished job 8123 in 41 ms \u2014 status ok and no retries left", "cache-2 evicted 17 entries of region eu-west \u2014 the queue was draining  "];
+const ends = /^[ \t\r\n\xa0\u2003\ufeff]+|[ \t\r\n\xa0\u2003\ufeff]+$/g;
+function turn(i: number): number {
+  return lines[i & 1]!.replace(ends, "").length;
+}
+//// slashes-at-the-end-of-a-path
+const paths = ["packages/app/src/components/button/primary/index.test.tsx", "packages/app/src/components/button/primary//"];
+const slashes = /[\/\\]+$/;
+function turn(i: number): number {
+  return paths[i & 1]!.replace(slashes, "").length;
+}
+//// forty-patterns-out-of-run-time-text-over-a-short-label
+const labels = ["worker-7 finished job 8123 ok", "cache-2 evicted 17 entries now"];
+const nothing = String(Date.now()).slice(99);
+const rules = [
+  /\bkey-[a-z0-9]{20}\b/, /\btok_[A-Za-z0-9]{24}\b/, /\b[a-z0-9-]{1,64}@[a-z0-9-]+\.example\.invalid\b/i, /\bid:[0-9a-f]{32}\b/, /-----BEGIN [A-Z ]+-----/,
+  /\bpass(?:word)?\s*[=:]\s*\S+/i, /\bsecret\s*[=:]\s*\S+/i, /\b[A-Z0-9]{20}==\b/, /\bv1\.[a-f0-9]{40}\b/, /\bhttps?:\/\/[^\s@]+@[^\s]+/,
+  /\bxk-[a-zA-Z0-9]{48}(?![a-zA-Z0-9])/, /\bab_live_[0-9a-zA-Z]{24}\b/, /\bgg[pousr]_[A-Za-z0-9]{36}\b/, /\b[0-9]{3}-[0-9]{2}-[0-9]{4}\b/, /\b(?:\d[ -]?){13,16}\b/,
+  /\bey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/, /\bcookie:\s*\S+/i, /\bbearer\s+[a-z0-9._~+\/-]+=*/i, /\bbasic\s+[a-z0-9+\/]+=*/i, /\b[a-f0-9]{64}\b/,
+  /\bsid=[^;\s]+/, /\bapi[_-]?key\s*[=:]\s*\S+/i, /\bprivate[_-]?key\s*[=:]\s*\S+/i, /\baccess[_-]?token\s*[=:]\s*\S+/i, /\brefresh[_-]?token\s*[=:]\s*\S+/i,
+  /\b[\w.+-]+@[\w-]+\.[\w.-]+\b/, /\+\d{1,3}[ -]\d{3}[ -]\d{4}/, /\b\d{1,3}(?:\.\d{1,3}){3}:\d+\b/, /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i, /\bssh-rsa\s+[A-Za-z0-9+\/]+/,
+  /\bmongodb(?:\+srv)?:\/\/\S+/, /\bpostgres(?:ql)?:\/\/\S+/, /\bredis:\/\/\S+/, /\bamqp:\/\/\S+/, /\bftp:\/\/\S+/,
+  /"token"\s*:\s*"[^"]+"/, /"password"\s*:\s*"[^"]+"/, /'secret'\s*:\s*'[^']+'/, /<key>[^<]+<\/key>/, /\$\{[A-Z_]+\}/,
+].map(rule => new RegExp("(?:" + rule.source + ")" + nothing, rule.flags));
+function turn(i: number): number {
+  const label = labels[i & 1]!;
+  let hits = 0;
+  for (const rule of rules) if (rule.test(label)) hits++;
+  return hits;
+}
+//// an-alternative-tried-at-the-start-alone-matches-beside-one-that-holds-a-text
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^(?:.*/)?src/.*\\.tsx?$|never-built" + nothing);
+const subjects: string[] = ["packages/app/src/components/button/primary/index.test.tsx" + nothing, "src/index.ts" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-name-and-its-number-far-behind-the-start-of-a-line
+const lines = ["2026-01-02 10:11:12 info worker-7 finished job 8123 in 41 ms with status ok and retries_left = 3", "2026-01-02 10:11:13 warn cache-2 evicted 17 entries of region eu-west while queue_length=12"];
+const setting = /[a-z_]+\s*=\s*\d+/;
+function turn(i: number): number {
+  return setting.test(lines[i & 1]!) ? 1 : 0;
+}

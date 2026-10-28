@@ -1,0 +1,264 @@
+//// built-ins-typed-native-entries/listing-differential.js
+// bun differential.js <seed> <paths>: every function of path.posix and path.win32 over made-up paths in every form a JS string has
+// (flat, rope, substring, 8-bit, 16-bit, String object) and over values that are no strings. One line a call. Two Buns agree when their outputs are the same.
+const path = require("node:path");
+const [seedText = "1", countText = "2000"] = process.argv.slice(2);
+
+let state = Number(seedText) >>> 0 || 1;
+const random = below => {
+  state ^= state << 13;
+  state >>>= 0;
+  state ^= state >>> 17;
+  state ^= state << 5;
+  state >>>= 0;
+  return state % below;
+};
+const pick = list => list[random(list.length)];
+
+const names = [
+  "", "", ".", "..", "...", "a", "b", "ab", "abc", "index.ts", "package.json", ".bin", ".gitignore", "e.", "f..g", "..h", ".i.", "x.tar.gz",
+  "node_modules", "src", "lib", " ", "é", "ñandú.txt", "ÿ", "日本", "日本.語", "\ud800", "a\udc00.b", "😀.png", "C:", "c:", "Z:", "1:", "é:", "?", "UNC", "con", "aux:", "nul.txt", "server", "share",
+  "a-rather-long-name-of-a-folder-that-has-more-than-thirty-two-characters", "sixteen-letters!", "seventeen-letters", "eight-ch", "nine-char",
+];
+const separators = ["/", "/", "/", "/", "\\", "\\", "//", "\\\\", "/./", "/../", "\\..\\", "/\\"];
+const starts = ["", "", "", "/", "/", "/", "//", "///", "\\", "\\\\", "\\\\?\\", "\\\\.\\", "C:", "C:\\", "c:/", "./", "../", ".\\", "..\\"];
+const ends = ["", "", "", "", "/", "//", "\\", "/.", "/..", "."];
+
+function makePath() {
+  let text = pick(starts);
+  for (let parts = random(7); parts > 0; --parts) text += pick(names) + (parts > 1 ? pick(separators) : "");
+  return text + pick(ends);
+}
+
+const flat = text => {
+  text.charCodeAt(0);
+  return text;
+};
+const copy = text => flat(Buffer.from(text, "utf16le").toString("utf16le"));
+const forms = {
+  flat: text => flat(text + ""),
+  rope: text => (text.length < 2 ? text : copy(text.slice(0, text.length >> 1)) + copy(text.slice(text.length >> 1))),
+  rope3: text => (text.length < 3 ? text : copy(text.slice(0, 1)) + (copy(text.slice(1, 2)) + copy(text.slice(2)))),
+  substring: text => flat("<<" + text + ">>>").slice(2, -3),
+  substringOfWide: text => flat("日" + text + "本").slice(1, -1),
+  object: text => new String(text),
+};
+const formNames = Object.keys(forms);
+
+function show(value) {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (value instanceof Error) return `Error ${value.name} ${value.code} ${JSON.stringify(value.message)}`;
+  if (value instanceof String) return `String object ${JSON.stringify(String(value))}`;
+  if (typeof value === "object" && value !== null) return `${Object.getPrototypeOf(value) === Object.prototype} ${JSON.stringify(value)}`;
+  return String(value);
+}
+const lines = [];
+function call(label, fn, ...operands) {
+  let answer;
+  try {
+    answer = show(fn(...operands));
+  } catch (error) {
+    answer = `throws ${error.name} ${error.code} ${JSON.stringify(error.message)}`;
+  }
+  lines.push(`${label} ${answer}`);
+  if (lines.length >= 4096) flush();
+}
+function flush() {
+  process.stdout.write(lines.join("\n") + "\n");
+  lines.length = 0;
+}
+
+const platforms = { posix: path.posix, win32: path.win32 };
+for (const [platform, p] of Object.entries(platforms)) {
+  for (const name of ["basename", "dirname", "extname", "format", "isAbsolute", "join", "normalize", "parse", "relative", "resolve", "toNamespacedPath", "_makeLong"])
+    lines.push(`${platform}.${name} name=${p[name].name} length=${p[name].length} ${Object.getOwnPropertyNames(p[name]).join()}`);
+}
+
+const count = Number(countText);
+for (let i = 0; i < count; ++i) {
+  const a = makePath(), b = makePath(), c = makePath();
+  const suffixes = [a.slice(-random(6)), pick([".ts", ".json", "", "a", "é", "本", ".", "/", a, a + "x"])];
+  for (const [platform, p] of Object.entries(platforms)) {
+    const form = forms[formNames[i % formNames.length]];
+    const other = forms[pick(formNames)];
+    const label = `${i} ${platform} ${formNames[i % formNames.length]} ${JSON.stringify([a, b, c])}`;
+    for (const name of ["basename", "dirname", "extname", "isAbsolute", "normalize", "parse", "toNamespacedPath", "resolve", "join"]) call(`${label} ${name}`, p[name], form(a));
+    for (const suffix of suffixes) call(`${label} basename ${JSON.stringify(suffix)}`, p.basename, form(a), other(suffix));
+    call(`${label} basename undefined`, p.basename, form(a), undefined);
+    call(`${label} relative`, p.relative, form(a), other(b));
+    call(`${label} relative self`, p.relative, form(a), other(a));
+    call(`${label} relative inside`, p.relative, form(a), other(a + "/" + b));
+    call(`${label} relative outside`, p.relative, form(a + "/" + b), other(a));
+    call(`${label} join2`, p.join, form(a), other(b));
+    call(`${label} join3`, p.join, form(a), other(b), form(c));
+    call(`${label} resolve2`, p.resolve, form(a), other(b));
+    call(`${label} resolve3`, p.resolve, form(a), other(b), form(c));
+    call(`${label} dirname dirname`, text => p.dirname(p.dirname(text)), form(a));
+    call(`${label} basename dirname`, text => p.basename(p.dirname(text)), form(a));
+    call(`${label} join of parts`, text => p.join(p.dirname(text), p.basename(text)), form(a));
+    call(`${label} format parse`, text => p.format(p.parse(text)), form(a));
+    call(`${label} many`, p.join, a, b, c, a, b, c, a, b, c, a);
+    call(`${label} many resolved`, p.resolve, a, b, c, a, b, c, a, b, c, a);
+  }
+}
+
+// What is no string, alone and beside strings, and the order in which operands are looked at.
+const log = [];
+const noisy = (name, text) => {
+  const object = new String(text);
+  object.toString = () => (log.push(name), text);
+  return object;
+};
+const throwing = name => {
+  const object = new String("x");
+  object.toString = () => {
+    log.push(name);
+    throw new RangeError(name);
+  };
+  return object;
+};
+const others = [undefined, null, true, 0, 5, 1.5, NaN, 10n, Symbol.iterator, {}, [], ["a"], () => {}, new Date(0), /x/, new Number(1), { toString: () => "/a" }, Object.create(null)];
+for (const [platform, p] of Object.entries(platforms)) {
+  for (const name of ["basename", "dirname", "extname", "isAbsolute", "normalize", "parse", "toNamespacedPath", "resolve", "join", "relative", "format"]) {
+    call(`${platform} ${name} nothing`, p[name]);
+    others.forEach((value, index) => {
+      call(`${platform} ${name} other ${index}`, p[name], value);
+      call(`${platform} ${name} string, other ${index}`, p[name], "a/b.c", value);
+      call(`${platform} ${name} other ${index}, string`, p[name], value, "a/b.c");
+      call(`${platform} ${name} other ${index}, absolute`, p[name], value, "/a/b.c");
+      call(`${platform} ${name} other, other ${index}`, p[name], value, others[(index + 1) % others.length]);
+      call(`${platform} ${name} string, string, other ${index}`, p[name], "a", "b", value);
+    });
+    for (const operands of [
+      () => [noisy("first", "/a/b.c"), noisy("second", ".c"), noisy("third", "d")],
+      () => [5, noisy("second", ".c")],
+      () => [noisy("first", "/a/b.c"), 5],
+      () => [noisy("first", "a"), noisy("second", "/b"), noisy("third", "c")],
+      () => [throwing("first"), noisy("second", ".c")],
+      () => [noisy("first", "a"), throwing("second")],
+      () => [noisy("first", "")],
+      () => [noisy("first", ""), noisy("second", "")],
+    ]) {
+      log.length = 0;
+      call(`${platform} ${name} noisy`, p[name], ...operands());
+      lines.push(`  ran ${log.join()}`);
+    }
+  }
+  for (const pathObject of [
+    {}, { root: "/" }, { dir: "/a" }, { base: "b.c" }, { name: "b" }, { ext: "c" }, { ext: ".c" }, { root: "/", dir: "/", base: "x" }, { root: "C:\\", dir: "C:\\a", name: "b", ext: "c" },
+    { dir: 5, base: true }, { root: null, dir: undefined, base: 0, name: "", ext: false }, { name: "é", ext: "日" }, { dir: "a".repeat(5000), base: "b".repeat(5000) },
+    { get root() { log.push("root"); return "r"; }, get dir() { log.push("dir"); return "d"; }, get base() { log.push("base"); return ""; }, get name() { log.push("name"); return noisy("name text", "n"); }, get ext() { log.push("ext"); return "e"; } },
+  ]) {
+    log.length = 0;
+    call(`${platform} format ${Object.keys(pathObject)}`, p.format, pathObject);
+    lines.push(`  ran ${log.join()}`);
+  }
+}
+
+// Lengths around the widths that are read at once, and long ones.
+for (const [platform, p] of Object.entries(platforms)) {
+  for (let length = 0; length <= 70; ++length) {
+    for (const at of [0, 1, length >> 1, length - 2, length - 1]) {
+      for (const inserted of ["/", "//", "/.", "/./", "/..", "/../", ".", "..", "\\", "é"]) {
+        const text = flat("x".repeat(Math.max(at, 0)) + inserted + "y".repeat(Math.max(length - at, 0)));
+        for (const start of ["", "/"]) {
+          for (const name of ["basename", "dirname", "extname", "normalize", "parse", "resolve", "join"]) call(`${platform} ${name} ${JSON.stringify(start + text)}`, p[name], flat(start + text));
+          call(`${platform} join2 ${JSON.stringify(start + text)}`, p.join, flat(start + text), text);
+          call(`${platform} resolve2 ${JSON.stringify(start + text)}`, p.resolve, flat(start + text), text);
+          call(`${platform} relative ${JSON.stringify(start + text)}`, p.relative, flat(start + text), flat("/" + text + "/z"));
+          call(`${platform} relative back ${JSON.stringify(start + text)}`, p.relative, flat("/x/" + text + "/z"), flat(start + text));
+        }
+      }
+    }
+  }
+  for (const length of [4095, 4096, 4097, 8192, 70000, 140000, 1 << 20]) {
+    const long = flat("/" + "ab/".repeat(length / 3) + "c.d");
+    const summary = value => (typeof value === "string" ? `${value.length} ${Bun.hash(value)}` : JSON.stringify(Object.entries(value).map(([key, text]) => [key, text.length, String(Bun.hash(text))])));
+    for (const name of ["basename", "dirname", "extname", "normalize", "parse", "resolve", "join"]) call(`${platform} ${name} long ${length}`, text => summary(p[name](text)), long);
+    call(`${platform} join long ${length}`, text => summary(p.join(text, "..", text)), long);
+    call(`${platform} relative long ${length}`, text => summary(p.relative(text, text + "/e")), long);
+    call(`${platform} relative long back ${length}`, text => summary(p.relative(text + "/e", "/q")), long);
+  }
+}
+flush();
+//// built-ins-typed-native-entries/listing-typed-calls.ts
+// typed-calls.ts <seed> <paths>: every function of node:path called with operands the compiler can prove to be strings, in the forms a JS string has. One line a call.
+// Compiled ahead of time and under `bun run` it prints the same.
+import path from "node:path";
+
+const [seedText = "1", countText = "2000"] = process.argv.slice(2);
+let state: number = Number(seedText) >>> 0 || 1;
+function random(below: number): number {
+  state ^= state << 13;
+  state >>>= 0;
+  state ^= state >>> 17;
+  state ^= state << 5;
+  state >>>= 0;
+  return state % below;
+}
+const names: string[] = ["", ".", "..", "...", "a", "ab", "index.ts", "package.json", ".bin", "e.", "f..g", "x.tar.gz", "node_modules", "src", "é", "ñandú.txt", "日本.語", "a-rather-long-name-of-a-folder-that-has-more-than-thirty-two-characters", "sixteen-letters!", "eight-ch"];
+const separators: string[] = ["/", "/", "/", "//", "/./", "/../"];
+const starts: string[] = ["", "", "/", "/", "//", "./", "../"];
+const ends: string[] = ["", "", "", "/", "//", "/.", "/..", "."];
+function pick(list: string[]): string {
+  return list[random(list.length)];
+}
+function makePath(): string {
+  let text: string = pick(starts);
+  for (let parts = random(7); parts > 0; --parts) text += pick(names) + (parts > 1 ? pick(separators) : "");
+  return text + pick(ends);
+}
+function flat(text: string): string {
+  text.charCodeAt(0);
+  return text;
+}
+function inForm(form: number, text: string): string {
+  if (form === 0) return flat(text);
+  if (form === 1) return text.length < 2 ? text : flat(text.slice(0, text.length >> 1) + "") + text.slice(text.length >> 1);
+  if (form === 2) return flat("<<" + text + ">>>").slice(2, -3);
+  return flat("日" + text + "本").slice(1, -1);
+}
+
+const lines: string[] = [];
+function say(label: string, answer: string): void {
+  lines.push(label + " " + JSON.stringify(answer));
+  if (lines.length >= 4096) {
+    console.log(lines.join("\n"));
+    lines.length = 0;
+  }
+}
+const count: number = Number(countText);
+for (let i = 0; i < count; ++i) {
+  const a: string = makePath();
+  const b: string = makePath();
+  const c: string = makePath();
+  const form: number = i & 3;
+  const other: number = random(4);
+  const label: string = i + " " + form + " " + other + " " + JSON.stringify([a, b, c]);
+  say(label + " basename", path.basename(inForm(form, a)));
+  say(label + " basename suffix", path.basename(inForm(form, a), inForm(other, a.slice(-random(6)))));
+  say(label + " basename .ts", path.basename(inForm(form, a), ".ts"));
+  say(label + " dirname", path.dirname(inForm(form, a)));
+  say(label + " extname", path.extname(inForm(form, a)));
+  say(label + " isAbsolute", String(path.isAbsolute(inForm(form, a))));
+  say(label + " normalize", path.normalize(inForm(form, a)));
+  const parsed = path.parse(inForm(form, a));
+  say(label + " parse", parsed.root + "|" + parsed.dir + "|" + parsed.base + "|" + parsed.ext + "|" + parsed.name);
+  say(label + " format", path.format(parsed));
+  say(label + " toNamespacedPath", path.toNamespacedPath(inForm(form, a)));
+  say(label + " join1", path.join(inForm(form, a)));
+  say(label + " join2", path.join(inForm(form, a), inForm(other, b)));
+  say(label + " join3", path.join(inForm(form, a), inForm(other, b), inForm(form, c)));
+  say(label + " join0", path.join());
+  say(label + " resolve1", path.resolve(inForm(form, a)));
+  say(label + " resolve2", path.resolve(inForm(form, a), inForm(other, b)));
+  say(label + " resolve3", path.resolve(inForm(form, a), inForm(other, b), inForm(form, c)));
+  say(label + " resolve0", path.resolve());
+  say(label + " relative", path.relative(inForm(form, a), inForm(other, b)));
+  say(label + " relative inside", path.relative(inForm(form, a), inForm(other, a + "/" + b)));
+  say(label + " relative outside", path.relative(inForm(form, a + "/" + b), inForm(other, a)));
+  say(label + " dirname dirname", path.dirname(path.dirname(inForm(form, a))));
+  say(label + " join of parts", path.join(path.dirname(inForm(form, a)), path.basename(inForm(form, a))));
+  say(label + " win32", path.win32.join(inForm(form, a), inForm(other, b)) + "|" + path.win32.dirname(inForm(form, a)) + "|" + path.win32.basename(inForm(form, a)) + "|" + path.win32.normalize(inForm(form, a)));
+}
+console.log(lines.join("\n"));

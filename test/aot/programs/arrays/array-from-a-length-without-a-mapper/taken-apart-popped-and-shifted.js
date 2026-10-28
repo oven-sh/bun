@@ -1,0 +1,1 @@
+function run(x) { const r = Array.from({ length: 2 }, x); const { 0: a, length } = r; const p = r.pop(); const s = r.shift(); return [a === undefined, length, p === undefined, s === undefined, r.length].join(" "); } console.log(run());

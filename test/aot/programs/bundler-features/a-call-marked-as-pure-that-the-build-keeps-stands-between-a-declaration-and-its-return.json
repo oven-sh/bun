@@ -1,0 +1,4 @@
+{
+  "build": ["--ignore-dce-annotations"],
+  "reference": "compiled"
+}

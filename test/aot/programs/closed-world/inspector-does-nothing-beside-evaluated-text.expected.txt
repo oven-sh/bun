@@ -1,0 +1,5 @@
+eval: 2
+inspector.open: object
+inspector.url: undefined
+inspector.close: undefined
+startRemoteDebugger: Cannot use startRemoteDebugger from bun:jsc: rebuild this executable with --compile-inspector.

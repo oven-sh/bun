@@ -105,6 +105,8 @@ pub enum Error {
     ProxyConnectFailed,
     #[error("TLSHandshakeFailed")]
     TLSHandshakeFailed,
+    #[error("BrotliFailedToLoad")]
+    BrotliFailedToLoad,
     #[error(transparent)]
     Cert(#[from] CertError),
     #[error(transparent)]
@@ -318,6 +320,7 @@ impl Error {
             Self::UnsupportedProtocol => "UnsupportedProtocol",
             Self::ProxyConnectFailed => "ProxyConnectFailed",
             Self::TLSHandshakeFailed => "TLSHandshakeFailed",
+            Self::BrotliFailedToLoad => "BrotliFailedToLoad",
             Self::Cert(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Hpack(e) => <&'static str>::from(e),

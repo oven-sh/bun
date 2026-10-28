@@ -1,0 +1,58 @@
+// Ways for a value to differ from its static type that do not end in "a Dog that is a Cat". The type checker accepts every line under `strict`: there is no `any`, no cast, no user type guard and no declaration without a body.
+// A compiled program prints what plain Bun prints, or throws a TypeError where a rule of the compiler says so. It never reads a value as something that it is not, and it never folds by a literal type.
+export {};
+async function t(name: string, f: () => unknown) { let r: string; try { r = String(await f()); } catch (e) { r = "threw " + (e instanceof Error ? e.name : typeof e); } console.log(name, r); }
+class Animal { name = "animal"; }
+class Dog extends Animal { legs = 4; bark(): number { return this.legs * 2; } }
+class Cat extends Animal { lives = "nine"; }
+const later = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0));
+namespace Settings { export const depth = 1; export let width = 1; export const read = (): string => [depth, width].join(); }
+enum Color { Red, Green }
+await t("the length of a tuple after push", () => { const pair: [number, string] = [1, "a"]; pair.push(2); const n = pair.length; return [n, n === 2, pair.length + 1].join(); });
+await t("the length of a tuple after pop", () => { const pair: [number, string] = [1, "a"]; pair.pop(); const n = pair.length; return [n, n === 2, new Array<number>(n).length].join(); });
+await t("the length of a tuple in a loop bound", () => { const pair: [number, number] = [1, 2]; pair.push(3, 4); let sum = 0; for (let i = 0; i < pair.length; i++) sum += i; return sum; });
+await t("the literal type 0 holds minus zero", () => { const z: 0 = -0; return [1 / z, Object.is(z, 0), Math.sign(1 / z)].join(); });
+await t("the literal type 0 holds minus zero behind a function", () => { const zero = (): 0 => -0; const z = zero(); return [1 / z, Object.is(z, -0), Math.atan2(z, -1) > 0].join(); });
+await t("a literal type is stored to through a wider alias", () => { const o: { mode: "on" } = { mode: "on" }; const wide: { mode: string } = o; wide.mode = "off"; return [o.mode, o.mode === "on", o.mode.length].join(); });
+await t("a boolean literal type is stored to through a wider alias", () => { const o: { ok: true } = { ok: true }; const wide: { ok: boolean } = o; wide.ok = false; return o.ok ? "true branch" : "false branch"; });
+await t("a number literal type is stored to through a wider alias", () => { const o: { size: 4 } = { size: 4 }; const wide: { size: number } = o; wide.size = 5; return [o.size, o.size * 2, o.size === 4].join(); });
+await t("a member of an enum holds any number", () => { enum Level { Low, High } const n: number = 9; const low: Level.Low = n; return [low, low === Level.Low, Level[low]].join(); });
+await t("a text satisfies an object type", () => { const sized: { length: number } = "text"; const use = (o: { length: number }): number => o.length * 2; return [use(sized), typeof sized].join(); });
+await t("a number satisfies an object type", () => { const fixer: { toFixed(digits: number): string } = 5; const use = (o: { toFixed(digits: number): string }): string => o.toFixed(1); return [use(fixer), typeof fixer].join(); });
+await t("a primitive satisfies the empty object type", () => { const some: {} = 5; const all: {}[] = [some, "s", true, 5n, Symbol.iterator]; return all.map(v => typeof v).join(); });
+await t("an array satisfies an object type", () => { const use = (o: { length: number }): number => o.length * 2; let sum = 0; for (let i = 0; i < 2000; i++) sum += use(i & 1 ? [1, 2, 3] : { length: 1 }); return sum; });
+await t("a function satisfies an object type", () => { const use = (o: { name: string; length: number }): string => o.name + o.length; function two(a: number, b: number) { return a + b; } return [use(two), use({ name: "n", length: 0 }), use(Dog)].join(); });
+await t("built-in objects satisfy an interface", () => { interface Sized { size: number } const use = (o: Sized): number => o.size + 1; return [use(new Map([[1, 1]])), use(new Set([1, 2])), use(new Blob(["abc"])), use({ size: 9 })].join(); });
+await t("an error satisfies an interface", () => { const use = (o: { message: string; name: string }): string => o.name + ":" + o.message; return [use(new RangeError("r")), use({ name: "n", message: "m" })].join(); });
+await t("a typed array satisfies an index signature and converts what is stored", () => { const cells: { [i: number]: number; length: number } = new Uint8Array(2); cells[0] = 300; cells[1] = -1.5; cells[5] = 7; return [cells[0], cells[1], cells[5], cells.length].join(); });
+await t("the environment satisfies a record and converts what is stored", () => { const env: Record<string, string | undefined> = process.env; env.PROBE_VARIABLE = undefined; const seen = [typeof env.PROBE_VARIABLE, "PROBE_VARIABLE" in env].join(); delete env.PROBE_VARIABLE; return seen; });
+await t("an object without a prototype satisfies an object type", () => { const made = { __proto__: null, a: 1 }; const bare: { a: number } = made; return [bare.a, typeof bare.toString, "toString" in bare].join(); });
+await t("a method of Object.prototype is called on an object without a prototype", () => { const made = { __proto__: null, a: 1 }; const bare: { a: number } = made; return bare.hasOwnProperty("a"); });
+await t("a parameter of type this gets the base class", () => { class Point { x = 1; same(o: this): unknown { return o.x === this.x; } } class Point3 extends Point { z = 3; same(o: this): unknown { return o.z.toFixed(1); } } const p: Point = new Point3(); return p.same(new Point()); });
+await t("a narrowed property is cleared while the function awaits", async () => { const o: { pet: Dog | null } = { pet: new Dog() }; const other = (async () => { await later(); o.pet = null; })(); if (o.pet === null) return "null"; await other; return o.pet.legs; });
+await t("a narrowed variable is stored to while the function awaits", async () => { let v: number | string = 1; const other = (async () => { await later(); v = "text"; })(); await other; return v.toFixed(1); });
+await t("a narrowed property is stored to while the generator is suspended", () => { const o: { v: number | string } = { v: 1 }; function* g() { if (typeof o.v !== "number") return "no"; yield 0; return o.v.toFixed(1); } const it = g(); it.next(); o.v = "text"; return it.next().value; });
+await t("an accessor whose setter takes more than its getter gives", () => { class Width { #w = 0; get w(): number { return this.#w; } set w(v: number | string) { this.#w = typeof v === "number" ? v : v.length; } } const o = new Width(); o.w = "four"; const a = o.w; o.w = 7; return [a, o.w, a + o.w].join(); });
+await t("a store to a frozen object behind a type that may be stored to", () => { const frozen = Object.freeze({ v: 1 }); const open: { v: number } = frozen; open.v = 2; return open.v; });
+await t("a store to a sealed object adds nothing", () => { const sealed: { v: number; w?: number } = Object.seal({ v: 1 }); sealed.w = 2; return sealed.w; });
+await t("a store to a property that has only a getter", () => { const o: { readonly v: number } = { get v() { return 1; } }; const open: { v: number } = o; open.v = 2; return open.v; });
+await t("the result of Object.assign claims the methods of a class", () => Object.assign({}, new Dog()).bark());
+await t("a structured clone claims the methods of a class", () => structuredClone(new Dog()).bark());
+await t("an interface merged into a class adds a method that nobody wrote", () => { interface Robot { run(): number } class Robot { on = true; } return new Robot().run(); });
+await t("a function returning something where void is declared, used as a condition of a callback", () => { const out: number[] = []; const each = (xs: number[], f: (x: number) => void): void => { for (const x of xs) f(x); }; each([1, 2], x => out.push(x)); return out.join(); });
+await t("a callback gets more arguments than it declares", () => ["1", "2", "3"].map(parseInt).join());
+await t("an optional parameter gets the index from a built-in", () => { const label = (s: string, suffix?: string): string => s + (suffix === undefined ? "" : suffix.toUpperCase()); const short: (s: string) => string = label; return ["a", "b"].map(short).join(); });
+await t("the keys of an object are more than keyof says", () => { function pick<T extends object>(o: T): string[] { const names: string[] = []; for (const k in o) names.push(k); return names; } class Base { a = 1; } const wide: object = Object.assign(Object.create({ inherited: 1 }), { a: 1, b: 2 }); return pick(wide).join() + pick(new Base()).join(); });
+await t("a class is its own stand-in when two classes have the same members", () => { class Meter { v = 1; } class Foot { v = 1; } const m: Meter = new Foot(); return [m instanceof Meter, m instanceof Foot, m.v].join(); });
+await t("a private name tells instances apart where the type does not", () => { class Sealed { #k = 1; static has(o: object): boolean { return #k in o; } v = 1; } const clone = { ...new Sealed() }; return [Sealed.has(new Sealed()), Sealed.has(clone), clone.v].join(); });
+await t("a constructor returns a stand-in", () => { class Point { x = 1; constructor(fake: boolean) { if (fake) return { x: 5, twice() { return -1; } }; } twice(): number { return this.x * 2; } } const a = new Point(true), b = new Point(false); return [a.twice(), b.twice(), a instanceof Point, b instanceof Point].join(); });
+await t("a read-only property changes between two reads", () => { const box = { n: 1 }; const fixed: { readonly n: number } = box; let sum = 0; for (let i = 0; i < 2000; i++) { sum += fixed.n; if (i === 999) box.n = 2; } return sum; });
+await t("a read-only field of a class changes between two reads", () => { class Fixed { readonly n: number = 1; } const fixed = new Fixed(); const open: { n: number } = fixed; const a = fixed.n; open.n = 2; return [a, fixed.n].join(); });
+await t("a read-only array changes between two reads", () => { const list = [1, 2, 3]; const fixed: readonly number[] = list; let sum = 0; for (let i = 0; i < fixed.length; i++) { sum += fixed[i]; if (i === 0) list.length = 2; } return sum; });
+await t("a read-only map changes between two reads", () => { const table = new Map([["k", 1]]); const fixed: ReadonlyMap<string, number> = table; const a = fixed.get("k"); table.set("k", 2); return [a, fixed.get("k"), fixed.size].join(); });
+await t("a conversion hands over a hint that the method does not declare", () => { class Money { cents = 150; [Symbol.toPrimitive](hint: "number"): number { const only: "number" = hint; return only === "number" ? this.cents : -1; } } const m = new Money(); return [`${m}`, +m, [m] + ""].join(); });
+await t("a text shorter than the pattern", () => { const [a, b] = "x"; return [a, typeof b, b + "!"].join(); });
+await t("an iterator that ends early fills a pattern", () => { function* two(): Generator<number> { yield 1; } const [a, b] = two(); return [a, b, a + b].join(); });
+await t("typeof function picks the member with a call signature", () => { const callable = Object.assign(() => 1, new Dog()); const asDog: Dog = callable; const f = (x: Dog | (() => string)) => (typeof x === "function" ? x().length : x.legs); return f(asDog); });
+await t("two unions that are equal narrow to what they have in common", () => { const f = (a: Dog | string, b: Cat | string) => (a === b ? a.length : -1); const both = Object.assign(new Dog(), new Cat()); return f(both, both); });
+await t("a member of an enum is stored to through an alias of the enum object", () => { const open: { Red: number } = Color; open.Red = 5; const seen = [Color.Red, open.Red, Color["Red"], Color[0], Color[5]].join(); open.Red = 0; return seen; });

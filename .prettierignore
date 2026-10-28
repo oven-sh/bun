@@ -31,14 +31,14 @@ docs/.rust-rewrite-verified-claims.md
 
 # Verbatim ports from Node.js v26.3.0 (lib/) — keep close to upstream
 # (mirrors the oxlint.json ignore block for the same files)
-src/js/node/repl.js
-src/js/node/readline.js
-src/js/node/readline.promises.js
-src/js/internal/repl.js
+src/js/node/repl.ts
+src/js/node/readline.ts
+src/js/node/readline.promises.ts
+src/js/internal/repl.ts
 src/js/internal/readline
-src/js/internal/repl/history.js
-src/js/internal/repl/utils.js
-src/js/internal/repl/completion.js
-src/js/internal/repl/await.js
-src/js/internal/repl/acorn.js
-src/js/internal/repl/acorn-walk.js
+src/js/internal/repl/history.ts
+src/js/internal/repl/utils.ts
+src/js/internal/repl/completion.ts
+src/js/internal/repl/await.ts
+src/js/internal/repl/acorn.ts
+src/js/internal/repl/acorn-walk.ts

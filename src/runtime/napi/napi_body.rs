@@ -4549,6 +4549,7 @@ mod uv_functions_to_export {}
 /// - pub export fn napi_
 use bun_core::keep_symbols;
 
+#[inline(never)]
 pub(crate) fn fix_dead_code_elimination() {
     jsc::mark_binding();
 

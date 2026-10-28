@@ -1811,6 +1811,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     data.test.loc,
                 );
+                // TypeScript does not treat `while (!0)` as an infinite loop.
+                let features = &p.options.features;
+                if result.value && features.minify_syntax && features.is_library {
+                    let infinite_loop = S::For {
+                        init: None,
+                        test: None,
+                        update: None,
+                        body: data.body,
+                    };
+                    stmts.push(p.s(infinite_loop, stmt.loc));
+                    return Ok(());
+                }
             }
         }
 
@@ -1890,7 +1902,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        if p.options.features.minify_syntax {
+        if p.should_remove_dead_statements() {
             if let Some(effects) = effects {
                 if effects.value {
                     if data.no.is_none()
@@ -1964,8 +1976,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return Ok(());
                     }
                 }
+                StmtData::SBlock(yes) if yes.stmts.is_empty() => {
+                    if data.no.is_none() && can_remove_test {
+                        return Ok(());
+                    }
+                }
                 _ => {}
             }
+        }
+
+        // `if (a);` is TS1313.
+        if p.options.features.is_library && matches!(data.yes.data, StmtData::SEmpty(_)) {
+            data.yes = p.s(S::Block::default(), data.yes.loc);
         }
 
         stmts.push(*stmt);

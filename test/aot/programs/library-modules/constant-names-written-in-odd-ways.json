@@ -1,0 +1,1 @@
+{ "env": { "NAMES": "node:dgram,node:zlib,node:tty,node:readline,node:dns,node:querystring,node:string_decoder,node:punycode,node:assert,node:diagnostics_channel" }, "skipInShell": "it asks for modules of Bun" }

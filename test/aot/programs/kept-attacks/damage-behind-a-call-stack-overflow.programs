@@ -1,0 +1,107 @@
+//// damage-behind-a-call-stack-overflow/a-recursion-that-is-dirty-at-every-level-overflows.ts
+// A function damages an object of its own and calls itself, without end. The RangeError is caught by the function that started it, which holds an object and reads it in the handler and behind it.
+////= Point
+
+let entered = 0;
+function endless(p: Point, n: number): number {
+  entered++;
+  const mine = new Point(n, 1);
+  delete (mine as any).x;
+  if (n === 50) delete (p as any).x;
+  return endless(p, n + 1) + mine.y;
+}
+
+function holder(p: Point): string {
+  const before = p.x;
+  let got: string;
+  try {
+    got = "returned " + endless(p, 0);
+  } catch (error) {
+    got = (error as Error).name + " " + p.x;
+  }
+  return before + " " + got + " " + p.x + "," + p.y;
+}
+
+for (let round = 0; round < 3; round++) {
+  entered = 0;
+  console.log(round + ": " + holder(new Point(round, 1)) + " went deep: " + (entered > 1000));
+}
+//// damage-behind-a-call-stack-overflow/an-overflow-below-a-dirty-activation-is-caught-by-it.ts
+// A function does the damage and then starts a recursion that runs out of stack. It catches the RangeError itself and returns as usual to the holder.
+////= Point
+
+function endless(n: number): number {
+  return endless(n + 1) + 1;
+}
+
+function damages(p: Point): string {
+  Object.defineProperty(p, "x", { get: () => -7 });
+  try {
+    return "returned " + endless(0);
+  } catch (error) {
+    return (error as Error).name;
+  }
+}
+
+function holder(p: Point): string {
+  const before = p.x;
+  const got = damages(p);
+  return before + " " + got + " " + p.x + "," + p.y;
+}
+
+for (let round = 0; round < 3; round++) console.log(round + ": " + holder(new Point(round, 1)));
+//// damage-behind-a-call-stack-overflow/the-damage-is-done-in-the-handler-of-an-overflow.ts
+// A clean recursion runs out of stack. The activation that catches the RangeError, some way up, does the damage in its handler and returns as usual, and so do all the activations above it, down to the holder.
+////= Point
+
+let caughtAt = -1;
+function descend(p: Point, n: number): number {
+  if (n % 500 === 499) {
+    try {
+      return descend(p, n + 1) + 1;
+    } catch (error) {
+      if (!(error instanceof RangeError) || caughtAt >= 0) throw error;
+      delete (p as any).x;
+      caughtAt = n;
+      return 0;
+    }
+  }
+  return descend(p, n + 1) + 1;
+}
+
+function holder(p: Point): string {
+  const before = p.x;
+  const depth = descend(p, 0);
+  return before + " " + (depth === caughtAt) + " " + p.x + "," + p.y;
+}
+
+for (let round = 0; round < 3; round++) {
+  caughtAt = -1;
+  console.log(round + ": " + holder(new Point(round, 1)) + " caught deep: " + (caughtAt > 400));
+}
+//// damage-behind-a-call-stack-overflow/the-generic-versions-run-out-of-stack.ts
+// A typed function is handed a string where it declares a number, so its generic version runs, and it calls itself with that string without end. The holder passes the string through `any`, catches the RangeError and reads its object.
+////= Point
+
+let entered = 0;
+function grows(p: Point, n: number): number {
+  entered++;
+  if (entered === 30) delete (p as any).x;
+  return grows(p, n) + n;
+}
+
+function holder(p: Point, start: any): string {
+  const before = p.x;
+  let got: string;
+  try {
+    got = "returned " + grows(p, start);
+  } catch (error) {
+    got = (error as Error).name;
+  }
+  return before + " " + got + " " + p.x + "," + p.y;
+}
+
+for (const start of [1, "one", 1.5, "two"]) {
+  entered = 0;
+  console.log(typeof start + ": " + holder(new Point(3, 1), start) + " went deep: " + (entered > 1000));
+}

@@ -1,0 +1,5 @@
+{
+  "build": ["--external", "outside-package"],
+  "skipInShell": "it loads an external package through the loader of Bun, which the jsc shell does not have",
+  "skipInVariants": "which members are locked is a result of the flow analysis"
+}

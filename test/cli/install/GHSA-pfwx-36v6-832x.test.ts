@@ -73,7 +73,7 @@ async function lockedEntry(dir: string) {
 }
 
 // Tarballs smaller than BUN_INSTALL_STREAMING_MIN_SIZE (2 MiB by default) are extracted
-// once the whole body has been buffered; larger ones are streamed into libarchive while
+// once the whole body has been buffered; larger ones are streamed into the extractor while
 // they download. The two extractors hash and verify the tarball independently, so every
 // test runs against both. `--verbose` output names the extractor that ran.
 const variants = [

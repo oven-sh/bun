@@ -1,10 +1,10 @@
-//! `checkJSSyntax`: what only TypeScript has is parsed in a JavaScript file too, and reported.
+//! `checkJSSyntax`: TypeScript-only syntax is parsed in a JavaScript file too, and reported as an error.
 
 use super::{Parser, ctx};
 use bun_sema::hir::*;
 
-/// What is said about the declaration `stmt` as a whole: where, the code and its argument.
-fn error_of_js_declaration(
+/// Returns the error for the declaration `stmt` as a whole: its range, code and argument.
+fn js_declaration_error(
     file: &FileBuilder,
     stmt: &Stmt,
 ) -> Option<((u32, u32), u32, &'static [u8])> {
@@ -26,8 +26,8 @@ fn error_of_js_declaration(
 }
 
 impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
-    /// `jsErrorAtRange`. An end of 0: the end of the token at the start. `what`: the `{0}` of the
-    /// message, if it has one. Nothing inside a type is reported.
+    /// `jsErrorAtRange`. An end of 0 means the end of the token at the start. `what` is the message's `{0}`, if it has
+    /// one. Nothing inside a type is reported.
     #[cold]
     #[inline(never)]
     pub(crate) fn js_error(&mut self, at: (u32, u32), code: u32, what: &[u8]) {
@@ -51,7 +51,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// For type arguments.
+    /// Reports type arguments.
     #[cold]
     pub(crate) fn check_js_type_arguments(&mut self, list: IdList<TypeNodeId>) {
         if self.options.is_javascript && !list.is_empty() {
@@ -60,8 +60,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// The modifiers that are not in `ModifierFlagsJavaScript`. `check_js_decorators`, if
-    /// `decorators`.
+    /// Reports the modifiers that aren't in `ModifierFlagsJavaScript`. Also runs `check_js_decorators` if `decorators`
+    /// is set.
     #[cold]
     pub(crate) fn check_js_modifiers(&mut self, list: Span<ModifierId>, decorators: bool) {
         const JAVASCRIPT: Flags = Flags::EXPORT
@@ -91,13 +91,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         list: Span<ModifierId>,
         is_class_declaration: bool,
     ) {
-        // Nodes can be missing.
+        // After a failure, nodes can be missing.
         if self.has_failed() {
             return;
         }
         let file = &self.f;
         let modifiers = file.modifier_list(list);
-        // Each with its index and its range.
+        // Yields each decorator's index and range.
         let decorators = || {
             let modifiers = modifiers.iter().enumerate();
             modifiers.filter_map(move |(index, modifier)| match modifier.kind {
@@ -113,7 +113,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             return;
         };
         if !is_class_declaration {
-            // `js_error` says nothing in Flow, whose parsers refuse this too.
+            // `js_error` is a no-op in Flow, but Flow's parsers reject this too.
             return match self.is_flow() {
                 true => self.fail(),
                 false => self.js_error(first, 1206, b""),
@@ -136,7 +136,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// For the declaration `id`.
+    /// Checks the declaration `id`.
     #[cold]
     pub(crate) fn check_js_statement(&mut self, id: StmtId) {
         let Some(&stmt) = self.f.stmts.get(id.idx()).filter(|_| !self.has_failed()) else {
@@ -146,9 +146,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             self.module_statements.0 += 1;
         }
         match stmt.kind {
-            // `parseAmbientExternalModuleDeclaration` does not perform this check.
+            // `parseAmbientExternalModuleDeclaration` doesn't perform this check.
             StmtKind::Module(m) if !matches!(self.f[m].name, ModuleName::Ident(_)) => return,
-            StmtKind::Class(_) => self.check_js_decorators(stmt.modifiers, true),
+            StmtKind::Class(_) => self.check_js_decorators(self.f.stmt_modifiers(id), true),
             StmtKind::Var(_)
             | StmtKind::Fn(_)
             | StmtKind::Interface(_)
@@ -160,21 +160,23 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             | StmtKind::ExportNamed(_)
             | StmtKind::ExportStar { .. }
             | StmtKind::ExportDefault(_)
-            | StmtKind::ExportAssign(_) => self.check_js_decorators(stmt.modifiers, false),
+            | StmtKind::ExportAssign(_) => {
+                self.check_js_decorators(self.f.stmt_modifiers(id), false);
+            }
             // Nor does `parseNamespaceExportDeclaration`.
             _ => return,
         }
         if let StmtKind::Fn(_) | StmtKind::Var(_) | StmtKind::Class(_) = stmt.kind {
-            self.check_js_modifiers(stmt.modifiers, false);
+            self.check_js_modifiers(self.f.stmt_modifiers(id), false);
         }
-        if let Some((at, code, what)) = error_of_js_declaration(&self.f, &stmt) {
+        if let Some((at, code, what)) = js_declaration_error(&self.f, &stmt) {
             self.js_error(at, code, what);
         }
     }
 
-    /// For a method or an accessor in an object literal.
+    /// Checks a method or accessor in an object literal.
     #[cold]
-    pub(crate) fn check_js_method_of_object(&mut self, prop: &Prop, modifiers: Span<ModifierId>) {
+    pub(crate) fn check_js_object_method(&mut self, prop: &Prop, modifiers: Span<ModifierId>) {
         if self.has_failed() {
             return;
         }
@@ -193,7 +195,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.check_js_modifiers(modifiers, false);
     }
 
-    /// For a class member. `question`: the position of the `?` after its name.
+    /// Checks a class member. `question` is the position of the `?` after its name.
     #[cold]
     pub(crate) fn check_js_member(&mut self, member: &Member, question: Option<u32>) {
         if self.has_failed() {
@@ -214,7 +216,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         match member.kind {
             MemberKind::IndexSignature => self.check_js_decorators(member.modifiers, false),
-            // oxc takes a decorator before a constructor.
+            // oxc accepts a decorator on a constructor.
             kind => self.check_js_modifiers(
                 member.modifiers,
                 kind == MemberKind::Constructor && !self.options.dialect.oxc,

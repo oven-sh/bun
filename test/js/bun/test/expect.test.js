@@ -1094,6 +1094,58 @@ describe("expect()", () => {
     }
   });
 
+  if (isBun) {
+    test(".not.toThrow(Class) reports a thrown string, symbol or BigInt that Symbol.hasInstance accepts", async () => {
+      const { bunEnv, bunExe } = require("harness");
+      const src = `
+        import { expect } from "bun:test";
+        class Anything {
+          static [Symbol.hasInstance]() {
+            return true;
+          }
+        }
+        const report = async run => {
+          try {
+            await run();
+            console.log("passed");
+          } catch (e) {
+            console.log(e.message.split("\\n").filter(Boolean).slice(1).join(" | "));
+          }
+        };
+        const thrower = thrown => () => {
+          throw thrown;
+        };
+        for (const thrown of ["boom", Symbol("boom"), 10n ** 30n, {}, { message: "an object" }, new TypeError("an error")]) {
+          await report(() => expect(thrower(thrown)).not.toThrow(Anything));
+        }
+        await report(() => expect(Promise.reject("boom")).rejects.not.toThrow(Anything));
+        await report(() => expect(thrower("boom")).not.toThrow(RangeError));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.split("\n"), stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+        stdout: [
+          'Expected constructor: not Anything | Received value: "boom"',
+          "Expected constructor: not Anything | Received value: Symbol(boom)",
+          "Expected constructor: not Anything | Received value: 1000000000000000000000000000000n",
+          "Expected constructor: not Anything | Received value: {}",
+          'Expected constructor: not Anything | Received message: "an object"',
+          'Expected constructor: not Anything | Received message: "an error"',
+          'Expected constructor: not Anything | Received value: "boom"',
+          "passed",
+          "",
+        ],
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  }
+
   test("deepEquals derived strings and strings", () => {
     let a = new String("hello");
     let b = "hello";
@@ -2448,6 +2500,46 @@ describe("expect()", () => {
     expect(() => expect(null).not.toHaveProperty("length")).toThrow();
     expect(() => expect(undefined).toHaveProperty("length")).toThrow();
     expect(() => expect(undefined).not.toHaveProperty("length")).toThrow();
+  });
+
+  test("matchers treat a missing argument as undefined", () => {
+    expect(undefined).toBe();
+    expect(1).not.toBe();
+    expect(undefined).toEqual();
+    expect(undefined).toStrictEqual();
+    expect([undefined]).toContain();
+    expect([1]).not.toContain();
+    expect([undefined]).toContainEqual();
+    expect({ undefined: 1 }).toContainKey();
+    expect({ a: undefined }).toContainValue();
+    expect(1).toBeCloseTo(1, undefined);
+    expect().pass(undefined);
+    expect().not.fail(undefined);
+    for (const name of ["if", "skipIf", "todoIf", "failingIf", "concurrentIf", "serialIf"]) {
+      expect(test[name]()).toBeFunction();
+    }
+
+    const results = [];
+    expect.extend({
+      toCallEqualsWithOneArgument(received) {
+        results.push(this.equals(received));
+        return { pass: true, message: () => "" };
+      },
+    });
+    expect(undefined).toCallEqualsWithOneArgument();
+    expect(1).toCallEqualsWithOneArgument();
+    expect(results).toEqual([true, false]);
+  });
+
+  test("resolves and rejects look at the promise before the matcher looks at its arguments", () => {
+    expect(() => expect(1).resolves.toBeGreaterThan()).toThrow("Expected promise");
+    expect(() => expect(1).rejects.toHaveProperty()).toThrow("Expected promise");
+  });
+
+  test("expect.not, resolvesTo and rejectsTo work on an object that inherits from expect", () => {
+    expect("b").toEqual(Object.create(expect).not.stringContaining("a"));
+    expect(Promise.resolve("a")).toEqual(Object.create(expect).resolvesTo.stringContaining("a"));
+    expect(Promise.reject("a")).toEqual(Object.create(expect).rejectsTo.stringContaining("a"));
   });
 
   test("toBe()", () => {

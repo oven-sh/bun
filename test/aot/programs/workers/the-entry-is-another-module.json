@@ -1,0 +1,1 @@
+{"entryPoints": ["./worker.ts", "./lib/deep-worker.ts", "./common.cjs", "./untyped.mjs", "./only-imports.ts", "./awaits.ts", "./throws.ts", "./preloaded.ts"], "skipInShell": "needs Workers"}

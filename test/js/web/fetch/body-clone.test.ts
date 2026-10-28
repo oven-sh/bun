@@ -1139,7 +1139,7 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
   // them. A body over such a store is read as one stream and teed instead,
   // whether it was given as a stream or as the Blob itself, and both bodies
   // see the whole input.
-  async function cloneInChild(bodyExpr: string, args: string[] = []) {
+  async function cloneInChild(bodyExpr: string, fifo?: string) {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1148,17 +1148,20 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
          const c = r.clone();
          const [a, b] = await Promise.all([r.text(), c.text()]);
          console.log(JSON.stringify([a, b]));`,
-        ...args,
+        ...(fifo ? [fifo] : []),
       ],
       env: bunEnv,
-      stdin: "pipe",
+      // A child that reads the FIFO never reads stdin and can exit before a write to it, which is EPIPE.
+      stdin: fifo ? "ignore" : "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
-    proc.stdin.write("hello ");
-    await proc.stdin.flush();
-    proc.stdin.write("world");
-    await proc.stdin.end();
+    if (proc.stdin) {
+      proc.stdin.write("hello ");
+      await proc.stdin.flush();
+      proc.stdin.write("world");
+      await proc.stdin.end();
+    }
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout: stdout.trim(), stderr, exitCode };
   }
@@ -1193,7 +1196,7 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
       stdout: "ignore",
       stderr: "inherit",
     });
-    expect(await cloneInChild("Bun.file(process.argv.at(-1)).stream()", [fifo])).toEqual(bothBodiesReadStdin);
+    expect(await cloneInChild("Bun.file(process.argv.at(-1)).stream()", fifo)).toEqual(bothBodiesReadStdin);
     expect(await writer.exited).toBe(0);
   });
 
@@ -1205,7 +1208,7 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
       stdout: "ignore",
       stderr: "inherit",
     });
-    expect(await cloneInChild("Bun.file(process.argv.at(-1))", [fifo])).toEqual(bothBodiesReadStdin);
+    expect(await cloneInChild("Bun.file(process.argv.at(-1))", fifo)).toEqual(bothBodiesReadStdin);
     expect(await writer.exited).toBe(0);
   });
 

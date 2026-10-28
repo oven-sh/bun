@@ -1,0 +1,110 @@
+////: a-getter-over-between
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+var below_1 = require("./between.mjs");
+Object.defineProperty(exports, "«1»", {
+  enumerable: true,
+  get: function () {
+    return below_1.«1»;
+  },
+});
+//// the-default-that-a-file-with-the-flag-stores-under-an-if-is-read-through-a-getter-over-an-es-module/marked.cjs
+Object.defineProperty(exports, "__esModule", { value: true });
+if (process.argv.length <= 99) exports.default = "text";
+//// the-default-that-a-file-with-the-flag-stores-under-an-if-is-read-through-a-getter-over-an-es-module/between.mjs
+export { default } from "./marked.cjs";
+//// the-default-that-a-file-with-the-flag-stores-under-an-if-is-read-through-a-getter-over-an-es-module/over.cjs
+////= a-getter-over-between	default
+//// the-default-that-a-file-with-the-flag-stores-under-an-if-is-read-through-a-getter-over-an-es-module/main.mjs
+// A CommonJS file with `__esModule` stores `default` under an `if`. An ES module hands the default on, a second CommonJS file has a getter over it, and this module imports the default of that file.
+import ofMarked from "./over.cjs";
+console.log(JSON.stringify(ofMarked));
+//// the-default-that-a-file-with-the-flag-stores-in-an-arm-of-a-conditional-is-read-through-a-getter-over-an-es-module/marked.cjs
+Object.defineProperty(exports, "__esModule", { value: true });
+process.argv.length <= 99 ? (exports.default = "text") : 0;
+//// the-default-that-a-file-with-the-flag-stores-in-an-arm-of-a-conditional-is-read-through-a-getter-over-an-es-module/between.mjs
+export { default } from "./marked.cjs";
+//// the-default-that-a-file-with-the-flag-stores-in-an-arm-of-a-conditional-is-read-through-a-getter-over-an-es-module/over.cjs
+////= a-getter-over-between	default
+//// the-default-that-a-file-with-the-flag-stores-in-an-arm-of-a-conditional-is-read-through-a-getter-over-an-es-module/main.mjs
+// A CommonJS file with `__esModule` stores `default` in an arm of a conditional expression. An ES module hands the default on, a second CommonJS file has a getter over it, and this module imports the default of that file.
+import ofMarked from "./over.cjs";
+console.log(JSON.stringify(ofMarked));
+//// a-name-stored-under-an-if-is-handed-on-by-name-and-imported-through-a-getter/lib.cjs
+if (process.argv.length <= 99) exports.one = 1;
+//// a-name-stored-under-an-if-is-handed-on-by-name-and-imported-through-a-getter/between.mjs
+export { one } from "./lib.cjs";
+//// a-name-stored-under-an-if-is-handed-on-by-name-and-imported-through-a-getter/over.cjs
+////= a-getter-over-between	one
+//// a-name-stored-under-an-if-is-handed-on-by-name-and-imported-through-a-getter/main.mjs
+// A CommonJS file stores a name under an `if`, an ES module hands it on by name, a second CommonJS file has a getter over it, and this module imports the name from that file.
+import { one } from "./over.cjs";
+console.log(one);
+//// a-name-stored-under-an-if-is-handed-on-by-a-star-and-imported-through-a-getter/lib.cjs
+if (process.argv.length <= 99) exports.one = 1;
+//// a-name-stored-under-an-if-is-handed-on-by-a-star-and-imported-through-a-getter/between.mjs
+export * from "./lib.cjs";
+//// a-name-stored-under-an-if-is-handed-on-by-a-star-and-imported-through-a-getter/over.cjs
+////= a-getter-over-between	one
+//// a-name-stored-under-an-if-is-handed-on-by-a-star-and-imported-through-a-getter/main.mjs
+// A CommonJS file stores a name under an `if`, an ES module hands it on with `export *`, a second CommonJS file has a getter over it, and this module imports the name from that file.
+import { one } from "./over.cjs";
+console.log(one);
+//// a-name-stored-behind-and-is-handed-on-by-two-es-modules-and-imported-through-a-getter/lib.cjs
+process.argv.length <= 99 && (exports.one = 1);
+//// a-name-stored-behind-and-is-handed-on-by-two-es-modules-and-imported-through-a-getter/further.mjs
+export { one } from "./lib.cjs";
+//// a-name-stored-behind-and-is-handed-on-by-two-es-modules-and-imported-through-a-getter/between.mjs
+export * from "./further.mjs";
+//// a-name-stored-behind-and-is-handed-on-by-two-es-modules-and-imported-through-a-getter/over.cjs
+////= a-getter-over-between	one
+//// a-name-stored-behind-and-is-handed-on-by-two-es-modules-and-imported-through-a-getter/main.mjs
+// A CommonJS file stores a name behind `&&`, two ES modules hand it on, a second CommonJS file has a getter over them, and this module imports the name from that file.
+import { one } from "./over.cjs";
+console.log(one);
+//// a-name-stored-in-a-loop-is-handed-on-by-an-es-module-and-imported-through-two-getters/lib.cjs
+for (let turn = 0; turn < 1; turn++) exports.one = 1;
+//// a-name-stored-in-a-loop-is-handed-on-by-an-es-module-and-imported-through-two-getters/between.mjs
+export { one } from "./lib.cjs";
+//// a-name-stored-in-a-loop-is-handed-on-by-an-es-module-and-imported-through-two-getters/over.cjs
+////= a-getter-over-between	one
+//// a-name-stored-in-a-loop-is-handed-on-by-an-es-module-and-imported-through-two-getters/top.cjs
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+var over_1 = require("./over.cjs");
+Object.defineProperty(exports, "one", {
+  enumerable: true,
+  get: function () {
+    return over_1.one;
+  },
+});
+//// a-name-stored-in-a-loop-is-handed-on-by-an-es-module-and-imported-through-two-getters/main.mjs
+// A CommonJS file stores a name in a loop, an ES module hands it on, a second CommonJS file has a getter over it and a third one a getter over that, and this module imports the name from the third.
+import { one } from "./top.cjs";
+console.log(one);
+//// a-function-stored-under-an-if-is-handed-on-by-an-es-module-imported-through-a-getter-and-called/lib.cjs
+if (process.argv.length <= 99)
+  exports.one = function () {
+    return this === undefined ? "no this" : typeof this;
+  };
+//// a-function-stored-under-an-if-is-handed-on-by-an-es-module-imported-through-a-getter-and-called/between.mjs
+export { one } from "./lib.cjs";
+//// a-function-stored-under-an-if-is-handed-on-by-an-es-module-imported-through-a-getter-and-called/over.cjs
+////= a-getter-over-between	one
+//// a-function-stored-under-an-if-is-handed-on-by-an-es-module-imported-through-a-getter-and-called/main.mjs
+// A CommonJS file stores a sloppy function under an `if`, an ES module hands it on, a second CommonJS file has a getter over it, and this module imports the function from that file and calls it.
+import { one } from "./over.cjs";
+console.log(one());
+//// a-name-stored-by-a-function-that-the-file-calls-is-handed-on-by-an-es-module-and-imported-through-a-getter/lib.cjs
+const store = () => {
+  exports.one = 1;
+};
+store();
+//// a-name-stored-by-a-function-that-the-file-calls-is-handed-on-by-an-es-module-and-imported-through-a-getter/between.mjs
+export { one } from "./lib.cjs";
+//// a-name-stored-by-a-function-that-the-file-calls-is-handed-on-by-an-es-module-and-imported-through-a-getter/over.cjs
+////= a-getter-over-between	one
+//// a-name-stored-by-a-function-that-the-file-calls-is-handed-on-by-an-es-module-and-imported-through-a-getter/main.mjs
+// A CommonJS file stores a name in a function that it calls, an ES module hands the name on, a second CommonJS file has a getter over it, and this module imports the name from that file.
+import { one } from "./over.cjs";
+console.log(one);

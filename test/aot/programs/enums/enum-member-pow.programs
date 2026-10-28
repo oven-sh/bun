@@ -1,0 +1,404 @@
+//// enum-member-pow.ts
+// The value of an enum member that is written as a power is what the same power yields anywhere else in the program.
+const unknown = <T,>(x: T): T => x;
+enum Size { Small = 3 ** 100, Next, Twice = Small * 2, Named = Size.Small, Root = 2147483647 ** 0.1, Exact = 2 ** 10, Negative = -(5 ** 33), Text = `${7 ** 30}`, Mixed = (3 ** 100) % 1000 }
+const enum Inlined { Big = 3 ** 100, Next, Half = Big / 2 }
+enum Other { Borrowed = Size.Small, Sum = Size.Small + Size.Root }
+const held = 3 ** 100;
+const three = 3, hundred = 100;
+const run = unknown(3) ** unknown(100);
+console.log(Size.Small === run, Size.Small === 3 ** 100, Size.Small === held, Size.Small === three ** hundred, Size.Small === Math.pow(3, 100));
+console.log(Size.Next === run + 1, Size.Twice === run * 2, Size.Named === run, Size.Root === unknown(2147483647) ** unknown(0.1), Size.Exact, Size.Negative === -(unknown(5) ** unknown(33)));
+console.log(Size.Text === String(unknown(7) ** unknown(30)), Size.Mixed === run % 1000);
+console.log(Inlined.Big === run, Inlined.Next === run + 1, Inlined.Half === run / 2);
+console.log(Other.Borrowed === run, Other.Sum === run + unknown(2147483647) ** unknown(0.1));
+console.log(Size[Size.Small], Size[run], Size[Size.Exact], Object.keys(Size).length);
+console.log(`${3 ** 100}` === String(run), `${held}` === String(run), `${Size.Small}` === String(run), "" + 3 ** 100 === String(run), `a${5 ** 33}b` === "a" + unknown(5) ** unknown(33) + "b");
+const member: Size.Small = Size.Small;
+const list: Size[] = [Size.Small, Size.Root];
+console.log(member === run, list[0] === run, list.includes(run as Size), new Set<Size>(list).has(run as Size), { [Size.Small]: 1 }[run]);
+switch (run as Size) { case Size.Small: console.log("the case is met"); break; default: console.log("the case is missed"); }
+//// enum-member-pow-string.ts
+// An enum member that is a text with a power in it reads as the same text does anywhere else in the program.
+const unknown = <T,>(x: T): T => x;
+enum Text { Template = `${3 ** 100}`, Joined = "a" + 5 ** 33, OfAMember = `${Template}!`, Number = 3 ** 100, OfANumber = `${Number}`, Both = `${2147483647 ** 0.1}/${7 ** 30}`, Plain = "plain", Exact = `${2 ** 10}` }
+const enum Inlined { Template = `${3 ** 100}`, OfAMember = `<${Template}>` }
+enum Other { Borrowed = Text.Template, Longer = `${Text.Joined}${Text.Number}` }
+const run = String(unknown(3) ** unknown(100));
+console.log(Text.Template === run, Text.Joined === "a" + unknown(5) ** unknown(33), Text.OfAMember === run + "!", Text.OfANumber === run);
+console.log(Text.Both === unknown(2147483647) ** unknown(0.1) + "/" + unknown(7) ** unknown(30), Text.Plain, Text.Exact);
+console.log(Inlined.Template === run, Inlined.OfAMember === "<" + run + ">");
+console.log(Other.Borrowed === run, Other.Longer === "a" + unknown(5) ** unknown(33) + run);
+console.log(Object.values(Text).includes(run), Object.keys(Text).length, Text.Template === `${3 ** 100}`, { [Text.Template]: 1 }[run]);
+switch (run as Text) { case Text.Template: console.log("the case is met"); break; default: console.log("the case is missed"); }
+//// enum-member-read-forms.ts
+// Enum members read with a dot, a literal key, a key held in a `const` and an optional chain, on ordinary, declared and merged enums.
+declare const console: { log(...a: unknown[]): void };
+declare enum D { A = 1 }
+(globalThis as any).D = { A: 2 };
+console.log("a declared enum, by a key: " + D["A"] + ", by a dot: " + D.A + ", by a chain: " + D?.A + ", by a chained key: " + D?.["A"]);
+enum E { A = 1 }
+declare enum E { B = 5 }
+console.log("the ambient half of a merged enum: " + E.B + " " + E["B"] + "; the real half: " + E.A + " " + E["A"]);
+enum F { A = 3 }
+const k = "A";
+console.log("a key that is a const: " + F[k] + "; a template: " + F[`A`] + "; the reverse: " + F[3] + " " + F[F.A]);
+const o: Record<string, unknown> = F;
+o.A = 9;
+console.log("behind a store: dot " + F.A + ", key " + F["A"] + ", const key " + F[k] + ", chain " + F?.A + ", chained key " + F?.["A"]);
+//// enum-member-reads-imported-enum/main.ts
+// An enum member whose initializer reads an enum of another file is evaluated where the enum is created, as in plain Bun: a string gets a reverse key, and the next member has no implicit value.
+import { Color, Size } from "./shared";
+function row(label: string, value: object) {
+  console.log(label + ": " + Object.keys(value).map(key => key + "=" + String((value as any)[key])).join());
+}
+
+enum ColorAlias { R = Color.Red }
+row("a string member", ColorAlias);
+enum SizeAlias { S = Size.Small, Next }
+row("a number member", SizeAlias);
+enum Joined { A = Color.Red + "-a", B = `${Color.Red}`, C = Size.Small + 1 }
+row("in a larger initializer", Joined);
+
+(Color as any).Red = "stored";
+enum AfterStore { R = Color.Red }
+row("after a store to the member", AfterStore);
+//// enum-member-reads-imported-enum/shared.ts
+export enum Color { Red = "red" }
+export enum Size { Small = 1 }
+//// enum-member-reads-outer-constant.ts
+// Plain Bun inlines a `const` with a literal value that stands before every other statement of an enclosing scope, so an enum member in an inner scope that reads it is a constant, and one that reads a later `const` is not.
+const leading = 5;
+const leadingWord = "w";
+declare const console: { log(...values: unknown[]): void };
+function row(label: string, value: object) {
+  console.log(label + ": " + Object.keys(value).map(key => key + "=" + String((value as any)[key])).join());
+}
+const trailing = 7;
+
+function readsLeading() {
+  enum E { A = leading, B, C = leadingWord, D = `${leadingWord}-d` }
+  return E;
+}
+row("a leading constant", readsLeading());
+
+function readsTrailing() {
+  enum E { A = trailing, B }
+  return E;
+}
+row("a later constant", readsTrailing());
+//// enum-member-reads-variable.ts
+// An enum member whose initializer reads a variable or an ambient enum is evaluated where the enum is created, as in plain Bun: its reverse key and the next implicit value follow from that.
+declare const console: { log(...values: unknown[]): void };
+function row(label: string, value: object) {
+  console.log(label + ": " + Object.keys(value).map(key => key + "=" + String((value as any)[key])).join());
+}
+
+const base = 5;
+const word = "w";
+enum FromNumber { A = base, B }
+row("a number", FromNumber);
+enum FromArithmetic { A = base * 2 + 1, B, C = 1, D }
+row("arithmetic", FromArithmetic);
+enum FromString { A = word }
+row("a string", FromString);
+enum FromTemplate { A = `${word}-a`, B = `${word}` }
+row("a template", FromTemplate);
+enum FromConcatenation { A = word + "-a", B = "a-" + word, C = word + word }
+row("a concatenation", FromConcatenation);
+
+enum Local { S = "s", N = 2 }
+enum FromLocalEnum { A = Local.S, B = Local.N, C, D = Local.S + word, E = Local.N + base, F }
+row("an enum of this file", FromLocalEnum);
+enum FromOwnMember { A = "a", B = A + word, C = base, D = C }
+row("its own members", FromOwnMember);
+
+declare enum Host { A = 1 }
+(globalThis as any).Host = { A: 20 };
+enum FromAmbientEnum { B = Host.A, C }
+row("an ambient enum", FromAmbientEnum);
+declare const hostNumber = 5;
+(globalThis as any).hostNumber = 50;
+enum FromAmbientConstant { A = hostNumber, B }
+row("an ambient constant", FromAmbientConstant);
+
+function inFunction() {
+  const inner = 3;
+  enum Inner { A = inner, B }
+  return Inner;
+}
+row("in a function", inFunction());
+//// enum-members.ts
+// Enum members read after the enum object was written to, had a member deleted, or got an accessor.
+declare const console: { log(...a: unknown[]): void };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function row(label: string, f: () => unknown) { console.log(label + ": " + said(f)); }
+const keys = (o: object) => Object.keys(o).join();
+
+enum E { A, B = "b" }
+const o: Record<string, unknown> = E;
+o.A = 9;
+row("an optional chain behind a store", () => E?.A);
+row("by a key behind a store", () => E["A"]);
+row("the object's own", () => o.A);
+delete o.B;
+row("an optional chain behind a delete", () => E?.B);
+enum G { A }
+Object.defineProperty(G, "A", { get() { return "got"; } });
+row("an optional chain over an accessor", () => G?.A);
+//// enum-members-mutated-cross-file/enums.ts
+export enum Color { Red, Green }
+export enum Level { Low, High = 10 }
+export enum Mode { On = "on", Off = "off" }
+export enum Shape { Round, Square, Flat, Tall }
+export enum Size { Small = 1, Large = 2 }
+export const enum Fixed { One = 1, Two = 2 }
+export enum Merged { First = 1 }
+export enum Merged { Second = 2 }
+export enum ThroughNamespace { Near = 1, Far = 2 }
+export enum Keyed { Left = 1, Right = 2 }
+export enum Assigned { Up = 1, Down = 2 }
+export enum Defined { In = 1, Out = 2 }
+export enum Reflected { Open = 1, Shut = 2, Ajar = 3 }
+export enum Untouched { One = 1, Two = 2 }
+export function colorInside(): Color { return Color.Red; }
+export function levelInside(): number { return Level.Low + Level.High; }
+export function mergedInside(): number { return Merged.First + Merged.Second; }
+//// enum-members-mutated-cross-file/main.js
+// A member of an enum that another file stores to, redefines or deletes is read from the object of the enum, as in plain Bun. Inside the file that declares it, its name stands for the constant.
+import { Color, Level, Mode, Shape, Size, Fixed, Merged, Keyed, Assigned, Defined, Reflected, Untouched, colorInside, levelInside, mergedInside } from "./enums.ts";
+import * as all from "./enums.ts";
+import { castAndStore, readColor, readLevel, readSize, readThroughNamespace, readKeyed, readAssigned, readDefined, readReflected, readUntouched } from "./reader.ts";
+
+Color.Red = 9;
+console.log(Color.Red, Color["Red"], Color.Green, readColor(), colorInside());
+
+Level.Low++;
+Level.Low += 1;
+--Level.High;
+console.log(Level.Low, Level["Low"], Level.High, readLevel(), levelInside());
+
+delete Mode.On;
+console.log(Mode.On, Mode["On"], Mode.Off, "On" in Mode);
+
+[Shape.Round] = [5];
+({ x: Shape.Square } = { x: 6 });
+for (Shape.Flat of [7]);
+console.log(Shape.Round, Shape.Square, Shape.Flat, Shape.Tall);
+
+castAndStore();
+console.log(Size.Small, Size["Small"], Size.Large, readSize());
+
+Fixed.One = 11;
+console.log(typeof Fixed, Fixed.One, Fixed.Two);
+
+Merged.First = 21;
+Merged.Second = 22;
+console.log(Merged.First, Merged.Second, mergedInside());
+
+all.ThroughNamespace.Near = 31;
+console.log(all.ThroughNamespace.Near, all.ThroughNamespace.Far, readThroughNamespace());
+
+const key = ["Left"][0];
+Keyed[key] = 41;
+console.log(Keyed.Left, Keyed.Right, readKeyed());
+
+Object.assign(Assigned, { Up: 51 });
+console.log(Assigned.Up, Assigned.Down, readAssigned());
+
+Object.defineProperty(Defined, "In", { value: 61 });
+Object.defineProperties(Defined, { Out: { value: 62 } });
+console.log(Defined.In, Defined.Out, readDefined());
+
+Reflect.set(Reflected, "Open", 71);
+Reflect.defineProperty(Reflected, "Shut", { value: 72 });
+Reflect.deleteProperty(Reflected, "Ajar");
+console.log(Reflected.Open, Reflected.Shut, Reflected.Ajar, readReflected());
+
+console.log(Untouched.One, Untouched["Two"], readUntouched());
+//// enum-members-mutated-cross-file/reader.ts
+import { Assigned, Color, Defined, Keyed, Level, Reflected, Size, ThroughNamespace, Untouched } from "./enums";
+export function readColor(): Color { return Color.Red; }
+export function readLevel(): number { return Level.Low + Level["High"]; }
+export function castAndStore(): void { (Size as any).Small = 40; (Size as any)["Large"] = 50; }
+export function readSize(): number { return Size.Small + Size.Large; }
+export function readThroughNamespace(): number { return ThroughNamespace.Near + ThroughNamespace.Far; }
+export function readKeyed(): number { return Keyed.Left + Keyed.Right; }
+export function readAssigned(): number { return Assigned.Up + Assigned.Down; }
+export function readDefined(): number { return Defined.In + Defined.Out; }
+export function readReflected(): number { return Reflected.Open + Reflected.Shut; }
+export function readUntouched(): number { return Untouched.One + Untouched.Two; }
+//// enum-merged.ts
+// An enum declared in three parts is one object that gains members as each part runs.
+declare const console: { log(...a: unknown[]): void };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function row(label: string, f: () => unknown) { console.log(label + ": " + said(f)); }
+const keys = (o: object) => Object.keys(o).join();
+
+enum E { A }
+const first = E;
+row("keys behind the first", () => keys(E));
+row("the later member is not there yet", () => "B" in E);
+(E as any).mark = 7;
+enum E { B = 1 }
+row("one object", () => first === E);
+row("the mark stays", () => (E as any).mark);
+row("keys behind the second", () => keys(E));
+enum E { C = "c" }
+row("one object still", () => first === E);
+row("keys behind the third", () => keys(E));
+row("the reverse mapping", () => E[0] + E[1] + String((E as any)["c"]));
+enum Never { A } enum Never { B = 1 }
+row("control: merged and only read as members", () => Never.A + Never.B);
+enum Late { A } enum Late { B = 1 }
+row("control: asked for behind both", () => keys(Late));
+function inFunction() { enum F { A } const f = F; const k = keys(F); enum F { B = 1 } return [f === F, k, keys(F)].join(" "); }
+row("in a function", inFunction);
+row("in a function, again", inFunction);
+function twoActivations() { enum G { A } return G; }
+row("two activations", () => twoActivations() === twoActivations());
+namespace N { export enum H { A } export const h = H; export const k = keys(H); export enum H { B = 1 } }
+row("in a namespace", () => [N.h === N.H, N.k, keys(N.H)].join(" "));
+namespace M { export enum I { A } } namespace M { export enum I { B = 1 } }
+row("in two blocks of a namespace", () => keys(M.I));
+enum Uses { A = 1 } enum Uses { B = A + 1 }
+row("a member of the first in the second", () => keys(Uses) + " " + Uses.B);
+enum One { A, B }
+const one = One;
+row("control: one declaration", () => [one === One, keys(One)].join(" "));
+//// enum-read-before-declaration.ts
+// An enum is read before its declaration has run: the object, `typeof`, optional chains and `in`.
+declare const console: { log(...a: unknown[]): void };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function row(label: string, f: () => unknown) { console.log(label + ": " + said(f)); }
+const keys = (o: object) => Object.keys(o).join();
+
+function whole() { return E; }
+function kind() { return typeof E; }
+function chain() { return E?.A; }
+function chainByKey() { return E?.["A"]; }
+function has() { return "A" in (E as object); }
+row("the object ahead", () => whole() === undefined);
+row("typeof ahead", kind);
+row("an optional chain ahead", chain);
+row("an optional chain by a key ahead", chainByKey);
+row("in, ahead", has);
+enum E { A = 7 }
+row("the object behind", () => keys(whole()));
+row("typeof behind", kind);
+row("an optional chain behind", chain);
+row("an optional chain by a key behind", chainByKey);
+row("in, behind", has);
+function inner() { const f = () => L; const early = f() === undefined; enum L { A } return early + " " + keys(f()); }
+row("in a function", inner);
+//// enum-read-early-in-cycle/holder.ts
+import { Level } from "./levels";
+export const held = { levels: Level };
+export function read(): string { return typeof held.levels; }
+//// enum-read-early-in-cycle/levels.ts
+import { read } from "./holder";
+export enum Level { Low, High }
+export function show(): string { return read() + " " + typeof Level; }
+//// enum-read-early-in-cycle/main.ts
+// Two modules import each other. The one that is evaluated first holds the other's enum in a constant: the enum has not been made yet, so the constant holds undefined for good.
+import { show } from "./levels";
+console.log(show());
+//// enums-with-reverse-keys-of-every-kind.ts
+enum Dense { A, B, C, D, E, F, G, H }
+enum Flags { None = 0, One = 1 << 0, Two = 1 << 1, Ten = 1 << 10, Twenty = 1 << 20, Thirty = 1 << 30, Top = 1 << 31 }
+enum Odd { Minus = -1, Half = 0.5, Big = 4294967294, Bigger = 4294967295, Huge = 1e21, Zero = 0, MinusZero = -0 }
+enum Twice { First = 1, Second = 1, Third = 2, Fourth = 1 }
+enum Mixed { Text = "text", Number = 7, Other = "7", After = 8 }
+enum Far { Near = 1, Away = 100000, Further = 5000000, Back = 2 }
+function show(name: string, object: object) {
+  console.log(name, Object.keys(object).join(","));
+  console.log(name, JSON.stringify(object));
+  console.log(name, Object.entries(Object.getOwnPropertyDescriptors(object)).map(([key, descriptor]) => `${key}:${descriptor.writable}${descriptor.enumerable}${descriptor.configurable}`).join(" "));
+}
+show("Dense", Dense);
+show("Flags", Flags);
+show("Odd", Odd);
+show("Twice", Twice);
+show("Mixed", Mixed);
+show("Far", Far);
+console.log(Dense[3], Flags[1024], Flags[-2147483648], Odd[-1], Odd[0.5], Odd[4294967294], Odd[4294967295], Odd[0], Twice[1], Mixed[7], Far[5000000]);
+const dense: Record<string | number, unknown> = Dense;
+dense[100] = "added";
+delete dense[2];
+Object.freeze(dense);
+show("Dense, changed and frozen", Dense);
+//// every-form-of-enum-and-namespace-with-what-they-merge-with.ts
+// Enums (computed, merged, const, negative, fractional, with duplicate values and odd names, changed through any) and namespaces (merged, nested, dotted, over functions, classes and enums, with destructured exports, import aliases and shadowed names).
+function show(label: string, f: () => unknown) {
+    try { console.log(label, JSON.stringify(f())); } catch (e) { console.log(label, "threw", (e as Error).constructor.name, (e as Error).message); }
+}
+// enums
+enum A { X, Y = 5, Z, W = "w", V = 1 << 3, U = V | Y, T = "a".length, S = -1, R = ~0, Q = Y * 2 + Z, P = `t${1}` as any, }
+show("enum object", () => [Object.keys(A), Object.values(A)]);
+enum Merge { A = 1 } enum Merge { B = A + 1, C = Merge.A + 10 }
+show("merged enum", () => [Merge, Merge[2], Merge.C]);
+const enum CE { A = 1, B = A << 4, C = "c" }
+show("const enum", () => [CE.A, CE.B, CE.C, CE["B"]]);
+enum Self { A = 1, B = Self.A + 1, C = Self["B"] * 3 }
+show("self enum", () => Self);
+let side = 0; function next() { return ++side; }
+enum Computed { A = next(), B = next() * 10, C = "x".charCodeAt(0) }
+show("computed enum", () => [Computed, side]);
+enum Neg { A = -1, B, C } show("negative enum", () => [Neg, Neg[-1], Neg[0]]);
+enum Fl { A = 0.5, B, C = 1e21, D = NaN, E = Infinity, F = -Infinity } show("float enum", () => [Object.keys(Fl), Fl.B, Fl[0.5], Fl[1e21], Fl[NaN], Fl["Infinity"], Fl["-Infinity"]]);
+enum Dup { A = 1, B = 1, C = 2 } show("duplicate values", () => [Dup, Dup[1]]);
+enum Names { toString = 1, constructor = 2, __proto__ = 3, length = 4, name = 5 } show("odd names", () => [Object.keys(Names), Names.toString, Names.constructor, Names[3], (Names as any).__proto__ === 3, Names.length]);
+show("enum in enum scope", () => { const X = 100; enum In { X = 1, Y = X + 1 } return [In, X]; });
+show("enum as value", () => { const e = A; const k: keyof typeof A = "Y"; return [e[k], e[e.Y], typeof e, Object.isFrozen(e)]; });
+show("enum mutated", () => { (Dup as any).D = 9; (Dup as any).A = 7; const r = [Dup.A, (Dup as any).D, Dup[1]]; return r; });
+// namespaces
+namespace N { export const a = 1; export let b = 2; const hidden = 3; export function f() { return a + b + hidden; } export function setB(v: number) { b = v; } export class C { v = a; } export namespace Inner { export const deep = a + 10; } export enum E { P = 4 } }
+show("namespace", () => [Object.keys(N), N.f(), (N.setB(20), N.b), N.f(), new N.C().v, N.Inner.deep, N.E.P]);
+namespace N { export const later = a + b; export function g() { return f() + later; } }
+show("merged namespace", () => [Object.keys(N), N.later, N.g()]);
+show("namespace store from outside", () => { N.b = 100; return [N.b, N.f()]; });
+function Fn() { return "fn"; } namespace Fn { export const extra = 5; export function helper() { return Fn() + extra; } }
+show("function namespace", () => [Fn(), Fn.extra, Fn.helper(), Object.keys(Fn)]);
+class Cl { static s = 1; m() { return Cl.extra; } } namespace Cl { export const extra = Cl.s + 1; }
+show("class namespace", () => [Cl.extra, new Cl().m(), Object.keys(Cl)]);
+enum En { A = 1 } namespace En { export function parse(s: string) { return En[s as keyof typeof En]; } }
+show("enum namespace", () => [En.parse("A"), Object.keys(En)]);
+namespace Empty { export type T = number; export interface I { x: T } } 
+show("type-only namespace", () => typeof (globalThis as any).Empty);
+namespace Dotted.Deep.Er { export const v = 1; } show("dotted namespace", () => Dotted);
+namespace Shadow { export const x = 1; export function f(x: number) { return x; } export function g() { const x = 5; return x; } export function h() { return x; } }
+show("shadowed export", () => [Shadow.f(9), Shadow.g(), Shadow.h()]);
+namespace Destr { export const { p, q: [r, ...s] } = { p: 1, q: [2, 3, 4] }; export const [t = 7] = [] as number[]; } show("destructured exports", () => Destr);
+namespace Alias { import I = N.Inner; export const v = I.deep; import fAlias = N.f; export const w = fAlias(); } show("import alias", () => Alias);
+namespace Loop { export let i = 0; for (i = 0; i < 3; i++) {} export var j = i * 2; } show("namespace loop", () => Loop);
+namespace Hoist { export const before = typeof later; export function later() {} } show("hoisted in namespace", () => Hoist);
+//// flag-enum-reverse-mapping-stays-small.ts
+// The reverse mapping of a flags enum has the keys 1, 2, 4 .. 1 << 30: each index is twice the last one. Such an object, or an array filled the same way, holds its 31 elements sparsely instead of growing a vector of 8 GB.
+declare const console: { log(...values: unknown[]): void };
+declare const process: { memoryUsage(): { rss: number } };
+enum Flags {
+    None = 0,
+    F0 = 1 << 0, F1 = 1 << 1, F2 = 1 << 2, F3 = 1 << 3, F4 = 1 << 4, F5 = 1 << 5, F6 = 1 << 6, F7 = 1 << 7,
+    F8 = 1 << 8, F9 = 1 << 9, F10 = 1 << 10, F11 = 1 << 11, F12 = 1 << 12, F13 = 1 << 13, F14 = 1 << 14, F15 = 1 << 15,
+    F16 = 1 << 16, F17 = 1 << 17, F18 = 1 << 18, F19 = 1 << 19, F20 = 1 << 20, F21 = 1 << 21, F22 = 1 << 22, F23 = 1 << 23,
+    F24 = 1 << 24, F25 = 1 << 25, F26 = 1 << 26, F27 = 1 << 27, F28 = 1 << 28, F29 = 1 << 29, F30 = 1 << 30,
+    Low = F0 | F1 | F2,
+}
+const before = process.memoryUsage().rss;
+console.log(Flags[1 << 29], Flags[1 << 30], Flags[7], Flags[0], Flags.F12, Object.keys(Flags).length);
+
+const list: string[] = [];
+const table: Record<number, string> = {};
+for (let bit = 0; bit < 31; bit++) {
+    list[2 ** bit] = "l" + bit;
+    table[2 ** bit] = "t" + bit;
+}
+console.log(list.length, list[1 << 20], list[3], Object.keys(list).length, table[1 << 30], Object.keys(table).join());
+
+const everyOther: number[] = [];
+for (let i = 0; i < 300000; i++) everyOther[i * 2] = i;
+let sum = 0;
+for (let i = 0; i < everyOther.length; i += 2) sum += everyOther[i];
+console.log(everyOther.length, sum);
+
+console.log("stays small:", process.memoryUsage().rss - before < 256 * 1024 * 1024);

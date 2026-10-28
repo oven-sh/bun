@@ -1,0 +1,28 @@
+cork undefined TypeError: Cannot access property of undefined or null
+uncork undefined TypeError: Cannot access property of undefined or null
+cork null TypeError: Cannot access property of undefined or null
+uncork null TypeError: Cannot access property of undefined or null
+nothing, number TypeError: what is called is not a function
+a number, number TypeError: what is called is not a function
+a function, number TypeError: second argument to Function.prototype.apply must be an Array-like object
+nothing, text TypeError: what is called is not a function
+a number, text TypeError: what is called is not a function
+a function, text TypeError: second argument to Function.prototype.apply must be an Array-like object
+nothing, true TypeError: what is called is not a function
+a number, true TypeError: what is called is not a function
+a function, true TypeError: second argument to Function.prototype.apply must be an Array-like object
+nothing, symbol TypeError: what is called is not a function
+a number, symbol TypeError: what is called is not a function
+a function, symbol TypeError: second argument to Function.prototype.apply must be an Array-like object
+nothing, undefined TypeError: what is called is not a function
+a number, undefined TypeError: what is called is not a function
+a function, undefined returned 0
+nothing, null TypeError: what is called is not a function
+a number, null TypeError: what is called is not a function
+a function, null returned 0
+nothing, list TypeError: what is called is not a function
+a number, list TypeError: what is called is not a function
+a function, list returned 1
+nothing, object TypeError: what is called is not a function
+a number, object TypeError: what is called is not a function
+a function, object returned 0

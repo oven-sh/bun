@@ -1,6 +1,8 @@
 // This is the file that loads for `bun bake`, when the project has no `bake` script or file of its own.
 // It serves the app in the working directory: the pages in `app/pages/` and the server in `app/server.*`.
-import type { HTMLBundle, Serve, Server } from "bun";
+import type { Serve } from "bun";
+type Glob = import("bun").Glob;
+type HTMLBundle = Bun.HTMLBundle;
 const initial = performance.now();
 const argv = process.argv;
 
@@ -12,9 +14,11 @@ const {
   serveOnFreePort,
   printBannerAndHandleShortcuts,
 } = require("internal/serve_cli");
-const setConfigPlugins = $newRustFunction("bake/config/plugins.rs", "setConfigPlugins", 2);
-const isRestart = $newRustFunction("bake/config/plugins.rs", "isRestart", 0);
-const restartProcess = $newRustFunction("bake/config/plugins.rs", "restartProcess", 0);
+const setConfigPlugins = $bindgen("bake_plugins.bind.ts", "setConfigPlugins");
+const isRestart = $bindgen("bake_plugins.bind.ts", "isRestart");
+const restartProcess = $bindgen("bake_plugins.bind.ts", "restartProcess");
+const setPages = $bindgen("bake_plugins.bind.ts", "setPages");
+const checkFramework = $bindgen("bake_plugins.bind.ts", "checkFramework");
 
 // `app/server.ts` runs before the code that checks its export, and can change these on the prototypes.
 const ObjectKeys = Object.keys;
@@ -90,7 +94,7 @@ function routeOfPage(file: string): string {
 async function loadPages(pagesDir: string): Promise<Page[]> {
   let files: string[];
   try {
-    files = [...new Bun.Glob("**/*.html").scanSync({ cwd: pagesDir, onlyFiles: true, followSymlinks: true })];
+    files = [...(new Bun.Glob("**/*.html") as Glob).scanSync({ cwd: pagesDir, onlyFiles: true, followSymlinks: true })];
   } catch (error: any) {
     if (error?.code === "ENOENT") return [];
     throw error;
@@ -129,7 +133,19 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
  */
 let configKeyInServer: string | undefined;
 
-type Config = { plugins: unknown[]; names: string[]; name: string; key: string };
+/** Whether the server has the routers of a framework, once it started. */
+let frameworkRoutesInServer: boolean | undefined;
+
+/** The `framework` object of a plugin, and the plugin's name. */
+type FrameworkPlugin = { object: object; plugin: string };
+
+type Config = {
+  plugins: unknown[];
+  names: string[];
+  name: string;
+  key: string;
+  framework: FrameworkPlugin | undefined;
+};
 
 /** The plugins of `bake.config.ts`: its default export is a config, or a function that returns one. */
 async function loadConfig(cwd: string): Promise<Config> {
@@ -137,12 +153,13 @@ async function loadConfig(cwd: string): Promise<Config> {
   try {
     file = Bun.resolveSync("./bake.config", cwd);
   } catch (error: any) {
-    if (error?.code === "ERR_MODULE_NOT_FOUND") return { plugins: [], names: [], name: "bake.config.ts", key: "" };
+    if (error?.code === "ERR_MODULE_NOT_FOUND")
+      return { plugins: [], names: [], name: "bake.config.ts", key: "", framework: undefined };
     throw error;
   }
 
   const name = display(file);
-  const key = file + "\0" + Bun.hash(await Bun.file(file).bytes());
+  const key = file + "\0" + Bun.hash(await (Bun.file(file) as Blob).bytes());
   // A promise, a function, or a function that returns a promise: each gives the config.
   let config = await (await import(file)).default;
   if ($isCallable(config)) config = await config({ mode: "development" });
@@ -156,11 +173,12 @@ async function loadConfig(cwd: string): Promise<Config> {
     }
   }
   const list = config.plugins;
-  if (list === undefined) return { plugins: [], names: [], name, key };
+  if (list === undefined) return { plugins: [], names: [], name, key, framework: undefined };
   if (!$isArray(list)) throw new BakeError(`"${name}": "plugins" must be an array.`, true);
 
   const plugins: unknown[] = [];
   const names: string[] = [];
+  let framework: FrameworkPlugin | undefined;
   for (let i = 0, length = list.length; i < length; i++) {
     const plugin = list[i];
     // A function with `name` and `setup` is a plugin too, as in `Bun.build()`.
@@ -171,6 +189,12 @@ async function loadConfig(cwd: string): Promise<Config> {
     if (typeof pluginName !== "string" || pluginName === "") {
       throw new BakeError(`"${name}": plugins[${i}] has no "name".`, true);
     }
+    const pluginFramework = plugin.framework;
+    if (pluginFramework !== undefined) {
+      framework = loadFramework(name, path.dirname(file), pluginName, pluginFramework, framework);
+    }
+    // A framework plugin needs no build hooks.
+    if (pluginFramework !== undefined && plugin.setup === undefined) continue;
     if (!$isCallable(plugin.setup)) {
       throw new BakeError(
         `"${name}": the plugin "${pluginName}" has no setup() function. "bun bake" takes Bun plugins.`,
@@ -180,7 +204,128 @@ async function loadConfig(cwd: string): Promise<Config> {
     plugins.push(plugin);
     names.push(pluginName);
   }
-  return { plugins, names, name, key };
+  return { plugins, names, name, key, framework };
+}
+
+/**
+ * The `framework` of a plugin: the object of the `framework` option of `Bun.serve()`'s `app`, with
+ * its routers, server and client entry points, and server components. Checked here, so that a
+ * mistake in it is an error of `bake.config.ts`.
+ */
+function loadFramework(name: string, dir: string, pluginName: string, value: any, other: FrameworkPlugin | undefined) {
+  if (other !== undefined) {
+    throw new BakeError(`"${name}": the plugins "${other.plugin}" and "${pluginName}" both have a framework.`, true);
+  }
+  const fail = (message: string) => new BakeError(`"${name}": the framework of "${pluginName}": ${message}`, true);
+  // The dev server would load them instead of the plugins of bake.config.ts and bunfig.toml.
+  if (value?.plugins !== undefined) {
+    throw fail(`"plugins" is not supported in "bun bake". Add build plugins to "plugins" of ${name}.`);
+  }
+  try {
+    checkFramework(value);
+  } catch (error: any) {
+    throw fail(error?.message ?? String(error));
+  }
+  // The server resolves these from the project root, unless `builtInModules` provides them.
+  const builtIn = new Set<string>();
+  for (const module of value.builtInModules ?? []) builtIn.add(module?.import);
+  const resolve = (specifier: unknown, what: string) => {
+    if (typeof specifier !== "string" || builtIn.has(specifier)) return;
+    try {
+      Bun.resolveSync(specifier, dir);
+    } catch {
+      throw fail(`cannot find "${specifier}", its ${what}.`);
+    }
+  };
+  for (const router of value.fileSystemRouterTypes ?? []) {
+    // Bake reads the routes of a router from its root folder, relative to the project.
+    const root = router?.root;
+    if (typeof root === "string" && !require("node:fs").existsSync(path.resolve(root))) {
+      throw fail(`its router's root folder "${root}" does not exist.`);
+    }
+    resolve(router.serverEntryPoint, "serverEntryPoint");
+    resolve(router.clientEntryPoint, "clientEntryPoint");
+  }
+  resolve(value.serverComponents?.serverRuntimeImportSource, "serverRuntimeImportSource");
+  resolve(
+    value.reactFastRefresh === true ? "react-refresh/runtime" : value.reactFastRefresh?.importSource,
+    "reactFastRefresh.importSource",
+  );
+  return { object: value as object, plugin: pluginName };
+}
+
+/**
+ * The `.tsx` and `.jsx` pages of the default framework in `app/pages/`, relative to it. Files and
+ * folders that start with `_`, such as `_layout.tsx`, are not pages. The dev server's router finds
+ * and serves the pages itself; this finds them as it does, symlinked folders too.
+ */
+function componentPages(pagesDir: string): string[] {
+  try {
+    return [
+      ...(new Bun.Glob("**/*.{tsx,jsx}") as Glob).scanSync({ cwd: pagesDir, onlyFiles: true, followSymlinks: true }),
+    ].filter(relative => !relative.split(/[\\/]/).some(part => part.startsWith("_")));
+  } catch (error: any) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+/** A component page and an `.html` page cannot have the same URL: one file is the page. */
+function checkPageClashes(pagesDir: string, components: string[], pages: Page[]) {
+  const htmlOfRoute = new Map(pages.map(page => [page.route, page.file]));
+  for (const relative of components) {
+    let route = relative.replaceAll("\\", "/").replace(/\.[jt]sx$/, "");
+    if (route === "index") route = "";
+    else if (route.endsWith("/index")) route = route.slice(0, -"/index".length);
+    const html = htmlOfRoute.get(route);
+    if (html !== undefined) {
+      throw new BakeError(
+        `"${display(path.join(pagesDir, relative))}" and "${display(html)}" are both the page "/${route}". Move the script of the .html page out of app/pages/.`,
+        false,
+      );
+    }
+  }
+}
+
+/** The first React major version with what the default framework uses: `hydrateRoot`, streaming. */
+const minimumReactMajor = 18;
+
+/** The version in `name/package.json`, resolved from the project, or `undefined` when not installed. */
+function installedVersion(name: string, cwd: string): string | undefined {
+  let file: string;
+  try {
+    file = Bun.resolveSync(`${name}/package.json`, cwd);
+  } catch {
+    return undefined;
+  }
+  return JSON.parse(require("node:fs").readFileSync(file, "utf8")).version;
+}
+
+/**
+ * The default framework of `.tsx` pages uses the project's React. Checks that it is installed, is a
+ * version the framework supports, and that `react` and `react-dom` match.
+ */
+function checkReactForPages(cwd: string) {
+  const react = installedVersion("react", cwd);
+  const reactDom = installedVersion("react-dom", cwd);
+  if (react === undefined || reactDom === undefined) {
+    const missing = [react === undefined && "react", reactDom === undefined && "react-dom"].filter(Boolean).join(" ");
+    throw new BakeError(`app/pages/ has .tsx pages, which need React. Install it: bun add ${missing}`, false);
+  }
+  // `0.0.0-experimental-...` and `0.0.0-canary-...` are builds of React's next release.
+  const major = Number(react.split(".")[0]);
+  if (major < minimumReactMajor && !react.startsWith("0.0.0-")) {
+    throw new BakeError(
+      `"bun bake" renders .tsx pages with React ${minimumReactMajor} or newer, but this project has react ${react}. Upgrade React.`,
+      false,
+    );
+  }
+  if (react !== reactDom) {
+    throw new BakeError(
+      `react ${react} and react-dom ${reactDom} must be the same version. Install matching versions: bun add react@${react} react-dom@${react}`,
+      false,
+    );
+  }
 }
 
 async function loadAppServer(
@@ -257,9 +402,23 @@ async function start() {
   }
   // Before `Bun.serve()`: the server loads them with the plugins of bunfig.toml.
   setConfigPlugins(config.plugins, config.names);
-  const pages = await loadPages(path.join(cwd, "app", "pages"));
+  const pagesDir = path.join(cwd, "app", "pages");
+  const pages = await loadPages(pagesDir);
+  // A framework plugin has its own routers. Without one, the default framework routes the `.tsx`
+  // and `.jsx` pages of app/pages/, with the project's React.
+  const components = config.framework === undefined ? componentPages(pagesDir) : [];
+  checkPageClashes(pagesDir, components, pages);
+  const defaultFrameworkPages = components.length > 0;
+  if (defaultFrameworkPages) checkReactForPages(cwd);
+  const frameworkRoutes = config.framework !== undefined || defaultFrameworkPages;
+  // The server sets up the router of a framework when it starts: start again for the first page of
+  // the default framework, or when the last one is gone.
+  if (frameworkRoutesInServer !== undefined && frameworkRoutes !== frameworkRoutesInServer) {
+    // Does not return: on a failure it prints the error and exits.
+    restartProcess();
+  }
   const app = await loadAppServer(cwd);
-  if (pages.length === 0 && app === undefined) {
+  if (pages.length === 0 && !frameworkRoutes && app === undefined) {
     throw new BakeError(
       `Nothing to serve in "${cwd}". Add a page, such as app/pages/index.html, or an app/server.ts.`,
       false,
@@ -300,11 +459,13 @@ async function start() {
   const exportedPort = exported?.port;
   // A `unix` socket in the export is kept unless a flag asks for a TCP address.
   const useUnix = exported?.unix !== undefined && flags.hostname === undefined && flags.port === undefined;
-  let server: Server<undefined>;
+  let server: Bun.Server<undefined>;
   try {
     server = serveOnFreePort(
       "bun bake",
       port => {
+        // Each `Bun.serve()` attempt (the port retries too) takes it.
+        if (frameworkRoutes) setPages(config.framework?.object);
         const options = ObjectCreate(exported ?? null);
         // Own properties, defined rather than assigned: the export may be frozen, or have getters.
         const own = (key: string, value: unknown) =>
@@ -340,6 +501,7 @@ async function start() {
     throw error;
   }
   configKeyInServer ??= config.key;
+  frameworkRoutesInServer ??= frameworkRoutes;
   const elapsed = (performance.now() - initial).toFixed(2);
 
   const listed: { route: string; file: string }[] = [];

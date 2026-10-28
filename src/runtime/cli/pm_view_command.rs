@@ -70,7 +70,8 @@ pub(crate) fn view(
 
             // Try our best to get the package.json name they meant
             'from_package_json: {
-                // `root_dir` is in the resolver's directory cache: probes must hold `entries_mutex`.
+                // `root_dir` is in the resolver's directory cache, so lookups must hold
+                // `entries_mutex`.
                 let has_package_json = {
                     let _entries_lock = bun_resolver::fs::FileSystem::instance()
                         .fs
@@ -270,7 +271,8 @@ pub(crate) fn view(
 
             let max_versions_to_display: usize = 5;
 
-            // Newest published versions; prereleases only when nothing else was ever published.
+            // The newest published versions. Prereleases are only included if nothing else was ever
+            // published.
             let mut all_versions = parsed_manifest.release_versions();
             if all_versions.is_empty() {
                 all_versions = parsed_manifest.prerelease_versions();
@@ -291,7 +293,8 @@ pub(crate) fn view(
         Global::exit(1);
     }
 
-    // Treat versions specially because npm does some normalization on there: valid ones, in semver order.
+    // Versions are handled specially, because npm normalizes them: only the valid ones, in semver
+    // order.
     if let Some(versions_object) = json.get_object(b"versions") {
         let versions_e_obj = versions_object
             .data
@@ -320,7 +323,8 @@ pub(crate) fn view(
         manifest.set(&bump, b"versions", versions_array)?;
     }
 
-    // Like `npm view`, add the package-level fields (`dist-tags`, `time`); the readme on request.
+    // Like `npm view`, add the package-level fields (`dist-tags`, `time`). The readme is only added
+    // on request.
     json.try_for_each_property(|key, _, value| {
         if key != b"versions"
             && (key != b"readme" || !fields.is_empty())
@@ -444,7 +448,8 @@ pub(crate) fn view(
         .map(|deps| deps.properties.slice())
         .unwrap_or_default();
 
-    // Every string printed below is registry-controlled: always `escape_control_chars` it.
+    // Every string printed below comes from the registry, so always pass it through
+    // `escape_control_chars`.
     prettyln!(
         "<b><blue><u>{}<r><d>@<r><blue><b><u>{}<r> <d>|<r> <cyan>{}<r> <d>|<r> deps<d>:<r> {} <d>|<r> versions<d>:<r> {}",
         escape_control_chars(pkg_name),

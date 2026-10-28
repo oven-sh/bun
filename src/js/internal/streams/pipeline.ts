@@ -21,18 +21,29 @@ const {
   isReadableFinished,
 } = require("internal/streams/utils");
 
-const SymbolAsyncIterator = Symbol.asyncIterator;
+const { isReadableState } = require("internal/streams/state");
+
+const SymbolAsyncIterator: typeof Symbol.asyncIterator = Symbol.asyncIterator;
 const ArrayIsArray = Array.isArray;
-const SymbolDispose = Symbol.dispose;
+const SymbolDispose: typeof Symbol.dispose = Symbol.dispose;
 const PromisePrototypeThen = $Promise.prototype.$then;
 
-let PassThrough;
-let Readable;
-let addAbortListener;
+let PassThrough: $BunModules["internal/streams/passthrough"] | undefined;
+let Readable: $BunModules["internal/streams/readable"] | undefined;
+let addAbortListener: $BunModules["internal/abort_listener"]["addAbortListener"] | undefined;
 let runInFrame;
 let HeldReader;
 
-function destroyer(stream, reading, writing) {
+type AnyIterable = Iterable<unknown> | AsyncIterable<unknown>;
+type PipelineCallback = (error?: Error | null, value?: unknown) => void;
+type Then = ((onFulfilled: (value: unknown) => unknown, onRejected: (error: Error) => unknown) => unknown) | undefined;
+
+interface PipelineOptions {
+  signal?: AbortSignal;
+  end?: boolean;
+}
+
+function destroyer(stream: $Node.AnyStream, reading: boolean, writing: boolean) {
   let finished = false;
   stream.on("close", () => {
     finished = true;
@@ -43,7 +54,7 @@ function destroyer(stream, reading, writing) {
   });
 
   return {
-    destroy: err => {
+    destroy: (err?: Error | null) => {
       if (finished) return;
       finished = true;
       destroyImpl.destroyer(stream, err || $ERR_STREAM_DESTROYED("pipe"));
@@ -52,12 +63,12 @@ function destroyer(stream, reading, writing) {
   };
 }
 
-function popCallback(streams) {
+function popCallback(streams: unknown[]) {
   // Streams should never be an empty array. It should always contain at least
   // a single stream. Therefore optimize for the average case instead of
   // checking for length === 0 as well.
   validateFunction(streams[streams.length - 1], "streams[stream.length - 1]");
-  return streams.pop();
+  return streams.pop() as PipelineCallback;
 }
 
 function makeAsyncIterable(val) {
@@ -70,7 +81,7 @@ function makeAsyncIterable(val) {
   throw $ERR_INVALID_ARG_TYPE("val", ["Readable", "Iterable", "AsyncIterable"], val);
 }
 
-async function* fromReadable(val) {
+async function* fromReadable(val: $Node.Readable) {
   Readable ??= require("internal/streams/readable");
   yield* Readable.prototype[SymbolAsyncIterator].$call(val);
 }
@@ -106,7 +117,7 @@ function createHeldReader() {
     #reader: ReadableStreamDefaultReader | null = null;
     #frame = $getInternalField($asyncContext, 0);
     #stopped = false;
-    #cancelled: Promise<void> | undefined = undefined;
+    #cancelled: Promise<unknown> | undefined = undefined;
 
     constructor(stream: ReadableStream) {
       this.#stream = stream;
@@ -184,14 +195,20 @@ function hold(stream, destroys) {
   return new HeldReader(stream);
 }
 
-async function pumpToNode(iterable, writable, finish, { end }, destroys?) {
-  let error;
+async function pumpToNode(
+  iterable: AnyIterable,
+  writable: $Node.AnyStream,
+  finish: $Node.ErrorCallback,
+  { end }: { end: boolean },
+  destroys?: ((err?: Error | null) => void)[],
+) {
+  let error: Error | undefined;
   let onresolve: (() => void) | null = null;
   let torn;
   let reported = false;
   const source = hold(iterable, destroys);
 
-  const resume = err => {
+  const resume = (err?: Error | null) => {
     if (err) {
       error = err;
     }
@@ -222,7 +239,7 @@ async function pumpToNode(iterable, writable, finish, { end }, destroys?) {
   let onclose;
   if (source !== null) {
     iterable = source;
-    destroys.push(err => {
+    destroys!.push(err => {
       torn ??= err;
       // The report of a destination that the teardown destroyed stops the pump, and ends a wait on a dead destination.
       if ((end || onresolve !== null) && !reported && writable.destroyed) return;
@@ -250,7 +267,7 @@ async function pumpToNode(iterable, writable, finish, { end }, destroys?) {
     }
 
     for await (const chunk of iterable) {
-      if (!writable.write(chunk)) {
+      if (!writable.write!(chunk)) {
         await wait();
       }
     }
@@ -265,13 +282,13 @@ async function pumpToNode(iterable, writable, finish, { end }, destroys?) {
     }
 
     if (end) {
-      writable.end();
+      writable.end!();
       await wait();
     }
 
     finish();
   } catch (err) {
-    finish(error !== err ? aggregateTwoErrors(error, err as Error) : err);
+    finish(error !== err ? aggregateTwoErrors(error, err as Error) : (err as Error));
   } finally {
     source?.release();
     cleanup();
@@ -287,7 +304,13 @@ function stopWhenErrored(sink, source) {
   runInFrame(undefined, PromisePrototypeThen, $webStreamClosedPromise(sink), undefined, stop);
 }
 
-async function pumpToWeb(readable, writable, finish, { end }, destroys?) {
+async function pumpToWeb(
+  readable: AnyIterable,
+  writable: WritableStream | TransformStream,
+  finish: $Node.ErrorCallback,
+  { end }: { end: boolean },
+  destroys?: ((err?: Error | null) => void)[],
+) {
   if (isTransformStream(writable)) {
     writable = writable.writable;
   }
@@ -299,13 +322,13 @@ async function pumpToWeb(readable, writable, finish, { end }, destroys?) {
   } catch (err) {
     // Not before pipelineImpl has registered every member: finishImpl then tears them all down.
     await source?.cancel();
-    finish(err);
+    finish(err as Error);
     return;
   }
   let torn;
   if (source !== null) {
     readable = source;
-    destroys.push(err => {
+    destroys!.push(err => {
       torn ??= err;
       source.stop();
     });
@@ -339,9 +362,9 @@ async function pumpToWeb(readable, writable, finish, { end }, destroys?) {
   } catch (err) {
     try {
       await writer.abort(err);
-      finish(err);
+      finish(err as Error);
     } catch (err) {
-      finish(err);
+      finish(err as Error);
     }
   } finally {
     source?.release();
@@ -352,7 +375,7 @@ function pipeline(...streams) {
   return pipelineImpl(streams, once(popCallback(streams)));
 }
 
-function pipelineImpl(streams, callback, opts?) {
+function pipelineImpl(streams, callback: PipelineCallback, opts?: PipelineOptions) {
   if (streams.length === 1 && ArrayIsArray(streams[0])) {
     streams = streams[0];
   }
@@ -361,9 +384,17 @@ function pipelineImpl(streams, callback, opts?) {
     throw $ERR_MISSING_ARGS("streams");
   }
 
-  const ac = new AbortController();
-  const signal = ac.signal;
+  let ac: AbortController | undefined;
+  let isAborted = false;
   const outerSignal = opts?.signal;
+
+  function signalForStage() {
+    if (!ac) {
+      ac = new AbortController();
+      if (isAborted) ac.abort();
+    }
+    return ac.signal;
+  }
 
   // Need to cleanup event listeners if last stream is readable
   // https://github.com/nodejs/node/issues/35452
@@ -376,26 +407,26 @@ function pipelineImpl(streams, callback, opts?) {
   }
 
   addAbortListener ??= require("internal/abort_listener").addAbortListener;
-  let disposable;
+  let disposable: Disposable | undefined;
   if (outerSignal) {
     disposable = addAbortListener(outerSignal, abort);
   }
 
-  let error;
-  let value;
-  const destroys: ((err: Error) => void)[] = [];
+  let error: Error | null | undefined;
+  let value: unknown;
+  const destroys: ((err?: Error | null) => void)[] = [];
 
   let finishCount = 0;
 
-  function finish(err) {
+  function finish(err?: Error | null) {
     finishImpl(err, --finishCount === 0);
   }
 
-  function finishOnlyHandleError(err) {
+  function finishOnlyHandleError(err?: Error | null) {
     finishImpl(err, false);
   }
 
-  function finishImpl(err, final?) {
+  function finishImpl(err?: Error | null, final?: boolean) {
     if (err && (!error || error.code === "ERR_STREAM_PREMATURE_CLOSE" || error.name === "AbortError")) {
       error = err;
     }
@@ -409,7 +440,8 @@ function pipelineImpl(streams, callback, opts?) {
     }
 
     disposable?.[SymbolDispose]();
-    ac.abort();
+    isAborted = true;
+    ac?.abort();
 
     if (final) {
       if (!error) {
@@ -445,7 +477,7 @@ function pipelineImpl(streams, callback, opts?) {
       }
 
       // Catch stream errors that occur after pipe/pump has completed.
-      function onError(err) {
+      function onError(err: Error | null | undefined) {
         if (err && err.name !== "AbortError" && err.code !== "ERR_STREAM_PREMATURE_CLOSE") {
           finishOnlyHandleError(err);
         }
@@ -460,7 +492,7 @@ function pipelineImpl(streams, callback, opts?) {
 
     if (i === 0) {
       if (typeof stream === "function") {
-        ret = stream({ signal });
+        ret = (stream as (options: { signal: AbortSignal }) => unknown)({ signal: signalForStage() });
         if (!isIterable(ret)) {
           throw $ERR_INVALID_RETURN_VALUE("Iterable, AsyncIterable or Stream", "source", ret);
         }
@@ -475,7 +507,9 @@ function pipelineImpl(streams, callback, opts?) {
       } else {
         ret = makeAsyncIterable(ret);
       }
-      ret = stream(ret, { signal });
+      ret = (stream as (source: AnyIterable, options: { signal: AbortSignal }) => unknown)(ret, {
+        signal: signalForStage(),
+      });
 
       if (reading) {
         if (!isIterable(ret, true)) {
@@ -495,7 +529,7 @@ function pipelineImpl(streams, callback, opts?) {
 
         // Handle Promises/A+ spec, `then` could be a getter that throws on
         // second use.
-        const then = ret?.then;
+        const then: Then = ret?.then;
         if (typeof then === "function") {
           finishCount++;
           then.$call(
@@ -519,7 +553,7 @@ function pipelineImpl(streams, callback, opts?) {
           finishCount++;
           pumpToNode(ret, pt, finish, { end });
         } else if (isReadableStream(ret) || isTransformStream(ret)) {
-          const toRead = (ret as TransformStream).readable || ret;
+          const toRead = (ret as any).readable || ret;
           finishCount++;
           pumpToNode(toRead, pt, finish, { end });
         } else {
@@ -542,7 +576,7 @@ function pipelineImpl(streams, callback, opts?) {
           lastStreamCleanup.push(cleanup);
         }
       } else if (isTransformStream(ret) || isReadableStream(ret)) {
-        const toRead = (ret as TransformStream).readable || ret;
+        const toRead = (ret as any).readable || ret;
         finishCount++;
         pumpToNode(toRead, stream, finish, { end }, held);
       } else if (isIterable(ret)) {
@@ -559,13 +593,13 @@ function pipelineImpl(streams, callback, opts?) {
     } else if (isWebStream(stream)) {
       if (isReadableNodeStream(ret)) {
         finishCount++;
-        pumpToWeb(makeAsyncIterable(ret), stream, finish, { end });
+        pumpToWeb(makeAsyncIterable(ret), stream as WritableStream | TransformStream, finish, { end });
       } else if (isReadableStream(ret) || isIterable(ret)) {
         finishCount++;
-        pumpToWeb(ret, stream, finish, { end }, held);
+        pumpToWeb(ret, stream as WritableStream | TransformStream, finish, { end }, held);
       } else if (isTransformStream(ret)) {
         finishCount++;
-        pumpToWeb(ret.readable, stream, finish, { end }, held);
+        pumpToWeb(ret.readable, stream as WritableStream | TransformStream, finish, { end }, held);
       } else {
         throw $ERR_INVALID_ARG_TYPE(
           "val",
@@ -579,14 +613,20 @@ function pipelineImpl(streams, callback, opts?) {
     }
   }
 
-  if (signal?.aborted || outerSignal?.aborted) {
+  if (isAborted || outerSignal?.aborted) {
     process.nextTick(abort);
   }
 
   return ret;
 }
 
-function pipe(src, dst, finish, finishOnlyHandleError, { end }) {
+function pipe(
+  src: $Node.Readable,
+  dst: $Node.AnyStream,
+  finish: $Node.ErrorCallback,
+  finishOnlyHandleError: $Node.ErrorCallback,
+  { end }: { end: boolean },
+) {
   let ended = false;
   dst.on("close", () => {
     if (!ended) {
@@ -604,7 +644,7 @@ function pipe(src, dst, finish, finishOnlyHandleError, { end }) {
 
     function endFn() {
       ended = true;
-      dst.end();
+      dst.end!();
     }
 
     if (isReadableFinished(src)) {
@@ -618,8 +658,14 @@ function pipe(src, dst, finish, finishOnlyHandleError, { end }) {
   }
 
   eos(src, { readable: true, writable: false }, err => {
-    const rState = src._readableState;
-    if (err && err.code === "ERR_STREAM_PREMATURE_CLOSE" && rState?.ended && !rState.errored && !rState.errorEmitted) {
+    const rState = src._readableState as $Node.ReadableState | $Node.ForeignState | undefined;
+    if (
+      err &&
+      err.code === "ERR_STREAM_PREMATURE_CLOSE" &&
+      (isReadableState(rState)
+        ? rState.ended && !rState.errored && !rState.errorEmitted
+        : rState?.ended && !rState.errored && !rState.errorEmitted)
+    ) {
       // Some readable streams will emit 'close' before 'end'. However, since
       // this is on the readable side 'end' should still be emitted if the
       // stream has been ended and no error emitted. This should be allowed in

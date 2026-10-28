@@ -4,7 +4,7 @@ use crate::rule::{Meta, Plugin};
 
 impl Plugin {
     /// The directory with this plugin's rule pages. `react-hooks` rules share `react`'s directory.
-    pub const fn directory_of_docs(self) -> &'static str {
+    pub const fn docs_directory(self) -> &'static str {
         match self {
             Plugin::Eslint => "eslint",
             Plugin::TypeScript => "typescript",
@@ -33,7 +33,7 @@ impl Plugin {
 impl Meta {
     /// The rule's page, relative to `docs/lint/rules` and without `.mdx`, like `typescript/no-explicit-any`.
     pub fn page(&self) -> Vec<u8> {
-        let directory = self.plugin.directory_of_docs();
+        let directory = self.plugin.docs_directory();
         [directory.as_bytes(), b"/", self.name.as_bytes()].concat()
     }
 

@@ -1,0 +1,33 @@
+# const above = { get on() { return handedOver(this); } }; Object.setPrototypeOf(Object.getPrototypeOf(process), above); process.on
+# %EventEmitter%.prototype has `on` among its own members, so the read ends there, as it would at a receiver that has the name: the getter above it is not entered, nobody is handed `process`,
+# and the read answers the native method
+# LIBRARY: own
+# RUN: valueflow-why reached=f1 escaped-builtin=Process values=f0:v8
+# CHECK: reached=f1
+# CHECK-NEXT: f1 is not reached
+# CHECK-NEXT: escaped-builtin=Process
+# CHECK-NEXT: not held
+# CHECK: result n{{*}} 2 members: primitive0 EventEmitterPrototypeOn
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Object
+    v1 = NewDictionary
+    v2 = NewClosure function=f1
+    DefineGetter v1, v2 key="on"
+    v4 = Builtin builtin=ObjectSetPrototypeOf
+    v5 = Builtin builtin=EventEmitterPrototype
+    v6 = Call v4, v0, v5, v1
+    v7 = Builtin builtin=Process
+    v8 = PropGet v7 key="on"
+    Return v8
+}
+function f1 name="on" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="handedOver" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}

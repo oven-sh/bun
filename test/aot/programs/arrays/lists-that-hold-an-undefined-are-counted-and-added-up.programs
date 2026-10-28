@@ -1,0 +1,215 @@
+//// the-undefined-in-a-list-filled-from-the-values-of-an-object-is-counted-by-for-each-before-the-list-is-added-up-typed-as-numbers.ts
+function collect(record: any): any { const list = []; for (const key in record) list.push(record[key]); return list; }
+function count(c: number[]): number { let found = 0; c.forEach(v => { if ((v as unknown) === undefined) found++; }); return found; }
+function walk(c: number[]): number { let found = 0; for (const v of c) if ((v as unknown) === undefined) found++; return found; }
+function step(c: number[]): number { let found = 0; for (let i = 0; i < c.length; i++) if ((c[i] as unknown) === undefined) found++; return found; }
+function total(c: number[]): number { let sum = 0; for (let i = 0; i < c.length; i++) if (c[i] > 1) sum += c[i]; return sum; }
+function look(c: number[]): string {
+  const first = count(c);
+  const second = c.reduce((t, v) => t + (v > 1 ? v : 0), 0);
+  return first + "," + second;
+}
+let out = "";
+let last = "";
+for (let turn = 0; turn < 60; turn++) {
+  out = "";
+  for (const list of [[3.5, 0.5, 1.5, 6.5], collect({ a: 0.5, b: undefined, c: 2.5, d: 4.5 }), [4.5, 7.5, 0.5, 8.5], [0.25, 0.75, 1.25, 1.75]]) out += look(list) + "; ";
+  if (turn && out !== last) console.log("changed in turn", turn, out);
+  last = out;
+}
+console.log(out);
+//// the-undefined-in-a-list-filled-from-the-values-of-an-object-is-counted-in-a-for-of-loop-before-the-list-is-added-up-typed-as-numbers.ts
+function collect(record: any): any { const list = []; for (const key in record) list.push(record[key]); return list; }
+function count(c: number[]): number { let found = 0; c.forEach(v => { if ((v as unknown) === undefined) found++; }); return found; }
+function walk(c: number[]): number { let found = 0; for (const v of c) if ((v as unknown) === undefined) found++; return found; }
+function step(c: number[]): number { let found = 0; for (let i = 0; i < c.length; i++) if ((c[i] as unknown) === undefined) found++; return found; }
+function total(c: number[]): number { let sum = 0; for (let i = 0; i < c.length; i++) if (c[i] > 1) sum += c[i]; return sum; }
+function look(c: number[]): string {
+  const first = walk(c);
+  const second = c.reduce((t, v) => t + (v > 1 ? v : 0), 0);
+  return first + "," + second;
+}
+let out = "";
+let last = "";
+for (let turn = 0; turn < 60; turn++) {
+  out = "";
+  for (const list of [[3.5, 0.5, 1.5, 6.5], collect({ a: 0.5, b: undefined, c: 2.5, d: 4.5 }), [4.5, 7.5, 0.5, 8.5], [0.25, 0.75, 1.25, 1.75]]) out += look(list) + "; ";
+  if (turn && out !== last) console.log("changed in turn", turn, out);
+  last = out;
+}
+console.log(out);
+//// the-undefined-in-a-list-filled-from-the-values-of-an-object-is-counted-by-for-each-before-the-list-is-added-up.js
+function collect(record) { const list = []; for (const key in record) list.push(record[key]); return list; }
+function count(c) { let found = 0; c.forEach(v => { if (v === undefined) found++; }); return found; }
+function walk(c) { let found = 0; for (const v of c) if (v === undefined) found++; return found; }
+function step(c) { let found = 0; for (let i = 0; i < c.length; i++) if (c[i] === undefined) found++; return found; }
+function total(c) { let sum = 0; for (let i = 0; i < c.length; i++) if (c[i] > 1) sum += c[i]; return sum; }
+function look(c) {
+  const first = count(c);
+  const second = c.reduce((t, v) => t + (v > 1 ? v : 0), 0);
+  return first + "," + second;
+}
+let out = "";
+let last = "";
+for (let turn = 0; turn < 60; turn++) {
+  out = "";
+  for (const list of [[3.5, 0.5, 1.5, 6.5], collect({ a: 0.5, b: undefined, c: 2.5, d: 4.5 }), [4.5, 7.5, 0.5, 8.5], [0.25, 0.75, 1.25, 1.75]]) out += look(list) + "; ";
+  if (turn && out !== last) console.log("changed in turn", turn, out);
+  last = out;
+}
+console.log(out);
+//// the-undefined-in-a-list-filled-from-the-values-of-an-object-is-counted-in-a-for-of-loop-before-the-list-is-added-up.js
+function collect(record) { const list = []; for (const key in record) list.push(record[key]); return list; }
+function count(c) { let found = 0; c.forEach(v => { if (v === undefined) found++; }); return found; }
+function walk(c) { let found = 0; for (const v of c) if (v === undefined) found++; return found; }
+function step(c) { let found = 0; for (let i = 0; i < c.length; i++) if (c[i] === undefined) found++; return found; }
+function total(c) { let sum = 0; for (let i = 0; i < c.length; i++) if (c[i] > 1) sum += c[i]; return sum; }
+function look(c) {
+  const first = walk(c);
+  const second = c.reduce((t, v) => t + (v > 1 ? v : 0), 0);
+  return first + "," + second;
+}
+let out = "";
+let last = "";
+for (let turn = 0; turn < 60; turn++) {
+  out = "";
+  for (const list of [[3.5, 0.5, 1.5, 6.5], collect({ a: 0.5, b: undefined, c: 2.5, d: 4.5 }), [4.5, 7.5, 0.5, 8.5], [0.25, 0.75, 1.25, 1.75]]) out += look(list) + "; ";
+  if (turn && out !== last) console.log("changed in turn", turn, out);
+  last = out;
+}
+console.log(out);
+//// the-undefined-in-a-list-written-as-a-literal-is-counted-by-index-before-the-list-is-added-up.js
+function count(c) { let found = 0; c.forEach(v => { if (v === undefined) found++; }); return found; }
+function walk(c) { let found = 0; for (const v of c) if (v === undefined) found++; return found; }
+function step(c) { let found = 0; for (let i = 0; i < c.length; i++) if (c[i] === undefined) found++; return found; }
+function total(c) { let sum = 0; for (let i = 0; i < c.length; i++) if (c[i] > 1) sum += c[i]; return sum; }
+function look(c) {
+  const first = step(c);
+  const second = c.reduce((t, v) => t + (v > 1 ? v : 0), 0);
+  return first + "," + second;
+}
+let out = "";
+let last = "";
+for (let turn = 0; turn < 60; turn++) {
+  out = "";
+  for (const list of [[3.5, 0.5, 1.5, 6.5], [0.5, undefined, 2.5, 4.5], [4.5, 7.5, 0.5, 8.5], [0.25, 0.75, 1.25, 1.75]]) out += look(list) + "; ";
+  if (turn && out !== last) console.log("changed in turn", turn, out);
+  last = out;
+}
+console.log(out);
+//// the-undefined-in-a-list-written-as-a-literal-is-counted-by-for-each-before-the-list-is-added-up.js
+function count(c) { let found = 0; c.forEach(v => { if (v === undefined) found++; }); return found; }
+function walk(c) { let found = 0; for (const v of c) if (v === undefined) found++; return found; }
+function step(c) { let found = 0; for (let i = 0; i < c.length; i++) if (c[i] === undefined) found++; return found; }
+function total(c) { let sum = 0; for (let i = 0; i < c.length; i++) if (c[i] > 1) sum += c[i]; return sum; }
+function look(c) {
+  const first = count(c);
+  const second = c.reduce((t, v) => t + (v > 1 ? v : 0), 0);
+  return first + "," + second;
+}
+let out = "";
+let last = "";
+for (let turn = 0; turn < 60; turn++) {
+  out = "";
+  for (const list of [[3.5, 0.5, 1.5, 6.5], [0.5, undefined, 2.5, 4.5], [4.5, 7.5, 0.5, 8.5], [0.25, 0.75, 1.25, 1.75]]) out += look(list) + "; ";
+  if (turn && out !== last) console.log("changed in turn", turn, out);
+  last = out;
+}
+console.log(out);
+//// the-undefined-in-a-list-written-as-a-literal-is-counted-in-a-for-of-loop-before-the-list-is-added-up.js
+function count(c) { let found = 0; c.forEach(v => { if (v === undefined) found++; }); return found; }
+function walk(c) { let found = 0; for (const v of c) if (v === undefined) found++; return found; }
+function step(c) { let found = 0; for (let i = 0; i < c.length; i++) if (c[i] === undefined) found++; return found; }
+function total(c) { let sum = 0; for (let i = 0; i < c.length; i++) if (c[i] > 1) sum += c[i]; return sum; }
+function look(c) {
+  const first = walk(c);
+  const second = c.reduce((t, v) => t + (v > 1 ? v : 0), 0);
+  return first + "," + second;
+}
+let out = "";
+let last = "";
+for (let turn = 0; turn < 60; turn++) {
+  out = "";
+  for (const list of [[3.5, 0.5, 1.5, 6.5], [0.5, undefined, 2.5, 4.5], [4.5, 7.5, 0.5, 8.5], [0.25, 0.75, 1.25, 1.75]]) out += look(list) + "; ";
+  if (turn && out !== last) console.log("changed in turn", turn, out);
+  last = out;
+}
+console.log(out);
+//// the-undefined-in-a-list-made-by-map-is-counted-by-for-each-before-the-list-is-added-up.js
+function count(c) { let found = 0; c.forEach(v => { if (v === undefined) found++; }); return found; }
+function walk(c) { let found = 0; for (const v of c) if (v === undefined) found++; return found; }
+function step(c) { let found = 0; for (let i = 0; i < c.length; i++) if (c[i] === undefined) found++; return found; }
+function total(c) { let sum = 0; for (let i = 0; i < c.length; i++) if (c[i] > 1) sum += c[i]; return sum; }
+function look(c) {
+  const first = count(c);
+  const second = c.reduce((t, v) => t + (v > 1 ? v : 0), 0);
+  return first + "," + second;
+}
+let out = "";
+let last = "";
+for (let turn = 0; turn < 60; turn++) {
+  out = "";
+  for (const list of [[3.5, 0.5, 1.5, 6.5], [0.5, 1.5, 2.5, 4.5].map((value, index) => (index === 1 ? undefined : value)), [4.5, 7.5, 0.5, 8.5], [0.25, 0.75, 1.25, 1.75]]) out += look(list) + "; ";
+  if (turn && out !== last) console.log("changed in turn", turn, out);
+  last = out;
+}
+console.log(out);
+//// the-undefined-in-a-list-made-by-map-is-counted-in-a-for-of-loop-before-the-list-is-added-up.js
+function count(c) { let found = 0; c.forEach(v => { if (v === undefined) found++; }); return found; }
+function walk(c) { let found = 0; for (const v of c) if (v === undefined) found++; return found; }
+function step(c) { let found = 0; for (let i = 0; i < c.length; i++) if (c[i] === undefined) found++; return found; }
+function total(c) { let sum = 0; for (let i = 0; i < c.length; i++) if (c[i] > 1) sum += c[i]; return sum; }
+function look(c) {
+  const first = walk(c);
+  const second = c.reduce((t, v) => t + (v > 1 ? v : 0), 0);
+  return first + "," + second;
+}
+let out = "";
+let last = "";
+for (let turn = 0; turn < 60; turn++) {
+  out = "";
+  for (const list of [[3.5, 0.5, 1.5, 6.5], [0.5, 1.5, 2.5, 4.5].map((value, index) => (index === 1 ? undefined : value)), [4.5, 7.5, 0.5, 8.5], [0.25, 0.75, 1.25, 1.75]]) out += look(list) + "; ";
+  if (turn && out !== last) console.log("changed in turn", turn, out);
+  last = out;
+}
+console.log(out);
+//// the-undefined-in-a-list-that-took-it-by-a-store-is-counted-by-for-each-before-the-list-is-added-up-typed-as-numbers.ts
+function put(): any { const list: any[] = [0.5, 1.5, 2.5, 4.5]; list[1] = undefined; return list; }
+function count(c: number[]): number { let found = 0; c.forEach(v => { if ((v as unknown) === undefined) found++; }); return found; }
+function walk(c: number[]): number { let found = 0; for (const v of c) if ((v as unknown) === undefined) found++; return found; }
+function step(c: number[]): number { let found = 0; for (let i = 0; i < c.length; i++) if ((c[i] as unknown) === undefined) found++; return found; }
+function total(c: number[]): number { let sum = 0; for (let i = 0; i < c.length; i++) if (c[i] > 1) sum += c[i]; return sum; }
+function look(c: number[]): string {
+  const first = count(c);
+  const second = c.reduce((t, v) => t + (v > 1 ? v : 0), 0);
+  return first + "," + second;
+}
+let out = "";
+let last = "";
+for (let turn = 0; turn < 60; turn++) {
+  out = "";
+  for (const list of [[3.5, 0.5, 1.5, 6.5], put(), [4.5, 7.5, 0.5, 8.5], [0.25, 0.75, 1.25, 1.75]]) out += look(list) + "; ";
+  if (turn && out !== last) console.log("changed in turn", turn, out);
+  last = out;
+}
+console.log(out);
+//// the-undefined-in-a-list-that-took-it-by-a-store-is-counted-by-for-each-before-the-list-is-added-up.js
+function put() { const list = [0.5, 1.5, 2.5, 4.5]; list[1] = undefined; return list; }
+function count(c) { let found = 0; c.forEach(v => { if (v === undefined) found++; }); return found; }
+function walk(c) { let found = 0; for (const v of c) if (v === undefined) found++; return found; }
+function step(c) { let found = 0; for (let i = 0; i < c.length; i++) if (c[i] === undefined) found++; return found; }
+function total(c) { let sum = 0; for (let i = 0; i < c.length; i++) if (c[i] > 1) sum += c[i]; return sum; }
+function look(c) {
+  const first = count(c);
+  const second = c.reduce((t, v) => t + (v > 1 ? v : 0), 0);
+  return first + "," + second;
+}
+let out = "";
+let last = "";
+for (let turn = 0; turn < 60; turn++) {
+  out = "";
+  for (const list of [[3.5, 0.5, 1.5, 6.5], put(), [4.5, 7.5, 0.5, 8.5], [0.25, 0.75, 1.25, 1.75]]) out += look(list) + "; ";
+  if (turn && out !== last) console.log("changed in turn", turn, out);
+  last = out;
+}
+console.log(out);

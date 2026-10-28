@@ -549,4 +549,12 @@ describe("bun", () => {
       }
     });
   });
+
+  test("--help lists check, lint and fmt", async () => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "--help"], env: bunEnv, stderr: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const listed = stdout.split(/\r?\n/).flatMap(line => /^ {2}(check|lint|fmt) /.exec(line)?.[1] ?? []);
+    expect(listed).toEqual(["check", "lint", "fmt"]);
+    expect(exitCode).toBe(0);
+  });
 });

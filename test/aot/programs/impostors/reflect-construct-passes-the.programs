@@ -1,0 +1,3059 @@
+////: attempt-37
+attempt("a slice of a Buffer shares its memory", () => {
+  const bytes = Buffer.from("hello");
+  const part = slice(bytes, 1, 3);
+  part[0] = 69;
+  return [bytes.toString(), part.toString()];
+});
+////: attempt-38
+attempt("a slice of a Uint8Array does not", () => {
+  const bytes = new Uint8Array([1, 2, 3]);
+  const part = slice(bytes, 1, 3);
+  part[0] = 9;
+  return [bytes, part];
+});
+////: attempt-39
+attempt("a slice of an array is a new array", () => {
+  const list = ["a", "b", "c"];
+  const copy = slice(list, 0, 3);
+  copy.push("d");
+  return [list, copy, copy === list];
+});
+////: countOccurrences
+function countOccurrences(text, piece) {
+  let count = 0;
+  let from = 0;
+  while (count < 5) {
+    const found = text.indexOf(piece, from);
+    if (found === -1 || found === undefined || typeof found !== "number") break;
+    count++;
+    from = found + 1;
+  }
+  return count;
+}
+////: everySuffix
+function everySuffix(text) {
+  const suffixes = [];
+  let rest = text;
+  for (let i = 0; i < 4; i++) {
+    rest = rest.slice(1);
+    suffixes.push(rest);
+  }
+  return suffixes;
+}
+////: for-151
+for (let i = 0; i < 2000; i++) {
+  total += indexOf("hello world", "o") + lastIndexOf("hello world", "o") + countOccurrences("hello world", "l");
+  if (includes("hello world", "wor")) total++;
+  if (startsWith("hello world", "hell")) total++;
+  if (endsWith("hello world", "rld")) total++;
+}
+////: inAClosure
+function inAClosure(a) {
+  (function () {
+    a = "from a closure";
+  })();
+  return arguments[0];
+}
+////: lines-132
+try {
+  «1»(«2»);
+} catch (error) {
+  console.log(error.«3», error.«4»);
+}
+////: lines-348
+try {
+  «1»);
+} catch (error) {
+  console.log(error.name);
+}
+////: lines-349
+try {
+  «1»);
+} catch (error) {
+  console.log(error.name, error.code);
+}
+////: uses-26
+const uses = [
+  ["indexOf", value => indexOf(value, "l")],
+  ["lastIndexOf", value => lastIndexOf(value, "l")],
+  ["includes", value => includes(value, "l")],
+  ["startsWith", value => startsWith(value, "h")],
+  ["endsWith", value => endsWith(value, "d")],
+];
+//// reflect-construct-passes-the-value.cjs
+const log = [];
+
+////= show-24
+
+function Pushes(a) {
+  a.push(1);
+  this.result = a.length;
+}
+const pushes = given => Reflect.construct(Pushes, [given]).result;
+
+function Iterates(a) {
+  const seen = [];
+  for (const x of a) seen.push(x);
+  this.result = seen;
+}
+const iterates = given => Reflect.construct(Iterates, [given]).result;
+
+function ReadsCharCode(s) {
+  this.result = s.charCodeAt(0);
+}
+const readsCharCode = given => Reflect.construct(ReadsCharCode, [given]).result;
+
+function Truncates(n) {
+  this.result = n | 0;
+}
+const truncates = given => Reflect.construct(Truncates, [given]).result;
+
+function AddsOne(n) {
+  this.result = n + 1;
+}
+const addsOne = given => Reflect.construct(AddsOne, [given]).result;
+
+function Calls(f) {
+  this.result = f(1);
+}
+const calls = given => Reflect.construct(Calls, [given]).result;
+
+function AddsMembers(o) {
+  this.result = o.x + o.y;
+}
+const addsMembers = given => Reflect.construct(AddsMembers, [given]).result;
+
+////= lines-49	StoresMember	o	o.x	1	result	o
+const storesMember = given => Reflect.construct(StoresMember, [given]).result;
+
+////= table-7
+
+console.log("strict:", (function () { return this === undefined; })());
+everyCase("at first");
+////= for
+everyCase("after 2000");
+//// reflect-construct-with-another-new-target.cjs
+const log = [];
+
+////= show-18
+
+function Engine(power) {
+  this.power = power;
+  this.madeFor = new.target === undefined ? "nobody" : new.target === Engine ? "Engine" : "someone else";
+}
+////= lines-36	Engine	run	"engine runs at "	power
+
+////= lines-67	Motor	power	"motor power"
+////= lines-36	Motor	run	"motor runs at "	power
+
+class Turbine {
+  constructor() {
+    this.power = "turbine power";
+  }
+  run() {
+    return "turbine runs at " + this.power;
+  }
+}
+
+class ModernEngine {
+  constructor(power) {
+    this.power = power;
+    this.madeFor = new.target === ModernEngine ? "ModernEngine" : "someone else";
+  }
+  run() {
+    return "modern engine runs at " + this.power;
+  }
+}
+
+////= lines-5	runOf	engine	engine.run
+
+////= lines-7	powerOf	engine	engine.power
+
+function withPrototype(value) {
+  function Odd() {}
+  Odd.prototype = value;
+  return Odd;
+}
+
+const targets = [
+  ["itself", Maker => Maker],
+  ["another constructor function", () => Motor],
+  ["a class", () => Turbine],
+  ["a function whose prototype is null", () => withPrototype(null)],
+  ["a function whose prototype is a number", () => withPrototype(5)],
+  ["a function whose prototype is an array", () => withPrototype([])],
+  ["a function whose prototype has no prototype", () => withPrototype(Object.create(null))],
+  ["a function whose prototype has a setter for power", () => withPrototype({ set power(value) { log.push("set power " + value); } })],
+  ["a function whose prototype has only a getter for power", () => withPrototype({ get power() { return "from the getter"; } })],
+  ["a function whose prototype has a power that cannot be written", () => withPrototype(Object.freeze({ power: "fixed" }))],
+  ["a bound function", Maker => Maker.bind(null)],
+  ["a bound other function", () => Motor.bind(null)],
+  ["a proxy that logs", Maker => new Proxy(Maker, { get(target, key, receiver) { log.push("get " + String(key)); return Reflect.get(target, key, receiver); } })],
+  ["a proxy that answers Motor's prototype", Maker => new Proxy(Maker, { get(target, key) { return key === "prototype" ? Motor.prototype : target[key]; } })],
+  ["Object", () => Object],
+  ["Array", () => Array],
+  ["Date", () => Date],
+  ["an arrow function", () => () => {}],
+  ["a method", () => ({ method() {} }).method],
+  ["a plain object", () => ({})],
+  ["undefined", () => undefined],
+];
+
+for (const Maker of [Engine, ModernEngine]) {
+  let length = 0;
+  for (let i = 0; i < 2000; i++) length += runOf(new Maker(i % 10)).length;
+  console.log(Maker.name, "2000 honest constructions", length);
+
+  for (const [label, pick] of targets) {
+    let line = Maker.name + " for " + label + " -> ";
+    try {
+      const made = Reflect.construct(Maker, [7], pick(Maker));
+      line += show(made) + " | log " + log.splice(0).join(", ");
+      const parent = Object.getPrototypeOf(made);
+      const names = [["Engine", Engine], ["ModernEngine", ModernEngine], ["Motor", Motor], ["Turbine", Turbine], ["Object", Object], ["Array", Array], ["Date", Date]];
+      const named = names.find(([, each]) => each.prototype === parent);
+      line += " | prototype of " + (named ? named[0] : parent === null ? "null" : Array.isArray(parent) ? "an array" : "something else");
+      line += " | isArray " + Array.isArray(made) + " | power " + show(powerOf(made));
+      try {
+        line += " | run() " + show(runOf(made));
+      } catch (error) {
+        line += " | run() threw " + error.constructor.name;
+      }
+    } catch (error) {
+      line += "threw " + error.constructor.name + " | log " + log.splice(0).join(", ");
+    }
+    console.log(line);
+    console.log("  honest again", runOf(new Maker(1)));
+  }
+}
+//// reflect-get-hands-over-the-value.cjs
+const log = [];
+
+////= show-24
+
+function pushes(holder) {
+  const a = Reflect.get(holder, "value");
+  a.push(1);
+  return a.length;
+}
+
+////= lines-343	iterates(holder	const a = Reflect.get(holder, "value")
+
+function readsCharCode(holder) {
+  const s = Reflect.get(holder, "value");
+  return s.charCodeAt(0);
+}
+
+function truncates(holder) {
+  const n = Reflect.get(holder, "value");
+  return n | 0;
+}
+
+function addsOne(holder) {
+  const n = Reflect.get(holder, "value");
+  return n + 1;
+}
+
+function calls(holder) {
+  const f = Reflect.get(holder, "value");
+  return f(1);
+}
+
+function addsMembers(holder) {
+  const o = Reflect.get(holder, "value");
+  return o.x + o.y;
+}
+
+function storesMember(holder) {
+  const o = Reflect.get(holder, "value");
+  o.x = 1;
+  return o;
+}
+
+////= table
+
+////= everyCase-7
+
+console.log("strict:", (function () { return this === undefined; })());
+everyCase("at first");
+////= for-38
+everyCase("after 2000");
+//// reflect-get-with-a-receiver-hands-over-the-value.js
+"use strict";
+
+const log = [];
+
+////= show-24
+
+const holder = { get value() { return this.hidden; } };
+
+function pushes(receiver) {
+  const a = Reflect.get(holder, "value", receiver);
+  a.push(1);
+  return a.length;
+}
+
+////= lines-343	iterates(receiver	const a = Reflect.get(holder, "value", receiver)
+
+function readsCharCode(receiver) {
+  const s = Reflect.get(holder, "value", receiver);
+  return s.charCodeAt(0);
+}
+
+function truncates(receiver) {
+  const n = Reflect.get(holder, "value", receiver);
+  return n | 0;
+}
+
+function addsOne(receiver) {
+  const n = Reflect.get(holder, "value", receiver);
+  return n + 1;
+}
+
+function calls(receiver) {
+  const f = Reflect.get(holder, "value", receiver);
+  return f(1);
+}
+
+function addsMembers(receiver) {
+  const o = Reflect.get(holder, "value", receiver);
+  return o.x + o.y;
+}
+
+function storesMember(receiver) {
+  const o = Reflect.get(holder, "value", receiver);
+  o.x = 1;
+  return o;
+}
+
+////= table
+
+function everyCase(round) {
+  for (const [name, use, values] of table) {
+    for (const [label, make] of [...values, values[0]]) attempt(round + " " + name + " " + label, () => use({ hidden: make() }));
+  }
+}
+
+console.log("strict:", (function () { return this === undefined; })());
+everyCase("at first");
+for (let i = 0; i < 2000; i++) {
+  pushes({ hidden: [5, 6] });
+  iterates({ hidden: [5, 6] });
+  readsCharCode({ hidden: "abc" });
+  truncates({ hidden: 7 });
+  addsOne({ hidden: 7 });
+  calls({ hidden: x => x + 1 });
+  addsMembers({ hidden: ({ x: 1, y: 2 }) });
+  storesMember({ hidden: ({ x: 1, y: 2 }) });
+}
+everyCase("after 2000");
+//// replace-answers-with-an-object-that-has-its-own-trim.js
+const pattern = { [Symbol.replace]: () => ({ trim: () => "trimmed" }) };
+console.log("a,b".replace(pattern, "").trim());
+//// revivers-turn-parsed-json-into-instances.cjs
+const log = [];
+
+////= show-41
+
+function Money(cents, currency) {
+  this.cents = cents;
+  this.currency = currency;
+}
+Money.prototype.format = function () {
+  return (this.cents / 100).toFixed(2) + " " + this.currency;
+};
+Money.prototype.add = function (other) {
+  return new Money(this.cents + other.cents, this.currency);
+};
+
+////= lines-5	formatOf	money	money.format
+
+////= lines-7	centsOf	money	money.cents
+
+////= lines-131	sumOf	list	cents
+
+const text = '{"paid":{"cents":250,"currency":"USD"},"due":{"currency":"EUR","cents":1999},"odd":{"cents":"5","currency":"GBP"},"list":[{"cents":1,"currency":"USD"},{"cents":2.5,"currency":"USD"}]}';
+const looksLikeMoney = value => typeof value === "object" && value !== null && "cents" in value && "currency" in value;
+
+const revivers = [
+  ["no reviver", undefined],
+  ["calls the constructor", (key, value) => (looksLikeMoney(value) ? new Money(value.cents, value.currency) : value)],
+  ["moves the parsed object under the prototype", (key, value) => (looksLikeMoney(value) ? Object.setPrototypeOf(value, Money.prototype) : value)],
+  ["copies into Object.create", (key, value) => (looksLikeMoney(value) ? Object.assign(Object.create(Money.prototype), value) : value)],
+  ["turns cents into strings", (key, value) => (key === "cents" ? String(value) : value)],
+  ["drops cents", (key, value) => (key === "cents" ? undefined : value)],
+  ["turns cents into getters", (key, value) => (looksLikeMoney(value) ? Object.defineProperty(value, "cents", { get() { log.push("get cents"); return 77; }, enumerable: true }) : value)],
+  ["freezes everything", (key, value) => (typeof value === "object" && value !== null ? Object.freeze(value) : value)],
+  ["changes a sibling that was not visited yet", function (key, value) { if (key === "paid") this.due = { cents: -1, currency: "changed" }; return value; }],
+  ["deletes a sibling that was not visited yet", function (key, value) { if (key === "paid") delete this.due; return value; }],
+  ["logs the order of the keys", (key, value) => (log.push(key === "" ? "(root)" : key), value)],
+];
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  const money = new Money(i % 300, "USD").add(new Money(1, "USD"));
+  total += centsOf(money) + formatOf(money).length + sumOf([money, money]);
+}
+console.log("2000 honest sums", total);
+
+for (const [label, reviver] of revivers) {
+  let parsed;
+  attempt(label + ": parse", () => ((parsed = JSON.parse(text, reviver)), Object.keys(parsed)));
+  for (const name of ["paid", "due", "odd"]) {
+    attempt(label + ", " + name, () => parsed[name]);
+    attempt(label + ", " + name + ": instanceof Money", () => parsed[name] instanceof Money);
+    attempt(label + ", " + name + ": cents", () => centsOf(parsed[name]));
+    attempt(label + ", " + name + ": format()", () => formatOf(parsed[name]));
+    attempt(label + ", " + name + ": the honest format with it as this", () => Money.prototype.format.call(parsed[name]));
+    attempt(label + ", " + name + ": an honest one adds it", () => new Money(100, "USD").add(parsed[name]));
+  }
+  attempt(label + ": the sum of the list", () => sumOf(parsed.list));
+  attempt(label + ": back to JSON", () => JSON.stringify(parsed));
+  attempt("honest again", () => formatOf(new Money(5, "USD").add(new Money(6, "USD"))));
+}
+//// ropes-and-long-texts-are-used-like-any-text.js
+////= show-26
+
+function buildByAppending(count) {
+  let text = "";
+  for (let i = 0; i < count; i++) text += "ab";
+  return text;
+}
+
+function buildByPrepending(count) {
+  let text = "";
+  for (let i = 0; i < count; i++) text = "ab" + text;
+  return text;
+}
+
+function buildByDoubling(times) {
+  let text = "ab";
+  for (let i = 0; i < times; i++) text = text + text;
+  return text;
+}
+
+function buildATree(depth) {
+  return depth === 0 ? "x" : buildATree(depth - 1) + "-" + buildATree(depth - 1);
+}
+
+function probe(text) {
+  return [text.length, text[0], text[text.length - 1], text.charCodeAt(text.length >> 1), text.indexOf("ba"), text.lastIndexOf("ab"), text.slice(-3), text.at(-1)];
+}
+
+////= hash
+
+////= lines-73	lookUp	table	key	table[key
+
+for (let i = 0; i < 2000; i++) {
+  probe("abab");
+  hash("abab");
+  lookUp({ abab: 1 }, "abab");
+}
+
+attempt("appended", () => probe(buildByAppending(100000)));
+attempt("prepended", () => probe(buildByPrepending(100000)));
+attempt("doubled", () => probe(buildByDoubling(20)));
+attempt("a tree", () => probe(buildATree(12)));
+attempt("hash of appended", () => hash(buildByAppending(50000)));
+attempt("hash of prepended", () => hash(buildByPrepending(50000)));
+attempt("hash of doubled", () => hash(buildByDoubling(16)));
+attempt("all three are equal", () => [buildByAppending(1 << 10) === buildByPrepending(1 << 10), buildByAppending(1 << 10) === buildByDoubling(10), buildByDoubling(10) === "ab".repeat(1 << 10)]);
+attempt("a rope that differs in the last character", () => [buildByAppending(1000) + "a" === buildByAppending(1000) + "b", buildByAppending(1000) + "a" < buildByAppending(1000) + "b"]);
+attempt("a rope as a key", () => {
+  const table = { abababab: "found" };
+  return [lookUp(table, buildByAppending(4)), lookUp(table, buildByPrepending(4)), lookUp(table, buildByDoubling(2)), buildByAppending(4) in table, Object.hasOwn(table, buildByDoubling(2))];
+});
+attempt("a rope as a key that is stored", () => {
+  const table = {};
+  table[buildByAppending(3)] = 1;
+  table[buildByPrepending(3)] = 2;
+  table["ab" + make("'abab'")] = 3;
+  return [Object.keys(table), table.ababab];
+});
+attempt("a rope as a map key", () => new Map([[buildByAppending(3), 1]]).get(buildByPrepending(3)));
+attempt("a rope in a switch", () => {
+  switch (buildByAppending(2)) {
+    case "abab":
+      return "matched";
+  }
+  return "not matched";
+});
+attempt("a rope that looks like an index", () => ["zero", "one", "two"]["" + make("'1'")] + ["a", "b"][make("'0'") + ""] + [..."0123456789ab"]["1" + make("'1'")]);
+attempt("a rope of narrow and wide pieces", () => probe(buildByAppending(10) + "世" + buildByAppending(10)));
+attempt("a rope of many kinds of pieces", () => {
+  let text = "";
+  for (let i = 0; i < 300; i++) text += i % 3 === 0 ? i : i % 3 === 1 ? "-" : [i];
+  return [text.length, text.slice(0, 12), hash(text)];
+});
+attempt("a slice of a rope of slices", () => {
+  const base = buildByAppending(1000);
+  const text = base.slice(1, 500) + base.slice(3, 700) + base.slice(999);
+  return [text.length, text.slice(495, 505), hash(text)];
+});
+attempt("a rope is split, joined, replaced and matched", () => {
+  const text = buildByAppending(1000);
+  return [text.split("b").length, text.split("").length, text.replaceAll("a", "").length, text.match(/ab/g).length, text.toUpperCase().slice(0, 4), text.trim().length, JSON.stringify(text).length, encodeURIComponent(text).length];
+});
+attempt("a rope is iterated", () => {
+  let count = 0;
+  for (const character of buildByAppending(5000)) if (character === "a") count++;
+  return [count, [...buildByDoubling(8)].length];
+});
+attempt("a rope is turned into a number", () => [+("1" + make("'2'")), ("1" + make("'2'")) * 2, parseInt("1" + make("'2px'")), ("0x" + make("'1f'")) | 0]);
+//// searches-are-made-in-values-that-are-not-strings.js
+////= show-26
+
+////= lines-25	indexOf	text	piece	text.indexOf
+
+////= lines-25	lastIndexOf	text	piece	text.lastIndexOf
+
+////= lines-25	includes	text	piece	text.includes
+
+////= lines-25	startsWith	text	piece	text.startsWith
+
+////= lines-25	endsWith	text	piece	text.endsWith
+
+////= countOccurrences
+
+////= receivers
+
+////= uses-26
+
+let total = 0;
+////= for-151
+console.log("2000 honest rounds", total);
+
+////= for-184	name	" in "	" in a string again"	"hello world"
+for (const text of receivers("indexOf")) attempt("occurrences in " + text, () => countOccurrences(make(text), "l"));
+
+attempt("a number is looked for in a list and in a text", () => [indexOf([1, 2, 3], 2), indexOf("123", 2), indexOf(["1", "2"], 2), includes([NaN], NaN), indexOf([NaN], NaN), includes("NaN", NaN)]);
+attempt("a byte is looked for in bytes", () => [indexOf(Buffer.from("hello"), 108), indexOf(Buffer.from("hello"), "l"), indexOf(new Uint8Array([104, 108]), 108), indexOf(new Uint8Array([104, 108]), "l"), includes(Buffer.from("hello"), "ell")]);
+attempt("undefined is looked for", () => [indexOf("undefined", undefined), includes([undefined], undefined), includes([,], undefined), indexOf([,], undefined), includes("x", undefined)]);
+//// searches-are-made-in-values-that-are-not-strings-with-the-values-in-plain-sight.js
+////= show-33
+
+const made = {
+  "'hello world'": () => ('hello world'),
+  "''": () => (''),
+  "'hello'.concat(' ', 'world')": () => ('hello'.concat(' ', 'world')),
+  "'h\\u00e9llo w\\u4e16rld'": () => ('h\u00e9llo w\u4e16rld'),
+  "'\\ud83d\\ude00 \\ud83d alone'": () => ('\ud83d\ude00 \ud83d alone'),
+  "new String('hello world')": () => (new String('hello world')),
+  "Object.assign(new String('hello world'), { indexOf() { return 'own member'; } })": () => (Object.assign(new String('hello world'), { indexOf() { return 'own member'; } })),
+  "Object.setPrototypeOf(new String('hello world'), { indexOf() { return 'other prototype'; } })": () => (Object.setPrototypeOf(new String('hello world'), { indexOf() { return 'other prototype'; } })),
+  "Object.setPrototypeOf(new String('hello world'), null)": () => (Object.setPrototypeOf(new String('hello world'), null)),
+  "{ indexOf(...given) { return 'mine ' + given.length; } }": () => ({ indexOf(...given) { return 'mine ' + given.length; } }),
+  "{ indexOf: String.prototype.indexOf, toString() { return 'borrowed method'; } }": () => ({ indexOf: String.prototype.indexOf, toString() { return 'borrowed method'; } }),
+  "{ indexOf: 5 }": () => ({ indexOf: 5 }),
+  "{}": () => ({}),
+  "['h', 'e', 'l', 'l', 'o', ' ', 'w']": () => (['h', 'e', 'l', 'l', 'o', ' ', 'w']),
+  "Buffer.from('hello world')": () => (Buffer.from('hello world')),
+  "new Uint8Array([104, 101, 108, 108, 111])": () => (new Uint8Array([104, 101, 108, 108, 111])),
+  "12345": () => (12345),
+  "-0": () => (-0),
+  "12345n": () => (12345n),
+  "Symbol('hello')": () => (Symbol('hello')),
+  "true": () => (true),
+  "null": () => (null),
+  "undefined": () => (undefined),
+  "new Proxy(new String('hello world'), {})": () => (new Proxy(new String('hello world'), {})),
+  "new Proxy({}, { get(target, key) { return () => 'trapped ' + String(key); } })": () => (new Proxy({}, { get(target, key) { return () => 'trapped ' + String(key); } })),
+  "Object.assign(new String('hello world'), { lastIndexOf() { return 'own member'; } })": () => (Object.assign(new String('hello world'), { lastIndexOf() { return 'own member'; } })),
+  "Object.setPrototypeOf(new String('hello world'), { lastIndexOf() { return 'other prototype'; } })": () => (Object.setPrototypeOf(new String('hello world'), { lastIndexOf() { return 'other prototype'; } })),
+  "{ lastIndexOf(...given) { return 'mine ' + given.length; } }": () => ({ lastIndexOf(...given) { return 'mine ' + given.length; } }),
+  "{ lastIndexOf: String.prototype.lastIndexOf, toString() { return 'borrowed method'; } }": () => ({ lastIndexOf: String.prototype.lastIndexOf, toString() { return 'borrowed method'; } }),
+  "{ lastIndexOf: 5 }": () => ({ lastIndexOf: 5 }),
+  "Object.assign(new String('hello world'), { includes() { return 'own member'; } })": () => (Object.assign(new String('hello world'), { includes() { return 'own member'; } })),
+  "Object.setPrototypeOf(new String('hello world'), { includes() { return 'other prototype'; } })": () => (Object.setPrototypeOf(new String('hello world'), { includes() { return 'other prototype'; } })),
+  "{ includes(...given) { return 'mine ' + given.length; } }": () => ({ includes(...given) { return 'mine ' + given.length; } }),
+  "{ includes: String.prototype.includes, toString() { return 'borrowed method'; } }": () => ({ includes: String.prototype.includes, toString() { return 'borrowed method'; } }),
+  "{ includes: 5 }": () => ({ includes: 5 }),
+  "Object.assign(new String('hello world'), { startsWith() { return 'own member'; } })": () => (Object.assign(new String('hello world'), { startsWith() { return 'own member'; } })),
+  "Object.setPrototypeOf(new String('hello world'), { startsWith() { return 'other prototype'; } })": () => (Object.setPrototypeOf(new String('hello world'), { startsWith() { return 'other prototype'; } })),
+  "{ startsWith(...given) { return 'mine ' + given.length; } }": () => ({ startsWith(...given) { return 'mine ' + given.length; } }),
+  "{ startsWith: String.prototype.startsWith, toString() { return 'borrowed method'; } }": () => ({ startsWith: String.prototype.startsWith, toString() { return 'borrowed method'; } }),
+  "{ startsWith: 5 }": () => ({ startsWith: 5 }),
+  "Object.assign(new String('hello world'), { endsWith() { return 'own member'; } })": () => (Object.assign(new String('hello world'), { endsWith() { return 'own member'; } })),
+  "Object.setPrototypeOf(new String('hello world'), { endsWith() { return 'other prototype'; } })": () => (Object.setPrototypeOf(new String('hello world'), { endsWith() { return 'other prototype'; } })),
+  "{ endsWith(...given) { return 'mine ' + given.length; } }": () => ({ endsWith(...given) { return 'mine ' + given.length; } }),
+  "{ endsWith: String.prototype.endsWith, toString() { return 'borrowed method'; } }": () => ({ endsWith: String.prototype.endsWith, toString() { return 'borrowed method'; } }),
+  "{ endsWith: 5 }": () => ({ endsWith: 5 }),
+};
+
+////= make-3
+
+////= lines-25	indexOf	text	piece	text.indexOf
+
+////= lines-25	lastIndexOf	text	piece	text.lastIndexOf
+
+////= lines-25	includes	text	piece	text.includes
+
+////= lines-25	startsWith	text	piece	text.startsWith
+
+////= lines-25	endsWith	text	piece	text.endsWith
+
+////= countOccurrences
+
+////= receivers
+
+////= uses-26
+
+let total = 0;
+////= for-151
+console.log("2000 honest rounds", total);
+
+////= for-184	name	" in "	" in a string again"	"hello world"
+for (const text of receivers("indexOf")) attempt("occurrences in " + text, () => countOccurrences(make(text), "l"));
+
+attempt("a number is looked for in a list and in a text", () => [indexOf([1, 2, 3], 2), indexOf("123", 2), indexOf(["1", "2"], 2), includes([NaN], NaN), indexOf([NaN], NaN), includes("NaN", NaN)]);
+attempt("a byte is looked for in bytes", () => [indexOf(Buffer.from("hello"), 108), indexOf(Buffer.from("hello"), "l"), indexOf(new Uint8Array([104, 108]), 108), indexOf(new Uint8Array([104, 108]), "l"), includes(Buffer.from("hello"), "ell")]);
+attempt("undefined is looked for", () => [indexOf("undefined", undefined), includes([undefined], undefined), includes([,], undefined), indexOf([,], undefined), includes("x", undefined)]);
+//// servers-and-scripts/a-bun-server-routes-by-path-and-method.js
+const notes = new Map();
+let nextId = 1;
+
+const server = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  async fetch(request) {
+    const url = new URL(request.url);
+    const match = /^\/notes\/(\d+)$/.exec(url.pathname);
+    if (url.pathname === "/notes" && request.method === "POST") {
+      const body = await request.json().catch(() => null);
+      if (!body || typeof body.text !== "string") return Response.json({ error: "text is missing" }, { status: 422 });
+      const note = { id: nextId++, text: body.text, tags: body.tags ?? [] };
+      notes.set(note.id, note);
+      return Response.json(note, { status: 201, headers: { location: "/notes/" + note.id } });
+    }
+    if (url.pathname === "/notes" && request.method === "GET") {
+      const tag = url.searchParams.get("tag");
+      return Response.json([...notes.values()].filter(note => !tag || note.tags.includes(tag)));
+    }
+    if (match && request.method === "GET") {
+      const note = notes.get(Number(match[1]));
+      return note ? Response.json(note) : new Response("no such note", { status: 404 });
+    }
+    if (match && request.method === "DELETE") return new Response(null, { status: notes.delete(Number(match[1])) ? 204 : 404 });
+    return new Response("method or path not known", { status: 405, headers: { allow: "GET, POST, DELETE" } });
+  },
+  error(error) {
+    return new Response("failed: " + error.message, { status: 500 });
+  },
+});
+
+const send = (path, method = "GET", body) => fetch(server.url + path.slice(1), { method, body: body === undefined ? undefined : JSON.stringify(body) });
+const created = await send("/notes", "POST", { text: "first", tags: ["a", "b"] });
+console.log(created.status, created.headers.get("location"), await created.json());
+console.log((await send("/notes", "POST", { text: "second" })).status);
+console.log((await send("/notes", "POST", { text: 5 })).status, (await send("/notes", "POST")).status);
+console.log(await (await send("/notes?tag=b")).json());
+console.log(await (await send("/notes/2")).json(), (await send("/notes/9")).status);
+console.log((await send("/notes/1", "DELETE")).status, (await send("/notes/1", "DELETE")).status);
+const refused = await send("/notes", "PATCH");
+console.log(refused.status, refused.headers.get("allow"), await refused.text());
+await server.stop(true);
+console.log("stopped", notes.size);
+//// servers-and-scripts/a-bun-server-tells-addresses-cookies-and-reloads.js
+const server = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  idleTimeout: 5,
+  development: false,
+  routes: {
+    "/cookies": request => {
+      const seen = request.cookies.get("visits");
+      request.cookies.set("visits", String(Number(seen ?? 0) + 1), { path: "/", httpOnly: true });
+      request.cookies.delete("old");
+      return Response.json({ seen, names: [...request.cookies.keys()].sort() });
+    },
+    "/redirect": Response.redirect("/cookies", 303),
+  },
+  fetch(request, server) {
+    const address = server.requestIP(request);
+    server.timeout(request, 10);
+    return Response.json({ address: address.address, family: address.family, port: address.port > 0, pending: server.pendingRequests, url: request.url.replace(/:\d+/, ":PORT") });
+  },
+});
+console.log(server.hostname, typeof server.port, server.url.protocol, server.development, typeof server.id, server.pendingRequests, server.pendingWebSockets);
+console.log(await (await fetch(server.url + "who?x=1")).json());
+const cookies = await fetch(server.url + "cookies", { headers: { cookie: "visits=4; old=1; other=x" } });
+console.log(await cookies.json(), cookies.headers.getSetCookie());
+console.log((await fetch(server.url + "redirect", { redirect: "manual" })).status);
+server.reload({ routes: {}, fetch: () => new Response("reloaded") });
+console.log(await (await fetch(server.url + "cookies")).text());
+server.unref();
+server.ref();
+await server.stop();
+console.log(await fetch(server.url).catch(error => error.code));
+//// servers-and-scripts/a-bun-server-with-a-table-of-routes.js
+const server = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  routes: {
+    "/health": new Response("ok"),
+    "/users/:id": request => Response.json({ id: request.params.id, verbose: new URL(request.url).searchParams.has("verbose") }),
+    "/items": {
+      GET: () => Response.json(["one", "two"]),
+      POST: async request => Response.json({ received: await request.text() }, { status: 201 }),
+    },
+    "/files/*": request => new Response("file " + new URL(request.url).pathname.slice("/files/".length)),
+    "/fails": () => {
+      throw new TypeError("on purpose");
+    },
+  },
+  fetch() {
+    return new Response("fallback", { status: 404 });
+  },
+  error(error) {
+    return new Response(error.name + ": " + error.message, { status: 500 });
+  },
+});
+
+async function show(path, init) {
+  const response = await fetch(new URL(path, server.url), init);
+  console.log(path, response.status, await response.text());
+}
+await show("/health");
+await show("/users/42?verbose");
+await show("/users/a%20b");
+await show("/items");
+await show("/items", { method: "POST", body: "three" });
+await show("/items", { method: "DELETE" });
+await show("/files/a/b/c.txt");
+await show("/fails");
+await show("/unknown");
+server.stop(true);
+//// servers-and-scripts/a-closure-in-a-literal-is-called-after-an-await-inside-an-async-context.js
+import { AsyncLocalStorage } from "node:async_hooks";
+
+const storage = new AsyncLocalStorage();
+
+async function handle({ getRouter, request, executeRouter, context, executed, signal, event }) {
+  const router = await getRouter();
+  if (signal.aborted || executed || !event) throw new Error("stopped");
+  return executeRouter(context, router, request);
+}
+
+async function resolveRequest(request, options, event) {
+  const signal = { aborted: false };
+  let routerPromise;
+  let executed;
+  const getRouter = () => {
+    routerPromise ??= (async () => {
+      if (signal.aborted) throw new Error("aborted");
+      return { request, options, event };
+    })();
+    return routerPromise;
+  };
+  const start = { getRouter, request, executed };
+  const executeRouter = async (context, matched, instance) => {
+    if (signal.aborted) throw new Error("aborted");
+    return request.id + (options.extra ?? 0) + matched.request.id + instance.id + context.weight;
+  };
+  const terminal = ({ context }) =>
+    storage.run({ ...start, after: context }, () => handle({ getRouter, request, executeRouter, context, executed, signal, event }));
+  return await terminal({ context: { weight: 1 } });
+}
+
+const rounds = Number(process.env.ROUNDS ?? 2000);
+let total = 0;
+for (let round = 0; round < rounds; round++) {
+  const batch = [];
+  for (let i = 0; i < 16; i++) batch.push(resolveRequest({ id: i, text: "request " + round }, {}, { round }));
+  for (const value of await Promise.all(batch)) total += value;
+}
+console.log(total);
+//// servers-and-scripts/a-file-is-copied-through-streams.js
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
+
+const folder = fs.mkdtempSync(path.join(os.tmpdir(), "copy-"));
+const source = path.join(folder, "source.txt");
+const target = path.join(folder, "target.txt");
+fs.writeFileSync(source, Array.from({ length: 5000 }, (_, index) => "row " + index).join("\n"));
+
+let chunks = 0;
+let bytes = 0;
+const upper = new Transform({
+  transform(chunk, encoding, done) {
+    chunks++;
+    bytes += chunk.length;
+    done(null, chunk.toString().toUpperCase());
+  },
+  flush(done) {
+    this.push("\nEND");
+    done();
+  },
+});
+
+await pipeline(fs.createReadStream(source, { highWaterMark: 4096 }), upper, fs.createWriteStream(target));
+const copied = fs.readFileSync(target, "utf8");
+console.log(chunks, bytes, copied.length, copied.slice(0, 11), copied.slice(-12));
+
+try {
+  await pipeline(fs.createReadStream(path.join(folder, "missing.txt")), fs.createWriteStream(target));
+} catch (error) {
+  console.log("pipeline failed:", error.code);
+}
+
+const part = fs.createReadStream(source, { start: 4, end: 12, encoding: "utf8" });
+let text = "";
+for await (const piece of part) text += piece;
+console.log(JSON.stringify(text));
+fs.rmSync(folder, { recursive: true });
+//// servers-and-scripts/a-file-is-read-through-a-stream.js
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const folder = fs.mkdtempSync(path.join(os.tmpdir(), "read-"));
+const file = path.join(folder, "text.txt");
+fs.writeFileSync(file, "some text");
+let text = "";
+for await (const chunk of fs.createReadStream(file, { encoding: "utf8", highWaterMark: 4 })) text += chunk + "|";
+console.log(text);
+fs.rmSync(folder, { recursive: true });
+//// servers-and-scripts/a-file-is-written-read-listed-and-removed.js
+import fs from "node:fs";
+import { mkdtemp, readFile, writeFile, appendFile, readdir, stat, rename, rm, access } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+const folder = await mkdtemp(path.join(os.tmpdir(), "notes-"));
+const first = path.join(folder, "first.txt");
+await writeFile(first, "line one\n");
+await appendFile(first, "line two\n", "utf8");
+console.log(JSON.stringify(await readFile(first, "utf8")), (await readFile(first)).length);
+const info = await stat(first);
+console.log(info.isFile(), info.isDirectory(), info.size, info.mtime instanceof Date, typeof info.mtimeMs);
+
+fs.mkdirSync(path.join(folder, "deep", "deeper"), { recursive: true });
+fs.writeFileSync(path.join(folder, "deep", "data.json"), JSON.stringify({ a: [1, 2], b: null }));
+console.log(JSON.parse(fs.readFileSync(path.join(folder, "deep", "data.json"), "utf8")));
+console.log((await readdir(folder)).sort(), fs.readdirSync(folder, { withFileTypes: true }).map(entry => entry.name + ":" + entry.isDirectory()).sort());
+console.log(fs.readdirSync(folder, { recursive: true }).sort());
+
+await rename(first, path.join(folder, "renamed.txt"));
+console.log(fs.existsSync(first), fs.existsSync(path.join(folder, "renamed.txt")));
+try {
+  await access(first);
+} catch (error) {
+  console.log(error.code, error.syscall, error instanceof Error);
+}
+try {
+  fs.readFileSync(path.join(folder, "missing.txt"));
+} catch (error) {
+  console.log(error.code, error.errno < 0, error.path === path.join(folder, "missing.txt"));
+}
+const descriptor = fs.openSync(path.join(folder, "renamed.txt"), "r");
+const bytes = Buffer.alloc(8);
+console.log(fs.readSync(descriptor, bytes, 0, 8, 5), bytes.toString());
+fs.closeSync(descriptor);
+fs.copyFileSync(path.join(folder, "renamed.txt"), path.join(folder, "copy.txt"));
+fs.truncateSync(path.join(folder, "copy.txt"), 4);
+console.log(fs.readFileSync(path.join(folder, "copy.txt"), "latin1"), fs.statSync(path.join(folder, "copy.txt")).size);
+await rm(folder, { recursive: true, force: true });
+console.log(fs.existsSync(folder));
+//// servers-and-scripts/a-file-is-written-through-a-stream.js
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const folder = fs.mkdtempSync(path.join(os.tmpdir(), "write-"));
+const file = path.join(folder, "text.txt");
+const stream = fs.createWriteStream(file);
+stream.write("first ");
+stream.end("second", () => {
+  console.log(fs.readFileSync(file, "utf8"), stream.bytesWritten);
+  fs.rmSync(folder, { recursive: true });
+});
+//// servers-and-scripts/a-file-stream-is-opened-in-a-program-that-also-imports-events.js
+import { EventEmitter } from "node:events";
+import fs from "node:fs";
+
+fs.createReadStream(process.execPath, { end: 3 })
+  .on("error", error => console.log("failed", error.message))
+  .on("open", fd => console.log("opened", typeof fd, typeof EventEmitter))
+  .resume();
+//// servers-and-scripts/a-function-with-1100-captured-variables-is-called-twice.js
+function makeCounters(seed) {
+  let
+    v0 = seed + 0, v1 = seed + 1, v2 = seed + 2, v3 = seed + 3, v4 = seed + 4, v5 = seed + 5, v6 = seed + 6, v7 = seed + 7, v8 = seed + 8, v9 = seed + 9, v10 = seed + 10, v11 = seed + 11,
+    v12 = seed + 12, v13 = seed + 13, v14 = seed + 14, v15 = seed + 15, v16 = seed + 16, v17 = seed + 17, v18 = seed + 18, v19 = seed + 19, v20 = seed + 20, v21 = seed + 21, v22 = seed + 22, v23 = seed + 23,
+    v24 = seed + 24, v25 = seed + 25, v26 = seed + 26, v27 = seed + 27, v28 = seed + 28, v29 = seed + 29, v30 = seed + 30, v31 = seed + 31, v32 = seed + 32, v33 = seed + 33, v34 = seed + 34, v35 = seed + 35,
+    v36 = seed + 36, v37 = seed + 37, v38 = seed + 38, v39 = seed + 39, v40 = seed + 40, v41 = seed + 41, v42 = seed + 42, v43 = seed + 43, v44 = seed + 44, v45 = seed + 45, v46 = seed + 46, v47 = seed + 47,
+    v48 = seed + 48, v49 = seed + 49, v50 = seed + 50, v51 = seed + 51, v52 = seed + 52, v53 = seed + 53, v54 = seed + 54, v55 = seed + 55, v56 = seed + 56, v57 = seed + 57, v58 = seed + 58, v59 = seed + 59,
+    v60 = seed + 60, v61 = seed + 61, v62 = seed + 62, v63 = seed + 63, v64 = seed + 64, v65 = seed + 65, v66 = seed + 66, v67 = seed + 67, v68 = seed + 68, v69 = seed + 69, v70 = seed + 70, v71 = seed + 71,
+    v72 = seed + 72, v73 = seed + 73, v74 = seed + 74, v75 = seed + 75, v76 = seed + 76, v77 = seed + 77, v78 = seed + 78, v79 = seed + 79, v80 = seed + 80, v81 = seed + 81, v82 = seed + 82, v83 = seed + 83,
+    v84 = seed + 84, v85 = seed + 85, v86 = seed + 86, v87 = seed + 87, v88 = seed + 88, v89 = seed + 89, v90 = seed + 90, v91 = seed + 91, v92 = seed + 92, v93 = seed + 93, v94 = seed + 94, v95 = seed + 95,
+    v96 = seed + 96, v97 = seed + 97, v98 = seed + 98, v99 = seed + 99, v100 = seed + 100, v101 = seed + 101, v102 = seed + 102, v103 = seed + 103, v104 = seed + 104, v105 = seed + 105, v106 = seed + 106, v107 = seed + 107,
+    v108 = seed + 108, v109 = seed + 109, v110 = seed + 110, v111 = seed + 111, v112 = seed + 112, v113 = seed + 113, v114 = seed + 114, v115 = seed + 115, v116 = seed + 116, v117 = seed + 117, v118 = seed + 118, v119 = seed + 119,
+    v120 = seed + 120, v121 = seed + 121, v122 = seed + 122, v123 = seed + 123, v124 = seed + 124, v125 = seed + 125, v126 = seed + 126, v127 = seed + 127, v128 = seed + 128, v129 = seed + 129, v130 = seed + 130, v131 = seed + 131,
+    v132 = seed + 132, v133 = seed + 133, v134 = seed + 134, v135 = seed + 135, v136 = seed + 136, v137 = seed + 137, v138 = seed + 138, v139 = seed + 139, v140 = seed + 140, v141 = seed + 141, v142 = seed + 142, v143 = seed + 143,
+    v144 = seed + 144, v145 = seed + 145, v146 = seed + 146, v147 = seed + 147, v148 = seed + 148, v149 = seed + 149, v150 = seed + 150, v151 = seed + 151, v152 = seed + 152, v153 = seed + 153, v154 = seed + 154, v155 = seed + 155,
+    v156 = seed + 156, v157 = seed + 157, v158 = seed + 158, v159 = seed + 159, v160 = seed + 160, v161 = seed + 161, v162 = seed + 162, v163 = seed + 163, v164 = seed + 164, v165 = seed + 165, v166 = seed + 166, v167 = seed + 167,
+    v168 = seed + 168, v169 = seed + 169, v170 = seed + 170, v171 = seed + 171, v172 = seed + 172, v173 = seed + 173, v174 = seed + 174, v175 = seed + 175, v176 = seed + 176, v177 = seed + 177, v178 = seed + 178, v179 = seed + 179,
+    v180 = seed + 180, v181 = seed + 181, v182 = seed + 182, v183 = seed + 183, v184 = seed + 184, v185 = seed + 185, v186 = seed + 186, v187 = seed + 187, v188 = seed + 188, v189 = seed + 189, v190 = seed + 190, v191 = seed + 191,
+    v192 = seed + 192, v193 = seed + 193, v194 = seed + 194, v195 = seed + 195, v196 = seed + 196, v197 = seed + 197, v198 = seed + 198, v199 = seed + 199, v200 = seed + 200, v201 = seed + 201, v202 = seed + 202, v203 = seed + 203,
+    v204 = seed + 204, v205 = seed + 205, v206 = seed + 206, v207 = seed + 207, v208 = seed + 208, v209 = seed + 209, v210 = seed + 210, v211 = seed + 211, v212 = seed + 212, v213 = seed + 213, v214 = seed + 214, v215 = seed + 215,
+    v216 = seed + 216, v217 = seed + 217, v218 = seed + 218, v219 = seed + 219, v220 = seed + 220, v221 = seed + 221, v222 = seed + 222, v223 = seed + 223, v224 = seed + 224, v225 = seed + 225, v226 = seed + 226, v227 = seed + 227,
+    v228 = seed + 228, v229 = seed + 229, v230 = seed + 230, v231 = seed + 231, v232 = seed + 232, v233 = seed + 233, v234 = seed + 234, v235 = seed + 235, v236 = seed + 236, v237 = seed + 237, v238 = seed + 238, v239 = seed + 239,
+    v240 = seed + 240, v241 = seed + 241, v242 = seed + 242, v243 = seed + 243, v244 = seed + 244, v245 = seed + 245, v246 = seed + 246, v247 = seed + 247, v248 = seed + 248, v249 = seed + 249, v250 = seed + 250, v251 = seed + 251,
+    v252 = seed + 252, v253 = seed + 253, v254 = seed + 254, v255 = seed + 255, v256 = seed + 256, v257 = seed + 257, v258 = seed + 258, v259 = seed + 259, v260 = seed + 260, v261 = seed + 261, v262 = seed + 262, v263 = seed + 263,
+    v264 = seed + 264, v265 = seed + 265, v266 = seed + 266, v267 = seed + 267, v268 = seed + 268, v269 = seed + 269, v270 = seed + 270, v271 = seed + 271, v272 = seed + 272, v273 = seed + 273, v274 = seed + 274, v275 = seed + 275,
+    v276 = seed + 276, v277 = seed + 277, v278 = seed + 278, v279 = seed + 279, v280 = seed + 280, v281 = seed + 281, v282 = seed + 282, v283 = seed + 283, v284 = seed + 284, v285 = seed + 285, v286 = seed + 286, v287 = seed + 287,
+    v288 = seed + 288, v289 = seed + 289, v290 = seed + 290, v291 = seed + 291, v292 = seed + 292, v293 = seed + 293, v294 = seed + 294, v295 = seed + 295, v296 = seed + 296, v297 = seed + 297, v298 = seed + 298, v299 = seed + 299,
+    v300 = seed + 300, v301 = seed + 301, v302 = seed + 302, v303 = seed + 303, v304 = seed + 304, v305 = seed + 305, v306 = seed + 306, v307 = seed + 307, v308 = seed + 308, v309 = seed + 309, v310 = seed + 310, v311 = seed + 311,
+    v312 = seed + 312, v313 = seed + 313, v314 = seed + 314, v315 = seed + 315, v316 = seed + 316, v317 = seed + 317, v318 = seed + 318, v319 = seed + 319, v320 = seed + 320, v321 = seed + 321, v322 = seed + 322, v323 = seed + 323,
+    v324 = seed + 324, v325 = seed + 325, v326 = seed + 326, v327 = seed + 327, v328 = seed + 328, v329 = seed + 329, v330 = seed + 330, v331 = seed + 331, v332 = seed + 332, v333 = seed + 333, v334 = seed + 334, v335 = seed + 335,
+    v336 = seed + 336, v337 = seed + 337, v338 = seed + 338, v339 = seed + 339, v340 = seed + 340, v341 = seed + 341, v342 = seed + 342, v343 = seed + 343, v344 = seed + 344, v345 = seed + 345, v346 = seed + 346, v347 = seed + 347,
+    v348 = seed + 348, v349 = seed + 349, v350 = seed + 350, v351 = seed + 351, v352 = seed + 352, v353 = seed + 353, v354 = seed + 354, v355 = seed + 355, v356 = seed + 356, v357 = seed + 357, v358 = seed + 358, v359 = seed + 359,
+    v360 = seed + 360, v361 = seed + 361, v362 = seed + 362, v363 = seed + 363, v364 = seed + 364, v365 = seed + 365, v366 = seed + 366, v367 = seed + 367, v368 = seed + 368, v369 = seed + 369, v370 = seed + 370, v371 = seed + 371,
+    v372 = seed + 372, v373 = seed + 373, v374 = seed + 374, v375 = seed + 375, v376 = seed + 376, v377 = seed + 377, v378 = seed + 378, v379 = seed + 379, v380 = seed + 380, v381 = seed + 381, v382 = seed + 382, v383 = seed + 383,
+    v384 = seed + 384, v385 = seed + 385, v386 = seed + 386, v387 = seed + 387, v388 = seed + 388, v389 = seed + 389, v390 = seed + 390, v391 = seed + 391, v392 = seed + 392, v393 = seed + 393, v394 = seed + 394, v395 = seed + 395,
+    v396 = seed + 396, v397 = seed + 397, v398 = seed + 398, v399 = seed + 399, v400 = seed + 400, v401 = seed + 401, v402 = seed + 402, v403 = seed + 403, v404 = seed + 404, v405 = seed + 405, v406 = seed + 406, v407 = seed + 407,
+    v408 = seed + 408, v409 = seed + 409, v410 = seed + 410, v411 = seed + 411, v412 = seed + 412, v413 = seed + 413, v414 = seed + 414, v415 = seed + 415, v416 = seed + 416, v417 = seed + 417, v418 = seed + 418, v419 = seed + 419,
+    v420 = seed + 420, v421 = seed + 421, v422 = seed + 422, v423 = seed + 423, v424 = seed + 424, v425 = seed + 425, v426 = seed + 426, v427 = seed + 427, v428 = seed + 428, v429 = seed + 429, v430 = seed + 430, v431 = seed + 431,
+    v432 = seed + 432, v433 = seed + 433, v434 = seed + 434, v435 = seed + 435, v436 = seed + 436, v437 = seed + 437, v438 = seed + 438, v439 = seed + 439, v440 = seed + 440, v441 = seed + 441, v442 = seed + 442, v443 = seed + 443,
+    v444 = seed + 444, v445 = seed + 445, v446 = seed + 446, v447 = seed + 447, v448 = seed + 448, v449 = seed + 449, v450 = seed + 450, v451 = seed + 451, v452 = seed + 452, v453 = seed + 453, v454 = seed + 454, v455 = seed + 455,
+    v456 = seed + 456, v457 = seed + 457, v458 = seed + 458, v459 = seed + 459, v460 = seed + 460, v461 = seed + 461, v462 = seed + 462, v463 = seed + 463, v464 = seed + 464, v465 = seed + 465, v466 = seed + 466, v467 = seed + 467,
+    v468 = seed + 468, v469 = seed + 469, v470 = seed + 470, v471 = seed + 471, v472 = seed + 472, v473 = seed + 473, v474 = seed + 474, v475 = seed + 475, v476 = seed + 476, v477 = seed + 477, v478 = seed + 478, v479 = seed + 479,
+    v480 = seed + 480, v481 = seed + 481, v482 = seed + 482, v483 = seed + 483, v484 = seed + 484, v485 = seed + 485, v486 = seed + 486, v487 = seed + 487, v488 = seed + 488, v489 = seed + 489, v490 = seed + 490, v491 = seed + 491,
+    v492 = seed + 492, v493 = seed + 493, v494 = seed + 494, v495 = seed + 495, v496 = seed + 496, v497 = seed + 497, v498 = seed + 498, v499 = seed + 499, v500 = seed + 500, v501 = seed + 501, v502 = seed + 502, v503 = seed + 503,
+    v504 = seed + 504, v505 = seed + 505, v506 = seed + 506, v507 = seed + 507, v508 = seed + 508, v509 = seed + 509, v510 = seed + 510, v511 = seed + 511, v512 = seed + 512, v513 = seed + 513, v514 = seed + 514, v515 = seed + 515,
+    v516 = seed + 516, v517 = seed + 517, v518 = seed + 518, v519 = seed + 519, v520 = seed + 520, v521 = seed + 521, v522 = seed + 522, v523 = seed + 523, v524 = seed + 524, v525 = seed + 525, v526 = seed + 526, v527 = seed + 527,
+    v528 = seed + 528, v529 = seed + 529, v530 = seed + 530, v531 = seed + 531, v532 = seed + 532, v533 = seed + 533, v534 = seed + 534, v535 = seed + 535, v536 = seed + 536, v537 = seed + 537, v538 = seed + 538, v539 = seed + 539,
+    v540 = seed + 540, v541 = seed + 541, v542 = seed + 542, v543 = seed + 543, v544 = seed + 544, v545 = seed + 545, v546 = seed + 546, v547 = seed + 547, v548 = seed + 548, v549 = seed + 549, v550 = seed + 550, v551 = seed + 551,
+    v552 = seed + 552, v553 = seed + 553, v554 = seed + 554, v555 = seed + 555, v556 = seed + 556, v557 = seed + 557, v558 = seed + 558, v559 = seed + 559, v560 = seed + 560, v561 = seed + 561, v562 = seed + 562, v563 = seed + 563,
+    v564 = seed + 564, v565 = seed + 565, v566 = seed + 566, v567 = seed + 567, v568 = seed + 568, v569 = seed + 569, v570 = seed + 570, v571 = seed + 571, v572 = seed + 572, v573 = seed + 573, v574 = seed + 574, v575 = seed + 575,
+    v576 = seed + 576, v577 = seed + 577, v578 = seed + 578, v579 = seed + 579, v580 = seed + 580, v581 = seed + 581, v582 = seed + 582, v583 = seed + 583, v584 = seed + 584, v585 = seed + 585, v586 = seed + 586, v587 = seed + 587,
+    v588 = seed + 588, v589 = seed + 589, v590 = seed + 590, v591 = seed + 591, v592 = seed + 592, v593 = seed + 593, v594 = seed + 594, v595 = seed + 595, v596 = seed + 596, v597 = seed + 597, v598 = seed + 598, v599 = seed + 599,
+    v600 = seed + 600, v601 = seed + 601, v602 = seed + 602, v603 = seed + 603, v604 = seed + 604, v605 = seed + 605, v606 = seed + 606, v607 = seed + 607, v608 = seed + 608, v609 = seed + 609, v610 = seed + 610, v611 = seed + 611,
+    v612 = seed + 612, v613 = seed + 613, v614 = seed + 614, v615 = seed + 615, v616 = seed + 616, v617 = seed + 617, v618 = seed + 618, v619 = seed + 619, v620 = seed + 620, v621 = seed + 621, v622 = seed + 622, v623 = seed + 623,
+    v624 = seed + 624, v625 = seed + 625, v626 = seed + 626, v627 = seed + 627, v628 = seed + 628, v629 = seed + 629, v630 = seed + 630, v631 = seed + 631, v632 = seed + 632, v633 = seed + 633, v634 = seed + 634, v635 = seed + 635,
+    v636 = seed + 636, v637 = seed + 637, v638 = seed + 638, v639 = seed + 639, v640 = seed + 640, v641 = seed + 641, v642 = seed + 642, v643 = seed + 643, v644 = seed + 644, v645 = seed + 645, v646 = seed + 646, v647 = seed + 647,
+    v648 = seed + 648, v649 = seed + 649, v650 = seed + 650, v651 = seed + 651, v652 = seed + 652, v653 = seed + 653, v654 = seed + 654, v655 = seed + 655, v656 = seed + 656, v657 = seed + 657, v658 = seed + 658, v659 = seed + 659,
+    v660 = seed + 660, v661 = seed + 661, v662 = seed + 662, v663 = seed + 663, v664 = seed + 664, v665 = seed + 665, v666 = seed + 666, v667 = seed + 667, v668 = seed + 668, v669 = seed + 669, v670 = seed + 670, v671 = seed + 671,
+    v672 = seed + 672, v673 = seed + 673, v674 = seed + 674, v675 = seed + 675, v676 = seed + 676, v677 = seed + 677, v678 = seed + 678, v679 = seed + 679, v680 = seed + 680, v681 = seed + 681, v682 = seed + 682, v683 = seed + 683,
+    v684 = seed + 684, v685 = seed + 685, v686 = seed + 686, v687 = seed + 687, v688 = seed + 688, v689 = seed + 689, v690 = seed + 690, v691 = seed + 691, v692 = seed + 692, v693 = seed + 693, v694 = seed + 694, v695 = seed + 695,
+    v696 = seed + 696, v697 = seed + 697, v698 = seed + 698, v699 = seed + 699, v700 = seed + 700, v701 = seed + 701, v702 = seed + 702, v703 = seed + 703, v704 = seed + 704, v705 = seed + 705, v706 = seed + 706, v707 = seed + 707,
+    v708 = seed + 708, v709 = seed + 709, v710 = seed + 710, v711 = seed + 711, v712 = seed + 712, v713 = seed + 713, v714 = seed + 714, v715 = seed + 715, v716 = seed + 716, v717 = seed + 717, v718 = seed + 718, v719 = seed + 719,
+    v720 = seed + 720, v721 = seed + 721, v722 = seed + 722, v723 = seed + 723, v724 = seed + 724, v725 = seed + 725, v726 = seed + 726, v727 = seed + 727, v728 = seed + 728, v729 = seed + 729, v730 = seed + 730, v731 = seed + 731,
+    v732 = seed + 732, v733 = seed + 733, v734 = seed + 734, v735 = seed + 735, v736 = seed + 736, v737 = seed + 737, v738 = seed + 738, v739 = seed + 739, v740 = seed + 740, v741 = seed + 741, v742 = seed + 742, v743 = seed + 743,
+    v744 = seed + 744, v745 = seed + 745, v746 = seed + 746, v747 = seed + 747, v748 = seed + 748, v749 = seed + 749, v750 = seed + 750, v751 = seed + 751, v752 = seed + 752, v753 = seed + 753, v754 = seed + 754, v755 = seed + 755,
+    v756 = seed + 756, v757 = seed + 757, v758 = seed + 758, v759 = seed + 759, v760 = seed + 760, v761 = seed + 761, v762 = seed + 762, v763 = seed + 763, v764 = seed + 764, v765 = seed + 765, v766 = seed + 766, v767 = seed + 767,
+    v768 = seed + 768, v769 = seed + 769, v770 = seed + 770, v771 = seed + 771, v772 = seed + 772, v773 = seed + 773, v774 = seed + 774, v775 = seed + 775, v776 = seed + 776, v777 = seed + 777, v778 = seed + 778, v779 = seed + 779,
+    v780 = seed + 780, v781 = seed + 781, v782 = seed + 782, v783 = seed + 783, v784 = seed + 784, v785 = seed + 785, v786 = seed + 786, v787 = seed + 787, v788 = seed + 788, v789 = seed + 789, v790 = seed + 790, v791 = seed + 791,
+    v792 = seed + 792, v793 = seed + 793, v794 = seed + 794, v795 = seed + 795, v796 = seed + 796, v797 = seed + 797, v798 = seed + 798, v799 = seed + 799, v800 = seed + 800, v801 = seed + 801, v802 = seed + 802, v803 = seed + 803,
+    v804 = seed + 804, v805 = seed + 805, v806 = seed + 806, v807 = seed + 807, v808 = seed + 808, v809 = seed + 809, v810 = seed + 810, v811 = seed + 811, v812 = seed + 812, v813 = seed + 813, v814 = seed + 814, v815 = seed + 815,
+    v816 = seed + 816, v817 = seed + 817, v818 = seed + 818, v819 = seed + 819, v820 = seed + 820, v821 = seed + 821, v822 = seed + 822, v823 = seed + 823, v824 = seed + 824, v825 = seed + 825, v826 = seed + 826, v827 = seed + 827,
+    v828 = seed + 828, v829 = seed + 829, v830 = seed + 830, v831 = seed + 831, v832 = seed + 832, v833 = seed + 833, v834 = seed + 834, v835 = seed + 835, v836 = seed + 836, v837 = seed + 837, v838 = seed + 838, v839 = seed + 839,
+    v840 = seed + 840, v841 = seed + 841, v842 = seed + 842, v843 = seed + 843, v844 = seed + 844, v845 = seed + 845, v846 = seed + 846, v847 = seed + 847, v848 = seed + 848, v849 = seed + 849, v850 = seed + 850, v851 = seed + 851,
+    v852 = seed + 852, v853 = seed + 853, v854 = seed + 854, v855 = seed + 855, v856 = seed + 856, v857 = seed + 857, v858 = seed + 858, v859 = seed + 859, v860 = seed + 860, v861 = seed + 861, v862 = seed + 862, v863 = seed + 863,
+    v864 = seed + 864, v865 = seed + 865, v866 = seed + 866, v867 = seed + 867, v868 = seed + 868, v869 = seed + 869, v870 = seed + 870, v871 = seed + 871, v872 = seed + 872, v873 = seed + 873, v874 = seed + 874, v875 = seed + 875,
+    v876 = seed + 876, v877 = seed + 877, v878 = seed + 878, v879 = seed + 879, v880 = seed + 880, v881 = seed + 881, v882 = seed + 882, v883 = seed + 883, v884 = seed + 884, v885 = seed + 885, v886 = seed + 886, v887 = seed + 887,
+    v888 = seed + 888, v889 = seed + 889, v890 = seed + 890, v891 = seed + 891, v892 = seed + 892, v893 = seed + 893, v894 = seed + 894, v895 = seed + 895, v896 = seed + 896, v897 = seed + 897, v898 = seed + 898, v899 = seed + 899,
+    v900 = seed + 900, v901 = seed + 901, v902 = seed + 902, v903 = seed + 903, v904 = seed + 904, v905 = seed + 905, v906 = seed + 906, v907 = seed + 907, v908 = seed + 908, v909 = seed + 909, v910 = seed + 910, v911 = seed + 911,
+    v912 = seed + 912, v913 = seed + 913, v914 = seed + 914, v915 = seed + 915, v916 = seed + 916, v917 = seed + 917, v918 = seed + 918, v919 = seed + 919, v920 = seed + 920, v921 = seed + 921, v922 = seed + 922, v923 = seed + 923,
+    v924 = seed + 924, v925 = seed + 925, v926 = seed + 926, v927 = seed + 927, v928 = seed + 928, v929 = seed + 929, v930 = seed + 930, v931 = seed + 931, v932 = seed + 932, v933 = seed + 933, v934 = seed + 934, v935 = seed + 935,
+    v936 = seed + 936, v937 = seed + 937, v938 = seed + 938, v939 = seed + 939, v940 = seed + 940, v941 = seed + 941, v942 = seed + 942, v943 = seed + 943, v944 = seed + 944, v945 = seed + 945, v946 = seed + 946, v947 = seed + 947,
+    v948 = seed + 948, v949 = seed + 949, v950 = seed + 950, v951 = seed + 951, v952 = seed + 952, v953 = seed + 953, v954 = seed + 954, v955 = seed + 955, v956 = seed + 956, v957 = seed + 957, v958 = seed + 958, v959 = seed + 959,
+    v960 = seed + 960, v961 = seed + 961, v962 = seed + 962, v963 = seed + 963, v964 = seed + 964, v965 = seed + 965, v966 = seed + 966, v967 = seed + 967, v968 = seed + 968, v969 = seed + 969, v970 = seed + 970, v971 = seed + 971,
+    v972 = seed + 972, v973 = seed + 973, v974 = seed + 974, v975 = seed + 975, v976 = seed + 976, v977 = seed + 977, v978 = seed + 978, v979 = seed + 979, v980 = seed + 980, v981 = seed + 981, v982 = seed + 982, v983 = seed + 983,
+    v984 = seed + 984, v985 = seed + 985, v986 = seed + 986, v987 = seed + 987, v988 = seed + 988, v989 = seed + 989, v990 = seed + 990, v991 = seed + 991, v992 = seed + 992, v993 = seed + 993, v994 = seed + 994, v995 = seed + 995,
+    v996 = seed + 996, v997 = seed + 997, v998 = seed + 998, v999 = seed + 999, v1000 = seed + 1000, v1001 = seed + 1001, v1002 = seed + 1002, v1003 = seed + 1003, v1004 = seed + 1004, v1005 = seed + 1005, v1006 = seed + 1006, v1007 = seed + 1007,
+    v1008 = seed + 1008, v1009 = seed + 1009, v1010 = seed + 1010, v1011 = seed + 1011, v1012 = seed + 1012, v1013 = seed + 1013, v1014 = seed + 1014, v1015 = seed + 1015, v1016 = seed + 1016, v1017 = seed + 1017, v1018 = seed + 1018, v1019 = seed + 1019,
+    v1020 = seed + 1020, v1021 = seed + 1021, v1022 = seed + 1022, v1023 = seed + 1023, v1024 = seed + 1024, v1025 = seed + 1025, v1026 = seed + 1026, v1027 = seed + 1027, v1028 = seed + 1028, v1029 = seed + 1029, v1030 = seed + 1030, v1031 = seed + 1031,
+    v1032 = seed + 1032, v1033 = seed + 1033, v1034 = seed + 1034, v1035 = seed + 1035, v1036 = seed + 1036, v1037 = seed + 1037, v1038 = seed + 1038, v1039 = seed + 1039, v1040 = seed + 1040, v1041 = seed + 1041, v1042 = seed + 1042, v1043 = seed + 1043,
+    v1044 = seed + 1044, v1045 = seed + 1045, v1046 = seed + 1046, v1047 = seed + 1047, v1048 = seed + 1048, v1049 = seed + 1049, v1050 = seed + 1050, v1051 = seed + 1051, v1052 = seed + 1052, v1053 = seed + 1053, v1054 = seed + 1054, v1055 = seed + 1055,
+    v1056 = seed + 1056, v1057 = seed + 1057, v1058 = seed + 1058, v1059 = seed + 1059, v1060 = seed + 1060, v1061 = seed + 1061, v1062 = seed + 1062, v1063 = seed + 1063, v1064 = seed + 1064, v1065 = seed + 1065, v1066 = seed + 1066, v1067 = seed + 1067,
+    v1068 = seed + 1068, v1069 = seed + 1069, v1070 = seed + 1070, v1071 = seed + 1071, v1072 = seed + 1072, v1073 = seed + 1073, v1074 = seed + 1074, v1075 = seed + 1075, v1076 = seed + 1076, v1077 = seed + 1077, v1078 = seed + 1078, v1079 = seed + 1079,
+    v1080 = seed + 1080, v1081 = seed + 1081, v1082 = seed + 1082, v1083 = seed + 1083, v1084 = seed + 1084, v1085 = seed + 1085, v1086 = seed + 1086, v1087 = seed + 1087, v1088 = seed + 1088, v1089 = seed + 1089, v1090 = seed + 1090, v1091 = seed + 1091,
+    v1092 = seed + 1092, v1093 = seed + 1093, v1094 = seed + 1094, v1095 = seed + 1095, v1096 = seed + 1096, v1097 = seed + 1097, v1098 = seed + 1098, v1099 = seed + 1099;
+  function bump() {
+    v0++; v1++; v2++; v3++; v4++; v5++; v6++; v7++; v8++; v9++; v10++; v11++; v12++; v13++; v14++; v15++; v16++; v17++; v18++; v19++; v20++; v21++; v22++; v23++;
+    v24++; v25++; v26++; v27++; v28++; v29++; v30++; v31++; v32++; v33++; v34++; v35++; v36++; v37++; v38++; v39++; v40++; v41++; v42++; v43++; v44++; v45++; v46++; v47++;
+    v48++; v49++; v50++; v51++; v52++; v53++; v54++; v55++; v56++; v57++; v58++; v59++; v60++; v61++; v62++; v63++; v64++; v65++; v66++; v67++; v68++; v69++; v70++; v71++;
+    v72++; v73++; v74++; v75++; v76++; v77++; v78++; v79++; v80++; v81++; v82++; v83++; v84++; v85++; v86++; v87++; v88++; v89++; v90++; v91++; v92++; v93++; v94++; v95++;
+    v96++; v97++; v98++; v99++; v100++; v101++; v102++; v103++; v104++; v105++; v106++; v107++; v108++; v109++; v110++; v111++; v112++; v113++; v114++; v115++; v116++; v117++; v118++; v119++;
+    v120++; v121++; v122++; v123++; v124++; v125++; v126++; v127++; v128++; v129++; v130++; v131++; v132++; v133++; v134++; v135++; v136++; v137++; v138++; v139++; v140++; v141++; v142++; v143++;
+    v144++; v145++; v146++; v147++; v148++; v149++; v150++; v151++; v152++; v153++; v154++; v155++; v156++; v157++; v158++; v159++; v160++; v161++; v162++; v163++; v164++; v165++; v166++; v167++;
+    v168++; v169++; v170++; v171++; v172++; v173++; v174++; v175++; v176++; v177++; v178++; v179++; v180++; v181++; v182++; v183++; v184++; v185++; v186++; v187++; v188++; v189++; v190++; v191++;
+    v192++; v193++; v194++; v195++; v196++; v197++; v198++; v199++; v200++; v201++; v202++; v203++; v204++; v205++; v206++; v207++; v208++; v209++; v210++; v211++; v212++; v213++; v214++; v215++;
+    v216++; v217++; v218++; v219++; v220++; v221++; v222++; v223++; v224++; v225++; v226++; v227++; v228++; v229++; v230++; v231++; v232++; v233++; v234++; v235++; v236++; v237++; v238++; v239++;
+    v240++; v241++; v242++; v243++; v244++; v245++; v246++; v247++; v248++; v249++; v250++; v251++; v252++; v253++; v254++; v255++; v256++; v257++; v258++; v259++; v260++; v261++; v262++; v263++;
+    v264++; v265++; v266++; v267++; v268++; v269++; v270++; v271++; v272++; v273++; v274++; v275++; v276++; v277++; v278++; v279++; v280++; v281++; v282++; v283++; v284++; v285++; v286++; v287++;
+    v288++; v289++; v290++; v291++; v292++; v293++; v294++; v295++; v296++; v297++; v298++; v299++; v300++; v301++; v302++; v303++; v304++; v305++; v306++; v307++; v308++; v309++; v310++; v311++;
+    v312++; v313++; v314++; v315++; v316++; v317++; v318++; v319++; v320++; v321++; v322++; v323++; v324++; v325++; v326++; v327++; v328++; v329++; v330++; v331++; v332++; v333++; v334++; v335++;
+    v336++; v337++; v338++; v339++; v340++; v341++; v342++; v343++; v344++; v345++; v346++; v347++; v348++; v349++; v350++; v351++; v352++; v353++; v354++; v355++; v356++; v357++; v358++; v359++;
+    v360++; v361++; v362++; v363++; v364++; v365++; v366++; v367++; v368++; v369++; v370++; v371++; v372++; v373++; v374++; v375++; v376++; v377++; v378++; v379++; v380++; v381++; v382++; v383++;
+    v384++; v385++; v386++; v387++; v388++; v389++; v390++; v391++; v392++; v393++; v394++; v395++; v396++; v397++; v398++; v399++; v400++; v401++; v402++; v403++; v404++; v405++; v406++; v407++;
+    v408++; v409++; v410++; v411++; v412++; v413++; v414++; v415++; v416++; v417++; v418++; v419++; v420++; v421++; v422++; v423++; v424++; v425++; v426++; v427++; v428++; v429++; v430++; v431++;
+    v432++; v433++; v434++; v435++; v436++; v437++; v438++; v439++; v440++; v441++; v442++; v443++; v444++; v445++; v446++; v447++; v448++; v449++; v450++; v451++; v452++; v453++; v454++; v455++;
+    v456++; v457++; v458++; v459++; v460++; v461++; v462++; v463++; v464++; v465++; v466++; v467++; v468++; v469++; v470++; v471++; v472++; v473++; v474++; v475++; v476++; v477++; v478++; v479++;
+    v480++; v481++; v482++; v483++; v484++; v485++; v486++; v487++; v488++; v489++; v490++; v491++; v492++; v493++; v494++; v495++; v496++; v497++; v498++; v499++; v500++; v501++; v502++; v503++;
+    v504++; v505++; v506++; v507++; v508++; v509++; v510++; v511++; v512++; v513++; v514++; v515++; v516++; v517++; v518++; v519++; v520++; v521++; v522++; v523++; v524++; v525++; v526++; v527++;
+    v528++; v529++; v530++; v531++; v532++; v533++; v534++; v535++; v536++; v537++; v538++; v539++; v540++; v541++; v542++; v543++; v544++; v545++; v546++; v547++; v548++; v549++; v550++; v551++;
+    v552++; v553++; v554++; v555++; v556++; v557++; v558++; v559++; v560++; v561++; v562++; v563++; v564++; v565++; v566++; v567++; v568++; v569++; v570++; v571++; v572++; v573++; v574++; v575++;
+    v576++; v577++; v578++; v579++; v580++; v581++; v582++; v583++; v584++; v585++; v586++; v587++; v588++; v589++; v590++; v591++; v592++; v593++; v594++; v595++; v596++; v597++; v598++; v599++;
+    v600++; v601++; v602++; v603++; v604++; v605++; v606++; v607++; v608++; v609++; v610++; v611++; v612++; v613++; v614++; v615++; v616++; v617++; v618++; v619++; v620++; v621++; v622++; v623++;
+    v624++; v625++; v626++; v627++; v628++; v629++; v630++; v631++; v632++; v633++; v634++; v635++; v636++; v637++; v638++; v639++; v640++; v641++; v642++; v643++; v644++; v645++; v646++; v647++;
+    v648++; v649++; v650++; v651++; v652++; v653++; v654++; v655++; v656++; v657++; v658++; v659++; v660++; v661++; v662++; v663++; v664++; v665++; v666++; v667++; v668++; v669++; v670++; v671++;
+    v672++; v673++; v674++; v675++; v676++; v677++; v678++; v679++; v680++; v681++; v682++; v683++; v684++; v685++; v686++; v687++; v688++; v689++; v690++; v691++; v692++; v693++; v694++; v695++;
+    v696++; v697++; v698++; v699++; v700++; v701++; v702++; v703++; v704++; v705++; v706++; v707++; v708++; v709++; v710++; v711++; v712++; v713++; v714++; v715++; v716++; v717++; v718++; v719++;
+    v720++; v721++; v722++; v723++; v724++; v725++; v726++; v727++; v728++; v729++; v730++; v731++; v732++; v733++; v734++; v735++; v736++; v737++; v738++; v739++; v740++; v741++; v742++; v743++;
+    v744++; v745++; v746++; v747++; v748++; v749++; v750++; v751++; v752++; v753++; v754++; v755++; v756++; v757++; v758++; v759++; v760++; v761++; v762++; v763++; v764++; v765++; v766++; v767++;
+    v768++; v769++; v770++; v771++; v772++; v773++; v774++; v775++; v776++; v777++; v778++; v779++; v780++; v781++; v782++; v783++; v784++; v785++; v786++; v787++; v788++; v789++; v790++; v791++;
+    v792++; v793++; v794++; v795++; v796++; v797++; v798++; v799++; v800++; v801++; v802++; v803++; v804++; v805++; v806++; v807++; v808++; v809++; v810++; v811++; v812++; v813++; v814++; v815++;
+    v816++; v817++; v818++; v819++; v820++; v821++; v822++; v823++; v824++; v825++; v826++; v827++; v828++; v829++; v830++; v831++; v832++; v833++; v834++; v835++; v836++; v837++; v838++; v839++;
+    v840++; v841++; v842++; v843++; v844++; v845++; v846++; v847++; v848++; v849++; v850++; v851++; v852++; v853++; v854++; v855++; v856++; v857++; v858++; v859++; v860++; v861++; v862++; v863++;
+    v864++; v865++; v866++; v867++; v868++; v869++; v870++; v871++; v872++; v873++; v874++; v875++; v876++; v877++; v878++; v879++; v880++; v881++; v882++; v883++; v884++; v885++; v886++; v887++;
+    v888++; v889++; v890++; v891++; v892++; v893++; v894++; v895++; v896++; v897++; v898++; v899++; v900++; v901++; v902++; v903++; v904++; v905++; v906++; v907++; v908++; v909++; v910++; v911++;
+    v912++; v913++; v914++; v915++; v916++; v917++; v918++; v919++; v920++; v921++; v922++; v923++; v924++; v925++; v926++; v927++; v928++; v929++; v930++; v931++; v932++; v933++; v934++; v935++;
+    v936++; v937++; v938++; v939++; v940++; v941++; v942++; v943++; v944++; v945++; v946++; v947++; v948++; v949++; v950++; v951++; v952++; v953++; v954++; v955++; v956++; v957++; v958++; v959++;
+    v960++; v961++; v962++; v963++; v964++; v965++; v966++; v967++; v968++; v969++; v970++; v971++; v972++; v973++; v974++; v975++; v976++; v977++; v978++; v979++; v980++; v981++; v982++; v983++;
+    v984++; v985++; v986++; v987++; v988++; v989++; v990++; v991++; v992++; v993++; v994++; v995++; v996++; v997++; v998++; v999++; v1000++; v1001++; v1002++; v1003++; v1004++; v1005++; v1006++; v1007++;
+    v1008++; v1009++; v1010++; v1011++; v1012++; v1013++; v1014++; v1015++; v1016++; v1017++; v1018++; v1019++; v1020++; v1021++; v1022++; v1023++; v1024++; v1025++; v1026++; v1027++; v1028++; v1029++; v1030++; v1031++;
+    v1032++; v1033++; v1034++; v1035++; v1036++; v1037++; v1038++; v1039++; v1040++; v1041++; v1042++; v1043++; v1044++; v1045++; v1046++; v1047++; v1048++; v1049++; v1050++; v1051++; v1052++; v1053++; v1054++; v1055++;
+    v1056++; v1057++; v1058++; v1059++; v1060++; v1061++; v1062++; v1063++; v1064++; v1065++; v1066++; v1067++; v1068++; v1069++; v1070++; v1071++; v1072++; v1073++; v1074++; v1075++; v1076++; v1077++; v1078++; v1079++;
+    v1080++; v1081++; v1082++; v1083++; v1084++; v1085++; v1086++; v1087++; v1088++; v1089++; v1090++; v1091++; v1092++; v1093++; v1094++; v1095++; v1096++; v1097++; v1098++; v1099++;
+  }
+  function total() {
+    return (
+    v0 + v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8 + v9 + v10 + v11 + v12 + v13 + v14 + v15 + v16 + v17 + v18 + v19 + v20 + v21 + v22 + v23 +
+    v24 + v25 + v26 + v27 + v28 + v29 + v30 + v31 + v32 + v33 + v34 + v35 + v36 + v37 + v38 + v39 + v40 + v41 + v42 + v43 + v44 + v45 + v46 + v47 +
+    v48 + v49 + v50 + v51 + v52 + v53 + v54 + v55 + v56 + v57 + v58 + v59 + v60 + v61 + v62 + v63 + v64 + v65 + v66 + v67 + v68 + v69 + v70 + v71 +
+    v72 + v73 + v74 + v75 + v76 + v77 + v78 + v79 + v80 + v81 + v82 + v83 + v84 + v85 + v86 + v87 + v88 + v89 + v90 + v91 + v92 + v93 + v94 + v95 +
+    v96 + v97 + v98 + v99 + v100 + v101 + v102 + v103 + v104 + v105 + v106 + v107 + v108 + v109 + v110 + v111 + v112 + v113 + v114 + v115 + v116 + v117 + v118 + v119 +
+    v120 + v121 + v122 + v123 + v124 + v125 + v126 + v127 + v128 + v129 + v130 + v131 + v132 + v133 + v134 + v135 + v136 + v137 + v138 + v139 + v140 + v141 + v142 + v143 +
+    v144 + v145 + v146 + v147 + v148 + v149 + v150 + v151 + v152 + v153 + v154 + v155 + v156 + v157 + v158 + v159 + v160 + v161 + v162 + v163 + v164 + v165 + v166 + v167 +
+    v168 + v169 + v170 + v171 + v172 + v173 + v174 + v175 + v176 + v177 + v178 + v179 + v180 + v181 + v182 + v183 + v184 + v185 + v186 + v187 + v188 + v189 + v190 + v191 +
+    v192 + v193 + v194 + v195 + v196 + v197 + v198 + v199 + v200 + v201 + v202 + v203 + v204 + v205 + v206 + v207 + v208 + v209 + v210 + v211 + v212 + v213 + v214 + v215 +
+    v216 + v217 + v218 + v219 + v220 + v221 + v222 + v223 + v224 + v225 + v226 + v227 + v228 + v229 + v230 + v231 + v232 + v233 + v234 + v235 + v236 + v237 + v238 + v239 +
+    v240 + v241 + v242 + v243 + v244 + v245 + v246 + v247 + v248 + v249 + v250 + v251 + v252 + v253 + v254 + v255 + v256 + v257 + v258 + v259 + v260 + v261 + v262 + v263 +
+    v264 + v265 + v266 + v267 + v268 + v269 + v270 + v271 + v272 + v273 + v274 + v275 + v276 + v277 + v278 + v279 + v280 + v281 + v282 + v283 + v284 + v285 + v286 + v287 +
+    v288 + v289 + v290 + v291 + v292 + v293 + v294 + v295 + v296 + v297 + v298 + v299 + v300 + v301 + v302 + v303 + v304 + v305 + v306 + v307 + v308 + v309 + v310 + v311 +
+    v312 + v313 + v314 + v315 + v316 + v317 + v318 + v319 + v320 + v321 + v322 + v323 + v324 + v325 + v326 + v327 + v328 + v329 + v330 + v331 + v332 + v333 + v334 + v335 +
+    v336 + v337 + v338 + v339 + v340 + v341 + v342 + v343 + v344 + v345 + v346 + v347 + v348 + v349 + v350 + v351 + v352 + v353 + v354 + v355 + v356 + v357 + v358 + v359 +
+    v360 + v361 + v362 + v363 + v364 + v365 + v366 + v367 + v368 + v369 + v370 + v371 + v372 + v373 + v374 + v375 + v376 + v377 + v378 + v379 + v380 + v381 + v382 + v383 +
+    v384 + v385 + v386 + v387 + v388 + v389 + v390 + v391 + v392 + v393 + v394 + v395 + v396 + v397 + v398 + v399 + v400 + v401 + v402 + v403 + v404 + v405 + v406 + v407 +
+    v408 + v409 + v410 + v411 + v412 + v413 + v414 + v415 + v416 + v417 + v418 + v419 + v420 + v421 + v422 + v423 + v424 + v425 + v426 + v427 + v428 + v429 + v430 + v431 +
+    v432 + v433 + v434 + v435 + v436 + v437 + v438 + v439 + v440 + v441 + v442 + v443 + v444 + v445 + v446 + v447 + v448 + v449 + v450 + v451 + v452 + v453 + v454 + v455 +
+    v456 + v457 + v458 + v459 + v460 + v461 + v462 + v463 + v464 + v465 + v466 + v467 + v468 + v469 + v470 + v471 + v472 + v473 + v474 + v475 + v476 + v477 + v478 + v479 +
+    v480 + v481 + v482 + v483 + v484 + v485 + v486 + v487 + v488 + v489 + v490 + v491 + v492 + v493 + v494 + v495 + v496 + v497 + v498 + v499 + v500 + v501 + v502 + v503 +
+    v504 + v505 + v506 + v507 + v508 + v509 + v510 + v511 + v512 + v513 + v514 + v515 + v516 + v517 + v518 + v519 + v520 + v521 + v522 + v523 + v524 + v525 + v526 + v527 +
+    v528 + v529 + v530 + v531 + v532 + v533 + v534 + v535 + v536 + v537 + v538 + v539 + v540 + v541 + v542 + v543 + v544 + v545 + v546 + v547 + v548 + v549 + v550 + v551 +
+    v552 + v553 + v554 + v555 + v556 + v557 + v558 + v559 + v560 + v561 + v562 + v563 + v564 + v565 + v566 + v567 + v568 + v569 + v570 + v571 + v572 + v573 + v574 + v575 +
+    v576 + v577 + v578 + v579 + v580 + v581 + v582 + v583 + v584 + v585 + v586 + v587 + v588 + v589 + v590 + v591 + v592 + v593 + v594 + v595 + v596 + v597 + v598 + v599 +
+    v600 + v601 + v602 + v603 + v604 + v605 + v606 + v607 + v608 + v609 + v610 + v611 + v612 + v613 + v614 + v615 + v616 + v617 + v618 + v619 + v620 + v621 + v622 + v623 +
+    v624 + v625 + v626 + v627 + v628 + v629 + v630 + v631 + v632 + v633 + v634 + v635 + v636 + v637 + v638 + v639 + v640 + v641 + v642 + v643 + v644 + v645 + v646 + v647 +
+    v648 + v649 + v650 + v651 + v652 + v653 + v654 + v655 + v656 + v657 + v658 + v659 + v660 + v661 + v662 + v663 + v664 + v665 + v666 + v667 + v668 + v669 + v670 + v671 +
+    v672 + v673 + v674 + v675 + v676 + v677 + v678 + v679 + v680 + v681 + v682 + v683 + v684 + v685 + v686 + v687 + v688 + v689 + v690 + v691 + v692 + v693 + v694 + v695 +
+    v696 + v697 + v698 + v699 + v700 + v701 + v702 + v703 + v704 + v705 + v706 + v707 + v708 + v709 + v710 + v711 + v712 + v713 + v714 + v715 + v716 + v717 + v718 + v719 +
+    v720 + v721 + v722 + v723 + v724 + v725 + v726 + v727 + v728 + v729 + v730 + v731 + v732 + v733 + v734 + v735 + v736 + v737 + v738 + v739 + v740 + v741 + v742 + v743 +
+    v744 + v745 + v746 + v747 + v748 + v749 + v750 + v751 + v752 + v753 + v754 + v755 + v756 + v757 + v758 + v759 + v760 + v761 + v762 + v763 + v764 + v765 + v766 + v767 +
+    v768 + v769 + v770 + v771 + v772 + v773 + v774 + v775 + v776 + v777 + v778 + v779 + v780 + v781 + v782 + v783 + v784 + v785 + v786 + v787 + v788 + v789 + v790 + v791 +
+    v792 + v793 + v794 + v795 + v796 + v797 + v798 + v799 + v800 + v801 + v802 + v803 + v804 + v805 + v806 + v807 + v808 + v809 + v810 + v811 + v812 + v813 + v814 + v815 +
+    v816 + v817 + v818 + v819 + v820 + v821 + v822 + v823 + v824 + v825 + v826 + v827 + v828 + v829 + v830 + v831 + v832 + v833 + v834 + v835 + v836 + v837 + v838 + v839 +
+    v840 + v841 + v842 + v843 + v844 + v845 + v846 + v847 + v848 + v849 + v850 + v851 + v852 + v853 + v854 + v855 + v856 + v857 + v858 + v859 + v860 + v861 + v862 + v863 +
+    v864 + v865 + v866 + v867 + v868 + v869 + v870 + v871 + v872 + v873 + v874 + v875 + v876 + v877 + v878 + v879 + v880 + v881 + v882 + v883 + v884 + v885 + v886 + v887 +
+    v888 + v889 + v890 + v891 + v892 + v893 + v894 + v895 + v896 + v897 + v898 + v899 + v900 + v901 + v902 + v903 + v904 + v905 + v906 + v907 + v908 + v909 + v910 + v911 +
+    v912 + v913 + v914 + v915 + v916 + v917 + v918 + v919 + v920 + v921 + v922 + v923 + v924 + v925 + v926 + v927 + v928 + v929 + v930 + v931 + v932 + v933 + v934 + v935 +
+    v936 + v937 + v938 + v939 + v940 + v941 + v942 + v943 + v944 + v945 + v946 + v947 + v948 + v949 + v950 + v951 + v952 + v953 + v954 + v955 + v956 + v957 + v958 + v959 +
+    v960 + v961 + v962 + v963 + v964 + v965 + v966 + v967 + v968 + v969 + v970 + v971 + v972 + v973 + v974 + v975 + v976 + v977 + v978 + v979 + v980 + v981 + v982 + v983 +
+    v984 + v985 + v986 + v987 + v988 + v989 + v990 + v991 + v992 + v993 + v994 + v995 + v996 + v997 + v998 + v999 + v1000 + v1001 + v1002 + v1003 + v1004 + v1005 + v1006 + v1007 +
+    v1008 + v1009 + v1010 + v1011 + v1012 + v1013 + v1014 + v1015 + v1016 + v1017 + v1018 + v1019 + v1020 + v1021 + v1022 + v1023 + v1024 + v1025 + v1026 + v1027 + v1028 + v1029 + v1030 + v1031 +
+    v1032 + v1033 + v1034 + v1035 + v1036 + v1037 + v1038 + v1039 + v1040 + v1041 + v1042 + v1043 + v1044 + v1045 + v1046 + v1047 + v1048 + v1049 + v1050 + v1051 + v1052 + v1053 + v1054 + v1055 +
+    v1056 + v1057 + v1058 + v1059 + v1060 + v1061 + v1062 + v1063 + v1064 + v1065 + v1066 + v1067 + v1068 + v1069 + v1070 + v1071 + v1072 + v1073 + v1074 + v1075 + v1076 + v1077 + v1078 + v1079 +
+    v1080 + v1081 + v1082 + v1083 + v1084 + v1085 + v1086 + v1087 + v1088 + v1089 + v1090 + v1091 + v1092 + v1093 + v1094 + v1095 + v1096 + v1097 + v1098 + v1099
+    );
+  }
+  return { bump, total };
+}
+
+const first = makeCounters(1);
+console.log("first", first.total());
+const second = makeCounters(2);
+first.bump();
+console.log("second", second.total(), "first again", first.total());
+//// servers-and-scripts/a-log-file-is-parsed-grouped-and-reported.js
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const folder = mkdtempSync(join(tmpdir(), "logs-"));
+const file = join(folder, "access.log");
+const paths = ["/", "/about", "/api/users", "/api/orders", "/static/app.js"];
+const rows = [];
+for (let i = 0; i < 400; i++) {
+  const status = i % 37 === 0 ? 500 : i % 11 === 0 ? 404 : 200;
+  rows.push(JSON.stringify({ time: new Date(Date.UTC(2026, 0, 1, 0, 0, i * 7)).toISOString(), method: i % 5 === 3 ? "POST" : "GET", path: paths[i % paths.length], status, ms: (i * 13) % 250 + 0.5, bytes: status === 200 ? 100 + i : undefined }));
+}
+rows.splice(50, 0, "this line is not json", "", '{"time": "broken"');
+writeFileSync(file, rows.join("\n") + "\n");
+
+const byPath = new Map();
+let skipped = 0;
+for (const line of readFileSync(file, "utf8").split("\n")) {
+  if (!line) continue;
+  let entry;
+  try {
+    entry = JSON.parse(line);
+  } catch {
+    skipped++;
+    continue;
+  }
+  let group = byPath.get(entry.path);
+  if (!group) byPath.set(entry.path, (group = { path: entry.path, hits: 0, errors: 0, ms: 0, slowest: 0, bytes: 0, methods: new Set(), first: entry.time, last: entry.time }));
+  group.hits++;
+  if (entry.status >= 500) group.errors++;
+  group.ms += entry.ms;
+  group.slowest = Math.max(group.slowest, entry.ms);
+  group.bytes += entry.bytes ?? 0;
+  group.methods.add(entry.method);
+  if (entry.time > group.last) group.last = entry.time;
+}
+const report = [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path)).map(group => ({ ...group, methods: [...group.methods].join("+"), mean: (group.ms / group.hits).toFixed(2), share: ((100 * group.hits) / 400).toFixed(1) + "%" }));
+for (const line of report) console.log(line.path.padEnd(16), String(line.hits).padStart(4), String(line.errors).padStart(2), line.mean.padStart(8), String(line.slowest).padStart(6), line.bytes.toLocaleString("en-US").padStart(8), line.methods, line.share, line.last.slice(11, 19));
+console.log("skipped", skipped, "total", report.reduce((sum, line) => sum + line.hits, 0), Object.groupBy(report, line => (line.errors ? "failing" : "healthy")).failing?.length);
+const hours = new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", hour: "2-digit", minute: "2-digit" }).format(new Date(report[0].last));
+console.log(hours, new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1 }).format(12345.678), new Intl.PluralRules("en").select(1), new Intl.ListFormat("en").format(["a", "b", "c"]), new Intl.RelativeTimeFormat("en").format(-2, "day"));
+rmSync(folder, { recursive: true });
+//// servers-and-scripts/a-mark-is-set-on-the-performance-timeline.js
+performance.mark("start");
+console.log(performance.getEntriesByName("start").length, performance.mark === Performance.prototype.mark, Object.getOwnPropertyNames(performance));
+//// servers-and-scripts/a-node-http-client-asks-a-node-http-server.js
+import http from "node:http";
+
+const server = http.createServer((request, response) => {
+  let size = 0;
+  request.setEncoding("utf8");
+  request.on("data", text => (size += text.length));
+  request.on("end", () => {
+    response.writeHead(request.url === "/teapot" ? 418 : 200, { "content-type": "text/plain", "x-method": request.method });
+    response.write("got " + size + " characters");
+    response.end(" on " + request.url);
+  });
+});
+
+function ask(options, body) {
+  return new Promise((resolve, reject) => {
+    const request = http.request({ host: "127.0.0.1", port: server.address().port, agent: false, ...options }, response => {
+      const parts = [];
+      response.on("data", part => parts.push(part));
+      response.on("end", () => resolve({ status: response.statusCode, message: response.statusMessage, method: response.headers["x-method"], text: Buffer.concat(parts).toString() }));
+    });
+    request.on("error", reject);
+    if (body !== undefined) request.write(body);
+    request.end();
+  });
+}
+
+server.listen(0, "127.0.0.1", async () => {
+  console.log(await ask({ path: "/first" }));
+  console.log(await ask({ path: "/second", method: "PUT", headers: { "content-type": "text/plain" } }, "twelve chars"));
+  console.log(await ask({ path: "/teapot", method: "POST" }, Buffer.from("abc")));
+  http.get({ host: "127.0.0.1", port: server.address().port, path: "/get", agent: false }, response => {
+    response.resume();
+    response.on("end", () => {
+      console.log("get", response.statusCode, response.httpVersion, typeof response.headers.date);
+      server.close();
+    });
+  });
+});
+//// servers-and-scripts/a-node-http-server-answers-a-get-and-a-post.js
+import http from "node:http";
+
+const server = http.createServer((request, response) => {
+  const url = new URL(request.url, "http://localhost");
+  if (request.method === "GET" && url.pathname === "/hello") {
+    response.writeHead(200, { "Content-Type": "text/plain", "X-Name": url.searchParams.get("name") ?? "nobody" });
+    response.end("hello " + (url.searchParams.get("name") ?? "nobody"));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/sum") {
+    const chunks = [];
+    request.on("data", chunk => chunks.push(chunk));
+    request.on("end", () => {
+      let numbers;
+      try {
+        numbers = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      } catch {
+        response.statusCode = 400;
+        response.end("bad json");
+        return;
+      }
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ sum: numbers.reduce((total, n) => total + n, 0), type: request.headers["content-type"] }));
+    });
+    return;
+  }
+  response.statusCode = 404;
+  response.end("not found: " + request.method + " " + url.pathname);
+});
+
+server.listen(0, "127.0.0.1", async () => {
+  const base = "http://127.0.0.1:" + server.address().port;
+  const hello = await fetch(base + "/hello?name=Ada");
+  console.log(hello.status, hello.headers.get("content-type"), hello.headers.get("x-name"), await hello.text());
+  const sum = await fetch(base + "/sum", { method: "POST", headers: { "content-type": "application/json" }, body: "[1, 2, 3.5]" });
+  console.log(sum.status, await sum.json());
+  const bad = await fetch(base + "/sum", { method: "POST", body: "[1," });
+  console.log(bad.status, await bad.text());
+  const missing = await fetch(base + "/nothing", { method: "DELETE" });
+  console.log(missing.status, await missing.text());
+  server.close(() => console.log("closed"));
+});
+//// servers-and-scripts/a-node-http-server-sets-reads-and-removes-headers.js
+import http from "node:http";
+
+const server = http.createServer((request, response) => {
+  response.setHeader("Set-Cookie", ["a=1; Path=/", "b=2"]);
+  response.setHeader("X-Number", 5);
+  response.setHeader("X-Gone", "soon");
+  response.appendHeader?.("X-List", "one");
+  response.appendHeader?.("X-List", "two");
+  response.removeHeader("x-gone");
+  const seen = {
+    has: [response.hasHeader("X-NUMBER"), response.hasHeader("x-gone")],
+    number: response.getHeader("x-number"),
+    names: response.getHeaderNames(),
+    cookie: response.getHeaders()["set-cookie"],
+    method: request.method,
+    url: request.url,
+    version: request.httpVersion + " " + request.httpVersionMajor,
+    raw: request.rawHeaders.filter((_, index) => index % 2 === 0).map(name => name.toLowerCase()).filter(name => name.startsWith("x-")),
+    twice: request.headers["x-twice"],
+    distinct: request.headersDistinct?.["x-twice"],
+    cookie2: request.headers.cookie,
+    host: typeof request.headers.host,
+    remote: request.socket.remoteAddress,
+    complete: request.complete,
+    sent: response.headersSent,
+  };
+  response.writeHead(201, "Made", { "Content-Type": "application/json", "X-Late": ["p", "q"] });
+  try {
+    response.setHeader("x-too-late", "1");
+  } catch (error) {
+    seen.late = error.code;
+  }
+  response.end(JSON.stringify(seen));
+});
+
+server.keepAliveTimeout = 1000;
+server.listen(0, "127.0.0.1", async () => {
+  const headers = new Headers({ "x-one": "1", cookie: "s=1; t=2" });
+  headers.append("x-twice", "a");
+  headers.append("x-twice", "b");
+  const answer = await fetch("http://127.0.0.1:" + server.address().port + "/path?q=1", { method: "PATCH", headers, body: "x" });
+  console.log(answer.status, answer.statusText, answer.headers.getSetCookie(), answer.headers.get("x-number"), answer.headers.get("x-list"), answer.headers.get("x-late"), answer.headers.has("x-gone"));
+  console.log(await answer.json());
+  console.log(http.STATUS_CODES[404], http.STATUS_CODES[999], http.METHODS.includes("PATCH"), http.METHODS.length > 20, typeof http.globalAgent.maxSockets, http.maxHeaderSize, server.listening, server.timeout, server.requestTimeout);
+  try {
+    http.validateHeaderName("bad name");
+  } catch (error) {
+    console.log(error.code);
+  }
+  try {
+    http.validateHeaderValue("x", "bad\nvalue");
+  } catch (error) {
+    console.log(error.code);
+  }
+  server.closeAllConnections();
+  server.close(error => console.log("closed", error));
+});
+//// servers-and-scripts/a-require-made-by-create-require-loads-a-built-in-module.js
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+console.log(require("node:os").EOL === "\n", typeof require("node:zlib").gzipSync, require("url") === require("node:url"));
+//// servers-and-scripts/a-static-file-server-with-ranges-and-types.js
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { extname, join, normalize, sep } from "node:path";
+
+const root = mkdtempSync(join(tmpdir(), "static-"));
+mkdirSync(join(root, "css"));
+writeFileSync(join(root, "index.html"), "<h1>home</h1>");
+writeFileSync(join(root, "css", "site.css"), "body { margin: 0 }");
+writeFileSync(join(root, "data.bin"), Buffer.from(Array.from({ length: 100 }, (_, i) => i)));
+const types = { ".html": "text/html; charset=utf-8", ".css": "text/css" };
+
+const server = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  async fetch(request) {
+    let pathname = decodeURIComponent(new URL(request.url).pathname);
+    if (pathname.endsWith("/")) pathname += "index.html";
+    const full = normalize(join(root, pathname));
+    if (!full.startsWith(root + sep)) return new Response("forbidden", { status: 403 });
+    const file = Bun.file(full);
+    if (!(await file.exists())) return new Response("not found", { status: 404 });
+    const headers = { "content-type": types[extname(full)] ?? "application/octet-stream", "accept-ranges": "bytes" };
+    const range = /^bytes=(\d+)-(\d*)$/.exec(request.headers.get("range") ?? "");
+    if (range) {
+      const start = Number(range[1]);
+      const end = range[2] ? Math.min(Number(range[2]), file.size - 1) : file.size - 1;
+      if (start > end) return new Response(null, { status: 416, headers: { "content-range": "bytes */" + file.size } });
+      return new Response(file.slice(start, end + 1), { status: 206, headers: { ...headers, "content-range": `bytes ${start}-${end}/${file.size}` } });
+    }
+    return new Response(request.method === "HEAD" ? null : file, { headers: { ...headers, "content-length": String(file.size) } });
+  },
+});
+
+async function show(path, init) {
+  const answer = await fetch(server.url.origin + path, init);
+  const body = new Uint8Array(await answer.arrayBuffer());
+  console.log(path, answer.status, answer.headers.get("content-type"), answer.headers.get("content-length"), answer.headers.get("content-range"), body.length, body.length < 20 ? new TextDecoder("latin1").decode(body).replace(/[^ -~]/g, ".") : "");
+}
+await show("/");
+await show("/css/site.css");
+await show("/css/missing.css");
+await show("/data.bin");
+await show("/data.bin", { headers: { range: "bytes=10-19" } });
+await show("/data.bin", { headers: { range: "bytes=95-" } });
+await show("/data.bin", { headers: { range: "bytes=200-300" } });
+await show("/index.html", { method: "HEAD" });
+await show("/%2e%2e/%2e%2e/etc/hostname");
+server.stop(true);
+rmSync(root, { recursive: true });
+//// servers-and-scripts/a-tcp-server-echoes-lines.js
+import net from "node:net";
+
+const events = [];
+const server = net.createServer(socket => {
+  socket.setEncoding("utf8");
+  let pending = "";
+  socket.on("data", text => {
+    pending += text;
+    let end;
+    while ((end = pending.indexOf("\n")) >= 0) {
+      const line = pending.slice(0, end);
+      pending = pending.slice(end + 1);
+      if (line === "quit") socket.end("bye\n");
+      else socket.write(line.split("").reverse().join("") + "\n");
+    }
+  });
+  socket.on("end", () => events.push("server saw the end"));
+  socket.on("close", hadError => events.push("server socket closed " + hadError));
+});
+
+server.on("listening", () => events.push("listening " + server.listening));
+server.listen(0, "127.0.0.1", () => {
+  const { port, family, address } = server.address();
+  console.log(typeof port, family, address);
+  const client = net.connect({ port, host: "127.0.0.1" });
+  let received = "";
+  client.on("connect", () => {
+    console.log(client.remoteAddress, client.remotePort === port, client.remoteFamily, client.connecting, client.readyState);
+    client.write("abc\nde");
+    client.write("f\n");
+    client.write(Buffer.from("quit\n"));
+  });
+  client.on("data", chunk => (received += chunk));
+  client.on("close", () => {
+    console.log(JSON.stringify(received), client.bytesWritten, client.bytesRead, client.destroyed);
+    server.getConnections((error, count) => {
+      console.log(error, count);
+      server.close(() => {
+        console.log(events.sort(), server.listening);
+        net.connect(port, "127.0.0.1").on("error", error => console.log(error.code, error.syscall, net.isIP("127.0.0.1"), net.isIPv6("::1"), net.isIP("nope")));
+      });
+    });
+  });
+});
+//// servers-and-scripts/a-tcp-server-of-bun-echoes-what-it-gets.js
+const log = [];
+const server = Bun.listen({
+  hostname: "127.0.0.1",
+  port: 0,
+  data: { name: "server side" },
+  socket: {
+    open(socket) {
+      socket.data = { received: 0 };
+      log.push("server open");
+    },
+    data(socket, chunk) {
+      socket.data.received += chunk.length;
+      socket.write("echo:" + chunk.toString());
+      if (chunk.toString().endsWith("bye")) socket.end();
+    },
+    close(socket) {
+      log.push("server close after " + socket.data.received);
+    },
+    error(socket, error) {
+      log.push("server error " + error.message);
+    },
+  },
+});
+
+let text = "";
+const closed = Promise.withResolvers();
+const client = await Bun.connect({
+  hostname: "127.0.0.1",
+  port: server.port,
+  socket: {
+    open(socket) {
+      log.push("client open " + socket.remoteAddress + " " + (socket.localPort > 0));
+      socket.write("hello ");
+    },
+    data(socket, chunk) {
+      text += chunk.toString();
+      if (text === "echo:hello ") socket.write(new TextEncoder().encode("and bye"));
+    },
+    end() {
+      log.push("client end");
+    },
+    close() {
+      closed.resolve();
+    },
+  },
+});
+await closed.promise;
+await Bun.sleep(5);
+console.log(text, log.sort(), typeof client.readyState, server.hostname, typeof server.port);
+server.stop(true);
+console.log(await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } }).catch(error => error.code));
+//// servers-and-scripts/a-timer-calls-the-resolve-function-of-a-promise-with-an-argument.js
+const later = new Promise(resolve => setTimeout(resolve, 20, "loaded while the page was sent"));
+console.log(await later);
+const sooner = new Promise(resolve => setTimeout(resolve, 1));
+console.log(await sooner);
+const refused = new Promise((resolve, reject) => setTimeout(reject, 1, new RangeError("too late")));
+console.log(await refused.catch(error => error.message));
+console.log(await new Promise(resolve => setImmediate(resolve, "at once")), await new Promise(resolve => process.nextTick(resolve, "next tick")), await new Promise(resolve => queueMicrotask(resolve)));
+//// servers-and-scripts/a-websocket-server-echoes-and-publishes.js
+const log = [];
+const server = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  fetch(request, server) {
+    const name = new URL(request.url).searchParams.get("name");
+    if (server.upgrade(request, { data: { name } })) return;
+    return new Response("not a websocket", { status: 426 });
+  },
+  websocket: {
+    open(socket) {
+      socket.subscribe("room");
+      log.push("open " + socket.data.name);
+    },
+    message(socket, message) {
+      if (typeof message === "string") socket.send(socket.data.name + " said " + message);
+      else socket.send(new Uint8Array(message).reverse());
+      if (message === "shout") server.publish("room", "everyone hears " + socket.data.name);
+    },
+    close(socket, code, reason) {
+      log.push("close " + socket.data.name + " " + code + " " + reason);
+    },
+  },
+});
+
+console.log((await fetch(server.url)).status);
+const client = new WebSocket("ws://127.0.0.1:" + server.port + "/?name=ada");
+client.binaryType = "arraybuffer";
+const received = [];
+const next = () => new Promise(resolve => client.addEventListener("message", event => resolve(event.data), { once: true }));
+await new Promise((resolve, reject) => {
+  client.onopen = resolve;
+  client.onerror = reject;
+});
+console.log(client.readyState === WebSocket.OPEN, client.protocol === "", server.pendingWebSockets);
+client.send("hello");
+received.push(await next());
+client.send(new Uint8Array([1, 2, 3]));
+received.push([...new Uint8Array(await next())]);
+client.send("shout");
+received.push(await next(), await next());
+console.log(received);
+const closed = new Promise(resolve => (client.onclose = event => resolve([event.code, event.reason, event.wasClean])));
+client.close(4000, "done");
+console.log(await closed);
+await Bun.sleep(10);
+console.log(log);
+server.stop(true);
+//// servers-and-scripts/a-worker-thread-computes-and-answers.js
+import { Worker, isMainThread, parentPort, threadId, workerData } from "node:worker_threads";
+
+if (isMainThread) {
+  const worker = new Worker(new URL(import.meta.url), { workerData: { base: 10 } });
+  const answers = [];
+  worker.on("online", () => answers.push("online"));
+  worker.on("message", message => {
+    answers.push(message);
+    if (message.done) worker.postMessage({ stop: true });
+  });
+  worker.on("error", error => answers.push("error " + error.message));
+  worker.postMessage({ numbers: [1, 2, 3] });
+  worker.postMessage({ numbers: new Float64Array([0.5, 0.25]), done: true });
+  const code = await new Promise(resolve => worker.on("exit", resolve));
+  console.log(answers, code, threadId, typeof worker.threadId);
+
+  const failing = new Worker(new URL(import.meta.url), { workerData: { fail: true } });
+  console.log(await new Promise(resolve => failing.on("error", error => resolve(error.name + ": " + error.message))));
+  const ended = new Worker(new URL(import.meta.url), { workerData: { forever: true } });
+  await new Promise(resolve => ended.once("message", resolve));
+  console.log(typeof (await ended.terminate()));
+} else {
+  if (workerData.fail) throw new RangeError("the worker fails on purpose");
+  if (workerData.forever) {
+    parentPort.postMessage("ready");
+    setInterval(() => {}, 1000);
+  }
+  parentPort.on("message", message => {
+    if (message.stop) process.exit(7);
+    let sum = workerData.base;
+    for (const n of message.numbers) sum += n;
+    parentPort.postMessage({ sum, done: message.done === true, main: isMainThread, positive: threadId > 0 });
+  });
+}
+//// servers-and-scripts/an-event-emitter-subclass-reports-progress.js
+import { EventEmitter, once } from "node:events";
+
+class Download extends EventEmitter {
+  constructor(size) {
+    super();
+    this.size = size;
+    this.done = 0;
+  }
+  step(amount) {
+    this.done = Math.min(this.size, this.done + amount);
+    this.emit("progress", this.done, this.size);
+    if (this.done === this.size) this.emit("finish", { bytes: this.done });
+    return this;
+  }
+}
+
+const download = new Download(10);
+const log = [];
+const onProgress = (done, size) => log.push(done + "/" + size);
+download.on("progress", onProgress);
+download.prependListener("progress", done => log.push("first " + done));
+download.once("progress", () => log.push("only once"));
+console.log(download.listenerCount("progress"), download.eventNames(), download.emit("nobody listens"));
+const finished = once(download, "finish");
+download.step(4).step(4);
+download.off("progress", onProgress);
+download.step(4);
+console.log(log, await finished, download.listenerCount("progress"));
+
+try {
+  download.emit("error", new RangeError("no listener for errors"));
+} catch (error) {
+  console.log(error.name, error.message);
+}
+download.on("error", error => console.log("handled", error.message));
+console.log(download.emit("error", new Error("second")));
+download.setMaxListeners(1);
+console.log(download.getMaxListeners(), download.rawListeners("error").length, download instanceof EventEmitter);
+download.removeAllListeners();
+console.log(download.eventNames());
+//// servers-and-scripts/assertions-pass-and-fail-with-messages.js
+import assert, { AssertionError } from "node:assert";
+import strict from "node:assert/strict";
+
+assert(true);
+assert.ok(1, "one is truthy");
+assert.equal(1, "1");
+assert.strictEqual("a", "a");
+assert.deepEqual({ a: [1, 2] }, { a: [1, 2] });
+assert.deepStrictEqual(new Map([["k", { v: 1 }]]), new Map([["k", { v: 1 }]]));
+assert.notDeepStrictEqual([1], ["1"]);
+assert.match("abc", /b/);
+assert.throws(() => JSON.parse("{"), SyntaxError);
+assert.throws(() => { throw new RangeError("too big"); }, { name: "RangeError", message: "too big" });
+assert.doesNotThrow(() => 1);
+await assert.rejects(Promise.reject(new TypeError("no")), TypeError);
+await assert.doesNotReject(Promise.resolve(1));
+
+function failure(run) {
+  try {
+    run();
+    return "did not fail";
+  } catch (error) {
+    return [error instanceof AssertionError, error.name, error.code, error.operator, error.generatedMessage, JSON.stringify(error.actual), JSON.stringify(error.expected), error.message.split("\n")[0]].join(" | ");
+  }
+}
+console.log(failure(() => assert.strictEqual(1, 2)));
+console.log(failure(() => assert.strictEqual(1, 2, "my own message")));
+console.log(failure(() => assert.deepStrictEqual({ a: 1 }, { a: 2 })));
+console.log(failure(() => assert.ok(0)));
+console.log(failure(() => assert.equal(null, 0)));
+console.log(failure(() => assert.notStrictEqual("x", "x")));
+console.log(failure(() => assert.throws(() => {})));
+console.log(failure(() => assert.fail("stop here")));
+console.log(failure(() => assert.ifError(new Error("an error came back"))));
+console.log(failure(() => strict.equal(1, "1")));
+console.log(failure(() => assert.match("abc", /x/)));
+console.log(failure(() => assert.strictEqual(NaN, NaN)), failure(() => assert.deepStrictEqual(-0, 0)).split(" | ")[2]);
+console.log(await assert.rejects(Promise.resolve(1)).catch(error => error.code), strict.strictEqual === assert.strictEqual, typeof assert.CallTracker);
+const custom = new AssertionError({ actual: 1, expected: 2, operator: "strictEqual" });
+console.log(custom.message.split("\n").length > 1, Object.keys(custom).sort().join());
+//// servers-and-scripts/bound-methods-are-called-by-timers-promises-and-events.js
+import { EventEmitter } from "node:events";
+
+class Job {
+  constructor(name) {
+    this.name = name;
+    this.runs = 0;
+  }
+  run(...values) {
+    this.runs++;
+    console.log(this.name, "ran with", values.length, "values");
+    return this.runs;
+  }
+}
+
+const job = new Job("job");
+console.log("called directly", job.run.bind(job)());
+[1].forEach(job.run.bind(job));
+await Promise.resolve("value").then(job.run.bind(job));
+await new Promise(resolve => {
+  queueMicrotask(job.run.bind(job));
+  process.nextTick(job.run.bind(job));
+  setImmediate(job.run.bind(job));
+  setTimeout(job.run.bind(job), 1);
+  setTimeout(resolve, 20);
+});
+const emitter = new EventEmitter();
+emitter.on("go", job.run.bind(job));
+emitter.emit("go", 1, 2);
+const target = new EventTarget();
+target.addEventListener("go", job.run.bind(job));
+target.dispatchEvent(new Event("go"));
+const controller = new AbortController();
+controller.signal.addEventListener("abort", job.run.bind(job));
+controller.abort();
+console.log(job.runs);
+//// servers-and-scripts/buffers-are-built-sliced-and-encoded.js
+import { Buffer } from "node:buffer";
+
+const text = Buffer.from("héllo wörld", "utf8");
+console.log(text.length, text.toString("hex"), text.toString("base64"), text.toString("base64url"), text.toString("latin1").length, text.toString("utf8", 0, 6));
+console.log(Buffer.from("aGk=", "base64").toString(), Buffer.from("6869", "hex").toString(), Buffer.from([104, 105, 256 + 33]).toString(), Buffer.from("zz", "hex").length);
+const joined = Buffer.concat([Buffer.from("ab"), Buffer.alloc(2, "x"), new Uint8Array([99])]);
+console.log(joined.toString(), joined.indexOf("x"), joined.includes("c"), joined.lastIndexOf("x"), joined.indexOf("nope"), Buffer.byteLength("héllo"), Buffer.isBuffer(joined), Buffer.isBuffer(new Uint8Array(1)));
+
+const numbers = Buffer.alloc(24);
+numbers.writeUInt32BE(0xdeadbeef, 0);
+numbers.writeInt16LE(-2, 4);
+numbers.writeDoubleLE(1.5, 8);
+numbers.writeBigUInt64BE(2n ** 63n, 16);
+console.log(numbers.readUInt32BE(0), numbers.readUInt32LE(0), numbers.readInt16LE(4), numbers.readUInt8(4), numbers.readDoubleLE(8), numbers.readBigUInt64BE(16), numbers.readFloatBE(0));
+////= lines-132	numbers.readUInt32BE	22	name	code
+const view = joined.subarray(1, 3);
+view[0] = 66;
+console.log(joined.toString(), view.toString(), view.buffer === joined.buffer, joined.slice(-2).toString());
+console.log(Buffer.compare(Buffer.from("a"), Buffer.from("b")), Buffer.from("a").equals(Buffer.from("a")), [Buffer.from("b"), Buffer.from("a")].sort(Buffer.compare).join());
+console.log(JSON.stringify(Buffer.from("hi")), Buffer.from(JSON.parse(JSON.stringify(Buffer.from("hi")))).toString(), [...Buffer.from("hi").entries()]);
+const target = Buffer.alloc(6, ".");
+console.log(Buffer.from("abcd").copy(target, 1, 1), target.toString(), target.fill("xy", 4).toString(), target.write("Z", 0), target.toString(), target.swap16().toString(), target.reverse().toString());
+console.log(Buffer.from(new Uint16Array([1, 2]).buffer).length, Buffer.from("€").toJSON().data, Buffer.alloc(3).toString("hex"), Buffer.allocUnsafe(5).length, Buffer.poolSize);
+console.log(new TextDecoder("utf-8", { fatal: false }).decode(Buffer.from([0xe2, 0x82])), atob(btoa("round trip")), Buffer.from("\ud800").toString("hex"));
+//// servers-and-scripts/bun-file-reads-writes-and-slices.js
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const folder = mkdtempSync(join(tmpdir(), "bun-file-"));
+const name = join(folder, "data.json");
+console.log(await Bun.write(name, JSON.stringify({ list: [1, 2, 3], text: "héllo" })));
+const file = Bun.file(name);
+console.log(file.size, file.type, await file.exists(), file.name === name);
+console.log(await file.json(), (await file.text()).length, (await file.arrayBuffer()).byteLength, (await file.bytes()).length);
+console.log(await file.slice(2, 6).text(), file.slice(2, 6).size);
+
+const missing = Bun.file(join(folder, "missing.txt"));
+console.log(await missing.exists(), missing.size, await missing.text().catch(error => error.code));
+
+const copy = join(folder, "copy.json");
+console.log(await Bun.write(copy, file), await Bun.file(copy).text() === await file.text());
+console.log(await Bun.write(join(folder, "bytes.bin"), new Uint8Array([1, 2, 3])), await Bun.write(join(folder, "from-response.txt"), new Response("from a response")));
+console.log(await Bun.file(join(folder, "from-response.txt")).text());
+
+const writer = Bun.file(join(folder, "log.txt")).writer();
+writer.write("first\n");
+writer.write(new TextEncoder().encode("second\n"));
+await writer.flush();
+writer.write("third\n");
+await writer.end();
+console.log(JSON.stringify(await Bun.file(join(folder, "log.txt")).text()));
+
+let streamed = 0;
+for await (const chunk of Bun.file(join(folder, "log.txt")).stream()) streamed += chunk.length;
+console.log(streamed, (await Bun.file(join(folder, "log.txt")).stat()).isFile());
+await Bun.file(copy).delete();
+console.log(await Bun.file(copy).exists(), new Response(file).headers.get("content-type"));
+rmSync(folder, { recursive: true });
+//// servers-and-scripts/bun-utilities-hash-escape-compare-and-inspect.js
+console.log(Bun.hash("hello"), Bun.hash.crc32("hello"), Bun.hash.adler32("hello"), Bun.hash.wyhash("hello", 1n), Bun.hash.cityHash32("hello"), typeof Bun.hash.xxHash64("a"));
+console.log(new Bun.CryptoHasher("sha256").update("hel").update("lo").digest("hex"), Bun.CryptoHasher.hash("md5", "hello", "base64"), Bun.SHA1.hash("a", "hex"), new Bun.CryptoHasher("sha256", "key").update("m").digest("hex").length, Bun.CryptoHasher.algorithms.includes("blake2b256"));
+console.log(Bun.escapeHTML('<a href="x">T&C\'s</a>'), Bun.escapeHTML(5), Bun.stringWidth("héllo 日本 🚀"), Bun.stringWidth("\u001b[31mred\u001b[0m"), Bun.stripANSI?.("\u001b[31mred\u001b[0m"));
+console.log(Bun.deepEquals({ a: [1, { b: 2 }] }, { a: [1, { b: 2 }] }), Bun.deepEquals({ a: undefined }, {}), Bun.deepEquals({ a: undefined }, {}, true), Bun.deepMatch({ a: 1 }, { a: 1, b: 2 }), Bun.deepEquals(new Map([[1, 2]]), new Map([[1, 3]])));
+console.log(Bun.inspect({ a: 1, list: [1, "two"], nested: { deep: { deeper: { deepest: 1 } } } }), Bun.inspect("text"), Bun.inspect(new Error("e")).split("\n").some(line => line.includes("e")), Bun.inspect.table([{ a: 1, b: "x" }]));
+console.log(Bun.semver.satisfies("1.2.3", "^1.0.0"), Bun.semver.satisfies("2.0.0", "~1.2"), Bun.semver.order("1.0.0", "1.0.1"), ["1.10.0", "1.2.0", "1.2.0-beta"].sort(Bun.semver.order));
+console.log(Bun.TOML.parse('title = "x"\n[server]\nport = 80\ntags = ["a", "b"]\n'), Bun.YAML?.parse("a: 1\nlist:\n  - x\n  - y\n"), Bun.JSONC?.parse('{ "a": 1, // note\n }'));
+const glob = new Bun.Glob("**/*.{js,ts}");
+console.log(glob.match("src/a/b.ts"), glob.match("src/a/b.css"), new Bun.Glob("a?c").match("abc"), new Bun.Glob("!x").match("y"));
+console.log(typeof Bun.nanoseconds(), typeof Bun.version, /^[0-9a-f]+$/.test(Bun.revision), Bun.which("sh") !== null, Bun.which("no-such-tool-anywhere"), Bun.env === process.env || typeof Bun.env.PATH, /^[0-9a-f-]{36}$/.test(Bun.randomUUIDv7()), Bun.isMainThread);
+console.log(Bun.peek(Promise.resolve(5)), Bun.peek.status(new Promise(() => {})), Bun.peek(7), Bun.fileURLToPath(Bun.pathToFileURL(process.cwd() + "/a b")).endsWith("a b"), Bun.pathToFileURL("/a b").href, Bun.color("red", "hex"), Bun.color("#0f0", "[rgb]"), Bun.color("nope", "css"));
+const sink = new Bun.ArrayBufferSink();
+sink.start({ asUint8Array: true });
+sink.write("ab");
+sink.write(new Uint8Array([99]));
+console.log(sink.end(), Bun.concatArrayBuffers([new Uint8Array([1]), new Uint8Array([2, 3])]).byteLength, await Bun.readableStreamToText(new Blob(["stream"]).stream()), (await Bun.readableStreamToArray(new Blob(["x"]).stream())).length, await Bun.readableStreamToJSON(new Blob(["[1]"]).stream()));
+const cookies = new Bun.CookieMap("a=1; b=two%20words");
+cookies.set("c", "3", { httpOnly: true, path: "/", maxAge: 60 });
+cookies.delete("a");
+console.log(cookies.get("b"), cookies.has("a"), cookies.size, cookies.toSetCookieHeaders(), Bun.Cookie.parse("id=7; Secure; SameSite=Lax").sameSite);
+console.log(await Bun.password.verify("secret", await Bun.password.hash("secret", { algorithm: "bcrypt", cost: 4 })), Bun.password.verifySync("wrong", Bun.password.hashSync("secret", { algorithm: "bcrypt", cost: 4 })));
+console.log((await Bun.$`echo shell $(echo nested)`.text()).trim(), (await Bun.$`exit 3`.nothrow().quiet()).exitCode, (await Bun.$`echo ${"a b; c"}`.text()).trim(), await Bun.$`echo '{"a":1}'`.json(), (await Bun.$`echo x; echo y`.lines().next()).value);
+//// servers-and-scripts/bytes-are-decoded-piece-by-piece.js
+import { StringDecoder } from "node:string_decoder";
+
+const euro = Buffer.from("a€b😀c");
+const decoder = new StringDecoder("utf8");
+const pieces = [];
+for (const byte of euro) pieces.push(decoder.write(Buffer.from([byte])));
+console.log(pieces, JSON.stringify(decoder.end()), decoder.encoding);
+const cut = new StringDecoder("utf8");
+console.log(JSON.stringify(cut.write(euro.subarray(0, 3))), JSON.stringify(cut.end()), JSON.stringify(new StringDecoder("hex").write(euro.subarray(0, 2))));
+const base64 = new StringDecoder("base64");
+console.log(base64.write(Buffer.from("ab")), base64.write(Buffer.from("cd")), base64.end(), new StringDecoder("utf16le").write(Buffer.from("hi", "utf16le")), new StringDecoder("latin1").write(Buffer.from([0xe9])));
+////= lines-349	new StringDecoder("klingon"
+
+const streaming = new TextDecoder("utf-8");
+let text = "";
+for (let i = 0; i < euro.length; i += 2) text += streaming.decode(euro.subarray(i, i + 2), { stream: true });
+console.log(text + streaming.decode(), streaming.encoding, streaming.fatal, streaming.ignoreBOM);
+////= lines-349	new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array([0xff])
+console.log(new TextDecoder().decode(new Uint8Array([0xef, 0xbb, 0xbf, 0x61])).length, new TextDecoder("utf-8", { ignoreBOM: true }).decode(new Uint8Array([0xef, 0xbb, 0xbf, 0x61])).length);
+console.log(new TextDecoder("utf-16le").decode(new Uint8Array([0x61, 0, 0x3d, 0xd8, 0, 0xde])), new TextDecoder("latin1").decode(new Uint8Array([0xe9, 0x80])), new TextDecoder("windows-1252").encoding);
+const encoder = new TextEncoder();
+const room = new Uint8Array(5);
+console.log(encoder.encode("€").length, encoder.encodeInto("a€€", room), room, encoder.encode("\ud800").join(), encoder.encode().length, encoder.encoding);
+const stream = new Blob([euro.subarray(0, 3), euro.subarray(3)]).stream().pipeThrough(new TextDecoderStream());
+let joined = "";
+for await (const piece of stream) joined += piece;
+console.log(joined, joined.length, [...joined].length, joined.isWellFormed(), "\ud800".toWellFormed() === "�", joined.normalize("NFD").length);
+//// servers-and-scripts/child-processes-are-started-and-their-output-read.js
+import { exec, execFile, execFileSync, spawn, spawnSync } from "node:child_process";
+import { promisify } from "node:util";
+
+console.log(JSON.stringify(execFileSync("echo", ["from", "execFileSync"], { encoding: "utf8" })));
+const sync = spawnSync("sh", ["-c", "echo out; echo err >&2; exit 3"]);
+console.log(sync.status, sync.signal, sync.stdout.toString(), sync.stderr.toString());
+try {
+  execFileSync("sh", ["-c", "exit 2"], { stdio: "pipe" });
+} catch (error) {
+  console.log("failed with", error.status);
+}
+console.log(spawnSync("no-such-command-anywhere").error?.code);
+
+const { stdout } = await promisify(execFile)("printf", ["%s-%s", "a", "b"]);
+console.log(stdout);
+await new Promise(resolve => exec("echo $GREETING", { env: { GREETING: "hello", PATH: process.env.PATH } }, (error, out, err) => resolve(console.log(error, JSON.stringify(out), JSON.stringify(err)))));
+
+const child = spawn("cat", [], { stdio: ["pipe", "pipe", "inherit"] });
+let text = "";
+child.stdout.setEncoding("utf8");
+child.stdout.on("data", piece => (text += piece));
+child.stdin.write("through ");
+child.stdin.end("cat");
+const [code, signal] = await new Promise(resolve => child.on("close", (...all) => resolve(all)));
+console.log(text, code, signal, typeof child.pid, child.exitCode);
+
+const sleeper = spawn("sleep", ["10"]);
+sleeper.kill("SIGTERM");
+console.log(await new Promise(resolve => sleeper.on("exit", (exitCode, exitSignal) => resolve([exitCode, exitSignal]))), sleeper.killed);
+
+const viaBun = Bun.spawn(["sh", "-c", "cat; exit 4"], { stdin: "pipe", stdout: "pipe" });
+viaBun.stdin.write("bun spawn");
+viaBun.stdin.end();
+console.log(await new Response(viaBun.stdout).text(), await viaBun.exited, viaBun.exitCode);
+console.log(Bun.spawnSync(["echo", "sync"]).stdout.toString().trim(), Bun.spawnSync(["false"]).success);
+//// servers-and-scripts/data-is-compressed-and-expanded-again.js
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { promisify } from "node:util";
+import zlib from "node:zlib";
+
+const text = "compress me, ".repeat(400);
+const gzipped = zlib.gzipSync(text);
+console.log(gzipped.length < text.length, gzipped[0], gzipped[1], zlib.gunzipSync(gzipped).toString() === text);
+console.log(zlib.inflateSync(zlib.deflateSync(Buffer.from(text), { level: 9 })).length, zlib.inflateRawSync(zlib.deflateRawSync(text)).length, zlib.unzipSync(gzipped).length);
+console.log(zlib.brotliDecompressSync(zlib.brotliCompressSync(text)).toString() === text, zlib.zstdDecompressSync?.(zlib.zstdCompressSync(text)).length);
+console.log((await promisify(zlib.gunzip)(await promisify(zlib.gzip)("async"))).toString(), zlib.crc32?.("hello"), zlib.constants.Z_BEST_COMPRESSION);
+try {
+  zlib.gunzipSync(Buffer.from("this is not gzip"));
+} catch (error) {
+  console.log(error.code, error.errno);
+}
+zlib.inflate(Buffer.from([1, 2, 3]), error => console.log("callback", error.code));
+
+const pieces = [];
+await pipeline(Readable.from([text.slice(0, 1000), text.slice(1000)]), zlib.createGzip(), zlib.createGunzip(), async function (source) {
+  for await (const piece of source) pieces.push(piece);
+});
+console.log(Buffer.concat(pieces).toString() === text);
+console.log(Bun.gunzipSync(Bun.gzipSync(text)).length, Bun.inflateSync(Bun.deflateSync("abc")).length);
+
+const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip")).pipeThrough(new DecompressionStream("gzip"));
+console.log((await new Response(stream).text()) === text);
+
+const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(gzipped, { headers: { "content-encoding": "gzip" } }) });
+console.log((await (await fetch(server.url)).text()).length);
+server.stop(true);
+//// servers-and-scripts/datagrams-are-sent-and-received.js
+import dgram from "node:dgram";
+
+const receiver = dgram.createSocket("udp4");
+const got = [];
+receiver.on("message", (message, info) => {
+  got.push(message.toString() + " from " + info.address + " " + info.family + " " + info.size);
+  if (got.length === 2) receiver.close();
+});
+await new Promise(resolve => receiver.bind(0, "127.0.0.1", resolve));
+const { port, address, family } = receiver.address();
+console.log(typeof port, address, family);
+const sender = dgram.createSocket({ type: "udp4" });
+await new Promise(resolve => sender.send("first", port, "127.0.0.1", resolve));
+await new Promise(resolve => sender.send([Buffer.from("sec"), "ond"], port, "127.0.0.1", (error, bytes) => resolve(console.log(error, bytes))));
+await new Promise(resolve => receiver.on("close", resolve));
+sender.close();
+console.log(got);
+try {
+  sender.send("late", port);
+} catch (error) {
+  console.log(error.code);
+}
+
+const heard = Promise.withResolvers();
+const bunReceiver = await Bun.udpSocket({ hostname: "127.0.0.1", socket: { data: (socket, data, fromPort, fromAddress) => heard.resolve(data.toString() + " " + fromAddress + " " + (fromPort > 0)) } });
+const bunSender = await Bun.udpSocket({ hostname: "127.0.0.1" });
+console.log(bunSender.send("through bun", bunReceiver.port, "127.0.0.1"), await heard.promise, bunReceiver.hostname, bunReceiver.closed);
+bunReceiver.close();
+bunSender.close();
+console.log(bunReceiver.closed);
+//// servers-and-scripts/dates-numbers-and-texts-are-formatted-for-people.js
+const when = new Date(Date.UTC(2026, 9, 20, 7, 5, 9, 42));
+console.log(when.toISOString(), when.toJSON(), when.getTime(), when.toUTCString(), JSON.stringify({ when }), new Date("2026-10-20").getUTCDay(), new Date("nonsense").getTime(), Date.UTC(2026, 0));
+console.log(when.toLocaleDateString("en-US", { timeZone: "UTC" }), when.toLocaleTimeString("en-GB", { timeZone: "UTC" }), when.toLocaleString("de-DE", { timeZone: "Europe/Berlin" }), when.toLocaleDateString("ja-JP", { timeZone: "Asia/Tokyo", dateStyle: "full" }));
+const format = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", year: "numeric", month: "short", day: "2-digit", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+console.log(format.format(when), format.formatToParts(when).map(part => part.type).join(), format.resolvedOptions().timeZone, format.formatRange(when, new Date(when.getTime() + 86400000)));
+console.log((1234567.891).toLocaleString("en-US"), (1234567.891).toLocaleString("de-DE", { style: "currency", currency: "EUR" }), (0.256).toLocaleString("en-US", { style: "percent" }), (1e9).toLocaleString("en-US", { notation: "compact" }), (5).toLocaleString("en-US", { minimumIntegerDigits: 3 }), 12345678901234567890n.toLocaleString("en-IN"));
+console.log(new Intl.NumberFormat("en-US", { style: "unit", unit: "kilometer-per-hour" }).format(50), new Intl.NumberFormat("fr-FR").formatToParts(1234.5).length, (1.005).toFixed(2), (255).toString(16), (0.1 + 0.2).toPrecision(3), (1e21).toString(), Number("0x1f"), parseFloat("3.5kg"), parseInt("08"));
+console.log(["ä", "a", "z", "Z", "10", "9"].sort(new Intl.Collator("de").compare), ["10", "9", "1"].sort(new Intl.Collator(undefined, { numeric: true }).compare), "a".localeCompare("B", "en", { sensitivity: "base" }), "ß".localeCompare("ss", "de", { sensitivity: "base" }));
+console.log(new Intl.PluralRules("en", { type: "ordinal" }).select(22), new Intl.PluralRules("ru").select(5), new Intl.RelativeTimeFormat("es", { numeric: "auto" }).format(-1, "day"), new Intl.ListFormat("en", { type: "disjunction" }).format(["a", "b"]), new Intl.DisplayNames("en", { type: "region" }).of("JP"), new Intl.DisplayNames("fr", { type: "language" }).of("de"));
+console.log([...new Intl.Segmenter("en", { granularity: "word" }).segment("Hello, wide world!")].filter(part => part.isWordLike).map(part => part.segment), [...new Intl.Segmenter().segment("👨‍👩‍👧é")].length, Intl.getCanonicalLocales("EN-us"), Intl.supportedValuesOf("currency").includes("USD"), new Intl.Locale("zh-Hant-TW").script);
+console.log("İstanbul".toLocaleLowerCase("tr"), "i".toLocaleUpperCase("tr"), "straße".toUpperCase(), "ǅ".toLowerCase(), "Å".normalize("NFC").length, "abc".padStart(6, "12"), "x".repeat(3), " a b ".trim().split(" "), "a-b-c".replaceAll("-", "+"), "Hello".at(-1), "tab\there".split("\t"));
+////= lines-348	new Intl.DateTimeFormat("en", { timeZone: "Mars/Olympus" }
+////= lines-348	(1).toFixed(101
+//// servers-and-scripts/duplex-streams-are-composed-and-destroyed.js
+import { on } from "node:events";
+import { Duplex, PassThrough, Readable, Transform, Writable, addAbortSignal, compose, finished, pipeline } from "node:stream";
+import { finished as finishedPromise } from "node:stream/promises";
+import { EventEmitter } from "node:events";
+
+const written = [];
+const duplex = new Duplex({
+  read() {
+    this.push(written.length ? "read after " + written.length : null);
+    if (written.length) this.push(null);
+  },
+  write(chunk, encoding, done) {
+    written.push(chunk.toString());
+    done();
+  },
+});
+duplex.write("a");
+duplex.end("b");
+let read = "";
+for await (const piece of duplex) read += piece;
+console.log(written, read, duplex.writableFinished, duplex.readableEnded);
+
+const shout = new Transform({ transform: (chunk, encoding, done) => done(null, chunk.toString().toUpperCase()) });
+const exclaim = new Transform({ transform: (chunk, encoding, done) => done(null, chunk + "!") });
+console.log(await Readable.from(["a", "b"]).pipe(compose(shout, exclaim)).toArray().then(parts => parts.join("")));
+console.log(await Readable.from([1, 2, 3, 4, 5]).filter(n => n % 2).map(n => n * 10).take(2).toArray(), await Readable.from([1, 2, 3]).reduce((sum, n) => sum + n, 0), await Readable.from(["x"]).some(v => v === "x"));
+
+const broken = new Readable({ read() { this.destroy(new RangeError("source broke")); } });
+console.log(await new Promise(resolve => pipeline(broken, new PassThrough(), new Writable({ write: (c, e, done) => done() }), error => resolve(error.message))));
+const slow = new Writable({ highWaterMark: 2, write: (chunk, encoding, done) => setTimeout(done, 1) });
+console.log(slow.write("abc"), slow.writableNeedDrain, slow.writableLength, await new Promise(resolve => slow.once("drain", () => resolve("drained"))), slow.writableHighWaterMark);
+slow.end();
+await finishedPromise(slow);
+try {
+  slow.write("late");
+} catch (error) {
+  console.log("threw", error.code);
+}
+slow.on("error", error => console.log("error event", error.code));
+const controller = new AbortController();
+const aborted = addAbortSignal(controller.signal, new Readable({ read() {} }));
+finished(aborted, error => console.log("finished with", error.name, aborted.destroyed));
+controller.abort();
+await new Promise(resolve => setImmediate(resolve));
+const web = Readable.toWeb(Readable.from(["to ", "web"]));
+console.log(await new Response(web.pipeThrough(new TextEncoderStream())).text(), await Readable.fromWeb(new Blob(["from web"]).stream()).toArray().then(parts => Buffer.concat(parts).toString()));
+const emitter = new EventEmitter();
+setTimeout(() => { emitter.emit("tick", 1); emitter.emit("tick", 2); emitter.emit("end"); }, 1);
+const ticks = [];
+for await (const [value] of on(emitter, "tick", { close: ["end"] })) ticks.push(value);
+console.log(ticks, Readable.prototype.isPaused.call(new Readable()), new PassThrough({ objectMode: true }).readableObjectMode, Duplex.from("text") instanceof Duplex);
+//// servers-and-scripts/each-request-keeps-its-own-context.js
+import { AsyncLocalStorage, AsyncResource, executionAsyncId } from "node:async_hooks";
+import http from "node:http";
+
+const context = new AsyncLocalStorage();
+const lines = [];
+const log = message => lines.push((context.getStore()?.id ?? "none") + ": " + message);
+
+async function work(ms) {
+  log("work starts");
+  await new Promise(resolve => setTimeout(resolve, ms));
+  log("after a timer");
+  await Promise.all([Promise.resolve().then(() => log("in a reaction")), new Promise(resolve => setImmediate(() => resolve(log("in an immediate"))))]);
+  process.nextTick(() => log("in a tick"));
+  queueMicrotask(() => log("in a microtask"));
+}
+
+const server = http.createServer((request, response) => {
+  context.run({ id: request.headers["x-id"] }, async () => {
+    await work(Number(request.headers["x-wait"]));
+    response.end(context.getStore().id);
+  });
+});
+
+server.listen(0, "127.0.0.1", async () => {
+  const ask = (id, wait) => fetch("http://127.0.0.1:" + server.address().port, { headers: { "x-id": id, "x-wait": String(wait) } }).then(answer => answer.text());
+  console.log(await Promise.all([ask("a", 15), ask("b", 5), ask("c", 10)]));
+  console.log(lines.filter(line => line.startsWith("a")), lines.filter(line => line.startsWith("b")).length, lines.filter(line => line.startsWith("none")).length);
+  server.close();
+
+  console.log(context.getStore(), context.run(1, () => context.run(2, () => context.getStore()) + context.getStore()), context.run("x", (a, b) => a + b + context.getStore(), "p", "q"));
+  context.enterWith("entered");
+  console.log(context.getStore(), context.exit(() => context.getStore()));
+  const bound = context.run("bound", () => AsyncLocalStorage.bind(() => context.getStore()));
+  const snapshot = context.run("snapshot", () => AsyncLocalStorage.snapshot());
+  console.log(bound(), snapshot(() => context.getStore()), typeof executionAsyncId());
+  const resource = context.run("resource", () => new AsyncResource("Job"));
+  console.log(resource.runInAsyncScope((a, b) => context.getStore() + a + b, null, 1, 2));
+  context.disable();
+  console.log(context.getStore());
+});
+//// servers-and-scripts/errors-carry-causes-codes-and-stacks.js
+import { inspect } from "node:util";
+
+class HttpError extends Error {
+  constructor(status, message, options) {
+    super(message, options);
+    this.name = "HttpError";
+    this.status = status;
+  }
+  get isClientError() {
+    return this.status >= 400 && this.status < 500;
+  }
+  toJSON() {
+    return { name: this.name, status: this.status, message: this.message };
+  }
+}
+
+function load(id) {
+  try {
+    if (id < 0) throw new RangeError("negative id");
+    return JSON.parse(id === 0 ? "{" : '{"id":' + id + "}");
+  } catch (cause) {
+    throw new HttpError(id < 0 ? 400 : 500, "cannot load " + id, { cause });
+  }
+}
+
+for (const id of [1, 0, -1]) {
+  try {
+    console.log(load(id));
+  } catch (error) {
+    console.log(error instanceof HttpError, error instanceof Error, error.name, error.status, error.isClientError, error.message, error.cause.name, JSON.stringify(error), String(error), Object.keys(error), Object.prototype.toString.call(error));
+    console.log(typeof error.stack, error.stack.split("\n")[0], error.stack.includes("load"), "cause" in error, Object.getOwnPropertyDescriptor(error, "cause").enumerable, Object.getOwnPropertyDescriptor(error, "message").enumerable);
+  }
+}
+const many = new AggregateError([new Error("one"), new TypeError("two")], "several");
+console.log(many.errors.map(error => error.message), many.message, many.name, await Promise.any([Promise.reject(1), Promise.reject(2)]).catch(error => error.errors));
+console.log(inspect(new HttpError(404, "missing")).split("\n")[0], inspect(new Error("plain", { cause: "text" })).includes("cause"), inspect(Object.assign(new Error("with code"), { code: "E_CODE" })).includes("E_CODE"));
+const target = {};
+Error.captureStackTrace(target, load);
+console.log(typeof target.stack, Error.stackTraceLimit, typeof Error.prepareStackTrace, Error.isError?.(many), Error.isError?.({ message: "fake" }));
+const original = Error.prepareStackTrace;
+Error.prepareStackTrace = (error, sites) => sites.length > 0 && typeof sites[0].getFileName() + " " + typeof sites[0].getLineNumber() + " " + sites[0].getFunctionName();
+console.log((function named() { return new Error("prepared").stack; })());
+Error.prepareStackTrace = original;
+console.log(new DOMException("gone", "NotFoundError").code, new DOMException("x", "AbortError") instanceof Error, structuredClone(new RangeError("cloned")).message, (() => { try { null.x; } catch (error) { return error.constructor === TypeError; } })(), (() => { try { undefinedName; } catch (error) { return error.name; } })());
+const results = await Promise.allSettled([Promise.resolve(1), Promise.reject(new HttpError(418, "teapot")), new Promise((resolve, reject) => setTimeout(reject, 1, "late"))]);
+console.log(results.map(result => result.status + ":" + (result.value ?? result.reason?.status ?? result.reason)));
+function recurse(n) { return recurse(n + 1) + 1; }
+try {
+  recurse(0);
+} catch (error) {
+  console.log(error.name, error.message);
+}
+//// servers-and-scripts/fetch-reads-headers-statuses-and-bodies.js
+const server = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  async fetch(request) {
+    const { pathname } = new URL(request.url);
+    if (pathname === "/moved") return Response.redirect("/target", 302);
+    if (pathname === "/target") return new Response("arrived");
+    if (pathname === "/slow") return new Promise(resolve => setTimeout(() => resolve(new Response("late")), 2000));
+    if (pathname === "/form") {
+      const form = await request.formData();
+      return Response.json({ name: form.get("name"), all: form.getAll("tag"), file: form.get("file")?.size ?? null });
+    }
+    if (pathname === "/echo") {
+      const headers = new Headers({ "x-method": request.method, "x-type": request.headers.get("content-type") ?? "none" });
+      headers.append("set-cookie", "a=1");
+      headers.append("set-cookie", "b=2");
+      return new Response(await request.arrayBuffer(), { status: 202, statusText: "Taken", headers });
+    }
+    return new Response(null, { status: 204 });
+  },
+});
+const at = path => new URL(path, server.url).href;
+
+const echoed = await fetch(at("/echo"), { method: "PUT", body: new Uint8Array([104, 105]), headers: [["Content-Type", "application/octet-stream"]] });
+console.log(echoed.status, echoed.statusText, echoed.ok, echoed.headers.get("X-Method"), echoed.headers.get("x-type"), echoed.headers.getSetCookie(), new Uint8Array(await echoed.arrayBuffer()));
+console.log(echoed.bodyUsed, await echoed.text().catch(error => error.name));
+const followed = await fetch(at("/moved"));
+console.log(followed.status, followed.redirected, new URL(followed.url).pathname, await followed.text());
+const manual = await fetch(at("/moved"), { redirect: "manual" });
+console.log(manual.status, manual.headers.get("location"));
+const form = new FormData();
+form.append("name", "Ada");
+form.append("tag", "x");
+form.append("tag", "y");
+form.append("file", new Blob(["12345"], { type: "text/plain" }), "five.txt");
+console.log(await (await fetch(at("/form"), { method: "POST", body: form })).json());
+console.log(await (await fetch(at("/form"), { method: "POST", body: new URLSearchParams({ name: "Bob", tag: "z" }) })).json());
+const empty = await fetch(at("/nothing"));
+console.log(empty.status, JSON.stringify(await empty.text()), [...empty.headers.keys()].includes("content-type"));
+const blob = await (await fetch(at("/target"))).blob();
+console.log(blob.size, await blob.text());
+const controller = new AbortController();
+setTimeout(() => controller.abort(), 20);
+console.log(await fetch(at("/slow"), { signal: controller.signal }).catch(error => error.name));
+console.log(await fetch(at("/slow"), { signal: AbortSignal.timeout(20) }).catch(error => error.name));
+console.log(await fetch("http://127.0.0.1:1/").catch(error => error.code ?? error.name));
+server.stop(true);
+//// servers-and-scripts/files-are-watched-linked-and-given-modes.js
+import fs from "node:fs";
+import fsp from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+const folder = fs.mkdtempSync(path.join(os.tmpdir(), "modes-"));
+const file = path.join(folder, "file.txt");
+fs.writeFileSync(file, "content", { mode: 0o640 });
+console.log((fs.statSync(file).mode & 0o777).toString(8), fs.statSync(file, { bigint: true }).size, fs.lstatSync(file).isSymbolicLink());
+fs.chmodSync(file, 0o600);
+fs.utimesSync(file, 1000, 2000);
+console.log((fs.statSync(file).mode & 0o777).toString(8), fs.statSync(file).mtimeMs, fs.statSync(file).atime.toISOString());
+fs.symlinkSync(file, path.join(folder, "link"));
+fs.linkSync(file, path.join(folder, "hard"));
+console.log(fs.readlinkSync(path.join(folder, "link")) === file, fs.lstatSync(path.join(folder, "link")).isSymbolicLink(), fs.realpathSync(path.join(folder, "link")) === fs.realpathSync(file), fs.statSync(file).nlink);
+console.log(fs.statSync(path.join(folder, "nothing"), { throwIfNoEntry: false }), fs.accessSync(file, fs.constants.R_OK), fs.constants.O_RDONLY, typeof fs.constants.S_IFMT);
+
+const handle = await fsp.open(file, "r+");
+console.log((await handle.read(Buffer.alloc(4), 0, 4, 0)).bytesRead, (await handle.write("CON", 0)).bytesWritten, (await handle.stat()).size, await handle.readFile("utf8"), typeof handle.fd);
+await handle.truncate(3);
+await handle.sync();
+await handle.close();
+console.log(fs.readFileSync(file, "utf8"), await handle.stat().catch(error => error.code));
+fs.writeFileSync(file, "l1\nl2\nl3");
+const lines = [];
+const reading = await fsp.open(file);
+for await (const line of reading.readLines()) lines.push(line);
+console.log(lines);
+
+const directory = fs.opendirSync(folder);
+const names = [];
+for (let entry = directory.readSync(); entry; entry = directory.readSync()) names.push(entry.name + (entry.isFile() ? " file" : entry.isSymbolicLink() ? " link" : " other"));
+directory.closeSync();
+console.log(names.sort());
+fs.cpSync(folder, folder + "-copy", { recursive: true, dereference: true });
+console.log(fs.readdirSync(folder + "-copy").sort(), fs.globSync?.("*.txt", { cwd: folder }));
+
+const changes = Promise.withResolvers();
+const watcher = fs.watch(folder, (event, name) => changes.resolve(typeof event + " " + typeof name));
+await Bun.sleep(20);
+fs.writeFileSync(path.join(folder, "new.txt"), "x");
+console.log(await changes.promise);
+watcher.close();
+await new Promise(resolve => fs.readFile(file, "utf8", (error, text) => resolve(console.log(error, text.length))));
+await new Promise(resolve => fs.stat(path.join(folder, "missing"), error => resolve(console.log(error.code, error.message.startsWith("ENOENT")))));
+await new Promise(resolve => fs.writeFile(file, Buffer.from("cb"), error => fs.appendFile(file, "!", () => fs.unlink(file, () => resolve(console.log(error, fs.existsSync(file)))))));
+fs.rmSync(folder, { recursive: true });
+fs.rmSync(folder + "-copy", { recursive: true });
+////= lines-132	fs.rmdirSync	folder	code	syscall
+//// servers-and-scripts/functions-bound-with-arguments-are-the-reactions-of-a-promise.js
+function succeeded(id, depth, data) {
+  console.log("succeeded", this.name, id, depth, data);
+}
+function failed(id, depth, data) {
+  console.log("failed", this.name, id, depth, data.message);
+}
+
+const context = { name: "context" };
+const later = new Promise(resolve => setTimeout(resolve, 5, "value"));
+later.then(succeeded.bind(context, 1, 2), failed.bind(context, 1, 2));
+const refused = new Promise((resolve, reject) => setTimeout(reject, 5, new Error("reason")));
+refused.then(succeeded.bind(context, 3, 4), failed.bind(context, 3, 4));
+Promise.resolve("at once").then(succeeded.bind(context, 5, 6), failed.bind(context, 5, 6));
+//// servers-and-scripts/functions-bound-with-arguments-are-the-reactions-of-a-promise-inside-an-async-context.js
+import { AsyncLocalStorage } from "node:async_hooks";
+
+const storage = new AsyncLocalStorage();
+
+function succeeded(id, depth, data) {
+  console.log("succeeded", this.name, id, depth, data, storage.getStore());
+}
+function failed(id, depth, data) {
+  console.log("failed", this.name, id, depth, data.message, storage.getStore());
+}
+
+function watch(context, depth, id, current) {
+  current.then(succeeded.bind(context, id, depth), failed.bind(context, id, depth));
+}
+
+const context = { name: "context" };
+storage.run("the store", () => {
+  watch(context, 1, 2, new Promise(resolve => setTimeout(resolve, 5, "value")));
+  watch(context, 3, 4, new Promise((resolve, reject) => setTimeout(reject, 5, new Error("reason"))));
+  watch(context, 5, 6, Promise.resolve("at once"));
+  watch(context, 7, 8, (async () => "from an async function")());
+});
+for (let i = 0; i < 200; i++) watch(context, i, i, Promise.resolve(i % 100 === 0 ? "round " + i : new Promise(() => {})));
+//// servers-and-scripts/functions-bound-with-arguments-are-the-reactions-of-a-promise-of-unknown-type.js
+function succeeded(id, depth, data) {
+  console.log("succeeded", this.name, id, depth, data);
+}
+function failed(id, depth, data) {
+  console.log("failed", this.name, id, depth, data.message);
+}
+
+function watch(context, depth, id, current) {
+  if (typeof current === "object" && current !== null && typeof current.then === "function") {
+    current.then(succeeded.bind(context, id, depth), failed.bind(context, id, depth));
+    return "watched";
+  }
+  return typeof current;
+}
+
+const context = { name: "context" };
+const values = JSON.parse('[1, "two", null, {"then": 3}]');
+values.push(
+  new Promise(resolve => setTimeout(resolve, 5, "value")),
+  new Promise((resolve, reject) => setTimeout(reject, 5, new Error("reason"))),
+  Promise.resolve("at once"),
+  (async () => "from an async function")(),
+  { then: (resolve, reject) => resolve("from a thenable") },
+);
+values.forEach((value, index) => console.log(index, watch(context, index * 10, index, value)));
+//// servers-and-scripts/hashes-hmacs-ciphers-and-random-bytes.js
+import crypto from "node:crypto";
+
+console.log(crypto.createHash("sha256").update("hello").digest("hex"));
+console.log(crypto.createHash("md5").update("hel").update(Buffer.from("lo")).digest("base64"), crypto.createHash("sha1").update("").digest().length);
+console.log(crypto.createHmac("sha256", "secret").update("message").digest("hex"));
+console.log(crypto.hash?.("sha1", "hello"), crypto.getHashes().includes("sha512"));
+console.log(crypto.randomBytes(16).length, /^[0-9a-f-]{36}$/.test(crypto.randomUUID()), crypto.randomInt(5, 6), crypto.randomFillSync(new Uint8Array(4)).length);
+console.log(crypto.timingSafeEqual(Buffer.from("same"), Buffer.from("same")), crypto.timingSafeEqual(Buffer.from("same"), Buffer.from("sama")));
+console.log(crypto.pbkdf2Sync("password", "salt", 1000, 16, "sha256").toString("hex"), crypto.scryptSync("password", "salt", 16, { N: 1024 }).toString("hex"));
+
+const key = Buffer.alloc(32, 7);
+const iv = Buffer.alloc(12, 9);
+const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+const sealed = Buffer.concat([cipher.update("a secret text", "utf8"), cipher.final()]);
+const tag = cipher.getAuthTag();
+console.log(sealed.toString("hex"), tag.length);
+const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+decipher.setAuthTag(tag);
+console.log(decipher.update(sealed, undefined, "utf8") + decipher.final("utf8"));
+const forged = crypto.createDecipheriv("aes-256-gcm", key, iv);
+forged.setAuthTag(Buffer.alloc(16));
+try {
+  forged.update(sealed);
+  forged.final();
+} catch (error) {
+  console.log("refused", error instanceof Error);
+}
+try {
+  crypto.createHash("no-such-hash");
+} catch (error) {
+  console.log(error.name, typeof error.message);
+}
+const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("hello"));
+console.log(Buffer.from(digest).toString("hex").slice(0, 16), digest.byteLength);
+crypto.pbkdf2("password", "salt", 10, 8, "sha1", (error, derived) => console.log(error, derived.toString("hex")));
+//// servers-and-scripts/key-pairs-sign-verify-and-agree-on-secrets.js
+import crypto from "node:crypto";
+
+const { publicKey, privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+console.log(publicKey.type, privateKey.type, publicKey.asymmetricKeyType, publicKey.asymmetricKeyDetails);
+const signature = crypto.sign("sha256", Buffer.from("document"), privateKey);
+console.log(crypto.verify("sha256", Buffer.from("document"), publicKey, signature), crypto.verify("sha256", Buffer.from("forged"), publicKey, signature));
+const signer = crypto.createSign("SHA256").update("in ").update("pieces");
+console.log(crypto.createVerify("SHA256").update("in pieces").verify(publicKey, signer.sign(privateKey)));
+const pem = publicKey.export({ type: "spki", format: "pem" });
+console.log(pem.split("\n")[0], crypto.createPublicKey(pem).equals(publicKey), Object.keys(publicKey.export({ format: "jwk" })).sort().join(), crypto.createPublicKey(privateKey).equals(publicKey));
+
+const ed = crypto.generateKeyPairSync("ed25519");
+console.log(crypto.verify(null, Buffer.from("m"), ed.publicKey, crypto.sign(null, Buffer.from("m"), ed.privateKey)), ed.publicKey.export({ type: "spki", format: "der" }).length);
+const alice = crypto.createECDH("prime256v1");
+const bob = crypto.createECDH("prime256v1");
+alice.generateKeys();
+bob.generateKeys();
+console.log(alice.computeSecret(bob.getPublicKey()).equals(bob.computeSecret(alice.getPublicKey())), alice.getPublicKey("hex").length, crypto.getCurves().includes("secp256k1"));
+const x1 = crypto.generateKeyPairSync("x25519");
+const x2 = crypto.generateKeyPairSync("x25519");
+console.log(crypto.diffieHellman({ privateKey: x1.privateKey, publicKey: x2.publicKey }).equals(crypto.diffieHellman({ privateKey: x2.privateKey, publicKey: x1.publicKey })));
+const secret = crypto.createSecretKey(Buffer.alloc(32, 1));
+console.log(secret.type, secret.symmetricKeySize, secret.export().length, crypto.KeyObject.name, secret instanceof crypto.KeyObject);
+console.log(crypto.hkdfSync("sha256", "key", "salt", "info", 16).byteLength, Buffer.from(crypto.hkdfSync("sha256", "key", "salt", "info", 8)).toString("hex"), crypto.getCiphers().includes("aes-128-cbc"), crypto.getCipherInfo("aes-256-gcm").ivLength);
+const rsa = await new Promise((resolve, reject) => crypto.generateKeyPair("rsa", { modulusLength: 2048 }, (error, publicKey, privateKey) => (error ? reject(error) : resolve({ publicKey, privateKey }))));
+const sealed = crypto.publicEncrypt(rsa.publicKey, Buffer.from("for your eyes"));
+console.log(sealed.length, crypto.privateDecrypt(rsa.privateKey, sealed).toString(), rsa.publicKey.asymmetricKeyDetails.modulusLength);
+try {
+  crypto.createPrivateKey("not a key");
+} catch (error) {
+  console.log(error.name, typeof error.code);
+}
+console.log(crypto.webcrypto.subtle === globalThis.crypto.subtle, typeof crypto.constants.RSA_PKCS1_PADDING, crypto.randomBytes(4).toString("hex").length, crypto.checkPrimeSync(7n), crypto.generatePrimeSync(16, { bigint: true }) > 0n);
+//// servers-and-scripts/keys-are-made-and-data-is-signed-with-web-crypto.js
+const encode = text => new TextEncoder().encode(text);
+const hex = buffer => Buffer.from(buffer).toString("hex");
+
+const hmacKey = await crypto.subtle.importKey("raw", encode("a shared secret"), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+const signature = await crypto.subtle.sign("HMAC", hmacKey, encode("message"));
+console.log(hex(signature), await crypto.subtle.verify("HMAC", hmacKey, signature, encode("message")), await crypto.subtle.verify("HMAC", hmacKey, signature, encode("other")), hmacKey.type, hmacKey.extractable, hmacKey.algorithm.name, hmacKey.usages);
+console.log(await crypto.subtle.exportKey("raw", hmacKey).catch(error => error.name));
+
+const aesKey = await crypto.subtle.importKey("raw", new Uint8Array(32).fill(3), "AES-GCM", true, ["encrypt", "decrypt"]);
+const iv = new Uint8Array(12).fill(1);
+const sealed = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, aesKey, encode("private words"));
+console.log(hex(sealed), new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, aesKey, sealed)), (await crypto.subtle.exportKey("jwk", aesKey)).alg);
+const damaged = new Uint8Array(sealed);
+damaged[0] ^= 1;
+console.log(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, aesKey, damaged).catch(error => error.name));
+
+const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+const signed = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, pair.privateKey, encode("document"));
+console.log(signed.byteLength, await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, pair.publicKey, signed, encode("document")), pair.publicKey.type, (await crypto.subtle.exportKey("jwk", pair.publicKey)).crv, (await crypto.subtle.exportKey("spki", pair.publicKey)).byteLength);
+
+const base = await crypto.subtle.importKey("raw", encode("password"), "PBKDF2", false, ["deriveBits", "deriveKey"]);
+console.log(hex(await crypto.subtle.deriveBits({ name: "PBKDF2", salt: encode("salt"), iterations: 1000, hash: "SHA-256" }, base, 128)));
+const derived = await crypto.subtle.deriveKey({ name: "PBKDF2", salt: encode("salt"), iterations: 10, hash: "SHA-1" }, base, { name: "AES-CBC", length: 128 }, true, ["encrypt"]);
+console.log(hex(await crypto.subtle.exportKey("raw", derived)), derived.algorithm.length);
+for (const name of ["SHA-1", "SHA-256", "SHA-384", "SHA-512"]) console.log(name, hex(await crypto.subtle.digest(name, encode("abc"))).slice(0, 16));
+console.log(await crypto.subtle.digest("MD5", encode("x")).catch(error => error.name), crypto.getRandomValues(new Uint32Array(3)).length, typeof crypto.randomUUID(), crypto.subtle instanceof SubtleCrypto, hmacKey instanceof CryptoKey);
+////= lines-348	crypto.getRandomValues(new Float64Array(1)
+////= lines-348	crypto.getRandomValues(new Uint8Array(65537)
+//// servers-and-scripts/lines-are-read-from-a-readable-stream.js
+import readline from "node:readline";
+import { PassThrough, Readable, Writable } from "node:stream";
+import { text } from "node:stream/consumers";
+
+const source = Readable.from(["alpha\nbe", "ta\r\ngam", "ma\n\ndelta"]);
+const lines = [];
+for await (const line of readline.createInterface({ input: source, crlfDelay: Infinity })) lines.push(line);
+console.log(lines);
+
+const seen = [];
+const sink = new Writable({
+  objectMode: true,
+  write(record, encoding, done) {
+    seen.push(record.id * 2);
+    done();
+  },
+  final(done) {
+    seen.push("final");
+    done();
+  },
+});
+await new Promise((resolve, reject) => Readable.from([{ id: 1 }, { id: 2 }, { id: 3 }]).pipe(sink).on("finish", resolve).on("error", reject));
+console.log(seen);
+
+const through = new PassThrough();
+through.write("one ");
+through.write(Buffer.from("two "));
+through.end("three");
+console.log(await text(through));
+
+const counted = new Readable({
+  read() {
+    this.count = (this.count ?? 0) + 1;
+    this.push(this.count > 3 ? null : "chunk" + this.count);
+  },
+});
+counted.setEncoding("utf8");
+const events = [];
+counted.on("data", piece => events.push(piece));
+counted.on("end", () => events.push("end"));
+counted.on("close", () => console.log(events, counted.destroyed, counted.readableEnded));
+//// servers-and-scripts/middleware-runs-in-a-chain-around-a-handler.js
+import http from "node:http";
+
+function compose(middleware) {
+  return (context, last) => {
+    let reached = -1;
+    const dispatch = index => {
+      if (index <= reached) return Promise.reject(new Error("next() called twice"));
+      reached = index;
+      const step = index === middleware.length ? last : middleware[index];
+      if (!step) return Promise.resolve();
+      try {
+        return Promise.resolve(step(context, () => dispatch(index + 1)));
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    };
+    return dispatch(0);
+  };
+}
+
+const trace = [];
+const cookies = header => Object.fromEntries((header ?? "").split(";").map(pair => pair.trim().split("=")).filter(pair => pair.length === 2).map(([name, value]) => [name, decodeURIComponent(value)]));
+const run = compose([
+  async (context, next) => {
+    trace.push("timer in");
+    await next();
+    context.response.setHeader("x-steps", String(trace.length));
+    trace.push("timer out");
+  },
+  async (context, next) => {
+    try {
+      await next();
+    } catch (error) {
+      context.status = error.status ?? 500;
+      context.body = { error: error.message };
+    }
+  },
+  (context, next) => {
+    context.user = cookies(context.request.headers.cookie).user;
+    if (!context.user) throw Object.assign(new Error("sign in first"), { status: 401 });
+    return next();
+  },
+  context => {
+    if (context.request.url === "/boom") null.property;
+    context.body = { hello: context.user, path: context.request.url };
+  },
+]);
+
+const server = http.createServer(async (request, response) => {
+  const context = { request, response, status: 200, body: null };
+  await run(context);
+  response.statusCode = context.status;
+  response.setHeader("content-type", "application/json");
+  response.end(JSON.stringify(context.body));
+});
+server.listen(0, "127.0.0.1", async () => {
+  const base = "http://127.0.0.1:" + server.address().port;
+  for (const [path, cookie] of [["/a", "user=ada%20l; theme=dark"], ["/b", ""], ["/boom", "user=bob"], ["/c", "broken; user=cy"]]) {
+    const answer = await fetch(base + path, { headers: cookie ? { cookie } : {} });
+    const body = await answer.json();
+    console.log(path, answer.status, answer.headers.get("x-steps"), body.error ? typeof body.error : body);
+  }
+  console.log(trace.length);
+  server.close();
+});
+//// servers-and-scripts/names-are-looked-up-and-addresses-checked.js
+import dns from "node:dns";
+import { lookup } from "node:dns/promises";
+import net from "node:net";
+
+console.log(await lookup("localhost", { family: 4 }), await lookup("127.0.0.1"), (await lookup("localhost", { all: true, family: 4 })).length > 0);
+await new Promise(resolve => dns.lookup("127.0.0.1", (error, address, family) => resolve(console.log(error, address, family))));
+console.log(await lookup("").catch(error => error.code ?? error.name), typeof dns.getServers().length, typeof dns.Resolver, dns.NOTFOUND, dns.getDefaultResultOrder?.());
+try {
+  dns.lookup(5, () => {});
+} catch (error) {
+  console.log(error.code);
+}
+console.log(net.isIP("10.0.0.1"), net.isIP("::ffff:10.0.0.1"), net.isIP("10.0.0.256"), net.isIPv4("1.2.3"), net.isIPv6("fe80::1%eth0"), net.isIP(""), net.isIP(5));
+const blocked = new net.BlockList();
+blocked.addAddress("10.0.0.5");
+blocked.addRange("10.0.1.0", "10.0.1.9");
+blocked.addSubnet("192.168.0.0", 16);
+console.log(blocked.check("10.0.0.5"), blocked.check("10.0.0.6"), blocked.check("10.0.1.7"), blocked.check("192.168.44.1"), blocked.check("::1", "ipv6"), blocked.rules.length);
+const address = new net.SocketAddress({ address: "127.0.0.1", port: 8080 });
+console.log(address.address, address.port, address.family, net.SocketAddress.parse?.("127.0.0.1:99")?.port);
+const server = net.createServer().listen(0, "127.0.0.1");
+await new Promise(resolve => server.once("listening", resolve));
+const second = net.createServer();
+console.log(await new Promise(resolve => second.once("error", error => resolve([error.code, error.syscall, error.address, error.port === server.address().port])).listen(server.address().port, "127.0.0.1")));
+server.close();
+const timedOut = net.connect({ host: "127.0.0.1", port: 9, timeout: 50 });
+console.log(await new Promise(resolve => timedOut.once("error", error => resolve(error.code)).once("timeout", () => resolve("timeout"))));
+timedOut.destroy();
+//// servers-and-scripts/paths-are-joined-resolved-and-taken-apart.js
+import path from "node:path";
+import { basename, extname, posix, win32 } from "node:path";
+
+console.log(path.join("/srv", "app", "..", "static", "./index.html"), path.join("a", "", "b"), path.join(""));
+console.log(path.resolve("/srv/app", "../logs", "today.log"), path.resolve("/a", "/b", "c"), path.isAbsolute("a/b"), path.isAbsolute("/a"));
+console.log(path.normalize("/a//b/./c/../d/"), path.normalize("../x/../../y"), path.normalize(""));
+console.log(path.relative("/srv/app/src", "/srv/app/test/unit"), path.relative("/a", "/a"), JSON.stringify(path.relative("/a/b", "/a")));
+console.log(basename("/srv/report.final.pdf"), basename("/srv/report.final.pdf", ".pdf"), basename("/srv/folder/"), extname("archive.tar.gz"), JSON.stringify(extname(".bashrc")), extname("a."));
+console.log(path.dirname("/srv/app/index.js"), path.dirname("index.js"), path.dirname("/"), path.sep, path.delimiter);
+console.log(path.parse("/home/ada/notes.txt"), path.format({ dir: "/tmp", name: "file", ext: ".md" }), path.format({ root: "/", base: "x.y" }));
+console.log(win32.join("C:\\Users", "ada", "..", "bob"), win32.basename("C:\\a\\b.txt"), win32.parse("C:\\a\\b.txt").root, win32.isAbsolute("C:/x"), win32.sep);
+console.log(posix.join("a", "b") === path.join("a", "b"), posix === path.posix, path.posix.basename("a\\b"), path.matchesGlob?.("/a/b.js", "/a/*.js"));
+for (const bad of [undefined, null, 5, {}]) {
+  try {
+    path.join("a", bad);
+  } catch (error) {
+    console.log(error.name, error.code);
+  }
+}
+//// servers-and-scripts/random-bytes-fill-a-typed-array.js
+import crypto from "node:crypto";
+
+console.log(crypto.randomFillSync(new Uint8Array(4)).length);
+//// servers-and-scripts/requests-responses-and-blobs-are-built-and-cloned.js
+const request = new Request("http://example.com/path?x=1", { method: "POST", headers: { "Content-Type": "application/json", "X-Id": "7" }, body: JSON.stringify({ a: 1 }) });
+const twin = request.clone();
+console.log(request.method, request.url, request.headers.get("content-type"), request.bodyUsed, await request.json(), request.bodyUsed, await twin.text(), request.redirect, request.mode, request.credentials, request.cache, request.signal.aborted);
+const derived = new Request(new Request("http://h/", { headers: { a: "1" } }), { method: "PUT", body: "b", headers: { b: "2" } });
+console.log(derived.method, [...derived.headers], await derived.text(), new Request("http://h/").body, new Request("http://h/a b").url);
+for (const bad of [() => new Request("not a url"), () => new Request("http://h", { method: "GET", body: "x" }), () => new Request("http://h", { method: "TR ACE" }), () => new Response("x", { status: 99 }), () => new Response("x", { status: 204 }), () => new Headers({ "bad name": "x" })]) {
+  try {
+    bad();
+    console.log("accepted");
+  } catch (error) {
+    console.log(error.name);
+  }
+}
+const response = new Response("body", { status: 201, statusText: "Made", headers: [["a", "1"], ["a", "2"], ["B", "3"]] });
+console.log(response.status, response.ok, response.statusText, response.headers.get("a"), [...response.headers.entries()], response.type, response.url, response.redirected, await response.clone().text(), (await response.bytes()).length);
+console.log(Response.json({ a: [1] }).headers.get("content-type"), await Response.json({ a: [1] }, { status: 400 }).text(), Response.error().type, Response.error().status, Response.redirect("http://h/x", 301).headers.get("location"));
+console.log(new Response(null).body, await new Response().text(), await new Response(new URLSearchParams({ a: "b c" })).text(), new Response(new URLSearchParams()).headers.get("content-type"), new Response(new Blob(["x"], { type: "text/x" })).headers.get("content-type"), new Response("x").headers.get("content-type"), new Response(new Uint8Array(2)).headers.get("content-type"));
+const headers = new Headers();
+headers.set("Zeta", "1");
+headers.append("alpha", "2");
+headers.append("Alpha", "3");
+headers.append("Set-Cookie", "x=1");
+headers.append("Set-Cookie", "y=2");
+headers.delete("nothing");
+console.log([...headers.keys()], headers.get("ALPHA"), headers.get("missing"), headers.getSetCookie(), headers.has("zeta"), headers.count ?? [...headers].length, JSON.stringify(headers), headers.toJSON?.());
+const blob = new Blob(["héllo ", new Uint8Array([119, 111]), new Blob(["rld"])], { type: "Text/Plain" });
+console.log(blob.size, blob.type, await blob.text(), await blob.slice(-3).text(), await blob.slice(1, 3, "a/b").arrayBuffer().then(buffer => buffer.byteLength), blob.slice(1, 3, "a/b").type, blob.slice(100).size);
+const file = new File(["data"], "notes.txt", { type: "text/plain", lastModified: 5 });
+console.log(file.name, file.size, file.type, file.lastModified, file instanceof Blob, await file.text());
+const form = new FormData();
+form.append("a", "1");
+form.append("a", "2");
+form.set("f", file, "renamed.txt");
+console.log(form.get("a"), form.getAll("a"), form.get("f").name, form.has("z"), [...form.keys()], (await new Response(form).formData()).get("f").size, /^multipart\/form-data; boundary=/.test(new Response(form).headers.get("content-type")));
+const [left, right] = new Response("tee me").body.tee();
+console.log(await new Response(left).text(), await Bun.readableStreamToText(right), AbortSignal.abort("why").reason, AbortSignal.any([new AbortController().signal, AbortSignal.abort()]).aborted);
+//// servers-and-scripts/rows-are-stored-in-an-sqlite-database-in-memory.js
+import { Database } from "bun:sqlite";
+
+const db = new Database(":memory:");
+db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, age INTEGER, score REAL, photo BLOB)");
+const insert = db.prepare("INSERT INTO users (name, age, score, photo) VALUES ($name, $age, $score, $photo)");
+console.log(insert.run({ $name: "Ada", $age: 36, $score: 9.5, $photo: new Uint8Array([1, 2]) }));
+console.log(insert.run({ $name: "Bob", $age: null, $score: 7, $photo: null }).lastInsertRowid);
+const many = db.transaction(rows => {
+  for (const row of rows) db.run("INSERT INTO users (name, age) VALUES (?, ?)", [row.name, row.age]);
+  return rows.length;
+});
+console.log(many([{ name: "Cy", age: 20 }, { name: "Di", age: 41 }]));
+try {
+  many([{ name: "Ed", age: 1 }, { name: "Ada", age: 2 }]);
+} catch (error) {
+  console.log(error.name, error.code, error.message);
+}
+console.log(db.query("SELECT count(*) AS n FROM users").get(), db.query("SELECT name FROM users WHERE age > ? ORDER BY name").all(30), db.query("SELECT * FROM users WHERE id = ?").get(1));
+console.log(db.query("SELECT name, age FROM users ORDER BY id").values(), db.query("SELECT * FROM users WHERE id = 99").get(), db.query("SELECT * FROM users WHERE id = 99").all());
+const byName = db.query("SELECT id, score FROM users WHERE name = $name");
+console.log(byName.get({ $name: "Bob" }), byName.columnNames, byName.paramsCount, String(byName).includes("SELECT"));
+for (const row of db.query("SELECT id FROM users WHERE id < 3").iterate()) console.log("row", row.id);
+class User {
+  get label() {
+    return this.name + "#" + this.id;
+  }
+}
+console.log(db.query("SELECT id, name FROM users WHERE id = 2").as(User).get().label, db.query("SELECT 9007199254740993 AS big, 1.0 AS floating, 'x' AS word, NULL AS missing, x'00ff' AS bytes").get());
+console.log(db.run("UPDATE users SET age = age + 1 WHERE age IS NOT NULL").changes, db.run("DELETE FROM users WHERE name = ?", "Cy").changes, db.inTransaction, db.filename);
+////= lines-132	db.query	"SELECT * FROM nowhere"	name	message
+const saved = db.serialize();
+console.log(saved.length > 0, Database.deserialize(saved).query("SELECT count(*) AS n FROM users").get().n);
+insert.finalize();
+db.close();
+try {
+  db.query("SELECT 1").get();
+} catch (error) {
+  console.log("closed:", error.name);
+}
+//// servers-and-scripts/servers-stream-their-answers.js
+import http from "node:http";
+
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+const bun = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  fetch(request) {
+    const { pathname } = new URL(request.url);
+    if (pathname === "/generator")
+      return new Response(
+        (async function* () {
+          for (let i = 0; i < 3; i++) {
+            await wait(1);
+            yield "part " + i + "\n";
+          }
+        })(),
+      );
+    if (pathname === "/events") {
+      let n = 0;
+      return new Response(
+        new ReadableStream({
+          async pull(controller) {
+            if (n === 3) return controller.close();
+            controller.enqueue(new TextEncoder().encode("data: " + n++ + "\n\n"));
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    }
+    return new Response(request.body.pipeThrough(new TextDecoderStream()).pipeThrough(new TransformStream({ transform: (piece, controller) => controller.enqueue(piece.toUpperCase()) })).pipeThrough(new TextEncoderStream()));
+  },
+});
+console.log(JSON.stringify(await (await fetch(bun.url + "generator")).text()));
+const reader = (await fetch(bun.url + "events")).body.pipeThrough(new TextDecoderStream()).getReader();
+let events = "";
+for (let step = await reader.read(); !step.done; step = await reader.read()) events += step.value;
+console.log(JSON.stringify(events));
+console.log(await (await fetch(bun.url + "upper", { method: "POST", body: "make this loud" })).text());
+bun.stop(true);
+
+const node = http.createServer(async (request, response) => {
+  response.writeHead(200, { "content-type": "text/plain" });
+  for (let i = 0; i < 3; i++) {
+    response.write("row " + i + "\n");
+    await wait(1);
+  }
+  response.addTrailers?.({});
+  response.end(() => console.log("answer sent", response.writableEnded, response.headersSent));
+});
+node.listen(0, "127.0.0.1", async () => {
+  const answer = await fetch("http://127.0.0.1:" + node.address().port);
+  let rows = "";
+  for await (const piece of answer.body) rows += new TextDecoder().decode(piece);
+  console.log(JSON.stringify(rows), answer.headers.get("transfer-encoding"), answer.headers.get("content-length"));
+  node.close();
+});
+//// servers-and-scripts/the-console-prints-tables-groups-and-counts.js
+import { Console } from "node:console";
+import { Writable } from "node:stream";
+
+console.log("%s is %d years and %i months, %o, %j, %c styled, 100%%", "Ada", 36.5, 7.9, { a: 1 }, [1], "color: red", "extra");
+console.info("info", 1, true, null, undefined, 10n, Symbol("s"));
+console.debug({ nested: { list: [1, [2, [3, [4]]]], map: new Map([[1, { a: 1 }]]), set: new Set(["x"]) } });
+console.table([{ name: "Ada", age: 36 }, { name: "Bob", city: "Oslo" }]);
+console.table([[1, 2], [3, 4]]);
+console.table([{ a: 1, b: 2 }], ["b"]);
+console.table("not a table");
+console.group("outer");
+console.log("inside outer");
+console.group();
+console.log("inside\ninner");
+console.groupEnd();
+console.groupEnd();
+console.groupEnd();
+console.log("outside");
+console.count();
+console.count("named");
+console.count();
+console.countReset();
+console.count();
+console.dir({ a: { b: { c: { d: 1 } } } }, { depth: 0 });
+console.dir([1, "two"], { colors: false });
+console.assert(true, "never printed");
+console.log(new Error("shown with its name").message, [new Date(0)], [function f() {}, class C {}, () => {}], { "needs-quotes": 1, plain: 2, 3: 4 });
+console.log(Object.create(null), Object.create({ inherited: 1 }), new (class Named { field = 1 })(), [undefined, , null], "a\nb", ["a\nb"], -0, [-0], new Uint8Array(3), new ArrayBuffer(2));
+console.log(Promise.resolve(4), Promise.reject(new Error("x")).catch(() => {}) instanceof Promise, new WeakMap(), Symbol.iterator, [1.0, 1.5, 1e21, 1e-7, NaN], "%", "%s");
+
+let captured = "";
+const own = new Console({ stdout: new Writable({ write(chunk, encoding, done) { captured += chunk; done(); } }), stderr: process.stderr });
+own.log("to my own stream", { a: 1 });
+own.group("g");
+own.info("indented");
+own.table([{ x: 1 }]);
+console.log(JSON.stringify(captured), typeof console.time, typeof console.trace, console.log.name, typeof console.Console);
+//// servers-and-scripts/the-process-describes-itself.js
+import os from "node:os";
+import process2 from "node:process";
+
+console.log(process === process2, typeof process.pid, typeof process.ppid, process.platform === os.platform(), process.arch === os.arch(), process.title.length > 0);
+console.log(Array.isArray(process.argv), process.argv.length >= 1, typeof process.argv0, Array.isArray(process.execArgv), typeof process.execPath, typeof process.cwd());
+console.log(typeof process.version, /^v\d+\.\d+\.\d+/.test(process.version), typeof process.versions.bun, typeof process.versions.node, typeof process.release.name, process.isBun);
+process.env.MY_SETTING = 5;
+console.log(process.env.MY_SETTING, typeof process.env.MY_SETTING, "MY_SETTING" in process.env, delete process.env.MY_SETTING, process.env.MY_SETTING, Object.keys(process.env).includes("PATH"));
+const usage = process.memoryUsage();
+console.log(Object.keys(usage).sort().join(), usage.rss > 0, process.memoryUsage.rss() > 0, Object.keys(process.cpuUsage()).join(), Object.keys(process.resourceUsage()).length > 5);
+const [seconds, nanoseconds] = process.hrtime();
+console.log(seconds >= 0, nanoseconds < 1e9, process.hrtime([seconds, nanoseconds]).length, process.hrtime.bigint() > 0n, process.uptime() < 60);
+console.log(process.stdout.write("written to stdout\n"), process.stdout.isTTY, process.stdout.fd, process.stderr.fd, typeof process.stdout.columns, process.stdout.writable);
+console.log(typeof process.umask(), typeof process.getuid?.(), typeof process.geteuid?.(), process.exitCode, typeof process.emitWarning, typeof process.binding, process.config.variables !== undefined, process.features.typescript !== null);
+console.log(os.EOL === "\n", os.cpus().length > 0, typeof os.cpus()[0].model, os.totalmem() > os.freemem(), os.homedir().length > 0, os.tmpdir().length > 0, os.hostname().length > 0, os.type(), os.endianness(), os.loadavg().length);
+console.log(typeof os.release(), typeof os.uptime(), Object.keys(os.userInfo()).sort().join(), typeof os.networkInterfaces(), os.constants.signals.SIGTERM, os.availableParallelism() > 0, os.devNull, typeof os.version(), typeof os.machine());
+////= lines-132	process.chdir	"/no/such/folder"	code	syscall
+////= lines-349	process.kill(process.pid, "SIGNOPE"
+console.log(process.kill(process.pid, 0), process.emit("custom", 1), process.listenerCount("custom"), process.getMaxListeners());
+process.exitCode = 0;
+process.nextTick((a, b) => console.log("tick", a, b), "one", "two");
+//// servers-and-scripts/the-shell-runs-one-command.js
+console.log((await Bun.$`echo from the shell`.text()).trim());
+//// servers-and-scripts/timers-ticks-and-microtasks-run-in-order.js
+import { setImmediate as immediately, setInterval as every, setTimeout as wait } from "node:timers/promises";
+
+const order = [];
+setTimeout(() => order.push("timeout 0"), 0);
+setImmediate(() => order.push("immediate"));
+process.nextTick(value => order.push("tick " + value), 1);
+queueMicrotask(() => order.push("microtask"));
+Promise.resolve().then(() => order.push("promise"));
+order.push("sync");
+await wait(20);
+console.log(order);
+
+console.log(await wait(1, "value after a wait"), await immediately("value at once"));
+let rounds = 0;
+for await (const value of every(2, "tick")) if (++rounds === 3) break;
+console.log(rounds);
+
+const cancelled = setTimeout(() => console.log("WRONG: a cleared timer ran"), 5);
+clearTimeout(cancelled);
+let count = 0;
+await new Promise(resolve => {
+  const timer = setInterval((a, b) => {
+    count += a + b;
+    if (count >= 9) {
+      clearInterval(timer);
+      resolve();
+    }
+  }, 1, 1, 2);
+});
+console.log(count, typeof cancelled.ref, typeof cancelled.unref, cancelled.hasRef?.(), typeof cancelled[Symbol.toPrimitive]?.());
+const controller = new AbortController();
+const aborted = wait(1000, null, { signal: controller.signal }).catch(error => error.name + " " + error.code);
+controller.abort();
+console.log(await aborted);
+const unreferenced = setTimeout(() => console.log("WRONG: an unreferenced timer kept the process alive"), 60000);
+unreferenced.unref();
+const started = performance.now();
+await Bun.sleep(5);
+console.log(performance.now() - started >= 4, typeof process.hrtime.bigint(), process.hrtime().length, process.uptime() > 0);
+//// servers-and-scripts/twelve-bound-functions-are-the-reactions-of-promises.js
+function report(id, value) {
+  console.log(this.name, id, value);
+}
+
+const context = { name: "context" };
+for (let i = 0; i < 12; i++) Promise.resolve(i * 10).then(report.bind(context, i));
+//// servers-and-scripts/util-formats-inspects-and-promisifies.js
+import util from "node:util";
+
+console.log(util.format("%s has %d items costing %f, %i whole, %j %o %%", "cart", 3, 9.75, 4.9, { a: 1 }, [1]), util.format("no", "pattern", 5, { b: 2 }));
+console.log(util.inspect({ name: "Ada", nested: { deep: { deeper: { deepest: 1 } } }, list: [1, "two", null, undefined], when: new Date(0), pattern: /x+/g }, { depth: 1 }));
+console.log(util.inspect(new Map([["k", new Set([1, 2])]])), util.inspect("text"), util.inspect(Symbol("s")), util.inspect(12n), util.inspect(-0), util.inspect([, 1]));
+console.log(util.inspect({ a: 1, b: "x" }, { compact: false }), util.inspect("a".repeat(30), { maxStringLength: 5 }), util.inspect(Array.from({ length: 8 }, (_, i) => i), { maxArrayLength: 3 }));
+class Point {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+  }
+  [util.inspect.custom](depth, options) {
+    return "Point<" + this.x + "," + this.y + ">";
+  }
+}
+console.log(util.inspect(new Point(1, 2)), util.inspect([new Point(3, 4)]), `${util.inspect(class A {})} ${util.inspect(function named() {})} ${util.inspect(() => {})}`);
+
+function later(value, callback) {
+  setTimeout(() => (value < 0 ? callback(new RangeError("negative")) : callback(null, value * 2)), 1);
+}
+const promised = util.promisify(later);
+console.log(await promised(21), await promised(-1).catch(error => error.message));
+util.callbackify(async value => value + 1)(1, (error, value) => console.log("callbackified", error, value));
+console.log(util.isDeepStrictEqual({ a: [1, { b: 2 }] }, { a: [1, { b: 2 }] }), util.isDeepStrictEqual([1], ["1"]), util.types.isPromise(promised(1)), util.types.isRegExp(/x/), util.types.isDate({}));
+console.log(util.parseArgs({ args: ["--port", "80", "-v", "file.txt"], options: { port: { type: "string" }, v: { type: "boolean", short: "v" } }, allowPositionals: true }));
+console.log(new util.TextDecoder().decode(new util.TextEncoder().encode("héllo")), util.stripVTControlCharacters("\u001b[31mred\u001b[0m"), util.inherits.length, typeof util.deprecate(() => 1, "old")());
+//// servers-and-scripts/values-are-cloned-and-posted-between-ports.js
+import { MessageChannel as NodeChannel, receiveMessageOnPort } from "node:worker_threads";
+
+const original = { date: new Date(5), pattern: /a/gi, map: new Map([["k", new Set([1])]]), bytes: new Uint8Array([1, 2]), big: 5n, list: [1, , 3], nested: { undefinedValue: undefined, nan: NaN }, error: new RangeError("kept") };
+original.self = original;
+const copy = structuredClone(original);
+console.log(copy !== original, copy.self === copy, copy.date.getTime(), copy.pattern.flags, copy.map.get("k").has(1), copy.bytes, copy.big, 1 in copy.list, "undefinedValue" in copy.nested, copy.error.name, copy.error instanceof RangeError);
+class Point {
+  constructor() {
+    this.x = 1;
+  }
+  get double() {
+    return this.x * 2;
+  }
+}
+console.log(structuredClone(new Point()) instanceof Point, structuredClone(new Point()), structuredClone(Object.create({ inherited: 1 })), structuredClone("text"), structuredClone(null));
+for (const bad of [() => {}, Symbol("s"), { method() {} }, new WeakMap()]) {
+  try {
+    structuredClone(bad);
+  } catch (error) {
+    console.log(error.name, error.code, error instanceof DOMException);
+  }
+}
+const buffer = new ArrayBuffer(8);
+const moved = structuredClone(buffer, { transfer: [buffer] });
+console.log(buffer.byteLength, moved.byteLength, buffer.detached);
+
+const { port1, port2 } = new MessageChannel();
+const got = [];
+const all = new Promise(resolve => {
+  port2.onmessage = event => {
+    got.push(event.data);
+    if (got.length === 3) resolve();
+  };
+});
+port1.postMessage("text");
+port1.postMessage({ list: [1, 2], when: new Date(0) });
+port1.postMessage(new Map([[1, 2]]));
+await all;
+console.log(got);
+port1.close();
+port2.close();
+
+const channel = new NodeChannel();
+channel.port1.postMessage({ hello: "world" });
+console.log(receiveMessageOnPort(channel.port2), receiveMessageOnPort(channel.port2));
+channel.port1.close();
+
+const target = new EventTarget();
+const heard = [];
+target.addEventListener("ping", event => heard.push(event.type + " " + event.detail + " " + (event.target === target)));
+target.addEventListener("ping", { handleEvent: event => heard.push("object listener " + event.cancelable) }, { once: true });
+console.log(target.dispatchEvent(new CustomEvent("ping", { detail: 7 })), target.dispatchEvent(new CustomEvent("ping", { detail: 8, cancelable: true })), heard);
+//// slices-are-taken-of-values-that-are-not-strings.js
+////= show-26
+
+////= lines-91	slice	from	to
+
+////= lines-91	substring	from	to
+
+////= lines-91	substr	from	count
+
+////= lines-3	tail	text	text.slice	1
+
+////= everySuffix
+
+////= receivers
+
+const uses = [
+  ["slice", value => slice(value, 1, 4)],
+  ["substring", value => substring(value, 4, 1)],
+  ["substr", value => substr(value, -4, 2)],
+];
+
+for (const text of receivers("slice")) attempt("the first call of all: tail of " + text, () => tail(make(text)));
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += slice("hello world", i % 11, 9).length + substring("hello world", i % 11, 3).length + substr("hello world", i % 11, 2).length + tail("hello").length;
+  total += everySuffix("hello world").length;
+}
+console.log("2000 honest rounds", total);
+
+////= for-81
+for (const text of receivers("slice")) attempt("suffixes of " + text, () => everySuffix(make(text)));
+
+////= attempt-39
+////= attempt-37
+////= attempt-38
+//// slices-are-taken-of-values-that-are-not-strings-with-the-values-in-plain-sight.js
+////= show-33
+
+const made = {
+  "'hello world'": () => ('hello world'),
+  "''": () => (''),
+  "'hello'.concat(' ', 'world')": () => ('hello'.concat(' ', 'world')),
+  "'h\\u00e9llo w\\u4e16rld'": () => ('h\u00e9llo w\u4e16rld'),
+  "'\\ud83d\\ude00 \\ud83d alone'": () => ('\ud83d\ude00 \ud83d alone'),
+  "new String('hello world')": () => (new String('hello world')),
+  "Object.assign(new String('hello world'), { slice() { return 'own member'; } })": () => (Object.assign(new String('hello world'), { slice() { return 'own member'; } })),
+  "Object.setPrototypeOf(new String('hello world'), { slice() { return 'other prototype'; } })": () => (Object.setPrototypeOf(new String('hello world'), { slice() { return 'other prototype'; } })),
+  "Object.setPrototypeOf(new String('hello world'), null)": () => (Object.setPrototypeOf(new String('hello world'), null)),
+  "{ slice(...given) { return 'mine ' + given.length; } }": () => ({ slice(...given) { return 'mine ' + given.length; } }),
+  "{ slice: String.prototype.slice, toString() { return 'borrowed method'; } }": () => ({ slice: String.prototype.slice, toString() { return 'borrowed method'; } }),
+  "{ slice: 5 }": () => ({ slice: 5 }),
+  "{}": () => ({}),
+  "['h', 'e', 'l', 'l', 'o', ' ', 'w']": () => (['h', 'e', 'l', 'l', 'o', ' ', 'w']),
+  "Buffer.from('hello world')": () => (Buffer.from('hello world')),
+  "new Uint8Array([104, 101, 108, 108, 111])": () => (new Uint8Array([104, 101, 108, 108, 111])),
+  "12345": () => (12345),
+  "-0": () => (-0),
+  "12345n": () => (12345n),
+  "Symbol('hello')": () => (Symbol('hello')),
+  "true": () => (true),
+  "null": () => (null),
+  "undefined": () => (undefined),
+  "new Proxy(new String('hello world'), {})": () => (new Proxy(new String('hello world'), {})),
+  "new Proxy({}, { get(target, key) { return () => 'trapped ' + String(key); } })": () => (new Proxy({}, { get(target, key) { return () => 'trapped ' + String(key); } })),
+  "Object.assign(new String('hello world'), { substring() { return 'own member'; } })": () => (Object.assign(new String('hello world'), { substring() { return 'own member'; } })),
+  "Object.setPrototypeOf(new String('hello world'), { substring() { return 'other prototype'; } })": () => (Object.setPrototypeOf(new String('hello world'), { substring() { return 'other prototype'; } })),
+  "{ substring(...given) { return 'mine ' + given.length; } }": () => ({ substring(...given) { return 'mine ' + given.length; } }),
+  "{ substring: String.prototype.substring, toString() { return 'borrowed method'; } }": () => ({ substring: String.prototype.substring, toString() { return 'borrowed method'; } }),
+  "{ substring: 5 }": () => ({ substring: 5 }),
+  "Object.assign(new String('hello world'), { substr() { return 'own member'; } })": () => (Object.assign(new String('hello world'), { substr() { return 'own member'; } })),
+  "Object.setPrototypeOf(new String('hello world'), { substr() { return 'other prototype'; } })": () => (Object.setPrototypeOf(new String('hello world'), { substr() { return 'other prototype'; } })),
+  "{ substr(...given) { return 'mine ' + given.length; } }": () => ({ substr(...given) { return 'mine ' + given.length; } }),
+  "{ substr: String.prototype.substr, toString() { return 'borrowed method'; } }": () => ({ substr: String.prototype.substr, toString() { return 'borrowed method'; } }),
+  "{ substr: 5 }": () => ({ substr: 5 }),
+};
+
+////= make-3
+
+////= lines-91	slice	from	to
+
+////= lines-91	substring	from	to
+
+////= lines-91	substr	from	count
+
+////= lines-3	tail	text	text.slice	1
+
+////= everySuffix
+
+////= receivers
+
+const uses = [
+  ["slice", value => slice(value, 1, 4)],
+  ["substring", value => substring(value, 4, 1)],
+  ["substr", value => substr(value, -4, 2)],
+];
+
+for (const text of receivers("slice")) attempt("the first call of all: tail of " + text, () => tail(make(text)));
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += slice("hello world", i % 11, 9).length + substring("hello world", i % 11, 3).length + substr("hello world", i % 11, 2).length + tail("hello").length;
+  total += everySuffix("hello world").length;
+}
+console.log("2000 honest rounds", total);
+
+////= for-81
+for (const text of receivers("slice")) attempt("suffixes of " + text, () => everySuffix(make(text)));
+
+////= attempt-39
+////= attempt-37
+////= attempt-38
+//// sloppy-and-strict/a-function-declared-under-the-name-of-a-parameter-shows-in-arguments-strict.mjs
+////= console
+
+function declared(a) {
+  function a() {}
+  return [typeof a, typeof arguments[0], arguments[0] === a];
+}
+function declaredSecond(a, b) {
+  function b() {}
+  return [typeof a, typeof arguments[0], typeof b, typeof arguments[1]];
+}
+function storedAfterwards(a) {
+  function a() {}
+  arguments[0] = "stored";
+  return [typeof a, typeof arguments[0]];
+}
+function assignedAfterwards(a) {
+  function a() {}
+  a = "assigned";
+  return [typeof a, typeof arguments[0]];
+}
+attempt("declared(1)", () => declared(1));
+attempt("declared()", () => declared());
+attempt("declaredSecond(1, 2)", () => declaredSecond(1, 2));
+attempt("declaredSecond(1)", () => declaredSecond(1));
+attempt("storedAfterwards(1)", () => storedAfterwards(1));
+attempt("assignedAfterwards(1)", () => assignedAfterwards(1));
+
+export {};
+//// sloppy-and-strict/a-proxy-under-with-is-asked-the-same-questions-in-the-same-order.cjs
+// What a proxy under `with` is asked, in order, by a store, a read, a compound assignment, an increment, typeof, delete, a call, a pattern and a store to a name that has vanished.
+var log = [];
+function watch(target) {
+  return new Proxy(target, {
+    has(t, key) { log.push("has " + String(key)); return Reflect.has(t, key); },
+    get(t, key, r) { log.push("get " + String(key)); return Reflect.get(t, key, r); },
+    set(t, key, v, r) { log.push("set " + String(key)); return Reflect.set(t, key, v, r); },
+    deleteProperty(t, key) { log.push("delete " + String(key)); return Reflect.deleteProperty(t, key); },
+    getOwnPropertyDescriptor(t, key) { log.push("describe " + String(key)); return Reflect.getOwnPropertyDescriptor(t, key); },
+    defineProperty(t, key, d) { log.push("define " + String(key)); return Reflect.defineProperty(t, key, d); },
+  });
+}
+function report(title, run) {
+  var answer;
+  try { answer = run(); } catch (e) { answer = e.constructor.name; }
+  console.log(title + ": " + log.splice(0).join(", ") + " -> " + String(answer));
+}
+var outside = "outside";
+report("store", function () { with (watch({ x: 5 })) { x = "stored"; return x; } });
+report("store of a name it lacks", function () { with (watch({ x: 5 })) { outside = "changed"; return outside; } });
+report("read", function () { with (watch({ x: 5 })) { return x; } });
+report("add", function () { with (watch({ x: 5 })) { x += 1; return x; } });
+report("increment", function () { with (watch({ x: 5 })) { return x++; } });
+report("typeof", function () { with (watch({ x: 5 })) { return typeof x; } });
+report("delete", function () { with (watch({ x: 5 })) { return delete x; } });
+report("call", function () { with (watch({ x: function () { return this === undefined ? "no receiver" : typeof this; } })) { return x(); } });
+report("logical", function () { with (watch({ x: null })) { x ??= 3; return x; } });
+report("pattern", function () { with (watch({ x: 5, y: 6 })) { [x, y] = [1, 2]; return x + y; } });
+report("vanishes", function () { var o = { x: 5 }; with (watch(o)) { x = (delete o.x, "late"); } return o.x + " " + typeof globalThis.x; });
+report("nested", function () { with (watch({ x: 1 })) { with (watch({ y: 2 })) { x = y; return x; } } });
+//// sloppy-and-strict/a-store-to-a-parameter-shows-in-arguments-sloppy.cjs
+////= console
+
+////= lines-7	sizeOfFirst	list	list.length
+function assigned(a) {
+  a = "changed";
+  return arguments[0];
+}
+function incremented(a) {
+  a++;
+  return arguments[0];
+}
+function addedTo(a) {
+  a += "!";
+  return arguments[0];
+}
+function fromAPattern(a) {
+  [a] = ["from a pattern"];
+  return arguments[0];
+}
+////= inAClosure
+function byEval(a) {
+  eval("a = 'from eval'");
+  return arguments[0];
+}
+function applied(a, b) {
+  a = 10;
+  b = 20;
+  return Math.max.apply(null, arguments);
+}
+function spread(a, b) {
+  a = 10;
+  return [...arguments];
+}
+function notPassed(a, b) {
+  b = "set";
+  return [arguments.length, arguments[1], 1 in arguments];
+}
+function passedOn(a) {
+  a = [1, 2, 3];
+  return sizeOfFirst.apply(null, arguments);
+}
+function loopVariable(a) {
+  for (a = 0; a < 3; a++);
+  return arguments[0];
+}
+function logical(a) {
+  a ||= "filled in";
+  return arguments[0];
+}
+function sometimes(a, change) {
+  if (change) a = "changed";
+  return arguments[0] + 1;
+}
+function readFirst(a) {
+  var before = arguments[0];
+  a = "changed";
+  return [before, arguments[0]];
+}
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += sometimes(i, false);
+console.log("sum", sum);
+var uses = { assigned, incremented, addedTo, fromAPattern, inAClosure, byEval, applied, spread, notPassed, passedOn, loopVariable, readFirst };
+for (var name in uses) attempt(name, uses[name].bind(null, 1));
+attempt("applied with two", () => applied(1, 2));
+attempt("spread with two", () => spread(1, 2));
+attempt("logical", () => [logical(0), logical(5)]);
+attempt("sometimes, changed", () => sometimes(1, true));
+attempt("sometimes, unchanged", () => sometimes(1, false));
+//// sloppy-and-strict/a-store-to-a-parameter-shows-in-arguments-strict.mjs
+////= console
+
+////= lines-7	sizeOfFirst	list	list.length
+function assigned(a) {
+  a = "changed";
+  return arguments[0];
+}
+function incremented(a) {
+  a++;
+  return arguments[0];
+}
+function addedTo(a) {
+  a += "!";
+  return arguments[0];
+}
+function fromAPattern(a) {
+  [a] = ["from a pattern"];
+  return arguments[0];
+}
+////= inAClosure
+function byEval(a) {
+  eval("a = 'from eval'");
+  return arguments[0];
+}
+function applied(a, b) {
+  a = 10;
+  b = 20;
+  return Math.max.apply(null, arguments);
+}
+function spread(a, b) {
+  a = 10;
+  return [...arguments];
+}
+function notPassed(a, b) {
+  b = "set";
+  return [arguments.length, arguments[1], 1 in arguments];
+}
+function passedOn(a) {
+  a = [1, 2, 3];
+  return sizeOfFirst.apply(null, arguments);
+}
+function loopVariable(a) {
+  for (a = 0; a < 3; a++);
+  return arguments[0];
+}
+function logical(a) {
+  a ||= "filled in";
+  return arguments[0];
+}
+function sometimes(a, change) {
+  if (change) a = "changed";
+  return arguments[0] + 1;
+}
+function readFirst(a) {
+  var before = arguments[0];
+  a = "changed";
+  return [before, arguments[0]];
+}
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += sometimes(i, false);
+console.log("sum", sum);
+var uses = { assigned, incremented, addedTo, fromAPattern, inAClosure, byEval, applied, spread, notPassed, passedOn, loopVariable, readFirst };
+for (var name in uses) attempt(name, uses[name].bind(null, 1));
+attempt("applied with two", () => applied(1, 2));
+attempt("spread with two", () => spread(1, 2));
+attempt("logical", () => [logical(0), logical(5)]);
+attempt("sometimes, changed", () => sometimes(1, true));
+attempt("sometimes, unchanged", () => sometimes(1, false));
+
+export {};

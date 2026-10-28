@@ -74,6 +74,17 @@ void us_socket_group_deinit(struct us_socket_group_t *group) {
  * closes it in finalize(), so closing+freeing it here turns that into a UAF
  * (the original LSAN was only the *accepted* sockets, not the listener). */
 void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_listeners) {
+    struct us_loop_t *loop = group->loop;
+    if (!loop) {
+        /* A Windows named-pipe Listener never initializes its group. */
+        return;
+    }
+
+    /* A close handler can tick the loop (waitForPromise). Bump tick_depth so
+     * that nested tick doesn't free the sockets closed here while this loop and
+     * Listener.stop still read them. */
+    loop->data.tick_depth++;
+
     if (also_listeners) {
         /* Listeners first — stops new sockets from being accepted into
          * head_sockets while we're draining it. */
@@ -141,6 +152,8 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
         }
         US_ASSERT(group->low_prio_count == 0);
     }
+
+    loop->data.tick_depth--;
 }
 
 void us_socket_group_close_all(struct us_socket_group_t *group) {
@@ -347,6 +360,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
     s->hangup_closes_unsent = 0;
+    s->send_rejected = 0;
     s->next = 0;
     s->prev = 0;
     s->connect_state = NULL;
@@ -464,7 +478,7 @@ void us_listen_socket_close(struct us_listen_socket_t *ls) {
         struct us_socket_group_t *group = ls->accept_group;
         struct us_loop_t *loop = s->group->loop;
         us_poll_stop((struct us_poll_t *) s, loop);
-        bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
+        us_internal_poll_close_fd((struct us_poll_t *) s);
 
         us_internal_listen_socket_ssl_free(ls);
 
@@ -527,6 +541,7 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
     s->hangup_closes_unsent = 0;
+    s->send_rejected = 0;
     s->connect_state = NULL;
     s->connect_next = NULL;
 }

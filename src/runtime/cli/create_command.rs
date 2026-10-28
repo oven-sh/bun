@@ -4,6 +4,7 @@ use std::io::Write as _;
 
 use crate::api::bun_process::Status;
 use crate::api::bun_process::sync as spawn_sync;
+use bun_archive::{Archiver, archiver};
 use bun_clap as clap;
 use bun_core::Progress::{Node as ProgressNode, Progress};
 use bun_core::{Global, Output, pretty_error, pretty_errorln};
@@ -11,7 +12,6 @@ use bun_core::{MutableString, strings};
 use bun_dotenv as DotEnv;
 use bun_http as HTTP;
 use bun_js_printer as JSPrinter;
-use bun_libarchive::{Archiver, archiver};
 use bun_parsers::json as JSON;
 use bun_paths::{OSPathSlice, PathBuffer};
 use bun_resolver::fs;
@@ -148,6 +148,13 @@ impl CreateOptions {
             clap::param!("--verbose                      Too many logs"),
             clap::param!("--no-package-json              Disable package.json transforms"),
             clap::param!("--open                         On finish, start bun & open in-browser"),
+            clap::param!(
+                "--use-system-ca                Use the system's trusted certificate authorities"
+            ),
+            clap::param!(
+                "--use-openssl-ca               Use OpenSSL's default CA store instead of the bundled one"
+            ),
+            clap::param!("--use-bundled-ca               Use bundled CA store"),
             clap::param!("<POS>...                       "),
         ];
         let mut diag = clap::Diagnostic::default();
@@ -165,6 +172,8 @@ impl CreateOptions {
                 return Err(err.into());
             }
         };
+
+        Global::set_ca_store_from_flags(|flag| args.flag(flag));
 
         let mut positionals = args.positionals().to_vec();
         if !positionals.is_empty() && (positionals[0] == b"c" || positionals[0] == b"create") {
@@ -373,7 +382,7 @@ impl CreateCommand {
                 .dirname_store
                 .append_slice(bun_paths::resolve_path::join_abs::<
                     bun_paths::platform::Loose,
-                >(filesystem.top_level_dir, dirname))?;
+                >(filesystem.top_level_dir(), dirname))?;
 
         let mut progress = Progress {
             supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),
@@ -540,8 +549,8 @@ impl CreateCommand {
                     struct OverwriteListAppender {
                         buf: Vec<u8>,
                     }
-                    impl bun_libarchive::ArchiveAppender for OverwriteListAppender {
-                        fn append(&mut self, path: &[u8]) -> Result<&[u8], bun_libarchive::Error> {
+                    impl bun_archive::ArchiveAppender for OverwriteListAppender {
+                        fn append(&mut self, path: &[u8]) -> Result<&[u8], bun_archive::Error> {
                             self.buf.clear();
                             self.buf.extend_from_slice(path);
                             Ok(&self.buf)
@@ -1051,7 +1060,7 @@ impl CreateCommand {
                 && bun_install::package_manager::config_ignores_scripts(
                     ctx,
                     env_loader,
-                    filesystem.top_level_dir,
+                    filesystem.top_level_dir(),
                 )?);
 
         // `--no-install` skips the tasks too. No dependencies skips only `bun install`.
@@ -1087,15 +1096,15 @@ impl CreateCommand {
 
         if let Some(bun_exe) = bun_exe {
             let start_time = bun_core::time::nano_timestamp();
-            let install_args: &[&[u8]] = if ignore_scripts {
-                &[bun_exe, b"install", b"--ignore-scripts"]
-            } else {
-                &[bun_exe, b"install"]
-            };
-            Output::flush();
-            bun_core::pretty!("\n<r><d>$ <b><cyan>bun<r><d> install");
+            let mut install_args: Vec<&[u8]> = vec![bun_exe, b"install"];
             if ignore_scripts {
-                bun_core::pretty!(" --ignore-scripts");
+                install_args.push(b"--ignore-scripts");
+            }
+            install_args.extend(Global::ca_store_flag().map(|flag| flag.as_bytes()));
+            Output::flush();
+            bun_core::pretty!("\n<r><d>$ <b><cyan>bun<r><d>");
+            for arg in &install_args[1..] {
+                bun_core::pretty!(" {}", bstr::BStr::new(arg));
             }
             bun_core::pretty!("<r>\n");
             Output::flush();
@@ -1193,7 +1202,7 @@ impl CreateCommand {
         }
 
         let rel_destination =
-            bun_paths::resolve_path::relative(filesystem.top_level_dir, destination);
+            bun_paths::resolve_path::relative(filesystem.top_level_dir(), destination);
         if rel_destination.is_empty() {
             bun_core::pretty!(
                 "\n<d>#<r><b> To get started, run:<r>\n\n  <b><cyan>{}<r>\n\n",
@@ -1260,13 +1269,13 @@ impl CreateCommand {
         let join = |parts: &[&[u8]], buf: &mut PathBuffer| {
             bun_paths::resolve_path::join_abs_string_buf_z_checked::<
                 bun_paths::resolve_path::platform::Loose,
-            >(filesystem.top_level_dir, &mut buf[..], parts)
+            >(filesystem.top_level_dir(), &mut buf[..], parts)
             .map(|path| path.as_bytes().len())
         };
         let template: &[u8] = 'brk: {
             let positional = positionals[0];
 
-            let parts = [filesystem.top_level_dir, positional];
+            let parts = [filesystem.top_level_dir(), positional];
             let Some(len) = join(&parts, home_dir_buf) else {
                 pretty_errorln!("<r><red>error<r>: template name too long");
                 Global::exit(1);
@@ -1308,7 +1317,7 @@ impl CreateCommand {
             let home_dir = env_loader.map.get(b"HOME");
             let template_dirs: [Option<Vec<&[u8]>>; 3] = [
                 create_dir.map(|dir| vec![dir, positional]),
-                Some(vec![filesystem.top_level_dir, BUN_CREATE_DIR, positional]),
+                Some(vec![filesystem.top_level_dir(), BUN_CREATE_DIR, positional]),
                 home_dir.map(|dir| vec![dir, BUN_CREATE_DIR, positional]),
             ];
             for parts in template_dirs.iter().flatten() {
@@ -1606,7 +1615,7 @@ impl Example {
         let home_dir = env_loader.map.get(bun_core::env_var::HOME.key());
         let folders: [Option<bun_sys::Dir>; 3] = [
             create_dir.map(|dir| vec![dir]),
-            Some(vec![filesystem.top_level_dir, BUN_CREATE_DIR]),
+            Some(vec![filesystem.top_level_dir(), BUN_CREATE_DIR]),
             home_dir.map(|dir| vec![dir, BUN_CREATE_DIR]),
         ]
         .map(|parts| -> Option<bun_sys::Dir> {
@@ -1717,8 +1726,7 @@ impl Example {
         }
 
         let http_proxy = env_loader.get_http_proxy_for(&api_url);
-        let mutable: &'static mut MutableString =
-            crate::cli::cli_arena().alloc(MutableString::init(8192)?);
+        let mut mutable = MutableString::default();
 
         // ensure very stable memory address
         let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
@@ -1734,7 +1742,7 @@ impl Example {
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
-        let response = async_http.send_sync(mutable)?;
+        let response = async_http.send_sync(&mut mutable)?;
 
         match response.status_code() {
             404 => return Err(crate::Error::GitHubRepositoryNotFound),
@@ -1773,7 +1781,7 @@ impl Example {
             Global::crash();
         }
 
-        Ok(mutable.clone()?)
+        Ok(mutable)
     }
 
     pub(crate) fn fetch(
@@ -1788,8 +1796,7 @@ impl Example {
 
         // SAFETY: single-threaded CLI access to static buffer.
         let url_buf = unsafe { &mut *NPM_REGISTRY_URL_BUF.get() };
-        let mutable: &'static mut MutableString =
-            crate::cli::cli_arena().alloc(MutableString::init(2048)?);
+        let mut mutable = MutableString::default();
 
         let api_url = URL::parse({
             let mut cursor: &mut [u8] = &mut url_buf[..];
@@ -1812,23 +1819,21 @@ impl Example {
             .get_http_proxy_for(unsafe { (*URL_.get()).as_ref().unwrap() })
             .map(|u| URL::parse_single_reader(crate::cli::cli_dupe(u.href)));
 
-        // ensure very stable memory address
-        let async_http: &mut HTTP::AsyncHTTP =
-            crate::cli::cli_arena().alloc(HTTP::AsyncHTTP::init_sync(
-                HTTP::Method::GET,
-                // SAFETY: single-threaded CLI access to static URL_ (set just above)
-                unsafe { (*URL_.get()).clone() }.unwrap(),
-                Default::default(),
-                b"",
-                b"",
-                http_proxy,
-                HTTP::ProxySettings::from_env(env_loader),
-                HTTP::FetchRedirect::Follow,
-            ));
+        let mut async_http = HTTP::AsyncHTTP::init_sync(
+            HTTP::Method::GET,
+            // SAFETY: single-threaded CLI access to static URL_ (set just above)
+            unsafe { (*URL_.get()).clone() }.unwrap(),
+            Default::default(),
+            b"",
+            b"",
+            http_proxy,
+            HTTP::ProxySettings::from_env(env_loader),
+            HTTP::FetchRedirect::Follow,
+        );
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
-        let mut response = async_http.send_sync(mutable)?;
+        let mut response = async_http.send_sync(&mut mutable)?;
 
         match response.status_code() {
             404 => return Err(crate::Error::ExampleNotFound),
@@ -1896,7 +1901,7 @@ impl Example {
             .get_http_proxy_for(&parsed_tarball_url)
             .map(|u| URL::parse_single_reader(crate::cli::cli_dupe(u.href)));
 
-        *async_http = HTTP::AsyncHTTP::init_sync(
+        async_http = HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
             parsed_tarball_url,
             Default::default(),
@@ -1911,7 +1916,7 @@ impl Example {
 
         refresher.maybe_refresh();
 
-        response = async_http.send_sync(mutable)?;
+        response = async_http.send_sync(&mut mutable)?;
 
         refresher.maybe_refresh();
 
@@ -1927,7 +1932,7 @@ impl Example {
 
         refresher.refresh();
 
-        Ok(mutable.clone()?)
+        Ok(mutable)
     }
 
     pub(crate) fn fetch_all(
@@ -1938,8 +1943,13 @@ impl Example {
         let url = URL::parse(Self::EXAMPLES_URL);
         let http_proxy = env_loader.get_http_proxy_for(&url);
 
+        // Never freed because the returned `Example` names borrow from the body.
         let mutable: &'static mut MutableString =
-            crate::cli::cli_arena().alloc(MutableString::init(2048)?);
+            crate::cli::cli_arena().alloc(MutableString::default());
+        bun_core::asan::register_root_region(
+            std::ptr::from_ref::<MutableString>(mutable).cast(),
+            core::mem::size_of::<MutableString>(),
+        );
 
         let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,

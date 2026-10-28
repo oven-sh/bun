@@ -5,16 +5,16 @@
 //! plugins. The result is checked or written like the built-in formatter's output. It's exact, but slow.
 
 use super::cli::{Options, Precedence};
-use super::config::is_option_of_prettier;
+use super::config::is_prettier_option;
 use crate::run::Environment;
-use crate::{fs, paths};
+use crate::{fs, git, paths};
 use bun_lint::js_plugin::{Host, Unformatted};
 use bun_lint::linter::write_json;
 use bun_lint::options::Json;
 
 const BOM: &[u8] = b"\xEF\xBB\xBF";
 
-/// Whether the package `name` is found from `directory`.
+/// True if the package `name` resolves from `directory`.
 pub(crate) fn is_installed(directory: &[u8], name: &[u8]) -> bool {
     paths::ancestors(directory).any(|it| {
         let package = paths::join(&paths::join(it, b"node_modules"), name);
@@ -25,9 +25,9 @@ pub(crate) fn is_installed(directory: &[u8], name: &[u8]) -> bool {
 pub(crate) struct Prettier<'e> {
     host: Host<'e>,
     cwd: Vec<u8>,
-    /// What is the same for all files, as `formatWithPrettier` in `worker/prettier.js` reads it.
+    /// The settings shared by all files, in the shape that `formatWithPrettier` in `worker/prettier.js` reads.
     run: Vec<(Vec<u8>, Json)>,
-    once: fs::Written,
+    written_files: fs::WrittenFiles,
 }
 
 impl<'e> Prettier<'e> {
@@ -40,13 +40,13 @@ impl<'e> Prettier<'e> {
     ) -> Prettier<'e> {
         let host = Host::with_engine(environment.js_engine, &environment.cwd);
         host.expect(files, size, threads);
-        // A string is written without its quotes.
+        // A string flag's value has no quotes, so it isn't valid JSON.
         let value = |text: &[u8]| match bun_lint::json::parse(text) {
             Some(value @ (Json::Bool(_) | Json::Number(_))) => value,
             _ => Json::String(text.to_vec()),
         };
         let mut flags: Vec<(Vec<u8>, Json)> = (options.format.iter())
-            .filter(|it| is_option_of_prettier(it.0))
+            .filter(|it| is_prettier_option(it.0))
             .map(|it| (it.0.to_vec(), value(&it.1)))
             .collect();
         if !options.plugins.is_empty() {
@@ -71,7 +71,7 @@ impl<'e> Prettier<'e> {
             host,
             cwd: environment.cwd.clone(),
             run,
-            once: fs::Written::default(),
+            written_files: fs::WrittenFiles::default(),
         }
     }
 
@@ -85,31 +85,33 @@ impl<'e> Prettier<'e> {
         self.host.for_each(count, is_heavy, work);
     }
 
-    /// Formats the file at `path`. `shown`: its name for the user. `writes`: it is written if it changes. Returns whether it
-    /// changes. `Err`: for the user.
+    /// Formats the file at `path`. With `writes`, the file is written if it changes. Returns whether it changed. `Err`
+    /// is the message to print.
     pub(crate) fn format_file(
         &self,
-        (path, shown): (&[u8], &[u8]),
+        (path, display_name): (&[u8], &[u8]),
         config: Option<&[u8]>,
         writes: bool,
+        only: Option<&git::Files>,
     ) -> Result<bool, Vec<u8>> {
-        let fail = |what: &[u8], why: &[u8]| [what, b" file \"", shown, b"\":\n", why].concat();
-        let text =
-            fs::read(path).map_err(|error| fail(b"Unable to read", &fs::describe(&error)))?;
+        let fail =
+            |what: &[u8], why: &[u8]| [what, b" file \"", display_name, b"\":\n", why].concat();
+        let text = git::read(only, path)
+            .map_err(|error| fail(b"Unable to read", &fs::describe(&error)))?;
         let formatted = (self.format(Some(path), config, &text))
-            .map_err(|why| [shown, b": ", &describe(why)].concat())?;
+            .map_err(|why| [display_name, b": ", &describe(why)].concat())?;
         if formatted == text {
             return Ok(false);
         }
         if writes {
-            fs::write_atomically(&self.once, &self.cwd, path, &formatted)
+            fs::write_atomically(&self.written_files, &self.cwd, path, &formatted)
                 .map_err(|why| fail(b"Unable to write", &why))?;
         }
         Ok(true)
     }
 
-    /// What Prettier makes of `text`, which is the file at `path`. `None`: it has no file name. `config`: its configuration
-    /// file.
+    /// Returns Prettier's output for `text`, the contents of the file at `path`. `path` is `None` if it has no file
+    /// name. `config` is its config file.
     pub(crate) fn format(
         &self,
         path: Option<&[u8]>,
@@ -122,7 +124,8 @@ impl<'e> Prettier<'e> {
         how.push((b"config".to_vec(), or_null(config)));
         let mut json = Vec::new();
         write_json(&mut json, &Json::Object(how));
-        // Prettier puts the byte order mark back. What decodes the text may not show it one.
+        // Prettier keeps a byte order mark, but decoding the text for JavaScript may strip it first. So it's re-added
+        // here.
         let (mark, text) = match text.strip_prefix(BOM) {
             Some(text) => (BOM, text),
             None => (&b""[..], text),
@@ -132,7 +135,7 @@ impl<'e> Prettier<'e> {
     }
 }
 
-/// For the user, behind the name of the file.
+/// The message to print after the file name.
 pub(crate) fn describe(why: Unformatted) -> Vec<u8> {
     match why {
         Unformatted::NotInstalled => b"prettier is not installed".to_vec(),

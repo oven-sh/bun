@@ -46,10 +46,8 @@ fn out_kind_str(k: OutKind) -> &'static str {
 /// **not** re-enter code that derefs another `Rc<PipeReader>` to the same
 /// allocation (e.g. `Cmd::buffered_output_close` reading `pipe.slice()`).
 ///
-/// **Thread-confinement (no data race):** `PipeReader` holds raw
-/// `*mut ShellSubprocess` / `*mut Interpreter` fields and is therefore
-/// auto-`!Send + !Sync`; consequently `Rc<PipeReader>` is `!Send + !Sync`
-/// too and cannot escape the JS thread. See the `static_assertions` below.
+/// **Thread-confinement (no data race):** `Rc` is `!Send + !Sync`, so no other
+/// thread can reach the payload.
 ///
 /// **Provenance:** `Rc::as_ptr` projects from the `NonNull<RcInner<T>>`
 /// stored by value (originating from `Box::into_raw`), so the returned
@@ -819,7 +817,7 @@ impl ShellSubprocess {
         }
 
         // Wire the FileSink's close-signal back to the enclosing `Writable` so
-        // `Writable::on_close` (drops the `Rc<FileSink>`) runs when the sink
+        // `Writable::on_close` (drops the `RefPtr<FileSink>`) runs when the sink
         // finishes. `stdin` lives inside the Box-allocated `Subprocess` at a
         // stable address, so the self-referential raw pointer is sound for the
         // life of the subprocess. Only reachable on Windows (POSIX
@@ -963,7 +961,7 @@ impl Writable {
     pub fn on_close(&mut self, _: Option<bun_sys::Error>) {
         match self {
             Writable::Buffer(_) | Writable::Pipe(_) => {
-                // Dropping the Rc on reassignment below derefs.
+                // Dropping the `RefPtr` on reassignment below derefs.
             }
             _ => {}
         }

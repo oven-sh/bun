@@ -9,8 +9,8 @@
 //!
 //! So `IOWriter` is essentially a writer queue to a file descriptor.
 //!
-//! We also make `IOWriter` reference counted (via `Rc` in the Rust port),
-//! this simplifies management of the file descriptor.
+//! `IOWriter` is also reference counted (`Rc`), which simplifies management of
+//! the file descriptor.
 
 use bun_collections::VecExt;
 use core::cell::UnsafeCell;

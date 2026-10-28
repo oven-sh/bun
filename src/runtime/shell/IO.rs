@@ -29,7 +29,7 @@ impl IO {
 
     /// Maps the state-node IO triple onto
     /// `subproc::Stdio` for [`ShellSubprocess::spawn_async`], and stashes the
-    /// owning `IOWriter` Arcs on `shellio` so [`PipeReader`]'s captured-writer
+    /// owning `IOWriter` `Rc`s on `shellio` so [`PipeReader`]'s captured-writer
     /// path can tee subprocess output back into the JS-side buffers.
     pub(crate) fn to_subproc_stdio(&self, stdio: &mut [Stdio; 3], shellio: &mut ShellIO) {
         stdio[0] = self.stdin.to_subproc_stdio();

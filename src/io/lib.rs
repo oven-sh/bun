@@ -542,7 +542,7 @@ bun_dispatch::link_interface! {
 /// aliasing contract on [`pipe_reader::BufferedReaderParent`]). `Self` resolves
 /// to `$T` inside every body. Autoref via `(*this).method()` covers the common
 /// case where the inherent takes `&self`/`&mut self`; sites whose inherent must
-/// stay raw-pointer (e.g. `Arc::from_raw` keepalive in shell `PipeReader`)
+/// stay raw-pointer (e.g. `Rc::from_raw` keepalive in shell `PipeReader`)
 /// forward as `<Self>::method(this)` instead.
 #[macro_export]
 macro_rules! impl_buffered_reader_parent {

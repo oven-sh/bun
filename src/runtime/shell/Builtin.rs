@@ -267,12 +267,6 @@ pub(crate) enum BuiltinInput {
 pub(crate) struct BuiltinBlob {
     pub(crate) blob: crate::webcore::Blob,
 }
-// `BuiltinBlob` is auto-`Send + Sync`: its sole field is `webcore::Blob`,
-// which already asserts `Send + Sync`. No `unsafe impl` needed.
-const _: fn() = || {
-    fn assert<T: Send + Sync>() {}
-    assert::<BuiltinBlob>();
-};
 
 impl BuiltinIO {
     /// From the Cmd's IO::OutKind. `Rc::clone` (via `OutFd: Clone`) bumps

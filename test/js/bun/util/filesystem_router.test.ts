@@ -1034,10 +1034,10 @@ it("reload() while Bun.build() resolves the same directory", async () => {
   // Run in a subprocess so a crash is observable as a signal instead of taking
   // down the test runner.
   //
-  // A round is 4 builds, and a debug build takes about 0.4 s for each (a release
-  // build 0.02 s). ASAN, the default there, fails on the first read of a freed
-  // listing, so a debug build needs few rounds.
-  const rounds = isDebug ? 5 : 40;
+  // A round is 4 builds, and a debug build with ASAN takes about 0.4 s for each
+  // (a release build 0.02 s). ASAN fails on the first read of a freed listing,
+  // so that build needs few rounds.
+  const rounds = isDebug && isASAN ? 5 : 40;
   const files: Record<string, string> = {
     "fixture.ts": /* ts */ `
       import path from "path";

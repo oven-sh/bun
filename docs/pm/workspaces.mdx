@@ -119,6 +119,23 @@ Workspaces have a few major benefits.
 - **Bun can de-duplicate dependencies.** If `a` and `b` share a common dependency, Bun _hoists_ it to the root `node_modules` directory. This saves disk space and minimizes the "dependency hell" of multiple versions of a package installed at once.
 - **Run scripts in multiple packages.** Use the [`--filter` flag](/pm/filter) to run `package.json` scripts in several packages at once, or `--workspaces` to run scripts across all workspaces.
 
+## Run a command in a workspace
+
+A package manager command that you run in a workspace, such as `bun install` or `bun add`, uses the `bun.lock`, `bunfig.toml`, and `.npmrc` of the root. To find the root, Bun reads each `package.json` above the working directory, up to the first one that has `"workspaces"`.
+
+If one of those files can't tell whether it lists the working directory, Bun stops the command and changes nothing. The error names the file, and a note reads `cannot tell if "<working directory>" is a workspace of "<directory of the file>"`. This happens when:
+
+- The `package.json` can't be parsed, or is a directory.
+- Its `"workspaces"` is not an array of strings, or is an object whose `"packages"` is not an array of strings. An object without `"packages"` lists nothing.
+- A `"workspaces"` pattern needs a directory that Bun can't read. The patterns before that one still count: if one of them lists the working directory, Bun has found the root. Bun skips a symlink that it can't follow.
+- The `package.json` is empty next to a lockfile, and no `package.json` above it lists the working directory.
+
+Bun skips a `package.json` that it can't open, like npm does.
+
+This applies to every directory below such a file, not only to workspaces. A directory whose own `package.json` has content but no `"name"` is never a workspace, so only the first case stops a command there.
+
+`bun run --filter`, `bun run --workspaces`, and `bunx` find the root on their own. This rule doesn't apply to them.
+
 ## Self-contained workspaces
 
 With the hoisted linker, dependencies shared by several workspaces are hoisted to the root

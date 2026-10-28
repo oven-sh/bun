@@ -608,6 +608,23 @@ impl Lockfile {
             || (self.packages.len() == 1 && self.packages.get(0).resolutions.len == 0)
     }
 
+    /// Returns true if `dir` has a file named like a lockfile that `load_from_dir` would take.
+    pub(crate) fn exists_in(dir: &[u8]) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        [LockfileFormat::Text, LockfileFormat::Binary]
+            .map(LockfileFormat::filename)
+            .into_iter()
+            .chain(migration::OTHER_LOCKFILES.map(|(_, name)| name))
+            .any(|name| {
+                resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
+                    dir,
+                    &mut buf,
+                    &[name.as_bytes()],
+                )
+                .is_some_and(sys::exists_z)
+            })
+    }
+
     pub fn load_from_cwd<'a, const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(
         &'a mut self,
         manager: Option<&mut PackageManager>,

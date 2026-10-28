@@ -736,10 +736,9 @@ impl Subcommand {
         matches!(self, Self::Audit | Self::Pm | Self::Info)
     }
 
-    /// A bare `bun link` registers the folder it runs in, so it stays there. `bun link <package>`
-    /// installs, like `bun add`.
+    /// A bare `bun link` or `bun unlink` acts on the folder it runs in. With a package it installs.
     pub(crate) fn should_chdir_to_root(self, has_package_args: bool) -> bool {
-        !matches!(self, Self::Link) || has_package_args
+        !matches!(self, Self::Link | Self::Unlink) || has_package_args
     }
 
     /// `init` opens package.json read-write for these so a read-only file fails before any work.
@@ -2047,6 +2046,15 @@ impl<'a> PackageJsonWalk<'a> {
     }
 }
 
+/// What the package.json files above a folder say about it.
+enum RootAbove<'a> {
+    /// The root's directory, its open package.json and the hash of the workspace's name.
+    Found(&'a [u8], bun_sys::File, PackageNameHash),
+    NotListed,
+    /// The package.json at `walk.path` might list the folder but can't tell. The log says why.
+    Unasked(Error, bun_ast::Log),
+}
+
 /// Continues `walk` above `child_cwd` to find the workspace root that `child_cwd` belongs to. Only
 /// the first package.json with a `workspaces` field counts. If it lists `child_cwd`, this returns
 /// the root's directory, its open package.json and the hash of the workspace's name.
@@ -2064,7 +2072,7 @@ fn find_workspace_root<'a>(
     )>,
     mut last_name: Option<&mut Box<[u8]>>,
 ) -> Result<Option<(&'a [u8], bun_sys::File, PackageNameHash)>, Error> {
-    let found = find_workspace_root_above(
+    let above = find_workspace_root_above(
         walk,
         child_cwd,
         log,
@@ -2073,20 +2081,51 @@ fn find_workspace_root<'a>(
             .map(|(names, cache)| (&mut **names, &mut **cache)),
         last_name.as_deref_mut(),
     )?;
-    if found.is_some() {
-        return Ok(found);
-    }
+    let mut unasked = match above {
+        RootAbove::Found(root, json_file, name_hash) => {
+            return Ok(Some((root, json_file, name_hash)));
+        }
+        RootAbove::NotListed => None,
+        RootAbove::Unasked(err, why) => Some((err, why)),
+    };
     // A workspace can be a symlink to a folder outside the root. The root is then only found above
     // the path that the user typed to get here.
-    let Some(child_cwd) = path_as_typed(child_cwd) else {
+    if let Some(typed) = path_as_typed(child_cwd) {
+        let real_walk = core::mem::replace(walk, PackageJsonWalk::new(typed));
+        walk.next_dir = bun_core::dirname(typed);
+        if let Some((names, _)) = &mut members {
+            **names = Package::WorkspaceMap::WorkspaceMap::init();
+        }
+        let above = find_workspace_root_above(
+            walk,
+            typed,
+            log,
+            members
+                .as_mut()
+                .map(|(names, cache)| (&mut **names, &mut **cache)),
+            last_name,
+        )?;
+        match above {
+            RootAbove::Found(root, json_file, name_hash) => {
+                return Ok(Some((root, json_file, name_hash)));
+            }
+            // The file above the real path is the one to report.
+            _ if unasked.is_some() => *walk = real_walk,
+            RootAbove::NotListed => {}
+            RootAbove::Unasked(err, why) => unasked = Some((err, why)),
+        }
+    }
+    let Some((err, mut why)) = unasked else {
         return Ok(None);
     };
-    *walk = PackageJsonWalk::new(child_cwd);
-    walk.next_dir = bun_core::dirname(child_cwd);
-    if let Some((names, _)) = &mut members {
-        **names = Package::WorkspaceMap::WorkspaceMap::init();
+    // A folder without a `name` is never a workspace. Callers without `members` check that first.
+    if let Some((_, cache)) = members
+        && is_no_workspace(cache, child_cwd)
+    {
+        return Ok(None);
     }
-    find_workspace_root_above(walk, child_cwd, log, members, last_name)
+    why.append_to(log);
+    Err(err)
 }
 
 /// Returns `dir` as `$PWD` spells it, which keeps the symlinks that the user went through. The
@@ -2124,7 +2163,9 @@ fn find_workspace_root_above<'a>(
         &mut WorkspacePackageJSONCache,
     )>,
     mut last_name: Option<&mut Box<[u8]>>,
-) -> Result<Option<(&'a [u8], bun_sys::File, PackageNameHash)>, Error> {
+) -> Result<RootAbove<'a>, Error> {
+    // The first empty package.json next to a lockfile. One above it that lists `child_cwd` wins.
+    let mut emptied: Option<Vec<u8>> = None;
     // Finding the workspace root must not depend on its package.json being writable.
     while let Some((parent, opened)) = walk.next(bun_sys::O::RDONLY) {
         let Ok(json_file) = opened else {
@@ -2135,6 +2176,11 @@ fn find_workspace_root_above<'a>(
         let json_stat_size = json_file.get_end_pos()?;
         let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
         let json_len = json_file.pread_all(&mut json_buf, 0)?;
+        // It lost its content, so it can't tell. `bun install` in `parent` refuses this file too.
+        if json_len == 0 && Lockfile::exists_in(parent) {
+            emptied.get_or_insert_with(|| walk.path.clone());
+            continue;
+        }
         // Keep the path that was opened. The real path of the file descriptor may be on another
         // drive or outside the project. SAFETY: ROOT_PACKAGE_JSON_PATH_BUF is a process-global only
         // touched by the thread that creates the process's one manager; `&raw mut` + explicit
@@ -2163,53 +2209,56 @@ fn find_workspace_root_above<'a>(
         if let Some(prop) = json.as_property(b"workspaces") {
             let value_loc = crate::bun_json::property_value_loc(&json_source.contents, prop.loc)
                 .unwrap_or(prop.loc);
+            // Why this `workspaces` can't tell, worded like `bun install` in `parent`.
+            let mut why = bun_ast::Log::init();
             let names = match &prop.expr.data {
-                bun_ast::ExprData::EArrayJSON(arr) => Some(
-                    Package::WorkspaceMap::NamesArray::Immutable(arr.get(), value_loc),
-                ),
-                bun_ast::ExprData::EObjectJSON(obj) => obj
-                    .get()
-                    .properties()
-                    .iter()
-                    .find(|row| row.key.slice() == b"packages")
-                    .and_then(|row| match &row.value {
-                        bun_ast::E::JsonValue::Array(arr) => {
-                            let packages_loc = crate::bun_json::property_value_loc(
-                                &json_source.contents,
-                                row.key_loc,
-                            )
+                bun_ast::ExprData::EArrayJSON(arr) => {
+                    Package::WorkspaceMap::NamesArray::Immutable(arr.get(), value_loc)
+                }
+                bun_ast::ExprData::EObjectJSON(obj) => {
+                    let Some(row) =
+                        (obj.get().properties().iter()).find(|row| row.key.slice() == b"packages")
+                    else {
+                        break;
+                    };
+                    let packages_loc =
+                        crate::bun_json::property_value_loc(&json_source.contents, row.key_loc)
                             .unwrap_or(row.key_loc);
-                            Some(Package::WorkspaceMap::NamesArray::Immutable(
-                                arr.get(),
-                                packages_loc,
-                            ))
-                        }
-                        _ => None,
-                    }),
-                _ => None,
-            };
-            let Some(names) = names else {
-                break;
+                    let bun_ast::E::JsonValue::Array(arr) = &row.value else {
+                        let err = Package::WorkspaceMap::add_workspaces_packages_type_error(
+                            &mut why,
+                            &json_source,
+                            packages_loc,
+                        );
+                        return Ok(RootAbove::Unasked(err, why));
+                    };
+                    Package::WorkspaceMap::NamesArray::Immutable(arr.get(), packages_loc)
+                }
+                _ => {
+                    let err = Package::WorkspaceMap::add_workspaces_type_error(
+                        &mut why,
+                        &json_source,
+                        prop.loc,
+                    );
+                    return Ok(RootAbove::Unasked(err, why));
+                }
             };
             let Some((workspace_names, workspace_package_json_cache)) = members else {
-                if Package::WorkspaceMap::WorkspaceMap::lists(names, &json_source, child_cwd) {
-                    return Ok(Some((parent, json_file, 0)));
+                match Package::WorkspaceMap::WorkspaceMap::lists(names, &json_source, child_cwd) {
+                    Ok(true) => return Ok(RootAbove::Found(parent, json_file, 0)),
+                    Ok(false) => break,
+                    Err(err) => return Ok(RootAbove::Unasked(err, why)),
                 }
-                break;
             };
-            let mut log = bun_ast::Log::init();
-            // An error here is about some other workspace. A command that needs that workspace
-            // reports it later.
-            let _ = workspace_names.process_names_array(
+            let listing = workspace_names.process_names_array(
                 workspace_package_json_cache,
-                &mut log,
+                &mut why,
                 names,
                 &json_source,
                 prop.loc,
                 None,
                 Package::WorkspaceMap::MissingWorkspace::Skip,
             );
-            drop(log);
 
             debug_assert_eq!(workspace_names.keys().len(), workspace_names.values().len());
             for (path_, entry) in workspace_names
@@ -2239,14 +2288,52 @@ fn find_workspace_root_above<'a>(
 
                 if strings::eql_long(maybe_workspace_path, path_, true) {
                     let name_hash = Semver::string::Builder::string_hash(&entry.name);
-                    return Ok(Some((parent, json_file, name_hash)));
+                    return Ok(RootAbove::Found(parent, json_file, name_hash));
                 }
             }
 
-            break;
+            match listing {
+                // The listing didn't reach `child_cwd` or couldn't read it: it may be a workspace.
+                Err(err)
+                    if !workspace_names.is_complete()
+                        || workspace_names.could_not_read(&json_source, child_cwd) =>
+                {
+                    return Ok(RootAbove::Unasked(err, why));
+                }
+                // Any other error is about another workspace. Commands that need it report it.
+                _ => break,
+            }
         }
     }
-    Ok(None)
+    let Some(path) = emptied else {
+        return Ok(RootAbove::NotListed);
+    };
+    walk.path = path;
+    Ok(RootAbove::Unasked(
+        Error::EmptyPackageJSON,
+        bun_ast::Log::init(),
+    ))
+}
+
+/// Exits because `file` can't tell whether `folder` is its workspace. No `folder`, no note.
+#[cold]
+fn exit_on_unasked_root(file: &[u8], err: Error, log: &bun_ast::Log, folder: Option<&[u8]>) -> ! {
+    match err {
+        Error::EmptyPackageJSON => install_with_manager::print_empty_package_json_error(file),
+        // The parser and the listing of the workspaces log what is wrong.
+        _ if !matches!(err, Error::Sys(_)) && log.has_errors() => {
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        }
+        _ => Output::err(err, "cannot read \"{}\"", (bstr::BStr::new(file),)),
+    }
+    if let Some(folder) = folder {
+        bun_core::note!(
+            "cannot tell if \"{}\" is a workspace of \"{}\"",
+            bun_core::fmt::escape_control_chars(folder),
+            bun_core::fmt::escape_control_chars(bun_core::dirname(file).unwrap_or(file))
+        );
+    }
+    Global::exit(1);
 }
 
 /// Returns true if `dir` is sticky and group- or world-writable, like `/tmp`. Any local user can
@@ -2263,6 +2350,24 @@ fn is_shared_directory(dir: &[u8]) -> bool {
 #[cfg(not(unix))]
 fn is_shared_directory(_: &[u8]) -> bool {
     false
+}
+
+fn has_name(package_json: &bun_ast::Expr) -> bool {
+    package_json.get(b"name").is_some_and(
+        |name| matches!(&name.data, bun_ast::ExprData::EString(it) if !it.data.slice().is_empty()),
+    )
+}
+
+/// Returns true if the package.json in `dir` has content but no `name`: never a workspace.
+#[cold]
+fn is_no_workspace(cache: &mut WorkspacePackageJSONCache, dir: &[u8]) -> bool {
+    let mut path = dir.to_vec();
+    push_package_json(&mut path);
+    let path = &path[..path.len() - 1];
+    cache
+        .get_with_path(&mut bun_ast::Log::init(), path, Default::default())
+        .unwrap()
+        .is_ok_and(|json| !json.source.contents.is_empty() && !has_name(&json.root))
 }
 
 /// Finds the project that `dir` is in, the way `init` does: the directory of the nearest
@@ -2305,9 +2410,7 @@ fn find_project<'a>(
         {
             Ok(json) if OF_A_PROJECT.iter().any(|key| json.root.get(key).is_some()) => {
                 project = Some(dir);
-                is_named = json.root.get(b"name").is_some_and(|name| {
-                    matches!(&name.data, bun_ast::ExprData::EString(it) if !it.data.slice().is_empty())
-                });
+                is_named = has_name(&json.root);
             }
             Ok(_) => {
                 topmost = Some(dir);
@@ -2599,6 +2702,7 @@ pub fn init(
             if !created_package_json
                 && !no_project
                 && !is_bunx_install
+                && !cli.global
                 && let Some((parent, json_file, name_hash)) = find_workspace_root(
                     &mut walk,
                     child_cwd,
@@ -2609,7 +2713,19 @@ pub fn init(
                     Some((&mut workspace_names, &mut workspace_package_json_cache)),
                     (subcommand == Subcommand::Pm)
                         .then_some(&mut root_package_json_name_at_time_of_init),
-                )?
+                )
+                .unwrap_or_else(|err| {
+                    // The walk above the path in `$PWD` names the folder as the user typed it.
+                    let folder = if core::ptr::eq(walk.cwd, original_cwd) {
+                        child_cwd
+                    } else {
+                        walk.cwd
+                    };
+                    let is_named = !is_no_workspace(&mut workspace_package_json_cache, child_cwd);
+                    // SAFETY: `ctx.log` as above. The call that borrowed it has returned.
+                    let log = unsafe { &*ctx.log };
+                    exit_on_unasked_root(&walk.path, err, log, is_named.then_some(folder))
+                })
             {
                 // Intern via the resolver's DirnameStore so the slice is
                 // process-lifetime (`set_top_level_dir` requires `'static`).

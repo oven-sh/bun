@@ -2152,12 +2152,17 @@ fn root_package_json_source(
 /// An empty file parses as `{}`, and installing from `{}` drops its pins from the lockfile.
 #[cold]
 pub(crate) fn exit_on_empty_package_json(path: &[u8]) -> ! {
+    print_empty_package_json_error(path);
+    bun_core::note!("restore package.json, or write {{}} to start without dependencies");
+    Global::exit(1)
+}
+
+#[cold]
+pub(crate) fn print_empty_package_json_error(path: &[u8]) {
     Output::err_generic(
         "failed to parse '{}': file is empty",
         (bstr::BStr::new(path),),
     );
-    bun_core::note!("restore package.json, or write {{}} to start without dependencies");
-    Global::exit(1)
 }
 
 #[cold]

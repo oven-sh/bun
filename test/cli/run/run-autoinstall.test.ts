@@ -2626,6 +2626,52 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     });
   });
 
+  // An empty package.json parses, but the workspaces it had are gone. `bun install` refuses one
+  // next to a lockfile and reads it as `{}` without one.
+  test("an empty package.json next to a lockfile above the project, which may be its workspace", async () => {
+    const result = await run({ ...project, "package.json": "", "bun.lock": "{}" }, { cwd: "app/src" });
+    expect({ ...result, stderr: "" }).toEqual(refused(unreadable));
+  });
+
+  test("an empty package.json with no lockfile above the project lists no workspace", async () => {
+    expect(await run({ ...project, "package.json": "" }, { cwd: "app/src" })).toEqual(installed);
+  });
+
+  // `bun install` next to that package.json refuses its `workspaces`.
+  test.each([`"packages/*"`, `{ "packages": "packages/*" }`, `["packages/*", 1]`])(
+    "a package.json above the project whose workspaces field is %s, so it may list the project",
+    async workspaces => {
+      const root = `{ "name": "root", "workspaces": ${workspaces} }`;
+      const result = await run({ ...project, "package.json": root }, { cwd: "app/src" });
+      expect({ ...result, stderr: "" }).toEqual(refused(unreadable));
+    },
+  );
+
+  // Run as its own project, the workspace wouldn't see the scanner of its root.
+  test("a scanner in the bunfig.toml next to a package.json with an invalid workspaces field", async () => {
+    const files = {
+      "app/bunfig.toml": scanner,
+      "app/package.json": `{ "name": "app", "workspaces": "packages/*" }`,
+      "app/packages/member/package.json": JSON.stringify({ name: "member" }),
+      "app/packages/member/index.js": requireIt,
+    };
+    const result = await run(files, { cwd: "app/packages/member" });
+    expect({ ...result, stderr: "" }).toEqual(refused(unreadable));
+  });
+
+  // Auto-install matches the folder against the patterns and reads no directory, so the folder
+  // that stops `bun install` doesn't stop it. The file with mode 000 stands in for a folder that
+  // can't be opened.
+  test.serial.skipIf(isWindows)("a workspace whose root lists a folder that can't be opened", async () => {
+    const files = {
+      "app/package.json": JSON.stringify({ name: "app", workspaces: ["locked/*", "packages/*"] }),
+      "app/locked": UNREADABLE,
+      "app/packages/member/package.json": JSON.stringify({ name: "member" }),
+      "app/packages/member/index.js": requireIt,
+    };
+    expect(await run(files, { cwd: "app/packages/member" })).toEqual(installed);
+  });
+
   test("the error of an import statement names the package.json that cannot be parsed", async () => {
     const files = { ...project, "app/src/package.json": "{", "app/src/index.js": `import "no-deps";\n` };
     const result = await run(files, { cwd: "app/src" });
@@ -3088,7 +3134,6 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
     [false, "packages/member", ["packages/*", "!packages/**"]],
     [false, "packages/.member", ["packages/*"]],
     [false, "packages/.git/member", ["packages/**"]],
-    [false, "packages/member", ["packages/*", 1]],
     [false, "packages/member", []],
   ] as [boolean, string, unknown[]][])("is a member: %p, %s of %j", async (isMember, folder, workspaces) => {
     const result = await autoInstall({
@@ -3102,6 +3147,49 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
       }),
     });
     expect(result).toEqual(isMember ? fromPrivateRegistry : fromDefaultRegistry);
+  });
+
+  // `bun install` in `app` refuses each of these.
+  cell.each([[["packages/*", 1]], ["packages/*"], [{ packages: "packages/*" }], [null]] as [unknown][])(
+    "a `workspaces` of %j can't tell whether the folder is a workspace",
+    async workspaces => {
+      const result = await autoInstall({
+        args: ["x.mjs"],
+        cwd: dir => join(dir, "app", "packages", "member"),
+        files: r => ({
+          "app/.npmrc": scopeAndToken(r),
+          "app/package.json": JSON.stringify({ name: "app", workspaces }),
+          "app/packages/member/package.json": JSON.stringify({ name: "member" }),
+          "app/packages/member/x.mjs": importIt,
+        }),
+      });
+      expect(result.stderr).toContain(
+        'error: Cannot find package "@corp/thing": auto-install is off because a package.json or bunfig.toml cannot be read or parsed. Run "bun install"',
+      );
+      expect(result.stderr).toMatch(/note: cannot read or parse "\S+app[\\/]package\.json"/);
+      expect({ ...result, stderr: "" }).toEqual({
+        stdout: "",
+        stderr: "",
+        exitCode: 1,
+        signalCode: null,
+        seen: [],
+        created: ["app", "home"],
+      });
+    },
+  );
+
+  cell("a `workspaces` object without `packages` lists no workspace", async () => {
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      cwd: dir => join(dir, "app", "packages", "member"),
+      files: r => ({
+        "app/.npmrc": scopeAndToken(r),
+        "app/package.json": JSON.stringify({ name: "app", workspaces: { catalog: {} } }),
+        "app/packages/member/package.json": JSON.stringify({ name: "member" }),
+        "app/packages/member/x.mjs": importIt,
+      }),
+    });
+    expect(result).toEqual(fromDefaultRegistry);
   });
 
   cell("a folder that `workspaces` matches is no member without a name", async () => {

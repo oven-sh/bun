@@ -1,0 +1,23 @@
+# import database from "./data.sqlite" with { type: "sqlite" }
+# The build knows the file and has no code for it: the run time asks the host, and the host's require() is a function of the library (overridableRequire, runtimefunction 65547).
+# So that function is in the image. A program without such a module leaves it out: loader-of-the-host-stays-out-without-a-module-that-the-host-answers.ir
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen-code no
+# UNSEEN-NEXT: modules-by-name no
+
+module m0 path="/app/main.js" displayPath="main.js" body=f0
+module m1 path="/app/data.sqlite" displayPath="data.sqlite" kind=External exportRule=RuntimeModule requireResult=DefaultExport externalKind=HostValue referrer=m0
+entry module=m0
+runtimefunction id=65547 function=f1
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="/app/data.sqlite"
+    Return
+}
+function f1 name="require" role=Library flags=[HasThis] enclosingRuntimeFunction=65547 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v1
+}

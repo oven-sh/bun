@@ -1,0 +1,3068 @@
+////: Dog
+class Dog extends Animal {
+  name = "rex";
+  /** @returns {string} */
+  bark() {
+    return this.name + "!";
+  }
+}
+////: Grown
+export class Grown {
+  constructor() {
+    this.x = 1;
+  }
+}
+////: attempt-2
+function attempt(label, run) {
+  log.length = 0;
+  let line;
+  try {
+    line = label + " -> " + show(run());
+  } catch (error) {
+    line = label + " threw " + (error instanceof Error ? error.constructor.name : typeof error);
+  }
+  console.log(log.length > 0 ? line + " | " + log.join(" ") : line);
+}
+////: levelName
+function levelName(level) {
+  switch (level) {
+    case Level.Low:
+      return "low";
+    case Level.High:
+      return "high";
+    default:
+      return "«1»;
+  }
+}
+////: lines-12
+/**
+ * @overload
+ * @param {«1»} «2»
+ * @returns {«3»}
+ */
+////: lines-15
+/**
+ * @param {«1»} «2»
+ * @param {«3»} «4»
+ * @returns {«3»}
+ */
+////: lines-17
+/**
+ * @param {«1»} «2»
+ * @returns {«2» is «3»}
+ */
+////: lines-19
+export function «1»(«2») {
+  return «3»;
+}
+////: lines-2
+/**
+ * @param {string} label
+ * @param {() => unknown} run
+ */
+////: lines-20
+function «1»() {
+  return JSON.parse(text);
+}
+////: lines-21
+/**
+ * @param {number | string} «1»
+ * @returns {number | string}
+ */
+////: lines-22
+/**
+ * @param {«1» | «2»} «3»
+ * @returns {number}
+ */
+////: lines-23
+export interface «1» {
+  «2»: number;
+  «3»: number;
+}
+////: lines-24
+function «1»(value) {
+  return /** @type {«2»} */ (value);
+}
+////: lines-25
+/**
+ * @template T
+ * @template {keyof T} K
+ * @param {T} object
+ * @param {K} key
+ * @«1»
+ */
+////: lines-26
+////= lines-3
+////= show-4
+
+////= lines-2
+////= attempt
+////: lines-27
+////= lines-3
+////= show-3
+
+////= lines-2
+////: lines-28
+////= lines-4
+////= plusOne
+
+////= lines-5
+////= sum
+////: lines-3
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+////: lines-5
+/**
+ * @param {Point} p
+ * @returns {number}
+ */
+////: lines-6
+/**
+ * @this {Point}
+ * @param {number} n
+ * @returns {number}
+ */
+////: lines-7
+/**
+ * @callback Reducer
+ * @param {number} total
+ * @param {Point} p
+ * @returns {number}
+ */
+////: lines-8
+/**
+ * @param {Shape} shape
+ * @returns {number}
+ */
+////: lines-9
+/**
+ * @template T
+ */
+////: show-3
+function show(value) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(show).join(", ") + "]";
+  if (typeof value === "object" && value !== null) return "{" + Object.keys(value).join() + "}";
+  return String(value);
+}
+//// a-class-of-a-js-module-is-constructed-in-typescript/library.js
+export class Old {
+  /** @param {number} value */
+  constructor(value) {
+    this.value = value;
+  }
+  extra() {
+    return this.value + 1;
+  }
+}
+//// a-class-of-a-js-module-is-constructed-in-typescript/main.ts
+import { Old } from "./library.js";
+
+const made: new (value: number) => object = Old;
+console.log(new Old(3).value, new Old(3).extra(), typeof made);
+//// a-js-function-that-reads-arguments-gets-operands-from-typescript/library.js
+export function variadic() {
+  return arguments.length;
+}
+//// a-js-function-that-reads-arguments-gets-operands-from-typescript/main.ts
+import { variadic } from "./library.js";
+
+console.log(variadic(), variadic(1, 2, 3));
+//// a-js-function-with-a-rest-parameter-gets-operands-from-typescript/library.js
+/** @param {...number} values */
+export function variadic(...values) {
+  return values.length;
+}
+//// a-js-function-with-a-rest-parameter-gets-operands-from-typescript/main.ts
+import { variadic } from "./library.js";
+
+console.log(variadic(), variadic(1, 2, 3));
+//// a-member-is-added-to-a-class-before-it-is-assigned-to-module-exports/assigned.cjs
+class Main {}
+Main.helper = function () {
+  return "helper";
+};
+module.exports = Main;
+//// a-member-is-added-to-a-class-before-it-is-assigned-to-module-exports/main.ts
+import Main = require("./assigned.cjs");
+
+console.log(Main.helper());
+//// a-member-is-added-to-exports-after-exports-and-module-exports-got-one-function/both.cjs
+exports = module.exports = function main() {
+  return "main";
+};
+exports.extra = 1;
+//// a-member-is-added-to-exports-after-exports-and-module-exports-got-one-function/main.ts
+import both = require("./both.cjs");
+
+console.log(both(), both.extra + 1);
+//// a-member-is-added-to-module-exports-after-a-class-was-assigned-to-it/assigned.cjs
+class Main {}
+module.exports = Main;
+module.exports.helper = function () {
+  return "helper";
+};
+//// a-member-is-added-to-module-exports-after-a-class-was-assigned-to-it/main.ts
+import Main = require("./assigned.cjs");
+
+console.log(Main.helper());
+//// a-method-assigned-to-the-prototype-of-a-js-class-is-called-from-typescript/library.js
+////= Grown
+Grown.prototype.extra = function () {
+  return this.x + 1;
+};
+//// a-method-assigned-to-the-prototype-of-a-js-class-is-called-from-typescript/main.ts
+import { Grown } from "./library.js";
+
+console.log(new Grown().extra());
+//// a-module-that-is-not-checked-feeds-tagged-code/loose.js
+// @ts-nocheck
+////= lines-19	same	value	value
+
+export function make(kind) {
+  return { number: 3, text: "3", nothing: null, list: [3], point: { x: 1, y: 2 }, texts: { x: "1", y: "2" }, step: Object.assign(n => n + "!", { toString: () => "step" }) }[kind];
+}
+
+export function call(f, ...operands) {
+  return f(...operands);
+}
+
+/** @type {number} */
+export const tagged = "tagged and false";
+
+/** @returns {number} */
+////= lines-13	export	taggedResult	"a false result"
+
+export function spoil(object, name, value) {
+  object[name] = value;
+}
+//// a-module-that-is-not-checked-feeds-tagged-code/main.js
+import { call, make, same, spoil, tagged, taggedResult } from "./loose.js";
+
+////= lines-26
+
+/** @typedef {{ x: number, y: number }} Point */
+
+////= lines-28
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += plusOne(same(i)) + sum(make("point")) + call(plusOne, i);
+console.log("2000 honest rounds: " + warm);
+
+for (const kind of ["number", "text", "nothing", "list", "point", "texts", "step", "unknown"]) {
+  attempt(kind + " as a number", () => {
+    /** @type {number} */
+    const n = make(kind);
+    return [typeof n, n + 1, plusOne(n)];
+  });
+  attempt(kind + " as a point", () => {
+    /** @type {Point} */
+    const p = make(kind);
+    return [p.x, sum(p)];
+  });
+  attempt(kind + " as a function", () => {
+    /** @type {(n: number) => number} */
+    const f = make(kind);
+    return f(1) + 1;
+  });
+}
+attempt("tags of the module that is not checked", () => [tagged, tagged + 1, plusOne(tagged), taggedResult(), taggedResult() + 1, plusOne(taggedResult())]);
+attempt("tagged functions are called from there", () => [call(plusOne, "1"), call(plusOne), call(sum, { x: "1", y: 2 }), call(sum, [1, 2])]);
+attempt("a tagged literal is stored to from there", () => {
+  /** @type {Point} */
+  const p = { x: 1, y: 2 };
+  spoil(p, "x", "text");
+  spoil(p, "z", 3);
+  return [p.x, sum(p), JSON.stringify(p)];
+});
+//// a-typedef-beside-an-object-of-a-js-module-is-used-as-a-type-in-typescript/library.js
+/** @typedef {number} Level */
+/** @type {{ Low: Level, High: Level }} */
+export const Level = { Low: 1, High: 2 };
+//// a-typedef-beside-an-object-of-a-js-module-is-used-as-a-type-in-typescript/main.ts
+import { Level } from "./library.js";
+
+const level: Level = Level.High;
+console.log(level + 1);
+//// an-enum-tag-of-a-js-module-is-used-as-a-type-in-another-js-module/library.js
+/** @enum {number} */
+export const Level = { Low: 1, High: 2 };
+//// an-enum-tag-of-a-js-module-is-used-as-a-type-in-another-js-module/main.js
+import { Level } from "./library.js";
+
+/** @type {Level} */
+const level = Level.High;
+console.log(level + 1);
+//// an-enum-tag-of-a-js-module-is-used-as-a-type-in-typescript/library.js
+/** @enum {number} */
+export const Level = { Low: 1, High: 2 };
+//// an-enum-tag-of-a-js-module-is-used-as-a-type-in-typescript/main.ts
+import { Level } from "./library.js";
+
+const level: Level = Level.High;
+console.log(level + 1);
+//// an-unchecked-js-module-calls-typescript-with-other-kinds/main.js
+import { bump, counter, Meter, origin, plusOne, report, size, sizes, sum, total, twice } from "./typed.ts";
+
+////= show-3
+
+////= attempt
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += plusOne(i) + sum({ x: i, y: 1 }) + size("ab") + total([i]) + twice(plusOne) + new Meter(i).add(1);
+console.log("2000 honest rounds: " + warm);
+
+attempt("plusOne", () => [plusOne("1"), plusOne(null), plusOne(), plusOne(true), plusOne([1]), plusOne({ valueOf: () => 1 })]);
+attempt("plusOne of a bigint", () => plusOne(1n));
+attempt("sum", () => [sum({ x: "1", y: 2 }), sum({ y: 1 }), sum([1, 2]), sum("xy"), sum(5), sum({ y: 1, x: 2, z: 3 })]);
+attempt("sum of nothing", () => sum());
+attempt("size", () => [size([1, 2]), size({ length: null }), size(5), size(() => 1)]);
+attempt("size of null", () => size(null));
+attempt("total", () => [total("12"), total(["1", 2]), total(new Set([1, 2])), total([1, , 3])]);
+attempt("total of an array-like", () => total({ length: 1, 0: 1 }));
+attempt("twice", () => [twice(n => n + "!"), twice(() => {}), twice(Math.sqrt)]);
+attempt("twice of a class", () => twice(Meter));
+attempt("twice of nothing", () => twice());
+attempt("a meter", () => [new Meter("1").add(2), new Meter(1).add("2"), new Meter().add(1), Meter.zero().add([1])]);
+attempt("a meter without new", () => Meter(1));
+attempt("a method on another receiver", () => [Meter.prototype.add.call({ value: "1" }, 2), Meter.prototype.add.call([], 2)]);
+attempt("a field is stored to", () => {
+  const meter = new Meter(1);
+  meter.value = "one";
+  const first = meter.add(1);
+  meter.value = null;
+  const second = meter.add(1);
+  delete meter.value;
+  return [first, second, meter.add(1), Object.keys(meter).join()];
+});
+attempt("a member is added and a method replaced", () => {
+  const meter = new Meter(1);
+  meter.extra = "extra";
+  meter.add = () => "replaced";
+  return [meter.add(1), JSON.stringify(meter), new Meter(1).add(1)];
+});
+attempt("exported objects are changed", () => {
+  const before = report();
+  origin.x = "left";
+  origin.z = 1;
+  sizes.push("four");
+  sizes[6] = 7;
+  return [before, report()];
+});
+attempt("an exported variable cannot be stored to", () => {
+  bump();
+  return [counter, typeof counter];
+});
+attempt("honest again", () => [plusOne(1), sum({ x: 1, y: 2 }), size("ab"), total([1, 2]), twice(plusOne), new Meter(1).add(1)]);
+//// an-unchecked-js-module-calls-typescript-with-other-kinds/tsconfig.json
+////= lines
+//// an-unchecked-js-module-calls-typescript-with-other-kinds/typed.ts
+////= lines-23	Point	x	y
+
+export function plusOne(n: number): number {
+  return n + 1;
+}
+
+export function sum(p: Point): number {
+  return p.x + p.y;
+}
+
+export function size(s: string): number {
+  return s.length;
+}
+
+export function total(numbers: number[]): number {
+  let result = 0;
+  for (const n of numbers) result += n;
+  return result;
+}
+
+export function twice(f: (n: number) => number): number {
+  return f(f(1));
+}
+
+export class Meter {
+  value: number;
+  constructor(start: number) {
+    this.value = start;
+  }
+  add(by: number): number {
+    this.value += by;
+    return this.value;
+  }
+  static zero(): Meter {
+    return new Meter(0);
+  }
+}
+
+export const origin: Point = { x: 0, y: 0 };
+export const sizes: number[] = [1, 2, 3];
+export let counter = 0;
+
+export function bump(): number {
+  return ++counter;
+}
+
+export function report(): string {
+  return JSON.stringify([origin, sum(origin), sizes, total(sizes)]);
+}
+//// casts-in-comments-that-are-right.js
+/** @typedef {{ x: number, y: number }} Point */
+/** @typedef {{ kind: "circle", r: number } | { kind: "square", side: number }} Shape */
+
+////= lines-10	unknown	value	returns	number
+////= lines-24	asNumber	number
+
+////= lines-10	unknown	value	returns	Point
+////= lines-24	asPoint	Point
+
+////= lines-8
+function radius(shape) {
+  return /** @type {Extract<Shape, { kind: "circle" }>} */ (shape).r;
+}
+
+////= lines-22	number	undefined	n
+function present(n) {
+  return /** @type {number} */ (n) + 1;
+}
+
+const tuple = /** @type {const} */ ([1, "two"]);
+const fixed = /** @type {const} */ ({ mode: "fast", level: 3 });
+const list = /** @type {number[]} */ ([]);
+const table = /** @type {Record<string, number>} */ ({});
+const nothing = /** @type {Point | null} */ (null);
+const nested = /** @type {Point} */ (/** @type {unknown} */ ({ x: 1, y: 2 }));
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  list.push(i);
+  table["k" + (i % 3)] = i;
+  warm += asNumber(i) + asPoint({ x: i, y: 1 }).x + radius({ kind: "circle", r: i }) + present(i) + tuple[0] + fixed.level + nested.y;
+}
+console.log("2000 rounds: " + warm);
+console.log(list.length, list[1999] + 1, Object.keys(table).join(), table.k0 + 1, nothing === null, tuple[1].length, fixed.mode.length);
+console.log(asNumber(1.5) * 2, JSON.stringify(asPoint({ x: 1, y: 2 })), (/** @type {string} */ (/** @type {unknown} */ ("ab"))).length);
+
+export {};
+//// casts-in-comments-that-lie.js
+/** @typedef {{ x: number, y: number }} Point */
+/** @typedef {{ kind: "circle", r: number } | { kind: "square", side: number }} Shape */
+
+////= lines-18	Animal	legs	4
+
+////= Dog
+
+////= lines-27
+////= attempt
+
+////= lines-28
+
+////= lines-10	unknown	value	returns	number
+////= lines-24	asNumber	number
+
+////= lines-10	unknown	value	returns	Point
+////= lines-24	asPoint	Point
+
+////= lines-8
+function radius(shape) {
+  return /** @type {Extract<Shape, { kind: "circle" }>} */ (shape).r;
+}
+
+////= lines-10	Animal	animal	returns	string
+function bark(animal) {
+  return /** @type {Dog} */ (animal).bark();
+}
+
+////= lines-10	Animal	animal	returns	string
+function nameOf(animal) {
+  return /** @type {Dog} */ (animal).name + "?";
+}
+
+////= lines-22	number	undefined	n
+function present(n) {
+  return /** @type {number} */ (n) + 1;
+}
+
+////= lines-22	string	number	v
+function sizeOf(v) {
+  return /** @type {string} */ (v).length;
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += plusOne(asNumber(i)) + sum(asPoint({ x: i, y: 1 })) + radius({ kind: "circle", r: i }) + bark(new Dog()).length + present(i) + sizeOf("ab");
+console.log("2000 honest rounds: " + warm);
+
+for (const value of [1, "1", null, undefined, true, [1], { valueOf: () => 1 }, { x: 1, y: 2 }, { x: "1", y: "2" }, { y: 1 }]) {
+  attempt("as a number, " + show(value), () => [asNumber(value) + 1, plusOne(asNumber(value)), typeof asNumber(value)]);
+  attempt("as a point, " + show(value), () => [asPoint(value).x, sum(asPoint(value))]);
+}
+
+attempt("the radius of a square", () => [radius({ kind: "square", side: 2 }), radius({ kind: "square", side: 2 }) + 1]);
+attempt("an animal barks", () => bark(new Animal()));
+attempt("the name of an animal", () => nameOf(new Animal()));
+attempt("present, and it is not", () => present(undefined));
+attempt("the size of a number", () => [sizeOf(5), sizeOf(5) + 1]);
+
+attempt("through unknown, in sight", () => {
+  const n = /** @type {number} */ (/** @type {unknown} */ ("12"));
+  const p = /** @type {Point} */ (/** @type {unknown} */ ([1, 2]));
+  const f = /** @type {() => number} */ (/** @type {unknown} */ ({ call: 1 }));
+  return [n + 1, typeof n, p.x, sum(p), typeof f];
+});
+attempt("a function that is none, called", () => /** @type {() => number} */ (/** @type {unknown} */ ({ call: 1 }))());
+attempt("a list that is a text", () => {
+  const list = /** @type {number[]} */ (/** @type {unknown} */ ("12"));
+  let total = 0;
+  for (const n of list) total += n;
+  return [total, list.length];
+});
+attempt("an empty literal as a point", () => {
+  const p = /** @type {Point} */ ({});
+  const before = [p.x, sum(p), Object.keys(p).join()];
+  p.y = 2;
+  p.x = 1;
+  return [before, sum(p), Object.keys(p).join()];
+});
+attempt("const, and then stored to through another name", () => {
+  const fixed = /** @type {const} */ ({ level: 3 });
+  /** @type {{ level: number }} */
+  const open = fixed;
+  open.level = 4;
+  return [fixed.level, fixed.level === 3, fixed.level + 1];
+});
+
+console.log("honest again: " + [plusOne(asNumber(1)), sum(asPoint({ x: 1, y: 2 })), bark(new Dog())].join(" "));
+
+export {};
+//// checked-javascript-uses-what-is-inferred-from-other-javascript-files/assigned.cjs
+class Main {}
+module.exports = Main;
+module.exports.helper = function () {
+  return "helper";
+};
+//// checked-javascript-uses-what-is-inferred-from-other-javascript-files/both.cjs
+exports = module.exports = function main() {
+  return "main";
+};
+exports.extra = 1;
+//// checked-javascript-uses-what-is-inferred-from-other-javascript-files/esm.js
+export function variadic() {
+  return arguments.length;
+}
+
+////= Grown
+/** @returns {number} */
+Grown.prototype.extra = function () {
+  return this.x + 1;
+};
+
+/**
+ * @constructor
+ * @param {number} n
+ */
+export function Tagged(n) {
+  this.n = n;
+}
+/** @returns {number} */
+Tagged.prototype.next = function () {
+  return this.n + 1;
+};
+
+/** @param {number} n */
+export function Bare(n) {
+  this.n = n;
+}
+//// checked-javascript-uses-what-is-inferred-from-other-javascript-files/main.js
+import { Bare, Grown, Tagged, variadic } from "./esm.js";
+import both from "./both.cjs";
+import Main from "./assigned.cjs";
+
+console.log(variadic(), variadic(1, 2, 3));
+console.log(new Grown().extra());
+console.log(new Tagged(1).next(), new Bare(2).n + 1);
+console.log(both(), both.extra + 1, Main.helper());
+//// constructor-functions-with-tags-that-are-right.js
+/**
+ * @constructor
+ * @param {number} x
+ * @param {number} y
+ */
+function Point(x, y) {
+  /** @type {number} */
+  this.x = x;
+  /** @type {number} */
+  this.y = y;
+}
+
+/** @returns {number} */
+Point.prototype.sum = function () {
+  return this.x + this.y;
+};
+
+////= lines-10	Point	other	returns	Point
+Point.prototype.plus = function (other) {
+  return new Point(this.x + other.x, this.y + other.y);
+};
+
+/** @type {number} */
+Point.made = 0;
+
+////= lines-10	number	n	returns	Point
+Point.diagonal = function (n) {
+  Point.made++;
+  return new Point(n, n);
+};
+
+/**
+ * @class
+ * @param {string} name
+ */
+function Named(name) {
+  this.name = name;
+  /** @type {string[]} */
+  this.tags = [];
+}
+
+Named.prototype = {
+  /** @returns {string} */
+  describe() {
+    return "named";
+  },
+};
+
+/** @param {number} start */
+function Counter(start) {
+  this.n = start;
+}
+Counter.prototype.next = function () {
+  return ++this.n;
+};
+
+////= lines-5
+function sumOf(p) {
+  return p.x + p.y;
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += new Point(i, 1).sum() + sumOf(Point.diagonal(i)) + new Point(i, 1).plus(new Point(1, 1)).x + new Counter(i).next();
+console.log("2000 rounds: " + warm);
+
+const p = new Point(1, 2);
+console.log(p.sum(), sumOf(p), p instanceof Point, Object.keys(p).join(), JSON.stringify(p.plus(p)), Point.made, p.constructor === Point);
+const named = new Named("n");
+named.tags.push("t");
+console.log(named.name, named.tags.join(), named.describe(), named instanceof Named, named.constructor === Object);
+const counter = new Counter(5);
+console.log(counter.next(), counter.next(), counter.n, Object.keys(counter).join());
+
+export {};
+//// enum-tags-that-hold-other-values.js
+////= lines-27
+////= attempt
+
+/** @enum {number} */
+const Level = { Low: 1, High: JSON.parse('"2"'), None: JSON.parse("null"), List: JSON.parse("[3]") };
+
+/** @enum {string} */
+const Color = { Red: "red", Green: JSON.parse("7") };
+
+/** @enum {number} */
+const Bare = { A: 1, B: 2 };
+
+/** @enum {number} */
+const Open = { First: 1 };
+
+////= lines-10	Level	level	returns	number
+function next(level) {
+  return level + 1;
+}
+
+////= lines-10	Level	level	returns	string
+////= levelName	other " + typeof level
+
+////= lines-10	Color	color	returns	number
+////= size	color
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += next(Level.Low) + levelName(Level.Low).length + size(Color.Red) + Bare.A + Open.First;
+console.log("2000 honest rounds: " + warm);
+
+attempt("members", () => [Level.Low, Level.High, Level.None, Level.List, Color.Red, Color.Green]);
+attempt("arithmetic", () => [next(Level.Low), next(Level.High), next(Level.None), next(Level.List), Level.High * 2]);
+attempt("names", () => [levelName(Level.Low), levelName(Level.High), levelName(Level.None), levelName(Level.List), levelName(2), levelName(99)]);
+attempt("sizes", () => [size(Color.Red), size(Color.Green)]);
+attempt("any number is a level", () => [next(1.5), next(-0), next(NaN), levelName(NaN)]);
+attempt("the object of the enum is an ordinary object", () => {
+  /** @type {Record<string, number>} */
+  const view = Open;
+  view.First = 5;
+  view.Second = 6;
+  return [Open.First, Open.First + 1, Object.keys(Open).join(), JSON.stringify(Open)];
+});
+attempt("a member is deleted", () => {
+  Reflect.deleteProperty(Open, "First");
+  return [Open.First, Open.First + 1, "First" in Open];
+});
+attempt("a member becomes a getter", () => {
+  let reads = 0;
+  Object.defineProperty(Bare, "A", { get: () => ++reads + 100 });
+  return [Bare.A, Bare.A, Bare.B];
+});
+
+export {};
+//// optional-default-and-rest-parameters-in-comments.js
+/**
+ * @param {number} a
+ * @param {number} [b]
+ * @returns {number}
+ */
+function bracketed(a, b) {
+  return a + (b ?? 10);
+}
+
+/**
+ * @param {number} a
+ * @param {number=} b
+ * @returns {number}
+ */
+function withEquals(a, b) {
+  return a + (b === undefined ? 20 : b);
+}
+
+/**
+ * @param {number} a
+ * @param {number} [b=30]
+ * @returns {number}
+ */
+function withDefaultInTheComment(a, b) {
+  return a + (b ?? -1);
+}
+
+/**
+ * @param {number} a
+ * @param {number} [b]
+ * @returns {number}
+ */
+function withDefaultInTheCode(a, b = 40) {
+  return a + b;
+}
+
+/**
+ * @param {number} first
+ * @param {...number} rest
+ * @returns {number}
+ */
+function summed(first, ...rest) {
+  let total = first;
+  for (const n of rest) total += n;
+  return total;
+}
+
+/**
+ * @param {object} options
+ * @param {number} options.width
+ * @param {number} [options.height]
+ * @param {string} [options.unit="px"]
+ * @returns {string}
+ */
+function box(options) {
+  return options.width + "x" + (options.height ?? options.width) + (options.unit ?? "px");
+}
+
+/**
+ * @param {{ width: number, height?: number }} options
+ * @returns {number}
+ */
+function area({ width, height = width }) {
+  return width * height;
+}
+
+/**
+ * @param {object[]} rows
+ * @param {number} rows[].id
+ * @param {string} [rows[].name]
+ * @returns {string}
+ */
+function names(rows) {
+  return rows.map(row => row.id + ":" + (row.name ?? "?")).join();
+}
+
+/**
+ * @param {?number} n
+ * @param {!string} s
+ * @param {*} anything
+ * @param {?} unknownKind
+ * @returns {string}
+ */
+function oldStyle(n, s, anything, unknownKind) {
+  return (n === null ? "null" : n + 1) + s + typeof anything + typeof unknownKind;
+}
+
+/**
+ * @param {function(number, string): boolean} test
+ * @param {Array.<number>} list
+ * @param {Object.<string, number>} table
+ * @returns {number}
+ */
+function closureStyle(test, list, table) {
+  let count = 0;
+  for (const n of list) if (test(n, "k" + n)) count += table["k" + n] ?? 0;
+  return count;
+}
+
+function usesArguments() {
+  return arguments.length;
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += bracketed(i) + bracketed(i, 1) + withEquals(i) + withDefaultInTheComment(i) + withDefaultInTheCode(i) + summed(i) + summed(i, 1, 2) + area({ width: i });
+console.log("2000 rounds: " + warm);
+console.log(bracketed(1), bracketed(1, 2), bracketed(1, undefined), withEquals(1), withEquals(1, 2), withDefaultInTheComment(1), withDefaultInTheComment(1, 2), withDefaultInTheCode(1), withDefaultInTheCode(1, undefined), withDefaultInTheCode(1, 2));
+console.log(summed(1), summed(1, 2), summed(1, 2, 3, 4), box({ width: 1 }), box({ width: 1, height: 2, unit: "em" }), area({ width: 2 }), area({ width: 2, height: 3 }));
+console.log(names([{ id: 1 }, { id: 2, name: "two" }]), oldStyle(null, "s", 1, "u"), oldStyle(1, "s", undefined, null), closureStyle((n, k) => n > 1 && k.length === 2, [1, 2, 3], { k2: 20, k3: 30 }));
+console.log(usesArguments(), usesArguments(1, 2, 3), bracketed.length, withDefaultInTheCode.length, summed.length);
+
+export {};
+//// overload-tags-whose-implementation-disagrees.js
+////= lines-26
+
+////= lines-18	Animal	legs	4
+
+////= Dog
+
+////= lines-12	number	value	number
+////= lines-12	string	value	string
+////= lines-21	value
+function crossed(value) {
+  return typeof value === "number" ? String(value) : value.length;
+}
+
+////= lines-12	"dog"	kind	Dog
+////= lines-12	"animal"	kind	Animal
+////= lines-10	string	kind	returns	Animal
+function make(kind) {
+  return new Animal();
+}
+
+////= lines-12	number	a	number
+/**
+ * @overload
+ * @param {number} a
+ * @param {number} b
+ * @returns {number}
+ */
+/**
+ * @param {number} a
+ * @param {number} [b]
+ * @returns {number | undefined}
+ */
+function maybe(a, b) {
+  return b === undefined ? undefined : a + b;
+}
+
+/**
+ * @overload
+ * @param {number[]} list
+ * @returns {number}
+ */
+/**
+ * @overload
+ * @param {string[]} list
+ * @returns {string}
+ */
+/**
+ * @param {(number | string)[]} list
+ * @returns {number | string}
+ */
+function first(list) {
+  return list[0];
+}
+
+class Reader {
+  /**
+   * @overload
+   * @param {number} key
+   * @returns {number}
+   */
+  /**
+   * @overload
+   * @param {string} key
+   * @returns {string}
+   */
+  /**
+   * @param {number | string} key
+   * @returns {number | string}
+   */
+  read(key) {
+    return typeof key === "number" ? "n" + key : key.length;
+  }
+}
+
+////= lines-4
+////= plusOne
+
+////= lines-10	string	s	returns	number
+////= size	s
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += plusOne(i) + size("ab") + maybe(i, 1) + first([i]);
+console.log("2000 honest rounds: " + warm);
+
+attempt("a number is promised and a text comes", () => [crossed(5), typeof crossed(5), crossed(5) + 1, plusOne(crossed(5)), crossed(5) * 2]);
+attempt("a text is promised and a number comes", () => [crossed("ab"), typeof crossed("ab"), crossed("ab") + "!"]);
+attempt("a text is promised and a number comes, its size", () => size(crossed("ab")));
+attempt("a text is promised and a number comes, a method", () => crossed("ab").toUpperCase());
+attempt("a dog is promised and an animal comes, a field", () => [make("dog").legs, make("dog").name, make("dog").name + "?", make("dog") instanceof Dog]);
+attempt("a dog is promised and an animal comes, a method", () => make("dog").bark());
+attempt("a number is promised and nothing comes", () => [maybe(1), maybe(1) + 1, plusOne(maybe(1)), maybe(1, 2)]);
+attempt("the first of an empty list", () => [first([]), plusOne(first(/** @type {number[]} */ ([])))]);
+attempt("a method", () => [new Reader().read(1), new Reader().read(1) + 1, new Reader().read("ab"), new Reader().read("ab") + "!"]);
+attempt("in fields and lists", () => {
+  const holder = { n: crossed(5), s: crossed("ab") };
+  /** @type {number[]} */
+  const numbers = [1, crossed(5)];
+  let total = 0;
+  for (const n of numbers) total += n;
+  return [holder.n + 1, holder.s + "!", total];
+});
+
+export {};
+//// param-tags-with-honest-callers-and-one-odd-caller.js
+/** @typedef {{ x: number, y: number }} Point */
+
+////= lines-27
+////= attempt
+
+////= lines-28
+
+////= lines-10	string	s	returns	number
+////= size	s
+
+/**
+ * @param {number[]} list
+ * @returns {number}
+ */
+////= total	result
+
+/**
+ * @param {(n: number) => number} f
+ * @returns {number}
+ */
+function twice(f) {
+  return f(f(1));
+}
+
+class Meter {
+  /** @param {number} start */
+  constructor(start) {
+    this.value = start;
+  }
+  /**
+   * @param {number} by
+   * @returns {number}
+   */
+  add(by) {
+    this.value += by;
+    return this.value;
+  }
+}
+
+console.log("honest: " + [plusOne(1), plusOne(2.5), sum({ x: 1, y: 2 }), sum({ y: 4, x: 3 }), size("ab"), total([1, 2]), twice(plusOne), new Meter(1).add(2)].join(" "));
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += plusOne(i) + sum({ x: i, y: 1 }) + size("ab") + total([i]) + twice(plusOne) + new Meter(i).add(1);
+console.log("2000 honest rounds: " + warm);
+
+attempt("a plain call with parsed text", () => [plusOne(JSON.parse('"1"')), sum(JSON.parse('{"x":"1","y":2}')), size(JSON.parse("[1,2,3]")), total(JSON.parse('"12"')), new Meter(JSON.parse('"1"')).add(JSON.parse('"2"'))]);
+attempt("a plain call with null", () => [plusOne(JSON.parse("null")), total(JSON.parse("[null]"))]);
+attempt("null for a point", () => sum(JSON.parse("null")));
+attempt("null for a text", () => size(JSON.parse("null")));
+attempt("null for a function", () => twice(JSON.parse("null")));
+
+/** @type {Function} */
+const loosePlusOne = plusOne;
+/** @type {Function} */
+const looseSum = sum;
+attempt("through a value of type Function", () => [loosePlusOne("1"), loosePlusOne(), looseSum({ x: "1", y: 2 }), looseSum([1, 2])]);
+attempt("call, apply and bind of a value of type Function", () => [loosePlusOne.call(null, "1"), loosePlusOne.apply(null, ["1"]), loosePlusOne.bind(null, "1")()]);
+attempt("Reflect.apply", () => [Reflect.apply(loosePlusOne, undefined, ["1"]), Reflect.apply(looseSum, undefined, ["xy"])]);
+attempt("a callback of a parsed list", () => [JSON.parse('["1",null,[2]]').map(plusOne), JSON.parse('[{"x":"1","y":2},[1,2],5]').map(sum)]);
+attempt("a callback of replace", () => "a1b".replace(/(\d)/, (whole, /** @type {number} */ digit) => String(plusOne(digit))));
+attempt("a reviver", () => JSON.stringify(JSON.parse('{"a":"1","b":2}', (key, value) => (key === "" ? value : plusOne(value)))));
+attempt("text that is evaluated", () => Function("plusOne", "sum", "return [plusOne('1'), plusOne(), sum({ x: '1', y: 2 }), sum('xy')]")(plusOne, sum));
+attempt("a method read by a computed name", () => {
+  const meter = new Meter(1);
+  return Reflect.get(meter, "ad" + "d").call(meter, "2");
+});
+attempt("a method on another receiver", () => Reflect.apply(Meter.prototype.add, { value: "1" }, [2]));
+attempt("more operands than declared", () => Reflect.apply(loosePlusOne, undefined, [1, 2, 3]));
+
+console.log("honest again: " + [plusOne(1), sum({ x: 1, y: 2 }), size("ab"), total([1, 2]), twice(plusOne), new Meter(1).add(2)].join(" "));
+
+export {};
+//// returns-tags-over-values-that-are-something-else.js
+/** @typedef {{ x: number, y: number }} Point */
+
+////= lines-27
+////= attempt
+
+let text = "1";
+
+/** @returns {number} */
+////= lines-20	aNumber
+
+/** @returns {string} */
+////= lines-20	aText
+
+/** @returns {Point} */
+////= lines-20	aPoint
+
+/** @returns {number[]} */
+////= lines-20	aList
+
+/** @returns {boolean} */
+const aTruth = () => JSON.parse(text);
+
+/** @returns {Promise<number>} */
+async function later() {
+  return JSON.parse(text);
+}
+
+/** @returns {Generator<number, void, undefined>} */
+function* yielded() {
+  yield JSON.parse(text);
+}
+
+class Source {
+  /** @returns {number} */
+  get value() {
+    return JSON.parse(text);
+  }
+  /** @returns {number} */
+  method() {
+    return JSON.parse(text);
+  }
+  /** @returns {Point} */
+  static point() {
+    return JSON.parse(text);
+  }
+}
+
+////= lines-4
+////= plusOne
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += aNumber() + plusOne(aNumber()) + new Source().value + new Source().method();
+console.log("2000 honest rounds: " + warm);
+
+for (text of ["1", "1.5", "-0", '"1"', '"ab"', "true", "null", "[1,2]", '["a"]', '{"x":1,"y":2}', '{"y":"2","x":"1"}', "{}"]) {
+  attempt("a number is " + text, () => [aNumber(), typeof aNumber(), aNumber() + 1, plusOne(aNumber())]);
+  attempt("a text is " + text, () => [aText() + "!", aText().length]);
+  attempt("a point is " + text, () => [aPoint().x, aPoint().x + aPoint().y, Source.point().y]);
+  attempt("a list is " + text, () => {
+    let total = 0;
+    for (const n of aList()) total += n;
+    return [total, aList().length];
+  });
+  attempt("a truth is " + text, () => [aTruth() === true, aTruth() ? "truthy" : "falsy"]);
+  attempt("a getter and a method are " + text, () => [new Source().value + 1, new Source().method() + 1]);
+  attempt("yielded is " + text, () => [...yielded()].map(plusOne));
+  const awaited = await later();
+  attempt("awaited is " + text, () => [awaited + 1, typeof awaited]);
+}
+
+export {};
+//// satisfies-overload-and-import-tags-that-are-right/main.js
+import { add, Circle, unit } from "./shapes.js";
+
+/** @import { Point, Named } from "./shapes.js" */
+/** @import { Size } from "./types" */
+/** @import * as Types from "./types" */
+
+/** @type {Point} */
+const origin = { x: 0, y: 0 };
+
+/** @type {Named} */
+const home = { name: "home", at: { x: 1, y: 2 } };
+
+/** @type {Size} */
+const size = { width: 2, height: 3 };
+
+/** @type {Types.Unit} */
+const px = "px";
+
+/** @type {import("./shapes.js").Point} */
+const far = { x: 100, y: 200 };
+
+/** @type {import("./shapes.js").Circle} */
+const circle = new Circle(far, 2);
+
+/** @type {typeof import("./shapes.js").add} */
+const plus = add;
+
+/** @param {import("./types").Size} s */
+const areaOf = s => s.width * s.height;
+
+const palette = /** @satisfies {Record<string, [number, number, number] | string>} */ ({
+  red: [255, 0, 0],
+  green: "#00ff00",
+});
+
+/** @satisfies {Point} */
+const checked = { x: 5, y: 6 };
+
+////= lines-12	number	value	number
+////= lines-12	string	value	string
+////= lines-21	value
+function twice(value) {
+  return typeof value === "number" ? value * 2 : value + value;
+}
+
+class Reader {
+  /**
+   * @overload
+   * @param {number} index
+   * @returns {number}
+   */
+  /**
+   * @overload
+   * @param {string} name
+   * @returns {string}
+   */
+  /**
+   * @param {number | string} key
+   * @returns {number | string}
+   */
+  read(key) {
+    return typeof key === "number" ? key + 1 : key.toUpperCase();
+  }
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += plus(origin, home.at).x + areaOf(size) + circle.area() + twice(i) + twice("a").length + new Reader().read(i) + checked.x + unit.x;
+console.log("2000 rounds: " + warm);
+console.log(JSON.stringify(add(far, unit)), px, palette.red[0] + 1, palette.green.toUpperCase(), checked.x + checked.y);
+console.log(twice(2) + 1, twice("ab").length, new Reader().read(1) + 1, new Reader().read("ab").length, circle.center === far);
+//// satisfies-overload-and-import-tags-that-are-right/shapes.js
+/**
+ * @typedef {{ x: number, y: number }} Point
+ */
+
+/**
+ * @typedef {object} Named
+ * @property {string} name
+ * @property {Point} at
+ */
+
+export class Circle {
+  /**
+   * @param {Point} center
+   * @param {number} r
+   */
+  constructor(center, r) {
+    this.center = center;
+    this.r = r;
+  }
+
+  /** @returns {number} */
+  area() {
+    return this.r * this.r * 3;
+  }
+}
+
+////= lines-15	Point	a	Point	b
+export function add(a, b) {
+  return { x: a.x + b.x, y: a.y + b.y };
+}
+
+export const unit = /** @type {const} */ ({ x: 1, y: 1 });
+//// satisfies-overload-and-import-tags-that-are-right/types.d.ts
+////= lines-23	Size	width	height
+
+export type Unit = "px" | "em";
+//// tags-in-a-commonjs-file-that-are-right.cjs
+console.log("strict: " + (/** @this {unknown} */ function () {
+  return this === undefined;
+})());
+
+/** @typedef {{ x: number, y: number }} Point */
+
+////= lines-5
+////= sum
+
+////= lines-4
+////= plusOne
+exports.plusOne = plusOne;
+
+/** @type {number} */
+exports.limit = 10;
+
+class Pixel {
+  /**
+   * @param {number} x
+   * @param {number} y
+   */
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+  }
+}
+exports.Pixel = Pixel;
+
+const path = require("node:path");
+
+/** @type {string} */
+const separator = path.posix.sep;
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += sum({ x: i, y: 1 }) + plusOne(i) + exports.limit + sum(new exports.Pixel(i, 1)) + separator.length;
+console.log("2000 rounds: " + warm);
+console.log(Object.keys(exports).join(), typeof module.exports.plusOne, module.exports === exports, sum(new Pixel(1, 2)));
+//// tags-on-fields-over-values-that-are-something-else.js
+////= lines-26
+
+/** @typedef {{ x: number, y: number }} Point */
+
+class Account {
+  /** @type {number} */
+  balance = JSON.parse('"100"');
+
+  /** @type {string} */
+  owner = JSON.parse("7");
+
+  /** @type {number[]} */
+  history = JSON.parse('"none"');
+
+  /** @type {Point} */
+  place = JSON.parse("null");
+
+  /** @type {number} */
+  static count = JSON.parse('"zero"');
+
+  /** @type {number} */
+  #hidden = JSON.parse('"hidden"');
+
+  /** @param {string} text */
+  constructor(text) {
+    /** @type {number} */
+    this.limit = JSON.parse(text);
+    /** @type {Point} */
+    this.home = JSON.parse('{"x":' + text + ',"y":2}');
+  }
+
+  /** @returns {number} */
+  total() {
+    return this.balance + this.limit;
+  }
+
+  /** @returns {number} */
+  hidden() {
+    return this.#hidden + 1;
+  }
+
+  /** @returns {number} */
+  far() {
+    return this.home.x + this.home.y;
+  }
+}
+
+class Honest {
+  /** @type {number} */
+  n = JSON.parse("1");
+  /** @type {Point} */
+  p = JSON.parse('{"x":1,"y":2}');
+  /** @returns {number} */
+  all() {
+    return this.n + this.p.x + this.p.y;
+  }
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += new Honest().all();
+console.log("2000 honest rounds: " + warm);
+
+attempt("fields as they were made", () => {
+  const a = new Account("5");
+  return [a.balance, a.owner, a.history, a.place, a.limit, Account.count, Object.keys(a).join(), JSON.stringify(a)];
+});
+attempt("arithmetic", () => {
+  const a = new Account("5");
+  return [a.balance + 1, a.balance * 2, a.owner + 1, a.limit + 1, Account.count + 1, a.total(), a.hidden(), a.far()];
+});
+for (const text of ["5", '"5"', "null", "[5]", "true", "{}"]) {
+  attempt("the constructor parses " + text, () => {
+    const a = new Account(text);
+    return [a.limit, a.limit + 1, a.total(), a.home.x, a.far()];
+  });
+}
+attempt("a member of a field that is null", () => new Account("5").place.x);
+attempt("the list that is a text", () => [new Account("5").history.length, new Account("5").history[0]]);
+attempt("the list that is a text, pushed to", () => new Account("5").history.push(1));
+attempt("the text that is a number, its length", () => new Account("5").owner.length);
+attempt("stored honestly afterwards", () => {
+  const a = new Account('"5"');
+  a.balance = 1;
+  a.limit = 2;
+  a.home = { x: 3, y: 4 };
+  return [a.total(), a.far(), JSON.stringify(a)];
+});
+attempt("honest again", () => new Honest().all());
+
+export {};
+//// template-tags-over-values-that-are-something-else.js
+////= lines-26
+
+/**
+ * @template T
+ * @param {T} model
+ * @param {string} text
+ * @returns {T}
+ */
+function parsedLike(model, text) {
+  return JSON.parse(text);
+}
+
+/**
+ * @template T
+ * @param {string} text
+ * @returns {T[]}
+ */
+function listOf(text) {
+  return JSON.parse(text);
+}
+
+/**
+ * @template {{ id: number }} T
+ * @param {T} row
+ * @returns {number}
+ */
+function nextId(row) {
+  return row.id + 1;
+}
+
+////= lines-9
+class Box {
+  /** @param {T} content */
+  constructor(content) {
+    /** @type {T} */
+    this.content = content;
+  }
+  /** @returns {T} */
+  get() {
+    return this.content;
+  }
+  /** @param {T} content */
+  set(content) {
+    this.content = content;
+  }
+}
+
+/**
+ * @template T
+ * @param {Box<T>} box
+ * @param {string} text
+ */
+function fill(box, text) {
+  box.set(JSON.parse(text));
+}
+
+////= lines-25	param {T[K]} value
+function store(object, key, value) {
+  object[key] = value;
+}
+
+////= lines-4
+////= plusOne
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += parsedLike(0, "1") + nextId({ id: i }) + new Box(i).get() + listOf("[1]").length;
+console.log("2000 honest rounds: " + warm);
+
+for (const text of ["1", '"1"', "null", "true", "[1]", "{}"]) {
+  attempt("like a number, " + text, () => [parsedLike(0, text) + 1, plusOne(parsedLike(0, text)), typeof parsedLike(0, text)]);
+  attempt("like a text, " + text, () => [parsedLike("", text) + "!", parsedLike("", text).length]);
+  attempt("like a point, " + text, () => [parsedLike({ x: 0, y: 0 }, text).x, typeof parsedLike({ x: 0, y: 0 }, text)]);
+  attempt("a box of numbers is filled with " + text, () => {
+    const box = new Box(1);
+    const before = box.get() + 1;
+    fill(box, text);
+    return [before, box.get() + 1, plusOne(box.content)];
+  });
+  attempt("a row whose id is " + text, () => nextId(JSON.parse('{"id":' + text + "}")));
+}
+
+attempt("a list of numbers", () => {
+  /** @type {number[]} */
+  const numbers = listOf('[1,"2",null]');
+  return [numbers.map(plusOne), numbers.length];
+});
+attempt("a list that is none", () => {
+  /** @type {number[]} */
+  const numbers = listOf('{"length":1}');
+  return [numbers.length, numbers[0]];
+});
+attempt("a list that is none, a method", () => {
+  /** @type {number[]} */
+  const numbers = listOf('{"length":1}');
+  return numbers.map(plusOne);
+});
+attempt("a key that is one of two", () => {
+  const row = { id: 1, name: "n" };
+  /** @type {"id" | "name"} */
+  const key = JSON.parse('"id"');
+  store(row, key, "text");
+  return [row.id, typeof row.id, row.id + 1, nextId(row), JSON.stringify(row)];
+});
+attempt("a box seen as a box of something wider", () => {
+  const numbers = new Box(1);
+  /** @type {Box<number | string>} */
+  const wider = numbers;
+  wider.set("text");
+  return [numbers.get(), numbers.get() + 1, plusOne(numbers.content)];
+});
+
+export {};
+//// template-tags-that-are-right.js
+////= lines-16	template	T	T	value	T
+function same(value) {
+  return value;
+}
+
+/**
+ * @template T
+ * @param {T[]} list
+ * @returns {T | undefined}
+ */
+function last(list) {
+  return list[list.length - 1];
+}
+
+/**
+ * @template {{ id: number }} T
+ * @param {T[]} rows
+ * @param {number} id
+ * @returns {T | undefined}
+ */
+function byId(rows, id) {
+  return rows.find(row => row.id === id);
+}
+
+/**
+ * @template K, V
+ * @param {K} key
+ * @param {V} value
+ * @returns {[K, V]}
+ */
+function pair(key, value) {
+  return [key, value];
+}
+
+////= lines-25	returns {T[K]}
+function pick(object, key) {
+  return object[key];
+}
+
+/**
+ * @template T
+ * @template [U=T[]]
+ * @typedef {{ one: T, many: U }} Both
+ */
+
+/** @type {Both<number>} */
+const both = { one: 1, many: [1, 2] };
+
+/** @type {Both<number, string>} */
+const other = { one: 1, many: "many" };
+
+////= lines-9
+class Box {
+  /** @param {T} content */
+  constructor(content) {
+    /** @type {T} */
+    this.content = content;
+  }
+
+  /** @returns {T} */
+  get() {
+    return this.content;
+  }
+
+  /**
+   * @template U
+   * @param {(content: T) => U} f
+   * @returns {Box<U>}
+   */
+  map(f) {
+    return new Box(f(this.content));
+  }
+}
+
+/**
+ * @template T
+ * @extends {Box<T[]>}
+ */
+class Shelf extends Box {
+  /** @returns {number} */
+  size() {
+    return this.content.length;
+  }
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  warm += same(i) + (last([i, 1]) ?? 0) + (byId([{ id: i, extra: "e" }], i)?.id ?? 0) + pair(i, "v")[0] + pick({ n: i, s: "s" }, "n") + new Box(i).map(n => n + 1).get();
+}
+console.log("2000 rounds: " + warm);
+console.log(same("text").length, last(["a", "b"]), last([]), byId([{ id: 1, name: "n" }], 1)?.name, byId([], 1));
+console.log(pair("k", 1).join(), pick({ n: 1, s: "s" }, "s").length, both.many.length, other.many.length);
+console.log(new Box("ab").map(s => s.length).get(), new Shelf([1, 2, 3]).size(), new Shelf(["a"]).get().join(), JSON.stringify(new Box({ x: 1 })));
+
+export {};
+//// this-enum-extends-and-implements-tags-that-are-right.js
+/** @typedef {{ x: number, y: number }} Point */
+
+////= lines-6
+function shifted(n) {
+  return this.x + this.y + n;
+}
+
+/** @enum {number} */
+const Level = { Low: 1, Middle: 2, High: 3 };
+
+/** @enum {string} */
+const Color = { Red: "red", Green: "green" };
+
+/** @enum {(n: number) => number} */
+const Steps = { up: /** @param {number} n */ n => n + 1, down: /** @param {number} n */ n => n - 1 };
+
+////= lines-10	Level	level	returns	string
+////= levelName	middle"
+
+/**
+ * @interface
+ */
+class Shape {
+  /** @returns {number} */
+  area() {
+    return 0;
+  }
+}
+
+/** @implements {Shape} */
+class Square {
+  /** @param {number} side */
+  constructor(side) {
+    this.side = side;
+  }
+  area() {
+    return this.side * this.side;
+  }
+}
+
+////= lines-9
+class Stack {
+  constructor() {
+    /** @type {T[]} */
+    this.items = [];
+  }
+  /** @param {T} item */
+  push(item) {
+    this.items.push(item);
+    return this;
+  }
+  /** @returns {T | undefined} */
+  top() {
+    return this.items[this.items.length - 1];
+  }
+}
+
+/** @extends {Stack<number>} */
+class Numbers extends Stack {
+  /** @returns {number} */
+  total() {
+    let sum = 0;
+    for (const n of this.items) sum += n;
+    return sum;
+  }
+
+  /**
+   * @override
+   * @param {number} item
+   */
+  push(item) {
+    return super.push(item * 2);
+  }
+}
+
+class Account {
+  /** @private */
+  secret = 1;
+  /** @protected */
+  shared = 2;
+  /** @public */
+  open = 3;
+  /** @readonly */
+  fixed = 4;
+  /** @returns {number} */
+  all() {
+    return this.secret + this.shared + this.open + this.fixed;
+  }
+}
+
+////= lines-8
+function twiceTheArea(shape) {
+  return shape.area() * 2;
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += shifted.call({ x: i, y: 1 }, 1) + levelName(Level.High).length + twiceTheArea(new Square(i % 5)) + Steps.up(i) + new Numbers().push(i).total();
+console.log("2000 rounds: " + warm);
+console.log(shifted.call({ x: 1, y: 2 }, 3), shifted.apply({ x: 1, y: 2 }, [3]), shifted.bind({ x: 1, y: 2 })(3), [1, 2].map(shifted, { x: 1, y: 2 }).join());
+console.log(levelName(Level.Low), levelName(Level.Middle), Color.Red + Color.Green, Steps.down(1), Object.keys(Level).join());
+console.log(new Square(3).area(), twiceTheArea(new Shape()), new Square(1) instanceof Shape);
+console.log(new Numbers().push(1).push(2).total(), new Numbers().top(), new Account().all(), new Account().open, Object.keys(new Account()).join());
+
+export {};
+//// this-tags-and-other-receivers.js
+/** @typedef {{ x: number, y: number }} Point */
+
+/** @type {string[]} */
+const log = [];
+
+////= lines-27
+////= attempt-2
+
+////= lines-6
+function shifted(n) {
+  return this.x + this.y + n;
+}
+
+/**
+ * @this {Point}
+ * @returns {string}
+ */
+function kind() {
+  return typeof this;
+}
+
+/**
+ * @this {Point}
+ * @param {number} x
+ */
+function moveTo(x) {
+  this.x = x;
+  return this;
+}
+
+class Scale {
+  factor = 3;
+  /**
+   * @param {number} n
+   * @returns {number}
+   */
+  apply(n) {
+    return n * this.factor;
+  }
+}
+
+/** @type {[string, unknown][]} */
+const receivers = [
+  ["honest", { x: 1, y: 2 }],
+  ["swapped", { y: 2, x: 1 }],
+  ["texts", { x: "1", y: "2" }],
+  ["partial", { y: 2 }],
+  [
+    "getters",
+    {
+      get x() {
+        log.push("x");
+        return 1;
+      },
+      get y() {
+        log.push("y");
+        return 2;
+      },
+    },
+  ],
+  ["frozen", Object.freeze({ x: 1, y: 2 })],
+  ["a list", [1, 2]],
+  ["a scale", new Scale()],
+  ["a text", "xy"],
+  ["a number", 5],
+  ["null", null],
+  ["undefined", undefined],
+];
+
+/** @type {Function} */
+const looseShifted = shifted;
+/** @type {Function} */
+const looseKind = kind;
+/** @type {Function} */
+const looseMoveTo = moveTo;
+/** @type {Function} */
+const looseApply = Scale.prototype.apply;
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += shifted.call({ x: i, y: 1 }, 1) + new Scale().apply(i) + looseMoveTo.call({ x: 0, y: 0 }, i).x;
+console.log("2000 honest rounds: " + warm);
+
+for (const [name, receiver] of receivers) {
+  attempt("call, " + name, () => looseShifted.call(receiver, 1));
+  attempt("apply, " + name, () => looseShifted.apply(receiver, [1]));
+  attempt("bind, " + name, () => looseShifted.bind(receiver)(1));
+  attempt("Reflect.apply, " + name, () => Reflect.apply(looseShifted, receiver, [1]));
+  attempt("the operand for this of map, " + name, () => [1, 2].map(shifted, receiver));
+  attempt("typeof this, " + name, () => looseKind.call(receiver));
+  attempt("a store to this, " + name, () => {
+    const result = looseMoveTo.call(receiver, 9);
+    return [result === receiver, typeof result, Reflect.get(Object(result), "x")];
+  });
+  attempt("a method of a class, " + name, () => looseApply.call(receiver, 2));
+}
+
+attempt("a plain call through a value of type Function", () => looseShifted(1));
+attempt("as a member of another object", () => {
+  const holder = { x: "held", y: 1, shifted: looseShifted };
+  return holder.shifted(1);
+});
+attempt("a method taken off its object", () => {
+  const apply = new Scale().apply;
+  return apply(2);
+});
+
+export {};
+//// type-param-and-returns-tags-honest.js
+/** @type {number} */
+let count = 0;
+
+/** @type {string} */
+const name = "counter";
+
+/** @type {number[]} */
+const sizes = [1, 2, 3];
+
+/** @type {{ x: number, y: number }} */
+const origin = { x: 1, y: 2 };
+
+/** @type {Map<string, number>} */
+const byName = new Map();
+
+/** @type {(n: number) => number} */
+const double = n => n * 2;
+
+////= lines-15	number	a	number	b
+function add(a, b) {
+  return a + b;
+}
+
+/**
+ * @param {{ x: number, y: number }} p
+ * @returns {number}
+ */
+////= sum
+
+/**
+ * @param {number[]} list
+ * @returns {number}
+ */
+function total(list) {
+  let result = 0;
+  for (const n of list) result += n;
+  return result;
+}
+
+////= lines-10	string	text	return	number
+const size = text => text.length;
+
+class Counter {
+  /** @type {number} */
+  n = 0;
+
+  /** @type {string[]} */
+  log = [];
+
+  /** @param {number} start */
+  constructor(start) {
+    this.n = start;
+    /** @type {number} */
+    this.step = 1;
+  }
+
+  /**
+   * @param {number} by
+   * @returns {number}
+   */
+  add(by) {
+    this.n += by * this.step;
+    return this.n;
+  }
+
+  /** @returns {number} */
+  get twice() {
+    return this.n * 2;
+  }
+
+  /** @param {number} value */
+  set twice(value) {
+    this.n = value / 2;
+  }
+
+  /**
+   * @param {number} n
+   * @returns {Counter}
+   */
+  static from(n) {
+    return new Counter(n);
+  }
+}
+
+for (let i = 0; i < 2000; i++) {
+  count = add(count, i % 3);
+  count += sum(origin) + total(sizes) + double(i % 2) + size(name);
+  byName.set("k" + (i % 4), count);
+}
+console.log("count: " + count);
+console.log("map: " + [...byName].join(" "));
+
+const counter = Counter.from(1);
+for (let i = 0; i < 2000; i++) counter.add(i % 2);
+counter.twice = counter.twice + 2;
+console.log("counter: " + counter.n + " " + counter.twice + " " + counter.step + " " + JSON.stringify(counter));
+console.log("kinds: " + [typeof count, typeof name, typeof double, typeof counter.n, Array.isArray(sizes)].join(" "));
+
+export {};
+//// type-tags-over-values-that-are-something-else.js
+/** @typedef {{ x: number, y: number }} Point */
+
+/** @type {string[]} */
+const log = [];
+
+////= lines-3
+////= show-2
+
+////= lines-2
+////= attempt-2
+
+const things = {
+  three: 3,
+  digits: "3",
+  yes: true,
+  nothing: null,
+  missing: undefined,
+  big: 3n,
+  valued: {
+    valueOf() {
+      log.push("valueOf");
+      return 3;
+    },
+  },
+  point: { x: 1, y: 2 },
+  swapped: { y: 2, x: 1 },
+  texts: { x: "1", y: "2" },
+  partial: { x: 1 },
+  getters: {
+    get x() {
+      log.push("x");
+      return 1;
+    },
+    get y() {
+      log.push("y");
+      return "2";
+    },
+  },
+  numbers: [1, 2],
+  mixed: [1, "2", null],
+  like: { 0: 1, 1: 2, length: 2 },
+  step: Object.assign(/** @param {number} n */ n => n + 1, { toString: () => "step" }),
+  shout: Object.assign(/** @param {number} n */ n => n + "!", { toString: () => "shout" }),
+  text: "ab",
+};
+const names = Object.keys(things);
+
+/** @param {string} name */
+function get(name) {
+  return Reflect.get(things, name);
+}
+
+/** @type {[string, string, (name: string) => unknown][]} */
+const uses = [
+  [
+    "number",
+    "three",
+    name => {
+      /** @type {number} */
+      const n = get(name);
+      return [typeof n, n + 1, n * 2, [10, 20, 30, 40][n]];
+    },
+  ],
+  [
+    "string",
+    "text",
+    name => {
+      /** @type {string} */
+      const s = get(name);
+      return [typeof s, s + "!", s.length, s[0]];
+    },
+  ],
+  [
+    "boolean",
+    "yes",
+    name => {
+      /** @type {boolean} */
+      const b = get(name);
+      return [typeof b, b === true, !b, b ? "truthy" : "falsy"];
+    },
+  ],
+  [
+    "Point",
+    "point",
+    name => {
+      /** @type {Point} */
+      const p = get(name);
+      return [p.x, p.y, p.x + p.y, Object.keys(p).join()];
+    },
+  ],
+  [
+    "number[]",
+    "numbers",
+    name => {
+      /** @type {number[]} */
+      const list = get(name);
+      let total = 0;
+      for (let i = 0; i < list.length; i++) total += list[i];
+      return [total, list.length, Array.isArray(list)];
+    },
+  ],
+  [
+    "number[], iterated",
+    "numbers",
+    name => {
+      /** @type {number[]} */
+      const list = get(name);
+      let total = 0;
+      for (const n of list) total += n;
+      return [total, list.map(n => n * 2)];
+    },
+  ],
+  [
+    "(n: number) => number",
+    "step",
+    name => {
+      /** @type {(n: number) => number} */
+      const f = get(name);
+      return [f(1), f(1) + 1];
+    },
+  ],
+  [
+    "number | undefined",
+    "three",
+    name => {
+      /** @type {number | undefined} */
+      const n = get(name);
+      return n === undefined ? "nothing" : [n + 1, typeof n];
+    },
+  ],
+  [
+    "let, stored twice",
+    "three",
+    name => {
+      /** @type {number} */
+      let n = 1;
+      n = get(name);
+      const first = n + 1;
+      n = 2;
+      return [first, n + 1];
+    },
+  ],
+];
+
+for (const [type, honest, run] of uses) {
+  let rounds = 0;
+  for (let i = 0; i < 2000; i++) {
+    run(honest);
+    rounds++;
+  }
+  console.log(type + ": " + rounds + " honest rounds");
+  for (const name of names) attempt(type + " is " + name, () => run(name));
+}
+
+export {};
+//// typedef-and-callback-tags-that-are-right.js
+/**
+ * @typedef {{ x: number, y: number }} Point
+ */
+
+/**
+ * @typedef {object} User
+ * @property {number} id
+ * @property {string} name
+ * @property {Point} home
+ * @property {string[]} [tags]
+ * @property {number | null} age
+ */
+
+/**
+ * @typedef {Object} Nested
+ * @property {object} inner
+ * @property {number} inner.depth
+ * @property {string} inner.label
+ */
+
+/** @typedef {"low" | "high"} Level */
+/** @typedef {[number, string]} Pair */
+/** @typedef {Record<string, Point>} Places */
+/** @typedef {Point & { z: number }} Point3 */
+/** @typedef {(n: number) => number} Step */
+
+////= lines-7
+
+/**
+ * @callback Visitor
+ * @param {User} user
+ * @param {number} [index]
+ * @returns {void}
+ */
+
+/**
+ * @param {Point[]} points
+ * @param {Reducer} reducer
+ * @returns {number}
+ */
+function reduce(points, reducer) {
+  let total = 0;
+  for (const p of points) total = reducer(total, p);
+  return total;
+}
+
+/**
+ * @param {User[]} users
+ * @param {Visitor} visit
+ */
+function each(users, visit) {
+  users.forEach((user, index) => visit(user, index));
+}
+
+/** @type {User} */
+const first = { id: 1, name: "first", home: { x: 1, y: 2 }, age: null };
+
+/** @type {User} */
+const second = { id: 2, name: "second", home: { y: 4, x: 3 }, tags: ["a", "b"], age: 30 };
+
+/** @type {Nested} */
+const nested = { inner: { depth: 2, label: "deep" } };
+
+/** @type {Level} */
+let level = "low";
+
+/** @type {Pair} */
+const pair = [1, "one"];
+
+/** @type {Places} */
+const places = { home: { x: 1, y: 2 }, work: { x: 3, y: 4 } };
+
+/** @type {Point3} */
+const high = { x: 1, y: 2, z: 3 };
+
+/** @type {Step} */
+const up = n => n + 1;
+
+/** @type {Reducer} */
+const addX = (total, p) => total + p.x;
+
+////= lines-10	Level	l	returns	number
+function rank(l) {
+  return l === "low" ? 1 : 2;
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += reduce([first.home, second.home, high], addX) + up(i) + rank(level) + pair[0] + nested.inner.depth;
+console.log("2000 rounds: " + warm);
+
+/** @type {string[]} */
+const seen = [];
+each([first, second], (user, index) => {
+  seen.push(index + ":" + user.name + ":" + (user.tags?.join("+") ?? "no tags") + ":" + (user.age ?? "no age"));
+});
+console.log(seen.join(" "));
+level = "high";
+console.log(rank(level), pair[1].length, Object.keys(places).join(), places.work.x + places.home.y, high.z);
+console.log(JSON.stringify([first, second, nested, pair, high]));
+
+export {};
+//// typescript-believes-the-false-tags-of-an-unchecked-js-module/library.js
+/** @returns {number} */
+////= lines-13	export	count	"7"
+
+/** @returns {string} */
+////= lines-13	export	label	42
+
+/** @returns {{ x: number, y: number }} */
+export function point() {
+  return { y: "2", x: "1", z: 3 };
+}
+
+/** @returns {number[]} */
+export function list() {
+  return ["1", 2, null];
+}
+
+/** @returns {(n: number) => number} */
+export function step() {
+  return n => n + "!";
+}
+
+/** @returns {boolean} */
+////= lines-13	export	flag	0
+
+/** @returns {number} */
+export function nothing() {}
+
+/** @type {number} */
+export const limit = "10";
+
+/** @type {3} */
+export const version = 4;
+
+/** @type {number} */
+export let mutable = 1;
+
+export function spoil() {
+  mutable = "spoiled";
+}
+
+export class Dog {
+  /** @param {string} name */
+  constructor(name) {
+    /** @type {string} */
+    this.name = name.length;
+    /** @type {number} */
+    this.legs = "four";
+  }
+
+  /** @returns {number} */
+  bark() {
+    return "woof";
+  }
+
+  /** @type {number} */
+  static kinds = "many";
+}
+
+////= lines-15	number	n	string	s
+export function takes(n, s) {
+  return typeof n + " " + typeof s + " " + (n + s);
+}
+
+/**
+ * @param {(n: number) => number} f
+ * @returns {number[]}
+ */
+export function callBack(f) {
+  return [f("1"), f(null), f()];
+}
+
+/**
+ * @template T
+ * @param {T} value
+ * @returns {T[]}
+ */
+////= lines-19	wrap	value	value
+
+////= lines-17	unknown	v	number
+////= lines-19	isNumber	v	true
+
+/** @returns {never} */
+////= lines-13	export	fail	"came back"
+
+/** @enum {number} */
+export const Level = { Low: "low", High: 2 };
+//// typescript-believes-the-false-tags-of-an-unchecked-js-module/main.ts
+import { callBack, count, Dog, fail, flag, isNumber, label, Level, limit, list, mutable, nothing, point, spoil, step, takes, version, wrap } from "./library.js";
+
+function show(value: unknown): string {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(show).join(", ") + "]";
+  if (typeof value === "object" && value !== null) return "{" + Object.keys(value).join() + "}";
+  return String(value);
+}
+
+function attempt(label: string, run: () => unknown): void {
+  try {
+    console.log(label + " -> " + show(run()));
+  } catch (error) {
+    console.log(label + " threw " + (error instanceof Error ? error.constructor.name : typeof error));
+  }
+}
+
+function plusOne(n: number): number {
+  return n + 1;
+}
+
+function size(s: string): number {
+  return s.length;
+}
+
+function sum(p: { x: number; y: number }): number {
+  return p.x + p.y;
+}
+
+function total(numbers: number[]): number {
+  let result = 0;
+  for (let i = 0; i < numbers.length; i++) result += numbers[i];
+  return result;
+}
+
+class Holder {
+  n = count();
+  s = label();
+  p = point();
+  next(): number {
+    return this.n + 1;
+  }
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += plusOne(i) + size("ab") + sum({ x: i, y: 1 }) + total([i]);
+console.log("2000 honest rounds: " + warm);
+
+attempt("a number", () => [count(), typeof count(), count() + 1, count() * 2, plusOne(count()), [0, 1, 2, 3, 4, 5, 6, 7][count()]]);
+attempt("a number in a local, a list and a map", () => {
+  const n: number = count();
+  const numbers: number[] = [1, count()];
+  const map = new Map<string, number>([["k", count()]]);
+  return [n + 1, total(numbers), (map.get("k") ?? 0) + 1];
+});
+attempt("a text", () => [label(), typeof label(), label() + "!", label() + 1]);
+attempt("the size of a text", () => size(label()));
+attempt("a point", () => [point().x, point().x + point().y, sum(point()), Object.keys(point()).join(), JSON.stringify(point())]);
+attempt("a list", () => [total(list()), list().map(plusOne), list().length]);
+attempt("a function", () => [step()(1), step()(1) + 1, [1, 2].map(step())]);
+attempt("a truth", () => [flag() === false, flag() === true, flag() ? "truthy" : "falsy", typeof flag()]);
+attempt("nothing", () => [nothing(), nothing() + 1, plusOne(nothing())]);
+attempt("constants", () => [limit, limit + 1, plusOne(limit), version, version === 3, version + 1]);
+attempt("a variable", () => {
+  const before = mutable + 1;
+  spoil();
+  return [before, mutable, mutable + 1, plusOne(mutable)];
+});
+attempt("fields of a holder", () => {
+  const holder = new Holder();
+  return [holder.next(), holder.s + "!", sum(holder.p), JSON.stringify(holder)];
+});
+attempt("a class", () => {
+  const dog = new Dog("rex");
+  return [dog.name, dog.name + "!", dog.legs, dog.legs + 1, dog.bark(), dog.bark() + 1, Dog.kinds + 1, JSON.stringify(dog)];
+});
+attempt("the size of a field", () => size(new Dog("rex").name));
+attempt("a subclass", () => {
+  class Puppy extends Dog {
+    small = true;
+    legsPlusOne(): number {
+      return this.legs + 1;
+    }
+  }
+  const puppy = new Puppy("p");
+  return [puppy.legsPlusOne(), puppy.small, Object.keys(puppy).join()];
+});
+attempt("operands", () => [takes(1, "s"), takes(1.5, "")]);
+attempt("a callback", () => [callBack(plusOne), callBack(n => n * 2), callBack(Math.abs)]);
+attempt("a template", () => [wrap(5), typeof wrap(5), wrap("ab").length]);
+attempt("a template, a method of lists", () => wrap(5).map(plusOne));
+attempt("a guard", () => {
+  const values: unknown[] = [1, "1", null, [1]];
+  return values.map(v => (isNumber(v) ? v + 1 : "no number"));
+});
+attempt("never", () => {
+  fail();
+  return "the statement after the call ran";
+});
+attempt("never narrows", () => {
+  const n: number | undefined = [1][1];
+  if (n === undefined) fail();
+  return n + 1;
+});
+attempt("an enum", () => [Level.Low, Level.Low + "!", plusOne(Level.High)]);
+//// typescript-believes-the-false-tags-of-an-unchecked-js-module/tsconfig.json
+////= lines
+//// typescript-uses-more-of-what-is-inferred-from-javascript-files/both.cjs
+exports = module.exports = function main() {
+  return "main";
+};
+//// typescript-uses-more-of-what-is-inferred-from-javascript-files/esm.js
+export function fewer(a, b) {
+  return [a, b].filter(v => v !== undefined).length;
+}
+
+export function variadic() {
+  return arguments.length;
+}
+
+////= Grown
+Grown.made = 0;
+
+export const space = {};
+space.sub = {};
+space.sub.value = 1;
+space.fn = function (n) {
+  return n;
+};
+
+export default {
+  name: "default",
+  size() {
+    return 1;
+  },
+};
+
+export class Fields {
+  static count = 1;
+  #hidden = 2;
+  shown = 3;
+  get both() {
+    return this.#hidden + this.shown;
+  }
+  static make() {
+    return new Fields();
+  }
+}
+
+export const arrow = (a, b = 2) => a + b;
+
+export function withDefault(a = 1, { b = 2 } = {}) {
+  return a + b;
+}
+
+export async function later() {
+  return 1;
+}
+
+export function* many() {
+  yield 1;
+  yield "two";
+}
+
+export const tuple = /** @type {[number, string]} */ ([1, "one"]);
+
+/** @param n a number without a type */
+////= lines-19	untypedTag	n	n
+
+export * from "./other.js";
+export * as other from "./other.js";
+//// typescript-uses-more-of-what-is-inferred-from-javascript-files/main.ts
+import both = require("./both.cjs");
+import settings, { arrow, fewer, Fields, fromOther, Grown, later, many, other, otherFn, space, tuple, untypedTag, variadic, withDefault } from "./esm.js";
+import { two } from "./object.cjs";
+import { Legacy, one, sep } from "./pattern.cjs";
+
+console.log(fewer(), fewer(1), fewer(1, 2), variadic());
+console.log(new Grown().x + 1, Grown.made + 1);
+console.log(space.sub.value + 1, space.fn(1), settings.name.length, settings.size() + 1);
+console.log(Fields.count + 1, new Fields().shown + 1, new Fields().both + 1, Fields.make().shown);
+console.log(arrow(1), arrow(1, 1), withDefault(), withDefault(2, { b: 3 }), (await later()) + 1, [...many()].length, tuple[0] + 1, tuple[1].length, untypedTag(1));
+console.log(fromOther.length, otherFn() + 1, other.fromOther, other.otherFn());
+console.log(both(), two + 1, one + 1, sep.length, Legacy.create("a").greet(), Legacy.create("b").name);
+//// typescript-uses-more-of-what-is-inferred-from-javascript-files/object.cjs
+module.exports = {
+  one: 1,
+  get two() {
+    return 2;
+  },
+};
+//// typescript-uses-more-of-what-is-inferred-from-javascript-files/other.js
+export const fromOther = "other";
+////= lines-13	export	otherFn	2
+//// typescript-uses-more-of-what-is-inferred-from-javascript-files/pattern.cjs
+const { sep } = require("node:path").posix;
+const other = require("./object.cjs");
+
+function Legacy(name) {
+  if (!(this instanceof Legacy)) return new Legacy(name);
+  this.name = name;
+}
+Legacy.prototype = {
+  greet() {
+    return "hello " + this.name;
+  },
+};
+Legacy.create = function (name) {
+  return new Legacy(name);
+};
+
+module.exports = { Legacy, sep, one: other.one };
+//// typescript-uses-more-of-what-is-inferred-from-javascript-files/tsconfig.json
+////= lines
+//// typescript-uses-what-is-inferred-from-javascript-files/assigned.cjs
+class Main {
+  constructor() {
+    this.m = 1;
+  }
+}
+module.exports = Main;
+//// typescript-uses-what-is-inferred-from-javascript-files/common.cjs
+/** @typedef {{ id: number }} Row */
+
+exports.named = 1;
+exports.fn = function (/** @type {number} */ n) {
+  return n + 1;
+};
+Object.defineProperty(exports, "defined", { value: "defined", enumerable: true });
+module.exports.viaModule = "m";
+exports.Klass = class Klass {
+  constructor() {
+    this.k = 1;
+  }
+};
+//// typescript-uses-what-is-inferred-from-javascript-files/esm.js
+/** @typedef {{ x: number, y: number }} Point */
+
+/**
+ * @typedef {object} User
+ * @property {number} id
+ * @property {string} [name]
+ */
+
+////= lines-7
+
+/**
+ * @template T
+ * @typedef {{ one: T, many: T[] }} Both
+ */
+
+////= lines-9
+export class Box {
+  /** @param {T} content */
+  constructor(content) {
+    /** @type {T} */
+    this.content = content;
+  }
+  /** @returns {T} */
+  get() {
+    return this.content;
+  }
+  init() {
+    this.late = 1;
+  }
+}
+
+////= lines-12	number	v	number
+////= lines-12	string	v	string
+////= lines-21	v
+export function twice(v) {
+  return typeof v === "number" ? v * 2 : v + v;
+}
+
+////= lines-6
+export function shifted(n) {
+  return this.x + this.y + n;
+}
+
+/**
+ * @param {number} a
+ * @param {number} [b]
+ * @param {...number} rest
+ * @returns {number}
+ */
+export function add(a, b, ...rest) {
+  return a + (b ?? 0) + rest.length;
+}
+
+////= lines-13	export	expando	1
+expando.version = 2;
+expando.nested = { deep: "d" };
+
+export const open = {};
+open.a = 1;
+open.b = "two";
+
+export const frozen = Object.freeze({ low: 1, high: 2 });
+
+/** @type {Readonly<Record<string, number>>} */
+export const table = { a: 1 };
+
+export const property = {
+  /** @type {number | string} */
+  wide: 1,
+  /** @param {number} n */
+  method(n) {
+    return n + 1;
+  },
+};
+//// typescript-uses-what-is-inferred-from-javascript-files/main.ts
+import Main = require("./assigned.cjs");
+import type { Row } from "./common.cjs";
+import { defined, fn, Klass, named, viaModule } from "./common.cjs";
+import type { Both, Point, Reducer, User } from "./esm.js";
+import { add, Box, expando, frozen, open, property, shifted, table, twice } from "./esm.js";
+import { one, three, two } from "./object.cjs";
+
+const point: Point = { x: 1, y: 2 };
+const user: User = { id: 1 };
+const reducer: Reducer = (total, p) => total + p.x;
+const both: Both<number> = { one: 1, many: [1, 2] };
+const row: Row = { id: 1 };
+const box: Box<number> = new Box(1);
+box.init();
+const late: number | undefined = box.late;
+const n: number = twice(2);
+const s: string = twice("a");
+
+console.log(point.x, user.id, reducer(1, point), both.many.length, row.id, box.get() + 1, late, n, s);
+console.log(shifted.call(point, 1), add(1), add(1, 2), add(1, 2, 3, 4));
+console.log(expando() + expando.version, expando.nested.deep, open.a + 1, open.b.length, frozen.low + frozen.high, table.a, property.wide, property.method(1));
+console.log(named + 1, fn(1), defined.length, viaModule.length, new Klass().k + 1, new Main().m + 1, one() + 1, two.length, three[0] + 1);
+//// typescript-uses-what-is-inferred-from-javascript-files/object.cjs
+////= lines-11	one	1
+const two = "two";
+module.exports = { one, two, three: [3] };
+//// typescript-uses-what-is-inferred-from-javascript-files/tsconfig.json
+////= lines
+//// unchecked-function-types-are-false/main.js
+////= show-5
+
+////= lines-16	callback	Step	number	n	number
+
+/** @type {Step} */
+const honest = n => n + 1;
+
+/** @type {Step} */
+const shout = n => n + "!";
+
+/** @type {Step} */
+const silent = () => {};
+
+/** @type {Step} */
+const two = (a, b) => a + b;
+
+/** @type {Step} */
+const later = async n => n + 1;
+
+/** @type {Step} */
+const many = function* (n) {
+  yield n;
+};
+
+/** @type {Step} */
+const Only = class {
+  constructor(n) {
+    this.n = n;
+  }
+};
+
+/** @type {Step} */
+const bound = function (n) {
+  return this.by + n;
+}.bind({ by: "bound " });
+
+/** @type {Step} */
+const proxied = new Proxy(n => n + 1, { apply: () => "trapped" });
+
+/** @type {Step} */
+const lookAlike = { call: () => 1, apply: () => 2, bind: () => () => 3, length: 1, name: "fake" };
+
+/** @type {Step} */
+const number = 5;
+
+/** @type {Step} */
+const nothing = null;
+
+/** @param {Step} f */
+function twice(f) {
+  return f(f(1));
+}
+
+/** @param {Step} f */
+function mapped(f) {
+  return [1, 2].map(f);
+}
+
+class Machine {
+  /** @param {Step} step */
+  constructor(step) {
+    /** @type {Step} */
+    this.step = step;
+  }
+  run() {
+    return this.step(1) + 1;
+  }
+}
+
+/** @type {Step[]} */
+const steps = [honest, shout, silent, two];
+
+/** @type {Map<string, Step>} */
+const byName = new Map([
+  ["honest", honest],
+  ["number", number],
+]);
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += honest(i) + twice(honest) + new Machine(honest).run() + mapped(honest)[1];
+console.log("2000 honest rounds: " + warm);
+
+for (const [name, f] of Object.entries({ honest, shout, silent, two, later, many, Only, bound, proxied, lookAlike, number, nothing })) {
+  attempt(name + ", called", () => [f(1), typeof f(1), f(1) + 1]);
+  attempt(name + ", a parameter", () => twice(f));
+  attempt(name + ", a field", () => new Machine(f).run());
+  attempt(name + ", a callback", () => mapped(f));
+  attempt(name + ", call and apply", () => [f.call(undefined, 1), f.apply(undefined, [1]), f.bind(undefined, 1)()]);
+  attempt(name + ", its members", () => [typeof f, f.length, f.name]);
+}
+
+attempt("in sight: each called where it is named", () => [honest(1) + 1, shout(1) + 1, silent(1) + 1, two(1) + 1, bound(1) + 1, proxied(1) + 1]);
+attempt("in sight: a class", () => Only(1));
+attempt("in sight: a look-alike", () => lookAlike(1));
+attempt("in sight: a number", () => number(1));
+attempt("in sight: null", () => nothing(1));
+attempt("a list of steps", () => steps.map(f => f(1) + 1));
+attempt("a map of steps", () => byName.get("honest")(1) + byName.get("honest")(2));
+attempt("a map of steps, the number", () => byName.get("number")(1));
+attempt("a map of steps, missing", () => byName.get("missing")(1));
+//// unchecked-function-types-are-false/tsconfig.json
+////= lines
+//// unchecked-guards-and-assertions-are-false/main.js
+////= show-6
+
+////= lines-18	Shape	sides	0
+
+class Square extends Shape {
+  edge = 2;
+  /** @returns {number} */
+  area() {
+    return this.edge * this.edge;
+  }
+}
+
+////= lines-17	unknown	v	number
+function isNumber(v) {
+  return true;
+}
+
+////= lines-17	unknown	v	string
+function isText(v) {
+  return v !== null;
+}
+
+////= lines-17	Shape	s	Square
+function isSquare(s) {
+  return s.sides === 0;
+}
+
+/**
+ * @param {unknown} v
+ * @returns {v is { x: number, y: number }}
+ */
+function isPoint(v) {
+  return typeof v === "object";
+}
+
+/**
+ * @param {unknown} v
+ * @returns {v is number[]}
+ */
+function isList(v) {
+  return Object(v).length !== undefined;
+}
+
+/**
+ * @param {unknown} v
+ * @returns {asserts v is number}
+ */
+function assertNumber(v) {}
+
+/**
+ * @param {unknown} v
+ * @returns {asserts v}
+ */
+function assertPresent(v) {}
+
+/**
+ * @param {Shape} s
+ * @returns {asserts s is Square}
+ */
+function assertSquare(s) {}
+
+/** @param {unknown} v */
+function plusOne(v) {
+  return isNumber(v) ? v + 1 : "no number";
+}
+
+/** @param {unknown} v */
+function size(v) {
+  return isText(v) ? v.length : "no text";
+}
+
+/** @param {Shape} s */
+function area(s) {
+  return isSquare(s) ? [s.edge, s.edge * 2, s.area()] : "no square";
+}
+
+/** @param {Shape} s */
+function edge(s) {
+  return isSquare(s) ? [s.edge, s.edge * 2] : "no square";
+}
+
+/** @param {unknown} v */
+function sum(v) {
+  return isPoint(v) ? v.x + v.y : "no point";
+}
+
+/** @param {unknown} v */
+function total(v) {
+  if (!isList(v)) return "no list";
+  let result = 0;
+  for (let i = 0; i < v.length; i++) result += v[i];
+  return result;
+}
+
+/** @param {unknown} v */
+function asserted(v) {
+  assertNumber(v);
+  return [v + 1, v * 2, typeof v];
+}
+
+/** @param {{ x: number } | null | undefined} p */
+function present(p) {
+  assertPresent(p);
+  return p.x;
+}
+
+/** @param {Shape} s */
+function assertedEdge(s) {
+  assertSquare(s);
+  return [s.edge, s.edge * 2];
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += plusOne(i) + size("ab") + edge(new Square())[1] + sum({ x: i, y: 1 }) + total([i]) + asserted(i)[0] + present({ x: i }) + assertedEdge(new Square())[0];
+console.log("2000 honest rounds: " + warm);
+
+attempt("a guard for numbers", () => [plusOne(1), plusOne("1"), plusOne(null), plusOne(undefined), plusOne([1]), plusOne({})]);
+attempt("a guard for texts", () => [size("ab"), size([1, 2, 3]), size(5), size({ length: "long" }), size(null)]);
+attempt("a guard for texts, undefined", () => size(undefined));
+attempt("a guard for a subclass, its field", () => [edge(new Square()), edge(new Shape())]);
+attempt("a guard for a subclass, its method", () => area(new Shape()));
+attempt("a guard for points", () => [sum({ x: 1, y: 2 }), sum({ x: "1", y: 2 }), sum([1, 2]), sum({}), sum(5)]);
+attempt("a guard for points, null", () => sum(null));
+attempt("a guard for lists", () => [total([1, 2]), total("12"), total({ length: 2, 0: 1, 1: "2" }), total(() => 1), total(5)]);
+attempt("an assertion for numbers", () => [asserted(1), asserted("1"), asserted(null), asserted([2])]);
+attempt("an assertion that something is there", () => present({ x: 1 }));
+attempt("an assertion that something is there, null", () => present(null));
+attempt("an assertion that something is there, undefined", () => present(undefined));
+attempt("an assertion for a subclass", () => [assertedEdge(new Square()), assertedEdge(new Shape())]);
+attempt("a guard in filter", () => [1, "2", null, [3]].filter(isNumber).map(n => n + 1));
+attempt("a guard in find", () => {
+  const found = ["a", 1].find(isNumber);
+  return [found, found + 1];
+});
+//// unchecked-guards-and-assertions-are-false/tsconfig.json
+////= lines
+//// unchecked-import-types-are-false/main.js
+/** @import { Size } from "./shapes" */
+
+/** @param {import("./shapes").Point} p */
+function norm(p) {
+  return p.x + p.y;
+}
+
+/** @param {Size} s */
+function area(s) {
+  return s.width * s.height;
+}
+
+/** @param {import("./shapes").Point[]} points */
+function sum(points) {
+  let total = 0;
+  for (let i = 0; i < points.length; i++) total += points[i].x;
+  return total;
+}
+
+/** @returns {import("./shapes").Point} */
+function make(kind) {
+  return kind === 0 ? { x: 1, y: 2 } : kind === 1 ? { x: "1", y: 2 } : kind === 2 ? "text" : null;
+}
+
+const getter = {
+  get x() {
+    return 5;
+  },
+  y: 6,
+};
+const values = [{ x: 1, y: 2 }, { x: "1", y: 2 }, { y: 2 }, { x: 1.5, y: -0 }, { x: 1n, y: 2n }, "ab", 7, [3, 4], getter];
+for (let round = 0; round < 3; round++) {
+  for (const value of values) console.log(String(norm(value)));
+}
+console.log(area({ width: 2, height: 3 }), area({ width: "2", height: 3 }), area({}), area("ab"));
+console.log(sum([{ x: 1 }, { x: 2 }]), sum([{ x: "a" }, { x: 2 }]), sum("ab"), sum({ length: 2, 0: { x: 1 }, 1: { x: 2 } }));
+for (let kind = 0; kind < 4; kind++) {
+  const made = make(kind);
+  console.log(made === null ? "null" : typeof made === "string" ? made.length : made.x + made.y);
+}
+for (const nothing of [null, undefined]) {
+  try {
+    norm(nothing);
+  } catch (error) {
+    console.log(error instanceof TypeError);
+  }
+}
+//// unchecked-import-types-are-false/shapes.d.ts
+////= lines-23	Point	x	y
+////= lines-23	Size	width	height
+//// unchecked-import-types-are-false/tsconfig.json
+////= lines
+//// unchecked-lists-maps-and-tuples-are-false/main.js
+////= show-5
+
+/** @param {number[]} list */
+////= total	sum
+
+/** @param {number[]} list */
+function doubled(list) {
+  return list.map(n => n * 2);
+}
+
+/** @type {number[]} */
+const honest = [1, 2, 3];
+
+/** @type {number[]} */
+const texts = ["1", "2"];
+
+/** @type {number[]} */
+const mixed = [1, "2", null, undefined, true, [3], { valueOf: () => 4 }];
+
+/** @type {number[]} */
+const holes = [1, , 3];
+
+/** @type {number[]} */
+const empty = new Array(3);
+
+/** @type {number[]} */
+const like = { length: 2, 0: 1, 1: 2 };
+
+/** @type {number[]} */
+const typed = new Float64Array([1.5, 2.5]);
+
+/** @type {number[]} */
+const set = new Set([1, 2]);
+
+/** @type {number[]} */
+const word = "12";
+
+/** @type {Float64Array} */
+const plain = [1.5, "2.5"];
+
+/** @type {[number, string]} */
+const swapped = ["one", 1];
+
+/** @type {[number, string]} */
+const short = [1];
+
+/** @type {[number, string]} */
+const long = [1, "one", true, null];
+
+/** @type {Map<string, number>} */
+const map = new Map([
+  ["a", "1"],
+  [2, 2],
+]);
+
+/** @type {Map<string, number>} */
+const record = { a: 1, get: () => "own get", size: "big" };
+
+/** @type {Set<number>} */
+const words = new Set(["a", 1]);
+
+/** @type {Record<string, number>} */
+const table = { a: "1", b: null, c: [3] };
+
+/** @type {Record<string, number>} */
+const listed = [1, 2];
+
+/** @type {readonly number[]} */
+const fixed = [1, 2];
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += total(honest) + doubled(honest)[2] + total([i]);
+console.log("2000 honest rounds: " + warm);
+
+for (const [name, list] of Object.entries({ honest, texts, mixed, holes, empty, like, typed, set, word })) {
+  attempt(name + ", summed by index", () => [total(list), typeof total(list)]);
+  attempt(name + ", summed by iteration", () => {
+    let sum = 0;
+    for (const n of list) sum += n;
+    return sum;
+  });
+  attempt(name + ", mapped", () => doubled(list));
+  attempt(name + ", read", () => [list.length, list[0], list[1] + 1, 1 in list, Array.isArray(list)]);
+  attempt(name + ", pushed to", () => [list.push(9), list.length]);
+}
+
+attempt("a typed array that is a list", () => [plain[0] + plain[1], plain.length, plain.byteLength, plain.map(n => n + 1)]);
+attempt("tuples", () => [swapped[0] + 1, swapped[1] + "!", short[1], short[1] + "!", long.length, long[2]]);
+attempt("a tuple, the length of a text that is a number", () => swapped[1].length);
+attempt("a tuple, the length of a text that is not there", () => short[1].length);
+attempt("a tuple, taken apart", () => {
+  const [n, s] = swapped;
+  const [m, t = "default"] = short;
+  return [n + 1, s + 1, m + 1, t];
+});
+attempt("a map", () => [map.get("a") + 1, map.get(2) + 1, map.get("2"), map.size, [...map.values()].map(n => n + 1)]);
+attempt("a map that is a literal", () => [record.get("a"), record.size, record.a]);
+attempt("a map that is a literal, a method it lacks", () => record.has("a"));
+attempt("a set", () => [words.has("a"), words.has(1), [...words].map(n => n + 1)]);
+attempt("a record", () => [table.a + 1, table.b + 1, table.c + 1, table.d + 1, Object.values(table).map(n => n + 1)]);
+attempt("a record that is a list", () => [listed[0] + 1, listed.length, Object.keys(listed).join()]);
+attempt("a list declared read-only is changed", () => {
+  fixed.push(3);
+  fixed[0] = "first";
+  fixed.length = 2;
+  return [fixed, total(fixed)];
+});
+//// unchecked-lists-maps-and-tuples-are-false/tsconfig.json
+////= lines
+//// unchecked-never-void-and-literal-types-are-false/main.js
+////= show-6
+
+/** @returns {never} */
+////= lines-11	fail	"came back"
+
+/** @returns {never} */
+const failArrow = () => 1;
+
+class Thrower {
+  /** @returns {never} */
+  fail() {
+    return "came back";
+  }
+}
+
+function afterACall() {
+  fail();
+  return "the statement after the call ran";
+}
+
+function afterAMethod() {
+  new Thrower().fail();
+  return "the statement after the method ran";
+}
+
+function resultOfNever() {
+  const result = fail();
+  return [result, typeof result, result + "!"];
+}
+
+/** @param {number | undefined} n */
+function narrowedByNever(n) {
+  if (n === undefined) fail();
+  return n + 1;
+}
+
+/** @param {string | number} v */
+function bothBranches(v) {
+  if (typeof v === "string") return "text";
+  if (typeof v === "number") return "number";
+  return "neither: " + typeof v;
+}
+
+/** @param {"a" | "b"} mode */
+function exhaustive(mode) {
+  switch (mode) {
+    case "a":
+      return 1;
+    case "b":
+      return 2;
+  }
+  return "fell through with " + mode;
+}
+
+function loopThatNeverEnds() {
+  let rounds = 0;
+  for (;;) {
+    rounds++;
+    if (rounds === 3) break;
+    fail();
+  }
+  return rounds;
+}
+
+/** @type {never} */
+const impossible = "here";
+
+/** @type {void} */
+const empty = 3;
+
+/** @type {null} */
+const nil = { x: 1 };
+
+/** @type {undefined} */
+const missing = 7;
+
+/** @type {5} */
+const five = 6;
+
+/** @type {true} */
+const on = false;
+
+/** @type {false} */
+const off = 1;
+
+/** @type {"a"} */
+const mode = "b";
+
+/** @type {1 | 2} */
+const level = 3;
+
+/** @type {0} */
+const zero = -0;
+
+/** @type {{ kind: "fixed", size: 4 }} */
+const fixed = { kind: "loose", size: 5 };
+
+/** @type {readonly [1, 2]} */
+const pair = [3, 4, 5];
+
+/** @type {unique symbol} */
+const unique = "no symbol";
+
+/** @param {5} n */
+function takesFive(n) {
+  return [n, n + 1, n === 5];
+}
+
+/** @param {true} flag */
+function takesTrue(flag) {
+  return flag ? "then" : "else";
+}
+
+/** @returns {5} */
+////= lines-11	givesFive	6
+
+attempt("after a call that never returns", afterACall);
+attempt("after a method that never returns", afterAMethod);
+attempt("after an arrow that never returns", () => {
+  failArrow();
+  return "the statement after the arrow ran";
+});
+attempt("the result of never", resultOfNever);
+attempt("narrowed by never", () => [narrowedByNever(1), narrowedByNever(undefined)]);
+attempt("neither branch", () => [bothBranches("a"), bothBranches(1), bothBranches(true), bothBranches(null)]);
+attempt("an exhaustive switch", () => [exhaustive("a"), exhaustive("b"), exhaustive("c"), exhaustive(1)]);
+attempt("a loop", loopThatNeverEnds);
+attempt("a value of type never", () => [typeof impossible, impossible, impossible + "!", impossible.length]);
+attempt("a value of type void", () => [typeof empty, empty, empty + 1, empty === undefined]);
+attempt("a value of type null", () => [typeof nil, nil === null, nil == null, nil ?? "fallback", nil ? "truthy" : "falsy", nil?.x]);
+attempt("a value of type undefined", () => [typeof missing, missing === undefined, missing ?? "fallback", missing + 1, missing ? "truthy" : "falsy"]);
+attempt("five", () => [five, five + 1, five === 5, five === 6, five * 2, [0, 1, 2, 3, 4, 5, 6][five], `${five}`]);
+attempt("true and false", () => [on, on === true, !on, on ? "then" : "else", off, off === false, !off, off ? "then" : "else", on && "and", off || "or"]);
+attempt("a text", () => [mode, mode === "a", mode === "b", mode + "!", mode.length, { a: 1, b: 2 }[mode]]);
+attempt("a level", () => [level, level === 1 ? "one" : "two", level + 1]);
+attempt("zero", () => [zero, Object.is(zero, 0), 1 / zero]);
+attempt("a literal of literals", () => [fixed.kind, fixed.kind === "fixed", fixed.size, fixed.size + 1, fixed.size === 4, JSON.stringify(fixed)]);
+attempt("a pair", () => [pair[0], pair[1], pair[0] + pair[1], pair.length, pair.length === 2, pair[2]]);
+attempt("a symbol", () => [typeof unique, unique + "!", { [unique]: 1 }]);
+attempt("parameters", () => [takesFive(5), takesFive(6), takesFive("5"), takesTrue(true), takesTrue(false), takesTrue(0), takesTrue("no")]);
+attempt("a result", () => [givesFive(), givesFive() + 1, givesFive() === 5]);
+//// unchecked-never-void-and-literal-types-are-false/tsconfig.json
+////= lines

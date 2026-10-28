@@ -40,6 +40,7 @@ async function runOxlint(files: Record<string, string>) {
       categories: {},
       rules: {
         "bun/no-duplicate-conditional-property-access": "error",
+        "bun/no-unused-expressions": "error",
       },
     }),
   });
@@ -198,6 +199,29 @@ if (map.entry != null) {
     expect(exitCode).toBe(1);
   });
 
+  test("ignores bodies that write to the same property through a non-null assertion", async () => {
+    const { stdout, stderr, exitCode } = await runOxlint({
+      "writes.ts": `
+declare const self: { count?: number; pos?: number; size?: number };
+declare function use(value: number): void;
+if (self.count === 0) {
+  self.count!++;
+}
+if (self.pos !== undefined) {
+  self.pos! += 1;
+}
+// a read through a non-null assertion is still a read (positive control)
+if (self.size !== undefined) {
+  use(self.size!);
+}
+`,
+    });
+
+    expect(stderr).not.toContain("Failed");
+    expect(diagnostics(stdout)).toEqual([{ file: "writes.ts", line: 11, rule: RULE }]);
+    expect(exitCode).toBe(1);
+  });
+
   test("inline disable comment suppresses the diagnostic", async () => {
     const { stdout, stderr, exitCode } = await runOxlint({
       "suppressed.js": `
@@ -222,7 +246,114 @@ if (options.b != null) y = options.b;
   });
 });
 
+describeOxlint("bun/no-unused-expressions", () => {
+  const RULE = "bun(no-unused-expressions)";
+
+  test("flags a statement that is only a value", async () => {
+    const { stdout, stderr, exitCode } = await runOxlint({
+      "bad.ts": `
+export function bad(a: any, b: any) {
+  a.b;
+  a === b;
+  a?.b;
+  a!;
+  a as any;
+  a && b();
+  a ? b() : 0;
+  \`x\`;
+  "text";
+}
+`,
+    });
+
+    expect(stderr).not.toContain("Failed");
+    expect(diagnostics(stdout)).toEqual(
+      [3, 4, 5, 6, 7, 8, 9, 10, 11].map(line => ({ file: "bad.ts", line, rule: RULE })),
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  test("allows a statement that does something, and a directive", async () => {
+    const { stdout, stderr, exitCode } = await runOxlint({
+      "good.js": `
+"use strict";
+export function good(a, b) {
+  "use strict";
+  a();
+  a?.();
+  a = b;
+  new a();
+  void a;
+  delete a.b;
+  a++;
+}
+`,
+    });
+
+    expect(stderr).not.toContain("Failed");
+    expect(diagnostics(stdout)).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  test('allows "unlikely" only as the first statement of an arm of an if', async () => {
+    const { stdout, stderr, exitCode } = await runOxlint({
+      "marks.js": `
+export function marks(a, b) {
+  ("unlikely");
+  if (a) {
+    ("unlikely");
+    b();
+  } else if (b) {
+    "unlikely";
+    a();
+  } else {
+    ("unlikely");
+    b();
+  }
+  if (a) {
+    b();
+    ("unlikely");
+  }
+  while (a) {
+    ("unlikely");
+  }
+  {
+    ("unlikely");
+  }
+  if (a) {
+    ("likely");
+  }
+}
+`,
+    });
+
+    expect(stderr).not.toContain("Failed");
+    expect(diagnostics(stdout)).toEqual([3, 16, 19, 22, 25].map(line => ({ file: "marks.js", line, rule: RULE })));
+    expect(exitCode).toBe(1);
+  });
+});
+
 describeOxlint("src/js lint", () => {
+  test("a statement that is only a value is an error in every built-in module outside src/js/builtins", async () => {
+    await using proc = Bun.spawn({
+      cmd: [runtime!, oxlintBin, "--config=oxlint.json", "--print-config", "src/js/node/fs.ts"],
+      cwd: root,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const overrides: { files: string[]; rules?: Record<string, unknown> }[] = JSON.parse(stdout).overrides;
+    const levels = overrides
+      .filter(({ rules }) => rules && "bun/no-unused-expressions" in rules)
+      .map(({ files, rules }) => [files, rules!["bun/no-unused-expressions"]]);
+    expect(levels).toEqual([
+      [["src/js/**"], expect.stringMatching(/^(error|deny)$/)],
+      [["src/js/builtins/**"], expect.stringMatching(/^(off|allow)$/)],
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   // End-to-end: the repo's own oxlint config, against src/js, should be
   // clean. Existing instances of the pattern were refactored to read the
   // property into a local before the check; this guards against new ones.

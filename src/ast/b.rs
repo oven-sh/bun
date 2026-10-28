@@ -125,17 +125,8 @@ impl B {
         // `symbol_table: anytype` — forwarded to `Ref::get_symbol` and
         // `Expr::Data::write_to_hasher`; bound mirrors `Expr::Data::write_to_hasher`.
     {
-        // Local mirror of `bun.writeAnyToHasher`. Rust tuples have
-        // *uninitialized* padding bytes (e.g. `(Tag /*u8*/, usize)` has 7 on
-        // 64-bit), so forming a `&[u8]` over them is UB. Instead we feed each
-        // scalar field individually and bound on `NoUninit` so the compiler
-        // proves every byte is initialized — same pattern as
-        // `expr::Data::write_to_hasher`. The hash is only used in-process for
-        // React Fast Refresh.
-        #[inline(always)]
-        fn raw<H: bun_core::Hasher + ?Sized, T: bun_core::NoUninit>(h: &mut H, v: T) {
-            h.update(bun_core::bytes_of(&v));
-        }
+        // Each scalar is fed on its own: a tuple of them would have padding.
+        use bun_core::write_any_to_hasher as raw;
         match self {
             B::BIdentifier(id) => {
                 let ref_ = id.r#ref;

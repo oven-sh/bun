@@ -1,0 +1,1 @@
+function make(x) { return Array.from({ length: 2 }, x); } const a = make(), b = make(i => 1), c = make((v, i) => "s" + i); console.log(a.map(v => typeof v).join(), b.map(v => typeof v).join(), c.map(v => typeof v).join(), a.concat(b, c).map(v => typeof v).join());

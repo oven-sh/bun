@@ -1,0 +1,3058 @@
+////: Bag
+class Bag {
+  items: number[];
+  constructor(...items: number[]) {
+    this.items = items;
+  }
+  *[Symbol.iterator](): Generator<number, void, unknown> {
+    log.push("class iterator");
+    yield* this.items;
+  }
+}
+////: Point-22
+class Point {
+  x = 3;
+  norm(): number {
+    return this.x * this.x;
+  }
+}
+////: Point-28
+////= Point-2
+
+////= Pair
+
+////= setX
+
+////= shift
+////: ask-2
+function ask(order: string): Promise<string> {
+  return new Promise(resolve => {
+    const worker = new Worker(new URL(import.meta.url), { workerData: order });
+    worker.once("message", (answer: string) => {
+      void worker.terminate().then(() => resolve(answer));
+    });
+  });
+}
+////: line-2
+line(
+  «1»,
+  «2»(new Counter(5), (c, n) => {
+    if (n === 2) c.«3» = «4»;
+  }),
+);
+////: lines-171
+[Point.prototype, Point.prototype].sort((a: Target, b: Target) => {
+  a.norm = «1»;
+  b.norm = «1»;
+  return 0;
+});
+////: lines-292
+function «1»(numbers: number[], at: number, length: number): number {
+  let total = 0;
+  for (let i = 0«2»; i++) {
+    if (i === at) numbers.length = length;
+    total += numbers[i];
+  }
+  return total;
+}
+////: report-2
+function report(label: string): void {
+  console.log(label + ": " + p.norm() + " " + normOf(p) + " " + p.twice() + " " + new Point(1, 1).norm() + " " + (Point.prototype.norm === original) + " " + Object.hasOwn(p, "norm"));
+}
+////: setX
+function setX(p: Point): string {
+  try {
+    p.x = 50;
+    return "stored " + p.x;
+  } catch (error) {
+    return "threw " + (error instanceof TypeError) + " " + p.x;
+  }
+}
+////: shift
+function shift(p: Pair): string {
+  try {
+    return "shifted " + p.shift();
+  } catch (error) {
+    return "threw " + (error instanceof TypeError) + " " + p.x;
+  }
+}
+//// the-inspector-lists-a-symbol-key-where-it-was-written.ts
+const tag = Symbol("tag");
+
+const between = { x: 1, [tag]: "t", y: 2 };
+const first = { [tag]: "t", x: 1, y: 2 };
+
+class Tagged {
+  x = 1;
+  [tag] = "t";
+  y = 2;
+}
+
+console.log(between);
+console.log(first);
+console.log(new Tagged());
+console.log(Bun.inspect(between));
+console.log(Reflect.ownKeys(between).map(String).join());
+console.log(Reflect.ownKeys(first).map(String).join());
+console.log(Reflect.ownKeys({ ...between }).map(String).join());
+console.log(Reflect.ownKeys(Object.assign({}, between)).map(String).join());
+console.log({ ...between });
+console.log(Object.assign({}, first));
+
+export {};
+//// the-inspector-shows-each-object-as-it-is.ts
+////= Point-2
+
+////= Pair-2
+
+class Reversed {
+  y = 2;
+  extra = "extra";
+  x = 1;
+}
+
+class Computed {
+  get x(): number {
+    return 1;
+  }
+  y = 2;
+}
+
+////= lines-14	class	Sub	extends	Pair	z	3
+
+const tag = Symbol("tag");
+
+function show(label: string, p: Point): void {
+  console.log(label + ": " + Bun.inspect(p).replaceAll("\n", " ").replaceAll(/ +/g, " "));
+}
+
+const wide = { a: "a", x: 1, nested: { deep: [1, 2] }, y: 2 };
+const optional: Point & { z?: number } = { x: 1, y: 2, z: 3 };
+delete optional.z;
+const undefinedMember: Point & { z?: number } = { x: 1, y: 2, z: undefined };
+const deletedField = new Pair();
+const looseField: { x?: number } = deletedField;
+delete looseField.x;
+const withSymbol = { x: 1, [tag]: "t", y: 2 };
+const withIndexes = { x: 1, 1: "one", y: 2, 0: "zero" };
+const withMethods = { x: 1, y: 2, method() {}, arrow: () => {} };
+const grown = Object.assign(new Pair(), { added: true });
+
+show("a literal", { x: 1, y: 2 });
+show("another order", { y: 2, x: 1 });
+show("wider", wide);
+show("an instance", new Pair());
+show("a look-alike", new Reversed());
+show("a subclass", new Sub());
+show("a getter of a class", new Computed());
+show("an own getter", { get x() { return 1; }, y: 2 });
+show("an own setter", { set x(value: number) {}, y: 2 });
+show("a pair of accessors", { get x() { return 1; }, set x(value: number) {}, y: 2 });
+show("inherited", Object.create({ x: 1, y: 2 }));
+show("no prototype", Object.assign(Object.create(null), { x: 1, y: 2 }));
+show("frozen", Object.freeze({ x: 1, y: 2 }));
+show("x is hidden", Object.defineProperty({ x: 1, y: 2 }, "x", { enumerable: false }));
+show("a symbol key", withSymbol);
+show("index keys", withIndexes);
+show("an optional member deleted", optional);
+show("an optional member undefined", undefinedMember);
+show("a field deleted", deletedField);
+show("a member added to an instance", grown);
+show("special numbers", { x: -0, y: NaN });
+show("a proxy", new Proxy({ x: 1, y: 2 }, {}));
+show("methods", withMethods);
+
+const list: Point[] = [{ x: 1, y: 2 }, new Pair(), new Reversed(), { y: 4, x: 3 }];
+console.log("a list: " + Bun.inspect(list).replaceAll("\n", " ").replaceAll(/ +/g, " "));
+
+class Holder {
+  point: Point = new Reversed();
+  points: Point[] = [new Pair()];
+  #hidden = 1;
+  peek(): number {
+    return this.#hidden;
+  }
+}
+console.log("fields: " + Bun.inspect(new Holder()).replaceAll("\n", " ").replaceAll(/ +/g, " "));
+
+console.log({ y: 2, x: 1 });
+console.log(new Reversed());
+console.log("beside text", new Pair(), { x: 1, y: 2 });
+console.log([new Sub()]);
+
+export {};
+//// the-iterator-method-of-a-class-is-replaced-within-its-type.ts
+const log: string[] = [];
+
+////= Bag
+
+////= lines-306	sum
+
+function spread(b: Bag): string {
+  return [...b].join();
+}
+
+////= firstTwo	b	Bag	x	y	" "
+
+function largest(b: Bag): number {
+  return Math.max(...b);
+}
+
+////= lines-284	through	b	Bag
+
+function all(b: Bag): string {
+  return [sum(b), spread(b), firstTwo(b), largest(b), Array.from(b).join(), new Set(b).size, [...through(b)].join(), new Map([...b].map(n => [n, n])).size].join(" | ");
+}
+
+function round(label: string, b: Bag): void {
+  log.length = 0;
+  console.log(label + ": " + all(b) + " {" + log.length + " " + [...new Set(log)].join() + "}");
+}
+
+const b = new Bag(1, 2, 3);
+const other = new Bag(10, 20);
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += sum(b) + largest(b) + sum(other);
+console.log("2000 honest: " + warm);
+round("the class's", b);
+
+b[Symbol.iterator] = function* () {
+  log.push("own generator");
+  yield 100;
+  yield 200;
+};
+round("an own generator function", b);
+round("the other", other);
+
+b[Symbol.iterator] = function* () {
+  log.push("backwards");
+  for (let i = this.items.length - 1; i >= 0; i--) yield this.items[i];
+};
+round("one that reads this", b);
+
+Reflect.deleteProperty(b, Symbol.iterator);
+round("uncovered", b);
+
+const original = Bag.prototype[Symbol.iterator];
+Bag.prototype[Symbol.iterator] = function* () {
+  log.push("patched");
+  for (const n of this.items) yield n * 2;
+};
+round("replaced on the prototype", b);
+round("the other", other);
+Bag.prototype[Symbol.iterator] = original;
+round("put back", b);
+
+const swapping = new Bag(1, 2, 3, 4);
+const seen: number[] = [];
+for (const n of swapping) {
+  seen.push(n);
+  if (n === 2)
+    swapping[Symbol.iterator] = function* () {
+      yield -1;
+    };
+}
+console.log("replaced while a loop runs: " + seen.join() + ", the next loop: " + spread(swapping));
+
+export {};
+//// the-iterator-method-of-a-class-is-used-in-every-way-honest.ts
+const log: string[] = [];
+
+////= Bag
+
+////= lines-306	sum
+
+function spread(b: Bag): string {
+  return [...b].join();
+}
+
+////= firstTwo	b	Bag	x	y	" "
+
+function largest(b: Bag): number {
+  return Math.max(...b);
+}
+
+////= lines-284	through	b	Bag
+
+function all(b: Bag): string {
+  return [sum(b), spread(b), firstTwo(b), largest(b), Array.from(b).join(), new Set(b).size, [...through(b)].join(), new Map([...b].map(n => [n, n])).size].join(" | ");
+}
+
+function round(label: string, b: Bag): void {
+  log.length = 0;
+  console.log(label + ": " + all(b) + " {" + log.length + " " + [...new Set(log)].join() + "}");
+}
+
+const b = new Bag(1, 2, 3);
+const other = new Bag(10, 20);
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += sum(b) + largest(b) + sum(other);
+console.log("2000 honest: " + warm);
+round("the class's", b);
+
+export {};
+//// the-json-body-of-a-response-is-used-as-a-point.ts
+////= show-41
+
+function fetched(source: Point): Promise<Point> {
+  return Response.json(source).json();
+}
+
+////= uses-7
+
+let warm = 0;
+////= for-21
+for (const [, use] of uses) for (let i = 0; i < 200; i++) use(new Point(i, 0.5));
+console.log("after the honest points", warm);
+
+for (const [name, use] of uses) {
+  const made = await fetched(new Point(3, 4));
+  attempt(name, () => use(made));
+}
+////= lines-103	fetched
+attempt("honest again", () => [total(new Point(3, 4)), distance(new Point(3, 4)), rename(new Point(3, 4), "honest")]);
+
+export {};
+//// the-key-order-of-an-instance-follows-what-its-constructor-did.ts
+function listing(o: object): string {
+  let walked = "";
+  for (const key in o) walked += key + ",";
+  return Object.keys(o).join() + " | " + walked + " | " + JSON.stringify(o) + " | " + Object.keys({ ...o }).join();
+}
+
+class FieldsAndParameters {
+  first = 1;
+  constructor(
+    public given: number,
+    readonly fixed: string,
+  ) {}
+  last = 2;
+}
+
+class Branching {
+  declare a: number;
+  declare b: number;
+  declare c?: number;
+  constructor(order: number) {
+    if (order === 0) {
+      this.a = 1;
+      this.b = 2;
+    } else if (order === 1) {
+      this.b = 2;
+      this.a = 1;
+    } else {
+      this.c = 3;
+      this.b = 2;
+      this.a = 1;
+    }
+  }
+}
+
+class Base {
+  baseFirst = 1;
+  constructor() {
+    this.setup();
+  }
+  setup(): void {}
+  baseLast = 2;
+}
+
+class Derived extends Base {
+  declare early: number;
+  derived = 3;
+  setup(): void {
+    this.early = 0;
+  }
+}
+
+class StopsEarly {
+  declare x: number;
+  declare y: number;
+  constructor(stop: boolean) {
+    this.x = 1;
+    if (stop) return;
+    this.y = 2;
+  }
+}
+
+class AddsOnTheWay {
+  a = 1;
+  b = (Object.assign(this, { slipped: true }), 2);
+  c = 3;
+}
+
+class Looping {
+  declare p: number;
+  declare q: number;
+  declare r: number;
+  constructor(names: ("p" | "q" | "r")[]) {
+    let n = 0;
+    for (const name of names) this[name] = ++n;
+  }
+}
+
+////= lines-27	AB	a	number	b	number
+
+////= lines-159	sum	o	AB	o.a	10	o.b
+
+console.log("fields and parameter properties: " + listing(new FieldsAndParameters(5, "f")));
+for (let order = 0; order < 3; order++) console.log("a branch in the constructor, " + order + ": " + listing(new Branching(order)) + " " + sum(new Branching(order)));
+console.log("a base constructor calls an override that stores: " + listing(new Derived()));
+console.log("the base alone: " + listing(new Base()));
+console.log("the constructor returns early: " + listing(new StopsEarly(true)) + " / " + listing(new StopsEarly(false)));
+console.log("an initializer adds a member: " + listing(new AddsOnTheWay()));
+console.log("stores in a loop: " + listing(new Looping(["r", "p", "q"])) + " / " + listing(new Looping(["q"])) + " / " + listing(new Looping([])));
+
+function conditional(flag: boolean): { a?: number; b: number } {
+  return { ...(flag ? { a: 1 } : {}), b: 2, ...(flag ? {} : { a: 1 }) };
+}
+console.log("a literal with conditional spreads: " + listing(conditional(true)) + " / " + listing(conditional(false)));
+
+function twoBranches(flag: boolean): AB {
+  if (flag) return { a: 1, b: 2 };
+  return { b: 2, a: 1 };
+}
+console.log("a literal from two branches: " + listing(twoBranches(true)) + " / " + listing(twoBranches(false)));
+
+let length = 0;
+for (let i = 0; i < 2000; i++) length += listing(new Branching(0)).length + Object.keys(twoBranches(true))[0].length;
+console.log("2000 of one order: " + length);
+console.log("then the others: " + listing(new Branching(1)) + " / " + listing(new Branching(2)) + " / " + listing(twoBranches(false)));
+
+const mixed: AB[] = [new Branching(0), new Branching(1), new Branching(2), twoBranches(true), twoBranches(false)];
+console.log("in one array: " + JSON.stringify(mixed) + " " + mixed.map(sum).join());
+console.log("first keys: " + mixed.map(o => Object.keys(o)[0]).join());
+
+export {};
+//// the-keys-of-an-object-are-joined.ts
+class Pair {
+  first: number = 1;
+  second: number = 2;
+}
+console.log("keys " + Object.keys(new Pair()).join());
+//// the-last-member-of-an-enum-is-compared-after-the-others-were-ruled-out.ts
+////= Color
+function afterRed(color: Color): string {
+  if (color === Color.Red) return "red";
+  return "green: " + (color === Color.Green) + " not green: " + (color !== Color.Green);
+}
+function inDefault(color: Color): string {
+  switch (color) {
+    case Color.Red:
+      return "red";
+    default:
+      return color === Color.Green ? "green" : "neither";
+  }
+}
+const numbers: number[] = [0, 1, 2, 0.5, -1];
+for (const n of numbers) console.log(afterRed(n), "|", inDefault(n));
+//// the-length-and-name-of-functions-with-every-kind-of-parameter.ts
+function none(): void {}
+function one(a: number): void {}
+function optional(a: number, b?: number): void {}
+function onlyOptional(a?: number, b?: number): void {}
+function defaulted(a: number, b: number = 1): void {}
+function defaultFirst(a: number = 1, b: number): void {}
+function defaultInTheMiddle(a: number, b: number = 1, c: number): void {}
+function rest(...all: number[]): void {}
+function oneAndRest(a: number, ...others: number[]): void {}
+function pattern({ a }: { a: number }, [b]: number[]): void {}
+function patternWithDefault({ a }: { a: number } = { a: 1 }, b: number): void {}
+function withThis(this: { x: number }, a: number): void {}
+function overloaded(a: number): void;
+function overloaded(a: number, b: number, c: number): void;
+function overloaded(a: number, b?: number, c?: number, d?: number): void {}
+function* generator(a: number, b: number): Generator<number, void, void> {}
+async function asynchronous(a: number, b: number = 1): Promise<void> {}
+async function* asyncGenerator(a: number): AsyncGenerator<number, void, void> {}
+
+class Plain {}
+class WithConstructor {
+  constructor(a: number, b: number, c?: number) {}
+  method(a: number, b: number = 1): void {}
+  static fixed(a: number): void {}
+  get value(): number {
+    return 1;
+  }
+  set value(v: number) {}
+  ["computed" + 1](a: number): void {}
+  #hidden(a: number): void {}
+  hiddenShape(): string {
+    return this.#hidden.name + "/" + this.#hidden.length;
+  }
+  field = (a: number, b: number): void => {};
+}
+class Derived extends WithConstructor {}
+////= lines-14	class	DerivedWithFields	extends	WithConstructor	extra	1
+
+const arrow = (a: number, b: number): void => {};
+const anonymous = function (a: number): void {};
+const named = function inner(a: number): void {};
+const classExpression = class {};
+const namedClassExpression = class Inner {};
+const mark = Symbol("mark");
+const bare = Symbol();
+const holder = {
+  method(a: number): void {},
+  arrow: (a: number): void => {},
+  plain: function (a: number): void {},
+  [mark](a: number): void {},
+  [bare](a: number): void {},
+  get got(): number {
+    return 1;
+  },
+  5(a: number): void {},
+  "with space"(a: number): void {},
+};
+let assignedLater: (a: number) => void;
+assignedLater = a => {};
+const [fromPattern = (a: number): void => {}] = [];
+const { fromObject = (a: number): void => {} }: { fromObject?: (a: number) => void } = {};
+const conditional = none.length === 0 ? (a: number): void => {} : none;
+const wrapped = ((a: number): void => {});
+const viaComma = (none(), (a: number): void => {});
+
+function shape(f: Function): string {
+  return JSON.stringify(f.name) + "/" + f.length;
+}
+
+const all: [string, Function][] = [
+  ["none", none], ["one", one], ["optional", optional], ["only optional", onlyOptional], ["defaulted", defaulted],
+  ["default first", defaultFirst], ["default in the middle", defaultInTheMiddle], ["rest", rest], ["one and rest", oneAndRest],
+  ["pattern", pattern], ["pattern with a default", patternWithDefault], ["a this parameter", withThis], ["overloaded", overloaded],
+  ["generator", generator], ["async", asynchronous], ["async generator", asyncGenerator],
+  ["a class", Plain], ["a class with a constructor", WithConstructor], ["derived", Derived], ["derived with fields", DerivedWithFields],
+  ["a method", WithConstructor.prototype.method], ["a static method", WithConstructor.fixed],
+  ["an arrow", arrow], ["anonymous", anonymous], ["named", named], ["a class expression", classExpression], ["a named class expression", namedClassExpression],
+  ["an object's method", holder.method], ["an object's arrow", holder.arrow], ["an object's function", holder.plain],
+  ["a symbol key", holder[mark]], ["a symbol without a description", holder[bare]], ["a numeric key", holder[5]], ["a key with a space", holder["with space"]],
+  ["assigned later", assignedLater], ["a default in an array pattern", fromPattern], ["a default in an object pattern", fromObject],
+  ["out of a conditional", conditional], ["in parentheses", wrapped], ["after a comma", viaComma],
+  ["bound", one.bind(null)], ["bound with an argument", optional.bind(null, 1)], ["bound twice", one.bind(null).bind(null)],
+  ["a field that is an arrow", new WithConstructor(1, 2).field],
+];
+
+for (const [label, f] of all) console.log(label + ": " + shape(f));
+
+console.log("a computed method: " + Object.getOwnPropertyNames(WithConstructor.prototype).join());
+console.log("a private method: " + new WithConstructor(1, 2).hiddenShape());
+const accessor = Object.getOwnPropertyDescriptor(WithConstructor.prototype, "value");
+console.log("a getter and a setter: " + (accessor?.get ? shape(accessor.get) : "none") + " " + (accessor?.set ? shape(accessor.set) : "none"));
+const got = Object.getOwnPropertyDescriptor(holder, "got");
+console.log("an object's getter: " + (got?.get ? shape(got.get) : "none"));
+console.log("descriptors: " + JSON.stringify(Object.getOwnPropertyDescriptor(one, "length")) + " " + JSON.stringify(Object.getOwnPropertyDescriptor(one, "name")));
+console.log("own names: " + Object.getOwnPropertyNames(one).sort().join() + " | " + Object.getOwnPropertyNames(arrow).sort().join() + " | " + Object.getOwnPropertyNames(Plain).sort().join());
+//// the-length-of-a-named-group-that-took-no-part.ts
+////= size
+
+function named(pattern: RegExp, text: string): string {
+  const groups = pattern.exec(text)?.groups;
+  return groups === undefined ? "no groups" : groups.name;
+}
+
+console.log(size(named(/(?<name>a)b/, "ab")));
+////= lines-307	size(named(/(?<name>a)?b/, "b"))
+//// the-length-of-a-pair-is-compared-with-two-after-a-push-and-a-pop.ts
+const pair: [number, number] = [1, 2];
+
+////= lines-41	lengthOf	2	pair.length
+function second(): number {
+  return pair[1];
+}
+
+console.log(pair.length, lengthOf() === 2, second());
+pair.push(3);
+console.log(pair.length);
+console.log(pair.length === 2);
+console.log(lengthOf());
+console.log(lengthOf() === 2 ? "two" : "not two");
+pair.pop();
+pair.pop();
+console.log(pair.length);
+console.log(pair.length === 2);
+console.log(second());
+console.log(second() === undefined);
+console.log(typeof second() === "number");
+console.log(second() + 1);
+Reflect.set(pair, "length", 0);
+console.log(pair.length === 2, pair[0], pair[0] === undefined);
+//// the-length-of-an-array-is-stored-to.ts
+////= show-31
+
+let warm = 0;
+////= for-3
+console.log("after 4000 dense arrays", warm);
+
+function setLength(numbers: number[], length: number): number {
+  numbers.length = length;
+  return numbers.length;
+}
+
+////= lines-292	truncateWhileSumming	; i < numbers.length
+
+////= lines-292	cachedLength	, n = numbers.length; i < n
+
+for (const length of [0, 1, 3, 5]) {
+  report("integers, length = " + length, () => {
+    const numbers = [1, 2, 3];
+    setLength(numbers, length);
+    return numbers;
+  });
+}
+report("doubles, length = 5", () => {
+  const numbers = [1.5, 2.5, 3.5];
+  setLength(numbers, 5);
+  return numbers;
+});
+
+const lengths: [string, number][] = [
+  ["-1", -1],
+  ["1.5", 1.5],
+  ["NaN", NaN],
+  ["-0", -0],
+  ["2 ** 32 - 1", 2 ** 32 - 1],
+  ["2 ** 32", 2 ** 32],
+  ["Infinity", Infinity],
+];
+for (const [name, length] of lengths) attempt("length = " + name, () => setLength([1, 2, 3], length));
+attempt("length += 2", () => {
+  const numbers = [1];
+  numbers.length += 2;
+  return inspect(numbers);
+});
+attempt("length--", () => {
+  const numbers = [1, 2, 3];
+  numbers.length--;
+  return inspect(numbers);
+});
+attempt("cut short during a loop", () => truncateWhileSumming([1, 2, 3, 4, 5], 1, 3));
+attempt("emptied during a loop", () => truncateWhileSumming([1, 2, 3, 4, 5], 1, 0));
+attempt("made longer during a loop", () => truncateWhileSumming([1, 2, 3], 1, 5));
+attempt("cut short during a loop that cached the length", () => cachedLength([1, 2, 3, 4, 5], 1, 3));
+attempt("emptied during a loop that cached the length", () => cachedLength([1.5, 2.5, 3.5], 0, 0));
+attempt("cut short and refilled", () => {
+  const numbers = [1, 2, 3];
+  numbers.length = 0;
+  numbers.push(9);
+  return [inspect(numbers), numbers[1], numbers[2]];
+});
+attempt("a frozen length", () => {
+  const numbers = [1, 2, 3];
+  Object.defineProperty(numbers, "length", { writable: false });
+  const results: unknown[] = [];
+  for (const change of [() => numbers.push(4), () => numbers.pop(), () => setLength(numbers, 1), () => (numbers[5] = 1), () => (numbers[0] = 10)]) {
+    try {
+      results.push(change());
+    } catch (error) {
+      results.push(error instanceof Error ? error.constructor.name : "?");
+    }
+  }
+  return [results, inspect(numbers)];
+});
+//// the-length-of-an-open-tuple-is-stored-to.ts
+////= show-32
+
+type Open = [number, ...string[]];
+type Optional = [number, string?];
+type Tail = [...number[], string];
+
+////= lines-260	head	tuple	Open	tuple[0
+
+function names(tuple: Open): string {
+  const [, ...rest] = tuple;
+  return rest.map(name => name.toUpperCase()).join();
+}
+
+function headOfOptional(tuple: Optional): number {
+  return tuple[0] * 2;
+}
+
+function last(tuple: Tail): string {
+  const [...all] = tuple;
+  return typeof all[all.length - 1];
+}
+
+let total = 0;
+for (let i = 0; i < 2000; i++) total += head([i, "a", "b"]) + names([i, "a"]).length + headOfOptional([i]) + last([i, "z"]).length;
+console.log("2000 honest rounds: " + total);
+
+const open: Open = [1, "a", "b"];
+attempt("before", () => [show(open), head(open), names(open)]);
+open.length = 2;
+attempt("length = 2", () => [show(open), head(open), names(open)]);
+open.length = 4;
+attempt("length = 4: the list", () => show(open));
+attempt("length = 4: head", () => head(open));
+attempt("length = 4: names", () => names(open));
+attempt("length = 4: [3]", () => [typeof open[3], 3 in open]);
+open.length = 0;
+attempt("length = 0: the list", () => show(open));
+attempt("length = 0: typeof [0]", () => typeof open[0]);
+attempt("length = 0: head", () => head(open));
+attempt("length = 0: [0].toFixed", () => open[0].toFixed(1));
+attempt("length = 0: destructured", () => {
+  const [first, second] = open;
+  return [typeof first, typeof second];
+});
+open.push("only a string");
+attempt("then a string is pushed: the list", () => show(open));
+attempt("then a string is pushed: head", () => head(open));
+attempt("then a string is pushed: [0] * 2", () => open[0] * 2);
+
+const optional: Optional = [1, "a"];
+optional.length = 1;
+attempt("an optional place is cut off", () => [show(optional), headOfOptional(optional), optional[1], optional.length]);
+optional.length = 2;
+attempt("and comes back as a hole", () => [show(optional), 1 in optional, optional[1]?.length]);
+
+const tail: Tail = [1, 2, "z"];
+tail.length = 2;
+attempt("the string at the end is cut off", () => [show(tail), last(tail)]);
+tail.length = 0;
+attempt("everything is cut off", () => [show(tail), last(tail)]);
+
+const wide: (number | string)[] = [];
+const pair: [number, string] = [1, "a"];
+const alias: (number | string)[] = pair;
+alias.length = 0;
+attempt("a closed tuple through a list type", () => [show(pair), pair.length, typeof pair[0], typeof pair[1], wide.length]);
+attempt("a closed tuple through a list type: [0] + 1", () => pair[0] + 1);
+attempt("a closed tuple through a list type: [1].length", () => pair[1].length);
+
+export {};
+//// the-length-of-arguments-is-read-in-a-typed-function.ts
+function count(first: number, second: number): number {
+  return arguments.length;
+}
+
+console.log("start");
+console.log("count", count(1, 2));
+//// the-literal-that-picked-an-overload-is-changed-through-a-wider-view.ts
+////= text-19
+
+////= lines-28	AsNumber	as	"number"
+////= lines-28	AsText	as	"text"
+////= lines-28	AsList	as	"list"
+
+function convert(value: string, how: AsNumber): number;
+function convert(value: string, how: AsText): string;
+function convert(value: string, how: AsList): string[];
+function convert(value: string, how: AsNumber | AsText | AsList): number | string | string[] {
+  switch (how.as) {
+    case "number":
+      return Number(value);
+    case "text":
+      return value + "!";
+    case "list":
+      return value.split("");
+  }
+}
+
+const toNumber: AsNumber = { as: "number" };
+const toText: AsText = { as: "text" };
+const toList: AsList = { as: "list" };
+
+attempt("honest number", () => convert("12", toNumber) + 1);
+attempt("honest text", () => convert("12", toText).length);
+attempt("honest list", () => convert("12", toList).join("+"));
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += convert("3", toNumber) + convert("ab", toText).length + convert("abc", toList).length;
+console.log("2000 honest rounds: " + warm);
+
+const loose: { as: string } = toNumber;
+
+loose.as = "text";
+attempt("typed number, really text", () => text(convert("12", toNumber)));
+attempt("plus one", () => convert("12", toNumber) + 1);
+attempt("times two", () => convert("12", toNumber) * 2);
+attempt("toFixed", () => convert("12", toNumber).toFixed(1));
+
+loose.as = "list";
+attempt("typed number, really a list", () => text(convert("12", toNumber)));
+attempt("plus one", () => convert("12", toNumber) + 1);
+attempt("kept in a number[]", () => {
+  const kept: number[] = [convert("12", toNumber), 1];
+  return kept.map(n => typeof n).join() + " " + JSON.stringify(kept);
+});
+
+loose.as = "nothing the switch knows";
+attempt("typed number, really nothing", () => text(convert("12", toNumber)));
+attempt("plus one", () => convert("12", toNumber) + 1);
+
+loose.as = "number";
+attempt("back to a number", () => convert("12", toNumber) + 1);
+
+function flagged(raw: true): number[];
+function flagged(raw: false): string;
+function flagged(raw: boolean): number[] | string {
+  return raw ? [1, 2] : "text";
+}
+attempt("true", () => flagged(true).length);
+attempt("false", () => flagged(false).toUpperCase());
+
+function level(n: 0): "off";
+function level(n: 1): "on";
+function level(n: 0 | 1): "off" | "on" {
+  return n === 0 ? "off" : "on";
+}
+const levels: { n: 0 } = { n: 0 };
+const looseLevels: { n: number } = levels;
+looseLevels.n = 1;
+attempt("a numeric literal was changed", () => {
+  const result: "off" = level(levels.n);
+  return result + " " + (result === "off");
+});
+looseLevels.n = 0.5;
+attempt("to a fraction", () => level(levels.n));
+
+type Route = `/${string}`;
+function open(route: Route): string;
+function open(route: number): number;
+function open(route: Route | number): string | number {
+  return typeof route === "number" ? route + 1 : route.slice(1);
+}
+const routes: { home: Route } = { home: "/home" };
+const looseRoutes: { home: string } = routes;
+looseRoutes.home = "no slash";
+attempt("a template literal type was changed", () => open(routes.home));
+//// the-main-thread-and-a-worker-each-replace-a-method-for-themselves.ts
+import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+////= Point-22
+
+////= Raised
+
+////= normOf
+
+function facts(): string {
+  let warm = 0;
+  for (let i = 0; i < 2000; i++) warm += normOf(new Point()) + normOf(new Raised());
+  return warm + " " + normOf(new Point()) + " " + normOf(new Raised()) + " " + new Point().norm();
+}
+
+////= ask-2
+
+if (isMainThread) {
+  console.log("main, at first: " + facts());
+  Point.prototype.norm = () => -1;
+  console.log("main, after its own replacement: " + facts());
+  console.log("a worker that changes nothing: " + (await ask("nothing")));
+  console.log("a worker that replaces the method for itself: " + (await ask("replace")));
+  console.log("main, after the workers: " + facts());
+  console.log("another worker that changes nothing: " + (await ask("nothing")));
+} else {
+  const before = facts();
+  if (workerData === "replace") Point.prototype.norm = () => -2;
+  parentPort?.postMessage(String(workerData) + ": " + before + " then " + facts());
+}
+
+export {};
+//// the-main-thread-and-workers-call-the-same-methods-honest.ts
+import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+////= Point-22
+
+////= Raised
+
+////= normOf
+
+function facts(): string {
+  let warm = 0;
+  for (let i = 0; i < 2000; i++) warm += normOf(new Point()) + normOf(new Raised());
+  return warm + " " + normOf(new Point()) + " " + normOf(new Raised()) + " " + new Point().norm();
+}
+
+////= ask-2
+
+if (isMainThread) {
+  console.log("main, at first: " + facts());
+  console.log("main, again: " + facts());
+  console.log("a worker that changes nothing: " + (await ask("nothing")));
+  console.log("a worker: " + (await ask("replace")));
+  console.log("main, after the workers: " + facts());
+  console.log("another worker that changes nothing: " + (await ask("nothing")));
+} else {
+  const before = facts();
+  parentPort?.postMessage(String(workerData) + ": " + before + " then " + facts());
+}
+
+export {};
+//// the-map-that-group-by-returns-is-iterated.ts
+const groups = Map.groupBy([1, 2, 3], n => n % 2);
+let total = 0;
+for (const [key, list] of groups) total += key + list.length;
+console.log(total);
+
+export {};
+//// the-map-that-group-by-returns-is-read-with-get.ts
+const groups = Map.groupBy([1, 2, 3], n => n % 2);
+console.log(groups.get(1)?.length, groups.size);
+
+export {};
+//// the-mark-of-an-int32-is-read-as-a-member.ts
+import type { int32 } from "bun";
+
+////= show-35
+
+function markOf(v: int32): true | undefined {
+  return v["bun.int32"];
+}
+function marked(v: int32): string {
+  return v["bun.int32"] ? "marked" : "plain";
+}
+function hasMark(v: int32): boolean {
+  return v["bun.int32"] === true;
+}
+const holder: { at: int32 } = { at: 4 };
+
+attempt("of a constant", () => [markOf(1), marked(1), hasMark(1)]);
+attempt("of a member", () => [markOf(holder.at), marked(holder.at), hasMark(holder.at), holder.at["bun.int32"]]);
+attempt("of a sum", () => markOf((holder.at + 1) | 0));
+attempt("with a default", () => holder.at["bun.int32"] ?? "nothing");
+attempt("the other members of a number", () => [holder.at.toFixed(1), holder.at.toString(2), holder.at.valueOf(), typeof holder.at]);
+//// the-members-of-a-class-are-listed-before-and-after-they-are-replaced.ts
+const tag: unique symbol = Symbol("tag");
+
+class Shape {
+  side = 2;
+  area(): number {
+    return this.side * this.side;
+  }
+  get double(): number {
+    return this.side * 2;
+  }
+  set double(value: number) {
+    this.side = value / 2;
+  }
+  get only(): string {
+    return "only a getter";
+  }
+  [tag](): string {
+    return "tagged";
+  }
+  3(): string {
+    return "three";
+  }
+  last(): string {
+    return "last";
+  }
+  static count = 0;
+  static make(): Shape {
+    return new Shape();
+  }
+  static get kind(): string {
+    return "shape";
+  }
+}
+
+class Box extends Shape {
+  area(): number {
+    return super.area() * 6;
+  }
+  depth(): number {
+    return 1;
+  }
+}
+
+function describe(holder: object): string {
+  return Reflect.ownKeys(holder)
+    .map(key => {
+      const d = Object.getOwnPropertyDescriptor(holder, key);
+      if (!d) return String(key) + " nothing";
+      const flags = (d.writable ? "w" : "-") + (d.enumerable ? "e" : "-") + (d.configurable ? "c" : "-");
+      const kind = "value" in d ? typeof d.value : (d.get ? "get" : "") + (d.set ? "set" : "");
+      return String(key) + " " + kind + " " + flags;
+    })
+    .join(", ");
+}
+
+function listings(label: string, holder: object): void {
+  console.log(label + ", own keys: " + describe(holder));
+  const inherited: string[] = [];
+  for (const key in holder) inherited.push(key);
+  console.log(label + ", names " + Object.getOwnPropertyNames(holder).join() + " | keys " + Object.keys(holder).join() + " | for-in " + inherited.join() + " | spread " + Object.keys({ ...holder }).join() + " | json " + JSON.stringify(holder));
+}
+
+listings("the prototype, untouched", Shape.prototype);
+listings("the class, untouched", Shape);
+listings("the subclass's prototype, untouched", Box.prototype);
+listings("the subclass, untouched", Box);
+console.log("questions: " + ["area", "double", "side", "constructor", "toString"].map(name => name + " " + (name in Shape.prototype) + " " + Object.hasOwn(Shape.prototype, name)).join(", "));
+
+const s = new Shape();
+console.log("used: " + s.area() + " " + s.double + " " + s.only + " " + s[tag]() + " " + s[3]() + " " + s.last() + " " + Shape.make().side + " " + Shape.kind + " " + new Box().area());
+listings("the prototype, after use", Shape.prototype);
+
+const area = Shape.prototype.area;
+Shape.prototype.area = () => -1;
+listings("area replaced", Shape.prototype);
+
+Reflect.deleteProperty(Shape.prototype, "area");
+listings("area deleted", Shape.prototype);
+
+Shape.prototype.area = area;
+listings("area stored again", Shape.prototype);
+
+Object.defineProperty(Shape.prototype, "double", { value: 9, writable: true, enumerable: true, configurable: true });
+listings("the pair redefined as a value that is listed", Shape.prototype);
+
+Shape.make = () => new Box();
+Reflect.deleteProperty(Shape, "count");
+listings("the class, make replaced and count deleted", Shape);
+
+Box.prototype.last = () => "the box's last";
+listings("the subclass's prototype, a member added", Box.prototype);
+
+Object.freeze(Box.prototype);
+listings("the subclass's prototype, frozen", Box.prototype);
+console.log("frozen: " + Object.isFrozen(Box.prototype) + " " + Object.isFrozen(Shape.prototype) + " " + Object.isExtensible(Box.prototype));
+console.log("still works: " + new Box().area() + " " + new Box().last() + " " + new Box().depth());
+
+export {};
+//// the-method-of-a-point-is-called-and-never-replaced-honest.ts
+////= Point-26
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+report("a second time");
+report("a third time");
+report("a fourth time");
+
+export {};
+//// the-methods-of-an-object-literal-in-every-place-honest.ts
+////= meter
+
+type Meter = typeof meter;
+
+////= make
+
+////= Holder-8
+
+////= lines-19	byParameter	m	Meter	number	m.read
+
+////= lines-258	byElement	list	Meter	number	read
+
+const honest = make();
+const holder = new Holder(meter);
+const list = [meter];
+const captured = (): number => meter.read();
+
+function everywhere(label: string): void {
+  const local = meter;
+  console.log(label + ": " + [meter.read(), local.read(), byParameter(meter), holder.ask(), byElement(list), captured(), meter.twice(), meter.arrow(1), meter.level].join(" ") + " | honest " + [honest.read(), byParameter(honest), honest.twice(), honest.arrow(1)].join(" ") + " | keys " + Object.keys(meter).join());
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += meter.read() + byParameter(meter) + holder.ask() + byElement(list) + captured() + meter.twice() + meter.arrow(i) + byParameter(honest);
+console.log("2000 honest: " + warm);
+everywhere("before");
+
+export {};
+//// the-name-of-an-enum-value-that-is-no-member-is-compared-with-undefined.ts
+////= Color
+
+////= lines-40	nameOf	color	Color	string	Color[color
+
+const seven: number = 7;
+const odd: Color = seven;
+console.log(nameOf(Color.Green));
+console.log(nameOf(odd));
+console.log(nameOf(odd) === undefined);
+console.log(typeof nameOf(odd));
+console.log(typeof nameOf(odd) === "string");
+console.log(nameOf(odd) ?? "no name");
+console.log(Color[seven] === undefined);
+console.log(typeof Color[seven] === "string" ? "a string" : "no string");
+console.log(Color[odd] ? "truthy" : "falsy");
+console.log("" + Color[odd]);
+//// the-next-method-is-read-once-and-return-when-the-loop-is-left.ts
+const log: string[] = [];
+
+class Counter implements IterableIterator<number> {
+  at = 0;
+  limit: number;
+  constructor(limit: number) {
+    this.limit = limit;
+  }
+  [Symbol.iterator](): this {
+    log.push("iterator");
+    return this;
+  }
+  next(): IteratorResult<number, undefined> {
+    this.at++;
+    return this.at <= this.limit ? { done: false, value: this.at } : { done: true, value: undefined };
+  }
+  return?(): IteratorResult<number, undefined>;
+}
+
+////= line
+
+function walk(c: Counter, change: (c: Counter, n: number) => void): string {
+  const seen: number[] = [];
+  for (const n of c) {
+    seen.push(n);
+    change(c, n);
+  }
+  return seen.join();
+}
+
+function walkAndLeave(c: Counter, change: (c: Counter, n: number) => void): string {
+  const seen: number[] = [];
+  for (const n of c) {
+    seen.push(n);
+    change(c, n);
+    if (n === 3) break;
+  }
+  return seen.join();
+}
+
+const hundreds = function (this: Counter): IteratorResult<number, undefined> {
+  this.at++;
+  return this.at <= this.limit ? { done: false, value: this.at * 100 } : { done: true, value: undefined };
+};
+
+const closing = (): IteratorResult<number, undefined> => {
+  log.push("return ran");
+  return { done: true, value: undefined };
+};
+
+line("nothing changes", walk(new Counter(5), () => {}));
+////= line-2	"an own next appears in the middle"	walk	next	hundreds
+
+const original = Counter.prototype.next;
+line(
+  "the prototype's next is replaced in the middle",
+  walk(new Counter(5), (c, n) => {
+    if (n === 2) Counter.prototype.next = hundreds;
+  }),
+);
+line("the next loop uses it from the start", walk(new Counter(3), () => {}));
+Counter.prototype.next = original;
+line("put back", walk(new Counter(3), () => {}));
+
+line("left early, no return method", walkAndLeave(new Counter(5), () => {}));
+////= line-2	"a return method appears before the loop is left"	walkAndLeave	return	closing
+Counter.prototype.return = closing;
+line("on the prototype", walkAndLeave(new Counter(5), () => {}));
+line("a loop that runs to its end does not call it", walk(new Counter(2), () => {}));
+////= line-2	"covered by undefined before the loop is left"	walkAndLeave	return	undefined
+delete Counter.prototype.return;
+
+////= firstTwo	c	Counter	a	b	" "
+
+line("a pattern, no return method", firstTwo(new Counter(5)));
+Counter.prototype.return = closing;
+line("a pattern closes what it did not finish", firstTwo(new Counter(5)));
+line("a pattern that finishes it", firstTwo(new Counter(1)));
+line("spread", [...new Counter(3)].join());
+delete Counter.prototype.return;
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += walk(new Counter(3), () => {}).length;
+log.length = 0;
+line("2000 honest", warm);
+////= line-2	"then an own next in the middle"	walk	next	hundreds
+
+export {};
+//// the-next-of-one-generator-is-called-on-other-values.ts
+////= text-14
+
+function* numbers(): Generator<number, string, number> {
+  const a: number = yield 1;
+  const b: number = yield a + 1;
+  return "end " + b;
+}
+
+function* words(): Generator<string, number, string> {
+  const a: string = yield "one";
+  const b: string = yield a + "!";
+  return b.length;
+}
+
+async function* slow(): AsyncGenerator<number, void, void> {
+  yield 1;
+}
+
+const receivers: [string, () => unknown][] = [
+  ["another generator of the same function", numbers],
+  ["a generator of another function", words],
+  ["an async generator", slow],
+  ["an array iterator", () => [1, 2].values()],
+  ["a plain object", () => ({})],
+  ["an object that inherits from a generator", () => Object.create(numbers())],
+  ["a number", () => 5],
+  ["undefined", () => undefined],
+  ["null", () => null],
+  ["the generator function", () => numbers],
+];
+
+const lender = numbers();
+const next = lender.next;
+const giveBack = lender.return;
+const raise = lender.throw;
+
+for (const [label, make] of receivers) {
+  for (const [name, call] of [
+    ["next", (receiver: unknown) => next.call(receiver, 10)],
+    ["return", (receiver: unknown) => giveBack.call(receiver, "given back")],
+    ["throw", (receiver: unknown) => raise.call(receiver, "raised")],
+  ] satisfies [string, (receiver: unknown) => unknown][]) {
+    try {
+      console.log(name + " on " + label + ": " + text(call(make())));
+    } catch (error) {
+      console.log(name + " on " + label + ": " + failure(error));
+    }
+  }
+}
+
+console.log("the lender was never touched: " + text(lender.next(0)));
+
+const detached = numbers().next;
+try {
+  console.log("a bare call: " + text(detached(1)));
+} catch (error) {
+  console.log("a bare call: " + failure(error));
+}
+
+const target = words();
+const asNumbers: (this: unknown, sent: number) => IteratorResult<number, string> = next;
+const first = asNumbers.call(target, 1);
+const second = asNumbers.call(target, 2);
+const third = asNumbers.call(target, 3);
+console.log("typed as numbers, really words: " + text(first) + " " + text(second) + " " + text(third));
+if (!first.done) console.log("the first value plus one: " + text(first.value + 1));
+if (third.done) {
+  try {
+    console.log("the end's length: " + text(third.value.length));
+  } catch (error) {
+    console.log("the end's length: " + failure(error));
+  }
+}
+
+const asyncNext = slow().next;
+for (const [label, make] of receivers.slice(0, 5)) {
+  try {
+    const result: unknown = asyncNext.call(make());
+    console.log("async next on " + label + ": a promise " + (result instanceof Promise) + ", " + (await Promise.resolve(result).then(text, failure)));
+  } catch (error) {
+    console.log("async next on " + label + ": at once " + failure(error));
+  }
+}
+
+export {};
+//// the-number-of-arguments-tells-a-read-from-a-store-and-undefined-is-stored.ts
+////= text-14
+
+class Cell {
+  held: number = 1;
+  label: string = "cell";
+  value(): number;
+  value(next: number): this;
+  value(...args: [] | [number]): number | this {
+    if (args.length === 0) return this.held;
+    this.held = args[0];
+    return this;
+  }
+  name(): string;
+  name(next: string): this;
+  name(next?: string): string | this {
+    if (arguments.length === 0) return this.label;
+    if (next !== undefined) this.label = next;
+    else this.label = String(next);
+    return this;
+  }
+}
+
+interface Settable {
+  value(next?: number): unknown;
+  name(next?: string): unknown;
+}
+
+function describe(cell: Cell): string {
+  let fixed: string;
+  try {
+    fixed = cell.held.toFixed(1);
+  } catch (error) {
+    fixed = failure(error);
+  }
+  return text(cell.held) + " | plus one " + text(cell.held + 1) + " | " + fixed + " | " + JSON.stringify(cell) + " | " + Object.keys(cell).join();
+}
+
+const honest = new Cell();
+console.log("read: " + text(honest.value()));
+console.log("store: " + (honest.value(5) === honest));
+console.log("read: " + text(honest.value()));
+console.log(describe(honest));
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += honest.value(i & 7).value();
+console.log("2000 stores and reads: " + sum);
+
+const loose: Settable = honest;
+console.log("no argument through the loose view: " + text(loose.value()));
+console.log("undefined through the loose view is a store: " + (loose.value(undefined) === honest));
+console.log(describe(honest));
+console.log("read afterwards: " + text(honest.value()));
+console.log("read afterwards, doubled: " + text(honest.value() * 2));
+console.log("store again: " + (honest.value(3) === honest) + " " + describe(honest));
+
+const none: [number?] = [];
+const explicit: [number?] = [undefined];
+console.log("an empty tuple is spread: " + text(loose.value(...none)));
+console.log("a tuple with undefined is spread: " + (loose.value(...explicit) === honest) + " " + text(honest.held));
+
+console.log("name, read: " + text(honest.name()));
+console.log("name, undefined through the loose view: " + (loose.name(undefined) === honest) + " " + text(honest.label));
+
+function counted(a?: number, b?: string, c?: boolean): string {
+  return arguments.length + ": " + [a, b, c].map(text).join(", ");
+}
+console.log(counted());
+console.log(counted(undefined));
+console.log(counted(undefined, undefined));
+console.log(counted(undefined, undefined, undefined));
+console.log(counted(1, undefined, true));
+
+function lastGiven(...all: (number | undefined)[]): string {
+  return all.length + " " + text(all[all.length - 1]) + " " + text(all.at(-1)) + " " + Object.keys(all).join();
+}
+console.log(lastGiven());
+console.log(lastGiven(undefined));
+console.log(lastGiven(1, undefined));
+console.log(lastGiven(...[1, , 3]));
+//// the-object-a-generic-setter-spoils-lives-in-a-local-a-field-an-element-and-a-closure.ts
+////= show-45
+
+////= set
+
+const yes: boolean = process.argv.length > 0;
+
+function spoil(p: Point): void {
+  set(p, yes ? "x" : "name", "text");
+  set(p, yes ? "name" : "x", 7);
+}
+
+////= lines-281	describe	Point	x	name
+
+////= lines-88	twice	p	Point	p.x	2
+
+////= lines-90	shout	p	Point	string	p.name.toUpperCase
+
+class Holder {
+  point: Point = { x: 1, name: "held" };
+  twice(): number {
+    return this.point.x * 2;
+  }
+  shout(): string {
+    return this.point.name.toUpperCase();
+  }
+}
+
+function counter(): { read: () => number; shout: () => string; spoil: () => void; describe: () => string } {
+  const captured: Point = { x: 1, name: "captured" };
+  return { read: () => captured.x + 1, shout: () => captured.name.toUpperCase(), spoil: () => spoil(captured), describe: () => describe(captured) };
+}
+
+function made(): Point {
+  const p: Point = { x: 1, name: "made" };
+  spoil(p);
+  return p;
+}
+
+const local: Point = { x: 1, name: "local" };
+console.log("a local before: " + describe(local) + " " + twice(local) + " " + shout(local));
+spoil(local);
+console.log("a local: " + describe(local));
+attempt("  x + 1", () => local.x + 1);
+attempt("  twice", () => twice(local));
+attempt("  shout", () => shout(local));
+
+const holder = new Holder();
+console.log("a field before: " + describe(holder.point) + " " + holder.twice() + " " + holder.shout());
+spoil(holder.point);
+console.log("a field: " + describe(holder.point) + " " + JSON.stringify(holder));
+attempt("  x + 1", () => holder.point.x + 1);
+attempt("  twice", () => holder.twice());
+attempt("  shout", () => holder.shout());
+
+const points: Point[] = [
+  { x: 1, name: "zero" },
+  { x: 2, name: "one" },
+  { x: 3, name: "two" },
+];
+spoil(points[1]);
+console.log("an element: " + points.map(describe).join(" | "));
+attempt("  a sum", () => points.reduce((sum, p) => sum + p.x, 0));
+attempt("  a sum by a loop", () => {
+  let sum = 0;
+  for (let i = 0; i < points.length; i++) sum += points[i].x;
+  return sum;
+});
+attempt("  names", () => points.map(p => p.name.length));
+attempt("  shouts", () => points.map(shout));
+
+const closure = counter();
+console.log("a captured variable before: " + closure.describe() + " " + closure.read() + " " + closure.shout());
+closure.spoil();
+console.log("a captured variable: " + closure.describe());
+attempt("  read", () => closure.read());
+attempt("  shout", () => closure.shout());
+
+const returned = made();
+console.log("a result: " + describe(returned));
+attempt("  x + 1", () => returned.x + 1);
+attempt("  shout", () => shout(returned));
+
+const table = new Map<string, Point>([["k", { x: 1, name: "mapped" }]]);
+for (const p of table.values()) spoil(p);
+for (const [key, p] of table) {
+  console.log("a value of a map: " + key + " " + describe(p));
+  attempt("  twice", () => twice(p));
+}
+
+export {};
+//// the-object-interface-takes-every-primitive.ts
+////= show-30
+
+////= lines-57	kindOf	value	Object
+
+////= lines-19	textOf	value	Object	string	value.toString
+
+function localTextOf(value: Object): string {
+  return typeof value.toLocaleString();
+}
+
+function unwrapped(value: Object): string {
+  return typeof value.valueOf();
+}
+
+function unwrapsToItself(value: Object): boolean {
+  return value.valueOf() === value;
+}
+
+function owns(value: Object, key: PropertyKey): boolean {
+  return value.hasOwnProperty(key);
+}
+
+function lists(value: Object, key: PropertyKey): boolean {
+  return value.propertyIsEnumerable(key);
+}
+
+function isParentOf(value: Object, child: Object): boolean {
+  return value.isPrototypeOf(child);
+}
+
+////= lines-20	madeBy	value	Object	Function	return	value.constructor
+
+class Wrapper {
+  held: Object;
+  constructor(held: Object) {
+    this.held = held;
+  }
+  kind(): string {
+    return typeof this.held;
+  }
+  text(): string {
+    return this.held.toString();
+  }
+}
+
+const values: [string, Object][] = [
+  ["a literal", { a: 1 }],
+  ["3", 3],
+  ["-0", -0],
+  ["0.25", 0.25],
+  ["NaN", NaN],
+  ["a string", "ab"],
+  ["an empty string", ""],
+  ["false", false],
+  ["a symbol", Symbol("s")],
+  ["a bigint", 9n],
+  ["a built-in function", Math.max],
+  ["an array", ["x"]],
+];
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const honest: Object = { a: i };
+  warm += kindOf(honest).length + textOf(honest).length + localTextOf(honest).length + unwrapped(honest).length + (unwrapsToItself(honest) ? 1 : 0);
+  warm += (owns(honest, "a") ? 1 : 0) + (lists(honest, "a") ? 1 : 0) + (isParentOf(honest, honest) ? 1 : 0) + madeBy(honest).name.length + new Wrapper(honest).kind().length;
+}
+console.log("after 2000 literals", warm);
+
+for (const [name, value] of values) {
+  attempt(name + ": typeof", () => kindOf(value));
+  attempt(name + ": toString", () => textOf(value));
+  attempt(name + ": typeof toLocaleString()", () => localTextOf(value));
+  attempt(name + ": typeof valueOf()", () => unwrapped(value));
+  attempt(name + ": valueOf() is the value", () => unwrapsToItself(value));
+  attempt(name + ": owns 0, length, a", () => [owns(value, 0), owns(value, "length"), owns(value, "a")]);
+  attempt(name + ": lists 0, length, a", () => [lists(value, 0), lists(value, "length"), lists(value, "a")]);
+  attempt(name + ": is the prototype of an object", () => isParentOf(value, {}));
+  attempt(name + ": constructor", () => madeBy(value));
+  attempt(name + ": in a field", () => {
+    const wrapper = new Wrapper(value);
+    return [wrapper.kind(), wrapper.text(), wrapper.held === value || value !== value];
+  });
+}
+//// the-object-of-an-enum-is-changed-by-reflection-and-read-as-a-table.ts
+enum Level {
+  Low,
+  High = 5,
+}
+function read(table: { readonly Low: number; readonly High: number }): number {
+  return table.Low * 10 + table.High;
+}
+////= lines-40	nameOf	level	Level	string	Level[level
+console.log(read(Level), nameOf(Level.High), Object.keys(Level).join());
+Reflect.set(Level, "High", 6.5);
+Reflect.set(Level, 5, "Renamed");
+console.log(read(Level), nameOf(Level.High), Level.High, Object.keys(Level).join());
+Reflect.deleteProperty(Level, "Low");
+Reflect.deleteProperty(Level, 0);
+console.log(read(Level), nameOf(Level.Low), Level.Low, Object.keys(Level).join());
+Object.defineProperty(Level, "High", { get: () => 100, enumerable: true, configurable: true });
+console.log(read(Level), Level.High);
+//// the-object-of-an-enum-is-listed-extended-frozen-and-merged.ts
+////= show-35
+
+enum Level {
+  Low,
+  High = 5,
+  Text = "text",
+}
+
+////= lines-224	keysOf	value	object
+function countOf(table: Record<string, string | number>): number {
+  let count = 0;
+  for (const key in table) if (typeof table[key] === "number") count++;
+  return count;
+}
+function read(table: { readonly Low: number; readonly High: number }): number {
+  return table.Low * 10 + table.High;
+}
+
+attempt("keys", () => keysOf(Level));
+attempt("values", () => Object.values(Level));
+////= lines-175	attempt	"for in"	keys	key	Level
+attempt("as a table", () => [countOf(Level), read(Level), JSON.stringify(Level)]);
+attempt("spread and assigned", () => [{ ...Level }, Object.assign({}, Level), structuredClone(Level)]);
+attempt("what it is", () => [typeof Level, Object.getPrototypeOf(Level) === Object.prototype, Object.isFrozen(Level), Object.isExtensible(Level), String(Level)]);
+attempt("extended", () => {
+  const wider = Object.assign(Level, { Extra: 9 });
+  return [wider === Level, wider.Extra, keysOf(Level), "Extra" in Level];
+});
+attempt("a member becomes an accessor", () => {
+  let reads = 0;
+  Object.defineProperty(Level, "High", { get: () => 100 + reads++, enumerable: true, configurable: true });
+  const name: "High" | "Low" = keysOf(Level).includes("High") ? "High" : "Low";
+  return [Level.High, Level[name], Level[name], read(Level), reads];
+});
+attempt("merged after it was frozen", () => {
+  enum Part {
+    A,
+  }
+  Object.freeze(Part);
+  const before = keysOf(Part);
+  enum Part {
+    B = 1,
+  }
+  return [before, keysOf(Part), Part.B];
+});
+attempt("what the frozen one holds", () => {
+  enum Part {
+    A,
+  }
+  Object.freeze(Part);
+  const view: { A: number } = Part;
+  let threw = "no";
+  try {
+    view.A = 5;
+  } catch (error) {
+    threw = error instanceof Error ? error.constructor.name : typeof error;
+  }
+  return [threw, Part.A, view.A, Part[0], Part[5]];
+});
+attempt("made anew by each call", () => {
+  function make(): object {
+    enum Local {
+      A,
+      B,
+    }
+    return Local;
+  }
+  const first = make();
+  const second = make();
+  Object.assign(first, { C: 2 });
+  return [first === second, keysOf(first), keysOf(second)];
+});
+//// the-only-delete-goes-through-a-view-that-says-optional.ts
+////= Point-31
+
+let reads = 0;
+
+////= getter-2
+
+function remove(view: { x?: number }): void {
+  delete view.x;
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += facts({ x: 1, y: 2 }).length + facts(new Pair()).length;
+console.log("2000 honest: " + warm + " " + typeof getter.get);
+
+const literal: Point = { x: 1, y: 2 };
+const instance = new Pair();
+console.log("before: " + facts(literal) + " | " + facts(instance));
+remove(literal);
+remove(instance);
+console.log("after: " + facts(literal) + " | " + facts(instance));
+console.log("others: " + facts({ x: 1, y: 2 }) + " | " + facts(new Pair()));
+
+export {};
+//// the-only-delete-is-in-code-made-at-run-time.ts
+////= Point-31
+
+let reads = 0;
+
+////= getter-2
+
+const remove = new Function("target", "delete target.x;");
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += facts({ x: 1, y: 2 }).length + facts(new Pair()).length;
+console.log("2000 honest: " + warm + " " + typeof getter.get);
+
+const literal: Point = { x: 1, y: 2 };
+const instance = new Pair();
+console.log("before: " + facts(literal) + " | " + facts(instance));
+remove(literal);
+remove(instance);
+console.log("after: " + facts(literal) + " | " + facts(instance));
+console.log("others: " + facts({ x: 1, y: 2 }) + " | " + facts(new Pair()));
+
+export {};
+//// the-only-freeze-is-a-promise-reaction.ts
+////= Point-28
+
+////= for-28
+
+const literal: Point = { x: 1, y: 2 };
+const instance = new Pair();
+console.log("before: " + setX(literal) + ", " + setX(instance) + ", " + shift(instance));
+await Promise.resolve(literal).then(Object.freeze);
+await Promise.resolve(instance).then(Object.freeze);
+console.log("after: " + setX(literal) + ", " + setX(instance) + ", " + shift(instance));
+console.log("frozen: " + Object.isFrozen(literal) + " " + Object.isFrozen(instance));
+console.log("others: " + setX({ x: 1, y: 2 }) + ", " + shift(new Pair()));
+
+export {};
+//// the-only-freeze-is-called-through-reflect-apply.ts
+////= Point-28
+
+////= for-28
+
+const literal: Point = { x: 1, y: 2 };
+const instance = new Pair();
+console.log("before: " + setX(literal) + ", " + setX(instance) + ", " + shift(instance));
+Reflect.apply(Object.freeze, Object, [literal]);
+Reflect.apply(Object.freeze, Object, [instance]);
+console.log("after: " + setX(literal) + ", " + setX(instance) + ", " + shift(instance));
+console.log("frozen: " + Object.isFrozen(literal) + " " + Object.isFrozen(instance));
+console.log("others: " + setX({ x: 1, y: 2 }) + ", " + shift(new Pair()));
+
+export {};
+//// the-only-freeze-is-handed-to-a-function-of-ours.ts
+////= Point-28
+
+function each(points: Point[], action: (p: Point) => unknown): void {
+  for (const p of points) action(p);
+}
+
+////= for-28
+
+const literal: Point = { x: 1, y: 2 };
+const instance = new Pair();
+console.log("before: " + setX(literal) + ", " + setX(instance) + ", " + shift(instance));
+each([literal, instance], Object.freeze);
+console.log("after: " + setX(literal) + ", " + setX(instance) + ", " + shift(instance));
+console.log("frozen: " + Object.isFrozen(literal) + " " + Object.isFrozen(instance));
+console.log("others: " + setX({ x: 1, y: 2 }) + ", " + shift(new Pair()));
+
+export {};
+//// the-only-freeze-is-handed-to-for-each.ts
+////= Point-28
+
+////= for-28
+
+const literal: Point = { x: 1, y: 2 };
+const instance = new Pair();
+console.log("before: " + setX(literal) + ", " + setX(instance) + ", " + shift(instance));
+[literal, instance].forEach(Object.freeze);
+console.log("after: " + setX(literal) + ", " + setX(instance) + ", " + shift(instance));
+console.log("frozen: " + Object.isFrozen(literal) + " " + Object.isFrozen(instance));
+console.log("others: " + setX({ x: 1, y: 2 }) + ", " + shift(new Pair()));
+
+export {};
+//// the-only-freeze-is-made-of-smaller-steps.ts
+////= Point-28
+
+function lock(target: object): void {
+  Object.preventExtensions(target);
+  for (const name of Object.keys(target)) Object.defineProperty(target, name, { writable: false, configurable: false });
+}
+
+////= for-28
+
+const literal: Point = { x: 1, y: 2 };
+const instance = new Pair();
+console.log("before: " + setX(literal) + ", " + setX(instance) + ", " + shift(instance));
+lock(literal);
+lock(instance);
+console.log("after: " + setX(literal) + ", " + setX(instance) + ", " + shift(instance));
+console.log("frozen: " + Object.isFrozen(literal) + " " + Object.isFrozen(instance));
+console.log("others: " + setX({ x: 1, y: 2 }) + ", " + shift(new Pair()));
+
+export {};
+//// the-only-freeze-walks-down-from-a-wrapper.ts
+////= Point-28
+
+function deepFreeze(value: unknown): void {
+  if (typeof value !== "object" || value === null) return;
+  for (const inner of Object.values(value)) deepFreeze(inner);
+  Object.freeze(value);
+}
+
+////= for-28
+
+const literal: Point = { x: 1, y: 2 };
+const instance = new Pair();
+console.log("before: " + setX(literal) + ", " + setX(instance) + ", " + shift(instance));
+deepFreeze({ wrapped: [literal, { deeper: instance }] });
+console.log("after: " + setX(literal) + ", " + setX(instance) + ", " + shift(instance));
+console.log("frozen: " + Object.isFrozen(literal) + " " + Object.isFrozen(instance));
+console.log("others: " + setX({ x: 1, y: 2 }) + ", " + shift(new Pair()));
+
+export {};
+//// the-only-function-field-replacement-goes-through-a-generic-setter.ts
+////= adder-2
+
+////= set
+
+const m = new Machine();
+const other = new Machine();
+const first = m.step;
+const box = { count: 0 };
+
+////= attempt-95
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += m.step(i) + stepOf(m, i) + m.run(i) + stepOf(other, i);
+console.log("2000 honest rounds: " + sum);
+report("before");
+set(m, "step", adder(10));
+report("the same definition with another amount");
+set(m, "step", counter("abc", box));
+report("another definition with other captures");
+set(m, "step", Math.abs);
+report("a built-in");
+set(m, "step", first);
+report("the first one again");
+
+export {};
+//// the-only-function-field-replacement-goes-through-a-parameter.ts
+////= adder-2
+
+function replace(target: { step: (n: number) => number }, replacement: (n: number) => number): void {
+  target.step = replacement;
+}
+
+const m = new Machine();
+const other = new Machine();
+const first = m.step;
+const box = { count: 0 };
+
+////= attempt-95
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += m.step(i) + stepOf(m, i) + m.run(i) + stepOf(other, i);
+console.log("2000 honest rounds: " + sum);
+report("before");
+replace(m, adder(10));
+report("the same definition with another amount");
+replace(m, counter("abc", box));
+report("another definition with other captures");
+replace(m, Math.abs);
+report("a built-in");
+replace(m, first);
+report("the first one again");
+
+export {};
+//// the-only-function-field-replacement-goes-through-a-proxy.ts
+////= adder-2
+
+const through = (target: Machine): Machine => new Proxy(target, {});
+
+const m = new Machine();
+const other = new Machine();
+const first = m.step;
+const box = { count: 0 };
+
+////= attempt-95
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += m.step(i) + stepOf(m, i) + m.run(i) + stepOf(other, i);
+console.log("2000 honest rounds: " + sum);
+report("before");
+through(m).step = adder(10);
+report("the same definition with another amount");
+through(m).step = counter("abc", box);
+report("another definition with other captures");
+through(m).step = Math.abs;
+report("a built-in");
+through(m).step = first;
+report("the first one again");
+
+export {};
+//// the-only-function-field-replacement-is-a-getter.ts
+////= adder-2
+
+const m = new Machine();
+const other = new Machine();
+const first = m.step;
+const box = { count: 0 };
+
+////= attempt-95
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += m.step(i) + stepOf(m, i) + m.run(i) + stepOf(other, i);
+console.log("2000 honest rounds: " + sum);
+report("before");
+Object.defineProperty(m, "step", { get: () => adder(10), enumerable: true, configurable: true });
+report("the same definition with another amount");
+Object.defineProperty(m, "step", { get: () => counter("abc", box), enumerable: true, configurable: true });
+report("another definition with other captures");
+Object.defineProperty(m, "step", { get: () => Math.abs, enumerable: true, configurable: true });
+report("a built-in");
+Object.defineProperty(m, "step", { get: () => () => "text", enumerable: true, configurable: true });
+report("a function that gives a string");
+Object.defineProperty(m, "step", { get: () => 5, enumerable: true, configurable: true });
+report("a number");
+Object.defineProperty(m, "step", { get: () => undefined, enumerable: true, configurable: true });
+report("undefined");
+Object.defineProperty(m, "step", { get: () => { call: 1 }, enumerable: true, configurable: true });
+report("an object");
+Object.defineProperty(m, "step", { get: () => "text", enumerable: true, configurable: true });
+report("a string");
+Object.defineProperty(m, "step", { get: () => first, enumerable: true, configurable: true });
+report("the first one again");
+
+export {};
+//// the-only-function-field-replacement-is-an-object-pattern.ts
+////= adder-2
+
+const m = new Machine();
+const other = new Machine();
+const first = m.step;
+const box = { count: 0 };
+
+////= attempt-95
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += m.step(i) + stepOf(m, i) + m.run(i) + stepOf(other, i);
+console.log("2000 honest rounds: " + sum);
+report("before");
+({ step: m.step } = { step: adder(10) });
+report("the same definition with another amount");
+({ step: m.step } = { step: counter("abc", box) });
+report("another definition with other captures");
+({ step: m.step } = { step: Math.abs });
+report("a built-in");
+({ step: m.step } = { step: first });
+report("the first one again");
+
+export {};
+//// the-only-function-field-replacement-is-define-property.ts
+////= adder-2
+
+const m = new Machine();
+const other = new Machine();
+const first = m.step;
+const box = { count: 0 };
+
+////= attempt-95
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += m.step(i) + stepOf(m, i) + m.run(i) + stepOf(other, i);
+console.log("2000 honest rounds: " + sum);
+report("before");
+Object.defineProperty(m, "step", { value: adder(10), writable: true, enumerable: true, configurable: true });
+report("the same definition with another amount");
+Object.defineProperty(m, "step", { value: counter("abc", box), writable: true, enumerable: true, configurable: true });
+report("another definition with other captures");
+Object.defineProperty(m, "step", { value: Math.abs, writable: true, enumerable: true, configurable: true });
+report("a built-in");
+Object.defineProperty(m, "step", { value: () => "text", writable: true, enumerable: true, configurable: true });
+report("a function that gives a string");
+Object.defineProperty(m, "step", { value: 5, writable: true, enumerable: true, configurable: true });
+report("a number");
+Object.defineProperty(m, "step", { value: undefined, writable: true, enumerable: true, configurable: true });
+report("undefined");
+Object.defineProperty(m, "step", { value: { call: 1 }, writable: true, enumerable: true, configurable: true });
+report("an object");
+Object.defineProperty(m, "step", { value: "text", writable: true, enumerable: true, configurable: true });
+report("a string");
+Object.defineProperty(m, "step", { value: first, writable: true, enumerable: true, configurable: true });
+report("the first one again");
+
+export {};
+//// the-only-function-field-replacement-is-in-code-made-at-run-time.ts
+////= adder-2
+
+const replace = new Function("target", "replacement", "target.step = replacement;");
+
+const m = new Machine();
+const other = new Machine();
+const first = m.step;
+const box = { count: 0 };
+
+////= attempt-95
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += m.step(i) + stepOf(m, i) + m.run(i) + stepOf(other, i);
+console.log("2000 honest rounds: " + sum);
+report("before");
+replace(m, adder(10));
+report("the same definition with another amount");
+replace(m, counter("abc", box));
+report("another definition with other captures");
+replace(m, Math.abs);
+report("a built-in");
+replace(m, () => "text");
+report("a function that gives a string");
+replace(m, 5);
+report("a number");
+replace(m, undefined);
+report("undefined");
+replace(m, { call: 1 });
+report("an object");
+replace(m, "text");
+report("a string");
+replace(m, first);
+report("the first one again");
+
+export {};
+//// the-only-function-field-replacement-is-object-assign.ts
+////= adder-2
+
+const m = new Machine();
+const other = new Machine();
+const first = m.step;
+const box = { count: 0 };
+
+////= attempt-95
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += m.step(i) + stepOf(m, i) + m.run(i) + stepOf(other, i);
+console.log("2000 honest rounds: " + sum);
+report("before");
+Object.assign(m, { step: adder(10) });
+report("the same definition with another amount");
+Object.assign(m, { step: counter("abc", box) });
+report("another definition with other captures");
+Object.assign(m, { step: Math.abs });
+report("a built-in");
+Object.assign(m, { step: () => "text" });
+report("a function that gives a string");
+Object.assign(m, { step: 5 });
+report("a number");
+Object.assign(m, { step: undefined });
+report("undefined");
+Object.assign(m, { step: { call: 1 } });
+report("an object");
+Object.assign(m, { step: "text" });
+report("a string");
+Object.assign(m, { step: first });
+report("the first one again");
+
+export {};
+//// the-only-function-field-replacement-is-reflect-set.ts
+////= adder-2
+
+const m = new Machine();
+const other = new Machine();
+const first = m.step;
+const box = { count: 0 };
+
+////= attempt-95
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += m.step(i) + stepOf(m, i) + m.run(i) + stepOf(other, i);
+console.log("2000 honest rounds: " + sum);
+report("before");
+Reflect.set(m, "step", adder(10));
+report("the same definition with another amount");
+Reflect.set(m, "step", counter("abc", box));
+report("another definition with other captures");
+Reflect.set(m, "step", Math.abs);
+report("a built-in");
+Reflect.set(m, "step", () => "text");
+report("a function that gives a string");
+Reflect.set(m, "step", 5);
+report("a number");
+Reflect.set(m, "step", undefined);
+report("undefined");
+Reflect.set(m, "step", { call: 1 });
+report("an object");
+Reflect.set(m, "step", "text");
+report("a string");
+Reflect.set(m, "step", first);
+report("the first one again");
+
+export {};
+//// the-only-function-field-replacement-is-the-head-of-a-for-of-loop.ts
+////= adder-2
+
+const m = new Machine();
+const other = new Machine();
+const first = m.step;
+const box = { count: 0 };
+
+////= attempt-95
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += m.step(i) + stepOf(m, i) + m.run(i) + stepOf(other, i);
+console.log("2000 honest rounds: " + sum);
+report("before");
+for (m.step of [adder(10)]);
+report("the same definition with another amount");
+for (m.step of [counter("abc", box)]);
+report("another definition with other captures");
+for (m.step of [Math.abs]);
+report("a built-in");
+for (m.step of [first]);
+report("the first one again");
+
+export {};
+//// the-only-function-field-replacement-uses-a-computed-name.ts
+////= adder-2
+
+const key: "step" | "run" = ["st", "ep"].join("") === "step" ? "step" : "run";
+
+const m = new Machine();
+const other = new Machine();
+const first = m.step;
+const box = { count: 0 };
+
+////= attempt-95
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += m.step(i) + stepOf(m, i) + m.run(i) + stepOf(other, i);
+console.log("2000 honest rounds: " + sum);
+report("before");
+m[key] = adder(10);
+report("the same definition with another amount");
+m[key] = counter("abc", box);
+report("another definition with other captures");
+m[key] = Math.abs;
+report("a built-in");
+m[key] = first;
+report("the first one again");
+
+export {};
+//// the-only-getter-definition-goes-by-another-name.ts
+////= Point-31
+
+let reads = 0;
+
+////= getter-2
+
+const define = Object.defineProperty;
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += facts({ x: 1, y: 2 }).length + facts(new Pair()).length;
+console.log("2000 honest: " + warm + " " + typeof getter.get);
+
+const literal: Point = { x: 1, y: 2 };
+const instance = new Pair();
+console.log("before: " + facts(literal) + " | " + facts(instance));
+define(literal, "x", getter);
+define(instance, "x", getter);
+console.log("after: " + facts(literal) + " | " + facts(instance));
+console.log("others: " + facts({ x: 1, y: 2 }) + " | " + facts(new Pair()));
+
+export {};
+//// the-only-getter-definition-is-called-through-reflect-apply.ts
+////= Point-31
+
+let reads = 0;
+
+////= getter-2
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += facts({ x: 1, y: 2 }).length + facts(new Pair()).length;
+console.log("2000 honest: " + warm + " " + typeof getter.get);
+
+const literal: Point = { x: 1, y: 2 };
+const instance = new Pair();
+console.log("before: " + facts(literal) + " | " + facts(instance));
+Reflect.apply(Object.defineProperty, Object, [literal, "x", getter]);
+Reflect.apply(Object.defineProperty, Object, [instance, "x", getter]);
+console.log("after: " + facts(literal) + " | " + facts(instance));
+console.log("others: " + facts({ x: 1, y: 2 }) + " | " + facts(new Pair()));
+
+export {};
+//// the-only-getter-definition-is-in-code-made-at-run-time.ts
+////= Point-31
+
+let reads = 0;
+
+////= getter-2
+
+const define = new Function("target", "getter", "target.__defineGetter__('x', getter);");
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += facts({ x: 1, y: 2 }).length + facts(new Pair()).length;
+console.log("2000 honest: " + warm + " " + typeof getter.get);
+
+const literal: Point = { x: 1, y: 2 };
+const instance = new Pair();
+console.log("before: " + facts(literal) + " | " + facts(instance));
+define(literal, getter.get);
+define(instance, getter.get);
+console.log("after: " + facts(literal) + " | " + facts(instance));
+console.log("others: " + facts({ x: 1, y: 2 }) + " | " + facts(new Pair()));
+
+export {};
+//// the-only-getter-definition-uses-a-computed-name.ts
+////= Point-31
+
+let reads = 0;
+
+////= getter-2
+
+const name: string = ["x"].join("");
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += facts({ x: 1, y: 2 }).length + facts(new Pair()).length;
+console.log("2000 honest: " + warm + " " + typeof getter.get);
+
+const literal: Point = { x: 1, y: 2 };
+const instance = new Pair();
+console.log("before: " + facts(literal) + " | " + facts(instance));
+Object.defineProperty(literal, name, getter);
+Object.defineProperty(instance, name, getter);
+console.log("after: " + facts(literal) + " | " + facts(instance));
+console.log("others: " + facts({ x: 1, y: 2 }) + " | " + facts(new Pair()));
+
+export {};
+//// the-only-method-replacement-goes-through-a-generic-setter.ts
+////= Point-26
+
+const five = (): number => 5;
+
+////= set
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+set(Point.prototype, "norm", minus);
+report("replaced by a function");
+set(Point.prototype, "norm", five);
+report("replaced by an arrow");
+set(Point.prototype, "norm", original);
+report("put back");
+
+export {};
+//// the-only-method-replacement-goes-through-a-parameter.ts
+////= Point-26
+
+const five = (): number => 5;
+
+function patch(target: { norm(): number }, replacement: () => number): void {
+  target.norm = replacement;
+}
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+patch(Point.prototype, minus);
+report("replaced by a function");
+patch(Point.prototype, five);
+report("replaced by an arrow");
+patch(Point.prototype, original);
+report("put back");
+
+export {};
+//// the-only-method-replacement-goes-through-a-proxy.ts
+////= Point-26
+
+const five = (): number => 5;
+
+const through = new Proxy(Point.prototype, {});
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+through.norm = minus;
+report("replaced by a function");
+through.norm = five;
+report("replaced by an arrow");
+through.norm = original;
+report("put back");
+
+export {};
+//// the-only-method-replacement-goes-through-an-alias-of-the-prototype.ts
+////= Point-26
+
+const five = (): number => 5;
+
+const proto = Point.prototype;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+proto.norm = minus;
+report("replaced by a function");
+proto.norm = five;
+report("replaced by an arrow");
+proto.norm = original;
+report("put back");
+
+export {};
+//// the-only-method-replacement-is-a-logical-assignment.ts
+////= Point-26
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+Point.prototype.norm &&= minus;
+report("replaced by a function");
+Point.prototype.norm &&= five;
+report("replaced by an arrow");
+Point.prototype.norm &&= original;
+report("put back");
+
+export {};
+//// the-only-method-replacement-is-a-loop-that-copies-members.ts
+////= Point-26
+
+const five = (): number => 5;
+
+function copy(target: object, source: object): void {
+  for (const name of Object.getOwnPropertyNames(source)) {
+    const descriptor = Object.getOwnPropertyDescriptor(source, name);
+    if (descriptor) Object.defineProperty(target, name, descriptor);
+  }
+}
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+copy(Point.prototype, { norm: minus });
+report("replaced by a function");
+copy(Point.prototype, { norm: five });
+report("replaced by an arrow");
+copy(Point.prototype, { norm: original });
+report("put back");
+
+export {};
+//// the-only-method-replacement-is-an-array-pattern.ts
+////= Point-26
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+[Point.prototype.norm] = [minus];
+report("replaced by a function");
+[Point.prototype.norm] = [five];
+report("replaced by an arrow");
+[Point.prototype.norm] = [original];
+report("put back");
+
+export {};
+//// the-only-method-replacement-is-an-object-pattern.ts
+////= Point-26
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+({ norm: Point.prototype.norm } = { norm: minus });
+report("replaced by a function");
+({ norm: Point.prototype.norm } = { norm: five });
+report("replaced by an arrow");
+({ norm: Point.prototype.norm } = { norm: original });
+report("put back");
+
+export {};
+//// the-only-method-replacement-is-define-properties.ts
+////= Point-26
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+Object.defineProperties(Point.prototype, { norm: { value: minus, writable: true, configurable: true } });
+report("replaced by a function");
+Object.defineProperties(Point.prototype, { norm: { value: five, writable: true, configurable: true } });
+report("replaced by an arrow");
+Object.defineProperties(Point.prototype, { norm: { value: original, writable: true, configurable: true } });
+report("put back");
+
+export {};
+//// the-only-method-replacement-is-define-property.ts
+////= Point-26
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+Object.defineProperty(Point.prototype, "norm", { value: minus, writable: true, configurable: true });
+report("replaced by a function");
+Object.defineProperty(Point.prototype, "norm", { value: five, writable: true, configurable: true });
+report("replaced by an arrow");
+Object.defineProperty(Point.prototype, "norm", { value: original, writable: true, configurable: true });
+report("put back");
+
+export {};
+//// the-only-method-replacement-is-handed-to-for-each.ts
+////= Point-26
+
+const five = (): number => 5;
+
+const targets: { norm(): number }[] = [Point.prototype];
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+targets.forEach(target => {
+  target.norm = minus;
+});
+report("replaced by a function");
+targets.forEach(target => {
+  target.norm = five;
+});
+report("replaced by an arrow");
+targets.forEach(target => {
+  target.norm = original;
+});
+report("put back");
+
+export {};
+//// the-only-method-replacement-is-in-another-module/main.ts
+import { Point, normOf } from "./point.ts";
+import { patch, restore } from "./patch.ts";
+
+const p = new Point(3, 4);
+
+function report(label: string): void {
+  console.log(label + ": " + p.norm() + " " + normOf(p) + " " + p.twice() + " " + new Point(1, 1).norm() + " " + Object.hasOwn(p, "norm"));
+}
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+patch();
+report("patched by the other module");
+restore();
+report("restored by the other module");
+patch();
+report("patched again");
+//// the-only-method-replacement-is-in-another-module/patch.ts
+import { Point } from "./point.ts";
+
+const original = Point.prototype.norm;
+
+export function patch(): void {
+  Point.prototype.norm = function () {
+    return -this.x;
+  };
+}
+
+export function restore(): void {
+  Point.prototype.norm = original;
+}
+//// the-only-method-replacement-is-in-another-module/point.ts
+////= Point-12
+
+////= normOf-2
+//// the-only-method-replacement-is-in-code-made-at-run-time.ts
+////= Point-26
+
+const five = (): number => 5;
+
+const patch = new Function("target", "replacement", "target.prototype.norm = replacement;");
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+patch(Point, minus);
+report("replaced by a function");
+patch(Point, five);
+report("replaced by an arrow");
+patch(Point, original);
+report("put back");
+
+export {};
+//// the-only-method-replacement-is-object-assign.ts
+////= Point-26
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+Object.assign(Point.prototype, { norm: minus });
+report("replaced by a function");
+Object.assign(Point.prototype, { norm: five });
+report("replaced by an arrow");
+Object.assign(Point.prototype, { norm: original });
+report("put back");
+
+export {};
+//// the-only-method-replacement-is-reflect-set.ts
+////= Point-26
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+Reflect.set(Point.prototype, "norm", minus);
+report("replaced by a function");
+Reflect.set(Point.prototype, "norm", five);
+report("replaced by an arrow");
+Reflect.set(Point.prototype, "norm", original);
+report("put back");
+
+export {};
+//// the-only-method-replacement-is-the-head-of-a-for-of-loop.ts
+////= Point-26
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+for (Point.prototype.norm of [minus]);
+report("replaced by a function");
+for (Point.prototype.norm of [five]);
+report("replaced by an arrow");
+for (Point.prototype.norm of [original]);
+report("put back");
+
+export {};
+//// the-only-method-replacement-uses-a-computed-name.ts
+////= Point-26
+
+const five = (): number => 5;
+
+const key: "norm" | "twice" = ["no", "rm"].join("") === "norm" ? "norm" : "twice";
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+Point.prototype[key] = minus;
+report("replaced by a function");
+Point.prototype[key] = five;
+report("replaced by an arrow");
+Point.prototype[key] = original;
+report("put back");
+
+export {};
+//// the-only-method-replacement-where-the-prototype-arrives-as-the-this-argument-of-for-each.ts
+////= Point-25
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+[minus].forEach(function (this: Target, replacement) {
+  this.norm = replacement;
+}, Point.prototype);
+report("replaced by a function");
+[five].forEach(function (this: Target, replacement) {
+  this.norm = replacement;
+}, Point.prototype);
+report("replaced by an arrow");
+[original].forEach(function (this: Target, replacement) {
+  this.norm = replacement;
+}, Point.prototype);
+report("put back");
+
+export {};
+//// the-only-method-replacement-where-the-prototype-arrives-as-this-through-call.ts
+////= Point-25
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= lines-279	patch	this
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+patch.call(Point.prototype, minus);
+report("replaced by a function");
+patch.call(Point.prototype, five);
+report("replaced by an arrow");
+patch.call(Point.prototype, original);
+report("put back");
+
+export {};
+//// the-only-method-replacement-where-the-prototype-comes-out-of-a-map.ts
+////= Point-25
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+const targets = new Map<string, Target>([["target", Point.prototype]]);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+for (const target of targets.values()) target.norm = minus;
+report("replaced by a function");
+for (const target of targets.values()) target.norm = five;
+report("replaced by an arrow");
+for (const target of targets.values()) target.norm = original;
+report("put back");
+
+export {};
+//// the-only-method-replacement-where-the-prototype-comes-out-of-a-promise.ts
+////= Point-25
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+const promised: Promise<Target> = Promise.resolve(Point.prototype);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+////= lines-252	minus
+report("replaced by a function");
+////= lines-252	five
+report("replaced by an arrow");
+////= lines-252	original
+report("put back");
+
+export {};
+//// the-only-method-replacement-where-the-prototype-comes-out-of-a-weak-ref.ts
+////= Point-25
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+const weak = new WeakRef<Target>(Point.prototype);
+
+////= patch-2	weak.deref
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+patch(minus);
+report("replaced by a function");
+patch(five);
+report("replaced by an arrow");
+patch(original);
+report("put back");
+
+export {};
+//// the-only-method-replacement-where-the-prototype-comes-out-of-array-from.ts
+////= Point-25
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+const kept: Target[] = [Point.prototype];
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+Array.from(kept)[0].norm = minus;
+report("replaced by a function");
+Array.from(kept)[0].norm = five;
+report("replaced by an arrow");
+Array.from(kept)[0].norm = original;
+report("put back");
+
+export {};
+//// the-only-method-replacement-where-the-prototype-comes-out-of-object-values.ts
+////= Point-25
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+const kept: Record<string, Target> = { target: Point.prototype };
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+for (const target of Object.values(kept)) target.norm = minus;
+report("replaced by a function");
+for (const target of Object.values(kept)) target.norm = five;
+report("replaced by an arrow");
+for (const target of Object.values(kept)) target.norm = original;
+report("put back");
+
+export {};
+//// the-only-method-replacement-where-the-prototype-is-an-operand-of-a-sort-comparator.ts
+////= Point-25
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+////= lines-171	minus
+report("replaced by a function");
+////= lines-171	five
+report("replaced by an arrow");
+////= lines-171	original
+report("put back");
+
+export {};
+//// the-only-method-replacement-where-the-prototype-is-bound-as-an-argument.ts
+////= Point-25
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= lines-279	store	target
+
+const patch = store.bind(null, Point.prototype);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+patch(minus);
+report("replaced by a function");
+patch(five);
+report("replaced by an arrow");
+patch(original);
+report("put back");
+
+export {};
+//// the-only-method-replacement-where-the-prototype-is-emitted-as-an-event.ts
+import { EventEmitter } from "node:events";
+
+////= Point-25
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+const emitter = new EventEmitter();
+emitter.on("patch", (target: Target, replacement: () => number) => {
+  target.norm = replacement;
+});
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+emitter.emit("patch", Point.prototype, minus);
+report("replaced by a function");
+emitter.emit("patch", Point.prototype, five);
+report("replaced by an arrow");
+emitter.emit("patch", Point.prototype, original);
+report("put back");
+
+export {};
+//// the-only-method-replacement-where-the-prototype-is-handed-to-a-timer.ts
+////= Point-25
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= later
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+await later(Point.prototype, minus);
+report("replaced by a function");
+await later(Point.prototype, five);
+report("replaced by an arrow");
+await later(Point.prototype, original);
+report("put back");
+
+export {};
+//// the-only-method-replacement-where-the-prototype-is-kept-in-async-local-storage.ts
+import { AsyncLocalStorage } from "node:async_hooks";
+
+////= Point-25
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+const storage = new AsyncLocalStorage<Target>();
+
+////= patch-2	storage.getStore
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+storage.run(Point.prototype, patch, minus);
+report("replaced by a function");
+storage.run(Point.prototype, patch, five);
+report("replaced by an arrow");
+storage.run(Point.prototype, patch, original);
+report("put back");
+
+export {};
+//// the-only-method-replacement-where-the-prototype-is-kept-on-the-global-object.ts
+////= Point-25
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+Reflect.set(globalThis, "keptForLater", Point.prototype);
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+Reflect.get(globalThis, "keptForLater").norm = minus;
+report("replaced by a function");
+Reflect.get(globalThis, "keptForLater").norm = five;
+report("replaced by an arrow");
+Reflect.get(globalThis, "keptForLater").norm = original;
+report("put back");
+
+export {};
+//// the-only-method-replacement-where-the-prototype-is-read-from-the-arguments-object.ts
+////= Point-25
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+function patch(target: Target, replacement: () => number): void {
+  arguments[0].norm = arguments[1];
+}
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+patch(Point.prototype, minus);
+report("replaced by a function");
+patch(Point.prototype, five);
+report("replaced by an arrow");
+patch(Point.prototype, original);
+report("put back");
+
+export {};
+//// the-only-method-replacement-where-the-prototype-is-the-cause-of-an-error.ts
+////= Point-25
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+const carrier = new Error("carrier", { cause: Point.prototype });
+
+function patch(replacement: () => number): void {
+  const cause = carrier.cause;
+  if (typeof cause === "object" && cause !== null && "norm" in cause) cause.norm = replacement;
+}
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+patch(minus);
+report("replaced by a function");
+patch(five);
+report("replaced by an arrow");
+patch(original);
+report("put back");
+
+export {};
+//// the-only-method-replacement-where-the-prototype-is-the-result-of-a-getter.ts
+////= Point-25
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+const holder = {
+  get target(): Target {
+    return Point.prototype;
+  },
+};
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+holder.target.norm = minus;
+report("replaced by a function");
+holder.target.norm = five;
+report("replaced by an arrow");
+holder.target.norm = original;
+report("put back");
+
+export {};
+//// the-only-method-replacement-where-the-prototype-is-thrown-and-caught.ts
+////= Point-25
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+////= patch
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+patch(Point.prototype, minus);
+report("replaced by a function");
+patch(Point.prototype, five);
+report("replaced by an arrow");
+patch(Point.prototype, original);
+report("put back");
+
+export {};
+//// the-only-method-replacement-where-the-prototype-is-yielded-by-a-generator.ts
+////= Point-25
+
+const five = (): number => 5;
+
+const original = Point.prototype.norm;
+const p = new Point(3, 4);
+
+function* targets(): Generator<Target, void, unknown> {
+  yield Point.prototype;
+}
+
+////= report-2
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += normOf(p) + p.norm() + p.twice();
+console.log("2000 honest rounds: " + sum);
+report("before");
+for (const target of targets()) target.norm = minus;
+report("replaced by a function");
+for (const target of targets()) target.norm = five;
+report("replaced by an arrow");
+for (const target of targets()) target.norm = original;
+report("put back");
+
+export {};
+//// the-only-new-parent-of-a-subclass-prototype-goes-by-another-name.ts
+////= Walker-2
+
+const { setPrototypeOf: hang } = Object;
+
+const p = new Person();
+
+////= report-6
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += moveOf(p).length + asWalker(p).length + p.above().length + (p instanceof Walker ? 1 : 0);
+console.log("2000 honest rounds: " + warm);
+report("before");
+hang(Person.prototype, Swimmer.prototype);
+report("under the swimmer");
+hang(Person.prototype, Walker.prototype);
+report("back under the walker");
+hang(Person.prototype, Swimmer.prototype);
+report("under the swimmer again");
+
+export {};

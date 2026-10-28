@@ -1,0 +1,36 @@
+# import Module from "node:module"; loaded = Module.createRequire(globalThis.parent)("./other.js"); loaded.helper()   built with two entry points, main.js and other.js
+# What a relative path finds hangs on the file that asks, and nobody knows that file: the load may answer an entry point of the program (h8).
+# The build excludes code outside the image: the run time refuses a file with code that is not in the image.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: valueflow-why flag=h8 flag=h15
+# CHECK: flag=h8
+# CHECK-NEXT: by Call f0 v6
+# CHECK: flag=h15
+# CHECK-NEXT: not held
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0 requests=[{target=m1 completes=true}]
+module m1 path="node:module" displayPath="node:module" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule
+module m2 path="/app/other.js" displayPath="other.js" body=f1 exports=[{name="helper" variable=g0}]
+entry module=m0
+entry module=m2
+variable g0 name="helper" module=m2 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="parent" [isFreeName]
+    v2 = Builtin builtin=NodeModule
+    v3 = PropGet v2 key="createRequire"
+    v4 = Call v3, v2, v1
+    v5 = String string="./other.js"
+    v6 = Call v4, -, v5
+    v7 = PropGet v6 key="helper"
+    v8 = Call v7, v6
+    Return v8
+}
+function f1 name="other" module=m2 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f2 name="helperOfProgram" module=m2 results=[{type=anything}] {
+    Return
+}

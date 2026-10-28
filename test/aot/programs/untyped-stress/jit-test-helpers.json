@@ -1,0 +1,1 @@
+{ "skipInShell": "the shell's own `next` does not take a generator of a function that one of its native functions has seen" }

@@ -1,0 +1,2799 @@
+////: lines-181
+function «1»(names, prototype) {
+  const seen = Object.create(prototype);
+  let added = 0;
+  for (let k = 0; k < names.length; k++) {
+    const key = names[k];
+    if («2») continue;
+    seen[key] = k;
+    added++;
+  }
+  return [seen, added];
+}
+//// defining-absent-properties-on-compiled-objects.ts
+// Object.defineProperty of a name that an object with a layout does not have yet: every combination of value, get and set with the three flags absent, true and false, written as a literal at the call.
+// On literals and instances of classes, with and without properties added earlier, frozen, sealed and not extensible; under a new name, a symbol, an index, the name of a field, of an empty field and of a method.
+// Each definition is made three times on new objects, since the second one finds what the first one left behind. Afterwards: the descriptors, the keys, for..in, JSON, typed reads, a store and a delete.
+type Define = (object: object, key: PropertyKey) => unknown;
+type Way = [string, Define];
+
+let stored: unknown = "nothing";
+function getter(): number {
+  return 7;
+}
+function setter(value: unknown): void {
+  stored = value;
+}
+function yes(): boolean {
+  return stored !== "never";
+}
+const notCallable: any = 1;
+
+const literals: Way[] = [
+  ["nothing", (object, key) => Object.defineProperty(object, key, {})],
+  ["configurable", (object, key) => Object.defineProperty(object, key, { configurable: true })],
+  ["!configurable", (object, key) => Object.defineProperty(object, key, { configurable: false })],
+  ["enumerable", (object, key) => Object.defineProperty(object, key, { enumerable: true })],
+  ["enumerable,configurable", (object, key) => Object.defineProperty(object, key, { enumerable: true, configurable: true })],
+  ["enumerable,!configurable", (object, key) => Object.defineProperty(object, key, { enumerable: true, configurable: false })],
+  ["!enumerable", (object, key) => Object.defineProperty(object, key, { enumerable: false })],
+  ["!enumerable,configurable", (object, key) => Object.defineProperty(object, key, { enumerable: false, configurable: true })],
+  ["!enumerable,!configurable", (object, key) => Object.defineProperty(object, key, { enumerable: false, configurable: false })],
+  ["writable", (object, key) => Object.defineProperty(object, key, { writable: true })],
+  ["writable,configurable", (object, key) => Object.defineProperty(object, key, { writable: true, configurable: true })],
+  ["writable,!configurable", (object, key) => Object.defineProperty(object, key, { writable: true, configurable: false })],
+  ["writable,enumerable", (object, key) => Object.defineProperty(object, key, { writable: true, enumerable: true })],
+  ["writable,enumerable,configurable", (object, key) => Object.defineProperty(object, key, { writable: true, enumerable: true, configurable: true })],
+  ["writable,enumerable,!configurable", (object, key) => Object.defineProperty(object, key, { writable: true, enumerable: true, configurable: false })],
+  ["writable,!enumerable", (object, key) => Object.defineProperty(object, key, { writable: true, enumerable: false })],
+  ["writable,!enumerable,configurable", (object, key) => Object.defineProperty(object, key, { writable: true, enumerable: false, configurable: true })],
+  ["writable,!enumerable,!configurable", (object, key) => Object.defineProperty(object, key, { writable: true, enumerable: false, configurable: false })],
+  ["!writable", (object, key) => Object.defineProperty(object, key, { writable: false })],
+  ["!writable,configurable", (object, key) => Object.defineProperty(object, key, { writable: false, configurable: true })],
+  ["!writable,!configurable", (object, key) => Object.defineProperty(object, key, { writable: false, configurable: false })],
+  ["!writable,enumerable", (object, key) => Object.defineProperty(object, key, { writable: false, enumerable: true })],
+  ["!writable,enumerable,configurable", (object, key) => Object.defineProperty(object, key, { writable: false, enumerable: true, configurable: true })],
+  ["!writable,enumerable,!configurable", (object, key) => Object.defineProperty(object, key, { writable: false, enumerable: true, configurable: false })],
+  ["!writable,!enumerable", (object, key) => Object.defineProperty(object, key, { writable: false, enumerable: false })],
+  ["!writable,!enumerable,configurable", (object, key) => Object.defineProperty(object, key, { writable: false, enumerable: false, configurable: true })],
+  ["!writable,!enumerable,!configurable", (object, key) => Object.defineProperty(object, key, { writable: false, enumerable: false, configurable: false })],
+  ["value", (object, key) => Object.defineProperty(object, key, { value: 1 })],
+  ["value,configurable", (object, key) => Object.defineProperty(object, key, { value: 1, configurable: true })],
+  ["value,!configurable", (object, key) => Object.defineProperty(object, key, { value: 1, configurable: false })],
+  ["value,enumerable", (object, key) => Object.defineProperty(object, key, { value: 1, enumerable: true })],
+  ["value,enumerable,configurable", (object, key) => Object.defineProperty(object, key, { value: 1, enumerable: true, configurable: true })],
+  ["value,enumerable,!configurable", (object, key) => Object.defineProperty(object, key, { value: 1, enumerable: true, configurable: false })],
+  ["value,!enumerable", (object, key) => Object.defineProperty(object, key, { value: 1, enumerable: false })],
+  ["value,!enumerable,configurable", (object, key) => Object.defineProperty(object, key, { value: 1, enumerable: false, configurable: true })],
+  ["value,!enumerable,!configurable", (object, key) => Object.defineProperty(object, key, { value: 1, enumerable: false, configurable: false })],
+  ["value,writable", (object, key) => Object.defineProperty(object, key, { value: 1, writable: true })],
+  ["value,writable,configurable", (object, key) => Object.defineProperty(object, key, { value: 1, writable: true, configurable: true })],
+  ["value,writable,!configurable", (object, key) => Object.defineProperty(object, key, { value: 1, writable: true, configurable: false })],
+  ["value,writable,enumerable", (object, key) => Object.defineProperty(object, key, { value: 1, writable: true, enumerable: true })],
+  ["value,writable,enumerable,configurable", (object, key) => Object.defineProperty(object, key, { value: 1, writable: true, enumerable: true, configurable: true })],
+  ["value,writable,enumerable,!configurable", (object, key) => Object.defineProperty(object, key, { value: 1, writable: true, enumerable: true, configurable: false })],
+  ["value,writable,!enumerable", (object, key) => Object.defineProperty(object, key, { value: 1, writable: true, enumerable: false })],
+  ["value,writable,!enumerable,configurable", (object, key) => Object.defineProperty(object, key, { value: 1, writable: true, enumerable: false, configurable: true })],
+  ["value,writable,!enumerable,!configurable", (object, key) => Object.defineProperty(object, key, { value: 1, writable: true, enumerable: false, configurable: false })],
+  ["value,!writable", (object, key) => Object.defineProperty(object, key, { value: 1, writable: false })],
+  ["value,!writable,configurable", (object, key) => Object.defineProperty(object, key, { value: 1, writable: false, configurable: true })],
+  ["value,!writable,!configurable", (object, key) => Object.defineProperty(object, key, { value: 1, writable: false, configurable: false })],
+  ["value,!writable,enumerable", (object, key) => Object.defineProperty(object, key, { value: 1, writable: false, enumerable: true })],
+  ["value,!writable,enumerable,configurable", (object, key) => Object.defineProperty(object, key, { value: 1, writable: false, enumerable: true, configurable: true })],
+  ["value,!writable,enumerable,!configurable", (object, key) => Object.defineProperty(object, key, { value: 1, writable: false, enumerable: true, configurable: false })],
+  ["value,!writable,!enumerable", (object, key) => Object.defineProperty(object, key, { value: 1, writable: false, enumerable: false })],
+  ["value,!writable,!enumerable,configurable", (object, key) => Object.defineProperty(object, key, { value: 1, writable: false, enumerable: false, configurable: true })],
+  ["value,!writable,!enumerable,!configurable", (object, key) => Object.defineProperty(object, key, { value: 1, writable: false, enumerable: false, configurable: false })],
+  ["get", (object, key) => Object.defineProperty(object, key, { get: getter })],
+  ["get,configurable", (object, key) => Object.defineProperty(object, key, { get: getter, configurable: true })],
+  ["get,!configurable", (object, key) => Object.defineProperty(object, key, { get: getter, configurable: false })],
+  ["get,enumerable", (object, key) => Object.defineProperty(object, key, { get: getter, enumerable: true })],
+  ["get,enumerable,configurable", (object, key) => Object.defineProperty(object, key, { get: getter, enumerable: true, configurable: true })],
+  ["get,enumerable,!configurable", (object, key) => Object.defineProperty(object, key, { get: getter, enumerable: true, configurable: false })],
+  ["get,!enumerable", (object, key) => Object.defineProperty(object, key, { get: getter, enumerable: false })],
+  ["get,!enumerable,configurable", (object, key) => Object.defineProperty(object, key, { get: getter, enumerable: false, configurable: true })],
+  ["get,!enumerable,!configurable", (object, key) => Object.defineProperty(object, key, { get: getter, enumerable: false, configurable: false })],
+  ["set", (object, key) => Object.defineProperty(object, key, { set: setter })],
+  ["set,configurable", (object, key) => Object.defineProperty(object, key, { set: setter, configurable: true })],
+  ["set,!configurable", (object, key) => Object.defineProperty(object, key, { set: setter, configurable: false })],
+  ["set,enumerable", (object, key) => Object.defineProperty(object, key, { set: setter, enumerable: true })],
+  ["set,enumerable,configurable", (object, key) => Object.defineProperty(object, key, { set: setter, enumerable: true, configurable: true })],
+  ["set,enumerable,!configurable", (object, key) => Object.defineProperty(object, key, { set: setter, enumerable: true, configurable: false })],
+  ["set,!enumerable", (object, key) => Object.defineProperty(object, key, { set: setter, enumerable: false })],
+  ["set,!enumerable,configurable", (object, key) => Object.defineProperty(object, key, { set: setter, enumerable: false, configurable: true })],
+  ["set,!enumerable,!configurable", (object, key) => Object.defineProperty(object, key, { set: setter, enumerable: false, configurable: false })],
+  ["get,set", (object, key) => Object.defineProperty(object, key, { get: getter, set: setter })],
+  ["get,set,configurable", (object, key) => Object.defineProperty(object, key, { get: getter, set: setter, configurable: true })],
+  ["get,set,!configurable", (object, key) => Object.defineProperty(object, key, { get: getter, set: setter, configurable: false })],
+  ["get,set,enumerable", (object, key) => Object.defineProperty(object, key, { get: getter, set: setter, enumerable: true })],
+  ["get,set,enumerable,configurable", (object, key) => Object.defineProperty(object, key, { get: getter, set: setter, enumerable: true, configurable: true })],
+  ["get,set,enumerable,!configurable", (object, key) => Object.defineProperty(object, key, { get: getter, set: setter, enumerable: true, configurable: false })],
+  ["get,set,!enumerable", (object, key) => Object.defineProperty(object, key, { get: getter, set: setter, enumerable: false })],
+  ["get,set,!enumerable,configurable", (object, key) => Object.defineProperty(object, key, { get: getter, set: setter, enumerable: false, configurable: true })],
+  ["get,set,!enumerable,!configurable", (object, key) => Object.defineProperty(object, key, { get: getter, set: setter, enumerable: false, configurable: false })],
+];
+
+const otherWays: Way[] = [
+  ["value=undefined", (object, key) => Object.defineProperty(object, key, { value: undefined, enumerable: true })],
+  ["get=undefined", (object, key) => Object.defineProperty(object, key, { get: undefined, enumerable: true })],
+  ["set=undefined", (object, key) => Object.defineProperty(object, key, { set: undefined, enumerable: true })],
+  ["get=undefined,set=undefined", (object, key) => Object.defineProperty(object, key, { get: undefined, set: undefined })],
+  ["get,set=undefined", (object, key) => Object.defineProperty(object, key, { get: getter, set: undefined, configurable: true })],
+  ["get is not callable", (object, key) => Object.defineProperty(object, key, { get: notCallable })],
+  ["set is not callable", (object, key) => Object.defineProperty(object, key, { set: notCallable })],
+  ["value,get", (object, key) => Object.defineProperty(object, key, { value: 1, get: getter })],
+  ["value,set", (object, key) => Object.defineProperty(object, key, { value: 1, set: setter })],
+  ["writable,get", (object, key) => Object.defineProperty(object, key, { writable: true, get: getter })],
+  ["!writable,get,set", (object, key) => Object.defineProperty(object, key, { writable: false, get: getter, set: setter })],
+  ["methods in the literal", (object, key) => Object.defineProperty(object, key, { get() { return 7; }, set(value: unknown) { stored = value; }, enumerable: true, configurable: true })],
+  ["computed flags", (object, key) => Object.defineProperty(object, key, { value: 1, writable: yes(), enumerable: yes(), configurable: !yes() })],
+  ["descriptor in a variable", (object, key) => { const descriptor: PropertyDescriptor = { value: 1, enumerable: true }; return Object.defineProperty(object, key, descriptor); }],
+  ["Reflect.defineProperty, value", (object, key) => Reflect.defineProperty(object, key, { value: 1, writable: true, enumerable: true, configurable: true })],
+  ["Reflect.defineProperty, value with the defaults", (object, key) => Reflect.defineProperty(object, key, { value: 1 })],
+  ["Reflect.defineProperty, accessor", (object, key) => Reflect.defineProperty(object, key, { get: getter, set: setter, enumerable: true })],
+  ["Object.defineProperties, value", (object, key) => Object.defineProperties(object, { [key]: { value: 1, writable: true, enumerable: true, configurable: true } })],
+  ["Object.defineProperties, accessor", (object, key) => Object.defineProperties(object, { [key]: { get: getter, configurable: true } })],
+];
+
+interface Pair {
+  a: number;
+  b?: number;
+}
+class Point {
+  x: number;
+  y: number;
+  declare late?: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+  sum(): number {
+    return this.x + this.y;
+  }
+}
+////= lines-162	Point3	Point	z	3
+const tag = Symbol("tag");
+
+function pair(): Pair {
+  return { a: 1 };
+}
+function point(): Point {
+  return new Point(1, 2);
+}
+function point3(): Point3 {
+  return new Point3(1, 2);
+}
+function withAddedProperties(): Point {
+  const made = new Point(1, 2);
+  (made as any).first = "first";
+  Object.defineProperty(made, "hidden", { value: "hidden", configurable: true });
+  return made;
+}
+function withDeletedField(): Point {
+  const made = new Point(1, 2);
+  delete (made as any).y;
+  return made;
+}
+function crowded(): Point {
+  const made = new Point(1, 2);
+  for (let i = 0; i < 200; i++) (made as any)["k" + i] = i;
+  return made;
+}
+function crowdedWithGaps(): Point {
+  const made = crowded();
+  for (let i = 0; i < 200; i += 3) delete (made as any)["k" + i];
+  return made;
+}
+
+function textOf(value: unknown): string {
+  return typeof value === "function" ? "function " + value.name : String(value);
+}
+function partsOf(descriptor: PropertyDescriptor): string {
+  const flags = (descriptor.writable ? "w" : "-") + (descriptor.enumerable ? "e" : "-") + (descriptor.configurable ? "c" : "-");
+  if ("value" in descriptor) return "=" + textOf(descriptor.value) + " " + flags;
+  return "(" + textOf(descriptor.get) + "," + textOf(descriptor.set) + ") " + flags;
+}
+function whole(object: object): string {
+  const all = Object.getOwnPropertyDescriptors(object) as Record<PropertyKey, PropertyDescriptor>;
+  return Reflect.ownKeys(all).map(key => String(key) + partsOf(all[key])).join(", ");
+}
+function listed(object: object): string {
+  const inLoop: string[] = [];
+  for (const key in object) inLoop.push(key);
+  return "keys " + Object.keys(object).join() + " for-in " + inLoop.join() + " json " + JSON.stringify(object);
+}
+function messageOf(action: () => unknown): string {
+  try {
+    return String(action());
+  } catch (error) {
+    return (error as Error).name + ": " + (error as Error).message;
+  }
+}
+function kindOf(action: () => unknown): string {
+  try {
+    return String(action());
+  } catch (error) {
+    return (error as Error).name;
+  }
+}
+
+function readPair(object: Pair): string {
+  return object.a + "," + object.b;
+}
+function readPoint(object: Point): string {
+  return object.x + "," + object.y + "," + object.late;
+}
+function callSum(object: Point): string {
+  return kindOf(() => object.sum());
+}
+// Typed code is shown a required field only while it holds what its type says.
+function seenByTypedCode(object: object): string {
+  const untyped = object as any;
+  if (object instanceof Point) {
+    if (typeof untyped.x !== "number" || typeof untyped.y !== "number") return "late " + object.late;
+    const own = object instanceof Point3 && typeof untyped.z === "number" ? " z " + object.z : "";
+    return readPoint(object) + " sum " + callSum(object) + own;
+  }
+  if (typeof untyped.a !== "number") return "b " + (object as Pair).b;
+  return readPair(object as Pair);
+}
+function uses(object: object, key: PropertyKey): string {
+  const untyped = object as any;
+  return [
+    "has " + (key in object) + " " + Object.hasOwn(object, key),
+    "read " + kindOf(() => untyped[key]),
+    "store " + kindOf(() => { untyped[key] = 5; return untyped[key]; }) + " " + String(stored),
+    "delete " + kindOf(() => delete untyped[key]) + " " + Object.hasOwn(object, key),
+  ].join(" ");
+}
+function everything(object: object, key: PropertyKey): string {
+  return [whole(object), listed(object), seenByTypedCode(object), uses(object, key)].join(" | ");
+}
+function inBrief(object: object, key: PropertyKey): string {
+  const descriptor = Object.getOwnPropertyDescriptor(object, key);
+  const keys = Object.keys(object);
+  return [descriptor ? String(key) + partsOf(descriptor) : "absent", Reflect.ownKeys(object).length, keys.length, keys.slice(-2).join(), seenByTypedCode(object), uses(object, key)].join(" | ");
+}
+
+const lines: string[] = [];
+function outcome(create: () => object, key: PropertyKey, define: Define, tell: (object: object, key: PropertyKey) => string): string {
+  const object = create();
+  stored = "nothing";
+  const result = messageOf(() => {
+    const returned = define(object, key);
+    return returned === object ? "defined" : returned;
+  });
+  return result + " | " + tell(object, key);
+}
+// The ways that end alike share a line.
+function report(title: string, create: () => object, key: PropertyKey, ways: Way[], tell: (object: object, key: PropertyKey) => string): void {
+  const groups = new Map<string, string[]>();
+  for (const [label, define] of ways) {
+    const first = outcome(create, key, define, tell);
+    for (let turn = 2; turn <= 3; turn++) {
+      const again = outcome(create, key, define, tell);
+      if (again !== first) lines.push(title + ", " + label + ", differs in turn " + turn + ": " + again);
+    }
+    const labels = groups.get(first);
+    if (labels) labels.push(label);
+    else groups.set(first, [label]);
+  }
+  lines.push(title);
+  for (const [result, labels] of groups) lines.push("  " + labels.join(" ; "), "    " + result);
+}
+
+const cases: [string, () => object, PropertyKey][] = [
+  ["literal, new name", pair, "extra"],
+  ["literal, symbol", pair, tag],
+  ["literal, index", pair, 0],
+  ["literal, index as text", pair, "7"],
+  ["literal, number past the indexes", pair, 4294967295],
+  ["literal, field", pair, "a"],
+  ["literal, empty field", pair, "b"],
+  ["literal, __proto__", pair, "__proto__"],
+  ["instance, new name", point, "extra"],
+  ["instance, symbol", point, tag],
+  ["instance, well-known symbol", point, Symbol.toStringTag],
+  ["instance, index", point, 0],
+  ["instance, field", point, "x"],
+  ["instance, empty field", point, "late"],
+  ["instance, deleted field", withDeletedField, "y"],
+  ["instance, name of a method", point, "sum"],
+  ["instance, __proto__", point, "__proto__"],
+  ["instance of a subclass, new name", point3, "extra"],
+  ["instance of a subclass, field of the base class", point3, "x"],
+  ["instance of a subclass, own field", point3, "z"],
+  ["instance of a subclass, empty field of the base class", point3, "late"],
+  ["instance with added properties, new name", withAddedProperties, "extra"],
+  ["instance with added properties, symbol", withAddedProperties, tag],
+  ["instance with added properties, added name", withAddedProperties, "first"],
+  ["instance with added properties, added hidden name", withAddedProperties, "hidden"],
+  ["instance with added properties, empty field", withAddedProperties, "late"],
+  ["frozen literal, new name", () => Object.freeze(pair()), "extra"],
+  ["frozen literal, symbol", () => Object.freeze(pair()), tag],
+  ["frozen literal, index", () => Object.freeze(pair()), 0],
+  ["frozen literal, field", () => Object.freeze(pair()), "a"],
+  ["frozen literal, empty field", () => Object.freeze(pair()), "b"],
+  ["sealed literal, new name", () => Object.seal(pair()), "extra"],
+  ["sealed literal, symbol", () => Object.seal(pair()), tag],
+  ["sealed literal, index", () => Object.seal(pair()), 0],
+  ["sealed literal, field", () => Object.seal(pair()), "a"],
+  ["sealed literal, empty field", () => Object.seal(pair()), "b"],
+  ["literal that is not extensible, new name", () => Object.preventExtensions(pair()), "extra"],
+  ["literal that is not extensible, symbol", () => Object.preventExtensions(pair()), tag],
+  ["literal that is not extensible, index", () => Object.preventExtensions(pair()), 0],
+  ["literal that is not extensible, field", () => Object.preventExtensions(pair()), "a"],
+  ["literal that is not extensible, empty field", () => Object.preventExtensions(pair()), "b"],
+  ["frozen instance, new name", () => Object.freeze(point()), "extra"],
+  ["frozen instance, symbol", () => Object.freeze(point()), tag],
+  ["frozen instance, index", () => Object.freeze(point()), 0],
+  ["frozen instance, field", () => Object.freeze(point()), "x"],
+  ["frozen instance, empty field", () => Object.freeze(point()), "late"],
+  ["sealed instance, new name", () => Object.seal(point()), "extra"],
+  ["sealed instance, symbol", () => Object.seal(point()), tag],
+  ["sealed instance, index", () => Object.seal(point()), 0],
+  ["sealed instance, field", () => Object.seal(point()), "x"],
+  ["sealed instance, empty field", () => Object.seal(point()), "late"],
+  ["instance that is not extensible, new name", () => Object.preventExtensions(point()), "extra"],
+  ["instance that is not extensible, symbol", () => Object.preventExtensions(point()), tag],
+  ["instance that is not extensible, index", () => Object.preventExtensions(point()), 0],
+  ["instance that is not extensible, field", () => Object.preventExtensions(point()), "x"],
+  ["instance that is not extensible, empty field", () => Object.preventExtensions(point()), "late"],
+  ["instance that is not extensible, deleted field", () => Object.preventExtensions(withDeletedField()), "y"],
+  ["frozen instance with added properties, new name", () => Object.freeze(withAddedProperties()), "extra"],
+  ["frozen instance with added properties, added name", () => Object.freeze(withAddedProperties()), "first"],
+  ["instance with added properties that is not extensible, new name", () => Object.preventExtensions(withAddedProperties()), "extra"],
+  ["instance with added properties that is not extensible, added name", () => Object.preventExtensions(withAddedProperties()), "first"],
+];
+const casesOfOtherWays = new Set([
+  "literal, new name",
+  "literal, symbol",
+  "literal, index",
+  "literal, field",
+  "literal, empty field",
+  "instance, new name",
+  "instance, empty field",
+  "instance, deleted field",
+  "instance with added properties, new name",
+  "instance with added properties, added name",
+  "frozen literal, new name",
+  "sealed instance, empty field",
+  "instance that is not extensible, new name",
+]);
+for (const [title, create, key] of cases) {
+  report(title, create, key, literals, everything);
+  if (casesOfOtherWays.has(title)) report(title + ", in other ways", create, key, otherWays, everything);
+}
+report("instance with 200 added properties, new name", crowded, "extra", literals, inBrief);
+report("instance with 200 added properties, added name", crowded, "k100", literals, inBrief);
+report("instance with 200 added properties of which some were deleted, new name", crowdedWithGaps, "extra", literals, inBrief);
+report("instance with 200 added properties of which some were deleted, deleted name", crowdedWithGaps, "k99", literals, inBrief);
+
+// The names come in the order in which they were created, whether they are fields or not.
+const orderedPair: Pair = { a: 1 };
+Object.defineProperty(orderedPair, "second", { value: 2, enumerable: true });
+Object.defineProperty(orderedPair, tag, { value: 3, enumerable: true });
+Object.defineProperty(orderedPair, "b", { value: 4, writable: true, enumerable: true, configurable: true });
+Object.defineProperty(orderedPair, 1, { value: 5, enumerable: true });
+Object.defineProperty(orderedPair, "third", { get: getter, enumerable: true });
+Object.defineProperty(orderedPair, 0, { value: 6, enumerable: true });
+lines.push("order on a literal: " + whole(orderedPair) + " | " + listed(orderedPair) + " | " + readPair(orderedPair));
+const orderedPoint = new Point(1, 2);
+Object.defineProperty(orderedPoint, "second", { value: 2, enumerable: true });
+Object.defineProperty(orderedPoint, tag, { value: 3, enumerable: true });
+Object.defineProperty(orderedPoint, "late", { value: 4, writable: true, enumerable: true, configurable: true });
+Object.defineProperty(orderedPoint, 1, { value: 5, enumerable: true });
+Object.defineProperty(orderedPoint, "third", { get: getter, enumerable: true });
+Object.defineProperty(orderedPoint, 0, { value: 6, enumerable: true });
+lines.push("order on an instance: " + whole(orderedPoint) + " | " + listed(orderedPoint) + " | " + readPoint(orderedPoint));
+
+// Whoever looked for the name in vain, on the object or on an object that inherits from it, finds it afterwards.
+function readExtra(object: any): unknown {
+  return object.extra;
+}
+function hasExtra(object: object): boolean {
+  return "extra" in object;
+}
+for (const [title, create] of [["literal", pair], ["instance", point]] as [string, () => object][]) {
+  const parent = create();
+  const child: object = Object.create(parent);
+  let missed = 0;
+  for (let i = 0; i < 300; i++) if (readExtra(child) === undefined && readExtra(parent) === undefined && !hasExtra(child) && !hasExtra(parent)) missed++;
+  Object.defineProperty(parent, "extra", { value: "inherited", enumerable: true });
+  lines.push("below a " + title + ": " + [missed, readExtra(child), readExtra(parent), hasExtra(child), hasExtra(parent), Object.hasOwn(child, "extra"), listed(child)].join(" "));
+  const other = create();
+  Object.defineProperty(other, "extra", { get: getter });
+  lines.push("another " + title + ": " + [readExtra(other), hasExtra(other), readExtra(create()), hasExtra(create()), listed(other)].join(" "));
+}
+
+// An accessor gets the object that was read or stored to, and a function is called on it.
+const owner = new Point(10, 20);
+Object.defineProperty(owner, "double", { get(this: any) { return this.x * 2; }, set(this: any, value: number) { this.x = value; }, configurable: true });
+Object.defineProperty(owner, "plus", { value(this: any, more: number) { return this.x + more; } });
+const heir: any = Object.create(owner);
+lines.push("receivers: " + [(owner as any).double, heir.double, (owner as any).plus(1), heir.plus(2)].join(" "));
+heir.double = 4;
+lines.push("receivers after a store: " + [owner.x, heir.x, Object.hasOwn(heir, "x"), (owner as any).double, heir.double, heir.plus(2), whole(owner)].join(" "));
+
+// The same definitions on many objects, read after a collection.
+const many: Point[] = [];
+for (let i = 0; i < 3000; i++) {
+  const made = new Point(i, -i);
+  if (i % 3 === 0) Object.defineProperty(made, "extra", { value: i, writable: true, enumerable: true, configurable: true });
+  else if (i % 3 === 1) Object.defineProperty(made, "extra", { value: i });
+  else Object.defineProperty(made, "extra", { get: getter, enumerable: true });
+  if (i % 5 === 0) Object.defineProperty(made, tag, { value: "tagged" });
+  if (i % 7 === 0) Object.defineProperty(made, "late", { value: i, writable: true, enumerable: true, configurable: true });
+  many.push(made);
+}
+Bun.gc(true);
+let right = 0;
+for (let i = 0; i < many.length; i++) {
+  const made = many[i];
+  const untyped = made as any;
+  if (untyped.extra !== (i % 3 === 2 ? 7 : i)) continue;
+  if (Object.keys(made).includes("extra") !== (i % 3 !== 1)) continue;
+  if ((untyped[tag] === "tagged") !== (i % 5 === 0)) continue;
+  if (made.late !== (i % 7 === 0 ? i : undefined)) continue;
+  if (made.x === i && made.y === -i && made.sum() === 0) right++;
+}
+lines.push("3000 objects: " + right);
+
+console.log(lines.join("\n"));
+export {};
+//// definitions-by-name-and-key.js
+// Own properties that are defined, not assigned: computed keys in object literals and class fields, on ordinary, frozen, non-extensible, Proxy, array, function, class, error and Map targets. A computed key is converted before its value is evaluated, as ECMAScript says; plain Bun converts it afterwards.
+const lines = [];
+function say(label, value) {
+  lines.push(label + ": " + value);
+}
+function keyText(key) {
+  return typeof key === "symbol" ? key.toString() : JSON.stringify(key);
+}
+function valueText(value) {
+  return typeof value === "function" ? "function " + value.name : String(value);
+}
+function describeKey(object, key) {
+  const descriptor = Reflect.getOwnPropertyDescriptor(object, key);
+  if (!descriptor) return keyText(key) + " absent";
+  const flags = (descriptor.writable ? "w" : "-") + (descriptor.enumerable ? "e" : "-") + (descriptor.configurable ? "c" : "-");
+  const body = "value" in descriptor ? valueText(descriptor.value) : (descriptor.get ? "get" : "") + (descriptor.set ? "set" : "");
+  return keyText(key) + " " + flags + " " + body;
+}
+function describe(object) {
+  return Reflect.ownKeys(object)
+    .map(key => describeKey(object, key))
+    .join(", ");
+}
+////= attempt-2
+
+const tag = Symbol("tag");
+
+function literal(text, number, i) {
+  return { first: i, [text]: i + 1, [tag]: i + 2, [number]: i + 3, ["__proto__"]: i + 4, last: i + 5 };
+}
+say("computed keys", describe(literal("middle", 7, 10)));
+say("a computed __proto__ does not set the prototype", Object.getPrototypeOf(literal("middle", 7, 10)) === Object.prototype);
+
+function repeated(key, i) {
+  return { a: i, [key]: i + 1, b: i + 2, [key]: i + 3, c: i + 4 };
+}
+for (const key of ["k", "a", "b", "c", tag, 3, "3", "__proto__"]) say("defined twice, " + keyText(key), describe(repeated(key, 0)));
+
+function between(key) {
+  return { before: 0, [key]: "here", after: 1 };
+}
+const keyKinds = [
+  0, -0, 1, 1.5, -1, 4294967294, 4294967295, 4294967296, 1e21, 1e-7, NaN, Infinity, true, null, undefined, 10n, "", "a b", [1, 2],
+  { toString() { return "from toString"; } },
+  { [Symbol.toPrimitive]() { return tag; } },
+  Symbol.iterator, Symbol.for("registered"), Symbol(),
+];
+keyKinds.forEach((key, index) => say("key kind " + index, describe(between(key))));
+
+const order = [];
+function keyNamed(name) {
+  return { toString() { order.push("key " + name); return name; } };
+}
+function noted(value) {
+  order.push("value " + value);
+  return value;
+}
+const ordered = { [keyNamed("x")]: noted(1), [keyNamed("y")]: noted(2), [keyNamed("x")]: noted(3) };
+say("each key is converted before its value is evaluated", order.join(", ") + " | " + describe(ordered));
+order.length = 0;
+const thrown = attempt(() => describe({ a: noted("a"), [{ toString() { throw new RangeError("no key"); } }]: noted("never"), b: noted("never either") }));
+say("a key that throws", thrown + " | " + order.join(", "));
+
+const names = ["alpha", "beta", "gamma", "delta"];
+const orders = new Set();
+let total = 0;
+for (let i = 0; i < 100; i++) {
+  const text = names[i % names.length];
+  const object = literal(text, i % 2, i);
+  orders.add(Reflect.ownKeys(object).map(keyText).join());
+  total += object.first + object[text] + object[tag] + object[i % 2] + object["__proto__"] + object.last;
+}
+say("constant strings as keys, 100 literals", total + " | " + [...orders].sort().join(" | "));
+
+orders.clear();
+total = 0;
+for (let i = 0; i < 100; i++) {
+  const built = "built" + (i % 3);
+  const object = { [built]: i, [`templated${i % 2}`]: i + 1, [built + "!"]: i + 2, [String(i % 2)]: i + 3 };
+  orders.add(Reflect.ownKeys(object).map(keyText).join());
+  total += object[built] + object["templated" + (i % 2)] + object[built + "!"] + object[i % 2];
+}
+say("strings built at run time as keys, 100 literals", total + " | " + [...orders].sort().join(" | "));
+
+function classWith(first, second) {
+  return class {
+    before = "before";
+    [first] = "first";
+    [second] = "second";
+    after = "after";
+    static [first] = "static first";
+    static [second] = "static second";
+  };
+}
+const fieldKeys = [["one", "two"], ["same", "same"], ["before", "after"], ["after", "before"], [tag, Symbol.for("registered")], [1, 0], ["__proto__", "constructor"], ["name", "length"]];
+for (const [first, second] of fieldKeys) {
+  const WithFields = classWith(first, second);
+  let last;
+  for (let i = 0; i < 100; i++) last = new WithFields();
+  say("fields " + keyText(first) + " and " + keyText(second), describe(last) + " | static: " + describeKey(WithFields, first) + ", " + describeKey(WithFields, second));
+}
+
+class Returns {
+  constructor(target) {
+    return target;
+  }
+}
+////= lines-162	DefinesAlpha	Returns	alpha	"by name"
+function definerOf(key) {
+  return class extends Returns {
+    [key] = "by key";
+  };
+}
+////= Point-2
+const targetKeys = ["alpha", "x", tag, 0, 5, "length", "__proto__"];
+const definers = new Map(targetKeys.map(key => [key, definerOf(key)]));
+function define(definer, target) {
+  return attempt(() => {
+    new definer(target);
+    return "defined";
+  });
+}
+const targets = [
+  ["an empty object", () => ({})],
+  ["an object with the property", () => ({ alpha: "old", omega: "old" })],
+  ["a frozen object", () => Object.freeze({ alpha: "old" })],
+  ["a sealed object", () => Object.seal({ alpha: "old" })],
+  ["a non-extensible object", () => Object.preventExtensions({ alpha: "old" })],
+  ["a read-only property", () => Object.defineProperty({}, "alpha", { value: "old", configurable: true })],
+  ["a getter", () => ({ get alpha() { return "old"; } })],
+  ["an object without a prototype", () => Object.create(null)],
+  ["a class instance", () => new Point(1, 2)],
+  ["a frozen class instance", () => Object.freeze(new Point(1, 2))],
+  ["a non-extensible class instance", () => Object.preventExtensions(new Point(1, 2))],
+  ["an array", () => ["old", "old"]],
+  ["a frozen array", () => Object.freeze(["old", "old"])],
+  ["a typed array", () => new Uint8Array(2)],
+];
+for (const [label, create] of targets) {
+  const named = create();
+  say(label + ", alpha by name", define(DefinesAlpha, named) + " | " + describe(named));
+  for (const key of targetKeys) {
+    const target = create();
+    say(label + ", " + keyText(key), define(definers.get(key), target) + " | " + describe(target));
+  }
+}
+
+const otherKeys = ["alpha", tag, "name", "length", "prototype", "displayName", "declared", "message", "stack"];
+const otherDefiners = new Map(otherKeys.map(key => [key, definerOf(key)]));
+const otherTargets = [
+  ["a function", () => function target() {}],
+  ["an arrow function", () => () => {}],
+  ["a bound function", () => function target() {}.bind(null)],
+  ["a class", () => class Target { static declared = "old"; }],
+  ["an error", () => new RangeError("old")],
+  ["a Map", () => new Map()],
+];
+for (const [label, create] of otherTargets) {
+  for (const key of otherKeys) {
+    const target = create();
+    say(label + ", " + keyText(key), define(otherDefiners.get(key), target) + " | " + describeKey(target, key) + " | " + Object.keys(target).join());
+  }
+}
+
+function watched(target, allows) {
+  const log = [];
+  const proxy = new Proxy(target, {
+    defineProperty(inner, key, descriptor) {
+      log.push("defineProperty " + keyText(key) + " " + JSON.stringify(descriptor));
+      return allows && Reflect.defineProperty(inner, key, descriptor);
+    },
+    set(inner, key) {
+      log.push("set " + keyText(key));
+      return true;
+    },
+    getOwnPropertyDescriptor(inner, key) {
+      log.push("getOwnPropertyDescriptor " + keyText(key));
+      return Reflect.getOwnPropertyDescriptor(inner, key);
+    },
+  });
+  return { proxy, log };
+}
+for (const allows of [true, false]) {
+  const label = allows ? "a Proxy whose trap succeeds" : "a Proxy whose trap returns false";
+  const inner = { alpha: "old" };
+  const { proxy, log } = watched(inner, allows);
+  say(label + ", alpha by name", define(DefinesAlpha, proxy) + " | " + log.join("; "));
+  for (const key of targetKeys) {
+    log.length = 0;
+    say(label + ", " + keyText(key), define(definers.get(key), proxy) + " | " + log.join("; "));
+  }
+  say(label + ", its target", describe(inner));
+}
+
+const extraDefiners = ["extra", "more", tag, "y"].map(definerOf);
+total = 0;
+orders.clear();
+for (let i = 0; i < 100; i++) {
+  const point = new Point(i, -i);
+  for (const definer of extraDefiners) new definer(point);
+  orders.add(describe(point).replaceAll(String(i), "i"));
+  total += point.x + point.extra.length + point.more.length + point[tag].length + point.y.length;
+}
+say("undeclared names on 100 class instances", total + " | " + [...orders].join(" | "));
+
+const calls = [];
+const parent = {
+  set watched(value) {
+    calls.push(value);
+  },
+  get watched() {
+    return "inherited";
+  },
+};
+Object.defineProperty(parent, "fixed", { value: "inherited", enumerable: true });
+function definedOver(key, value) {
+  return { __proto__: parent, [key]: value };
+}
+function assignedOver(key, value) {
+  "use strict";
+  const object = { __proto__: parent };
+  object[key] = value;
+  return object;
+}
+let ownAfterDefinition = 0;
+let ownAfterAssignment = 0;
+for (let i = 0; i < 100; i++) {
+  if (Object.hasOwn(definedOver("watched", i), "watched")) ownAfterDefinition++;
+  if (Object.hasOwn(assignedOver("watched", i), "watched")) ownAfterAssignment++;
+}
+say("over an inherited setter", ownAfterDefinition + " definitions created an own property, " + ownAfterAssignment + " assignments did, the setter ran " + calls.length + " times");
+say("over an inherited read-only property, defined", describe(definedOver("fixed", 1)));
+say("over an inherited read-only property, assigned", attempt(() => describe(assignedOver("fixed", 1))));
+say("no inherited property, defined and assigned", describe(definedOver("free", 1)) + " | " + describe(assignedOver("free", 1)));
+
+calls.length = 0;
+class Watches {
+  set watched(value) {
+    calls.push("watched " + value);
+  }
+  set [tag](value) {
+    calls.push("tag " + value);
+  }
+}
+class DefinesOverSetters extends Watches {
+  watched = 1;
+  [tag] = 2;
+}
+class AssignsToSetters extends Watches {
+  constructor() {
+    super();
+    this.watched = 1;
+    this[tag] = 2;
+  }
+}
+say("fields over inherited setters", describe(new DefinesOverSetters()) + " | " + calls.join(", "));
+say("assignments to inherited setters", describe(new AssignsToSetters()) + " | " + calls.join(", "));
+
+console.log(lines.join("\n"));
+//// definitions-in-literals-that-nobody-else-holds.ts
+// Literals whose later definitions are made one by one: more fields than an allocation takes, values that are computed in between, code that runs once and code that runs often.
+// While a literal is built nobody else has it. Afterwards everything may happen to it: a store of another type, a redefinition, a delete, a freeze. The keys keep the order of the source.
+const lines: string[] = [];
+const show = (label: string, value: unknown) => lines.push(label + ": " + (typeof value === "string" ? value : JSON.stringify(value)));
+const keysOf = (object: object) => Reflect.ownKeys(object).map(String).join();
+let calls = 0;
+function next(): number { return ++calls; }
+
+function large(start: number) { return { f0: start + 0, f1: start + 1, f2: start + 2, f3: Symbol.iterator, f4: start + 4, f5: "s5", f6: start + 6, f7: start + 7, f8: start + 8, f9: start + 9, f10: Symbol.iterator, f11: start + 11, f12: "s12", f13: start + 13, f14: start + 14, f15: start + 15, f16: start + 16, f17: Symbol.iterator, f18: start + 18, f19: "s19", f20: start + 20, f21: start + 21, f22: start + 22, f23: start + 23, f24: Symbol.iterator, f25: start + 25, f26: "s26", f27: start + 27, f28: start + 28, f29: start + 29, f30: start + 30, f31: Symbol.iterator, f32: start + 32, f33: "s33", f34: start + 34, f35: start + 35, f36: start + 36, f37: start + 37, f38: Symbol.iterator, f39: start + 39, f40: "s40", f41: start + 41, f42: start + 42, f43: start + 43, f44: start + 44, f45: Symbol.iterator, f46: start + 46, f47: "s47", f48: start + 48, f49: start + 49, f50: start + 50, f51: start + 51, f52: Symbol.iterator, f53: start + 53, f54: "s54", f55: start + 55, f56: start + 56, f57: start + 57, f58: start + 58, f59: Symbol.iterator, f60: start + 60, f61: "s61", f62: start + 62, f63: start + 63, f64: start + 64, f65: start + 65, f66: Symbol.iterator, f67: start + 67, f68: "s68", f69: start + 69, f70: start + 70, f71: start + 71, f72: start + 72, f73: Symbol.iterator, f74: start + 74, f75: "s75", f76: start + 76, f77: start + 77, f78: start + 78, f79: start + 79 }; }
+const once = large(1000);
+show("large, once", keysOf(once).length + " " + once.f0 + " " + String(once.f3) + " " + once.f5 + " " + once.f79 + " " + Object.keys(once).slice(60, 70).join());
+let total = 0;
+for (let i = 0; i < 300; i++) total += large(i).f79 + Object.keys(large(i)).length;
+show("large, often", total);
+
+type Wide = { a: number; b: string; c: symbol; d?: number; e?: string };
+function computedBetween(): Wide { return { a: next(), b: String(next()), c: Symbol.for("c" + next()), d: next(), e: "e" + next() }; }
+const built = computedBetween();
+show("computed in between", keysOf(built) + " " + built.a + built.b + String(built.c) + built.d + built.e);
+
+// Afterwards the fields leave their slots, and the next literal of the same place starts afresh.
+const loose = built as any;
+loose.c = 12; loose.a = "text"; delete loose.b; Object.defineProperty(loose, "d", { get() { return "getter"; }, enumerable: true, configurable: true });
+show("changed afterwards", keysOf(loose) + " " + loose.a + " " + loose.b + " " + loose.c + " " + loose.d);
+Object.freeze(loose);
+const again = computedBetween();
+show("the next one", keysOf(again) + " " + again.a + again.b + String(again.c) + again.d + again.e + " " + Object.isFrozen(again));
+
+// What is no plain definition: a spread, a computed key that spells a later name, an accessor beside the names, another prototype, a value of another type. (A name twice and an accessor under a name that is also defined: the program beside this one, in JavaScript.)
+const source = { d: "from the spread", z: 1 } as any;
+function withSpread(i: number): any { return { a: i, ...source, d: i + 1, e: "e" }; }
+function withSpreadBehind(i: number): any { return { a: i, d: i + 1, ...source, e: "e" }; }
+function withComputedKey(key: string, i: number): any { return { a: i, [key]: "computed", d: i + 1, e: "e" }; }
+function withAccessorBeside(i: number): any { return { a: i, get other() { return "getter " + this.d; }, set other(value) { this.e = value; }, d: i + 1, e: "e" }; }
+function withPrototype(i: number): any { return { __proto__: { set d(value: number) { lines.push("the setter ran"); }, inherited: true }, a: i, d: i + 1, e: "e" }; }
+function otherType(i: number): Wide { return { a: i, b: "b", c: Symbol.iterator, d: ("not a number " + i) as any, e: (i * 2) as any }; }
+for (const [label, make] of Object.entries({ withSpread, withSpreadBehind, withAccessorBeside, withPrototype, otherType })) {
+  let last: any;
+  for (let i = 0; i < 40; i++) last = make(i);
+  show(label, keysOf(last) + " | " + String(last.d) + " | " + String(last.e) + " | " + JSON.stringify(Object.getOwnPropertyDescriptor(last, "d")) + " | " + String(last.inherited));
+}
+for (const key of ["d", "e", "x", "a", "0"]) show("computed key " + key, keysOf(withComputedKey(key, 5)) + " | " + JSON.stringify(withComputedKey(key, 5)));
+
+// One definition gets a value that its field does not admit, so that field lies outside its slot while the definitions behind it are made.
+type Mixed = { a: number; run(): number; b: number; c: number; d: string; e?: number };
+function mixed(i: number, odd: unknown): Mixed { return { __proto__: null, a: i, run() { return this.a + this.c; }, b: odd as number, c: i + 1, d: "d" + i, e: odd as number } as Mixed; }
+function mixedBesideAccessor(i: number, odd: unknown): Mixed { return { get lazy() { return this.d; }, a: i, run() { return this.a + this.c; }, d: odd as string, b: i, c: i + 1 } as Mixed; }
+for (const odd of [5, "text", undefined, null, 1.5, { object: 1 }, Symbol.iterator, -0, 2 ** 40, true]) {
+  for (const make of [mixed, mixedBesideAccessor]) {
+    let last = make(0, odd);
+    for (let i = 1; i < 12; i++) last = make(i, odd);
+    show(make.name + " " + String(odd), keysOf(last) + " | " + [last.a, last.b, last.c, last.d, last.e].map(String).join() + " | " + last.run() + " | " + Object.entries(Object.getOwnPropertyDescriptors(last)).map(([key, d]) => key + (d.writable ? "w" : "") + (d.enumerable ? "e" : "") + (d.configurable ? "c" : "")).join());
+  }
+}
+
+// The value of a later definition throws, suspends, or looks at the world in between.
+function throwsInBetween(i: number): Wide { return { a: i, b: "b", c: Symbol.iterator, d: i > 2 ? (() => { throw new RangeError("at " + i); })() : i, e: "e" }; }
+for (let i = 0; i < 5; i++) { try { show("throws " + i, keysOf(throwsInBetween(i))); } catch (error) { show("throws " + i, (error as Error).message); } }
+async function suspended(i: number): Promise<Wide> { return { a: i, b: await Promise.resolve("awaited"), c: Symbol.iterator, d: await Promise.resolve(i + 1), e: "e" }; }
+function* yielded(i: number): Generator<number, Wide, number> { return { a: i, b: "b", c: Symbol.iterator, d: yield i, e: "e" + (yield i + 1) }; }
+const generator = yielded(7); generator.next(); generator.next(70);
+show("yielded", JSON.stringify(generator.next(71).value) );
+show("nested", JSON.stringify({ outer: next(), inner: { a: next(), b: { c: next(), d: [next(), { e: next() }] } }, last: next() }));
+show("suspended", JSON.stringify(await suspended(3), (key, value) => typeof value === "symbol" ? String(value) : value));
+console.log(lines.join("\n"));
+//// delete-optional-fields-via-any.ts
+// `delete` of optional fields through a receiver of type `any`.
+function normalize(given: any) {
+  const params = given
+  if (!params) return {}
+  if (params?.message !== undefined) params.error = params.message
+  delete params.message
+  return params
+}
+function byKey(o: any, k: string) { delete o[k]; return o }
+class Box { width = 1; height?: number = 2; label?: string = "b"; area() { return this.width * (this.height ?? NaN) } }
+const a: { message?: string; error: string | undefined; code: number } = { message: "m", error: undefined, code: 7 }
+const b: { message?: string; code: number; nested: { message?: string; keep: boolean } } = { message: "n", code: 8.5, nested: { message: "inner", keep: true } }
+console.log(JSON.stringify(normalize(a)), "message" in a, a.message, Object.keys(a).join(), a.code + 1)
+console.log(JSON.stringify(normalize(b)), JSON.stringify(normalize(b.nested)), b.code * 2, b.nested.keep)
+const box = new Box()
+console.log(JSON.stringify(byKey(box, "height")), box.area(), box.height, Object.hasOwn(box, "height"), box.label?.length)
+box.height = 5
+console.log(box.area(), JSON.stringify(box), Reflect.deleteProperty(box, "label"), box.label, Object.keys(box).join())
+const frozen = Object.freeze({ message: "f" })
+try { normalize(frozen) } catch (e) { console.log((e as Error).constructor.name) }
+console.log(frozen.message)
+//// deletion-of-one-field-leaves-the-others.js
+// A deletion that names its key takes that field alone out of the object. The fields beside it stay where they are: reads, `in`, the order of the keys, a store that brings the field back,
+// and a deletion under a computed key, which may take any of them.
+function make(i) {
+  return { cache: i, kept: i * 2, label: "n" + i };
+}
+
+const entry = make(1);
+console.log(entry.kept, entry.cache, entry.label);
+delete entry.cache;
+console.log(entry.kept, entry.cache, entry.label, "cache" in entry, "kept" in entry, Object.keys(entry).join());
+entry.cache = 7;
+console.log(entry.kept, entry.cache, Object.keys(entry).join(), JSON.stringify(entry));
+
+let sum = 0;
+for (let i = 0; i < 10; i++) {
+  const each = make(i);
+  if (i & 1) delete each.cache;
+  sum += each.kept + (each.cache ?? 100) + each.label.length;
+}
+console.log(sum);
+
+class Node {
+  constructor(value) {
+    this.value = value;
+    this.memo = value + 1;
+    this.next = null;
+  }
+  forget() {
+    delete this.memo;
+    return this;
+  }
+}
+const first = new Node(1), second = new Node(2).forget();
+first.next = second;
+console.log(first.memo, second.memo, first.next.value, second.next, Object.keys(second).join(), second.hasOwnProperty("memo"));
+
+const names = ["kept", "label"];
+const other = make(3);
+delete other[names[process.argv.length > 99 ? 0 : 1]];
+console.log(other.kept, other.label, other.cache, Object.keys(other).join());
+//// descriptors-taken-apart-and-descriptors-asked-what-they-have.js
+// Object.getOwnPropertyDescriptor and Reflect.getOwnPropertyDescriptor whose result is only taken apart, and whose result is asked what only a real object can answer: which fields it has, in which order, whether it is the same object; on data properties, accessors, properties that are not there, frozen objects, lists, strings, functions, typed arrays, proxies, null and undefined.
+const log = [];
+class Point { constructor(x) { this.x = x; } get double() { return this.x * 2; } static origin = 0; }
+const withAccessor = { get a() { return 1; }, set a(v) {}, get onlyGet() { return 2; }, set onlySet(v) {} };
+const hidden = Object.defineProperty({}, "h", { value: undefined, enumerable: false, writable: false, configurable: false });
+const trapped = new Proxy({ t: 1 }, { getOwnPropertyDescriptor(target, key) { log.push("trap " + String(key)); return Reflect.getOwnPropertyDescriptor(target, key); } });
+const sym = Symbol("s");
+const subjects = () => [[new Point(1), "x"], [new Point(1), "double"], [Point.prototype, "double"], [Point, "origin"], [Point, "prototype"], [Point, "name"], [{ x: 5, z: 1 }, "x"], [{ x: 5 }, "y"], [withAccessor, "a"], [withAccessor, "onlyGet"], [withAccessor, "onlySet"], [hidden, "h"], [Object.freeze({ f: 1 }), "f"], [Object.seal({ s: 1 }), "s"], [[1, 2], "length"], [[1, 2], "0"], [[1, 2], 1], [[1, 2], 5], ["text", "length"], ["text", 0], ["text", "9"], [function f(a, b) {}, "length"], [() => 1, "name"], [() => 1, "prototype"], [new Uint8Array(2), "0"], [new Uint8Array(2), "7"], [trapped, "t"], [trapped, "u"], [{ [sym]: 1 }, sym], [5, "x"], [true, "x"], [null, "x"], [undefined, "x"], [{ value: 1, get: 2 }, "value"], [globalThis, "undefined"], [Math, "PI"], [new Map(), "size"], [Map.prototype, "size"], [{ k: 1 }, { toString() { log.push("key"); return "k"; } }]];
+function attempt(run) { try { return String(run()); } catch (e) { return e.constructor.name; } }
+const gopd = Object.getOwnPropertyDescriptor;
+const forms = {
+  value: (o, k) => Object.getOwnPropertyDescriptor(o, k).value,
+  valueGuarded: (o, k) => { const d = Object.getOwnPropertyDescriptor(o, k); return d ? d.value : "none"; },
+  optional: (o, k) => Object.getOwnPropertyDescriptor(o, k)?.value,
+  enumerable: (o, k) => { let d; return !(d = Object.getOwnPropertyDescriptor(o, k)) || d.enumerable; },
+  all: (o, k) => { const d = Object.getOwnPropertyDescriptor(o, k); return d === undefined ? "none" : [typeof d.value, d.writable, typeof d.get, typeof d.set, d.enumerable, d.configurable].join(); },
+  getter: (o, k) => { const d = Object.getOwnPropertyDescriptor(o, k); return d && d.get ? typeof d.get.call(o) : "no getter"; },
+  other: (o, k) => { const d = Object.getOwnPropertyDescriptor(o, k); return d && [d.toString === Object.prototype.toString, d.nothing, d.constructor === Object].join(); },
+  alias: (o, k) => { const d = gopd(o, k); return d && d.writable; },
+  reflect: (o, k) => { const d = Reflect.getOwnPropertyDescriptor(o, k); return d ? typeof d.value + d.configurable : "none"; },
+  has: (o, k) => { const d = Object.getOwnPropertyDescriptor(o, k); return d && ["value" in d, "get" in d, "writable" in d, Object.hasOwn(d, "set"), d.hasOwnProperty("enumerable")].join(); },
+  keys: (o, k) => { const d = Object.getOwnPropertyDescriptor(o, k); return d && Object.keys(d).join(); },
+  spread: (o, k) => { const d = Object.getOwnPropertyDescriptor(o, k); return d && JSON.stringify({ ...d, value: typeof d.value }); },
+  forIn: (o, k) => { const d = Object.getOwnPropertyDescriptor(o, k); let s = ""; for (const n in d) s += n + ";"; return s; },
+  written: (o, k) => { const d = Object.getOwnPropertyDescriptor(o, k); if (!d) return "none"; d.value = 7; d.extra = 8; return [d.value, d.extra, Object.keys(d).join()].join(); },
+  defined: (o, k) => { const d = Object.getOwnPropertyDescriptor(o, k); if (!d) return "none"; const t = Object.defineProperty({}, "p", d); return Object.keys(Object.getOwnPropertyDescriptor(t, "p")).join(); },
+  identity: (o, k) => { const d = Object.getOwnPropertyDescriptor(o, k); return d === Object.getOwnPropertyDescriptor(o, k); },
+  destructured: (o, k) => { const { value, get = "no get", enumerable } = Object.getOwnPropertyDescriptor(o, k) ?? {}; return [typeof value, typeof get, enumerable].join(); },
+  kept: (o, k) => { const d = Object.getOwnPropertyDescriptor(o, k); log.push(d ? 1 : 0); return d && d.value === undefined && d.get === undefined; },
+};
+for (const name in forms) {
+  let line = "";
+  for (let round = 0; round < 30; round++) { log.length = 0; line = subjects().map(([o, k]) => attempt(() => forms[name](o, k))).join(" | ") + " || " + log.join(","); }
+  console.log(name + ": " + line);
+}
+//// descriptors-that-meet-in-front-of-the-call.ts
+// Descriptors that are made on several ways and meet in front of the call that takes them.
+const lines: string[] = [];
+function show(name: string, ...values: unknown[]) { lines.push(name + ": " + values.map(value => typeof value === "function" ? "function " + value.name : typeof value === "symbol" ? value.toString() : JSON.stringify(value) ?? String(value)).join(" | ")); }
+function attempt(run: () => unknown): unknown { try { return run(); } catch (error) { return "threw " + (error as Error).name; } }
+const order: string[] = [];
+function note<T>(text: string, value: T): T { order.push(text); return value; }
+
+function getters(target: object, key: PropertyKey, first: boolean, a: any, b: any) {
+    return Object.defineProperty(target, key, first ? { get: a, enumerable: true, configurable: true } : { get: b, enumerable: true, configurable: true });
+}
+function values(target: object, key: PropertyKey, first: boolean, a: unknown, b: unknown) {
+    return Object.defineProperty(target, key, first ? { value: a, writable: false } : { value: b, writable: false });
+}
+function otherAttributes(target: object, key: PropertyKey, first: boolean, a: unknown) {
+    return Object.defineProperty(target, key, first ? { value: a, enumerable: true } : { value: a, enumerable: false });
+}
+function inOrder(target: object, first: boolean) {
+    return Object.defineProperty(note("target", target), note("key", "k"), first ? { get: note("first", () => 1), enumerable: note("flag", true) } : { get: note("second", () => 2), enumerable: note("flag", true) });
+}
+const o: any = {};
+getters(o, "a", true, () => "from a", () => "from b"); getters(o, "b", false, () => "from a", () => "from b");
+show("getters", o.a, o.b, Object.keys(o), Object.getOwnPropertyDescriptor(o, "a")!.configurable);
+show("not callable", attempt(() => getters(o, "c", true, 5, () => 1)), attempt(() => getters(o, "c", false, () => 1, "text")), "c" in o, attempt(() => getters(o, "d", true, undefined, null)), Object.getOwnPropertyDescriptor(o, "d"));
+values(o, "v", true, 1, "two"); values(o, "w", false, 1, "two");
+show("values", o.v, o.w, attempt(() => { "use strict"; o.v = 3; return "stored"; }), Object.keys(o));
+otherAttributes(o, "e", true, 1); otherAttributes(o, "f", false, 2);
+show("attributes", Object.keys(o), o.e, o.f);
+show("result", getters({}, "x", true, () => 1, () => 2) instanceof Object, attempt(() => getters(5 as never, "x", true, () => 1, () => 2)), attempt(() => getters(Object.freeze({}), "x", false, () => 1, () => 2)));
+const mark = Symbol("mark");
+getters(o, mark, false, () => 1, () => "by symbol"); getters(o, 7, true, () => "by index", () => 2);
+show("keys", o[mark], o[7], Reflect.ownKeys(o).length);
+inOrder({}, true); inOrder({}, false);
+show("order", order);
+getters(o, "a", false, () => 0, () => "again");
+show("again", o.a, attempt(() => values(o, "v", true, 9, 9)), o.v);
+
+function fill(names: [string, number][]) {
+    const made: Record<string, unknown> = Object.create(null);
+    for (const [name, n] of names) Object.defineProperty(made, name, { get: n & 1 ? () => "odd " + n : () => "even " + n, enumerable: true, configurable: true });
+    return made;
+}
+const filled = fill([["p", 1], ["q", 2], ["r", 3]]);
+show("in a loop", filled.p, filled.q, filled.r, Object.keys(filled));
+console.log(lines.join("\n"));
+//// dictionaries.ts
+// Object literals written under a type that has only an index signature: their keys, key order, prototypes, copies and ill-typed contents.
+const out: string[] = [];
+function say(what: string, ...parts: unknown[]): void { out.push(what + ": " + parts.map(String).join(" ")); }
+
+interface Item { name: string; size: number }
+class Box implements Item {
+    name = "box";
+    size = 3;
+    volume(): number { return this.size ** 3; }
+}
+interface State { byId: Record<string, Item>; ids: string[]; count: number }
+function createState(): State { return { byId: {}, ids: [], count: 0 }; }
+function withItem(items: Record<string, Item>, id: string, item: Item): Record<string, Item> { return { ...items, [id]: item }; }
+function count(values: { [key: string]: unknown }): number { return Object.keys(values).length; }
+class Registry {
+    static shared: Record<string, number> = { zero: 0 };
+    items: Record<string, Item> = {};
+    add(item: Item, labels: Record<string, string> = {}): this {
+        this.items[item.name] = item;
+        labels.added = item.name;
+        Registry.shared[item.name] = Object.keys(labels).length;
+        return this;
+    }
+}
+
+{
+    const byId: Record<string, Item> = {};
+    for (let i = 0; i < 5; i++) byId["k" + i] = { name: "n" + i, size: i };
+    byId["10"] = { name: "ten", size: 10 };
+    byId[2] = { name: "two", size: 2 };
+    say("filled by key", Object.keys(byId).join(), byId.k3.name, byId["10"].size, byId[2].name, byId.missing);
+    say("an ordinary object", Object.getPrototypeOf(byId) === Object.prototype, Object.is(byId.constructor, Object), typeof byId.toString, "k1" in byId, "toString" in byId, Object.hasOwn(byId, "toString"), Object.prototype.toString.call(byId));
+}
+{
+    const counts: Record<string, number> = { constructor: 1, toString: 2, hasOwnProperty: 3, valueOf: 4, __defineGetter__: 5 };
+    say("named like built-ins", Object.keys(counts).join(), counts["constructor"], counts["toString"], JSON.stringify(counts));
+    let thrown = "none";
+    try { say("never", "" + counts); } catch (e) { thrown = (e as Error).constructor.name; }
+    say("no conversion to a string", thrown, Object.hasOwn(counts, "hasOwnProperty"), Object.keys(counts).length);
+}
+{
+    const base: Record<string, number> = { inherited: 7 };
+    const derived: Record<string, unknown> = { __proto__: base, own: 1 };
+    say("prototype from the literal", Object.getPrototypeOf(derived) === base, derived.inherited, Object.keys(derived).join(), "inherited" in derived, Object.hasOwn(derived, "__proto__"));
+    const bare: Record<string, unknown> = { __proto__: null, a: 1 };
+    say("no prototype", Object.getPrototypeOf(bare), "toString" in bare, Object.keys(bare).join(), bare.a);
+    const ignored: Record<string, unknown> = { __proto__: 5, a: 1 };
+    say("a primitive is no prototype", Object.getPrototypeOf(ignored) === Object.prototype, Object.keys(ignored).join());
+    const __proto__ = 5;
+    const shorthand: Record<string, unknown> = { __proto__ };
+    const computed: Record<string, unknown> = { ["__proto__"]: 6 };
+    say("own properties named __proto__", Object.hasOwn(shorthand, "__proto__"), shorthand["__proto__"], Object.hasOwn(computed, "__proto__"), Object.keys(computed).join(), Object.getPrototypeOf(computed) === Object.prototype);
+    const stored: Record<string, unknown> = {};
+    stored["__proto__"] = base;
+    say("stored through the setter", Object.getPrototypeOf(stored) === base, Object.keys(stored).length, stored.inherited);
+    const key = "__proto" + "__".slice(0);
+    stored[key] = 3;
+    say("a primitive stored through the setter", Object.getPrototypeOf(stored) === base, Object.keys(stored).length);
+    bare[key] = base;
+    say("stored without the setter", Object.getPrototypeOf(bare), Object.keys(bare).join(), bare[key] === base);
+}
+{
+    const mixed: Record<string, string> = { b: "b", 2: "two", a: "a", "1": "one", "01": "zero one", [-1]: "minus", 1.5: "half", 4294967295: "too large", 4294967294: "largest index" };
+    say("order of keys", Object.keys(mixed).join(), JSON.stringify(mixed));
+    mixed[0] = "zero"; mixed.c = "c"; delete mixed.a; mixed.a = "again";
+    say("order after changes", Object.keys(mixed).join(), Object.values(mixed).join());
+    const repeated: Record<string, number> = { a: 1, b: 2, ["a" + ""]: 3 };
+    say("a repeated key keeps its place", JSON.stringify(repeated));
+}
+{
+    const tag = Symbol("tag");
+    const tagged: Record<string | symbol, number> = { [tag]: 1, plain: 2, [Symbol.iterator]: 3, 0: 4 };
+    say("symbols", Object.keys(tagged).join(), Object.getOwnPropertySymbols(tagged).map(String).join(), tagged[tag], tagged[Symbol.iterator], Reflect.ownKeys(tagged).map(String).join(), JSON.stringify(tagged));
+    delete tagged[tag];
+    say("symbol deleted", Object.getOwnPropertySymbols(tagged).length, tag in tagged, Symbol.iterator in tagged);
+}
+{
+    let items: Record<string, Item> = {};
+    const steps: Record<string, Item>[] = [items];
+    for (let i = 0; i < 6; i++) {
+        items = withItem(items, "id" + (i % 4), i % 2 ? new Box() : { name: "n" + i, size: i });
+        steps.push(items);
+    }
+    say("copies", steps.map(step => Object.keys(step).join("+")).join(), JSON.stringify(items), steps[1] === steps[2]);
+    const box = items.id1;
+    say("an instance read back", box instanceof Box, box.name, box.size, box instanceof Box ? box.volume() : -1);
+
+    let reads = 0;
+    const source = { get computed() { return ++reads; }, plain: 1, [Symbol.for("s")]: 2 };
+    Object.defineProperty(source, "hidden", { value: 3, enumerable: false });
+    const copy: Record<string | symbol, number> = { before: 0, ...source, after: 4 };
+    say("spread", Object.keys(copy).join(), copy.computed, copy.computed, reads, copy.hidden, copy[Symbol.for("s")], Object.getOwnPropertyDescriptor(copy, "computed")!.value);
+    const absent: Record<string, number> | null = out.length < 0 ? {} : null;
+    const letters: any = "ab";
+    const spelled: Record<string, unknown> = { ...absent, ...letters, ...[7, 8, 9].slice(2) };
+    say("spread of other values", JSON.stringify(spelled));
+    const boxes: Record<string, Box> = { one: new Box() };
+    const wider: Record<string, Item> = { ...boxes, ...{ two: new Box(), three: { name: "three", size: 0 } } };
+    say("spread of narrower types", Object.keys(wider).map(id => id + "=" + wider[id].name + "/" + wider[id].size).join());
+}
+{
+    const tree: Record<string, Record<string, number[]>> = { a: { x: [1, 2], y: [] }, b: {}, c: { z: [3] } };
+    tree.b.late = [4];
+    say("nested", JSON.stringify(tree), Object.keys(tree.b).join(), JSON.stringify(tree, ["a", "x"]), JSON.stringify(tree, null, 1).length);
+    const replaced: Record<string, unknown> = { toJSON() { return { replaced: Object.keys(this).join() }; }, a: 1 };
+    say("toJSON", JSON.stringify(replaced), JSON.stringify({ inner: replaced }));
+    const parsed: Record<string, number> = JSON.parse('{"b":1,"a":2,"1":3,"__proto__":4}');
+    const merged: Record<string, number> = { first: 0, ...parsed };
+    say("parsed and merged", Object.keys(merged).join(), Object.hasOwn(merged, "__proto__"), merged["__proto__"], Object.getPrototypeOf(merged) === Object.prototype);
+}
+{
+    type Operation = (n: number) => number;
+    function negate(n: number): number { return -n; }
+    const operations: Record<string, Operation> = { double(n) { return n * 2; }, square: n => n * n, ["cu" + "be"]: n => n ** 3, negate, chosen: out.length > 1000 ? negate : Math.abs };
+    say("functions", Object.keys(operations).map(name => name + "=" + operations[name](-3) + "/" + operations[name].name).join());
+    const parent: Record<string, () => string> = { who() { return "parent"; } };
+    const child: Record<string, () => string> = { who() { return "child of " + super.who(); } };
+    Object.setPrototypeOf(child, parent);
+    say("super", child.who(), parent.who());
+    let reads = 0;
+    const lazy: Record<string, number> = { get once() { return ++reads; }, set once(value) { reads = value; }, plain: 1 };
+    say("accessors", lazy.once, lazy.once, (lazy.once = 10), lazy.once, Object.keys(lazy).join(), typeof Object.getOwnPropertyDescriptor(lazy, "once")!.get);
+}
+{
+    const byId: Record<string, Item> = { good: { name: "good", size: 1 } };
+    const untyped: any = byId;
+    untyped.number = 5; untyped.text = "text"; untyped.nothing = null; untyped.other = { size: "wide" }; untyped.list = [1, 2];
+    const seen: string[] = [];
+    for (const id in byId) {
+        const item = byId[id];
+        seen.push(id + "=" + (item == null ? "nil" : item.name + "/" + item.size));
+    }
+    say("contents that do not fit the type", seen.join());
+    const wrong: any = { name: 1 };
+    const held: Record<string, Item> = { wrong, [wrong.name]: wrong.name };
+    say("members that do not fit the type", JSON.stringify(held), held.wrong.name, held[1]);
+}
+{
+    const fixed: Record<string, number> = { a: 1, b: 2 };
+    Object.defineProperty(fixed, "hidden", { value: 3, enumerable: false, configurable: true, writable: false });
+    Object.freeze(fixed);
+    const thrown: string[] = [];
+    try { fixed.c = 4; } catch (e) { thrown.push((e as Error).constructor.name); }
+    try { delete fixed.a; } catch (e) { thrown.push((e as Error).constructor.name); }
+    say("frozen", thrown.join(), Object.isFrozen(fixed), Object.keys(fixed).join(), fixed.hidden, fixed.c);
+    const above: Record<string, number> = { shared: 1, above: 2 };
+    const below: Record<string, number> = { below: 3, shared: 4 };
+    Object.setPrototypeOf(below, above);
+    const seen: string[] = [];
+    for (const key in below) seen.push(key + "=" + below[key]);
+    say("for-in through a prototype", seen.join(), Object.entries(below).join(";"), JSON.stringify(Object.assign({}, below, above)));
+}
+{
+    const first = createState(), second = createState();
+    first.byId.a = { name: "a", size: 1 }; first.ids.push("a"); first.count++;
+    say("a new dictionary each time", Object.keys(first.byId).join(), Object.keys(second.byId).length, first.byId === second.byId, JSON.stringify(second));
+    const rows: Record<string, number>[] = [{}, { a: 1 }, {}];
+    rows[0].x = 1; rows[2]["y" + rows.length] = 2;
+    say("in an array", JSON.stringify(rows), rows[0] === rows[2]);
+}
+{
+    const registry = new Registry().add(new Box()).add({ name: "plain", size: 1 }, { color: "red" });
+    say("fields and parameters", Object.keys(registry.items).join(), JSON.stringify(Registry.shared), new Registry().items === registry.items);
+    say("arguments and assertions", count({}), count({ a: 1, b: {} }), count({} as Record<string, Item>), count({ a: 1 } satisfies Record<string, number>), count(out.length ? { yes: 1 } : {}));
+}
+{
+    const sparse: { [index: number]: string } = { 5: "five", 0: "zero" };
+    sparse[2] = "two"; sparse[1e3] = "thousand";
+    say("indexed by numbers", Object.keys(sparse).join(), sparse[5], sparse[3], JSON.stringify(sparse), Array.prototype.join.call({ length: 3, ...sparse }, "|"));
+    const key = "k" + out.length;
+    const own = { [key]: 1 };
+    own.more = 2; own[key]++;
+    say("a literal of computed keys", JSON.stringify(own), Object.keys(own).length);
+}
+{
+    const many: Record<string, number> = { seed: -1 };
+    for (let i = 0; i < 3000; i++) many["key" + i] = i;
+    for (let i = 0; i < 3000; i += 3) delete many["key" + i];
+    let sum = 0;
+    for (const key in many) sum += many[key];
+    say("many keys", Object.keys(many).length, sum, Object.keys(many).slice(0, 3).join(), Object.entries(many).pop()!.join("="));
+    const squares: Record<string, number> = {
+        w0: 0, w1: 1, w2: 4, w3: 9, w4: 16, w5: 25, w6: 36, w7: 49, w8: 64, w9: 81,
+        w10: 100, w11: 121, w12: 144, w13: 169, w14: 196, w15: 225, w16: 256, w17: 289, w18: 324, w19: 361,
+        w20: 400, w21: 441, w22: 484, w23: 529, w24: 576, w25: 625, w26: 676, w27: 729, w28: 784, w29: 841,
+        w30: 900, w31: 961, w32: 1024, w33: 1089, w34: 1156, w35: 1225, w36: 1296, w37: 1369, w38: 1444, w39: 1521,
+        w40: 1600, w41: 1681, w42: 1764, w43: 1849, w44: 1936, w45: 2025, w46: 2116, w47: 2209, w48: 2304, w49: 2401,
+        w50: 2500, w51: 2601, w52: 2704, w53: 2809, w54: 2916, w55: 3025, w56: 3136, w57: 3249, w58: 3364, w59: 3481,
+        w60: 3600, w61: 3721, w62: 3844, w63: 3969, w64: 4096, w65: 4225, w66: 4356, w67: 4489, w68: 4624, w69: 4761,
+    };
+    let total = 0;
+    for (let i = 0; i < 80; i++) total += squares["w" + i] ?? -1;
+    delete squares.w35; squares.w70 = 4900;
+    say("a long literal", total, Object.keys(squares).length, Object.keys(squares)[35], Object.keys(squares).pop(), squares.w69);
+}
+console.log(out.join("\n"));
+//// dictionaries-are-built-anew-from-the-same-names-between-collections.js
+// Dictionaries are built name by name, each name asked for first, again and again from the same lists: the objects go through the same shapes every time.
+// Between the rounds whole collections run, names are deleted, and a list is long enough that its object changes the way it keeps its names.
+function namesOf(list, count) {
+  const names = [];
+  for (let k = 0; k < count; k++) names.push(k % 5 === 4 ? "a_rather_long_name_of_list_" + list + "_number_" + k : "n" + list + "_" + k);
+  return names;
+}
+function fresh(text) {
+  return JSON.parse(JSON.stringify({ text })).text;
+}
+function piece(text) {
+  return fresh("<<" + text + ">>").slice(2, -2);
+}
+////= lines-181	buildByRead	seen[key] !== undefined
+////= lines-181	buildByIn	key in seen
+////= lines-181	buildByHasOwn	Object.hasOwn(seen, key)
+function sumOf(seen, names) {
+  let sum = 0;
+  for (let k = 0; k < names.length; k++) {
+    const value = seen[names[k]];
+    sum = (sum * 31 + (value === undefined ? 7 : typeof value === "string" ? value.length : value)) % 1000003;
+  }
+  return sum;
+}
+function replaceAll(seen, names, by) {
+  for (let k = 0; k < names.length; k++) if (names[k] in seen) seen[names[k]] = seen[names[k]] + by;
+}
+
+const above = { n0_1: "above", n1_2: "above", toString: undefined };
+const builders = [buildByRead, buildByIn, buildByHasOwn];
+const counts = [1, 3, 12, 40, 70, 300];
+const kept = [];
+for (let round = 0; round < 6; round++) {
+  const line = [];
+  for (let list = 0; list < counts.length; list++) {
+    const names = namesOf(list, counts[list]);
+    const twice = names.concat(names.slice(0, names.length >> 1));
+    const asked = round % 3 === 1 ? twice.map(fresh) : round % 3 === 2 ? twice.map(piece) : twice;
+    const others = namesOf(list + 1, counts[list]);
+    for (const build of builders) {
+      for (const prototype of [null, Object.prototype, above]) {
+        const [seen, added] = build(asked, prototype);
+        let sum = sumOf(seen, names) + sumOf(seen, others) * 3 + added * 5;
+        replaceAll(seen, asked, round);
+        sum += sumOf(seen, names) * 7;
+        if (round & 1) {
+          delete seen[names[names.length >> 1]];
+          sum += sumOf(seen, asked) * 11 + (names[names.length >> 1] in seen ? 1 : 0);
+          seen[names[names.length >> 1]] = -1;
+          sum += sumOf(seen, names) * 13;
+        }
+        sum += Object.keys(seen).length;
+        line.push(sum % 1000003);
+        if ((round + list) % 4 === 0) kept.push(seen);
+      }
+    }
+    if (round >= 2) Bun.gc(true);
+    // What was kept is asked once its shapes have lost what a collection takes from them.
+    let sumOfKept = 0;
+    for (const seen of kept) sumOfKept = (sumOfKept + sumOf(seen, names) + sumOf(seen, others)) % 1000003;
+    line.push(sumOfKept);
+  }
+  console.log(round, line.join(" "));
+}
+//// dictionary-objects-with-deletes.ts
+// Objects filled and emptied by computed keys: property order, enumeration and attributes after many deletes.
+const out: string[] = [];
+function say(what: string, ...parts: unknown[]): void { out.push(what + ": " + parts.join(" ")); }
+
+function slidingWindow(count: number, width: number): string {
+    const o: Record<string, number> = {};
+    let sum = 0;
+    for (let i = 0; i < count; i++) {
+        o["k" + i] = i;
+        if (i >= width) delete o["k" + (i - width)];
+    }
+    for (const k in o) sum += o[k]!;
+    return sum + " " + Object.keys(o).length + " " + Object.keys(o)[0] + " " + Object.keys(o)[width - 1];
+}
+say("sliding window", slidingWindow(5000, 100), slidingWindow(300, 3), slidingWindow(40, 39));
+
+{
+    const o: Record<string, number> = {};
+    for (let i = 0; i < 12; i++) o["p" + i] = i;
+    for (let i = 0; i < 12; i += 2) delete o["p" + i];
+    for (let i = 0; i < 12; i += 4) o["p" + i] = 100 + i;
+    say("deleted keys come back at the end", Object.keys(o).join(","), JSON.stringify(o));
+    say("absent keys", delete o["nothing" + o.p1], "p2" in o, o["p" + 2], Object.keys(o).length);
+    o[7] = 7; o["3"] = 3; delete o["p" + 1];
+    say("indices stay first", Object.keys(o).join(","));
+    delete o[7];
+    say("index deleted", Object.keys(o).join(","), Object.entries(o).length);
+}
+{
+    const o: Record<string, unknown> = {};
+    for (let i = 0; i < 20; i++) o["a" + i] = i;
+    Object.defineProperty(o, "fixed", { value: 1, configurable: false, enumerable: true, writable: true });
+    Object.defineProperty(o, "hidden", { value: 2, configurable: true, enumerable: false });
+    Object.defineProperty(o, "computed", { get() { return Object.keys(this).length; }, configurable: true, enumerable: true });
+    let thrown = "";
+    try { delete o["fix" + "ed".slice(0)]; } catch (e) { thrown = (e as Error).constructor.name; }
+    say("not configurable", thrown, "fixed" in o);
+    const names = ["a3", "hidden", "a19", "computed", "a0"];
+    for (const name of names) delete o[name];
+    say("after mixed deletes", Object.getOwnPropertyNames(o).join(","), o.computed, o.hidden);
+    const tag = Symbol("tag");
+    (o as Record<symbol, unknown>)[tag] = "s";
+    say("symbol", Object.getOwnPropertySymbols(o).length, delete (o as Record<symbol, unknown>)[tag], Object.getOwnPropertySymbols(o).length);
+}
+{
+    const frozen: Record<string, number> = {};
+    for (let i = 0; i < 10; i++) frozen["f" + i] = i;
+    delete frozen["f" + 4];
+    Object.freeze(frozen);
+    let thrown = "";
+    try { delete frozen["f" + 5]; } catch (e) { thrown = (e as Error).constructor.name; }
+    say("frozen", thrown, Object.keys(frozen).join(","), Object.isFrozen(frozen));
+}
+{
+    const base: Record<string, number> = {};
+    for (let i = 0; i < 10; i++) base["b" + i] = i;
+    const derived: Record<string, number> = Object.create(base);
+    for (let i = 5; i < 15; i++) derived["b" + i] = 100 + i;
+    for (let i = 0; i < 15; i += 3) delete derived["b" + i];
+    for (let i = 0; i < 10; i += 4) delete base["b" + i];
+    const seen: string[] = [];
+    for (const k in derived) seen.push(k + "=" + derived[k]);
+    say("through a prototype", seen.join(","));
+}
+{
+    const counts: Record<string, number> = {};
+    let live = 0, checksum = 0, seed = 7;
+    for (let round = 0; round < 20000; round++) {
+        seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+        const key = "id" + (seed % 257);
+        if (key in counts) { checksum = (checksum * 31 + counts[key]!) | 0; delete counts[key]; live--; } else { counts[key] = round; live++; }
+    }
+    say("random churn", live, Object.keys(counts).length, checksum, Object.keys(counts).slice(0, 4).join(","));
+}
+{
+    const copies: Record<string, number>[] = [];
+    for (let n = 0; n < 50; n++) {
+        const o: Record<string, number> = {};
+        for (let i = 0; i < n; i++) o["x" + i] = i;
+        for (let i = 0; i < n; i += 2) delete o["x" + i];
+        copies.push({ ...o });
+    }
+    say("spread after deletes", copies.map(c => Object.keys(c).length).join(","), JSON.stringify(copies[9]));
+    const untyped: any = {};
+    for (let i = 0; i < 30; i++) untyped["u" + i] = i;
+    for (let i = 29; i >= 0; i -= 3) delete untyped["u" + i];
+    untyped.u29 = "again";
+    say("untyped", Object.keys(untyped).length, untyped.u29, untyped.u28, Object.keys(untyped).pop());
+}
+console.log(out.join("\n"));
+//// dynamic-key-lookups.ts
+// Fields of a typed object are looked up with keys that are built at run time, with garbage collections in between.
+declare const console: { log(...values: unknown[]): void };
+type Layout = { narrow: number; wide: number; tails: number; heads: number; masks: number; empty: number; space: number; words: number; tabs: number };
+function make(by: number): Layout {
+  return { narrow: by, wide: by + 1, tails: by + 2, heads: by + 3, masks: by + 4, empty: by + 5, space: by + 6, words: by + 7, tabs: by + 8 };
+}
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+const texts = 'narrow wide tails heads masks empty space words tabs none1 none2 none3';
+// A new string each time: never one of the program's constants.
+function key(i: number): string {
+  return texts.split(' ')[i]!.split('').join('');
+}
+function expected(by: number, i: number): number | undefined {
+  return i < 9 ? by + i : undefined;
+}
+const record: any = make(100);
+let wrongIndexed = 0, wrongReflect = 0, wrongDescriptor = 0, wrongHas = 0, wrongIn = 0;
+for (let round = 0; round < 60; round++) { // Five collections for each key: more rounds are too slow for the suite.
+  for (let i = 0; i < 12; i++) {
+    const j = (i * 7 + round) % 12;
+    if (record[key(j)] !== expected(100, j)) wrongIndexed++;
+    collect();
+    if (Reflect.get(record, key(j)) !== expected(100, j)) wrongReflect++;
+    collect();
+    if (Object.getOwnPropertyDescriptor(record, key(j))?.value !== expected(100, j)) wrongDescriptor++;
+    collect();
+    if (Object.prototype.hasOwnProperty.call(record, key(j)) !== (j < 9)) wrongHas++;
+    collect();
+    if (key(j) in record !== (j < 9)) wrongIn++;
+    collect();
+  }
+}
+console.log('indexed', wrongIndexed, 'Reflect.get', wrongReflect, 'descriptor', wrongDescriptor, 'hasOwnProperty', wrongHas, 'in', wrongIn);
+function count(name: string, rounds: number, isRight: (j: number) => boolean): void {
+  let wrong = 0;
+  for (let round = 0; round < rounds; round++) for (let i = 0; i < 12; i++) { const j = (i * 7 + round) % 12; if (!isRight(j)) wrong++; collect(); }
+  console.log(name, wrong);
+}
+count('alone: indexed', 40, j => record[key(j)] === expected(100, j));
+count('alone: Reflect.get', 40, j => Reflect.get(record, key(j)) === expected(100, j));
+count('alone: descriptor', 40, j => Object.getOwnPropertyDescriptor(record, key(j))?.value === expected(100, j));
+count('alone: hasOwnProperty.call', 40, j => Object.prototype.hasOwnProperty.call(record, key(j)) === (j < 9));
+count('alone: Object.hasOwn', 40, j => Object.hasOwn(record, key(j)) === (j < 9));
+count('alone: in', 40, j => (key(j) in record) === (j < 9));
+count('alone: Reflect.has', 40, j => Reflect.has(record, key(j)) === (j < 9));
+count('alone: propertyIsEnumerable', 40, j => Object.prototype.propertyIsEnumerable.call(record, key(j)) === (j < 9));
+// ───── WRITES. The contents of the object afterwards are read BY THE PROGRAM's OWN NAMES, through the type, and compared with a model.
+function read(l: Layout): (number | undefined)[] { return [l.narrow, l.wide, l.tails, l.heads, l.masks, l.empty, l.space, l.words, l.tabs]; }
+// Separate names for the properties that are not fields here: `o.other1` keeps that name alive forever, and none1 .. none3 above have to die for the "has" tests to show anything.
+function extras(o: any): unknown[] { return [o.other1, o.other2, o.other3]; }
+const written = 'narrow wide tails heads masks empty space words tabs other1 other2 other3';
+const keyWritten = (i: number): string => written.split(' ')[i]!.split('').join('');
+function writes(name: string, rounds: number, write: (o: any, k: string, v: number) => void): void {
+  let wrong = 0;
+  for (let round = 0; round < rounds; round++) for (let i = 0; i < 12; i++) {
+    const j = (i * 5 + round) % 12, v = 1000 + round * 12 + i, typed = make(0);
+    write(typed, keyWritten(j), v);
+    if ([...read(typed), ...extras(typed)].some((value, at) => value !== (at === j ? v : at < 9 ? at : undefined))) wrong++;
+    collect();
+  }
+  console.log(name, wrong);
+}
+writes('store: indexed', 40, (o, k, v) => { o[k] = v; });
+writes('store: Reflect.set', 40, (o, k, v) => { Reflect.set(o, k, v); });
+writes('store: defineProperty', 40, (o, k, v) => { Object.defineProperty(o, k, { value: v, writable: true, enumerable: true, configurable: true }); });
+writes('store: Object.assign', 40, (o, k, v) => { Object.assign(o, { [k]: v }); });
+// delete: the one that is named goes, and no other. What is left is read through the type: a test that asks by a name it keeps (`o.narrow` of an `any`, a list of the names, Object.keys(), JSON.stringify()) makes that name
+// live for good, and shows nothing from then on.
+type Loose = { narrow?: number; wide?: number; tails?: number; heads?: number; masks?: number; empty?: number; space?: number; words?: number; tabs?: number };
+const makeLoose = (by: number): Loose => ({ narrow: by, wide: by + 1, tails: by + 2, heads: by + 3, masks: by + 4, empty: by + 5, space: by + 6, words: by + 7, tabs: by + 8 });
+const readLoose = (l: Loose): (number | undefined)[] => [l.narrow, l.wide, l.tails, l.heads, l.masks, l.empty, l.space, l.words, l.tabs];
+{
+  let wrong = 0;
+  for (let round = 0; round < 40; round++) for (let i = 0; i < 9; i++) {
+    const j = (i * 5 + round) % 9, typed = makeLoose(10);
+    delete (typed as any)[key(j)];
+    if (readLoose(typed).some((value, at) => value !== (at === j ? undefined : 10 + at))) wrong++;
+    collect();
+  }
+  console.log('delete', wrong);
+}
+// Not tested: a name that dies without a collection in between (native code's `Identifier::fromString(vm, "narrow")`). No program can create one: a string's name lives until its JSString is swept.
+export {};
+//// dynamic-key-lookups-monomorphic.ts
+// Each way to ask a typed object about a key built at run time (`o[k]`, `Reflect.get`, `hasOwnProperty`, descriptors ..), one per loop, with garbage collections in between.
+declare const console: { log(...values: unknown[]): void };
+type Layout = { narrow: number; wide: number; tails: number; heads: number; masks: number; empty: number; space: number; words: number; tabs: number };
+const make = (by: number): Layout => ({ narrow: by, wide: by + 1, tails: by + 2, heads: by + 3, masks: by + 4, empty: by + 5, space: by + 6, words: by + 7, tabs: by + 8 });
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+const texts = 'narrow wide tails heads masks empty space words tabs none1 none2 none3';
+const key = (i: number): string => texts.split(' ')[i]!.split('').join('');
+const record: any = make(100);
+function count(name: string, isRight: (j: number) => boolean): void {
+  let wrong = 0
+  for (let round = 0; round < 100; round++) for (let i = 0; i < 12; i++) { const j = (i * 7 + round) % 12; if (!isRight(j)) wrong++; collect() }
+  console.log(name, wrong)
+}
+const expected = (j: number): number | undefined => j < 9 ? 100 + j : undefined
+count("indexed", j => record[key(j)] === expected(j))
+count("Reflect.get", j => Reflect.get(record, key(j)) === expected(j))
+count("descriptor", j => Object.getOwnPropertyDescriptor(record, key(j))?.value === expected(j))
+count("hasOwnProperty.call", j => Object.prototype.hasOwnProperty.call(record, key(j)) === (j < 9))
+count("Object.hasOwn", j => Object.hasOwn(record, key(j)) === (j < 9))
+count("in", j => (key(j) in record) === (j < 9))
+count("Reflect.has", j => Reflect.has(record, key(j)) === (j < 9))
+count("propertyIsEnumerable", j => Object.prototype.propertyIsEnumerable.call(record, key(j)) === (j < 9))
+export {};
+//// empty-literal-filled-by-computed-keys/main.ts
+// Objects that start as `{}`, get named properties, and are then filled by computed keys in a loop.
+// @ts-ignore
+import "./text.js";
+//// empty-literal-filled-by-computed-keys/text.js
+var log = [];
+function show(o) { return Object.keys(o).join() + " " + JSON.stringify(o); }
+function id(x) { return x; }
+var a = {}; a.name = "a"; a.k = 1; for (var i = 0; i < 3; i++) a["x" + i] = i; log.push("1 module, {} then names: " + show(a));
+function f(n) { var o = {}; o.name = n; o.k = 1; for (var i = 0; i < 3; i++) o["x" + i] = i; return show(o); }
+log.push("2 function: " + f("b")); for (var r = 0; r < 300; r++) f("w"); log.push("3 function, hot: " + f("c"));
+function g(n, src) { var o = {}; o.name = id(n); o.k = id(1); for (var key in src) o[key] = src[key]; return show(o); }
+log.push("4 function, calls, for-in: " + g("d", { p: 1, q: 2 }));
+function h(n, src) { const o = {}; o.name = n; for (const [key, value] of Object.entries(src)) o[key] = value; o.last = 1; return show(o); }
+log.push("5 function, entries, a name behind the loop: " + h("e", { p: 1 }));
+function j(n, src) { var o = Object.create(null); o.name = n; o.k = 1; for (var key in src) o[key] = src[key]; return Object.keys(o).join() + " " + o.name; }
+log.push("6 null prototype: " + j("f", { p: 1 }));
+function k(src) { var o = {}; for (var key in src) o[key] = src[key]; return show(o); }
+log.push("7 nothing but keys (bykey1's own ground): " + k({ p: 1, q: 2 }));
+function m(n, src) { var o = {}; if (n) { o.name = n; o.k = 1; } for (var key in src) o[key] = src[key]; return show(o); }
+log.push("8 names under a condition: " + m("g", { p: 1 }) + " | " + m("", { p: 1 }));
+console.log(log.join("\n"));
+//// entries-of-literal-with-dictionary-spread.ts
+// `Object.entries({ ...sent, 9: "tail" })`, where `sent` is a dictionary by number: TypeScript infers the values' type from the one written member and forgets what the spread brings. What is inferred never decides what the program does.
+type Body = string | Uint8Array;
+const sent: Record<number, Body> = { 1: new Uint8Array(2), 5: "five" };
+const counts: { [index: number]: number | boolean } = { 1: true, 2: 2 };
+const row = (name: string, f: () => unknown) => { let r: unknown; try { r = f(); } catch (e) { r = "THROWS " + (e as Error).message.split(" (bun")[0]; } console.log(name + ": " + JSON.stringify(r)); };
+row("entries, taken apart in the parameter", () => Object.entries({ ...sent, 9: "tail" }).map(([number, content]) => [number, typeof content]));
+row("entries, a parameter", () => Object.entries({ ...sent, 9: "tail" }).map(entry => typeof entry[1]));
+row("entries, for..of", () => { const kinds: string[] = []; for (const [, content] of Object.entries({ ...sent, 9: "tail" })) kinds.push(typeof content); return kinds; });
+row("values", () => Object.values({ ...sent, 9: "tail" }).map(content => typeof content));
+row("values, kept first", () => { const all = Object.values({ ...counts, 9: 9 }); return all.map(n => typeof n); });
+row("used as the type says", () => Object.entries({ ...sent, 9: "tail" }).map(([, content]) => content.length));
+row("handed on", () => { const size = (text: unknown) => (typeof text === "string" ? text.length : -1); return Object.values({ ...sent, 9: "tail" }).map(content => size(content)); });
+row("the spread behind the written member", () => Object.values({ 9: "tail", ...sent }).map(content => typeof content));
+row("no spread: a fact as before", () => Object.values({ 1: "a", 9: "tail" }).map(content => content.length));
+row("a spread of a literal: known", () => Object.values({ ...{ 1: "a" }, 9: "tail" }).map(content => content.length));
+row("a dictionary by string", () => { const named: Record<string, Body> = { a: new Uint8Array(1) }; return Object.values({ ...named, b: "tail" }).map(content => typeof content); });
+//// error-capture-stack-trace-on-a-class-and-on-records-with-and-without-a-stack-field.ts
+// Error.captureStackTrace defines stack on an instance whose class declares it as a string, on a record that has it and on a record that lacks it.
+class Failure { stack: string; code: number; constructor(code: number) { this.stack = "none"; this.code = code; } describe(): string { return this.stack.length > 4 ? "long" : this.stack; } }
+type Plain = { stack: string; n: number };
+type Bare = { a: number; b: string };
+function plain(i: number): Plain { return { stack: "s" + i, n: i }; }
+function bare(i: number): Bare { return { a: i, b: "b" + i }; }
+const out: string[] = [];
+for (let i = 0; i < 4; i++) {
+  const f = new Failure(i), p = plain(i), b = bare(i);
+  if (i >= 2) { (Error as any).captureStackTrace(f); (Error as any).captureStackTrace(p); (Error as any).captureStackTrace(b); }
+  out.push([f.describe(), typeof f.stack, f.code, typeof p.stack, p.stack.startsWith("Error") || p.stack, p.n, b.a, b.b, typeof (b as any).stack, Object.keys(f).join(), Object.keys(p).join(), Object.keys(b).join(), Object.getOwnPropertyNames(b).join()].join(" "));
+  f.stack = "again"; p.stack = "again";
+  out.push(f.describe() + " " + p.stack + " " + JSON.stringify(p) + JSON.stringify(b));
+}
+console.log(out.join("\n"));
+//// evaluated-text-stores-other-types-into-typed-variables.ts
+// Evaluated text is one more writer of the variables it can see, and no type holds it back.
+let count: number = 1;
+let label: string = "one";
+let on: boolean = true;
+let point: { x: number; y: number } = { x: 1, y: 2 };
+let callback: (value: number) => number = value => value + 1;
+
+function describe(): string {
+  return [typeof count, String(count), typeof label, String(label), typeof on, String(on), typeof point, JSON.stringify(point), typeof callback].join(" ");
+}
+function inner(): string {
+  let total: number = 10;
+  let name: string = "inner";
+  let box: { value: number } = { value: 3 };
+  const read = () => [typeof total, String(total), typeof name, String(name), JSON.stringify(box)].join(" ");
+  const lines = [read()];
+  eval("total = 'text'; name = 5; box = null");
+  lines.push(read());
+  eval("total = -0; name = undefined; box = [1]");
+  lines.push(read() + " " + Object.is(total, -0));
+  eval("total = 2 ** 31; name = 'back'; box = { value: 4 }");
+  lines.push(read() + " " + (total + 1) + " " + name.length + " " + box.value);
+  return lines.join("\n");
+}
+console.log(describe());
+eval("count = 'text'; label = 7; on = null; point = 'none'; callback = 3");
+console.log(describe());
+eval("count = 0.5; label = undefined; on = 1; point = [1, 2]; callback = { call: 1 }");
+console.log(describe());
+eval("count = 3; label = 'three'; on = false; point = { x: 3, y: 4 }; callback = value => value * 2");
+console.log(describe(), count + 1, label.length, point.x + point.y, callback(4));
+console.log(inner());
+//// exported-literal-accessors/files/lib.ts
+let kept = 1;
+export const own = { w: 1, get g() { return 2; } };
+export const only = { get g() { return 3; } };
+export const pair = { get x() { return kept; }, set x(v: number) { kept = v * 2; } };
+export function make(n: number) { return { get g() { return n; } }; }
+export const annotated: { g: number } = { get g() { return 4; } };
+//// exported-literal-accessors/main.ts
+// An object literal with getters and setters is exported from one file and used through a declared type in another.
+import { own, only, pair, make, annotated } from "./files/lib.ts";
+declare const console: any;
+function line(name: string, f: () => unknown) { try { console.log(name, JSON.stringify(f())); } catch (e: any) { console.log(name, "THREW", e.constructor.name, String(e.message).slice(0, 70)); } }
+const read = (p: { g: number }) => p.g;
+line("own type, data beside", () => read(own));
+line("own type, accessors only", () => read(only));
+line("made by a function", () => [read(make(5)), read(make(6))]);
+line("annotated over there", () => read(annotated));
+line("directly", () => [own.g, own.w, only.g, annotated.g]);
+line("a pair", () => { const p: { x: number } = pair; p.x = 4; return [p.x, pair.x]; });
+line("assigned", () => { const seen: { g: number; w: number } = own; return seen.g + seen.w; });
+line("in an array", () => { const all: { g: number }[] = [own, only, make(7), annotated, { g: 8 }]; return all.map(read); });
+//// extra-property-reads-avoid-runtime.ts
+// By-name reads of properties outside an object's layout (getters of a literal that also has data members, properties added later, absent names) are answered
+// by the stubs without calling the runtime, for one object and for many. The jsc shell counts the calls; elsewhere the program checks the values alone.
+declare const aotOperationCount: undefined | ((name: string) => number);
+const operations = ["operationAOTGetById", "operationAOTGetByIdAndCache"];
+function entered(): number { let sum = 0; if (typeof aotOperationCount === "function") for (const operation of operations) sum += aotOperationCount(operation); return sum; }
+const lines: string[] = [];
+function measure(label: string, reads: number, run: () => number): void {
+    const before = entered();
+    const result = run();
+    const entries = entered() - before;
+    lines.push(label + ": " + result + ", " + (entries * 20 < reads ? "few entries" : entries + " ENTRIES FOR " + reads + " READS"));
+}
+interface Point { x: number; readonly twice: number }
+function point(x: number): Point { return { x, get twice() { return this.x * 2; } }; }
+function twiceOf(from: any): number { return from.twice; }
+function tagOf(from: any): unknown { return from.tag; }
+function colorOf(from: any): unknown { return from.color; }
+function anyTwiceOf(from: any): number { return from.twice; }
+
+const one = point(3);
+measure("getter of one object", 20000, () => { let sum = 0; for (let i = 0; i < 20000; i++) sum += twiceOf(one); return sum; });
+const many: Point[] = [];
+for (let i = 0; i < 200; i++) many.push(point(i));
+measure("two hundred objects of the literal, in turn", 20000, () => { let sum = 0; for (let round = 0; round < 100; round++) for (const each of many) sum += twiceOf(each); return sum; });
+measure("absent name", 20000, () => { let sum = 0; for (let round = 0; round < 100; round++) for (const each of many) if (tagOf(each) === undefined) sum++; return sum; });
+for (const each of many) (each as any).color = each.x;
+measure("property added later", 20000, () => { let sum = 0; for (let round = 0; round < 100; round++) for (const each of many) sum += colorOf(each) as number; return sum; });
+const others: any[] = [JSON.parse('{"twice":1}'), JSON.parse('{"a":1,"twice":2}'), JSON.parse('{"a":1,"b":2,"twice":3}'), one];
+measure("getter at a polymorphic site", 20000, () => { let sum = 0; for (let i = 0; i < 20000; i++) sum += anyTwiceOf(others[i & 3]); return sum; });
+measure("new objects, each read once", 20000, () => { let sum = 0; for (let i = 0; i < 20000; i++) sum += twiceOf(point(i & 15)); return sum; });
+console.log(lines.join("\n"));
+//// extra-property-stores.ts
+// Stores under names a class does not declare: adding, replacing, past the inline capacity, of young cells into old objects, after preventExtensions and freeze, over accessors, over a method's name.
+class Point {
+    x: number;
+    y: number;
+    constructor(x: number, y: number) { this.x = x; this.y = y; }
+    norm(): number { return this.x * this.x + this.y * this.y; }
+}
+type Put = (target: Point, value: unknown) => void;
+type Route = { title: string; put: Put; putNine: (target: Point, base: number) => void; read: (target: Point) => string };
+
+function putTyped(point: Point, value: unknown): void { (point as any).tag = value; }
+function putUntyped(object: any, value: unknown): void { object.tag = value; }
+function putNineTyped(point: Point, base: number): void {
+    const object = point as any;
+    object.a = base + 1; object.b = base + 2; object.c = base + 3;
+    object.d = base + 4; object.e = base + 5; object.f = base + 6;
+    object.g = base + 7; object.h = base + 8; object.i = base + 9;
+}
+function putNineUntyped(object: any, base: number): void {
+    object.a = base + 1; object.b = base + 2; object.c = base + 3;
+    object.d = base + 4; object.e = base + 5; object.f = base + 6;
+    object.g = base + 7; object.h = base + 8; object.i = base + 9;
+}
+// Class code is always strict. Plain Bun's transpiler drops a "use strict" directive inside a function, which would leave the reference run without a strict store.
+class StrictCode {
+    static mode = function (this: unknown): string { return this === undefined ? "strict" : "sloppy"; };
+    static putTyped = function (point: Point, value: unknown): void { (point as any).tag = value; };
+    static putUntyped = function (object: any, value: unknown): void { object.tag = value; };
+    static putNineTyped = function (point: Point, base: number): void {
+        const object = point as any;
+        object.a = base + 1; object.b = base + 2; object.c = base + 3;
+        object.d = base + 4; object.e = base + 5; object.f = base + 6;
+        object.g = base + 7; object.h = base + 8; object.i = base + 9;
+    };
+    static putNineUntyped = function (object: any, base: number): void {
+        object.a = base + 1; object.b = base + 2; object.c = base + 3;
+        object.d = base + 4; object.e = base + 5; object.f = base + 6;
+        object.g = base + 7; object.h = base + 8; object.i = base + 9;
+    };
+}
+const { mode: classCodeMode, putTyped: putTypedStrictly, putUntyped: putUntypedStrictly, putNineTyped: putNineTypedStrictly, putNineUntyped: putNineUntypedStrictly } = StrictCode;
+function readTyped(point: Point): string {
+    const object = point as any;
+    return [object.tag, object.a, object.b, object.c, object.d, object.e, object.f, object.g, object.h, object.i].join();
+}
+function readUntyped(object: any): string {
+    return [object.tag, object.a, object.b, object.c, object.d, object.e, object.f, object.g, object.h, object.i].join();
+}
+function shadowTyped(point: Point, value: unknown): void { (point as any).norm = value; }
+function shadowUntyped(object: any, value: unknown): void { object.norm = value; }
+const routes: Route[] = [
+    { title: "typed", put: putTyped, putNine: putNineTyped, read: readTyped },
+    { title: "typed strict", put: putTypedStrictly, putNine: putNineTypedStrictly, read: readTyped },
+    { title: "untyped", put: putUntyped, putNine: putNineUntyped, read: readUntyped },
+    { title: "untyped strict", put: putUntypedStrictly, putNine: putNineUntypedStrictly, read: readUntyped },
+];
+
+function describeResult(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function digest(texts: string[]): string {
+    let hash = 0;
+    for (const text of texts) for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) | 0;
+    return texts[0] + " .. " + texts[texts.length - 1] + " #" + hash;
+}
+function state(route: Route, point: Point): string { return "[" + route.read(point) + "] " + Object.keys(point).join() + " " + describeResult(() => point.norm()); }
+const allocatedArrays: unknown[] = [];
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+const collectYoung: () => void = (globalThis as any).edenGC ?? (() => { for (let i = 0; i < 1000000; i++) allocatedArrays[i & 1023] = [i]; });
+
+function storeInMany(route: Route): void {
+    const report = (label: string, text: string) => console.log(route.title + ", " + label + ": " + text);
+    const points: Point[] = [];
+    for (let i = 0; i < 100; i++) points.push(new Point(i, -i));
+    const readAll = () => digest(points.map(point => route.read(point)));
+    for (const point of points) route.put(point, point.x);
+    report("added", readAll());
+    for (const point of points) route.put(point, point.x * 2);
+    report("replaced", readAll());
+    for (const point of points) route.putNine(point, point.x * 10);
+    report("nine more", readAll());
+    for (const point of points) route.putNine(point, point.x * 100);
+    report("nine replaced", readAll());
+    collect();
+    for (const point of points) route.put(point, ["young", point.x]);
+    collectYoung();
+    report("young cells", readAll());
+    report("keys", [...new Set(points.map(point => Object.keys(point).join()))].join(" | "));
+    report("fields", String(points.reduce((sum, point) => sum + point.norm(), 0)));
+}
+
+function storeAfterIntegrityChange(route: Route): void {
+    const report = (label: string, text: string) => console.log(route.title + ", " + label + ": " + text);
+    const closed = new Point(1, 2);
+    Object.preventExtensions(closed);
+    report("not extensible", describeResult(() => route.put(closed, 5)) + " " + describeResult(() => route.putNine(closed, 10)) + " " + state(route, closed));
+    const closedLater = new Point(1, 2);
+    route.put(closedLater, 1);
+    Object.preventExtensions(closedLater);
+    report("not extensible after one", describeResult(() => route.put(closedLater, 2)) + " " + describeResult(() => route.putNine(closedLater, 10)) + " " + state(route, closedLater));
+    const frozen = new Point(1, 2);
+    route.put(frozen, 1);
+    route.putNine(frozen, 10);
+    Object.freeze(frozen);
+    report("frozen", describeResult(() => route.put(frozen, 2)) + " " + describeResult(() => route.putNine(frozen, 20)) + " " + state(route, frozen));
+}
+
+function storeOverAccessors(route: Route): void {
+    const report = (label: string, text: string) => console.log(route.title + ", " + label + ": " + text);
+    const seen: unknown[] = [];
+    const accessor = { get: () => seen.length, set: (value: unknown) => { seen.push(value); }, enumerable: true, configurable: true };
+    const watched = new Point(3, 4);
+    Object.defineProperty(watched, "tag", accessor);
+    route.put(watched, 7);
+    route.put(watched, 8);
+    report("setter", seen.join() + " " + state(route, watched));
+    const redefined = new Point(3, 4);
+    route.put(redefined, 1);
+    Object.defineProperty(redefined, "tag", accessor);
+    route.put(redefined, 9);
+    route.putNine(redefined, 10);
+    report("setter over a value", seen.join() + " " + state(route, redefined));
+    const readOnly = new Point(3, 4);
+    Object.defineProperty(readOnly, "tag", { get: () => "got", configurable: true });
+    report("getter alone", describeResult(() => route.put(readOnly, 1)) + " " + state(route, readOnly));
+}
+
+function shadowMethod(title: string, shadow: Put): void {
+    const shadowed = new Point(5, 6);
+    shadow(shadowed, 9);
+    console.log(title + ", method name: " + Object.keys(shadowed).join() + " " + Object.values(shadowed).join() + " " + describeResult(() => shadowed.norm()));
+    shadow(shadowed, () => -1);
+    putUntyped(shadowed, "late");
+    console.log(title + ", method replaced: " + shadowed.norm() + " " + Object.keys(shadowed).join() + " " + (shadowed as any).tag + " " + new Point(5, 6).norm());
+    delete (shadowed as any).norm;
+    console.log(title + ", method restored: " + shadowed.norm() + " " + Object.keys(shadowed).join());
+}
+
+console.log("functions without a directive are " + (function (this: unknown) { return this === undefined ? "strict" : "sloppy"; })());
+console.log("functions in a class body are " + classCodeMode());
+const parsed: any = JSON.parse('{"x":0,"y":0}');
+putUntyped(parsed, 1);
+putUntypedStrictly(parsed, 2);
+putNineUntyped(parsed, 10);
+putNineUntypedStrictly(parsed, 20);
+shadowUntyped(parsed, 3);
+console.log("parsed object: " + readUntyped(parsed) + " " + Object.keys(parsed).join());
+for (const route of routes) storeInMany(route);
+for (const route of routes) storeAfterIntegrityChange(route);
+for (const route of routes) storeOverAccessors(route);
+shadowMethod("typed", shadowTyped);
+shadowMethod("untyped", shadowUntyped);
+// This store makes the file a CommonJS module, so a function without a "use strict" directive is sloppy.
+module.exports = {};
+//// factories-that-finish-what-the-constructor-began.ts
+// Objects whose constructor stores little and whose factory stores the rest: every place that makes them, some places, one place under a condition.
+// What lies where in the object must not show: key order, enumeration, deletion, redefinition, freezing, a `this` that leaks early, a factory that throws half way.
+
+const lines: string[] = [];
+function say(label: string, value: unknown) {
+  lines.push(label + ": " + (typeof value === "string" ? value : JSON.stringify(value)));
+}
+
+class Signature {
+  flags: number;
+  checker?: object;
+  declaration?: string;
+  typeParameters?: string[];
+  parameters?: string[];
+  thisParameter?: string;
+  resolvedReturnType?: string;
+  resolvedTypePredicate?: string;
+  minArgumentCount?: number;
+  resolvedMinArgumentCount?: number;
+  target?: Signature;
+  mapper?: (name: string) => string;
+  compositeSignatures?: Signature[];
+  compositeKind?: number;
+  constructor(checker: object | undefined, flags: number) {
+    this.flags = flags;
+    if (checker) this.checker = checker;
+  }
+}
+
+function createSignature(declaration: string | undefined, typeParameters: string[] | undefined, thisParameter: string | undefined, parameters: string[], resolvedReturnType: string | undefined, minArgumentCount: number, flags: number) {
+  const signature = new Signature(undefined, flags);
+  signature.declaration = declaration;
+  signature.typeParameters = typeParameters;
+  signature.parameters = parameters;
+  signature.thisParameter = thisParameter;
+  signature.resolvedReturnType = resolvedReturnType;
+  signature.resolvedTypePredicate = undefined;
+  signature.minArgumentCount = minArgumentCount;
+  signature.resolvedMinArgumentCount = undefined;
+  signature.target = undefined;
+  signature.mapper = undefined;
+  signature.compositeSignatures = undefined;
+  signature.compositeKind = undefined;
+  return signature;
+}
+
+function cloneSignature(signature: Signature) {
+  const result = createSignature(signature.declaration, signature.typeParameters, signature.thisParameter, signature.parameters!, undefined, signature.minArgumentCount!, signature.flags & 3);
+  result.target = signature.target;
+  result.mapper = signature.mapper;
+  result.compositeSignatures = signature.compositeSignatures;
+  result.compositeKind = signature.compositeKind;
+  return result;
+}
+
+{
+  const all: Signature[] = [];
+  for (let i = 0; i < 300; i++) {
+    const made = createSignature(i % 3 ? "d" + i : undefined, i % 5 ? undefined : ["T"], undefined, ["a", "b"].slice(0, i % 3), i % 2 ? "r" + i : undefined, i % 4, i);
+    all.push(i % 7 ? made : cloneSignature(made));
+  }
+  say("keys", Object.keys(all[1]).join());
+  say("keys of a clone", Object.keys(all[7]).join());
+  say("json", all[5]);
+  let sum = 0;
+  for (const one of all) sum += one.minArgumentCount! + one.parameters!.length + (one.resolvedReturnType ? 1 : 0) + (one.declaration ? 2 : 0);
+  say("sum", sum);
+  const seen: string[] = [];
+  for (const key in all[2]) seen.push(key);
+  say("for in", seen.join());
+  say("entries", Object.entries(all[3]).filter(([, value]) => value !== undefined).map(([key]) => key).join());
+}
+
+// Deleted, added again, redefined, frozen.
+{
+  const one = createSignature("d", undefined, undefined, ["p"], "r", 1, 9);
+  delete one.parameters;
+  say("after delete", Object.keys(one).join());
+  say("has", "parameters" in one);
+  one.parameters = ["again"];
+  say("added again", Object.keys(one).join());
+  say("value", one.parameters);
+  let reads = 0;
+  Object.defineProperty(one, "minArgumentCount", { get() { reads++; return 41 + reads; }, enumerable: true, configurable: true });
+  say("accessor", [one.minArgumentCount, one.minArgumentCount, reads]);
+  say("descriptor", Object.getOwnPropertyDescriptor(one, "declaration"));
+  Object.defineProperty(one, "declaration", { value: "fixed", writable: false });
+  let threw = "no";
+  try { one.declaration = "other"; } catch (error) { threw = (error as Error).constructor.name; }
+  say("read-only", [one.declaration, threw]);
+  const frozen = Object.freeze(createSignature("f", undefined, undefined, [], undefined, 0, 0));
+  threw = "no";
+  try { (frozen as Signature).resolvedReturnType = "x"; } catch (error) { threw = (error as Error).constructor.name; }
+  say("frozen", [frozen.resolvedReturnType, threw, Object.isFrozen(frozen)]);
+}
+
+// Two factories: both fill `left`, only one fills `right`; a third place fills nothing.
+class Pair {
+  tag: string;
+  left?: number;
+  right?: number;
+  rest?: number[];
+  constructor(tag: string) { this.tag = tag; }
+}
+function both(left: number, right: number) { const pair = new Pair("both"); pair.left = left; pair.right = right; return pair; }
+function onlyLeft(left: number) { const pair = new Pair("left"); pair.left = left; return pair; }
+function bare() { return new Pair("bare"); }
+{
+  const pairs: Pair[] = [];
+  for (let i = 0; i < 200; i++) pairs.push(i % 3 === 0 ? both(i, -i) : i % 3 === 1 ? onlyLeft(i) : bare());
+  say("pairs", pairs.slice(0, 6));
+  say("pair keys", pairs.slice(0, 3).map(pair => Object.keys(pair).join("+")));
+  pairs[2].right = 5; pairs[2].left = 6;
+  say("late, the other way round", Object.keys(pairs[2]).join("+"));
+  let total = 0;
+  for (const pair of pairs) total += (pair.left ?? 1000) + (pair.right ?? 100000);
+  say("total", total);
+}
+
+// The object is seen before the factory has finished, and the factory may throw half way.
+class Watched {
+  id: number;
+  first?: string;
+  second?: string;
+  third?: string;
+  constructor(id: number, early: (made: Watched) => void) { this.id = id; early(this); }
+}
+const snapshots: string[] = [];
+let kept: Watched | undefined;
+function makeWatched(id: number, fail: boolean) {
+  const made = new Watched(id, early => { snapshots.push(JSON.stringify(early) + Object.keys(early).length); kept = early; });
+  made.first = "f" + id;
+  if (fail) throw new RangeError("half way " + id);
+  made.second = "s" + id;
+  made.third = "t" + id;
+  return made;
+}
+{
+  for (let i = 0; i < 120; i++) {
+    try { makeWatched(i, i % 40 === 39); } catch (error) { say("threw", [(error as Error).message, JSON.stringify(kept), Object.keys(kept!).join()]); }
+  }
+  say("snapshots", snapshots.slice(0, 2));
+  say("last", kept);
+}
+
+// A subclass, Reflect.construct with another new.target, and a constructor function.
+class Wider extends Pair {
+  extra?: string;
+  constructor() { super("wider"); }
+}
+function wider(left: number) { const made = new Wider(); made.left = left; made.extra = "e"; return made; }
+function Legacy(this: { kind: number; name?: string; size?: number }, kind: number) { this.kind = kind; }
+function legacy(kind: number, name: string, size: number) {
+  const made = new (Legacy as unknown as new (kind: number) => { kind: number; name?: string; size?: number })(kind);
+  made.name = name;
+  made.size = size;
+  return made;
+}
+{
+  say("wider", [wider(1), Object.keys(wider(2)).join(), wider(3) instanceof Pair]);
+  const odd = Reflect.construct(Pair, ["odd"], Wider) as Wider;
+  odd.extra = "first"; odd.left = 3;
+  say("another new.target", [odd, odd instanceof Wider, Object.keys(odd).join()]);
+  const many = [] as ReturnType<typeof legacy>[];
+  for (let i = 0; i < 150; i++) many.push(legacy(i, "n" + i, i * 2));
+  say("legacy", [many[149], Object.keys(many[3]).join(), Object.getPrototypeOf(many[0]) === Legacy.prototype]);
+  say("spread", { ...many[4], kind: "k" });
+  say("assign", Object.assign({}, many[5], both(1, 2)));
+}
+
+// More birth fields than a cell takes.
+class Wide {
+  a0?: number; a1?: number; a2?: number; a3?: number; a4?: number; a5?: number; a6?: number; a7?: number; a8?: number; a9?: number;
+  b0?: number; b1?: number; b2?: number; b3?: number; b4?: number; b5?: number; b6?: number; b7?: number; b8?: number; b9?: number;
+  c0?: string; c1?: string; c2?: string; c3?: string; c4?: string; c5?: string; c6?: string; c7?: string; c8?: string; c9?: string;
+}
+function wide(n: number) {
+  const w = new Wide();
+  w.a0 = n; w.a1 = n + 0.5; w.a2 = n; w.a3 = n; w.a4 = n; w.a5 = n; w.a6 = n; w.a7 = n; w.a8 = n; w.a9 = n;
+  w.b0 = n; w.b1 = n; w.b2 = n; w.b3 = n; w.b4 = n; w.b5 = n; w.b6 = n; w.b7 = n; w.b8 = n; w.b9 = -n;
+  w.c0 = "x" + n; w.c1 = "x"; w.c2 = "x"; w.c3 = "x"; w.c4 = "x"; w.c5 = "x"; w.c6 = "x"; w.c7 = "x"; w.c8 = "x"; w.c9 = "y" + n;
+  return w;
+}
+{
+  const wides: Wide[] = [];
+  for (let i = 0; i < 100; i++) wides.push(wide(i));
+  say("wide", [wides[99].a1, wides[99].b9, wides[99].c9, Object.keys(wides[50]).length, JSON.stringify(wides[7]).length]);
+}
+
+console.log(lines.join("\n"));
+//// field-read-after-aliased-store.ts
+// A read that follows a store to the same field returns the stored value, also when two variables refer to the same object.
+declare const console: any;
+const log: any[] = [];
+interface P { x: number; y: number | undefined; o?: number; q: P | undefined }
+function make(x: number): P { return { x, y: undefined, q: undefined }; }
+const hide = (v: unknown): any => v;
+let moduleVariable = 0;
+function changesModule(): number { moduleVariable += 10; return 1; }
+function twoNames(a: P, b: P): number { a.x = 1; b.x = 2; return a.x * 10 + b.x; }
+function callBetween(a: P, f: (p: P) => void): number { a.x = 1; f(a); return a.x; }
+function throughAny(a: P): number { a.x = 1; hide(a).x = 5; return a.x; }
+function otherField(a: P): number { a.x = 1; a.y = 2; return a.x * 10 + (a.y ?? 0); }
+function deleted(a: P): string { a.o = 1; delete a.o; return String(a.o) + ("o" in a); }
+function frozen(a: P): string { Object.freeze(a); try { a.x = 9; return "stored " + a.x; } catch (e: any) { return "threw " + e.constructor.name + " " + a.x; } }
+function wrongUnderHandler(a: P, v: any): string { a.x = 1; try { a.x = v; return "stored " + a.x; } catch (e: any) { return "threw " + e.constructor.name + " " + a.x; } }
+function oneWay(a: P, c: boolean): number { if (c) a.x = 7; return a.x; }
+function bothWays(a: P, c: boolean): number { if (c) a.x = 7; else a.x = 8; return a.x; }
+function inLoop(a: P, n: number): number { let s = 0; for (let i = 0; i < n; i++) { s += a.x; a.x = i; s += a.x; } return s; }
+function loopCarried(a: P, b: P, n: number): number { a.x = 100; let s = 0; for (let i = 0; i < n; i++) { s += a.x; b.x = i; } return s; }
+function numbers(a: P): string { const out: any[] = []; for (const v of [0, -0, 1.5, NaN, 2 ** 31, -(2 ** 31) - 1, 2 ** 53, Infinity]) { a.x = v; out.push(Object.is(a.x, v)); a.y = v; out.push(Object.is(a.y, v)); } return out.join(); }
+function chain(a: P): number { a.q = make(3); a.q.x = 4; a.q.q = a; a.q.q.x = 5; return a.x * 10 + a.q.x; }
+function environment(): string { let n = 0; const bump = () => { n += 5; }; n = 1; bump(); const first = n; n = 2; const second = n; bump(); return first + " " + second + " " + n; }
+function module(): string { moduleVariable = 1; const a = moduleVariable; changesModule(); const b = moduleVariable; moduleVariable = 3; return a + " " + b + " " + moduleVariable; }
+function nilReceiver(a: P | undefined): string { try { a!.x = 1; return "stored " + a!.x; } catch (e: any) { return "threw " + e.constructor.name; } }
+function attempt(name: string, f: () => any) { try { log.push(name + ": " + f()); } catch (e: any) { log.push(name + " threw " + e.constructor.name); } }
+for (let round = 0; round < 2; round++) {
+    const p = make(0), r = make(0);
+    attempt("twoNames, two", () => twoNames(p, r)); attempt("twoNames, one", () => twoNames(p, p)); attempt("callBetween", () => callBetween(p, x => { x.x = 42; })); attempt("callBetween, nothing", () => callBetween(p, () => { }));
+    attempt("throughAny", () => throughAny(p)); attempt("otherField", () => otherField(p)); attempt("deleted", () => deleted(p)); attempt("frozen", () => frozen(make(3))); attempt("wrongUnderHandler, right", () => wrongUnderHandler(p, 6));
+    attempt("oneWay yes", () => oneWay(make(1), true)); attempt("oneWay no", () => oneWay(make(1), false)); attempt("bothWays", () => bothWays(p, true) * 10 + bothWays(p, false)); attempt("inLoop", () => inLoop(make(50), 4));
+    attempt("loopCarried, two", () => loopCarried(p, r, 3)); attempt("loopCarried, one", () => loopCarried(p, p, 3)); attempt("numbers", () => numbers(p)); attempt("chain", () => chain(make(1))); attempt("environment", environment); attempt("module", module);
+    attempt("nilReceiver", () => nilReceiver(hide(undefined))); attempt("nilReceiver, there", () => nilReceiver(p));
+}
+console.log(log.join("\n"));
+export {};
+//// field-read-after-distant-store.ts
+// `o.f = v; .. o.f ..`: cases where the value read is not simply the value stored (calls in between, aliases, deleted, redefined or frozen properties).
+declare const console: any;
+const log: any[] = [];
+interface Links { check: number; other?: number }
+interface Sym { flags: number; name?: string }
+interface TransientSym extends Sym { links: Links; count: number; label?: string }
+let seen: TransientSym | undefined;
+function touch(s: TransientSym) { s.links = { check: 99 }; s.count = -1; }
+function make(): TransientSym { return { flags: 1, links: { check: 0 }, count: 0, label: undefined }; }
+// A call in between stores to it.
+{ const s = make(); s.links = { check: 1 }; touch(s); log.push(s.links.check, s.count); }
+// It has escaped, and what runs in between is not known.
+{ const s = make(); seen = s; s.count = 5; (() => { seen!.count = 6; })(); log.push(s.count); }
+// A second store to the same field, and a store to another one.
+{ const s = make(); s.count = 1; s.flags = 2; s.count = 3; log.push(s.count, s.flags); }
+// Two objects of one layout.
+{ const a = make(); const b = make(); a.count = 1; b.count = 2; log.push(a.count, b.count); }
+// Deleted, redefined, frozen in between.
+{ const s: any = make(); s.label = "x"; delete s.label; log.push(s.label, "label" in s); }
+{ const s = make(); s.count = 1; Object.defineProperty(s, "count", { value: 7, writable: true, enumerable: true, configurable: true }); log.push(s.count); }
+{ const s = make(); s.count = 1; Object.freeze(s); try { s.count = 2; } catch (e) { log.push("frozen"); } log.push(s.count); }
+// Numbers are read back unchanged.
+{ const s = make(); s.count = -0; log.push(Object.is(s.count, -0)); s.count = NaN; log.push(s.count); s.count = 2 ** 40; log.push(s.count); s.count = 1.5; log.push(s.count); }
+// The same object is read back: identity.
+{ const s = make(); const l: Links = { check: 4 }; s.links = l; log.push(s.links === l); s.links.check = 8; log.push(l.check, s.links.check); }
+// Through a view in which a member lacks the field, as in createSymbol.
+function create(flags: number): TransientSym {
+    const s = { flags } as Sym as TransientSym;
+    s.links = { check: 0 };
+    s.links.check = flags + 1;
+    s.count = flags; s.label = undefined;
+    return s;
+}
+log.push(JSON.stringify(create(3)), Object.keys(create(4)).join());
+// In a loop: the store of one iteration, the read of the next.
+{ const s = make(); let sum = 0; for (let i = 0; i < 4; i++) { sum += s.count; s.count = i; } log.push(sum, s.count); }
+// On two ways.
+function branch(c: boolean) { const s = make(); if (c) s.count = 1; else s.count = 2; return s.count; }
+log.push(branch(true), branch(false));
+// In a handler's sight.
+function guarded() { const s = make(); try { s.count = 3; return s.count; } finally { log.push("finally"); } }
+log.push(guarded());
+// An accessor on the `prototype` of the function that makes the object: a store by its name runs the setter, which stores to ANOTHER field; a read by its name runs the getter.
+interface Celsius { degrees: number; fahrenheit: number }
+function Celsius(this: Celsius, f: number) { this.degrees = 0; this.fahrenheit = f; }
+Object.defineProperty(Celsius.prototype, "fahrenheit", {
+    get(this: Celsius) { return this.degrees * 9 / 5 + 32 + 1; },
+    set(this: Celsius, f: number) { this.degrees = (f - 32) * 5 / 9; },
+});
+type CelsiusConstructor = new (f: number) => Celsius;
+function boil() { const c = new (Celsius as unknown as CelsiusConstructor)(212); return c.degrees + " " + c.fahrenheit + " " + Object.keys(c).join(); }
+function storeAndRead() { const c = new (Celsius as unknown as CelsiusConstructor)(32); c.fahrenheit = 50; const read = c.fahrenheit; return read + " " + c.degrees; }
+function storeAcross() { const c = new (Celsius as unknown as CelsiusConstructor)(32); c.degrees = 7; c.fahrenheit = 212; return c.degrees; }
+log.push(boil(), storeAndRead(), storeAcross());
+console.log(log.join("\n"));
+export {};
+//// field-reads-by-name.ts
+// Untyped code reads every field representation of a class instance by name and by key: present, undefined, null, absent, deleted, and deleted below a prototype that defines the name.
+type Color = "red" | "green" | "blue";
+
+class Point {
+  constructor(
+    public x: number,
+    public y: number,
+  ) {}
+}
+
+const colors: Color[] = ["red", "green", "blue"];
+const boxedValues: unknown[] = [0, 1.5, "text", null, undefined, true, new Point(3, 4), -0, NaN];
+
+class Sample {
+  boxed: unknown;
+  point: Point;
+  color: Color;
+  count: number;
+  ratio: number;
+  flag: boolean;
+  byte: number;
+  signedByte: number;
+  halfWord: number;
+  signedHalfWord: number;
+  unsignedWord: number;
+  wideInteger: number;
+  optionalBoxed?: unknown;
+  optionalPoint?: Point | null;
+  optionalColor?: Color | null;
+  optionalCount?: number | null;
+  optionalRatio?: number | null;
+  optionalFlag?: boolean | null;
+  declare lateCount?: number | null;
+
+  constructor(index: number, count: number) {
+    this.boxed = boxedValues[index % boxedValues.length];
+    this.point = new Point(index, -index);
+    this.color = colors[index % colors.length];
+    this.count = count;
+    this.ratio = count / 2;
+    this.flag = index % 2 === 0;
+    this.byte = (index * 37) & 0xff;
+    this.signedByte = ((index * 37) & 0xff) - 128;
+    this.halfWord = (index * 4099) & 0xffff;
+    this.signedHalfWord = ((index * 4099) & 0xffff) - 32768;
+    this.unsignedWord = (index * 0x13579bdf) >>> 0;
+    this.wideInteger = index * 2 ** 33 + index;
+  }
+}
+
+class Derived extends Sample {}
+
+const requiredNames = ["boxed", "point", "color", "count", "ratio", "flag", "byte", "signedByte", "halfWord", "signedHalfWord", "unsignedWord", "wideInteger"];
+const optionalNames = ["optionalBoxed", "optionalPoint", "optionalColor", "optionalCount", "optionalRatio", "optionalFlag", "lateCount"];
+const names = [...requiredNames, ...optionalNames];
+
+function show(value: unknown): string {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (value instanceof Point) return "Point(" + show(value.x) + "," + show(value.y) + ")";
+  return String(value);
+}
+
+function readByName(sample: any): string {
+  return [
+    sample.boxed,
+    sample.point,
+    sample.color,
+    sample.count,
+    sample.ratio,
+    sample.flag,
+    sample.byte,
+    sample.signedByte,
+    sample.halfWord,
+    sample.signedHalfWord,
+    sample.unsignedWord,
+    sample.wideInteger,
+    sample.optionalBoxed,
+    sample.optionalPoint,
+    sample.optionalColor,
+    sample.optionalCount,
+    sample.optionalRatio,
+    sample.optionalFlag,
+    sample.lateCount,
+  ]
+    .map(value => show(value))
+    .join(" ");
+}
+
+function readByKey(sample: any): string {
+  return names.map(name => show(sample[name])).join(" ");
+}
+
+function report(label: string, sample: any) {
+  const results = new Set<string>();
+  for (let i = 0; i < 100; i++) {
+    results.add(readByName(sample));
+    results.add(readByKey(sample));
+  }
+  console.log(label + ": " + [...results].join("\n  differs: "));
+}
+
+function fill(sample: Sample) {
+  sample.optionalBoxed = "boxed";
+  sample.optionalPoint = new Point(1, 2);
+  sample.optionalColor = "green";
+  sample.optionalCount = 3;
+  sample.optionalRatio = 0.25;
+  sample.optionalFlag = false;
+  sample.lateCount = 9;
+}
+
+function setAll(sample: Sample, value: null | undefined) {
+  sample.optionalBoxed = value;
+  sample.optionalPoint = value;
+  sample.optionalColor = value;
+  sample.optionalCount = value;
+  sample.optionalRatio = value;
+  sample.optionalFlag = value;
+  sample.lateCount = value;
+}
+
+function deleteAll(sample: Sample) {
+  delete sample.optionalBoxed;
+  delete sample.optionalPoint;
+  delete sample.optionalColor;
+  delete sample.optionalCount;
+  delete sample.optionalRatio;
+  delete sample.optionalFlag;
+  delete sample.lateCount;
+}
+
+report("parsed", JSON.parse('{"boxed":"parsed","count":2.5,"flag":false,"optionalCount":null}'));
+
+const lowest = -(2 ** 31);
+const counts = [1, 1.5, -0, NaN, 2 ** 31, 2 ** 31 - 1, lowest, lowest + 1, lowest + 2, lowest + 3, lowest + 4, lowest + 5, lowest - 1, Infinity];
+for (let index = 0; index < counts.length; index++) report("count " + show(counts[index]), new Sample(index, counts[index]));
+
+const sample = new Sample(1, 7);
+report("constructed", sample);
+fill(sample);
+report("filled", sample);
+sample.optionalCount = 1.5;
+sample.optionalRatio = 8;
+sample.optionalFlag = true;
+sample.lateCount = lowest + 2;
+report("filled with other numbers", sample);
+sample.optionalCount = 4;
+report("a whole number again", sample);
+setAll(sample, null);
+report("null", sample);
+setAll(sample, undefined);
+report("undefined", sample);
+deleteAll(sample);
+report("deleted", sample);
+console.log(Object.keys(sample).join());
+
+const inherited: Record<string, unknown> = {
+  optionalBoxed: "inherited",
+  optionalPoint: new Point(5, 6),
+  optionalColor: "blue",
+  optionalCount: 42,
+  optionalRatio: 4.5,
+  optionalFlag: true,
+  lateCount: 43,
+};
+const prototype: any = Sample.prototype;
+for (const name of optionalNames) prototype[name] = inherited[name];
+report("deleted, the prototype defines the names", sample);
+
+const shadowing = new Sample(2, 8);
+report("constructed below that prototype", shadowing);
+fill(shadowing);
+report("own fields shadow the prototype", shadowing);
+deleteAll(shadowing);
+report("deleted below that prototype", shadowing);
+
+Object.defineProperty(prototype, "optionalFlag", {
+  get() {
+    return !this.flag;
+  },
+  configurable: true,
+});
+report("deleted, the prototype has a getter", sample);
+report("deleted, the same getter on another receiver", shadowing);
+
+for (const name of optionalNames) delete prototype[name];
+report("deleted, the prototype no longer defines the names", sample);
+
+const derivedPrototype: any = Derived.prototype;
+derivedPrototype.optionalCount = 1000;
+derivedPrototype.lateCount = 1001;
+const derived = new Derived(4, 10);
+report("derived, constructed", derived);
+deleteAll(derived);
+report("derived, deleted", derived);
+fill(derived);
+report("derived, filled", derived);
+console.log(Object.keys(derived).join());
+//// field-stores-by-name.ts
+// Stores by name through a receiver of type `any` into typed fields of every representation, and the stores that a field cannot take in place.
+"use strict"
+interface Shape { area(): number }
+class Square implements Shape { side = 2; area() { return this.side * this.side } }
+class Disk implements Shape { radius = 3; area() { return 3 * this.radius * this.radius } }
+class Foo { id: number; constructor(id: number) { this.id = id } }
+type Mode = "idle" | "busy" | "done"
+let calls = 0
+const addOne = () => { calls += 1 }
+const addTen = () => { calls += 10 }
+function addHundred() { calls += 100 }
+class Widget {
+  count: number = 0
+  label: string = "first"
+  mode: Mode = "idle"
+  enabled: boolean = false
+  owner: Foo | null = null
+  parts: Foo[] = []
+  action: () => void = addOne
+  shape: Shape = new Square()
+  declare note?: string
+  declare weight?: number
+}
+interface Options { id: number; note?: string }
+interface Panel { id: number; top?: number; left?: number; width?: number; height?: number; color?: string; title?: string; hidden?: boolean; locked?: boolean; parent?: Foo; child?: Foo; order?: number; hint?: string }
+
+function setCount(target: any, value: any) { target.count = value }
+function setLabel(target: any, value: any) { target.label = value }
+function setMode(target: any, value: any) { target.mode = value }
+function setEnabled(target: any, value: any) { target.enabled = value }
+function setOwner(target: any, value: any) { target.owner = value }
+function setParts(target: any, value: any) { target.parts = value }
+function setAction(target: any, value: any) { target.action = value }
+function setShape(target: any, value: any) { target.shape = value }
+function setNote(target: any, value: any) { target.note = value }
+function setWeight(target: any, value: any) { target.weight = value }
+function setOrder(target: any, value: any) { target.order = value }
+function setHint(target: any, value: any) { target.hint = value }
+function setChild(target: any, value: any) { target.child = value }
+function getNote(target: any) { return target.note }
+
+function show(value: any): string {
+  if (typeof value === "function") return "function " + value.name
+  if (Array.isArray(value)) return "[" + value.map(element => show(element)).join() + "]"
+  if (value instanceof Foo) return "Foo " + value.id
+  if (value instanceof Square || value instanceof Disk) return value.constructor.name + " " + value.area()
+  if (typeof value === "object" && value !== null) return JSON.stringify(value)
+  return typeof value + " " + (Object.is(value, -0) ? "-0" : String(value))
+}
+function showAll(target: any): string { return Object.keys(target).map(key => key + "=" + show(target[key])).join(" ") }
+function same(texts: string[]): string { return texts.every(text => text === texts[0]) ? texts[0] : "DIFFERENT: " + texts.join(" | ") }
+function attempt(title: string, run: () => string) {
+  try { console.log(title + ":", run()) } catch (error) { console.log(title + ": threw", (error as Error).constructor.name) }
+}
+
+// An object from JSON.parse goes through every function too, so that no receiver has a known layout.
+const parsed: any = JSON.parse("{}")
+const widgets: Widget[] = []
+for (let i = 0; i < 5; i++) widgets.push(new Widget())
+function storeInAll(set: (target: any, value: any) => void, value: unknown) {
+  for (const widget of widgets) set(widget, value)
+  set(parsed, value)
+}
+
+for (const value of [1, 1.5, 2, -0, 2 ** 31, -(2 ** 31), -(2 ** 31) + 1, -(2 ** 31) + 4, -(2 ** 31) + 5, NaN, 7]) {
+  storeInAll(setCount, value)
+  console.log("count", same(widgets.map(widget => show(widget.count))), show(parsed.count))
+}
+for (const value of ["busy", "done", ["id", "le"].join(""), "busy"]) {
+  storeInAll(setMode, value)
+  console.log("mode", same(widgets.map(widget => show(widget.mode) + " " + (widget.mode === "idle") + " " + (widget.mode === "busy"))), show(parsed.mode))
+}
+for (const value of ["second", "", "done", "x".repeat(40), "<" + parsed.mode + ">", widgets.length + "th"]) {
+  storeInAll(setLabel, value)
+  console.log("label", same(widgets.map(widget => show(widget.label) + " " + widget.label.length)), show(parsed.label))
+}
+for (const value of [true, false, true]) {
+  storeInAll(setEnabled, value)
+  console.log("enabled", same(widgets.map(widget => show(widget.enabled) + " " + (widget.enabled ? "on" : "off"))), show(parsed.enabled))
+}
+for (const value of [new Foo(1), null, new Foo(2)]) {
+  storeInAll(setOwner, value)
+  console.log("owner", same(widgets.map(widget => show(widget.owner) + " " + (widget.owner === null ? "none" : widget.owner.id + 1))), show(parsed.owner))
+}
+for (const value of [[new Foo(3)], [], [new Foo(4), new Foo(5)]]) {
+  storeInAll(setParts, value)
+  console.log("parts", same(widgets.map(widget => show(widget.parts) + " " + widget.parts.length)), show(parsed.parts))
+}
+for (const value of [addTen, addHundred, addOne.bind(null), addOne]) {
+  storeInAll(setAction, value)
+  for (const widget of widgets) widget.action()
+  console.log("action", same(widgets.map(widget => show(widget.action))), show(parsed.action), calls)
+}
+for (const value of [new Disk(), new Square(), new Disk()]) {
+  storeInAll(setShape, value)
+  console.log("shape", same(widgets.map(widget => show(widget.shape) + " " + widget.shape.area())), show(parsed.shape))
+}
+console.log("all", same(widgets.map(showAll)))
+console.log("parsed", showAll(parsed))
+
+attempt("string into a number field", () => {
+  const widget = new Widget()
+  setCount(widget, "many")
+  const stored = showAll(widget)
+  setCount(widget, 3)
+  return stored + " then " + showAll(widget)
+})
+attempt("plain object into an array field", () => {
+  const widget = new Widget()
+  setParts(widget, { size: 0 })
+  return showAll(widget)
+})
+attempt("number into a function field", () => {
+  const widget = new Widget()
+  setAction(widget, 5)
+  return showAll(widget)
+})
+attempt("object of another class into a class field", () => {
+  const widget = new Widget()
+  setOwner(widget, new Square())
+  return showAll(widget)
+})
+
+const frozen = Object.freeze(new Widget())
+attempt("store to a frozen instance", () => { setCount(frozen, 5); return "stored" })
+attempt("creation on a frozen instance", () => { setNote(frozen, "late"); return "created" })
+console.log("frozen", showAll(frozen))
+
+setNote(parsed, "parsed")
+setWeight(parsed, 0.5)
+for (let round = 0; round < 4; round++) {
+  attempt("creation " + round, () => {
+    const first = new Widget()
+    const second = new Widget()
+    setWeight(first, round)
+    setNote(first, "n" + round)
+    setNote(second, "m" + round)
+    setWeight(second, round + 0.5)
+    setWeight(second, round)
+    return Object.keys(first).slice(-3).join() + " " + first.weight + " " + first.note + " | " + Object.keys(second).slice(-3).join() + " " + second.weight + " " + second.note
+  })
+}
+
+const seen: string[] = []
+Object.defineProperty(Widget.prototype, "note", { set(value: string) { seen.push("setter got " + value) }, configurable: true })
+attempt("setter on the prototype", () => {
+  const widget = new Widget()
+  setNote(widget, "for the setter")
+  return Object.keys(widget).includes("note") + " " + show(getNote(widget)) + " " + seen.join()
+})
+delete (Widget.prototype as any).note
+attempt("setter removed again", () => {
+  const widget = new Widget()
+  setNote(widget, "own")
+  return Object.keys(widget).includes("note") + " " + show(getNote(widget)) + " " + seen.join()
+})
+
+const base = { set note(value: string) { seen.push("base got " + value) } }
+for (let round = 0; round < 3; round++) {
+  attempt("literal " + round, () => {
+    const plain: Options = { id: round }
+    const derived: Options = { id: round }
+    Object.setPrototypeOf(derived, base)
+    setNote(plain, "p" + round)
+    setNote(derived, "d" + round)
+    return showAll(plain) + " | " + showAll(derived) + " | " + seen.length
+  })
+}
+console.log(seen.join())
+
+setOrder(parsed, 1)
+setHint(parsed, "parsed")
+setChild(parsed, null)
+for (let round = 0; round < 4; round++) {
+  attempt("sparse " + round, () => {
+    const panel: Panel = { id: round }
+    setHint(panel, "h" + round)
+    setChild(panel, new Foo(round))
+    setOrder(panel, round)
+    const created = showAll(panel)
+    setOrder(panel, round + 0.25)
+    setHint(panel, "again")
+    setChild(panel, new Foo(round + 10))
+    return created + " | " + Object.keys(panel).join() + " " + panel.order + " " + panel.hint + " " + show(panel.child)
+  })
+}
+console.log("parsed", showAll(parsed))
+//// fields-added-late-one-after-the-other-in-many-orders.ts
+class Wide {
+  id: number;
+  a?: Wide | number;
+  b?: Wide | number;
+  c?: Wide | number;
+  d?: Wide | number;
+  e?: Wide | number;
+  f?: Wide | number;
+  g?: Wide | number;
+  h?: Wide | number;
+  i?: Wide | number;
+  j?: Wide | number;
+  k?: Wide | number;
+  l?: Wide | number;
+  m?: Wide | number;
+  n?: Wide | number;
+  o?: Wide | number;
+  p?: Wide | number;
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+const setters: ((wide: Wide, value: Wide | number) => void)[] = [
+  (wide, value) => { wide.a = value; },
+  (wide, value) => { wide.b = value; },
+  (wide, value) => { wide.c = value; },
+  (wide, value) => { wide.d = value; },
+  (wide, value) => { wide.e = value; },
+  (wide, value) => { wide.f = value; },
+  (wide, value) => { wide.g = value; },
+  (wide, value) => { wide.h = value; },
+  (wide, value) => { wide.i = value; },
+  (wide, value) => { wide.j = value; },
+  (wide, value) => { wide.k = value; },
+  (wide, value) => { wide.l = value; },
+  (wide, value) => { wide.m = value; },
+  (wide, value) => { wide.n = value; },
+  (wide, value) => { wide.o = value; },
+  (wide, value) => { wide.p = value; },
+];
+function numberOf(value: Wide | number | undefined): number {
+  return value === undefined ? 0 : typeof value === "number" ? value : value.id;
+}
+function sumOf(wide: Wide): number {
+  return (
+    numberOf(wide.a) + 2 * numberOf(wide.b) + 3 * numberOf(wide.c) + 4 * numberOf(wide.d) + 5 * numberOf(wide.e) + 6 * numberOf(wide.f) +
+    7 * numberOf(wide.g) + 8 * numberOf(wide.h) + 9 * numberOf(wide.i) + 10 * numberOf(wide.j) + 11 * numberOf(wide.k) + 12 * numberOf(wide.l) +
+    13 * numberOf(wide.m) + 14 * numberOf(wide.n) + 15 * numberOf(wide.o) + 16 * numberOf(wide.p)
+  );
+}
+let seed = 12345;
+function next(limit: number): number {
+  seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+  return seed % limit;
+}
+const kept: Wide[] = [];
+const expected: number[] = [];
+let total = 0;
+for (let round = 0; round < 40000; round++) {
+  const wide = new Wide(round);
+  const count = next(17);
+  let sum = 0;
+  const taken = new Set<number>();
+  for (let step = 0; step < count; step++) {
+    const which = next(16);
+    const value = step % 3 === 0 ? wide : step + 1;
+    if (taken.has(which)) continue;
+    taken.add(which);
+    setters[which](wide, value);
+    sum += (which + 1) * numberOf(value);
+    if (sumOf(wide) !== sum) throw new Error("round " + round + " step " + step + ": " + sumOf(wide) + " is not " + sum);
+  }
+  total = (total + sum) % 1000003;
+  if (round % 16 === 0) {
+    kept.push(wide);
+    expected.push(sum);
+  }
+  if (round % 10000 === 9999) Bun.gc(true);
+}
+let wrong = 0;
+for (let index = 0; index < kept.length; index++) if (sumOf(kept[index]) !== expected[index]) wrong++;
+const inOrder = new Wide(7);
+for (let which = 0; which < 16; which++) setters[which](inOrder, which + 1);
+const backwards = new Wide(8);
+for (let which = 15; which >= 0; which--) setters[which](backwards, which + 1);
+console.log(total, wrong, kept.length, sumOf(inOrder), sumOf(backwards), Object.keys(inOrder).join(""), Object.keys(backwards).join(""));
+//// fields-and-keys-found-through-heirs.js
+// Fields, methods and keys of an object that are found through a proxy or through the objects that inherit from it.
+const lines = [];
+////= printer
+
+{
+  const print = printer("assign-heir");
+  const c = Object.assign({}, Object.create({ a: 1 }));
+  print(c.a);
+}
+{
+  const print = printer("comma-call");
+  let holder;
+  function make(n) { return { run: () => n, n }; }
+  function use() { return (0, holder.run)(); }
+  holder = make(4);
+  print(use());
+}
+{
+  const print = printer("for-in-class-prototype-assigned");
+  class C { x = 1; }
+  C.prototype.extra = 2;
+  for (const k in new C()) print(k);
+}
+{
+  const print = printer("for-in-constructor-this");
+  function P() { this.a = 1; this.b = 2; }
+  const o = Object.create(new P());
+  let n = 0;
+  for (const k in o) n++;
+  print(n);
+}
+{
+  const print = printer("for-in-order");
+  function make() { const p = {}; p.z = 1; p.a = 2; p.m = 3; return p; }
+  const o = Object.create(make());
+  let s = "";
+  for (const k in o) s += k;
+  print(s);
+}
+{
+  const print = printer("for-in-shadowed");
+  class P { a = 1; b = 2; }
+  const o = Object.create(new P());
+  o.a = 5;
+  let s = "";
+  for (const k in o) s += k + o[k];
+  print(s);
+}
+{
+  const print = printer("for-in-swapped-prototype");
+  const a = { first: 1 };
+  const b = { second: 2 };
+  const o = Object.create(a);
+  function list(x) { let s = ""; for (const k in x) s += k; return s; }
+  print(list(o));
+  Object.setPrototypeOf(o, b);
+  print(list(o));
+}
+{
+  const print = printer("for-in-three-levels");
+  class A { a = 1; }
+  class B { b = 2; }
+  const top = new A();
+  const middle = new B();
+  Object.setPrototypeOf(middle, top);
+  const o = Object.create(middle);
+  o.own = 3;
+  let s = "";
+  for (const k in o) s += k + ",";
+  print(s);
+}
+{
+  const print = printer("get-prototype-read");
+  class C { a = 7; }
+  const o = Object.create(new C());
+  print(Object.getPrototypeOf(o).a);
+}
+{
+  const print = printer("instanceof-prototype-field");
+  function F() {}
+  const holder = { prototype: F.prototype, [Symbol.hasInstance]: undefined };
+  print(typeof holder.prototype);
+}
+{
+  const print = printer("is-prototype-of");
+  const p = { a: 1 };
+  const o = Object.create(p);
+  print(p.isPrototypeOf(o), Object.getPrototypeOf(o) === p, Object.getPrototypeOf(o).a);
+}
+{
+  const print = printer("locale-string-class");
+  class C { toString() { return "c"; } }
+  print(new C().toLocaleString());
+}
+{
+  const print = printer("locale-string-literal");
+  print(({ toString() { return "l"; } }).toLocaleString());
+}
+{
+  const print = printer("own-symbols");
+  const k = Symbol("k");
+  const o = { [k]: 1 };
+  print(Object.getOwnPropertySymbols(o).length);
+}
+{
+  const print = printer("pattern-call");
+  let holder;
+  function make(n) { return { run: () => { print("ran"); }, n }; }
+  function use() { const { run } = holder; run(); return holder.n; }
+  holder = make(1);
+  print(use());
+  holder = make(2);
+  print(use());
+}
+{
+  const print = printer("property-is-enumerable");
+  const o = { a: 1 };
+  print(o.propertyIsEnumerable("a"));
+}
+{
+  const print = printer("proto-getter-read");
+  class C { a = 7; }
+  const o = Object.create(new C());
+  print(o.__proto__.a);
+}
+{
+  const print = printer("proxy-target-field");
+  const t = { a: 1 };
+  const p = new Proxy(t, {});
+  print(p.a);
+}
+{
+  const print = printer("proxy-target-keys");
+  const t = { a: 1, b: 2 };
+  print(Object.keys(new Proxy(t, {})).length);
+}
+{
+  const print = printer("proxy-target-method");
+  const t = { m() { return 2; } };
+  const p = new Proxy(t, {});
+  print(p.m());
+}
+{
+  const print = printer("pure-call-dropped");
+  let holder;
+  function make(n) { return { run: () => {}, n }; }
+  function use() { holder.run(); return holder.n; }
+  holder = make(1);
+  print(use());
+  print(typeof holder.n);
+}
+{
+  const print = printer("stringify-heir");
+  print(JSON.stringify(Object.create({ a: 1 })));
+}
+{
+  const print = printer("variable-call");
+  let holder;
+  function make(n) { return { run: () => { print("ran"); }, n }; }
+  function use() { const f = holder.run; f(); return holder.n; }
+  holder = make(1);
+  print(use());
+}
+
+await new Promise(resolve => setTimeout(resolve, 0));
+console.log(lines.join("\n"));
+//// fields-created-on-objects-that-have-other-extra-properties.ts
+// A store that finds the slot of a field empty creates the property, and a read that finds it empty answers undefined, only where the property lies nowhere else on the object.
+// That is so as long as no FIELD of the object has left its slot. A name that the layout has no field for, stored in between, changes nothing about the fields: the order of keys still has it in its place.
+// A field that has left its slot (a value its slot cannot hold, an accessor, a property that is read-only) is found where it lies, by the same compiled stores and reads.
+interface Message {
+  socket?: string;
+  complete?: boolean;
+  url?: string;
+  count?: number;
+  trailers?: string[];
+}
+
+class Made {}
+interface Made extends Message {}
+
+const hand = new Function("value", "return value") as <T>(value: T) => T;
+const odd = hand("odd" + "Name");
+const mark = hand(Symbol("mark"));
+
+function fillHead(message: Message, socket: string) {
+  message.socket = socket;
+  message.complete = false;
+}
+function fillTail(message: Message, url: string, count: number) {
+  message.url = url;
+  message.count = count;
+  message.trailers = [url];
+}
+function read(message: Message) {
+  return [message.socket, message.complete, message.url, message.count, message.trailers?.length, "url" in message, Object.hasOwn(message, "count")].join();
+}
+function show(label: string, message: Message) {
+  const listed: string[] = [];
+  for (const name in message) listed.push(name);
+  console.log(label, "|", read(message), "|", Object.keys(message).join(), "|", listed.join(), "|", Reflect.ownKeys(message).length, "|", JSON.stringify(message));
+}
+
+function plain() {
+  const message = hand(new Made());
+  fillHead(message, "s");
+  fillTail(message, "/plain", 1);
+  return message;
+}
+function withExtraInBetween() {
+  const message: any = hand(new Made());
+  fillHead(message, "s");
+  message[odd] = "extra";
+  message[mark] = 1;
+  fillTail(message, "/extra", 2);
+  return message as Message;
+}
+function withExtraFirst() {
+  const message: any = hand(new Made());
+  message[odd] = "first";
+  fillHead(message, "s");
+  fillTail(message, "/first", 3);
+  delete message[odd];
+  return message as Message;
+}
+function withOtherTypeInField() {
+  const message: any = hand(new Made());
+  fillHead(message, "s");
+  message.url = { not: "a string" };
+  message.count = "seven";
+  show("other types before the stores", message);
+  fillTail(message, "/typed", 4);
+  return message as Message;
+}
+function withAccessor() {
+  const message: any = hand(new Made());
+  const seen: unknown[] = [];
+  Object.defineProperty(message, "url", { get: () => "from the getter", set: value => void seen.push(value), enumerable: true, configurable: true });
+  fillHead(message, "s");
+  fillTail(message, "/accessor", 5);
+  console.log("the setter saw", seen.join());
+  return message as Message;
+}
+function withReadOnly() {
+  const message: any = hand(new Made());
+  Object.defineProperty(message, "count", { value: -1, writable: false, enumerable: true, configurable: true });
+  fillHead(message, "s");
+  let thrown = "nothing";
+  try {
+    fillTail(message, "/read-only", 6);
+  } catch (error) {
+    thrown = (error as Error).constructor.name;
+  }
+  console.log("the store threw", thrown);
+  return message as Message;
+}
+function withDeletedField() {
+  const message: any = hand(new Made());
+  fillHead(message, "s");
+  fillTail(message, "/deleted", 7);
+  delete message.url;
+  message[odd] = "after the deletion";
+  show("deleted", message);
+  message.url = 8;
+  show("another type after the deletion", message);
+  fillTail(message, "/again", 9);
+  return message as Message;
+}
+
+for (let round = 0; round < 3; round++) {
+  show("plain", plain());
+  show("extra in between", withExtraInBetween());
+  show("extra first", withExtraFirst());
+  show("other types", withOtherTypeInField());
+  show("accessor", withAccessor());
+  show("read-only", withReadOnly());
+  show("deleted", withDeletedField());
+}
+
+let sum = 0;
+for (let index = 0; index < 30000; index++) {
+  const message = index % 3 ? withExtraInBetween() : plain();
+  if (index % 1000 === 0) (message as any).count = "text";
+  sum += typeof message.count === "number" ? message.count : 100;
+  sum += Object.keys(message).length + (message.trailers?.length ?? 0);
+}
+console.log(sum);
+//// fields-left-out-are-looked-for-above-the-object.ts
+type Project = { cwd: string };
+interface Session {
+  readonly id: number;
+  project: Project | null;
+  optionalProject?: Project | null;
+  title: string | null;
+}
+const home: Project = { cwd: "/home" };
+const elsewhere: Project = { cwd: "/elsewhere" };
+function make(id: number): Session {
+  return { id, title: null } as Session;
+}
+function projectOf(holder: Session): Project | null | undefined {
+  return holder.project;
+}
+function optionalProjectOf(holder: Session): Project | null | undefined {
+  return holder.optionalProject;
+}
+const lines: string[] = [];
+function show(name: string, session: Session) {
+  lines.push(name + ": " + JSON.stringify(projectOf(session)) + " " + JSON.stringify(optionalProjectOf(session)));
+}
+
+const bare = make(1);
+show("left out", bare);
+show("left out, once more", bare);
+
+const inheriting = make(2);
+Object.setPrototypeOf(inheriting, { project: home });
+show("inherited", inheriting);
+show("left out, behind the other", bare);
+
+const withGetters = make(3);
+Object.setPrototypeOf(withGetters, {
+  get project() {
+    return { cwd: "seen by " + (this as Session).id };
+  },
+  get optionalProject() {
+    return this === withGetters ? elsewhere : null;
+  },
+});
+show("getters above", withGetters);
+
+const changing = make(4);
+const above: Record<string, unknown> = {};
+Object.setPrototypeOf(changing, above);
+show("nothing above yet", changing);
+above.project = home;
+show("added above", changing);
+above.project = elsewhere;
+show("replaced above", changing);
+delete above.project;
+show("deleted above", changing);
+changing.project = elsewhere;
+show("stored", changing);
+delete (changing as { project?: Project | null }).project;
+show("deleted", changing);
+Object.defineProperty(changing, "optionalProject", { get() { return home; }, configurable: true });
+show("an accessor of its own", changing);
+Object.setPrototypeOf(changing, null);
+show("no prototype", changing);
+
+const behindProxy = make(5);
+Object.setPrototypeOf(
+  behindProxy,
+  new Proxy({}, {
+    get(target, key, receiver) {
+      return key === "project" ? { cwd: "a proxy asked by " + receiver.id } : undefined;
+    },
+  }),
+);
+show("a proxy above", behindProxy);
+
+let seen = 0;
+for (let turn = 0; turn < 30000; turn++) {
+  const session = turn % 3 === 0 ? bare : turn % 3 === 1 ? inheriting : withGetters;
+  const project = projectOf(session);
+  if (project) seen += project.cwd.length;
+  const other = optionalProjectOf(session);
+  if (other) seen += other.cwd.length;
+}
+lines.push("turns " + seen);
+console.log(lines.join("\n"));

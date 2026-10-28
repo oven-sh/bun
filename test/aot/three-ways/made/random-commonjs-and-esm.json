@@ -1,0 +1,19 @@
+{
+ "seed-001": "it fails in plain Bun",
+ "seed-002": "it fails in plain Bun",
+ "seed-003": "it fails in plain Bun",
+ "seed-005": "it fails in plain Bun",
+ "seed-009": "it fails in plain Bun",
+ "seed-011": "it fails in plain Bun",
+ "seed-013": "it fails in plain Bun",
+ "seed-014": "it fails in plain Bun",
+ "seed-017": "it fails in plain Bun",
+ "seed-018": "it fails in plain Bun",
+ "seed-021": "it fails in plain Bun",
+ "seed-023": "it fails in plain Bun",
+ "seed-024": "it fails in plain Bun",
+ "seed-025": "it fails in plain Bun",
+ "seed-027": "it fails in plain Bun",
+ "seed-028": "it fails in plain Bun",
+ "seed-029": "alone: main: direct m1: !TypeError !TypeError !TypeError !TypeError\nmain: m5: undefined 127 object !TypeError !TypeError\nmain: m5 again: !TypeError !TypeError 72\nmain: handed: []\nand 1 lines more"
+}

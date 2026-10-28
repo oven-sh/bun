@@ -1,0 +1,1 @@
+{ "skipInShell": "it uses node:util, node:assert and the console of Bun" }

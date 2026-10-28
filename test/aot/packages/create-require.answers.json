@@ -1,0 +1,5 @@
+{
+  "create-require.by_dir_mjs.mjs": {
+    "output": "v THROWS Error MODULE_NOT_FOUND\n"
+  }
+}

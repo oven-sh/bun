@@ -3635,7 +3635,6 @@ impl RunCommand {
         }
         #[cfg(unix)]
         {
-            // SAFETY: all-zero is a valid winsize (#[repr(C)] POD).
             let mut size: libc::winsize = bun_core::ffi::zeroed();
             // SAFETY: ioctl with valid winsize ptr
             if unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &raw mut size) } == 0 {

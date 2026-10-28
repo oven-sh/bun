@@ -585,7 +585,6 @@ mod _impl {
             let mut string_bytes: &mut [u8] = &mut stack_string_bytes[..];
             let mut using_heap = false;
 
-            // SAFETY: zeroed POD
             let mut pw: libc::passwd = bun_core::ffi::zeroed();
             let mut result: *mut libc::passwd = core::ptr::null_mut();
 

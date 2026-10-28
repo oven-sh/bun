@@ -393,7 +393,6 @@ mod freebsd_impl {
         timeout: Option<u64>,
     ) -> Result<(), TimeoutError> {
         let mut tm_size: usize = 0;
-        // SAFETY: all-zero is a valid `_umtx_time` (POD).
         let mut tm: libc::_umtx_time = bun_core::ffi::zeroed();
         let mut tm_ptr: *mut c_void = core::ptr::null_mut();
 

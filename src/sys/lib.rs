@@ -9475,7 +9475,6 @@ unsafe fn adapter_flush(w: *mut bun_core::io::Writer) -> core::result::Result<()
 
 #[cfg(unix)]
 fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
-    // SAFETY: POD, zero-valid — libc::winsize is all-integer; ioctl writes it.
     let mut ws: libc::winsize = bun_core::ffi::zeroed();
     // SAFETY: TIOCGWINSZ writes exactly `sizeof(winsize)` into the stack-local
     // `ws`; `fd` is a plain int (bad fd → ENOTTY/EBADF, never UB).
@@ -9492,7 +9491,6 @@ fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
 }
 #[cfg(windows)]
 fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
-    // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
     let mut info: windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
     // SAFETY: `info` is a valid out-pointer for the duration of the call; a
     // handle that is not a console makes the call fail rather than misbehave.

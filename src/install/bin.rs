@@ -420,8 +420,7 @@ impl Bin {
     }
 
     // ── Tag-checked union accessors ────────────────────────────────────────
-    // `Value` is a `Copy` POD union (largest member `ExternalStringList` is two
-    // `u32`s); reading the wrong variant is well-defined garbage.
+    // `Value` is a `Copy` POD union; reading the wrong variant is well-defined garbage.
     bun_core::extern_union_accessors! {
         tag: tag as Tag, value: value;
         File      => file: String;

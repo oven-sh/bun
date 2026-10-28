@@ -3,7 +3,7 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statfsSync, writeFileSync } from "fs";
 import { join } from "path";
 import { withoutInstallingPackages } from "../harness/without-installing-packages";
-import { checksThatMoveNoOutput, inTheRun, isFinding, isOfTheBuild, sameFailure, wholeText, writeProgram, type Bed, type Failure, type Judged, type Mode, type Program, type Verdict } from "./beds";
+import { isFinding, sameFailure, wholeText, writeProgram, type Bed, type Failure, type Judged, type Mode, type Program, type Verdict } from "./beds";
 import { parses, reprinted } from "./mutate";
 import { Random } from "./random";
 import { reduce, reduceFiles, shape, type Reduction, type Whole } from "./reduce";
@@ -33,8 +33,6 @@ export interface Settings {
   /** Each of `sources` is drawn as often in its form of several files, on the beds that take such programs. */
   alsoInSeveralFiles?: boolean;
   alsoWrittenAgain?: boolean;
-  /** The clock that says when the run is over. A test hands over one of its own and waits for nothing. */
-  now?: () => number;
 }
 
 export interface Summary {
@@ -55,8 +53,7 @@ interface Known {
 
 export async function fuzz(settings: Settings): Promise<Summary> {
   const { out, work, beds } = settings;
-  const now = settings.now ?? Date.now;
-  const started = now();
+  const started = Date.now();
   const deadline = started + settings.seconds * 1000;
   // Behind the deadline every worker ends the batch it has begun, and what fails there is looked at too: a later run has other seeds. But a shared build under a sanitizer takes minutes, so that work has a bound of its own:
   // a few failures are confirmed, and from the last call on nothing is built again. What is never the load's doing is then stored as it was drawn, the rest is listed.
@@ -102,7 +99,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
   const total = () => Object.values(counts.programs).reduce((sum, count) => sum + count, 0);
 
   const status = (state: string) => {
-    const hours = (now() - started) / 3_600_000;
+    const hours = (Date.now() - started) / 3_600_000;
     const rate = beds.map(({ bed }) => `${bed.name} ${Math.round(Object.entries(counts.programs).filter(([key]) => key.startsWith(bed.name)).reduce((sum, [, count]) => sum + count, 0) / hours)}/h`).join(", ");
     return (
       `${new Date().toISOString().slice(0, 19)}Z ${state} | binaries ${beds.map(({ bed }) => bed.binary).join(", ")} | seeds ${settings.firstSeed}.. | programs ${total()} (${listed(counts.programs)}) | rate ${rate} | compiled runs: ${listed(counts.runs)} | skipped: ${listed(counts.skipped)} | ` +
@@ -125,7 +122,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     const { bavail, bsize } = statfsSync(path);
     return Number(bavail) * Number(bsize);
   };
-  const stopped = () => now() > deadline || existsSync(join(out, "STOP")) || (settings.programs !== undefined && sequence >= settings.programs);
+  const stopped = () => Date.now() > deadline || existsSync(join(out, "STOP")) || (settings.programs !== undefined && sequence >= settings.programs);
 
   const alone = async (bed: Bed, folder: string, program: Program, flags: string[]) => (await bed.judge(folder, [program], flags))[0];
   const textsOf = ({ text, files }: Whole): Whole => ({ text, ...(files ? { files } : {}) });
@@ -175,10 +172,10 @@ export async function fuzz(settings: Settings): Promise<Summary> {
       return isNeverTheLoad(failure.kind) ? keepAsItIs(bed, generated, mode, failure, `same, by itself and beside the same ${others.length} programs`) : undefined;
     }
     counts.reductions++;
-    const until = now() > deadline ? 0 : now() + settings.reduceSeconds * 1000;
-    for (let size = Math.max(1, others.length >> 1); others.length && now() < until; size = Math.max(1, size >> 1)) {
+    const until = Date.now() > deadline ? 0 : Date.now() + settings.reduceSeconds * 1000;
+    for (let size = Math.max(1, others.length >> 1); others.length && Date.now() < until; size = Math.max(1, size >> 1)) {
       let removed = false;
-      for (let at = 0; at < others.length && now() < until; ) {
+      for (let at = 0; at < others.length && Date.now() < until; ) {
         const fewer = [...others.slice(0, at), ...others.slice(at + size)];
         if (await failsWith(generated, fewer)) [others, removed] = [fewer, true];
         else at += size;
@@ -192,7 +189,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
         return results;
       },
       width: 1,
-      seconds: now() > deadline ? 0 : settings.reduceSeconds,
+      seconds: Date.now() > deadline ? 0 : settings.reduceSeconds,
     });
     const small: Program = { ...textsOf(reduced), extension: generated.extension };
     const group = `${failure.kind} only together`;
@@ -240,7 +237,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     if (looks >= (isNeverByDesign(failure.kind) ? 4 : 1)) return void counts.repeated++;
     seenEarly.set(early, looks + 1);
     const isStored = () => void seenEarly.set(early, Infinity);
-    if (now() > deadline && (now() > lastCall || lateLooks++ >= confirmedBehindTheDeadline)) {
+    if (Date.now() > deadline && (Date.now() > lastCall || lateLooks++ >= confirmedBehindTheDeadline)) {
       counts.notConfirmed++;
       appendFileSync(join(out, "not-confirmed.tsv"), `${bed.binary}\t${generated.source}:${generated.seed}\t${described(bed, mode.name, failure, generated.group)}\t${mode.flags.join(" ")}\n`);
       if (isNeverTheLoad(failure.kind)) (keepAsItIs(bed, generated, mode, failure, "none: the run was over", members, "not tried again"), isStored());
@@ -269,7 +266,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     const failsInOneFile = generated.inOneFile === undefined ? undefined : stillFails(await alone(bed, folder, { text: generated.inOneFile, extension: generated.extension }, mode.flags));
     if (failsInOneFile) start = { text: generated.inOneFile! };
     // The case that fails by itself, if one does: one build for all of them.
-    if (generated.alone && generated.alone.length > 1 && now() < deadline) {
+    if (generated.alone && generated.alone.length > 1 && Date.now() < deadline) {
       const failing = (await bed.judge(folder, generated.alone.map(text => ({ text, extension: generated.extension })), mode.flags)).findIndex(stillFails); // prettier-ignore
       if (failing >= 0 && stillFails(await alone(bed, folder, { text: generated.alone[failing], extension: generated.extension }, mode.flags))) start = { text: generated.alone[failing] };
     }
@@ -278,7 +275,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     const printed = (program: Whole): Program => ({ ...textsOf(program), ...(reprints ? { text: reprinted(program.text) } : {}), extension: generated.extension });
     const reduceWith = (width: number, seconds: number) => cut(start, generated.extension, { fails: async candidates => (await bed.judge(folder, candidates.map(printed), mode.flags)).map(stillFails), width, seconds });
     // Past the deadline the other workers wait for this one, so a finding is stored as it is.
-    const isLate = () => now() > deadline;
+    const isLate = () => Date.now() > deadline;
     const seconds = isLate() ? 0 : bed.batch === 1 ? settings.reduceSeconds / 3 : settings.reduceSeconds;
     let reduced = await reduceWith(bed.batch === 1 ? 6 : bed.batch, seconds);
     let final = await alone(bed, folder, printed(reduced), mode.flags);
@@ -320,10 +317,6 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     mkdirSync(target, { recursive: true });
     writeProgram(target, "reduced", small);
     writeProgram(target, "original", generated);
-    // The same program in the form of ../parallel, in which it lands with its fix: what the build and the runs need stands in its first lines.
-    const flags = mode.flags.filter(flag => isOfTheBuild(flag) && (flag !== checksThatMoveNoOutput || !final.compiled?.run));
-    const head = [flags.length ? `// Flags: ${flags.join(" ")}` : "", small.entryPoints?.length ? `// Entry points: ${small.entryPoints.map(path => `./${path.replace(/^\.\//, "")}`).join(" ")}` : "", ...mode.flags.filter(flag => flag.startsWith(inTheRun)).map(flag => `// Env of the executable: ${flag.slice(inTheRun.length)}`), final.plain.exitCode ? `// Exit code: ${final.plain.exitCode}` : ""];
-    writeProgram(join(out, "as-tests"), name, { ...small, text: head.filter(Boolean).map(line => line + "\n").join("") + small.text });
     writeFileSync(join(target, "plain.txt"), final.plain.stdout + (final.plain.exitCode ? `exit code ${final.plain.exitCode}\n${final.plain.stderr.slice(0, 2000)}` : ""));
     const run = final.compiled?.run;
     writeFileSync(join(target, "compiled.txt"), run ? run.stdout + (run.exitCode !== 0 ? `exit code ${run.exitCode} signal ${run.signal}\n${run.stderr.slice(0, 4000)}` : "") : (final.compiled?.build.stderr ?? "").slice(0, 8000) + (final.compiled?.build.stdout ?? "").slice(0, 2000));
@@ -432,7 +425,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
       const units = [members.filter(generated => !generated.standsAlone), ...members.filter(generated => generated.standsAlone).map(generated => [generated])];
       for (const inTheBuild of units) {
         if (!inTheBuild.length) continue;
-        if (now() > lastCall) {
+        if (Date.now() > lastCall) {
           bump(counts.skipped, `the run was over, not tried in mode ${mode.name}`, inTheBuild.length);
           continue;
         }

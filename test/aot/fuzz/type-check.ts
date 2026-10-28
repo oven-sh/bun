@@ -94,11 +94,7 @@ export function typeChecker({ typings, options: written }: { typings?: string; o
       return root;
     });
     const errors: string[][] = programs.map(() => []);
-    const program = ts.createProgram({ rootNames, options, host });
-    // Only the programs' own files are asked: the libraries are the same every time, and to go through them takes most of a second.
-    const own = program.getSourceFiles().filter(file => indexOf(file.fileName) >= 0);
-    const found = [...program.getOptionsDiagnostics(), ...program.getGlobalDiagnostics(), ...own.flatMap(file => [...program.getSyntacticDiagnostics(file), ...program.getSemanticDiagnostics(file)])];
-    for (const { file, start, code, messageText } of found)
+    for (const { file, start, code, messageText } of ts.getPreEmitDiagnostics(ts.createProgram({ rootNames, options, host })))
       errors[Math.max(0, indexOf(file?.fileName ?? ""))].push(`${file && start !== undefined ? file.getLineAndCharacterOfPosition(start).line + 1 : 0}: TS${code}: ${ts.flattenDiagnosticMessageText(messageText, " ")}`);
     return errors;
   };

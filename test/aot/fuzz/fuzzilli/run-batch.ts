@@ -3,7 +3,7 @@
 //
 //   bun run-batch.ts --bun <the Bun that builds and runs> --programs <folder> --work <folder> --finds <folder> [--count 2000] [--group 500] [--batches 1] [--flags=--aot-threads=1]
 //
-// It takes `count` files out of `programs` for each batch and waits for more. `--batches 0` never ends. `--seconds 3600` starts no batch behind that time. `--keep` copies the files instead.
+// It takes `count` files out of `programs` for each batch and waits for more. `--batches 0` never ends. `--keep` copies the files instead.
 // `--count 1,3,12` takes one program for the first batch, three for the second, twelve for the third, one for the fourth. Which code the compiler takes for hot depends on what else the executable holds.
 // `--group 1` makes each program an entry point, which the compiler takes for a program of its own: up to 127 of them share an executable and nothing else.
 // `--hides-function-text` is for a Bun built with --fuzzilli=on: neither run shows the text of a function, which the two spell differently.
@@ -72,7 +72,6 @@ const { values: options } = parseArgs({
     count: { type: "string", default: "2000" },
     group: { type: "string", default: "500" },
     batches: { type: "string", default: "1" },
-    seconds: { type: "string", default: "0" },
     flags: { type: "string", default: "" },
     milliseconds: { type: "string", default: "250" },
     keep: { type: "boolean", default: false },
@@ -1574,11 +1573,9 @@ async function judgeUnderCollections(
 }
 
 let extension = "";
-const lastStart = Number(options.seconds) ? performance.now() + Number(options.seconds) * 1000 : Infinity;
 for (
   let batch = 0;
-  performance.now() < lastStart &&
-  (batches === 0 || batch < batches || waitingWithTheWorldOpen.length || waitingForABatchOfTheirOwn.length);
+  batches === 0 || batch < batches || waitingWithTheWorldOpen.length || waitingForABatchOfTheirOwn.length;
   batch++
 ) {
   for (const stage in spent) delete spent[stage];

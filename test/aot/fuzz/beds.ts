@@ -208,7 +208,7 @@ function unusable(bed: Bed, plain: Run): Verdict | undefined {
 }
 
 /** In front of a flag that is no flag of the build: a variable for the run of the executable. */
-export const inTheRun = "--in-the-run=";
+const inTheRun = "--in-the-run=";
 /** The same: so many shapes that hold the names of the programs are built beside them (company.ts). */
 const inTheCompanyOf = "--in-the-company-of=";
 /** The same: what lies in the folder beside the programs, a name of `projects`. */
@@ -218,7 +218,7 @@ const eachAProgram = "--each-a-program";
 export const staysAScript = "// stays a script\n";
 /** What a program may call without declaring it. */
 export const printFor = (isTyped: boolean) => (isTyped ? "function print(text: string): void {\n  console.log(text);\n}\n" : "function print(text) {\n  console.log(text);\n}\n");
-export const isOfTheBuild = (flag: string) => !flag.startsWith(inTheRun) && !flag.startsWith(inTheCompanyOf) && !flag.startsWith(besideTheProgram) && flag !== eachAProgram;
+const isOfTheBuild = (flag: string) => !flag.startsWith(inTheRun) && !flag.startsWith(inTheCompanyOf) && !flag.startsWith(besideTheProgram) && flag !== eachAProgram;
 
 const ownOptions = { target: "esnext", module: "preserve", moduleResolution: "bundler", allowJs: true, noEmit: true, strict: true };
 /** What a folder may hold beside a program. A small script has no tsconfig.json at all and no typings installed: there the build has to know the host by itself. */
@@ -737,7 +737,7 @@ const uncaught = (run: Run) => (run.stderr + "\n" + run.stdout).split("\n").find
 const validationMessage = /^.*(AOT validation|validation failed).*$/m;
 
 // What the compiler can ask itself while it builds, without a byte of the executable depending on it. A build of a user's does not pay for it.
-export const checksThatMoveNoOutput = "--aot-check=verify-each-stage,validate-references,flow-fixpoint,used-values-are-listed";
+const checksThatMoveNoOutput = "--aot-check=verify-each-stage,validate-references,flow-fixpoint,used-values-are-listed";
 
 export function compare(bed: Bed, program: Program, plain: Run, compiled: Compiled): Verdict {
   const failure = (kind: FindingKind, detail: string, signature = detail): Failure => ({ kind, detail, signature });

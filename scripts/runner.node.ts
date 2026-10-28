@@ -12,6 +12,8 @@ import { createHash } from "node:crypto";
 import {
   accessSync,
   appendFileSync,
+  chmodSync,
+  copyFileSync,
   existsSync,
   constants as fs,
   linkSync,
@@ -263,6 +265,14 @@ const jobBudgetMs = () => {
   return minutes * 60_000 - (Date.now() - runnerStartedAt);
 };
 const aotDriver = "test/aot/run-parallel.ts";
+// `bun build --compile` writes a copy of the Bun that runs it, so a file that builds a hundred executables writes a hundred times the debug information of `bun-profile`.
+const strippedBuns = new Map<string, string>();
+const buildsManyExecutables = (testPath: string) =>
+  /^(?:aot\/|cli\/aot-|cli\/run\/run-aot\.)/.test(testPath.replaceAll("\\", "/"));
+const withSymbols = (execPath: string) =>
+  [...strippedBuns].find(([, stripped]) => stripped === execPath)?.[0] ?? execPath;
+const bunFor = (execPath: string, testPath: string) =>
+  (buildsManyExecutables(testPath) && strippedBuns.get(execPath)) || execPath;
 // What a program under test/aot/parallel takes of a shard: its part of a build that it shares with others, and two runs. No program has an entry in expected-durations.json.
 const aotProgramCostMs = 1_000;
 const spawnTimeout = 5_000;
@@ -1144,7 +1154,7 @@ async function runTests(): Promise<TestResult[]> {
         return runTest(
           title,
           async () =>
-            spawnBunTest(execPath, join("test", testPath), {
+            spawnBunTest(bunFor(execPath, testPath), join("test", testPath), {
               cwd,
               stdout: concurrent ? () => {} : pipeTestStdout(process.stdout),
               stderr: concurrent ? () => {} : pipeTestStdout(process.stderr),
@@ -1332,7 +1342,7 @@ async function runTests(): Promise<TestResult[]> {
       writeFileSync(list, [...byPath.keys()].join("\n") + "\n");
       let unfinishedLine = "";
       let unexpectedLine: string | undefined;
-      const { error, exitCode, crashes } = await spawnBun(execPath, {
+      const { error, exitCode, crashes } = await spawnBun(bunFor(execPath, "aot/"), {
         args: [
           aotDriver,
           `--jobs=${parallelSafeWidth}`,
@@ -2208,7 +2218,7 @@ async function spawnBun(
         let out = "";
         const gdb = await spawnWithTimeout({
           command: "gdb",
-          args: ["-batch", `--eval-command=bt`, "--core", corePath, execPath],
+          args: ["-batch", `--eval-command=bt`, "--core", corePath, withSymbols(execPath)],
           timeout: 240_000,
           stderr: () => {},
           stdout(text) {
@@ -3099,12 +3109,32 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
   for (const entry of releaseFiles) {
     const execPath = join(releasePath, entry);
     if (/bun(?:-[a-z]+)?(?:\.exe)?$/i.test(entry) && statSync(execPath).isFile()) {
+      if (isLinux) await unpackStrippedBun(releasePath, zipPath, execPath);
       return execPath;
     }
   }
 
   console.warn(`Found ${releaseFiles.length} files in ${releasePath}:`, releaseFiles);
   throw new Error(`Could not find executable from BuildKite: ${releasePath}`);
+}
+
+/**
+ * The step that links `bun-profile` also uploads `bun`, the same link without symbols and debug information, in an
+ * archive of its own. It is laid beside `bun-profile`, where tests look for the tools that are packed with it.
+ */
+async function unpackStrippedBun(releasePath: string, profileZipPath: string, execPath: string): Promise<void> {
+  const zipPath = readdirSync(releasePath, { encoding: "utf-8" })
+    .filter(filename => /^bun.*\.zip$/i.test(filename))
+    .map(filename => join(releasePath, filename))
+    .find(path => path !== profileZipPath);
+  if (!zipPath) return;
+  const unpacked = join(await unzip(zipPath), basename(zipPath, ".zip"), "bun");
+  if (!existsSync(unpacked)) return;
+  const stripped = join(dirname(execPath), "bun-stripped");
+  copyFileSync(unpacked, stripped);
+  chmodSync(stripped, 0o755);
+  rmSync(dirname(dirname(unpacked)), { recursive: true, force: true });
+  if (getRevision(stripped) === getRevision(execPath)) strippedBuns.set(execPath, stripped);
 }
 
 function getRevision(execPath: string): string {

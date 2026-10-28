@@ -5,7 +5,6 @@
 //   bun test/aot/fuzz/run.ts --replay mutation:1234 [--bed engine] [--print-only]           one program again, printed with its verdicts
 //
 //   --seconds <n>         stops after that long (default 600); a file STOP in --out stops it too
-//   --minutes <n>         the same in minutes
 //   --programs <n>        stops after that many programs
 //   --rounds              round after round of --seconds each, every one in a folder <out>/<n> of its own and from a new seed, until a file STOP lies in --out
 //   --jobs <n>            builds at once on the product bed (default: a quarter of the cores; 0: none)
@@ -103,7 +102,7 @@ if (replay) {
       out: has("rounds") ? join(out, round()) : out,
       work,
       programsRoot,
-      seconds: option("minutes") ? Number(option("minutes")) * 60 : Number(option("seconds") ?? 600),
+      seconds: Number(option("seconds") ?? 600),
       programs: option("programs") ? Number(option("programs")) : undefined,
       firstSeed: Number(option("seed") ?? Math.floor(Date.now() / 1000) * 1000),
       sources: option("sources")?.split(",").flatMap(word => Array<string>(Number(word.split(":")[1] ?? 1)).fill(word.split(":")[0])),

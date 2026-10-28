@@ -707,6 +707,7 @@ function inotifyInodes(pid: number): string[] {
 // directory only: one on a file would keep its inode alive after a save by
 // rename, and the kernel would then never report the old inode as deleted.
 async function watchedFds(pid: number, cwd: string): Promise<Map<string, string[]>> {
+  const deadline = Date.now() + 30_000;
   for (;;) {
     const watched = new Map<string, string[]>();
     for (const { fd, path } of openFds(pid)) {
@@ -716,6 +717,9 @@ async function watchedFds(pid: number, cwd: string): Promise<Map<string, string[
       watched.set(rel, [...(watched.get(rel) ?? []), fd]);
     }
     if (isLinux ? watched.has("/") && inotifyInodes(pid).length >= 3 : watched.size >= 3) return watched;
+    if (Date.now() > deadline) {
+      throw new Error(`the watcher of ${pid} did not register its files: ${JSON.stringify([...watched])}`);
+    }
     await Bun.sleep(10);
   }
 }
@@ -823,9 +827,14 @@ async function watchOn(pid: number, path: string) {
   const started = Date.now();
   let told = false;
   while (!inotifyInodes(pid).includes(inode)) {
-    if (!told && Date.now() - started > 3000) {
+    const waited = Date.now() - started;
+    // The timeout of the test can come before the deadline. This names the step then.
+    if (!told && waited > 3000) {
       told = true;
       console.error(`watchOn: no inotify watch on ${path} (inode ${inode}) after 3 s`);
+    }
+    if (waited > 30_000) {
+      throw new Error(`no inotify watch on ${path} (inode ${inode}), watched: ${inotifyInodes(pid).join(" ")}`);
     }
     await Bun.sleep(10);
   }

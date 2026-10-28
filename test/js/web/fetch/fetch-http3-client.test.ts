@@ -244,8 +244,8 @@ describe("fetch protocol: http3", () => {
   });
 
   test.each([
-    ["small (shared-buffer fast path)", 32 * 1024],
-    ["large (zlib-streaming spill path)", 600 * 1024],
+    ["small (inline, <= 64 KiB)", 32 * 1024],
+    ["large (work pool, > 64 KiB)", 600 * 1024],
   ])("compress: gzip request body — %s", async (_, size) => {
     const payload = Buffer.alloc(size, "abcdefghij");
     const res = await fetch(`${base}/raw-echo`, {

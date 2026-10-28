@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { brotliDecompressSync, gunzipSync, inflateSync, zstdDecompressSync } from "node:zlib";
 
@@ -259,6 +259,45 @@ describe("fetch compress option", () => {
     expect(Number(json.contentLength)).toBe(json.rawLength);
   });
 
+  // BUN_FEATURE_FLAG_NO_LIBDEFLATE=1 is the kill switch for every libdeflate
+  // user; request compression falls back to zlib for gzip and deflate.
+  test.concurrent("gzip and deflate compress with zlib under BUN_FEATURE_FLAG_NO_LIBDEFLATE", async () => {
+    using server = makeServer();
+    const big = Buffer.alloc(600 * 1024, "abcdefghij").toString();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const big = Buffer.alloc(600 * 1024, "abcdefghij").toString();
+         const out = [];
+         for (const [body, compress] of [[${JSON.stringify(payload)}, "gzip"], [big, "gzip"], [big, "deflate"], [big, { encoding: "gzip", level: 12 }]]) {
+           const res = await fetch(process.env.SERVER, { method: "POST", body, compress });
+           out.push(await res.json());
+         }
+         console.log(JSON.stringify(out));`,
+      ],
+      env: { ...bunEnv, SERVER: server.url.href, BUN_FEATURE_FLAG_NO_LIBDEFLATE: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const results: any[] = JSON.parse(stdout);
+    expect(
+      results.map(r => [
+        r.encoding,
+        r.decoded === payload || r.decoded === big,
+        Number(r.contentLength) === r.rawLength,
+      ]),
+    ).toEqual([
+      ["gzip", true, true],
+      ["gzip", true, true],
+      ["deflate", true, true],
+      ["gzip", true, true],
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("concurrent large compressed bodies each arrive intact", async () => {
     using server = makeServer();
     const bodies = Array.from({ length: 8 }, (_, i) => Buffer.alloc(300 * 1024, `body-${i}-`).toString());
@@ -300,7 +339,8 @@ describe("fetch compress option", () => {
 
   // The HTTP thread serves every fetch socket in the process. Compressing a
   // body on that thread stalled every other in-flight response for the whole
-  // codec time (#47164). zstd level 19 on 1 MiB takes long enough to show it.
+  // codec time (#47164). zstd level 19 on 400 KiB takes long enough to show it
+  // (about 200 ms in a release build) without making the test slow under ASAN.
   test("a large compressed body does not stall another in-flight response", async () => {
     using server = Bun.serve({
       port: 0,
@@ -333,7 +373,7 @@ describe("fetch compress option", () => {
     })();
 
     const body = JSON.stringify(
-      Array.from({ length: 14_000 }, (_, id) => ({
+      Array.from({ length: 7_000 }, (_, id) => ({
         id,
         name: `item-${(id * 2654435761) % 4294967296}`,
         value: id / 7,

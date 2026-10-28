@@ -3,11 +3,10 @@
 //!
 //! The body is compressed before the request is handed to the HTTP thread, so
 //! that thread (which serves every fetch socket in the process) only ever
-//! sees final bytes. A body that compresses in well under the cost of a work
-//! pool round trip is compressed inline on the JS thread. Everything else
-//! runs as a [`jsc::Job`] on the work pool and queues the request from the
-//! job's completion. Only buffered bodies reach this: streams and sendfile
-//! are filtered out in `fetch_impl`.
+//! sees final bytes. A small body at a fast level is compressed inline on the
+//! JS thread. Everything else runs as a [`jsc::Job`] on the work pool and
+//! queues the request from the job's completion. Only buffered bodies reach
+//! this: streams and sendfile are filtered out in `fetch_impl`.
 
 use core::cell::RefCell;
 use core::ptr::NonNull;
@@ -47,9 +46,10 @@ pub(crate) const DEFAULT_DEFLATE_LEVEL: i32 = 6;
 pub(crate) const DEFAULT_BROTLI_QUALITY: i32 = 6;
 pub(crate) const DEFAULT_ZSTD_LEVEL: i32 = 3;
 
-/// Bodies up to this size at a fast level are compressed on the JS thread:
-/// the codec takes well under a millisecond there, less than a work pool
-/// round trip costs.
+/// Bodies up to this size at a fast level are compressed on the JS thread.
+/// gzip-6 or zstd-3 on 64 KiB takes 0.3 to 0.6 ms there, the pause judged
+/// acceptable. The pool hop itself is cheap (50 to 130 us) and is skipped
+/// only to save the two boxes, the queue entry and the loop wake per request.
 const INLINE_MAX_LEN: usize = 64 * 1024;
 
 bun_core::comptime_string_map! {
@@ -160,37 +160,62 @@ impl CompressError {
     }
 }
 
+/// Levels above this allocate an 8.6 MiB near-optimal compressor, so they are
+/// never cached. Levels 1 to 9 allocate 200 to 668 KiB.
+const MAX_CACHED_DEFLATE_LEVEL: i32 = 9;
+
 thread_local! {
-    /// The libdeflate compressor this thread used last, with its level. A
-    /// compressor is a 668 KiB allocation at levels 1 to 9, so requests at
-    /// the same level reuse one per thread instead of allocating each time.
+    /// The libdeflate compressor this thread used last, with its level, so
+    /// requests at the same level reuse one per thread instead of allocating
+    /// each time. Only levels up to `MAX_CACHED_DEFLATE_LEVEL` land here.
     static DEFLATE_COMPRESSOR: RefCell<Option<(i32, libdeflate::OwnedCompressor)>> =
         const { RefCell::new(None) };
 }
 
-/// One-shot compression of `input`. Runs on any thread.
+/// One-shot compression of `input`. Runs on any thread. The output holds no
+/// spare capacity: the body keeps it for the whole request, and a codec's
+/// worst-case bound can be many times the output (brotli: 4 MiB for 111 KiB).
 pub(crate) fn compress(input: &[u8], opt: &CompressOption) -> Result<Vec<u8>, CompressError> {
-    match opt.encoding {
+    let mut out = match opt.encoding {
         CompressEncoding::Gzip | CompressEncoding::Deflate => {
-            let encoding = if opt.encoding == CompressEncoding::Gzip {
-                libdeflate::Encoding::Gzip
+            let gzip = opt.encoding == CompressEncoding::Gzip;
+            let level = opt.level.unwrap_or(DEFAULT_DEFLATE_LEVEL);
+            if bun_core::feature_flags::is_libdeflate_enabled() {
+                compress_libdeflate(input, gzip, level)?
             } else {
-                // HTTP "deflate" is the zlib-wrapped DEFLATE stream (RFC 9110
-                // §8.4.1.2); libdeflate's `Deflate` is the raw stream.
-                libdeflate::Encoding::Zlib
-            };
-            compress_libdeflate(input, encoding, opt.level.unwrap_or(DEFAULT_DEFLATE_LEVEL))
+                compress_zlib(input, gzip, level)?
+            }
         }
-        CompressEncoding::Brotli => compress_brotli(input, opt.level),
-        CompressEncoding::Zstd => compress_zstd(input, opt.level),
+        CompressEncoding::Brotli => compress_brotli(input, opt.level)?,
+        CompressEncoding::Zstd => compress_zstd(input, opt.level)?,
+    };
+    if out.capacity() - out.len() > 4096 {
+        out.shrink_to_fit();
     }
+    Ok(out)
 }
 
-fn compress_libdeflate(
-    input: &[u8],
-    encoding: libdeflate::Encoding,
-    level: i32,
-) -> Result<Vec<u8>, CompressError> {
+fn compress_libdeflate(input: &[u8], gzip: bool, level: i32) -> Result<Vec<u8>, CompressError> {
+    let encoding = if gzip {
+        libdeflate::Encoding::Gzip
+    } else {
+        // HTTP "deflate" is the zlib-wrapped DEFLATE stream (RFC 9110
+        // §8.4.1.2); libdeflate's `Deflate` is the raw stream.
+        libdeflate::Encoding::Zlib
+    };
+    let run = |compressor: &mut libdeflate::Compressor| {
+        let mut out = Vec::new();
+        let result = compressor.compress_to_vec(input, &mut out, encoding)?;
+        if result.status != libdeflate::Status::Success {
+            return Err(CompressError::Failed);
+        }
+        Ok(out)
+    };
+    if level > MAX_CACHED_DEFLATE_LEVEL {
+        let mut compressor =
+            libdeflate::OwnedCompressor::new(level).ok_or(CompressError::OutOfMemory)?;
+        return run(&mut compressor);
+    }
     DEFLATE_COMPRESSOR.with(|slot| {
         let mut slot = slot.borrow_mut();
         let compressor = match &mut *slot {
@@ -202,13 +227,49 @@ fn compress_libdeflate(
                 &mut slot.insert((level, compressor)).1
             }
         };
-        let mut out = Vec::new();
-        let result = compressor.compress_to_vec(input, &mut out, encoding)?;
-        if result.status != libdeflate::Status::Success {
-            return Err(CompressError::Failed);
-        }
-        Ok(out)
+        run(compressor)
     })
+}
+
+/// `BUN_FEATURE_FLAG_NO_LIBDEFLATE=1`: streaming zlib `deflate(Z_FINISH)` into
+/// a Vec that grows in 64 KiB steps.
+fn compress_zlib(input: &[u8], gzip: bool, level: i32) -> Result<Vec<u8>, CompressError> {
+    use bun_zlib::{DeflateEncoder, FlushValue, ReturnCode};
+
+    // gzip wrapper: +16; HTTP "deflate" is the zlib-wrapped stream
+    // (RFC 9110 §8.4.1.2): plain 15.
+    let window_bits = if gzip { 15 + 16 } else { 15 };
+    // libdeflate accepts 0..=12; zlib only 0..=9.
+    let level = level.min(9);
+    let mut encoder = DeflateEncoder::new(level, window_bits, 8, 0).map_err(|err| match err {
+        bun_zlib::ZlibError::OutOfMemory => CompressError::OutOfMemory,
+        _ => CompressError::Failed,
+    })?;
+
+    // `avail_in` is `c_uint`; `step()` clamps to u32::MAX per call so a
+    // >= 4 GiB body is not truncated: loop until `remaining` is empty.
+    let mut out = Vec::new();
+    let mut remaining = input;
+    loop {
+        let flush = if remaining.len() <= u32::MAX as usize {
+            FlushValue::Finish
+        } else {
+            FlushValue::NoFlush
+        };
+        let reserve = if out.capacity() == out.len() {
+            64 * 1024
+        } else {
+            0
+        };
+        let (consumed, rc) = encoder.step(remaining, &mut out, reserve, flush);
+        remaining = &remaining[consumed..];
+        match rc {
+            ReturnCode::StreamEnd => return Ok(out),
+            ReturnCode::Ok => continue,
+            ReturnCode::MemError => return Err(CompressError::OutOfMemory),
+            _ => return Err(CompressError::Failed),
+        }
+    }
 }
 
 fn compress_brotli(input: &[u8], level: Option<i32>) -> Result<Vec<u8>, CompressError> {
@@ -253,8 +314,8 @@ fn compress_zstd(input: &[u8], level: Option<i32>) -> Result<Vec<u8>, CompressEr
 
 /// Whether a body of `len` bytes at `opt` is cheap enough to compress on the
 /// JS thread. gzip, deflate and zstd at or below their default level
-/// compress 64 KiB in under a millisecond. Brotli never qualifies: its
-/// default quality already takes tens of milliseconds at that size.
+/// compress 64 KiB in 0.3 to 0.6 ms. Brotli never qualifies: its default
+/// quality takes about 1.2 ms at that size, twice gzip-6.
 fn is_cheap_inline(len: usize, opt: &CompressOption) -> bool {
     if len > INLINE_MAX_LEN {
         return false;

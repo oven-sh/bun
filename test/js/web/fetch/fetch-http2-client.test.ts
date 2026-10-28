@@ -2318,8 +2318,8 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
   });
 
   test.each([
-    ["small (shared-buffer fast path)", 32 * 1024],
-    ["large (zlib-streaming spill path)", 600 * 1024],
+    ["small (inline, <= 64 KiB)", 32 * 1024],
+    ["large (work pool, > 64 KiB)", 600 * 1024],
   ])("compress: gzip request body over h2 — %s", async (_, size) => {
     await withH2Server(
       (req, res) => {

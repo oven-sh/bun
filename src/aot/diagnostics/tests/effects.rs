@@ -271,8 +271,8 @@ fn type_error_in_program_source_stops_build() {
 
 #[test]
 fn signatures_of_compiler_declarations_take_no_parameter_types_away() {
-    let source =
-        "export const parse: typeof JSON.parse = (text, reviver) => JSON.parse(text, reviver);\n";
+    let source = "export const parse: typeof JSON.parse = (text, reviver) =>
+  reviver ? JSON.parse(text, reviver) : JSON.parse(text);\n";
     assert_eq!(check(&[("main.ts", source)]), NOTHING);
 }
 

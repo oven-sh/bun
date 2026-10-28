@@ -2711,6 +2711,9 @@ impl<'h> Resolver<'h> {
         if let Some(&known) = self.caches.dirs.get_ref(path) {
             return known;
         }
+        if let Some(normalized) = normalized_for_lookup(path) {
+            return self.is_dir(&normalized);
+        }
         // `projectReferenceDtsFakingVfs.DirectoryExists`
         let result = self.host.is_dir(path)
             || (!self.options.referenced_outputs.is_empty()
@@ -2725,6 +2728,9 @@ impl<'h> Resolver<'h> {
         if let Some(&known) = self.caches.files.get_ref(path) {
             return known;
         }
+        if let Some(normalized) = normalized_for_lookup(path) {
+            return self.is_file(&normalized);
+        }
         // Most misses are in directories that don't exist.
         let result = self.is_dir(dirname::<Posix>(path)) && self.host.is_file(path);
         *self.caches.files.insert_ref(self.keep(path), result)
@@ -2734,6 +2740,9 @@ impl<'h> Resolver<'h> {
         let dir = strings::without_trailing_slash(dir);
         if let Some(known) = self.caches.packages.get_ref(dir) {
             return known.as_ref();
+        }
+        if let Some(normalized) = normalized_for_lookup(dir) {
+            return self.package(&normalized);
         }
         let path = inside(dir, b"package.json");
         // `getPackageJsonInfo`: a file that can't be read or parsed is a package without fields.

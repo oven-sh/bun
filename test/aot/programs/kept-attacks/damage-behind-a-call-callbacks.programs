@@ -1,0 +1,408 @@
+////: Hook
+class Hook {
+  action: () => boolean;
+  constructor(action: () => boolean) {
+    this.action = action;
+  }
+}
+////: callee-14
+function callee(round: number): number {
+  bound();
+  return round & 3;
+}
+////: callee-16
+function callee(round: number): number {
+  const struck = round & 1 ? Reflect.apply(strike, undefined, []) : strike.call(undefined);
+  return struck ? -1 : round & 3;
+}
+////: callee-19
+function callee(round: number): number {
+  hook.action();
+  return round & 3;
+}
+////: callee-25
+function callee(round: number, action: () => boolean): number {
+  action();
+  return round & 3;
+}
+//// damage-behind-a-call-callbacks/a-bound-function-hides-push-behind-an-own-property.ts
+// A typed caller reads an array, makes a call and reads it again. A bound function, which the callee calls, gives the array an own property named push.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+
+let victim: number[] | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-20	push	1
+////= strike
+
+const bound = strike.bind(null);
+////= callee-14
+
+////= holder-16
+
+////= outer-50	number[] = [round, round + 1, round + 2, round + 3]	[0] + p[3] + p.length	push(7) + "," + p.length + "," + p[p.length - 1]
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-callbacks/a-bound-function-replaces-a-method-on-the-prototype.ts
+// A typed caller reads an object, makes a call and reads it again. A bound function, which the callee calls, replaces a method on the prototype object of the class.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+
+let victim: Square | null = null;
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  Square.prototype.area = function (this: Square) {
+    return -this.side;
+  };
+  return true;
+}
+
+const bound = strike.bind(null);
+////= callee-14
+
+////= holder-39
+
+let digest = 0;
+////= for-3
+console.log("digest " + digest);
+//// damage-behind-a-call-callbacks/a-bound-function-stores-a-string-into-a-number-field-of-a-literal.ts
+// A typed caller reads an object, makes a call and reads it again. A bound function, which the callee calls, stores a string into a number field of the object, which an object literal has made.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+type Pair = { left: number; right: number; note?: string };
+
+let victim: Pair | null = null;
+let spark: number = 0;
+////= hot-9
+////= strike-2
+
+const bound = strike.bind(null);
+////= callee-14
+
+////= holder-21
+
+////= outer-29
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-callbacks/a-callback-handed-down-gives-an-array-another-prototype.ts
+// A typed caller reads an array, makes a call and reads it again. A function that the caller hands to the callee deletes an element of the array and gives the array a prototype that has an element there.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+const withAnElement: number[] = Object.create(Array.prototype, { 1: { value: 111 } });
+
+let victim: number[] | null = null;
+let spark: number = 0;
+////= hot-4
+////= strike-2
+
+////= callee-25
+
+////= holder-35	callee(round, strike	p[3]
+
+////= outer-3
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-callbacks/a-callback-handed-down-replaces-a-method-on-the-prototype.ts
+// A typed caller reads an object, makes a call and reads it again. A function that the caller hands to the callee replaces a method on the prototype object of the class.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+
+let victim: Square | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-3
+////= strike
+
+////= callee-25
+
+////= holder-38	callee(round, strike)
+
+////= outer-4
+
+let digest = 0;
+////= for-3
+console.log("digest " + digest);
+//// damage-behind-a-call-callbacks/a-callback-handed-down-stores-a-string-into-a-number-field-of-a-literal.ts
+// A typed caller reads an object, makes a call and reads it again. A function that the caller hands to the callee stores a string into a number field of the object, which an object literal has made.
+type Pair = { left: number; right: number; note?: string };
+
+let victim: Pair | null = null;
+////= strike-8
+
+////= callee-25
+
+function holder(p: Pair, round: number): string {
+  const before = p.left + p.right + ":" + p.note;
+  const got = callee(round, strike);
+  const after = p.left + "," + (p.right + 1) + "," + typeof p.right;
+  return before + " " + got + " " + after;
+}
+
+////= outer-33
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-callbacks/a-callback-kept-in-a-field-deletes-an-element.ts
+// A typed caller reads an array, makes a call and reads it again. A function that lies in a field of an object, which the callee reads and calls, deletes an element of the array.
+
+let victim: number[] | null = null;
+////= strike-25	delete target[1]
+
+////= Hook
+const hook = new Hook(strike);
+////= callee-19
+
+////= holder-17
+
+function outer(round: number): string {
+  const p: number[] = [round, round + 1, round + 2, round + 3];
+  const before = p[0] + p[3] + p.length;
+  if (round === 150 || round === 151 || round === 299) victim = p;
+  const inner = holder(p, round);
+  let sum = 0;
+  for (let index = 0; index < p.length; index++) sum += p[index];
+  const after = sum + "," + p.length + "," + p[1] + "," + (1 in p);
+  return before + " [" + inner + "] " + after;
+}
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-callbacks/a-callback-kept-in-a-field-seals-the-object.ts
+// A typed caller reads an object, makes a call and reads it again. A function that lies in a field of an object, which the callee reads and calls, seals the object, which has an optional field that is not there yet.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Card
+
+let victim: Card | null = null;
+let spark: number = 0;
+////= hot-19	Object.seal	target
+////= strike-2
+
+////= Hook
+const hook = new Hook(strike);
+////= callee-19
+
+////= holder-5
+
+function outer(round: number): string {
+  const p: Card = new Card(round);
+  const before = p.id + ":" + p.note;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    spark = hot;
+  }
+  const inner = holder(p, round);
+  let stored = "stored";
+  try {
+    p.note = "late";
+  } catch (error) {
+    stored = (error as Error).name;
+  }
+  const after = stored + "," + p.note + "," + p.id + "," + Object.keys(p).join("");
+  return before + " [" + inner + "] " + after;
+}
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-callbacks/a-callback-kept-in-a-field-stores-an-object-with-value-of-into-a-number-field.ts
+// A typed caller reads an object, makes a call and reads it again. A function that lies in a field of an object, which the callee reads and calls, stores an object with a valueOf method into a number field of the object.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Point
+
+let victim: Point | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-8
+////= strike
+
+////= Hook
+const hook = new Hook(strike);
+////= callee-19
+
+////= holder-46
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-callbacks/a-closure-handed-down-two-calls-freezes-the-object.ts
+// A typed caller reads an object, makes a call and reads it again. A closure that the caller makes and that is handed down two calls freezes the object.
+////= Point
+
+let victim: Point | null = null;
+////= strike-3
+
+function inner(action: (step: number) => number): number {
+  return action(1) + action(2);
+}
+function callee(round: number, action: (step: number) => number): number {
+  return inner(action) + (round & 3);
+}
+
+////= holder-33	callee(round, step => (step === 2 && strike() ? 10 : step))
+
+////= outer-22
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-callbacks/a-closure-handed-down-two-calls-stores-zero-into-a-boolean-field.ts
+// A typed caller reads an object, makes a call and reads it again. A closure that the caller makes and that is handed down two calls stores 0 into a boolean field of the object.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Lamp
+
+let victim: Lamp | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-19	on	0
+////= strike
+
+function inner(action: (step: number) => number): number {
+  return action(1) + action(2);
+}
+function callee(round: number, action: (step: number) => number): number {
+  return inner(action) + (round & 3);
+}
+
+function holder(p: Lamp, round: number): string {
+  const before = (p.on ? "lit" : "dark") + p.watts;
+  const got = callee(round, step => (step === 2 && strike() ? 10 : step));
+  const after = (p.on ? "lit" : "dark") + "," + (p.on === true) + "," + (p.on === false) + "," + typeof p.on + "," + p.watts;
+  return before + " " + got + " " + after;
+}
+
+////= outer-26
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-callbacks/a-closure-handed-down-two-calls-takes-the-object-out-of-its-class.ts
+// A typed caller reads an object, makes a call and reads it again. A closure that the caller makes and that is handed down two calls gives the object the prototype of the base class.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+
+let victim: Square | null = null;
+let spark: number = 0;
+////= hot-22	Object.setPrototypeOf(target, Shape.prototype)
+////= strike-2
+
+function inner(action: (step: number) => number): number {
+  return action(1) + action(2);
+}
+function callee(round: number, action: (step: number) => number): number {
+  return inner(action) + (round & 3);
+}
+
+////= holder-38	callee(round, step => (step === 2 && strike() ? 10 : step))
+
+////= outer-2
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-callbacks/a-closure-that-the-callee-keeps-on-its-dirty-path.ts
+// In every round the caller makes a closure over its own variables and hands it to a callee, which is the last use of them. On a rare path the callee damages the caller's object and keeps the closure. The kept closures are called at the end, and each still has the variables of its round.
+////= Point
+
+let strikes = false;
+const kept: (() => string)[] = [];
+function consult(p: Point, describe: () => string): number {
+  if (strikes) {
+    delete (p as any).x;
+    kept.push(describe);
+  }
+  return describe().length;
+}
+
+function holder(p: Point, round: number): string {
+  const before = p.x;
+  let count = round * 2;
+  const name = "r" + round;
+  const got = consult(p, () => name + ":" + count++);
+  return before + " " + got + " " + p.x;
+}
+
+for (let round = 0; round < 400; round++) {
+  strikes = round % 100 >= 98;
+  const line = holder(new Point(round, 1), round);
+  if (round % 100 >= 97) console.log(round + ": " + line);
+}
+console.log(kept.map(describe => describe()).join(" "));
+console.log(kept.map(describe => describe()).join(" "));
+//// damage-behind-a-call-callbacks/a-function-called-through-reflect-apply-makes-a-field-read-only.ts
+// A typed caller reads an object, makes a call and reads it again. A function that the callee calls through Reflect.apply and Function.prototype.call makes a field of the object read-only.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Point
+
+let victim: Point | null = null;
+let spark: number = 0;
+////= hot-22	Object.defineProperty(target, "x", { value: 41, writable: false })
+////= strike-2
+
+////= callee-16
+
+////= holder-11
+
+////= outer-39	spark	hot
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-callbacks/a-function-called-through-reflect-apply-stores-zero-into-a-boolean-field.ts
+// A typed caller reads an object, makes a call and reads it again. A function that the callee calls through Reflect.apply and Function.prototype.call stores 0 into a boolean field of the object.
+////= Lamp
+
+let victim: Lamp | null = null;
+////= strike-7
+
+////= callee-16
+
+////= holder-8
+
+////= outer-25
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-callbacks/a-function-called-through-reflect-apply-takes-the-object-out-of-its-class.ts
+// A typed caller reads an object, makes a call and reads it again. A function that the callee calls through Reflect.apply and Function.prototype.call gives the object the prototype of the base class.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+
+let victim: Square | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-24	Object.setPrototypeOf(target, Shape.prototype)
+////= strike
+
+////= callee-16
+
+////= holder-43
+
+let digest = 0;
+////= for
+console.log("digest " + digest);

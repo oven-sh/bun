@@ -1,0 +1,5 @@
+42
+typeof process.mainModule: undefined
+'mainModule' in process: true
+typeof require: undefined
+typeof module: undefined

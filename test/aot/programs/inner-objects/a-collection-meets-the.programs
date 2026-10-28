@@ -1,0 +1,937 @@
+////: fill
+function fill(into: Outer[], rows: number, columns: number): void {
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      const i = row * columns + column;
+      into.push({ inner: { count: i, label: "label" + i }, tag: i });
+    }
+  }
+}
+////: fill-2
+function fill(round: number): void {
+  for (let i = 0; i < «1»; i++) {
+    const o = laid(i), p = laid(i + 1), q = laid(i + 2);
+    if ((i & 3) === 0) kept.push(o, p);
+    sum += read(o) + read(p) + read(q);
+  }
+  for (let i = 0; i < kept.length; i += 3) {
+    const o = kept[i];
+    if (i % 2) o.a = { u: i, ref: null, name: "again" }; else if (o.a) o.a.ref = { z: round };
+  }
+}
+////: fill-3
+function fill(into: Outer[], rows: number, columns: number): void {
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      const i = row * columns + column;
+      into.push({ inner: { count: i, leaf: «1» }, tag: i });
+    }
+  }
+}
+////: for
+for (let round = 0; round < 3; round++) {
+  const outers: Outer[] = [];
+  fill(outers, 10, 10);
+  let next = 0;
+  for (const [name, way] of ways) {
+    current = outers[next++];
+    console.log(round, name + ":", way(current));
+    sink.length = 0;
+  }
+  console.log(round, "swap:", swap(outers[next++], outers[next++]));
+  console.log(round, "give:", give(outers[next++], outers[next++]));
+  if (round === 1) fullGC();
+}
+////: give
+function give(x: Outer, y: Outer): string {
+  const c = x.inner, d = y.inner;
+  y.inner = x.inner;
+  c.count += 100;
+  d.count += 200;
+  return show(c) + " " + show(d) + " " + show(y.inner) + " " + (x.inner === y.inner);
+}
+////: swap
+function swap(x: Outer, y: Outer): string {
+  const c = x.inner, d = y.inner;
+  const held = x.inner;
+  x.inner = y.inner;
+  y.inner = held;
+  c.count += 100;
+  d.count += 200;
+  return show(c) + " " + show(d) + " " + show(x.inner) + " " + show(y.inner) + " " + (x.inner === d) + (y.inner === c);
+}
+////: takeAndRead
+function takeAndRead(slot: { it: Parent | null }, i: number): number {
+  const p = slot.it!;
+  slot.it = null;
+  const c = p.c;
+  const before = c.x;
+  const made = churn(8);
+  c.second = new Payload(before + made, "late");
+  const more = churn(8);
+  return c.x + c.first.v + c.first.w.length + c.second.v + c.second.w.length + more;
+}
+////: ways
+const ways: [string, Way][] = [
+  ["push", x => { const c = x.inner; const a = c.count; sink.push(x.inner); c.count += 100; return a + " " + show(c) + " " + show(x.inner); }],
+  ["spread", x => { const c = x.inner; const a = c.count; const copy = { ...x }; c.count += 100; return a + " " + show(c) + " " + show(copy.inner) + " " + (copy.inner === x.inner); }],
+  ["spread of it", x => { const c = x.inner; const copy = { ...x.inner }; c.count += 100; return show(c) + " " + show(copy) + " " + (copy === (x.inner as unknown)); }],
+  ["assign", x => { const c = x.inner; const copy = Object.assign({}, x); c.count += 100; return show(c) + " " + show(copy.inner) + " " + (copy.inner === x.inner); }],
+  ["assign into", x => { const c = x.inner; Object.assign(x, { tag: -1 }); c.count += 100; return show(c) + " " + x.tag; }],
+  ["values", x => { const c = x.inner; const values = Object.values(x); c.count += 100; return show(c) + " " + (values[0] === x.inner); }],
+  ["entries", x => { const c = x.inner; const entries = Object.entries(x); c.count += 100; return show(c) + " " + (entries[0][1] === x.inner); }],
+  ["keys", x => { const c = x.inner; const keys = Object.keys(x); c.count += 100; return show(c) + " " + keys.join(); }],
+  ["for in", x => { const c = x.inner; let found: unknown; for (const key in x) if (key === "inner") found = (x as any)[key]; c.count += 100; return show(c) + " " + (found === x.inner); }],
+  ["by key", x => { const c = x.inner; const key = sink.length >= 0 ? "inner" : "tag"; const found = (x as any)[key]; c.count += 100; return show(c) + " " + show(found); }],
+  ["stored by key", x => { const c = x.inner; const key = sink.length >= 0 ? "inner" : "tag"; (x as any)[key] = { count: -1, leaf: { id: -1 }, text: "other" }; c.count += 100; return show(c) + " " + show(x.inner); }],
+  ["json", x => { const c = x.inner; const text = JSON.stringify(x); c.count += 100; return show(c) + " " + text; }],
+  ["clone", x => { const c = x.inner; const clone = structuredClone(x); c.count += 100; return show(c) + " " + show(clone.inner); }],
+  ["getter", x => { const c = x.inner; const a = withGetter.trap; c.count += 100; return a + " " + show(c) + " " + (sink[sink.length - 1] === c); }],
+  ["value of", x => { const c = x.inner; const a = (withValueOf as any) * 2; c.count += 100; return a + " " + show(c) + " " + (sink[sink.length - 1] === c); }],
+  ["to string", x => { const c = x.inner; const a = `${withToString}`; c.count += 100; return a + " " + show(c) + " " + (sink[sink.length - 1] === c); }],
+  ["to primitive", x => { const c = x.inner; const a = (withToPrimitive as any) + 1; c.count += 100; return a + " " + show(c) + " " + (sink[sink.length - 1] === c); }],
+  ["proxy get", x => { const c = x.inner; const a = proxy.anything; c.count += 100; return a + " " + show(c) + " " + (sink[sink.length - 1] === c); }],
+  ["proxy has", x => { const c = x.inner; const a = "anything" in proxy; c.count += 100; return a + " " + show(c) + " " + (sink[sink.length - 1] === c); }],
+  ["iterator", x => { const c = x.inner; const [a] = iterable; c.count += 100; return a + " " + show(c) + " " + (sink[sink.length - 1] === c); }],
+  ["caught", x => { const c = x.inner; try { sink.push(x.inner); (null as any).nothing; } catch { c.count += 100; } return show(c) + " " + show(x.inner); }],
+  ["finally", x => { const c = x.inner; try { return show(c); } finally { sink.push(x.inner); c.count += 100; sink.push(show(c)); } }],
+  ["loop", x => { const c = x.inner; let sum = 0; for (let i = 0; i < 5; i++) { if (i === 2) sink.push(x.inner); c.count += 1; sum += c.count + c.leaf.id; } return sum + " " + show(x.inner); }],
+  ["other name", x => { const y = x; const c = x.inner; sink.push(y.inner); c.count += 100; return show(c) + " " + show(y.inner); }],
+  ["itself", x => { const c = x.inner; x.inner = x.inner; c.count += 100; return show(c) + " " + show(x.inner) + " " + (c === x.inner); }],
+  ["out of itself", x => { const c = x.inner; x.inner = { count: x.inner.count + 1, leaf: x.inner.leaf, text: x.inner.text + "!" }; c.count += 100; return show(c) + " " + show(x.inner) + " " + (c === x.inner); }],
+  ["null", x => { const c = x.inner; (x as any).inner = null; c.count += 100; return show(c) + " " + (x as any).inner; }],
+  ["deleted", x => { const c = x.inner; delete (x as any).inner; c.count += 100; return show(c) + " " + ("inner" in x); }],
+  ["frozen", x => { const c = x.inner; Object.freeze(x); c.count += 100; return show(c) + " " + show(x.inner) + " " + Object.isFrozen(x) + Object.isFrozen(x.inner); }],
+  ["it is frozen", x => { const c = x.inner; Object.freeze(x.inner); try { c.count += 100; } catch (error) { sink.push((error as Error).name); } return show(c) + " " + Object.isFrozen(c) + " " + sink[sink.length - 1]; }],
+  ["extra property", x => { const c = x.inner; (x.inner as any).extra = "extra"; c.count += 100; return show(c) + " " + (c as any).extra + " " + Object.keys(c).join(); }],
+  ["extra on the outer", x => { const c = x.inner; (x as any).extra = "extra"; c.count += 100; return show(c) + " " + show(x.inner) + " " + Object.keys(x).join(); }],
+  ["prototype", x => { const c = x.inner; Object.setPrototypeOf(x.inner, { inherited: "inherited" }); c.count += 100; return show(c) + " " + (c as any).inherited; }],
+  ["prototype of the outer", x => { const c = x.inner; Object.setPrototypeOf(x, { inherited: "inherited" }); c.count += 100; return show(c) + " " + show(x.inner) + " " + (x as any).inherited; }],
+  ["defined", x => { const c = x.inner; Object.defineProperty(x, "inner", { value: x.inner, writable: false, enumerable: false, configurable: true }); c.count += 100; return show(c) + " " + show(x.inner) + " " + Object.keys(x).join(); }],
+  ["accessor", x => { const c = x.inner; const kept = x.inner; Object.defineProperty(x, "inner", { get() { return kept; }, configurable: true }); c.count += 100; return show(c) + " " + show(x.inner); }],
+  ["descriptor", x => { const c = x.inner; const descriptor = Object.getOwnPropertyDescriptor(x, "inner")!; c.count += 100; return show(c) + " " + (descriptor.value === x.inner); }],
+  ["reflect", x => { const c = x.inner; const found = Reflect.get(x, "inner"); c.count += 100; return show(c) + " " + (found === x.inner); }],
+  ["collections", x => { const c = x.inner; const a = c.count; fullGC(); c.count += 100; edenGC(); return a + " " + show(c) + " " + show(x.inner); }],
+  ["collected after", x => { const c = x.inner; sink.push(x.inner); sink.pop(); fullGC(); c.count += 100; c.leaf = { id: -c.leaf.id }; edenGC(); return show(c) + " " + show(x.inner); }],
+];
+////: ways-2
+////= ways
+
+////= swap
+////= give
+
+////= for
+//// a-collection-meets-the-outer-object-before-its-booleans-are-written.ts
+// The inner object is made first, with the cell of both; a text is split before the outer object is filled, and that collects: the outer object has a header and none of its booleans yet.
+// Its cell lies where other objects lay before, so a slot that is not written yet holds what they left there.
+import { fullGC } from "bun:jsc";
+
+interface Inner { count: number; text: string }
+interface Outer { seen?: boolean; inner: Inner; rest?: unknown; done?: boolean; parts: string[] }
+interface Label { order: number; name: string }
+interface Tagged { label: Label; low: number; high: number }
+
+const labels: (Label | null)[] = new Array(1024).fill(null);
+const tagged: (Tagged | null)[] = new Array(1024).fill(null);
+function makeTagged(i: number, x: number): Tagged {
+  const label: Label = { order: i, name: "s" + i };
+  labels[i & 1023] = label;
+  return { label, low: x, high: x };
+}
+function fillCellsAndLetGo(count: number): number {
+  let sum = 0;
+  for (let i = 0; i < count; i++) {
+    const made = makeTagged(i, 0x55555555 ^ (i & 1));
+    tagged[i & 1023] = made;
+    sum += made.low & 1;
+  }
+  labels.fill(null);
+  tagged.fill(null);
+  return sum;
+}
+
+const inners: Inner[] = [];
+function make(i: number, text: string): Outer {
+  const inner: Inner = { count: i, text: "t" + i };
+  inners.push(inner);
+  const parts = text.split(/,/);
+  return { inner, parts };
+}
+
+const outers: Outer[] = [];
+let sum = 0;
+for (let round = 0; round < 4; round++) {
+  sum += fillCellsAndLetGo(4000);
+  fullGC();
+  for (let i = 0; i < 1500; i++) {
+    const made = make(i, "a,b,c," + i);
+    if (i % 7 === 0) made.seen = i % 2 === 0;
+    if (i % 5 === 0) made.done = i % 3 === 0;
+    if (i % 11 === 0) made.rest = i;
+    outers.push(made);
+  }
+}
+for (const outer of outers) {
+  sum += outer.inner.count + outer.parts.length;
+  sum += outer.seen === undefined ? 1 : outer.seen ? 2 : 3;
+  sum += outer.done === undefined ? 1 : outer.done ? 2 : 3;
+  sum += outer.rest === undefined ? 0 : 1;
+}
+console.log(sum, inners.length);
+//// a-collection-meets-the-outer-object-before-its-numbers-are-written.ts
+// The inner object is made first, with the cell of both; a string is put together before the outer object is filled, and that collects: the outer object has a header and no numbers yet.
+interface Leaf { id: number }
+interface Inner { count: number; leaf: Leaf; text: string }
+interface Outer { inner: Inner; tag: number }
+const into: Outer[] = [];
+for (let i = 0; i < 3000; i++) into.push({ inner: { count: i, leaf: { id: i }, text: "t" + i }, tag: i });
+let sum = 0;
+for (const o of into) sum += o.inner.count + o.inner.leaf.id + o.inner.text.length + o.tag;
+console.log(sum);
+//// a-collection-runs-between-the-two-births.ts
+// Between the birth of the inner object and that of the outer one a full collection runs, while the inner object is already kept. So the cell is old and marked when the outer object is filled
+// with young strings, and only collections of the young follow.
+import { edenGC, fullGC } from "bun:jsc";
+interface Inner { d: number }
+interface Outer { first: string; c: Inner; second: string }
+const keptInner: Inner[] = [];
+const keptOuter: Outer[] = [];
+const ring: string[] = new Array(512).fill("");
+function garbage(n: number): number { let x = 0; for (let i = 0; i < n; i++) { const s = "g" + i + "-" + n; ring[i & 511] = s; x += s.length; } return x; }
+function make(i: number, depth: number): Outer {
+  if (depth > 0) return make(i, depth - 1);
+  const c: Inner = { d: i };
+  keptInner.push(c);
+  fullGC();
+  return { first: "a" + i + "-" + depth, c, second: "b" + i + "-" + depth };
+}
+function batch(from: number): void { for (let i = from; i < from + 4; i++) keptOuter.push(make(i, 3)); }
+let g = 0;
+for (let i = 0; i < 100; i += 4) {
+  batch(i);
+  edenGC(); g += garbage(20000); edenGC(); g += garbage(20000);
+}
+let bad = "";
+for (let i = 0; i < keptOuter.length; i++) {
+  const o = keptOuter[i];
+  if (o.first !== "a" + i + "-0" || o.second !== "b" + i + "-0" || o.c !== keptInner[i] || o.c.d !== i) { bad = "WRONG at " + i + ": " + o.first + " " + o.second; break; }
+}
+console.log(keptOuter.length, g, bad);
+//// a-constructor-makes-the-inner-object.ts
+class Vec { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y; } len() { return this.x * this.x + this.y * this.y; } }
+class Body { id: number; pos: Vec; name: string; constructor(i: number) { this.id = i; this.pos = new Vec(i, i + 1); this.name = "b" + i; } move(d: number) { this.pos.x += d; return this; } }
+class Sub extends Body { extra: number; constructor(i: number) { super(i); this.extra = i * 2; } }
+const all: Body[] = [];
+for (let i = 0; i < 5000; i++) all.push(i % 4 ? new Body(i) : new Sub(i));
+const positions = all.map(b => b.pos);
+Bun.gc(true);
+let s = 0;
+for (let i = 0; i < all.length; i++) { all[i].move(1); s += positions[i].len() + (positions[i] === all[i].pos ? 1 : 0) + (all[i].pos instanceof Vec ? 1 : 0) + all[i].name.length; }
+console.log(s, all[0] instanceof Sub, (all[0] as Sub).extra, JSON.stringify(all[3]));
+all.length = 0; Bun.gc(true);
+let t = 0; for (const p of positions) t += p.x + p.y;
+console.log(t);
+//// an-index-gets-an-accessor-above-arrays-that-lie-in-cells.js
+// Arrays that lie in the cells of their objects exist, and then an index gets an accessor above them: on the prototype of all arrays or of all objects where the program may do that, on a prototype of their own in any case.
+function make(i) { return { list: [i, i + 1], tag: "t" + i }; }
+function makeEmpty(i) { return { list: [], tag: "e" + i }; }
+const before = [];
+for (let i = 0; i < 200; i++) { before.push(make(i)); before.push(makeEmpty(i)); }
+let seen = 0;
+const accessor = { get() { seen++; return "from above"; }, set(v) { seen += 100; }, configurable: true };
+const lines = [];
+for (const [name, prototype] of [["Array.prototype", Array.prototype], ["Object.prototype", Object.prototype]]) {
+  let defined = true;
+  try { Object.defineProperty(prototype, 4, accessor); } catch (error) { defined = false; }
+  if (!defined) continue;
+  const after = make(1000);
+  lines.push(name, before[0].list[4], before[1].list[4], after.list[4], seen);
+  before[0].list[4] = 1; before[1].list[4] = 2; after.list[4] = 3;
+  lines.push(seen, before[0].list.length, before[1].list.length, after.list.length, Object.keys(before[0].list).join());
+  delete prototype[4];
+  before[2].list[4] = 5; lines.push(before[2].list.join(), before[2].list.length);
+}
+const checked = lines.length > 0 ? "checked" : "refused";
+const own = Object.create(Array.prototype);
+Object.defineProperty(own, 3, accessor);
+const a = before[10].list, b = before[11].list;
+Object.setPrototypeOf(a, own); Object.setPrototypeOf(b, own);
+const start = seen;
+const read = [a[3], b[3], a.length, b.length];
+a[3] = 1; b[3] = 2; a.push(7, 8, 9); b.push(7);
+console.log(typeof checked, read.join(), seen - start, a.join(), b.join(), a.length, b.length, before[10].list === a, Array.isArray(a));
+//// copies-share-the-inner-object.ts
+interface Inner { d: number; e: number }
+interface Outer { b: number; c: Inner }
+function make(i: number): Outer { return { b: i, c: { d: i + 1, e: i + 2 } }; }
+const a = make(1);
+const spread = { ...a };
+console.log(spread.c === a.c, JSON.stringify(spread));
+const inner = { ...a.c };
+console.log(inner === a.c, JSON.stringify(inner));
+const t = make(100); const tc = t.c;
+Object.assign(t, a);
+console.log(t.c === a.c, tc.d, tc.e, t.b);
+console.log(JSON.stringify(a), JSON.stringify(a.c), Object.keys(a).join(), Object.keys(a.c).join(), Object.entries(a.c).join("|"));
+const clone = structuredClone(a);
+console.log(clone.c !== a.c, JSON.stringify(clone), JSON.stringify(structuredClone(a.c)));
+const both = structuredClone({ p: a, q: a.c });
+console.log(both.p.c === both.q);
+for (const k in a) console.log(k, typeof (a as any)[k]);
+for (const k in a.c) console.log(k, (a.c as any)[k]);
+console.log(Bun.inspect(a), Bun.deepEquals(a, make(1)), a.c === make(1).c);
+const { c, ...rest } = a; console.log(c === a.c, JSON.stringify(rest));
+const parsed: Outer = JSON.parse(JSON.stringify(a)); console.log(parsed.c.d + parsed.c.e + parsed.b);
+//// heap-snapshots-count-both-objects.ts
+import { generateHeapSnapshot } from "bun";
+import { writeHeapSnapshot, getHeapSnapshot } from "node:v8";
+interface Inner { d: number; e: number }
+interface Outer { b: number; c: Inner }
+function make(i: number): Outer { return { b: i, c: { d: i + 1, e: i + 2 } }; }
+const kept: Outer[] = []; const inners: Inner[] = [];
+for (let i = 0; i < 1000; i++) { kept.push(make(i)); inners.push(make(i).c); }
+const snapshot: any = generateHeapSnapshot();
+console.log(typeof snapshot, Array.isArray(snapshot.nodes), snapshot.nodes.length > 1000);
+const v8: any = generateHeapSnapshot("v8");
+console.log(typeof v8, v8.length > 1000);
+let s = 0; for (const o of kept) s += o.c.d; for (const c of inners) s += c.e;
+console.log(s);
+//// many-hold-one-inner-object-while-several-threads-mark.ts
+// Many objects and promises hold the same inner objects, and nothing else holds the objects those lie in. Several threads mark them at once, and the collector checks each visit.
+import { fullGC } from "bun:jsc";
+type Inner = { count: number; label: string };
+type Outer = { inner: Inner; tag: number };
+type Holder = { held: Inner; id: number };
+////= fill
+function hold(list: Holder[], outer: Outer, id: number): void { list.push({ held: outer.inner, id }); }
+function promise(list: Promise<Inner>[], outer: Outer): void { list.push(Promise.resolve(outer.inner)); }
+const holders: Holder[][] = [];
+const promises: Promise<Inner>[][] = [];
+let outers: Outer[] | null = [];
+fill(outers, 40, 50);
+for (let part = 0; part < 48; part++) {
+  const list: Holder[] = [];
+  const settled: Promise<Inner>[] = [];
+  for (let i = 0; i < 2000; i++) {
+    hold(list, outers[(i * 7 + part) % 2000], i);
+    promise(settled, outers[(i * 11 + part) % 2000]);
+  }
+  holders.push(list);
+  promises.push(settled);
+}
+outers = null;
+let sum = 0;
+for (let round = 0; round < 300; round++) {
+  fullGC();
+  sum += holders[round % 48][round].held.count + holders[(round + 20) % 48][round].held.label.length + (await promises[round % 48][round]).count;
+}
+console.log(sum);
+//// objects-born-with-a-short-array-are-kept.ts
+// Long-lived objects that are born with a short array in a field: what the collector pays for them, beside what the births cost.
+interface Node3 { id: number; items: number[]; next: Node3 | null }
+class Bag { id: number; items: number[]; next: Bag | null; constructor(id: number, next: Bag | null) { this.id = id; this.items = []; this.next = next; } }
+function make(n: number): Node3 | null {
+  let head: Node3 | null = null;
+  for (let i = 0; i < n; i++) head = { id: i, items: [i, i + 1, i + 2], next: head };
+  return head;
+}
+function makeBags(n: number): Bag | null {
+  let head: Bag | null = null;
+  for (let i = 0; i < n; i++) { head = new Bag(i, head); if ((i & 3) === 0) head.items.push(i); }
+  return head;
+}
+function sum(head: Node3 | null): number {
+  let total = 0;
+  for (let p = head; p; p = p.next) total += p.items[0] + p.items[2] + p.items.length + p.id;
+  return total;
+}
+function sumBags(head: Bag | null): number {
+  let total = 0;
+  for (let p = head; p; p = p.next) total += p.items.length + p.id;
+  return total;
+}
+let answer = 0;
+const kept = make(10000);
+const keptBags = makeBags(10000);
+for (let round = 0; round < 20; round++) answer += sum(kept) + sumBags(keptBags);
+for (let round = 0; round < 20; round++) answer += sum(make(1000)) + sumBags(makeBags(1000));
+console.log(answer);
+//// objects-with-every-kind-of-slot-are-made-around-calls-that-collect.ts
+// Each field of these objects is of another kind: booleans, whole numbers, fractions, one of a few texts, texts, objects, anything, each also optional. An object or a short list in a field is made first,
+// and what fills the fields behind it splits texts, joins lists and parses, so collections fall between the two. The objects come from literals, constructors, class fields, spreads and `JSON.parse(text) as T`.
+type Color = "red" | "green" | "blue";
+interface Inner { count: number; text: string }
+interface Wide {
+  inner: Inner;
+  flag: boolean; maybeFlag?: boolean;
+  whole: number; maybeWhole?: number;
+  fraction: number; maybeFraction?: number;
+  color: Color; maybeColor?: Color;
+  text: string; maybeText?: string;
+  other: Inner | null; maybeOther?: Inner;
+  anything: unknown; maybeAnything?: unknown;
+  parts: string[];
+}
+interface WithList { list: number[]; flag: boolean; maybeFlag?: boolean; color: Color; whole: number; parts: string[] }
+
+const colors: Color[] = ["red", "green", "blue"];
+const inners: Inner[] = [];
+const lists: number[][] = [];
+
+function keep(inner: Inner): Inner {
+  inners.push(inner);
+  return inner;
+}
+
+function fromLiteral(i: number, text: string): Wide {
+  const inner = keep({ count: i, text: "t" + i });
+  const parts = text.split(/,/);
+  return {
+    inner, flag: i % 2 === 0, whole: parts.length + i, fraction: i / 4, color: colors[i % 3], text: parts.join("-"),
+    other: i % 3 === 0 ? null : { count: -i, text: parts[0] }, anything: i % 5 === 0 ? parts : i, parts,
+  };
+}
+
+function withOptionalFields(i: number, text: string): Wide {
+  const inner = keep({ count: i, text: "u" + i });
+  const parts = text.split(/;/);
+  return {
+    inner, flag: i % 2 === 1, maybeFlag: i % 3 === 0, whole: i, maybeWhole: i % 7 === 0 ? undefined : i * 2, fraction: i / 8, maybeFraction: i / 16,
+    color: colors[(i + 1) % 3], maybeColor: colors[i % 3], text: parts.join("+"), maybeText: "m" + parts.length, other: null, maybeOther: { count: i, text: "o" + i },
+    anything: null, maybeAnything: parts.length > 1 ? parts[1] : undefined, parts,
+  };
+}
+
+function withList(i: number, text: string): WithList {
+  const list = [i, i + 1, i + 2];
+  lists.push(list);
+  const parts = text.split(/,/);
+  return { list, flag: parts.length > 3, color: colors[i % 3], whole: parts.length, parts };
+}
+
+class Made {
+  inner: Inner;
+  flag = false;
+  maybeFlag?: boolean;
+  whole = 0;
+  color: Color = "red";
+  parts: string[];
+  constructor(i: number, text: string) {
+    this.inner = keep({ count: i, text: "c" + i });
+    this.parts = text.split(/,/);
+    this.flag = this.parts.length % 2 === 0;
+    this.whole = this.parts.length + i;
+    if (i % 4 === 0) this.maybeFlag = i % 8 === 0;
+    this.color = colors[i % 3];
+  }
+}
+
+function describe(wide: Wide): string {
+  return [
+    wide.inner.count, wide.inner.text, wide.flag, wide.maybeFlag, wide.whole, wide.maybeWhole, wide.fraction, wide.maybeFraction, wide.color, wide.maybeColor, wide.text, wide.maybeText,
+    wide.other === null ? "none" : wide.other.text, wide.maybeOther?.text, typeof wide.anything, typeof wide.maybeAnything, wide.parts.length,
+  ].join(" ");
+}
+
+let length = 0;
+let last = "";
+const kept: unknown[] = [];
+for (let i = 0; i < 1200; i++) {
+  const first = fromLiteral(i, "a,b,c," + i);
+  const second = withOptionalFields(i, "x;y;" + i);
+  const copy: Wide = { ...first, maybeFlag: i % 2 === 0, parts: second.text.split(/\+/) };
+  const parsed = JSON.parse(JSON.stringify(second)) as Wide;
+  const listed = withList(i, "p,q,r,s," + i);
+  const made = new Made(i, "k,l," + i);
+  last = [describe(first), describe(second), describe(copy), describe(parsed), listed.list.join(), listed.flag, listed.maybeFlag, listed.color, listed.whole, made.inner.text, made.flag, made.maybeFlag, made.whole, made.color].join(" | ");
+  length += last.length;
+  if (i % 3 === 0) kept.push(first, second, copy, parsed, listed, made);
+}
+console.log(length, kept.length, inners.length, lists.length);
+console.log(last);
+//// only-the-borrowed-address-is-left.ts
+// The outer object is taken out of the only place that names it, and what lies in it is read behind allocations that collect.
+class Payload { constructor(public v: number, public w: string) {} }
+class Child { x: number; first: Payload; second: Payload | null; constructor(i: number) { this.x = i; this.first = new Payload(i, "w" + (i & 3)); this.second = null; } }
+class Parent { c: Child; tag: number; constructor(i: number) { this.c = new Child(i); this.tag = i; } }
+const box: { it: Parent | null }[] = [];
+const N = 40000;
+for (let i = 0; i < N; i++) box.push({ it: new Parent(i) });
+function churn(n: number): number { let s = 0; for (let i = 0; i < n; i++) s += [i, { a: i }, "x" + i].length; return s; }
+////= takeAndRead
+let sum = 0;
+for (let i = 0; i < N; i++) sum += takeAndRead(box[i], i);
+console.log(sum);
+//// outer-objects-are-given-an-object-null-or-undefined.ts
+// Outer objects whose room is never filled: born with an object that has a cell, with null or with undefined: the collector looks into the room all the same.
+interface In { u: number; ref: { z: number } | null; name: string }
+interface Out { a: In | null | undefined; m: number }
+const shared: In = { u: 1, ref: { z: 1 }, name: "shared" };
+function laid(i: number): Out { return { a: { u: i, ref: { z: i }, name: "n" + (i & 1) }, m: i }; }
+function given(i: number): Out { return { a: shared, m: i }; }
+function nulled(i: number): Out { return { a: null, m: i }; }
+function undefinedOne(i: number): Out { return { a: undefined, m: i }; }
+const kept: Out[] = [];
+let sum = 0;
+function read(o: Out): number { return o.m + (o.a ? o.a.u + (o.a.ref ? o.a.ref.z : 0) + o.a.name.length : o.a === null ? 1 : 2); }
+////= fill-2	800
+function rare(k: number): void {
+  kept.push(given(k), nulled(k), undefinedOne(k), given(k + 1), nulled(k + 1), undefinedOne(k + 1));
+  kept[k * 3].a = null; kept[k * 5 + 1].a = undefined; kept[k * 7 + 2].a = shared;
+}
+fill(0); rare(1); Bun.gc(true); fill(1); rare(2); Bun.gc(true); fill(2); rare(3); fill(3); rare(4); Bun.gc(true);
+for (const o of kept) sum += read(o);
+console.log(sum, kept.length, JSON.stringify(kept[1]), JSON.stringify(kept[4]), JSON.stringify(kept[kept.length - 2]));
+//// pairs-change-while-the-collector-marks.ts
+// A large heap of pairs, so that marking takes long, and a program that never stops changing them: values stored into the inner objects, inner objects wanted for themselves, replaced by new ones, exchanged and taken away.
+import { edenGC, fullGC } from "bun:jsc";
+
+type Leaf = (number | Leaf | null)[];
+type Inner = { count: number; leaf: Leaf | null; text: string | null };
+type Outer = { inner: Inner | null; tag: number };
+
+////= fill-3	null, text: null
+
+let seed = 12345;
+function random(limit: number): number {
+  seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+  return seed % limit;
+}
+
+const held: Inner[] = [];
+function hold(outer: Outer): void { if (outer.inner) held.push(outer.inner); }
+function exchange(x: Outer, y: Outer): void { const kept = x.inner; x.inner = y.inner; y.inner = kept; }
+
+function storeLeaf(outer: Outer, step: number): void {
+  const inner = outer.inner;
+  if (inner) { inner.leaf = [step, inner.leaf && step % 4 ? inner.leaf : null]; inner.count = step; }
+}
+function storeText(outer: Outer, step: number): void {
+  if (outer.inner) outer.inner.text = "text" + step;
+}
+function renew(outer: Outer, step: number): void {
+  outer.inner = { count: -step, leaf: [-step, null], text: null };
+}
+function depth(leaf: Leaf | null): number { let n = 0; while (leaf && n < 1000) { n++; leaf = leaf[1] as Leaf | null; } return n; }
+
+const outers: Outer[] = [];
+fill(outers, 200, 200);
+const n = outers.length;
+let sum = 0;
+for (let step = 1; step <= 300000; step++) {
+  const outer = outers[random(n)];
+  switch (random(16)) {
+  case 0: case 1: case 2: case 3: case 4: case 5: storeLeaf(outer, step); break;
+  case 6: case 7: case 8: storeText(outer, step); break;
+  case 9: case 10: renew(outer, step); break;
+  case 11: if (step % 64 === 0) hold(outer); break;
+  case 12: if (step % 16 === 0) exchange(outer, outers[random(n)]); break;
+  case 13: if (step % 128 === 0) outer.inner = null; break;
+  default: if (outer.inner) sum = (sum + outer.inner.count + depth(outer.inner.leaf) + (outer.inner.text ? outer.inner.text.length : 0)) | 0;
+  }
+  if (held.length > 500) held.length = 100;
+  if (step % 75000 === 0) edenGC();
+}
+fullGC();
+let check = 0, none = 0;
+for (const outer of outers) {
+  const inner = outer.inner;
+  if (!inner) { none++; continue; }
+  check = (check * 31 + inner.count + depth(inner.leaf) * 7 + (inner.leaf ? (inner.leaf[0] as number) : 1) + (inner.text ? inner.text.length + Number(inner.text.slice(4)) : 3)) | 0;
+}
+for (const inner of held) check = (check * 31 + inner.count + depth(inner.leaf)) | 0;
+console.log(sum, check, none, held.length);
+//// pairs-that-are-kept-and-pairs-that-die.ts
+// Many long-lived pairs of an object and the object in its field, read and stored through again and again, beside short-lived ones.
+interface Inner { d: number; e: number }
+interface Outer { b: number; c: Inner; next: Outer | null }
+function make(n: number): Outer | null {
+  let head: Outer | null = null;
+  for (let i = 0; i < n; i++) head = { b: i, c: { d: i * 2, e: i * 3 }, next: head };
+  return head;
+}
+function sum(head: Outer | null): number {
+  let total = 0;
+  for (let p = head; p; p = p.next) total += p.c.d + p.c.e + p.b;
+  return total;
+}
+function bump(head: Outer | null): void {
+  for (let p = head; p; p = p.next) { p.c.d += 1; p.c.e += 2; }
+}
+let answer = 0;
+const kept = make(20000);
+for (let round = 0; round < 20; round++) { bump(kept); answer += sum(kept); }
+for (let round = 0; round < 20; round++) answer += sum(make(2000));
+console.log(answer);
+//// parents-that-are-given-an-object-or-nothing.ts
+// Outer objects whose room is never filled: born with an object that has a cell, with null or with undefined: the collector looks into the room all the same.
+interface In { u: number; ref: { z: number } | null; name: string }
+interface Out { a: In | null | undefined; m: number }
+const shared: In = { u: 1, ref: { z: 1 }, name: "shared" };
+function laid(i: number): Out { return { a: { u: i, ref: { z: i }, name: "n" + (i & 1) }, m: i }; }
+function given(i: number): Out { return { a: shared, m: i }; }
+function nulled(i: number): Out { return { a: null, m: i }; }
+function undefinedOne(i: number): Out { return { a: undefined, m: i }; }
+const kept: Out[] = [];
+let sum = 0;
+function read(o: Out): number { return o.m + (o.a ? o.a.u + (o.a.ref ? o.a.ref.z : 0) + o.a.name.length : o.a === null ? 1 : 2); }
+////= fill-2	20000
+function rare(k: number): void {
+  kept.push(given(k), nulled(k), undefinedOne(k), given(k + 1), nulled(k + 1), undefinedOne(k + 1));
+  kept[k * 3].a = null; kept[k * 5 + 1].a = undefined; kept[k * 7 + 2].a = shared;
+}
+fill(0); rare(1); Bun.gc(true); fill(1); rare(2); Bun.gc(true); fill(2); rare(3); fill(3); rare(4); Bun.gc(true);
+for (const o of kept) sum += read(o);
+console.log(sum, kept.length, JSON.stringify(kept[1]), JSON.stringify(kept[4]), JSON.stringify(kept[kept.length - 2]));
+//// the-class-of-the-outer-object-is-defined-behind-the-birth-of-the-inner-one.ts
+// The object that a field initializer of a class names is made before the class is defined. Whoever lays the two objects into one cell would need the class at the birth of the first.
+interface Like { size: number }
+class Part implements Like { size = 1; grow() { this.size++; return this; } }
+const part = new Part();
+const lines: string[] = [];
+{
+  class Holder { #held: Like = part; label = "h"; get held() { return this.#held; } }
+  const holder = new Holder();
+  lines.push(holder.held === part ? "same" : "other", String(holder.held.size), holder.label, Holder.name, String(Object.getPrototypeOf(holder) === Holder.prototype));
+}
+const literal = { size: 7 };
+{
+  class Wrapper { inner: Like; constructor(inner: Like) { this.inner = inner; } }
+  const wrapper = new Wrapper(literal);
+  lines.push(String(wrapper.inner === literal), String(wrapper instanceof Wrapper), String(wrapper.inner.size));
+}
+function later(): string {
+  const made = new Part().grow();
+  class Local { kept = made; }
+  const local = new Local();
+  return String(local.kept === made) + local.kept.size + Local.name + (local instanceof Local);
+}
+lines.push(later(), later());
+console.log(lines.join(" "));
+//// the-field-is-deleted-redefined-or-frozen.ts
+interface Inner { d: number; e: number }
+interface Outer { b: number; c?: Inner }
+function make(i: number): Outer { return { b: i, c: { d: i + 1, e: i + 2 } }; }
+const a = make(1); const x = a.c!;
+delete a.c;
+console.log("c" in a, a.c, x.d, Object.keys(a).join());
+a.c = x;
+console.log(a.c === x, Object.keys(a).join());
+const r = make(2); const y = r.c!;
+Object.defineProperty(r, "c", { get() { return "got"; }, configurable: true, enumerable: true });
+console.log((r as any).c, y.e, JSON.stringify(r));
+const f = Object.freeze(make(3));
+try { (f as any).c = null; } catch (e) { console.log("threw", (e as Error).constructor.name); }
+f.c!.d = 50;
+console.log(Object.isFrozen(f), Object.isFrozen(f.c), f.c!.d);
+const g = make(4); Object.freeze(g.c);
+try { g.c!.d = 1; } catch (e) { console.log("threw", (e as Error).constructor.name); }
+g.b = 9;
+console.log(Object.isFrozen(g), Object.isFrozen(g.c), g.c!.d, g.b);
+const s = Object.seal(make(5)); console.log(Object.isSealed(s), Object.isSealed(s.c));
+delete (make(6).c as any).d;
+const h = make(7); delete (h.c as any).d; (h.c as any).z = "added";
+console.log(JSON.stringify(h), Object.keys(h.c!).join());
+Object.setPrototypeOf(h.c, { inherited: 1 });
+console.log((h.c as any).inherited, Object.getPrototypeOf(h) === Object.prototype);
+//// the-inner-object-gets-its-cell-between-two-uses-of-a-name.ts
+// `const c = x.inner` and then something, seen or unseen, wants the object for itself before `c` is used again. Whatever it was, `c` names the one object.
+import { edenGC, fullGC } from "bun:jsc";
+
+type Leaf = { id: number };
+type Inner = { count: number; leaf: Leaf; text: string };
+type Outer = { inner: Inner; tag: number };
+
+////= fill-3	{ id: i }, text: "t" + i
+
+const sink: unknown[] = [];
+let current: Outer | null = null;
+function show(c: Inner): string { return c.count + "," + c.leaf.id + "," + c.text; }
+function takeCurrent(): number { sink.push(current!.inner); return 1; }
+
+const withGetter = { get trap(): number { return takeCurrent(); } };
+const withValueOf = { valueOf(): number { return takeCurrent(); } };
+const withToString = { toString(): string { takeCurrent(); return "s"; } };
+const withToPrimitive = { [Symbol.toPrimitive](): number { return takeCurrent(); } };
+const proxy = new Proxy({} as Record<string, number>, { get() { return takeCurrent(); }, has() { takeCurrent(); return true; } });
+const iterable = { *[Symbol.iterator]() { takeCurrent(); yield 1; } };
+
+type Way = (x: Outer) => string;
+////= ways-2
+//// the-inner-object-gets-its-cell-between-two-uses-of-a-name-and-holds-what-was-given.ts
+// `const c = x.inner` and then something, seen or unseen, wants the object for itself before `c` is used again. Whatever it was, `c` names the one object.
+import { edenGC, fullGC } from "bun:jsc";
+
+type Leaf = { id: number };
+type Inner = { count: number; leaf: Leaf; text: string };
+type Outer = { inner: Inner; tag: number };
+
+const leaves: Leaf[] = [];
+for (let i = 0; i < 100; i++) leaves.push({ id: i });
+////= fill-3	leaves[i], text: "t" + i
+
+const sink: unknown[] = [];
+let current: Outer | null = null;
+function show(c: Inner): string { return c.count + "," + c.leaf.id + "," + c.text; }
+function takeCurrent(): number { sink.push(current!.inner); return 1; }
+
+const withGetter = { get trap(): number { return takeCurrent(); } };
+const withValueOf = { valueOf(): number { return takeCurrent(); } };
+const withToString = { toString(): string { takeCurrent(); return "s"; } };
+const withToPrimitive = { [Symbol.toPrimitive](): number { return takeCurrent(); } };
+const proxy = new Proxy({} as Record<string, number>, { get() { return takeCurrent(); }, has() { takeCurrent(); return true; } });
+const iterable = { *[Symbol.iterator]() { takeCurrent(); yield 1; } };
+
+type Way = (x: Outer) => string;
+////= ways-2
+//// the-inner-object-is-carried-from-one-field-to-another.ts
+// The inner object is read out of one field and stored into another, with collections between, and nobody else holds it or its outer object meanwhile.
+interface Inner { d: number; s: string }
+interface Outer { b: number; c: Inner }
+interface Holder { c: Inner | null; n: number }
+function make(i: number): Outer { return { b: i, c: { d: i, s: "s" + i } }; }
+const sources: (Outer | null)[] = [];
+const ring: (Outer | null)[] = new Array(2048).fill(null);
+function dropAndCollect(index: number, from: number): number {
+  sources[index] = null;
+  Bun.gc(true);
+  let x = 0;
+  for (let i = 0; i < 5000; i++) { const o = make(from + i); ring[i & 2047] = o; x += o.b & 1; }
+  ring.fill(null);
+  return x;
+}
+function carry(index: number, to: Holder): void {
+  const x = sources[index]!.c;
+  to.n += dropAndCollect(index, 3000000 + index * 10000);
+  to.c = x;
+}
+const holders: Holder[] = [];
+for (let i = 0; i < 16; i++) { sources.push(make(i)); holders.push({ c: null, n: 0 }); }
+for (let i = 0; i < 16; i++) carry(i, holders[i]);
+let bad = "";
+for (let i = 0; i < 16; i++) { const c = holders[i].c!; if (c.d !== i || c.s !== "s" + i) { bad = "WRONG at " + i + ": " + c.d + " " + c.s; break; } }
+console.log("done", bad);
+//// the-inner-object-is-stored-elsewhere.ts
+interface Inner { d: number; e: number }
+interface Outer { b: number; c: Inner }
+interface Other { held: Inner; n: number }
+function make(i: number): Outer { return { b: i, c: { d: i + 1, e: i + 2 } }; }
+const inArray: Inner[] = [], inObject: Other[] = [], inMap = new Map<number, Inner>(), inAny: any[] = [], inClosure: (() => number)[] = [];
+for (let i = 0; i < 4000; i++) {
+  const c = make(i).c;
+  switch (i % 5) {
+    case 0: inArray.push(c); break;
+    case 1: inObject.push({ held: c, n: i }); break;
+    case 2: inMap.set(i, c); break;
+    case 3: inAny.push(i % 2 ? c : [c]); break;
+    case 4: inClosure.push(() => c.d + c.e); break;
+  }
+}
+function churn() { let x = 0; for (let i = 0; i < 150000; i++) x += make(i).c.e; return x; }
+for (let i = 0; i < 4; i++) { churn(); Bun.gc(i % 2 === 0); }
+let s = 0;
+for (const c of inArray) s += c.d; for (const o of inObject) s += o.held.e + o.n; for (const [k, c] of inMap) s += k + c.d;
+for (const v of inAny) s += Array.isArray(v) ? v[0].e : v.d; for (const f of inClosure) s += f();
+console.log(s);
+async function across(i: number) { const c = make(i).c; await null; Bun.gc(true); await new Promise(r => setTimeout(r, 0)); return c.d + c.e; }
+function* gen(i: number) { const c = make(i).c; yield 1; Bun.gc(true); yield c.d + c.e; }
+console.log(await across(5), [...gen(6)].join());
+//// the-inner-object-outlives-the-outer-one.ts
+// Only the inner object is kept. The outer one is garbage to the program, collections run, and objects of the same kind are made and kept for a while: they take every cell that was given back.
+interface Inner { d: number; e: number; s: string }
+interface Outer { b: number; c: Inner; t: string }
+function make(i: number): Outer {
+  return { b: i, c: { d: i + 1, e: i + 2, s: "s" + i }, t: "t" + i };
+}
+const kept: Inner[] = [];
+const ring: (Outer | null)[] = new Array(4096).fill(null);
+function churn(n: number, from: number): number {
+  let x = 0;
+  for (let i = 0; i < n; i++) {
+    const o = make(from + i);
+    ring[i & 4095] = o;
+    x += o.c.d & 7;
+  }
+  return x;
+}
+for (let i = 0; i < 20000; i++) {
+  const a = make(i);
+  ring[i & 4095] = a;
+  if (i % 7 === 0) kept.push(a.c);
+}
+let noise = 0;
+for (let round = 0; round < 6; round++) {
+  ring.fill(null);
+  Bun.gc(true);
+  noise += churn(50000, 1000000 * (round + 1));
+}
+let sum = 0;
+let text = "";
+for (let k = 0; k < kept.length; k++) {
+  const c = kept[k];
+  if (c.d !== k * 7 + 1 || c.e !== k * 7 + 2 || c.s !== "s" + k * 7) { text = "WRONG at " + k + ": " + c.d + " " + c.e + " " + c.s; break; }
+  sum += c.d * 3 + c.e;
+}
+console.log(kept.length, sum, text, noise);
+//// the-outer-object-is-named-by-nothing-while-the-inner-one-is-read.ts
+// The outer object is taken out of the only place that names it, and what lies in it is read behind allocations that collect.
+class Payload { constructor(public v: number, public w: string) {} }
+class Child { x: number; first: Payload; second: Payload | null; constructor(i: number) { this.x = i; this.first = new Payload(i, "w" + (i & 3)); this.second = null; } }
+class Parent { c: Child; tag: number; constructor(i: number) { this.c = new Child(i); this.tag = i; } }
+const box: { it: Parent | null }[] = [];
+const N = 1500;
+for (let i = 0; i < N; i++) box.push({ it: new Parent(i) });
+function churn(n: number): number { let s = 0; for (let i = 0; i < n; i++) s += [i, { a: i }, "x" + i].length; return s; }
+////= takeAndRead
+let sum = 0;
+for (let i = 0; i < N; i++) sum += takeAndRead(box[i], i);
+console.log(sum);
+//// the-outer-object-is-out-in-the-world-before-the-inner-one-is-made.ts
+// Long-lived pairs, with the outer object made first and out in the world before the inner one is made and stored.
+interface Inner { d: number; e: number }
+interface Outer { b: number; c: Inner | undefined; next: Outer | null }
+let last: Outer | null = null
+function make(n: number): Outer | null {
+  let head: Outer | null = null;
+  for (let i = 0; i < n; i++) {
+    const outer: Outer = { b: i, c: undefined, next: head };
+    last = outer;
+    outer.c = { d: i * 2, e: i * 3 };
+    head = outer;
+  }
+  return head;
+}
+function sum(head: Outer | null): number {
+  let total = 0;
+  for (let p = head; p; p = p.next) total += p.c!.d + p.c!.e + p.b;
+  return total;
+}
+function bump(head: Outer | null): void {
+  for (let p = head; p; p = p.next) { p.c!.d += 1; p.c!.e += 2; }
+}
+let answer = 0;
+const kept = make(20000);
+for (let round = 0; round < 20; round++) { bump(kept); answer += sum(kept); }
+for (let round = 0; round < 20; round++) answer += sum(make(2000));
+console.log(answer, last !== null);
+//// two-objects-list-one-object.ts
+// One fresh object listed by two allocations, in a loop, in arms of a branch: at most one may take the cell. Each case has layouts of its own.
+interface I1 { d1: number } interface O1 { b1: number; c1: I1 }
+interface I2 { d2: number } interface O2 { b2: number; c2: I2 }
+interface I3 { d3: number } interface O3 { b3: number; c3: I3 }
+interface I4 { d4: number } interface O4 { b4: number; c4: I4 }
+interface I5 { d5: number } interface O5 { b5: number; c5: I5 } interface P5 { a5: number; e5: I5 }
+const keep: any[] = [];
+function twice(i: number): [O1, O1] { const c: I1 = { d1: i }; const p: O1 = { b1: 1, c1: c }; keep[i & 63] = p; const q: O1 = { b1: 2, c1: c }; keep[(i + 1) & 63] = q; return [p, q]; }
+function inLoop(i: number): O2[] { const c: I2 = { d2: i }; const r: O2[] = []; for (let k = 0; k < 3; k++) r.push({ b2: k, c2: c }); return r; }
+function arms(i: number): O3 { const c: I3 = { d3: i }; keep[i & 63] = c; return i & 1 ? { b3: 1, c3: c } : { b3: 2, c3: c }; }
+function maybe(i: number): I4 | O4 { const c: I4 = { d4: i }; keep[i & 63] = c; if (i & 1) return c; return { b4: 3, c4: c }; }
+function twoLayouts(i: number): [O5, P5] { const c: I5 = { d5: i }; const p: O5 = { b5: 1, c5: c }; keep[i & 63] = p; const q: P5 = { a5: 2, e5: c }; keep[(i + 1) & 63] = q; return [p, q]; }
+let s = 0;
+for (let i = 0; i < 30000; i++) {
+  const [p, q] = twice(i); p.c1.d1++; s += q.c1.d1 + p.b1 + q.b1 + (p.c1 === q.c1 ? 1 : 0) + (p === (q as any) ? 1000 : 0);
+  const l = inLoop(i); l[0].c2.d2 += 2; s += l[2].c2.d2 + l[1].b2 + l[0].b2 + l[2].b2;
+  const x = arms(i); s += x.c3.d3 + x.b3;
+  const m: any = maybe(i); s += m.d4 ?? m.c4.d4 + m.b4;
+  const [u, v] = twoLayouts(i); u.c5.d5 += 3; s += v.e5.d5 + u.b5 + v.a5 + (u.c5 === v.e5 ? 1 : 0);
+  if (i % 5000 === 0) Bun.gc(true);
+}
+console.log(s, JSON.stringify(keep[5]), JSON.stringify(keep[6]));
+//// weak-references-to-either-object.ts
+interface Inner { d: number; e: number }
+interface Outer { b: number; c: Inner }
+function make(i: number): Outer { return { b: i, c: { d: i + 1, e: i + 2 } }; }
+const map = new WeakMap<object, string>();
+const set = new WeakSet<object>();
+const keptOuter: Outer[] = [], keptInner: Inner[] = [];
+const refsToInnerOfKeptOuter: WeakRef<Inner>[] = [], refsToOuterOfKeptInner: WeakRef<Outer>[] = [], refsToDead: WeakRef<object>[] = [];
+let finalized = 0;
+const registry = new FinalizationRegistry<number>(() => { finalized++; });
+(function fill() {
+  for (let i = 0; i < 2000; i++) {
+    const a = make(i);
+    map.set(a.c, "inner" + i); set.add(a.c);
+    if (i % 3 === 0) { keptOuter.push(a); refsToInnerOfKeptOuter.push(new WeakRef(a.c)); }
+    else if (i % 3 === 1) { keptInner.push(a.c); refsToOuterOfKeptInner.push(new WeakRef(a)); }
+    else { refsToDead.push(new WeakRef(a)); refsToDead.push(new WeakRef(a.c)); registry.register(a.c, i); }
+  }
+})();
+function churn() { let x = 0; for (let i = 0; i < 100000; i++) x += make(i).c.e; return x; }
+await new Promise(r => setTimeout(r, 0));
+for (let i = 0; i < 4; i++) { churn(); Bun.gc(true); await new Promise(r => setTimeout(r, 0)); }
+let ok = 0;
+for (let i = 0; i < keptOuter.length; i++) if (refsToInnerOfKeptOuter[i].deref() === keptOuter[i].c && map.get(keptOuter[i].c) === "inner" + keptOuter[i].b && set.has(keptOuter[i].c)) ok++;
+let ok2 = 0;
+for (const c of keptInner) if (map.get(c) === "inner" + (c.d - 1) && set.has(c)) ok2++;
+console.log(ok, keptOuter.length, ok2, keptInner.length);
+// Whether a dead pair is gone is the collector's business: only that a reference which answers gives a whole object.
+let whole = 0; for (const r of refsToDead) { const o: any = r.deref(); if (o === undefined || typeof (o.b ?? o.d) === "number") whole++; }
+let whole2 = 0; for (const r of refsToOuterOfKeptInner) { const o = r.deref(); if (o === undefined || o.c.d === o.b + 1) whole2++; }
+console.log(whole === refsToDead.length, whole2 === refsToOuterOfKeptInner.length, finalized >= 0);
+//// weak-things-on-the-inner-and-on-the-outer-object.ts
+// Weak references, weak maps, weak sets and registries that name the inner object, or the outer one, of a pair.
+import { fullGC } from "bun:jsc";
+
+type Inner = { count: number; label: string };
+type Outer = { inner: Inner; tag: number };
+
+////= fill
+function churn(): number { const some: Outer[] = []; fill(some, 20, 20); return some[7].inner.count; }
+
+const weakInner: WeakRef<Inner>[] = [];
+const weakOuter: WeakRef<Outer>[] = [];
+const byInner = new WeakMap<Inner, string>();
+const byOuter = new WeakMap<Outer, Inner>();
+const setOfInner = new WeakSet<Inner>();
+let cleanedInner = 0, cleanedOuter = 0;
+const registryOfInner = new FinalizationRegistry<number>(() => { cleanedInner++; });
+const registryOfOuter = new FinalizationRegistry<number>(() => { cleanedOuter++; });
+
+function watchInner(outer: Outer): void { weakInner.push(new WeakRef(outer.inner)); }
+function watchOuter(outer: Outer): void { weakOuter.push(new WeakRef(outer)); }
+function mapInner(outer: Outer): void { byInner.set(outer.inner, "mapped" + outer.tag); }
+function mapOuter(outer: Outer): void { byOuter.set(outer, outer.inner); }
+function addInner(outer: Outer): void { setOfInner.add(outer.inner); }
+function registerBoth(outer: Outer): void { registryOfInner.register(outer.inner, outer.tag); registryOfOuter.register(outer, outer.tag); }
+
+const kept: Outer[] = [];
+const keptInner: Inner[] = [];
+async function round(): Promise<void> {
+  const outers: Outer[] = [];
+  fill(outers, 10, 10);
+  for (let i = 0; i < 10; i++) { watchInner(outers[i]); watchOuter(outers[i]); }
+  for (let i = 10; i < 20; i++) { mapInner(outers[i]); mapOuter(outers[i]); addInner(outers[i]); }
+  for (let i = 20; i < 30; i++) registerBoth(outers[i]);
+  // Of each ten: the outer object of the first three is kept, of the next three only the inner one, the rest nothing.
+  for (const start of [0, 10, 20]) {
+    for (let i = 0; i < 3; i++) kept.push(outers[start + i]);
+    keptInner.push(outers[start + 3].inner, outers[start + 4].inner, outers[start + 5].inner);
+  }
+}
+await round();
+for (let i = 0; i < 4; i++) { await new Promise(resolve => setTimeout(resolve, 1)); churn(); fullGC(); }
+
+// While the outer object lives, so does the inner one, and it is the same one.
+console.log(weakInner.slice(0, 3).map((ref, i) => ref.deref() === kept[i].inner).join(), weakOuter.slice(0, 3).map((ref, i) => ref.deref() === kept[i]).join());
+console.log(weakInner.slice(3, 6).map((ref, i) => ref.deref() === keptInner[i]).join());
+console.log(kept.slice(3, 6).map(outer => byInner.get(outer.inner) + " " + (byOuter.get(outer) === outer.inner) + " " + setOfInner.has(outer.inner)).join(" | "));
+console.log(keptInner.slice(3, 6).map(inner => byInner.get(inner) + " " + setOfInner.has(inner) + " " + inner.count + inner.label).join(" | "));
+console.log(kept.map(outer => outer.inner.count + outer.inner.label).join(), keptInner.map(inner => inner.count + inner.label).join());
+console.log("no callback for what is kept:", cleanedInner <= 4, cleanedOuter <= 7);
+//// workers-make-pairs-beside-each-other.ts
+declare var self: Worker;
+interface Inner { d: number; e: number }
+interface Outer { b: number; c: Inner }
+function make(i: number): Outer { return { b: i, c: { d: i + 1, e: i + 2 } }; }
+if (Bun.isMainThread) {
+  const w = new Worker(import.meta.url);
+  const got: any = await new Promise(resolve => { w.onmessage = e => resolve(e.data); w.postMessage({ whole: make(1), part: make(2).c }); });
+  console.log(JSON.stringify(got));
+  w.terminate();
+} else {
+  self.onmessage = (e: MessageEvent) => {
+    const mine: Outer[] = []; for (let i = 0; i < 20000; i++) mine.push(make(i)); Bun.gc(true);
+    let s = 0; for (const o of mine) s += o.c.d;
+    postMessage({ echo: e.data, s, back: make(3), backPart: make(4).c });
+  };
+}

@@ -623,6 +623,7 @@ impl FileResponseStream {
 // the duration of the handler since it can end in `finish()`.
 bun_io::impl_buffered_reader_parent! {
     FileResponseStream for FileResponseStream;
+    feature = Serve;
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, state| {
         let _guard = RefPtr::init_ref(this);

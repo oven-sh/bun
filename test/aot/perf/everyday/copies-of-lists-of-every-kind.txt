@@ -1,0 +1,814 @@
+//// slice.whole-literal
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b = xs.slice();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice.fractions-literal
+const xs: number[] = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = xs.slice();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice.whole-parsed
+const xs: number[] = JSON.parse("[1,2,3,4,5,6,7,8]");
+function turn(i: number): number {
+  const b = xs.slice();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice.fractions-parsed
+const xs: number[] = JSON.parse("[1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5]");
+function turn(i: number): number {
+  const b = xs.slice();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice.whole-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 1);
+function turn(i: number): number {
+  const b = xs.slice();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice.fractions-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 0.5);
+function turn(i: number): number {
+  const b = xs.slice();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice.whole-from
+const xs: number[] = Array.from({ length: 8 }, (_, k) => k);
+function turn(i: number): number {
+  const b = xs.slice();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice.whole-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k);
+function turn(i: number): number {
+  const b = xs.slice();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice.fractions-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k + 0.5);
+function turn(i: number): number {
+  const b = xs.slice();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice.whole-with-a-hole
+const xs: number[] = [1, 2, 3, , 5, 6, 7, 8] as number[];
+function turn(i: number): number {
+  const b = xs.slice();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice.fractions-with-a-hole
+const xs: number[] = [1.5, 2.5, 3.5, , 5.5, 6.5, 7.5, 8.5] as number[];
+function turn(i: number): number {
+  const b = xs.slice();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice.with-nan
+const xs: number[] = [1.5, 2.5, NaN, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = xs.slice();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice-a-part.whole-literal
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b = xs.slice(1, 7);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice-a-part.fractions-literal
+const xs: number[] = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = xs.slice(1, 7);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice-a-part.whole-parsed
+const xs: number[] = JSON.parse("[1,2,3,4,5,6,7,8]");
+function turn(i: number): number {
+  const b = xs.slice(1, 7);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice-a-part.fractions-parsed
+const xs: number[] = JSON.parse("[1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5]");
+function turn(i: number): number {
+  const b = xs.slice(1, 7);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice-a-part.whole-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 1);
+function turn(i: number): number {
+  const b = xs.slice(1, 7);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice-a-part.fractions-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 0.5);
+function turn(i: number): number {
+  const b = xs.slice(1, 7);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice-a-part.whole-from
+const xs: number[] = Array.from({ length: 8 }, (_, k) => k);
+function turn(i: number): number {
+  const b = xs.slice(1, 7);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice-a-part.whole-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k);
+function turn(i: number): number {
+  const b = xs.slice(1, 7);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice-a-part.fractions-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k + 0.5);
+function turn(i: number): number {
+  const b = xs.slice(1, 7);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice-a-part.whole-with-a-hole
+const xs: number[] = [1, 2, 3, , 5, 6, 7, 8] as number[];
+function turn(i: number): number {
+  const b = xs.slice(1, 7);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice-a-part.fractions-with-a-hole
+const xs: number[] = [1.5, 2.5, 3.5, , 5.5, 6.5, 7.5, 8.5] as number[];
+function turn(i: number): number {
+  const b = xs.slice(1, 7);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// slice-a-part.with-nan
+const xs: number[] = [1.5, 2.5, NaN, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = xs.slice(1, 7);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat.whole-literal
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b = xs.concat();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat.fractions-literal
+const xs: number[] = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = xs.concat();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat.whole-parsed
+const xs: number[] = JSON.parse("[1,2,3,4,5,6,7,8]");
+function turn(i: number): number {
+  const b = xs.concat();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat.fractions-parsed
+const xs: number[] = JSON.parse("[1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5]");
+function turn(i: number): number {
+  const b = xs.concat();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat.whole-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 1);
+function turn(i: number): number {
+  const b = xs.concat();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat.fractions-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 0.5);
+function turn(i: number): number {
+  const b = xs.concat();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat.whole-from
+const xs: number[] = Array.from({ length: 8 }, (_, k) => k);
+function turn(i: number): number {
+  const b = xs.concat();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat.whole-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k);
+function turn(i: number): number {
+  const b = xs.concat();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat.fractions-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k + 0.5);
+function turn(i: number): number {
+  const b = xs.concat();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat.whole-with-a-hole
+const xs: number[] = [1, 2, 3, , 5, 6, 7, 8] as number[];
+function turn(i: number): number {
+  const b = xs.concat();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat.fractions-with-a-hole
+const xs: number[] = [1.5, 2.5, 3.5, , 5.5, 6.5, 7.5, 8.5] as number[];
+function turn(i: number): number {
+  const b = xs.concat();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat.with-nan
+const xs: number[] = [1.5, 2.5, NaN, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = xs.concat();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat-itself.whole-literal
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b = xs.concat(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat-itself.fractions-literal
+const xs: number[] = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = xs.concat(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat-itself.whole-parsed
+const xs: number[] = JSON.parse("[1,2,3,4,5,6,7,8]");
+function turn(i: number): number {
+  const b = xs.concat(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat-itself.fractions-parsed
+const xs: number[] = JSON.parse("[1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5]");
+function turn(i: number): number {
+  const b = xs.concat(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat-itself.whole-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 1);
+function turn(i: number): number {
+  const b = xs.concat(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat-itself.fractions-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 0.5);
+function turn(i: number): number {
+  const b = xs.concat(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat-itself.whole-from
+const xs: number[] = Array.from({ length: 8 }, (_, k) => k);
+function turn(i: number): number {
+  const b = xs.concat(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat-itself.whole-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k);
+function turn(i: number): number {
+  const b = xs.concat(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat-itself.fractions-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k + 0.5);
+function turn(i: number): number {
+  const b = xs.concat(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat-itself.whole-with-a-hole
+const xs: number[] = [1, 2, 3, , 5, 6, 7, 8] as number[];
+function turn(i: number): number {
+  const b = xs.concat(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat-itself.fractions-with-a-hole
+const xs: number[] = [1.5, 2.5, 3.5, , 5.5, 6.5, 7.5, 8.5] as number[];
+function turn(i: number): number {
+  const b = xs.concat(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// concat-itself.with-nan
+const xs: number[] = [1.5, 2.5, NaN, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = xs.concat(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// spread.whole-literal
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b = [...xs];
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// spread.fractions-literal
+const xs: number[] = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = [...xs];
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// spread.whole-parsed
+const xs: number[] = JSON.parse("[1,2,3,4,5,6,7,8]");
+function turn(i: number): number {
+  const b = [...xs];
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// spread.fractions-parsed
+const xs: number[] = JSON.parse("[1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5]");
+function turn(i: number): number {
+  const b = [...xs];
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// spread.whole-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 1);
+function turn(i: number): number {
+  const b = [...xs];
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// spread.fractions-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 0.5);
+function turn(i: number): number {
+  const b = [...xs];
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// spread.whole-from
+const xs: number[] = Array.from({ length: 8 }, (_, k) => k);
+function turn(i: number): number {
+  const b = [...xs];
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// spread.whole-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k);
+function turn(i: number): number {
+  const b = [...xs];
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// spread.fractions-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k + 0.5);
+function turn(i: number): number {
+  const b = [...xs];
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// spread.whole-with-a-hole
+const xs: number[] = [1, 2, 3, , 5, 6, 7, 8] as number[];
+function turn(i: number): number {
+  const b = [...xs];
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// spread.fractions-with-a-hole
+const xs: number[] = [1.5, 2.5, 3.5, , 5.5, 6.5, 7.5, 8.5] as number[];
+function turn(i: number): number {
+  const b = [...xs];
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// spread.with-nan
+const xs: number[] = [1.5, 2.5, NaN, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = [...xs];
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-sorted.whole-literal
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b = xs.toSorted();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-sorted.fractions-literal
+const xs: number[] = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = xs.toSorted();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-sorted.whole-parsed
+const xs: number[] = JSON.parse("[1,2,3,4,5,6,7,8]");
+function turn(i: number): number {
+  const b = xs.toSorted();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-sorted.fractions-parsed
+const xs: number[] = JSON.parse("[1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5]");
+function turn(i: number): number {
+  const b = xs.toSorted();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-sorted.whole-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 1);
+function turn(i: number): number {
+  const b = xs.toSorted();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-sorted.fractions-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 0.5);
+function turn(i: number): number {
+  const b = xs.toSorted();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-sorted.whole-from
+const xs: number[] = Array.from({ length: 8 }, (_, k) => k);
+function turn(i: number): number {
+  const b = xs.toSorted();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-sorted.whole-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k);
+function turn(i: number): number {
+  const b = xs.toSorted();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-sorted.fractions-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k + 0.5);
+function turn(i: number): number {
+  const b = xs.toSorted();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-sorted.whole-with-a-hole
+const xs: number[] = [1, 2, 3, , 5, 6, 7, 8] as number[];
+function turn(i: number): number {
+  const b = xs.toSorted();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-sorted.fractions-with-a-hole
+const xs: number[] = [1.5, 2.5, 3.5, , 5.5, 6.5, 7.5, 8.5] as number[];
+function turn(i: number): number {
+  const b = xs.toSorted();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-sorted.with-nan
+const xs: number[] = [1.5, 2.5, NaN, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = xs.toSorted();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-reversed.whole-literal
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b = xs.toReversed();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-reversed.fractions-literal
+const xs: number[] = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = xs.toReversed();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-reversed.whole-parsed
+const xs: number[] = JSON.parse("[1,2,3,4,5,6,7,8]");
+function turn(i: number): number {
+  const b = xs.toReversed();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-reversed.fractions-parsed
+const xs: number[] = JSON.parse("[1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5]");
+function turn(i: number): number {
+  const b = xs.toReversed();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-reversed.whole-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 1);
+function turn(i: number): number {
+  const b = xs.toReversed();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-reversed.fractions-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 0.5);
+function turn(i: number): number {
+  const b = xs.toReversed();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-reversed.whole-from
+const xs: number[] = Array.from({ length: 8 }, (_, k) => k);
+function turn(i: number): number {
+  const b = xs.toReversed();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-reversed.whole-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k);
+function turn(i: number): number {
+  const b = xs.toReversed();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-reversed.fractions-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k + 0.5);
+function turn(i: number): number {
+  const b = xs.toReversed();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-reversed.whole-with-a-hole
+const xs: number[] = [1, 2, 3, , 5, 6, 7, 8] as number[];
+function turn(i: number): number {
+  const b = xs.toReversed();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-reversed.fractions-with-a-hole
+const xs: number[] = [1.5, 2.5, 3.5, , 5.5, 6.5, 7.5, 8.5] as number[];
+function turn(i: number): number {
+  const b = xs.toReversed();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-reversed.with-nan
+const xs: number[] = [1.5, 2.5, NaN, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = xs.toReversed();
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// with.whole-literal
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b = xs.with(2, 9);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// with.fractions-literal
+const xs: number[] = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = xs.with(2, 9);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// with.whole-parsed
+const xs: number[] = JSON.parse("[1,2,3,4,5,6,7,8]");
+function turn(i: number): number {
+  const b = xs.with(2, 9);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// with.fractions-parsed
+const xs: number[] = JSON.parse("[1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5]");
+function turn(i: number): number {
+  const b = xs.with(2, 9);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// with.whole-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 1);
+function turn(i: number): number {
+  const b = xs.with(2, 9);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// with.fractions-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 0.5);
+function turn(i: number): number {
+  const b = xs.with(2, 9);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// with.whole-from
+const xs: number[] = Array.from({ length: 8 }, (_, k) => k);
+function turn(i: number): number {
+  const b = xs.with(2, 9);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// with.whole-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k);
+function turn(i: number): number {
+  const b = xs.with(2, 9);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// with.fractions-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k + 0.5);
+function turn(i: number): number {
+  const b = xs.with(2, 9);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// with.whole-with-a-hole
+const xs: number[] = [1, 2, 3, , 5, 6, 7, 8] as number[];
+function turn(i: number): number {
+  const b = xs.with(2, 9);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// with.fractions-with-a-hole
+const xs: number[] = [1.5, 2.5, 3.5, , 5.5, 6.5, 7.5, 8.5] as number[];
+function turn(i: number): number {
+  const b = xs.with(2, 9);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// with.with-nan
+const xs: number[] = [1.5, 2.5, NaN, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = xs.with(2, 9);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-spliced.whole-literal
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b = xs.toSpliced(1, 1);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-spliced.fractions-literal
+const xs: number[] = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = xs.toSpliced(1, 1);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-spliced.whole-parsed
+const xs: number[] = JSON.parse("[1,2,3,4,5,6,7,8]");
+function turn(i: number): number {
+  const b = xs.toSpliced(1, 1);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-spliced.fractions-parsed
+const xs: number[] = JSON.parse("[1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5]");
+function turn(i: number): number {
+  const b = xs.toSpliced(1, 1);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-spliced.whole-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 1);
+function turn(i: number): number {
+  const b = xs.toSpliced(1, 1);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-spliced.fractions-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 0.5);
+function turn(i: number): number {
+  const b = xs.toSpliced(1, 1);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-spliced.whole-from
+const xs: number[] = Array.from({ length: 8 }, (_, k) => k);
+function turn(i: number): number {
+  const b = xs.toSpliced(1, 1);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-spliced.whole-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k);
+function turn(i: number): number {
+  const b = xs.toSpliced(1, 1);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-spliced.fractions-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k + 0.5);
+function turn(i: number): number {
+  const b = xs.toSpliced(1, 1);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-spliced.whole-with-a-hole
+const xs: number[] = [1, 2, 3, , 5, 6, 7, 8] as number[];
+function turn(i: number): number {
+  const b = xs.toSpliced(1, 1);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-spliced.fractions-with-a-hole
+const xs: number[] = [1.5, 2.5, 3.5, , 5.5, 6.5, 7.5, 8.5] as number[];
+function turn(i: number): number {
+  const b = xs.toSpliced(1, 1);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// to-spliced.with-nan
+const xs: number[] = [1.5, 2.5, NaN, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = xs.toSpliced(1, 1);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// filter.whole-literal
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b = xs.filter(x => x > 2);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// filter.fractions-literal
+const xs: number[] = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = xs.filter(x => x > 2);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// filter.whole-parsed
+const xs: number[] = JSON.parse("[1,2,3,4,5,6,7,8]");
+function turn(i: number): number {
+  const b = xs.filter(x => x > 2);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// filter.fractions-parsed
+const xs: number[] = JSON.parse("[1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5]");
+function turn(i: number): number {
+  const b = xs.filter(x => x > 2);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// filter.whole-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 1);
+function turn(i: number): number {
+  const b = xs.filter(x => x > 2);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// filter.fractions-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 0.5);
+function turn(i: number): number {
+  const b = xs.filter(x => x > 2);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// filter.whole-from
+const xs: number[] = Array.from({ length: 8 }, (_, k) => k);
+function turn(i: number): number {
+  const b = xs.filter(x => x > 2);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// filter.whole-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k);
+function turn(i: number): number {
+  const b = xs.filter(x => x > 2);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// filter.fractions-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k + 0.5);
+function turn(i: number): number {
+  const b = xs.filter(x => x > 2);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// filter.whole-with-a-hole
+const xs: number[] = [1, 2, 3, , 5, 6, 7, 8] as number[];
+function turn(i: number): number {
+  const b = xs.filter(x => x > 2);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// filter.fractions-with-a-hole
+const xs: number[] = [1.5, 2.5, 3.5, , 5.5, 6.5, 7.5, 8.5] as number[];
+function turn(i: number): number {
+  const b = xs.filter(x => x > 2);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// filter.with-nan
+const xs: number[] = [1.5, 2.5, NaN, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = xs.filter(x => x > 2);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// array-from.whole-literal
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b = Array.from(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// array-from.fractions-literal
+const xs: number[] = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = Array.from(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// array-from.whole-parsed
+const xs: number[] = JSON.parse("[1,2,3,4,5,6,7,8]");
+function turn(i: number): number {
+  const b = Array.from(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// array-from.fractions-parsed
+const xs: number[] = JSON.parse("[1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5]");
+function turn(i: number): number {
+  const b = Array.from(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// array-from.whole-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 1);
+function turn(i: number): number {
+  const b = Array.from(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// array-from.fractions-mapped
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8].map(x => x + 0.5);
+function turn(i: number): number {
+  const b = Array.from(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// array-from.whole-from
+const xs: number[] = Array.from({ length: 8 }, (_, k) => k);
+function turn(i: number): number {
+  const b = Array.from(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// array-from.whole-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k);
+function turn(i: number): number {
+  const b = Array.from(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// array-from.fractions-pushed
+const xs: number[] = [];
+for (let k = 0; k < 8; k++) xs.push(k + 0.5);
+function turn(i: number): number {
+  const b = Array.from(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// array-from.whole-with-a-hole
+const xs: number[] = [1, 2, 3, , 5, 6, 7, 8] as number[];
+function turn(i: number): number {
+  const b = Array.from(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// array-from.fractions-with-a-hole
+const xs: number[] = [1.5, 2.5, 3.5, , 5.5, 6.5, 7.5, 8.5] as number[];
+function turn(i: number): number {
+  const b = Array.from(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}
+//// array-from.with-nan
+const xs: number[] = [1.5, 2.5, NaN, 4.5, 5.5, 6.5, 7.5, 8.5];
+function turn(i: number): number {
+  const b = Array.from(xs);
+  return (b[i & 3] ?? 0) + (b[2] ?? 0);
+}

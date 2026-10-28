@@ -1,0 +1,969 @@
+////: createBinding
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+////: createBinding-2
+////= createBinding
+////= exportStar
+////: early
+function early() {
+    try {
+        return __classPrivateFieldIn(C, {});
+    } catch (error) {
+        return error.constructor.name;
+    }
+}
+////: exportStar
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+////: lines
+var «1» = function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(«2», k);
+    if (!desc || ("get" in desc ? !m.«3» : desc.writable || desc.configurable)) {
+      desc = { enumerable: «4», get: function() { return m[«5»]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+};
+////: lines-2
+function «1»(«2») {
+  return function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+  };
+}
+////: lines-3
+var «1» = function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+    return «2»;
+};
+////: lines-4
+«1» __classPrivateFieldIn = function(state, receiver) {
+    if (receiver === null || (typeof receiver !== "object" && typeof receiver !== "function")) throw new TypeError("Cannot use 'in' operator on non-object");
+    return typeof state === "function" ? receiver === state : state.has(receiver);
+};
+//// a-helper-behind-many-returns-that-stand-in-no-block.cjs
+// Two lookup functions as a generator writes them: one chain of `if .. else if ..`, a `return` in each arm, no braces. So the file has
+// more `return` statements than its lists of statements and arguments have entries, and the helper of TypeScript stands behind them.
+
+function grade(n) {
+  if (n < 10) return 0; else if (n < 20) return 1; else if (n < 30) return 2; else if (n < 40) return 3; else if (n < 50) return 4;
+  else if (n < 60) return 5; else if (n < 70) return 6; else if (n < 80) return 7; else if (n < 90) return 8; else if (n < 100) return 9;
+  else if (n < 110) return 10; else if (n < 120) return 11; else if (n < 130) return 12; else if (n < 140) return 13; else if (n < 150) return 14;
+  else if (n < 160) return 15; else if (n < 170) return 16; else if (n < 180) return 17; else if (n < 190) return 18; else if (n < 200) return 19;
+  else if (n < 210) return 20; else if (n < 220) return 21; else if (n < 230) return 22; else if (n < 240) return 23; else if (n < 250) return 24;
+  else if (n < 260) return 25; else if (n < 270) return 26; else if (n < 280) return 27; else if (n < 290) return 28; else if (n < 300) return 29;
+  else if (n < 310) return 30; else if (n < 320) return 31; else if (n < 330) return 32; else if (n < 340) return 33; else if (n < 350) return 34;
+  else if (n < 360) return 35; else if (n < 370) return 36; else if (n < 380) return 37; else if (n < 390) return 38; else if (n < 400) return 39;
+  else if (n < 410) return 40; else if (n < 420) return 41; else if (n < 430) return 42; else if (n < 440) return 43; else if (n < 450) return 44;
+  else if (n < 460) return 45; else if (n < 470) return 46; else if (n < 480) return 47; else if (n < 490) return 48; else if (n < 500) return 49;
+  else if (n < 510) return 50; else if (n < 520) return 51; else if (n < 530) return 52; else if (n < 540) return 53; else if (n < 550) return 54;
+  else if (n < 560) return 55; else if (n < 570) return 56; else if (n < 580) return 57; else if (n < 590) return 58; else if (n < 600) return 59;
+  else return -1;
+}
+
+function band(n) {
+  if (n < 10) return 1; else if (n < 20) return 2; else if (n < 30) return 3; else if (n < 40) return 4; else if (n < 50) return 5;
+  else if (n < 60) return 6; else if (n < 70) return 7; else if (n < 80) return 8; else if (n < 90) return 9; else if (n < 100) return 10;
+  else if (n < 110) return 11; else if (n < 120) return 12; else if (n < 130) return 13; else if (n < 140) return 14; else if (n < 150) return 15;
+  else if (n < 160) return 16; else if (n < 170) return 17; else if (n < 180) return 18; else if (n < 190) return 19; else if (n < 200) return 20;
+  else if (n < 210) return 21; else if (n < 220) return 22; else if (n < 230) return 23; else if (n < 240) return 24; else if (n < 250) return 25;
+  else if (n < 260) return 26; else if (n < 270) return 27; else if (n < 280) return 28; else if (n < 290) return 29; else if (n < 300) return 30;
+  else if (n < 310) return 31; else if (n < 320) return 32; else if (n < 330) return 33; else if (n < 340) return 34; else if (n < 350) return 35;
+  else if (n < 360) return 36; else if (n < 370) return 37; else if (n < 380) return 38; else if (n < 390) return 39; else if (n < 400) return 40;
+  else if (n < 410) return 41; else if (n < 420) return 42; else if (n < 430) return 43; else if (n < 440) return 44; else if (n < 450) return 45;
+  else if (n < 460) return 46; else if (n < 470) return 47; else if (n < 480) return 48; else if (n < 490) return 49; else if (n < 500) return 50;
+  else if (n < 510) return 51; else if (n < 520) return 52; else if (n < 530) return 53; else if (n < 540) return 54; else if (n < 550) return 55;
+  else if (n < 560) return 56; else if (n < 570) return 57; else if (n < 580) return 58; else if (n < 590) return 59; else if (n < 600) return 60;
+  else return -1;
+}
+
+var __extends = (this && this.__extends) || (function () {
+    var extendStatics = function (d, b) {
+        extendStatics = Object.setPrototypeOf ||
+            ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
+            function (d, b) { for (var p in b) if (Object.prototype.hasOwnProperty.call(b, p)) d[p] = b[p]; };
+        return extendStatics(d, b);
+    };
+    return function (d, b) {
+        if (typeof b !== "function" && b !== null)
+            throw new TypeError("Class extends value " + String(b) + " is not a constructor or null");
+        extendStatics(d, b);
+        function __() { this.constructor = d; }
+        d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+    };
+})();
+
+var Animal = (function () {
+    function Animal(name) {
+        this.name = name;
+    }
+    Animal.prototype.speak = function () {
+        return this.name + " makes a sound";
+    };
+    return Animal;
+}());
+
+var Dog = (function (_super) {
+    __extends(Dog, _super);
+    function Dog() {
+        return _super !== null && _super.apply(this, arguments) || this;
+    }
+    Dog.prototype.speak = function () {
+        return _super.prototype.speak.call(this) + ": woof";
+    };
+    return Dog;
+}(Animal));
+
+console.log(new Dog("Rex").speak(), new Dog("Rex") instanceof Animal);
+console.log(grade(5), grade(305), grade(1000), band(5), band(305), band(1000));
+//// a-helper-defined-behind-a-call-in-its-initializer.js
+// A helper that is defined behind a call in its own initializer.
+////= early
+function C() {}
+var first;
+var __classPrivateFieldIn = (first = early(), function(state, receiver) {
+    if (receiver === null || (typeof receiver !== "object" && typeof receiver !== "function")) throw new TypeError("Cannot use 'in' operator on non-object");
+    return typeof state === "function" ? receiver === state : state.has(receiver);
+});
+console.log(first, early());
+//// a-helper-defined-behind-a-call-in-its-statement.js
+// A helper that is defined behind a call in the statement that declares it.
+////= early
+function C() {}
+////= lines-4	var first = early(),
+console.log(first, early());
+//// a-helper-of-another-file-called-before-that-file-has-run/a-helper-of-another-file-called-before-that-file-has-run/helpers.mjs
+import "./user.mjs";
+////= lines-4	export var
+//// a-helper-of-another-file-called-before-that-file-has-run/a-helper-of-another-file-called-before-that-file-has-run/main.mjs
+// A helper that is a variable of another file, called while that file has not started: on a cycle of imports the importer runs first.
+import "./helpers.mjs";
+//// a-helper-of-another-file-called-before-that-file-has-run/a-helper-of-another-file-called-before-that-file-has-run/user.mjs
+import { __classPrivateFieldIn } from "./helpers.mjs";
+class C {}
+try {
+    console.log(__classPrivateFieldIn(C, {}));
+} catch (error) {
+    console.log(error.constructor.name);
+}
+//// a-helper-of-another-file-called-before-that-file-has-run/helpers.mjs
+import "./user.mjs";
+////= lines-4	export var
+//// a-helper-of-another-file-called-before-that-file-has-run/main.mjs
+// A helper that is a variable of another file, called while that file has not started: on a cycle of imports the importer runs first.
+import "./helpers.mjs";
+//// a-helper-of-another-file-called-before-that-file-has-run/user.mjs
+import { __classPrivateFieldIn } from "./helpers.mjs";
+class C {}
+try {
+    console.log(__classPrivateFieldIn(C, {}));
+} catch (error) {
+    console.log(error.constructor.name);
+}
+//// create-binding-look-alikes/main.cjs
+// Functions that are named as TypeScript's helpers and differ from them in one place are ordinary functions. So is one that differs from __exportStar in one place and calls the real __createBinding, which is the only known helper here, under another name.
+// TODO: the build counts 3: look-alikes are taken for the helper: STATISTIC: KnownHelperFunctions = 1
+// STATISTIC: KnownHelperCalls = 0
+"use strict";
+////= lines	__createBinding	m	__esModule	false	k
+var __exportStar = function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+////= lines-2	shadowed	Object
+////= lines-2	shadowsUndefined	undefined
+////= lines	swapped	o	__esModule	true	k
+////= lines	readsOtherKey	m	__esModule	true	k2
+////= lines-3	oneMoreStatement	o
+var comparesLoosely = function(o, m, k, k2) {
+    if (k2 == undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+};
+////= lines	asksForAnotherMarker	m	__esmodule	true	k
+////= lines	real	m	__esModule	true	k
+var takesDefaultToo = function(m, exports) {
+    for (var p in m) if (!Object.prototype.hasOwnProperty.call(exports, p)) real(exports, m, p);
+};
+var takesOwnNamesOnly = function(m, exports) {
+    for (var p of Object.keys(m)) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) real(exports, m, p);
+};
+var overwrites = function(m, exports) {
+    for (var p in m) if (p !== "default") real(exports, m, p);
+};
+var asksTheSource = function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(m, p)) real(exports, m, p);
+};
+var bindsUnderOneName = function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) real(exports, m, p, "last");
+};
+function describe(object) {
+  return Reflect.ownKeys(object).map(key => {
+    const d = Reflect.getOwnPropertyDescriptor(object, key);
+    return `${String(key)}: ${Object.keys(d).map(name => `${name}=${typeof d[name] === "function" ? "function" : d[name]}`).join(" ")}`;
+  }).join("; ");
+}
+const target = {};
+__exportStar({ a: 1, b: 2 }, target);
+console.log(describe(target), Object.keys(target).length);
+const calls = [];
+const own = shadowed({
+  getOwnPropertyDescriptor(m, k) { calls.push(`describe ${k}`); return undefined; },
+  defineProperty(o, k, d) { calls.push(`define ${k}`); o[k] = "mine"; },
+});
+const byOwn = {};
+own(byOwn, { a: 1 }, "a");
+console.log(describe(byOwn), calls.join());
+const byNull = {};
+shadowsUndefined(null)(byNull, { a: 1 }, "a", null);
+shadowsUndefined(null)(byNull, { a: 1 }, "a");
+console.log(describe(byNull));
+const bySwapped = { a: 0 };
+try { swapped(bySwapped, { a: 1 }, "a"); } catch (error) { console.log(error.constructor.name); }
+console.log(describe(bySwapped));
+const byOtherKey = {};
+readsOtherKey(byOtherKey, { a: 1, z: 26 }, "a", "z");
+console.log(describe(byOtherKey), byOtherKey.z);
+console.log(oneMoreStatement({}, { a: 1 }, "a").a);
+const byLooseComparison = {};
+comparesLoosely(byLooseComparison, { a: 1 }, "a", null);
+console.log(describe(byLooseComparison));
+const marked = { __esModule: true, get a() { return 1; } };
+const byAnotherMarker = {};
+asksForAnotherMarker(byAnotherMarker, marked, "a");
+console.log(describe(byAnotherMarker), Object.getOwnPropertyDescriptor(byAnotherMarker, "a").get === Object.getOwnPropertyDescriptor(marked, "a").get);
+const byTheRealOne = {};
+real(byTheRealOne, marked, "a");
+console.log(describe(byTheRealOne), Object.getOwnPropertyDescriptor(byTheRealOne, "a").get === Object.getOwnPropertyDescriptor(marked, "a").get);
+
+const source = Object.create({ inherited: "inherited" });
+source.a = 1;
+source.default = "default";
+for (const star of [takesDefaultToo, takesOwnNamesOnly, overwrites, asksTheSource, bindsUnderOneName]) {
+  const to = { a: "mine" };
+  try {
+    star(source, to);
+  } catch (error) {
+    console.log(error.constructor.name);
+  }
+  console.log(describe(to), to.a, to.last);
+}
+const byDirectCalls = { a: "mine" };
+takesDefaultToo(source, byDirectCalls);
+overwrites({ a: 2 }, byDirectCalls);
+console.log(describe(byDirectCalls), byDirectCalls.a);
+//// create-binding-observables/main.cjs
+// TypeScript's __createBinding and __exportStar as emitted since 4.6: everything a program can see of what they define is as under plain Bun.
+// STATISTIC: KnownHelperFunctions >= 2
+// STATISTIC: KnownHelperCalls >= 16
+"use strict";
+////= createBinding-2
+
+// Plain Bun gives the text of a function as its transpiler printed it, an executable as it is written: the line breaks differ.
+const textOf = f => String(f).replace(/\s+/g, " ");
+function describe(object) {
+  const lines = [];
+  for (const key of Reflect.ownKeys(object)) {
+    const d = Object.getOwnPropertyDescriptor(object, key);
+    const parts = Object.keys(d).map(name => `${name}=${typeof d[name] === "function" ? `function ${JSON.stringify(d[name].name)}/${d[name].length}: ${textOf(d[name])}` : String(d[name])}`);
+    lines.push(`${String(key)}: ${parts.join(" ")}`);
+  }
+  return lines.join("\n");
+}
+function attempt(label, work) {
+  try {
+    console.log(label, work());
+  } catch (error) {
+    // Plain Bun quotes the source at the end of some messages, an executable does not.
+    console.log(label, "threw", error.constructor.name, error.message.replace(/ \(evaluating '.*'\)$/, ""));
+  }
+}
+
+const plain = { a: 1, b: "two", default: "skipped", c: undefined };
+const target = { b: "mine" };
+__exportStar(plain, target);
+console.log(describe(target));
+console.log(Object.keys(target).join(), JSON.stringify(target), target.a, target.b, target.c);
+plain.a = 10;
+console.log(target.a, "live");
+attempt("store", () => { target.a = 5; return target.a; });
+attempt("delete", () => delete target.a);
+attempt("redefine", () => Object.defineProperty(target, "a", { value: 1 }));
+const first = Object.getOwnPropertyDescriptor(target, "a").get;
+console.log(first === Object.getOwnPropertyDescriptor(target, "a").get, first(), first.call(null), "prototype" in first, Object.getPrototypeOf(first) === Function.prototype);
+console.log(target.__lookupGetter__("a") === first, target.__lookupSetter__("a"));
+delete plain.a;
+console.log(target.a, "a" in target);
+
+const marked = {};
+Object.defineProperty(marked, "__esModule", { value: true });
+let reads = 0;
+const getter = function() { reads++; return "from getter"; };
+const setter = function(v) { reads += 100; };
+Object.defineProperty(marked, "both", { get: getter, set: setter, enumerable: true, configurable: true });
+Object.defineProperty(marked, "hidden", { get: getter, enumerable: false, configurable: false });
+Object.defineProperty(marked, "fixed", { value: 7, writable: false, enumerable: true, configurable: false });
+Object.defineProperty(marked, "fixedHidden", { value: 8, writable: false, enumerable: false, configurable: false });
+Object.defineProperty(marked, "readOnly", { value: 9, writable: false, enumerable: true, configurable: true });
+Object.defineProperty(marked, "pinned", { value: 10, writable: true, enumerable: true, configurable: false });
+const reused = {};
+for (const name of ["both", "hidden", "fixed", "fixedHidden", "readOnly", "pinned", "absent"]) __createBinding(reused, marked, name);
+console.log(describe(reused), reads);
+console.log(Object.getOwnPropertyDescriptor(reused, "both").get === getter, Object.getOwnPropertyDescriptor(reused, "both").set === setter, Object.getOwnPropertyDescriptor(reused, "hidden").get === getter);
+console.log(reused.both, reused.hidden, reused.fixed, reused.absent, reads);
+marked.absent = "now there";
+console.log(reused.absent);
+const starred = {};
+__exportStar(marked, starred);
+console.log(describe(starred), reads);
+Object.defineProperty(starred, "__esModule", { value: true });
+const starredAgain = {};
+__exportStar(starred, starredAgain);
+console.log(describe(starredAgain), reads);
+console.log(Object.getOwnPropertyDescriptor(starredAgain, "both").get === getter, Object.getOwnPropertyDescriptor(starredAgain, "readOnly").get === Object.getOwnPropertyDescriptor(starred, "readOnly").get);
+marked.pinned = 11;
+console.log(starred.pinned, starredAgain.pinned, reads);
+
+const unmarked = {};
+Object.defineProperty(unmarked, "both", { get: getter, set: setter, enumerable: true, configurable: true });
+const wrapped = {};
+__createBinding(wrapped, unmarked, "both");
+console.log(describe(wrapped), Object.getOwnPropertyDescriptor(wrapped, "both").get === getter, wrapped.both);
+for (const marker of [0, "", null, NaN, 1, "yes", {}]) {
+  const source = { __esModule: marker };
+  Object.defineProperty(source, "x", { get: getter, enumerable: true });
+  const to = {};
+  __createBinding(to, source, "x");
+  console.log(String(marker), Object.getOwnPropertyDescriptor(to, "x").get === getter);
+}
+const inheritsMarker = Object.create({ __esModule: true });
+Object.defineProperty(inheritsMarker, "x", { get: getter, enumerable: true });
+const fromInheriting = {};
+__createBinding(fromInheriting, inheritsMarker, "x");
+console.log(Object.getOwnPropertyDescriptor(fromInheriting, "x").get === getter);
+let markerReads = 0;
+const computesMarker = { get __esModule() { markerReads++; return true; } };
+Object.defineProperty(computesMarker, "x", { get: getter, enumerable: true });
+computesMarker.y = 1;
+const fromComputing = {};
+__createBinding(fromComputing, computesMarker, "x");
+__createBinding(fromComputing, computesMarker, "y");
+console.log(markerReads, Object.getOwnPropertyDescriptor(fromComputing, "x").get === getter);
+
+const renamed = {};
+__createBinding(renamed, plain, "b", "other");
+__createBinding(renamed, plain, "b", undefined);
+__createBinding(renamed, plain, "b", null);
+__createBinding(renamed, plain, "b", 0);
+__createBinding(renamed, plain, "b", 1.5);
+__createBinding(renamed, plain, 0, "zero");
+const symbol = Symbol("s");
+plain[symbol] = "by symbol";
+__createBinding(renamed, plain, symbol);
+__createBinding(renamed, plain, "b", symbol.description);
+console.log(describe(renamed), renamed.other, renamed[symbol], renamed[0], renamed.zero);
+const keyObject = { toString() { console.log("key converted"); return "b"; } };
+__createBinding(renamed, plain, keyObject, "converted");
+console.log(renamed.converted);
+const joined = {};
+__createBinding(joined, { ab: 1, cd: 2 }, ["a", "b"].join(""));
+__createBinding(joined, { ab: 1, cd: 2 }, "cd", ["e", "f"].join(""));
+__createBinding(joined, { ab: 1 }, "ab", "__proto__");
+__createBinding(joined, { ab: 1 }, "__proto__", "prototypeOfTheSource");
+__createBinding(joined, { "": "empty" }, "");
+console.log(describe(joined), joined.ab, joined.ef, joined.__proto__, Object.getPrototypeOf(joined) === Object.prototype, joined.prototypeOfTheSource === Object.prototype, joined[""]);
+console.log(__createBinding({}, plain, "b"), __exportStar(plain, {}));
+
+const parent = { inherited: "from parent" };
+Object.defineProperty(parent, "unseen", { value: 1, enumerable: false });
+const child = Object.create(parent);
+child.own = "own";
+const fromChild = {};
+__exportStar(child, fromChild);
+console.log(describe(fromChild), fromChild.inherited, fromChild.own);
+
+attempt("already there", () => { const to = { a: 1 }; __createBinding(to, { a: 2 }, "a"); return describe(to); });
+attempt("already fixed", () => { const to = Object.freeze({ a: 1 }); __createBinding(to, { a: 2 }, "a"); return describe(to); });
+attempt("not extensible", () => { const to = Object.preventExtensions({}); __createBinding(to, { a: 2 }, "a"); return describe(to); });
+attempt("sealed", () => { const to = Object.seal({}); __exportStar({ a: 2 }, to); return describe(to); });
+attempt("target is a number", () => __createBinding(1, { a: 2 }, "a"));
+attempt("target is undefined", () => __createBinding(undefined, { a: 2 }, "a"));
+attempt("source is undefined", () => __createBinding({}, undefined, "a"));
+attempt("source is null", () => __createBinding({}, null, "a"));
+attempt("source is a string", () => { const to = {}; __createBinding(to, "text", "length"); __createBinding(to, "text", 1); __createBinding(to, "text", "x"); return describe(to) + to.length + to[1]; });
+attempt("source is a function", () => { const to = {}; const f = function named(a, b) {}; for (const k of ["name", "length", "prototype"]) __createBinding(to, f, k); return describe(to); });
+attempt("source is an array", () => { const to = {}; __exportStar(["x", "y"], to); __createBinding(to, ["x"], "length"); return describe(to); });
+attempt("target is an array", () => { const to = []; __exportStar({ 0: "x", 2: "z", name: "n" }, to); return describe(to) + to.length; });
+attempt("target is a function", () => { const to = function () {}; __exportStar({ a: 1, name: "n", length: 5 }, to); return describe(to); });
+attempt("star over undefined", () => { const to = {}; __exportStar(undefined, to); return describe(to); });
+attempt("star over a null-prototype object", () => { const to = Object.create(null); const from = Object.create(null); from.a = 1; __exportStar(from, to); return describe(to); });
+attempt("star over null", () => { const to = {}; __exportStar(null, to); return describe(to); });
+attempt("star over a number", () => { const to = {}; __exportStar(5, to); return describe(to); });
+attempt("star over a string", () => { const to = {}; __exportStar("ab", to); return describe(to); });
+attempt("star over a frozen object", () => { const to = {}; __exportStar(Object.freeze({ a: 1, b: { c: 2 } }), to); return describe(to); });
+attempt("star over a sealed object", () => { const to = {}; __exportStar(Object.seal({ a: 1 }), to); return describe(to); });
+attempt("star over an object onto itself", () => { const self = { a: 1 }; __exportStar(self, self); return describe(self); });
+attempt("star over an enumerable marker", () => { const to = {}; __exportStar({ __esModule: true, default: 1, a: 2 }, to); return describe(to) + to.__esModule; });
+attempt("star over index keys", () => { const to = {}; __exportStar({ b: 1, 2: "two", a: 3, 1: "one" }, to); return describe(to); });
+attempt("star over a symbol", () => { const to = {}; __exportStar({ [symbol]: 1, a: 2 }, to); return describe(to); });
+attempt("star over an own __proto__", () => { const to = {}; __exportStar(JSON.parse('{ "__proto__": { "polluted": true }, "a": 1 }'), to); return describe(to) + Object.getPrototypeOf(to).polluted + to.polluted; });
+attempt("star into an accessor of the same name", () => { const to = { get a() { return "mine"; } }; __exportStar({ a: 1, b: 2 }, to); return describe(to) + to.a; });
+attempt("star into an object that inherits the name", () => { const to = Object.create({ a: "inherited" }); __exportStar({ a: 1 }, to); return describe(to) + to.a; });
+attempt("star into undefined", () => __exportStar({ a: 1 }, undefined));
+attempt("star of nothing into undefined", () => __exportStar({}, undefined));
+attempt("star into a number", () => __exportStar({ a: 1 }, 5));
+attempt("star without a target", () => __exportStar({ a: 1 }));
+attempt("star without arguments", () => __exportStar());
+attempt("star with one more argument", () => { const to = {}; return __exportStar({ a: 1 }, to, "more") + describe(to); });
+attempt("star by spread", () => { const to = {}; __exportStar(...[{ a: 1 }, to]); return describe(to); });
+attempt("star by an optional call", () => { const to = {}; __exportStar?.({ a: 1 }, to); return describe(to); });
+attempt("star behind a comma", () => { const to = {}; (0, __exportStar)({ a: 1 }, to); return describe(to); });
+attempt("star by call", () => { const to = {}; __exportStar.call(null, { a: 1 }, to); return describe(to); });
+attempt("star as a constructor", () => { const to = {}; const made = new __exportStar({ a: 1 }, to); return describe(to) + (made instanceof __exportStar); });
+function starInAFunction(from) {
+  const to = {};
+  __exportStar(from, to);
+  return describe(to);
+}
+console.log(starInAFunction({ a: 1 }), starInAFunction(Object.freeze({ a: 1 })), starInAFunction(undefined));
+
+const order = [];
+const ordered = {};
+console.log(__exportStar((order.push("source"), { get a() { order.push("read"); return 1; } }), (order.push("target"), ordered)), order.join(), ordered.a, order.join());
+
+const log = [];
+const observed = new Proxy({ a: 1, b: 2 }, {
+  ownKeys(t) { log.push("ownKeys"); return Reflect.ownKeys(t); },
+  getOwnPropertyDescriptor(t, k) { log.push(`describe ${String(k)}`); return Reflect.getOwnPropertyDescriptor(t, k); },
+  get(t, k, r) { log.push(`get ${String(k)}`); return Reflect.get(t, k, r); },
+  has(t, k) { log.push(`has ${String(k)}`); return Reflect.has(t, k); },
+  getPrototypeOf(t) { log.push("getPrototypeOf"); return Reflect.getPrototypeOf(t); },
+});
+const fromProxy = {};
+__exportStar(observed, fromProxy);
+console.log(log.join(), describe(fromProxy), fromProxy.a, log.join());
+log.length = 0;
+const observedTarget = new Proxy({}, {
+  defineProperty(t, k, d) { log.push(`define ${String(k)} ${Object.keys(d)}`); return Reflect.defineProperty(t, k, d); },
+  getOwnPropertyDescriptor(t, k) { log.push(`describe ${String(k)}`); return Reflect.getOwnPropertyDescriptor(t, k); },
+});
+__exportStar({ a: 1 }, observedTarget);
+console.log(log.join(), observedTarget.a);
+
+const growing = { a: 1, b: 2 };
+const grown = {};
+Object.defineProperty(growing, "a", { get() { growing.late = "added during the loop"; delete growing.b; return 1; }, enumerable: true, configurable: true });
+__exportStar(growing, grown);
+console.log(describe(grown));
+console.log(grown.a, Object.keys(growing).join(), grown.b);
+
+class Holder { constructor() { this.x = 1; this.y = 2; } get z() { return 3; } }
+const fromInstance = {};
+__exportStar(new Holder(), fromInstance);
+console.log(describe(fromInstance));
+const intoInstance = new Holder();
+__exportStar({ x: "kept out", w: "let in" }, intoInstance);
+console.log(describe(intoInstance), intoInstance.w);
+const partly = new Holder();
+delete partly.x;
+partly.extra = "extra";
+const fromPartly = {};
+__exportStar(partly, fromPartly);
+console.log(describe(fromPartly), fromPartly.y, fromPartly.extra);
+partly.x = "back";
+console.log(fromPartly.x, Object.keys(fromPartly).join());
+const fromFrozenInstance = {};
+__exportStar(Object.freeze(new Holder()), fromFrozenInstance);
+console.log(describe(fromFrozenInstance));
+
+exports.own = "own";
+__exportStar({ own: "kept out", added: "let in" }, exports);
+__createBinding(exports, plain, "b", "renamed");
+console.log(describe(exports), exports === module.exports, exports.added, exports.renamed);
+const fromExports = {};
+__exportStar(module.exports, fromExports);
+console.log(describe(fromExports), fromExports.own, fromExports.renamed);
+
+const many = {};
+for (let i = 0; i < 300; i++) many["name" + i] = i;
+const manyTarget = {};
+__exportStar(many, manyTarget);
+console.log(Object.keys(manyTarget).length, Object.keys(manyTarget)[299], manyTarget.name299, Object.getOwnPropertyDescriptor(manyTarget, "name150").get());
+//// create-binding-under-a-changed-object-prototype/main.cjs
+// A descriptor is an ordinary object under Object.prototype, and the helpers find Object.defineProperty and its like by name. Plain Bun lets a program change those built-ins, a compiled program refuses the change. Either way __createBinding and __exportStar do what the same text does in functions that are no known helpers.
+// STATISTIC: KnownHelperFunctions >= 2
+// TODO: the build counts 4: STATISTIC: KnownHelperFunctions <= 3
+// STATISTIC: KnownHelperCalls >= 2
+"use strict";
+////= createBinding-2
+////= lines-3	ordinaryBinding	undefined
+var ordinaryStar = function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) ordinaryBinding(exports, m, p);
+};
+const known = { bind: (o, m, k, k2) => __createBinding(o, m, k, k2), star: (m, o) => __exportStar(m, o) };
+const ordinary = { bind: (o, m, k, k2) => ordinaryBinding(o, m, k, k2), star: (m, o) => ordinaryStar(m, o) };
+
+// What the program itself uses does not go through the names that it changes.
+const RealObject = Object;
+const { defineProperty, getOwnPropertyDescriptor, getOwnPropertyNames, freeze, create } = Object;
+const { hasOwnProperty } = Object.prototype;
+const { call } = Function.prototype;
+const { apply, ownKeys } = Reflect;
+const describeProperty = Reflect.getOwnPropertyDescriptor;
+const redefine = Reflect.defineProperty;
+
+function describe(object) {
+  return ownKeys(object).map(key => {
+    const d = describeProperty(object, key);
+    return `${String(key)}: ${getOwnPropertyNames(d).map(name => `${name}=${typeof d[name] === "function" ? "function" : String(d[name])}`).join(" ")}`;
+  }).join("; ");
+}
+let log = [];
+function outcomeOf(helpers, work) {
+  log = [];
+  try {
+    log.push(work(helpers));
+  } catch (error) {
+    log.push(`threw ${error.constructor.name}: ${error.message}`);
+  }
+  return log.join(" | ");
+}
+
+const accessor = { get a() { return "from the getter of the source"; } };
+const markedAccessor = { __esModule: true, get a() { return "from the getter of the source"; }, set a(v) { log.push(`the setter of the source takes ${v}`); } };
+const symbol = Symbol("s");
+const works = {
+  data({ bind }) { const to = {}; bind(to, { a: 1 }, "a"); return `${describe(to)} ${to.a}`; },
+  storeToTheBinding({ bind }) { const to = {}; bind(to, { a: 1 }, "a"); to.a = 3; return `${describe(to)} ${to.a}`; },
+  frozenSource({ bind }) { const to = {}; bind(to, freeze({ a: 1 }), "a"); return `${describe(to)} ${to.a}`; },
+  frozenAndMarkedSource({ bind }) { const to = {}; bind(to, freeze({ a: 1, __esModule: true }), "a"); return `${describe(to)} ${to.a}`; },
+  accessor({ bind }) { const to = {}; bind(to, accessor, "a"); return `${describe(to)} ${to.a} ${describeProperty(to, "a").get === describeProperty(accessor, "a").get}`; },
+  accessorOfAMarkedSource({ bind }) { const to = {}; bind(to, markedAccessor, "a"); to.a = 3; return `${describe(to)} ${to.a} ${describeProperty(to, "a").get === describeProperty(markedAccessor, "a").get}`; },
+  absentName({ bind }) { const to = {}; bind(to, {}, "a"); return `${describe(to)} ${to.a}`; },
+  otherName({ bind }) { const to = {}; bind(to, { a: 1 }, "a", "b"); return `${describe(to)} ${to.a} ${to.b}`; },
+  symbolAndIndex({ bind }) { const to = {}; bind(to, { [symbol]: 1, 0: 2 }, symbol); bind(to, { [symbol]: 1, 0: 2 }, 0); return `${describe(to)} ${to[symbol]} ${to[0]}`; },
+  nameTheTargetHas({ bind }) { const to = { a: "mine" }; bind(to, { a: 1 }, "a"); return `${describe(to)} ${to.a}`; },
+  frozenTarget({ bind }) { const to = freeze({}); bind(to, { a: 1 }, "a"); return describe(to); },
+  star({ star }) { const to = { b: "mine" }; star({ a: 1, b: 2, default: 3, c: 4 }, to); return `${describe(to)} ${to.a} ${to.b} ${to.c}`; },
+  starOverAMarkedSource({ star }) { const to = {}; star(markedAccessor, to); return `${describe(to)} ${to.a}`; },
+  starWithoutPrototypes({ star }) { const to = create(null); const from = create(null); from.a = 1; star(from, to); return `${describe(to)} ${to.a}`; },
+};
+function compare(label, change, undo) {
+  let isChanged = true;
+  try {
+    change();
+  } catch {
+    isChanged = false;
+  }
+  const different = [];
+  try {
+    for (const name of getOwnPropertyNames(works)) {
+      const outcomes = [outcomeOf(known, works[name]), outcomeOf(ordinary, works[name])];
+      if (outcomes[0] !== outcomes[1]) different.push(`\n  ${name}\n    the known helper: ${outcomes[0]}\n    the ordinary function: ${outcomes[1]}`);
+    }
+  } finally {
+    if (isChanged) undo();
+  }
+  console.log(`${label}: ${different.length ? `DIFFERENT${different.join("")}` : "alike"}`);
+}
+
+const before = {};
+__exportStar({ a: 1 }, before);
+console.log(describe(before), before.a);
+compare("nothing changed", () => {}, () => {});
+
+compare("Object.prototype.configurable", () => { Object.prototype.configurable = true; }, () => { delete Object.prototype.configurable; });
+compare("Object.prototype.enumerable", () => { Object.prototype.enumerable = false; }, () => { delete Object.prototype.enumerable; });
+compare("Object.prototype.writable", () => { Object.prototype.writable = true; }, () => { delete Object.prototype.writable; });
+compare("Object.prototype.value", () => { Object.prototype.value = 5; }, () => { delete Object.prototype.value; });
+compare("Object.prototype.get", () => { Object.prototype.get = function () { return "inherited getter"; }; }, () => { delete Object.prototype.get; });
+compare("Object.prototype.set", () => { Object.prototype.set = function (v) { log.push(`the inherited setter takes ${v}`); }; }, () => { delete Object.prototype.set; });
+compare("Object.prototype.__esModule", () => { Object.prototype.__esModule = true; }, () => { delete Object.prototype.__esModule; });
+compare("Object.prototype.a", () => { Object.prototype.a = "inherited"; }, () => { delete Object.prototype.a; });
+compare("Object.prototype.seen", () => { Object.prototype.seen = "enumerable and inherited"; }, () => { delete Object.prototype.seen; });
+compare(
+  "Object.prototype.hasOwnProperty",
+  () => { Object.prototype.hasOwnProperty = function (key) { log.push(`asked for ${String(key)}`); return key === "c"; }; },
+  () => { Object.prototype.hasOwnProperty = hasOwnProperty; },
+);
+compare(
+  "Function.prototype.call",
+  () => { Function.prototype.call = function (receiver, ...passed) { log.push(`called with ${passed.map(String)}`); return apply(this, receiver, passed); }; },
+  () => { Function.prototype.call = call; },
+);
+compare(
+  "Object.defineProperty",
+  () => { Object.defineProperty = function (o, k, d) { log.push(`defines ${String(k)} by ${getOwnPropertyNames(d)}`); return defineProperty(o, k, d); }; },
+  () => { Object.defineProperty = defineProperty; },
+);
+compare("an Object.defineProperty that does nothing", () => { Object.defineProperty = function (o) { log.push("ignored"); return o; }; }, () => { Object.defineProperty = defineProperty; });
+compare(
+  "no Object.defineProperty",
+  () => { delete Object.defineProperty; },
+  () => { redefine(RealObject, "defineProperty", { value: defineProperty, writable: true, enumerable: false, configurable: true }); },
+);
+compare(
+  "Object.getOwnPropertyDescriptor",
+  () => { Object.getOwnPropertyDescriptor = function (m, k) { log.push(`describes ${String(k)}`); return { value: "mine", writable: false, enumerable: true, configurable: false }; }; },
+  () => { Object.getOwnPropertyDescriptor = getOwnPropertyDescriptor; },
+);
+compare(
+  "globalThis.Object",
+  () => {
+    globalThis.Object = {
+      getOwnPropertyDescriptor(m, k) { log.push(`another Object describes ${String(k)}`); return undefined; },
+      defineProperty(o, k, d) { log.push(`another Object defines ${String(k)}`); o[k] = d.get(); },
+      prototype: { hasOwnProperty(key) { log.push(`another Object is asked for ${String(key)}`); return false; } },
+    };
+  },
+  () => { globalThis.Object = RealObject; },
+);
+
+compare("afterwards", () => {}, () => {});
+const afterwards = {};
+__exportStar({ a: 1 }, afterwards);
+console.log(describe(afterwards), afterwards.a);
+//// private-state-of-classes-compiled-down/helpers.mjs
+export function __classPrivateFieldGet(receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+}
+export function __classPrivateFieldSet(receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+}
+export function __classPrivateFieldIn(state, receiver) {
+    if (receiver === null || (typeof receiver !== "object" && typeof receiver !== "function")) throw new TypeError("Cannot use 'in' operator on non-object");
+    return typeof state === "function" ? receiver === state : state.has(receiver);
+}
+//// private-state-of-classes-compiled-down/main.mjs
+// `#x`, `#m()` and `#x in o` as TypeScript writes them for a target below ES2022: a WeakMap or a WeakSet a name, reached through three helpers.
+import { __classPrivateFieldGet, __classPrivateFieldSet, __classPrivateFieldIn } from "./helpers.mjs";
+var _Counter_x, _Counter_label, _Counter_instances, _Counter_step;
+class Counter {
+    constructor(start) {
+        _Counter_instances.add(this);
+        _Counter_x.set(this, start);
+        _Counter_label.set(this, void 0);
+    }
+    read() { return __classPrivateFieldGet(this, _Counter_x, "f"); }
+    write(v) { return __classPrivateFieldSet(this, _Counter_x, v, "f"); }
+    bump() { var _a; return __classPrivateFieldSet(this, _Counter_x, (_a = __classPrivateFieldGet(this, _Counter_x, "f"), ++_a), "f"); }
+    label() { return __classPrivateFieldGet(this, _Counter_label, "f"); }
+    name(text) { __classPrivateFieldSet(this, _Counter_label, text, "f"); return this; }
+    step() { return __classPrivateFieldGet(this, _Counter_instances, "m", _Counter_step).call(this, 2); }
+    static is(o) { return __classPrivateFieldIn(_Counter_x, o); }
+    static marked(o) { return __classPrivateFieldIn(_Counter_instances, o); }
+}
+_Counter_x = new WeakMap(), _Counter_label = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = function _Counter_step(by) {
+    return this.write(this.read() + by);
+};
+class Below extends Counter {
+    constructor() { super(100); this.own = true; }
+}
+const says = action => {
+    try {
+        return action();
+    } catch (error) {
+        return error.constructor.name + ": " + error.message;
+    }
+};
+const counter = new Counter(1), below = new Below();
+console.log(counter.read(), counter.write(5), counter.read(), counter.bump(), counter.step(), counter.read());
+console.log(counter.label(), counter.name("first").label(), below.read(), below.step(), below.own, Object.keys(below).join());
+console.log(Counter.is(counter), Counter.is(below), Counter.is({}), Counter.marked(counter), Counter.marked({}), says(() => Counter.is(1)));
+console.log(says(() => Counter.prototype.read.call({})));
+console.log(says(() => Counter.prototype.write.call({}, 1)));
+console.log(says(() => Counter.prototype.step.call({})));
+console.log(says(() => Counter.prototype.read.call(null)));
+let sum = 0;
+for (let round = 0; round < 1000; round++) {
+    const one = new Counter(round);
+    one.bump();
+    sum += one.read() + one.step();
+}
+console.log(sum, JSON.stringify(counter), Object.getOwnPropertyNames(counter).length, Reflect.ownKeys(counter).length);
+const frozen = Object.freeze(new Counter(7));
+console.log(frozen.read(), frozen.write(8), frozen.read(), Object.isFrozen(frozen));
+//// reassigned-helpers/main.cjs
+// A helper's variable holds what the program gave it: a function it assigns later, or the one that `this` has, as the emitted text asks. The other helpers and the calls in the file call that.
+// STATISTIC: KnownHelperFunctions >= 4
+// STATISTIC: KnownHelperCalls >= 7
+"use strict";
+////= createBinding-2
+const describe = object => Object.entries(Object.getOwnPropertyDescriptors(object)).map(([key, d]) => `${key}:${Object.keys(d)}`).join(" ");
+const before = {};
+__exportStar({ a: 1 }, before);
+console.log(describe(before));
+const original = __createBinding;
+__createBinding = function (o, m, k) { o[k] = `mine ${m[k]}`; };
+const between = {};
+__exportStar({ a: 1 }, between);
+console.log(describe(between), between.a);
+__createBinding = undefined;
+try {
+  __exportStar({ a: 1 }, {});
+} catch (error) {
+  console.log(error.constructor.name);
+}
+console.log(__exportStar({}, {}));
+__createBinding = original;
+const after = {};
+__exportStar({ a: 1 }, after);
+console.log(describe(after));
+
+const originalStar = __exportStar;
+__exportStar = function (m, exports) { exports.names = Object.keys(m).join(); };
+const byAnotherStar = {};
+__exportStar({ a: 1, b: 2 }, byAnotherStar);
+console.log(describe(byAnotherStar), byAnotherStar.names);
+__exportStar = originalStar;
+const byTheStarAgain = {};
+__exportStar({ a: 1, b: 2 }, byTheStarAgain);
+console.log(describe(byTheStarAgain));
+
+const borrowed = { bind: original, star: originalStar };
+const byMethod = {};
+borrowed.bind(byMethod, { a: 1 }, "a");
+original.call(null, byMethod, { b: 2 }, "b");
+original.apply(undefined, [byMethod, { c: 3 }, "c", "renamed"]);
+Reflect.apply(original, 5, [byMethod, { d: 4 }, "d"]);
+borrowed.star({ e: 5 }, byMethod);
+console.log(describe(byMethod), original.length, JSON.stringify(original.name), originalStar.length, JSON.stringify(originalStar.name));
+console.log(new original({}, { a: 1 }, "a") instanceof original);
+
+function emittedInAFunction() {
+  var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+      if (k2 === undefined) k2 = k;
+      var desc = Object.getOwnPropertyDescriptor(m, k);
+      if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+        desc = { enumerable: true, get: function() { return m[k]; } };
+      }
+      Object.defineProperty(o, k2, desc);
+  }) : (function(o, m, k, k2) {
+      if (k2 === undefined) k2 = k;
+      o[k2] = m[k];
+  }));
+  var __exportStar = (this && this.__exportStar) || function(m, exports) {
+      for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+  };
+  const to = {};
+  __exportStar({ a: 1 }, to);
+  return `${describe(to)} ${to.a}`;
+}
+console.log(emittedInAFunction.call(undefined));
+console.log(emittedInAFunction.call({}));
+console.log(emittedInAFunction.call({ __createBinding(o, m, k) { o[k] = `bound by what this has: ${m[k]}`; } }));
+console.log(emittedInAFunction.call({ __exportStar(m, exports) { exports.a = "starred by what this has"; } }));
+console.log(emittedInAFunction.call({ __createBinding: original, __exportStar: originalStar }));
+//// stars-looked-at-late-behind-changes-to-object-prototype/descriptors-inherit/barrel.js
+"use strict";
+////= createBinding-2
+Object.defineProperty(exports, "__esModule", { value: true });
+__exportStar(require("./leaf.js"), exports);
+//// stars-looked-at-late-behind-changes-to-object-prototype/descriptors-inherit/leaf.js
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.two = exports.one = void 0;
+exports.one = "one";
+exports.two = "two";
+//// stars-looked-at-late-behind-changes-to-object-prototype/main.cjs
+// `export * from` as TypeScript emits it for CommonJS, where Object.prototype gets names in front of the star or behind it. A compiled executable refuses every change of Object.prototype, and where the
+// compiler sees the assignment the build says so.
+"use strict";
+const show = value => (typeof value === "function" ? String(value) : typeof value === "string" ? JSON.stringify(value) : String(value));
+const describe = object =>
+  Reflect.ownKeys(object)
+    .map(key => {
+      const d = Object.getOwnPropertyDescriptor(object, key);
+      return `${String(key)}{${Object.keys(d).map(name => `${name}=${show(d[name])}`).join(" ")}}`;
+    })
+    .join(" ");
+const valuesOf = object => Object.keys(object).map(key => `${key}=${show(object[key])}`).join(" ");
+const getterOf = (object, key) => Object.getOwnPropertyDescriptor(object, key)?.get;
+const attempt = work => {
+  try {
+    return show(work());
+  } catch (error) {
+    return `threw ${error.constructor.name}: ${error.message}`;
+  }
+};
+const section = name => console.log(`--- ${name}`);
+const listWithForIn = object => {
+  const listed = [];
+  for (const key in object) listed.push(key);
+  return listed.join();
+};
+
+section("Object.prototype changes behind the star");
+{
+  const barrel = require("./prototype-changed-late/barrel.js");
+  Object.prototype.inherited = "inherited";
+  Object.prototype.configurable = true;
+  Object.prototype.set = function () {};
+  const described = describe(barrel);
+  const listed = listWithForIn(barrel);
+  delete Object.prototype.inherited;
+  delete Object.prototype.configurable;
+  delete Object.prototype.set;
+  console.log(described);
+  console.log(listed, attempt(() => delete barrel.one));
+}
+
+section("Object.prototype has a name that can be listed at the star");
+{
+  Object.prototype.inherited = "inherited";
+  const barrel = require("./prototype-changed-early/barrel.js");
+  delete Object.prototype.inherited;
+  console.log(describe(barrel));
+  console.log(valuesOf(barrel));
+  require("./prototype-changed-early/leaf.js").inherited = "own by now";
+  console.log(valuesOf(barrel));
+}
+
+section("descriptors inherit at the star");
+{
+  Object.prototype.configurable = true;
+  const barrel = require("./descriptors-inherit/barrel.js");
+  delete Object.prototype.configurable;
+  console.log(describe(barrel));
+  console.log(attempt(() => delete barrel.one), Object.keys(barrel).join());
+}
+//// stars-looked-at-late-behind-changes-to-object-prototype/package.json
+{"type":"commonjs"}
+//// stars-looked-at-late-behind-changes-to-object-prototype/prototype-changed-early/barrel.js
+"use strict";
+////= createBinding-2
+Object.defineProperty(exports, "__esModule", { value: true });
+__exportStar(require("./leaf.js"), exports);
+//// stars-looked-at-late-behind-changes-to-object-prototype/prototype-changed-early/leaf.js
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.two = exports.one = void 0;
+exports.one = "one";
+exports.two = "two";
+//// stars-looked-at-late-behind-changes-to-object-prototype/prototype-changed-late/barrel.js
+"use strict";
+////= createBinding-2
+Object.defineProperty(exports, "__esModule", { value: true });
+__exportStar(require("./leaf.js"), exports);
+//// stars-looked-at-late-behind-changes-to-object-prototype/prototype-changed-late/leaf.js
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.two = exports.one = void 0;
+exports.one = "one";
+exports.two = "two";
+//// typescript-barrel/cycle-a.js
+"use strict";
+////= createBinding-2
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.seen = exports.early = void 0;
+exports.early = "early";
+__exportStar(require("./cycle-b.js"), exports);
+exports.seen = require("./cycle-b.js").sawOfA;
+exports.late = "late";
+//// typescript-barrel/cycle-b.js
+"use strict";
+////= createBinding-2
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.sawOfA = void 0;
+__exportStar(require("./cycle-a.js"), exports);
+exports.sawOfA = Object.keys(require("./cycle-a.js")).join("+");
+//// typescript-barrel/index.js
+"use strict";
+////= createBinding-2
+Object.defineProperty(exports, "__esModule", { value: true });
+__exportStar(require("./names.js"), exports);
+__exportStar(require("./inner/index.js"), exports);
+//// typescript-barrel/inner/deep.js
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ALPHA = exports.deep = void 0;
+exports.deep = "deep";
+exports.ALPHA = "hidden by the first star";
+//// typescript-barrel/inner/index.js
+"use strict";
+////= createBinding-2
+Object.defineProperty(exports, "__esModule", { value: true });
+__exportStar(require("./deep.js"), exports);
+//// typescript-barrel/main.cjs
+// A barrel as TypeScript 5.9 emits it for CommonJS: `export * from` twice, one level deep and two, and a cycle.
+// STATISTIC: KnownHelperFunctions >= 6
+// STATISTIC: KnownHelperCalls >= 5
+"use strict";
+const barrel = require("./index.js");
+const describe = object => Reflect.ownKeys(object).map(key => {
+  const d = Object.getOwnPropertyDescriptor(object, key);
+  return `${String(key)}: ${Object.keys(d).map(name => `${name}=${typeof d[name] === "function" ? String(d[name]) : d[name]}`).join(" ")}`;
+}).join("\n");
+const attempt = (label, work) => {
+  try {
+    console.log(label, work());
+  } catch (error) {
+    console.log(label, "threw", error.constructor.name, error.message);
+  }
+};
+console.log(barrel.ALPHA, barrel.deep, barrel.missing, "BETA" in barrel, "default" in barrel);
+console.log(describe(barrel));
+console.log(Object.keys(barrel).join());
+console.log(barrel.ALPHA, barrel.BETA, barrel.gamma(2), barrel.counter, barrel.deep, barrel.default);
+barrel.bump();
+console.log(barrel.counter, require("./names.js").counter);
+require("./names.js").ALPHA = "changed";
+console.log(barrel.ALPHA);
+const inner = require("./inner/index.js");
+console.log(Object.getOwnPropertyDescriptor(barrel, "deep").get === Object.getOwnPropertyDescriptor(inner, "deep").get);
+console.log(JSON.stringify(barrel), JSON.stringify({ ...barrel }));
+console.log(require("./cycle-a.js").seen, Object.keys(require("./cycle-a.js")).join(), Object.keys(require("./cycle-b.js")).join());
+console.log(require("./cycle-b.js").early, require("./cycle-b.js").seen, require("./cycle-b.js").late, require("./cycle-a.js").sawOfA);
+require("./inner/deep.js").deep = "deeper";
+console.log(barrel.deep, inner.deep, inner.ALPHA);
+attempt("store", () => { barrel.BETA = "mine"; return barrel.BETA; });
+attempt("delete", () => delete barrel.BETA);
+attempt("redefine", () => Object.defineProperty(barrel, "BETA", { value: "mine" }));
+attempt("define the same", () => Object.defineProperty(barrel, "BETA", { enumerable: true }) === barrel);
+const names = require("./names.js");
+delete names.BETA;
+console.log(barrel.BETA, "BETA" in barrel, Object.keys(names).join());
+names.BETA = "back";
+console.log(barrel.BETA, Object.keys(names).join());
+barrel.added = "added";
+console.log(Object.keys(barrel).join(), Object.isExtensible(barrel), Object.isFrozen(barrel));
+//// typescript-barrel/names.js
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.counter = exports.BETA = exports.ALPHA = void 0;
+exports.gamma = gamma;
+exports.bump = bump;
+exports.ALPHA = "alpha";
+exports.BETA = "beta";
+function gamma(n) { return n + 1; }
+exports.counter = 0;
+function bump() { exports.counter++; }
+exports.default = "not re-exported";
+//// typescript-barrel/package.json
+{"type":"commonjs"}

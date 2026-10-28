@@ -1,0 +1,15 @@
+new with arguments: TypeError: function is not a constructor (evaluating 'new bound[2]')
+new without arguments: TypeError: function is not a constructor (evaluating 'new bound[2]')
+a call with a constant as its argument: TypeError: empty is not a function. (In 'empty()', 'empty' is null)
+a call with two arguments: TypeError: object.absent is not a function. (In 'object.absent()', 'object.absent' is undefined)
+a call of a number: TypeError: 1 is not a function
+a call of what a call returned: TypeError: 5 is not a function
+a name outside ASCII: TypeError: object.中 is not a function. (In 'object.中()', 'object.中' is undefined)
+a read two members deep: TypeError: undefined is not an object (evaluating 'undefined.deeper')
+a read of a variable that holds nothing: TypeError: undefined is not an object (evaluating 'undefined.member')
+a read under a symbol: TypeError: null is not an object
+a list pattern: TypeError: null is not an object
+an object pattern: TypeError: Cannot destructure property 'first' from null or undefined value
+instanceof with a literal on the left: TypeError: Object  is not a function
+instanceof with names on both sides: TypeError: object is not a function. (evaluating 'holder instanceof object')
+in: TypeError: 60 is not an Object.

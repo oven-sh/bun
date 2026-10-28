@@ -1,0 +1,788 @@
+////: hand-on-marker
+Object.defineProperty(exports, "__esModule", { value: true });
+////: hand-on-getter
+Object.defineProperty(exports, "«1»", { enumerable: true, get: function () { return «2».«3»; } });
+////: hand-on-helpers-of-typescript
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+////: hand-on-by-getters
+"use strict";
+////= hand-on-marker
+exports.y = exports.x = void 0;
+var below_1 = require("./«1»");
+////= hand-on-getter	x	below_1	x
+////= hand-on-getter	y	below_1	y
+////: hand-on-by-export-star
+"use strict";
+////= hand-on-helpers-of-typescript
+////= hand-on-marker
+__exportStar(require("./«1»"), exports);
+////: hand-on-by-create-binding
+"use strict";
+////= hand-on-helpers-of-typescript
+////= hand-on-marker
+var below_1 = require("./«1»");
+__createBinding(exports, below_1, "x");
+__createBinding(exports, below_1, "y");
+////: hand-on-by-assign
+"use strict";
+////= hand-on-marker
+Object.assign(exports, require("./«1»"));
+////: hand-on-by-stores
+"use strict";
+////= hand-on-marker
+var below_1 = require("./«1»");
+exports.x = below_1.x;
+exports.y = below_1.y;
+////: hand-on-whole
+"use strict";
+module.exports = require("./«1»");
+////: hand-on-two-names
+"use strict";
+////= hand-on-marker
+exports.y = exports.x = void 0;
+exports.x = "«1»";
+exports.y = 2;
+//// a-name-behind-a-getter-of-a-commonjs-file-comes-through-export-star/inner.cjs
+exports.x = 1;
+//// a-name-behind-a-getter-of-a-commonjs-file-comes-through-export-star/lib.cjs
+var inner_1 = require("./inner.cjs");
+////= hand-on-getter	x	inner_1	x
+//// a-name-behind-a-getter-of-a-commonjs-file-comes-through-export-star/main.mjs
+// A CommonJS file defines a getter that returns a name of a second file, a module hands the names of the first file on with `export *`, and the entry
+// point imports the name from that module.
+import { x } from "./star.mjs";
+
+console.log(x);
+//// a-name-behind-a-getter-of-a-commonjs-file-comes-through-export-star/star.mjs
+export * from "./lib.cjs";
+//// a-name-behind-a-getter-of-a-commonjs-file-comes-through-export-star.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// a-name-behind-a-getter-of-a-commonjs-file-comes-through-export-star-beside-an-import-of-a-second-name/inner.cjs
+exports.x = 1;
+exports.y = 2;
+//// a-name-behind-a-getter-of-a-commonjs-file-comes-through-export-star-beside-an-import-of-a-second-name/lib.cjs
+var inner_1 = require("./inner.cjs");
+////= hand-on-getter	x	inner_1	x
+////= hand-on-getter	y	inner_1	y
+//// a-name-behind-a-getter-of-a-commonjs-file-comes-through-export-star-beside-an-import-of-a-second-name/main.mjs
+// A CommonJS file defines getters that return two names of a second file. The entry point imports one of them from a module that hands the names of
+// the first file on with `export *`, and another module imports the other from the first file itself.
+import { seen } from "./other.mjs";
+import { x } from "./star.mjs";
+
+console.log(x, seen);
+//// a-name-behind-a-getter-of-a-commonjs-file-comes-through-export-star-beside-an-import-of-a-second-name/other.mjs
+import { y } from "./lib.cjs";
+
+export const seen = y;
+//// a-name-behind-a-getter-of-a-commonjs-file-comes-through-export-star-beside-an-import-of-a-second-name/star.mjs
+export * from "./lib.cjs";
+//// a-name-behind-a-getter-of-a-commonjs-file-comes-through-export-star-beside-an-import-of-a-second-name.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/assign-1/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/assign-1/inner.cjs
+////= hand-on-two-names	assign-1
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/assign-1/lib.cjs
+////= hand-on-by-assign	inner.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/assign-2/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/assign-2/inner.cjs
+////= hand-on-two-names	assign-2
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/assign-2/lib.cjs
+////= hand-on-by-assign	middle.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/assign-2/middle.cjs
+////= hand-on-by-assign	inner.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/assign-3/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/assign-3/inner.cjs
+////= hand-on-two-names	assign-3
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/assign-3/lib.cjs
+////= hand-on-by-assign	middle.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/assign-3/low.cjs
+////= hand-on-by-assign	inner.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/assign-3/middle.cjs
+////= hand-on-by-assign	low.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/create-binding-1/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/create-binding-1/inner.cjs
+////= hand-on-two-names	create-binding-1
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/create-binding-1/lib.cjs
+////= hand-on-by-create-binding	inner.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/create-binding-2/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/create-binding-2/inner.cjs
+////= hand-on-two-names	create-binding-2
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/create-binding-2/lib.cjs
+////= hand-on-by-create-binding	middle.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/create-binding-2/middle.cjs
+////= hand-on-by-create-binding	inner.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/create-binding-3/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/create-binding-3/inner.cjs
+////= hand-on-two-names	create-binding-3
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/create-binding-3/lib.cjs
+////= hand-on-by-create-binding	middle.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/create-binding-3/low.cjs
+////= hand-on-by-create-binding	inner.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/create-binding-3/middle.cjs
+////= hand-on-by-create-binding	low.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/export-star-1/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/export-star-1/inner.cjs
+////= hand-on-two-names	export-star-1
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/export-star-1/lib.cjs
+////= hand-on-by-export-star	inner.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/export-star-2/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/export-star-2/inner.cjs
+////= hand-on-two-names	export-star-2
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/export-star-2/lib.cjs
+////= hand-on-by-export-star	middle.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/export-star-2/middle.cjs
+////= hand-on-by-export-star	inner.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/export-star-3/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/export-star-3/inner.cjs
+////= hand-on-two-names	export-star-3
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/export-star-3/lib.cjs
+////= hand-on-by-export-star	middle.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/export-star-3/low.cjs
+////= hand-on-by-export-star	inner.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/export-star-3/middle.cjs
+////= hand-on-by-export-star	low.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/getters-1/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/getters-1/inner.cjs
+////= hand-on-two-names	getters-1
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/getters-1/lib.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/getters-2/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/getters-2/inner.cjs
+////= hand-on-two-names	getters-2
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/getters-2/lib.cjs
+////= hand-on-by-getters	middle.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/getters-2/middle.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/getters-3/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/getters-3/inner.cjs
+////= hand-on-two-names	getters-3
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/getters-3/lib.cjs
+////= hand-on-by-getters	middle.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/getters-3/low.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/getters-3/middle.cjs
+////= hand-on-by-getters	low.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/main.mjs
+// CommonJS files hand the names of other CommonJS files on in six ways, through one, two and three files: getters as TypeScript writes them, its helpers
+// `__exportStar` and `__createBinding`, `Object.assign`, stores, and `module.exports = require(..)`. A module hands the names of the last file on with
+// `export *`, and nothing but the entry point imports one of them, from that module.
+import { x as getters_1 } from "./getters-1/barrel.mjs";
+import { x as getters_2 } from "./getters-2/barrel.mjs";
+import { x as getters_3 } from "./getters-3/barrel.mjs";
+import { x as export_star_1 } from "./export-star-1/barrel.mjs";
+import { x as export_star_2 } from "./export-star-2/barrel.mjs";
+import { x as export_star_3 } from "./export-star-3/barrel.mjs";
+import { x as create_binding_1 } from "./create-binding-1/barrel.mjs";
+import { x as create_binding_2 } from "./create-binding-2/barrel.mjs";
+import { x as create_binding_3 } from "./create-binding-3/barrel.mjs";
+import { x as assign_1 } from "./assign-1/barrel.mjs";
+import { x as assign_2 } from "./assign-2/barrel.mjs";
+import { x as assign_3 } from "./assign-3/barrel.mjs";
+import { x as stores_1 } from "./stores-1/barrel.mjs";
+import { x as stores_2 } from "./stores-2/barrel.mjs";
+import { x as stores_3 } from "./stores-3/barrel.mjs";
+import { x as whole_1 } from "./whole-1/barrel.mjs";
+import { x as whole_2 } from "./whole-2/barrel.mjs";
+import { x as whole_3 } from "./whole-3/barrel.mjs";
+
+console.log(getters_1, getters_2, getters_3, export_star_1, export_star_2, export_star_3, create_binding_1, create_binding_2, create_binding_3, assign_1, assign_2, assign_3, stores_1, stores_2, stores_3, whole_1, whole_2, whole_3);
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/stores-1/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/stores-1/inner.cjs
+////= hand-on-two-names	stores-1
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/stores-1/lib.cjs
+////= hand-on-by-stores	inner.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/stores-2/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/stores-2/inner.cjs
+////= hand-on-two-names	stores-2
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/stores-2/lib.cjs
+////= hand-on-by-stores	middle.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/stores-2/middle.cjs
+////= hand-on-by-stores	inner.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/stores-3/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/stores-3/inner.cjs
+////= hand-on-two-names	stores-3
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/stores-3/lib.cjs
+////= hand-on-by-stores	middle.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/stores-3/low.cjs
+////= hand-on-by-stores	inner.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/stores-3/middle.cjs
+////= hand-on-by-stores	low.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/whole-1/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/whole-1/inner.cjs
+////= hand-on-two-names	whole-1
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/whole-1/lib.cjs
+////= hand-on-whole	inner.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/whole-2/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/whole-2/inner.cjs
+////= hand-on-two-names	whole-2
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/whole-2/lib.cjs
+////= hand-on-whole	middle.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/whole-2/middle.cjs
+////= hand-on-whole	inner.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/whole-3/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/whole-3/inner.cjs
+////= hand-on-two-names	whole-3
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/whole-3/lib.cjs
+////= hand-on-whole	middle.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/whole-3/low.cjs
+////= hand-on-whole	inner.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star/whole-3/middle.cjs
+////= hand-on-whole	low.cjs
+//// names-that-commonjs-files-hand-on-in-six-ways-come-through-export-star.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/main.mjs
+// CommonJS files define getters that return names of other CommonJS files, through one, two and three files. ES modules hand the names of the last file
+// on: `export *` whose namespace is read, `export * as`, `export { x } from`, and those on top of each other. Each name has one importer.
+import * as star_read_on_the_namespace_1 from "./star-read-on-the-namespace-1/barrel.mjs";
+import * as star_read_on_the_namespace_2 from "./star-read-on-the-namespace-2/barrel.mjs";
+import * as star_read_on_the_namespace_3 from "./star-read-on-the-namespace-3/barrel.mjs";
+import { all as star_as_1 } from "./star-as-1/barrel.mjs";
+import { all as star_as_2 } from "./star-as-2/barrel.mjs";
+import { all as star_as_3 } from "./star-as-3/barrel.mjs";
+import { x as named_1 } from "./named-1/barrel.mjs";
+import { x as named_2 } from "./named-2/barrel.mjs";
+import { x as named_3 } from "./named-3/barrel.mjs";
+import { x as star_of_star_1 } from "./star-of-star-1/barrel.mjs";
+import { x as star_of_star_2 } from "./star-of-star-2/barrel.mjs";
+import { x as star_of_star_3 } from "./star-of-star-3/barrel.mjs";
+import { x as named_of_star_1 } from "./named-of-star-1/barrel.mjs";
+import { x as named_of_star_2 } from "./named-of-star-2/barrel.mjs";
+import { x as named_of_star_3 } from "./named-of-star-3/barrel.mjs";
+import { x as star_of_named_of_star_1 } from "./star-of-named-of-star-1/barrel.mjs";
+import { x as star_of_named_of_star_2 } from "./star-of-named-of-star-2/barrel.mjs";
+import { x as star_of_named_of_star_3 } from "./star-of-named-of-star-3/barrel.mjs";
+
+console.log(star_read_on_the_namespace_1.x, star_read_on_the_namespace_2.x, star_read_on_the_namespace_3.x, star_as_1.x, star_as_2.x, star_as_3.x, named_1, named_2, named_3, star_of_star_1, star_of_star_2, star_of_star_3, named_of_star_1, named_of_star_2, named_of_star_3, star_of_named_of_star_1, star_of_named_of_star_2, star_of_named_of_star_3);
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-1/barrel.mjs
+export { x } from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-1/inner.cjs
+////= hand-on-two-names	named-1
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-1/lib.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-2/barrel.mjs
+export { x } from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-2/inner.cjs
+////= hand-on-two-names	named-2
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-2/lib.cjs
+////= hand-on-by-getters	middle.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-2/middle.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-3/barrel.mjs
+export { x } from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-3/inner.cjs
+////= hand-on-two-names	named-3
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-3/lib.cjs
+////= hand-on-by-getters	middle.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-3/low.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-3/middle.cjs
+////= hand-on-by-getters	low.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-of-star-1/barrel.mjs
+export { x } from "./below.mjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-of-star-1/below.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-of-star-1/inner.cjs
+////= hand-on-two-names	named-of-star-1
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-of-star-1/lib.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-of-star-2/barrel.mjs
+export { x } from "./below.mjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-of-star-2/below.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-of-star-2/inner.cjs
+////= hand-on-two-names	named-of-star-2
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-of-star-2/lib.cjs
+////= hand-on-by-getters	middle.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-of-star-2/middle.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-of-star-3/barrel.mjs
+export { x } from "./below.mjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-of-star-3/below.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-of-star-3/inner.cjs
+////= hand-on-two-names	named-of-star-3
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-of-star-3/lib.cjs
+////= hand-on-by-getters	middle.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-of-star-3/low.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/named-of-star-3/middle.cjs
+////= hand-on-by-getters	low.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-as-1/barrel.mjs
+export * as all from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-as-1/inner.cjs
+////= hand-on-two-names	star-as-1
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-as-1/lib.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-as-2/barrel.mjs
+export * as all from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-as-2/inner.cjs
+////= hand-on-two-names	star-as-2
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-as-2/lib.cjs
+////= hand-on-by-getters	middle.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-as-2/middle.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-as-3/barrel.mjs
+export * as all from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-as-3/inner.cjs
+////= hand-on-two-names	star-as-3
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-as-3/lib.cjs
+////= hand-on-by-getters	middle.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-as-3/low.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-as-3/middle.cjs
+////= hand-on-by-getters	low.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-named-of-star-1/barrel.mjs
+export * from "./between.mjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-named-of-star-1/below.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-named-of-star-1/between.mjs
+export { x } from "./below.mjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-named-of-star-1/inner.cjs
+////= hand-on-two-names	star-of-named-of-star-1
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-named-of-star-1/lib.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-named-of-star-2/barrel.mjs
+export * from "./between.mjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-named-of-star-2/below.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-named-of-star-2/between.mjs
+export { x } from "./below.mjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-named-of-star-2/inner.cjs
+////= hand-on-two-names	star-of-named-of-star-2
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-named-of-star-2/lib.cjs
+////= hand-on-by-getters	middle.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-named-of-star-2/middle.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-named-of-star-3/barrel.mjs
+export * from "./between.mjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-named-of-star-3/below.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-named-of-star-3/between.mjs
+export { x } from "./below.mjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-named-of-star-3/inner.cjs
+////= hand-on-two-names	star-of-named-of-star-3
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-named-of-star-3/lib.cjs
+////= hand-on-by-getters	middle.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-named-of-star-3/low.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-named-of-star-3/middle.cjs
+////= hand-on-by-getters	low.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-star-1/barrel.mjs
+export * from "./below.mjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-star-1/below.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-star-1/inner.cjs
+////= hand-on-two-names	star-of-star-1
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-star-1/lib.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-star-2/barrel.mjs
+export * from "./below.mjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-star-2/below.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-star-2/inner.cjs
+////= hand-on-two-names	star-of-star-2
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-star-2/lib.cjs
+////= hand-on-by-getters	middle.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-star-2/middle.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-star-3/barrel.mjs
+export * from "./below.mjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-star-3/below.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-star-3/inner.cjs
+////= hand-on-two-names	star-of-star-3
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-star-3/lib.cjs
+////= hand-on-by-getters	middle.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-star-3/low.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-of-star-3/middle.cjs
+////= hand-on-by-getters	low.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-read-on-the-namespace-1/barrel.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-read-on-the-namespace-1/inner.cjs
+////= hand-on-two-names	star-read-on-the-namespace-1
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-read-on-the-namespace-1/lib.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-read-on-the-namespace-2/barrel.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-read-on-the-namespace-2/inner.cjs
+////= hand-on-two-names	star-read-on-the-namespace-2
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-read-on-the-namespace-2/lib.cjs
+////= hand-on-by-getters	middle.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-read-on-the-namespace-2/middle.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-read-on-the-namespace-3/barrel.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-read-on-the-namespace-3/inner.cjs
+////= hand-on-two-names	star-read-on-the-namespace-3
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-read-on-the-namespace-3/lib.cjs
+////= hand-on-by-getters	middle.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-read-on-the-namespace-3/low.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways/star-read-on-the-namespace-3/middle.cjs
+////= hand-on-by-getters	low.cjs
+//// names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/a-class/barrel.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/a-class/inner.cjs
+"use strict";
+////= hand-on-marker
+exports.Base = void 0;
+class Base {
+    one() {
+        return 1;
+    }
+}
+exports.Base = Base;
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/a-class/lib.cjs
+"use strict";
+////= hand-on-marker
+exports.Base = void 0;
+var below_1 = require("./inner.cjs");
+////= hand-on-getter	Base	below_1	Base
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/a-function/barrel.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/a-function/inner.cjs
+exports.f = function () {
+  return this === undefined ? "no this" : typeof this;
+};
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/a-function/lib.cjs
+var below_1 = require("./inner.cjs");
+////= hand-on-getter	f	below_1	f
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/a-name-of-a-module/barrel.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/a-name-of-a-module/inner.cjs
+////= hand-on-two-names	a name of a module
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/a-name-of-a-module/inner.mjs
+export * from "./inner.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/a-name-of-a-module/lib.cjs
+var below_1 = require("./inner.mjs");
+////= hand-on-getter	x	below_1	x
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/another-name/barrel.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/another-name/inner.cjs
+exports.inside = "another name";
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/another-name/lib.cjs
+var below_1 = require("./inner.cjs");
+////= hand-on-getter	outside	below_1	inside
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/beside-names-of-its-own/barrel.mjs
+export * from "./lib.cjs";
+export * from "./more.mjs";
+export const own = "own";
+export const y = "hides";
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/beside-names-of-its-own/inner.cjs
+////= hand-on-two-names	beside names of its own
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/beside-names-of-its-own/lib.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/beside-names-of-its-own/more.mjs
+export const more = "more";
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/cycle/barrel.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/cycle/inner.cjs
+exports.x = "cycle";
+var lib = require("./lib.cjs");
+exports.y = typeof lib.x;
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/cycle/lib.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/imported-on-demand/barrel.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/imported-on-demand/inner.cjs
+////= hand-on-two-names	imported on demand
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/imported-on-demand/lib.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/main.mjs
+// Names behind getters of CommonJS files come through `export *`: the two files need each other, the name is stored on some runs, it is stored again
+// later, the getter has another name, the modules need each other, the module has names of its own, two stars lead to one file, the name holds a class
+// or a function, it is a name of a module that hands it on in its turn, and the module is required or imported on demand.
+import { x as cycle, y as seenInCycle } from "./cycle/barrel.mjs";
+import { x as onSomeRuns } from "./on-some-runs/barrel.mjs";
+import { x as stored, again } from "./stored-again/barrel.mjs";
+import { outside } from "./another-name/barrel.mjs";
+import { x as modulesInCycle, read } from "./modules-in-a-cycle/barrel.mjs";
+import { x as besideOwn, y as hidden, own, more } from "./beside-names-of-its-own/barrel.mjs";
+import { x as firstStar, y as secondStar } from "./two-stars/barrel.mjs";
+import { Base } from "./a-class/barrel.mjs";
+import { f } from "./a-function/barrel.mjs";
+import * as functions from "./a-function/barrel.mjs";
+import { x as ofModule } from "./a-name-of-a-module/barrel.mjs";
+import required from "./required/asks.cjs";
+
+export const here = "here";
+
+class Heir extends Base {
+  two() {
+    return this.one() + 1;
+  }
+}
+
+console.log(cycle, seenInCycle, onSomeRuns);
+console.log(stored, again(), stored);
+console.log(outside, modulesInCycle, read());
+console.log(besideOwn, hidden, own, more, firstStar, secondStar);
+console.log(new Heir().two(), new Heir() instanceof Base, f(), functions.f());
+console.log(ofModule, required);
+const onDemand = await import("./imported-on-demand/barrel.mjs");
+console.log(onDemand.x, Object.keys(onDemand));
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/modules-in-a-cycle/barrel.mjs
+import { here } from "../main.mjs";
+export * from "./lib.cjs";
+export const read = () => here;
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/modules-in-a-cycle/inner.cjs
+////= hand-on-two-names	modules in a cycle
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/modules-in-a-cycle/lib.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/on-some-runs/barrel.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/on-some-runs/inner.cjs
+if (typeof process === "object") exports.x = "on some runs";
+exports.y = 2;
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/on-some-runs/lib.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/required/asks.cjs
+const { x } = require("./barrel.mjs");
+const all = require("./barrel.mjs");
+module.exports = [x, all.y];
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/required/barrel.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/required/inner.cjs
+////= hand-on-two-names	required
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/required/lib.cjs
+////= hand-on-by-getters	inner.cjs
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/stored-again/barrel.mjs
+export * from "./lib.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/stored-again/inner.cjs
+exports.x = "stored";
+exports.again = function () {
+  exports.x += " again";
+  return exports.x;
+};
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/stored-again/lib.cjs
+var below_1 = require("./inner.cjs");
+////= hand-on-getter	x	below_1	x
+////= hand-on-getter	again	below_1	again
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/two-stars/barrel.mjs
+export * from "./lib.cjs";
+export * from "./lib2.cjs";
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/two-stars/inner.cjs
+////= hand-on-two-names	two stars
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/two-stars/lib.cjs
+var below_1 = require("./inner.cjs");
+////= hand-on-getter	x	below_1	x
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings/two-stars/lib2.cjs
+var below_1 = require("./inner.cjs");
+////= hand-on-getter	y	below_1	y
+//// names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// names-that-commonjs-files-hand-on-with-the-helpers-of-five-tools-come-through-export-star/a-copy-of-an-object-of-arrows/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-with-the-helpers-of-five-tools-come-through-export-star/a-copy-of-an-object-of-arrows/inner.cjs
+////= hand-on-two-names	a-copy-of-an-object-of-arrows
+//// names-that-commonjs-files-hand-on-with-the-helpers-of-five-tools-come-through-export-star/a-copy-of-an-object-of-arrows/lib.cjs
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var lib_exports = {};
+__export(lib_exports, {
+  x: () => import_inner.x,
+  y: () => import_inner.y
+});
+module.exports = __toCommonJS(lib_exports);
+var import_inner = require("./inner.cjs");
+//// names-that-commonjs-files-hand-on-with-the-helpers-of-five-tools-come-through-export-star/a-loop-at-the-top/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-with-the-helpers-of-five-tools-come-through-export-star/a-loop-at-the-top/inner.cjs
+////= hand-on-two-names	a-loop-at-the-top
+//// names-that-commonjs-files-hand-on-with-the-helpers-of-five-tools-come-through-export-star/a-loop-at-the-top/lib.cjs
+"use strict";
+////= hand-on-marker
+var _inner = require("./inner.cjs");
+Object.keys(_inner).forEach(function (key) {
+  if (key === "default" || key === "__esModule") return;
+  if (key in exports && exports[key] === _inner[key]) return;
+  Object.defineProperty(exports, key, { enumerable: true, get: function () { return _inner[key]; } });
+});
+//// names-that-commonjs-files-hand-on-with-the-helpers-of-five-tools-come-through-export-star/a-loop-in-a-helper/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-with-the-helpers-of-five-tools-come-through-export-star/a-loop-in-a-helper/inner.cjs
+////= hand-on-two-names	a-loop-in-a-helper
+//// names-that-commonjs-files-hand-on-with-the-helpers-of-five-tools-come-through-export-star/a-loop-in-a-helper/lib.cjs
+"use strict";
+////= hand-on-marker
+_export_star(require("./inner.cjs"), exports);
+function _export_star(from, to) {
+    Object.keys(from).forEach(function(k) {
+        if (k !== "default" && !Object.prototype.hasOwnProperty.call(to, k)) {
+            Object.defineProperty(to, k, { enumerable: true, get: function() { return from[k]; } });
+        }
+    });
+    return from;
+}
+//// names-that-commonjs-files-hand-on-with-the-helpers-of-five-tools-come-through-export-star/functions-in-a-literal/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-with-the-helpers-of-five-tools-come-through-export-star/functions-in-a-literal/inner.cjs
+////= hand-on-two-names	functions-in-a-literal
+//// names-that-commonjs-files-hand-on-with-the-helpers-of-five-tools-come-through-export-star/functions-in-a-literal/lib.cjs
+"use strict";
+////= hand-on-marker
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, { enumerable: true, get: all[name] });
+}
+_export(exports, {
+    x: function() { return _inner.x; },
+    y: function() { return _inner.y; }
+});
+const _inner = require("./inner.cjs");
+//// names-that-commonjs-files-hand-on-with-the-helpers-of-five-tools-come-through-export-star/getters-in-a-literal/barrel.mjs
+export * from "./lib.cjs";
+//// names-that-commonjs-files-hand-on-with-the-helpers-of-five-tools-come-through-export-star/getters-in-a-literal/inner.cjs
+////= hand-on-two-names	getters-in-a-literal
+//// names-that-commonjs-files-hand-on-with-the-helpers-of-five-tools-come-through-export-star/getters-in-a-literal/lib.cjs
+"use strict";
+////= hand-on-marker
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, { enumerable: true, get: Object.getOwnPropertyDescriptor(all, name).get });
+}
+_export(exports, {
+    get x () { return _inner.x; },
+    get y () { return _inner.y; }
+});
+const _inner = require("./inner.cjs");
+//// names-that-commonjs-files-hand-on-with-the-helpers-of-five-tools-come-through-export-star/main.mjs
+// CommonJS files hand the names of other files on as five tools other than TypeScript write it: a helper that is given getters or functions in a literal,
+// a loop over the keys in a helper or at the top, and a copy of an object of arrow functions. A module hands the names on with `export *`.
+import { x as getters_in_a_literal } from "./getters-in-a-literal/barrel.mjs";
+import { x as functions_in_a_literal } from "./functions-in-a-literal/barrel.mjs";
+import { x as a_loop_in_a_helper } from "./a-loop-in-a-helper/barrel.mjs";
+import { x as a_loop_at_the_top } from "./a-loop-at-the-top/barrel.mjs";
+import { x as a_copy_of_an_object_of_arrows } from "./a-copy-of-an-object-of-arrows/barrel.mjs";
+
+console.log(getters_in_a_literal, functions_in_a_literal, a_loop_in_a_helper, a_loop_at_the_top, a_copy_of_an_object_of_arrows);
+//// names-that-commonjs-files-hand-on-with-the-helpers-of-five-tools-come-through-export-star.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// a-file-in-typescript-hands-on-the-names-of-packages-that-typescript-compiled-to-commonjs/first-barrel.ts
+export * from "hands-on-by-getters";
+//// a-file-in-typescript-hands-on-the-names-of-packages-that-typescript-compiled-to-commonjs/main.ts
+// Two packages that TypeScript compiled to CommonJS, with their declaration files: the main file of each hands the names of another file on, one by
+// getters, one by `__exportStar`. A file of the program hands the names of each package on with `export *`, and the entry point imports them from there.
+import { Shape, sides } from "./first-barrel";
+import { Shape as SecondShape, sides as secondSides } from "./second-barrel";
+
+const square: Shape = new Shape("square");
+const second: SecondShape = new SecondShape("second square");
+console.log(square.describe(), sides, second.describe(), secondSides);
+//// a-file-in-typescript-hands-on-the-names-of-packages-that-typescript-compiled-to-commonjs/node_modules/hands-on-by-export-star/lib/index.d.ts
+export * from "./shape";
+//// a-file-in-typescript-hands-on-the-names-of-packages-that-typescript-compiled-to-commonjs/node_modules/hands-on-by-export-star/lib/index.js
+"use strict";
+////= hand-on-helpers-of-typescript
+////= hand-on-marker
+__exportStar(require("./shape"), exports);
+//// a-file-in-typescript-hands-on-the-names-of-packages-that-typescript-compiled-to-commonjs/node_modules/hands-on-by-export-star/lib/shape.d.ts
+export declare class Shape {
+    name: string;
+    constructor(name: string);
+    describe(): string;
+}
+export declare const sides = 4;
+//// a-file-in-typescript-hands-on-the-names-of-packages-that-typescript-compiled-to-commonjs/node_modules/hands-on-by-export-star/lib/shape.js
+"use strict";
+////= hand-on-marker
+exports.sides = exports.Shape = void 0;
+class Shape {
+    constructor(name) {
+        this.name = name;
+    }
+    describe() {
+        return "a " + this.name;
+    }
+}
+exports.Shape = Shape;
+exports.sides = 4;
+//// a-file-in-typescript-hands-on-the-names-of-packages-that-typescript-compiled-to-commonjs/node_modules/hands-on-by-export-star/package.json
+{ "name": "hands-on-by-export-star", "version": "1.0.0", "main": "./lib/index.js", "types": "./lib/index.d.ts" }
+//// a-file-in-typescript-hands-on-the-names-of-packages-that-typescript-compiled-to-commonjs/node_modules/hands-on-by-getters/lib/index.d.ts
+export { Shape, sides } from "./shape";
+//// a-file-in-typescript-hands-on-the-names-of-packages-that-typescript-compiled-to-commonjs/node_modules/hands-on-by-getters/lib/index.js
+"use strict";
+////= hand-on-marker
+exports.sides = exports.Shape = void 0;
+var shape_1 = require("./shape");
+////= hand-on-getter	Shape	shape_1	Shape
+////= hand-on-getter	sides	shape_1	sides
+//// a-file-in-typescript-hands-on-the-names-of-packages-that-typescript-compiled-to-commonjs/node_modules/hands-on-by-getters/lib/shape.d.ts
+export declare class Shape {
+    name: string;
+    constructor(name: string);
+    describe(): string;
+}
+export declare const sides = 4;
+//// a-file-in-typescript-hands-on-the-names-of-packages-that-typescript-compiled-to-commonjs/node_modules/hands-on-by-getters/lib/shape.js
+"use strict";
+////= hand-on-marker
+exports.sides = exports.Shape = void 0;
+class Shape {
+    constructor(name) {
+        this.name = name;
+    }
+    describe() {
+        return "a " + this.name;
+    }
+}
+exports.Shape = Shape;
+exports.sides = 4;
+//// a-file-in-typescript-hands-on-the-names-of-packages-that-typescript-compiled-to-commonjs/node_modules/hands-on-by-getters/package.json
+{ "name": "hands-on-by-getters", "version": "1.0.0", "main": "./lib/index.js", "types": "./lib/index.d.ts" }
+//// a-file-in-typescript-hands-on-the-names-of-packages-that-typescript-compiled-to-commonjs/second-barrel.ts
+export * from "hands-on-by-export-star";
+//// a-file-in-typescript-hands-on-the-names-of-packages-that-typescript-compiled-to-commonjs/tsconfig.json
+{ "compilerOptions": { "strict": true, "module": "esnext", "moduleResolution": "bundler", "target": "esnext" } }
+//// a-file-in-typescript-hands-on-the-names-of-packages-that-typescript-compiled-to-commonjs.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }

@@ -1016,8 +1016,7 @@ impl<'a> Resolver<'a> {
         self.matches_user_external_pattern(import_path)
     }
 
-    /// True iff the user marked `import_path` external (`--external`), by exact
-    /// absolute path or by wildcard pattern.
+    /// `--external` named `import_path`, as an absolute path or a wildcard pattern.
     pub fn is_user_external(&self, import_path: &[u8]) -> bool {
         self.matches_user_external_pattern(import_path)
             || (self.opts.external.abs_paths.count() > 0

@@ -68,10 +68,7 @@ impl<'a> HTMLScanner<'a> {
 
 impl<'a> HTMLScanner<'a> {
     fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
-        // A root-relative URL (`/src/index.js`) is stored as written. The bundler
-        // rebases it onto the project root when it resolves the record, see
-        // `RootRelativeUrl`.
-        //
+        // A root-relative URL (`/src/index.js`) is stored as written, see `RootRelativeUrl`.
         // Check if imports to (e.g) "App.tsx" are actually relative imoprts w/o the "./"
         let path_to_use: &[u8] = if input_path.len() > 2
             && input_path[0] != b'.'
@@ -166,24 +163,19 @@ pub fn scan_import_records(
     Ok(scanner.import_records)
 }
 
-/// True for an HTML URL that names a file under the project root: one leading `/`.
-/// `//host/path` is protocol-relative and reaches the resolver as written, which
-/// marks it external.
+/// One leading `/`. `//host/path` is protocol-relative and stays a URL.
 pub fn is_root_relative_url(url: &[u8]) -> bool {
     url.len() > 1 && url[0] == b'/' && url[1] != b'/'
 }
 
-/// The file that a root-relative HTML URL names: `/favicon.png` under `root` is
-/// `<root>/favicon.png`. The result lives in a thread-local buffer until the next path join.
+/// `<root>/favicon.png` for `/favicon.png`, in a thread-local buffer until the next join.
 pub fn rebase_root_relative_url<'r>(root: &'r [u8], url: &[u8]) -> &'r [u8] {
     debug_assert!(is_root_relative_url(url));
     resolve_path::join_abs_string::<platform::Auto>(root, &[&url[1..]])
 }
 
-/// The directories a root-relative HTML URL is looked up under, in order: `root_dir`
-/// when the front end set one, the directory of the HTML file `importer`, then `cwd`
-/// (an entry point under `public/` whose `/src/app.tsx` lives beside `public/`). A
-/// directory that repeats an earlier one is left out.
+/// Where a root-relative HTML URL is looked up, in order: `root_dir` when set, the HTML
+/// file's directory, then `cwd`. No repeats.
 pub struct RootRelativeBases<'a> {
     dirs: [&'a [u8]; 3],
     len: usize,
@@ -198,14 +190,21 @@ impl<'a> RootRelativeBases<'a> {
         if !root_dir.is_empty() {
             bases.push(root_dir);
         }
-        bases.push(resolve_path::dirname::<platform::Auto>(importer));
+        let dir = resolve_path::dirname::<platform::Auto>(importer);
+        // On Windows the dirname of `C:\index.html` is the bare `C:`. Keep the separator.
+        let dir = if cfg!(windows) && dir.len() == 2 && importer.len() > 2 {
+            &importer[..3]
+        } else {
+            dir
+        };
+        bases.push(dir);
         bases.push(cwd);
         bases
     }
 
     fn push(&mut self, dir: &'a [u8]) {
-        let dir = strip_trailing_sep(dir);
-        if dir.is_empty() || self.as_slice().contains(&dir) {
+        let same = |other: &&[u8]| strip_trailing_sep(other) == strip_trailing_sep(dir);
+        if dir.is_empty() || self.as_slice().iter().any(same) {
             return;
         }
         self.dirs[self.len] = dir;
@@ -217,8 +216,7 @@ impl<'a> RootRelativeBases<'a> {
     }
 }
 
-/// A root-relative HTML URL of an import record, and the file it names under each of
-/// its `RootRelativeBases`, in lookup order.
+/// A root-relative HTML URL and the file it names under each of its `RootRelativeBases`.
 pub struct RootRelativeUrl<'r> {
     url: &'r [u8],
     candidates: [&'r [u8]; 3],
@@ -228,8 +226,7 @@ pub struct RootRelativeUrl<'r> {
 }
 
 impl<'r> RootRelativeUrl<'r> {
-    /// `None` unless `record` (an import of the HTML file `importer`) was written with
-    /// one leading `/`. The candidate paths are copied into `arena`.
+    /// `None` unless the URL of `record`, an import of the HTML file `importer`, is root-relative.
     pub fn of_record(
         record: &ImportRecord<'r>,
         importer: &[u8],
@@ -253,25 +250,37 @@ impl<'r> RootRelativeUrl<'r> {
         Some(this)
     }
 
-    /// Every file the URL can name, in lookup order.
     pub fn candidates(&self) -> &[&'r [u8]] {
         &self.candidates[..self.len]
     }
 
-    /// The file to resolve first.
     pub fn first(&self) -> &'r [u8] {
         self.candidates[0]
     }
 
-    /// The next file to resolve after the previous candidate was not found.
+    /// The next candidate after the previous one was not found.
     pub fn next_retry(&mut self) -> Option<&'r [u8]> {
         let next = *self.candidates().get(self.retry)?;
         self.retry += 1;
         Some(next)
     }
 
-    /// True when the user marked the URL as written, or one of the files it can name,
-    /// external.
+    /// The first candidate again, after the directory caches were re-read.
+    pub fn restart(&mut self) -> &'r [u8] {
+        self.retry = 1;
+        self.first()
+    }
+
+    /// Evicts the cached directory of every candidate. True when any was cached.
+    pub fn bust_dir_caches(&self, resolver: &mut bun_resolver::Resolver, importer: &[u8]) -> bool {
+        let mut busted = false;
+        for candidate in self.candidates() {
+            busted |= resolver.bust_dir_cache_from_specifier(importer, candidate);
+        }
+        busted
+    }
+
+    /// The user marked the URL as written, or one of its candidates, external.
     pub fn is_user_external(&self, resolver: &bun_resolver::Resolver) -> bool {
         resolver.is_user_external(self.url)
             || self

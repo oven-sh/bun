@@ -870,8 +870,7 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
     let records = bun_bundler::html_scanner::scan_import_records(&mut log, &source);
     let directory = resolve_path::dirname::<Auto>(&page);
     let is_url = |path: &[u8]| path.starts_with(b"//") || bun_core::strings::contains(path, b"://");
-    // The same lookup as the bundler's: `/src/main.tsx` is under the page's directory, else
-    // under the cwd.
+    // The bundler's lookup: the first `RootRelativeBases` candidate that exists.
     let root_relative = |url: &[u8]| {
         use bun_bundler::html_scanner::{RootRelativeBases, rebase_root_relative_url};
         let bases = RootRelativeBases::init(&page, b"", cwd);

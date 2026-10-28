@@ -2686,8 +2686,7 @@ pub mod bv2_impl {
             let source_dir =
                 Fs::PathName::init(&import_record.source_file).dir_with_trailing_slash();
 
-            // Same as in `resolve_import_records`: a root-relative HTML URL is looked up
-            // under each of its `RootRelativeBases`.
+            // As in `resolve_import_records`: a root-relative HTML URL has several candidates.
             let mut specifier: &[u8] = &import_record.specifier;
             let mut root_relative = if self.graph.input_files.items_loader()
                 [import_record.importer_source_index as usize]
@@ -2709,97 +2708,90 @@ pub mod bv2_impl {
                 specifier = url.first();
             }
 
-            // Check the FileMap first for in-memory files
-            if let Some(file_map) = self.file_map {
-                let file_map_result = match &root_relative {
-                    None => file_map.resolve(self.arena(), &import_record.source_file, specifier),
-                    // Each file the URL can name, then the URL as written for a files map
-                    // that is its own root.
-                    Some(url) => (url.candidates().iter().copied())
-                        .chain([&*import_record.specifier])
-                        .find_map(|candidate| {
-                            file_map.resolve(self.arena(), &import_record.source_file, candidate)
-                        }),
-                };
-                if let Some(_file_map_result) = file_map_result {
-                    let file_map_result = _file_map_result;
-                    let mut path_primary = file_map_result.path_pair.primary;
-                    // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
-                    // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
-                    // type-check. SAFETY: `path_to_source_index_map(target)` is not mutated again
-                    // until after the last `*value_ptr` access below.
-                    let (found_existing, value_ptr): (bool, *mut u32) = {
-                        let entry = self
-                            .path_to_source_index_map(target)
-                            .get_or_put(path_primary.text)
-                            .expect("oom");
-                        (
-                            entry.found_existing,
-                            std::ptr::from_mut::<u32>(entry.value_ptr),
-                        )
-                    };
-                    if !found_existing {
-                        let loader: Loader = 'brk: {
-                            let record: &mut ImportRecord =
-                                &mut self.graph.ast.items_import_records_mut()
-                                    [import_record.importer_source_index as usize]
-                                    .as_mut_slice()
-                                    [import_record.import_record_index as usize];
-                            if let Some(out_loader) = record.loader {
-                                break 'brk out_loader;
-                            }
-                            // SAFETY: see `transpiler` note above.
-                            break 'brk Fs::Path::init(path_primary.text)
-                                .loader(unsafe { &(*transpiler).options.loaders })
-                                .unwrap_or(Loader::File);
-                        };
-                        // For virtual files, use the path text as-is (no relative path computation needed).
-                        path_primary.pretty = self.arena().alloc_slice_copy(path_primary.text);
-                        let mut tmp_source = bun_ast::Source {
-                            path: path_primary,
-                            contents: std::borrow::Cow::Borrowed(&b""[..]),
-                            ..Default::default()
-                        };
-                        let idx = self
-                            .enqueue_parse_task(
-                                &file_map_result,
-                                file_map_result.path_pair.primary,
-                                &mut tmp_source,
-                                loader,
-                                import_record.original_target,
-                            )
-                            .expect("oom");
-                        // SAFETY: see `value_ptr` note above.
-                        unsafe { *value_ptr = idx };
-                        let record: &mut ImportRecord =
-                            &mut self.graph.ast.items_import_records_mut()
-                                [import_record.importer_source_index as usize]
-                                .as_mut_slice()
-                                [import_record.import_record_index as usize];
-                        record.source_index = Index::init(idx);
-                    } else {
-                        let record: &mut ImportRecord =
-                            &mut self.graph.ast.items_import_records_mut()
-                                [import_record.importer_source_index as usize]
-                                .as_mut_slice()
-                                [import_record.import_record_index as usize];
-                        // SAFETY: see `value_ptr` note above.
-                        record.source_index = Index::init(unsafe { *value_ptr });
-                    }
-                    return;
-                }
-            }
-
             // SAFETY: see `transpiler` note above.
+            let resolver = &unsafe { &*transpiler }.resolver;
             if root_relative
                 .as_ref()
-                .is_some_and(|url| url.is_user_external(&unsafe { &*transpiler }.resolver))
+                .is_some_and(|url| url.is_user_external(resolver))
             {
                 return;
             }
 
             let mut had_busted_dir_cache = false;
             let resolve_result = loop {
+                // Check the FileMap first for in-memory files
+                if let Some(file_map) = self.file_map {
+                    if let Some(_file_map_result) =
+                        file_map.resolve(self.arena(), &import_record.source_file, specifier)
+                    {
+                        let file_map_result = _file_map_result;
+                        let mut path_primary = file_map_result.path_pair.primary;
+                        // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
+                        // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
+                        // type-check. SAFETY: `path_to_source_index_map(target)` is not mutated again
+                        // until after the last `*value_ptr` access below.
+                        let (found_existing, value_ptr): (bool, *mut u32) = {
+                            let entry = self
+                                .path_to_source_index_map(target)
+                                .get_or_put(path_primary.text)
+                                .expect("oom");
+                            (
+                                entry.found_existing,
+                                std::ptr::from_mut::<u32>(entry.value_ptr),
+                            )
+                        };
+                        if !found_existing {
+                            let loader: Loader = 'brk: {
+                                let record: &mut ImportRecord =
+                                    &mut self.graph.ast.items_import_records_mut()
+                                        [import_record.importer_source_index as usize]
+                                        .as_mut_slice()
+                                        [import_record.import_record_index as usize];
+                                if let Some(out_loader) = record.loader {
+                                    break 'brk out_loader;
+                                }
+                                // SAFETY: see `transpiler` note above.
+                                break 'brk Fs::Path::init(path_primary.text)
+                                    .loader(unsafe { &(*transpiler).options.loaders })
+                                    .unwrap_or(Loader::File);
+                            };
+                            // For virtual files, use the path text as-is (no relative path computation needed).
+                            path_primary.pretty = self.arena().alloc_slice_copy(path_primary.text);
+                            let mut tmp_source = bun_ast::Source {
+                                path: path_primary,
+                                contents: std::borrow::Cow::Borrowed(&b""[..]),
+                                ..Default::default()
+                            };
+                            let idx = self
+                                .enqueue_parse_task(
+                                    &file_map_result,
+                                    file_map_result.path_pair.primary,
+                                    &mut tmp_source,
+                                    loader,
+                                    import_record.original_target,
+                                )
+                                .expect("oom");
+                            // SAFETY: see `value_ptr` note above.
+                            unsafe { *value_ptr = idx };
+                            let record: &mut ImportRecord =
+                                &mut self.graph.ast.items_import_records_mut()
+                                    [import_record.importer_source_index as usize]
+                                    .as_mut_slice()
+                                    [import_record.import_record_index as usize];
+                            record.source_index = Index::init(idx);
+                        } else {
+                            let record: &mut ImportRecord =
+                                &mut self.graph.ast.items_import_records_mut()
+                                    [import_record.importer_source_index as usize]
+                                    .as_mut_slice()
+                                    [import_record.import_record_index as usize];
+                            // SAFETY: see `value_ptr` note above.
+                            record.source_index = Index::init(unsafe { *value_ptr });
+                        }
+                        return;
+                    }
+                }
+
                 // SAFETY: see `transpiler` note above.
                 match unsafe { &mut *transpiler }.resolver.resolve(
                     source_dir,
@@ -2810,20 +2802,6 @@ pub mod bv2_impl {
                     Err(err) => {
                         // Only perform directory busting when hot-reloading is enabled
                         if err == _resolver::Error::ModuleNotFound {
-                            if self.dev_server.is_some() && !had_busted_dir_cache {
-                                // Only re-query if we previously had something cached.
-                                // SAFETY: see `transpiler` note above.
-                                if unsafe { &mut *transpiler }
-                                    .resolver
-                                    .bust_dir_cache_from_specifier(
-                                        &import_record.source_file,
-                                        specifier,
-                                    )
-                                {
-                                    had_busted_dir_cache = true;
-                                    continue;
-                                }
-                            }
                             if let Some(dev) = &self.dev_server {
                                 // Tell Bake's Dev Server to wait for the file to be imported.
                                 dev.track_resolution_failure(
@@ -2839,8 +2817,28 @@ pub mod bv2_impl {
                                 root_relative.as_mut().and_then(|url| url.next_retry())
                             {
                                 specifier = next;
-                                had_busted_dir_cache = false;
                                 continue;
+                            }
+                            if self.dev_server.is_some() && !had_busted_dir_cache {
+                                // Only re-query if we previously had something cached.
+                                // SAFETY: see `transpiler` note above.
+                                let resolver = &mut unsafe { &mut *transpiler }.resolver;
+                                let busted = match &root_relative {
+                                    Some(url) => {
+                                        url.bust_dir_caches(resolver, &import_record.source_file)
+                                    }
+                                    None => resolver.bust_dir_cache_from_specifier(
+                                        &import_record.source_file,
+                                        specifier,
+                                    ),
+                                };
+                                if busted {
+                                    had_busted_dir_cache = true;
+                                    if let Some(url) = &mut root_relative {
+                                        specifier = url.restart();
+                                    }
+                                    continue;
+                                }
                             }
                             if self.dev_server.is_some() {
                                 // Turn this into an invalid AST, so that incremental mode skips it when printing.
@@ -6934,10 +6932,8 @@ pub mod bv2_impl {
                 // SAFETY: see note above — raw `*mut Transpiler` lives for `'a`.
                 let transpiler: &mut Transpiler<'a> = unsafe { &mut *transpiler_ptr };
 
-                // A root-relative HTML URL (`/favicon.png`) names a file under the
-                // project root. The record keeps the URL as written, so plugins,
-                // `external` and the error message see it. Resolution tries each
-                // file the URL can name, see `RootRelativeBases`.
+                // A root-relative HTML URL (`/favicon.png`) stays as written in the record.
+                // Resolution tries each file it can name, see `RootRelativeBases`.
                 let mut specifier: &'a [u8] = import_record.path.text;
                 let mut root_relative = if loader == Loader::Html {
                     crate::html_scanner::RootRelativeUrl::of_record(
@@ -6953,73 +6949,6 @@ pub mod bv2_impl {
                     specifier = url.first();
                 }
 
-                // Check the FileMap first for in-memory files
-                if let Some(file_map) = self.file_map {
-                    let file_map_result = match &root_relative {
-                        None => file_map.resolve(self.arena(), source.path.text, specifier),
-                        // Each file the URL can name, then the URL as written for a files
-                        // map that is its own root.
-                        Some(url) => (url.candidates().iter().copied())
-                            .chain([import_record.path.text])
-                            .find_map(|candidate| {
-                                file_map.resolve(self.arena(), source.path.text, candidate)
-                            }),
-                    };
-                    if let Some(_file_map_result) = file_map_result {
-                        let mut file_map_result = _file_map_result;
-                        let mut path_primary = file_map_result.path_pair.primary;
-                        let import_record_loader = import_record.loader.unwrap_or_else(|| {
-                            Fs::Path::init(path_primary.text)
-                                .loader(&transpiler.options.loaders)
-                                .unwrap_or(Loader::File)
-                        });
-                        import_record.loader = Some(import_record_loader);
-
-                        if let Some(id) =
-                            self.path_to_source_index_map(target).get(path_primary.text)
-                        {
-                            import_record.source_index = Index::init(id);
-                            continue;
-                        }
-
-                        let resolve_entry =
-                            resolve_queue.get_or_put(path_primary.text).expect("oom");
-                        if resolve_entry.found_existing {
-                            // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
-                            import_record.path = unsafe { &**resolve_entry.value_ptr }.path;
-                            continue;
-                        }
-
-                        // For virtual files, use the path text as-is (no relative path computation needed).
-                        path_primary.pretty = self.graph.heap.alloc_slice_copy(path_primary.text);
-                        import_record.path = path_primary;
-                        let _ = path_primary.text; // key already interned by get_or_put
-                        bun_core::scoped_log!(
-                            Bundle,
-                            "created ParseTask from FileMap: {}",
-                            bstr::BStr::new(&path_primary.text)
-                        );
-                        file_map_result.path_pair.primary = path_primary;
-                        // Arena-owned.
-                        let resolve_task_val = ParseTask::init(
-                            &file_map_result,
-                            file_map_result.path_pair.primary,
-                            bun_ast::Index::INVALID,
-                            self,
-                        );
-                        // SAFETY: arena outlives the bundle pass.
-                        let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
-                        resolve_task.known_target = target;
-                        // Use transpiler JSX options, applying force_node_env like the disk path does
-                        resolve_task.jsx = transpiler.options.jsx.clone();
-                        resolve_task.jsx.development = transpiler.options.forced_jsx_development();
-                        resolve_task.loader = Some(import_record_loader);
-                        resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
-                        *resolve_entry.value_ptr = resolve_task;
-                        continue;
-                    }
-                }
-
                 if root_relative
                     .as_ref()
                     .is_some_and(|url| url.is_user_external(&transpiler.resolver))
@@ -7029,6 +6958,67 @@ pub mod bv2_impl {
 
                 let mut had_busted_dir_cache = false;
                 let resolve_result: _resolver::Result<'a> = 'inner: loop {
+                    // Check the FileMap first for in-memory files
+                    if let Some(file_map) = self.file_map {
+                        if let Some(_file_map_result) =
+                            file_map.resolve(self.arena(), source.path.text, specifier)
+                        {
+                            let mut file_map_result = _file_map_result;
+                            let mut path_primary = file_map_result.path_pair.primary;
+                            let import_record_loader = import_record.loader.unwrap_or_else(|| {
+                                Fs::Path::init(path_primary.text)
+                                    .loader(&transpiler.options.loaders)
+                                    .unwrap_or(Loader::File)
+                            });
+                            import_record.loader = Some(import_record_loader);
+
+                            if let Some(id) =
+                                self.path_to_source_index_map(target).get(path_primary.text)
+                            {
+                                import_record.source_index = Index::init(id);
+                                continue 'outer;
+                            }
+
+                            let resolve_entry =
+                                resolve_queue.get_or_put(path_primary.text).expect("oom");
+                            if resolve_entry.found_existing {
+                                // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
+                                import_record.path = unsafe { &**resolve_entry.value_ptr }.path;
+                                continue 'outer;
+                            }
+
+                            // For virtual files, use the path text as-is (no relative path computation needed).
+                            path_primary.pretty =
+                                self.graph.heap.alloc_slice_copy(path_primary.text);
+                            import_record.path = path_primary;
+                            let _ = path_primary.text; // key already interned by get_or_put
+                            bun_core::scoped_log!(
+                                Bundle,
+                                "created ParseTask from FileMap: {}",
+                                bstr::BStr::new(&path_primary.text)
+                            );
+                            file_map_result.path_pair.primary = path_primary;
+                            // Arena-owned.
+                            let resolve_task_val = ParseTask::init(
+                                &file_map_result,
+                                file_map_result.path_pair.primary,
+                                bun_ast::Index::INVALID,
+                                self,
+                            );
+                            // SAFETY: arena outlives the bundle pass.
+                            let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
+                            resolve_task.known_target = target;
+                            // Use transpiler JSX options, applying force_node_env like the disk path does
+                            resolve_task.jsx = transpiler.options.jsx.clone();
+                            resolve_task.jsx.development =
+                                transpiler.options.forced_jsx_development();
+                            resolve_task.loader = Some(import_record_loader);
+                            resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
+                            *resolve_entry.value_ptr = resolve_task;
+                            continue 'outer;
+                        }
+                    }
+
                     match transpiler.resolver.resolve_with_framework(
                         source_dir,
                         specifier,
@@ -7053,24 +7043,6 @@ pub mod bv2_impl {
                             // Only perform directory busting when hot-reloading is enabled
                             if err == _resolver::Error::ModuleNotFound {
                                 if self.bun_watcher.is_some() {
-                                    if !had_busted_dir_cache {
-                                        bun_core::scoped_log!(
-                                            watcher,
-                                            "busting dir cache {} -> {}",
-                                            bstr::BStr::new(&source.path.text),
-                                            bstr::BStr::new(specifier)
-                                        );
-                                        // Only re-query if we previously had something cached.
-                                        if transpiler.resolver.bust_dir_cache_from_specifier(
-                                            source.path.text,
-                                            specifier,
-                                        ) {
-                                            had_busted_dir_cache = true;
-                                            continue 'inner;
-                                        }
-                                    }
-                                }
-                                if self.bun_watcher.is_some() {
                                     if let Some(dev) = self.dev_server {
                                         // Tell DevServer about the resolution failure.
                                         dev.track_resolution_failure(
@@ -7086,8 +7058,33 @@ pub mod bv2_impl {
                                     root_relative.as_mut().and_then(|url| url.next_retry())
                                 {
                                     specifier = next;
-                                    had_busted_dir_cache = false;
                                     continue 'inner;
+                                }
+                                if self.bun_watcher.is_some() && !had_busted_dir_cache {
+                                    bun_core::scoped_log!(
+                                        watcher,
+                                        "busting dir cache {} -> {}",
+                                        bstr::BStr::new(&source.path.text),
+                                        bstr::BStr::new(specifier)
+                                    );
+                                    // Only re-query if we previously had something cached.
+                                    let resolver = &mut transpiler.resolver;
+                                    let busted = match &root_relative {
+                                        Some(url) => {
+                                            url.bust_dir_caches(resolver, source.path.text)
+                                        }
+                                        None => resolver.bust_dir_cache_from_specifier(
+                                            source.path.text,
+                                            specifier,
+                                        ),
+                                    };
+                                    if busted {
+                                        had_busted_dir_cache = true;
+                                        if let Some(url) = &mut root_relative {
+                                            specifier = url.restart();
+                                        }
+                                        continue 'inner;
+                                    }
                                 }
                             }
 

@@ -388,11 +388,14 @@ describe("fake node cli", () => {
       { name: "`.`", cwd: "pkg", arg: ".", file: "pkg/index.js" },
       { name: "a file without its extension", cwd: ".", arg: "./pkg/entry", file: "pkg/entry.js" },
       { name: "a symlink", cwd: ".", arg: "./bin/link", file: "pkg/cli.js" },
+      // The watcher does not watch a directory outside the working directory for the files in it.
+      { name: "a directory outside the working directory", cwd: "work", arg: "../pkg", file: "pkg/index.js" },
+      { name: "a file outside the working directory", cwd: "work", arg: "../pkg/index.js", file: "pkg/index.js" },
     ];
     type EntryPoint = (typeof entryPoints)[number];
 
     function project({ file }: EntryPoint) {
-      const temp = tempDir("fake-node-hot", { "pkg/package.json": "{}", [file]: source(1) });
+      const temp = tempDir("fake-node-hot", { "pkg/package.json": "{}", "work/package.json": "{}", [file]: source(1) });
       mkdirSync(join(temp, "bin"));
       symlinkSync(join("..", "pkg", "cli.js"), join(temp, "bin", "link"));
       return temp;

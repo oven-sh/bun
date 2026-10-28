@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 6acea1f32be784f6cc5297335ed19b6b69edaf6ceca9bec51ec7e891dd5dac80.
+// Written against that file with the SHA-256 00da691f682964c532730a08c0b7c7605ece1e07636025f9a75cd0283c4bbb1e.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const { validateInteger, validateObject } = require("internal/validators");

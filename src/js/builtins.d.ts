@@ -660,6 +660,7 @@ interface Set<T> {
 }
 
 interface ObjectConstructor {
+  $create: typeof Object.create;
   $defineProperty: typeof Object.defineProperty;
   $defineProperties: typeof Object.defineProperties;
   $getOwnPropertyDescriptor: typeof Object.getOwnPropertyDescriptor;

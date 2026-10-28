@@ -1,0 +1,3 @@
+{
+  "skipInShell": "CustomEvent and Buffer are not in the shell"
+}

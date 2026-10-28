@@ -1,0 +1,207 @@
+//// damage-behind-a-call-loops/a-field-read-in-a-loop-becomes-an-accessor-halfway.ts
+// A loop reads a field of an object and makes a call in every iteration, so the test of the object can stand in front of the loop. In one iteration the callee makes the field an accessor that counts its reads.
+class Meter {
+  step: number;
+  total: number;
+  constructor(step: number) {
+    this.step = step;
+    this.total = 0;
+  }
+}
+
+let reads = 0;
+let strikeAt = -1;
+function tick(meter: Meter, index: number): number {
+  if (index === strikeAt) {
+    Object.defineProperty(meter, "step", {
+      get() {
+        return ++reads;
+      },
+    });
+  }
+  return index & 1;
+}
+
+function run(meter: Meter): string {
+  let sum = 0;
+  for (let index = 0; index < 10; index++) {
+    sum += meter.step;
+    sum += tick(meter, index);
+    sum += meter.step;
+  }
+  return sum + " " + meter.step;
+}
+
+for (let round = 0; round < 300; round++) {
+  strikeAt = round % 100 === 99 ? 4 : -1;
+  const line = run(new Meter(round));
+  if (strikeAt >= 0 || round === 0) console.log(round + ": " + line + " " + reads);
+}
+//// damage-behind-a-call-loops/a-loop-goes-on-behind-a-dirty-return-and-the-next-object-is-whole.ts
+// A loop takes one object after the other out of an array, reads it, makes a call and reads it again. The callee damages some of them. The objects that follow a damaged one are whole and must read as such.
+////= lines-7	Item	price	number	count
+
+function check(item: Item, index: number): number {
+  if (index % 7 === 3) delete (item as any).count;
+  else if (index % 7 === 5) (item as any).price = "free";
+  return index;
+}
+
+function total(items: Item[]): string {
+  let text = "";
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index];
+    const before = item.price * item.count;
+    check(item, index);
+    text += before + ">" + item.price * item.count + " ";
+  }
+  return text;
+}
+
+let line = "";
+for (let round = 0; round < 100; round++) {
+  const items: Item[] = [];
+  for (let index = 0; index < 16; index++) items.push(new Item(index + 1, 2));
+  line = total(items);
+}
+console.log(line);
+//// damage-behind-a-call-loops/a-method-called-in-a-loop-is-replaced-halfway.ts
+// A loop calls a method of an object and another function in every iteration. In one iteration that function replaces the method on the prototype object, and two iterations later it puts the old one back.
+class Counter {
+  count = 0;
+  bump(): number {
+    return ++this.count;
+  }
+}
+const original = Counter.prototype.bump;
+
+let strikes = false;
+function between(index: number): number {
+  if (strikes && index === 3) {
+    Counter.prototype.bump = function (this: Counter) {
+      this.count += 100;
+      return -1;
+    };
+  }
+  if (strikes && index === 5) Counter.prototype.bump = original;
+  return 0;
+}
+
+function run(counter: Counter): string {
+  let text = "";
+  for (let index = 0; index < 8; index++) {
+    text += counter.bump();
+    between(index);
+    text += "," + counter.bump() + " ";
+  }
+  return text + counter.count;
+}
+
+////= for-24	run(new Counter()
+//// damage-behind-a-call-loops/an-array-walked-by-a-loop-changes-its-kind-halfway.ts
+// A loop sums an array of small integers and makes a call in every iteration. In one iteration the callee stores a fraction, a string, or a hole into an element that the loop has not reached yet.
+let strikeAt = -1;
+let mode = 0;
+function visit(list: number[], index: number): number {
+  if (index === strikeAt) {
+    if (mode === 1) list[index + 2] = 0.25;
+    else if (mode === 2) (list as any)[index + 2] = "s";
+    else if (mode === 3) delete list[index + 2];
+    else if (mode === 4) list[5000] = 1;
+  }
+  return 1;
+}
+
+function walk(list: number[]): string {
+  let sum: any = 0;
+  const end = Math.min(list.length, 8);
+  for (let index = 0; index < end; index++) {
+    sum += list[index];
+    sum += visit(list, index);
+  }
+  return sum + " " + list.length;
+}
+
+for (let round = 0; round < 500; round++) {
+  mode = round % 100 === 99 ? (round + 1) / 100 : 0;
+  strikeAt = mode ? 3 : -1;
+  const line = walk([round, 1, 2, 3, 4, 5, 6, 7]);
+  if (mode || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-loops/an-array-walked-by-a-loop-is-cut-halfway.ts
+// A loop walks an array by index and makes a call in every iteration. In one iteration the callee cuts the array, in another round it lets it grow, so neither the length nor the bounds that the loop has tested hold any longer.
+let strikeAt = -1;
+let grows = false;
+function visit(list: number[], index: number): number {
+  if (index === strikeAt) {
+    if (grows) list.push(100, 200);
+    else list.length = index + 2;
+  }
+  return 1;
+}
+
+function walk(list: number[]): string {
+  let sum = 0;
+  let steps = 0;
+  for (let index = 0; index < list.length; index++) {
+    sum += list[index];
+    steps += visit(list, index);
+    sum += list[list.length - 1];
+  }
+  return sum + " " + steps + " " + list.length;
+}
+
+for (let round = 0; round < 400; round++) {
+  strikeAt = round % 100 === 99 ? 3 : -1;
+  grows = round > 200;
+  const line = walk([round, 1, 2, 3, 4, 5, 6, 7]);
+  if (strikeAt >= 0 || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-loops/for-of-over-an-array-that-the-callee-changes.ts
+// A for-of loop over an array makes a call in every iteration. The callee appends, removes, and at last replaces the iterator method on the array itself, which the running loop does not see and the next loop does.
+let mode = 0;
+function visit(list: number[], value: number): number {
+  if (value === 2) {
+    if (mode === 1) list.push(50);
+    else if (mode === 2) list.pop();
+    else if (mode === 3) list.length = 0;
+    else if (mode === 4) {
+      (list as any)[Symbol.iterator] = function* () {
+        yield -1;
+      };
+    }
+  }
+  return value;
+}
+
+function walk(list: number[]): string {
+  let text = "";
+  for (const value of list) text += visit(list, value) + ",";
+  text += " ";
+  for (const value of list) text += value + ",";
+  return text;
+}
+
+////= for-27	walk([1, 2, 3, 4]
+//// damage-behind-a-call-loops/the-damage-comes-in-the-inner-of-two-loops.ts
+// Two nested loops read the fields of one object. The test of the object can stand in front of both. A call in the inner loop deletes one field at one point, and both loops go on reading.
+////= lines-7	Grid	width	number	height
+
+let strikes = false;
+function cell(grid: Grid, row: number, column: number): number {
+  if (strikes && row === 1 && column === 1) delete (grid as any).width;
+  return row * 10 + column;
+}
+
+function scan(grid: Grid): string {
+  let text = "";
+  for (let row = 0; row < grid.height; row++) {
+    for (let column = 0; column < 3; column++) {
+      text += cell(grid, row, column) + ":" + grid.width + " ";
+    }
+    text += "/" + grid.width + "/" + grid.height + " ";
+  }
+  return text;
+}
+
+////= for-24	scan(new Grid(round, 3)

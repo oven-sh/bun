@@ -1,0 +1,46 @@
+before
+  literals made before: 190 30 10
+  literals made now: 190 30 10
+  instances made before: 190 30 10 0---4---8---12---16---20---24---28---32---36---
+  instances made now: 190 30 10
+  objects of a function made before: 190 30 10
+  objects of a function made now: 190 30 10
+  stores: 40 40 40
+  behind the stores: 4040 0 40 | 4040 0 40 | 4040 0 40
+a function out of text
+  literals made before: 190 30 10
+  literals made now: 190 30 10
+  instances made before: NaN 0 40 0---4---8---12---16---20---24---28---32---36---
+  instances made now: NaN 0 40
+  objects of a function made before: 190 30 10
+  objects of a function made now: 190 30 10
+  stores: 40 40 40
+  behind the stores: 4040 0 40 | 4040 0 40 | 4040 0 40
+a direct eval
+  literals made before: 190 30 10
+  literals made now: 190 30 10
+  instances made before: 190 30 10 0---4---8---12---16---20---24---28---32---36---
+  instances made now: 190 30 10
+  objects of a function made before: 1x1x1x141x1x1x181x1x1x1121x1x1x1161x1x1x1201x1x1x1241x1x1x1281x1x1x1321x1x1x1361x1x1x1 0 40
+  objects of a function made now: 1x1x1x141x1x1x181x1x1x1121x1x1x1161x1x1x1201x1x1x1241x1x1x1281x1x1x1321x1x1x1361x1x1x1 0 40
+  stores: 40 40 40
+  behind the stores: 4040 0 40 | 4040 0 40 | 4040 0 40
+an indirect eval
+  literals made before: 190 30 10
+  literals made now: 190 30 10
+  instances made before: NaN 29 11 0---4---8---12---16---20---24---28---32---36---
+  instances made now: 190 30 10
+  objects of a function made before: 190 30 10
+  objects of a function made now: 190 30 10
+  stores: 40 40 40
+  behind the stores: 4040 0 40 | 4040 0 40 | 4040 0 40
+Object.prototype: TypeError
+behind that
+  literals made before: 190 30 10
+  literals made now: 190 30 10
+  instances made before: NaN 29 11 0---4---8---12---16---20---24---28---32---36---
+  instances made now: 190 30 10
+  objects of a function made before: 190 30 10
+  objects of a function made now: 190 30 10
+  stores: 40 40 40
+  behind the stores: 4040 0 40 | 4040 0 40 | 4040 0 40

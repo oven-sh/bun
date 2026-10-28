@@ -1,0 +1,1821 @@
+//// removed-object-read-among-other-reads/impl.js
+////= check
+
+(function makesConstantObject() {
+    "use strict";
+    const readInFront = { limit: 5, scale: 2, name: "config" };
+    const readBetween = { limit: 5, scale: 2, name: "config" };
+    const readInLoop = { limit: 5, scale: 2, name: "config" };
+    const readEachTime = { limit: 5, scale: 2, name: "config" };
+    function Item(a, b, c) {
+        this.a = a;
+        this.b = b;
+        this.c = c;
+    }
+    function build(...pairs) {
+        let object = { };
+        for (let i = 0; i < pairs.length; i += 2)
+            object[pairs[i]] = pairs[i + 1];
+        return object;
+    }
+    function readsObjectInFrontOfGuards(o) { const c = readInFront; let sum = o.a + o.b + o.c; return sum + c.limit * c.scale; }
+    function readsObjectBetweenGuards(o) { let sum = o.a; const c = readBetween; sum += o.b; sum += c.limit; sum += o.c; return sum + c.scale + c.name.length; }
+    function readsObjectInLoop(o) { let sum = 0; for (let i = 0; i < 2; ++i) { sum += o.a; const c = readInLoop; sum += o.b + c.limit; sum += o.c + c.scale; } return sum; }
+    function readsObjectEachTime(o) { return o.a + readEachTime.limit + o.b + readEachTime.scale + o.c + readEachTime.name.length; }
+    function readsNoSuchObject(o) { return o.a + o.b + o.c; }
+
+    const receivers = [
+        () => new Item(1, 2, 3),
+        () => build("c", 3, "b", 2, "a", 1),
+        () => build("a", 1, "c", 3, "b", 2),
+        () => build("a", 1, "b", 2, "other", 0, "c", 3),
+    ];
+    for (let i = 0; i < 400; ++i) {
+        let make = receivers[i % 9 < receivers.length ? i % 9 : 0];
+        check(readsObjectInFrontOfGuards(make()), 16, "the object is read in front of the guards");
+        check(readsObjectBetweenGuards(make()), 19, "the object is read between the guards");
+        check(readsObjectInLoop(make()), 26, "the object is read in a loop");
+        check(readsObjectEachTime(make()), 19, "the object is read each time");
+        check(readsNoSuchObject(make()), 6, "no such object is read");
+    }
+})();
+console.log("passed");
+//// removed-object-read-among-other-reads/main.ts
+// A local object whose allocation is removed is read before, between and after reads of other objects.
+import "./impl.js";
+//// returned-objects-also-stored-by-callee/impl.js
+////= check
+(function () {
+    "use strict";
+    function work(x) { let sum = 0; for (let i = 0; i < 3; i++) sum += x ^ i; return sum; }
+    function expectedWork(x) { return (x ^ 0) + (x ^ 1) + (x ^ 2); }
+    let keptInVariable = null;
+    const holder = { kept: null };
+    const list = [];
+    let getter = null;
+    const map = new Map();
+    function remember(object) { keptInVariable = object; }
+
+    function keepsInVariable(i) { const made = { a: work(i), b: i }; keptInVariable = made; return made; }
+    function keepsInProperty(i) { const made = { a: work(i), b: i }; holder.kept = made; return made; }
+    function keepsInArray(i) { const made = { a: work(i), b: i }; list.push(made); return made; }
+    function keepsInElement(i) { const made = { a: work(i), b: i }; list[0] = made; return made; }
+    function keepsInClosure(i) { const made = { a: work(i), b: i }; getter = () => made; return made; }
+    function keepsInMap(i) { const made = { a: work(i), b: i }; map.set("k", made); return made; }
+    function keepsInLiteral(i) { const made = { a: work(i), b: i }; holder.kept = { inner: made }; return made; }
+    function keepsSometimes(i) { const made = { a: work(i), b: i }; if (i & 1) keptInVariable = made; return made; }
+    function keepsThroughCall(i) { const made = { a: work(i), b: i }; remember(made); return made; }
+    function keepsDirectly(i) { return keptInVariable = { a: work(i), b: i }; }
+    function keepsInOneReturn(i) { if (i & 1) { const made = { a: work(i), b: i }; keptInVariable = made; return made; } return { a: work(i), b: -1 }; }
+
+    function readsVariable(i) { const { a, b } = keepsInVariable(i); return a + b === keptInVariable.a + keptInVariable.b && a === expectedWork(i) && b === i; }
+    function mutatesVariable(i) { const got = keepsInVariable(i); got.a = "changed"; got.c = 3; return got === keptInVariable && keptInVariable.a === "changed" && keptInVariable.c === 3; }
+    function readsProperty(i) { const { a, b } = keepsInProperty(i); holder.kept.a = "later"; return a === expectedWork(i) && b === i && holder.kept.a === "later" && holder.kept.b === i; }
+    function mutatesProperty(i) { const got = keepsInProperty(i); got.b = "changed"; return got === holder.kept && holder.kept.b === "changed"; }
+    function readsArray(i) { const got = keepsInArray(i); return got.a === expectedWork(i) && got.b === i && list[list.length - 1].b === i; }
+    function mutatesArray(i) { const got = keepsInArray(i); got.a = -1; return got === list[list.length - 1] && list[list.length - 1].a === -1; }
+    function readsElement(i) { const { a, b } = keepsInElement(i); return a === list[0].a && b === list[0].b && b === i; }
+    function mutatesElement(i) { const got = keepsInElement(i); got.a = -1; return got === list[0] && list[0].a === -1; }
+    function readsClosure(i) { const got = keepsInClosure(i); return got.a === expectedWork(i) && getter() === getter() && getter().b === i; }
+    function mutatesClosure(i) { const got = keepsInClosure(i); got.a = "changed"; return got === getter() && getter().a === "changed"; }
+    function readsMap(i) { const { a, b } = keepsInMap(i); return a === map.get("k").a && b === i; }
+    function mutatesMap(i) { const got = keepsInMap(i); got.b = "changed"; return got === map.get("k") && map.get("k").b === "changed"; }
+    function readsLiteral(i) { const { a, b } = keepsInLiteral(i); return a === holder.kept.inner.a && b === i; }
+    function mutatesLiteral(i) { const got = keepsInLiteral(i); got.b = "changed"; return got === holder.kept.inner && holder.kept.inner.b === "changed"; }
+    function readsSometimes(i) { keptInVariable = null; const { a, b } = keepsSometimes(i); return a === expectedWork(i) && b === i && (i & 1 ? keptInVariable.b === i : keptInVariable === null); }
+    function mutatesSometimes(i) { keptInVariable = null; const got = keepsSometimes(i); got.b = "changed"; return i & 1 ? got === keptInVariable && keptInVariable.b === "changed" : keptInVariable === null; }
+    function readsThroughCall(i) { const { a } = keepsThroughCall(i); return a === expectedWork(i) && keptInVariable.a === a; }
+    function mutatesThroughCall(i) { const got = keepsThroughCall(i); got.a = "changed"; return got === keptInVariable && keptInVariable.a === "changed"; }
+    function readsDirectly(i) { const { b } = keepsDirectly(i); return b === i && keptInVariable.b === i; }
+    function mutatesDirectly(i) { const got = keepsDirectly(i); got.b = "changed"; return got === keptInVariable && keptInVariable.b === "changed"; }
+    function readsOneReturn(i) { keptInVariable = null; const { a, b } = keepsInOneReturn(i); return a === expectedWork(i) && (i & 1 ? b === i && keptInVariable.b === i : b === -1 && keptInVariable === null); }
+    function mutatesOneReturn(i) { keptInVariable = null; const got = keepsInOneReturn(i); got.b = "changed"; return i & 1 ? got === keptInVariable && keptInVariable.b === "changed" : keptInVariable === null && got.b === "changed"; }
+
+    const callers = {
+        readsVariable, mutatesVariable, readsProperty, mutatesProperty, readsArray, mutatesArray, readsElement, mutatesElement, readsClosure, mutatesClosure, readsMap, mutatesMap,
+        readsLiteral, mutatesLiteral, readsSometimes, mutatesSometimes, readsThroughCall, mutatesThroughCall, readsDirectly, mutatesDirectly, readsOneReturn, mutatesOneReturn,
+    };
+    for (const [name, caller] of Object.entries(callers)) {
+        for (let i = 0; i < 300; i++)
+            check(caller(i), true, name + " in round " + i);
+    }
+})();
+console.log("passed");
+//// returned-objects-also-stored-by-callee/main.ts
+// A function returns an object that it has also stored elsewhere.
+import "./impl.js";
+//// runs-of-stores-on-growing-objects/impl.js
+////= check-2
+function effect() { return 1; }
+function fillsMany(o) {
+    o.p0 = 0; o.p1 = 1; o.p2 = 2; o.p3 = 3; o.p4 = 4; o.p5 = 5; o.p6 = 6; o.p7 = 7; effect();
+    o.p8 = 8; o.p9 = 9; o.p10 = 10; o.p11 = 11; o.p12 = 12; o.p13 = 13; o.p14 = 14; o.p15 = 15; effect();
+    o.p16 = 16; o.p17 = 17; o.p18 = 18; o.p19 = 19; o.p20 = 20; o.p21 = 21; o.p22 = 22; o.p23 = 23; effect();
+    o.p24 = 24; o.p25 = 25; o.p26 = 26; o.p27 = 27; o.p28 = 28; o.p29 = 29; o.p30 = 30; o.p31 = 31; effect();
+    o.p32 = 32; o.p33 = 33; o.p34 = 34; o.p35 = 35; o.p36 = 36; o.p37 = 37; o.p38 = 38; o.p39 = 39; effect();
+    o.p40 = 40; o.p41 = 41; o.p42 = 42; o.p43 = 43; o.p44 = 44; o.p45 = 45; o.p46 = 46; o.p47 = 47; effect();
+    o.p48 = 48; o.p49 = 49; o.p50 = 50; o.p51 = 51; o.p52 = 52; o.p53 = 53; o.p54 = 54; o.p55 = 55; effect();
+    o.p56 = 56; o.p57 = 57; o.p58 = 58; o.p59 = 59; o.p60 = 60; o.p61 = 61; o.p62 = 62; o.p63 = 63; effect();
+    o.p64 = 64; o.p65 = 65; o.p66 = 66; o.p67 = 67; o.p68 = 68; o.p69 = 69; o.p70 = 70; o.p71 = 71; effect();
+    o.p72 = 72; o.p73 = 73; o.p74 = 74; o.p75 = 75; o.p76 = 76; o.p77 = 77; o.p78 = 78; o.p79 = 79; effect();
+    o.p80 = 80; o.p81 = 81; o.p82 = 82; o.p83 = 83; o.p84 = 84; o.p85 = 85; o.p86 = 86; o.p87 = 87; effect();
+    o.p88 = 88; o.p89 = 89; o.p90 = 90; o.p91 = 91; o.p92 = 92; o.p93 = 93; o.p94 = 94; o.p95 = 95; effect();
+    o.p96 = 96; o.p97 = 97; o.p98 = 98; o.p99 = 99; o.p100 = 100; o.p101 = 101; o.p102 = 102; o.p103 = 103; effect();
+    o.p104 = 104; o.p105 = 105; o.p106 = 106; o.p107 = 107; o.p108 = 108; o.p109 = 109; o.p110 = 110; o.p111 = 111; effect();
+    o.p112 = 112; o.p113 = 113; o.p114 = 114; o.p115 = 115; o.p116 = 116; o.p117 = 117; o.p118 = 118; o.p119 = 119; effect();
+    o.p120 = 120; o.p121 = 121; o.p122 = 122; o.p123 = 123; o.p124 = 124; o.p125 = 125; o.p126 = 126; o.p127 = 127; effect();
+    o.p128 = 128; o.p129 = 129; o.p130 = 130; o.p131 = 131; o.p132 = 132; o.p133 = 133; o.p134 = 134; o.p135 = 135; effect();
+    o.p136 = 136; o.p137 = 137; o.p138 = 138; o.p139 = 139; o.p140 = 140; o.p141 = 141; o.p142 = 142; o.p143 = 143; effect();
+    o.p144 = 144; o.p145 = 145; o.p146 = 146; o.p147 = 147; o.p148 = 148; o.p149 = 149; o.p150 = 150; o.p151 = 151; effect();
+    o.p152 = 152; o.p153 = 153; o.p154 = 154; o.p155 = 155; o.p156 = 156; o.p157 = 157; o.p158 = 158; o.p159 = 159; effect();
+    return o;
+}
+function fillsSome(o) {
+    o.q0 = 0; o.q1 = 1; o.q2 = 2; o.q3 = 3; o.q4 = 4; o.q5 = 5; o.q6 = 6; o.q7 = 7; effect();
+    o.q8 = 8; o.q9 = 9; o.q10 = 10; o.q11 = 11; o.q12 = 12; o.q13 = 13; o.q14 = 14; o.q15 = 15; effect();
+    o.q16 = 16; o.q17 = 17; o.q18 = 18; o.q19 = 19; o.q20 = 20; o.q21 = 21; o.q22 = 22; o.q23 = 23; effect();
+    return o;
+}
+class Instance {
+    constructor() {
+        this.r0 = 0; this.r1 = 1; this.r2 = 2; this.r3 = 3; this.r4 = 4; this.r5 = 5; this.r6 = 6; this.r7 = 7; effect();
+        this.r8 = 8; this.r9 = 9; this.r10 = 10; this.r11 = 11; this.r12 = 12; this.r13 = 13; this.r14 = 14; this.r15 = 15; effect();
+        this.r16 = 16; this.r17 = 17; this.r18 = 18; this.r19 = 19; this.r20 = 20; this.r21 = 21; this.r22 = 22; this.r23 = 23; effect();
+    }
+}
+function makesTable() {
+    return {
+        0: -1, 1: -2,
+        k0: 0, k1: 1, k2: 2, k3: 3, k4: 4, k5: 5, k6: 6, k7: 7, k8: 8, k9: 9, k10: 10, k11: 11, k12: 12, k13: 13, k14: 14, k15: 15,
+        k16: 16, k17: 17, k18: 18, k19: 19, k20: 20, k21: 21, k22: 22, k23: 23, k24: 24, k25: 25, k26: 26, k27: 27, k28: 28, k29: 29, k30: 30, k31: 31,
+        k32: 32, k33: 33, k34: 34, k35: 35, k36: 36, k37: 37, k38: 38, k39: 39, k40: 40, k41: 41, k42: 42, k43: 43, k44: 44, k45: 45, k46: 46, k47: 47,
+        k48: 48, k49: 49, k50: 50, k51: 51, k52: 52, k53: 53, k54: 54, k55: 55, k56: 56, k57: 57, k58: 58, k59: 59, k60: 60, k61: 61, k62: 62, k63: 63,
+        k64: 64, k65: 65, k66: 66, k67: 67, k68: 68, k69: 69, k70: 70, k71: 71, k72: 72, k73: 73, k74: 74, k75: 75, k76: 76, k77: 77, k78: 78, k79: 79,
+        k80: 80, k81: 81, k82: 82, k83: 83, k84: 84, k85: 85, k86: 86, k87: 87, k88: 88, k89: 89, k90: 90, k91: 91, k92: 92, k93: 93, k94: 94, k95: 95,
+        k96: 96, k97: 97, k98: 98, k99: 99, k100: 100, k101: 101, k102: 102, k103: 103, k104: 104, k105: 105, k106: 106, k107: 107, k108: 108, k109: 109, k110: 110, k111: 111,
+        k112: 112, k113: 113, k114: 114, k115: 115, k116: 116, k117: 117, k118: 118, k119: 119, k120: 120, k121: 121, k122: 122, k123: 123, k124: 124, k125: 125, k126: 126, k127: 127,
+        k128: 128, k129: 129, k130: 130, k131: 131, k132: 132, k133: 133, k134: 134, k135: 135, k136: 136, k137: 137, k138: 138, k139: 139, k140: 140, k141: 141, k142: 142, k143: 143,
+        k144: 144, k145: 145, k146: 146, k147: 147, k148: 148, k149: 149, k150: 150, k151: 151, k152: 152, k153: 153, k154: 154, k155: 155, k156: 156, k157: 157, k158: 158, k159: 159,
+        k160: 160, k161: 161, k162: 162, k163: 163, k164: 164, k165: 165, k166: 166, k167: 167, k168: 168, k169: 169, k170: 170, k171: 171, k172: 172, k173: 173, k174: 174, k175: 175,
+        k176: 176, k177: 177, k178: 178, k179: 179, k180: 180, k181: 181, k182: 182, k183: 183, k184: 184, k185: 185, k186: 186, k187: 187, k188: 188, k189: 189, k190: 190, k191: 191,
+        k192: 192, k193: 193, k194: 194, k195: 195, k196: 196, k197: 197, k198: 198, k199: 199, k200: 200, k201: 201, k202: 202, k203: 203, k204: 204, k205: 205, k206: 206, k207: 207,
+        k208: 208, k209: 209, k210: 210, k211: 211, k212: 212, k213: 213, k214: 214, k215: 215, k216: 216, k217: 217, k218: 218, k219: 219, k220: 220, k221: 221, k222: 222, k223: 223,
+        k224: 224, k225: 225, k226: 226, k227: 227, k228: 228, k229: 229, k230: 230, k231: 231, k232: 232, k233: 233, k234: 234, k235: 235, k236: 236, k237: 237, k238: 238, k239: 239,
+        k240: 240, k241: 241, k242: 242, k243: 243, k244: 244, k245: 245, k246: 246, k247: 247, k248: 248, k249: 249, k250: 250, k251: 251, k252: 252, k253: 253, k254: 254, k255: 255,
+        k256: 256, k257: 257, k258: 258, k259: 259, k260: 260, k261: 261, k262: 262, k263: 263, k264: 264, k265: 265, k266: 266, k267: 267, k268: 268, k269: 269, k270: 270, k271: 271,
+        k272: 272, k273: 273, k274: 274, k275: 275, k276: 276, k277: 277, k278: 278, k279: 279, k280: 280, k281: 281, k282: 282, k283: 283, k284: 284, k285: 285, k286: 286, k287: 287,
+        k288: 288, k289: 289, k290: 290, k291: 291, k292: 292, k293: 293, k294: 294, k295: 295, k296: 296, k297: 297, k298: 298, k299: 299, k300: 300, k301: 301, k302: 302, k303: 303,
+        k304: 304, k305: 305, k306: 306, k307: 307, k308: 308, k309: 309, k310: 310, k311: 311, k312: 312, k313: 313, k314: 314, k315: 315, k316: 316, k317: 317, k318: 318, k319: 319,
+        k320: 320, k321: 321, k322: 322, k323: 323, k324: 324, k325: 325, k326: 326, k327: 327, k328: 328, k329: 329, k330: 330, k331: 331, k332: 332, k333: 333, k334: 334, k335: 335,
+        k336: 336, k337: 337, k338: 338, k339: 339, k340: 340, k341: 341, k342: 342, k343: 343, k344: 344, k345: 345, k346: 346, k347: 347, k348: 348, k349: 349, k350: 350, k351: 351,
+        k352: 352, k353: 353, k354: 354, k355: 355, k356: 356, k357: 357, k358: 358, k359: 359, k360: 360, k361: 361, k362: 362, k363: 363, k364: 364, k365: 365, k366: 366, k367: 367,
+        k368: 368, k369: 369, k370: 370, k371: 371, k372: 372, k373: 373, k374: 374, k375: 375, k376: 376, k377: 377, k378: 378, k379: 379, k380: 380, k381: 381, k382: 382, k383: 383,
+        k384: 384, k385: 385, k386: 386, k387: 387, k388: 388, k389: 389, k390: 390, k391: 391, k392: 392, k393: 393, k394: 394, k395: 395, k396: 396, k397: 397, k398: 398, k399: 399,
+        k400: 400, k401: 401, k402: 402, k403: 403, k404: 404, k405: 405, k406: 406, k407: 407, k408: 408, k409: 409, k410: 410, k411: 411, k412: 412, k413: 413, k414: 414, k415: 415,
+        k416: 416, k417: 417, k418: 418, k419: 419, k420: 420, k421: 421, k422: 422, k423: 423, k424: 424, k425: 425, k426: 426, k427: 427, k428: 428, k429: 429, k430: 430, k431: 431,
+        k432: 432, k433: 433, k434: 434, k435: 435, k436: 436, k437: 437, k438: 438, k439: 439, k440: 440, k441: 441, k442: 442, k443: 443, k444: 444, k445: 445, k446: 446, k447: 447,
+        k448: 448, k449: 449, k450: 450, k451: 451, k452: 452, k453: 453, k454: 454, k455: 455, k456: 456, k457: 457, k458: 458, k459: 459, k460: 460, k461: 461, k462: 462, k463: 463,
+        k464: 464, k465: 465, k466: 466, k467: 467, k468: 468, k469: 469, k470: 470, k471: 471, k472: 472, k473: 473, k474: 474, k475: 475, k476: 476, k477: 477, k478: 478, k479: 479,
+        k480: 480, k481: 481, k482: 482, k483: 483, k484: 484, k485: 485, k486: 486, k487: 487, k488: 488, k489: 489, k490: 490, k491: 491, k492: 492, k493: 493, k494: 494, k495: 495,
+        k496: 496, k497: 497, k498: 498, k499: 499, k500: 500, k501: 501, k502: 502, k503: 503, k504: 504, k505: 505, k506: 506, k507: 507, k508: 508, k509: 509, k510: 510, k511: 511,
+        k512: 512, k513: 513, k514: 514, k515: 515, k516: 516, k517: 517, k518: 518, k519: 519, k520: 520, k521: 521, k522: 522, k523: 523, k524: 524, k525: 525, k526: 526, k527: 527,
+        k528: 528, k529: 529, k530: 530, k531: 531, k532: 532, k533: 533, k534: 534, k535: 535, k536: 536, k537: 537, k538: 538, k539: 539, k540: 540, k541: 541, k542: 542, k543: 543,
+        k544: 544, k545: 545, k546: 546, k547: 547, k548: 548, k549: 549, k550: 550, k551: 551, k552: 552, k553: 553, k554: 554, k555: 555, k556: 556, k557: 557, k558: 558, k559: 559,
+        k560: 560, k561: 561, k562: 562, k563: 563, k564: 564, k565: 565, k566: 566, k567: 567, k568: 568, k569: 569, k570: 570, k571: 571, k572: 572, k573: 573, k574: 574, k575: 575,
+        k576: 576, k577: 577, k578: 578, k579: 579, k580: 580, k581: 581, k582: 582, k583: 583, k584: 584, k585: 585, k586: 586, k587: 587, k588: 588, k589: 589, k590: 590, k591: 591,
+        k592: 592, k593: 593, k594: 594, k595: 595, k596: 596, k597: 597, k598: 598, k599: 599, k600: 600, k601: 601, k602: 602, k603: 603, k604: 604, k605: 605, k606: 606, k607: 607,
+        k608: 608, k609: 609, k610: 610, k611: 611, k612: 612, k613: 613, k614: 614, k615: 615, k616: 616, k617: 617, k618: 618, k619: 619, k620: 620, k621: 621, k622: 622, k623: 623,
+        k624: 624, k625: 625, k626: 626, k627: 627, k628: 628, k629: 629, k630: 630, k631: 631, k632: 632, k633: 633, k634: 634, k635: 635, k636: 636, k637: 637, k638: 638, k639: 639,
+        k640: 640, k641: 641, k642: 642, k643: 643, k644: 644, k645: 645, k646: 646, k647: 647, k648: 648, k649: 649, k650: 650, k651: 651, k652: 652, k653: 653, k654: 654, k655: 655,
+        k656: 656, k657: 657, k658: 658, k659: 659, k660: 660, k661: 661, k662: 662, k663: 663, k664: 664, k665: 665, k666: 666, k667: 667, k668: 668, k669: 669, k670: 670, k671: 671,
+        k672: 672, k673: 673, k674: 674, k675: 675, k676: 676, k677: 677, k678: 678, k679: 679, k680: 680, k681: 681, k682: 682, k683: 683, k684: 684, k685: 685, k686: 686, k687: 687,
+        k688: 688, k689: 689, k690: 690, k691: 691, k692: 692, k693: 693, k694: 694, k695: 695, k696: 696, k697: 697, k698: 698, k699: 699, k700: 700, k701: 701, k702: 702, k703: 703,
+        k704: 704, k705: 705, k706: 706, k707: 707, k708: 708, k709: 709, k710: 710, k711: 711, k712: 712, k713: 713, k714: 714, k715: 715, k716: 716, k717: 717, k718: 718, k719: 719,
+        k720: 720, k721: 721, k722: 722, k723: 723, k724: 724, k725: 725, k726: 726, k727: 727, k728: 728, k729: 729, k730: 730, k731: 731, k732: 732, k733: 733, k734: 734, k735: 735,
+        k736: 736, k737: 737, k738: 738, k739: 739, k740: 740, k741: 741, k742: 742, k743: 743, k744: 744, k745: 745, k746: 746, k747: 747, k748: 748, k749: 749, k750: 750, k751: 751,
+        k752: 752, k753: 753, k754: 754, k755: 755, k756: 756, k757: 757, k758: 758, k759: 759, k760: 760, k761: 761, k762: 762, k763: 763, k764: 764, k765: 765, k766: 766, k767: 767,
+        k768: 768, k769: 769, k770: 770, k771: 771, k772: 772, k773: 773, k774: 774, k775: 775, k776: 776, k777: 777, k778: 778, k779: 779, k780: 780, k781: 781, k782: 782, k783: 783,
+        k784: 784, k785: 785, k786: 786, k787: 787, k788: 788, k789: 789, k790: 790, k791: 791, k792: 792, k793: 793, k794: 794, k795: 795, k796: 796, k797: 797, k798: 798, k799: 799,
+        k800: 800, k801: 801, k802: 802, k803: 803, k804: 804, k805: 805, k806: 806, k807: 807, k808: 808, k809: 809, k810: 810, k811: 811, k812: 812, k813: 813, k814: 814, k815: 815,
+        k816: 816, k817: 817, k818: 818, k819: 819, k820: 820, k821: 821, k822: 822, k823: 823, k824: 824, k825: 825, k826: 826, k827: 827, k828: 828, k829: 829, k830: 830, k831: 831,
+        k832: 832, k833: 833, k834: 834, k835: 835, k836: 836, k837: 837, k838: 838, k839: 839, k840: 840, k841: 841, k842: 842, k843: 843, k844: 844, k845: 845, k846: 846, k847: 847,
+        k848: 848, k849: 849, k850: 850, k851: 851, k852: 852, k853: 853, k854: 854, k855: 855, k856: 856, k857: 857, k858: 858, k859: 859, k860: 860, k861: 861, k862: 862, k863: 863,
+        k864: 864, k865: 865, k866: 866, k867: 867, k868: 868, k869: 869, k870: 870, k871: 871, k872: 872, k873: 873, k874: 874, k875: 875, k876: 876, k877: 877, k878: 878, k879: 879,
+        k880: 880, k881: 881, k882: 882, k883: 883, k884: 884, k885: 885, k886: 886, k887: 887, k888: 888, k889: 889, k890: 890, k891: 891, k892: 892, k893: 893, k894: 894, k895: 895,
+        k896: 896, k897: 897, k898: 898, k899: 899, k900: 900, k901: 901, k902: 902, k903: 903, k904: 904, k905: 905, k906: 906, k907: 907, k908: 908, k909: 909, k910: 910, k911: 911,
+        k912: 912, k913: 913, k914: 914, k915: 915, k916: 916, k917: 917, k918: 918, k919: 919, k920: 920, k921: 921, k922: 922, k923: 923, k924: 924, k925: 925, k926: 926, k927: 927,
+        k928: 928, k929: 929, k930: 930, k931: 931, k932: 932, k933: 933, k934: 934, k935: 935, k936: 936, k937: 937, k938: 938, k939: 939, k940: 940, k941: 941, k942: 942, k943: 943,
+        k944: 944, k945: 945, k946: 946, k947: 947, k948: 948, k949: 949, k950: 950, k951: 951, k952: 952, k953: 953, k954: 954, k955: 955, k956: 956, k957: 957, k958: 958, k959: 959,
+        k960: 960, k961: 961, k962: 962, k963: 963, k964: 964, k965: 965, k966: 966, k967: 967, k968: 968, k969: 969, k970: 970, k971: 971, k972: 972, k973: 973, k974: 974, k975: 975,
+        k976: 976, k977: 977, k978: 978, k979: 979, k980: 980, k981: 981, k982: 982, k983: 983, k984: 984, k985: 985, k986: 986, k987: 987, k988: 988, k989: 989, k990: 990, k991: 991,
+        k992: 992, k993: 993, k994: 994, k995: 995, k996: 996, k997: 997, k998: 998, k999: 999, k1000: 1000, k1001: 1001, k1002: 1002, k1003: 1003, k1004: 1004, k1005: 1005, k1006: 1006, k1007: 1007,
+        k1008: 1008, k1009: 1009, k1010: 1010, k1011: 1011, k1012: 1012, k1013: 1013, k1014: 1014, k1015: 1015, k1016: 1016, k1017: 1017, k1018: 1018, k1019: 1019, k1020: 1020, k1021: 1021, k1022: 1022, k1023: 1023,
+        k1024: 1024, k1025: 1025, k1026: 1026, k1027: 1027, k1028: 1028, k1029: 1029, k1030: 1030, k1031: 1031, k1032: 1032, k1033: 1033, k1034: 1034, k1035: 1035, k1036: 1036, k1037: 1037, k1038: 1038, k1039: 1039,
+        k1040: 1040, k1041: 1041, k1042: 1042, k1043: 1043, k1044: 1044, k1045: 1045, k1046: 1046, k1047: 1047, k1048: 1048, k1049: 1049, k1050: 1050, k1051: 1051, k1052: 1052, k1053: 1053, k1054: 1054, k1055: 1055,
+        k1056: 1056, k1057: 1057, k1058: 1058, k1059: 1059, k1060: 1060, k1061: 1061, k1062: 1062, k1063: 1063, k1064: 1064, k1065: 1065, k1066: 1066, k1067: 1067, k1068: 1068, k1069: 1069, k1070: 1070, k1071: 1071,
+        k1072: 1072, k1073: 1073, k1074: 1074, k1075: 1075, k1076: 1076, k1077: 1077, k1078: 1078, k1079: 1079, k1080: 1080, k1081: 1081, k1082: 1082, k1083: 1083, k1084: 1084, k1085: 1085, k1086: 1086, k1087: 1087,
+        k1088: 1088, k1089: 1089, k1090: 1090, k1091: 1091, k1092: 1092, k1093: 1093, k1094: 1094, k1095: 1095, k1096: 1096, k1097: 1097, k1098: 1098, k1099: 1099, k1100: 1100, k1101: 1101, k1102: 1102, k1103: 1103,
+        k1104: 1104, k1105: 1105, k1106: 1106, k1107: 1107, k1108: 1108, k1109: 1109, k1110: 1110, k1111: 1111, k1112: 1112, k1113: 1113, k1114: 1114, k1115: 1115, k1116: 1116, k1117: 1117, k1118: 1118, k1119: 1119,
+        k1120: 1120, k1121: 1121, k1122: 1122, k1123: 1123, k1124: 1124, k1125: 1125, k1126: 1126, k1127: 1127, k1128: 1128, k1129: 1129, k1130: 1130, k1131: 1131, k1132: 1132, k1133: 1133, k1134: 1134, k1135: 1135,
+        k1136: 1136, k1137: 1137, k1138: 1138, k1139: 1139, k1140: 1140, k1141: 1141, k1142: 1142, k1143: 1143, k1144: 1144, k1145: 1145, k1146: 1146, k1147: 1147, k1148: 1148, k1149: 1149, k1150: 1150, k1151: 1151,
+        k1152: 1152, k1153: 1153, k1154: 1154, k1155: 1155, k1156: 1156, k1157: 1157, k1158: 1158, k1159: 1159, k1160: 1160, k1161: 1161, k1162: 1162, k1163: 1163, k1164: 1164, k1165: 1165, k1166: 1166, k1167: 1167,
+        k1168: 1168, k1169: 1169, k1170: 1170, k1171: 1171, k1172: 1172, k1173: 1173, k1174: 1174, k1175: 1175, k1176: 1176, k1177: 1177, k1178: 1178, k1179: 1179, k1180: 1180, k1181: 1181, k1182: 1182, k1183: 1183,
+        k1184: 1184, k1185: 1185, k1186: 1186, k1187: 1187, k1188: 1188, k1189: 1189, k1190: 1190, k1191: 1191, k1192: 1192, k1193: 1193, k1194: 1194, k1195: 1195, k1196: 1196, k1197: 1197, k1198: 1198, k1199: 1199,
+        k1200: 1200, k1201: 1201, k1202: 1202, k1203: 1203, k1204: 1204, k1205: 1205, k1206: 1206, k1207: 1207, k1208: 1208, k1209: 1209, k1210: 1210, k1211: 1211, k1212: 1212, k1213: 1213, k1214: 1214, k1215: 1215,
+        k1216: 1216, k1217: 1217, k1218: 1218, k1219: 1219, k1220: 1220, k1221: 1221, k1222: 1222, k1223: 1223, k1224: 1224, k1225: 1225, k1226: 1226, k1227: 1227, k1228: 1228, k1229: 1229, k1230: 1230, k1231: 1231,
+        k1232: 1232, k1233: 1233, k1234: 1234, k1235: 1235, k1236: 1236, k1237: 1237, k1238: 1238, k1239: 1239, k1240: 1240, k1241: 1241, k1242: 1242, k1243: 1243, k1244: 1244, k1245: 1245, k1246: 1246, k1247: 1247,
+        k1248: 1248, k1249: 1249, k1250: 1250, k1251: 1251, k1252: 1252, k1253: 1253, k1254: 1254, k1255: 1255, k1256: 1256, k1257: 1257, k1258: 1258, k1259: 1259, k1260: 1260, k1261: 1261, k1262: 1262, k1263: 1263,
+        k1264: 1264, k1265: 1265, k1266: 1266, k1267: 1267, k1268: 1268, k1269: 1269, k1270: 1270, k1271: 1271, k1272: 1272, k1273: 1273, k1274: 1274, k1275: 1275, k1276: 1276, k1277: 1277, k1278: 1278, k1279: 1279,
+        k1280: 1280, k1281: 1281, k1282: 1282, k1283: 1283, k1284: 1284, k1285: 1285, k1286: 1286, k1287: 1287, k1288: 1288, k1289: 1289, k1290: 1290, k1291: 1291, k1292: 1292, k1293: 1293, k1294: 1294, k1295: 1295,
+        k1296: 1296, k1297: 1297, k1298: 1298, k1299: 1299, k1300: 1300, k1301: 1301, k1302: 1302, k1303: 1303, k1304: 1304, k1305: 1305, k1306: 1306, k1307: 1307, k1308: 1308, k1309: 1309, k1310: 1310, k1311: 1311,
+        k1312: 1312, k1313: 1313, k1314: 1314, k1315: 1315, k1316: 1316, k1317: 1317, k1318: 1318, k1319: 1319, k1320: 1320, k1321: 1321, k1322: 1322, k1323: 1323, k1324: 1324, k1325: 1325, k1326: 1326, k1327: 1327,
+        k1328: 1328, k1329: 1329, k1330: 1330, k1331: 1331, k1332: 1332, k1333: 1333, k1334: 1334, k1335: 1335, k1336: 1336, k1337: 1337, k1338: 1338, k1339: 1339, k1340: 1340, k1341: 1341, k1342: 1342, k1343: 1343,
+        k1344: 1344, k1345: 1345, k1346: 1346, k1347: 1347, k1348: 1348, k1349: 1349, k1350: 1350, k1351: 1351, k1352: 1352, k1353: 1353, k1354: 1354, k1355: 1355, k1356: 1356, k1357: 1357, k1358: 1358, k1359: 1359,
+        k1360: 1360, k1361: 1361, k1362: 1362, k1363: 1363, k1364: 1364, k1365: 1365, k1366: 1366, k1367: 1367, k1368: 1368, k1369: 1369, k1370: 1370, k1371: 1371, k1372: 1372, k1373: 1373, k1374: 1374, k1375: 1375,
+        k1376: 1376, k1377: 1377, k1378: 1378, k1379: 1379, k1380: 1380, k1381: 1381, k1382: 1382, k1383: 1383, k1384: 1384, k1385: 1385, k1386: 1386, k1387: 1387, k1388: 1388, k1389: 1389, k1390: 1390, k1391: 1391,
+        k1392: 1392, k1393: 1393, k1394: 1394, k1395: 1395, k1396: 1396, k1397: 1397, k1398: 1398, k1399: 1399, k1400: 1400, k1401: 1401, k1402: 1402, k1403: 1403, k1404: 1404, k1405: 1405, k1406: 1406, k1407: 1407,
+        k1408: 1408, k1409: 1409, k1410: 1410, k1411: 1411, k1412: 1412, k1413: 1413, k1414: 1414, k1415: 1415, k1416: 1416, k1417: 1417, k1418: 1418, k1419: 1419, k1420: 1420, k1421: 1421, k1422: 1422, k1423: 1423,
+        k1424: 1424, k1425: 1425, k1426: 1426, k1427: 1427, k1428: 1428, k1429: 1429, k1430: 1430, k1431: 1431, k1432: 1432, k1433: 1433, k1434: 1434, k1435: 1435, k1436: 1436, k1437: 1437, k1438: 1438, k1439: 1439,
+        k1440: 1440, k1441: 1441, k1442: 1442, k1443: 1443, k1444: 1444, k1445: 1445, k1446: 1446, k1447: 1447, k1448: 1448, k1449: 1449, k1450: 1450, k1451: 1451, k1452: 1452, k1453: 1453, k1454: 1454, k1455: 1455,
+        k1456: 1456, k1457: 1457, k1458: 1458, k1459: 1459, k1460: 1460, k1461: 1461, k1462: 1462, k1463: 1463, k1464: 1464, k1465: 1465, k1466: 1466, k1467: 1467, k1468: 1468, k1469: 1469, k1470: 1470, k1471: 1471,
+        k1472: 1472, k1473: 1473, k1474: 1474, k1475: 1475, k1476: 1476, k1477: 1477, k1478: 1478, k1479: 1479, k1480: 1480, k1481: 1481, k1482: 1482, k1483: 1483, k1484: 1484, k1485: 1485, k1486: 1486, k1487: 1487,
+        k1488: 1488, k1489: 1489, k1490: 1490, k1491: 1491, k1492: 1492, k1493: 1493, k1494: 1494, k1495: 1495, k1496: 1496, k1497: 1497, k1498: 1498, k1499: 1499, k1500: 1500, k1501: 1501, k1502: 1502, k1503: 1503,
+        k1504: 1504, k1505: 1505, k1506: 1506, k1507: 1507, k1508: 1508, k1509: 1509, k1510: 1510, k1511: 1511, k1512: 1512, k1513: 1513, k1514: 1514, k1515: 1515, k1516: 1516, k1517: 1517, k1518: 1518, k1519: 1519,
+        k1520: 1520, k1521: 1521, k1522: 1522, k1523: 1523, k1524: 1524, k1525: 1525, k1526: 1526, k1527: 1527, k1528: 1528, k1529: 1529, k1530: 1530, k1531: 1531, k1532: 1532, k1533: 1533, k1534: 1534, k1535: 1535,
+        k1536: 1536, k1537: 1537, k1538: 1538, k1539: 1539, k1540: 1540, k1541: 1541, k1542: 1542, k1543: 1543, k1544: 1544, k1545: 1545, k1546: 1546, k1547: 1547, k1548: 1548, k1549: 1549, k1550: 1550, k1551: 1551,
+        k1552: 1552, k1553: 1553, k1554: 1554, k1555: 1555, k1556: 1556, k1557: 1557, k1558: 1558, k1559: 1559, k1560: 1560, k1561: 1561, k1562: 1562, k1563: 1563, k1564: 1564, k1565: 1565, k1566: 1566, k1567: 1567,
+        k1568: 1568, k1569: 1569, k1570: 1570, k1571: 1571, k1572: 1572, k1573: 1573, k1574: 1574, k1575: 1575, k1576: 1576, k1577: 1577, k1578: 1578, k1579: 1579, k1580: 1580, k1581: 1581, k1582: 1582, k1583: 1583,
+        k1584: 1584, k1585: 1585, k1586: 1586, k1587: 1587, k1588: 1588, k1589: 1589, k1590: 1590, k1591: 1591, k1592: 1592, k1593: 1593, k1594: 1594, k1595: 1595, k1596: 1596, k1597: 1597, k1598: 1598, k1599: 1599,
+    };
+}
+function isFilled(o, prefix, count, indexKeys = 0) {
+    const keys = Object.keys(o);
+    check(keys.length, count + indexKeys, "the number of properties " + prefix);
+    for (let i = 0; i < count; i++) {
+        check(keys[i + indexKeys], prefix + i, "the order of properties");
+        check(o[prefix + i], i, "the value of " + prefix + i);
+    }
+}
+function during(make, ...expected) {
+    const made = make();
+    isFilled(made, ...expected);
+}
+
+const first = during(() => fillsMany({ }), "p", 160);
+const again = during(() => fillsMany({ }), "p", 160);
+
+const some = [0, 1, 2].map(() => during(() => fillsSome({ }), "q", 24));
+const instances = [0, 1, 2].map(() => during(() => new Instance, "r", 24));
+const table = during(makesTable, "k", 1600, 2);
+console.log("passed");
+//// runs-of-stores-on-growing-objects/main.ts
+// Runs of property stores that add properties to an object keep the order of the properties.
+import "./impl.js";
+//// scope-chain-across-calls/impl.js
+////= check
+
+let afterCall = () => { };
+function calls() { afterCall(); }
+
+function outermost(a) {
+    let shared = a;
+    function middle(b) {
+        let own = b;
+        function innermost(c, takesFirst) {
+            let result = [shared, own];
+            calls();
+            if (takesFirst) {
+                result.push(shared, own);
+                shared += c;
+                calls();
+                result.push(shared, own);
+            } else {
+                result.push(own, shared);
+                own += c;
+                calls();
+                result.push(own, shared);
+            }
+            calls();
+            result.push(shared, own);
+            for (let i = 0; i < 2; i++) {
+                calls();
+                result.push(shared + own);
+            }
+            return result.join();
+        }
+        return { innermost, setsOwn(v) { own = v; }, getsOwn() { return own; } };
+    }
+    return { middle, setsShared(v) { shared = v; }, getsShared() { return shared; } };
+}
+
+let first = outermost(1), second = outermost(100);
+let firstMiddle = first.middle(10), otherMiddle = first.middle(20), secondMiddle = second.middle(1000);
+
+check(firstMiddle.innermost(1, true), "1,10,1,10,2,10,2,10,12,12", "nothing changes during the calls, first path");
+check(firstMiddle.innermost(1, false), "2,10,10,2,11,2,2,11,13,13", "nothing changes during the calls, second path");
+check(otherMiddle.innermost(5, false), "2,20,20,2,25,2,2,25,27,27", "another environment with the same parent");
+check(secondMiddle.innermost(7, true), "100,1000,100,1000,107,1000,107,1000,1107,1107", "another chain");
+
+let count = 0;
+afterCall = () => {
+    count++;
+    first.setsShared(first.getsShared() + 1000);
+    firstMiddle.setsOwn(firstMiddle.getsOwn() + 100000);
+};
+check(firstMiddle.innermost(1, true), "2,11,1002,100011,2003,200011,3003,300011,404014,505014", "both variables change during every call, first path");
+check(count, 5, "the number of calls");
+check(firstMiddle.innermost(1, false), "5003,500011,600011,6003,700012,7003,8003,800012,909015,1010015", "both variables change during every call, second path");
+check(otherMiddle.innermost(0, true), "10003,25,11003,25,12003,25,13003,25,14028,15028", "only the parent's variable changes for the other environment");
+check(secondMiddle.innermost(0, false), "107,1000,1000,107,1000,107,107,1000,1107,1107", "nothing changes for the other chain");
+afterCall = () => { };
+
+function deep(a) {
+    return function (b) {
+        return function (c) {
+            return function (d) {
+                return function (choose) {
+                    let sum = a + b + c + d;
+                    calls();
+                    if (choose)
+                        sum += a + c;
+                    else
+                        sum += b + d;
+                    calls();
+                    a++, b++, c++, d++;
+                    return sum + a + b + c + d;
+                };
+            };
+        };
+    };
+}
+let deepest = deep(1)(10)(100)(1000);
+check(deepest(true), 1111 + 101 + 1115, "four levels, first path");
+check(deepest(false), 1115 + 1012 + 1119, "four levels, second path");
+let sibling = deep(2)(20)(200)(2000);
+check(sibling(true), 2222 + 202 + 2226, "another chain of four levels");
+check(deepest(true), 1119 + 105 + 1123, "the first chain again");
+console.log("passed");
+//// scope-chain-across-calls/main.ts
+// Captured variables of outer functions are read again after calls that may have changed them.
+import "./impl.js";
+//// scopes-of-call-and-construct-code/impl.js
+////= check
+
+(function () {
+    function OnlyConstructed(start) {
+        var n = start;
+        var twice = function twice(x) { return x * 2; };
+        this.get = function readsOnlyConstructed() { return twice(n) + 1; };
+    }
+    check(new OnlyConstructed(3).get(), 7, "only constructed");
+
+    function OnlyCalled(start) {
+        var n = start;
+        var halves = function halves(x) { return x / 2; };
+        return { owner: this, get: function readsOnlyCalled() { return halves(n) + 1; } };
+    }
+    check(OnlyCalled(4).get(), 3, "only called");
+
+    function Both(start) {
+        var m = start;
+        var thrice = function thrice(x) { return x * 3; };
+        var read = function readsBoth() { return thrice(m) + 1; };
+        if (new.target)
+            this.read = read;
+        return read;
+    }
+    check(Both(1)(), 4, "called");
+    check(new Both(2)(), 7, "constructed");
+    check(Both(1.5)(), 5.5, "called with a double");
+    check(new Both("2")(), 7, "constructed with a string");
+
+    function Differs() {
+        var pick = new.target ? function whenConstructed(x) { return x + 1; } : function whenCalled(x) { return x + 2; };
+        return function runsPick(x) { return pick(x); };
+    }
+    check(Differs()(1), 3, "the function stored by the call");
+    check(new Differs()(1), 2, "the function stored by the construction");
+
+    function MakesEither() {
+        return new.target ? function madeByConstruction(x) { return x + 1; } : function madeByCall(x) { return x + 2; };
+    }
+    check(new MakesEither()(1), 2, "a function that only the construction makes");
+    check(MakesEither()(1), 3, "a function that only the call makes");
+
+    function MakesWhenConstructed() {
+        if (!new.target)
+            return null;
+        var factor = 2;
+        return function madeWhenConstructed(x) {
+            return [x].map(function nestedInMadeWhenConstructed(y) { return y * factor; })[0];
+        };
+    }
+    check(new MakesWhenConstructed()(4), 8, "a function, and one nested in it, that the call never makes");
+    check(MakesWhenConstructed(), null, "the call makes nothing");
+
+    function KeepsEither() {
+        var kept = new.target ? "text" : 1;
+        return function readsKept() { return kept + 1; };
+    }
+    check(KeepsEither()(), 2, "a number from the call");
+    check(new KeepsEither()(), "text1", "a string from the construction");
+
+    function KeepsTarget() {
+        var target = new.target;
+        return function readsTarget() { return typeof target; };
+    }
+    check(new KeepsTarget()(), "function", "new.target of the construction");
+    check(KeepsTarget()(), "undefined", "new.target of the call");
+
+    function KeepsOr() {
+        let who = new.target || 1;
+        return function readsWho() { return typeof (who + 1); };
+    }
+    check(KeepsOr()(), "number", "the other operand in the call");
+    check(new KeepsOr()(), "string", "new.target in the construction");
+
+    function KeepsCoalesced() {
+        let who = new.target ?? 1.5;
+        return function readsCoalesced() { return typeof (who + 1); };
+    }
+    check(KeepsCoalesced()(), "number", "the default in the call");
+    check(new KeepsCoalesced()(), "string", "no default in the construction");
+
+    function OnlyConstructedOr() {
+        let who = new.target || 1;
+        return function readsOnlyConstructedOr() { return typeof (who + 1); };
+    }
+    check(new OnlyConstructedOr()(), "string", "new.target of a function that is only constructed");
+
+    function InBlock(n) {
+        let all = [];
+        for (let i = 0; i < n; i++) {
+            let who = new.target || i;
+            all.push(function readsInBlock() { return typeof (who + 1); });
+        }
+        return all;
+    }
+    check(InBlock(2)[1](), "number", "in a block of the call");
+    check(new InBlock(2)[1](), "string", "in a block of the construction");
+
+    function NestedOr() {
+        let outer = new.target || 1;
+        return function MiddleOr() {
+            let inner = new.target || 2;
+            return function readsNestedOr() { return typeof (outer + 1) + " " + typeof (inner + 1); };
+        };
+    }
+    check(NestedOr()()(), "number number", "called, called");
+    check(new (NestedOr())()(), "number string", "called, constructed");
+    check(new NestedOr()()(), "string number", "constructed, called");
+    check(new (new NestedOr())()(), "string string", "constructed, constructed");
+
+    function WritesOr() {
+        let who = 1;
+        let write = function writesWho(v) { who = v; };
+        write(new.target || 2);
+        return function readsWritten() { return typeof (who + 1); };
+    }
+    check(WritesOr()(), "number", "a closure of the call writes a number");
+    check(new WritesOr()(), "string", "a closure of the construction writes new.target");
+
+    function HoldsThis() {
+        "use strict";
+        return () => this;
+    }
+    check(HoldsThis()(), undefined, "this of the call");
+    check(typeof new HoldsThis()(), "object", "this of the construction");
+    check(HoldsThis.call(5)(), 5, "this given to the call");
+
+    function WritesBack(value) {
+        var kept = 0;
+        var write = function writesKept(v) { kept = v; };
+        write(value);
+        return new.target ? { kept } : kept;
+    }
+    check(WritesBack(1.5), 1.5, "written by a closure of the call");
+    check(new WritesBack("s").kept, "s", "written by a closure of the construction");
+
+    function InLoop(n) {
+        var all = [];
+        for (let i = 0; i < n; i++) {
+            let j = new.target ? String(i) : i;
+            all.push(function readsJ() { return j; });
+        }
+        return all;
+    }
+    check(InLoop(2)[1](), 1, "a scope made in a loop of the call");
+    check(new InLoop(2)[1](), "1", "a scope made in a loop of the construction");
+
+    function Nested(a) {
+        var outer = new.target ? [a] : a;
+        return function Middle(b) {
+            var inner = new.target ? { b } : b;
+            return function readsNested() { return [outer, inner]; };
+        };
+    }
+    check(JSON.stringify(Nested(1)(2)()), "[1,2]", "called, called");
+    check(JSON.stringify(new (Nested(1))(2)()), "[1,{\"b\":2}]", "called, constructed");
+    check(JSON.stringify(new Nested(1)(2)()), "[[1],2]", "constructed, called");
+    check(JSON.stringify(new (new Nested(1))(2)()), "[[1],{\"b\":2}]", "constructed, constructed");
+
+    function Uninitialized(early) {
+        var read = function readsLater() { return later; };
+        if (early) {
+            try {
+                read();
+            } catch (error) {
+                return new.target ? { name: error.name } : error.name;
+            }
+        }
+        let later = new.target ? "constructed" : "called";
+        return new.target ? { name: read() } : read();
+    }
+    check(Uninitialized(true), "ReferenceError", "read too early in the call");
+    check(new Uninitialized(true).name, "ReferenceError", "read too early in the construction");
+    check(Uninitialized(false), "called", "read in time in the call");
+    check(new Uninitialized(false).name, "constructed", "read in time in the construction");
+})();
+console.log("passed");
+//// scopes-of-call-and-construct-code/main.ts
+// Functions that are only constructed, only called, or both, and that capture variables.
+import "./impl.js";
+//// search-for-one-character/impl.js
+function check(actual, expected, what)
+{
+    if (!Object.is(actual, expected))
+        throw new Error(what + ": " + String(Object.is(actual, -0) ? "-0" : actual) + " instead of " + String(Object.is(expected, -0) ? "-0" : expected));
+}
+
+function errorOf(run)
+////= lines-2
+function test()
+{
+    const long = "abcdefghijklmnopqrstuvwxyz0123456789";
+    function dash(s) { return s.indexOf("-"); }
+    function hasDash(s) { return s.includes("-"); }
+    function accent(s) { return s.indexOf("\xe9"); }
+    function euro(s) { return s.indexOf("€"); }
+    function nothing(s) { return s.indexOf(""); }
+    function two(s) { return s.indexOf("--"); }
+    function from(s, i) { return s.indexOf("-", i); }
+    function variable(s, c) { return s.indexOf(c); }
+    function last(s) { return s.lastIndexOf("-"); }
+    function ofAnything(x) { return x.indexOf("-"); }
+    function afterTypeof(x) { if (typeof x === "string") return x.indexOf("-"); return -2; }
+
+    const strings = [
+        ["", -1], ["-", 0], ["a", -1], ["a-", 1], ["-a", 0], ["a-b", 1], ["a-b-c", 1], ["div", -1], ["my-element", 2], ["abcdefgh", -1], ["abcdefg-", 7],
+        [long.slice(0, 31) + "-", 31], [long.slice(0, 32), -1], [long.slice(0, 32) + "-", 32], [long + "-", 36], [long + long + long, -1], [long + long + long + "-x", 108], ["-" + long + long, 0],
+        ["\xe9-", 1], ["\xff\xfe-", 2], ["€-", 1], ["a€b", -1], ["€" + long + "-", 37], ["‐", -1], ["ĭ", -1], ["－", -1],
+    ];
+    for (let round = 0; round < 50; ++round) {
+        for (const [string, expected] of strings) {
+            const s = String(string);
+            check(dash(s), expected, "indexOf in " + s);
+            check(hasDash(s), expected >= 0, "includes in " + s);
+            check(dash(("x" + s + "y").slice(1, -1)), expected, "indexOf in a slice of " + s);
+            check(dash("ab" + s), expected < 0 ? -1 : expected + 2, "indexOf in a rope with " + s);
+            check(dash(s + "q" + round), expected, "indexOf in a rope that starts with " + s);
+            check(afterTypeof(s), expected, "indexOf behind typeof in " + s);
+            check(ofAnything(s), expected, "indexOf of anything in " + s);
+            check(variable(s, "-"), expected, "indexOf of a variable in " + s);
+            check(from(s, 0), expected, "indexOf from 0 in " + s);
+        }
+        check(accent("caf\xe9"), 3, "a Latin-1 character");
+        check(accent("cafe"), -1, "a Latin-1 character");
+        check(accent("€caf\xe9"), 4, "a Latin-1 character among wide ones");
+        check(accent("é"), -1, "a Latin-1 character and a combining one");
+        check(euro("5€"), 1, "a wide character");
+        check(euro("5e"), -1, "a wide character in a narrow string");
+        check(euro("\xac"), -1, "the low byte of a wide character");
+        check(nothing("ab"), 0, "an empty needle");
+        check(two("a--b"), 1, "two characters");
+        check(two("a-b"), -1, "two characters");
+        check(from("a-b-c", 2), 3, "from an index");
+        check(last("a-b-c"), 3, "lastIndexOf");
+        check(ofAnything(["a", "-"]), 1, "an array");
+        check(ofAnything(new String("a-b")), 1, "a String object");
+        check(ofAnything({ indexOf() { return "mine"; } }), "mine", "an object with its own indexOf");
+        check(afterTypeof(5), -2, "no string");
+    }
+    for (const length of [33, 65534, 65535, 65536, 65539]) {
+        const filler = "x".repeat(length);
+        for (const [string, expected] of [[filler, -1], [filler + "ab-", length + 2], ["-" + filler, 0]]) {
+            const flat = String(string);
+            flat.charCodeAt(0);
+            check(dash(flat), expected, "indexOf in a string of " + flat.length + " characters");
+            check(hasDash(flat), expected >= 0, "includes in a string of " + flat.length + " characters");
+            check(dash(("y" + flat + "y").slice(1, -1)), expected, "indexOf in a slice of " + flat.length + " characters");
+        }
+    }
+    check(errorOf(() => ofAnything(null)), TypeError, "null");
+    check(errorOf(() => ofAnything(5)), TypeError, "a number");
+}
+test();
+console.log("passed");
+//// search-for-one-character/main.ts
+// `indexOf` and `includes` with a one-character string: Latin-1, wide and combining characters.
+import "./impl.js";
+//// set-and-map-iteration-without-operations/impl.js
+////= check
+function joined(iterable) {
+    let s = "";
+    for (const x of iterable)
+        s += String(x) + ";";
+    return s;
+}
+function joinedPairs(iterable) {
+    let s = "";
+    for (const [key, value] of iterable)
+        s += String(key) + "=" + String(value) + ";";
+    return s;
+}
+function joinedWhile(iterable, during) {
+    let s = "";
+    for (const x of iterable) {
+        s += String(x) + ";";
+        during(x);
+    }
+    return s;
+}
+function firstOf(iterable) {
+    for (const x of iterable)
+        return x;
+    return "nothing";
+}
+function firstTwo(iterable) {
+    const [first, second] = iterable;
+    return String(first) + " " + String(second);
+}
+
+function range(count) {
+    const result = [];
+    for (let i = 0; i < count; i++)
+        result.push(i);
+    return result;
+}
+
+{
+    const set = new Set(range(100));
+    const map = new Map(range(100).map(i => [i, "v" + i]));
+    const expectedKeys = range(100).join(";") + ";";
+    const expectedValues = range(100).map(i => "v" + i).join(";") + ";";
+    for (let round = 0; round < 10; round++) {
+        check(joined(set), expectedKeys, "a set");
+        check(joined(set.values()), expectedKeys, "the values of a set");
+        check(joined(set.keys()), expectedKeys, "the keys of a set");
+        check(joined(map.keys()), expectedKeys, "the keys of a map");
+        check(joined(map.values()), expectedValues, "the values of a map");
+    }
+    check(joinedPairs(map), range(100).map(i => i + "=v" + i).join(";") + ";", "a map");
+    check(joinedPairs(set.entries()), range(100).map(i => i + "=" + i).join(";") + ";", "the entries of a set");
+    check(joinedPairs(map.entries()), range(100).map(i => i + "=v" + i).join(";") + ";", "the entries of a map");
+    const pairs = [];
+    for (const pair of map)
+        pairs.push(pair);
+    check(pairs.length, 100, "the pairs of a map");
+    check(Array.isArray(pairs[7]) && pairs[7].length === 2 && Object.getPrototypeOf(pairs[7]) === Array.prototype, true, "a pair is an array of two");
+    check(pairs[7] !== pairs[8] && pairs[7][0] === 7 && pairs[7][1] === "v7", true, "each pair is its own array");
+    pairs[7].push("more");
+    check(pairs[7].join(), "7,v7,more", "a pair can grow");
+    const shrinking = new Map(range(6).map(i => [i, i * 2]));
+    let seen = "";
+    for (const [key, value] of shrinking) {
+        seen += key + "=" + value + ";";
+        shrinking.delete(key + 1);
+    }
+    check(seen, "0=0;2=4;4=8;", "the next entry deleted while pairs are made");
+}
+{
+    const object = {}, symbol = Symbol("s");
+    const set = new Set([1, 1.5, "text", object, symbol, null, undefined, true, NaN, -0, 10n]);
+    const seen = [];
+    for (const x of set)
+        seen.push(x);
+    check(seen.length, 11, "a set of anything");
+    check(seen[3], object, "an object in a set");
+    check(seen[4], symbol, "a symbol in a set");
+    check(seen[6], undefined, "undefined in a set");
+    check(seen[8], NaN, "NaN in a set");
+    check(seen[9], 0, "negative zero in a set");
+    const map = new Map([["undefined", undefined], ["null", null], ["zero", 0]]);
+    check(joined(map.values()), "undefined;null;0;", "values of a map that look like nothing");
+}
+{
+    check(joined(new Set), "", "an empty set");
+    check(joined(new Map().keys()), "", "the keys of an empty map");
+    const set = new Set;
+    const early = set.values();
+    set.add("late");
+    check(joined(early), "late;", "an iterator made while the set was empty");
+    const emptied = new Set([1]);
+    emptied.delete(1);
+    check(joined(emptied), "", "a set that lost its only element");
+}
+{
+    const set = new Set([0]);
+    check(joinedWhile(set, x => { if (x < 40) set.add(x + 1); }), range(41).join(";") + ";", "a set that grows while it is iterated over");
+    const map = new Map([[0, 0]]);
+    check(joinedWhile(map.keys(), x => { if (x < 40) map.set(x + 1, 0); }), range(41).join(";") + ";", "a map that grows while it is iterated over");
+}
+{
+    let set = new Set(range(6));
+    check(joinedWhile(set, x => set.delete(x)), "0;1;2;3;4;5;", "each element deleted when it is seen");
+    check(set.size, 0, "each element deleted when it is seen");
+    set = new Set(range(6));
+    check(joinedWhile(set, x => set.delete(x + 1)), "0;2;4;", "the next element deleted");
+    set = new Set(range(6));
+    check(joinedWhile(set, x => { if (x) set.delete(x - 1); }), "0;1;2;3;4;5;", "the previous element deleted");
+    set = new Set(range(6));
+    check(joinedWhile(set, x => { if (x === 2) { set.delete(0); set.add(0); } }), "0;1;2;3;4;5;0;", "an element deleted and added again");
+    set = new Set(range(6));
+    check(joinedWhile(set, x => { if (x === 2) set.clear(); }), "0;1;2;", "a set cleared while it is iterated over");
+    set = new Set(range(6));
+    check(joinedWhile(set, x => { if (x === 2) { set.clear(); set.add("a"); set.add("b"); } }), "0;1;2;a;b;", "a set cleared and refilled");
+    set = new Set(range(200));
+    check(joinedWhile(set, x => { if (x === 10) { for (let i = 0; i < 190; i++) set.delete(i); } }), range(11).join(";") + ";" + range(200).slice(190).join(";") + ";", "a set that shrinks while it is iterated over");
+    const map = new Map(range(6).map(i => [i, i * 2]));
+    check(joinedWhile(map.values(), x => map.delete(x / 2 + 1)), "0;4;8;", "the next entry of a map deleted");
+}
+{
+    const set = new Set(range(100));
+    const iterator = set.values();
+    check(firstOf(iterator), 0, "a loop that is left early");
+    check(firstOf(iterator), 1, "the same iterator afterwards");
+    check(firstTwo(iterator), "2 3", "a pattern on the same iterator");
+    check(joined(iterator), range(100).slice(4).join(";") + ";", "the rest");
+    check(joined(iterator), "", "an iterator that reached the end");
+    set.add("more");
+    check(joined(iterator), "", "an iterator that reached the end, after an addition");
+    check(firstOf(iterator), "nothing", "an iterator that reached the end, once more");
+    check(iterator.next().done, true, "an iterator that reached the end, asked directly");
+
+    const direct = set.values();
+    while (!direct.next().done);
+    check(joined(direct), "", "an iterator that was exhausted by calls of next");
+    const mixed = set.values();
+    check(mixed.next().value, 0, "a call of next");
+    check(firstOf(mixed), 1, "a loop after a call of next");
+    check(mixed.next().value, 2, "a call of next after a loop");
+    check(firstTwo(new Set([1])), "1 undefined", "a pattern longer than the set");
+    check(firstTwo(new Map([[1, 2]]).values()), "2 undefined", "a pattern longer than the map");
+}
+{
+    class Sub extends Set { }
+    check(joined(new Sub([1, 2])), "1;2;", "an instance of a subclass of Set");
+    class Reversed extends Set {
+        *[Symbol.iterator]() { yield* [...super.values()].reverse(); }
+    }
+    check(joined(new Reversed([1, 2])), "2;1;", "a subclass with its own iterator");
+    const own = new Set([1, 2]).values();
+    own.next = function () { return { done: true }; };
+    check(joined(own), "", "an iterator with its own next");
+}
+console.log("passed");
+//// set-and-map-iteration-without-operations/main.ts
+// `for..of` over Sets and over the keys, values and entries of Maps and Sets.
+import "./impl.js";
+//// shadowed-builtin-methods/impl.js
+(function () {
+    function check(actual, expected, what) {
+        if (!Object.is(actual, expected))
+            throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
+    }
+    const answer = () => 42;
+
+    function byStore() { const map = new Map(); map.has = answer; return map.has(1); }
+    function byDefinition() { const map = new Map(); Object.defineProperty(map, "has", { value: answer }); return map.has(1); }
+    function byAccessor() { const map = new Map(); let reads = 0; Object.defineProperty(map, "has", { get() { reads++; return answer; } }); map.has(1); return reads; }
+    function byAssign() { const map = new Map(); Object.assign(map, { has: answer }); return map.has(1); }
+    function byReflect() { const map = new Map(); Reflect.set(map, "has", answer); return map.has(1); }
+    function byComputedName(name) { const map = new Map(); map[name] = answer; return map.has(1); }
+    function byNewPrototype() { const map = new Map(); Object.setPrototypeOf(map, { has: answer }); return map.has(1); }
+    function byProto() { const map = new Map(); map.__proto__ = { has: answer }; return map.has(1); }
+    function withoutPrototype() { const map = new Map(); Object.setPrototypeOf(map, null); try { return map.has(1); } catch (error) { return error.constructor.name; } }
+    class ReturnsArgument { constructor(object) { return object; } }
+    class Stamps extends ReturnsArgument { has = answer; }
+    function byField() { const map = new Map(); new Stamps(map); return map.has(1); }
+    function byProxy() { const map = new Map(); new Proxy(map, { }).has = answer; return map.has(1); }
+    function byInterpretedCode() { const map = new Map(); (0, eval)("(function (object, f) { object.has = f; })")(map, answer); return map.has(1); }
+    check([byStore(), byDefinition(), byAccessor(), byAssign(), byReflect(), byComputedName("has"), byNewPrototype(), byProto(), withoutPrototype(), byField(), byProxy(), byInterpretedCode()].join(),
+        "42,42,1,42,42,42,42,42,TypeError,42,42,42", "Map.prototype.has shadowed in twelve ways");
+
+    function setAdd() { const set = new Set(); set.add = answer; return set.add(1); }
+    function setDelete() { const set = new Set([1]); set.delete = answer; return set.delete(1); }
+    function setSize() { const set = new Set([1]); Object.defineProperty(set, "size", { value: "many" }); return set.size; }
+    function mapSize() { const map = new Map(); Object.setPrototypeOf(map, { size: "none" }); return map.size; }
+    function mapGet() { const map = new Map([[1, 2]]); map.get = answer; return map.get(1); }
+    function mapSet() { const map = new Map(); map.set = answer; return map.set(1, 2); }
+    function weakMapGet() { const map = new WeakMap(); map.get = answer; return map.get({ }); }
+    function weakSetHas() { const set = new WeakSet(); set.has = answer; return set.has({ }); }
+    function dateTime() { const date = new Date(0); date.getTime = answer; return date.getTime(); }
+    function dateYear() { const date = new Date(0); date.getUTCFullYear = answer; return date.getUTCFullYear(); }
+    function literalExec() { const pattern = /a/g; pattern.exec = answer; return pattern.exec("a"); }
+    function constructedTest() { const pattern = new RegExp("a"); pattern.test = answer; return pattern.test("a"); }
+    function testWithOwnExec() { const pattern = new RegExp("a"); pattern.exec = () => null; return pattern.test("a"); }
+    check([setAdd(), setDelete(), setSize(), mapSize(), mapGet(), mapSet(), weakMapGet(), weakSetHas(), dateTime(), dateYear(), literalExec(), constructedTest(), testWithOwnExec()].join(),
+        "42,42,many,none,42,42,42,42,42,42,42,42,false", "the other kinds");
+
+    class Textual extends Map {
+        has(key) { return super.has(key) ? "present" : ""; }
+        get size() { return super.size ? "some" : ""; }
+    }
+    function returnsHas(map, key) { return map.has(key); }
+    function returnsSize(map) { return map.size; }
+    const plain = new Map([[1, 1]]), shadowed = new Map([[1, 1]]), inheriting = new Map([[1, 1]]);
+    shadowed.has = key => "own " + key;
+    Object.setPrototypeOf(inheriting, { has(key) { return "inherited " + key; }, size: -1 });
+    check([returnsHas(plain, 1), returnsHas(plain, 2), returnsHas(shadowed, 1), returnsHas(inheriting, 1)].join(), "true,false,own 1,inherited 1", "maps from outside");
+    check([returnsSize(plain), returnsSize(shadowed), returnsSize(inheriting)].join(), "1,1,-1", "sizes of maps from outside");
+})();
+console.log("passed");
+//// shadowed-builtin-methods/main.ts
+// Objects that define their own methods with the names of built-in methods of Map, Set, Array and String.
+import "./impl.js";
+//// slice-of-unknown-receiver/impl.js
+(function () {
+    function check(actual, expected, what) {
+        if (!Object.is(actual, expected))
+            throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
+    }
+
+    function sliceFrom(x, start) { return x.slice(start); }
+    function sliceWithEnd(x, start, end) { return x.slice(start, end); }
+    function sliceAll(x) { return x.slice(); }
+    function sliceWithMore(x, start, end) { return x.slice(start, end, 1); }
+    function sliceOfArray(n) { return [n, n + 1, n + 2].slice(1).length; }
+    function sliceOfText(n) { return ("text" + n).slice(1, 3); }
+    function sliceIgnored(x, start) { x.slice(start); return 1; }
+    function sliceWithoutReceiver(x) { let slice = x.slice; try { return slice(1); } catch (error) { return error.constructor.name; } }
+
+    function toInteger(value) {
+        let number = Number(value);
+        return number !== number ? 0 : Math.trunc(number);
+    }
+    function expected(text, start, end) {
+        let length = text.length;
+        let from = toInteger(start);
+        let to = end === undefined ? length : toInteger(end);
+        from = from < 0 ? Math.max(length + from, 0) : Math.min(from, length);
+        to = to < 0 ? Math.max(length + to, 0) : Math.min(to, length);
+        let result = "";
+        for (let i = from; i < to; ++i)
+            result += text[i];
+        return result;
+    }
+
+    const half = "a rope of two ";
+    const texts = ["", "x", "hello, world", "a text of more than sixteen characters", "sn☃wman and friends", half + ["halves"][0], "0123456789abcdefghij".slice(3, 19)];
+    const positions = [0, 1, 2, 5, 12, 100, -1, -2, -5, -100, 2147483647, -2147483648, 1.5, -1.5, NaN, Infinity, -Infinity, 4294967296, undefined, null, true, "2", "-3", "x", { valueOf() { return 2; } }];
+    for (let round = 0; round < 2; ++round) {
+        for (let text of texts) {
+            check(sliceAll(text), text, "no argument");
+            for (let start of positions) {
+                check(sliceFrom(text, start), expected(text, start, undefined), JSON.stringify(text) + ".slice(" + String(start) + ")");
+                check(sliceIgnored(text, start), 1, "the result is not used");
+                for (let end of positions) {
+                    check(sliceWithEnd(text, start, end), expected(text, start, end), JSON.stringify(text) + ".slice(" + String(start) + ", " + String(end) + ")");
+                    check(sliceWithMore(text, start, end), expected(text, start, end), "three arguments");
+                }
+            }
+        }
+    }
+
+    check(sliceFrom([1, 2, 3], 1).join(), "2,3", "an array");
+    check(sliceWithEnd([1, 2, 3, 4], 1, 3).join(), "2,3", "an array, with an end");
+    check(sliceWithEnd(new Uint8Array([1, 2, 3, 4]), 1, -1).join(), "2,3", "a typed array");
+    check(sliceFrom(new String("object"), 2), "ject", "a String object");
+    check(sliceWithEnd({ slice(start, end) { return this.base + start + end; }, base: 10 }, 1, 2), 13, "a method of the program");
+    check(sliceFrom({ slice: Array.prototype.slice, length: 2, 0: "a", 1: "b" }, 1).join(), "b", "the method of arrays on another object");
+    check(sliceFrom({ slice: String.prototype.slice, toString() { return "converted"; } }, 3), "verted", "the method of strings on an object");
+    check(sliceWithoutReceiver("text"), "TypeError", "the method of strings without a receiver");
+    check(sliceWithoutReceiver({ slice(start) { return start + 1; } }), 2, "a method of the program without a receiver");
+    for (let nothing of [undefined, null]) {
+        let thrown = "nothing";
+        try {
+            sliceFrom(nothing, 1);
+        } catch (error) {
+            thrown = error.constructor.name;
+        }
+        check(thrown, "TypeError", "no receiver");
+    }
+    check(sliceOfArray(1), 2, "an array literal");
+    check(sliceOfText(5), "ex", "a proven string");
+
+    function readsAround(o, x, start) {
+        let before = o.p;
+        let sliced = x.slice(start);
+        return before + ":" + o.p + ":" + sliced;
+    }
+    let observed = { p: 1 };
+    check(readsAround(observed, "text", 1), "1:1:ext", "nothing changes");
+    check(readsAround(observed, { slice() { observed.p = 2; return "z"; } }, 1), "1:2:z", "a method of the program stores");
+    check(readsAround(observed, "text", { valueOf() { observed.p = 3; return 2; } }), "2:3:xt", "the conversion of an argument stores");
+    check(readsAround(observed, "text", 3), "3:3:t", "nothing changes again");
+
+    let order = [];
+    check(sliceWithEnd("ordered", { valueOf() { order.push("start"); return 1; } }, { valueOf() { order.push("end"); return 3; } }), "rd", "both arguments are objects");
+    check(order.join(), "start,end", "the order of conversions");
+})();
+console.log("passed");
+//// slice-of-unknown-receiver/main.ts
+// `slice` on a receiver of unknown type: strings, arrays, typed arrays and String objects, with zero to three arguments.
+import "./impl.js";
+//// small-and-large-callees/impl.js
+////= check
+
+(function () {
+function small(a, b) { return a + b; }
+function callsSmall(count) { let sum = 0; for (let i = 0; i < count; i++) sum += small(i, 1); return sum; }
+function callsSmallAgain(count) { let sum = 0; for (let i = 0; i < count; i++) sum += small(i, 2); return sum; }
+check(callsSmall(4), 10, "a small callee");
+check(callsSmallAgain(4), 14, "a small callee, its second site");
+
+function big(a, b, c) {
+    let t = a * 2 + b; if (t > c) t -= c; else t += c; t = (t ^ a) + (b | c); if (t < 0) t = -t; t = t % 1000;
+    t += (a & b) + (b & c) + (a | c) - (t >> 1); if (t > c) t -= c; else t += c; t = (t ^ a) + (b | c); if (t < 0) t = -t;
+    return t % 1000 + (a & b) + (b & c) + (a | c) - (t >> 1);
+}
+function callsBig(count) { let sum = 0; for (let i = 0; i < count; i++) sum += big(i, 3, 5); return sum; }
+function callsBigAgain(count) { let sum = 0; for (let i = 0; i < count; i++) sum += big(i, 4, 6); return sum; }
+check(callsBig(3), big(0, 3, 5) + big(1, 3, 5) + big(2, 3, 5), "a big callee");
+check(callsBigAgain(3), big(0, 4, 6) + big(1, 4, 6) + big(2, 4, 6), "a big callee, its second site");
+
+function catches(a) { try { return a.length; } catch { return -1; } }
+function callsCatches(count) { let sum = 0; for (let i = 0; i < count; i++) sum += catches(i ? "ab" : null); return sum; }
+check(callsCatches(3), 3, "a callee that catches");
+
+function readsArguments() { let all = arguments; return all[0] + all.length; }
+function callsReadsArguments(count) { let sum = 0; for (let i = 0; i < count; i++) sum += readsArguments(i, i); return sum; }
+check(callsReadsArguments(3), 9, "a callee that reads its arguments object");
+
+function down(n) { return n ? down(n - 1) + 1 : 0; }
+function callsDown(count) { let sum = 0; for (let i = 0; i < count; i++) sum += down(i); return sum; }
+check(callsDown(4), 6, "a callee that calls itself");
+
+function loops(n) { let sum = 0; for (let i = 0; i < n; i++) sum += i; return sum; }
+function callsLoops(count) { let sum = 0; for (let i = 0; i < count; i++) sum += loops(i); return sum; }
+function callsLoopsAgain(count) { let sum = 0; for (let i = 0; i < count; i++) sum += loops(i + 1); return sum; }
+check(callsLoops(4), 4, "a callee with a loop, called in a loop");
+check(callsLoopsAgain(3), 4, "a callee with a loop, called in a loop, its second site");
+})();
+console.log("passed");
+//// small-and-large-callees/main.ts
+// Small and large functions called from several sites give the same results whether or not they are inlined.
+import "./impl.js";
+//// specialized-function-called-with-other-types/impl.js
+////= check
+
+(function () {
+    function callsMappedWithIntegers(callee) {
+        let sum = 0;
+        try {
+            for (let i = 0; i < 100; i++)
+                sum += callee(i);
+        } catch { }
+        return sum;
+    }
+    function maps(array) {
+        const mapped = function (x) { try { return x + 1; } catch { return 0; } };
+        return callsMappedWithIntegers(mapped) + " " + array.map(mapped).join();
+    }
+    check(maps([1, 2, 3]), "5050 2,3,4", "integers are mapped");
+    check(maps([1.5, 2.5]), "5050 2.5,3.5", "doubles are mapped");
+    check(maps(["a", "b"]), "5050 a1,b1", "strings are mapped");
+    check(maps([{ }, undefined, null, true]), "5050 [object Object]1,NaN,1,2", "other values are mapped");
+
+    function callsVisitorWithIntegers(callee) {
+        let sum = 0;
+        try {
+            for (let i = 0; i < 100; i++)
+                sum += callee(i);
+        } catch { }
+        return sum;
+    }
+    function visits(array) {
+        const visitor = function (x) { try { return x + 1; } catch { return 0; } };
+        array.forEach(visitor);
+        return [callsVisitorWithIntegers(visitor), array.filter(visitor).join(), array.some(visitor), array.every(visitor), array.find(visitor), array.findIndex(visitor), array.findLast(visitor), array.findLastIndex(visitor), array.reduce(visitor), array.reduceRight(visitor), array.flatMap(visitor).join()].join(" ");
+    }
+    check(visits([1, 2, 3]), "5050 1,2,3 true true 1 0 3 2 3 5 2,3,4", "integers are visited");
+    check(visits(["a", "b"]), "5050 a,b true true a 0 b 1 a1 b1 a1,b1", "strings are visited");
+    check(visits([{ }, undefined, null, true]), "5050 [object Object],,true true false [object Object] 0 true 3 [object Object]111 4 [object Object]1,NaN,1,2", "other values are visited");
+
+    function callsStoredWithIntegers(callee) {
+        let sum = 0;
+        try {
+            for (let i = 0; i < 100; i++)
+                sum += callee(i);
+        } catch { }
+        return sum;
+    }
+    function readsFromLiteral(value) {
+        const stored = function (x) { try { return x + 1; } catch { return 0; } };
+        return callsStoredWithIntegers(stored) + " " + ({ method: stored }).method(value);
+    }
+    check(readsFromLiteral(1), "5050 2", "an integer is passed to what a literal holds");
+    check(readsFromLiteral(1.5), "5050 2.5", "a double is passed to what a literal holds");
+    check(readsFromLiteral("a"), "5050 a1", "a string is passed to what a literal holds");
+    check(readsFromLiteral({ }), "5050 [object Object]1", "an object is passed to what a literal holds");
+    check(readsFromLiteral(undefined), "5050 NaN", "undefined is passed to what a literal holds");
+    check(readsFromLiteral(), "5050 NaN", "nothing is passed to what a literal holds");
+
+    function callsKeptWithIntegers(callee) {
+        let sum = 0;
+        try {
+            for (let i = 0; i < 100; i++)
+                sum += callee(i);
+        } catch { }
+        return sum;
+    }
+    function callsMethodOf(object, value) { return object.method(value); }
+    function keepsInObjects(value) {
+        const kept = function (x) { try { return x + 1; } catch { return 0; } };
+        return callsKeptWithIntegers(kept) + " " + callsMethodOf({ method: kept }, value) + " " + [kept][0](value);
+    }
+    check(keepsInObjects(1), "5050 2 2", "an integer is passed to what objects hold");
+    check(keepsInObjects("a"), "5050 a1 a1", "a string is passed to what objects hold");
+    check(keepsInObjects({ }), "5050 [object Object]1 [object Object]1", "an object is passed to what objects hold");
+    check(keepsInObjects(undefined), "5050 NaN NaN", "undefined is passed to what objects hold");
+
+    function callsCountedWithIntegers(callee) {
+        let sum = 0;
+        try {
+            for (let i = 0; i < 100; i++)
+                sum += callee(i, i);
+        } catch { }
+        return sum;
+    }
+    function passesTooFew(array) {
+        const counted = function (x, y) { try { return x + y; } catch { return 0; } };
+        return callsCountedWithIntegers(counted) + " " + ({ method: counted }).method(1) + " " + array.map(counted).join();
+    }
+    check(passesTooFew([5, 6]), "9900 NaN 5,7", "a missing argument is undefined");
+    check(passesTooFew(["a"]), "9900 NaN a0", "a missing argument is undefined beside a string");
+})();
+console.log("passed");
+//// specialized-function-called-with-other-types/main.ts
+// A function that is specialized for integer arguments is also called with doubles, strings and other values.
+import "./impl.js";
+//// spread-over-getters/impl.js
+function check(actual, expected, what)
+////= lines-5
+
+function manyProperties()
+{
+    const object = { };
+    for (let i = 0; i < 300; ++i)
+        object["key" + i] = i;
+    return object;
+}
+const dictionary = manyProperties();
+const symbol = Symbol("s");
+
+const cases = [
+    ["a plain object", () => ({ x: 1, ...{ a: 1, b: 2 } }), "x,a,b"],
+    ["two objects", () => ({ ...{ a: 1 }, ...{ b: 2 } }), "a,b"],
+    ["a name that the target has", () => ({ a: 0, ...{ a: 1 } }), "a"],
+    ["a property that is not enumerable", () => ({ x: 1, ...Object.defineProperty({ a: 1 }, "hidden", { value: 2, enumerable: false }) }), "x,a"],
+    ["a symbol", () => ({ x: 1, ...{ [symbol]: 1, a: 2 } }), "x,a,Symbol(s)"],
+    ["the rest of an object", () => { const { a, ...others } = { a: 1, b: 2, c: 3 }; return others; }, "b,c"],
+    ["null", () => ({ x: 1, ...null }), "x"],
+    ["undefined", () => ({ x: 1, ...undefined }), "x"],
+    ["a string", () => ({ x: 1, ..."ab" }), "0,1,x"],
+    ["a number", () => ({ x: 1, ...5 }), "x"],
+    ["an array", () => ({ x: 1, ...[1, 2] }), "0,1,x"],
+    ["a getter", () => ({ x: 1, ...{ get a() { return 1; } } }), "x,a"],
+    ["a proxy", () => ({ x: 1, ...new Proxy({ a: 1 }, { }) }), "x,a"],
+    ["a function", () => ({ x: 1, ...function () { } }), "x"],
+    ["a getter of the target", () => ({ get a() { return 0; }, ...{ a: 1 } }), "a"],
+    ["a dictionary", () => Object.keys({ x: 1, ...dictionary }).length, 301],
+    ["an object after a dictionary", () => Object.keys({ x: 1, ...dictionary, ...{ a: 1 } }).length, 302],
+];
+
+for (const [what, run, expected] of cases) {
+    for (let round = 0; round < 3; ++round) {
+        const result = run();
+        check(typeof result === "number" ? result : Reflect.ownKeys(result).map(String).join(), expected, what);
+    }
+}
+check(({ get a() { return 0; }, ...{ a: 1 } }).a, 1, "the value that replaces a getter");
+check(({ x: 1, ...{ get a() { return 7; } } }).a, 7, "the value of a getter");
+console.log("passed");
+//// spread-over-getters/main.ts
+// Object spread over getters copies the value that the getter returns.
+import "./impl.js";
+//// string-iteration-without-operations/impl.js
+////= check
+function described(iterable) {
+    let s = "";
+    for (const c of iterable) {
+        s += c.length;
+        for (let i = 0; i < c.length; i++)
+            s += ":" + c.charCodeAt(i).toString(16);
+        s += ";";
+    }
+    return s;
+}
+function firstOf(iterable) {
+    for (const c of iterable)
+        return c;
+    return "nothing";
+}
+function firstTwo(iterable) {
+    const [first, second] = iterable;
+    return String(first) + " " + String(second);
+}
+
+for (let round = 0; round < 100; round++) {
+    check(described("abc"), "1:61;1:62;1:63;", "ASCII");
+    check(described("éÿ\u0000"), "1:e9;1:ff;1:0;", "Latin-1");
+    check(described(""), "", "the empty string");
+}
+check(described("aĀb"), "1:61;1:100;1:62;", "a character past Latin-1");
+check(described("a\u{1f600}b"), "1:61;2:d83d:de00;1:62;", "a surrogate pair");
+check(described("\ud83d"), "1:d83d;", "a lone lead surrogate");
+check(described("\ude00\ud83d"), "1:de00;1:d83d;", "surrogates in the wrong order");
+check(described("\ud83dx"), "1:d83d;1:78;", "a lead surrogate before something else");
+check(described("\u{1f600}\u{1f601}"), "2:d83d:de00;2:d83d:de01;", "two pairs");
+
+{
+    let text = "left";
+    const rope = text + String(Math.max(1, 2)) + "right-hand side that is long enough";
+    check(described(rope).length, rope.length * 5, "a rope");
+    check(described(rope).length, rope.length * 5, "a rope that was flattened");
+    const part = "a long string of which a part is taken".substring(7, 13);
+    check(described(part), "1:73;1:74;1:72;1:69;1:6e;1:67;", "a substring");
+}
+{
+    const iterator = "abcde"[Symbol.iterator]();
+    check(firstOf(iterator), "a", "a loop that is left early");
+    check(iterator.next().value, "b", "a call of next afterwards");
+    check(firstTwo(iterator), "c d", "a pattern on the same iterator");
+    check(described(iterator), "1:65;", "the rest");
+    check(described(iterator), "", "an iterator that reached the end");
+    check(iterator.next().done, true, "an iterator that reached the end, asked directly");
+    const direct = "ab"[Symbol.iterator]();
+    while (!direct.next().done);
+    check(described(direct), "", "an iterator that was exhausted by calls of next");
+    check(firstTwo("x"), "x undefined", "a pattern longer than the string");
+    check(described(new String("ab")), "1:61;1:62;", "a String object");
+    check(firstOf("abc") === "a" && firstOf("abc") === firstOf("a"), true, "the character is an ordinary string");
+    const own = "ab"[Symbol.iterator]();
+    own.next = function () { return { done: true }; };
+    check(described(own), "", "an iterator with its own next");
+}
+console.log("passed");
+//// string-iteration-without-operations/main.ts
+// `for..of` over strings: empty, 8-bit, beyond Latin-1, surrogate pairs and unpaired surrogates.
+import "./impl.js";
+//// string-literals-with-nul-characters/impl.js
+////= check
+
+(function () {
+    function isFourWithTwoNulls(x) { return x === "ab\0\0"; }
+    function isFiveWithTwoNulls(x) { return x === "abc\0\0"; }
+    function isSixWithTwoNulls(x) { return x === "abcd\0\0"; }
+    function isSevenWithTwoNulls(x) { return x === "abcde\0\0"; }
+    function isEightWithTwoNulls(x) { return x === "abcdef\0\0"; }
+    function isEightWithThreeNulls(x) { return "abcde\0\0\0" === x; }
+    function isNotFourWithTwoNulls(x) { return x !== "ab\0\0"; }
+    function isOrdinary(x) { return x === "abcdefgh"; }
+    function which(x) {
+        switch (x) {
+        case "ab\0\0":
+            return 1;
+        case "abcdef\0\0":
+            return 2;
+        case "abcd":
+            return 3;
+        default:
+            return 0;
+        }
+    }
+    function join(a, b) { return a + b; }
+
+    const all = [isFourWithTwoNulls, isFiveWithTwoNulls, isSixWithTwoNulls, isSevenWithTwoNulls, isEightWithTwoNulls, isEightWithThreeNulls, isOrdinary];
+    const strings = ["ab\0\0", "abc\0\0", "abcd\0\0", "abcde\0\0", "abcdef\0\0", "abcde\0\0\0", "abcdefgh"];
+    for (let i = 0; i < all.length; ++i) {
+        for (let j = 0; j < strings.length; ++j) {
+            const half = strings[j].length >> 1;
+            check(all[i](strings[j]), i === j, all[i].name + " of literal " + j);
+            check(all[i](join(strings[j].slice(0, half), strings[j].slice(half))), i === j, all[i].name + " of rope " + j);
+        }
+        check(all[i]("ab"), false, all[i].name + " of a prefix");
+        check(all[i]("ab\0"), false, all[i].name + " of a prefix with one null");
+        check(all[i]("ab\0\0\0\0\0\0\0"), false, all[i].name + " of a longer string");
+        check(all[i](undefined), false, all[i].name + " of undefined");
+        check(all[i](0x626100006261), false, all[i].name + " of a number");
+    }
+    check(isNotFourWithTwoNulls(join("ab", "\0\0")), false, "isNotFourWithTwoNulls of an equal string");
+    check(isNotFourWithTwoNulls(join("ab", "\0\x01")), true, "isNotFourWithTwoNulls of another string");
+    check(which(join("ab", "\0\0")), 1, "which of four");
+    check(which(join("abcd", "ef\0\0")), 2, "which of eight");
+    check(which(join("ab", "cd")), 3, "which without nulls");
+    check(which(join("ab", "\0")), 0, "which of three");
+})();
+console.log("passed");
+//// string-literals-with-nul-characters/main.ts
+// Comparisons with string literals that contain NUL characters.
+import "./impl.js";
+//// string-number-methods-any-arguments.ts
+// Methods of String.prototype and Number.prototype called with arguments of every kind of value, among them proxies, objects with Symbol.toPrimitive and values whose conversion throws.
+process.on("unhandledRejection", () => {});
+const out: string[] = [];
+const describe = (x: any): string => { try { return x === null ? "null" : Array.isArray(x) ? "array(" + x.length + ")" : typeof x === "object" ? "object " + Object.prototype.toString.call(x) : typeof x === "function" ? "function" : typeof x + ":" + String(x); } catch (e: any) { return "indescribable " + e?.name; } };
+let failures = 0;
+const say = (name: string, f: () => unknown) => { let text: string; try { const r = f(); text = /^(Date|Math\.random|new Date)/.test(name) ? typeof r : describe(r); } catch (e: any) { text = "threw " + e?.name; failures++; } out.push(name + " = " + text); };
+const own = (methods: any) => Object.assign(Object.create(null), methods);
+class OtherArray { length = 0; }
+const withText = <T,>(f: T): T => Object.defineProperty(f, "toString", { value: () => "return 1" }) as T;
+const A: any[] = [
+  undefined, null, true, 0, -1, 1.5, NaN, 2 ** 40, "", "abc", "a,b", "12px", 10n, Symbol("s"), Symbol.iterator,
+  [], [1, 2, 3], [["k", "v"]], {}, { a: 1, b: "x" }, Object.create(null), withText(() => 1), withText(function named() {}), withText(class K {}),
+  new Map([[1, 2]]), new Set([1]), /b/g, new Date(0), new Error("e"), new Proxy({ p: 1 }, {}), new Proxy([1], {}), new Proxy(function () {}, {}),
+  { [Symbol.replace]: () => 42, [Symbol.split]: () => "not an array", [Symbol.search]: () => "not a number", [Symbol.match]: () => null },
+  { valueOf: () => 7, toString: () => "seven" }, { toString: () => { throw new RangeError("no"); } }, { [Symbol.toPrimitive]: () => "prim" },
+  new String("boxed"), new Number(5), new Uint8Array(2), new ArrayBuffer(4), Promise.resolve(1), { length: 2, 0: "x", 1: "y" }, { toJSON: () => undefined },
+];
+
+function onString_startsWith(r: string, a: any, b: any) { return (r as any).startsWith(a, b); }
+function onString_startsWith0(r: string) { return (r as any).startsWith(); }
+for (const r of ["", "abc", "a,b,c", "  pad  ", "\ud800"]) { say('String.startsWith()', () => onString_startsWith0(r)); for (const a of A) { say('String.startsWith(a)', () => onString_startsWith(r, a, undefined)); say('String.startsWith(a, s)', () => onString_startsWith(r, a, A[9])); say('String.startsWith(1, a)', () => onString_startsWith(r, 1, a)); } }
+function onString_substr(r: string, a: any, b: any) { return (r as any).substr(a, b); }
+function onString_substr0(r: string) { return (r as any).substr(); }
+for (const r of ["", "abc", "a,b,c", "  pad  ", "\ud800"]) { say('String.substr()', () => onString_substr0(r)); for (const a of A) { say('String.substr(a)', () => onString_substr(r, a, undefined)); say('String.substr(a, s)', () => onString_substr(r, a, A[9])); say('String.substr(1, a)', () => onString_substr(r, 1, a)); } }
+function onString_substring(r: string, a: any, b: any) { return (r as any).substring(a, b); }
+function onString_substring0(r: string) { return (r as any).substring(); }
+for (const r of ["", "abc", "a,b,c", "  pad  ", "\ud800"]) { say('String.substring()', () => onString_substring0(r)); for (const a of A) { say('String.substring(a)', () => onString_substring(r, a, undefined)); say('String.substring(a, s)', () => onString_substring(r, a, A[9])); say('String.substring(1, a)', () => onString_substring(r, 1, a)); } }
+function onString_toLocaleLowerCase(r: string, a: any, b: any) { return (r as any).toLocaleLowerCase(a, b); }
+function onString_toLocaleLowerCase0(r: string) { return (r as any).toLocaleLowerCase(); }
+for (const r of ["", "abc", "a,b,c", "  pad  ", "\ud800"]) { say('String.toLocaleLowerCase()', () => onString_toLocaleLowerCase0(r)); for (const a of A) { say('String.toLocaleLowerCase(a)', () => onString_toLocaleLowerCase(r, a, undefined)); say('String.toLocaleLowerCase(a, s)', () => onString_toLocaleLowerCase(r, a, A[9])); say('String.toLocaleLowerCase(1, a)', () => onString_toLocaleLowerCase(r, 1, a)); } }
+function onString_toLocaleUpperCase(r: string, a: any, b: any) { return (r as any).toLocaleUpperCase(a, b); }
+function onString_toLocaleUpperCase0(r: string) { return (r as any).toLocaleUpperCase(); }
+for (const r of ["", "abc", "a,b,c", "  pad  ", "\ud800"]) { say('String.toLocaleUpperCase()', () => onString_toLocaleUpperCase0(r)); for (const a of A) { say('String.toLocaleUpperCase(a)', () => onString_toLocaleUpperCase(r, a, undefined)); say('String.toLocaleUpperCase(a, s)', () => onString_toLocaleUpperCase(r, a, A[9])); say('String.toLocaleUpperCase(1, a)', () => onString_toLocaleUpperCase(r, 1, a)); } }
+function onString_toLowerCase(r: string, a: any, b: any) { return (r as any).toLowerCase(a, b); }
+function onString_toLowerCase0(r: string) { return (r as any).toLowerCase(); }
+for (const r of ["", "abc", "a,b,c", "  pad  ", "\ud800"]) { say('String.toLowerCase()', () => onString_toLowerCase0(r)); for (const a of A) { say('String.toLowerCase(a)', () => onString_toLowerCase(r, a, undefined)); say('String.toLowerCase(a, s)', () => onString_toLowerCase(r, a, A[9])); say('String.toLowerCase(1, a)', () => onString_toLowerCase(r, 1, a)); } }
+function onString_toString(r: string, a: any, b: any) { return (r as any).toString(a, b); }
+function onString_toString0(r: string) { return (r as any).toString(); }
+for (const r of ["", "abc", "a,b,c", "  pad  ", "\ud800"]) { say('String.toString()', () => onString_toString0(r)); for (const a of A) { say('String.toString(a)', () => onString_toString(r, a, undefined)); say('String.toString(a, s)', () => onString_toString(r, a, A[9])); say('String.toString(1, a)', () => onString_toString(r, 1, a)); } }
+function onString_toUpperCase(r: string, a: any, b: any) { return (r as any).toUpperCase(a, b); }
+function onString_toUpperCase0(r: string) { return (r as any).toUpperCase(); }
+for (const r of ["", "abc", "a,b,c", "  pad  ", "\ud800"]) { say('String.toUpperCase()', () => onString_toUpperCase0(r)); for (const a of A) { say('String.toUpperCase(a)', () => onString_toUpperCase(r, a, undefined)); say('String.toUpperCase(a, s)', () => onString_toUpperCase(r, a, A[9])); say('String.toUpperCase(1, a)', () => onString_toUpperCase(r, 1, a)); } }
+function onString_toWellFormed(r: string, a: any, b: any) { return (r as any).toWellFormed(a, b); }
+function onString_toWellFormed0(r: string) { return (r as any).toWellFormed(); }
+for (const r of ["", "abc", "a,b,c", "  pad  ", "\ud800"]) { say('String.toWellFormed()', () => onString_toWellFormed0(r)); for (const a of A) { say('String.toWellFormed(a)', () => onString_toWellFormed(r, a, undefined)); say('String.toWellFormed(a, s)', () => onString_toWellFormed(r, a, A[9])); say('String.toWellFormed(1, a)', () => onString_toWellFormed(r, 1, a)); } }
+function onString_trim(r: string, a: any, b: any) { return (r as any).trim(a, b); }
+function onString_trim0(r: string) { return (r as any).trim(); }
+for (const r of ["", "abc", "a,b,c", "  pad  ", "\ud800"]) { say('String.trim()', () => onString_trim0(r)); for (const a of A) { say('String.trim(a)', () => onString_trim(r, a, undefined)); say('String.trim(a, s)', () => onString_trim(r, a, A[9])); say('String.trim(1, a)', () => onString_trim(r, 1, a)); } }
+function onString_trimEnd(r: string, a: any, b: any) { return (r as any).trimEnd(a, b); }
+function onString_trimEnd0(r: string) { return (r as any).trimEnd(); }
+for (const r of ["", "abc", "a,b,c", "  pad  ", "\ud800"]) { say('String.trimEnd()', () => onString_trimEnd0(r)); for (const a of A) { say('String.trimEnd(a)', () => onString_trimEnd(r, a, undefined)); say('String.trimEnd(a, s)', () => onString_trimEnd(r, a, A[9])); say('String.trimEnd(1, a)', () => onString_trimEnd(r, 1, a)); } }
+function onString_trimStart(r: string, a: any, b: any) { return (r as any).trimStart(a, b); }
+function onString_trimStart0(r: string) { return (r as any).trimStart(); }
+for (const r of ["", "abc", "a,b,c", "  pad  ", "\ud800"]) { say('String.trimStart()', () => onString_trimStart0(r)); for (const a of A) { say('String.trimStart(a)', () => onString_trimStart(r, a, undefined)); say('String.trimStart(a, s)', () => onString_trimStart(r, a, A[9])); say('String.trimStart(1, a)', () => onString_trimStart(r, 1, a)); } }
+function onString_trimLeft(r: string, a: any, b: any) { return (r as any).trimLeft(a, b); }
+function onString_trimLeft0(r: string) { return (r as any).trimLeft(); }
+for (const r of ["", "abc", "a,b,c", "  pad  ", "\ud800"]) { say('String.trimLeft()', () => onString_trimLeft0(r)); for (const a of A) { say('String.trimLeft(a)', () => onString_trimLeft(r, a, undefined)); say('String.trimLeft(a, s)', () => onString_trimLeft(r, a, A[9])); say('String.trimLeft(1, a)', () => onString_trimLeft(r, 1, a)); } }
+function onString_trimRight(r: string, a: any, b: any) { return (r as any).trimRight(a, b); }
+function onString_trimRight0(r: string) { return (r as any).trimRight(); }
+for (const r of ["", "abc", "a,b,c", "  pad  ", "\ud800"]) { say('String.trimRight()', () => onString_trimRight0(r)); for (const a of A) { say('String.trimRight(a)', () => onString_trimRight(r, a, undefined)); say('String.trimRight(a, s)', () => onString_trimRight(r, a, A[9])); say('String.trimRight(1, a)', () => onString_trimRight(r, 1, a)); } }
+function onString_valueOf(r: string, a: any, b: any) { return (r as any).valueOf(a, b); }
+function onString_valueOf0(r: string) { return (r as any).valueOf(); }
+for (const r of ["", "abc", "a,b,c", "  pad  ", "\ud800"]) { say('String.valueOf()', () => onString_valueOf0(r)); for (const a of A) { say('String.valueOf(a)', () => onString_valueOf(r, a, undefined)); say('String.valueOf(a, s)', () => onString_valueOf(r, a, A[9])); say('String.valueOf(1, a)', () => onString_valueOf(r, 1, a)); } }
+function onString_replace(r: string, a: any, b: any) { return (r as any).replace(a, b); }
+function onString_replace0(r: string) { return (r as any).replace(); }
+for (const r of ["", "abc", "a,b,c", "  pad  ", "\ud800"]) { say('String.replace()', () => onString_replace0(r)); for (const a of A) { say('String.replace(a)', () => onString_replace(r, a, undefined)); say('String.replace(a, s)', () => onString_replace(r, a, A[9])); say('String.replace(1, a)', () => onString_replace(r, 1, a)); } }
+function onString_replaceAll(r: string, a: any, b: any) { return (r as any).replaceAll(a, b); }
+function onString_replaceAll0(r: string) { return (r as any).replaceAll(); }
+for (const r of ["", "abc", "a,b,c", "  pad  ", "\ud800"]) { say('String.replaceAll()', () => onString_replaceAll0(r)); for (const a of A) { say('String.replaceAll(a)', () => onString_replaceAll(r, a, undefined)); say('String.replaceAll(a, s)', () => onString_replaceAll(r, a, A[9])); say('String.replaceAll(1, a)', () => onString_replaceAll(r, 1, a)); } }
+function onString_split(r: string, a: any, b: any) { return (r as any).split(a, b); }
+function onString_split0(r: string) { return (r as any).split(); }
+for (const r of ["", "abc", "a,b,c", "  pad  ", "\ud800"]) { say('String.split()', () => onString_split0(r)); for (const a of A) { say('String.split(a)', () => onString_split(r, a, undefined)); say('String.split(a, s)', () => onString_split(r, a, A[9])); say('String.split(1, a)', () => onString_split(r, 1, a)); } }
+function onString_search(r: string, a: any, b: any) { return (r as any).search(a, b); }
+function onString_search0(r: string) { return (r as any).search(); }
+for (const r of ["", "abc", "a,b,c", "  pad  ", "\ud800"]) { say('String.search()', () => onString_search0(r)); for (const a of A) { say('String.search(a)', () => onString_search(r, a, undefined)); say('String.search(a, s)', () => onString_search(r, a, A[9])); say('String.search(1, a)', () => onString_search(r, 1, a)); } }
+function onNumber_toFixed(r: number, a: any, b: any) { return (r as any).toFixed(a, b); }
+function onNumber_toFixed0(r: number) { return (r as any).toFixed(); }
+for (const r of [0, 1.5, -7, NaN, 1e21, 255]) { say('Number.toFixed()', () => onNumber_toFixed0(r)); for (const a of A) { say('Number.toFixed(a)', () => onNumber_toFixed(r, a, undefined)); say('Number.toFixed(a, s)', () => onNumber_toFixed(r, a, A[9])); say('Number.toFixed(1, a)', () => onNumber_toFixed(r, 1, a)); } }
+function onNumber_toString(r: number, a: any, b: any) { return (r as any).toString(a, b); }
+function onNumber_toString0(r: number) { return (r as any).toString(); }
+for (const r of [0, 1.5, -7, NaN, 1e21, 255]) { say('Number.toString()', () => onNumber_toString0(r)); for (const a of A) { say('Number.toString(a)', () => onNumber_toString(r, a, undefined)); say('Number.toString(a, s)', () => onNumber_toString(r, a, A[9])); say('Number.toString(1, a)', () => onNumber_toString(r, 1, a)); } }
+console.log(out.length + " calls, " + failures + " threw");
+let h = 0; for (const l of out) for (let i = 0; i < l.length; i++) h = (h * 31 + l.charCodeAt(i)) | 0;
+console.log("hash " + h);
+console.log(out.join("\n"));
+//// super-property-reads/impl.js
+////= check
+class Base { constructor(v) { this.v = v; } get() { return this.v; } get twice() { return this.v * 2; } static make() { return "base"; } }
+class Derived extends Base { get() { return super.get() + 1; } get twice() { return super.twice + 1; } missing() { return super.nothing; } static make() { return super.make() + "+derived"; } }
+class Other { get() { return "other"; } get twice() { return "other twice"; } }
+let object = { __proto__: { hello() { return "hello " + this.name; } }, name: "object", hello() { return super.hello() + "!"; } };
+function callGet(d) { return d.get(); }
+function readTwice(d) { return d.twice; }
+function prototypeOf(v) { return Object.getPrototypeOf(v); }
+for (let round = 0; round < 3; ++round) {
+    check(callGet(new Derived(round)), round + 1, "a method of the superclass");
+    check(readTwice(new Derived(round)), round * 2 + 1, "a getter of the superclass gets this");
+    check(new Derived(1).missing(), undefined, "nothing there");
+    check(Derived.make(), "base+derived", "a static method");
+    check(object.hello(), "hello object!", "in an object literal");
+}
+Base.prototype.get = function () { return 100; };
+check(callGet(new Derived(1)), 101, "the method was replaced");
+Object.setPrototypeOf(Derived.prototype, Other.prototype);
+check(callGet(new Derived(1)), "other1", "the prototype of the home object was replaced");
+check(readTwice(new Derived(1)), "other twice1", "and its getter");
+check(prototypeOf({}), Object.prototype, "of an object");
+check(prototypeOf([]), Array.prototype, "of an array");
+check(prototypeOf(Object.create(null)), null, "null");
+check(prototypeOf(function () { }), Function.prototype, "of a function");
+check(prototypeOf("s"), String.prototype, "of a string");
+check(prototypeOf(1), Number.prototype, "of a number");
+check(prototypeOf(new Proxy({}, { getPrototypeOf() { return Array.prototype; } })), Array.prototype, "of a proxy");
+let threw = false;
+try { prototypeOf(null); } catch (e) { threw = e instanceof TypeError; }
+check(threw, true, "of null");
+
+class Computed extends Base { get(key) { return super[key](); } }
+let viaSuper = Object.getOwnPropertyDescriptor(Derived.prototype, "get").value;
+let viaComputedSuper = Object.getOwnPropertyDescriptor(Computed.prototype, "get").value;
+function named(f, name) { return { name, __proto__: null, f }; }
+check(new Computed(7).get("get"), 100, "a computed name");
+
+(function () {
+////= check
+function checkThrows(f, type, what) {
+    try {
+        f();
+    } catch (error) {
+        if (!(error instanceof type))
+            throw new Error(what + ": threw " + error);
+        return;
+    }
+    throw new Error(what + ": did not throw");
+}
+
+const base = {
+    value: 2,
+    get viaGetter() { return this.own * 10; },
+};
+const object = {
+    __proto__: base,
+    own: 7,
+    value: "shadows",
+    readsValue() { return super.value; },
+    readsGetter() { return super.viaGetter; },
+    readsMissing() { return super.missing; },
+};
+for (let i = 0; i < 20; i++) {
+    check(object.readsValue(), 2, "a value of the prototype");
+    check(object.readsGetter(), 70, "a getter of the prototype, which sees the receiver");
+    check(object.readsMissing(), undefined, "what the prototype does not have");
+}
+
+base.value = 3;
+check(object.readsValue(), 3, "after the value changes");
+base.missing = "found";
+check(object.readsMissing(), "found", "after the property is added");
+Object.defineProperty(base, "value", { get() { return this.own + 1; }, configurable: true });
+check(object.readsValue(), 8, "after the value becomes a getter");
+Object.defineProperty(base, "viaGetter", { value: "plain", configurable: true });
+check(object.readsGetter(), "plain", "after the getter becomes a value");
+
+const other = { value: "other", viaGetter: "other too" };
+Object.setPrototypeOf(object, other);
+for (let i = 0; i < 20; i++) {
+    check(object.readsValue(), "other", "after the prototype changes");
+    check(object.readsGetter(), "other too", "after the prototype changes, what was a getter");
+    check(object.readsMissing(), undefined, "after the prototype changes, what it does not have");
+}
+
+Object.setPrototypeOf(object, null);
+for (let i = 0; i < 3; i++) {
+    checkThrows(() => object.readsValue(), TypeError, "without a prototype");
+    checkThrows(() => object.readsGetter(), TypeError, "without a prototype, what was a getter");
+    checkThrows(() => object.readsMissing(), TypeError, "without a prototype, what nothing has");
+}
+Object.setPrototypeOf(object, base);
+check(object.readsValue(), 8, "with the prototype again");
+
+class Parent {
+    get doubled() { return this.n * 2; }
+    static label = "parent";
+}
+Parent.prototype.shared = "on the prototype";
+class Child extends Parent {
+    constructor(n) { super(); this.n = n; }
+    get doubled() { return -1; }
+    readsDoubled() { return super.doubled; }
+    readsShared() { return super.shared; }
+    static readsLabel() { return super.label; }
+}
+let sum = 0;
+for (let i = 0; i < 20; i++)
+    sum += new Child(i).readsDoubled();
+check(sum, 380, "a getter of the parent class");
+check(new Child(1).readsShared(), "on the prototype", "a value on the prototype of the parent class");
+check(Child.readsLabel(), "parent", "a static field of the parent class");
+Object.setPrototypeOf(Child.prototype, null);
+checkThrows(() => new Child(1).readsShared(), TypeError, "a class whose prototype has none");
+})();
+console.log("passed");
+//// super-property-reads/main.ts
+// `super.x` reads: methods, getters (which get the right `this`), missing properties, static methods, object literals, and replaced methods.
+import "./impl.js";
+//// tail-call-in-function-called-from-native-code/impl.js
+////= check-2
+function result(n) { return { done: n > 3, value: n }; }
+function resultOfMany(a, b, c, d, e, f, g, h, i, j) { return { done: j > 3, value: a + j }; }
+function compare(a, b) { return a - b; }
+function iterable(next) { return { [Symbol.iterator]() { return { next }; } }; }
+
+for (let round = 0; round < 50; ++round) {
+    let n = 0;
+    check(new Set(iterable(function () { return result(++n); })).size, 3, "a tail call");
+    n = 0;
+    check(new Set(iterable(function () { return resultOfMany(0, 0, 0, 0, 0, 0, 0, 0, 0, ++n); })).size, 3, "a tail call with an argument list");
+    n = 0;
+    check(new Set(iterable(function () { return result(...[++n]); })).size, 3, "a tail call with spread arguments");
+    n = 0;
+    check(new Map(iterable(function () { return result(++n <= 3 ? [n, n] : 4); })).size, 3, "a tail call, for a Map");
+    check([3, 1, 2].sort(function (a, b) { return compare(a, b); }).join(), "1,2,3", "a comparator");
+    check("abc".replace(/b/, function (text) { return text.toUpperCase(); }), "aBc", "a replacer that ends in a call of native code");
+    check(JSON.stringify([1, 2], function (key, value) { return Object(value).valueOf(); }), "[1,2]", "a replacer of JSON.stringify");
+    check(new Set([1, 2][Symbol.iterator]()).size, 2, "an array iterator");
+    check(new Set((function* () { yield 1; yield 2; })()).size, 2, "a generator");
+    check(new Uint8Array((function* () { yield 1; yield 2; })()).length, 2, "a generator, for a typed array");
+}
+console.log("passed");
+//// tail-call-in-function-called-from-native-code/main.ts
+// Tail calls in callbacks that native code calls: iterators, comparators, replacers.
+import "./impl.js";
+//// this-of-strict-functions/impl.js
+////= check
+
+(function () {
+    function returnsThis() { return this; }
+    function kindOfThis() { return typeof this; }
+    function readsFromThis() { return this.value; }
+    const escaped = [returnsThis, kindOfThis, readsFromThis];
+    globalThis.escapedFunctions = escaped;
+
+    function returnsThisOfKnownCallers() { return this; }
+    function callsWithObject(o) { return returnsThisOfKnownCallers.call(o); }
+
+    const symbol = Symbol("s");
+    const large = 1n << 80n;
+    const object = { value: 1 };
+    const array = [1];
+    const values = [
+        [undefined, "undefined"], [null, "object"], [1, "number"], [1.5, "number"], [true, "boolean"],
+        ["text", "string"], ["te" + String(array.length) + "xt", "string"], [symbol, "symbol"], [large, "bigint"], [1n, "bigint"],
+        [object, "object"], [array, "object"], [returnsThis, "function"], [new Map, "object"], [/x/, "object"], [new Proxy({ }, { }), "object"],
+        [globalThis, "object"],
+    ];
+    for (let round = 0; round < 50; ++round) {
+        for (const [value, kind] of values) {
+            const [first, second] = globalThis.escapedFunctions;
+            check(first.call(value), value, "this of a strict function called with " + kind);
+            check(second.call(value), kind, "typeof this of a strict function");
+        }
+        check(globalThis.escapedFunctions[2].call(object), 1, "a property of this");
+        check(globalThis.escapedFunctions[2].call("text"), undefined, "a property of a string that is this");
+        check(callsWithObject(object), object, "this of a function whose callers are known");
+    }
+    let message = "none";
+    try { globalThis.escapedFunctions[2].call(undefined); } catch (error) { message = error.constructor.name; }
+    check(message, "TypeError", "a property of undefined that is this");
+})();
+console.log("passed");
+//// this-of-strict-functions/main.ts
+// `this` in strict functions: primitives are not wrapped and undefined stays undefined.
+import "./impl.js";
+//// truthiness-of-builtin-values/impl.js
+const failures = [];
+
+function check(actual, expected, what)
+{
+    if (!Object.is(actual, expected))
+        failures.push(what + ": " + String(actual) + " instead of " + String(expected));
+}
+
+function test()
+{
+    function emptyName() { return Function.prototype.name ? "truthy" : "falsy"; }
+    function notEmptyName() { return !Function.prototype.name; }
+    function emptyNameOr() { return Function.prototype.name || "other"; }
+    function emptyNameAnd() { return Function.prototype.name && "other"; }
+    function ifEmptyName() { if (Function.prototype.name) return "truthy"; return "falsy"; }
+    function whileEmptyName() { var n = 0; while (Function.prototype.name) { if (++n > 3) break; } return n; }
+    function emptyNameIsUndefined() { return typeof Function.prototype.name === "undefined"; }
+    function emptyNameEqualsNull() { return Function.prototype.name == null; }
+    function emptyNameOrElse() { return Function.prototype.name ?? "other"; }
+    function tagOfMath() { return Math[Symbol.toStringTag] ? "truthy" : "falsy"; }
+    function tagOfJSON() { return JSON[Symbol.toStringTag] ? "truthy" : "falsy"; }
+    function iterator() { return Symbol.iterator ? "truthy" : "falsy"; }
+    function nan() { return Number.NaN ? "truthy" : "falsy"; }
+    function epsilon() { return Number.EPSILON ? "truthy" : "falsy"; }
+    function lengthOfStrings() { return String.prototype.length ? "truthy" : "falsy"; }
+    function lengthOfArrays() { return Array.prototype.length ? "truthy" : "falsy"; }
+    function lengthOfRandom() { return Math.random.length ? "truthy" : "falsy"; }
+    function aFunction() { return Math.floor ? "truthy" : "falsy"; }
+    function anObject() { return Math ? "truthy" : "falsy"; }
+    function aPrototype() { return Array.prototype ? "truthy" : "falsy"; }
+    function aConstructor() { return Map ? "truthy" : "falsy"; }
+    function truthinessOfAnything(x) { return x ? "truthy" : "falsy"; }
+
+    for (let i = 0; i < 20; ++i) {
+        check(emptyName(), "falsy", "the name of Function.prototype");
+        check(notEmptyName(), true, "its negation");
+        check(emptyNameOr(), "other", "|| after it");
+        check(emptyNameAnd(), "", "&& after it");
+        check(ifEmptyName(), "falsy", "if");
+        check(whileEmptyName(), 0, "while");
+        check(emptyNameIsUndefined(), false, "typeof");
+        check(emptyNameEqualsNull(), false, "== null");
+        check(emptyNameOrElse(), "", "?? after it");
+        check(tagOfMath(), "truthy", "the tag of Math");
+        check(tagOfJSON(), "truthy", "the tag of JSON");
+        check(iterator(), "truthy", "a symbol");
+        check(nan(), "falsy", "NaN");
+        check(epsilon(), "truthy", "a small number");
+        check(lengthOfStrings(), "falsy", "the length of String.prototype");
+        check(lengthOfArrays(), "falsy", "the length of Array.prototype");
+        check(lengthOfRandom(), "falsy", "the length of a function without parameters");
+        check(aFunction(), "truthy", "a function");
+        check(anObject(), "truthy", "an object");
+        check(aPrototype(), "truthy", "a prototype");
+        check(aConstructor(), "truthy", "a constructor");
+        check([0, "s", "", null].map(x => truthinessOfAnything(x)).join(), "falsy,truthy,falsy,falsy", "anything");
+    }
+}
+test();
+if (failures.length)
+    throw new Error(failures.length + " failures:\n" + [...new Set(failures)].join("\n"));
+console.log("passed");
+//// truthiness-of-builtin-values/main.ts
+// Truthiness of properties of built-in objects: names, `Symbol.toStringTag` values, lengths.
+import "./impl.js";
+//// two-string-concat-stress-2/impl.js
+////= check
+// What `f` returns is read: a text that nobody reads need not be made, however long it would be.
+////= throws
+
+function add(a, b) { return a + b; }
+function subtract(a, b) { return a - b; }
+function addIntegers(a, b) { return (a | 0) + (b | 0); }
+function addToInteger(a, b) { return a + (b | 0); }
+let text = "";
+function append(piece) { text += piece; }
+
+////= codes
+
+const narrow = ["a", "bc", "item 123", "\xe9\xff", "x".repeat(40)];
+const wide = ["中", "文字", "aĀ", "😀", "Ж".repeat(40)];
+////= for-3
+
+////= for-5
+check(add("", ""), "", "nothing and nothing");
+
+////= for-2
+
+////= lines-4
+
+text = "";
+let expected = [];
+for (let i = 0; i < 20000; ++i) {
+    let piece = i % 11 ? "<td>" : "cell " + i;
+    append(piece);
+    expected.push(piece);
+}
+check(text.length, expected.join("").length, "the length of a text built piece by piece");
+check(text, expected.join(""), "a text built piece by piece");
+
+check(add(1, 2), 3, "integers");
+check(add(2147483647, 1), 2147483648, "integers whose sum is no int32");
+check(add(-2147483648, -1), -2147483649, "integers whose sum is no int32");
+check(add(1.5, 2), 3.5, "a double and an integer");
+check(add(0.1, 0.2), 0.1 + 0.2, "doubles");
+check(add(-0, -0), -0, "negative zeros");
+check(add(NaN, 1), NaN, "not a number");
+check(add("a", 1), "a1", "a string and an integer");
+check(add(1, "a"), "1a", "an integer and a string");
+check(add("a", 1.5), "a1.5", "a string and a double");
+check(add("a", -0), "a0", "a string and negative zero");
+check(add("a", null), "anull", "a string and null");
+check(add(undefined, "a"), "undefineda", "undefined and a string");
+check(add("a", true), "atrue", "a string and a boolean");
+check(add(null, 1), 1, "null and an integer");
+check(add(undefined, 1), NaN, "undefined and an integer");
+check(add("a", 10n), "a10", "a string and a BigInt");
+check(add(1n, 2n), 3n, "BigInts");
+throws(() => add(1n, 2), TypeError, "a BigInt and a number");
+throws(() => add("a", Symbol()), TypeError, "a string and a symbol");
+throws(() => add(Symbol(), "a"), TypeError, "a symbol and a string");
+check(add(new String("a"), "b"), "ab", "a String object and a string");
+check(add("a", new String("b")), "ab", "a string and a String object");
+check(add(new String("a"), new String("b")), "ab", "two String objects");
+check(add("a", {}), "a[object Object]", "a string and an object");
+check(add({}, "a"), "[object Object]a", "an object and a string");
+check(add("a", [1, 2]), "a1,2", "a string and an array");
+check(add([], []), "", "two arrays");
+check(add("a", { toString() { return "t"; } }), "at", "an object with toString");
+check(add("a", { valueOf() { return 7; }, toString() { return "t"; } }), "a7", "an object with valueOf");
+check(add({ [Symbol.toPrimitive](hint) { return hint; } }, "!"), "default!", "an object with Symbol.toPrimitive");
+throws(() => add("a", { toString() { throw new RangeError("thrown"); } }), RangeError, "an object whose toString throws");
+{
+    let order = [];
+    let result = add({ toString() { order.push("left"); return "l"; } }, { toString() { order.push("right"); return "r"; } });
+    check(result + ":" + order.join(), "lr:left,right", "the order of conversions");
+}
+check(subtract("5", "3"), 2, "strings subtracted");
+check(addIntegers("5", "3"), 8, "strings made integers");
+check(addToInteger("5", "3"), "53", "a string and an integer made of a string");
+
+////= lines
+
+console.log("passed");
+//// two-string-concat-stress-2/main.ts
+// `+` on two strings: the length, characters and internal representation of the result, and empty operands; run with options that stress the garbage collector (variant 2).
+// ENV JSC_verifyGC=1
+// ENV JSC_scribbleFreeCells=1
+// ENV JSC_useZombieMode=1
+// ENV JSC_slowPathAllocsBetweenGCs=10
+import "./impl.js";
+//// typeof-tested-values-on-unreachable-paths/impl.js
+////= check
+
+(function () {
+    "use strict";
+    function Item(a, b, c) {
+        this.a = a;
+        this.b = b;
+        this.c = c;
+    }
+    function build(...pairs) {
+        let object = { };
+        for (let i = 0; i < pairs.length; i += 2)
+            object[pairs[i]] = pairs[i + 1];
+        return object;
+    }
+    let kept;
+    function takesString(s) { return s.length; }
+    function takesAnything(x) { return x === undefined ? 0 : x.length; }
+
+    function passesTestedValue(o, x) { let sum = o.a + o.b + o.c; if (x !== undefined) sum += takesString(x); return sum; }
+    function passesTestedValueBehindGuard(o, x) { let sum = o.a + o.b; if (x !== undefined) { sum += o.c; sum += takesString(x); } else sum += 3; return sum; }
+    function storesInCodeNeverReached(o, n) { let sum = o.a + o.b + o.c; if (typeof n === "string") kept = o; return sum + n; }
+    function returnsTestedValue(o, v) { let sum = o.a + o.b + o.c; return typeof v === "boolean" ? v : sum > 3; }
+    function usesResult(o, v) { return returnsTestedValue(o, v) ? 1 : 0; }
+    function agrees(o, x) { let sum = o.a + o.b + o.c; return sum + takesAnything(x); }
+
+    for (let i = 0; i < 400; ++i) {
+        let make = i % 10 == 9 ? () => build("c", 3, "b", 2, "a", 1) : i % 10 == 8 ? () => Object.defineProperty(new Item(1, 0, 3), "b", { get() { return 2; } }) : () => new Item(1, 2, 3);
+        let text = i & 1 ? "four" : undefined;
+        check(passesTestedValue(make(), text), i & 1 ? 10 : 6, "a tested value is passed");
+        check(passesTestedValueBehindGuard(make(), text), i & 1 ? 10 : 6, "a tested value is passed behind a guard");
+        check(storesInCodeNeverReached(make(), i), 6 + i, "a store that is never reached");
+        check(kept, undefined, "the variable that is never stored to");
+        check(usesResult(make(), i % 3 ? true : i), 1, "a tested value is returned");
+        check(usesResult(make(), false), 0, "a tested value is returned");
+        check(agrees(make(), text), i & 1 ? 10 : 6, "nothing is narrowed");
+    }
+})();
+console.log("passed");
+//// typeof-tested-values-on-unreachable-paths/main.ts
+// Values that were tested with `typeof` are passed, returned and stored on paths that can never be reached.
+import "./impl.js";
+//// uninitialized-variables-passed-to-inlined-calls/impl.js
+////= check
+
+(function () {
+function first() { return 2; }
+function second() { return 3; }
+function readsTooEarly() { keepsOfLet(mayBeEmpty); }
+let thrown = "nothing";
+try {
+    readsTooEarly();
+} catch (error) {
+    thrown = error.constructor.name;
+}
+check(thrown, "ReferenceError", "a variable that is read before it is initialized");
+
+let mayBeEmpty;
+var isNeverEmpty;
+let keptOfLet = 0;
+let keptOfVar = 0;
+let keptUntested = 0;
+function keepsOfLet(e) { keptOfLet = e ?? 0; }
+function keepsOfVar(e) { keptOfVar = e ?? 0; }
+function keepsUntested(e) { keptUntested = e; }
+function passesLet() { keepsOfLet(mayBeEmpty); }
+function passesVar() { keepsOfVar(isNeverEmpty); }
+function passesLetUntested() { keepsUntested(mayBeEmpty); }
+function callsKept() { return (keptOfLet === 0 ? 1 : keptOfLet()) * 100 + (keptOfVar === 0 ? 1 : keptOfVar()) * 10 + (keptUntested === undefined ? 1 : keptUntested()); }
+let letAlwaysUndefined;
+var varAlwaysUndefined;
+function passesLetAlwaysUndefined() { keepsOfLet(letAlwaysUndefined); }
+function passesVarAlwaysUndefined() { keepsOfVar(varAlwaysUndefined); }
+let results = [];
+for (let i = 0; i < 3; i++) {
+    mayBeEmpty = i === 0 ? undefined : i === 1 ? first : second;
+    isNeverEmpty = i === 0 ? undefined : i === 1 ? first : second;
+    passesLet();
+    passesVar();
+    passesLetUntested();
+    results.push(callsKept());
+}
+check(results.join(), "111,222,333", "what the inlined callees stored");
+passesLetAlwaysUndefined();
+passesVarAlwaysUndefined();
+check(keptOfLet, 0, "what is stored for a variable that is always undefined");
+check(keptOfVar, 0, "what is stored for a variable that is always undefined and never empty");
+})();
+
+(function () {
+function first() { return 2; }
+function second() { return 3; }
+let mayBeEmpty;
+var isNeverEmpty;
+let impossible = 0;
+let nulls = 0;
+let keptInTwoSteps = 0, keptAsLowered = 0, keptThroughTemporary = 0, keptAsLoweredChain = 0, keptOfVarInTwoSteps = 0, keptOfVarAsLowered = 0, keptBehindOneStep = 0;
+function inTwoSteps(e) { if (e !== undefined && e !== null) return e; return 0; }
+function asLowered(e) { return e !== null && e !== void 0 ? e : 0; }
+function throughTemporary(e) { var _a; return (_a = e) !== null && _a !== void 0 ? _a : 0; }
+function asLoweredChain(e) { return e === null || e === void 0 ? 0 : e; }
+function ofVarInTwoSteps(e) { if (e !== undefined && e !== null) return e; return 0; }
+function ofVarAsLowered(e) { return e !== null && e !== void 0 ? e : 0; }
+function behindOneStep(e) { return e !== undefined ? e : 0; }
+function passesInTwoSteps() { const kept = inTwoSteps(mayBeEmpty); keptInTwoSteps = kept; if (kept === null) ++impossible; }
+function passesAsLowered() { const kept = asLowered(mayBeEmpty); keptAsLowered = kept; if (kept === undefined) ++impossible; }
+function passesThroughTemporary() { const kept = throughTemporary(mayBeEmpty); keptThroughTemporary = kept; if (kept === undefined) ++impossible; }
+function passesAsLoweredChain() { const kept = asLoweredChain(mayBeEmpty); keptAsLoweredChain = kept; if (kept === undefined) ++impossible; }
+function passesVarInTwoSteps() { const kept = ofVarInTwoSteps(isNeverEmpty); keptOfVarInTwoSteps = kept; if (kept === null) ++impossible; }
+function passesVarAsLowered() { const kept = ofVarAsLowered(isNeverEmpty); keptOfVarAsLowered = kept; if (kept === undefined) ++impossible; }
+function passesBehindOneStep() { const kept = behindOneStep(mayBeEmpty); keptBehindOneStep = kept; if (kept === null) ++nulls; }
+const resultOf = kept => kept === 0 ? 1 : kept === null ? 0 : kept();
+let results = [];
+for (let i = 0; i < 4; i++) {
+    mayBeEmpty = i === 0 ? undefined : i === 1 ? null : i === 2 ? first : second;
+    isNeverEmpty = i === 0 ? undefined : i === 1 ? null : i === 2 ? first : second;
+    passesInTwoSteps();
+    passesAsLowered();
+    passesThroughTemporary();
+    passesAsLoweredChain();
+    passesVarInTwoSteps();
+    passesVarAsLowered();
+    passesBehindOneStep();
+    results.push([keptInTwoSteps, keptAsLowered, keptThroughTemporary, keptAsLoweredChain, keptOfVarInTwoSteps, keptOfVarAsLowered, keptBehindOneStep].map(resultOf).join(""));
+}
+check(results.join(), "1111111,1111110,2222222,3333333", "what inlined callees return behind tests in two steps");
+check(impossible, 0, "results that are nothing behind both tests");
+check(nulls, 1, "null behind the test for undefined alone");
+})();
+console.log("passed");
+//// uninitialized-variables-passed-to-inlined-calls/main.ts
+// Variables that are read before they are initialized, or that are always undefined, are passed to inlined functions.
+import "./impl.js";
+//// variable-live-across-two-catch-blocks/impl.js
+function shouldBe(actual, expected) {
+    if (actual !== expected)
+        throw new Error(`expected ${String(expected)} but got ${String(actual)}`);
+}
+
+function make() { return { tag: "kept" }; }
+function thrower(x) { throw x; }
+let calls = 0;
+function between() { calls++; }
+
+function adjacent() { const x = make(); try { throw 1; } catch (a) { } try { throw 2; } catch (b) { } return x.tag; }
+function separated() { const x = make(); try { throw 1; } catch (a) { } between(); try { throw 2; } catch (b) { } return x.tag; }
+function three() { const x = make(); try { throw 1; } catch (a) { } between(); try { throw 2; } catch (b) { } between(); try { throw 3; } catch (c) { } return x.tag; }
+function parameter(x) { try { throw 1; } catch (a) { } between(); try { throw 2; } catch (b) { } return x.tag; }
+function throwsInHandler() { const x = make(); try { try { throw 1; } catch (a) { between(); throw 2; } } catch (b) { } return x.tag; }
+function throwsInFinally() { const x = make(); try { try { throw 1; } finally { between(); try { throw 2; } catch (b) { } } } catch (c) { } return x.tag; }
+function calleeThrows() { const x = make(); try { thrower(1); } catch (a) { } between(); try { thrower(2); } catch (b) { } return x.tag; }
+function redefined() { let x = make(); try { throw 1; } catch (a) { } x = { tag: "second" }; try { throw 2; } catch (b) { } return x.tag; }
+function inLoop() { const x = make(); let n = 0; for (let i = 0; i < 3; ++i) { try { throw i; } catch (a) { n += a; } between(); } try { throw 9; } catch (b) { n += b; } return x.tag + n; }
+function stackIdiom() { const x = make(); let stack; try { throw new Error("here"); } catch (e) { stack = e.stack; } between(); try { JSON.parse("{"); } catch (b) { return x.tag + typeof stack; } return "no"; }
+function usesGlobalAfterwards() { try { throw 1; } catch (a) { } try { throw 2; } catch (b) { } return make().tag; }
+
+for (let i = 0; i < 100; ++i) {
+    shouldBe(adjacent(), "kept");
+    shouldBe(separated(), "kept");
+    shouldBe(three(), "kept");
+    shouldBe(parameter(make()), "kept");
+    shouldBe(throwsInHandler(), "kept");
+    shouldBe(throwsInFinally(), "kept");
+    shouldBe(calleeThrows(), "kept");
+    shouldBe(redefined(), "second");
+    shouldBe(inLoop(), "kept12");
+    shouldBe(stackIdiom(), "keptstring");
+    shouldBe(usesGlobalAfterwards(), "kept");
+}
+console.log("passed");
+//// variable-live-across-two-catch-blocks/main.ts
+// A variable stays live across two `catch` blocks.
+import "./impl.js";

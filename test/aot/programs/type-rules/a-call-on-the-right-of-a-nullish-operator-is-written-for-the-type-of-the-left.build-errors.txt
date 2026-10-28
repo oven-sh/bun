@@ -1,0 +1,1 @@
+error: TS2532: Object is possibly 'undefined'.

@@ -1,0 +1,3 @@
+{
+ "code-run-in-this-context": "alone: math: THROWS TypeError: Cannot assign to Math.random because built-in objects are read-only in"
+}

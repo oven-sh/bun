@@ -1,0 +1,6 @@
+a store: TypeError true
+a store under a computed name: TypeError true
+a deletion: TypeError function
+a new member of Object.prototype: TypeError false
+a definition: TypeError true
+Reflect.set answers: went through: false true

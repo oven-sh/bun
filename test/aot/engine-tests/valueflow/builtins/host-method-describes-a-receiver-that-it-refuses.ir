@@ -1,0 +1,50 @@
+# class Asked { get ["constructor"]() { .. } }    Blob.prototype.text.call(new Asked())
+# A method of a host class names a receiver that it refuses in the message of its error: it reads `constructor` of the receiver, so the getter runs.
+# class Left { get ["constructor"]() { .. } }    Map.prototype.get.call(new Left(), 1)
+# A method of the language throws without a word about the receiver: nobody asks that instance for anything.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f2
+# CHECK: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Asked" constructor=f1
+layout L1 kind=Instance name="Left" constructor=f3
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 methodKind=Getter key="constructor"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = Builtin builtin=BlobPrototypeText
+    v7 = Call v6, v5
+    v8 = NewClosure function=f3
+    v9 = NewClass v8 layout=L1
+    v10 = NewClosure function=f4
+    DefineMethod v9, v10 layout=L1 methodKind=Getter key="constructor"
+    v12 = FinishClass v9 layout=L1
+    v13 = Construct v12
+    v14 = Builtin builtin=MapPrototypeGet
+    v15 = Integer integer=1
+    v16 = Call v14, v13, v15
+    Return
+}
+function f1 name="Asked" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="constructor" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    Return v1
+}
+function f3 name="Left" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f4 name="constructor" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    Return v1
+}

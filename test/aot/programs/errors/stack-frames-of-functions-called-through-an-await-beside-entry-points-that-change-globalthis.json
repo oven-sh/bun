@@ -1,0 +1,1 @@
+{ "entryPoints": ["./assigns-to-globalthis.js", "./deletes-from-globalthis-under-a-computed-key.js"] }

@@ -1,0 +1,9 @@
+error: TS2632: Cannot assign to 'whole' because it is an import.
+error: TS2632: Cannot assign to 'star' because it is an import.
+error: TS2632: Cannot assign to 'sep' because it is an import.
+error: TS2632: Cannot assign to 'renamed' because it is an import.
+error: TS2632: Cannot assign to 'delimiter' because it is an import.
+error: TS2632: Cannot assign to 'basename' because it is an import.
+error: TS2632: Cannot assign to 'dirname' because it is an import.
+error: TS2632: Cannot assign to 'extname' because it is an import.
+error: TS2632: Cannot assign to 'format' because it is an import.

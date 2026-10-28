@@ -1,0 +1,114 @@
+//// damage-behind-a-call-tools-of-the-run-time/define-properties-changes-several-fields-at-once.ts
+// Object.defineProperties makes one field an accessor, one read-only and one non-enumerable in a single call, below a call of a typed function whose caller has read all three.
+class Triple {
+  a: number;
+  b: number;
+  c: number;
+  constructor(a: number, b: number, c: number) {
+    this.a = a;
+    this.b = b;
+    this.c = c;
+  }
+}
+
+let strikes = false;
+function below(t: Triple): number {
+  if (strikes) {
+    Object.defineProperties(t, {
+      a: { get: () => -1, configurable: true },
+      b: { value: -2, writable: false },
+      c: { enumerable: false },
+    });
+  }
+  return 1;
+}
+
+function holder(t: Triple): string {
+  const before = t.a + t.b + t.c;
+  const got = below(t);
+  const read = t.a + "," + t.b + "," + t.c;
+  let stored = "stored";
+  try {
+    t.c = 9;
+    t.b = 8;
+  } catch (error) {
+    stored = (error as Error).name;
+  }
+  return before + " " + got + " " + read + " " + stored + " " + t.b + "," + t.c + " " + Object.keys(t).join("") + " " + JSON.stringify(t);
+}
+
+////= for-24	holder(new Triple(round, 1, 2)
+//// damage-behind-a-call-tools-of-the-run-time/indexed-and-symbol-properties-on-an-instance.ts
+// An instance of a class gets a property whose name is an index, one whose name is a symbol, and one whose name is a number too large for an index. The caller walks the keys of the object in front of the call and behind it.
+////= Point
+
+const mark = Symbol("mark");
+let mode = 0;
+function below(p: Point): number {
+  if (mode === 1) (p as any)[0] = "zero";
+  else if (mode === 2) (p as any)[mark] = "marked";
+  else if (mode === 3) (p as any)[4294967295] = "large";
+  else if (mode === 4) (p as any)["-1"] = "negative";
+  return 1;
+}
+
+function holder(p: Point): string {
+  let before = "";
+  for (const key in p) before += key;
+  const got = below(p);
+  let after = "";
+  for (const key in p) after += key + ".";
+  return before + " " + got + " " + after + " " + (p.x + p.y) + " " + Reflect.ownKeys(p).length + " " + String((p as any)[0]) + " " + String((p as any)[mark]);
+}
+
+////= for-18	500	holder	Point	round	1
+//// damage-behind-a-call-tools-of-the-run-time/object-assign-and-spread-store-misfits.ts
+// Object.assign stores into fields without the compiled store: a string into a number field, a number into a boolean field, a property that the class does not declare. It runs below a call, and the caller has read the object.
+////= Lamp
+
+let mode = 0;
+function below(lamp: Lamp): number {
+  if (mode === 1) Object.assign(lamp, { watts: "many" });
+  else if (mode === 2) Object.assign(lamp, { on: 1 });
+  else if (mode === 3) Object.assign(lamp, { color: "red" });
+  else if (mode === 4) Object.assign(lamp, { watts: 60, on: false });
+  else if (mode === 5) Object.assign(lamp, JSON.parse('{"watts":null,"on":"off"}'));
+  return 1;
+}
+
+function holder(lamp: Lamp): string {
+  const before = (lamp.on ? "lit" : "dark") + lamp.watts;
+  const got = below(lamp);
+  return before + " " + got + " " + (lamp.on ? "lit" : "dark") + "," + (lamp.on === true) + "," + (lamp.watts + 1) + "," + Object.keys(lamp).length;
+}
+
+////= for-18	600	holder	Lamp	true	round
+//// damage-behind-a-call-tools-of-the-run-time/reflect-stores-defines-and-deletes.ts
+// The functions of Reflect do to an object what the operators do, and answer with a boolean where the operators would throw. They run below a call, and the caller has read the object.
+////= Point
+
+let mode = 0;
+function below(p: Point): boolean {
+  if (mode === 1) return Reflect.set(p, "x", "text");
+  if (mode === 2) return Reflect.deleteProperty(p, "x");
+  if (mode === 3) return Reflect.defineProperty(p, "x", { get: () => -7 });
+  if (mode === 4) return Reflect.setPrototypeOf(p, null);
+  if (mode === 5) return Reflect.preventExtensions(p);
+  if (mode === 6) return Reflect.set({}, "x", "through a receiver", p);
+  return false;
+}
+
+function holder(p: Point): string {
+  const before = p.x + p.y;
+  const got = below(p);
+  const read = p.x + "," + p.y;
+  let added = "added";
+  try {
+    (p as any).z = 1;
+  } catch (error) {
+    added = (error as Error).name;
+  }
+  return before + " " + got + " " + read + " " + added + " " + (p instanceof Point);
+}
+
+////= for-18	700	holder	Point	round	1

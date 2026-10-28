@@ -1,0 +1,6 @@
+{
+  "skipInVariant": {
+    "trimmed-runtime": "it calls members of Bun under names that are put together at run time, and the source names none of them: --trim removes them, and the calls throw"
+  },
+  "alone": "what it prints hangs on what else the executable holds: which modules and members were compiled in, and whether anything evaluates text"
+}

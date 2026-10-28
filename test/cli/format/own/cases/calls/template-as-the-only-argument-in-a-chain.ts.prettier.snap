@@ -1,0 +1,71 @@
+------------------
+{ printWidth: 80 }
+------------------
+const rows = this.database
+  .run<Row>(
+    `
+        SELECT a.first_column, a.second_column, a.third_column
+      `,
+  )
+  .toArray();
+
+const code = compiler
+  .transformSync(
+    `${source}
+export const names = [first.name, ${expression}];`,
+  )
+  .code.trim();
+
+const short = a
+  .b(
+    `
+  c
+`,
+  )
+  .d();
+
+const tagged = this.database
+  .run(
+    sql`
+        SELECT a.first_column, a.second_column, a.third_column
+      `,
+  )
+  .toArray()
+  .filter(Boolean);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const rows = this.database
+  .run<Row>(
+    `
+        SELECT a.first_column, a.second_column, a.third_column
+      `,
+  )
+  .toArray();
+
+const code = compiler
+  .transformSync(
+    `${source}
+export const names = [first.name, ${expression}];`,
+  )
+  .code.trim();
+
+const short = a
+  .b(
+    `
+  c
+`,
+  )
+  .d();
+
+const tagged = this.database
+  .run(
+    sql`
+        SELECT a.first_column, a.second_column, a.third_column
+      `,
+  )
+  .toArray()
+  .filter(Boolean);
+
+===================== End =====================

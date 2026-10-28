@@ -29,7 +29,10 @@ static constexpr ASCIILiteral commonJSDefaultWrapperEnd = "})"_s;
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireCommonJS);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireNativeModule);
 JSC_DECLARE_HOST_FUNCTION(functionJSCommonJSModule_compile);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireTestModule);
 
 void populateESMExports(
     JSC::JSGlobalObject* globalObject,
@@ -86,6 +89,9 @@ public:
 
     bool ignoreESModuleAnnotation { false };
     bool hasEvaluated = false;
+    // Of the module object of a file of an ahead-of-time executable: the number of the file in the executable. Its `exports`, `parent` and `children` are the engine's to answer.
+    static constexpr uint32_t noCompiledModule = UINT32_MAX;
+    uint32_t compiledModule { noCompiledModule };
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
@@ -120,7 +126,7 @@ public:
         JSC::JSString* key,
         JSValue exportsObject, bool hasEvaluated, JSValue parent);
 
-    static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* = nullptr);
+    static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* = nullptr, JSCommonJSModule* requestingModule = nullptr);
     JSModuleGraph* moduleGraph() const { return m_moduleGraph.get(); }
     void setModuleGraph(JSC::VM&, JSModuleGraph*);
 

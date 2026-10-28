@@ -12,8 +12,8 @@ use super::convert::FamilyFacts;
 use super::layouts::ObjectTypeKey;
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{
-    Data, EvalScope, ExpectedResult, Function, Layout, LayoutFlags, RuntimeFunctionEntry,
-    SourcePositions, TypeSite, Variable,
+    Data, EvalScope, ExpectedResult, Function, FunctionVisibility, Layout, LayoutFlags,
+    RuntimeFunctionEntry, SourcePositions, TypeSite, Variable,
 };
 use crate::ir::{
     DataId, EvalScopeId, ExpectedResultId, FunctionId, FunctionKey, Id, LayoutId, LayoutKey,
@@ -408,6 +408,13 @@ impl FragmentBuilder {
     pub(crate) fn add_runtime_function(&mut self, entry: RuntimeFunctionEntry) {
         debug_assert!(self.function_keys.is_declared(entry.function));
         self.runtime_functions.push(entry);
+    }
+
+    /// A private library function hides itself. Only a recursively private one hides what is written inside it.
+    pub(crate) fn lists_functions_inside(&self, function: FunctionId) -> bool {
+        self.runtime_functions.iter().any(|entry| {
+            entry.function == function && entry.visibility == FunctionVisibility::Private
+        })
     }
 
     pub(crate) fn finish(mut self, module: ModuleFragment) -> Fragment {

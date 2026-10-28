@@ -13,6 +13,12 @@ function callsIn(counts, ...besides) {
 }
 // These make the text that is printed, list the keys for it and keep it in a set; a cell where the allocator has none at hand is the work of the run time.
 const owed = ["operationAOTConcat", "operationAOTOwnPropertyKeys", "operationAOTSetAdd", "operationAOTStackStringBuilderAppend", "operationAOTStackStringBuilderFinish", "operationAOTStringOfAnyValue", "operationAOTAllocateSlow"];
+// So do these: show() reads three names and each key of twelve kinds of objects, and the run time looks each up until it is remembered. Each is owed at most so often.
+const owedAtMost = { operationAOTGetByIdAndCache: 33, operationAOTGetByValGeneric: 90 };
+// The calls of one operation in such a text.
+const callsOf = (counts, name) => callsIn(counts) - callsIn(counts, name);
+// Those of them that were called more often than that between two such texts.
+const calledTooOften = (before, after) => Object.keys(owedAtMost).filter(name => callsOf(after, name) - callsOf(before, name) > owedAtMost[name]);
 var kMode = Symbol("first");
 if (countsSoFar.length > 5) kMode = Symbol("never");
 function Root(limit) {
@@ -35,8 +41,10 @@ const before = countsSoFar();
 for (let turn = 0; turn < 2000; turn++) {
   for (const Kind of kinds) said.add(new Kind(10).show());
 }
-const asked = callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed);
+const after = countsSoFar();
+const asked = callsIn(after, ...owed, ...Object.keys(owedAtMost)) - callsIn(before, ...owed, ...Object.keys(owedAtMost));
+const tooOften = calledTooOften(before, after);
 console.log([...said].join("\n"));
-console.log(asked <= 400 ? "the run time was asked at most 400 times" : "the run time was asked " + asked + " times");
+console.log(asked <= 400 && !tooOften.length ? "the run time was asked at most 400 times" : "the run time was asked " + asked + " times, and too often called: " + tooOften.join());
 kMode = Symbol("second");
 console.log(new kinds[0](11).show(), new kinds[1](11).show());

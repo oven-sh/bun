@@ -982,8 +982,8 @@
     "jit": 20212.3
   },
   "built-in/stringify-a-short-text-with-one-quote": {
-    "typed": 922.8,
-    "untyped": 917.9,
+    "typed": 735.4,
+    "untyped": 732.6,
     "jit": 746.5
   },
   "built-in/stringify-a-text-of-sixty-lines": {

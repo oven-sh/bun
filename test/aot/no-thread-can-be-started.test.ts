@@ -5,7 +5,7 @@ import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 import { run as runCommand } from "./harness/run";
 import { withoutCoreDump } from "./run-programs";
-import { describe, test } from "./supported";
+import { describe, test, unsupported } from "./supported";
 
 const program = `type Cell = { id: number; next: Cell | null };
 if (!Bun.isMainThread) {
@@ -59,91 +59,112 @@ const underLimit = (executable: string) => [
   executable,
 ];
 
-describe.skipIf(!isLinux || isASAN)("a compiled program that can start no thread", () => {
-  const folder = tempDir("aot-no-thread", { "program.ts": program });
-  const executable = join(String(folder), "program");
-  let isBound = false;
-  const ask = async (what: string) => {
-    const { stdout, stderr, exitCode } = await runCommand(withoutCoreDump(underLimit(executable)), String(folder), {
-      ...bunEnv,
-      BUN_CRASH_REPORT_URL: "",
-      WHAT: what,
-    });
-    return { stdout, exitCode, lines: stderr.split("\n").filter(line => /^(error|note|FATAL|panic)/.test(line)) };
-  };
+const folder = tempDir("aot-no-thread", { "program.ts": program });
+const executable = join(String(folder), "program");
+const ask = async (what: string) => {
+  const { stdout, stderr, exitCode } = await runCommand(withoutCoreDump(underLimit(executable)), String(folder), {
+    ...bunEnv,
+    BUN_CRASH_REPORT_URL: "",
+    WHAT: what,
+  });
+  return { stdout, exitCode, lines: stderr.split("\n").filter(line => /^(error|note|FATAL|panic)/.test(line)) };
+};
 
-  test("builds, and the limit binds this user", async () => {
-    const built = await runCommand(
+const canAsk = isLinux && !isASAN && !unsupported;
+const built = canAsk
+  ? await runCommand(
       [bunExe(), "build", "--compile", "--aot", "program.ts", "--outfile", "program"],
       String(folder),
       bunEnv,
-    );
+    )
+  : { stderr: "", exitCode: 0 };
+// The program ran and could start no process: an uncaught EAGAIN. A shell that cannot set the limit ends with 2.
+const isBound = canAsk && built.exitCode === 0 && (await ask("limit")).exitCode === 1;
+if (canAsk && !isBound)
+  console.error("SKIPPED: the tests of no-thread-can-be-started.test.ts: `ulimit -u` does not bind this user");
+
+describe.skipIf(!canAsk)("a compiled program that can start no thread", () => {
+  test("builds, and the limit binds this user", () => {
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
       stderr: expect.not.stringMatching(/^error\b/m),
       exitCode: 0,
     });
-    // The program ran and could start no process: an uncaught EAGAIN. A shell that cannot set the limit ends with 2.
-    isBound = (await ask("limit")).exitCode === 1;
-    if (!isBound)
-      console.error("SKIPPED: the tests of no-thread-can-be-started.test.ts: `ulimit -u` does not bind this user");
-  }, 120_000);
+  });
 
-  test("makes and collects millions of objects by itself", async () => {
-    if (!isBound) return;
-    expect(await ask("collections")).toEqual({
-      stdout: "made and collected 7999999 64000\nthe end\n",
-      exitCode: 0,
-      lines: [],
-    });
-  }, 120_000);
+  test.skipIf(!isBound)(
+    "makes and collects millions of objects by itself",
+    async () => {
+      expect(await ask("collections")).toEqual({
+        stdout: "made and collected 7999999 64000\nthe end\n",
+        exitCode: 0,
+        lines: [],
+      });
+    },
+    120_000,
+  );
 
   // A collection that takes longer than its slice of time goes on beside the program. A program that waits for it hands it to the collector's own thread, or finishes it by itself.
-  test("waits for the collections that it asks for, on a busy machine too", async () => {
-    if (!isBound) return;
-    expect(await ask("awaited collections")).toEqual({ stdout: "the end\n", exitCode: 0, lines: [] });
-  }, 120_000);
+  test.skipIf(!isBound)(
+    "waits for the collections that it asks for, on a busy machine too",
+    async () => {
+      expect(await ask("awaited collections")).toEqual({ stdout: "the end\n", exitCode: 0, lines: [] });
+    },
+    120_000,
+  );
 
-  test("waits for the collections of millions of objects that it asks for", async () => {
-    if (!isBound) return;
-    expect(await ask("awaited collections of many objects")).toEqual({
-      stdout: "kept 4000000\nthe end\n",
-      exitCode: 0,
-      lines: [],
-    });
-  }, 120_000);
+  test.skipIf(!isBound)(
+    "waits for the collections of millions of objects that it asks for",
+    async () => {
+      expect(await ask("awaited collections of many objects")).toEqual({
+        stdout: "kept 4000000\nthe end\n",
+        exitCode: 0,
+        lines: [],
+      });
+    },
+    120_000,
+  );
 
-  test("new Worker() throws", async () => {
-    if (!isBound) return;
-    expect(await ask("worker")).toEqual({
-      stdout: "TypeError: Failed to spawn worker thread\nthe end\n",
-      exitCode: 0,
-      lines: [],
-    });
-  }, 120_000);
+  test.skipIf(!isBound)(
+    "new Worker() throws",
+    async () => {
+      expect(await ask("worker")).toEqual({
+        stdout: "TypeError: Failed to spawn worker thread\nthe end\n",
+        exitCode: 0,
+        lines: [],
+      });
+    },
+    120_000,
+  );
 
-  test("the first task of the thread pool ends the program with a line that says why", async () => {
-    if (!isBound) return;
-    const { stdout, exitCode, lines } = await ask("file");
-    expect({ stdout, lines }).toEqual({
-      stdout: "",
-      lines: [
-        expect.stringMatching(/^error: Failed to start a thread of the thread pool: /),
-        expect.stringMatching(/^note: The process or thread limit may have been reached/),
-      ],
-    });
-    expect(exitCode).not.toBe(0);
-  }, 120_000);
+  test.skipIf(!isBound)(
+    "the first task of the thread pool ends the program with a line that says why",
+    async () => {
+      const { stdout, exitCode, lines } = await ask("file");
+      expect({ stdout, lines }).toEqual({
+        stdout: "",
+        lines: [
+          expect.stringMatching(/^error: Failed to start a thread of the thread pool: /),
+          expect.stringMatching(/^note: The process or thread limit may have been reached/),
+        ],
+      });
+      expect(exitCode).not.toBe(0);
+    },
+    120_000,
+  );
 
-  test("so does the first fetch", async () => {
-    if (!isBound) return;
-    const { stdout, exitCode, lines } = await ask("fetch");
-    expect({ stdout, lines }).toEqual({
-      stdout: "",
-      lines: [
-        expect.stringMatching(/^error: Failed to start HTTP Client thread: /),
-        expect.stringMatching(/^note: The process or thread limit may have been reached/),
-      ],
-    });
-    expect(exitCode).not.toBe(0);
-  }, 120_000);
+  test.skipIf(!isBound)(
+    "so does the first fetch",
+    async () => {
+      const { stdout, exitCode, lines } = await ask("fetch");
+      expect({ stdout, lines }).toEqual({
+        stdout: "",
+        lines: [
+          expect.stringMatching(/^error: Failed to start HTTP Client thread: /),
+          expect.stringMatching(/^note: The process or thread limit may have been reached/),
+        ],
+      });
+      expect(exitCode).not.toBe(0);
+    },
+    120_000,
+  );
 });

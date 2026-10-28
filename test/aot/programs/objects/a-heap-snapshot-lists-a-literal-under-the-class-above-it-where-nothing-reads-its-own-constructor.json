@@ -1,0 +1,3 @@
+{
+  "skipInShell": "it uses Bun.generateHeapSnapshot, which the jsc shell does not have"
+}

@@ -43,16 +43,6 @@ export async function runTool(cmd: string[]) {
 
 export const run = (...args: string[]) => runTool([testaot!, ...args]);
 
-// TODO: on Windows x64 `pass` answers "unknown pass f0:v3" to a word that retypes a value behind the parser, so it runs no pass. Why is not known.
-// On Windows arm64 it takes the word. These are three files with such a word. The last one is in ./engine-tests.
-export const unexplainedOnWindows = [
-  "represent/operand-wider-than-its-operation-takes.ir",
-  "select/builtin-call-whose-operand-lost-its-type.ir",
-  "select/a-call-that-takes-parts-of-views-keeps-its-form-when-a-view-is-only-known-as-an-object.ir",
-];
-const isKnownOnWindows = (line: string) =>
-  unexplainedOnWindows.some(file => line.replaceAll("\\", "/").includes(`/${file}:`));
-
 // TODO: on arm64 it prints another output.
 const notYetOnArm64 = isArm64 ? ["dictionary-access-by-name/programs/uncacheable-dictionary-files-nothing"] : [];
 // TODO: on the Intel Macs of CI the native tests, in four parts at one time, did not end within the five minutes that the runner gives a file.
@@ -61,11 +51,7 @@ const nativeTestsOutlastTheRunner = isMacOS && !isArm64;
 const limit = isASAN ? 480_000 : 290_000;
 
 async function expectEveryTestPassed({ lines, stderr, exitCode }: Awaited<ReturnType<typeof run>>) {
-  await printOutputOfFailedTests(lines.filter(line => !(isWindows && isKnownOnWindows(line))));
-  if (isWindows && lines.some(line => line.startsWith("FAIL ") && isKnownOnWindows(line))) {
-    expect(lines.filter(line => line.startsWith("FAIL ") && !isKnownOnWindows(line))).toEqual([]);
-    return;
-  }
+  await printOutputOfFailedTests(lines);
   const failed = lines.filter(line => line.startsWith("FAIL "));
   const isOnTheList = (line: string) => notYetOnArm64.some(name => line.startsWith(`FAIL ${name}: `));
   if (failed.length && failed.every(isOnTheList)) {

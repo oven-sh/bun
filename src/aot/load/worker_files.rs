@@ -10,7 +10,9 @@ use bun_sema::hir::{
     BinOp, Branches, CallId, ExportSpecId, ExprId, ExprKind, PatId, PatKind, PropKey, PropKind,
     StmtKind,
 };
-use bun_sema::import_sites::{ImportSiteKind, find_values_of_parameter, is_exported};
+use bun_sema::import_sites::{
+    ENCODERS, Encoder, ImportSiteKind, find_values_of_parameter, is_exported,
+};
 use bun_sema::messages::Category;
 use bun_sema::program::{CodeAnswer, FileId, Files};
 use bun_sema_driver::Locator;
@@ -65,35 +67,6 @@ impl WorkerFile {
 }
 
 const LOADERS_OF_CODE: [Loader; 4] = [Loader::Js, Loader::Jsx, Loader::Ts, Loader::Tsx];
-
-/// `None`: the function throws.
-type Encoder = fn(&[u8]) -> Option<Vec<u8>>;
-
-fn encode_uri_component(text: &[u8]) -> Option<Vec<u8>> {
-    if !is_valid_utf8(text) {
-        return None;
-    }
-    let mut encoded = Vec::with_capacity(text.len());
-    for &byte in text {
-        let is_mark = matches!(
-            byte,
-            b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
-        );
-        if byte.is_ascii_alphanumeric() || is_mark {
-            encoded.push(byte);
-        } else {
-            encoded.push(b'%');
-            encoded.extend(hex_byte_lower(byte).map(|digit| digit.to_ascii_uppercase()));
-        }
-    }
-    Some(encoded)
-}
-
-fn encode_base64(text: &[u8]) -> Option<Vec<u8>> {
-    let characters = core::str::from_utf8(text).ok()?.chars();
-    let bytes: Option<Vec<u8>> = characters.map(|it| u8::try_from(it).ok()).collect();
-    Some(bun_base64::encode_alloc(&bytes?))
-}
 
 pub(crate) struct WorkerSearch<'a> {
     pub limits: &'a LimitValues,
@@ -300,14 +273,8 @@ pub(crate) fn find_code_that_starts_workers(
         blob_constructor: table::find_name(b"Blob").and_then(table::global),
         modules: [b"node:worker_threads".as_slice(), b"node:path", b"node:url"]
             .map(table::module_by_specifier),
-        encoders: [
-            (
-                b"encodeURIComponent".as_slice(),
-                encode_uri_component as Encoder,
-            ),
-            (b"btoa".as_slice(), encode_base64 as Encoder),
-        ]
-        .map(|(name, encode)| (table::find_name(name).and_then(table::global), encode)),
+        encoders: ENCODERS
+            .map(|(name, encode)| (table::find_name(name).and_then(table::global), encode)),
         variables_left: 0,
         parameters_left: 0,
         pending: Vec::new(),
@@ -1295,20 +1262,6 @@ impl Walk<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn texts_are_encoded_as_the_functions_of_the_language_encode_them() {
-        let encoded = encode_uri_component("a b;/?:@&=+$,#-_.!~*'()\u{e9}\u{20ac}".as_bytes());
-        let expected = b"a%20b%3B%2F%3F%3A%40%26%3D%2B%24%2C%23-_.!~*'()%C3%A9%E2%82%AC";
-        assert_eq!(encoded.as_deref(), Some(&expected[..]));
-        assert_eq!(encode_uri_component(b"\xed\xa0\x80"), None);
-        assert_eq!(encode_base64(b"ab").as_deref(), Some(&b"YWI="[..]));
-        assert_eq!(
-            encode_base64("\u{e9}".as_bytes()).as_deref(),
-            Some(&b"6Q=="[..])
-        );
-        assert_eq!(encode_base64("\u{20ac}".as_bytes()), None);
-    }
 
     #[test]
     fn paths_are_joined_as_node_path_joins_them() {

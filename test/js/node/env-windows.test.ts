@@ -32,3 +32,17 @@ test.if(isWindows)("process.env is case insensitive on windows", () => {
   expect(process.env.doesntexistahahahahaha).toBeUndefined();
   expect(Object.keys(process.env)).not.toInclude("doesntExistAHaHaHaHaHa");
 });
+
+test.if(isWindows)("process.env can be listed after an attempt to keep it from being extended", () => {
+  expect(() => Object.preventExtensions(process.env)).toThrow(TypeError);
+  expect(() => Object.seal(process.env)).toThrow(TypeError);
+  expect(() => Object.freeze(process.env)).toThrow(TypeError);
+  expect(Reflect.preventExtensions(process.env)).toBe(false);
+  expect(Object.isExtensible(process.env)).toBe(true);
+
+  expect(Object.keys(process.env)).toInclude(Object.keys({ ...process.env })[0]);
+  process.env.storedBehindTheAttempt = "stored";
+  expect(process.env.STOREDBEHINDTHEATTEMPT).toBe("stored");
+  expect(Object.keys(process.env).pop()).toBe("storedBehindTheAttempt");
+  delete process.env.storedBehindTheAttempt;
+});

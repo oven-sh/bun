@@ -1,6 +1,7 @@
 // Runs one command as a child of this process and counts what it costs. ./measure-check.ts calls it, and also runs this file as a program of its own, so
 // it imports nothing of the tests' harness.
 import { dlopen, FFIType, ptr } from "bun:ffi";
+import { statSync } from "node:fs";
 import { endAtMemoryLimit } from "../harness/memory-limit";
 
 /**
@@ -54,6 +55,23 @@ export type Measured = {
   exceededMemoryLimit: boolean;
 };
 
+/**
+ * macOS checks each page of an executable against its signature when a process first touches the page, and counts that as instructions of the
+ * process: 19 million for a program that prints a line. So a file that was written a moment ago is run once before it is measured.
+ */
+const filesThatHaveRun = new Set([fileOf(process.execPath)]);
+function fileOf(path: string) {
+  const stats = statSync(path, { throwIfNoEntry: false });
+  return stats ? `${stats.dev}:${stats.ino}:${stats.mtimeMs}` : path;
+}
+async function runOnceUnmeasured(cwd: string, cmd: string[], timeout: number, env: Record<string, string | undefined>) {
+  const file = fileOf(cmd[0]);
+  if (filesThatHaveRun.has(file)) return;
+  filesThatHaveRun.add(file);
+  await using child = Bun.spawn({ cmd, cwd, env, stdio: ["ignore", "ignore", "ignore"], timeout, killSignal: "SIGKILL" });
+  await child.exited;
+}
+
 export async function measureHere(
   cwd: string,
   command: string[],
@@ -61,6 +79,7 @@ export async function measureHere(
   env: Record<string, string | undefined>,
 ): Promise<Measured> {
   const isDarwin = process.platform === "darwin";
+  if (isDarwin) await runOnceUnmeasured(cwd, command, killAfter, env);
   await using child = Bun.spawn({
     cmd: isDarwin ? ["/usr/bin/time", "-l", ...command] : ["/bin/sh", "-c", 'read line; exec "$0" "$@"', ...command],
     cwd,

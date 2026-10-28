@@ -7,56 +7,58 @@ import Compile from "/snippets/cli/compile.mdx";
 
 <Warning>Ahead-of-time compilation is experimental.</Warning>
 
+`bun compile` compiles your program to machine code at build time and writes one executable. It runs on machines that don't have Bun installed.
+
 ```bash terminal icon="terminal"
 bun compile ./server.ts
+./server
 ```
 
-`bun compile` compiles your program to machine code and writes a standalone executable. Under `bun run`, your program starts in an interpreter, and a just-in-time compiler (JIT) compiles the hot functions while it runs.
+There's no new syntax and nothing to annotate. TypeScript, JavaScript and npm packages all compile. Where your code has types, the compiler [uses them](/compiler/types) to generate faster code.
 
-- Your code is machine code from the first instruction. There's nothing to parse at startup and nothing to warm up.
-- The compiler uses your TypeScript types. A class, an interface or an object type gets a fixed layout: its fields sit at fixed offsets, like a struct in Go or Rust. Where the compiler can prove which objects reach a property access, the access is one load or one store. Code that compiles this way is called **typed** in these docs.
-- Bun compiles JavaScript files and npm packages too, the same way. Where the compiler has no such proof, the compiled code looks the property up at run time, like an interpreter.
-- The result is one file, like the output of [`bun build --compile`](/compiler/executables). It runs on a machine that doesn't have Bun installed.
+## What to expect
 
-There's no new syntax and nothing to annotate. Point `bun compile` at the entry point you already have.
+Under `bun run`, and in an executable from [`bun build --compile`](/compiler/executables), your code starts in an interpreter and a JIT compiles the hot functions while the program runs. `bun compile` does that work at build time, and the executable has no JIT.
 
-`bun compile` is short for `bun build --compile --aot` and takes the same flags. Three other commands take `--aot`: `bun check --aot` reports what the build would report, and [`bun run --aot` and `bun test --aot`](#run-under-the-compilers-rules) check your program as the build does and then run it from its source.
+What you get:
 
-## Build an executable
+- Your program starts faster. There's no source to parse and nothing to warm up.
+- It uses less memory. The process has no bytecode, no JIT-compiled code and no profiling data.
+- Typed code runs faster. A property access is one load from a fixed offset, like a struct field in Go or Rust.
+- A small program's file is smaller, because it leaves out the `bun` command line and the JIT. In a large program, the machine code can outweigh that. [`--trim`](/compiler/size) removes the Bun APIs you don't use.
 
-The build type checks your program. It knows Bun's and Node.js's APIs even when no type declarations are installed, because [Bun carries a copy of them](/compiler/troubleshooting#buns-type-declarations-arent-installed). Your editor and `bun check` don't read that copy, so install `@types/bun` anyway. The build then uses the version you installed. [`bun init`](/runtime/templating/init) installs it for a new project.
+What it costs:
+
+- The build takes longer. Bun type checks the whole program and compiles every function it can reach, and nothing is cached between builds.
+- Untyped code can run slower than under the JIT. A JIT watches the program run and learns which objects show up at each property access. The compiler has to prove that at build time. Where it can't, the code looks the property up at run time.
+- [A few things differ from `bun run`](/compiler/compatibility). Built-in objects such as `Array.prototype` are read-only, and code from a string (`eval`, `new Function`) runs in an interpreter.
+
+[`bun compile --explain`](/compiler/explain) lists the code that compiled to a slow path, worst first, with a fix for each.
+
+## When to stay with the JIT
+
+- Peak throughput matters most, and your hot code is untyped JavaScript from npm.
+- You build on one platform and deploy to another. `bun compile` only builds for the platform it runs on, so run it in CI or in a container.
+- A library generates its hot code with `new Function`, as some validators and serializers do. [That code is interpreted](/compiler/compatibility#code-from-strings).
+- A dependency changes [built-in objects](/compiler/compatibility#built-in-objects-are-read-only). Assigning to `Array.prototype.push` throws a `TypeError`.
+- Your program spends its time in [WebAssembly](/compiler/compatibility#webassembly) that it downloads or decodes at run time. Only a `.wasm` file that you import is compiled.
+- You need breakpoints in the executable. [The inspector](/compiler/debugging#the-inspector) connects, but it can't pause compiled code.
+
+If you aren't sure, build the same entry point both ways and measure. With `--no-aot`, the executable holds your JavaScript and runs it with the JIT.
 
 ```bash terminal icon="terminal"
-bun add -d @types/bun
+bun compile --no-aot ./server.ts --outfile server-jit
+bun compile ./server.ts --outfile server-aot
 ```
 
-```ts server.ts icon="/icons/typescript.svg"
-interface Todo {
-  id: number;
-  title: string;
-  done: boolean;
-}
+Put both under the same load, on routes that do what your application does in production. Run the load twice and keep the second result, so the JIT has warmed up. [Benchmarking](/project/benchmarking) covers the tools.
 
-const todos: Todo[] = [{ id: 1, title: "Try bun compile", done: false }];
-
-const server = Bun.serve({
-  port: 3000,
-  routes: {
-    "/todos": () => Response.json(todos),
-    "/todos/:id": req => {
-      const todo = todos.find(todo => todo.id === Number(req.params.id));
-      return todo ? Response.json(todo) : new Response("Not found", { status: 404 });
-    },
-  },
-});
-
-console.log(`Listening on ${server.url}`);
-```
+## Build an executable
 
 <Tabs>
   <Tab title="CLI">
     ```bash terminal icon="terminal"
-    bun compile ./server.ts
+    bun compile ./server.ts --outfile server
     ```
   </Tab>
   <Tab title="JavaScript">
@@ -69,58 +71,9 @@ console.log(`Listening on ${server.url}`);
   </Tab>
 </Tabs>
 
-```txt
- [282ms]  bundle  1 modules
- [100ms] compile  server
-```
-
-Run it like any other program.
-
-```bash terminal icon="terminal"
-./server
-```
-
-The server prints its address and waits for requests.
-
-```txt
-Listening on http://localhost:3000/
-```
-
-```bash terminal icon="terminal"
-curl localhost:3000/todos/1
-```
-
-```txt
-{"id":1,"title":"Try bun compile","done":false}
-```
-
-### The typed percentage
-
-Untyped code works, but runs slower. `bun compile --explain` prints how much of your program is typed, in the last lines of its report. These lines are from a larger program.
-
-```txt
-Dependencies: 3.1% of property accesses are one load: 210 free, 1,320 tested, 5,244 by name (6,774)
-92.4% of property accesses are one load: 1,204 free, 61 tested, 38 by name (1,303)
-```
-
-The percentage counts property accesses: reads, writes, `in` tests and deletes. An access is typed if the compiled code does it with one load or one store at a fixed offset. Those are the `free` ones: Bun already knows the object's shape at that point, from the types or from a check earlier in the function. A `tested` access runs a test of its own first, and a `by name` access looks the property up by name. The count is taken after optimization, so it describes the machine code, not your source.
-
-| In your code                                                                                         | Counts as                                           |
-| ---------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| `todo.id`, `todo.done = true`                                                                        | A property access                                   |
-| `stock.add(item)`                                                                                    | A call. A method call isn't a property access       |
-| `items.length`, `items.push(item)`, `map.get(key)`, `console.log(item)`, `Math.max(a, b)`            | Nothing. Bun resolves them to built-in operations   |
-| Any other property of an object that Bun provides: `req.params.id`, `server.url`, `process.env.PORT` | A property access, and one that's looked up by name |
-
-Code in `node_modules` is counted separately, on its own `Dependencies:` line.
-
-The todo server only has a handful of property accesses, and most of them are of the last kind, so its percentage is low. That doesn't mean much for a program this small. A lookup by name only matters in hot code. There, read the property once and keep the value in a variable.
-
-The rest of the report lists what's lowering the number, worst first, with a fix for each. [Get more of your program typed](/compiler/explain) explains exactly what is counted and how to work through the list.
+`bun compile` is short for `bun build --compile --aot` and takes the same flags. Without an entry point, it builds the file that `"bin"` in `package.json` points to, then `"module"`, then `"main"`, then `index.ts`.
 
 ### Type errors stop the build
-
-`bun run` and `bun build` remove your types and never check them. `bun compile` relies on them, so a type error stops the build. Bun writes no executable and exits with code `1`.
 
 ```ts wrong.ts icon="/icons/typescript.svg"
 const port: number = "3000";
@@ -138,192 +91,17 @@ error: TS2322: Type 'string' is not assignable to type 'number'.
     at /path/to/wrong.ts:1:7
 ```
 
-[`bun check --aot`](/runtime/check) reports every error that the build reports, and builds nothing. Get it to pass first.
+`bun run` removes your types and never checks them. `bun compile` relies on them, so it type checks the whole program first. If there's a type error, it writes no executable and exits with code `1`.
 
-```bash terminal icon="terminal"
-bun check --aot ./wrong.ts
-```
+[`bun check --aot`](/runtime/check) reports the same errors and builds nothing. Bun checks each file with the nearest `tsconfig.json`. If you can't fix an error yet, you can [suppress it](/compiler/troubleshooting#the-build-stops-at-a-type-error).
 
-```txt
-wrong.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.
-Found 1 error in 1 file, checked 1 file [49.21ms]
-```
-
-Bun checks each file with the nearest `tsconfig.json`, so each package in a monorepo keeps its own compiler options. Only that file is used to resolve the imports that run: `paths` and `baseUrl` from a `tsconfig.json` further up only apply if the nearest one `extends` it. A type-only import that it can't resolve is also looked up with the entry point's `tsconfig.json`, so a build reports no missing module that `bun check` doesn't. `baseUrl` works as it does under `bun run`. Options that TypeScript 7 removed and that `bun run` never read are ignored: `target: "es5"`, `module: "amd"`, `"umd"` or `"system"`, `moduleResolution: "node"` or `"classic"`, `downlevelIteration`, and `false` for `alwaysStrict`, `esModuleInterop` or `allowSyntheticDefaultImports`. `--tsconfig-override` uses one file for everything.
-
-If the nearest `tsconfig.json` has nothing but `references`, like the one from `create vite`, Bun uses the referenced project that includes the file. Bun reads a referenced project from its source files, so you don't have to build it first.
-
-The build doesn't report errors in code that it removes, such as the `process.platform === "win32"` branch in a build for Linux.
-
-Bun reads a file without an extension, like the `bin/tool` of many packages, as TypeScript. If the file is already valid JavaScript, the build doesn't check its types, as in a `.js` file.
-
-If such a file isn't code at all, the executable carries it as it is and your program gets its path, as in an executable built without `--aot`. Under `bun run --aot` and `bun test --aot`, loading it throws where your program loads it, as in `bun run`, and the build only warns. That also goes for `require()` of a file with an extension that Bun has no loader for, like the `require("./native.so")` in a `try` that some packages use to look for a library. The build stops if the entry point reaches the file through `import` statements alone.
-
-### Compile a project
-
-Without an entry point, `bun compile` reads `package.json`. It compiles the file that `"bin"` points to. If there's no `"bin"`, it uses `"module"`, then `"main"`, then `index.ts`. The executable is named after the `"bin"` entry, or after the package without its scope.
-
-```json package.json icon="file-json"
-{
-  "name": "@acme/todo-server",
-  "module": "server.ts"
-}
-```
-
-```bash terminal icon="terminal"
-bun compile
-```
-
-```txt
- [125ms]  bundle  1 modules
-  [72ms] compile  todo-server
-```
-
-If `package.json` has a `"compile"` script, `bun compile` runs that script. `bun compile --no-script` skips the script.
-
-### What changes when your program runs
-
-Compiled code relies on your types and on the built-in objects, and the executable has no JIT. At run time, that means:
-
-- A value that doesn't match its declared type doesn't throw. The function falls back to its slow path. See [When a value doesn't match its type](/compiler/types#when-a-value-doesnt-match-its-type).
-- Built-in objects such as `Array.prototype` are [read-only](/compiler/compatibility#built-in-objects-are-read-only). Replacing `Array.prototype.push` throws a `TypeError`.
-- Code that only exists at run time, such as a string passed to `eval`, runs in the interpreter.
-- A `.wasm` file that your program imports is compiled with it. Every other [WebAssembly](/compiler/compatibility#webassembly) module runs in the interpreter.
-
-[Compatibility](/compiler/compatibility) lists the rest.
-
-### Run under the compiler's rules
-
-`bun run --aot` and `bun test --aot` first check your program as `bun compile` does, and print what they find the same way. Then they run your program from its source files, like `bun run` and `bun test`, with [built-in objects read-only](/compiler/compatibility#built-in-objects-are-read-only) as in an executable. Use them during development, so that the build has no surprises for you.
-
-```bash terminal icon="terminal"
-bun run --aot ./server.ts
-bun test --aot
-```
-
-A type error ends the process with exit code `1`, just like `bun compile`. Mocks work, because the tests don't run as compiled code. `--inspect`, `--watch` and `--hot` work too. `-e` and `-p` can't be combined with `--aot`.
-
-[Run under the compiler's rules](/compiler/debugging#run-under-the-compilers-rules) has the details. The rest of that page covers the guards that fail, stack traces, crash reports and profilers.
-
-## What to expect
-
-Servers start faster and use less memory. Requests per second depend on how much of the code that handles a request is typed.
-
-Here are eight small servers with the same eight routes: plain text, JSON, path parameters, async, a stream, and a `POST` whose body is validated with zod, validated by hand, or only cast. Each row compares the server run with Bun 1.4.3 to the same server compiled with `bun compile`.
-
-|                | Peak memory (RSS) | Peak private memory | Start to first response |
-| -------------- | ----------------: | ------------------: | ----------------------: |
-| `Bun.serve`    |    41.8 → 34.4 MB |      16.4 → 12.9 MB |           15.8 → 8.2 ms |
-| Hono           |    47.2 → 34.9 MB |      19.7 → 12.8 MB |           18.8 → 8.8 ms |
-| Elysia         |    48.1 → 41.5 MB |      20.4 → 13.0 MB |                         |
-| TanStack Start |    61.3 → 43.1 MB |      30.9 → 15.6 MB |                         |
-| `node:http`    |    71.0 → 44.9 MB |      35.8 → 19.0 MB |          31.2 → 11.8 ms |
-| Fastify        |    80.7 → 54.7 MB |      52.4 → 21.0 MB |          77.7 → 17.9 ms |
-| Express        |    83.5 → 54.7 MB |      51.0 → 23.4 MB |          64.2 → 18.2 ms |
-| Koa            |    89.8 → 59.5 MB |      56.3 → 29.9 MB |          84.1 → 21.8 ms |
-
-Requests per second, next to the same server built with `--no-aot`. That executable runs your JavaScript with the JIT of the same Bun: same built-in modules, same native code. It's the column that shows what the compiler does.
-
-|                | Compiled | `--no-aot` | Bun 1.4.3 | Against `--no-aot` | Against Bun 1.4.3 |
-| -------------- | -------: | ---------: | --------: | -----------------: | ----------------: |
-| `node:http`    |   44,838 |     38,954 |    31,506 |             +12.5% |            +37.8% |
-| `Bun.serve`    |   55,065 |     52,647 |    51,340 |              +3.2% |             +6.2% |
-| Hono           |   42,948 |     42,716 |    41,409 |              +0.3% |             +4.0% |
-| Express        |   53,352 |     51,581 |    40,733 |              -0.7% |            +26.5% |
-| TanStack Start |   22,130 |     23,012 |    22,451 |              -4.8% |             -2.5% |
-| Elysia         |   47,112 |     50,503 |    48,258 |              -7.3% |             -3.8% |
-| Fastify        |   59,678 |     65,807 |    50,255 |             -10.9% |            +16.9% |
-| Koa            |   34,175 |     46,540 |    37,075 |             -31.5% |            -13.0% |
-
-Measured on October 22, 2026: one server process on one core of an AMD EPYC 9R14, Linux x64, 64 connections. Each JIT was warmed with at least 200,000 requests a route. Requests per second are means over the eight routes, and the percentages are geometric means of the routes' ratios. Express, Fastify and Koa ran in one run and the other five in a second one on a busier machine, so compare columns, not rows. The time to the first response is the median of 200 starts. Elysia and TanStack Start weren't in that run.
-
-- **Startup.** Every server answers its first request sooner. There's no source to parse and no bytecode to generate. A program that prints one line goes the other way: 5.05 ms against 4.57 ms.
-- **Memory.** Peak memory is 14% to 37% lower, and the larger frameworks hold about half the private memory or less. The process has no bytecode, no JIT-compiled code and no profiling data. The machine code is part of the file, so the operating system shares it between processes.
-- **Throughput.** Against the JIT of the same Bun, two of the eight are faster, two are level and four are slower. Koa loses the most. It's untyped JavaScript from npm in many small packages, and one plain-text request makes about 450 lookups by name. A JIT learns which objects reach a property access by watching the code run. The compiler has to prove it at build time, and where it can't, the access is a lookup at run time.
-- **Code from strings.** The route that validates with zod is 20% to 54% slower on all eight servers. zod 4 builds its validators with `new Function`, and [that code is interpreted](/compiler/compatibility#code-from-strings). The same body validated by hand is within 6% of the JIT on `Bun.serve`, Hono, Elysia, TanStack Start and `node:http`.
-- **`node:http`.** Bun 1.4.3 has an older `node:http`, which is why `node:http`, Express and Fastify gain so much in the last column. They gain most of that without `bun compile` too.
-
-Typed code does better. The TypeScript 6 compiler, built from its own TypeScript source, type checking the `effect` repository on one thread:
-
-|                   | Bun 1.4.3 | Compiled |
-| ----------------- | --------: | -------: |
-| Time              |   15.05 s |   4.14 s |
-| CPU time          |    31.3 s |    5.3 s |
-| Peak memory (RSS) |  2,568 MB |   961 MB |
-
-The median of five runs on the same kind of machine, the same day.
-
-Here are five of the servers next to the same eight routes written in Go (`net/http`, `GOMAXPROCS=1`) and in Rust (axum, a current-thread tokio runtime). Every response has the same bytes.
-
-|                          | K instructions per request | Peak private memory | RSS when ready | M instructions to first response |
-| ------------------------ | -------------------------: | ------------------: | -------------: | -------------------------------: |
-| `node:http`, compiled    |                       49.8 |             21.0 MB |        25.1 MB |                               19 |
-| Elysia, compiled         |                       56.7 |             12.8 MB |        27.0 MB |                               18 |
-| Hono, compiled           |                       58.2 |             12.4 MB |        20.0 MB |                               11 |
-| Rust                     |                       70.8 |              2.0 MB |         3.4 MB |                                1 |
-| Express, compiled        |                       74.9 |             23.2 MB |        33.1 MB |                               48 |
-| TanStack Start, compiled |                       87.2 |             16.1 MB |        25.3 MB |                               19 |
-| Go                       |                      130.2 |              6.9 MB |         7.1 MB |                                3 |
-
-Private memory is the peak over 400,000 requests. By requests per second on one core, five of seven compiled servers are ahead of Go, from 1.1x (Fastify) to 1.6x (`Bun.serve`). Express and TanStack Start are behind it. All seven are behind Rust, from 1.1x (`Bun.serve`) to 2.6x (TanStack Start). Memory and startup lose to both: 1.8x to 3.4x Go's private memory and 6x to 12x Rust's.
-
-What it costs:
-
-- **The build takes longer.** Bun type checks the whole program and compiles every function that can be reached, and there's no cache between builds. The TypeScript 6 compiler builds in 8.2 s on a machine with many cores, with 121 s of CPU time and 1.5 GB of memory.
-- **The machine code is part of the file.** That's a few megabytes for a small server and tens of megabytes for a large application. The executable is still smaller than with `bun build --compile`, because `bun compile` leaves out the `bun` command line and the JIT compilers: the todo server at the top of this page is 69 MB instead of 140 MB. [`bun compile --trim`](/compiler/size) also removes the Bun APIs that your program doesn't use.
-
-## Compare on your application
-
-Build the same entry point both ways. With `--no-aot`, the executable contains your JavaScript and runs it with the JIT, like `bun build --compile`.
-
-```bash terminal icon="terminal"
-bun compile --no-aot ./server.ts --outfile server-jit
-bun compile ./server.ts --outfile server-aot
-ls -l server-jit server-aot
-```
-
-For a command-line tool, compare the time of a whole run with [`hyperfine`](https://github.com/sharkdp/hyperfine).
-
-```bash terminal icon="terminal"
-hyperfine --warmup 10 -N './cli-jit --help' './cli-aot --help'
-```
-
-For a server, start one executable at a time and put each under the same load with [`oha`](https://github.com/hatoo/oha) or [`bombardier`](https://github.com/codesenberg/bombardier). Run the load twice and keep the second result, so that the JIT has compiled the hot functions of `server-jit` by the time you measure.
-
-```bash terminal icon="terminal"
-oha -z 10s -c 64 --no-tui http://localhost:3000/todos
-```
-
-Use routes that do what your application does in production. A route that returns a constant measures Bun's HTTP server, which is native code either way.
-
-[Benchmarking](/project/benchmarking) has more on measuring time and memory.
-
-## When to stay with the JIT
-
-- **Peak requests per second matter most, and your hot code is untyped.** See Express, Fastify and Effect above.
-- **You build on one platform and deploy to another.** `bun compile` makes machine code for the platform that runs the build. Run the build on the target platform, in CI or in a container.
-
-  ```txt
-  error: bun compile can't cross-compile. It only builds for the platform it runs on
-  note: run this on the target platform, or pass --no-aot to bundle your code with the Bun runtime instead, like bun build --compile
-  ```
-
-- **A library generates its hot code at run time.** zod 4, ajv, fast-json-stringify and Elysia build functions with `new Function`. The compiler can't see that code, so Bun interprets it. Some of them have [a mode without generated code](/compiler/compatibility#code-from-strings).
-- **Your program spends its time in WebAssembly that it doesn't import.** A `.wasm` file that your program imports is compiled with it. Bun interprets every other module, such as bytes that your program downloads or decodes from a string. The executable has no JIT, so a tight loop runs about 20 times slower there. See [WebAssembly](/compiler/compatibility#webassembly).
-- **A dependency changes built-in objects.** `Array.prototype`, `Object.prototype`, `Promise` and the rest are read-only in a compiled program. [Packages that change built-in objects](/compiler/compatibility#packages-that-change-built-in-objects) lists known cases and what to use instead.
-- **You set breakpoints in the executable.** In an executable built with `--compile-inspector`, the inspector connects, and its console, heap snapshots and CPU profiles work. Breakpoints and stepping don't. See [The inspector](/compiler/debugging#the-inspector).
-- **Your project has type errors that you can't fix or [suppress](/compiler/troubleshooting#the-build-stops-at-a-type-error) yet.**
-- **You keep more than 256 `JSCallback`s from `bun:ffi` open at a time.** Their entry points are compiled into the executable, so there's a fixed number of them.
+During development, [`bun run --aot` and `bun test --aot`](/compiler/debugging#run-under-the-compilers-rules) run the same checks and then run your program from its source.
 
 ## Read next
 
-- [How `bun compile` uses your types](/compiler/types): what types get you, and what happens when a value doesn't match its declared type.
-- [Get more of your program typed](/compiler/explain): what the typed percentage counts, and how to raise it.
-- [Compatibility](/compiler/compatibility): what works the same, what differs on purpose, what isn't available.
-- [Test and debug a compiled program](/compiler/debugging): run your tests as compiled code and find the guards that fail, then stack traces, crash reports and profilers.
-- [Smaller executables](/compiler/size): remove the Bun APIs that your program doesn't use.
-- [Publish a library for `bun compile`](/compiler/libraries): ship a package that keeps its types, or add types to one you don't maintain.
-- [Troubleshooting](/compiler/troubleshooting): the errors you're most likely to hit first, with the cause and the fix.
-- [How `bun compile` works](/compiler/internals): the compiler from the inside, for people who want to read or change it.
+- [Types](/compiler/types): how your types change the compiled program.
+- [Compatibility](/compiler/compatibility): what differs from `bun run`.
+- [Testing and debugging](/compiler/debugging): stack traces, source maps and profilers.
+- [Troubleshooting](/compiler/troubleshooting): the errors you're most likely to hit first.
 
 <Compile />

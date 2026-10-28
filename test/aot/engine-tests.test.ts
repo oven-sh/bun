@@ -10,13 +10,11 @@
 //   $TESTAOT run <aot/tests>/passes/sink-allocations --jobs=1     one folder, serially, each path printed before it runs
 //   $TESTAOT native <filter> --part=2/4                           every fourth of the native tests whose name holds the filter, from the second on
 import { expect, test } from "bun:test";
-import { existsSync } from "fs";
 import { isASAN, isCI, isWindows, tempDir } from "harness";
 import { join } from "path";
 import {
   run,
   runTool,
-  unexplainedOnWindows,
   whyEngineTestsSkipped,
   whyNativeTestsSkipped,
   whyShellSkipped,
@@ -35,16 +33,6 @@ for (const why of new Set([whySkipped, whyEngineTestsSkipped, whyNativeTestsSkip
 test.skipIf(isWindows || (!isCI && process.env.AOT_TOOLS !== "required"))("no tool is missing", () => {
   expect([whyNativeTestsSkipped, whyShellSkipped, scriptSkipReason].filter(why => why !== undefined)).toEqual([]);
 });
-
-// It judges nothing: the log of a run on Windows is the only place where their output can be read.
-test.skipIf(!!whyEngineTestsSkipped || !isWindows).each(unexplainedOnWindows)(
-  "what %s prints on Windows",
-  async file => {
-    const folder = existsSync(join(engineTests!, file)) ? engineTests! : join(import.meta.dir, "engine-tests");
-    const { lines, stderr } = await run("run", join(folder, file), "--show-output");
-    console.error(`UNEXPLAINED ON WINDOWS ${file}:\n${[...lines, stderr].join("\n")}`);
-  },
-);
 
 test.skipIf(!!whyEngineTestsSkipped).each([
   ["an unknown list", ["list", "nothing"], 2],

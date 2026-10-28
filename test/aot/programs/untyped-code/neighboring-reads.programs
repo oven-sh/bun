@@ -1615,6 +1615,12 @@ function callsIn(counts, ...besides) {
 }
 // These make the text that is printed, list the names for it and keep it in a set; a cell where the allocator has none at hand is the work of the run time.
 const owed = ["operationAOTConcat", "operationAOTOwnPropertyKeys", "operationAOTSetAdd", "operationAOTStackStringBuilderAppend", "operationAOTStackStringBuilderFinish", "operationAOTValueAdd", "operationAOTAllocateSlow"];
+// So do these: show() reads three names and each key of twelve kinds of objects, and the run time looks each up until it is remembered. Each is owed at most so often.
+const owedAtMost = { operationAOTGetByIdAndCache: 33, operationAOTGetByValGeneric: 67 };
+// The calls of one operation in such a text.
+const callsOf = (counts, name) => callsIn(counts) - callsIn(counts, name);
+// Those of them that were called more often than that between two such texts.
+const calledTooOften = (before, after) => Object.keys(owedAtMost).filter(name => callsOf(after, name) - callsOf(before, name) > owedAtMost[name]);
 function Root(limit) {
   this.events = null;
   this.eventsCount = 0;
@@ -1633,9 +1639,11 @@ const before = countsSoFar();
 for (let turn = 0; turn < 2000; turn++) {
   for (const Kind of kinds) said.add(new Kind(10).show());
 }
-const inRunTime = callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed);
+const after = countsSoFar();
+const inRunTime = callsIn(after, ...owed, ...Object.keys(owedAtMost)) - callsIn(before, ...owed, ...Object.keys(owedAtMost));
+const tooOften = calledTooOften(before, after);
 console.log([...said].join("\n"));
-console.log(inRunTime <= 200 ? "the run time stored for at most 200 of them" : "the run time stored for " + inRunTime + " of them");
+console.log(inRunTime <= 200 && !tooOften.length ? "the run time stored for at most 200 of them" : "the run time stored for " + inRunTime + " of them, and too often called: " + tooOften.join());
 
 const log = [];
 function define(object, name, descriptor) { Object.defineProperty(object, name, descriptor); }

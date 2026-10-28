@@ -2,7 +2,7 @@
 // ./idioms-against-the-jit.ts says: instructions a turn, as TypeScript and as JavaScript, against the JIT's last tier, inside one test.
 //
 // ./behind-the-jit.<os>-<arch>.json names the idioms, of ./idioms too, that took more instructions than the JIT when they were last measured, with the ratio.
-// Each is a todo: `bun test --todo` runs them and tells which have come under the JIT. `bun test/aot/perf/idioms-against-the-jit.ts --write-behind` rewrites the file.
+// Each is a todo, and the ratio is only its title: ./pins.<os>-<arch>.json or ./everyday-pins.<os>-<arch>.json holds what it takes. `bun test --todo` runs them and tells which have come under the JIT. `bun test/aot/perf/idioms-against-the-jit.ts --write-behind` rewrites the file.
 // Every other idiom of ./everyday fails at over 1.35 times and 8 instructions: the JIT's own number moves by up to a tenth from run to run.
 // ./idioms.test.ts holds the idioms of ./idioms against pins.
 // A run measures one idiom in ten, others for each commit of Bun; AOT_SHARE=all measures all of them (../run-programs.ts).

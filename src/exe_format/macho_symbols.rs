@@ -215,7 +215,7 @@ impl MachoFile {
         linkedit.filesize += growth;
         linkedit.vmsize = align_up(linkedit.filesize, SEGMENT_ALIGNMENT);
 
-        self.data.truncate(symbols_at);
+        self.data.resize(symbols_at);
         self.data.extend_from_slice(&tail);
         write_command(&mut self.data, symtab_at, &symtab);
         write_command(&mut self.data, dysymtab_at, &dysymtab);
@@ -235,6 +235,7 @@ mod tests {
     use crate::elf_symbols::tests::{CODE_OFFSET, encode_table, symbol};
     use crate::macho::MachoSigner;
     use crate::macho_types::{CPU_TYPE_ARM64, MH_EXECUTE, MH_MAGIC_64, SuperBlob, load_command};
+    use crate::mapped_file::FileBytes;
 
     const N_EXT: u8 = 0x01;
     const INDIRECT_SYMBOL_LOCAL: u32 = 0x8000_0000;
@@ -470,12 +471,12 @@ mod tests {
     fn add_symbols(file: &[u8], table: &[u8]) -> (Option<()>, Vec<u8>) {
         let mut macho = MachoFile {
             header: read_at(file, 0),
-            data: file.to_vec(),
+            data: FileBytes::Vector(file.to_vec()),
             segment: read_struct(&[0; SEGMENT_COMMAND_SIZE]),
             section: read_struct(&[0; SECTION_SIZE]),
         };
         let result = macho.add_symbols(table, IMAGE_OFFSET);
-        (result, macho.data)
+        (result, macho.data.to_vec())
     }
 
     fn assert_linkedit_ends_file(file: &[u8]) {
@@ -600,7 +601,7 @@ mod tests {
     fn payload_writer_moves_and_signs_symbols() {
         let mut macho = MachoFile::init(&toy_macho(), PAYLOAD.len()).unwrap();
         assert_eq!(macho.add_symbols(&toy_table(), IMAGE_OFFSET), Some(()));
-        let with_symbols = macho.data.clone();
+        let with_symbols = macho.data.to_vec();
         macho.write_section(&PAYLOAD, true).unwrap();
         let mut signed = Vec::new();
         let written = macho.build_and_sign(&mut signed).unwrap();
@@ -636,9 +637,9 @@ mod tests {
     fn rejects_file_with_payload() {
         let mut macho = MachoFile::init(&toy_macho(), PAYLOAD.len()).unwrap();
         macho.write_section(&PAYLOAD, true).unwrap();
-        let with_payload = macho.data.clone();
+        let with_payload = macho.data.to_vec();
         assert_eq!(macho.add_symbols(&toy_table(), IMAGE_OFFSET), None);
-        assert!(macho.data == with_payload);
+        assert!(*macho.data == *with_payload);
     }
 
     #[test]

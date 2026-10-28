@@ -77,6 +77,34 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     expect([...new Set(recordRelocationTypes(join(folder, "main.obj")))]).toEqual([pointerRelocationType[machine]]);
   });
 
+  testLink("reads the members of an archive where the objects that went into it lie beside it", async () => {
+    using dir = tempDir("trim-coff-freestanding", freestandingSources(4000));
+    const { featuresOf, summary } = await linked(
+      String(dir),
+      optionsWith({
+        archives: { "shelf.lib": ["feature_code", "entry", "table", "embedder", "main"] },
+        keepsArchivedObjects: true,
+      }),
+    );
+    expect(["feature_code", "entered", "feature_numbers"].map(featuresOf)).toEqual([[Extra], [Extra], [Extra]]);
+    expect(["retained", "main"].map(featuresOf)).toEqual([undefined, undefined]);
+    expect(summary.removed).toContain(Extra);
+  });
+
+  testLink("links twice where every object of bitcode is a member of an archive", async () => {
+    using dir = tempDir("trim-coff-freestanding", sources);
+    const objects = ["feature_code", "entry", "table", "embedder", "main"];
+    const { featuresOf, summary } = await linked(
+      String(dir),
+      optionsWith({
+        archives: { "shelf.lib": objects },
+        compileFlags: Object.fromEntries(objects.map(name => [name, thinLtoFlags])),
+      }),
+    );
+    expect(["entered", "retained", "main"].map(featuresOf)).toEqual([[Extra], undefined, undefined]);
+    expect(summary.removed).toContain(Extra);
+  });
+
   testLink("writes the four review files, the table and the state", async () => {
     using dir = tempDir("trim-coff-freestanding", sources);
     const folder = String(dir);

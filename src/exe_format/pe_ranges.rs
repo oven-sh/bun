@@ -104,6 +104,11 @@ pub(crate) fn remove_ranges(pe: &mut Vec<u8>, cuts: &[AddressRange]) -> Result<(
     result
 }
 
+/// Lays the data of the sections anew, behind a table that has a free slot. The table ends in front of the address of the first section.
+pub(crate) fn make_room_for_a_section_header(file: &mut PEFile) -> Result<(), Error> {
+    remove_ranges_in(file, &[])
+}
+
 fn remove_ranges_in(file: &mut PEFile, cuts: &[AddressRange]) -> Result<(), Error> {
     file.strip_authenticode()?;
     let mut headers = read_headers(&file.data)?;

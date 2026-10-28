@@ -88,11 +88,14 @@ arrays/a-position-that-is-no-index-is-asked-of-a-list
 arrays/a-setter-above-a-frozen-array-still-runs
 arrays/a-spread-of-an-array-longer-than-any-storage-is-out-of-memory-at-once
 arrays/a-test-of-an-array-is-used-again-behind-a-getter-of-a-namespace-object-that-a-bundler-made
+arrays/a-view-and-a-buffer-come-through-one-function
+arrays/a-view-or-a-buffer-is-asked-for-members-that-the-two-answer-otherwise
 arrays/a-worker-is-terminated-between-loops-over-arrays-and-strings
 arrays/an-array-of-int32s-is-pushed-an-element-that-is-kept-as-a-double
 arrays/an-element-is-read-of-a-variable-that-holds-a-list-a-record-and-a-bound-function
 arrays/an-element-is-tested-stored-and-read-again-in-one-turn-of-a-loop
 arrays/an-element-of-a-list-with-a-hole-is-chosen-then-a-factor-and-then-its-kind-is-asked
+arrays/an-element-of-a-pushed-list-of-fractions-is-tested-and-read-again-in-a-validating-build
 arrays/an-element-of-another-kind-is-stored-in-the-loop-that-calls-a-method-by-kind
 arrays/array-entries-of-a-string
 arrays/array-from-a-length-and-a-mapper-that-is-no-closure
@@ -455,6 +458,7 @@ callees-replaced-behind-their-test/two-closures-over-variables-that-change-below
 callees-replaced-behind-their-test/what-is-no-function-is-handed-to-a-loop-of-no-turns
 calls-fast-paths/a-callee-taken-in-makes-an-object-of-the-shape-that-the-caller-has-tested
 calls-fast-paths/a-function-bound-at-module-level-is-entered-directly
+calls-fast-paths/a-typed-function-with-a-loop-stays-a-function-in-code-that-runs-once
 calls-fast-paths/an-own-function-under-the-name-of-a-method-is-called-on-the-road-behind-a-failed-prediction
 calls-fast-paths/class-as-value
 calls-fast-paths/class-members-created-on-first-inspection
@@ -507,6 +511,8 @@ calls/a-worker-is-terminated-inside-a-loop-that-walks-on-past-the-end-of-a-typed
 calls/a-worker-is-terminated-inside-a-loop-up-to-a-length-with-nothing-behind-it
 calls/a-worker-is-terminated-inside-every-form-of-a-counted-loop
 calls/above-the-allocation
+calls/an-arguments-object-is-spread-walked-and-taken-apart
+calls/an-arguments-object-is-spread-walked-and-taken-apart-sloppy
 calls/an-arguments-object-is-the-receiver-and-the-list-of-one-apply
 calls/an-async-function-that-takes-the-rest-of-its-arguments-is-found-by-name-and-called-at-every-level-on-the-way-up-from-the-end-of-the-stack
 calls/async-functions-of-a-library-that-take-the-rest-of-their-arguments-are-called-at-every-level-on-the-way-up-from-the-end-of-the-stack
@@ -629,6 +635,7 @@ claims-to-the-back-end/a-function-that-a-loop-calls-hands-back-a-declared-functi
 claims-to-the-back-end/a-function-that-a-loop-calls-hands-back-a-declared-function-that-nobody-has-asked-for-yet-2
 claims-to-the-back-end/a-function-that-a-loop-calls-reads-a-method-of-objects-of-two-classes-one-after-the-other
 claims-to-the-back-end/a-list-written-in-the-text-is-stored-to-in-a-loop-that-asks-for-its-length-on-every-turn
+claims-to-the-back-end/a-loop-makes-a-function-on-every-turn-and-asks-for-a-declared-function-and-moved-loads-are-checked
 claims-to-the-back-end/a-loop-reads-every-second-element-of-a-view-also-past-its-end
 claims-to-the-back-end/increment-field-of-spread-copy-in-loop
 claims-to-the-back-end/one-place-in-a-loop-reads-a-method-of-objects-of-two-classes-one-after-the-other
@@ -747,6 +754,7 @@ classes-below-functions/two-classes-below-one-function-inherit-from-the-two-prot
 classes/a-base-constructor-makes-the-object-that-new-target-selects
 classes/a-base-constructor-returns-another-object-to-the-classes-below
 classes/a-class-is-constructed-for-a-class-below-beside-or-above-it
+classes/a-class-is-printed-under-the-display-name-that-it-holds-as-a-static-field
 classes/a-class-without-a-name-is-the-default-export
 classes/a-definition-that-throws-leaves-the-fields-defined-before-it
 classes/a-field-and-a-derived-constructor-both-evaluate-text
@@ -754,10 +762,12 @@ classes/a-field-declared-by-a-base-class-holds-integers-in-the-class-below
 classes/a-field-declared-without-a-value-in-a-class-that-is-constructed-for-another-class
 classes/a-field-declared-without-a-value-is-defined-on-the-object-that-the-class-above-answers
 classes/a-field-declared-without-a-value-is-read-ahead-of-its-store-above-a-class-that-a-function-makes
+classes/a-field-is-defined-on-an-object-that-may-not-grow-first-where-it-has-the-property-then-where-it-has-lost-it
 classes/a-function-that-constructs-itself-without-end-makes-classes-with-members-under-indexes
 classes/a-function-that-returns-a-class-is-called-once-and-by-callers-nobody-sees
 classes/a-function-that-returns-a-class-is-handed-what-is-no-ordinary-class
 classes/a-function-that-the-field-of-a-private-accessor-holds-takes-its-name
+classes/a-member-read-through-a-trap-has-the-name-of-a-static-field-that-nothing-reads
 classes/a-method-is-called-on-a-parameter-without-a-type
 classes/a-method-that-some-objects-lack-is-read-asked-for-and-called-while-it-changes
 classes/a-name-that-looks-like-a-number-is-stored-to-the-prototype-object-of-a-class
@@ -794,6 +804,7 @@ classes/declared-mixins-are-applied-where-classes-are-declared
 classes/evaluated-text-lists-the-static-fields-of-a-class-in-its-first-for-in
 classes/evaluated-text-reads-one-name-of-classes-with-and-without-a-static-member-of-that-name
 classes/every-method-of-a-class-with-more-methods-than-a-word-has-bits-is-replaced
+classes/fields-are-defined-on-an-object-that-the-base-class-returns-and-the-first-of-them-is-fixed-there
 classes/fields-beside-a-field-under-a-constant-where-fields-are-assigned
 classes/fields-beside-a-field-under-a-defined-name-where-fields-are-assigned
 classes/fields-beside-a-field-under-a-key-computed-from-literals-where-fields-are-assigned
@@ -1386,8 +1397,20 @@ definitions-by-descriptor/each-evaluation-of-a-getter-in-a-descriptor-is-another
 definitions-by-descriptor/properties-are-defined-on-values-nobody-knows
 definitions-by-descriptor/the-constructor-of-a-prototype-object-is-made-enumerable-and-called-out-of-the-values-of-the-object
 definitions-by-descriptor/the-constructor-of-a-prototype-object-is-made-enumerable-and-the-object-is-written-as-json
+definitions-by-descriptor/the-length-of-a-built-in-function-is-made-enumerable-and-read-out-of-its-values
+definitions-by-descriptor/the-length-of-a-list-copied-by-its-descriptors-is-read-into-a-literal
+definitions-by-descriptor/the-name-and-the-prototype-of-a-class-copied-by-its-descriptors-are-read-into-a-literal
+definitions-by-descriptor/the-name-of-a-function-copied-by-its-descriptors-is-read-into-a-literal
 definitions-by-descriptor/the-own-properties-of-object-prototype-are-defined-on-an-object-without-a-prototype
 definitions-by-descriptor/the-species-of-a-promise-is-a-bound-getter-that-throws
+definitions-by-descriptor/what-a-bound-function-holds-since-it-was-made-is-called-under-a-computed-key-on-a-copy-by-its-descriptors
+definitions-by-descriptor/what-a-built-in-function-holds-since-it-was-made-is-called-under-a-computed-key-on-a-copy-by-its-descriptors-in-a-validating-build
+definitions-by-descriptor/what-a-list-that-a-built-in-made-holds-since-it-was-made-is-called-under-a-computed-key-on-a-copy-by-its-descriptors-in-a-validating-build
+definitions-by-descriptor/what-a-list-that-the-array-constructor-made-holds-since-it-was-made-is-called-under-a-computed-key-on-a-copy-by-its-descriptors
+definitions-by-descriptor/what-a-regular-expression-holds-since-it-was-made-is-called-under-a-computed-key-on-a-copy-by-its-descriptors
+definitions-by-descriptor/what-a-string-object-holds-since-it-was-made-is-called-under-a-computed-key-on-a-copy-by-its-descriptors-in-a-validating-build
+definitions-by-descriptor/what-an-instance-of-a-class-below-regexp-holds-since-it-was-made-is-defined-on-an-instance-of-another-class
+definitions-by-descriptor/what-an-instance-of-a-class-below-regexp-holds-since-it-was-made-is-taken-by-a-pattern-from-a-copy-by-its-descriptors
 descriptions-of-own-properties/a-module-lists-the-keys-of-its-own-namespace
 descriptions-of-own-properties/descriptions-and-reads-by-key-run-the-code-of-the-object-they-ask
 descriptions-of-own-properties/everything-is-asked-of-a-module-namespace-object
@@ -1441,6 +1464,8 @@ effects/a-function-that-a-built-in-calls-whichever-it-is-raises-a-count-and-ends
 effects/a-function-that-a-built-in-calls-whichever-it-is-raises-a-count-and-ends-in-a-throw
 effects/a-function-that-a-built-in-calls-whichever-it-is-raises-a-count-and-ends-in-a-variable-in-its-dead-zone
 effects/a-function-that-a-built-in-calls-whichever-it-is-raises-a-count-and-ends-in-an-iterator-that-is-done-at-once
+effects/a-getter-of-a-built-in-module-stores-to-the-module-while-a-loop-walks-it
+effects/a-getter-of-a-walked-object-stores-to-a-field-that-the-loop-reads-around-it
 effects/a-helper-is-handed-more-callbacks-than-a-summary-follows
 effects/a-refused-operand-keeps-the-code-of-the-operands-behind-it-from-running
 effects/a-split-that-nobody-reads-still-converts-and-throws
@@ -1601,6 +1626,7 @@ errors/stack-frames-of-closures-of-one-function-that-code-made-at-run-time-names
 errors/stack-frames-of-closures-renamed-before-their-maker-calls-them-in-a-file-with-direct-eval
 errors/stack-frames-of-closures-that-are-named-through-the-receiver-of-a-trap-of-a-proxy-above-them
 errors/stack-frames-of-closures-that-get-the-first-name-out-of-sight-between-the-throw-and-the-read-of-the-stack
+errors/stack-frames-of-closures-that-ran-before-they-get-a-name-out-of-sight
 errors/stack-frames-of-commonjs-files-that-hold-a-direct-eval-or-a-with-statement
 errors/stack-frames-of-commonjs-files-that-store-to-exports-declare-module-again-or-name-arguments
 errors/stack-frames-of-default-constructors
@@ -1640,6 +1666,7 @@ errors/stack-frames-of-functions-with-a-display-name-once-a-statement-has-looked
 errors/stack-frames-of-functions-with-typed-parameters-that-are-made-once-and-renamed
 errors/stack-frames-of-functions-written-as-arguments-of-array-methods-that-a-method-of-the-receiver-renames
 errors/stack-frames-of-functions-written-as-arguments-of-array-methods-while-others-of-them-get-a-display-name
+errors/stack-frames-of-generators-written-inside-built-in-functions
 errors/stack-frames-of-lists-made-through-a-variable-named-array
 errors/stack-frames-of-lists-that-are-filled-and-mapped
 errors/stack-frames-of-lists-that-are-made-under-other-names-and-filled
@@ -1880,6 +1907,7 @@ host-classes/keys-of-four-objects-after-a-member-is-compared-or-looked-for
 host-classes/keys-of-four-objects-after-loops-that-call-their-functions-in-some-turns-or-in-none
 host-classes/keys-of-four-objects-after-loops-that-call-their-functions-in-some-turns-or-in-none-in-hot-code
 host-classes/keys-of-four-objects-after-what-the-compiler-writes-with-their-functions
+host-classes/keys-of-fourteen-objects-that-went-out-of-sight-and-were-copied
 host-classes/keys-of-json-after-a-call-and-a-walk
 host-classes/keys-of-json-in-its-descriptors-after-a-call
 host-classes/keys-of-json-listed-by-a-function-that-also-takes-parsed-text
@@ -1950,7 +1978,9 @@ host-classes/ranges-of-bytes-that-lost-their-memory-are-kept-across-collections
 host-classes/read-every-key-of-node-fs-returned-by-a-proxy
 host-classes/records-with-a-symbol-between-names-are-converted-key-by-key
 host-classes/replaced-prototype-getters
+host-classes/search-params-and-urls-of-a-text-whose-characters-are-read-too
 host-classes/search-params-asked-for-their-size-by-a-closure-that-is-called-twice
+host-classes/search-params-of-a-string-where-the-type-names-a-record-or-a-list
 host-classes/search-params-without-the-object-and-the-global-stays
 host-classes/spy-on-builtin-instance
 host-classes/spy-on-locked-member
@@ -2013,6 +2043,7 @@ initializers-run-at-the-first-read/a-function-that-runs-once-says-that-a-constan
 initializers-run-at-the-first-read/a-function-that-runs-once-takes-again-what-it-made-for-an-inner-function
 initializers-run-at-the-first-read/a-list-that-an-initializer-takes-is-also-named-by-a-function-that-nobody-calls
 initializers-run-at-the-first-read/a-literal-takes-a-variable-of-a-file-that-is-still-running-when-a-computed-require-starts-the-file-of-the-literal
+initializers-run-at-the-first-read/a-literal-takes-a-variable-of-a-file-that-is-still-running-when-a-function-of-a-third-file-starts-the-file-of-the-literal
 initializers-run-at-the-first-read/a-literal-takes-a-variable-of-a-file-that-is-still-running-when-an-import-call-starts-the-file-of-the-literal
 initializers-run-at-the-first-read/a-loop-starts-at-what-a-function-called-on-the-spot-returns-behind-a-try
 initializers-run-at-the-first-read/a-map-is-made-of-a-list-of-pairs-that-a-number-was-pushed-to
@@ -2238,6 +2269,7 @@ library-modules/a-function-added-to-the-prototype-of-map-throws-while-a-library-
 library-modules/a-function-expression-that-bun-wrap-exports-is-constructed
 library-modules/a-global-defined-with-define-property
 library-modules/a-loader-that-the-compiler-does-not-follow-is-refused-with-advice
+library-modules/a-message-that-has-a-header-is-frozen-or-given-a-descriptor-by-calls-that-are-written-out-validated
 library-modules/a-message-that-has-a-header-is-frozen-sealed-or-closed-and-asked-for-the-map-of-its-headers
 library-modules/a-module-whose-file-has-another-name-than-the-module-is-shown-under-one-and-found-under-the-other
 library-modules/a-name-that-the-program-writes-comes-to-a-loader-by-a-way-of-its-own
@@ -2323,9 +2355,14 @@ modules/a-commonjs-entry-point-requires-a-graph-that-imports-it-and-a-file-that-
 modules/a-commonjs-entry-point-that-a-module-it-requires-imports-is-imported-under-a-computed-name
 modules/a-commonjs-entry-point-throws-after-a-module-it-required-imported-it
 modules/a-commonjs-file-below-a-required-module-drains-the-jobs-while-the-file-that-requires-runs-for-the-entry-point
+modules/a-commonjs-file-imports-itself-and-throws-while-a-require-below-a-require-runs-it
+modules/a-commonjs-file-imports-itself-and-throws-while-a-required-module-imports-it
+modules/a-commonjs-file-imports-itself-and-throws-while-an-import-below-a-require-loads-it
 modules/a-commonjs-file-is-imported-back-while-a-require-of-an-es-module-runs-it-and-then-replaces-its-exports
 modules/a-commonjs-file-one-level-further-down-runs-behind-the-job-that-a-draining-file-queued
+modules/a-commonjs-file-requires-a-file-that-imports-it-and-throws-while-an-import-below-a-require-loads-it
 modules/a-commonjs-file-requires-a-module-that-awaits-and-imports-the-entry-point
+modules/a-commonjs-file-requires-a-module-that-imports-it-and-throws-while-an-import-below-a-require-loads-it
 modules/a-commonjs-file-requires-a-module-that-its-importer-imports-behind-it-while-an-import-loads-them
 modules/a-commonjs-file-requires-the-entry-point-inside-a-require-of-another-graph
 modules/a-commonjs-file-requires-the-entry-point-inside-a-require-of-another-graph-and-a-later-file-throws
@@ -2333,8 +2370,12 @@ modules/a-commonjs-file-requires-the-entry-point-while-its-graph-is-loaded-and-r
 modules/a-commonjs-file-requires-the-module-that-settles-an-awaited-promise
 modules/a-commonjs-file-requires-the-root-of-a-graph-that-also-imports-the-names-of-the-entry-point
 modules/a-commonjs-file-that-a-module-it-requires-imports-ends-in-order-and-is-required-later
+modules/a-commonjs-file-that-imported-itself-and-threw-below-a-require-is-asked-for-again-later
 modules/a-commonjs-file-that-requires-the-entry-point-that-imports-it-has-the-id-dot
 modules/a-commonjs-file-that-runs-inside-the-drain-of-the-file-in-front-of-it-throws-first
+modules/a-commonjs-file-that-threw-is-required-again-after-a-module-that-it-required-called-import-of-it
+modules/a-commonjs-file-that-threw-is-required-again-after-a-module-that-it-required-imported-it
+modules/a-commonjs-file-that-threw-is-required-again-after-an-import-call-came-back-to-it-and-answers-with-its-exports
 modules/a-commonjs-file-throws-after-a-module-it-required-called-import-on-it
 modules/a-commonjs-file-throws-after-a-module-it-required-imported-it
 modules/a-computed-path-is-required-again-and-again
@@ -2346,6 +2387,7 @@ modules/a-constant-of-another-file-keeps-a-built-in-module-out-of-the-executable
 modules/a-cycle-is-entered-where-the-arguments-of-the-process-say
 modules/a-cycle-of-modules-one-of-which-throws-is-asked-for-in-a-worker
 modules/a-cycle-that-is-entered-at-either-of-two-files-checks-its-reads
+modules/a-data-url-that-encoders-put-together-from-constants-is-imported
 modules/a-default-export-that-names-only-a-type-exports-nothing
 modules/a-deferred-file-is-not-begun-while-a-file-that-it-imports-is-unfinished
 modules/a-deferred-namespace-lists-an-export-named-then
@@ -2465,12 +2507,14 @@ modules/a-name-behind-a-getter-of-a-commonjs-file-comes-through-export-star-besi
 modules/a-name-behind-two-export-stars-in-a-package-without-side-effects-is-exported-again-by-the-program
 modules/a-name-behind-two-export-stars-over-commonjs-files-is-imported-through-modules-that-hand-it-on-by-name-and-by-star
 modules/a-name-behind-two-export-stars-over-commonjs-files-is-on-the-namespace-object-of-the-module-that-exports-it-again
+modules/a-name-imported-from-bun-is-handed-on-by-an-export-list
 modules/a-name-stored-behind-and-is-handed-on-by-two-es-modules-and-imported-through-a-getter
 modules/a-name-stored-by-a-function-that-the-file-calls-is-handed-on-by-an-es-module-and-imported-through-a-getter
 modules/a-name-stored-in-a-loop-is-handed-on-by-an-es-module-and-imported-through-two-getters
 modules/a-name-stored-under-an-if-is-handed-on-by-a-star-and-imported-through-a-getter
 modules/a-name-stored-under-an-if-is-handed-on-by-name-and-imported-through-a-getter
 modules/a-name-that-a-commonjs-file-does-not-have-is-found-through-the-getter-of-another-file-and-not-in-the-file-itself
+modules/a-name-that-a-library-module-lacks-is-read-off-its-namespace-beside-a-file-that-binds-it
 modules/a-name-that-a-module-hands-on-comes-through-an-export-star-that-stands-beside-one-over-a-commonjs-file
 modules/a-name-that-stands-for-a-name-of-a-file-whose-body-requires-a-module-that-reads-it
 modules/a-name-that-stands-for-a-name-of-a-file-whose-body-requires-the-file-that-hands-it-on
@@ -2520,6 +2564,7 @@ modules/an-import-alias-names-a-value-on-the-exports-of-its-own-commonjs-file
 modules/an-import-alias-names-the-whole-namespace-of-a-json-file
 modules/an-import-alias-that-only-types-name-leaves-a-required-es-module-alone
 modules/an-import-call-made-ahead-of-a-require-runs-its-module-behind-the-module-that-called
+modules/an-import-called-ahead-of-the-require-that-runs-a-commonjs-file-is-rejected-with-what-the-file-throws
 modules/an-import-called-below-a-require-finds-a-commonjs-file-that-the-required-graph-has-just-asked-for
 modules/an-import-called-below-a-require-finds-an-es-module-that-the-required-graph-has-just-asked-for
 modules/an-import-called-by-a-commonjs-file-of-an-imported-graph-that-throws-after-a-module-imported-it-settles
@@ -2549,6 +2594,7 @@ modules/an-import-waits-for-a-commonjs-entry-point-whose-rewriter-waits-for-its-
 modules/an-import-waits-for-a-commonjs-file-below-two-modules-that-drains-the-microtask-queue
 modules/an-import-waits-for-a-commonjs-file-of-another-import-that-drains-the-jobs-while-it-runs
 modules/an-import-waits-for-an-imported-commonjs-file-that-drains-the-microtask-queue
+modules/an-import-with-its-type-in-a-variable-gets-the-text-that-a-statement-has-imported
 modules/an-imported-commonjs-file-requires-a-module-that-awaits
 modules/an-imported-require-is-given-a-path-that-starts-at-the-folder-of-the-caller
 modules/an-imported-require-of-a-commonjs-file-is-given-a-path-that-starts-at-dirname
@@ -2574,6 +2620,7 @@ modules/files-behind-a-barrel-without-side-effects-import-the-barrel-back
 modules/files-between-a-require-and-a-namespace-that-is-exported-again-run-in-a-package-without-side-effects
 modules/files-of-a-cycle-call-nothing-while-they-load-and-a-function-below-them-reads-a-constant-of-the-lowest-file
 modules/files-of-a-graph-run-between-its-import-and-its-link
+modules/files-that-import-themselves-read-their-own-names-early-and-late
 modules/first-lines-that-only-resemble-the-one-of-the-commonjs-format-of-bun-build
 modules/functions-behind-getters-of-a-commonjs-file-that-return-names-of-a-second-file-are-called-through-the-namespace
 modules/functions-objects-and-classes-behind-two-export-stars-are-used-through-the-namespace-object-of-the-module-that-exports-them-again
@@ -2605,6 +2652,7 @@ modules/imported-require-helper-replaced-later
 modules/imported-require-helper-resolves-from-its-own-folder
 modules/imported-require-made-by-create-require
 modules/imports-called-by-two-imported-commonjs-files-that-drain-the-microtask-queue-settle-though-the-second-file-throws
+modules/imports-of-a-commonjs-file-that-called-import-of-itself-and-threw-under-a-require-find-what-it-had-exported
 modules/imports-through-getters-of-commonjs-files-as-three-tools-write-them-hold-what-a-module-held-when-the-files-were-loaded
 modules/jobs-of-the-caller-wait-while-require-runs-a-module-with-top-level-await
 modules/jobs-require-modules-that-import-calls-began-to-load-up-to-nine-jobs-earlier
@@ -2619,6 +2667,7 @@ modules/names-behind-getters-of-a-commonjs-file-with-a-default-of-its-own-are-ta
 modules/names-behind-getters-of-commonjs-files-come-through-export-star-in-twelve-surroundings
 modules/names-behind-getters-of-commonjs-files-come-through-modules-that-hand-them-on-in-six-ways
 modules/names-behind-several-export-stars-over-commonjs-files-built-in-modules-data-and-modules-are-exported-again-by-name
+modules/names-imported-from-bun-are-read-by-the-body-of-the-file-by-functions-and-ahead-of-the-import
 modules/names-imported-from-node-process-hold-what-they-held-at-the-load
 modules/names-of-a-commonjs-file-are-read-on-what-require-gives-of-a-module-that-hands-them-on
 modules/names-of-commonjs-files-are-handed-on-by-files-that-nobody-takes-them-from
@@ -2841,6 +2890,7 @@ native-callbacks/the-json-directive-of-console-calls-the-to-json-of-a-bigint
 native-callbacks/what-code-of-an-operand-hands-back-is-used
 node-http-probes/a-class-stored-in-net-socket-is-the-base-of-connections
 node-http-probes/a-map-of-headers-stored-before-the-first-header
+node-http-probes/a-map-of-headers-stored-on-a-response-whose-constructor-calls-server-response
 node-http-probes/a-request-is-read-behind-a-socket-of-another-class
 node-http-probes/a-request-that-ends-reads-its-socket
 node-http-probes/accessors-added-between-a-socket-and-their-owner
@@ -2871,6 +2921,8 @@ node-http-probes/state-of-a-response-through-a-proxy-and-an-heir
 node-http-probes/stores-of-a-response-in-their-order
 node-http-probes/stores-of-the-response-constructor
 node-http-probes/the-head-is-decided-at-the-first-write
+node-http-probes/the-map-of-headers-of-instances-of-classes-below-server-response-however-they-are-made
+node-http-probes/the-map-of-headers-of-objects-that-other-constructors-hand-to-server-response
 node-http-probes/what-a-changed-member-throws-while-a-request-ends
 node-http-probes/what-write-head-reads
 nothing-throws-because-of-a-type/a-boolean-out-of-a-map-of-numbers-is-held-in-a-field-and-rounded
@@ -2884,7 +2936,21 @@ nothing-throws-because-of-a-type/a-literal-lists-three-values-made-from-a-list-d
 nothing-throws-because-of-a-type/a-number-declared-a-string-is-spread-behind-a-loop-in-a-validating-build
 nothing-throws-because-of-a-type/a-private-name-is-looked-for-in-a-value-that-is-not-the-object-its-type-says
 nothing-throws-because-of-a-type/a-test-that-only-null-and-undefined-should-fail-is-failed-by-other-values
+nothing-throws-because-of-a-type/a-url-made-of-what-is-declared-as-a-number
+nothing-throws-because-of-a-type/a-url-made-of-what-is-declared-as-a-record
+nothing-throws-because-of-a-type/a-url-made-of-what-is-declared-as-a-string
+nothing-throws-because-of-a-type/a-url-made-of-what-is-declared-as-a-string-or-a-url
+nothing-throws-because-of-a-type/a-url-made-of-what-is-declared-as-a-url
+nothing-throws-because-of-a-type/a-url-made-of-what-is-declared-as-unknown
 nothing-throws-because-of-a-type/an-object-is-handed-on-unfinished-to-a-parameter-whose-type-admits-no-object
+nothing-throws-because-of-a-type/search-params-made-of-what-is-declared-as-a-list-of-pairs
+nothing-throws-because-of-a-type/search-params-made-of-what-is-declared-as-a-number
+nothing-throws-because-of-a-type/search-params-made-of-what-is-declared-as-a-record
+nothing-throws-because-of-a-type/search-params-made-of-what-is-declared-as-a-string
+nothing-throws-because-of-a-type/search-params-made-of-what-is-declared-as-a-string-or-a-record
+nothing-throws-because-of-a-type/search-params-made-of-what-is-declared-as-a-string-or-undefined
+nothing-throws-because-of-a-type/search-params-made-of-what-is-declared-as-search-params
+nothing-throws-because-of-a-type/search-params-made-of-what-is-declared-as-unknown
 nothing-throws-because-of-a-type/tests-that-a-declared-type-would-decide-are-met-by-other-values
 null-where-the-type-says-none/a-field-declared-and-never-made-is-read-in-a-callback-of-a-function-called-twice
 objects-inside-objects/an-old-outer-object-gets-young-objects
@@ -2927,6 +2993,7 @@ objects/a-field-that-names-a-class-holds-a-record-without-the-name
 objects/a-field-that-names-a-class-holds-an-arrow-function
 objects/a-field-that-names-three-classes-gets-a-record
 objects/a-getter-written-again-in-a-literal-keeps-the-place-of-its-key
+objects/a-heap-snapshot-lists-a-literal-under-the-class-above-it-where-nothing-reads-its-own-constructor
 objects/a-heap-snapshot-lists-an-object-that-holds-a-constructor-itself-as-a-plain-object
 objects/a-key-in-brackets-is-converted-before-the-value-beside-it-is-read
 objects/a-large-map-and-set-keep-one-entry-in-a-thousand-in-a-validating-build
@@ -3229,6 +3296,7 @@ strings/a-string-used-with-itself
 strings/a-subject-without-the-text-that-every-match-holds-is-not-tried-place-by-place
 strings/a-symbol-stands-in-a-sum-of-texts-in-front-of-a-call
 strings/a-text-built-in-a-loop-takes-a-json-text-that-makes-it-as-long-as-a-string-can-be-or-a-little-longer
+strings/a-text-grows-past-the-longest-string-inside-a-try-and-the-handler-reads-what-the-function-made
 strings/a-text-is-read-between-and-behind-its-appends
 strings/a-text-made-in-either-arm-grows-in-a-try-whose-catch-reads-it
 strings/a-text-takes-the-place-of-what-a-pattern-finds
@@ -3290,6 +3358,7 @@ strings/switches-over-short-texts
 strings/texts-are-cut-and-replaced-at-texts-of-every-length
 strings/texts-built-of-numbers-and-constants-in-front-of-calls-and-of-reads-that-throw
 strings/texts-joined-of-parts-of-which-some-are-empty
+strings/texts-put-together-in-8-bits-name-properties-whose-names-are-held-in-16-bits
 strings/texts-that-may-be-undefined-put-in-order
 strings/texts-too-long-that-nobody-reads-in-functions-called-often
 strings/texts-too-long-that-nobody-reads-in-functions-with-declared-types
@@ -3507,6 +3576,7 @@ untyped-code/names-born-undefined-are-filled-under-computed-keys
 untyped-code/object-filled-from-other-keys-keeps-structure
 untyped-code/objects-filled-by-key-settle-on-shapes
 untyped-code/one-place-reads-tests-and-stores-through-proxies-made-elsewhere
+untyped-code/ordinary-objects-of-many-kinds-spread
 untyped-code/own-keys-asked-again-and-again-of-objects-with-properties-beside-their-fields
 untyped-code/reflect-get-of-a-written-name-reads-for-the-receiver-it-is-handed
 untyped-code/the-text-of-an-index-names-an-element
@@ -3530,6 +3600,8 @@ untyped-loops/loops-over-the-elements-of-a-declared-union
 untyped-loops/loops-over-the-elements-of-whatever-is-given
 untyped-loops/loops-that-expect-an-array-are-handed-other-iterables
 untyped-loops/sums-of-a-field-and-a-counter-are-cut-to-32-bits-or-kept-whole-at-the-edges-of-32-52-and-53-bits
+untyped-loops/sums-of-a-field-of-made-objects-beside-a-literal-that-holds-a-text-under-the-same-name
+untyped-loops/sums-of-counters-that-come-near-the-ends-of-int32-and-run-through-many-stretches
 untyped-loops/sums-of-integers-past-int32-go-into-bitwise-operators
 untyped-speed/a-function-with-members-of-its-own-beside-a-file-that-deletes-a-file-is-not-three-times-as-slow-a-call-as-a-method-of-a-class
 untyped-speed/a-function-with-members-of-its-own-in-a-file-imported-under-a-computed-name-is-not-three-times-as-slow-a-call-as-a-method-of-a-class

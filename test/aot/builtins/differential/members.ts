@@ -62,6 +62,8 @@ function createHiddenRoots(): Map<string, () => unknown> {
     ["%ModuleObject%", () => require("./module-object.cjs")],
     ["%CompilerHelpers%", loadCompiledHelpers],
     ["%ModuleRequire%", () => require],
+    // The import and require() each get a function of their own.
+    ["utf-8-validate", () => require("utf-8-validate")],
   ]);
 }
 

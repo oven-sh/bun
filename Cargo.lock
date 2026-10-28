@@ -221,6 +221,7 @@ dependencies = [
  "bstr",
  "bun_ast",
  "bun_core",
+ "bun_js_parser",
  "bun_options_types",
  "bun_paths",
  "bun_sema",

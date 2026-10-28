@@ -217,6 +217,10 @@ export const rows: Row[] = [
     ],
   ]),
   variant("moved-loads-checked-at-run-time", ["--aot-check=MovedLoads"]),
+  variant(
+    ["program-is-very-large", "moved-loads-checked-at-run-time"],
+    ["--aot-limit=MaxWarmCodeValues:1", "--aot-check=MovedLoads"],
+  ),
   variant("decided-comparisons-checked-at-run-time", ["--aot-check=DecidedComparisons"]),
   variant("no-flow-results", ["--aot-disable=flow-results"], {}, 3, [
     [
@@ -235,7 +239,9 @@ export const rows: Row[] = [
     ],
   ]),
   variant("no-inlining", [withoutInlining]),
-  variant("predictions-fail-every-time", ["--aot-testing=FailPredictions"]),
+  variant("predictions-fail-every-time", ["--aot-testing=FailPredictions"], {}, 3, [
+    [["node-http-probes/a-map-of-headers-stored-before-the-first-header"]],
+  ]),
   variant("predictions-fail-half-the-time", ["--aot-testing=FailPredictions:2:1"], {}, 3, [
     [["host-classes/bodies-parsed-into-declared-types"]],
   ]),
@@ -246,16 +252,41 @@ export const rows: Row[] = [
     3,
     [[["inner-objects/objects-with-every-kind-of-slot-are-made-around-calls-that-collect"]]],
   ),
-  variant("predictions-fail-one-time-in-seven", ["--aot-testing=FailPredictions:7:1"]),
-  variant("predictions-fail-one-time-in-seven-validated", ["--aot-testing=FailPredictions:7:2", "--aot-validate"]),
-  variant("program-is-very-large", ["--aot-limit=MaxWarmCodeValues:1"]),
+  variant("predictions-fail-one-time-in-seven", ["--aot-testing=FailPredictions:7:1"], {}, 3, [
+    [["node-http-probes/a-map-of-headers-stored-before-the-first-header"]],
+  ]),
+  variant(
+    "predictions-fail-one-time-in-seven-validated",
+    ["--aot-testing=FailPredictions:7:2", "--aot-validate"],
+    {},
+    3,
+    [[["node-http-probes/a-map-of-headers-stored-before-the-first-header"]]],
+  ),
+  variant("program-is-very-large", ["--aot-limit=MaxWarmCodeValues:1"], {}, 3, [
+    [
+      [
+        "errors/a-refused-apply-names-the-member-that-was-called",
+        "errors/stack-frames-of-closures-that-get-the-first-name-out-of-sight-between-the-throw-and-the-read-of-the-stack",
+      ],
+    ],
+  ]),
   variant("proofs-checked-at-run-time", ["--aot-testing=CheckProofsAtRunTime"]),
   variant("stub-copies", [], {}, 3, [
     ["async-and-generators/what-an-async-generator-throws-reaches-the-catch-around-the-loop", 3],
     ["calls/calls-with-lists-of-arguments-in-tail-position-keep-the-stack-level", 3],
     ["", 3],
   ]),
-  variant("validate", ["--aot-validate"], {}, 3, [[], [], ["narrowing/members-changed-behind-the-checker"]]),
+  variant("validate", ["--aot-validate"], {}, 3, [
+    [
+      [
+        "builtin-modules/default-export-and-namespace-of-every-module",
+        "builtin-modules/exports-that-only-the-namespace-holds",
+        "builtin-modules/inspect-and-zip-keyed-take-descriptors-apart-and-every-pass-is-verified",
+      ],
+    ],
+    ["objects/a-heap-snapshot-lists-a-literal-under-the-class-above-it-where-nothing-reads-its-own-constructor"],
+    ["narrowing/members-changed-behind-the-checker"],
+  ]),
   variant("validate-back-end", ["--aot-check=validate-back-end"], {}, 8),
   variant("validate-collecting", ["--aot-validate"], {
     BUN_JSC_slowPathAllocsBetweenGCs: "1",
@@ -527,11 +558,11 @@ export const rows: Row[] = [
   ["aot/minifying-first-saves-no-code", 16, "./minifying-first-saves-no-code-cases", "minifyingFirstInParts"],
   ["aot/modules-three-ways", 4, "./three-ways/run-three-ways", "threeWays"],
   ["aot/one-line-changes-little", 8, "./one-line-changes-little-cases", "oneLineChangesLittle"],
-  ["aot/perf/generated-code-of-idioms", 16, "./perf/generated-code", "generatedCodeOfIdioms"],
+  ["aot/perf/generated-code-of-idioms", 26, "./perf/generated-code", "generatedCodeOfIdioms"],
   ["aot/perf/generated-code-of-operations", 4, "./perf/generated-code", "generatedCodeOfOperations"],
   ["aot/perf/idioms-in-parts", 4, "./perf/pinned-idioms", "pinnedIdiomsInParts"],
   ["aot/perf/pinned-applications", 0, "./perf/pinned-applications", "pinnedApplications"],
-  ["aot/perf/pinned-everyday-idioms", 4, "./perf/pinned-everyday-idioms", "pinnedEverydayIdioms"],
+  ["aot/perf/pinned-everyday-idioms", 8, "./perf/pinned-everyday-idioms", "pinnedEverydayIdioms"],
   ["aot/process-platform-folds", 4, "./process-platform-folds-cases", "processPlatformFolds"],
   ["aot/programs-in-every-run", 64, "./run-programs", "programsInEveryRun"],
   ["aot/programs-marked-as-failing", 0, "./run-programs", "programsMarkedAsFailing"],

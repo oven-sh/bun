@@ -4303,6 +4303,7 @@ JSC::EncodedJSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC::JSGlobalObjec
     snapshotBuilder.buildSnapshot();
 
     WTF::String jsonString = snapshotBuilder.json();
+    heapProfiler.clearSnapshots();
     if (jsonString.isNull()) [[unlikely]] {
         JSC::throwOutOfMemoryError(globalObject, scope);
         return {};

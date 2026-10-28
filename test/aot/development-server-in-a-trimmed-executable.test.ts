@@ -2,7 +2,7 @@
 // the compiler sees `app`, the world is open, and the server answers as in the whole executable. Where it does not see the options
 // the call throws an EvalError, whole or trimmed: a server whose options nobody follows would open the world of every such program.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { slot, unsupported } from "./run-programs";
 
@@ -46,7 +46,7 @@ const probed = Bun.spawnSync({
   stderr: "pipe",
 });
 
-(probed.exitCode !== 0 || unsupported || isWindows ? describe.skip : describe.concurrent)(
+(probed.exitCode !== 0 || unsupported ? describe.skip : describe.concurrent)(
   "the development server in a trimmed executable answers as in the whole one",
   () => {
     for (const [name, source] of Object.entries(programs)) {

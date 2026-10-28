@@ -29,6 +29,7 @@
 #include <mach-o/loader.h>
 #include <malloc/malloc.h>
 #include <new>
+#include <sched.h>
 
 namespace {
 
@@ -57,11 +58,11 @@ NEVER_INLINE void* moveSystemBlock(void* block, size_t newSize)
     return result;
 }
 
-// Where the executable's code is. `bun build --compile --trim` removes unused code and keeps the rest at its address,
-// which splits the code into several segments. Another image can be mapped into a gap between them, so gapEdges records
-// where each gap starts and ends, as ascending offsets from executableCodeStart.
-// Any thread may be the first to ask, and every thread finds the same answer.
-uintptr_t executableCodeStart;
+// Where the executable's code is: it starts with the Mach-O header. `bun build --compile --trim` removes unused code and
+// keeps the rest at its address, which splits the code into several segments. Another image can be mapped into a gap
+// between them, so gapEdges records where each gap starts and ends, as ascending offsets from the header.
+// The first thread to ask finds the answer and writes executableCodeSize last. A thread that asks meanwhile waits for it.
+std::atomic<bool> isFindingExecutableCode;
 std::atomic<unsigned long> executableCodeSize;
 // A Mach-O image has at most 255 sections, and every code segment has at least one.
 constexpr size_t maxGapEdgeCount = 2 * 254;
@@ -70,9 +71,14 @@ size_t gapEdgeCount;
 
 NEVER_INLINE unsigned long findExecutableCode()
 {
+    if (isFindingExecutableCode.exchange(true, std::memory_order_relaxed)) {
+        for (;;) {
+            if (unsigned long size = executableCodeSize.load(std::memory_order_acquire))
+                return size;
+            sched_yield();
+        }
+    }
     const mach_header_64& header = _mh_execute_header;
-    // The first code segment starts with the Mach-O header.
-    executableCodeStart = reinterpret_cast<uintptr_t>(&header);
     uint64_t linkedStart = 0;
     unsigned long size = 0;
     size_t edgeCount = 0;
@@ -106,7 +112,7 @@ ALWAYS_INLINE bool isInExecutable(const void* returnAddress)
     unsigned long size = executableCodeSize.load(std::memory_order_acquire);
     if (!size) [[unlikely]]
         size = findExecutableCode();
-    uintptr_t offset = reinterpret_cast<uintptr_t>(returnAddress) - executableCodeStart;
+    uintptr_t offset = reinterpret_cast<uintptr_t>(returnAddress) - reinterpret_cast<uintptr_t>(&_mh_execute_header);
     return offset < size && (!gapEdgeCount || !isInGap(offset));
 }
 

@@ -1,4 +1,1 @@
-{
-  "skipInShell": "it needs Bun's CommonJS modules and require()",
-  "skipWithASAN": "TODO: with assertions on, plain Bun prints another output"
-}
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }

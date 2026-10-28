@@ -35,9 +35,17 @@ test.concurrent.each([1, 2, 3, 4, 5, 6])(
       String(dir),
     );
     const lines = stdout.trim().split("\n");
-    expect(lines.filter(line => line.startsWith("DIFFERS")).map(line => line.slice(0, 2000))).toEqual([]);
-    expect(lines.at(-1)).toMatch(/^texts \d+ .* differences 0$/);
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect({
+      differs: lines.filter(line => line.startsWith("DIFFERS")).map(line => line.slice(0, 2000)),
+      lastLine: lines.at(-1),
+      stderr,
+      exitCode,
+    }).toEqual({
+      differs: [],
+      lastLine: expect.stringMatching(/^texts \d+ .* differences 0$/),
+      stderr: "",
+      exitCode: 0,
+    });
   },
   600_000,
 );

@@ -249,7 +249,13 @@ export const generators: Record<string, () => Generator> = {
         "members",
       ].flatMap(part => (require(`./generate/native-callbacks-${part}`) as Generator).programs()),
   }),
-  "nothing-throws-because-of-a-type": () => require("./programs/generate-nothing-throws-because-of-a-type"),
+  "nothing-throws-because-of-a-type": () => ({
+    programs: () =>
+      [
+        "./programs/generate-nothing-throws-because-of-a-type",
+        "./generate/url-objects-made-of-values-that-are-not-what-their-types-say",
+      ].flatMap(part => (require(part) as Generator).programs()),
+  }),
   "objects": () => require("./generate/objects"),
   "objects-that-are-not-what-their-layout-says": () =>
     require("./generate/objects-that-are-not-what-their-layout-says"),
@@ -308,7 +314,8 @@ export function writeProgram(folder: string, program: WrittenProgram) {
  * A tsconfig.json at the top of `folder` is inherited from: what it names by a path stays where it is.
  */
 export function unpacked(folder: string): string {
-  const where = realpathSync(mkdtempSync(join(tmpdir(), `${basename(folder)}-`)));
+  // On Windows this one alone spells each name as the file system does.
+  const where = realpathSync.native(mkdtempSync(join(tmpdir(), `${basename(folder)}-`)));
   process.on("exit", () => rmSync(where, { recursive: true, force: true }));
   cpSync(folder, where, { recursive: true, filter: source => !source.endsWith(".programs") });
   if (existsSync(join(folder, "tsconfig.json")))

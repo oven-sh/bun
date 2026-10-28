@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { slot, unsupported } from "./run-programs";
 
@@ -73,7 +73,7 @@ const probed = Bun.spawnSync({
   stderr: "pipe",
 });
 
-(probed.exitCode !== 0 || unsupported || isWindows ? describe.skip : describe)(
+(probed.exitCode !== 0 || unsupported ? describe.skip : describe)(
   "code evaluated through the constructor of an async function",
   () => {
     const importsAModule = ([, code]: (typeof snippets)[number]) => code.includes("import(");

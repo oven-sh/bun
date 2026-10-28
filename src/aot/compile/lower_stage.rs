@@ -961,7 +961,7 @@ impl Build<'_> {
         let default_define = RuntimeTranspiler::create_default_define();
         let transpiler = match project {
             ProjectId::Application => RuntimeTranspiler::new(
-                RuntimeTranspiler::find_define(self.provider).unwrap_or(&default_define),
+                self.provider.define().unwrap_or(&default_define),
                 &self.provider.enabled_features(),
             ),
             ProjectId::Runtime => RuntimeTranspiler::new(&default_define, &[]),

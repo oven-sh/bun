@@ -24,4 +24,4 @@ let cellCount = 0;
 for (let at = 0; at < cells.length; at += 4) {
   if (cells[at + 2] === wanted) cellCount++;
 }
-console.log(cellCount, globalThis.keptForTheSnapshot.length);
+console.log(cellCount, globalThis.keptForTheSnapshot.map(kept => kept.constructor === MakerOfOneInstanceInTheSnapshot).join());

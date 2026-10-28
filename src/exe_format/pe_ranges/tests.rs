@@ -564,6 +564,55 @@ fn full_section_table_allows_no_cuts() {
 }
 
 #[test]
+fn payload_moves_data_where_the_file_has_no_room_for_its_header() {
+    let slots_in_file =
+        (TOY_SIZE_OF_HEADERS as usize - SECTION_TABLE_OFFSET) / size_of::<SectionHeader>();
+    let mut sections = headers(&toy()).sections;
+    let filler = toy_section(b".more", PAGE, FILE_ALIGNMENT, READ_ONLY);
+    sections.splice(6..6, vec![filler; slots_in_file - sections.len()]);
+    let mut original = assemble_pe(IMAGE_FILE_MACHINE_AMD64, &sections, TOY_SIZE_OF_HEADERS);
+    write_toy_debug_directory(&mut original);
+    edit_optional(&mut original, |optional| {
+        optional.data_directories[IMAGE_DIRECTORY_ENTRY_DEBUG] = DataDirectory {
+            virtual_address: DEBUG_DIRECTORY_ADDRESS,
+            size: DEBUG_DIRECTORY_ENTRY_SIZE as u32,
+        };
+    });
+    assert_eq!(headers(&original).sections.len(), slots_in_file);
+
+    let mut file = PEFile::init(&original).unwrap();
+    file.add_bun_section(b"payload", false).unwrap();
+    let with_payload = file.data;
+    let new = headers(&with_payload);
+    assert!(check(&with_payload, &new).is_ok());
+    assert_eq!(new.sections.len(), slots_in_file + 1);
+    assert_eq!(
+        { new.optional.size_of_headers },
+        TOY_SIZE_OF_HEADERS + FILE_ALIGNMENT
+    );
+    assert_eq!(
+        { new.sections[0].pointer_to_raw_data },
+        TOY_SIZE_OF_HEADERS + FILE_ALIGNMENT
+    );
+    assert_retained_bytes(&original, &with_payload, &[]);
+    let field = read_addresses(&with_payload, widen_address_range(DEBUG_POINTER_ADDRESS, 4));
+    let pointer = u32_at(field.unwrap(), 0) as usize;
+    assert_eq!(&with_payload[pointer..pointer + 4], b"RSDS");
+    let payload = new.sections.last().unwrap();
+    assert_eq!(payload.name, *b".bun\0\0\0\0");
+    let start = payload.pointer_to_raw_data as usize;
+    assert_eq!(&with_payload[start + 8..start + 15], b"payload");
+
+    // A table that reaches the address of the first section has no slot to give.
+    let full = toy_with_sections(94, PAGE);
+    let mut file = PEFile::init(&full).unwrap();
+    assert_eq!(
+        file.add_bun_section(b"payload", false).err(),
+        Some(pe::Error::InsufficientHeaderSpace)
+    );
+}
+
+#[test]
 fn header_room_limits_cuts() {
     let original = toy_with_sections(90, PAGE);
     assert_eq!(cut_model(&original).capacity, CutCapacity::Cuts(1));

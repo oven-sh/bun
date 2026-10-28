@@ -1,4 +1,5 @@
-// The programs of definitions-by-descriptor that are one text but for a few places: an object of each kind is copied in each way, and the copy is asked for what the object holds since it was made.
+// The programs of definitions-by-descriptor that are one text but for a few places: an object of each kind is copied in each way, and the copy is asked for what the object holds since it was made,
+// under names that are written and under keys that are computed.
 import type { WrittenProgram } from "../generate";
 
 /** `names`: what is read on the copy, each with the type that a variable for it declares. `shown`: "type" where the text differs from one Bun to the next. `isBuiltIn`: the program does not change it. */
@@ -115,6 +116,7 @@ const sources: Record<string, Source> = {
       ["0", "string"],
     ],
   },
+  "a-list-that-the-array-constructor-made": { make: "new Array(3)", names: [["length", "number"]] },
   "a-match": {
     make: '/(?<first>a)(b)/.exec("xab")!',
     names: [
@@ -164,6 +166,30 @@ const sources: Record<string, Source> = {
       ["lastIndex", "number"],
       ["source", "string"],
       ["flags", "string"],
+    ],
+  },
+  "a-regexp-of-a-class-of-the-program": {
+    before: "class Pattern extends RegExp {}",
+    make: 'new Pattern("a+", "g")',
+    names: [
+      ["lastIndex", "number"],
+      ["source", "string"],
+    ],
+  },
+  "a-list-of-a-class-of-the-program": {
+    before: "class List extends Array<number> {}",
+    make: "List.of(1, 2)",
+    names: [
+      ["length", "number"],
+      ["0", "number"],
+    ],
+  },
+  "a-string-object-of-a-class-of-the-program": {
+    before: "class Text extends String {}",
+    make: 'new Text("text")',
+    names: [
+      ["length", "number"],
+      ["0", "string"],
     ],
   },
   "an-error": {
@@ -316,6 +342,7 @@ function textOf(
   copierName: string,
   copier: Copier,
   route: "inline" | "variable" | "function",
+  asked: "by-name" | "under-a-computed-key",
 ) {
   const words = `${sourceName.replaceAll("-", " ")}, copied by ${copierName.replaceAll("-", " ")}`;
   const form = route === "function" ? copier.inline : copier[route];
@@ -323,9 +350,19 @@ function textOf(
     route === "function"
       ? `function copyOf(given: any): any { return ${form.replaceAll("$", "given")}; }\nconst copy: any = attempt(() => copyOf(original));`
       : `const copy: any = attempt(() => ${form.replaceAll("$", "original")});`;
-  const rows = source.names.flatMap(([name, type, shown]) => {
-    const read = `copy${access(name)}`;
+  const rows = source.names.flatMap(([name, type, shown], index) => {
+    const read = asked === "by-name" ? `copy${access(name)}` : `copy[keys[${index}]]`;
     const show = shown === "type" ? "kindOf" : "textOf";
+    if (asked === "under-a-computed-key") {
+      return [
+        `row("${name} is called if it is there", () => kindOf(${read}?.(0)));`,
+        `row("${name} is asked for a member", () => kindOf(${read}?.member));`,
+        `row("${name} in a literal", () => { const holder = { member: ${read} }; return ${show}(holder.member); });`,
+        `row("${name} in a sum", () => ${shown === "type" || type === "object" ? "kindOf" : "textOf"}(${read} + 1));`,
+        `row("${name} in a call", () => ${show}(handOn(${read})));`,
+        `row("${name} is the same", () => ${read} === original[keys[${index}]]);`,
+      ];
+    }
     return [
       `row("${name} in a literal", () => { const holder = { member: ${read} }; return ${show}(holder.member); });`,
       `row("${name} in a variable", () => { const held: ${type} | undefined = ${read}; return ${show}(held); });`,
@@ -335,14 +372,18 @@ function textOf(
       `row("${name} is own", () => Object.hasOwn(copy, "${name}") + " " + ("${name}" in copy));`,
     ];
   });
-  return `// What ${words}, holds under the names that the original has since it was made${route === "inline" ? "" : route === "variable" ? ": what lies between the calls is in a variable" : ": a function makes the copy"}.
+  const keys =
+    asked === "by-name"
+      ? ""
+      : `\nconst keys: string[] = [${source.names.map(([name]) => `"${name}"`).join(", ")}, "other"];`;
+  return `// What ${words}, holds under the ${asked === "by-name" ? "names" : "computed keys"} that the original has since it was made${route === "inline" ? "" : route === "variable" ? ": what lies between the calls is in a variable" : ": a function makes the copy"}.
 ${source.before ?? ""}
 function kindOf(value: unknown): string { return typeof value; }
 function textOf(value: unknown): string { return typeof value === "function" ? "function " + value.name : typeof value === "object" && value !== null ? "object " + Object.prototype.toString.call(value) : typeof value + " " + String(value); }
 function handOn<T>(value: T): T { return value; }
 function attempt(make: () => unknown): unknown { try { return make(); } catch (error) { console.log("no copy: " + (error as Error).name); return {}; } }
 function row(name: string, read: () => unknown): void { try { console.log(name + ": " + String(read())); } catch (error) { console.log(name + ": THROWS " + (error as Error).name); } }
-const original: any = ${source.make};
+const original: any = ${source.make};${keys}
 ${made}
 ${rows.join("\n")}
 row("keys", () => Reflect.ownKeys(copy).map(String).filter(key => key !== "stack" && key !== "line" && key !== "column" && key !== "sourceURL").join(" "));
@@ -445,20 +486,22 @@ const programsOfCopies = (): WrittenProgram[] =>
     Object.entries(copiers)
       .filter(([copierName]) => !source.isBuiltIn || copierName !== "a-spread-of-what-was-made-enumerable")
       .flatMap(([copierName, copier]) =>
-        (["inline", "variable", "function"] as const).map(route => {
-          const name = `what-${sourceName}-holds-since-it-was-made-copied-by-${copierName}-${route}`;
-          const text = textOf(sourceName, source, copierName, copier, route);
-          if (!source.files) return { entry: `${name}.ts`, files: { [`${name}.ts`]: text } };
-          return {
-            entry: `${name}/main.ts`,
-            files: {
-              [`${name}/main.ts`]: text,
-              ...Object.fromEntries(
-                Object.entries(source.files).map(([file, content]) => [`${name}/${file}`, content]),
-              ),
-            },
-          };
-        }),
+        (["inline", "variable", "function"] as const)
+          .flatMap(route => (["by-name", "under-a-computed-key"] as const).map(asked => ({ route, asked })))
+          .map(({ route, asked }) => {
+            const name = `what-${sourceName}-holds-since-it-was-made-copied-by-${copierName}-${route}${asked === "by-name" ? "" : `-and-read-${asked}`}`;
+            const text = textOf(sourceName, source, copierName, copier, route, asked);
+            if (!source.files) return { entry: `${name}.ts`, files: { [`${name}.ts`]: text } };
+            return {
+              entry: `${name}/main.ts`,
+              files: {
+                [`${name}/main.ts`]: text,
+                ...Object.fromEntries(
+                  Object.entries(source.files).map(([file, content]) => [`${name}/${file}`, content]),
+                ),
+              },
+            };
+          }),
       ),
   );
 

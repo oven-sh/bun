@@ -12,6 +12,7 @@ use bun_bundler::options::{self, OutputFile};
 use bun_collections::StringArrayHashMap;
 use bun_core::{Environment, Output};
 use bun_core::{String as BunString, StringPointer, ZStr};
+use bun_exe_format::mapped_file::FileBytes;
 use bun_exe_format::{macho as bun_macho, pe as bun_pe};
 use bun_options_types::bundle_enums::{Format, WindowsOptions};
 #[cfg(not(windows))]
@@ -2525,10 +2526,13 @@ pub(crate) fn inject<'a>(
         {
             let _self_fd_guard = Syscall::CloseOnDrop::new(self_fd);
 
-            // A trimmed ELF executable with compiled code is written whole, from the template's bytes.
-            let is_written_whole = additions.has_code
-                && additions.trims()
-                && matches!(target.os, CompileTargetOs::Linux | CompileTargetOs::Freebsd);
+            // A trimmed executable is written whole, from the template's bytes: an ELF one where it has compiled code.
+            let is_written_whole = additions.trims()
+                && match target.os {
+                    CompileTargetOs::Linux | CompileTargetOs::Freebsd => additions.has_code,
+                    CompileTargetOs::Mac => true,
+                    _ => false,
+                };
             if !is_written_whole && let Err(e) = bun_sys::copy_file(self_fd, fd) {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
@@ -2545,19 +2549,26 @@ pub(crate) fn inject<'a>(
 
     match target.os {
         CompileTargetOs::Mac => {
-            let mut input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
-                Ok(b) => b,
-                Err(err) => {
-                    bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
-                    cleanup(zname, cloned_executable_fd);
-                    return None;
-                }
+            let symbols_size = additions.symbols.map_or(0, |symbols| symbols.table.len());
+            let mapped = MappedFile::open_with_room(self_exe, |template_size| {
+                bun_macho::MachoFile::room_for(template_size, bytes.len(), symbols_size)
+            });
+            let mut template = match mapped {
+                Some(mapped) => FileBytes::Mapping(mapped),
+                None => match bun_sys::File::read_from(Fd::cwd(), self_exe.as_bytes()) {
+                    Ok(b) => FileBytes::Vector(b),
+                    Err(err) => {
+                        bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
+                        cleanup(zname, cloned_executable_fd);
+                        return None;
+                    }
+                },
             };
-            if !additions.edit_template(&mut input_bytes) {
+            if !additions.edit_template(&mut template) {
                 cleanup(zname, cloned_executable_fd);
                 return None;
             }
-            let mut macho_file = match bun_macho::MachoFile::init(&input_bytes, bytes.len()) {
+            let mut macho_file = match bun_macho::MachoFile::over(template) {
                 Ok(f) => f,
                 Err(e) => {
                     bun_core::pretty_errorln!("Error initializing standalone module graph: {}", e);
@@ -2571,19 +2582,10 @@ pub(crate) fn inject<'a>(
                 cleanup(zname, cloned_executable_fd);
                 return None;
             }
-            drop(input_bytes);
 
-            if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
-                bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
-                cleanup(zname, cloned_executable_fd);
-                return None;
-            }
-
-            let mut buffered_writer = std::io::BufWriter::with_capacity(
-                512 * 1024,
-                bun_sys::FileWriter(cloned_executable_fd),
-            );
-            let written = match macho_file.build_and_sign(&mut buffered_writer) {
+            let file = bun_sys::File::borrow(&cloned_executable_fd);
+            let holds_template = !additions.has_code && !additions.trims();
+            let written = match macho_file.build_and_sign_into(file, holds_template) {
                 Ok(n) => n,
                 Err(e) => {
                     bun_core::pretty_errorln!(
@@ -2594,11 +2596,6 @@ pub(crate) fn inject<'a>(
                     return None;
                 }
             };
-            if let Err(e) = std::io::Write::flush(&mut buffered_writer) {
-                bun_core::pretty_errorln!("Error flushing standalone module graph: {}", e);
-                cleanup(zname, cloned_executable_fd);
-                return None;
-            }
             // The template copy may be longer than the signed output; codesign rejects bytes past the signature.
             if let Err(err) = Syscall::ftruncate(
                 cloned_executable_fd,

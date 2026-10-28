@@ -1870,12 +1870,13 @@ mod draft {
                 return;
             }
             REPORTS_ABORTS.store(true, Ordering::Relaxed);
-            // SAFETY: the handler has the signature that `signal` calls and is never unloaded.
+            // SAFETY: the handlers have the signatures that `signal` and the engine call and are never unloaded.
             unsafe {
                 libc::signal(
                     libc::SIGABRT,
                     handle_abort_windows as extern "C" fn(core::ffi::c_int) as usize,
                 );
+                WTFSetAbortReporter(Some(report_abort_windows));
             }
         }
     }
@@ -2111,6 +2112,7 @@ mod draft {
                 bun_sys::windows::kernel32::SetUnhandledExceptionFilter(None);
                 if REPORTS_ABORTS.swap(false, Ordering::Relaxed) {
                     libc::signal(libc::SIGABRT, libc::SIG_DFL);
+                    WTFSetAbortReporter(None);
                 }
             }
             return;
@@ -2285,6 +2287,18 @@ mod draft {
                 handle_abort_windows as extern "C" fn(core::ffi::c_int) as usize,
             );
         }
+        report_abort_windows()
+    }
+
+    #[cfg(windows)]
+    unsafe extern "C" {
+        fn WTFSetAbortReporter(reporter: Option<extern "C" fn()>);
+    }
+
+    /// An assertion of the engine that fails calls this in front of `abort()`: between the C runtime's reset and the
+    /// first statement of `handle_abort_windows` the `abort()` of a second thread ends the process.
+    #[cfg(windows)]
+    extern "C" fn report_abort_windows() {
         bun_core::debug::with_current_context(|pc, context| {
             crash_handler(CrashReason::Abort, TraceSeed::Fault { pc, fp: context })
         })

@@ -359,13 +359,64 @@ if (Bun.isMainThread) {
   self.onmessage = event => {
     if (event.data === "block") {
       postMessage("held up");
-      Bun.sleepSync(3000);
+      Bun.sleepSync(400);
       return;
     }
     for (let i = 0; i < 2_000_000; i++) head = { id: i, next: head };
     let entries = 0;
     for (let entry: Entry | null = head; entry; entry = entry.next) entries++;
     postMessage("kept " + entries);
+  };
+  setInterval(() => {}, 1000);
+  postMessage("ready");
+}
+`;
+
+// Workers start until the constructor throws. One ends and has closed. Another is terminated in a call that blocks it, and a new one is constructed at once.
+const constructsWorkerAfterTerminatingBlockedOne = `import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+declare var self: Worker;
+const call = process.argv[2];
+if (Bun.isMainThread) {
+  if (call.includes("pipe")) execFileSync("mkfifo", ["pipe"]);
+  const construct = () => new Worker(new URL(import.meta.url), { argv: [call] });
+  const hear = (worker: Worker, wanted: string) =>
+    new Promise<string>(resolve => {
+      worker.onmessage = event => void (event.data === wanted && resolve(event.data));
+      worker.onerror = event => resolve(event.message);
+    });
+  const workers: Worker[] = [];
+  for (;;) {
+    try {
+      const worker = construct();
+      await hear(worker, "ready");
+      workers.push(worker);
+    } catch {
+      break;
+    }
+  }
+  const first = workers.shift()!;
+  const closed = new Promise(resolve => first.addEventListener("close", resolve));
+  first.terminate();
+  await closed;
+  const blocked = workers.shift()!;
+  const isBlocked = hear(blocked, "blocks");
+  blocked.postMessage("block");
+  await isBlocked;
+  await Bun.sleep(200);
+  blocked.terminate();
+  try {
+    console.log(await hear(construct(), "ready"));
+  } catch (error) {
+    console.log(String(error));
+  }
+  process.exit(0);
+} else {
+  self.onmessage = () => {
+    postMessage("blocks");
+    if (call.includes("pipe")) readFileSync("pipe");
+    else if (call.includes("sleep")) Bun.sleepSync(100_000_000);
+    else Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
   };
   setInterval(() => {}, 1000);
   postMessage("ready");
@@ -1042,6 +1093,20 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
       async () => {
         expect(await runWithin(GB, keepsObjectsInWorkerConstructedWhileOthersEnd)).toEqual({
           stdout: "kept 2000000\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      240_000,
+    );
+
+    test
+      .skipIf(!isLinux || isASAN)
+      .each(dealt(["a sleep that does not end", "a read of a pipe that nobody writes to", "Atomics.wait()"]))(
+      "a Worker that is constructed after another was terminated in %s starts or gets an error",
+      async call => {
+        expect(await runWithin(GB, constructsWorkerAfterTerminatingBlockedOne, call)).toEqual({
+          stdout: expect.stringMatching(/^(ready|TypeError: Failed to spawn worker thread)\n$/),
           stderr: "",
           exitCode: 0,
         });

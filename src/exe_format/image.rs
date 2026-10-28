@@ -320,7 +320,7 @@ pub trait ImageBytes: core::ops::DerefMut<Target = [u8]> {
     /// Moves the bytes at `source` to `target`, which is below `source.start`. Until `truncate`, nothing reads what the move leaves behind.
     fn move_down(&mut self, source: core::ops::Range<usize>, target: usize);
     fn truncate(&mut self, len: usize);
-    /// The bytes that are added are zero. `len` is at most the first length.
+    /// The bytes that are added are zero. `len` is at most the first length, or what a mapping has room for.
     fn grow(&mut self, len: usize);
     fn as_vec(&mut self) -> Option<&mut Vec<u8>>;
 }
@@ -435,7 +435,7 @@ impl<'a> ImageEditor<'a> {
         let old_len = self.bytes.len();
         match self.format {
             ExecutableFormat::Elf => elf_ranges::remove_ranges(self.bytes, cuts)?,
-            ExecutableFormat::MachO => macho_ranges::remove_ranges(self.vector()?, cuts)?,
+            ExecutableFormat::MachO => macho_ranges::remove_ranges(self.bytes, cuts)?,
             ExecutableFormat::Pe => pe_ranges::remove_ranges(self.vector()?, cuts)?,
         }
         self.spans = read_mapped_spans(self.format, self.bytes)?;

@@ -5013,7 +5013,7 @@ impl<'p, 's> Checker<'p, 's> {
             && self.reliability == 0
             // A frame that drops its diagnostics reports them when it is evaluated again.
             && !(self.reported.len() > reported
-                && self.frames.last().is_some_and(|frame| frame.drops_reported))
+                && (self.frames.last()).is_some_and(|frame| frame.marks.drops_reported()))
         {
             self.p.awaited_types.insert(&self.task, ty, awaited, stored);
         }

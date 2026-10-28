@@ -866,6 +866,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
         if (useArrayBuffer) {
             JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
             auto bytes = builder.jsonBytes();
+            heapProfiler.clearSnapshots();
             RETURN_IF_EXCEPTION(throwScope, {});
             auto released = bytes.releaseBuffer();
             auto span = released.leakSpan();
@@ -877,6 +878,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
 
         JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
         auto json = builder.json();
+        heapProfiler.clearSnapshots();
         RETURN_IF_EXCEPTION(throwScope, {});
         return JSC::JSValue::encode(jsString(vm, json));
     }
@@ -884,6 +886,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
     JSC::HeapSnapshotBuilder builder(heapProfiler);
     builder.buildSnapshot();
     auto json = builder.json();
+    heapProfiler.clearSnapshots();
     RETURN_IF_EXCEPTION(throwScope, {});
     // json() returns a null string if the snapshot exceeds the max string length.
     if (json.isNull()) [[unlikely]] {

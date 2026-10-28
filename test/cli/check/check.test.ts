@@ -898,6 +898,29 @@ export const api = { f1 };
     });
   });
 
+  // The message about `load.nope` prints the type of `load`, whose return type is being inferred, and then the call asks for
+  // its argument once more. Nothing of that evaluation is stored, so the walk evaluates the argument again.
+  test.each([
+    ["a function", "function load() { return [api.nope, cached]; }", ["a.ts(3,10)", "a.ts(3,31)", "a.ts(4,28)"]],
+    [
+      "an async function",
+      "async function load() { return [api.nope, cached]; }",
+      ["a.ts(3,16)", "a.ts(3,37)", "a.ts(4,28)"],
+    ],
+  ])("reports a missing property once if its message prints the type of %s in a ring", async (_, load, places) => {
+    using dir = project({
+      "a.ts": `declare function same<T>(value: T): T;
+declare const api: { load: typeof load };
+${load}
+var cached = same(api.load.nope);
+export {};
+`,
+    });
+    const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
+    expect(stdout.split("\n").map(line => line.slice(0, line.indexOf(":")))).toEqual(places);
+    expect(exitCode).toBe(1);
+  });
+
   // `f1` and `f2` report errors whose messages print a type, so `f3`'s return type is inferred two messages deep, where
   // TypeScript discards errors. It caches the expression of a `return` statement without its parentheses, so the walk checks
   // a parenthesized one again and reports. An expression body is checked again too.

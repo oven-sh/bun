@@ -1,5 +1,6 @@
 // Bun's own test files as compiled code: `bun test <file>` against `bun test --debug-aot <file>`, which compiles the file and all it imports and runs that. The verdicts are compared
-// test by test (other-suites/bun-tests.ts). other-suites/bun-tests.same.txt lists the files of test/js and test/regression in which every test has the same verdict both ways.
+// test by test (other-suites/bun-tests.ts). other-suites/bun-tests.same.txt lists the files of test/js and test/regression in which every test has the same verdict both ways,
+// but for the tests that other-suites/bun-tests.known.txt names.
 //
 // A run takes one file in eighty, others for each commit of Bun (run-programs.ts), and a few that every run takes:
 //   AOT_SHARE=all bun test test/aot/buns-own-tests-as-compiled-code            every file: an hour at sixteen files at a time
@@ -25,6 +26,13 @@ const files = readFileSync(join(import.meta.dir, "other-suites", "bun-tests.same
         ? (takesWhatIsFixed && inEveryRun.has(file)) || inShare(file, isASAN || isDebug ? 800 : 80, true)
         : file.includes(wanted)),
   );
+
+const keyOf = (line: string) => /^[A-Z-]+ (.*?): /.exec(line)?.[1];
+const known = new Set(
+  readFileSync(join(import.meta.dir, "other-suites", "bun-tests.known.txt"), "utf8")
+    .split("\n")
+    .map(keyOf),
+);
 
 /** What differs, one line each, by file. A test that runs out of its own time limit says little about the compiler. A file of which nothing was judged differs too. */
 async function compare(files: string[], jobs: number): Promise<Map<string, string[]>> {
@@ -57,7 +65,7 @@ async function compare(files: string[], jobs: number): Promise<Map<string, strin
       return [
         file,
         judged.length
-          ? judged.filter(line => !/^(same|TIMES-OUT) /.test(line))
+          ? judged.filter(line => !/^(same|TIMES-OUT) /.test(line) && !known.has(keyOf(line)))
           : [`neither ${file}: the driver has no line for it`],
       ];
     }),

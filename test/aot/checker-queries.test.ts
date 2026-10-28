@@ -123,7 +123,10 @@ describe("checker queries", () => {
       const eight = describeCheckerQueries(entry, 8);
       expect(eight).toBe(one);
       const failures = findFailures(textLines(join(fixtures, expectation), "#"), one.split("\n"));
-      expect(failures).toEqual([]);
+      expect({ failures, printed: failures.length ? one.split("\n").slice(0, 3) : [] }).toEqual({
+        failures: [],
+        printed: [],
+      });
     });
   }
 });

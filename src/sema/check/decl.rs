@@ -2987,9 +2987,10 @@ impl<'p, 's> Checker<'p, 's> {
             _ => false,
         };
         if resolves_to_any && let Some(annotation) = self.frames.last_mut() {
-            annotation.tainted = false;
-            annotation.drops_reported = false;
-            self.tainted_from = None;
+            annotation.marks.clear_tainted(&mut self.fully_marked);
+            annotation
+                .marks
+                .set_drops_reported(false, &mut self.fully_marked);
         }
     }
 

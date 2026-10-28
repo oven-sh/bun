@@ -223,6 +223,8 @@ export default b.declarations(
     uses: { path: b.inspected },
     implementation: b.generic,
   }),
+  // The import and require() each get a function of their own.
+  b.namespace("utf-8-validate", {}, { scope: "Module" }),
   b.fn("utf-8-validate", {
     args: { buffer: bytes },
     returns: b.bool,

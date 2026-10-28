@@ -3066,10 +3066,11 @@ class Scenes {
         ? this.plainly(30, ": any", () => (hasRows ? ": { value: number }[]" : ": number[]"))
         : "";
       this.emit(1, `function total${id}(a${type})${any} { let s${any} = 0; ${before} ${loop} return s; }`);
-      for (const list of this.several(1, 3, made))
+      // Each list has a name of its own: run-batch.ts can take the try away (--unwraps-try-blocks), and then the declarations stand in one block.
+      for (const [at, list] of this.several(1, 3, made).entries())
         this.emit(
           1,
-          `try { const list${any} = ${list}; note(total${id}(list)); note(list); } catch (error) { note("threw " + (error${asAny})?.constructor?.name); }`,
+          `try { const list${id}_${at}${any} = ${list}; note(total${id}(list${id}_${at})); note(list${id}_${at}); } catch (error) { note("threw " + (error${asAny})?.constructor?.name); }`,
         );
     }
     this.emit(1, `printValue("elements ${number}", out);`);
@@ -3948,7 +3949,7 @@ class Scenes {
             `try { note([...Array.prototype.${walker}.call(like${id})]); } catch (error) { note("threw"); }`,
             `try { like${id}[Symbol.iterator] = Array.prototype.${walker}; note([...like${id}]); } catch (error) { note("threw"); }`,
             `try { like${id}[Symbol.iterator] = Array.prototype.${walker}; const [first, second, third] = like${id}; note([first, second, third]); } catch (error) { note("threw"); }`,
-            `try { const walk = Array.prototype.${walker}.call(like${id}); note(walk.next()); count${id} = 3; note(walk.next()); note(walk.next()); note(walk.next()); } catch (error) { note("threw"); }`,
+            `try { const walk${id} = Array.prototype.${walker}.call(like${id}); note(walk${id}.next()); count${id} = 3; note(walk${id}.next()); note(walk${id}.next()); note(walk${id}.next()); } catch (error) { note("threw"); }`,
             `try { note(Array.from(Array.prototype.${walker}.call(like${id}))); } catch (error) { note("threw"); }`,
           ]),
         );
@@ -4002,7 +4003,7 @@ class Scenes {
    * that can't be written, with fields of the same names, a field under a key in brackets that only the run knows, and a field without a value. In JavaScript the scene is one of class factories.
    *
    * With `bun run` every file follows the tsconfig.json where Bun is started, and in an executable each file follows the one nearest to it. So run-batch.ts holds a program of this scene against the
-   * executable that `bun build --compile` makes without --aot (saysInAFolderOfItsOwnHowFieldsAreMade there).
+   * executable that `bun build --compile` makes without --aot (hasATsconfigInAFolderOfItsOwn there).
    * The folder lies two deep: a tsconfig.json one folder below a program makes that folder the project that run-batch.ts checks in the program's place.
    */
   sceneOfFieldsUnderOptionsOfTheTranspiler() {
@@ -4050,7 +4051,7 @@ class Scenes {
         `class D${id} extends Base${id} { ${this.pick([`[${key}] = 1; y = 2; opt?: number;`, `[${key}] = 1; y = 2; opt?: number;`, `y = 2; [${key}] = 1; opt?: number;`, `opt?: number; y = 2; [${key}] = 1;`, `[${key}] = 1; declare y: number; opt?: number;`, `static [${key}] = 1; y = 2; opt!: number;`, `[${key}]: number; y = 2;`, `y = 2; opt?: number;`, `y = 2; opt?: number;`, `opt?: number; y = 2; name = 1;`, `declare y: number; opt = 1;`])} }`,
       );
       lines.push(
-        `try { const made: any = new D${id}(); note(Reflect.ownKeys(made).map(String).join("+")); note(made.y); note(Object.prototype.hasOwnProperty.call(made, "opt")); note(Reflect.ownKeys(D${id}).map(String).join("+")); } catch (error) { note("threw " + (error as any)?.name); }`,
+        `try { const made${id}: any = new D${id}(); note(Reflect.ownKeys(made${id}).map(String).join("+")); note(made${id}.y); note(Object.prototype.hasOwnProperty.call(made${id}, "opt")); note(Reflect.ownKeys(D${id}).map(String).join("+")); } catch (error) { note("threw " + (error as any)?.name); }`,
       );
     }
     lines.push(`export const said${number} = out;`, "");
@@ -4124,10 +4125,96 @@ class Scenes {
       );
       this.emit(
         1,
-        `try { const made: any = new D${id}(); note(Reflect.ownKeys(made).map(String).join("+")); note(made.y); note(Object.prototype.hasOwnProperty.call(made, "opt")); note(Reflect.ownKeys(D${id}).map(String).join("+")); } catch (error) { note("threw " + (error as any)?.name); }`,
+        `try { const made${id}: any = new D${id}(); note(Reflect.ownKeys(made${id}).map(String).join("+")); note(made${id}.y); note(Object.prototype.hasOwnProperty.call(made${id}, "opt")); note(Reflect.ownKeys(D${id}).map(String).join("+")); } catch (error) { note("threw " + (error as any)?.name); }`,
       );
     }
     this.emit(1, `printValue("fields ahead ${number}", out);`);
+    this.lines.push("}");
+  }
+
+  /**
+   * A member that is no function is called: with `?.(`, which asks only whether it is null or undefined, or with `(`. The member is a number, a text, a boolean, a symbol, a big integer, an object, null or
+   * undefined. It is read by name, under a key that a list answers, or under one made at run time. The object is written out, or is a copy, by descriptors or by a spread, of a built-in object.
+   */
+  sceneOfCallsOfMembersThatAreNoFunctions() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const asAny = this.isTypeScript ? " as any" : "";
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += (typeof value === "symbol" ? "symbol" : String(value)) + ";"; }`,
+    );
+    for (let index = this.pick([2, 3, 3, 4]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const [made, name] = this.pick<[string, string]>([
+        [`Object.defineProperties({}, Object.getOwnPropertyDescriptors(/a+/gi))`, "lastIndex"],
+        [`Object.defineProperties({}, Object.getOwnPropertyDescriptors(/a+/gi))`, "lastIndex"],
+        [`Object.defineProperties({}, Object.getOwnPropertyDescriptors([1, 2]))`, "length"],
+        [`Object.defineProperties({}, Object.getOwnPropertyDescriptors([1, 2]))`, "0"],
+        [`Object.defineProperties({}, Object.getOwnPropertyDescriptors("ab"))`, "length"],
+        [`Object.defineProperties({}, Object.getOwnPropertyDescriptors("ab"))`, "1"],
+        [`Object.defineProperties({}, Object.getOwnPropertyDescriptors(function two(a${any}, b${any}) {}))`, "length"],
+        [`Object.defineProperties({}, Object.getOwnPropertyDescriptors(function two(a${any}, b${any}) {}))`, "name"],
+        [`Object.defineProperties({}, Object.getOwnPropertyDescriptors(new Error("m")))`, "message"],
+        [`Object.create(null, Object.getOwnPropertyDescriptors(/a+/gi))`, "lastIndex"],
+        [`{ ...[7, 8] }`, "1"],
+        [`{ ..."ab" }`, "0"],
+        [`Object.assign({}, /a+/gi, { lastIndex: 0 })`, "lastIndex"],
+        [
+          `{ held: ${this.pick(["0", "1.5", `"t"`, "true", "false", "null", "undefined", "10n", `Symbol("s")`, "{}", "[]", "NaN", "-0"])} }`,
+          "held",
+        ],
+        [
+          `{ held: ${this.pick(["0", "1.5", `"t"`, "true", "false", "null", "undefined", "10n", `Symbol("s")`, "{}", "[]", "NaN", "-0"])} }`,
+          "held",
+        ],
+        [`/a+/gi`, "lastIndex"],
+        [`[1, 2]`, "length"],
+        [`new Map([[1, 2]])`, "size"],
+      ]);
+      const key = this.pick([
+        `["${name}", "other"][0]`,
+        `["${name}", "other"][0]`,
+        `["other", "${name}"][1]`,
+        `"${name}"`,
+        `["${name}"].join("")`,
+        `String("${name}")`,
+      ]);
+      const isAName = /^[a-z]/i.test(name);
+      const read = (object: string) =>
+        this.pick([
+          `${object}[key${id}]`,
+          `${object}[key${id}]`,
+          `${object}[key${id}]`,
+          isAName ? `${object}.${name}` : `${object}[${name}]`,
+          `${object}?.[key${id}]`,
+        ]);
+      // An optional chain can be neither the tag of a template nor, for `bun run`, what `new` constructs.
+      const call = (member: string) =>
+        this.pick([
+          `${member}?.(0)`,
+          `${member}?.(0)`,
+          `${member}?.(0)`,
+          `${member}?.()`,
+          `${member}(0)`,
+          `${member}?.(0)?.x`,
+          `${member}?.call(null, 0)`,
+          ...(member.includes("?.") ? [] : [`new (${member})(0)`, `${member}\`t\``]),
+        ]);
+      this.emit(1, `const key${id}${any} = ${key};`, `const make${id} = ()${any} => (${made});`);
+      for (let use = this.pick([1, 2, 2]); use > 0; use--) {
+        const object = this.pick([`make${id}()`, `make${id}()`, `held${id}_${use}`]);
+        if (object.startsWith("held")) this.emit(1, `const held${id}_${use}${any} = make${id}();`);
+        this.emit(
+          1,
+          `try { note(${this.pick(["", "", "["])}${call(read(object))}`.replace(/note\(\[(.*)$/, "note([$1]") +
+            `); } catch (error) { note("threw " + (error${asAny})?.constructor?.name); }`,
+        );
+      }
+    }
+    this.emit(1, `printValue("calls of members ${number}", out);`);
     this.lines.push("}");
   }
 }
@@ -4151,6 +4238,10 @@ export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: 
         () => scenes.sceneOfWalks(),
         () => scenes.sceneOfWalks(),
         () => scenes.sceneOfIdioms(),
+        () => scenes.sceneOfCallsOfMembersThatAreNoFunctions(),
+        () => scenes.sceneOfCallsOfMembersThatAreNoFunctions(),
+        () => scenes.sceneOfCallsOfMembersThatAreNoFunctions(),
+        () => scenes.sceneOfCallsOfMembersThatAreNoFunctions(),
         () => scenes.sceneOfFieldsBesideKeysThatAreWorkedOutAhead(),
         () => scenes.sceneOfFieldsBesideKeysThatAreWorkedOutAhead(),
         () => scenes.sceneOfFieldsBesideKeysThatAreWorkedOutAhead(),

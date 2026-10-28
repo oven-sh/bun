@@ -95,7 +95,7 @@ export type Generated = {
   flags?: string[];
   /** Flags of `bun build` that decide what the program is, such as --feature and --define. The reference is built with them too, so it is compiled. */
   flagsOfBothBuilds?: string[];
-  /** What it prints differs in a build with --aot-validate, and docs/compiler/internals.mdx says why. Or it runs past its time limit there. */
+  /** What it prints differs in a build with --aot-validate, or it runs past its time limit there. */
   isNeverValidated?: true;
   /** The executable runs once more under each of these and prints the same. */
   alsoUnder?: Record<string, string>[];

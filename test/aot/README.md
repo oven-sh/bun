@@ -153,7 +153,8 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
 - **What the back end is told.** `--aot-check=ClaimsToBackEnd` leaves the code of an ordinary build as it is up to the last phase that moves a value and adds code that finds out in
   the run whether a word that was said never to change has changed, a number lies in its range, a cell in the frame is read before it is filled. An ASAN or debug build of Bun builds
   every program that way; `joined-programs-claims-checked-*` takes all of them. `--aot-check=MovedLoads` (`joined-programs-moved-loads-checked-*`) reads every load again that a phase
-  moved or replaced; its second reads stand in the way of later phases, so it is not quite the ordinary build. `--aot-check=DecidedComparisons`
+  moved or replaced; its second reads stand in the way of later phases, so it is not quite the ordinary build. `variant-program-is-very-large-and-moved-loads-checked-at-run-time-*`
+  does the same in a build that counts the program as very large, where fewer calls are written into their callers. `--aot-check=DecidedComparisons`
   (`joined-programs-decided-comparisons-checked-*`) compares again, where it stood, every pair of integers whose comparison a loop phase has answered by itself: a range check that left a
   loop, the test of a turn that is written out. What was compared stays alive for that, so it is not quite the ordinary build either. `what-the-back-end-is-told-is-checked-at-run-time.test.ts` tells the
   back end something untrue of each kind and asks for the line that names it.

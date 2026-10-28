@@ -618,6 +618,11 @@ export function windowsEnv(
       // .slice() because paranoia that there is a way to call this without the engine cloning it for us
       return envMapList.slice();
     },
+    preventExtensions() {
+      // As in Node: Object.preventExtensions(), Object.seal() and Object.freeze() throw a TypeError. Of a target that
+      // cannot be extended ownKeys() would have to answer the target's own keys, which are in upper case.
+      return false;
+    },
   });
   return envProxy;
 }

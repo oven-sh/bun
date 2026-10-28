@@ -35,6 +35,11 @@ const withoutMessage = (text: string) =>
     .trim()
     .split("\n")
     .map(line => line.replace(/:.*$/, ""));
+const printed = ({ stdout, stderr, exitCode }: { stdout: string; stderr: string; exitCode: number }) => ({
+  lines: withoutMessage(stdout),
+  exitCode,
+  stderr: exitCode ? stderr : "",
+});
 
 test("every write is refused with a TypeError", async () => {
   using dir = tempDir("locked-host-prototypes", { "main.mjs": attempts });
@@ -44,11 +49,8 @@ test("every write is refused with a TypeError", async () => {
     stderr: expect.not.stringMatching(/^error\b/m),
     exitCode: 0,
   });
-  await using program = Bun.spawn({ cmd: [join(cwd, "program")], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  expect(withoutMessage(await program.stdout.text())).toEqual(refusals);
-  expect(await program.exited).toBe(0);
-  const run = await bun(cwd, "run", "--aot", "main.mjs");
-  expect(withoutMessage(run.stdout)).toEqual(refusals);
+  expect(printed(await runCommand([join(cwd, "program")], cwd))).toEqual({ lines: refusals, exitCode: 0, stderr: "" });
+  expect(printed(await bun(cwd, "run", "--aot", "main.mjs"))).toEqual({ lines: refusals, exitCode: 0, stderr: "" });
 }, 120_000);
 
 // The message is the engine's own, such as "Attempted to assign to readonly property."

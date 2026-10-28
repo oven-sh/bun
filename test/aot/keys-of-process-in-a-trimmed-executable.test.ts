@@ -1,6 +1,6 @@
 // Each program reads every member of `process`, takes one more step, and prints the keys in order.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { built, slot, spawned, unsupported } from "./run-programs";
@@ -34,7 +34,7 @@ console.log(Reflect.ownKeys(process).map(String).join(" "));
 if (!canTrim)
   console.error("SKIPPED: keys-of-process-in-a-trimmed-executable.test.ts: this build of Bun doesn't support --trim");
 
-(canTrim && !unsupported && !isWindows ? describe.concurrent : describe.skip)(
+(canTrim && !unsupported ? describe.concurrent : describe.skip)(
   "a trimmed executable lists the keys of process in the same order as one that is not trimmed",
   () => {
     test.each(Object.entries(steps))(

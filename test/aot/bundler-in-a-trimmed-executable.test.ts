@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { built, slot, spawned, unsupported } from "./run-programs";
@@ -86,7 +86,7 @@ function usesEveryMember(report: string): boolean {
   return /^aot: trim: uses property toTemporalInstant$/m.test(report);
 }
 
-(canTrim && !unsupported && !isWindows ? describe.concurrent : describe.skip)(
+(canTrim && !unsupported ? describe.concurrent : describe.skip)(
   "Bun.build, HTML routes and Bun.Transpiler in a trimmed executable",
   () => {
     for (const [name, { source, untrimmed, trimmed = untrimmed, runsUnseenCode }] of Object.entries(programs)) {

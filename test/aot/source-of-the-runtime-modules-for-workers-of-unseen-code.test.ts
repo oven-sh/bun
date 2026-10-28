@@ -184,7 +184,7 @@ if (!canTrim)
     "SKIPPED: source-of-the-runtime-modules-for-workers-of-unseen-code.test.ts: this build of Bun doesn't support --trim",
   );
 
-(canTrim && !unsupported && !isWindows ? describe.concurrent : describe.skip)(
+(canTrim && !unsupported ? describe.concurrent : describe.skip)(
   "an executable of a Bun that can be trimmed, built without --trim",
   () => {
     const all = countModulesWithSource(readFileSync(bunExe()));
@@ -192,7 +192,7 @@ if (!canTrim)
     async function run([, program, , extension = "mjs"]: Case) {
       using dir = tempDir("source-of-the-runtime-modules", { ...files, [`main.${extension}`]: helpers + program });
       const folder = String(dir);
-      const executable = join(folder, "main");
+      const executable = join(folder, isWindows ? "main.exe" : "main");
       built(
         await spawned(
           [bunExe(), "build", "--compile", "--aot", `main.${extension}`, "--outfile", executable],

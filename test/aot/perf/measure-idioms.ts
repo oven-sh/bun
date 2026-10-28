@@ -28,6 +28,7 @@ export const typedOverUntyped = (row: WholeRow) => row.typed.instructions / row.
 export const isTypedDearer = (row: WholeRow, bound = 1.05, slack = 1) =>
   typedOverUntyped(row) > bound && row.typed.instructions > row.untyped.instructions + slack;
 export const dearerPath = join(import.meta.dir, `typed-dearer-than-untyped.${process.platform}-${process.arch}.json`);
+export const everydayPinsPath = join(import.meta.dir, `everyday-pins.${process.platform}-${process.arch}.json`);
 export const behindInVeryLargeProgramPath = join(
   import.meta.dir,
   `behind-the-jit-in-a-very-large-program.${process.platform}-${process.arch}.json`,

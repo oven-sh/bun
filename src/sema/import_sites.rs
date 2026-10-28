@@ -1,5 +1,6 @@
 mod alternatives;
 mod call_sites;
+mod encoders;
 mod import_uses;
 mod jsx;
 mod macro_calls;
@@ -14,6 +15,7 @@ pub use call_sites::{RequireCall, RequireCallForm, find_require_call};
 pub(crate) use call_sites::{
     call_site_arguments, call_site_kind, is_free_common_js, is_in_with_scope,
 };
+pub use encoders::{ENCODERS, Encoder};
 pub use jsx::{
     AutomaticJsx, JsxCallee, JsxImport, JsxImportSet, JsxMode, KeyAttribute, find_key_attribute,
     has_static_children, is_ignored_key, jsx_callee, jsx_children,

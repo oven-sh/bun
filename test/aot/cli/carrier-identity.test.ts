@@ -125,10 +125,9 @@ function expectAnswer({ stdout, exitCode }: SpawnResult) {
 
 const strip = isWindows ? null : Bun.which("strip");
 
-test.skipIf(!strip)(
+test.skipIf(!strip || !hasIdentity)(
   "a stripped copy of this Bun is the same build",
   async () => {
-    if (!hasIdentity) return;
     using dir = tempDir("aot-carrier-stripped", files);
     const folder = String(dir);
     const copy = join(folder, "stripped");
@@ -147,10 +146,9 @@ test.skipIf(!strip)(
   timeout,
 );
 
-test(
+test.skipIf(!hasIdentity)(
   "another link of the same run time is compiled onto, and the image names it",
   async () => {
-    if (!hasIdentity) return;
     using dir = tempDir("aot-carrier-another-link", files);
     const folder = String(dir);
     const other = readFileSync(bunExe());
@@ -168,10 +166,9 @@ function findDescriptionOfEngine(file: Buffer): number {
   throw new Error("this Bun has no description of its run time");
 }
 
-test(
+test.skipIf(!hasIdentity)(
   "the image takes the form that the run time's description names",
   async () => {
-    if (!hasIdentity) return;
     using dir = tempDir("aot-carrier-other-form", files);
     const folder = String(dir);
     const other = readFileSync(bunExe());
@@ -184,10 +181,9 @@ test(
   timeout,
 );
 
-test.each(Object.keys(identityRemovals))(
+test.skipIf(!hasIdentity).each(Object.keys(identityRemovals))(
   "a Bun without an identity is rejected when the program is built: %s",
   async name => {
-    if (!hasIdentity) return;
     using dir = tempDir("aot-carrier-unidentified", files);
     const folder = String(dir);
     const other = readFileSync(bunExe());

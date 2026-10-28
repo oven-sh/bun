@@ -2732,6 +2732,13 @@ function callsIn(counts, ...besides) {
 }
 // These make the text that is printed, list the names for it and keep it in a set; a cell or an array where the allocator has none at hand is the work of the run time.
 const owed = ["operationAOTArrayJoin", "operationAOTConcatenate", "operationAOTToString", "operationAOTValueAdd", "operationAOTStackStringBuilderFinish", "operationAOTOwnPropertyKeys", "operationAOTSetAdd", "operationAOTAllocateSlow", "operationAOTNewArrayOfHoles"];
+// So do these, where the allocator has no cell at hand for a text that is put together or for an array. Each is owed at most so often in a stretch.
+const owedAtMost = { operationAOTConcat: 7, operationAOTConcatThree: 11, operationAOTNewArray: 5 };
+// The calls of one operation in such a text.
+const callsOf = (counts, name) => callsIn(counts) - callsIn(counts, name);
+// Those of them that were called more often than that between two such texts.
+const calledTooOften = (before, after) => Object.keys(owedAtMost).filter(name => callsOf(after, name) - callsOf(before, name) > owedAtMost[name]);
+const notCounted = [...owed, ...Object.keys(owedAtMost)];
 const attempt = (f) => { try { return f(); } catch (error) { return error instanceof RangeError ? error.message : error.constructor.name; } };
 function Request(id, params, raw, query, log, context) {
   this.id = id;
@@ -2774,8 +2781,9 @@ for (let i = 0; i < 2000; i++) {
   const request = new contexts[i & 1].Request(i & 1, "p", "r", "q", "l", "c");
   seen.add(request.describe() + " " + (request instanceof Request) + " " + Object.keys(request).join());
 }
-let calls = count("operationAOTConstruct") - before + callsIn(countsSoFar(), ...owed) - callsIn(known, ...owed);
-console.log([...seen].join(" | "), calls <= 8 ? "and the run time was asked at most 8 times" : "and the run time was asked " + calls + " times");
+let now = countsSoFar();
+let calls = count("operationAOTConstruct") - before + callsIn(now, ...notCounted) - callsIn(known, ...notCounted);
+console.log([...seen].join(" | "), calls <= 8 && !calledTooOften(known, now).length ? "and the run time was asked at most 8 times" : "and the run time was asked " + calls + " times, and too often called: " + calledTooOften(known, now).join());
 
 const others = new Set();
 before = count("operationAOTConstruct");
@@ -2793,8 +2801,9 @@ for (let i = 0; i < 1000; i++) {
     new context.TakesSeven(1, 2, 3, 4, 5, 6, 7, 8).text,
   ].join());
 }
-calls = count("operationAOTConstruct") - before + callsIn(countsSoFar(), ...owed) - callsIn(known, ...owed);
-console.log([...others].join(" | "), calls <= 8 ? "and the run time was asked at most 8 times" : "and the run time was asked " + calls + " times");
+now = countsSoFar();
+calls = count("operationAOTConstruct") - before + callsIn(now, ...notCounted) - callsIn(known, ...notCounted);
+console.log([...others].join(" | "), calls <= 8 && !calledTooOften(known, now).length ? "and the run time was asked at most 8 times" : "and the run time was asked " + calls + " times, and too often called: " + calledTooOften(known, now).join());
 
 for (let i = 0; i < 3; i++) {
   const asked = new context.AsksNewTarget(1, 2, 3, 4, 5);

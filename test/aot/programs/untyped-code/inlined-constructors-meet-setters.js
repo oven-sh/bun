@@ -55,6 +55,7 @@ function Plain(value) {
 }
 
 const said = new Set();
+let thrown = 0;
 const before = countsSoFar();
 for (let i = 0; i < 3000; i++) {
   const made = new WithSetter(i & 1);
@@ -67,11 +68,13 @@ for (let i = 0; i < 3000; i++) {
       const object = attempt();
       said.add(describe(object) + " " + object.fixed + " " + object.computed);
     } catch (error) {
+      thrown++;
       said.add(error.constructor.name);
     }
   }
 }
-const constructed = callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed);
+// A store that is refused enters the run time once, which makes the error.
+const constructed = callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed) - (countsSoFar() ? thrown : 0);
 console.log([...said].join("\n"));
 console.log(log.splice(0, 2).join("\n"));
 console.log(constructed <= 200 ? "the run time constructed at most 200 of them" : "the run time constructed " + constructed + " of them");

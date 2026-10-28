@@ -1,0 +1,3 @@
+file runs
+module: require threw thrown by the file
+module: rejected thrown by the file

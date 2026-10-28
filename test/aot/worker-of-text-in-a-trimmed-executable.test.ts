@@ -1,6 +1,6 @@
 // Each program makes a Worker from text and prints what the Worker reports.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { built, slot, spawned, unsupported } from "./run-programs";
@@ -30,7 +30,7 @@ worker.on("error", error => console.log("error", error.message.replace(/blob:[-0
 if (!canTrim)
   console.error("SKIPPED: worker-of-text-in-a-trimmed-executable.test.ts: this build of Bun doesn't support --trim");
 
-(canTrim && !unsupported && !isWindows ? describe.concurrent : describe.skip)(
+(canTrim && !unsupported ? describe.concurrent : describe.skip)(
   "a trimmed executable reports the same for a Worker made from text as one that is not trimmed",
   () => {
     test.each(Object.entries(programs))(

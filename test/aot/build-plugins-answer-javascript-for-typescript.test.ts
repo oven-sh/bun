@@ -1,6 +1,5 @@
 // A plugin of `Bun.build` that answers JavaScript for a TypeScript file, as the plugins of Solid, Vue and Svelte do, with `compile: { aot: true }` and without `aot`: build-both-ways.ts.
 // What runs is what the plugin answers. What the importers of the file see as types is the file, as in an editor.
-import { isWindows } from "harness";
 import { buildBothWays } from "./build-both-ways";
 
 // Every .tsx file becomes JavaScript without its types. `rewrite` changes the JavaScript.
@@ -161,13 +160,13 @@ export function Row(item: Item): string { return "[" + item.label + "]"; }`,
     files: {
       "main.tsx": `import { twice, type Count } from "./twice";
 const count: Count = 4;
-console.log(twice(count)${isWindows ? "" : ", import.meta.main"});`,
+console.log(twice(count), import.meta.main);`,
       "twice.tsx": `export type Count = number;
 export function twice(count: Count): Count { return count * 2; }`,
     },
     options: `entrypoints: ["./main.tsx"]`,
     plugins: [erases()],
-    prints: isWindows ? "8\n" : "8 true\n",
+    prints: "8 true\n",
   },
   "a default export, and a JavaScript file that imports it": {
     files: {

@@ -1088,7 +1088,7 @@ impl<'s> Program<'s> {
             in_check_identifier: Vec::new(),
             resolved_meanwhile: Vec::new(),
             resolved_meanwhile_of_class: [0; 256],
-            tainted_from: None,
+            fully_marked: FullyMarked::default(),
             signatures_resolved_within: Vec::new(),
             restrictive_instantiations: Default::default(),
             unresolved_renamed_params: Default::default(),
@@ -1373,6 +1373,78 @@ pub(super) enum CurrentNode {
     Node(FileId, Node),
 }
 
+/// The fields are private to this module, so taking a mark away from a frame takes `FullyMarked` too.
+mod marks {
+    /// What `mark_tainted_from` sets on a `QueryFrame`.
+    #[derive(Copy, Clone, Default)]
+    pub(super) struct Marks {
+        /// A query it made re-entered an entry below it.
+        tainted: bool,
+        /// Its diagnostics are dropped because the result depends on a cycle, a speculative evaluation
+        /// or a provisional type, and will be recomputed.
+        drops_reported: bool,
+    }
+
+    /// Every frame from the first number up that was pushed by the time `work` was the second number has both marks.
+    #[derive(Default)]
+    pub(super) struct FullyMarked(Option<(usize, u64)>);
+
+    impl Marks {
+        #[inline]
+        pub(super) fn new(tainted: bool, drops_reported: bool) -> Self {
+            Self {
+                tainted,
+                drops_reported,
+            }
+        }
+
+        #[inline]
+        pub(super) fn tainted(self) -> bool {
+            self.tainted
+        }
+
+        #[inline]
+        pub(super) fn drops_reported(self) -> bool {
+            self.drops_reported
+        }
+
+        pub(super) fn taint(&mut self) {
+            self.tainted = true;
+        }
+
+        pub(super) fn drop_reported(&mut self) {
+            self.drops_reported = true;
+        }
+
+        pub(super) fn clear_tainted(&mut self, fully_marked: &mut FullyMarked) {
+            self.tainted = false;
+            fully_marked.0 = None;
+        }
+
+        pub(super) fn set_drops_reported(&mut self, drops: bool, fully_marked: &mut FullyMarked) {
+            if self.drops_reported && !drops {
+                fully_marked.0 = None;
+            }
+            self.drops_reported = drops;
+        }
+    }
+
+    impl FullyMarked {
+        /// True if every frame from `from` up has both marks. `innermost` is the serial number of the innermost frame.
+        pub(super) fn covers(&self, from: usize, innermost: Option<u64>) -> bool {
+            self.0.is_some_and(|(marked_from, by)| {
+                marked_from <= from && innermost.is_none_or(|serial| serial <= by)
+            })
+        }
+
+        /// Call after marking every frame from `from` up. None of them has a serial number above `by`.
+        pub(super) fn record(&mut self, from: usize, by: u64) {
+            self.0 = Some((from, by));
+        }
+    }
+}
+use marks::{FullyMarked, Marks};
+
 /// Metadata for an entry of `Checker::stack`.
 #[derive(Copy, Clone)]
 struct QueryFrame {
@@ -1380,13 +1452,9 @@ struct QueryFrame {
     serial: u64,
     /// `instantiation_depth` when it was pushed.
     entry_depth: u32,
-    /// A query it made re-entered an entry below it.
-    tainted: bool,
+    marks: Marks,
     /// It `is_resolution`, and is part of a cycle of resolutions. See `mark_cycle_from`.
     circular: bool,
-    /// Its diagnostics are dropped because the result depends on a cycle, a speculative evaluation
-    /// or a provisional type, and will be recomputed.
-    drops_reported: bool,
     /// The length of `Checker::reported` when it was pushed. Later entries belong to it.
     reported_from: u32,
     /// Its index in `Checker::in_progress`.
@@ -2113,9 +2181,7 @@ pub struct Checker<'p, 's> {
     /// For each class of calls, the position of its innermost entry of `resolved_meanwhile`, plus one. As `in_progress`
     /// and `QueryFrame::next_of_class`.
     resolved_meanwhile_of_class: [u32; 256],
-    /// Every frame from the first number up that was pushed by the time `work` was the second number is tainted and
-    /// drops what it reported.
-    tainted_from: Option<(usize, u64)>,
+    fully_marked: FullyMarked,
     /// `links.resolvedSignature` of a call that's being resolved, assigned by the first resolution
     /// nested in the outermost one that returns, if `Program::calls` doesn't accept that result.
     /// `getResolvedSignature` returns it instead of the result of each enclosing resolution.
@@ -2411,7 +2477,7 @@ impl<'p, 's> Checker<'p, 's> {
         let tainted = !self.inference_contexts.is_empty() && self.is_innermost_tainted();
         // Diagnostics reported under a loop in progress are kept (`taint_from`).
         let drops_reported =
-            tainted && self.frames.last().is_some_and(|frame| frame.drops_reported);
+            tainted && (self.frames.last()).is_some_and(|frame| frame.marks.drops_reported());
         let incomplete_flow = tainted
             && self
                 .frames
@@ -2422,9 +2488,8 @@ impl<'p, 's> Checker<'p, 's> {
             next_of_class,
             serial: self.work,
             entry_depth: self.instantiation_depth,
-            tainted,
+            marks: Marks::new(tainted, drops_reported),
             circular: false,
-            drops_reported,
             reported_from: self.reported.len() as u32,
             has_result: false,
             incomplete_flow,
@@ -3525,8 +3590,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if matches!(q, Query::TypeNode(..))
                     && (self.stack[..i].contains(&q) || self.stack[i + 1..].contains(&q))
                 {
-                    self.frames[i].tainted = false;
-                    self.tainted_from = None;
+                    self.frames[i].marks.clear_tainted(&mut self.fully_marked);
                 }
             }
         }
@@ -3623,7 +3687,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.in_progress[frame.class as usize] = frame.next_of_class;
         if frame.next_of_class != 0 {
             cold_path();
-            if !frame.tainted || frame.circular {
+            if !frame.marks.tainted() || frame.circular {
                 self.note_result(q);
             }
         }
@@ -3637,7 +3701,7 @@ impl<'p, 's> Checker<'p, 's> {
             cold_path();
             self.settle_reported(frame, q);
         }
-        if frame.tainted {
+        if frame.marks.tainted() {
             cold_path();
             self.left_frame = Some(frame);
             return Err(Open);
@@ -3758,18 +3822,31 @@ impl<'p, 's> Checker<'p, 's> {
         self.note_taint_event(from);
         self.note_state_was_read();
         // While the stack unwinds for lack of room, every query that is turned away marks the same frames again.
-        let is_marked = self.tainted_from.is_some_and(|(marked_from, by)| {
-            marked_from <= from && self.frames.last().is_none_or(|frame| frame.serial <= by)
-        });
-        if is_marked {
+        let innermost = self.frames.last().map(|frame| frame.serial);
+        if self.fully_marked.covers(from, innermost) {
             return;
         }
         for frame in &mut self.frames[from..] {
-            frame.tainted = true;
-            frame.drops_reported = true;
+            frame.marks = Marks::new(true, true);
         }
         // A frame that the `enter` in progress goes on to push has `work` for its serial number.
-        self.tainted_from = Some((from, self.work.saturating_sub(1)));
+        self.fully_marked.record(from, self.work.saturating_sub(1));
+    }
+
+    /// Returns the argument for `restore_drops_reported`.
+    fn save_drops_reported(&self) -> Vec<bool> {
+        let frames = self.frames.iter();
+        frames.map(|frame| frame.marks.drops_reported()).collect()
+    }
+
+    /// Whatever the queries since `save_drops_reported` re-entered, the frames that were in progress then drop what they
+    /// reported only if they did so then.
+    fn restore_drops_reported(&mut self, saved: Vec<bool>) {
+        for (frame, drops) in self.frames.iter_mut().zip(saved) {
+            frame
+                .marks
+                .set_drops_reported(drops, &mut self.fully_marked);
+        }
     }
 
     fn note_taint_event(&mut self, from: usize) {
@@ -3791,7 +3868,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Drops the innermost query's diagnostics, whether or not its result is cached.
     fn drop_reported(&mut self) {
         if let Some(frame) = self.frames.last_mut() {
-            frame.drops_reported = true;
+            frame.marks.drop_reported();
         }
     }
 
@@ -3862,12 +3939,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// was reported for it belongs to the entry, as after an `Ok`, and no frame below drops it.
     fn incomplete_flow_result(&mut self, q: Query) -> Option<Stored> {
         let frame = self.left_frame.take()?;
-        if !frame.incomplete_flow || frame.drops_reported {
+        if !frame.incomplete_flow || frame.marks.drops_reported() {
             return None;
         }
         if self.reported.len() > frame.reported_from as usize {
             let finished = QueryFrame {
-                tainted: false,
+                marks: Marks::default(),
                 ..frame
             };
             self.settle_reported(finished, q);
@@ -3876,7 +3953,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn is_innermost_tainted(&self) -> bool {
-        self.frames.last().is_some_and(|frame| frame.tainted)
+        (self.frames.last()).is_some_and(|frame| frame.marks.tainted())
     }
 
     /// Returns the expressions of `file` grouped by kind, for callers that need a few kinds and would
@@ -3950,7 +4027,7 @@ impl<'p, 's> Checker<'p, 's> {
             (outermost.zip(innermost_loop))
                 .map(|(outermost, innermost_loop)| outermost.max(innermost_loop))
         } else {
-            self.frames.iter().position(|frame| frame.tainted)
+            self.frames.iter().position(|frame| frame.marks.tainted())
         };
         // An event from the frame's own index up hasn't tainted a caller.
         let from = self.lowest_taint_since(frame.serial);
@@ -4161,7 +4238,7 @@ impl<'p, 's> Checker<'p, 's> {
             if self.quick_initializers.iter().any(is_quick) && self.is_resolution(self.stack[at]) {
                 continue;
             }
-            self.frames[at].tainted = true;
+            self.frames[at].marks.taint();
             self.frames[at].incomplete_flow = true;
         }
         self.taints += 1;

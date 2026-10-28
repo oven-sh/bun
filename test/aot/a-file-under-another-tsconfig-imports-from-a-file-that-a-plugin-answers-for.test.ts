@@ -1,6 +1,5 @@
 // `Bun.build` with `compile: { aot: true }` and without `aot`: build-both-ways.ts. loose/ has a tsconfig.json whose compiler options are not the program's.
 // Its file imports from the entry point and from files for which a plugin answers JavaScript, as the plugins of Solid, Vue and Svelte do.
-import { isWindows } from "harness";
 import { buildBothWays } from "./build-both-ways";
 
 const erasesTypes = `build.onLoad({ filter: /\\.tsx$/ }, async (args: any) => {
@@ -42,15 +41,10 @@ export const describe = (): string => (IS_MAIN ? "main" : "not main") + " " + tw
     plugins: [erasesTypes],
     prints: "true main true\n",
   },
-  // On Windows `import.meta.main` is false in an entry point that a plugin answers for, with `aot` and without.
-  ...(isWindows
-    ? {}
-    : {
-        "the entry point is such a file": {
-          files: { "main.tsx": entryPoint, "loose/tsconfig.json": loose, "loose/reader.ts": readerOf("../main") },
-          options: `entrypoints: ["./main.tsx"]`,
-          plugins: [erasesTypes],
-          prints: "true main true\n",
-        },
-      }),
+  "the entry point is such a file": {
+    files: { "main.tsx": entryPoint, "loose/tsconfig.json": loose, "loose/reader.ts": readerOf("../main") },
+    options: `entrypoints: ["./main.tsx"]`,
+    plugins: [erasesTypes],
+    prints: "true main true\n",
+  },
 });

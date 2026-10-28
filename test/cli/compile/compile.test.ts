@@ -150,12 +150,14 @@ describe.concurrent("bun compile", () => {
     60_000,
   );
 
-  test.each([[["--aot", "--no-aot"], "error: Cannot use both --aot and --no-aot\n"]])("%j", async (flags, stderr) => {
-    using dir = tempDir("compile-both-flags", { "app.ts": `console.log(1);` });
-    const built = await bun(String(dir), "compile", ...flags, "app.ts");
-    if (unsupported && built.stderr.includes(unsupported)) return;
-    expect(built).toEqual({ stdout: "", stderr, exitCode: 1 });
-  });
+  test.skipIf(!!unsupported).each([[["--aot", "--no-aot"], "error: Cannot use both --aot and --no-aot\n"]])(
+    "%j",
+    async (flags, stderr) => {
+      using dir = tempDir("compile-both-flags", { "app.ts": `console.log(1);` });
+      const built = await bun(String(dir), "compile", ...flags, "app.ts");
+      expect(built).toEqual({ stdout: "", stderr, exitCode: 1 });
+    },
+  );
 
   test("--target=browser with an HTML entry point writes one HTML file", async () => {
     using dir = tempDir("compile-html", {

@@ -23,7 +23,6 @@ use smallvec::{SmallVec, smallvec};
 
 use self::alignment::{Alignment, PrintedTree, Rewrites};
 pub(super) use self::alignment::{Rewrite, find_written_literal};
-use crate::load::source_provider::SourceProvider;
 
 /// Bun's transpiler with the options `bun run` gives it, and the defines and flags of the build.
 pub struct RuntimeTranspiler<'b> {
@@ -37,11 +36,6 @@ impl<'b> RuntimeTranspiler<'b> {
     /// What `bun run` defines where no flag defines anything.
     pub fn create_default_define() -> Box<Define> {
         Define::with_pure_globals(false, true)
-    }
-
-    pub fn find_define(provider: &'b dyn SourceProvider) -> Option<&'b Define> {
-        let define = provider.define()?.downcast_ref();
-        Some(define.expect("a provider hands over the transpiler's `Define`"))
     }
 
     /// `enabled_features`: the flags for which `feature()` of "bun:bundle" answers true.

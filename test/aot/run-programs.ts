@@ -483,12 +483,12 @@ export async function spawned(cmd: string[], cwd: string, env: Record<string, st
     timeout,
     killSignal: "SIGKILL",
   });
-  using held = endAtMemoryLimit(proc, memoryLimitOfAKnownProgram);
   // A build that is asked to end says what each of its threads is still compiling. One that is killed says nothing.
   const secondsToAnswer = 3;
   const isBuild = behindTheFlag && (cmd.includes("build") || cmd.includes("compile"));
-  const asked =
-    isBuild && !isWindows ? setTimeout(() => proc.kill("SIGTERM"), timeout - secondsToAnswer * 1000) : undefined;
+  const answers = !!isBuild && !isWindows;
+  using held = endAtMemoryLimit(proc, memoryLimitOfAKnownProgram, answers);
+  const asked = answers ? setTimeout(() => proc.kill("SIGTERM"), timeout - secondsToAnswer * 1000) : undefined;
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   clearTimeout(asked);
   const milliseconds = Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1000;
@@ -496,7 +496,11 @@ export async function spawned(cmd: string[], cwd: string, env: Record<string, st
   const lasted = performance.now() - start;
   if (held.exceeded)
     console.error(
-      `KILLED at its memory limit of ${Math.round(memoryLimitOfAKnownProgram / 2 ** 20)} MB: ${cmd.at(-1)}`,
+      [
+        `KILLED at its memory limit of ${Math.round(memoryLimitOfAKnownProgram / 2 ** 20)} MB: ${cmd.at(-1)}`,
+        ...[held.held].filter(Boolean),
+        ...stderr.split("\n").filter(line => line.startsWith("Still ")),
+      ].join("\n  "),
     );
   if (
     (proc.signalCode === "SIGKILL" && lasted >= timeout) ||

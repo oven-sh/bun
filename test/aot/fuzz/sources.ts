@@ -1086,6 +1086,7 @@ async function inOneFile(programsRoot: string, rejected: Set<string>): Promise<R
     "workers-ended-in-the-middle",
     "calls-with-very-many-arguments",
     "strings-still-in-pieces",
+    "strings-whose-storage-changes-width-behind-their-parts",
     "changed-while-it-is-walked",
     "left-half-way",
     "numbers-across-their-borders",

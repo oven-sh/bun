@@ -17,3 +17,7 @@ console.log(values.first, values.second);
 
 const neverRead = require("./never-read.mjs");
 console.log(delete neverRead.only);
+
+const chained = require("./read-through-a-chain.mjs");
+console.log(delete chained?.only, chained.only);
+require("./in-a-strict-file.cjs");

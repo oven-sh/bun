@@ -8,12 +8,12 @@ use crate::load::data_modules::parse_json;
 use crate::load::loaders::loader_name;
 use bstr::BStr;
 use bun_ast::{ImportKind, Loader, Loc, Log};
+use bun_js_parser::Define;
 use bun_sema::atom::Interner;
 use bun_sema::fold::FoldOptions;
 use bun_sema::hir_from_data::{DataModule, DataValue};
 use bun_sema::resolve::{FileSearch, FoundCode, Host, find_file_plainly};
 use bun_sema::session::Arena;
-use std::any::Any;
 use std::borrow::Cow;
 
 #[derive(Debug)]
@@ -94,7 +94,7 @@ pub trait SourceProvider: Sync {
     ) -> FoldOptions<'s>;
 
     /// The `Define` of the transpiler: what the build puts in place of names, as `fold_options` lists it.
-    fn define(&self) -> Option<&dyn Any> {
+    fn define(&self) -> Option<&Define> {
         None
     }
 

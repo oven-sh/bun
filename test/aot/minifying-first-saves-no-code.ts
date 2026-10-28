@@ -27,6 +27,9 @@
 // of its own, so each case is compiled as it is alone, and an executable is written once for all of them. Not quite alone: files that are scripts share their globals, and what is
 // counted in a run can move by one with the neighbors. So a case that is larger beside the others is asked again in executables of its own, and that answer counts.
 //
+// Where the minifier removes an error that the language demands, there is code that minifying first saves: the code that throws. Such a case names the error
+// (`errorThatTheMinifierRemoves`), and both halves are asked in place of the sizes: the executable of the files as written throws it, and those of the minified forms do not.
+//
 // The cases that are larger as written today stand in ./minifying-first-saves-no-code/known-today.ts with their numbers and are todo. They share executables with each other
 // alone, which only a run with --todo builds.
 //
@@ -59,6 +62,8 @@ export type Case = {
   flags?: string[];
   /** false: the code alone is compared. The case is the input of a test that only reads what the bundler prints, and names things that are nowhere. */
   runs?: boolean;
+  /** The executable of the files as written throws it, `bun run` and the executables of the minified forms do not. The sizes are not compared. */
+  errorThatTheMinifierRemoves?: string;
 };
 
 const minifiedForms = ["each file", "bundled"] as const;
@@ -379,6 +384,20 @@ export function savedByMinifyingFirst({ plain, written, ...minified }: Compared)
   return found;
 }
 
+/** Nothing, if the files as written throw the error and nothing else does. */
+export function whoThrowsOtherwise(error: string, { plain, written, ...minified }: Compared) {
+  if ("failure" in written) return ["written: " + written.failure];
+  const found: string[] = [];
+  if (!written.output?.includes(error)) found.push(`written prints ${JSON.stringify(written.output)}, without ${error}`);
+  if (plain?.includes(error)) found.push(`bun run prints ${JSON.stringify(plain)}`);
+  for (const form of minifiedForms) {
+    const other = minified[form];
+    if ("failure" in other) found.push(`${form}: ${other.failure}`);
+    else if (other.output !== plain) found.push(`${form} prints ${JSON.stringify(other.output)}, bun run ${JSON.stringify(plain)}`); // prettier-ignore
+  }
+  return found;
+}
+
 const only = process.env.AOT_MINIFYING_FIRST;
 
 /** Part `part` of `parts`, from 1: the executables are dealt out in turn. */
@@ -415,9 +434,11 @@ export function minifyingFirstSavesNoCode(
           isKnown ? `${name} (${knownToday[name]})` : name,
           async () => {
             measured ??= measureGroup(group.map(each => cases[each]));
-            let saved = savedByMinifyingFirst((await measured)[index]);
-            if (saved.length && group.length > 1)
-              saved = savedByMinifyingFirst((await measureGroup([cases[name]]))[0]);
+            const error = cases[name].errorThatTheMinifierRemoves;
+            const judge = (compared: Compared) =>
+              error === undefined ? savedByMinifyingFirst(compared) : whoThrowsOtherwise(error, compared);
+            let saved = judge((await measured)[index]);
+            if (saved.length && group.length > 1) saved = judge((await measureGroup([cases[name]]))[0]);
             if (saved.length && process.env.AOT_REDS)
               appendFileSync(process.env.AOT_REDS, `${name}\t${saved.join("; ")}\n`);
             expect(saved).toEqual([]);

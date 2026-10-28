@@ -847,7 +847,7 @@ function HeirOfKnown(value) { library.Known.call(this, value); }
 function HeirOfUnknown(value) { library.Unknown.call(this, value); }
 function prototypeOf(constructor) { return Object.getPrototypeOf(Object.create(constructor.prototype)); }
 Object.defineProperty(prototypeOf(HeirOfKnown), "guarded", { get() { return "got"; }, set(value) { calls++; this.kept = Object.keys(this).join(""); } });
-Object.defineProperty(prototypeOf(HeirOfUnknown), ["vei", "led"].join(""), { get() { return "got"; }, set(value) { calls++; this.kept = Object.keys(this).join(""); } });
+Object.defineProperty(prototypeOf(HeirOfUnknown), JSON.parse('["veiled"]')[0], { get() { return "got"; }, set(value) { calls++; this.kept = Object.keys(this).join(""); } });
 function describe(object) { return object.constructor.name + " " + Object.keys(object).map(key => key + "=" + object[key]).join() + " " + object.guarded + " " + object.veiled; }
 ////= asked	describe(make(i & 1)
 const known = asked(value => new HeirOfKnown(value));
@@ -862,7 +862,7 @@ let calls = 0;
 const known = {};
 const unknown = {};
 Object.defineProperty(known, "guarded", { get() { return "got"; }, set(value) { calls++; this.kept = Object.keys(this).join(""); } });
-Object.defineProperty(unknown, ["vei", "led"].join(""), { get() { return "got"; }, set(value) { calls++; this.kept = Object.keys(this).join(""); } });
+Object.defineProperty(unknown, JSON.parse('["veiled"]')[0], { get() { return "got"; }, set(value) { calls++; this.kept = Object.keys(this).join(""); } });
 // Two functions are stored under the name: what the call yields is not known.
 const holder = { heirOf: function Unused() {} };
 holder.heirOf = function heirOf(parent) { return Object.create(parent); };

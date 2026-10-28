@@ -26,6 +26,10 @@ const forms: Record<string, (text: string) => any> = {
   rope: text => (text.length < 2 ? text : copy(text.slice(0, text.length >> 1)) + copy(text.slice(text.length >> 1))),
   ropeOfThree: text =>
     text.length < 3 ? text : copy(text.slice(0, 1)) + (copy(text.slice(1, 2)) + copy(text.slice(2))),
+  ropeOf8Bit: text =>
+    text.length < 2 ? text : narrowCopy(text.slice(0, text.length >> 1)) + narrowCopy(text.slice(text.length >> 1)),
+  ropeOfBothWidths: text =>
+    text.length < 2 ? text : narrowCopy(text.slice(0, text.length >> 1)) + copy(text.slice(text.length >> 1)),
   substring: text => flat("<<" + text + ">>>").slice(2, -3),
   substringOfWhatBecame16Bit: text => substringOfKey("[[" + text + "]]]", copy, narrowCopy),
   substringOfWhatBecame8Bit: text => substringOfKey("((" + text + ")))", narrowCopy, copy),

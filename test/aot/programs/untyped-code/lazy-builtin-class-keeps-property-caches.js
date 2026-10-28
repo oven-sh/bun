@@ -23,6 +23,8 @@ function pass() {
   return sum;
 }
 const first = pass();
+// Where the code in front of the run time finds a place by itself, its sixteenth look of a kind and a name goes to the run time to be remembered. All that is behind these passes.
+for (let i = 0; i < 32; i++) pass();
 const settled = misses();
 const second = pass();
 const repeatedWhenNothingHappened = misses() - settled;

@@ -27,18 +27,47 @@ function residentMemory(pid: number, field = "VmRSS") {
   return 0;
 }
 
-/** Kills the child once it holds more than `limit` bytes. `exceeded` says whether it came to that. Dispose of it when the child has ended. */
-export function endAtMemoryLimit(child: { pid: number; kill(signal: "SIGKILL"): void }, limit = memoryLimit) {
+/** What the kernel says of the memory of a process, on one line. Nothing where it does not say. */
+function describeMemory(pid: number) {
+  const pick = (file: string, fields: string[]) => {
+    const text = readFileSync(file, "utf8");
+    return fields.flatMap(
+      field => new RegExp(`^${field}:\\s*\\d+( kB)?`, "m").exec(text)?.[0].replace(/\s+/g, " ") ?? [],
+    );
+  };
+  try {
+    return [
+      ...pick(`/proc/${pid}/status`, ["VmRSS", "RssAnon", "RssFile", "RssShmem", "VmData", "VmStk", "Threads"]),
+      ...pick(`/proc/${pid}/smaps_rollup`, ["AnonHugePages"]),
+      `transparent huge pages: ${readFileSync("/sys/kernel/mm/transparent_hugepage/enabled", "utf8").trim()}`,
+    ].join(", ");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Kills the child once it holds more than `limit` bytes. `exceeded` says whether it came to that, and `held` what it held then. Dispose of it when the child has ended.
+ * `asksFirst`: the child has a second to say what it is doing.
+ */
+export function endAtMemoryLimit(
+  child: { pid: number; kill(signal: "SIGKILL" | "SIGTERM"): void },
+  limit = memoryLimit,
+  asksFirst = false,
+) {
   const timer = setInterval(
     () => {
-      if (residentMemory(child.pid) <= limit) return;
+      if (watch.exceeded || residentMemory(child.pid) <= limit) return;
       watch.exceeded = true;
-      child.kill("SIGKILL");
+      watch.held = describeMemory(child.pid);
+      if (!asksFirst) return child.kill("SIGKILL");
+      child.kill("SIGTERM");
+      setTimeout(() => child.kill("SIGKILL"), 1000).unref();
     },
     process.platform === "linux" ? 100 : 1000,
   );
   timer.unref();
-  const watch = { exceeded: false, [Symbol.dispose]: () => clearInterval(timer) };
+  const watch = { exceeded: false, held: "", [Symbol.dispose]: () => clearInterval(timer) };
   return watch;
 }
 

@@ -1,0 +1,3 @@
+main: require threw thrown by the file
+module: imported default,value
+timer: required value

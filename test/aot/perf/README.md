@@ -99,7 +99,7 @@ builds. [`../servers/measure/README.md`](../servers/measure/README.md) says what
 | `idioms.test.ts` | Instructions per turn of each benchmark of `idioms/` (`pins.linux-x64.json`) |
 | `pinned-everyday-idioms.ts` | The same for `everyday/` (`everyday-pins.linux-x64.json`) |
 | `pinned-applications.ts` | zod, and the type checker of the `typescript` package (`application-pins.linux-x64.json`) |
-| `idioms-against-the-jit.test.ts` | No benchmark takes over 1.35 times the JIT's instructions, unless `behind-the-jit.linux-x64.json` lists it |
+| `idioms-against-the-jit.test.ts` | No benchmark takes over 1.35 times the JIT's instructions, unless `behind-the-jit.linux-x64.json` lists it. What a list names has a pin |
 | `loops-at-the-top-level.test.ts` | A loop at the top level of a module takes no more than the same loop in a `main()` that is called once. Nothing is pinned |
 | `compare-builds.test.ts` | `compare-builds.ts` finds no difference between a Bun and itself: its numbers repeat on a busy machine |
 | `operations.test.ts`, `start.test.ts`, `small-benchmarks.test.ts`, `front-end.test.ts` | Single operations, start-up, whole small programs, the compiler's own front end |

@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "autobuild-preview-pr-927-617ed49e";
+export const WEBKIT_VERSION = "d6e9f85e675591200e4f0b91e43e12d6099af29c";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -1903,6 +1903,8 @@ export interface JSCProgram {
   cxxflags: string[];
   ldflags: string[];
   libs?: string[];
+  /** Dependencies of bun that it is linked with, beside WebKit and mimalloc. */
+  deps?: Array<"zstd">;
   /**
    * Headers to precompile for the program's sources, with its flags, each on top of the one before. A source takes
    * the last one whose `files` matches its path, or that has none.
@@ -1988,8 +1990,19 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
     .filter(f => f.startsWith("testb3_") && f.endsWith(".cpp"))
     .sort()
     .map(f => `b3/${f}`);
+  const jscShell = program(
+    "jsc",
+    ["jsc.cpp", "tools/JSDollarVMShell.cpp", ...shell, ...embedder],
+    cfg.darwin ? ["-ledit"] : [],
+  );
+  // The data of the ICU of a prebuilt WebKit is a zstd frame an item (icu/compress-data.ts). jsc.cpp has the hook that
+  // reads it, as shell/CMakeLists.txt builds it with BUN_ICU_ZSTD_SOURCE_DIR.
+  if (linuxIcuRoot(cfg) !== undefined) {
+    jscShell.cxxflags = [...jscShell.cxxflags, "-DBUN_ICU_ZSTD=1", `-I${join(cfg.vendorDir, "zstd", "lib")}`];
+    jscShell.deps = ["zstd"];
+  }
   return [
-    program("jsc", ["jsc.cpp", "tools/JSDollarVMShell.cpp", ...shell, ...embedder], cfg.darwin ? ["-ledit"] : []),
+    jscShell,
     program("testFFI", ["ffi/tests/testFFI.cpp", ...embedder], []),
     program("testb3", [...testb3, ...embedder], []),
     program("testair", ["b3/air/testair.cpp", ...embedder], []),

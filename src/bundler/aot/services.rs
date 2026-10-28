@@ -11,6 +11,7 @@ use bun_aot::load::source_provider::{
 };
 use bun_aot::{SourceProvider, WithoutServices};
 use bun_ast::{ASTMemoryAllocator, Loader, Log};
+use bun_js_parser::Define;
 use bun_paths::resolve_path::posix_to_platform_in_place;
 use bun_resolver::options::{ExternalModules, Packages};
 use bun_resolver::package_json::Status;
@@ -21,7 +22,6 @@ use bun_sema::hir_from_data::{DataModule, DataValue};
 use bun_sema::resolve::{AOT_CONDITION, CodeFailure, CodeImportKind, FileSearch, FoundCode, Host};
 use bun_sema_driver::host::{from_native, to_native};
 use bun_threading::Guarded;
-use core::any::Any;
 use core::ptr::NonNull;
 
 #[derive(Clone)]
@@ -263,7 +263,7 @@ impl SourceProvider for BundlerServices {
         defines::fold_options(self.context.options(), arena, atoms, log)
     }
 
-    fn define(&self) -> Option<&dyn Any> {
+    fn define(&self) -> Option<&Define> {
         Some(&*self.context.options().define)
     }
 

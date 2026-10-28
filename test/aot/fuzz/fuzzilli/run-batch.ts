@@ -31,6 +31,8 @@
 // `--keeps-what-compile-shares`: a program at which the executable differs from `bun run` exactly as one built without --aot does is kept too, as a kind of its own.
 // `--options-of-the-project 50`: half of the runs of this script that take TypeScript write one tsconfig.json, drawn for the run, into the folder where Bun is started. `bun run` and the executable follow it alike. `--options-of-the-project '"strict": true'`: every run writes one with these options.
 // `--each-a-program 25`: a quarter of the runs of this script leave --together aside: each program is an entry point, which begins a program of its own, at most 120 to a build.
+// `--few-to-a-build 50`: half of the runs of this script take one, two, four or eight programs to a build, each an entry point. What a build proves of a small program it does not prove of the same
+// program beside a hundred others, and what follows from such a proof shows only there.
 // `--launders 50`: in half of the runs of this script every program has values handed through a function that the build knows nothing about (launder-values.ts). Such programs share executables.
 // `--checks 50`: half of the other runs, and every run that launders, build with the compiler's checks that move no output: every pass is verified, and references are validated. `--checks never`: no run does.
 // `--ignores-type-errors 100` writes `// @ts-ignore` above every line of a TypeScript program. One error of the type checker in one program costs the whole batch a build.
@@ -95,6 +97,7 @@ const { values: options } = parseArgs({
     launders: { type: "string", default: "0" },
     scene: { type: "string", default: "" },
     "each-a-program": { type: "string", default: "0" },
+    "few-to-a-build": { type: "string", default: "0" },
     "only-throwers": { type: "string", default: "0" },
     "compares-errors": { type: "boolean", default: false },
     "keeps-what-compile-shares": { type: "boolean", default: false },
@@ -113,13 +116,19 @@ const [groupSize, batches, milliseconds] = [options.group, options.batches, opti
 const launders = Math.random() * 100 < Number(options.launders);
 // The programs that an entry point imports are one program of many modules. What a build proves only of a small program, it never proves there.
 const takesOnlyThrowers = !launders && Math.random() * 100 < Number(options["only-throwers"]);
-const isEachAProgram = !launders && !takesOnlyThrowers && Math.random() * 100 < Number(options["each-a-program"]);
+const fewToABuild =
+  !launders && !takesOnlyThrowers && Math.random() * 100 < Number(options["few-to-a-build"])
+    ? [1, 2, 4, 4, 8][Math.floor(Math.random() * 5)]
+    : 0;
+if (fewToABuild) console.log(`this run takes ${fewToABuild} programs to a build`);
+const isEachAProgram =
+  fewToABuild > 0 || (!launders && !takesOnlyThrowers && Math.random() * 100 < Number(options["each-a-program"]));
 const together = isEachAProgram ? 1 : Number(options.together);
 if (together > 1 && groupSize !== 1) throw new Error("--together goes with --group 1");
 /** How many programs a batch takes. The batches go through the list in turn. */
-const countsOfPrograms = options.count
-  .split(",")
-  .map(each => (isEachAProgram ? Math.min(Number(each), 120) : Number(each)));
+const countsOfPrograms = fewToABuild
+  ? [fewToABuild]
+  : options.count.split(",").map(each => (isEachAProgram ? Math.min(Number(each), 120) : Number(each)));
 let count = countsOfPrograms[0];
 const hidesFunctionText = options["hides-function-text"];
 const alsoKept = [
@@ -213,13 +222,21 @@ const optionsOfProjects = [
 ];
 const optionsOfThisProject = options["options-of-the-project"].startsWith('"')
   ? options["options-of-the-project"]
-  : Math.random() * 100 < Number(options["options-of-the-project"])
+  : // Most programs of a run that splits them lie in a folder with a tsconfig.json of its own (bringsItsOwnTsconfigUnderTheDrawnOne).
+    Number(options.splits) < 50 && Math.random() * 100 < Number(options["options-of-the-project"])
     ? optionsOfProjects[Math.floor(Math.random() * optionsOfProjects.length)]
     : "";
 if (optionsOfThisProject) console.log(`the tsconfig.json of this run: ${optionsOfThisProject}`);
 const partWithTheOptionsOfTheProject = optionsOfThisProject
   ? `// @filename: ./tsconfig.json\n{ "compilerOptions": { "moduleDetection": "force", "module": "preserve", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "noEmit": true, ${optionsOfThisProject} } }\n`
   : "";
+/**
+ * Under a drawn tsconfig.json a program with one in a folder of its own has no yardstick: in that folder `bun run` follows the drawn one and an executable the folder's, and elsewhere in the program the executable
+ * built without --aot can part from both. Such a program is left out of the run.
+ */
+const bringsItsOwnTsconfigUnderTheDrawnOne = (text: string) =>
+  partWithTheOptionsOfTheProject !== "" && hasATsconfigInAFolderOfItsOwn.test(text);
+let leftOutUnderTheDrawnTsconfig = 0;
 const withTheOptionsOfTheProject = (text: string, extension: string) =>
   partWithTheOptionsOfTheProject && extension.endsWith("ts") && !text.includes("// @filename: ./tsconfig.json\n")
     ? `${text.replace(/\n*$/, "\n")}${partWithTheOptionsOfTheProject}`
@@ -584,11 +601,22 @@ const deletesACharacterOfAString =
   /\bdelete \(?"[^"\n]*"(?: as any)?\)?\[\d+\]|\bconst (t\d+) = "[^"\n]*";\n.*\bdelete \(?\1(?: as any)?\)?\[\d+\]/;
 const setsThePrototypeOfABuiltIn = /\bsetPrototypeOf\([A-Z]/;
 /**
- * The tsconfig.json of a folder of the program says whether the fields of a class are assigned or defined. With `bun run` every file follows the tsconfig.json where Bun is started. In an executable, with
- * --aot or without, each file follows the one nearest to it (docs/compiler/compatibility.mdx, "What differs on purpose"). Such a program is held against the executable built without --aot.
+ * A folder of the program has a tsconfig.json of its own. With `bun run` every file follows the tsconfig.json where Bun is started. In an executable, with --aot or without, each file follows the one nearest
+ * to it (docs/compiler/compatibility.mdx, "What differs on purpose"). The two part where either names an option that changes what is written, such as whether fields are assigned or defined, and the one
+ * where Bun is started can be drawn (--options-of-the-project). Such a program is held against the executable built without --aot as well.
  */
-const saysInAFolderOfItsOwnHowFieldsAreMade =
-  /^\/\/ @filename: \.\/[^\n]+\/tsconfig\.json\n[^\n]*"(?:useDefineForClassFields|target)"/m;
+const hasATsconfigInAFolderOfItsOwn = /^\/\/ @filename: \.\/[^\n]+\/tsconfig\.json$/m;
+/** Such a program can hold more than the file in that folder, and in the rest the executable built without --aot can be the one that parts from `bun run`. So it is held against both, line by line. */
+const printsOnlyLinesOfEither = (ours: Ended, one: Ended, other: Ended) => {
+  const [lines, ofOne, ofOther] = [ours, one, other].map(({ stdout }) => removeDetailsOfErrors(stdout).split("\n"));
+  return (
+    ours.end === one.end &&
+    ours.end === other.end &&
+    lines.length === ofOne.length &&
+    lines.length === ofOther.length &&
+    lines.every((line, at) => line === ofOne[at] || line === ofOther[at])
+  );
+};
 
 // What `bun run` says when it refuses a file that the compiler builds.
 const refusalsOfBunRun = [
@@ -602,6 +630,12 @@ const refusalsOfBunRun = [
   "Ambiguous unary expression",
   "cannot cross static block boundary",
 ];
+/** Under "experimentalDecorators" `bun run` and `bun build` without --aot read `accessor` as the name of a field, so they stop at the name behind it: `accessor seen = 0`. */
+const hasAnAccessorFieldUnderExperimentalDecorators = (text: string) =>
+  /"experimentalDecorators": true/.test(text) && /^\s*(?:static\s+)?accessor\s+[\w#[]/m.test(text);
+const isRefusedByBunRun = (text: string, stderr: string) =>
+  refusalsOfBunRun.some(message => stderr.includes(message)) ||
+  (hasAnAccessorFieldUnderExperimentalDecorators(text) && stderr.includes('Expected ";" but found'));
 
 /** `console.log(error)` prints lines of the source, which an executable doesn't have, a message, whose words can differ, and a stack. A time is that of the run. */
 const removeDetailsOfErrors = (output: string) =>
@@ -1129,10 +1163,10 @@ async function judgeTogether(texts: string[], extension: string, add: (kind: str
   );
   // A program that ends in an error is the last of its entry point. One that doesn't end in time has an entry point to itself later.
   // A file that `bun run` refuses to read takes every program of its entry point with it: none of them runs.
-  const isRefused = ({ stdout, stderr }: Ended) =>
-    stdout.trim() === "" && refusalsOfBunRun.some(message => stderr.includes(message));
+  const isRefused = (text: string, { stdout, stderr }: Ended) =>
+    stdout.trim() === "" && isRefusedByBunRun(text, stderr);
   const read = texts.flatMap((text, index) =>
-    isRefused(alone.get(index)!) ? [] : [{ text, end: alone.get(index)!.end }],
+    isRefused(text, alone.get(index)!) ? [] : [{ text, end: alone.get(index)!.end }],
   );
   add("bun run refuses the file", texts.length - read.length);
   add("taken", read.length - texts.length);
@@ -1508,9 +1542,11 @@ for (
     if (options.draws) {
       extension = "." + options.draws;
       for (const text of await drawPrograms(extension))
-        (isWrittenToOpenTheWorld(text) && !launders ? waitingWithTheWorldOpen : texts).push(
-          withTheOptionsOfTheProject(text, extension),
-        );
+        if (bringsItsOwnTsconfigUnderTheDrawnOne(text)) leftOutUnderTheDrawnTsconfig++;
+        else
+          (isWrittenToOpenTheWorld(text) && !launders ? waitingWithTheWorldOpen : texts).push(
+            withTheOptionsOfTheProject(text, extension),
+          );
     } else {
       const paths = await takePrograms();
       extension = extname(paths[0]);
@@ -1529,6 +1565,8 @@ for (
     if (by) counts[kind] = (counts[kind] ?? 0) + by;
   };
   if (areOnTheirOwn) add("each an entry point now", texts.length);
+  add("brings a tsconfig.json of its own under the drawn one and is left out", leftOutUnderTheDrawnTsconfig);
+  leftOutUnderTheDrawnTsconfig = 0;
   const sayWhatTheBatchDid = () => {
     const cpuSeconds = Object.values(spent).reduce((sum, stage) => sum + stage.cpuSeconds, 0);
     const stages = Object.entries(spent).map(
@@ -1559,12 +1597,14 @@ for (
       add("builds that made no executable");
       add("processor seconds in them", Math.round(spent["failed-build"].cpuSeconds - secondsBefore));
     }
-    // keepFind() leaves out a build that its bound ended: on a busy machine that says nothing. A build that had a processor to itself for half a minute a program is another matter: there the compiler does not end.
+    // keepFind() leaves out a build that its bound ended: on a busy machine that says nothing. A build that had a processor to itself for half a minute a program is another matter, where the programs are small:
+    // there the compiler does not end. Some families write functions of a hundred thousand lines, whose builds take minutes.
     const secondsOfTheBuild = (spent["failed-build"]?.cpuSeconds ?? 0) - secondsBefore;
     if (
       stopped &&
       /^SIGKILL: the errors name no program$/.test(stopped.reason) &&
-      secondsOfTheBuild >= 30 * texts.length
+      secondsOfTheBuild >= 30 * texts.length &&
+      texts.every(text => text.length < 200_000)
     )
       keepFind("build-does-not-end", "its bound ended the build", {
         ["program" + extension]: texts.length === 1 ? texts[0] : "",
@@ -1712,26 +1752,27 @@ for (
                       hasALiteralAsComputedKey.test(texts[index])) ||
                     writesToBuiltins.has(index)
                   ? "documented difference"
-                  : referenceAgain.stdout === "" &&
-                      refusalsOfBunRun.some(message => referenceAgain.stderr.includes(message))
+                  : referenceAgain.stdout === "" && isRefusedByBunRun(texts[index], referenceAgain.stderr)
                     ? "bun run refuses the file"
-                    : inOrdinary && agree(second, inOrdinary) && classOfError(second) === classOfError(inOrdinary)
-                      ? saysInAFolderOfItsOwnHowFieldsAreMade.test(texts[index])
-                        ? "documented difference"
-                        : "as an executable without --aot"
-                      : showsFunctionText || agreeButForLayout(second, referenceAgain)
-                        ? "function text"
-                        : second.end === referenceAgain.end && definesAnAccessorTwice(texts[index])
-                          ? "an accessor defined twice"
-                          : isLimit(second)
-                            ? "limit"
-                            : second.end !== referenceAgain.end
-                              ? "exit-code"
-                              : removeDetailsOfErrors(second.stdout) !== removeDetailsOfErrors(referenceAgain.stdout)
-                                ? "stdout"
-                                : lastError(second).name !== lastError(referenceAgain).name
-                                  ? "error-class"
-                                  : "error-message";
+                    : inOrdinary &&
+                        hasATsconfigInAFolderOfItsOwn.test(texts[index]) &&
+                        printsOnlyLinesOfEither(second, referenceAgain, inOrdinary)
+                      ? "documented difference"
+                      : inOrdinary && agree(second, inOrdinary) && classOfError(second) === classOfError(inOrdinary)
+                        ? "as an executable without --aot"
+                        : showsFunctionText || agreeButForLayout(second, referenceAgain)
+                          ? "function text"
+                          : second.end === referenceAgain.end && definesAnAccessorTwice(texts[index])
+                            ? "an accessor defined twice"
+                            : isLimit(second)
+                              ? "limit"
+                              : second.end !== referenceAgain.end
+                                ? "exit-code"
+                                : removeDetailsOfErrors(second.stdout) !== removeDetailsOfErrors(referenceAgain.stdout)
+                                  ? "stdout"
+                                  : lastError(second).name !== lastError(referenceAgain).name
+                                    ? "error-class"
+                                    : "error-message";
     // A build warns about the first write to a built-in that it meets, so the build of a group names one program of several.
     if (["limit", "exit-code", "stdout", "error-class", "error-message"].includes(kind)) {
       const alone = join(work, `alone-${process.pid}`);

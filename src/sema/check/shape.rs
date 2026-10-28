@@ -1223,16 +1223,10 @@ impl<'p, 's> Checker<'p, 's> {
         sym: Sym,
         under: MapperId,
     ) -> Shape<'s> {
-        let dropped: Vec<bool> = self
-            .frames
-            .iter()
-            .map(|frame| frame.drops_reported)
-            .collect();
+        let dropped = self.save_drops_reported();
         let (binding, bases) = (MemberBinding::Late, BaseMembers::Inherited);
         let shape = self.build_declared_shape(sym, under, binding, bases, None, Some(ty));
-        for (frame, dropped) in self.frames.iter_mut().zip(dropped) {
-            frame.drops_reported = dropped;
-        }
+        self.restore_drops_reported(dropped);
         shape
     }
 

@@ -3808,6 +3808,9 @@
   "aot/generated-objects-read-where-they-are-made.test.ts": {
     "default": 300
   },
+  "aot/generated-objects-that-a-call-in-a-loop-is-the-first-to-ask-for.test.ts": {
+    "default": 15000
+  },
   "aot/generated-objects-that-live-for-one-turn-of-a-loop.test.ts": {
     "default": 300
   },
@@ -6121,6 +6124,18 @@
   },
   "aot/perf/pinned-everyday-idioms-4.test.ts": {
     "default": 62750
+  },
+  "aot/perf/pinned-everyday-idioms-5.test.ts": {
+    "default": 62000
+  },
+  "aot/perf/pinned-everyday-idioms-6.test.ts": {
+    "default": 62000
+  },
+  "aot/perf/pinned-everyday-idioms-7.test.ts": {
+    "default": 62000
+  },
+  "aot/perf/pinned-everyday-idioms-8.test.ts": {
+    "default": 62000
   },
   "aot/perf/plain-bun-costs.test.ts": {
     "default": 156000

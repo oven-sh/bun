@@ -29,3 +29,14 @@ await attempt(
     ),
 );
 await attempt("a URL made at run time, last", () => import(madeAtRunTime()));
+{
+  const btoa = text => text;
+  await attempt(
+    "a URL from a function of the program with the name of an encoder",
+    () => import("data:text/javascript;base64," + btoa("ZXhwb3J0IGRlZmF1bHQgMQ==")),
+  );
+  await attempt(
+    "what the encoder of that name makes of the same text",
+    () => import(glue("data:text/javascript;base64,", globalThis.btoa("ZXhwb3J0IGRlZmF1bHQgMQ=="))),
+  );
+}

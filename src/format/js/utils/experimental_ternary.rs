@@ -9,7 +9,9 @@
 //! ```
 
 use super::assignment_like::is_short_argument;
-use super::conditional::{ConditionalLike, Operand, should_extra_indent};
+use super::conditional::{
+    ConditionalLike, Operand, OperandParentheses, ReturnTypeReading, should_extra_indent,
+};
 use super::typecast::{comments_of_expression, is_chain_expression_without_comments};
 use crate::js::parentheses;
 use crate::js::print::binary_like_expression::is_angular_pipe;
@@ -222,6 +224,7 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
         }
     };
 
+    ReturnTypeReading::note(conditional, OperandParentheses::None, f);
     let test_id = f.group_id("test");
     let test_and_consequent_id = f.group_id("test-and-consequent");
 

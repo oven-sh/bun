@@ -1,0 +1,45 @@
+----------------------------------------
+{ arrowParens: "avoid", printWidth: 80 }
+----------------------------------------
+x = cond ? () => [] : y => y;
+x = cond ? y => y : () => ({});
+x = cond ? () => ({}) : (y, z) => y;
+x = cond ? () => ({}) : items.map(y => y.id);
+x = cond ? () => ({}) : this.items.map(y => y.id);
+x = cond ? () => ({}) : other ? y => y : z => z;
+x = cond ? () => ({}) : fallback || (y => y);
+x = cond ? () => ({}) : first === second ? y => y : fallback;
+x = cond ? () => ({}) : async y => y;
+x = cond ? (a, q => q) : fallback;
+x = f(cond ? () => [] : b < d, y => y);
+x = f(cond ? () => ({}) : fallback, y => y);
+x = f(cond ? () => ({}) : g(b) < d, y => y);
+x = cond
+  ? q => ({})
+  : (a): T =>
+      y =>
+        1;
+
+-----------------------------------------
+{ arrowParens: "avoid", printWidth: 100 }
+-----------------------------------------
+x = cond ? () => [] : y => y;
+x = cond ? y => y : () => ({});
+x = cond ? () => ({}) : (y, z) => y;
+x = cond ? () => ({}) : items.map(y => y.id);
+x = cond ? () => ({}) : this.items.map(y => y.id);
+x = cond ? () => ({}) : other ? y => y : z => z;
+x = cond ? () => ({}) : fallback || (y => y);
+x = cond ? () => ({}) : first === second ? y => y : fallback;
+x = cond ? () => ({}) : async y => y;
+x = cond ? (a, q => q) : fallback;
+x = f(cond ? () => [] : b < d, y => y);
+x = f(cond ? () => ({}) : fallback, y => y);
+x = f(cond ? () => ({}) : g(b) < d, y => y);
+x = cond
+  ? q => ({})
+  : (a): T =>
+      y =>
+        1;
+
+===================== End =====================

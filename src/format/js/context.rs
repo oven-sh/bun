@@ -1,6 +1,7 @@
 //! The state that formatting code can access besides the node it's formatting.
 
 use super::comments::{Comments, FileComments};
+use super::utils::conditional::ReturnTypeReading;
 use super::utils::tailwindcss::TailwindContext;
 use crate::cursor::CursorRegion;
 use crate::ir::element::FormatElement;
@@ -8,6 +9,7 @@ use crate::options::{FormatOptions, HtmlRoot, JavaScriptParser};
 use bun_lint::ast::{Expr, File};
 use bun_lint::span::{Span, Spanned};
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 use std::cell::Cell;
 
 /// True if Prettier parses the code with a parser that has no `ChainExpression` around an optional chain. That's Babel,
@@ -56,6 +58,8 @@ pub(crate) struct JsFormatContext<'a> {
     pub(crate) is_vue_filter_sequence: Cell<bool>,
     /// Parses the code in HTML, overriding `FormatOptions::parse_javascript`.
     pub(crate) parse_javascript: Option<JavaScriptParser<'a>>,
+    /// The ones that an arrow function written from here on can be in. See `ReturnTypeReading::note`.
+    pub(crate) return_type_readings: SmallVec<[ReturnTypeReading; 2]>,
 }
 
 impl<'a> JsFormatContext<'a> {
@@ -95,6 +99,7 @@ impl<'a> JsFormatContext<'a> {
             long_member_chain: Cell::new(None),
             is_vue_filter_sequence: Cell::new(false),
             parse_javascript: None,
+            return_type_readings: SmallVec::new(),
         }
     }
 

@@ -1,10 +1,13 @@
 //! `a ? b : c` and `A extends B ? C : D`. Prettier's `printTernary`.
 
-use super::typecast::is_cast_target_that_hides_its_kind;
+use super::expression::ExpressionLeftSide;
+use super::typecast::{is_cast_target, is_cast_target_that_hides_its_kind};
 use crate::js::format::format_node;
+use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::print::binary_like_expression::is_angular_pipe;
 use crate::prelude::*;
 use crate::write;
+use smallvec::SmallVec;
 
 #[derive(Copy, Clone)]
 pub(crate) enum ConditionalLike<'a> {
@@ -283,6 +286,7 @@ impl<'a> FormatConditionalLike<'a> {
         };
         // `a ? (b ? c : d) : e`
         let is_nested_consequent = consequent.is_conditional();
+        ReturnTypeReading::note(self.conditional, OperandParentheses::AroundConditional, f);
         write!(
             f,
             [
@@ -335,6 +339,7 @@ impl<'a> Format<'a> for FormatConditionalLike<'a> {
                 && let ConditionalLike::ConditionalExpression(conditional) = self.conditional
                 && let ExprKind::Cond { yes, no, .. } = conditional.kind()
             {
+                ReturnTypeReading::note(self.conditional, OperandParentheses::AroundEach, f);
                 write!(
                     f,
                     [
@@ -421,11 +426,7 @@ impl<'a> Format<'a> for FormatJsxChainExpression<'a> {
         let expression = self.expression;
         let is_conditional = matches!(expression.kind(), ExprKind::Cond { .. })
             && !is_cast_target_that_hides_its_kind(expression, f);
-        let no_wrap = match expression.kind() {
-            ExprKind::Ident(name) => name.bytes() == b"undefined",
-            ExprKind::Null => true,
-            _ => is_conditional && self.is_alternate,
-        };
+        let no_wrap = is_nil(expression) || (is_conditional && self.is_alternate);
 
         let format_expression = format_with(|f| match is_conditional {
             true => format_node(expression.as_ast_nodes(), f, |f| {
@@ -450,5 +451,319 @@ impl<'a> Format<'a> for FormatJsxChainExpression<'a> {
                 ]
             );
         }
+    }
+}
+
+/// `null` and `undefined` get no parentheses in a conditional that has a JSX element in it.
+fn is_nil(e: Expr<'_>) -> bool {
+    match e.kind() {
+        ExprKind::Ident(name) => name.bytes() == b"undefined",
+        ExprKind::Null => true,
+        _ => false,
+    }
+}
+
+/// The parentheses that a conditional expression puts around its operands by itself.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(super) enum OperandParentheses {
+    /// Around a conditional after the `?`, if all of it fits on the line.
+    AroundConditional,
+    /// Around each operand, if not all of it fits on the line: in a conditional that has a JSX element in it.
+    AroundEach,
+    /// With `--experimental-ternaries`.
+    None,
+}
+
+/// In TypeScript, `( .. )` right before the `:` of a conditional can be the parameters of an arrow function, and what
+/// follows the `:` its return type: `a ? b => ({}) : c => (d): T => e` is `a ? b => (({}): c => (d)) : T => e`, and
+/// `a ? () => ({}) : c => c` is a syntax error. Other readers of TypeScript refuse `a ? b => ({}) : c => c` too.
+/// Prettier and oxfmt print `c =>` for `(c) =>` there with `arrowParens: "avoid"`. So between such a `(` and where that
+/// type can end, an arrow function keeps the parentheses around a parameter that is only a name.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) struct ReturnTypeReading {
+    /// Where the first `(` is that the operand before the `:` can end with in any layout.
+    from: u32,
+    /// See `end_of_return_type`.
+    until: u32,
+}
+
+impl ReturnTypeReading {
+    /// Looks for the one of `conditional`, whose operands are written next.
+    pub(super) fn note<'a>(
+        conditional: ConditionalLike<'a>,
+        parentheses: OperandParentheses,
+        f: &mut Formatter<'a>,
+    ) {
+        let ConditionalLike::ConditionalExpression(conditional) = conditional else {
+            return;
+        };
+        if !removes_parentheses_that_typescript_reads(f) {
+            return;
+        }
+        let ExprKind::Cond { yes, no, .. } = conditional.kind() else {
+            return;
+        };
+        let Some(from) = tried_parameters(yes, parentheses, f) else {
+            return;
+        };
+        if parentheses != OperandParentheses::AroundEach && gives_up_after_colon(no, f) {
+            return;
+        }
+        let until = end_of_return_type(conditional, no);
+        let reading = ReturnTypeReading { from, until };
+        let readings = &mut f.context_mut().return_type_readings;
+        // What is written from here on is after the ones that end before this one starts.
+        while readings.last().is_some_and(|it| it.until <= from) {
+            readings.pop();
+        }
+        if readings.last() != Some(&reading) {
+            readings.push(reading);
+        }
+    }
+
+    /// True if `arrow`, whose only parameter is a name, keeps the parentheses around it.
+    pub(crate) fn keeps_parentheses<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> bool {
+        let readings = &f.context().return_type_readings;
+        !readings.is_empty()
+            && (arrow.params().first()).is_some_and(|param| {
+                let start = param.span().start;
+                readings
+                    .iter()
+                    .any(|it| it.from <= start && start < it.until)
+            })
+    }
+}
+
+/// True if `arrowParens: "avoid"` applies in a file that TypeScript reads. Angular reads its own expressions.
+fn removes_parentheses_that_typescript_reads(f: &Formatter<'_>) -> bool {
+    let options = f.options();
+    let file = f.file();
+    options.arrow_parentheses.is_as_needed()
+        && !file.is_flow()
+        && (!file.is_javascript()
+            || matches!(
+                options.parser.as_deref(),
+                Some(b"typescript" | b"babel-ts" | b"oxc-ts")
+            ))
+        && !options.in_html.root.is_angular()
+}
+
+/// Where the first `( .. )` starts that `operand` can end with in some layout, and that starts like parameters.
+fn tried_parameters<'a>(
+    operand: Expr<'a>,
+    parentheses: OperandParentheses,
+    f: &Formatter<'a>,
+) -> Option<u32> {
+    let mut from: Option<u32> = None;
+    let mut tried = |e: Expr<'a>| {
+        let start = e.span().start;
+        from = Some(from.map_or(start, |it| it.min(start)));
+    };
+    if parentheses == OperandParentheses::AroundEach
+        && !is_nil(operand)
+        && starts_like_parameters(operand)
+    {
+        tried(operand);
+    }
+    // A conditional after a `?` or after a `=>` is in parentheses if it fits on the line.
+    let mut fits_in_parentheses = parentheses == OperandParentheses::AroundConditional;
+    let mut current = operand;
+    loop {
+        if expression_needs_parentheses(current, f) || is_cast_target(current, f) {
+            if starts_like_parameters(current) {
+                tried(current);
+            }
+            return from;
+        }
+        if current.tag() == ExprTag::Cond && fits_in_parentheses && starts_like_parameters(current)
+        {
+            tried(current);
+        }
+        fits_in_parentheses = false;
+        match current.kind() {
+            ExprKind::Cond { no, .. } => {
+                // With `--experimental-ternaries`: `b => c ? d : (⏎e⏎)`, unless the conditional is in another one.
+                if parentheses == OperandParentheses::None
+                    && !matches!(current.ast_parent(), AstNodes::ConditionalExpression(_))
+                    && starts_like_parameters(no)
+                {
+                    tried(no);
+                }
+                current = no;
+            }
+            ExprKind::Fn(arrow) if arrow.is_arrow() => {
+                let FnBody::Expr(body) = arrow.body() else {
+                    return from;
+                };
+                // The arrow function writes the parentheses of a sequence.
+                if body.binary_op() == Some(BinOp::Comma) {
+                    if starts_like_parameters(body) {
+                        tried(body);
+                    }
+                    return from;
+                }
+                // `b => (c ? d : e)`, but `b => ({}) ? d : e`.
+                fits_in_parentheses = body.tag() == ExprTag::Cond
+                    && ExpressionLeftSide::leftmost(body).tag() != ExprTag::Object;
+                current = body;
+            }
+            ExprKind::Assign { value, .. } => current = value,
+            ExprKind::Yield {
+                value: Some(value), ..
+            } => current = value,
+            // `<T>(a, b)` starts like an arrow function with type parameters, whatever is in the parentheses.
+            ExprKind::As { expr, .. } | ExprKind::AsConst(expr)
+                if current.is_angle_bracket_assertion() =>
+            {
+                if expression_needs_parentheses(expr, f) {
+                    tried(expr);
+                }
+                return from;
+            }
+            // `async(a)` starts like an `async` arrow function. So does `async<T>(a)`, whatever `a` is.
+            ExprKind::Call(call) if !call.is_optional() => {
+                let callee = call.callee();
+                let has_type_arguments = !call.type_args().is_empty()
+                    || matches!(callee.kind(), ExprKind::Instantiation { .. });
+                let name = match callee.kind() {
+                    ExprKind::Instantiation { expr, .. } => expr,
+                    _ => callee,
+                };
+                if !name.as_ident().is_some_and(|name| name.is("async")) {
+                    return from;
+                }
+                match call.args().first() {
+                    // `async((a, b))`
+                    Some(first) if expression_needs_parentheses(first, f) => {}
+                    Some(first) if first.tag() != ExprTag::Spread => {
+                        if has_type_arguments || starts_like_parameters(first) {
+                            tried(first);
+                        }
+                    }
+                    // `async()`, `async(...a)`
+                    _ => tried(current),
+                }
+                return from;
+            }
+            _ => return from,
+        }
+    }
+}
+
+/// `({`, `([`, `(a,`, `(a =`, `(a)`: TypeScript's `isParenthesizedArrowFunctionExpression` says `Tristate.Unknown`.
+fn starts_like_parameters(e: Expr<'_>) -> bool {
+    let is_name = |it: Expr<'_>| matches!(it.tag(), ExprTag::Ident | ExprTag::This);
+    let first = match e.kind() {
+        ExprKind::Binary {
+            op: BinOp::Comma, ..
+        } => e.sequence().first().copied(),
+        ExprKind::Assign {
+            op: None, target, ..
+        } => Some(target),
+        _ => Some(e),
+    };
+    first.is_some_and(is_name)
+        || matches!(
+            (ExpressionLeftSide::from(e).iter().last()).map(|it| it.expr.tag()),
+            Some(ExprTag::Object | ExprTag::Array)
+        )
+}
+
+/// True if `alternate` starts with what no reader takes for a type before a `=>`: `a(`, `a +`, `async b`. Not `a <`.
+fn gives_up_after_colon<'a>(alternate: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let mut current = ExpressionLeftSide::from(alternate);
+    // What starts with the name and the properties that are read from it.
+    let mut around_name = None;
+    loop {
+        if expression_needs_parentheses(current.expr, f) || is_cast_target(current.expr, f) {
+            return false;
+        }
+        let Some(left) = current.left() else {
+            break;
+        };
+        // With `--experimental-ternaries`, a conditional writes the parentheses of a test that is a conditional.
+        if current.expr.tag() == ExprTag::Cond && left.expr.tag() == ExprTag::Cond {
+            return false;
+        }
+        if current.expr.tag() != ExprTag::Dot {
+            around_name = Some(current.expr);
+        }
+        current = left;
+    }
+    let first = current.expr;
+    if let Some(arrow) = first.arrow_function() {
+        return arrow.is_async() || arrow.return_type().is_some();
+    }
+    let is_name = match first.kind() {
+        ExprKind::Ident(name) => !matches!(name.bytes(), b"keyof" | b"unique" | b"readonly"),
+        ExprKind::This => true,
+        _ => false,
+    };
+    is_name
+        && match around_name.map(|it| it.kind()) {
+            None
+            | Some(ExprKind::Call(_) | ExprKind::TaggedTemplate(_) | ExprKind::Cond { .. }) => true,
+            // `<`, `<<`, `|` and `&` go on with a type.
+            Some(ExprKind::Binary { op, .. }) => {
+                !matches!(op, BinOp::Lt | BinOp::Shl | BinOp::BitOr | BinOp::BitAnd)
+            }
+            Some(_) => false,
+        }
+}
+
+/// Where a type after the `:` of `conditional` can end: in `f(a ? () => ({}) : b < c, d)`, `c, d` are type arguments.
+fn end_of_return_type<'a>(conditional: Expr<'a>, alternate: Expr<'a>) -> u32 {
+    let mut end = conditional.span().end;
+    // A `<` or a `<<` that isn't in brackets.
+    let mut has_open_type_arguments = false;
+    let mut rest: SmallVec<[Expr<'a>; 4]> = SmallVec::new();
+    rest.push(alternate);
+    while let Some(e) = rest.pop() {
+        match e.kind() {
+            ExprKind::Binary {
+                op: BinOp::Lt | BinOp::Shl,
+                ..
+            } => {
+                has_open_type_arguments = true;
+                break;
+            }
+            ExprKind::Binary { left, right, .. } => rest.extend([left, right]),
+            ExprKind::Fn(arrow) if arrow.is_arrow() => {
+                if let FnBody::Expr(body) = arrow.body() {
+                    rest.push(body);
+                }
+            }
+            _ => {}
+        }
+    }
+    if !has_open_type_arguments {
+        return end;
+    }
+    // The arguments, elements or operands that `conditional` ends one of, whatever the source has in parentheses.
+    let mut last = conditional;
+    loop {
+        let parent = match last.parent() {
+            Node::Expr(parent) => parent,
+            // `last` is what an arrow function returns.
+            Node::Func(function) => match function.owner().as_expr() {
+                Some(arrow) => {
+                    last = arrow;
+                    continue;
+                }
+                None => return end,
+            },
+            _ => return end,
+        };
+        match parent.kind() {
+            ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Array(_) => return parent.span().end,
+            ExprKind::Binary {
+                op: BinOp::Comma, ..
+            } => end = parent.span().end,
+            ExprKind::Cond { no, .. } if no == last => {}
+            ExprKind::Assign { value, .. } if value == last => {}
+            ExprKind::Yield { .. } | ExprKind::Spread(_) => {}
+            _ => return end,
+        }
+        last = parent;
     }
 }

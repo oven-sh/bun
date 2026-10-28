@@ -5,6 +5,7 @@ use crate::js::format::{FormatTypeAnnotation, format_node};
 use crate::js::utils::call_expression::{
     is_angular_test_wrapper, is_test_call_expression_in_flavor,
 };
+use crate::js::utils::conditional::ReturnTypeReading;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
@@ -417,6 +418,7 @@ pub(crate) fn can_avoid_parentheses<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> b
                 && !parameter_has_comment(param, f)
         })
         && (f.comments().of_node(arrow.as_ast_nodes()).dangling).is_empty()
+        && !ReturnTypeReading::keeps_parentheses(arrow, f)
 }
 
 /// Prettier's `shouldHugTheOnlyFunctionParameter`.

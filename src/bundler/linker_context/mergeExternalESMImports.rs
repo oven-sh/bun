@@ -8,41 +8,20 @@ use bun_collections::HashMap;
 use crate::chunk;
 use crate::{Chunk, LinkerContext};
 
-/// Everything the printer emits after `from` (path and `with { type }` suffix).
+/// What the printer emits after `from`: the path and, from the loader, `with { type }`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-struct PathKey {
-    text: &'static [u8],
-    namespace: &'static [u8],
-    print_namespace: bool,
+struct PathKey<'a> {
+    text: &'a [u8],
     loader: Option<bun_ast::Loader>,
-}
-
-/// The statement's clause as written (exports bound and the local names used
-/// for them); empty outside exact mode so a path shares one `Seen`. Keying on
-/// the local names too means a chunk only ever prints a name one of its own
-/// files wrote, even when the merged root ref belongs to a file it does not
-/// contain, so each entry's output depends on its own files alone.
-#[derive(Default, PartialEq, Eq, Hash)]
-struct Shape {
-    star: Option<&'static [u8]>,
-    default: Option<&'static [u8]>,
-    /// `(export name, local name)`, sorted by export name.
-    items: Box<[(&'static [u8], &'static [u8])]>,
-}
-
-#[derive(PartialEq, Eq, Hash)]
-struct ImportKey {
-    path: PathKey,
-    shape: Shape,
 }
 
 /// The ref a kept statement in the current chunk declares for each binding.
 #[derive(Default)]
-struct Seen {
+struct Seen<'a> {
     star: Ref,
     default: Ref,
     /// Keyed by export name (`ClauseItem.alias`).
-    items: HashMap<&'static [u8], Ref>,
+    items: HashMap<&'a [u8], Ref>,
 }
 
 #[inline]
@@ -51,20 +30,15 @@ fn pack(source_index: u32, import_record_index: u32) -> u64 {
 }
 
 /// #8671: drop external imports whose bindings an earlier statement in the chunk declares.
-pub(crate) fn merge_external_esm_imports(c: &mut LinkerContext, chunks: &mut [Chunk]) {
+pub(crate) fn merge_external_esm_imports<'a>(c: &mut LinkerContext<'a>, chunks: &mut [Chunk]) {
     if !c.options.output_format.keep_es6_import_export_syntax() {
         return;
     }
-    // SAFETY: `symbols.merge` is graph-global while keep/drop is per chunk. With
-    // splitting (or one JS chunk) a file lands in exactly one chunk, so a ref is
-    // only merged into a statement kept alongside it. Without splitting a file is
-    // copied into every entry chunk reaching it and may be kept in one chunk but
-    // dropped in another, so merges are restricted to statements of identical
-    // `Shape`: each chunk keeps exactly one per shape, and every ref of a shape
-    // prints as the binding that chunk declares. Because the shape includes the
-    // local names, that binding is also printed under a name the chunk's own
-    // files wrote, whichever file's ref ends up as the merged root.
-    let exact = !c.graph.code_splitting
+    // Without splitting, a file is copied into the chunk of every entry point that
+    // reaches it. `symbols.merge` is graph-wide, and a chunk's renamer names only
+    // the symbols of its own files, so a statement is dropped only when its file is
+    // in one chunk: the binding it links to is then in every chunk that prints it.
+    let copies_files = !c.graph.code_splitting
         && chunks
             .iter()
             .filter(|chunk| matches!(chunk.content, chunk::Content::Javascript(_)))
@@ -74,10 +48,9 @@ pub(crate) fn merge_external_esm_imports(c: &mut LinkerContext, chunks: &mut [Ch
     let all_parts = c.graph.ast.items_parts();
     let all_import_records = c.graph.ast.items_import_records();
     let parts_live = c.graph.parts_live.as_slice();
+    let entry_bits = c.graph.files.items_entry_bits();
 
-    let mut paths: HashMap<PathKey, ()> = HashMap::default();
-    let mut seen: HashMap<ImportKey, Seen> = HashMap::default();
-    let mut clause: Vec<(&'static [u8], &'static [u8])> = Vec::new();
+    let mut seen: HashMap<PathKey<'a>, Seen<'a>> = HashMap::default();
 
     for chunk in chunks.iter_mut() {
         let js = match &mut chunk.content {
@@ -85,7 +58,6 @@ pub(crate) fn merge_external_esm_imports(c: &mut LinkerContext, chunks: &mut [Ch
             _ => continue,
         };
 
-        paths.clear();
         seen.clear();
 
         for part_range in js.parts_in_chunk_in_order.iter() {
@@ -120,14 +92,6 @@ pub(crate) fn merge_external_esm_imports(c: &mut LinkerContext, chunks: &mut [Ch
                         continue;
                     }
 
-                    let path = PathKey {
-                        text: record.path.text,
-                        namespace: record.path.namespace,
-                        print_namespace: record
-                            .flags
-                            .contains(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH),
-                        loader: record.loader,
-                    };
                     let star_ref = record
                         .flags
                         .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
@@ -136,8 +100,12 @@ pub(crate) fn merge_external_esm_imports(c: &mut LinkerContext, chunks: &mut [Ch
                     let default_ref = s.default_name.and_then(|d| d.ref_.to_nullable());
                     let items = s.items.slice();
 
-                    let path_already_imported =
-                        bun_core::handle_oom(paths.get_or_put(path)).found_existing;
+                    let slot = bun_core::handle_oom(seen.get_or_put(PathKey {
+                        text: record.path.text,
+                        loader: record.loader,
+                    }));
+                    let path_already_imported = slot.found_existing;
+                    let entry = slot.value_ptr;
                     if star_ref.is_none() && default_ref.is_none() && items.is_empty() {
                         // Bare `import "x"`: an earlier import of the path already evaluates it.
                         if path_already_imported {
@@ -147,43 +115,12 @@ pub(crate) fn merge_external_esm_imports(c: &mut LinkerContext, chunks: &mut [Ch
                         continue;
                     }
 
-                    let shape = if exact {
-                        let symbols = &c.graph.symbols;
-                        let local_name = |ref_: Ref| -> &'static [u8] {
-                            match symbols.get_const(ref_) {
-                                Some(symbol) => symbol.original_name.slice(),
-                                None => &[],
-                            }
-                        };
-                        clause.clear();
-                        clause.extend(
-                            items
-                                .iter()
-                                .map(|item| (item.alias.slice(), local_name(item.name.ref_))),
-                        );
-                        clause.sort_unstable();
-                        // `import { x, x as y }` binds one export twice; `Seen` holds one ref per export.
-                        let bindings = clause.len();
-                        clause.dedup_by_key(|binding| binding.0);
-                        if clause.len() != bindings {
-                            continue;
-                        }
-                        Shape {
-                            star: star_ref.map(local_name),
-                            default: default_ref.map(local_name),
-                            items: clause.as_slice().into(),
-                        }
-                    } else {
-                        Shape::default()
-                    };
-                    let entry =
-                        bun_core::handle_oom(seen.get_or_put(ImportKey { path, shape })).value_ptr;
-
                     // A ref another chunk already imports by name must keep its own declaration.
                     let introduces = |kept: Ref, ref_: Ref| {
                         kept.is_empty() || js.exports_to_other_chunks.contains_key(&ref_)
                     };
-                    let must_keep = star_ref.is_some_and(|r| introduces(entry.star, r))
+                    let must_keep = !path_already_imported
+                        || star_ref.is_some_and(|r| introduces(entry.star, r))
                         || default_ref.is_some_and(|r| introduces(entry.default, r))
                         || items.iter().any(|item| {
                             item.name.ref_.to_nullable().is_some_and(|r| {
@@ -196,9 +133,10 @@ pub(crate) fn merge_external_esm_imports(c: &mut LinkerContext, chunks: &mut [Ch
                                     r,
                                 )
                             })
-                        });
+                        })
+                        || (copies_files && entry_bits[source_index as usize].count() != 1);
 
-                    if must_keep || !path_already_imported {
+                    if must_keep {
                         // Bindings overlapping an earlier statement stay distinct; the renamer suffixes them.
                         if let Some(ns) = star_ref
                             && entry.star.is_empty()

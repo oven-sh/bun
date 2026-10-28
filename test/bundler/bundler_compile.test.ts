@@ -322,11 +322,10 @@ describe("bundler", () => {
     },
     {
       // Several files import the same builtins; the linker drops the statements
-      // that add no binding (#8671), so the module record, which is built from
-      // what gets printed, must list each surviving import once, under the kept
-      // statement's names, including the one hoisted out of a __commonJS wrapper.
-      // The debug build cross-checks the record against JSC's own parse of the
-      // chunk and refuses to start the binary when they differ.
+      // that add no binding (#8671). The module record the binary links from is
+      // built from what gets printed, so it must list each surviving import once,
+      // under the kept statement's names, including the one hoisted out of a
+      // __commonJS wrapper.
       name: "DedupedExternalImports",
       files: {
         "/entry.ts": `

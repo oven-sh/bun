@@ -303,7 +303,6 @@ void saveBackEndOptionDefaults();
 void discardBackEndOptionsOfEnvironment();
 }
 
-extern "C" [[noreturn]] void Bun__outOfMemory();
 extern "C" void* Bun__getVM();
 extern "C" void WebWorker__endForExhaustedHeap(void* bunVM);
 

@@ -159,7 +159,7 @@ extern "C" bool Bun__AOT__useNoImageOnThisThread(BunAOTBytes specifier)
         return false;
     // All that the thread runs from here on is bytecode.
     if (JSC::Options::crashIfInterpreterIsUsed()) [[unlikely]] {
-        dataLogLn("crashIfInterpreterIsUsed: Worker ", WTF::String::fromUTF8ReplacingInvalidSequences(std::span { specifier.ptr, specifier.len }));
+        dataLogLn("crashIfInterpreterIsUsed: Worker ", Zig::convertUTF8ToStringLossy(std::span { specifier.ptr, specifier.len }, WTF::FailureAction::Report));
         CRASH();
     }
     JSC::AOT::Image::useNoneOnThisThread();

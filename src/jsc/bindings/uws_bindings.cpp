@@ -27,10 +27,10 @@ static JSC::EncodedJSValue uws_ws_get_topics_as_js_array_impl(uws_websocket_t *w
   {
     // Scope ensures the iterator lock is released before constructArray
     uws->iterateTopics([&](std::string_view topic) {
-      auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span {
+      auto str = Zig::convertUTF8ToStringLossy(std::span {
         reinterpret_cast<const unsigned char*>(topic.data()),
         topic.length()
-      });
+      }, WTF::FailureAction::Crash);
       args.append(JSC::jsString(vm, str));
     });
   }

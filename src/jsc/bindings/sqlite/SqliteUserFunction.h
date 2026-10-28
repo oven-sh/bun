@@ -40,11 +40,22 @@ inline bool loadSQLite(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope
 // replacement everywhere we surface SQLite-owned bytes to JS.
 ALWAYS_INLINE WTF::String sqliteText(const char* p, size_t len)
 {
-    return WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const uint8_t*>(p), len });
+    return Zig::convertUTF8ToStringLossy({ reinterpret_cast<const uint8_t*>(p), len }, WTF::FailureAction::Crash);
 }
 ALWAYS_INLINE WTF::String sqliteText(const char* p)
 {
     return p ? sqliteText(p, strlen(p)) : WTF::String();
+}
+
+// The same for a caller that can throw. Null with `RangeError: Out of memory` pending.
+ALWAYS_INLINE JSC::JSString* sqliteTextToJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const char* p, size_t len)
+{
+    WTF::String text = Zig::convertUTF8ToStringLossy({ reinterpret_cast<const uint8_t*>(p), len }, WTF::FailureAction::Report);
+    if (text.isNull()) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    return JSC::jsString(JSC::getVM(globalObject), WTF::move(text));
 }
 
 // A copy of the bytes. Null with an exception pending.

@@ -201,7 +201,7 @@ private:
     JSValue sliceOfExtra(uint32_t start, uint32_t end)
     {
         if (!m_extraText)
-            m_extraText = jsString(m_vm, String::fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(m_tree.extra)));
+            m_extraText = jsString(m_vm, Zig::convertUTF8ToStringLossy(m_tree.extra, WTF::FailureAction::Crash));
         end = std::min(end, m_extraText->length());
         start = std::min(start, end);
         return jsSubstringOfResolved(m_vm, m_extraText, start, end - start);

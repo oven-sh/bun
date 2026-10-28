@@ -210,7 +210,11 @@ JSObject* ServerRouteList::paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject
         auto param = req->getParameter(static_cast<unsigned short>(i));
         if (!param.empty()) {
             const std::span<const uint8_t> paramBytes(reinterpret_cast<const uint8_t*>(param.data()), param.size());
-            args.append(jsString(vm, decodeURIComponentSIMD(paramBytes)));
+            WTF::String decoded = decodeURIComponentSIMD(paramBytes);
+            // Null is a failed allocation. Nothing owns the request yet, so the process ends.
+            if (decoded.isNull()) [[unlikely]]
+                Bun__outOfMemory();
+            args.append(jsString(vm, WTF::move(decoded)));
         } else {
             args.append(jsEmptyString(vm));
         }

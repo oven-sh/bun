@@ -90,14 +90,14 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
 {
     {
         std::string_view fullURLStdStr = request->getFullUrl();
-        String fullURL = String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const Latin1Character*>(fullURLStdStr.data()), fullURLStdStr.length() });
+        String fullURL = Zig::convertUTF8ToStringLossy({ reinterpret_cast<const unsigned char*>(fullURLStdStr.data()), fullURLStdStr.length() }, WTF::FailureAction::Crash);
         args.append(jsString(vm, WTF::move(fullURL)));
     }
 
     // Get the method.
     if (methodString.isUndefinedOrNull()) [[unlikely]] {
         std::string_view methodView = request->getMethod();
-        WTF::String methodString = String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const Latin1Character*>(methodView.data()), methodView.length() });
+        WTF::String methodString = Zig::convertUTF8ToStringLossy({ reinterpret_cast<const unsigned char*>(methodView.data()), methodView.length() }, WTF::FailureAction::Crash);
         args.append(jsString(vm, WTF::move(methodString)));
     } else {
         args.append(methodString);

@@ -343,8 +343,8 @@ napi_status Napi::defineProperty(napi_env env, JSC::JSObject* to, const napi_pro
 
     JSC::Identifier propertyName;
     if (property.utf8name != nullptr) {
-        auto span = std::span { reinterpret_cast<const Latin1Character*>(property.utf8name), strlen(property.utf8name) };
-        propertyName = JSC::Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences(span).isolatedCopy());
+        auto span = std::span { reinterpret_cast<const unsigned char*>(property.utf8name), strlen(property.utf8name) };
+        propertyName = JSC::Identifier::fromString(vm, Zig::convertUTF8ToStringLossy(span, WTF::FailureAction::Crash).isolatedCopy());
     } else {
         if (!property.name) {
             return napi_name_expected;

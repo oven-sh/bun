@@ -2642,7 +2642,7 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
                 cwd[1] = '\0';
             }
 
-            putDirectNamed(vm, header, "cwd"_s, JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(cwd), strlen(cwd) })));
+            putDirectNamed(vm, header, "cwd"_s, JSC::jsString(vm, Zig::convertUTF8ToStringLossy(std::span { reinterpret_cast<const unsigned char*>(cwd), strlen(cwd) }, WTF::FailureAction::Crash)));
             RETURN_IF_EXCEPTION(scope, {});
         }
 
@@ -2667,10 +2667,10 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
                 memset(&buf, 0, sizeof(buf));
             }
 
-            putDirectNamed(vm, header, "osName"_s, JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(buf.sysname), strlen(buf.sysname) })));
-            putDirectNamed(vm, header, "osRelease"_s, JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(buf.release), strlen(buf.release) })));
-            putDirectNamed(vm, header, "osVersion"_s, JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(buf.version), strlen(buf.version) })));
-            putDirectNamed(vm, header, "osMachine"_s, JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(buf.machine), strlen(buf.machine) })));
+            putDirectNamed(vm, header, "osName"_s, JSC::jsString(vm, Zig::convertUTF8ToStringLossy(std::span { reinterpret_cast<const unsigned char*>(buf.sysname), strlen(buf.sysname) }, WTF::FailureAction::Crash)));
+            putDirectNamed(vm, header, "osRelease"_s, JSC::jsString(vm, Zig::convertUTF8ToStringLossy(std::span { reinterpret_cast<const unsigned char*>(buf.release), strlen(buf.release) }, WTF::FailureAction::Crash)));
+            putDirectNamed(vm, header, "osVersion"_s, JSC::jsString(vm, Zig::convertUTF8ToStringLossy(std::span { reinterpret_cast<const unsigned char*>(buf.version), strlen(buf.version) }, WTF::FailureAction::Crash)));
+            putDirectNamed(vm, header, "osMachine"_s, JSC::jsString(vm, Zig::convertUTF8ToStringLossy(std::span { reinterpret_cast<const unsigned char*>(buf.machine), strlen(buf.machine) }, WTF::FailureAction::Crash)));
         }
 
         // host
@@ -2681,7 +2681,7 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
                 host[0] = '0';
             }
 
-            putDirectNamed(vm, header, "host"_s, JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(host), strlen(host) })));
+            putDirectNamed(vm, header, "host"_s, JSC::jsString(vm, Zig::convertUTF8ToStringLossy(std::span { reinterpret_cast<const unsigned char*>(host), strlen(host) }, WTF::FailureAction::Crash)));
         }
 
 #if OS(LINUX)

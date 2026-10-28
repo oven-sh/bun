@@ -17,6 +17,7 @@
 #include "MimallocWTFMalloc.h"
 
 #include <limits>
+#include <wtf/MallocSpan.h>
 #include <wtf/Seconds.h>
 #include <wtf/text/ExternalStringImpl.h>
 #include <JavaScriptCore/JSONObject.h>
@@ -78,6 +79,52 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__tryCreateAtom(const char
     return { BunStringTag::Dead, {} };
 }
 
+static WTF::String utf8ConversionAllocationFailed(WTF::FailureAction action)
+{
+    if (action == WTF::FailureAction::Crash)
+        Bun__outOfMemory();
+    return {};
+}
+
+// `buffer` has one char16_t for each byte. That is enough: a sequence, well-formed or not, gives at most one for each of its bytes.
+static ALWAYS_INLINE WTF::String convertUTF8ToStringLossyWithBuffer(std::span<const unsigned char> bytes, std::span<char16_t> buffer, WTF::FailureAction action)
+{
+    auto result = WTF::Unicode::convertReplacingInvalidSequences(byteCast<char8_t>(bytes), buffer);
+    RELEASE_ASSERT(result.code == WTF::Unicode::ConversionResultCode::Success);
+    WTF::String string = Zig::tryCreateString(std::span<const char16_t> { result.buffer });
+    if (string.isNull()) [[unlikely]]
+        return utf8ConversionAllocationFailed(action);
+    return string;
+}
+
+WTF::String Zig::convertUTF8ToStringLossy(std::span<const unsigned char> bytes, WTF::FailureAction action)
+{
+    if (!bytes.data())
+        return {};
+    if (bytes.empty())
+        return emptyString();
+
+    if (WTF::charactersAreAllASCII(bytes)) {
+        WTF::String string = tryCreateString(byteCast<Latin1Character>(bytes));
+        if (string.isNull()) [[unlikely]]
+            return utf8ConversionAllocationFailed(action);
+        return string;
+    }
+
+    constexpr size_t inlineCapacity = 1024;
+    if (bytes.size() <= inlineCapacity) {
+        char16_t buffer[inlineCapacity];
+        return convertUTF8ToStringLossyWithBuffer(bytes, std::span { buffer }.first(bytes.size()), action);
+    }
+    // WTF's function sizes a Vector<char16_t> by the byte count, and ends the process past its capacity.
+    if (action == WTF::FailureAction::Report && !WTF::isValidCapacityForVector<char16_t>(bytes.size())) [[unlikely]]
+        return {};
+    auto buffer = WTF::MallocSpan<char16_t>::tryMalloc(bytes.size() * sizeof(char16_t));
+    if (!buffer) [[unlikely]]
+        return utf8ConversionAllocationFailed(action);
+    return convertUTF8ToStringLossyWithBuffer(bytes, buffer.mutableSpan(), action);
+}
+
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUTF8ForJS(JSC::JSGlobalObject* globalObject, const char* ptr, size_t length)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -100,12 +147,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
         return JSValue::encode(jsString(vm, WTF::String(impl.releaseNonNull())));
     }
 
-    std::span bytes { reinterpret_cast<const unsigned char*>(ptr), length };
-    // convertUTF8ToString crashes if the allocation fails, so only use it for small or invalid input.
-    constexpr size_t minFallibleLength = 64 * 1024;
-    auto str = length >= minFallibleLength && simdutf::validate_utf8(ptr, length)
-        ? Zig::tryConvertValidUTF8ToString(bytes)
-        : Zig::convertUTF8ToString(bytes);
+    auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(ptr), length });
     if (str.isNull()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
@@ -457,9 +499,10 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
         return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
     }
 
-    auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(bytes), length });
+    auto str = Zig::convertUTF8ToStringLossy(std::span { reinterpret_cast<const unsigned char*>(bytes), length }, WTF::FailureAction::Report);
     if (str.isNull()) [[unlikely]] {
-        return { .tag = BunStringTag::Dead };
+        // 2^30 ill-formed bytes or more get no string. Under that, null is a failed allocation.
+        return { .tag = WTF::isValidCapacityForVector<char16_t>(length) ? BunStringTag::OutOfMemory : BunStringTag::Dead };
     }
     auto impl = str.releaseImpl();
     return Bun::toString(impl.leakRef());

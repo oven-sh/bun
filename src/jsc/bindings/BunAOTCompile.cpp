@@ -192,7 +192,7 @@ extern "C" void Bun__AOT__freeResult(BunAOTResult* result)
 
 static String stringFromUTF8(BunAOTBytes bytes)
 {
-    return String::fromUTF8ReplacingInvalidSequences(std::span { bytes.ptr, bytes.len });
+    return Zig::convertUTF8ToStringLossy(std::span { bytes.ptr, bytes.len }, WTF::FailureAction::Crash);
 }
 
 static void encodeDiagnostics(BunAOTResult& result)
@@ -483,8 +483,8 @@ extern "C" size_t Bun__AOT__describeWhatThreadsAreCompiling(uint8_t* buffer, siz
 extern "C" size_t Bun__AOT__describeRegExpSyntaxError(const uint8_t* pattern, size_t patternSize, const uint8_t* flags, size_t flagsSize, uint8_t* message, size_t capacity)
 {
     WTF::initialize();
-    String patternText = String::fromUTF8ReplacingInvalidSequences(std::span { pattern, patternSize });
-    String flagsText = String::fromUTF8ReplacingInvalidSequences(std::span { flags, flagsSize });
+    String patternText = Zig::convertUTF8ToStringLossy(std::span { pattern, patternSize }, WTF::FailureAction::Crash);
+    String flagsText = Zig::convertUTF8ToStringLossy(std::span { flags, flagsSize }, WTF::FailureAction::Crash);
     JSC::Yarr::ErrorCode error = JSC::Yarr::checkSyntax(patternText, flagsText);
     if (!JSC::Yarr::hasHardError(error) || error == JSC::Yarr::ErrorCode::InvalidRegularExpressionFlags)
         return 0;

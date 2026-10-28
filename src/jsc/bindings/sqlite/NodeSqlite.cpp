@@ -342,7 +342,7 @@ static inline JSValue sqliteToJS(JSGlobalObject* globalObject, Source source, bo
         size_t len = source.bytes();
         const unsigned char* text = source.text();
         if (len == 0 || text == nullptr) return jsEmptyString(vm);
-        return jsString(vm, sqliteText(reinterpret_cast<const char*>(text), len));
+        RELEASE_AND_RETURN(scope, sqliteTextToJS(globalObject, scope, reinterpret_cast<const char*>(text), len));
     }
     case SQLITE_BLOB: {
         size_t len = source.bytes();
@@ -2552,7 +2552,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsStatementSyncSourceSQL, (JSGlobalObject * globalObjec
         return throwNodeState(globalObject, scope, "statement has been finalized"_s);
     }
     const char* sql = sqlite3_sql(self->statement());
-    return JSValue::encode(jsString(vm, sqliteText(sql ? sql : "")));
+    if (!sql)
+        return JSValue::encode(jsEmptyString(vm));
+    RELEASE_AND_RETURN(scope, JSValue::encode(sqliteTextToJS(globalObject, scope, sql, strlen(sql))));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsStatementSyncExpandedSQL, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -2569,9 +2571,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsStatementSyncExpandedSQL, (JSGlobalObject * globalObj
         throwSqliteMessage(globalObject, scope, SQLITE_NOMEM, "Expanded SQL text would exceed configured limits"_s);
         return {};
     }
-    JSValue result = jsString(vm, sqliteText(expanded));
+    JSValue result = sqliteTextToJS(globalObject, scope, expanded, strlen(expanded));
     sqlite3_free(expanded);
-    return JSValue::encode(result);
+    RELEASE_AND_RETURN(scope, JSValue::encode(result));
 }
 
 static const HashTableValue JSStatementSyncPrototypeTableValues[] = {

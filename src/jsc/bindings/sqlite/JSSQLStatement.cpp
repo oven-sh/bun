@@ -696,7 +696,7 @@ static JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Source sourc
         }
 
         if (len < 64) {
-            return jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ text, len }));
+            return jsString(vm, Zig::convertUTF8ToStringLossy({ text, len }, WTF::FailureAction::Crash));
         }
 
         auto encoded = Bun__encoding__toStringUTF8(text, len, globalObject);
@@ -2411,7 +2411,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementToStringFunction, (JSC::JSGlobalObject * 
     if (!string) {
         RELEASE_AND_RETURN(scope, JSValue::encode(jsEmptyString(vm)));
     }
-    auto* jsString = JSC::jsString(vm, Bun::sqliteText(string));
+    auto* jsString = Bun::sqliteTextToJS(lexicalGlobalObject, scope, string, strlen(string));
     sqlite3_free(string);
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString));
 }

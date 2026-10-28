@@ -326,9 +326,15 @@ static String agentClusterIDFromGlobalObject(JSGlobalObject& globalObject)
 
 // Version 2 added the AKP key class (ML-DSA/ML-KEM), the KEM usage tags, and
 // the ChaCha20-Poly1305/ML-* algorithm identifier tags.
-// Version 3 added <lengthBits> to CryptoKeyHMAC.
+// Version 3 ends a CryptoKeyHMAC record with <unusedBits>.
+//
+// A record carries the lowest version that can represent its key, so a reader
+// that stops at an older version still reads every key it can represent. Only an
+// HMAC key whose length is not a whole number of bytes is written as version 3.
+// currentKeyFormatVersion is the newest version the reader accepts.
 const uint32_t currentKeyFormatVersion = 3;
-const uint32_t firstKeyFormatVersionWithHMACLengthBits = 3;
+const uint32_t baseKeyFormatVersion = 2;
+const uint32_t firstKeyFormatVersionWithHMACUnusedBits = 3;
 
 enum class CryptoKeyClassSubtag {
     HMAC = 0,
@@ -565,7 +571,7 @@ static constexpr unsigned StringDataIs8BitFlag = 0x80000000;
  *    SharedArrayBufferTag <value:uint32_t>
  *
  * CryptoKeyHMAC :-
- *    <keySize:uint32_t> <keyData:byte{keySize}> CryptoAlgorithmIdentifierTag <lengthBits:uint32_t> // Algorithm tag inner hash function; lengthBits since key format version 3.
+ *    <keySize:uint32_t> <keyData:byte{keySize}> CryptoAlgorithmIdentifierTag <unusedBits:uint8_t>? // Algorithm tag inner hash function. unusedBits (1 to 7) is the count of bits of the last key byte past the key length; key format version 3 only.
  *
  * CryptoKeyAES :-
  *    CryptoAlgorithmIdentifierTag <keySize:uint32_t> <keyData:byte{keySize}>
@@ -1874,7 +1880,12 @@ private:
 
     void write(const CryptoKey* key)
     {
-        write(currentKeyFormatVersion);
+        auto keyClass = key->keyClass();
+        auto* hmacKey = keyClass == CryptoKeyClass::HMAC ? &downcast<CryptoKeyHMAC>(*key) : nullptr;
+        // The bits of the last key byte past the length of an HMAC key: 0 to 7.
+        size_t hmacUnusedBits = hmacKey ? hmacKey->key().size() * 8 - hmacKey->lengthBits() : 0;
+        uint32_t keyFormatVersion = hmacUnusedBits ? firstKeyFormatVersionWithHMACUnusedBits : baseKeyFormatVersion;
+        write(keyFormatVersion);
 
         write(key->extractable());
 
@@ -1905,12 +1916,13 @@ private:
         if (usages & CryptoKeyUsageDecapsulateBits)
             write(CryptoKeyUsageTag::DecapsulateBits);
 
-        switch (key->keyClass()) {
+        switch (keyClass) {
         case CryptoKeyClass::HMAC:
             write(CryptoKeyClassSubtag::HMAC);
-            write(downcast<CryptoKeyHMAC>(*key).key());
-            write(downcast<CryptoKeyHMAC>(*key).hashAlgorithmIdentifier());
-            write(static_cast<uint32_t>(downcast<CryptoKeyHMAC>(*key).lengthBits()));
+            write(hmacKey->key());
+            write(hmacKey->hashAlgorithmIdentifier());
+            if (keyFormatVersion >= firstKeyFormatVersionWithHMACUnusedBits)
+                write(static_cast<uint8_t>(hmacUnusedBits));
             break;
         case CryptoKeyClass::AES:
             write(CryptoKeyClassSubtag::AES);
@@ -3149,10 +3161,13 @@ private:
         CryptoAlgorithmIdentifier hash;
         if (!readHashAlgorithm(hash))
             return false;
-        uint32_t lengthBits = 0;
-        if (keyFormatVersion >= firstKeyFormatVersionWithHMACLengthBits) {
-            if (!read(lengthBits) || !CryptoKeyHMAC::lengthIsValidForKeyData(lengthBits, keyData.size()))
+        size_t lengthBits = 0;
+        if (keyFormatVersion >= firstKeyFormatVersionWithHMACUnusedBits) {
+            // A key with no unused bits is written as an older version.
+            uint8_t unusedBits;
+            if (!read(unusedBits) || !unusedBits || unusedBits > 7 || keyData.isEmpty())
                 return false;
+            lengthBits = keyData.size() * 8 - unusedBits;
         }
         result = CryptoKeyHMAC::importRaw(lengthBits, hash, WTF::move(keyData), extractable, usages);
         return true;

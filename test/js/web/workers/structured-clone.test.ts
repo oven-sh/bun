@@ -1,6 +1,7 @@
 import { deserialize, serialize } from "bun:jsc";
 import { openSync } from "fs";
 import { bunEnv, bunExe, tls } from "harness";
+import type { webcrypto } from "node:crypto";
 import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
 import { BlockList } from "node:net";
 import type { ReadableStreamDefaultReader } from "node:stream/web";
@@ -948,6 +949,69 @@ describe("X25519 CryptoKey records", () => {
     ],
   ])("%s is rejected", (_what, malformed) => {
     expect(() => read(malformed)).toThrow(new TypeError("Unable to deserialize data."));
+  });
+});
+
+// An HMAC CryptoKey record has these fields, in order:
+//   format version, CryptoKeyTag, record length, format version, key format, extractable,
+//   usage count, usage tags, HMAC, key size, key bytes, hash, [unused bits].
+// Only a key whose length is not a whole number of bytes has the unused bits, and only its
+// record is key format 3. Every other record stays key format 2, which Bun 1.4 also reads.
+describe("HMAC CryptoKey records", () => {
+  const compact = (spaced: string) => spaced.replaceAll(" ", "");
+  const read = (spaced: string): CryptoKey => deserialize(Buffer.from(compact(spaced), "hex"));
+  const written = (key: CryptoKey) => Buffer.from(serialize(key)).toString("hex");
+  const describeHmac = async (key: CryptoKey) => ({
+    length: (key.algorithm as webcrypto.HmacKeyAlgorithm).length,
+    raw: Buffer.from(await crypto.subtle.exportKey("raw", key)).toString("hex"),
+  });
+
+  const keyBytes = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1eff";
+  const importHmac = (length?: number) =>
+    crypto.subtle.importKey("raw", Buffer.from(keyBytes, "hex"), { name: "HMAC", hash: "SHA-256", length }, true, [
+      "sign",
+    ]);
+  const wholeBytes = `0e000000 21 37000000 0e000000 02000000 01000000 01000000 02 00 20000000 ${keyBytes} 10`;
+  // 249 bits: the last key byte keeps only its first bit, and the record ends with the count of the 7 unused bits.
+  const partialByte = `0e000000 21 38000000 0e000000 03000000 01000000 01000000 02 00 20000000 ${keyBytes.slice(0, -2)}80 10 07`;
+
+  test("only a key with a partial last byte is key format 3", async () => {
+    expect(written(await importHmac())).toBe(compact(wholeBytes));
+    expect(written(await importHmac(256))).toBe(compact(wholeBytes));
+    expect(written(await importHmac(249))).toBe(compact(partialByte));
+
+    const { subtle } = crypto;
+    const privateKey = async (algorithm: string | { name: string; namedCurve: string }) =>
+      ((await subtle.generateKey(algorithm, true, ["sign"])) as CryptoKeyPair).privateKey;
+    // One key of each other key class.
+    const others: Record<string, CryptoKey> = {
+      "AES-GCM": await subtle.importKey("raw", new Uint8Array(16), "AES-GCM", true, ["encrypt"]),
+      "ChaCha20-Poly1305": (await subtle.generateKey("ChaCha20-Poly1305", true, ["encrypt"])) as CryptoKey,
+      "RSA-PSS": await subtle.importKey(
+        "jwk",
+        { kty: "RSA", n: Buffer.alloc(256, 0xff).toString("base64url"), e: "AQAB" },
+        { name: "RSA-PSS", hash: "SHA-256" },
+        true,
+        ["verify"],
+      ),
+      "ECDSA": await privateKey({ name: "ECDSA", namedCurve: "P-256" }),
+      "Ed25519": await privateKey("Ed25519"),
+      "ML-DSA-44": await privateKey("ML-DSA-44"),
+    };
+    const keyFormats = Object.entries(others).map(([name, key]) => [
+      name,
+      Buffer.from(serialize(key)).readUInt32LE(13),
+    ]);
+    expect(keyFormats).toEqual(Object.keys(others).map(name => [name, 2]));
+  });
+
+  test("both key formats read, and each record is written back unchanged", async () => {
+    const [whole, partial] = [read(wholeBytes), read(partialByte)];
+    expect([await describeHmac(whole), await describeHmac(partial)]).toEqual([
+      { length: 256, raw: keyBytes },
+      { length: 249, raw: keyBytes.slice(0, -2) + "80" },
+    ]);
+    expect([written(whole), written(partial)]).toEqual([compact(wholeBytes), compact(partialByte)]);
   });
 });
 

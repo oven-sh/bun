@@ -864,6 +864,49 @@ it("deserialize rejects a ChaCha20-Poly1305 CryptoKey that is not 32 bytes", asy
   }
 });
 
+it("deserialize rejects an HMAC CryptoKey record whose unused bit count is not 1 to 7", async () => {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    Buffer.alloc(32, 0xff),
+    { name: "HMAC", hash: "SHA-256", length: 249 },
+    true,
+    ["sign"],
+  );
+  const bytes = Buffer.from(serialize(key));
+  // Only a key whose length is not a whole number of bytes is key format 3.
+  // Its record ends with <keySize:uint32_t> <keyData> <hash tag> <unusedBits>.
+  expect([bytes.readUInt32LE(13), bytes.readUInt32LE(bytes.length - 38), ...bytes.subarray(-3)]).toEqual([
+    3, 32, 0x80, 16, 7,
+  ]);
+
+  const read = (record: Uint8Array) => {
+    try {
+      return (deserialize(record).algorithm as webcrypto.HmacKeyAlgorithm).length;
+    } catch (e) {
+      return (e as Error).message;
+    }
+  };
+  const keyFormat4 = Buffer.from(bytes);
+  keyFormat4.writeUInt32LE(4, 13);
+  const rejected = "Unable to deserialize data.";
+  expect({
+    unusedBits: [0, 1, 2, 3, 4, 5, 6, 7, 8, 255].map(count => read(cryptoKeyRecord(bytes.subarray(0, -1), [count]))),
+    "no unused bit count": read(cryptoKeyRecord(bytes.subarray(0, -1))),
+    "no key bytes": read(cryptoKeyRecord(bytes.subarray(0, -38), [0, 0, 0, 0], bytes.subarray(-2))),
+    "key format 4": read(keyFormat4),
+  }).toEqual({
+    unusedBits: [rejected, 255, 254, 253, 252, 251, 250, 249, rejected, rejected],
+    "no unused bit count": rejected,
+    "no key bytes": rejected,
+    "key format 4": rejected,
+  });
+
+  // The key keeps only the bits inside its length, as importKey does, so bits set past it are cleared.
+  const dirty = Buffer.from(bytes);
+  dirty[dirty.length - 3] = 0xff;
+  expect(Buffer.from(serialize(deserialize(dirty)))).toEqual(bytes);
+});
+
 it("deserialize applies the same nesting depth limit to arrays as to objects", async () => {
   const script = `
     import { serialize, deserialize } from "bun:jsc";

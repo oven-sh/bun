@@ -1,10 +1,14 @@
 import { spawnSync } from "bun";
+import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { createSecretKey, type webcrypto } from "node:crypto";
+import { deserialize as v8Deserialize, serialize as v8Serialize } from "node:v8";
+import { receiveMessageOnPort } from "node:worker_threads";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
+type HmacKeyAlgorithm = webcrypto.HmacKeyAlgorithm;
 type JsonWebKey = webcrypto.JsonWebKey;
 type KeyUsage = webcrypto.KeyUsage;
 
@@ -1278,7 +1282,7 @@ describe("HMAC key length that is not a multiple of 8", () => {
       results[length] = {
         length: (key.algorithm as HmacKeyAlgorithm).length,
         bytes: raw.byteLength,
-        bitsPastLength: raw[raw.byteLength - 1] & (0xff >> length % 8),
+        bitsPastLength: raw[raw.byteLength - 1] & (0xff >> (length % 8)),
       };
     }
     expect(results).toEqual({
@@ -1304,6 +1308,61 @@ describe("HMAC key length that is not a multiple of 8", () => {
     expect(hex(await crypto.subtle.exportKey("raw", clone))).toBe(hex(await crypto.subtle.exportKey("raw", key)));
   });
 
+  it("every way to clone the key in one process preserves the length", async () => {
+    const key = await importRaw(249);
+    const notExtractable = await crypto.subtle.importKey(
+      "raw",
+      keyData,
+      { name: "HMAC", hash: "SHA-256", length: 249 },
+      false,
+      ["sign"],
+    );
+    const { port1, port2 } = new MessageChannel();
+    port1.postMessage(key);
+    const clones: Record<string, CryptoKey> = {
+      "bun:jsc": deserialize(serialize(key)),
+      "node:v8": v8Deserialize(v8Serialize(key)),
+      "clone of a clone": structuredClone(structuredClone(key)),
+      "MessageChannel": receiveMessageOnPort(port2)!.message,
+      "not extractable": structuredClone(notExtractable),
+    };
+    port1.close();
+
+    const data = new TextEncoder().encode("hello");
+    const lengthAndSignature = async (k: CryptoKey) => [
+      (k.algorithm as HmacKeyAlgorithm).length,
+      hex(await crypto.subtle.sign("HMAC", k, data)),
+    ];
+    const expected = [249, hex(await crypto.subtle.sign("HMAC", key, data))];
+    for (const [path, clone] of Object.entries(clones)) {
+      expect([path, ...(await lengthAndSignature(clone))]).toEqual([path, ...expected]);
+    }
+  });
+
+  it("advanced IPC preserves the length in both directions", async () => {
+    const key = await importRaw(249);
+    const { promise, resolve, reject } = Promise.withResolvers<{ length: number; key: CryptoKey }>();
+    await using child = Bun.spawn(
+      [bunExe(), "-e", `process.on("message", key => process.send({ length: key.algorithm.length, key }));`],
+      {
+        env: bunEnv,
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: "advanced",
+        ipc: resolve,
+        onExit(_subprocess, exitCode, signalCode) {
+          reject(new Error(`the child exited (${exitCode}, ${signalCode}) before it replied`));
+        },
+      },
+    );
+    child.send(key);
+    const reply = await promise;
+    expect({
+      inChild: reply.length,
+      inParent: (reply.key.algorithm as HmacKeyAlgorithm).length,
+      raw: hex(await crypto.subtle.exportKey("raw", reply.key)),
+    }).toEqual({ inChild: 249, inParent: 249, raw: hex(await crypto.subtle.exportKey("raw", key)) });
+  });
+
   it("deriveKey can derive an HMAC key of such a length", async () => {
     const { privateKey, publicKey } = (await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, false, [
       "deriveKey",
@@ -1326,11 +1385,13 @@ describe("HMAC key length that is not a multiple of 8", () => {
       "encapsulateKey",
       "decapsulateKey",
     ])) as CryptoKeyPair;
+    // The types do not declare the static SubtleCrypto.supports().
+    const subtleCrypto = SubtleCrypto as unknown as { supports(...args: unknown[]): boolean };
     const results: Record<number, unknown> = {};
     for (const length of [256, 252, 249, 248, 264]) {
       const hmac = { name: "HMAC", hash: "SHA-256", length };
       results[length] = {
-        supports: SubtleCrypto.supports("encapsulateKey", "ML-KEM-768", hmac),
+        supports: subtleCrypto.supports("encapsulateKey", "ML-KEM-768", hmac),
         encapsulate: await crypto.subtle.encapsulateKey("ML-KEM-768", publicKey, hmac, true, ["sign"]).then(
           async ({ sharedKey, ciphertext }) => {
             const back = await crypto.subtle.decapsulateKey("ML-KEM-768", privateKey, ciphertext, hmac, true, ["sign"]);

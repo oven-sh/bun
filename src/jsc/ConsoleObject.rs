@@ -98,9 +98,9 @@ pub struct ConsoleObject {
 
     /// Indexed by [`Destination`]. Set while a message of this VM holds the
     /// stream mutex: from its first write to its end, for a message over
-    /// [`SPILL_AT`] or of one primitive string. The mutex is not recursive,
-    /// and a VM is the only one on its thread. So a message that ends inside
-    /// that one (a hook that logs) reads this and does not lock again.
+    /// [`SPILL_AT`] or of primitives only. The mutex is not recursive, and a
+    /// VM is the only one on its thread. So a message that ends inside that
+    /// one (a hook that logs) reads this and does not lock again.
     locked: [bool; 2],
 
     /// Indexed by [`Destination`]. The memory of the message over
@@ -390,6 +390,20 @@ fn write_end(fd: bun_sys::Fd, bytes: &[u8]) {
 /// capacity on Linux and macOS.
 const SPILL_AT: usize = 64 * 1024;
 
+/// Formatting these arguments of a `console.log`-type call runs no user code:
+/// each one is a string, a number, a boolean, `undefined` or `null`. No format
+/// specifier calls into JavaScript for these. A BigInt or a Symbol is not in
+/// the list: `%j` calls `toJSON` for a BigInt, and `%s` throws for a Symbol.
+fn runs_no_user_code(args: &[JSValue]) -> bool {
+    !args.is_empty()
+        && args.iter().all(|arg| {
+            arg.is_string_literal()
+                || arg.is_number()
+                || arg.is_boolean()
+                || arg.is_undefined_or_null()
+        })
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Hold {
     /// The whole message is in the stage.
@@ -399,18 +413,18 @@ enum Hold {
     /// The message passed [`SPILL_AT`]. What it held is on the fd, and the
     /// rest goes through `ConsoleObject::block`.
     Streaming,
-    /// The message is a `console.log`-type call of one primitive string, so no
-    /// user code runs before its end. It goes out as it is produced: through
-    /// the stage, and a chunk the stage cannot take from the string's own
-    /// memory.
+    /// The message is a `console.log`-type call of primitives only (see
+    /// [`runs_no_user_code`]), so no user code runs before its end. It goes
+    /// out as it is produced: through the stage, and a chunk the stage cannot
+    /// take from the memory of its producer, with no copy.
     Direct,
 }
 
 /// The sink of one console message. The message reaches the fd when it ends,
 /// and not at all when its formatting threw. So a console call made while
 /// another message is formatted prints first, and no user code runs with the
-/// stream mutex held. Only a message over [`SPILL_AT`] or of one primitive
-/// string starts to go out earlier.
+/// stream mutex held. Only a message over [`SPILL_AT`] or of primitives only
+/// starts to go out earlier.
 struct ConsoleWriter<'a> {
     /// `ptr[..len]` is what the message holds, in the stage or in `heap`, and
     /// `cap` is how much fits there. `len` and `cap` are 0 while it streams.
@@ -426,7 +440,7 @@ struct ConsoleWriter<'a> {
     /// console call made from there derefs the same box.
     console: *mut ConsoleObject,
     /// The arguments of a `console.log`-type call, empty for any other call.
-    /// One primitive string among them is a message that can go out early.
+    /// A message of primitives only can go out early.
     args: &'a [JSValue],
     stage: core::marker::PhantomData<&'a mut [core::mem::MaybeUninit<u8>; STAGE_SIZE]>,
 }
@@ -495,7 +509,7 @@ impl ConsoleWriter<'_> {
         match self.hold {
             Hold::Streaming => self.stream_bytes(bytes),
             Hold::Direct => self.write_direct(bytes),
-            Hold::Stage if matches!(self.args, [arg] if arg.is_string_literal()) => {
+            Hold::Stage if runs_no_user_code(self.args) => {
                 self.enter_stream();
                 self.hold = Hold::Direct;
                 self.write_direct(bytes);
@@ -740,8 +754,8 @@ fn emit(
     args: &[JSValue],
     format: impl FnOnce(&mut dyn bun_io::Write) -> JsResult<()>,
 ) -> JsResult<()> {
-    // A message of one primitive string holds the mutex and runs no user
-    // code, so no message starts inside it.
+    // A message of primitives only holds the mutex and runs no user code, so
+    // no message starts inside it.
     debug_assert!(with_console(console, |console| {
         !console.holds(stream) || console.block[stream as usize].capacity() != 0
     }));
@@ -906,8 +920,8 @@ fn print_message(
     // Read before the message is formatted: a group that a hook opens or
     // closes does not move this message.
     let default_indent = with_console(console, |console| console.default_indent);
-    // Another message type can run user code after the string is written:
-    // `console.trace` reads the `stack` of an Error.
+    // Another message type can run user code after its arguments are
+    // written: `console.trace` reads the `stack` of an Error.
     let args = if message_type == MessageType::Log {
         vals
     } else {

@@ -466,11 +466,12 @@ describe("a console message reaches the stream whole", () => {
         console.log(line);
         console.error(line);
       }
-      // The engine throws this one.
+      // The engine throws these two. A BigInt and a Symbol are not primitives that a message goes out early for.
       try { console.log(big + " %j z", 1n); } catch (e) { console.log(e instanceof TypeError); }
+      try { console.log(big + " %s z", Symbol("x")); } catch (e) { console.log(e instanceof TypeError); }
     `);
       const names = Object.keys(calls).join("\n") + "\n";
-      expect({ stdout, stderr, exitCode }).toEqual({ stdout: names + "true\n", stderr: names, exitCode: 0 });
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: names + "true\ntrue\n", stderr: names, exitCode: 0 });
     });
 
     it("console.assert", async () => {
@@ -813,6 +814,9 @@ describe("a console message reaches the stream whole", () => {
     // the last page of a pipe. What process.stdout.write() then finds no room for on a nonblocking pipe is
     // queued, and the next console message would overtake it. The write of one byte leaves a page with room.
     //
+    // A message of strings, numbers, booleans, undefined and null runs no user code. It is not held: its
+    // bytes go out as they are produced, and a long string is written from its own memory.
+    //
     // /proc/thread-self/io has the number of write-family syscalls of the calling thread. Only Linux has it,
     // and only with task I/O accounting in the kernel.
     it.skipIf(!(isLinux && existsSync("/proc/thread-self/io")))(
@@ -831,26 +835,28 @@ describe("a console message reaches the stream whole", () => {
         console.time("t");
         for (const size of ${JSON.stringify(sizes)}) {
           const s = Buffer.alloc(size, "x").toString();
-          count("two arguments", () => console.log(s, 1));
-          count("format string", () => console.log("%s!", s));
+          count("a string and an array", () => console.log(s, []));
+          count("format string", () => console.log("%s %o!", s, []));
           count("object", () => console.dir({ s }));
-          count("error", () => console.error("label", s));
+          count("error", () => console.error("label", s, []));
           count("trace", () => console.trace(s, 1));
           count("count", () => console.count(s));
           count("timeLog", () => console.timeLog("t", s, 1));
           console.time(s);
           count("timeEnd", () => console.timeEnd(s));
+          // The label, the string, and the line feed.
+          count("primitives only", () => console.error("label", s));
         }
-        // " 1" and the line feed are 3 more bytes.
-        count("4096 bytes", () => console.log(Buffer.alloc(4096 - 3, "x").toString(), 1));
-        count("4097 bytes", () => console.log(Buffer.alloc(4097 - 3, "x").toString(), 1));
-        count("64 KiB", () => console.log(Buffer.alloc(65536 - 3, "x").toString(), 1));
+        // " []" and the line feed are 4 more bytes.
+        count("4096 bytes", () => console.log(Buffer.alloc(4096 - 4, "x").toString(), []));
+        count("4097 bytes", () => console.log(Buffer.alloc(4097 - 4, "x").toString(), []));
+        count("64 KiB", () => console.log(Buffer.alloc(65536 - 4, "x").toString(), []));
         fs.writeFileSync(process.env.REPORT, JSON.stringify(writes));
       `);
         const twice = sizes.map(() => 2);
         expect({ report, exitCode }).toEqual({
           report: {
-            "two arguments": twice,
+            "a string and an array": twice,
             "format string": twice,
             "object": twice,
             "error": twice,
@@ -858,6 +864,7 @@ describe("a console message reaches the stream whole", () => {
             "count": twice,
             "timeLog": twice,
             "timeEnd": twice,
+            "primitives only": sizes.map(() => 3),
             "4096 bytes": [1],
             "4097 bytes": [2],
             "64 KiB": [2],

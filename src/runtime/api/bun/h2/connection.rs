@@ -398,6 +398,10 @@ pub(crate) struct Connection {
 
 impl Connection {
     pub(crate) fn new(is_server: bool, local: Settings) -> Self {
+        let mut hpack_decoder = bun_hpack::Decoder::new();
+        // A smaller table waits for the peer's ACK. A larger one does no harm before it, and Bun up to 1.4.4 fills it at once.
+        let default_table_size = Settings::default().header_table_size;
+        hpack_decoder.set_max_capacity(local.header_table_size.max(default_table_size));
         Connection {
             is_server,
             local_settings: local,
@@ -415,8 +419,7 @@ impl Connection {
             max_settings: 32,
             send_window: SendWindow::new(wire::DEFAULT_WINDOW_SIZE),
             recv_window: RecvWindow::new(wire::DEFAULT_WINDOW_SIZE),
-            // The peer goes by `local.header_table_size` only once it has acknowledged it.
-            hpack_decoder: bun_hpack::Decoder::new(),
+            hpack_decoder,
             streams: HashMap::new(),
             header_block_in_flight: None,
             header_block: Vec::new(),

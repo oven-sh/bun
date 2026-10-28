@@ -3577,14 +3577,17 @@ describe("HPACK (RFC 7541)", () => {
   });
 
   // Bun up to 1.4.4 is such a peer. nghttp2, and so Node, waits for the size update and answers with COMPRESSION_ERROR.
-  test("a peer may fill a larger acknowledged headerTableSize without a table size update", async () => {
+  test.each([
+    ["once it has acknowledged it", true],
+    ["before it has acknowledged it", false],
+  ])("a peer may fill a larger headerTableSize without a table size update, %s", async (_, acknowledged) => {
     const { srv, seen, port } = await listen({ settings: { headerTableSize: 65536 } });
     const c = await RawH2.connect(port);
     try {
       c.sendPreface();
       c.sendEmptySettings();
       await c.waitFor(isSettings);
-      c.sendSettingsAck();
+      if (acknowledged) c.sendSettingsAck();
       // 60 entries of 100 bytes.
       const entries = Array.from({ length: 60 }, (_, i) =>
         Buffer.concat([

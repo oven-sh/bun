@@ -189,7 +189,6 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       expect(fs.existsSync(ran) ? fs.readFileSync(ran, "utf8") : output).toBe("install\n");
       expect(exitCode).toBe(0);
     },
-    30_000,
   );
 
   test("bun init in folder", async () => {

@@ -63,6 +63,10 @@ const seenCodeEntries = [
   "native:NewCppFunction:ModuleGraph.cpp:jsFunctionModuleGraphOfFrame",
   "native:NewCppFunction:NodeModuleModule.cpp:jsFunctionIsModuleResolveFilenameSlowPathEnabled",
   "native:NewCppFunction:Worker.cpp:jsFunctionPostMessage",
+  "native:NewCppFunction:node/NodeTimers.cpp:functionSetImmediate",
+  "native:NewCppFunction:streams/JSReadableStreamDefaultReader.cpp:jsReadableStreamDefaultReaderPrototypeFunction_cancel",
+  "native:NewCppFunction:streams/JSReadableStreamDefaultReader.cpp:jsReadableStreamDefaultReaderPrototypeFunction_read",
+  "native:NewCppFunction:streams/JSReadableStreamDefaultReader.cpp:jsReadableStreamDefaultReaderPrototypeFunction_releaseLock",
   "native:Bindgen:napi_body.bind.ts:threadsafeFunctionLiveCount",
   "process.binding",
 ];

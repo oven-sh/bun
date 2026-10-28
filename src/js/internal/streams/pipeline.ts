@@ -128,7 +128,7 @@ function createHeldReader() {
     }
 
     [SymbolAsyncIterator]() {
-      this.#reader = new $ReadableStreamDefaultReader(this.#stream!);
+      this.#reader = new ReadableStreamDefaultReader(this.#stream!);
       return this;
     }
 
@@ -148,7 +148,7 @@ function createHeldReader() {
       if (cancelled === undefined) {
         let reader = this.#reader;
         try {
-          reader ??= new $ReadableStreamDefaultReader(this.#stream!);
+          reader ??= new ReadableStreamDefaultReader(this.#stream!);
           cancelled = PromisePrototypeThen.$call(readerCancel.$call(reader), undefined, nop);
           readerRelease.$call(reader);
         } catch {
@@ -186,7 +186,7 @@ function hold(stream, destroys) {
   if (destroys === undefined || !isReadableStream(stream)) return null;
   try {
     // Not the built-in iterator (a subclass, a property, a replacement on the prototype): the loop reads through it.
-    if (stream[SymbolAsyncIterator] !== $ReadableStream.prototype.$values) return null;
+    if (stream[SymbolAsyncIterator] !== ReadableStream.prototype.$values) return null;
   } catch {
     // A getter threw. The loop reads it again, where the pump reports the error.
     return null;

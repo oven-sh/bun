@@ -2366,7 +2366,7 @@ impl<'a> LinkerContext<'a> {
                     wrapper_ref,
                     loc,
                     other_flags.is_async_or_has_async_dependency,
-                )?;
+                );
             }
         }
 
@@ -5120,16 +5120,13 @@ pub struct StmtList {
     pub(crate) all_stmts: Vec<Stmt>,
 }
 
-/// A wrapper's dependency statements in source order. `joined` starts at the first async one.
+/// The statements a wrapper runs before its body. They keep source order up to the first async dependency.
 pub struct InsideWrapperPrefix {
     pub(crate) stmts: Vec<Stmt>,
-    joined: Vec<Joined>,
-}
-
-enum Joined {
-    /// `init_x` of an async dependency. Every call returns the same promise.
-    Async(Ref, Loc),
-    Sync(Stmt),
+    /// `init_x` of each async dependency. Every call returns the same promise.
+    awaited: Vec<(Ref, Loc)>,
+    /// Statements after the first async dependency that are not an `init_x()` of an `import`.
+    after_await: Vec<Stmt>,
 }
 
 fn init_call(wrapper_ref: Ref, loc: Loc) -> Expr {
@@ -5142,30 +5139,37 @@ fn init_call(wrapper_ref: Ref, loc: Loc) -> Expr {
     )
 }
 
+fn init_stmt(wrapper_ref: Ref, loc: Loc) -> Stmt {
+    Stmt::alloc(
+        S::SExpr {
+            value: init_call(wrapper_ref, loc),
+            ..Default::default()
+        },
+        loc,
+    )
+}
+
 impl InsideWrapperPrefix {
     fn init() -> Self {
         Self {
             stmts: Vec::new(),
-            joined: Vec::new(),
+            awaited: Vec::new(),
+            after_await: Vec::new(),
         }
     }
 
     pub(crate) fn reset(&mut self) {
         self.stmts.clear();
-        self.joined.clear();
-    }
-
-    pub(crate) fn has_joined(&self) -> bool {
-        !self.joined.is_empty()
+        self.awaited.clear();
+        self.after_await.clear();
     }
 
     pub(crate) fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
-        if self.joined.is_empty() {
+        if self.awaited.is_empty() {
             self.stmts.push(stmt);
-            return Ok(());
+        } else {
+            self.after_await.push(stmt);
         }
-
-        self.joined.push(Joined::Sync(stmt));
         Ok(())
     }
 
@@ -5176,91 +5180,55 @@ impl InsideWrapperPrefix {
         Ok(())
     }
 
-    /// `wrapper_ref` is the `init_x` of a wrapped ESM dependency.
-    pub(crate) fn append_dependency(
+    /// A second `import` or `export from` of one async module adds no second call.
+    fn append_awaited(&mut self, wrapper_ref: Ref, loc: Loc) {
+        if !self.awaited.iter().any(|(seen, _)| *seen == wrapper_ref) {
+            self.awaited.push((wrapper_ref, loc));
+        }
+    }
+
+    /// `init_x` of the wrapped ESM module that an `import` names. A sync one runs before the `await`.
+    pub(crate) fn append_dependency(&mut self, wrapper_ref: Ref, loc: Loc, is_async: bool) {
+        if is_async {
+            self.append_awaited(wrapper_ref, loc);
+        } else {
+            self.stmts.push(init_stmt(wrapper_ref, loc));
+        }
+    }
+
+    /// `init_x` of the wrapped ESM module that an `export *` names. One that is not awaited keeps its place.
+    pub(crate) fn append_export_star(
         &mut self,
         wrapper_ref: Ref,
         loc: Loc,
-        is_async: bool,
+        is_awaited: bool,
     ) -> Result<(), AllocError> {
-        if is_async {
-            // A second `import` or `export from` of one module adds no second call.
-            let repeated = self
-                .joined
-                .iter()
-                .any(|item| matches!(item, Joined::Async(seen, _) if *seen == wrapper_ref));
-            if !repeated {
-                self.joined.push(Joined::Async(wrapper_ref, loc));
-            }
+        if is_awaited {
+            self.append_awaited(wrapper_ref, loc);
             return Ok(());
         }
-        self.append_non_dependency(Stmt::alloc(
-            S::SExpr {
-                value: init_call(wrapper_ref, loc),
-                ..Default::default()
-            },
-            loc,
-        ))
+        self.append_non_dependency(init_stmt(wrapper_ref, loc))
     }
 
-    /// Moves the statements to the end of `out`, the `await` last.
-    pub(crate) fn finish(&mut self, promise_ref: Ref, out: &mut Vec<Stmt>) {
+    /// Moves the statements to the end of `out`. Returns true if it printed an `await`.
+    pub(crate) fn finish(&mut self, promise_ref: Ref, out: &mut Vec<Stmt>) -> bool {
         out.append(&mut self.stmts);
-        if self.joined.is_empty() {
-            return;
+        if self.awaited.is_empty() {
+            return false;
         }
 
-        let last_sync = self
-            .joined
-            .iter()
-            .rposition(|item| matches!(item, Joined::Sync(_)));
-        let mut awaited = bun_ast::ExprNodeList::init_capacity(self.joined.len());
-        for (index, item) in self.joined.iter().enumerate() {
-            match *item {
-                Joined::Sync(stmt) => out.push(stmt),
-                Joined::Async(wrapper_ref, loc) => {
-                    awaited.push(init_call(wrapper_ref, loc));
-                    if last_sync.is_some_and(|last| index < last) {
-                        // `init_a()?.catch(() => {})`: a later statement can throw. A re-entered `init_a()` is `undefined`.
-                        let mut handler = bun_ast::ExprNodeList::init_capacity(1);
-                        handler.append_assume_capacity(Expr::init(E::Arrow::default(), Loc::EMPTY));
-                        out.push(Stmt::alloc(
-                            S::SExpr {
-                                value: Expr::init(
-                                    E::Call {
-                                        target: Expr::init(
-                                            E::Dot {
-                                                target: init_call(wrapper_ref, loc),
-                                                name: b"catch".into(),
-                                                name_loc: Loc::EMPTY,
-                                                optional_chain: Some(bun_ast::OptionalChain::Start),
-                                                ..Default::default()
-                                            },
-                                            Loc::EMPTY,
-                                        ),
-                                        args: handler,
-                                        optional_chain: Some(bun_ast::OptionalChain::Continuation),
-                                        ..Default::default()
-                                    },
-                                    Loc::EMPTY,
-                                ),
-                                ..Default::default()
-                            },
-                            loc,
-                        ));
-                    }
-                }
-            }
+        let mut calls = bun_ast::ExprNodeList::init_capacity(self.awaited.len());
+        for &(wrapper_ref, loc) in &self.awaited {
+            calls.append_assume_capacity(init_call(wrapper_ref, loc));
         }
-
         // `await init_a()`, or `await Promise.all([init_a(), init_d()])`
-        let value = if awaited.len() == 1 {
-            awaited.slice()[0]
+        let value = if calls.len() == 1 {
+            calls.slice()[0]
         } else {
             let mut args = bun_ast::ExprNodeList::init_capacity(1);
             args.append_assume_capacity(Expr::init(
                 E::Array {
-                    items: awaited,
+                    items: calls,
                     ..Default::default()
                 },
                 Loc::EMPTY,
@@ -5289,7 +5257,9 @@ impl InsideWrapperPrefix {
             },
             Loc::EMPTY,
         ));
-        self.joined.clear();
+        self.awaited.clear();
+        out.append(&mut self.after_await);
+        true
     }
 }
 

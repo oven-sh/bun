@@ -273,15 +273,22 @@ pub(crate) fn convert_stmts_for_chunk(
                             let other_source_index = record.source_index.get() as usize;
                             let flag = c.graph.meta.items_flags()[other_source_index];
                             let wrapper_ref = c.graph.ast.items_wrapper_ref()[other_source_index];
-                            if flag.wrap == WrapKind::Esm
-                                && wrapper_ref.is_valid()
-                                && c.graph.files_live.is_set(other_source_index)
-                            {
-                                // A `__commonJS` wrapper is not an async function: it cannot await.
-                                stmts.inside_wrapper_prefix.append_dependency(
+                            if flag.wrap == WrapKind::Esm && wrapper_ref.is_valid() {
+                                // A `__commonJS` wrapper and a sync `__esm` wrapper are plain functions: they cannot await.
+                                let can_await = match wrap {
+                                    WrapKind::None => true,
+                                    WrapKind::Esm => {
+                                        c.graph.meta.items_flags()[source_index as usize]
+                                            .is_async_or_has_async_dependency
+                                    }
+                                    WrapKind::Cjs => false,
+                                };
+                                stmts.inside_wrapper_prefix.append_export_star(
                                     wrapper_ref,
                                     stmt.loc,
-                                    flag.is_async_or_has_async_dependency && wrap != WrapKind::Cjs,
+                                    can_await
+                                        && flag.is_async_or_has_async_dependency
+                                        && c.graph.files_live.is_set(other_source_index),
                                 )?;
                             }
                         }

@@ -444,7 +444,6 @@ impl WebWorker {
                         specifier,
                         &dot_slash,
                         &mut ignored_message,
-                        temp_log,
                     )
                 };
                 // A text that the build knew is compiled.
@@ -462,7 +461,6 @@ impl WebWorker {
                     spec_slice.slice(),
                     &dot_slash,
                     &mut ignored_message,
-                    temp_log,
                 )
             };
             crate::compiled_program::image_of_worker(path)

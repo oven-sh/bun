@@ -1,0 +1,3 @@
+{
+  "build": ["--aot-heat=nothing-is-hottest"]
+}

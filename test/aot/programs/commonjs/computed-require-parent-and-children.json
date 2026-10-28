@@ -1,0 +1,7 @@
+{
+  "entryPoints": [
+    "./child.js",
+    "./grandchild.js"
+  ],
+  "skipInShell": "it needs Bun's CommonJS modules"
+}

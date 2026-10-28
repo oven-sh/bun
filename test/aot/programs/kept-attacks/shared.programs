@@ -1,0 +1,2013 @@
+////: Body
+class Body {
+  mass: number;
+  label: string;
+  at = { x: 1 };
+  constructor(mass: number, label: string) {
+    this.mass = mass;
+    this.label = label;
+  }
+  weight(): number {
+    return this.mass * 2;
+  }
+  name(): string {
+    return this.label;
+  }
+}
+////: Body-2
+class Body {
+  mass: number;
+  label: string;
+  at = { x: 1 };
+  constructor(mass: number, label: string) {
+    this.mass = mass;
+    this.label = label;
+  }
+  weight(): number {
+    return this.mass * 2;
+  }
+  name(): string {
+    return this.label;
+  }
+  tell(): void {
+    seen.push(this === undefined ? "none" : this.mass);
+  }
+}
+////: Body-4
+////= Body
+
+////= Heavy
+
+////= Light
+
+////= measure
+////: Body-5
+////= Body-2
+
+////= Heavy
+
+////= Light
+
+////= measure
+////: Body-6
+////= Body
+
+////= Heavy
+
+////= Light-2
+
+////= measure
+////: Box
+class Box {
+  inner: Point;
+  constructor(inner: Point) {
+    this.inner = inner;
+  }
+}
+////: Branch
+class Branch {
+  leaf: Leaf;
+  weight: number;
+  constructor(leaf: Leaf, weight: number) {
+    this.leaf = leaf;
+    this.weight = weight;
+  }
+}
+////: Card
+class Card {
+  id: number;
+  declare note?: string;
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+////: Fuse
+class Fuse {
+  spark: number;
+  constructor(spark: number) {
+    this.spark = spark;
+  }
+}
+////: Heavy
+class Heavy extends Body {
+  extra = 5;
+  weight(): number {
+    return this.mass * 3 + this.extra;
+  }
+}
+////: Lamp
+class Lamp {
+  on: boolean;
+  watts: number;
+  constructor(on: boolean, watts: number) {
+    this.on = on;
+    this.watts = watts;
+  }
+}
+////: Leaf
+class Leaf {
+  value: number;
+  constructor(value: number) {
+    this.value = value;
+  }
+}
+////: Leaf-3
+class Leaf {
+  weight = 7;
+}
+////: Leaf-5
+////= Leaf
+////= Branch
+////: Light
+class Light extends Body {
+  lift = 1;
+  weight(): number {
+    return this.mass - this.lift;
+  }
+}
+////: Light-2
+class Light extends Body {
+  lift = 1;
+  weight(): number {
+    return this.mass - this.lift;
+  }
+  toString(): string {
+    (this as any).mass = "9";
+    return "light";
+  }
+}
+////: Object-defineProperty
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    Object.freeze(target);
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-10
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    Object.defineProperty(target, "left", { get: () => -7, enumerable: true, configurable: true });
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-11
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    Object.seal(target);
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-12
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    Object.setPrototypeOf(Square.prototype, otherBase);
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-13
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    Object.setPrototypeOf(target, { note: "inherited" });
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-14
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    Shape.prototype.kind = () => "replaced above";
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-15
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    delete target[1];
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-16
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    target.length = 1;
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-17
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    target.shift();
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-19
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    (target as any).«1» = «2»;
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-2
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    target.note = "filled";
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-20
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    (target as any).«1» = () => -«2»;
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-21
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    delete (target as any).«1»;
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-22
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    delete («1» as any).«2»;
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-23
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    «1»;
+    target.«2»;
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-24
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    «1»;
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-3
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    Square.prototype.area = function (this: Square) {
+      return -this.side;
+    };
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-4
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    delete target[1];
+    Object.setPrototypeOf(target, withAnElement);
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-5
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    (target as any).leaf = 17;
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-6
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    (target as any).right = "text";
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-7
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    (target as any).x = "text";
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-8
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    (target as any).x = { valueOf: () => 1000 };
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Object-defineProperty-9
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    (target as any)[names[0]] = 1000;
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: Point
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+////: Shape
+class Shape {
+  kind(): string {
+    return "shape";
+  }
+  area(): number {
+    return 0;
+  }
+}
+////: Shape-3
+////= Shape
+////= Square
+////: Square
+class Square extends Shape {
+  side: number;
+  constructor(side: number) {
+    super();
+    this.side = side;
+  }
+  area(): number {
+    return this.side * this.side;
+  }
+}
+////: build
+function build(shape: Record<string, Field>): Record<string, unknown> {
+  const accessor: Record<string, unknown> = {};
+  for (const key of Object.keys(shape)) Object.defineProperty(accessor, key, { get: getterFor(key, shape[key], accessor), configurable: true });
+  return accessor;
+}
+////: callee-2
+function callee(round: number): number {
+  strike();
+  return round & 3;
+}
+////: callee-26
+function callee(round: number): number {
+  return «1»(«2»).length + (round & 3);
+}
+////: callee-27
+function callee(round: number): number {
+  return «1» + (round & 3);
+}
+////: for
+for (let round = 0; round < 300; round++) {
+  const line = outer(round);
+  for (let index = 0; index < line.length; index++) digest = (digest * 31 + line.charCodeAt(index)) | 0;
+  if (round < 2 || (round >= 149 && round <= 152) || round === 299) console.log(round + ": " + line);
+}
+////: for-11
+for (let round = 0; round < 300; round++) {
+  const line = outer(round);
+  for (let index = 0; index < line.length; index++) digest = (digest * 31 + line.charCodeAt(index)) | 0;
+  if (round < 2 || (round >= 149 && round <= 152) || round === 299) console.log(round + ": " + line);
+  delete (Square.prototype as any).kind;
+}
+////: for-18
+for (let round = 0; round < «1»; round++) {
+  mode = round % 100 === 99 ? (round + 1) / 100 : 0;
+  const line = «2»(new «3»(«4», «5»));
+  if (mode || round === 0) console.log(round + ": " + line);
+}
+////: for-21
+for (let round = 0; round < «1»; round++) {
+  «2» = round % «3» === «4»;
+  const line = «5»(«6»);
+  if («2» || round === 0) console.log(round + ": " + line);
+}
+////: for-24
+for (let round = 0; round < 300; round++) {
+  strikes = round % 100 === 99;
+  const line = «1»);
+  if (strikes || round === 0) console.log(round + ": " + line);
+}
+////: for-25
+for (let round = 0; round < 300; round++) {
+  strikes = round % 100 === 99;
+  const line = holder(new Point(round, 1), round);
+  if (strikes || round «1»);
+}
+////: for-26
+for (let round = 0; round < 400; round++) {
+  mode = round % 100 === 99 ? (round + 1) / 100 : 0;
+  const line = «1»);
+  if (mode || round === 0) console.log(round + ": " + line);
+}
+////: for-27
+for (let round = 0; round < 500; round++) {
+  mode = round % 100 === 99 ? (round + 1) / 100 : 0;
+  const line = «1»);
+  if (mode || round === 0) console.log(round + ": " + line);
+}
+////: for-3
+for (let round = 0; round < 300; round++) {
+  const line = outer(round);
+  for (let index = 0; index < line.length; index++) digest = (digest * 31 + line.charCodeAt(index)) | 0;
+  if (round < 2 || (round >= 149 && round <= 152) || round === 299) console.log(round + ": " + line);
+  Square.prototype.area = areaOfSquare;
+}
+////: for-4
+for (let round = 0; round < 300; round++) {
+  strikes = round % 100 === 99;
+  const line = holder(new Point(round, 1));
+  if (strikes || round === 0) console.log(round + ": " + line);
+}
+////: for-5
+for (let round = 0; round < 300; round++) {
+  const line = outer(round);
+  for (let index = 0; index < line.length; index++) digest = (digest * 31 + line.charCodeAt(index)) | 0;
+  if (round < 2 || (round >= 149 && round <= 152) || round === 299) console.log(round + ": " + line);
+  Object.setPrototypeOf(Square.prototype, Shape.prototype);
+}
+////: for-6
+for (let round = 0; round < 300; round++) {
+  const line = outer(round);
+  for (let index = 0; index < line.length; index++) digest = (digest * 31 + line.charCodeAt(index)) | 0;
+  if (round < 2 || (round >= 149 && round <= 152) || round === 299) console.log(round + ": " + line);
+  Shape.prototype.kind = kindOfShape;
+}
+////: for-7
+for (let round = 0; round < 300; round++) {
+  const line = outer(round);
+  for (let index = 0; index < line.length; index++) digest = (digest * 31 + line.charCodeAt(index)) | 0;
+  if (round < 2 || (round >= 149 && round <= 152) || round === 299) console.log(round + ": " + line);
+  delete (Card.prototype as any).note;
+}
+////: framesOf
+function framesOf(stack: string): string {
+  const frames: string[] = [];
+  for (const line of stack.split("\n")) {
+    const frame = /^\s*at (\w+) \(.*:(\d+):(\d+)\)$/.exec(line);
+    if (frame && own.has(frame[1])) frames.push(frame[1] + "@" + frame[2] + ":" + frame[3]);
+  }
+  return frames.join(" < ");
+}
+////: getterFor
+function getterFor(key: string, field: Field, unread: object): () => unknown {
+  let lastRaw: unknown = unread;
+  let lastParsed: unknown;
+  return () => {
+    const raw = process.env[key];
+    if (raw !== lastRaw) {
+      lastParsed = field.parse(raw);
+      lastRaw = raw;
+    }
+    return lastParsed;
+  };
+}
+////: holder
+function holder(p: number[], round: number): string {
+  const before = p[0] + p[3] + p.length;
+  const got = callee(round);
+  let sum = 0;
+  for (let index = 0; index < p.length; index++) sum += p[index];
+  const after = sum + "," + p.length + "," + p[1] + "," + p[3];
+  return before + " " + got + " " + after;
+}
+////: holder-10
+function holder(p: Point, round: number): string {
+  const before = p.x + p.y;
+  const got = callee(round);
+  let stored = "stored";
+  try {
+    p.x = 5;
+  } catch (error) {
+    stored = (error as Error).name;
+  }
+  const after = stored + "," + p.x + "," + p.y + "," + Object.isFrozen(p);
+  return before + " " + got + " " + after;
+}
+////: holder-11
+function holder(p: Point, round: number): string {
+  const before = p.x + p.y;
+  const got = callee(round);
+  let stored = "stored";
+  try {
+    p.x = 5;
+  } catch (error) {
+    stored = (error as Error).name;
+  }
+  const after = stored + "," + p.x + "," + p.y;
+  return before + " " + got + " " + after;
+}
+////: holder-12
+function holder(p: Point, round: number): string {
+  let keysBefore = "";
+  for (const key in p) keysBefore += key;
+  const before = keysBefore + (p.x + p.y);
+  const got = callee(round);
+  let keys = "";
+  for (const key in p) keys += key;
+  const after = keys + "," + p.x + "," + JSON.stringify(p) + "," + Object.keys({ ...p }).length;
+  return before + " " + got + " " + after;
+}
+////: holder-13
+function holder(p: Point, round: number): string {
+  const before = p.x + p.y;
+  const got = callee(round);
+  const after = p.x + "," + p.y + "," + ("x" in p) + "," + Object.keys(p).join("");
+  return before + " " + got + " " + after;
+}
+////: holder-14
+function holder(p: Point, round: number): string {
+  const before = p.x + p.y;
+  const got = callee(round);
+  const first = p.x;
+  p.x = 5;
+  const after = first + "," + p.x + "," + p.y + "," + reads + "," + stores;
+  return before + " " + got + " " + after;
+}
+////: holder-15
+function holder(p: Point, round: number): string {
+  const before = p.x + p.y;
+  const got = callee(round);
+  let keys = "";
+  for (const key in p) keys += key;
+  const after = p.x + "," + p.y + "," + keys;
+  return before + " " + got + " " + after;
+}
+////: holder-16
+function holder(p: number[], round: number): string {
+  const before = p[0] + p[3] + p.length;
+  const got = callee(round);
+  const after = p.push(7) + "," + p.length + "," + p[p.length - 1];
+  return before + " " + got + " " + after;
+}
+////: holder-17
+function holder(p: number[], round: number): string {
+  const before = p[0] + p[3] + p.length;
+  const got = callee(round);
+  let sum = 0;
+  for (let index = 0; index < p.length; index++) sum += p[index];
+  const after = sum + "," + p.length + "," + p[1] + "," + (1 in p);
+  return before + " " + got + " " + after;
+}
+////: holder-19
+function holder(p: Card, round: number): string {
+  const before = p.id + ":" + p.note;
+  const got = callee(round);
+  p.note = "mine";
+  const after = p.note + "," + caught + "," + Object.keys(p).join("");
+  return before + " " + got + " " + after;
+}
+////: holder-2
+function holder(p: Branch, round: number): string {
+  const leaf = p.leaf;
+  const before = leaf.value + p.weight;
+  const got = callee(round);
+  let through: string;
+  try {
+    through = String(p.leaf.value);
+  } catch (error) {
+    through = (error as Error).name;
+  }
+  const after = through + "," + leaf.value + "," + (p.leaf === leaf) + "," + p.weight;
+  return before + " " + got + " " + after;
+}
+////: holder-21
+function holder(p: Pair, round: number): string {
+  const before = p.left + p.right + ":" + p.note;
+  const got = callee(round);
+  const after = p.left + "," + (p.right + 1) + "," + typeof p.right;
+  return before + " " + got + " " + after;
+}
+////: holder-22
+function holder(p: Pair, round: number): string {
+  const before = p.left + p.right + ":" + p.note;
+  const got = callee(round);
+  const after = p.left + "," + p.right + "," + JSON.stringify(p);
+  return before + " " + got + " " + after;
+}
+////: holder-24
+function holder(p: Pair, round: number): string {
+  const before = p.left + p.right + ":" + p.note;
+  const got = callee(round);
+  const after = p.note + "," + p.left + "," + ("note" in p) + "," + Object.keys(p).join("");
+  return before + " " + got + " " + after;
+}
+////: holder-26
+function holder(p: Point, round: number): string {
+  const before = p.x + p.y;
+  const got = callee(round);
+  const after = 1 / p.x + "," + Object.is(p.x, -0) + "," + p.y;
+  return before + " " + got + " " + after;
+}
+////: holder-3
+function holder(p: Square, round: number): string {
+  const before = p.area() + p.kind();
+  const got = callee(round);
+  const after = p.area() + "," + p.kind() + "," + p.side + "," + (p instanceof Square);
+  return before + " " + got + " " + after;
+}
+////: holder-31
+function holder(p: Point, «1»: number): string {
+  const before = p.x;
+  const got = «2»(p, «1»);
+  return before + " " + got + " " + p.x + "," + p.y;
+}
+////: holder-32
+function holder(p: Branch, round: number): string {
+  const leaf = p.leaf;
+  const before = leaf.value + p.weight;
+  const got = «1»;
+  let through: string;
+  try {
+    through = String(p.leaf.value);
+  } catch (error) {
+    through = (error as Error).name;
+  }
+  const after = through + "," + leaf.value + "," + (p.leaf === leaf) + "," + p.weight;
+  return before + " " + got + " " + after;
+}
+////: holder-33
+function holder(p: Point, round: number): string {
+  const before = p.x + p.y;
+  const got = «1»;
+  let stored = "stored";
+  try {
+    p.x = 5;
+  } catch (error) {
+    stored = (error as Error).name;
+  }
+  const after = stored + "," + p.x + "," + p.y + "," + Object.isFrozen(p);
+  return before + " " + got + " " + after;
+}
+////: holder-35
+function holder(p: number[], round: number): string {
+  const before = p[0] + p[3] + p.length;
+  const got = «1»);
+  let sum = 0;
+  for (let index = 0; index < p.length; index++) sum += p[index];
+  const after = sum + "," + p.length + "," + p[1] + "," + «2»;
+  return before + " " + got + " " + after;
+}
+////: holder-36
+function holder(p: Pair, round: number): string {
+  const before = p.left + p.right + ":" + p.note;
+  const got = «1»;
+  const after = p.left + "," + «2»;
+  return before + " " + got + " " + after;
+}
+////: holder-37
+function holder(p: Point, round: number): string {
+  const before = p.x + p.y;
+  const got = callee(«1»);
+  const after = «2»;
+  return before + " " + got + " " + after;
+}
+////: holder-38
+function holder(p: Square, round: number): string {
+  const before = p.area() + p.kind();
+  const got = «1»;
+  const after = p.area() + "," + p.kind() + "," + p.side + "," + (p instanceof Square);
+  return before + " " + got + " " + after;
+}
+////: holder-39
+////= holder-3
+
+////= outer-8
+////: holder-4
+function holder(p: Point, round: number): string {
+  const before = p.x + p.y;
+  const got = callee(round);
+  const after = (p.x + 1) + "," + typeof p.x + "," + p.y;
+  return before + " " + got + " " + after;
+}
+////: holder-40
+////= holder
+
+////= outer-3
+////: holder-41
+////= holder
+
+////= outer-5
+////: holder-42
+////= holder
+
+////= outer
+////: holder-43
+////= holder-3
+
+////= outer-4
+////: holder-44
+////= holder-3
+
+////= outer-2
+////: holder-45
+////= holder-2
+
+////= outer-7
+////: holder-46
+////= holder-4
+
+////= outer-10
+////: holder-47
+////= holder-2
+
+////= outer-9
+////: holder-5
+function holder(p: Card, round: number): string {
+  const before = p.id + ":" + p.note;
+  const got = callee(round);
+  let stored = "stored";
+  try {
+    p.note = "late";
+  } catch (error) {
+    stored = (error as Error).name;
+  }
+  const after = stored + "," + p.note + "," + p.id + "," + Object.keys(p).join("");
+  return before + " " + got + " " + after;
+}
+////: holder-6
+function holder(p: Card, round: number): string {
+  const before = p.id + ":" + p.note;
+  const got = callee(round);
+  const after = p.note + "," + p.id + "," + ("note" in p) + "," + Object.keys(p).join("");
+  return before + " " + got + " " + after;
+}
+////: holder-7
+function holder(p: number[], round: number): string {
+  const before = p[0] + p[3] + p.length;
+  const got = callee(round);
+  let stored = "stored";
+  try {
+    p[0] = 9;
+    p.push(1);
+  } catch (error) {
+    stored = (error as Error).name;
+  }
+  const after = stored + "," + p[0] + "," + p.length;
+  return before + " " + got + " " + after;
+}
+////: holder-8
+function holder(p: Lamp, round: number): string {
+  const before = (p.on ? "lit" : "dark") + p.watts;
+  const got = callee(round);
+  const after = (p.on ? "lit" : "dark") + "," + (p.on === true) + "," + (p.on === false) + "," + typeof p.on + "," + p.watts;
+  return before + " " + got + " " + after;
+}
+////: holder-9
+function holder(p: Point, round: number): string {
+  const before = p.x + p.y;
+  const got = callee(round);
+  const after = p.x + "," + p.y;
+  return before + " " + got + " " + after;
+}
+////: hot
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    Object.freeze(target);
+    return 1;
+  },
+};
+////: hot-10
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    (target as any).x = { valueOf: () => 1000 };
+    return 1;
+  },
+};
+////: hot-11
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    (target as any)[names[0]] = 1000;
+    return 1;
+  },
+};
+////: hot-12
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    Object.defineProperty(target, "left", { get: () => -7, enumerable: true, configurable: true });
+    return 1;
+  },
+};
+////: hot-13
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    Object.setPrototypeOf(Square.prototype, otherBase);
+    return 1;
+  },
+};
+////: hot-15
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    Shape.prototype.kind = () => "replaced above";
+    return 1;
+  },
+};
+////: hot-16
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    delete (target as any).x;
+    return 1;
+  },
+};
+////: hot-17
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    target.length = 1;
+    return 1;
+  },
+};
+////: hot-18
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    (target as any).«1» = «2»;
+    return 1;
+  },
+};
+////: hot-19
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    «1»(«2»);
+    return 1;
+  },
+};
+////: hot-2
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    target.note = "filled";
+    return 1;
+  },
+};
+////: hot-20
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    delete («1» as any).«2»;
+    return 1;
+  },
+};
+////: hot-21
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    «1»;
+    target.«2»;
+    return 1;
+  },
+};
+////: hot-22
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    «1»;
+    return 1;
+  },
+};
+////: hot-3
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    Square.prototype.area = function (this: Square) {
+      return -this.side;
+    };
+    return 1;
+  },
+};
+////: hot-4
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    delete target[1];
+    Object.setPrototypeOf(target, withAnElement);
+    return 1;
+  },
+};
+////: hot-5
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    (Square.prototype as any).kind = () => "now its own";
+    return 1;
+  },
+};
+////: hot-6
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    (target as any).leaf = 17;
+    return 1;
+  },
+};
+////: hot-7
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    (target as any).on = 0;
+    return 1;
+  },
+};
+////: hot-8
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    (target as any).push = () => -1;
+    return 1;
+  },
+};
+////: hot-9
+const hot: any = {
+  valueOf(): number {
+    spark = 0;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    (target as any).right = "text";
+    return 1;
+  },
+};
+////: lines
+await Promise.resolve()
+  .then(() => {
+    throw world[0];
+  })
+  .finally(() => {})
+  .catch(caught => {
+    (caught as any).mass = "9";
+  });
+////: lines-15
+class «1» {
+  constructor(«2») {
+    this.«2» = «2»;
+  }
+}
+////: lines-18
+class «1» {
+  «2»: «3»;
+  constructor(«2»: «3») {
+    this.«2» = «2»;
+  }
+}
+////: lines-20
+class «1» {
+  id: number;
+  declare «2»?: string;
+  declare note?: string;
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+////: lines-24
+class «1» extends «2» {
+  «3» = «4»;
+}
+////: lines-25
+function «1»(«2») {
+  return «3»;
+}
+////: lines-30
+function «1»(«2»: «3»): «4» {
+  return { ...«2» };
+}
+////: lines-31
+function «1»(p: Point): number {
+  const got = «2»(p);
+  return got + p.y;
+}
+////: lines-32
+function «1»(round: number): number {
+  return «2»(round) + 1;
+}
+////: lines-40
+function «1»(round: number): number {
+  return «2»(round + «3»);
+}
+////: lines-41
+function «1»(«2», «3») {
+  this.«2» = «2»;
+  this.«3» = «3»;
+}
+////: lines-44
+try {
+  console.log(«1»));
+} catch (error) {
+  console.log(error instanceof TypeError);
+}
+////: lines-5
+function «1»(«2») {
+  return «3»(«4»);
+}
+////: lines-7
+class «1» {
+  «2»: «3»;
+  «4»: number;
+  constructor(«2»: «3», «4»: number) {
+    this.«2» = «2»;
+    this.«4» = «4»;
+  }
+}
+////: measure
+function measure(bodies: Body[]): string {
+  let total = 0;
+  let letters = 0;
+  try {
+    for (let round = 0; round < 200; round++) {
+      for (const body of bodies) {
+        total += body.weight() + body.mass + body.at.x;
+        letters += body.name().length;
+      }
+    }
+  } catch (error) {
+    return (error as Error).name;
+  }
+  return (typeof total === "number" ? String(total) : typeof total + String(total).length) + "/" + letters;
+}
+////: outer
+function outer(round: number): string {
+  const p: number[] = [round, round + 1, round + 2, round + 3];
+  const before = p[0] + p[3] + p.length;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    fuse = lit;
+  }
+  const inner = holder(p, round);
+  let sum = 0;
+  for (let index = 0; index < p.length; index++) sum += p[index];
+  const after = sum + "," + p.length + "," + p[1] + "," + p[3];
+  return before + " [" + inner + "] " + after;
+}
+////: outer-10
+function outer(round: number): string {
+  const p: Point = new Point(round, round + 1);
+  const before = p.x + p.y;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    fuse = lit;
+  }
+  const inner = holder(p, round);
+  const after = (p.x + 1) + "," + typeof p.x + "," + p.y;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-11
+function outer(round: number): string {
+  const p: Card = new Card(round);
+  const before = p.id + ":" + p.note;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    fuse = lit;
+  }
+  const inner = holder(p, round);
+  let stored = "stored";
+  try {
+    p.note = "late";
+  } catch (error) {
+    stored = (error as Error).name;
+  }
+  const after = stored + "," + p.note + "," + p.id + "," + Object.keys(p).join("");
+  return before + " [" + inner + "] " + after;
+}
+////: outer-12
+function outer(round: number): string {
+  const p: Point = new Point(round, round + 1);
+  const before = p.x + p.y;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    fuse = lit;
+  }
+  const inner = holder(p, round);
+  let stored = "stored";
+  try {
+    p.x = 5;
+  } catch (error) {
+    stored = (error as Error).name;
+  }
+  const after = stored + "," + p.x + "," + p.y + "," + Object.isFrozen(p);
+  return before + " [" + inner + "] " + after;
+}
+////: outer-13
+function outer(round: number): string {
+  const p: Point = new Point(round, round + 1);
+  const before = p.x + p.y;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    spark = hot;
+  }
+  const inner = holder(p, round);
+  let stored = "stored";
+  try {
+    p.x = 5;
+  } catch (error) {
+    stored = (error as Error).name;
+  }
+  const after = stored + "," + p.x + "," + p.y + "," + Object.isFrozen(p);
+  return before + " [" + inner + "] " + after;
+}
+////: outer-14
+function outer(round: number): string {
+  const p: Card = new Card(round);
+  const before = p.id + ":" + p.note;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    fuse = lit;
+  }
+  const inner = holder(p, round);
+  const after = p.note + "," + p.id + "," + ("note" in p) + "," + Object.keys(p).join("");
+  return before + " [" + inner + "] " + after;
+}
+////: outer-15
+function outer(round: number): string {
+  const p: Card = new Card(round);
+  const before = p.id + ":" + p.note;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    spark = hot;
+  }
+  const inner = holder(p, round);
+  const after = p.note + "," + p.id + "," + ("note" in p) + "," + Object.keys(p).join("");
+  return before + " [" + inner + "] " + after;
+}
+////: outer-16
+function outer(round: number): string {
+  const p: Lamp = new Lamp((round & 1) === 0, round);
+  const before = (p.on ? "lit" : "dark") + p.watts;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    spark = hot;
+  }
+  const inner = holder(p, round);
+  const after = (p.on ? "lit" : "dark") + "," + (p.on === true) + "," + (p.on === false) + "," + typeof p.on + "," + p.watts;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-17
+function outer(round: number): string {
+  const p: Point = new Point(round, round + 1);
+  const before = p.x + p.y;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    fuse = lit;
+  }
+  const inner = holder(p, round);
+  const after = p.x + "," + p.y;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-18
+function outer(round: number): string {
+  const p: Point = new Point(round, round + 1);
+  const before = p.x + p.y;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    spark = hot;
+  }
+  const inner = holder(p, round);
+  const after = (p.x + 1) + "," + typeof p.x + "," + p.y;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-19
+function outer(round: number): string {
+  const p: Point = new Point(round, round + 1);
+  const before = p.x + p.y;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    spark = hot;
+  }
+  const inner = holder(p, round);
+  const after = p.x + "," + p.y;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-2
+function outer(round: number): string {
+  const p: Square = new Square(round);
+  const before = p.area() + p.kind();
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    spark = hot;
+  }
+  const inner = holder(p, round);
+  const after = p.area() + "," + p.kind() + "," + p.side + "," + (p instanceof Square);
+  return before + " [" + inner + "] " + after;
+}
+////: outer-20
+function outer(round: number): string {
+  const p: Point = new Point(round, round + 1);
+  const before = p.x + p.y;
+  if (round === 150 || round === 151 || round === 299) victim = p;
+  const inner = holder(p, round);
+  const after = (p.x + 1) + "," + typeof p.x + "," + p.y;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-21
+function outer(round: number): string {
+  const p: Card = new Card(round);
+  const before = p.id + ":" + p.note;
+  if (round === 150 || round === 151 || round === 299) victim = p;
+  const inner = holder(p, round);
+  let stored = "stored";
+  try {
+    p.note = "late";
+  } catch (error) {
+    stored = (error as Error).name;
+  }
+  const after = stored + "," + p.note + "," + p.id + "," + Object.keys(p).join("");
+  return before + " [" + inner + "] " + after;
+}
+////: outer-22
+function outer(round: number): string {
+  const p: Point = new Point(round, round + 1);
+  const before = p.x + p.y;
+  if (round === 150 || round === 151 || round === 299) victim = p;
+  const inner = holder(p, round);
+  let stored = "stored";
+  try {
+    p.x = 5;
+  } catch (error) {
+    stored = (error as Error).name;
+  }
+  const after = stored + "," + p.x + "," + p.y + "," + Object.isFrozen(p);
+  return before + " [" + inner + "] " + after;
+}
+////: outer-23
+function outer(round: number): string {
+  const p: number[] = [round, round + 1, round + 2, round + 3];
+  const before = p[0] + p[3] + p.length;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    fuse = lit;
+  }
+  const inner = holder(p, round);
+  let sum = 0;
+  for (let index = 0; index < p.length; index++) sum += p[index];
+  const after = sum + "," + p.length + "," + p[1] + "," + (1 in p);
+  return before + " [" + inner + "] " + after;
+}
+////: outer-24
+function outer(round: number): string {
+  const p: Card = new Card(round);
+  const before = p.id + ":" + p.note;
+  if (round === 150 || round === 151 || round === 299) victim = p;
+  const inner = holder(p, round);
+  const after = p.note + "," + p.id + "," + ("note" in p) + "," + Object.keys(p).join("");
+  return before + " [" + inner + "] " + after;
+}
+////: outer-25
+function outer(round: number): string {
+  const p: Lamp = new Lamp((round & 1) === 0, round);
+  const before = (p.on ? "lit" : "dark") + p.watts;
+  if (round === 150 || round === 151 || round === 299) victim = p;
+  const inner = holder(p, round);
+  const after = (p.on ? "lit" : "dark") + "," + (p.on === true) + "," + (p.on === false) + "," + typeof p.on + "," + p.watts;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-26
+function outer(round: number): string {
+  const p: Lamp = new Lamp((round & 1) === 0, round);
+  const before = (p.on ? "lit" : "dark") + p.watts;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    fuse = lit;
+  }
+  const inner = holder(p, round);
+  const after = (p.on ? "lit" : "dark") + "," + (p.on === true) + "," + (p.on === false) + "," + typeof p.on + "," + p.watts;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-27
+function outer(round: number): string {
+  const p: Pair = { left: round, right: round + 1 };
+  const before = p.left + p.right + ":" + p.note;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    fuse = lit;
+  }
+  const inner = holder(p, round);
+  const after = p.left + "," + (p.right + 1) + "," + typeof p.right;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-28
+function outer(round: number): string {
+  const p: Pair = { left: round, right: round + 1 };
+  const before = p.left + p.right + ":" + p.note;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    fuse = lit;
+  }
+  const inner = holder(p, round);
+  const after = p.left + "," + p.right + "," + JSON.stringify(p);
+  return before + " [" + inner + "] " + after;
+}
+////: outer-29
+function outer(round: number): string {
+  const p: Pair = { left: round, right: round + 1 };
+  const before = p.left + p.right + ":" + p.note;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    spark = hot;
+  }
+  const inner = holder(p, round);
+  const after = p.left + "," + (p.right + 1) + "," + typeof p.right;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-3
+function outer(round: number): string {
+  const p: number[] = [round, round + 1, round + 2, round + 3];
+  const before = p[0] + p[3] + p.length;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    spark = hot;
+  }
+  const inner = holder(p, round);
+  let sum = 0;
+  for (let index = 0; index < p.length; index++) sum += p[index];
+  const after = sum + "," + p.length + "," + p[1] + "," + p[3];
+  return before + " [" + inner + "] " + after;
+}
+////: outer-30
+function outer(round: number): string {
+  const p: Pair = { left: round, right: round + 1 };
+  const before = p.left + p.right + ":" + p.note;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    spark = hot;
+  }
+  const inner = holder(p, round);
+  const after = p.left + "," + p.right + "," + JSON.stringify(p);
+  return before + " [" + inner + "] " + after;
+}
+////: outer-31
+function outer(round: number): string {
+  const p: Point = new Point(round, round + 1);
+  const before = p.x + p.y;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    spark = hot;
+  }
+  const inner = holder(p, round);
+  const after = p.x + "," + p.y + "," + ("x" in p) + "," + Object.keys(p).join("");
+  return before + " [" + inner + "] " + after;
+}
+////: outer-32
+function outer(round: number): string {
+  const p: number[] = [round, round + 1, round + 2, round + 3];
+  const before = p[0] + p[3] + p.length;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    spark = hot;
+  }
+  const inner = holder(p, round);
+  const after = p.push(7) + "," + p.length + "," + p[p.length - 1];
+  return before + " [" + inner + "] " + after;
+}
+////: outer-33
+function outer(round: number): string {
+  const p: Pair = { left: round, right: round + 1 };
+  const before = p.left + p.right + ":" + p.note;
+  if (round === 150 || round === 151 || round === 299) victim = p;
+  const inner = holder(p, round);
+  const after = p.left + "," + (p.right + 1) + "," + typeof p.right;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-34
+function outer(round: number): string {
+  const p: Pair = { left: round, right: round + 1 };
+  const before = p.left + p.right + ":" + p.note;
+  if (round === 150 || round === 151 || round === 299) victim = p;
+  const inner = holder(p, round);
+  const after = p.left + "," + p.right + "," + JSON.stringify(p);
+  return before + " [" + inner + "] " + after;
+}
+////: outer-35
+function outer(round: number): string {
+  const p: Point = new Point(round, round + 1);
+  const before = p.x + p.y;
+  if (round === 150 || round === 151 || round === 299) victim = p;
+  const inner = holder(p, round);
+  const after = p.x + "," + p.y + "," + ("x" in p) + "," + Object.keys(p).join("");
+  return before + " [" + inner + "] " + after;
+}
+////: outer-36
+function outer(round: number): string {
+  const p: Point = new Point(round, round + 1);
+  const before = p.x + p.y;
+  if (round === 150 || round === 151 || round === 299) victim = p;
+  const inner = holder(p, round);
+  const after = p.x + "," + p.y;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-37
+function outer(round: number): string {
+  const p: Pair = { left: round, right: round + 1 };
+  const before = p.left + p.right + ":" + p.note;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    «1» = «2»;
+  }
+  const inner = holder(p, round);
+  const after = p.«3» + "," + p.«4» + "," + Object.keys(p).join("");
+  return before + " [" + inner + "] " + after;
+}
+////: outer-38
+function outer(round: number): string {
+  const p: number[] = [round, round + 1, round + 2, round + 3];
+  const before = p[0] + p[3] + p.length;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    «1» = «2»;
+  }
+  const inner = holder(p, round);
+  let stored = "stored";
+  try {
+    p[0] = 9;
+    p.push(1);
+  } catch (error) {
+    stored = (error as Error).name;
+  }
+  const after = stored + "," + p[0] + "," + p.length;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-39
+function outer(round: number): string {
+  const p: Point = new Point(round, round + 1);
+  const before = p.x + p.y;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    «1» = «2»;
+  }
+  const inner = holder(p, round);
+  let stored = "stored";
+  try {
+    p.x = 5;
+  } catch (error) {
+    stored = (error as Error).name;
+  }
+  const after = stored + "," + p.x + "," + p.y;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-4
+function outer(round: number): string {
+  const p: Square = new Square(round);
+  const before = p.area() + p.kind();
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    fuse = lit;
+  }
+  const inner = holder(p, round);
+  const after = p.area() + "," + p.kind() + "," + p.side + "," + (p instanceof Square);
+  return before + " [" + inner + "] " + after;
+}
+////: outer-40
+function outer(round: number): string {
+  const p: Point = new Point(round, round + 1);
+  let keysBefore = "";
+  for (const key in p) keysBefore += key;
+  const before = keysBefore + (p.x + p.y);
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    «1» = «2»;
+  }
+  const inner = holder(p, round);
+  let keys = "";
+  for (const key in p) keys += key;
+  const after = keys + "," + p.x + "," + JSON.stringify(p) + "," + Object.keys({ ...p }).length;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-41
+function outer(round: number): string {
+  const p: Point = new Point(round, round + 1);
+  const before = p.x + p.y;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    «1» = «2»;
+  }
+  const inner = holder(p, round);
+  let keys = "";
+  for (const key in p) keys += key;
+  const after = p.x + "," + p.y + "," + keys;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-43
+function outer(round: number): string {
+  const p: Card = new Card(round);
+  const before = p.id + ":" + p.note;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    «1» = «2»;
+  }
+  const inner = holder(p, round);
+  p.note = "mine";
+  const after = p.note + "," + caught + "," + Object.keys(p).join("");
+  return before + " [" + inner + "] " + after;
+}
+////: outer-45
+function outer(round: number): string {
+  const p: Pair = { left: round, right: round + 1 };
+  const before = p.left + p.right + ":" + p.note;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    «1» = «2»;
+  }
+  const inner = holder(p, round);
+  const after = p.note + "," + p.left + "," + ("note" in p) + "," + Object.keys(p).join("");
+  return before + " [" + inner + "] " + after;
+}
+////: outer-49
+function outer(round: number): string {
+  const p: Pair = { left: round, right: round + 1 };
+  const before = p.left + p.right + ":" + p.note;
+  if (round === 150 || round === 151 || round === 299) victim = p;
+  const inner = holder(p, round);
+  const after = p.«1» + "," + p.«2» + "," + Object.keys(p).join("");
+  return before + " [" + inner + "] " + after;
+}
+////: outer-5
+function outer(round: number): string {
+  const p: number[] = [round, round + 1, round + 2, round + 3];
+  const before = p[0] + p[3] + p.length;
+  if (round === 150 || round === 151 || round === 299) victim = p;
+  const inner = holder(p, round);
+  let sum = 0;
+  for (let index = 0; index < p.length; index++) sum += p[index];
+  const after = sum + "," + p.length + "," + p[1] + "," + p[3];
+  return before + " [" + inner + "] " + after;
+}
+////: outer-50
+function outer(round: number): string {
+  const p: «1»;
+  const before = p«2»;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    fuse = lit;
+  }
+  const inner = holder(p, round);
+  const after = p.«3»;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-51
+function outer(round: number): string {
+  const p: Point = new Point(round, round + 1);
+  const before = p.x + p.y;
+  if (round === 150 || round === 151 || round === 299) victim = p;
+  const inner = holder(p, round);
+  «1»;
+  «2»;
+  const after = «3»s;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-52
+function outer(round: number): string {
+  const p: «1»;
+  const before = p«2»;
+  if (round === 150 || round === 151 || round === 299) victim = p;
+  const inner = holder(p, round);
+  const after = «3»;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-6
+function outer(round: number): string {
+  const p: Branch = new Branch(new Leaf(round), round + 1);
+  const leaf = p.leaf;
+  const before = leaf.value + p.weight;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    fuse = lit;
+  }
+  const inner = holder(p, round);
+  let through: string;
+  try {
+    through = String(p.leaf.value);
+  } catch (error) {
+    through = (error as Error).name;
+  }
+  const after = through + "," + leaf.value + "," + (p.leaf === leaf) + "," + p.weight;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-7
+function outer(round: number): string {
+  const p: Branch = new Branch(new Leaf(round), round + 1);
+  const leaf = p.leaf;
+  const before = leaf.value + p.weight;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    spark = hot;
+  }
+  const inner = holder(p, round);
+  let through: string;
+  try {
+    through = String(p.leaf.value);
+  } catch (error) {
+    through = (error as Error).name;
+  }
+  const after = through + "," + leaf.value + "," + (p.leaf === leaf) + "," + p.weight;
+  return before + " [" + inner + "] " + after;
+}
+////: outer-8
+function outer(round: number): string {
+  const p: Square = new Square(round);
+  const before = p.area() + p.kind();
+  if (round === 150 || round === 151 || round === 299) victim = p;
+  const inner = holder(p, round);
+  const after = p.area() + "," + p.kind() + "," + p.side + "," + (p instanceof Square);
+  return before + " [" + inner + "] " + after;
+}
+////: outer-9
+function outer(round: number): string {
+  const p: Branch = new Branch(new Leaf(round), round + 1);
+  const leaf = p.leaf;
+  const before = leaf.value + p.weight;
+  if (round === 150 || round === 151 || round === 299) victim = p;
+  const inner = holder(p, round);
+  let through: string;
+  try {
+    through = String(p.leaf.value);
+  } catch (error) {
+    through = (error as Error).name;
+  }
+  const after = through + "," + leaf.value + "," + (p.leaf === leaf) + "," + p.weight;
+  return before + " [" + inner + "] " + after;
+}
+////: settings
+const settings = build({ HOME: text, NOT_THERE_1: flag, PATH: text, NOT_THERE_2: flag, USER: text, NOT_THERE_3: flag }) as {
+  HOME: string; NOT_THERE_1: boolean; PATH: string; NOT_THERE_2: boolean; USER: string; NOT_THERE_3: boolean;
+};
+////: strike
+function strike(): boolean {
+  return fuse.spark === 1;
+}
+////: strike-10
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  (target as any).x = { valueOf: () => 1000 };
+  return true;
+}
+////: strike-11
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  Object.defineProperty(target, "left", { get: () => -7, enumerable: true, configurable: true });
+  return true;
+}
+////: strike-12
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  Object.seal(target);
+  return true;
+}
+////: strike-13
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  Object.setPrototypeOf(Square.prototype, otherBase);
+  return true;
+}
+////: strike-14
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  Object.setPrototypeOf(target, Shape.prototype);
+  return true;
+}
+////: strike-15
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  Object.setPrototypeOf(target, { note: "inherited" });
+  return true;
+}
+////: strike-16
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  Shape.prototype.kind = () => "replaced above";
+  return true;
+}
+////: strike-17
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  delete (target as any).x;
+  return true;
+}
+////: strike-18
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  target.length = 1;
+  return true;
+}
+////: strike-19
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  target.push(0.5);
+  return true;
+}
+////: strike-2
+function strike(): boolean {
+  return spark * 1 === 1;
+}
+////: strike-21
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  (target as any).«1» = «2»;
+  return true;
+}
+////: strike-23
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  delete («1» as any).«2»;
+  return true;
+}
+////: strike-24
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  «1»;
+  target.«2»;
+  return true;
+}
+////: strike-25
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  «1»;
+  return true;
+}
+////: strike-3
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  Object.freeze(target);
+  return true;
+}
+////: strike-4
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  target.note = "filled";
+  return true;
+}
+////: strike-5
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  delete target[1];
+  Object.setPrototypeOf(target, withAnElement);
+  return true;
+}
+////: strike-6
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  (target as any).leaf = 17;
+  return true;
+}
+////: strike-7
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  (target as any).on = 0;
+  return true;
+}
+////: strike-8
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  (target as any).right = "text";
+  return true;
+}
+////: strike-9
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  (target as any).x = "text";
+  return true;
+}
+////: touch
+function touch(p: Point): number {
+  if (strikes) delete (p as any).x;
+  return 1;
+}

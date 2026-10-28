@@ -1,0 +1,4 @@
+{
+  "build": ["--aot-validate"],
+  "runWithASAN": "JSCell::isPristineArray() asserts that the flag of a cell is the flag of its structure"
+}

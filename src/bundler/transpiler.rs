@@ -2,6 +2,8 @@
 // `Transpiler` — the legacy single-file transpile path (pre-`bundle_v2`).
 // ══════════════════════════════════════════════════════════════════════════
 
+use core::cell::OnceCell;
+
 use bun_alloc::Arena;
 use bun_collections::HashMap;
 use bun_collections::VecExt;
@@ -17,7 +19,7 @@ pub(crate) type ResolveResults = HashMap<u64, ()>;
 // `bun_collections::LinearFifo<T, DynamicBuffer<T>>` would be exact,
 // but `DynamicBuffer` isn't re-exported from `bun_collections` yet. `VecDeque`
 // is structurally equivalent (growable ring buffer); swap once the re-export lands.
-pub(crate) type ResolveQueue = std::collections::VecDeque<resolver::Result>;
+pub(crate) type ResolveQueue = std::collections::VecDeque<resolver::Result<'static>>;
 
 /// The canonical newtype lives in `bun_ast::Macro` (the lowest tier that
 /// stores it, in `MacroContext.javascript_object`); re-exported here.
@@ -331,7 +333,11 @@ impl<'a> Transpiler<'a> {
         }
     }
 
-    fn _resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
+    fn _resolve_entry_point<'e>(
+        &mut self,
+        entry_point: &'e [u8],
+        dot_slash: &'e OnceCell<Vec<u8>>,
+    ) -> crate::Result<resolver::Result<'e>> {
         let top_level_dir = self.fs().top_level_dir();
         let first = match self.resolver.resolve_with_framework(
             top_level_dir,
@@ -353,14 +359,11 @@ impl<'a> Transpiler<'a> {
         if !bun_paths::is_absolute(entry_point)
             && !(entry_point.starts_with(b"./") || entry_point.starts_with(b".\\"))
         {
-            let mut prefixed = Vec::with_capacity(2 + entry_point.len());
-            prefixed.extend_from_slice(b"./");
-            prefixed.extend_from_slice(entry_point);
-            // `Resolver::resolve` interns the path internally,
-            // so the heap buffer can drop after the call.
+            let prefixed = dot_slash.get_or_init(|| [b"./", entry_point].concat());
+            assert_eq!(&prefixed[2..], entry_point, "`dot_slash` was reused");
             if let Ok(r) = self.resolver.resolve(
                 top_level_dir,
-                &prefixed,
+                prefixed,
                 bun_ast::ImportKind::EntryPointBuild,
             ) {
                 if !r.flags.is_external() {
@@ -374,8 +377,13 @@ impl<'a> Transpiler<'a> {
 
     /// Resolve an entry-point specifier, busting the directory cache and
     /// retrying once on failure before reporting the error to the log.
-    pub fn resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
-        match self._resolve_entry_point(entry_point) {
+    /// The result may borrow `entry_point` and `dot_slash`, an empty cell for its `./` spelling.
+    pub fn resolve_entry_point<'e>(
+        &mut self,
+        entry_point: &'e [u8],
+        dot_slash: &'e OnceCell<Vec<u8>>,
+    ) -> crate::Result<resolver::Result<'e>> {
+        match self._resolve_entry_point(entry_point, dot_slash) {
             Ok(r) => self.reject_unbundleable_entry_point(r, entry_point),
             Err(err) => {
                 let mut cache_bust_buf = bun_paths::path_buffer_pool::get();
@@ -432,7 +440,7 @@ impl<'a> Transpiler<'a> {
 
                 // Only re-query if we previously had something cached.
                 if busted {
-                    if let Ok(result) = self._resolve_entry_point(entry_point) {
+                    if let Ok(result) = self._resolve_entry_point(entry_point, dot_slash) {
                         return self.reject_unbundleable_entry_point(result, entry_point);
                     }
                     // ignore this error, we will print the original error
@@ -454,11 +462,11 @@ impl<'a> Transpiler<'a> {
 
     /// A disabled module imports as `{}` and an external one stays an import. An entry point has
     /// nothing to emit in either case. `--external` skips entry points, so external means builtin.
-    fn reject_unbundleable_entry_point(
+    fn reject_unbundleable_entry_point<'e>(
         &self,
-        resolved: resolver::Result,
+        resolved: resolver::Result<'e>,
         entry_point: &[u8],
-    ) -> crate::Result<resolver::Result> {
+    ) -> crate::Result<resolver::Result<'e>> {
         let is_builtin = if resolved.flags.is_external() {
             true
         } else if resolved.path_const().is_some() {
@@ -630,6 +638,19 @@ impl<'a> Transpiler<'a> {
         }
     }
 
+    /// [`bun_resolver::Resolver::aot_package_config`]. It fills caches of the resolver, so only the thread that owns this
+    /// `Transpiler` may ask. A thread that works on a copy is handed the answer.
+    pub fn find_aot_package_config(
+        &mut self,
+        path: &[u8],
+        loader: options::Loader,
+    ) -> Option<std::sync::Arc<TSConfigJSON>> {
+        match loader.is_typescript() {
+            true => self.resolver.aot_package_config(path),
+            false => None,
+        }
+    }
+
     /// [`Self::configure_linker_with_auto_jsx`] with `auto_jsx = true`.
     #[inline]
     pub fn configure_linker(&mut self) {
@@ -779,7 +800,7 @@ impl AlreadyBundled {
 // so `AsyncModule.parse_result` / `JSTranspiler`
 // can store this by value without threading a borrow lifetime.
 pub struct ParseResult<'a> {
-    pub source: bun_ast::Source,
+    pub source: bun_ast::Source<'a>,
     pub loader: options::Loader,
     pub ast: bun_ast::Ast<'a>,
     pub already_bundled: AlreadyBundled,
@@ -800,8 +821,7 @@ pub struct ParseResult<'a> {
 
     /// Owns the bytes that `source.contents` points into when they came from
     /// `cache::Fs::read_file_with_allocator` (non-shared-buffer path) or a
-    /// decoded `data:` URL. `bun_ast::Source.contents` is `&'static [u8]`
-    /// (the AST crate's `Str` convention) so the backing must live at least as long as
+    /// decoded `data:` URL. That borrow is erased, so the backing must live at least as long as
     /// the `ParseResult`; threading it here means it drops when the result is
     /// recycled instead of leaking via `mem::forget` (PORTING.md §Forbidden).
     /// `Contents::Empty`/`SharedBuffer` for the virtual-source / shared-buffer
@@ -836,7 +856,7 @@ impl<'a> ParseResult<'a> {
     #[inline]
     fn empty_with(
         arena: &'a bun_alloc::Arena,
-        source: bun_ast::Source,
+        source: bun_ast::Source<'a>,
         loader: options::Loader,
         source_contents_backing: resolver::cache::Contents,
     ) -> Self {
@@ -862,6 +882,19 @@ impl<'a> ParseResult<'a> {
 }
 
 /// Per-file inputs to the transpiler's parse step.
+impl ParseOptions<'_, '_> {
+    /// What a package with the "aot" condition says about JSX, decorators and class fields, in place of what the program says.
+    pub fn apply_aot_package_config(&mut self, own: &TSConfigJSON) {
+        self.jsx = own.merge_jsx(crate::options_impl::jsx::Pragma {
+            development: self.jsx.development,
+            ..Default::default()
+        });
+        self.emit_decorator_metadata = own.emit_decorator_metadata;
+        self.experimental_decorators = own.experimental_decorators;
+        self.use_define_for_class_fields = own.use_define_for_class_fields != Some(false);
+    }
+}
+
 pub struct ParseOptions<'a, 'b> {
     pub arena: &'a Arena,
     pub dirname_fd: FD,
@@ -870,14 +903,14 @@ pub struct ParseOptions<'a, 'b> {
     /// On exception, we might still want to watch the file.
     pub file_fd_ptr: Option<&'b mut FD>,
 
-    pub path: bun_paths::fs::Path<'static>,
+    pub path: bun_paths::fs::Path<'a>,
     pub loader: options::Loader,
     /// `BundleOptions.jsx` — the file-backed `options_impl::jsx::Pragma`, NOT
     /// the lib.rs shim. Callers pass `transpiler.options.jsx.clone()`.
     pub jsx: crate::options_impl::jsx::Pragma,
     pub macro_remappings: MacroRemap,
     pub macro_js_ctx: MacroJSCtx,
-    pub virtual_source: Option<&'b bun_ast::Source>,
+    pub virtual_source: Option<&'b bun_ast::Source<'a>>,
     pub replace_exports: bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport>,
     pub inject_jest_globals: bool,
     pub set_breakpoint_on_first_line: bool,
@@ -979,7 +1012,7 @@ fn init_file_system(top_level_dir: Option<&'static [u8]>) -> crate::Result<*mut 
 /// is the icache/decode footprint of the prologue, not the cold body itself.
 #[cold]
 #[inline(never)]
-fn resolver_bundle_options_subset(
+pub(crate) fn resolver_bundle_options_subset(
     src: &options::BundleOptions<'_>,
 ) -> resolver::options::BundleOptions {
     use resolver::options as ropts;
@@ -1004,6 +1037,7 @@ fn resolver_bundle_options_subset(
                 default: src.extension_order.node_modules.default.clone(),
                 esm: src.extension_order.node_modules.esm.clone(),
             },
+            required_by_package: Box::default(),
             css: ropts::owned_string_list(ropts::bundle_options::defaults::CSS_EXTENSION_ORDER),
         },
         conditions: ropts::Conditions {
@@ -1241,19 +1275,20 @@ impl<'a> Transpiler<'a> {
         Ok(())
     }
 
-    pub fn parse(
+    /// `'p` is the parse's own lifetime (arena, path, virtual source), not the `Transpiler`'s.
+    pub fn parse<'p>(
         &mut self,
-        this_parse: ParseOptions<'a, '_>,
-        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
-    ) -> Option<ParseResult<'a>> {
+        this_parse: ParseOptions<'p, '_>,
+        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint<'p>>,
+    ) -> Option<ParseResult<'p>> {
         self.parse_maybe_return_file_only::<false>(this_parse, client_entry_point_)
     }
 
-    pub fn parse_maybe_return_file_only<const RETURN_FILE_ONLY: bool>(
+    pub fn parse_maybe_return_file_only<'p, const RETURN_FILE_ONLY: bool>(
         &mut self,
-        this_parse: ParseOptions<'a, '_>,
-        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
-    ) -> Option<ParseResult<'a>> {
+        this_parse: ParseOptions<'p, '_>,
+        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint<'p>>,
+    ) -> Option<ParseResult<'p>> {
         self.parse_maybe_return_file_only_allow_shared_buffer::<RETURN_FILE_ONLY, false>(
             this_parse,
             client_entry_point_,
@@ -1261,15 +1296,40 @@ impl<'a> Transpiler<'a> {
     }
 
     pub fn parse_maybe_return_file_only_allow_shared_buffer<
+        'p,
         const RETURN_FILE_ONLY: bool,
         const USE_SHARED_BUFFER: bool,
     >(
         &mut self,
-        mut this_parse: ParseOptions<'a, '_>,
+        this_parse: ParseOptions<'p, '_>,
+        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint<'p>>,
+    ) -> Option<ParseResult<'p>> {
+        self.parse_internal::<RETURN_FILE_ONLY, USE_SHARED_BUFFER, false>(
+            this_parse,
+            client_entry_point_,
+        )
+    }
+
+    /// References no JavaScript parser, so `--trim` can remove the parser and keep this.
+    pub fn parse_data_file<'p, const RETURN_FILE_ONLY: bool>(
+        &mut self,
+        this_parse: ParseOptions<'p, '_>,
+    ) -> Option<ParseResult<'p>> {
+        self.parse_internal::<RETURN_FILE_ONLY, false, true>(this_parse, None)
+    }
+
+    fn parse_internal<
+        'p,
+        const RETURN_FILE_ONLY: bool,
+        const USE_SHARED_BUFFER: bool,
+        const DATA_ONLY: bool,
+    >(
+        &mut self,
+        mut this_parse: ParseOptions<'p, '_>,
         // The only caller passes `EntryPoints::ClientEntryPoint`, so the
         // param is typed concretely.
-        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
-    ) -> Option<ParseResult<'a>> {
+        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint<'p>>,
+    ) -> Option<ParseResult<'p>> {
         let arena = this_parse.arena;
         let dirname_fd = this_parse.dirname_fd;
         let file_descriptor = this_parse.file_descriptor;
@@ -1289,7 +1349,7 @@ impl<'a> Transpiler<'a> {
         // (`Drop` is a no-op).
         let mut source_backing: resolver::cache::Contents = resolver::cache::Contents::Empty;
 
-        let source: &'a bun_ast::Source = arena.alloc('brk: {
+        let source: &'p bun_ast::Source<'p> = arena.alloc('brk: {
             if let Some(virtual_source) = this_parse.virtual_source {
                 break 'brk virtual_source.clone();
             }
@@ -1298,7 +1358,7 @@ impl<'a> Transpiler<'a> {
                 break 'brk client_entry_point.source.clone();
             }
 
-            if path.namespace == b"node" {
+            if !DATA_ONLY && path.namespace == b"node" {
                 if let Some(code) = NodeFallbackModules::contents_from_path(path.text) {
                     break 'brk bun_ast::Source::init_path_string(path.text, code);
                 }
@@ -1383,8 +1443,7 @@ impl<'a> Transpiler<'a> {
             if let Some(file_fd_ptr) = this_parse.file_fd_ptr {
                 *file_fd_ptr = entry.fd;
             }
-            // `Source.contents: &'static [u8]` (the AST crate's `Str`
-            // convention). The bytes live either in the per-thread shared
+            // The bytes live either in the per-thread shared
             // buffer (`USE_SHARED_BUFFER` → `Contents::SharedBuffer`, no-op
             // drop) or in `this_parse.arena` (`Contents::Arena`, no-op drop —
             // bulk-freed by `mi_heap_destroy` when the per-call arena is
@@ -1397,8 +1456,7 @@ impl<'a> Transpiler<'a> {
             // `source.contents` (it is moved into the returned `ParseResult`,
             // and the only consumers are the parser/printer which run before
             // the result drops). `contents_is_recycled = true` records that
-            // the bytes are externally-owned; threading `'bump` would remove
-            // the erasure.
+            // the bytes are externally-owned.
             let contents: &'static [u8] =
                 unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
             match bun_ast::Source::init_recycled_file(&bun_ast::PathContentsPair { path, contents })
@@ -1434,7 +1492,9 @@ impl<'a> Transpiler<'a> {
             options::Loader::Js
             | options::Loader::Jsx
             | options::Loader::Ts
-            | options::Loader::Tsx => {
+            | options::Loader::Tsx
+                if !DATA_ONLY =>
+            {
                 // wasm magic number
                 if source.is_web_assembly() {
                     return Some(ParseResult::empty_with(
@@ -1577,12 +1637,10 @@ impl<'a> Transpiler<'a> {
                 // `crate::defines::Define` IS
                 // `bun_js_parser::defines::Define`. Hand the parser the real
                 // table so user `--define` values apply at parse time.
-                let define: &'a js_ast::defines::Define;
-                // SAFETY: `self.options.define` / `self.macro_context` are
-                // owned by the long-lived `Transpiler`; the parser borrows
-                // them for `'a` (arena lifetime). Erase to `'a` so the
-                // returned `Ast<'a>` is not pinned to the `&mut self` borrow
-                // — neither field is dropped while a parse is in flight.
+                let define: &'p js_ast::defines::Define;
+                // SAFETY: `self.options.define` / `self.macro_context` are owned by the
+                // long-lived `Transpiler`, and neither is dropped while a parse is in flight.
+                // Erased to `'p` so the returned `Ast<'p>` is not pinned to the `&mut self` borrow.
                 unsafe {
                     let define_ptr: *const js_ast::defines::Define =
                         &raw const *self.options.define;
@@ -1722,7 +1780,7 @@ impl<'a> Transpiler<'a> {
             options::Loader::Text => {
                 return parse_text_loader(source, loader, source_backing, arena);
             }
-            options::Loader::Md => {
+            options::Loader::Md if !DATA_ONLY => {
                 return parse_md_loader(source, loader, source_backing, arena, log);
             }
             options::Loader::Wasm => {
@@ -1737,7 +1795,12 @@ impl<'a> Transpiler<'a> {
                 );
             }
             options::Loader::Css => {}
-            options::Loader::File
+            options::Loader::Js
+            | options::Loader::Jsx
+            | options::Loader::Ts
+            | options::Loader::Tsx
+            | options::Loader::Md
+            | options::Loader::File
             | options::Loader::Napi
             | options::Loader::Base64
             | options::Loader::Dataurl
@@ -1761,7 +1824,7 @@ impl<'a> Transpiler<'a> {
 #[cold]
 #[inline(never)]
 fn parse_data_loader<'a>(
-    source: &bun_ast::Source,
+    source: &bun_ast::Source<'a>,
     loader: options::Loader,
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
@@ -2026,7 +2089,7 @@ fn parse_data_loader<'a>(
 #[cold]
 #[inline(never)]
 fn parse_text_loader<'a>(
-    source: &bun_ast::Source,
+    source: &bun_ast::Source<'a>,
     loader: options::Loader,
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
@@ -2066,7 +2129,7 @@ fn parse_text_loader<'a>(
 #[cold]
 #[inline(never)]
 fn parse_md_loader<'a>(
-    source: &bun_ast::Source,
+    source: &bun_ast::Source<'a>,
     loader: options::Loader,
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
@@ -2122,11 +2185,11 @@ fn parse_md_loader<'a>(
 #[cold]
 #[inline(never)]
 fn parse_wasm_loader<'a>(
-    source: &bun_ast::Source,
+    source: &bun_ast::Source<'a>,
     loader: options::Loader,
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
-    path: &bun_paths::fs::Path<'static>,
+    path: &bun_paths::fs::Path<'_>,
     target: options::Target,
     log: &mut bun_ast::Log,
 ) -> Option<ParseResult<'a>> {
@@ -2159,7 +2222,7 @@ fn parse_wasm_loader<'a>(
 
 #[cold]
 #[inline(never)]
-fn parse_unsupported_loader(loader: options::Loader, path: &bun_paths::fs::Path<'static>) -> ! {
+fn parse_unsupported_loader(loader: options::Loader, path: &bun_paths::fs::Path<'_>) -> ! {
     // Programmer-error hard crash, NOT a
     // silent `None` (PORTING.md §Forbidden: silent no-op).
     bun_core::Output::panic(format_args!(
@@ -2569,7 +2632,7 @@ impl<'a> Transpiler<'a> {
 
     /// Returns only the count and lets
     /// `linker.enqueue_resolve_result` push directly onto `resolve_queue`.
-    fn enqueue_entry_points<const NORMALIZE_ENTRY_POINT: bool>(&mut self) -> usize {
+    fn enqueue_entry_points(&mut self) -> usize {
         let mut entry_point_i: usize = 0;
 
         // snapshot entry points so the `&mut self` resolver call
@@ -2578,11 +2641,7 @@ impl<'a> Transpiler<'a> {
         let top_level_dir = self.fs().top_level_dir();
 
         for _entry in entries.iter() {
-            let entry: &[u8] = if NORMALIZE_ENTRY_POINT {
-                self.normalize_entry_point_path(_entry)
-            } else {
-                _entry
-            };
+            let entry = self.normalize_entry_point_path(_entry);
 
             let _reset = bun_ast::StoreResetGuard::new();
 
@@ -2627,7 +2686,7 @@ impl<'a> Transpiler<'a> {
         log: *mut bun_ast::Log,
         _opts: api::TransformOptions,
     ) -> crate::Result<options::TransformResult> {
-        let _ = self.enqueue_entry_points::<true>();
+        let _ = self.enqueue_entry_points();
 
         // `log` is the same `*mut Log` stored on `self.log`; caller
         // (`BuildCommand::exec`) holds it for the process lifetime.
@@ -2774,7 +2833,7 @@ impl<'a> Transpiler<'a> {
         resolve_result: &resolver::Result,
         import_path_format: options::ImportPathFormat,
         _outstream: TransformOutstream,
-        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
+        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint<'a>>,
     ) -> crate::Result<Option<options::OutputFile>> {
         if resolve_result.flags.is_external() {
             return Ok(None);

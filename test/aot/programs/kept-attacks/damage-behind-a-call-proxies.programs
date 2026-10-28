@@ -1,0 +1,490 @@
+////: callee-24
+function callee(round: number): number {
+  watched.level = round;
+  return round & 3;
+}
+////: callee-28
+function callee(round: number): number {
+  return «1» «2» «3» ? round & 3 : -1;
+}
+////: outer-48
+function outer(round: number): string {
+  const p: Point = new Point(round, round + 1);
+  const before = p.x + p.y;
+  if (round === 150 || round === 151 || round === 299) {
+    victim = p;
+    «1» = «2»;
+  }
+  const inner = holder(p, round);
+  const after = 1 / p.x + "," + Object.is(p.x, -0) + "," + p.y;
+  return before + " [" + inner + "] " + after;
+}
+////: watched
+const watched = new Proxy(
+  { level: 1 },
+  {
+    get(target, key, receiver) {
+      strike();
+      return Reflect.get(target, key, receiver);
+    },
+  },
+);
+////: watched-2
+const watched = new Proxy(
+  { level: 1 },
+  {
+    has(target, key) {
+      strike();
+      return key in target;
+    },
+  },
+);
+////: watched-3
+const watched = new Proxy(
+  { level: 1 },
+  {
+    ownKeys(target) {
+      strike();
+      return Reflect.ownKeys(target);
+    },
+  },
+);
+////: watched-4
+const watched = new Proxy(
+  { level: 1 },
+  {
+    set(target, key, value, receiver) {
+      strike();
+      return Reflect.set(target, key, value, receiver);
+    },
+  },
+);
+////: watched-5
+const watched = new Proxy((round: number) => round & 3, {
+  apply(target, thisValue, list) {
+    strike();
+    return Reflect.apply(target, thisValue, list);
+  },
+});
+////: watched-6
+const watched = new Proxy(new Marker(), {
+  getPrototypeOf(target) {
+    strike();
+    return Reflect.getPrototypeOf(target);
+  },
+});
+//// damage-behind-a-call-proxies/the-apply-trap-of-a-proxy-adds-a-property.ts
+// A typed caller reads an object, makes a call and reads it again. The apply trap of a proxy around a function, which a call in the callee runs, adds a property that the class does not declare.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Point
+
+let victim: Point | null = null;
+let spark: number = 0;
+////= hot-18	z	3
+////= strike-2
+
+////= watched-5
+////= lines-32	callee	watched
+
+////= holder-12
+
+////= outer-40	spark	hot
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-proxies/the-apply-trap-of-a-proxy-defines-a-setter-above-an-absent-field.ts
+// A typed caller reads an object, makes a call and reads it again. The apply trap of a proxy around a function, which a call in the callee runs, defines a setter on the prototype object under the name of an optional field that the object does not have.
+////= Card
+let caught = "";
+
+let victim: Card | null = null;
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  Object.defineProperty(Card.prototype, "note", {
+    set(value: string) {
+      caught += value;
+    },
+    configurable: true,
+  });
+  return true;
+}
+
+////= watched-5
+////= lines-32	callee	watched
+
+////= holder-19
+
+function outer(round: number): string {
+  const p: Card = new Card(round);
+  const before = p.id + ":" + p.note;
+  if (round === 150 || round === 151 || round === 299) victim = p;
+  const inner = holder(p, round);
+  p.note = "mine";
+  const after = p.note + "," + caught + "," + Object.keys(p).join("");
+  return before + " [" + inner + "] " + after;
+}
+
+let digest = 0;
+////= for-7
+console.log("digest " + digest);
+//// damage-behind-a-call-proxies/the-apply-trap-of-a-proxy-freezes-an-array.ts
+// A typed caller reads an array, makes a call and reads it again. The apply trap of a proxy around a function, which a call in the callee runs, freezes the array.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+
+let victim: number[] | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty
+////= strike
+
+////= watched-5
+////= lines-32	callee	watched
+
+////= holder-7
+
+////= outer-38	fuse	lit
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-proxies/the-get-prototype-of-trap-of-a-proxy-deletes-a-field-and-stores-it-again.ts
+// A typed caller reads an object, makes a call and reads it again. The getPrototypeOf trap of a proxy, which an instanceof in the callee runs, deletes a field of the object and stores it again, so that it is the last key.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Point
+
+let victim: Point | null = null;
+let spark: number = 0;
+////= hot-21	delete (target as any).x	x = 8
+////= strike-2
+
+class Marker {}
+////= watched-6
+////= callee-28	watched	instanceof	Marker
+
+////= holder-15
+
+////= outer-41	spark	hot
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-proxies/the-get-prototype-of-trap-of-a-proxy-deletes-a-method-so-that-the-inherited-one-shows.ts
+// A typed caller reads an object, makes a call and reads it again. The getPrototypeOf trap of a proxy, which an instanceof in the callee runs, deletes a method of the class, so that the one of the base class shows.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+
+let victim: Square | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-22	Square.prototype	area
+////= strike
+
+class Marker {}
+////= watched-6
+////= callee-28	watched	instanceof	Marker
+
+////= holder-43
+
+let digest = 0;
+////= for-3
+console.log("digest " + digest);
+//// damage-behind-a-call-proxies/the-get-prototype-of-trap-of-a-proxy-gives-a-literal-another-prototype.ts
+// A typed caller reads an object, makes a call and reads it again. The getPrototypeOf trap of a proxy, which an instanceof in the callee runs, gives the object, which an object literal has made, a prototype that has the name of an optional field that the object does not have.
+type Pair = { left: number; right: number; note?: string };
+
+let victim: Pair | null = null;
+////= strike-15
+
+class Marker {}
+////= watched-6
+////= callee-28	watched	instanceof	Marker
+
+////= holder-24
+
+////= outer-52	Pair = { left: round, right: round + 1 }	.left + p.right + ":" + p.note	p.note + "," + p.left + "," + ("note" in p) + "," + Object.keys(p).join("")
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-proxies/the-get-trap-of-a-proxy-stores-a-stranger-into-a-reference-field.ts
+// A typed caller reads an object, makes a call and reads it again. The get trap of a proxy, which a read of a property in the callee runs, stores an object of another shape into a field that is declared to hold an instance of a class.
+////= Leaf-5
+
+let victim: Branch | null = null;
+////= strike-25	(target as any).leaf = { other: 1, value: "stranger" }
+
+////= watched
+////= callee-27	watched.level
+
+////= holder-47
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-proxies/the-get-trap-of-a-proxy-stores-far-beyond-the-end-of-an-array.ts
+// A typed caller reads an array, makes a call and reads it again. The get trap of a proxy, which a read of a property in the callee runs, stores far beyond the end of the array, so that it becomes sparse.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+
+let victim: number[] | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-24	target[20000] = 1
+////= strike
+
+////= watched
+////= callee-27	watched.level
+
+////= holder-42
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-proxies/the-get-trap-of-a-proxy-stores-minus-zero-and-a-large-number.ts
+// A typed caller reads an object, makes a call and reads it again. The get trap of a proxy, which a read of a property in the callee runs, stores -0 and a number beyond 32 bits into fields that have held only small integers, which their type allows.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Point
+
+let victim: Point | null = null;
+let spark: number = 0;
+////= hot-21	target.x = -0	y = 2 ** 40 + 1
+////= strike-2
+
+////= watched
+////= callee-27	watched.level
+
+////= holder-26
+
+////= outer-48	spark	hot
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-proxies/the-has-trap-of-a-proxy-deletes-a-method-so-that-the-inherited-one-shows.ts
+// A typed caller reads an object, makes a call and reads it again. The has trap of a proxy, which an `in` in the callee runs, deletes a method of the class, so that the one of the base class shows.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+
+let victim: Square | null = null;
+let spark: number = 0;
+////= hot-20	Square.prototype	area
+////= strike-2
+
+////= watched-2
+////= callee-28	"level"	in	watched
+
+////= holder-44
+
+let digest = 0;
+////= for-3
+console.log("digest " + digest);
+//// damage-behind-a-call-proxies/the-has-trap-of-a-proxy-gives-a-literal-another-prototype.ts
+// A typed caller reads an object, makes a call and reads it again. The has trap of a proxy, which an `in` in the callee runs, gives the object, which an object literal has made, a prototype that has the name of an optional field that the object does not have.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+type Pair = { left: number; right: number; note?: string };
+
+let victim: Pair | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-13
+////= strike
+
+////= watched-2
+////= callee-28	"level"	in	watched
+
+////= holder-24
+
+////= outer-45	fuse	lit
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-proxies/the-has-trap-of-a-proxy-makes-a-field-an-accessor.ts
+// A typed caller reads an object, makes a call and reads it again. The has trap of a proxy, which an `in` in the callee runs, makes a field of the object an accessor.
+////= Point
+let reads = 0;
+let stores = 0;
+
+let victim: Point | null = null;
+function strike(): boolean {
+  const target = victim;
+  if (target === null) return false;
+  victim = null;
+  Object.defineProperty(target, "x", {
+    get() {
+      reads++;
+      return -7;
+    },
+    set(value: number) {
+      stores += value;
+    },
+    enumerable: true,
+    configurable: true,
+  });
+  return true;
+}
+
+////= watched-2
+////= callee-28	"level"	in	watched
+
+////= holder-14
+
+////= outer-51	const first = p.x	p.x = 5	first + "," + p.x + "," + p.y + "," + reads + "," + store
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-proxies/the-own-keys-trap-of-a-proxy-stores-a-stranger-into-a-reference-field.ts
+// A typed caller reads an object, makes a call and reads it again. The ownKeys trap of a proxy, which Object.keys in the callee runs, stores an object of another shape into a field that is declared to hold an instance of a class.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Leaf-5
+
+let victim: Branch | null = null;
+let spark: number = 0;
+////= hot-22	(target as any).leaf = { other: 1, value: "stranger" }
+////= strike-2
+
+////= watched-3
+////= callee-26	Object.keys	watched
+
+////= holder-45
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-proxies/the-own-keys-trap-of-a-proxy-stores-a-string-into-an-array-of-numbers.ts
+// A typed caller reads an array, makes a call and reads it again. The ownKeys trap of a proxy, which Object.keys in the callee runs, stores a string into an array of numbers.
+
+let victim: number[] | null = null;
+////= strike-25	(target as any)[1] = "s"
+
+////= watched-3
+////= callee-26	Object.keys	watched
+
+////= holder-41
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-proxies/the-own-keys-trap-of-a-proxy-stores-minus-zero-and-a-large-number.ts
+// A typed caller reads an object, makes a call and reads it again. The ownKeys trap of a proxy, which Object.keys in the callee runs, stores -0 and a number beyond 32 bits into fields that have held only small integers, which their type allows.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Point
+
+let victim: Point | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-23	target.x = -0	y = 2 ** 40 + 1
+////= strike
+
+////= watched-3
+////= callee-26	Object.keys	watched
+
+////= holder-26
+
+////= outer-48	fuse	lit
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-proxies/the-set-trap-of-a-proxy-adds-a-property.ts
+// A typed caller reads an object, makes a call and reads it again. The set trap of a proxy, which a store to a property in the callee runs, adds a property that the class does not declare.
+////= Point
+
+let victim: Point | null = null;
+////= strike-21	z	3
+
+////= watched-4
+////= callee-24
+
+////= holder-12
+
+function outer(round: number): string {
+  const p: Point = new Point(round, round + 1);
+  let keysBefore = "";
+  for (const key in p) keysBefore += key;
+  const before = keysBefore + (p.x + p.y);
+  if (round === 150 || round === 151 || round === 299) victim = p;
+  const inner = holder(p, round);
+  let keys = "";
+  for (const key in p) keys += key;
+  const after = keys + "," + p.x + "," + JSON.stringify(p) + "," + Object.keys({ ...p }).length;
+  return before + " [" + inner + "] " + after;
+}
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-proxies/the-set-trap-of-a-proxy-defines-a-setter-above-an-absent-field.ts
+// A typed caller reads an object, makes a call and reads it again. The set trap of a proxy, which a store to a property in the callee runs, defines a setter on the prototype object under the name of an optional field that the object does not have.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Card
+let caught = "";
+
+let victim: Card | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+Object.defineProperty(lit, "spark", {
+  get(): number {
+    fuse = cold;
+    const target = victim;
+    if (target === null) return 0;
+    victim = null;
+    Object.defineProperty(Card.prototype, "note", {
+      set(value: string) {
+        caught += value;
+      },
+      configurable: true,
+    });
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////= strike
+
+////= watched-4
+////= callee-24
+
+////= holder-19
+
+////= outer-43	fuse	lit
+
+let digest = 0;
+////= for-7
+console.log("digest " + digest);
+//// damage-behind-a-call-proxies/the-set-trap-of-a-proxy-makes-an-element-an-accessor.ts
+// A typed caller reads an array, makes a call and reads it again. The set trap of a proxy, which a store to a property in the callee runs, makes an element of the array an accessor.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+
+let victim: number[] | null = null;
+let spark: number = 0;
+////= hot-22	Object.defineProperty(target, 1, { get: () => -5, configurable: true })
+////= strike-2
+
+////= watched-4
+////= callee-24
+
+////= holder-40
+
+let digest = 0;
+////= for
+console.log("digest " + digest);

@@ -1,0 +1,14 @@
+3 node
+TypeError Object.setPrototypeOf an object with a setter: TypeError true
+TypeError Object.setPrototypeOf a proxy: TypeError true
+TypeError Reflect.setPrototypeOf an object with a setter: false true
+TypeError Reflect.setPrototypeOf a proxy: false true
+TypeError strict __proto__ an object with a setter: TypeError true
+TypeError strict __proto__ a proxy: TypeError true
+Error Object.setPrototypeOf an object with a setter: TypeError true
+Error Object.setPrototypeOf a proxy: TypeError true
+Error Reflect.setPrototypeOf an object with a setter: false true
+Error Reflect.setPrototypeOf a proxy: false true
+Error strict __proto__ an object with a setter: TypeError true
+Error strict __proto__ a proxy: TypeError true
+3 node

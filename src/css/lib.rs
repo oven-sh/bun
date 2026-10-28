@@ -190,7 +190,7 @@ pub use printer::{ImportInfo, Printer, PrinterOptions, PseudoClasses};
 /// Dependent crates name this `ImportRecordHandler`; the surviving type is
 /// `printer::ImportInfo`, exposed under both names.
 pub type ImportRecordHandler<'a> = printer::ImportInfo<'a>;
-pub use values::color::{CssColor, FloatColor, LABColor, LabColor, PredefinedColor, RGBA};
+pub use values::color::{CssColor, FloatColor, LABColor, PredefinedColor, RGBA};
 pub type CssColorParseResult = values::color::ParseResult;
 
 // Cross-crate re-exports.

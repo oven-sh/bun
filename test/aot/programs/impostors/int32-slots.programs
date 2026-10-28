@@ -1,0 +1,3536 @@
+////: addsMembers-3
+function addsMembers(list, order) {
+  for (let i = 0; i < list.length; i++) {
+    order.push("<" + i);
+    const o = list[i];
+    order.push(o.x + o.y);
+    order.push(i + ">");
+  }
+  return "done";
+}
+////: addsMembersAndCatches
+function addsMembersAndCatches(list, order) {
+  for (let i = 0; i < list.length; i++) {
+    order.push("<" + i);
+    try {
+      const o = list[i];
+      order.push(o.x + o.y);
+    } catch (error) {
+      order.push(error.constructor.name);
+      continue;
+    } finally {
+      order.push("f" + i);
+    }
+    order.push(i + ">");
+  }
+  return "done";
+}
+////: addsOne
+function addsOne(list, order) {
+  for (let i = 0; i < list.length; i++) {
+    order.push("<" + i);
+    const n = list[i];
+    order.push(n + 1);
+    order.push(i + ">");
+  }
+  return "done";
+}
+////: addsOneAndCatches
+function addsOneAndCatches(list, order) {
+  for (let i = 0; i < list.length; i++) {
+    order.push("<" + i);
+    try {
+      const n = list[i];
+      order.push(n + 1);
+    } catch (error) {
+      order.push(error.constructor.name);
+      continue;
+    } finally {
+      order.push("f" + i);
+    }
+    order.push(i + ">");
+  }
+  return "done";
+}
+////: attempt-26
+attempt("'length' as a key with an object", () => {
+  const order = [];
+  const list = [1, 2, 3];
+  store(list, "length", { valueOf() { order.push("valueOf"); return 1; } });
+  return [list, order];
+});
+////: attempt-31
+attempt("'length' as a key shortens", () => {
+  const list = [1, 2, 3];
+  store(list, "length", 1);
+  return list;
+});
+////: attempt-32
+attempt("'length' as a key with a text", () => {
+  const list = [1, 2, 3];
+  store(list, "length", "2");
+  return list;
+});
+////: calls
+function calls(list, order) {
+  for (let i = 0; i < list.length; i++) {
+    order.push("<" + i);
+    const f = list[i];
+    order.push(f(1));
+    order.push(i + ">");
+  }
+  return "done";
+}
+////: callsAndCatches
+function callsAndCatches(list, order) {
+  for (let i = 0; i < list.length; i++) {
+    order.push("<" + i);
+    try {
+      const f = list[i];
+      order.push(f(1));
+    } catch (error) {
+      order.push(error.constructor.name);
+      continue;
+    } finally {
+      order.push("f" + i);
+    }
+    order.push(i + ">");
+  }
+  return "done";
+}
+////: fill-4
+function fill(list, keysToUse) {
+  for (let i = 0; i < keysToUse.length; i++) list[keysToUse[i]] = i;
+  return list;
+}
+////: for-104
+for (const [name, use, values] of table) {
+  for (let i = 0; i < 500; i++) use([values[0][1](), values[0][1](), values[0][1]()], []);
+  for (const pattern of patterns) {
+    const order = [];
+    const end = outcome(() => use([...pattern].map(digit => values[digit][1]()), order));
+    console.log(name + " " + pattern + " -> " + order.map(show).join(" ") + " " + end);
+  }
+}
+////: for-114
+for (let i = 0; i < 2000; i++) {
+  const key = honest[i % honest.length];
+  total += readOrDefault(key).length + String(readTheTable(key)).length + String(read(table, key)).length;
+  if (readTwice(key)) total++;
+}
+////: for-116
+for (const key of keys) {
+  attempt("'hello'[" + key + "]", () => plain(readHello(make(key))));
+  attempt("text[" + key + "]", () => plain(read("hello", make(key))));
+  attempt("wrapped[" + key + "]", () => plain(read(wrapped, make(key))));
+  attempt(key + " in wrapped, own in the text, own in wrapped", () => [isIn(wrapped, make(key)), hasOwn("hello", make(key)), hasOwn(wrapped, make(key))].join(" "));
+  if (log.length) console.log("log", log.splice(0).join(", "));
+}
+////: for-117
+for (const key of keys) {
+  attempt("letters[" + key + "]", () => plain(readTheList(make(key))));
+  attempt("list[" + key + "]", () => plain(read(letters, make(key))));
+  attempt("decorated[" + key + "]", () => plain(read(decorated, make(key))));
+  attempt(key + " in, own", () => [isIn(letters, make(key)), hasOwn(letters, make(key)), isIn(decorated, make(key)), hasOwn(decorated, make(key))].join(" "));
+  if (log.length) console.log("log", log.splice(0).join(", "));
+}
+////: for-124
+for (let i = 0; i < 2000; i++) {
+  readArgument(1, "first", "second");
+  storeArgument(1, "first", "second");
+  removeArgument(2, "first", "second");
+  hasArgument(1, "first", "second");
+  sumByKeys([0, 1, 2]);
+}
+////: for-170
+for (const [name, make] of «1») {
+  attempt(«2» + name, () => (({ «3»: run }) => run(make()))(holder));
+  attempt(«4» + name, () => (({ «5»: run }) => run(make()))(holder));
+}
+////: for-171
+for (const [name, make] of «1») {
+  attempt(«2» + name, () => holder.«3»(make()));
+  attempt(«4» + name, () => holder.«5»(make()));
+}
+////: for-174
+for (const [name, make] of «1») {
+  attempt(«2» + name, () => ({ ...holder }).«3»(make()));
+  attempt(«4» + name, () => ({ ...holder }).«5»(make()));
+}
+////: for-175
+for (const [name, make] of «1») {
+  attempt(«2» + name, () => callWith(«3», make()));
+  attempt(«4» + name, () => callWith(«5», make()));
+}
+////: for-176
+for (const [name, make] of «1») {
+  attempt(«2» + name, () => holder[nameOf(«3»)](make()));
+  attempt(«4» + name, () => holder[nameOf(«5»)](make()));
+}
+////: for-177
+for (const [name, make] of «1») {
+  attempt(«2» + name, () => vm.runInThisContext("(f, value) => f(value)")(«3», make()));
+  attempt(«4» + name, () => vm.runInThisContext("(f, value) => f(value)")(«5», make()));
+}
+////: for-20
+for (const key of keys) {
+  attempt("one store with " + key, () => {
+    const object = {};
+    store(object, make(key), "stored");
+    return describeKeys(object) + " | prototype kept: " + (Object.getPrototypeOf(object) === Object.prototype);
+  });
+  attempt("into the common tables " + key, () => {
+    store(everything, make(key), key);
+    store(withoutAPrototype, make(key), key);
+    count(counts, make(key));
+    return Reflect.ownKeys(everything).length + " " + Reflect.ownKeys(withoutAPrototype).length + " " + Reflect.ownKeys(counts).length;
+  });
+  if (log.length) console.log("log", log.splice(0).join(", "));
+}
+////: for-29
+for (const key of keys) {
+  attempt("table[" + key + "]", () => {
+    const found = readTheTable(make(key));
+    return typeof found === "function" ? "function " + found.name : found === Object.prototype ? "Object.prototype" : found;
+  });
+  attempt("object[" + key + "]", () => {
+    const found = read(table, make(key));
+    return typeof found === "function" ? "function " + found.name : found === Object.prototype ? "Object.prototype" : found;
+  });
+  attempt("twice [" + key + "]", () => readTwice(make(key)));
+  if (log.length) console.log("log", log.splice(0).join(", "));
+}
+////: for-44
+for (const key of keys) {
+  attempt(key, () => {
+    const table = makeTable();
+    return [isIn(table, make(key)), hasOwn(table, make(key)), hasOwnTheOldWay(table, make(key)), hasOwnAsAMethod(table, make(key)), isEnumerable(table, make(key)), describe(table, make(key))].join(" ");
+  });
+  if (log.length) console.log("log", log.splice(0).join(", "));
+  attempt("delete " + key, () => {
+    const table = makeTable();
+    const before = Reflect.ownKeys(table).length;
+    const answer = remove(table, make(key));
+    return answer + " " + (before - Reflect.ownKeys(table).length);
+  });
+  if (log.length) console.log("log of delete", log.splice(0).join(", "));
+}
+////: for-62
+for (const key of keys) {
+  attempt("list[" + key + "] = 'stored'", () => {
+    const list = ["x", "y"];
+    const length = store(list, make(key), "stored");
+    return length + " | " + describe(list) + " | still a list: " + Array.isArray(list) + " " + (Object.getPrototypeOf(list) === Array.prototype);
+  });
+  if (log.length) console.log("log", log.splice(0).join(", "));
+}
+////: for-72
+for (const key of keys) {
+  attempt("arguments[" + key + "]", () => {
+    const given = make(key);
+    const found = readArgument(given, "first", "second");
+    return found === given && typeof given === "object" && given !== null ? "the key itself" : plain(found);
+  });
+  attempt("arguments[" + key + "] = 'stored'", () => storeArgument(make(key), "first", "second"));
+  attempt("delete arguments[" + key + "]", () => removeArgument(make(key), "first", "second"));
+  attempt(key + " in arguments", () => hasArgument(make(key), "first", "second"));
+  if (log.length) console.log("log", log.splice(0).join(", "));
+}
+////: for-86
+for (let i = 0; i < 2000; i++) {
+  const key = i % 2 ? "a" : "b";
+  if (isIn(honestTable, key)) total++;
+  if (hasOwn(honestTable, key)) total++;
+  if (hasOwnTheOldWay(honestTable, key)) total++;
+  if (hasOwnAsAMethod(honestTable, key)) total++;
+  if (isEnumerable(honestTable, key)) total++;
+  if (remove({ a: 1 }, key)) total++;
+  total += String(describe(honestTable, key)).length;
+}
+////: for-97
+for (let i = 0; i < 2000; i++) {
+  const list = ["x"];
+  store(list, 1, "y");
+  store(list, 0, "z");
+  fill([], [0, 1, 2]);
+}
+////: for-98
+for (let i = 0; i < 2000; i++) {
+  const object = {};
+  store(object, "a", 1);
+  store(object, "b", 2);
+  count(object, "a");
+}
+////: iterates-3
+function iterates(list, order) {
+  for (let i = 0; i < list.length; i++) {
+    order.push("<" + i);
+    const a = list[i];
+    const seen = [];
+    for (const x of a) seen.push(x);
+    order.push(seen);
+    order.push(i + ">");
+  }
+  return "done";
+}
+////: iteratesAndCatches
+function iteratesAndCatches(list, order) {
+  for (let i = 0; i < list.length; i++) {
+    order.push("<" + i);
+    try {
+      const a = list[i];
+      const seen = [];
+      for (const x of a) seen.push(x);
+      order.push(seen);
+    } catch (error) {
+      order.push(error.constructor.name);
+      continue;
+    } finally {
+      order.push("f" + i);
+    }
+    order.push(i + ">");
+  }
+  return "done";
+}
+////: keys-2
+////= keys
+
+////= for-97
+
+////= for-62
+
+////= attempt-31
+////= attempt-32
+////: lines-251
+function «1»(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return (last = sum);
+}
+////: lines-284
+function «1»(n) {
+  return (last = n / 2);
+}
+////: lines-326
+function «1»(n, other) {
+  const results = [];
+  for (let i = 0; i < 1003; i++) {
+    if (i === 1000) n = other;
+    if (i > 997) results.push(n «2» «3»);
+  }
+  return results;
+}
+////: made-4
+function made<T extends object>(o: T) {
+  handOver(o);
+  return o;
+}
+////: plain-2
+function plain(found) {
+  return typeof found === "function" ? "function " + found.name : found === «1».prototype ? «2» : found;
+}
+////: pushes-3
+function pushes(list, order) {
+  for (let i = 0; i < list.length; i++) {
+    order.push("<" + i);
+    const a = list[i];
+    a.push(1);
+    order.push(a.length);
+    order.push(i + ">");
+  }
+  return "done";
+}
+////: pushesAndCatches
+function pushesAndCatches(list, order) {
+  for (let i = 0; i < list.length; i++) {
+    order.push("<" + i);
+    try {
+      const a = list[i];
+      a.push(1);
+      order.push(a.length);
+    } catch (error) {
+      order.push(error.constructor.name);
+      continue;
+    } finally {
+      order.push("f" + i);
+    }
+    order.push(i + ">");
+  }
+  return "done";
+}
+////: readsCharCode
+function readsCharCode(list, order) {
+  for (let i = 0; i < list.length; i++) {
+    order.push("<" + i);
+    const s = list[i];
+    order.push(s.charCodeAt(0));
+    order.push(i + ">");
+  }
+  return "done";
+}
+////: readsCharCodeAndCatches
+function readsCharCodeAndCatches(list, order) {
+  for (let i = 0; i < list.length; i++) {
+    order.push("<" + i);
+    try {
+      const s = list[i];
+      order.push(s.charCodeAt(0));
+    } catch (error) {
+      order.push(error.constructor.name);
+      continue;
+    } finally {
+      order.push("f" + i);
+    }
+    order.push(i + ">");
+  }
+  return "done";
+}
+////: show-35
+////= show-24
+
+////= pushes-3
+
+////= pushesAndCatches
+
+////= iterates-3
+
+////= iteratesAndCatches
+
+////= readsCharCode
+
+////= readsCharCodeAndCatches
+
+////= truncates-2
+
+////= truncatesAndCatches
+
+////= addsOne
+
+////= addsOneAndCatches
+
+////= calls
+
+////= callsAndCatches
+
+////= addsMembers-3
+
+////= addsMembersAndCatches
+
+////= storesMember-2
+
+////= storesMemberAndCatches
+
+////= table-5
+////: store
+function store(list, key, value) {
+  list[key] = value;
+  return list.length;
+}
+////: storesMember-2
+function storesMember(list, order) {
+  for (let i = 0; i < list.length; i++) {
+    order.push("<" + i);
+    const o = list[i];
+    o.x = 1;
+    order.push(o.x);
+    order.push(i + ">");
+  }
+  return "done";
+}
+////: storesMemberAndCatches
+function storesMemberAndCatches(list, order) {
+  for (let i = 0; i < list.length; i++) {
+    order.push("<" + i);
+    try {
+      const o = list[i];
+      o.x = 1;
+      order.push(o.x);
+    } catch (error) {
+      order.push(error.constructor.name);
+      continue;
+    } finally {
+      order.push("f" + i);
+    }
+    order.push(i + ">");
+  }
+  return "done";
+}
+////: sumByKeys
+function sumByKeys(keysToUse) {
+  const inner = function () {
+    let text = "";
+    for (let i = 0; i < keysToUse.length; i++) text += arguments[keysToUse[i]] + "|";
+    return text;
+  };
+  return inner("a", "b", "c");
+}
+////: table-2
+const table = {
+  a: "a",
+  b: "b",
+  0: "0",
+  1: "1",
+  1000: "1000",
+  4294967294: "4294967294",
+  4294967295: "4294967295",
+  4294967296: "4294967296",
+  2147483647: "2147483647",
+  2147483648: "2147483648",
+  "-0": "-0",
+  "00": "00",
+  "0.0": "0.0",
+  "1.0": "1.0",
+  "01": "01",
+  " 1": " 1",
+  "+1": "+1",
+  "1e3": "1e3",
+  "-1": "-1",
+  "1.5": "1.5",
+  "0.30000000000000004": "0.30000000000000004",
+  "9007199254740992": "9007199254740992",
+  "9007199254740993": "9007199254740993",
+  "1e21": "1e21",
+  "1e+21": "1e+21",
+  "1e-7": "1e-7",
+  NaN: "NaN",
+  Infinity: "Infinity",
+  "-Infinity": "-Infinity",
+  null: "null",
+  undefined: "undefined",
+  true: "true",
+  false: "false",
+  "": "empty",
+  "1,2": "1,2",
+  "[object Object]": "[object Object]",
+  "Symbol(a)": "Symbol(a)",
+  [Symbol.for("a")]: "the symbol",
+  length: "length",
+};
+////: table-5
+const table = [
+  ["pushes", pushes, arrays],
+  ["pushesAndCatches", pushesAndCatches, arrays],
+  ["iterates", iterates, arrays],
+  ["iteratesAndCatches", iteratesAndCatches, arrays],
+  ["readsCharCode", readsCharCode, strings],
+  ["readsCharCodeAndCatches", readsCharCodeAndCatches, strings],
+  ["truncates", truncates, numbers],
+  ["truncatesAndCatches", truncatesAndCatches, numbers],
+  ["addsOne", addsOne, numbers],
+  ["addsOneAndCatches", addsOneAndCatches, numbers],
+  ["calls", calls, functions],
+  ["callsAndCatches", callsAndCatches, functions],
+  ["addsMembers", addsMembers, objects],
+  ["addsMembersAndCatches", addsMembersAndCatches, objects],
+  ["storesMember", storesMember, objects],
+  ["storesMemberAndCatches", storesMemberAndCatches, objects],
+];
+////: truncates-2
+function truncates(list, order) {
+  for (let i = 0; i < list.length; i++) {
+    order.push("<" + i);
+    const n = list[i];
+    order.push(n | 0);
+    order.push(i + ">");
+  }
+  return "done";
+}
+////: truncatesAndCatches
+function truncatesAndCatches(list, order) {
+  for (let i = 0; i < list.length; i++) {
+    order.push("<" + i);
+    try {
+      const n = list[i];
+      order.push(n | 0);
+    } catch (error) {
+      order.push(error.constructor.name);
+      continue;
+    } finally {
+      order.push("f" + i);
+    }
+    order.push(i + ">");
+  }
+  return "done";
+}
+//// int32-slots/long-random-histories-of-objects-with-number-fields-that-look-like-int32.ts
+// 300 objects each live through 80 operations chosen by a small random number generator with a fixed seed: typed stores of small integers, hidden stores of every other kind of number and of values that are no numbers,
+// ++ and +=, delete, definitions with other attributes, accessors, copies from a neighbor, undeclared properties, and at the end sometimes freeze or seal. After every operation the whole state goes into a checksum.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver-2
+class Trio { a = 0; b = 0; c = 0; }
+function setA(trio: Trio, value: number) { trio.a = value; }
+function setB(trio: Trio, value: number) { trio.b = value; }
+function setC(trio: Trio, value: number) { trio.c = value; }
+function bumpA(trio: Trio) { trio.a++; }
+function addB(trio: Trio) { trio.b += trio.a; }
+function copyC(trio: Trio, from: Trio) { trio.c = from.c; }
+function sumOf(trio: Trio) { return trio.a + trio.b + trio.c; }
+let seed = Number(process.argv[2] ?? 12345);
+function random(below: number) {
+  seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+  return Math.floor((seed / 2147483648) * below);
+}
+const names = ["a", "b", "c"];
+const strangers: unknown[] = ["text", null, undefined, true, { k: 1 }];
+function describe(trio: Trio) {
+  const parts: string[] = [];
+  for (const name of Reflect.ownKeys(trio) as string[]) {
+    const descriptor = Object.getOwnPropertyDescriptor(trio, name)!;
+    const value = "value" in descriptor ? descriptor.value : "accessor " + String(descriptor.get?.call(trio));
+    parts.push(`${name}=${typeof value === "object" ? JSON.stringify(value) : exact(value)}${descriptor.writable === false ? "r" : ""}${descriptor.enumerable ? "" : "h"}${descriptor.configurable ? "" : "f"}`);
+  }
+  let total: string;
+  try {
+    total = exact(sumOf(trio));
+  } catch (error) {
+    total = (error as Error).constructor.name;
+  }
+  return `${parts.join(",")};${total};${JSON.stringify(trio)}`;
+}
+function hash(text: string, into: number) {
+  for (let i = 0; i < text.length; i++) into = (Math.imul(into, 31) + text.charCodeAt(i)) | 0;
+  return into;
+}
+function step(trio: Trio, neighbor: Trio) {
+  const name = names[random(3)];
+  const number = random(4) === 0 ? odd[random(odd.length)] : random(1000) - 500;
+  switch (random(16)) {
+    case 0: return setA(trio, random(100) | 0);
+    case 1: return setB(trio, (random(100) | 0) - 50);
+    case 2: return setC(trio, random(100) | 0);
+    case 3: return bumpA(trio);
+    case 4: return addB(trio);
+    case 5: return copyC(trio, neighbor);
+    case 6: return void ((trio as any)[name] = number);
+    case 7: return void Reflect.set(trio, name, number);
+    case 8: return void Object.assign(trio, { [name]: number });
+    case 9: return void delete (trio as any)[name];
+    case 10: return void Object.defineProperty(trio, name, { value: number, writable: random(4) > 0, enumerable: random(4) > 0, configurable: true });
+    case 11: return void Object.defineProperty(trio, name, { get: () => number, set: undefined, enumerable: true, configurable: true });
+    case 12: return void ((trio as any)[name] = strangers[random(strangers.length)]);
+    case 13: return void ((trio as any)["x" + random(3)] = number);
+    case 14: return setA.call(undefined, trio, number);
+    default: return setC.apply(undefined, [trio, number]);
+  }
+}
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const trio = new Trio();
+  handOver(trio);
+  setA(trio, i & 15);
+  setB(trio, i & 7);
+  setC(trio, 3);
+  bumpA(trio);
+  addB(trio);
+  warm += sumOf(trio);
+}
+console.log("warm", warm);
+let neighbor = new Trio();
+let checksum = 0;
+let refused = 0;
+for (let object = 0; object < 300; object++) {
+  const trio = new Trio();
+  handOver(trio);
+  for (let round = 0; round < 80; round++) {
+    try {
+      step(trio, neighbor);
+    } catch {
+      refused++;
+    }
+    checksum = hash(describe(trio), checksum);
+    if (round === 70 && object % 5 === 0) (object % 10 === 0 ? Object.freeze : Object.seal)(trio);
+  }
+  if (object % 25 === 0) console.log(object, checksum, refused, describe(trio));
+  neighbor = trio;
+}
+console.log("end", checksum, refused);
+//// int32-slots/math-functions-of-what-looks-like-small-integers-are-stored-into-number-fields.ts
+// Math.min, max, abs, floor, ceil, round and trunc give an int32 for int32 arguments, with one exception: Math.abs(-(2 ** 31)). Every call in sight has small integers.
+// Hidden callers bring the arguments for which the results are -0 (Math.round(-0.4), Math.ceil(-0.5), Math.trunc(-0.9), Math.min(0, -0)), NaN, infinities, fractions, and objects with valueOf.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver-2
+class Min { v = 0; }
+class Max { v = 0; }
+class Abs { v = 0; }
+class Floor { v = 0; }
+class Ceil { v = 0; }
+class Round { v = 0; }
+class Trunc { v = 0; }
+class AbsOfInt { v = 0; }
+function min(o: Min, a: number, b: number) { o.v = Math.min(a, b); }
+function max(o: Max, a: number, b: number) { o.v = Math.max(a, b); }
+function abs(o: Abs, a: number) { o.v = Math.abs(a); }
+function floor(o: Floor, a: number) { o.v = Math.floor(a); }
+function ceil(o: Ceil, a: number) { o.v = Math.ceil(a); }
+function round(o: Round, a: number) { o.v = Math.round(a); }
+function trunc(o: Trunc, a: number) { o.v = Math.trunc(a); }
+function absOfInt(o: AbsOfInt, a: number) { o.v = Math.abs(a | 0); }
+type Box = { v: number };
+function show(o: Box) {
+  return `${exact(o.v)} ${exact(o.v + 1)} ${exact(1 / o.v)} ${JSON.stringify(o)}`;
+}
+////= made-4
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  const a = made(new Min()), b = made(new Max()), c = made(new Abs()), d = made(new Floor()), e = made(new Ceil()), f = made(new Round()), g = made(new Trunc()), h = made(new AbsOfInt());
+  min(a, i & 31, 9);
+  max(b, i & 31, 9);
+  abs(c, (i & 31) - 16);
+  floor(d, i & 31);
+  ceil(e, i & 31);
+  round(f, i & 31);
+  trunc(g, i & 31);
+  absOfInt(h, (i & 31) - 16);
+  sum += a.v + b.v + c.v + d.v + e.v + f.v + g.v + h.v;
+}
+console.log("warm", sum);
+const more: number[] = (JSON.parse('["-0.4","-0.9","0.4","0.49999999999999994","2147483647.5","-2147483648.5","-2147483643.5","1.5","2.5","-1.5"]'.split("").join("")) as string[]).map(Number);
+const one: [string, () => Box, Function][] = [
+  ["abs", () => made(new Abs()), abs],
+  ["floor", () => made(new Floor()), floor],
+  ["ceil", () => made(new Ceil()), ceil],
+  ["round", () => made(new Round()), round],
+  ["trunc", () => made(new Trunc()), trunc],
+  ["abs of | 0", () => made(new AbsOfInt()), absOfInt],
+];
+for (const [label, make, run] of one) {
+  console.log(label + ":", [...odd, ...more].map(value => { const o = make(); run.call(undefined, o, value); return `${exact(value)} -> ${show(o)}`; }).join(" | "));
+}
+const pairs: [number, number][] = [[0, -0], [-0, 0], [-0, -0], [1, NaN], [NaN, 1], [Infinity, 1], [-Infinity, 1], [0.5, 1], [2147483648, 2147483647], [-2147483648, -2147483643], [-2147483649, 0]].map(([a, b]) => [Number(String(Object.is(a, -0) ? "-0" : a)), Number(String(Object.is(b, -0) ? "-0" : b))]);
+for (const [a, b] of pairs) {
+  const low = made(new Min()), high = made(new Max());
+  Reflect.apply(min, undefined, [low, a, b]);
+  Reflect.apply(max, undefined, [high, a, b]);
+  console.log(`min and max of ${exact(a)}, ${exact(b)}: ${show(low)} | ${show(high)}`);
+}
+const calls: string[] = [];
+const convertible = (label: string, value: number) => ({ valueOf() { calls.push(label); return value; } });
+const low = made(new Min()), rounded = made(new Round());
+min.call(undefined, low, convertible("first", 0.25) as any, convertible("second", 3) as any);
+round.call(undefined, rounded, convertible("third", -0.25) as any);
+console.log("objects with valueOf:", show(low), "|", show(rounded), "|", calls.join());
+//// int32-slots/math-min-and-max-of-no-arguments-and-of-empty-lists-are-stored-into-number-fields.ts
+// Math.min() is Infinity and Math.max() is -Infinity: with nothing to compare, no argument is anything but an int32. The lists that are spread into the calls hold small integers wherever the build looks;
+// at run time one of them is empty, one holds a hole, one holds a fraction, and one is so long that it holds 2 ** 31 at its end.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver-2
+class Low { v = 0; }
+class High { v = 0; }
+class Bare { low = 0; high = 0; }
+function lowest(o: Low, a: number, b: number, c: number, count: number) {
+  const list = [a, b, c];
+  list.length = count;
+  o.v = Math.min(...list);
+}
+function highest(o: High, list: number[]) {
+  o.v = Math.max(...list);
+}
+function bare(o: Bare, really: boolean) {
+  o.low = really ? Math.min() : 1;
+  o.high = really ? Math.max() : 2;
+}
+////= made-4
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  const a = made(new Low()), b = made(new High()), c = made(new Bare());
+  lowest(a, i & 7, 3, 5, 3);
+  highest(b, [i & 7, 3, 5]);
+  bare(c, false);
+  sum += a.v + b.v + c.low + c.high;
+}
+console.log("warm", sum);
+const show = (o: object) => Object.values(o).map(exact).join(",") + " " + JSON.stringify(o);
+for (const count of JSON.parse("[3,2,0,4]") as number[]) {
+  const o = made(new Low());
+  lowest.call(undefined, o, 4, 5, 6, count);
+  console.log("the lowest of", count, "->", show(o), exact(o.v + 1));
+}
+for (const list of JSON.parse("[[],[1,2.5],[2147483647,2147483648],[-2147483648],[null],[1,\"2\"]]") as number[][]) {
+  const o = made(new High());
+  highest.call(undefined, o, list);
+  console.log("the highest of", JSON.stringify(list), "->", show(o), exact(o.v - 1));
+}
+const o = made(new Bare());
+bare(o, process.argv.length < 99);
+console.log("no arguments:", show(o), exact(o.low - o.high), exact(o.low + o.high));
+//// int32-slots/nested-closures-methods-and-suspended-functions-store-what-they-captured.ts
+// The captured number goes a longer way before it is stored: through two nested closures, a method of an object literal, an arrow function in a class field,
+// a default value of a parameter, a generator and an async function. In sight there are only small integers; a hidden caller of each maker brings the other numbers.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver-2
+class Cell { n = 0; }
+function nested(cell: Cell, n: number) {
+  return () => () => { cell.n = n; };
+}
+function method(cell: Cell, n: number) {
+  return { run() { cell.n = n; } };
+}
+class Holder {
+  constructor(public cell: Cell, private n: number) {}
+  run = () => { this.cell.n = this.n; };
+}
+function byDefault(cell: Cell, n: number) {
+  return (value = n) => { cell.n = value; };
+}
+function* generated(cell: Cell, n: number) {
+  yield 1;
+  cell.n = n;
+}
+async function awaited(cell: Cell, n: number) {
+  await null;
+  cell.n = n;
+}
+////= lines-64	fresh	cell	Cell
+const ways: [string, (cell: Cell, n: number) => unknown, (cell: Cell, n: number) => unknown][] = [
+  ["nested", (cell, n) => nested(cell, n)()(), (cell, n) => nested.call(undefined, cell, n)()()],
+  ["a method", (cell, n) => method(cell, n).run(), (cell, n) => method.apply(undefined, [cell, n]).run()],
+  ["a class field", (cell, n) => new Holder(cell, n).run(), (cell, n) => Reflect.construct(Holder, [cell, n]).run()],
+  ["a default", (cell, n) => byDefault(cell, n)(), (cell, n) => byDefault.bind(undefined, cell)(n)()],
+  ["a generator", (cell, n) => [...generated(cell, n)], (cell, n) => [...Reflect.apply(generated, undefined, [cell, n])]],
+  ["an async function", (cell, n) => awaited(cell, n), (cell, n) => awaited.call(undefined, cell, n)],
+];
+let sum = 0;
+for (let i = 0; i < 1000; i++) {
+  for (const [, seen] of ways) {
+    const cell = fresh();
+    await seen(cell, i & 127);
+    sum += cell.n;
+  }
+}
+console.log("warm", sum);
+for (const [label, , hidden] of ways) {
+  const line: string[] = [];
+  for (const value of odd) {
+    const cell = fresh();
+    await hidden(cell, value);
+    line.push(`${exact(cell.n)}${Object.is(cell.n, value) ? "" : " WRONG, wanted " + exact(value)} ${exact(cell.n - 1)} ${JSON.stringify(cell)}`);
+  }
+  console.log(label + ":", line.join(" | "));
+}
+//// int32-slots/number-fields-lie-between-references-and-the-collector-runs.ts
+// Number fields that look like int32 alternate with fields that hold objects, strings and arrays, so that narrow slots lie beside references. The numbers are bit patterns of every kind:
+// small multiples of 8 and 16, which look like offsets of cells, all ones, the edges of int32. Some fields get a fraction by a hidden store and leave their slots. 30000 objects survive full and small collections.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver-2
+class Mixed {
+  a = 0;
+  first: { tag: number } | null = null;
+  b = 0;
+  name = "";
+  c = 0;
+  list: number[] | null = null;
+  d = 0;
+  e = 0;
+  next: Mixed | null = null;
+  f = 0;
+}
+function clamp(value: number) {
+  return Math.max(Math.min(value | 0, 2147483647), -2147483643);
+}
+function fill(mixed: Mixed, i: number, previous: Mixed | null) {
+  const pattern = Math.imul(i, 2654435761) | 0;
+  mixed.a = clamp(pattern);
+  mixed.first = { tag: i };
+  mixed.b = (i << 4) | 0;
+  mixed.name = "name" + i;
+  mixed.c = (i << 3) | 0;
+  mixed.list = [i, i + 1];
+  const set = () => { mixed.d = ~i; };
+  set();
+  mixed.e = Math.abs(i & 0xffff);
+  mixed.next = previous;
+  mixed.f = -1;
+}
+function check(mixed: Mixed, i: number, previous: Mixed | null) {
+  const pattern = Math.imul(i, 2654435761) | 0;
+  return (
+    (i % 97 === 0 ? mixed.a === i + 0.5 : mixed.a === clamp(pattern)) &&
+    mixed.first!.tag === i &&
+    mixed.b === ((i << 4) | 0) &&
+    mixed.name === "name" + i &&
+    (i % 89 === 0 ? mixed.c === 2 ** 40 + i : mixed.c === ((i << 3) | 0)) &&
+    mixed.list!.length === 2 &&
+    mixed.list![1] === i + 1 &&
+    mixed.d === ~i &&
+    mixed.e === (i & 0xffff) &&
+    mixed.next === previous &&
+    mixed.f === -1
+  );
+}
+function churn(rounds: number) {
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) sum += [{ tag: i }, "junk" + (i & 511), [i]].length;
+  return sum;
+}
+const all: Mixed[] = [];
+const keys: string[] = JSON.parse('["a","c"]');
+for (let i = 0; i < 30000; i++) {
+  const mixed = new Mixed();
+  handOver(mixed);
+  fill(mixed, i, all[i - 1] ?? null);
+  if (i % 97 === 0) (mixed as any)[keys[0]] = i + 0.5;
+  if (i % 89 === 0) Reflect.set(mixed, keys[1], 2 ** 40 + i);
+  all.push(mixed);
+}
+function count() {
+  let right = 0;
+  for (let i = 0; i < all.length; i++) if (check(all[i], i, all[i - 1] ?? null)) right++;
+  return right;
+}
+console.log("filled:", count());
+console.log("garbage", churn(1_500_000), count());
+Bun.gc(true);
+console.log("a full collection:", count());
+for (let i = 0; i < all.length; i += 2) fill(all[i], i, all[i - 1] ?? null);
+for (let i = 0; i < all.length; i += 2) {
+  if (i % 97 === 0) (all[i] as any)[keys[0]] = i + 0.5;
+  if (i % 89 === 0) Reflect.set(all[i], keys[1], 2 ** 40 + i);
+}
+console.log("garbage", churn(1_500_000), count());
+Bun.gc(true);
+Bun.gc(true);
+console.log("old objects filled again:", count(), JSON.stringify({ ...all[97], next: null }), Object.keys(all[89]).join());
+//// int32-slots/numbers-of-streams-and-file-stats-are-copied-into-fields-of-the-same-names.ts
+// The program's own class has number fields called pos, end, start and size, and so have Bun's read streams and file stats. An interface with those names fits both.
+// Real streams and stats go through the functions typed by the interface, and their numbers are copied into the program's objects: `end` of a stream is Infinity, `pos` is undefined, times are fractions.
+// Plain objects parsed at run time stand in for a file of more than 2 ** 31 bytes.
+import { closeSync, createReadStream, mkdtempSync, openSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver-2
+interface TextRange { pos: number; end: number }
+interface Sized { size: number }
+class Span implements TextRange {
+  pos = 0;
+  end = 0;
+  constructor(pos: number, end: number) {
+    this.pos = pos;
+    this.end = end;
+    handOver(this);
+  }
+}
+class Entry implements Sized {
+  size = 0;
+  start = 0;
+  modified = 0;
+}
+function width(range: TextRange) {
+  return range.end - range.pos;
+}
+function copyRange(target: Span, range: TextRange) {
+  target.pos = range.pos;
+  target.end = range.end;
+}
+function copySize(target: Entry, sized: Sized) {
+  target.size = sized.size;
+}
+function total(list: Sized[]) {
+  let sum = 0;
+  for (const item of list) sum += item.size;
+  return sum;
+}
+function showSpan(span: Span) {
+  return `${exact(span.pos)} ${exact(span.end)} ${exact(width(span))} ${JSON.stringify(span)} [${Object.keys(span)}]`;
+}
+function showEntry(entry: Entry) {
+  return `${exact(entry.size)} ${exact(entry.start)} ${Number.isInteger(entry.modified)} ${exact(entry.size + 1)} [${Object.keys(entry)}]`;
+}
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  const a = new Span(i & 15, (i & 15) + 4), b = new Span(0, 0), e = new Entry(), f = new Entry();
+  handOver(e);
+  copyRange(b, a);
+  e.size = i & 255;
+  e.start = i & 3;
+  copySize(f, e);
+  sum += width(b) + total([e, f]);
+}
+console.log("warm", sum);
+
+const folder = mkdtempSync(join(tmpdir(), "int32-slots-"));
+const file = join(folder, "data.txt");
+writeFileSync(file, "0123456789");
+const whole = createReadStream(file);
+const part = createReadStream(file, { start: 2, end: 5 });
+for (const [label, stream] of [["a whole file", whole], ["a part", part]] as [string, unknown][]) {
+  const span = new Span(1, 2);
+  copyRange(span, stream as TextRange);
+  console.log(label + ":", showSpan(span), exact(width(stream as TextRange)));
+  copyRange(span, new Span(3, 9));
+  console.log("  and an ordinary range again:", showSpan(span));
+}
+// The folder is gone before either stream has opened its file: that error is not what is asked about here.
+whole.on("error", () => {}).destroy();
+part.on("error", () => {}).destroy();
+const stats = statSync(file);
+const entry = new Entry();
+copySize(entry, stats);
+entry.modified = stats.mtimeMs + 0.5;
+entry.start = stats.size - 10.5;
+console.log("stats:", showEntry(entry), total([stats, entry]));
+const descriptor = openSync(file, "r");
+closeSync(descriptor);
+rmSync(folder, { recursive: true });
+for (const fake of JSON.parse('[{"size":2147483648},{"size":4294967301},{"size":0.5},{"size":-2147483648},{"size":-2147483645},{"size":null},{}]'.split("").join("")) as Sized[]) {
+  const target = new Entry();
+  copySize(target, fake);
+  console.log("a stand-in", JSON.stringify(fake) + ":", showEntry(target), exact(total([fake, target])));
+}
+for (const fake of JSON.parse('[{"pos":0.5,"end":2147483648},{"pos":-2147483648,"end":-2147483644},{"pos":1e21,"end":5e-324}]'.split("").join("")) as TextRange[]) {
+  const span = new Span(0, 0);
+  copyRange(span, fake);
+  console.log("a stand-in", JSON.stringify(fake) + ":", showSpan(span));
+}
+//// int32-slots/objects-with-narrow-and-wide-number-fields-of-one-name-go-through-one-function.ts
+// Two classes have a number field of the same name. In one every store in sight is a small integer, in the other they are fractions. Functions typed by an interface read the field of both kinds.
+// No typed code moves a number from the wide field into the narrow one, but built-ins do: Object.assign from instance to instance, Reflect.get and Reflect.set, a spread that is assigned, entries that are copied.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver-2
+interface Weighted { readonly weight: number }
+class Narrow implements Weighted { weight = 1; tag = "n"; }
+class Wide implements Weighted { weight = 1.5; tag = "w"; }
+////= lines-14	weightOf	item	Weighted	return	item.weight
+function addUp(items: Weighted[]) {
+  let sum = 0;
+  for (const item of items) sum += item.weight;
+  return sum;
+}
+function heaviest(items: Weighted[]) {
+  return items.reduce((best, item) => (item.weight > best.weight ? item : best));
+}
+////= lines-16	setNarrow	item	Narrow	weight	number	item.weight
+function growNarrow(item: Narrow) {
+  item.weight += item.weight;
+}
+////= lines-16	setWide	item	Wide	weight	number	item.weight
+////= made-5	item
+const moves: [string, (from: Wide, to: Narrow) => void][] = [
+  ["Object.assign", (from, to) => { Object.assign(to, from); }],
+  ["Reflect", (from, to) => { Reflect.set(to, "weight", Reflect.get(from, "weight")); }],
+  ["a spread", (from, to) => { Object.assign(to, { ...from }); }],
+  ["entries", (from, to) => { for (const [key, value] of Object.entries(from)) (to as any)[key] = value; }],
+  ["descriptors", (from, to) => { Object.defineProperties(to, Object.getOwnPropertyDescriptors(from)); }],
+];
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  const narrow = made(new Narrow()), wide = made(new Wide());
+  setNarrow(narrow, i & 15);
+  growNarrow(narrow);
+  setWide(wide, (i & 15) + 0.5);
+  sum += addUp([narrow, wide]) + weightOf(heaviest([narrow, wide]));
+}
+console.log("warm", sum);
+for (const [label, move] of moves) {
+  const lines: string[] = [];
+  for (const value of odd) {
+    const narrow = made(new Narrow()), wide = made(new Wide());
+    setWide(wide, value);
+    Reflect.apply(move, undefined, [wide, narrow]);
+    const moved = `${Object.is(weightOf(narrow), value)} ${exact(narrow.weight)} ${JSON.stringify(narrow)} [${Object.keys(narrow)}]`;
+    growNarrow(narrow);
+    const grown = exact(narrow.weight);
+    const total = exact(addUp([narrow, wide, made(new Narrow())]));
+    setNarrow(narrow, 3);
+    lines.push(`${moved} ${grown} ${total} ${exact(narrow.weight)}`);
+  }
+  console.log(label + ":", lines.join(" | "));
+}
+//// int32-slots/rounded-quotients-and-products-of-integers-are-stored-into-number-fields.ts
+// Math.floor(a / b), Math.round(a * b), Math.trunc(a % b), Math.ceil(a / b): the usual way to stay with integers. For integers a and b the results still include
+// NaN (0 / 0), the infinities (1 / 0), -0 (Math.ceil(-1 / 2), Math.round(-1 / 4), Math.trunc(-4 % 2), Math.floor(0 / -1)) and 2 ** 31 (-(2 ** 31) / -1). All operands pass through `| 0` first.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver-2
+class Quotient { floor = 0; ceil = 0; round = 0; trunc = 0; }
+class Product { round = 0; abs = 0; }
+class Remainder { trunc = 0; max = 0; }
+function divide(o: Quotient, a: number, b: number) {
+  const x = a | 0, y = b | 0;
+  o.floor = Math.floor(x / y);
+  o.ceil = Math.ceil(x / y);
+  o.round = Math.round(x / y);
+  o.trunc = Math.trunc(x / y);
+}
+function multiply(o: Product, a: number, b: number) {
+  const x = a | 0, y = b | 0;
+  o.round = Math.round(x * y);
+  o.abs = Math.abs(x * y);
+}
+function remain(o: Remainder, a: number, b: number) {
+  const x = a | 0, y = b | 0;
+  o.trunc = Math.trunc(x % y);
+  o.max = Math.max(x % y, -1);
+}
+////= made-4
+const show = (o: object) => Object.values(o).map(exact).join(",") + " " + JSON.stringify(o) + " " + Object.values(o).map(value => exact(1 / value)).join(",");
+let sum = 0;
+for (let i = 1; i < 2000; i++) {
+  const q = made(new Quotient()), p = made(new Product()), r = made(new Remainder());
+  divide(q, i, 7);
+  multiply(p, i & 255, 3);
+  remain(r, i, 7);
+  sum += q.floor + q.ceil + q.round + q.trunc + p.round + p.abs + r.trunc + r.max;
+}
+console.log("warm", sum);
+const pairs: [number, number][] = JSON.parse("[[0,0],[1,0],[-1,0],[-1,2],[-1,4],[0,-1],[-4,2],[-2147483648,-1],[-2147483648,1],[2147483647,1],[65536,65536],[46341,46341],[-65536,32768],[0,-5],[7,2],[-7,2],[-2147483645,1]]");
+for (const [a, b] of pairs) {
+  const q = made(new Quotient()), p = made(new Product()), r = made(new Remainder());
+  divide(q, a, b);
+  multiply(p, a, b);
+  remain(r, a, b);
+  console.log(`${a}, ${b}: / ${show(q)} | * ${show(p)} | % ${show(r)}`);
+}
+//// int32-slots/the-arguments-object-and-evaluated-text-change-a-parameter-before-it-is-stored.cts
+// Sloppy CommonJS TypeScript. Every caller in sight passes a small integer, and the function stores its parameter into a number field. But in sloppy code `arguments[1] = v` writes the parameter,
+// and text evaluated inside the function can assign to it too. Both get the value from a variable that is filled at run time.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver-2
+class Box { n = 0; }
+let replacement: number | undefined;
+function throughArguments(box: Box, n: number) {
+  if (replacement !== undefined) arguments[1] = replacement;
+  box.n = n;
+}
+function throughArgumentsInAClosure(box: Box, n: number) {
+  const all = arguments;
+  const change = () => { if (replacement !== undefined) all[1] = replacement; };
+  change();
+  return () => { box.n = n; };
+}
+const assignment: string = JSON.parse('["n = ","replacement"]').join("");
+function throughText(box: Box, n: number) {
+  if (replacement !== undefined) eval(assignment);
+  box.n = n;
+}
+////= lines-64	fresh	box	Box
+console.log("sloppy:", (function (this: unknown) { return this !== undefined; })());
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  const a = fresh(), b = fresh(), c = fresh();
+  throughArguments(a, i & 31);
+  throughArgumentsInAClosure(b, i & 31)();
+  throughText(c, i & 31);
+  sum += a.n + b.n + c.n;
+}
+console.log("warm", sum);
+for (const value of odd) {
+  replacement = value;
+  const a = fresh(), b = fresh(), c = fresh();
+  throughArguments(a, 1);
+  throughArgumentsInAClosure(b, 2)();
+  throughText(c, 3);
+  console.log(`${exact(value)}: ${exact(a.n)} ${exact(b.n)} ${exact(c.n)} ${[a, b, c].every(box => Object.is(box.n, value))} ${JSON.stringify([a, b, c])} ${exact(a.n + b.n)}`);
+}
+replacement = undefined;
+const last = fresh();
+throughArguments(last, 4);
+console.log("afterwards:", exact(last.n));
+//// int32-slots/the-map-for-define-properties-names-the-field-and-defines-it-on-a-typed-object.ts
+// `Object.defineProperties(target, { id: { get, set } })`: the literal has a member called `id`, which holds a descriptor and is no store of a number into any field called id.
+// But what it describes is one: the target is an instance whose `id` is a number field. The descriptors define fractions, -0 and NaN as values, accessors that answer them, and read-only and hidden numbers.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver-2
+class Entity { id = 0; rank = 0; }
+////= lines-14	idOf	entity	Entity	return	entity.id
+////= lines-16	setId	entity	Entity	id	number	entity.id
+function bump(entity: Entity) {
+  entity.id += 1;
+  entity.rank++;
+}
+////= lines-64	fresh	made	Entity
+function show(entity: Entity) {
+  return `${exact(idOf(entity))} ${exact(entity.rank)} ${JSON.stringify(entity)} [${Object.keys(entity)}] ${JSON.stringify(Object.getOwnPropertyDescriptor(entity, "id"), (_, item) => (typeof item === "number" ? exact(item) : typeof item === "function" ? "f" : item))}`;
+}
+////= attempt-44	"done"
+const log: string[] = [];
+function asValue(entity: Entity, value: number) {
+  Object.defineProperties(entity, { id: { value, writable: true, enumerable: true, configurable: true }, rank: { value } });
+}
+function asAccessors(entity: Entity, value: number) {
+  let kept = value;
+  Object.defineProperties(entity, {
+    id: {
+      get() { return kept; },
+      set(next: number) { log.push("set " + exact(next)); kept = next; },
+      enumerable: true,
+      configurable: true,
+    },
+  });
+}
+function asReadOnly(entity: Entity, value: number) {
+  Object.defineProperties(entity, { id: { value, writable: false } });
+}
+function asHidden(entity: Entity, value: number) {
+  Object.defineProperties(entity, { id: { value, enumerable: false } });
+}
+function onSomethingElse() {
+  return Object.defineProperties({}, { id: { get() { return 0.5; }, enumerable: true }, rank: { value: 1.5, enumerable: true } });
+}
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  const entity = fresh();
+  setId(entity, i & 63);
+  bump(entity);
+  sum += idOf(entity) + entity.rank;
+}
+console.log("warm", sum, JSON.stringify(onSomethingElse()));
+for (const [label, define] of [["a value", asValue], ["accessors", asAccessors], ["read-only", asReadOnly], ["hidden", asHidden]] as [string, (entity: Entity, value: number) => void][]) {
+  console.log(label + ":");
+  for (const value of odd) {
+    const entity = fresh();
+    define(entity, value);
+    const defined = show(entity);
+    const bumped = attempt(() => bump(entity));
+    const after = show(entity);
+    const stored = attempt(() => setId(entity, 4));
+    console.log(`  ${exact(value)}: ${defined} | ${bumped} ${after} | ${stored} ${exact(idOf(entity))} ${log.join()}`);
+    log.length = 0;
+  }
+}
+//// int32-slots/values-that-are-no-numbers-arrive-in-number-fields-by-hidden-ways.ts
+// A number field that looks like int32 gets a string, null, undefined, a boolean, a bigint, a symbol, an object, an array and a function: through a hidden caller of the typed function that stores it,
+// through a generic helper, through a closure, and by stores that the build cannot attribute. Plain JavaScript keeps whatever was stored, and so must the compiled program, in the same place among the keys.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver-2
+class Slot { before = 1; n = 0; after = 2; }
+function id<T>(x: T): T {
+  return x;
+}
+function direct(slot: Slot, n: number) { slot.n = n; }
+function helped(slot: Slot, n: number) { slot.n = id(n); }
+function captured(slot: Slot, n: number) { return () => { slot.n = n; }; }
+////= lines-64	fresh	slot	Slot
+function describe(slot: Slot) {
+  const held: unknown = (slot as any).n;
+  const shown = typeof held === "symbol" ? held.toString() : typeof held === "bigint" ? held + "n" : typeof held === "function" ? "function" : typeof held === "object" ? JSON.stringify(held) : exact(held);
+  let json: string;
+  try {
+    json = JSON.stringify(slot);
+  } catch (error) {
+    json = (error as Error).constructor.name;
+  }
+  return `${shown} [${Object.keys(slot)}] ${json} ${"n" in slot} ${slot.before + slot.after}`;
+}
+const strangers: unknown[] = ["text", "", "12", null, undefined, true, false, 10n, Symbol.for("s"), { k: 1 }, [3], () => 1, new Number(5), new Date(0)];
+const key: string = JSON.parse('"n"');
+const routes: [string, (slot: Slot, value: any) => void][] = [
+  ["a hidden caller", (slot, value) => direct.call(undefined, slot, value)],
+  ["a helper", (slot, value) => helped.apply(undefined, [slot, value])],
+  ["a closure", (slot, value) => Reflect.apply(captured, undefined, [slot, value])()],
+  ["a computed key", (slot, value) => { (slot as any)[key] = value; }],
+  ["Object.assign", (slot, value) => { Object.assign(slot, { [key]: value }); }],
+  ["Object.defineProperty", (slot, value) => { Object.defineProperty(slot, key, { value }); }],
+];
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  const slot = fresh();
+  direct(slot, i & 7);
+  helped(slot, slot.n + 1);
+  captured(slot, slot.n + 1)();
+  sum += slot.n + id("s").length + id({ k: 2 }).k;
+}
+console.log("warm", sum);
+for (const [label, put] of routes) {
+  console.log(label + ":");
+  for (const value of strangers) {
+    const slot = fresh();
+    put(slot, value);
+    const same = Object.is((slot as any).n, value);
+    const first = describe(slot);
+    direct(slot, 9);
+    console.log(`  ${same} ${first} | then 9: ${describe(slot)}`);
+  }
+}
+//// int32-slots/what-is-read-from-a-field-that-looks-like-int32-is-used-as-an-index-a-count-and-a-condition.ts
+// Code that reads a field of small integers goes on to use it where an integer is at home: as an index of an array, a string and a typed array, as a length, a count, a shift, a case of a switch, a key of a map.
+// A store that the build cannot attribute has put a fraction, -0, NaN, an infinity or a large integer there. Each use must do what JavaScript says for that number.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver-2
+class Cursor { at = 0; }
+const list = ["a", "b", "c", "d"];
+const text = "wxyz";
+const bytes = new Uint8Array([10, 20, 30, 40]);
+const table = new Map<number, string>([[0, "zero"], [1, "one"], [NaN, "nan"]]);
+function attempt(run: () => unknown) {
+  try {
+    const value = run();
+    return typeof value === "number" ? exact(value) : String(value);
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+}
+function uses(cursor: Cursor): string[] {
+  return [
+    attempt(() => list[cursor.at]),
+    attempt(() => text[cursor.at]),
+    attempt(() => text.charAt(cursor.at)),
+    attempt(() => text.charCodeAt(cursor.at)),
+    attempt(() => bytes[cursor.at]),
+    attempt(() => list.at(cursor.at)),
+    attempt(() => list.slice(cursor.at).join("")),
+    attempt(() => cursor.at in list),
+    attempt(() => new Array(cursor.at).length),
+    attempt(() => "ab".repeat(cursor.at).length),
+    attempt(() => cursor.at.toFixed(1)),
+    attempt(() => cursor.at.toString(2).length),
+    attempt(() => 1 << cursor.at),
+    attempt(() => cursor.at >> 1),
+    attempt(() => cursor.at >>> 0),
+    attempt(() => ~cursor.at),
+    attempt(() => cursor.at % 2),
+    attempt(() => cursor.at / 2),
+    attempt(() => cursor.at * cursor.at),
+    attempt(() => -cursor.at),
+    attempt(() => (cursor.at ? "truthy" : "falsy")),
+    attempt(() => cursor.at === 0),
+    attempt(() => cursor.at < 1),
+    attempt(() => cursor.at >= 0),
+    attempt(() => cursor.at == cursor.at),
+    attempt(() => { switch (cursor.at) { case 0: return "case 0"; case 1: return "case 1"; case 2147483647: return "case max"; default: return "default"; } }),
+    attempt(() => table.get(cursor.at)),
+    attempt(() => [cursor.at].includes(cursor.at)),
+    attempt(() => [cursor.at].indexOf(cursor.at)),
+    attempt(() => Object.is(cursor.at, 0)),
+    attempt(() => `${cursor.at}`),
+    attempt(() => JSON.stringify([cursor.at])),
+    attempt(() => Math.sign(cursor.at)),
+    attempt(() => Number.isSafeInteger(cursor.at)),
+    attempt(() => BigInt(cursor.at)),
+    attempt(() => ({ [cursor.at]: 1 })),
+    attempt(() => Object.keys({ [cursor.at]: 1 })[0]),
+  ];
+}
+function walk(cursor: Cursor) {
+  let seen = "";
+  for (let i = cursor.at; i < list.length && seen.length < 8; i++) seen += list[i] ?? "-";
+  return seen;
+}
+let length = 0;
+for (let i = 0; i < 1500; i++) {
+  const cursor = new Cursor();
+  handOver(cursor);
+  cursor.at = i & 3;
+  length += uses(cursor).join().length + walk(cursor).length;
+}
+console.log("warm", length);
+const key: string = JSON.parse('"at"');
+for (const value of [...odd, Number("1"), Number("3"), Number("-1"), Number("1.0000000000000002")]) {
+  const cursor = new Cursor();
+  handOver(cursor);
+  (cursor as any)[key] = value;
+  console.log(`${exact(value)}: ${uses(cursor).join(" ")} | ${walk(cursor)}`);
+}
+//// iteration-1000-of-a-loop-replaces-the-variable-by-the-impostor.js
+"use strict";
+
+const log = [];
+
+////= show-24
+
+function pushes(a, other) {
+  const results = [];
+  for (let i = 0; i < 1003; i++) {
+    if (i === 1000) a = other;
+    a.push(1);
+    if (i > 997) results.push(a.length);
+  }
+  return results;
+}
+
+function iterates(a, other) {
+  const results = [];
+  for (let i = 0; i < 1003; i++) {
+    if (i === 1000) a = other;
+    const seen = [];
+    for (const x of a) seen.push(x);
+    if (i > 997) results.push(seen);
+  }
+  return results;
+}
+
+function readsCharCode(s, other) {
+  const results = [];
+  for (let i = 0; i < 1003; i++) {
+    if (i === 1000) s = other;
+    if (i > 997) results.push(s.charCodeAt(0));
+  }
+  return results;
+}
+
+////= lines-326	truncates	|	0
+
+////= lines-326	addsOne	+	1
+
+function calls(f, other) {
+  const results = [];
+  for (let i = 0; i < 1003; i++) {
+    if (i === 1000) f = other;
+    if (i > 997) results.push(f(1));
+  }
+  return results;
+}
+
+function addsMembers(o, other) {
+  const results = [];
+  for (let i = 0; i < 1003; i++) {
+    if (i === 1000) o = other;
+    if (i > 997) results.push(o.x + o.y);
+  }
+  return results;
+}
+
+function storesMember(o, other) {
+  const results = [];
+  for (let i = 0; i < 1003; i++) {
+    if (i === 1000) o = other;
+    o.x = 1;
+    if (i > 997) results.push(o);
+  }
+  return results;
+}
+
+////= table-9
+
+console.log("strict:", (function () { return this === undefined; })());
+everyCase("at first");
+for (let i = 0; i < 3; i++) {
+  pushes([5, 6], [5, 6]);
+  iterates([5, 6], [5, 6]);
+  readsCharCode("abc", "abc");
+  truncates(7, 7);
+  addsOne(7, 7);
+  calls(x => x + 1, x => x + 1);
+  addsMembers(({ x: 1, y: 2 }), ({ x: 1, y: 2 }));
+  storesMember(({ x: 1, y: 2 }), ({ x: 1, y: 2 }));
+}
+everyCase("after 3");
+//// json-is-appended-inside-try-to-a-line-that-then-gets-a-conditional-tail.js
+for (let round = 0; round < 2; round++) {
+  for (const [label, box] of [["a literal", { width: 1 }]]) {
+    let line = "round " + round + " | " + label + " -> ";
+    try {
+      line += JSON.stringify(box);
+    } catch (error) {}
+    console.log(line + (round ? " | again" : ""));
+  }
+}
+//// json-parse-hands-over-the-value.cjs
+const log = [];
+
+////= show-38
+
+////= lines-189	pushes	text	JSON.parse	text
+
+////= lines-343	iterates(text	const a = JSON.parse(text)
+
+////= lines-228	readsCharCode	text	JSON.parse	text
+
+////= truncates-10	JSON.parse(text)
+
+////= addsOne-9	JSON.parse(text)
+
+////= calls-11	JSON.parse(text)
+
+////= addsMembers-12	JSON.parse(text)
+
+////= storesMember-14	JSON.parse(text)
+
+////= table-10
+
+console.log("strict:", (function () { return this === undefined; })());
+everyCase("at first");
+for (let i = 0; i < 2000; i++) {
+  pushes("[5,6]");
+  iterates("[5,6]");
+  readsCharCode("\"abc\"");
+  truncates("7");
+  addsOne("7");
+  addsMembers("{\"x\":1,\"y\":2}");
+  storesMember("{\"x\":1,\"y\":2}");
+}
+everyCase("after 2000");
+//// json-parse-in-strict-code-hands-over-a-member.js
+"use strict";
+
+const log = [];
+
+////= show-38
+
+////= pushes-14	JSON.parse(text).value[0]
+
+////= lines-343	iterates(text	const a = JSON.parse(text).value[0]
+
+////= readsCharCode-13	JSON.parse(text).value[0]
+
+////= truncates-10	JSON.parse(text).value[0]
+
+////= addsOne-9	JSON.parse(text).value[0]
+
+////= calls-11	JSON.parse(text).value[0]
+
+////= addsMembers-12	JSON.parse(text).value[0]
+
+////= storesMember-14	JSON.parse(text).value[0]
+
+////= table
+
+function everyCase(round) {
+  for (const [name, use, values] of table) {
+    for (const [label, text] of [...values, values[0]]) attempt(round + " " + name + " " + label, () => use('{"value":[' + text + "]}"));
+  }
+}
+
+console.log("strict:", (function () { return this === undefined; })());
+everyCase("at first");
+////= for-181	'{"value":['	"]}"
+everyCase("after 2000");
+//// json-stringify-gets-keys-spaces-and-replacers-that-are-not-strings.js
+////= show-26
+
+const log = [];
+globalThis.log = log;
+
+////= report-6
+
+function withSpace(space) {
+  return JSON.stringify({ a: [1] }, null, space);
+}
+
+function withList(list) {
+  return JSON.stringify({ a: 1, b: 2, 1: 3, null: 4, "1,2": 5, nested: { a: 6, c: 7 } }, list);
+}
+
+////= lines-157	keysSeenByAReplacer	value	stringify	item
+
+function keysSeenByToJSON(build) {
+  const seen = [];
+  const noisy = { toJSON(key) { seen.push(typeof key + " " + JSON.stringify(key)); return 0; } };
+  JSON.stringify(build(noisy));
+  return seen;
+}
+
+////= lines-3	stringify	value	JSON.stringify	value
+
+for (let i = 0; i < 2000; i++) {
+  withSpace("  ");
+  withList(["a", "b"]);
+  stringify("text");
+  stringify({ a: "text" });
+}
+
+for (const space of ["'  '", "''", "'\\t'", "'abcdefghijklmnop'", "2", "0", "-1", "2.9", "11", "'2'", "new String('--')", "new Number(2)", "true", "null", "undefined", "[' ']", "{ toString() { return '  '; } }", "Object.assign(new String('--'), { toString() { log.push('toString'); return '++'; } })", "Object.assign(new Number(1), { valueOf() { log.push('valueOf'); return 3; } })", "Symbol(' ')", "2n"]) {
+  report("space " + space, () => withSpace(make(space)));
+}
+
+for (const list of ["['a']", "['b', 'a']", "[1]", "['1']", "[null]", "[[1, 2]]", "[new String('a')]", "[new Number(1)]", "[{ toString() { return 'a'; } }]", "['a', 'a', new String('a')]", "[Symbol('a')]", "[true]", "[]", "['nested', 'c']", "'ab'", "{ 0: 'a', length: 1 }", "new Set(['a'])", "[Object.assign(new String('a'), { toString() { log.push('toString'); return 'b'; } })]"]) {
+  report("list " + list, () => withList(make(list)));
+}
+
+report("keys seen by a replacer", () => keysSeenByAReplacer({ a: [10, { 0: 1 }], 1: "x" }));
+report("keys seen by a replacer for a text", () => keysSeenByAReplacer("text"));
+report("keys seen by toJSON", () => keysSeenByToJSON(noisy => ({ a: noisy, 1: noisy, list: [noisy, noisy] })));
+report("keys seen by toJSON at the top", () => keysSeenByToJSON(noisy => noisy));
+
+for (const value of ["'text'", "'\\u2028\\u2029'", "'\\ud83d'", "'\"\\\\\\n\\u0007'", "new String('wrapped')", "Object.assign(new String('wrapped'), { extra: 1 })", "Object.assign(new String('wrapped'), { toString() { log.push('toString'); return 'changed'; } })", "Object.assign(new String('wrapped'), { valueOf() { log.push('valueOf'); return 'changed'; } })", "Object.setPrototypeOf(new String('wrapped'), null)", "new Proxy(new String('wrapped'), {})", "[new String('a'), new Number(1), new Boolean(false), Object(1n) && null]", "Symbol('s')", "[Symbol('s')]", "{ a: Symbol('s'), [Symbol('k')]: 1 }", "undefined", "[undefined, function f() {}]", "{ a: undefined, b: function f() {} }", "-0", "[NaN, Infinity]", "1n", "{ toJSON() { return 'from toJSON'; } }", "{ toJSON() { return new String('wrapped by toJSON'); } }", "{ toJSON: 'not a function' }", "new Date(0)", "Buffer.from('ab')", "new Uint8Array([1, 2])", "new Map([['a', 1]])", "/a/g", "new Error('message')", "Object.create({ inherited: 1 })", "{ '': 1, ' ': 2, 'a b': 3, '\\n': 4, '\\u00e9': 5, '\\ud83d': 6 }"]) {
+  report("stringify " + value, () => stringify(make(value)));
+}
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// keys-are-built-by-adding-and-a-part-is-not-a-text.js
+////= show-26
+
+const table = { ab: "ab", a1: "a1", "1a": "1a", 3: "3", 12: "12", a_b: "a_b", "1_2": "1_2", "a:b": "a:b", "1:2": "1:2", anull: "anull", aundefined: "aundefined", NaN: "NaN", "a1,2": "a1,2", "a[object Object]": "a[object Object]", "a-0": "a-0", a0: "a0", "0": "0", atrue: "atrue", 2: "2", a: "a", "": "empty", "null:undefined": "null:undefined", "a_": "a_", _: "_", ":": ":" };
+const map = new Map(Object.entries(table));
+
+////= lines-225	bySum	a	b	table[a	b
+
+function byThree(a, b) {
+  return table[a + "_" + b];
+}
+
+function byTemplate(a, b) {
+  return table[`${a}:${b}`];
+}
+
+function bySumInAMap(a, b) {
+  return map.get(a + b);
+}
+
+function byPrefix(b) {
+  return table["a" + b];
+}
+
+function isThere(a, b) {
+  return a + b in table;
+}
+
+function storeBySum(a, b) {
+  const target = {};
+  target[a + b] = 1;
+  return Reflect.ownKeys(target).map(key => typeof key + " " + String(key));
+}
+
+function countBySum(pairs) {
+  const counts = {};
+  for (const [a, b] of pairs) {
+    const key = a + "|" + b;
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  return JSON.stringify(counts);
+}
+
+function idsInALoop(prefix, count) {
+  const ids = {};
+  for (let i = 0; i < count; i++) ids[prefix + i] = i;
+  return Object.keys(ids);
+}
+
+const uses = [
+  ["a + b", bySum],
+  ["a + '_' + b", byThree],
+  ["template", byTemplate],
+  ["map", bySumInAMap],
+  ["'a' + b", (a, b) => byPrefix(b)],
+  ["in", isThere],
+  ["store", storeBySum],
+];
+
+const pairs = [
+  ["'a'", "'b'"],
+  ["'a'", "1"],
+  ["1", "'a'"],
+  ["1", "2"],
+  ["'1'", "2"],
+  ["1", "'2'"],
+  ["1n", "2n"],
+  ["1n", "'2'"],
+  ["1n", "2"],
+  ["'a'", "null"],
+  ["'a'", "undefined"],
+  ["null", "undefined"],
+  ["null", "null"],
+  ["undefined", "1"],
+  ["'a'", "[1, 2]"],
+  ["[1]", "[2]"],
+  ["[]", "[]"],
+  ["'a'", "{}"],
+  ["'a'", "-0"],
+  ["-0", "-0"],
+  ["'a'", "true"],
+  ["true", "true"],
+  ["'a'", "''"],
+  ["''", "''"],
+  ["new String('a')", "new String('b')"],
+  ["new Number(1)", "new Number(2)"],
+  ["{ valueOf() { return 1; }, toString() { return 'a'; } }", "2"],
+  ["{ valueOf() { return 1; }, toString() { return 'a'; } }", "'b'"],
+  ["'a'", "Symbol('b')"],
+  ["Symbol('a')", "'b'"],
+  ["new Date(0)", "1"],
+];
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  for (const [, use] of uses) total += String(use("a", "b")).length;
+  total += countBySum([["a", "b"]]).length + idsInALoop("id", 3).length;
+}
+console.log("2000 honest rounds", total);
+
+for (const [a, b] of pairs) {
+  console.log(a + ", " + b + " -> " + uses.map(([name, use]) => {
+    try {
+      return name + ": " + show(use(make(a), make(b)));
+    } catch (error) {
+      return name + ": threw " + error.constructor.name;
+    }
+  }).join("; "));
+}
+
+attempt("counted pairs", () => countBySum([["a", "b"], ["a", "b"], [1, 2], ["1", "2"], [null, undefined], [[1], [2]], [-0, 0], ["a|b", ""], ["a", "b|"]]));
+attempt("counted pairs with a symbol", () => countBySum([["a", Symbol("b")]]));
+for (const prefix of ["'id'", "''", "0", "1", "-1", "0.5", "null", "[]", "[1]", "1n", "{}", "new String('id')", "Symbol('id')"]) attempt("ids with the prefix " + prefix, () => idsInALoop(make(prefix), 3));
+//// keys-are-listed-only-by-code-the-compiler-cannot-see.js
+import { inspect, isDeepStrictEqual } from "node:util";
+
+////= Entry
+
+////= OldEntry
+////= lines-133	OldEntry	alpha	beta
+
+////= fill-6
+
+const listers = [
+  ["keys", new Function("entry", "return Object.keys(entry).join();")],
+  ["for-in", new Function("entry", "var names = []; for (var name in entry) names.push(name); return names.join();")],
+  ["entries", new Function("entry", "return Object.entries(entry).join(';');")],
+  ["ownKeys", new Function("entry", "return Reflect.ownKeys(entry).join();")],
+  ["json", new Function("entry", "return JSON.stringify(entry);")],
+  ["spread", new Function("entry", "return Object.keys({ ...entry }).join();")],
+  ["rest", new Function("entry", "var { beta, ...rest } = entry; return Object.keys(rest).join();")],
+  ["clone", new Function("entry", "return Object.keys(structuredClone(entry)).join();")],
+  ["inspect", entry => inspect(entry)],
+  ["deep equality with a copy made by hidden code", entry => isDeepStrictEqual(entry, new Function("entry", "return Object.assign(Object.create(Object.getPrototypeOf(entry)), entry);")(entry))],
+];
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) for (const [, make] of kinds) sum += make("alpha first").alpha + make("gamma first").beta + make("short").alpha;
+console.log("2000 honest rounds", sum);
+
+for (const [kind, make] of kinds) {
+  for (const [history, build] of histories) {
+    for (const [name, list] of listers) {
+      let line = kind + " | " + history + " | " + name + " -> ";
+      try {
+        line += String(list(build(make)));
+      } catch (error) {
+        line += "threw " + error.constructor.name;
+      }
+      console.log(line);
+    }
+  }
+}
+//// keys-of-every-kind-index-a-text.js
+////= show-26
+
+////= lines-37	readHello	key	"hello"[key
+
+////= lines-73	read	text	key	text[key
+
+////= lines-90	isIn	text	key	key	in	text
+
+////= lines-55	hasOwn	text	key	Object.hasOwn	text	key
+
+const log = [];
+globalThis.log = log;
+
+////= keys
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += readHello(i % 5).length + read("hello", i % 5).length;
+  if (hasOwn("hello", i % 6)) total++;
+}
+console.log("2000 honest rounds", total);
+
+////= plain-2	String	"String.prototype"
+
+const wrapped = new String("hello");
+
+////= for-116
+attempt("in a plain text", () => isIn("hello", "length"));
+attempt("in a plain text, with a key that has effects", () => isIn("hello", { toString() { log.push("toString"); return "0"; } }));
+console.log("log", log.splice(0).join(", "));
+attempt("honest again", () => [readHello(1), read("hello", 4), read("hello", 5), hasOwn("hello", 4)]);
+//// keys-of-every-kind-index-a-text-with-the-values-in-plain-sight.js
+////= show-36
+
+////= lines-37	readHello	key	"hello"[key
+
+////= lines-73	read	text	key	text[key
+
+////= lines-90	isIn	text	key	key	in	text
+
+////= lines-55	hasOwn	text	key	Object.hasOwn	text	key
+
+const log = [];
+globalThis.log = log;
+
+////= keys
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += readHello(i % 5).length + read("hello", i % 5).length;
+  if (hasOwn("hello", i % 6)) total++;
+}
+console.log("2000 honest rounds", total);
+
+////= plain-2	String	"String.prototype"
+
+const wrapped = new String("hello");
+
+////= for-116
+attempt("in a plain text", () => isIn("hello", "length"));
+attempt("in a plain text, with a key that has effects", () => isIn("hello", { toString() { log.push("toString"); return "0"; } }));
+console.log("log", log.splice(0).join(", "));
+attempt("honest again", () => [readHello(1), read("hello", 4), read("hello", 5), hasOwn("hello", 4)]);
+//// keys-of-every-kind-index-bytes.js
+////= show-26
+
+const inherited = {
+  a: "inherited a",
+  5: "inherited 5",
+  "-0": "inherited -0",
+  "-1": "inherited -1",
+  "1.5": "inherited 1.5",
+  "00": "inherited 00",
+  "01": "inherited 01",
+  "1.0": "inherited 1.0",
+  "1e3": "inherited 1e3",
+  1000: "inherited 1000",
+  "1e21": "inherited 1e21",
+  "1e+21": "inherited 1e+21",
+  "1e-7": "inherited 1e-7",
+  NaN: "inherited NaN",
+  Infinity: "inherited Infinity",
+  "-Infinity": "inherited -Infinity",
+  4294967295: "inherited 4294967295",
+  null: "inherited null",
+  "": "inherited empty",
+  __proto__: Uint8Array.prototype,
+};
+
+function makeBytes() {
+  return Object.setPrototypeOf(new Uint8Array([10, 11, 12]), inherited);
+}
+
+////= lines-73	read	bytes	key	bytes[key
+
+////= lines-196	store	bytes	key	bytes[key
+
+////= lines-90	isIn	bytes	key	key	in	bytes
+
+////= remove	bytes	key	bytes[key
+
+const log = [];
+globalThis.log = log;
+
+////= keys
+
+let total = 0;
+const honest = new Uint8Array([1, 2, 3]);
+for (let i = 0; i < 2000; i++) {
+  total += read(honest, i % 3);
+  store(honest, i % 3, i);
+  if (isIn(honest, i % 4)) total++;
+}
+console.log("2000 honest rounds", total);
+
+function plain(found) {
+  return typeof found === "function" ? "function " + found.name : typeof found === "object" && found !== null ? "an object" : found;
+}
+
+for (const key of keys) {
+  attempt("bytes[" + key + "]", () => plain(read(makeBytes(), make(key))));
+  attempt(key + " in bytes", () => isIn(makeBytes(), make(key)));
+  attempt("bytes[" + key + "] = 77", () => {
+    const bytes = makeBytes();
+    store(bytes, make(key), 77);
+    return Array.prototype.join.call(bytes) + " own: " + Reflect.ownKeys(bytes).map(String).join(" ");
+  });
+  attempt("delete bytes[" + key + "]", () => remove(makeBytes(), make(key)));
+  if (log.length) console.log("log", log.splice(0).join(", "));
+}
+attempt("the stored value is converted even when the index is outside", () => {
+  const order = [];
+  store(makeBytes(), 99, { valueOf() { order.push("valueOf"); return 1; } });
+  store(makeBytes(), "-0", { valueOf() { order.push("valueOf for -0"); return 1; } });
+  store(makeBytes(), "1.5", { valueOf() { order.push("valueOf for 1.5"); return 1; } });
+  store(makeBytes(), "01", { valueOf() { order.push("valueOf for 01"); return 1; } });
+  return order;
+});
+//// keys-of-every-kind-index-the-arguments-object.js
+////= show-26
+
+function readArgument(key, first, second) {
+  return arguments[key];
+}
+
+function storeArgument(key, first, second) {
+  arguments[key] = "stored";
+  return [key === "stored" ? "the key itself" : "key kept", first, second, arguments.length, Object.keys(arguments).join(",")];
+}
+
+function removeArgument(key, first, second) {
+  const answer = delete arguments[key];
+  first = "changed afterwards";
+  return [answer, arguments[1], arguments.length, Object.keys(arguments).join(",")];
+}
+
+function hasArgument(key, first, second) {
+  return [key in arguments, Object.hasOwn(arguments, key)];
+}
+
+////= sumByKeys
+
+const log = [];
+globalThis.log = log;
+
+////= keys
+
+////= for-124
+
+////= plain-2	Object	"Object.prototype"
+
+////= for-72
+attempt("many kinds of keys in one loop", () => sumByKeys([0, "1", 2.0, "02", -0, "-0", 1.5, 3, "length", [1], { toString: () => "2" }]));
+//// keys-of-every-kind-index-the-arguments-object-in-sloppy-commonjs/main.cjs
+////= show-26
+
+function readArgument(key, first, second) {
+  return arguments[key];
+}
+
+function storeArgument(key, first, second) {
+  arguments[key] = "stored";
+  return [key === "stored" ? "the key itself" : "key kept", first, second, arguments.length, Object.keys(arguments).join(",")];
+}
+
+function removeArgument(key, first, second) {
+  const answer = delete arguments[key];
+  first = "changed afterwards";
+  return [answer, arguments[1], arguments.length, Object.keys(arguments).join(",")];
+}
+
+function hasArgument(key, first, second) {
+  return [key in arguments, Object.hasOwn(arguments, key)];
+}
+
+////= sumByKeys
+
+const log = [];
+globalThis.log = log;
+
+////= keys
+
+////= for-124
+
+////= plain-2	Object	"Object.prototype"
+
+////= for-72
+attempt("many kinds of keys in one loop", () => sumByKeys([0, "1", 2.0, "02", -0, "-0", 1.5, 3, "length", [1], { toString: () => "2" }]));
+//// keys-that-are-not-integers-read-a-list.js
+////= show-26
+
+const letters = ["zero", "one", "two"];
+
+////= lines-37	readTheList	key	letters[key
+
+////= lines-73	read	list	key	list[key
+
+////= lines-90	isIn	list	key	key	in	list
+
+////= lines-55	hasOwn	list	key	Object.hasOwn	list	key
+
+function readInALoop(list, indexes) {
+  const found = [];
+  for (let i = 0; i < indexes.length; i++) found.push(list[indexes[i]]);
+  return found;
+}
+
+const log = [];
+globalThis.log = log;
+
+////= keys
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += readTheList(i % 3).length + read(letters, i % 3).length + readInALoop(letters, [0, 1, 2]).length;
+  if (isIn(letters, i % 4)) total++;
+  if (hasOwn(letters, i % 4)) total++;
+}
+console.log("2000 honest rounds", total);
+
+////= plain-2	Array	"Array.prototype"
+
+const decorated = Object.assign(["zero", "one", "two"], { a: "own a", "-0": "own -0", "01": "own 01", "1.5": "own 1.5", "-1": "own -1", "1e3": "own 1e3", 4294967295: "own 4294967295", NaN: "own NaN", null: "own null", "": "own empty", [Symbol.for("a")]: "own symbol" });
+
+////= for-117
+attempt("many kinds of keys in one loop", () => readInALoop(letters, [0, "1", 2.0, "2", "02", -0, "-0", 1.5, null, "length", [1], { toString: () => "2" }]));
+attempt("honest again", () => [readTheList(1), read(letters, 2), isIn(letters, 2), isIn(letters, 3), hasOwn(letters, 0)]);
+//// keys-that-are-not-integers-read-a-list-with-the-values-in-plain-sight.js
+////= show-36
+
+const letters = ["zero", "one", "two"];
+
+////= lines-37	readTheList	key	letters[key
+
+////= lines-73	read	list	key	list[key
+
+////= lines-90	isIn	list	key	key	in	list
+
+////= lines-55	hasOwn	list	key	Object.hasOwn	list	key
+
+function readInALoop(list, indexes) {
+  const found = [];
+  for (let i = 0; i < indexes.length; i++) found.push(list[indexes[i]]);
+  return found;
+}
+
+const log = [];
+globalThis.log = log;
+
+////= keys
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += readTheList(i % 3).length + read(letters, i % 3).length + readInALoop(letters, [0, 1, 2]).length;
+  if (isIn(letters, i % 4)) total++;
+  if (hasOwn(letters, i % 4)) total++;
+}
+console.log("2000 honest rounds", total);
+
+////= plain-2	Array	"Array.prototype"
+
+const decorated = Object.assign(["zero", "one", "two"], { a: "own a", "-0": "own -0", "01": "own 01", "1.5": "own 1.5", "-1": "own -1", "1e3": "own 1e3", 4294967295: "own 4294967295", NaN: "own NaN", null: "own null", "": "own empty", [Symbol.for("a")]: "own symbol" });
+
+////= for-117
+attempt("many kinds of keys in one loop", () => readInALoop(letters, [0, "1", 2.0, "2", "02", -0, "-0", 1.5, null, "length", [1], { toString: () => "2" }]));
+attempt("honest again", () => [readTheList(1), read(letters, 2), isIn(letters, 2), isIn(letters, 3), hasOwn(letters, 0)]);
+//// keys-that-are-not-integers-store-into-a-list.js
+////= show-26
+
+////= store
+
+function describe(list) {
+  return "length " + list.length + " keys " + Reflect.ownKeys(list).map(key => (typeof key === "symbol" ? key.toString() : JSON.stringify(key))).join(" ");
+}
+
+////= fill-4
+
+const log = [];
+globalThis.log = log;
+
+////= keys-2
+attempt("'length' as a key with a fraction", () => store([1, 2, 3], "length", 1.5));
+attempt("'length' as a key with minus one", () => store([1, 2, 3], "length", -1));
+////= attempt-26
+attempt("many kinds of keys in one loop", () => describe(fill([], [0, "1", 2.0, "03", -0, "-0", 1.5, null, [4], { toString: () => "5" }, "7"])));
+attempt("a frozen list", () => store(Object.freeze(["x"]), "1", "y"));
+attempt("a list whose length cannot change", () => store(Object.defineProperty(["x"], "length", { writable: false }), "1", "y"));
+attempt("honest again", () => store(["x"], 1, "y"));
+//// keys-that-are-not-integers-store-into-a-list-in-sloppy-commonjs/main.cjs
+////= show-26
+
+////= store
+
+function describe(list) {
+  return "length " + list.length + " keys " + Reflect.ownKeys(list).map(key => (typeof key === "symbol" ? key.toString() : JSON.stringify(key))).join(" ");
+}
+
+////= fill-4
+
+const log = [];
+globalThis.log = log;
+
+////= keys-2
+attempt("'length' as a key with a fraction", () => store([1, 2, 3], "length", 1.5));
+attempt("'length' as a key with minus one", () => store([1, 2, 3], "length", -1));
+////= attempt-26
+attempt("many kinds of keys in one loop", () => describe(fill([], [0, "1", 2.0, "03", -0, "-0", 1.5, null, [4], { toString: () => "5" }, "7"])));
+attempt("a frozen list", () => store(Object.freeze(["x"]), "1", "y"));
+attempt("a list whose length cannot change", () => store(Object.defineProperty(["x"], "length", { writable: false }), "1", "y"));
+attempt("honest again", () => store(["x"], 1, "y"));
+//// keys-that-are-not-integers-store-into-a-list-with-the-values-in-plain-sight.js
+////= show-36
+
+////= store
+
+function describe(list) {
+  return "length " + list.length + " keys " + Reflect.ownKeys(list).map(key => (typeof key === "symbol" ? key.toString() : JSON.stringify(key))).join(" ");
+}
+
+////= fill-4
+
+const log = [];
+globalThis.log = log;
+
+////= keys-2
+attempt("'length' as a key with a fraction", () => store([1, 2, 3], "length", 1.5));
+attempt("'length' as a key with minus one", () => store([1, 2, 3], "length", -1));
+////= attempt-26
+attempt("many kinds of keys in one loop", () => describe(fill([], [0, "1", 2.0, "03", -0, "-0", 1.5, null, [4], { toString: () => "5" }, "7"])));
+attempt("a frozen list", () => store(Object.freeze(["x"]), "1", "y"));
+attempt("a list whose length cannot change", () => store(Object.defineProperty(["x"], "length", { writable: false }), "1", "y"));
+attempt("honest again", () => store(["x"], 1, "y"));
+//// keys-that-are-not-strings-are-asked-for-and-deleted.js
+////= show-26
+
+function makeTable() {
+  return { a: 1, 0: 2, 1: 3, "-0": 4, "1.5": 5, 1000: 6, "1e3": 7, null: 8, undefined: 9, NaN: 10, "": 11, "1,2": 12, true: 13, "[object Object]": 14, [Symbol.for("a")]: 15, length: 16 };
+}
+
+////= isIn
+
+////= lines-55	hasOwn	table	key	Object.hasOwn	table	key
+
+function hasOwnTheOldWay(table, key) {
+  return Object.prototype.hasOwnProperty.call(table, key);
+}
+
+////= lines-25	hasOwnAsAMethod	table	key	table.hasOwnProperty
+
+////= lines-25	isEnumerable	table	key	table.propertyIsEnumerable
+
+////= remove	table	key	table[key
+
+function describe(table, key) {
+  const found = Object.getOwnPropertyDescriptor(table, key);
+  return found === undefined ? "none" : found.value;
+}
+
+const log = [];
+globalThis.log = log;
+
+////= keys
+
+let total = 0;
+const honestTable = makeTable();
+////= for-86
+console.log("2000 honest rounds", total);
+
+////= for-44
+//// keys-that-are-not-strings-are-asked-for-and-deleted-with-the-values-in-plain-sight.js
+////= show-36
+
+function makeTable() {
+  return { a: 1, 0: 2, 1: 3, "-0": 4, "1.5": 5, 1000: 6, "1e3": 7, null: 8, undefined: 9, NaN: 10, "": 11, "1,2": 12, true: 13, "[object Object]": 14, [Symbol.for("a")]: 15, length: 16 };
+}
+
+////= isIn
+
+////= lines-55	hasOwn	table	key	Object.hasOwn	table	key
+
+function hasOwnTheOldWay(table, key) {
+  return Object.prototype.hasOwnProperty.call(table, key);
+}
+
+////= lines-25	hasOwnAsAMethod	table	key	table.hasOwnProperty
+
+////= lines-25	isEnumerable	table	key	table.propertyIsEnumerable
+
+////= remove	table	key	table[key
+
+function describe(table, key) {
+  const found = Object.getOwnPropertyDescriptor(table, key);
+  return found === undefined ? "none" : found.value;
+}
+
+const log = [];
+globalThis.log = log;
+
+////= keys
+
+let total = 0;
+const honestTable = makeTable();
+////= for-86
+console.log("2000 honest rounds", total);
+
+////= for-44
+//// keys-that-are-not-strings-read-a-table.js
+////= show-26
+
+////= table-2
+
+////= lines-37	readTheTable	key	table[key
+
+////= read-2
+
+function readOrDefault(key) {
+  return table[key] || "missing";
+}
+
+function readTwice(key) {
+  return table[key] === table[key];
+}
+
+const log = [];
+globalThis.log = log;
+
+////= keys
+
+let total = 0;
+const honest = ["a", "b", "length", "null", "missing"];
+////= for-114
+console.log("2000 honest rounds", total);
+
+////= for-29
+attempt("honest again", () => [readTheTable("a"), read(table, "b"), readOrDefault("nothing"), readTwice("a")]);
+//// keys-that-are-not-strings-read-a-table-in-sloppy-commonjs/main.cjs
+////= show-26
+
+////= table-2
+
+////= lines-37	readTheTable	key	table[key
+
+////= read-2
+
+function readOrDefault(key) {
+  return table[key] || "missing";
+}
+
+function readTwice(key) {
+  return table[key] === table[key];
+}
+
+const log = [];
+globalThis.log = log;
+
+////= keys
+
+let total = 0;
+const honest = ["a", "b", "length", "null", "missing"];
+////= for-114
+console.log("2000 honest rounds", total);
+
+////= for-29
+attempt("honest again", () => [readTheTable("a"), read(table, "b"), readOrDefault("nothing"), readTwice("a")]);
+//// keys-that-are-not-strings-read-a-table-with-the-values-in-plain-sight.js
+////= show-36
+
+////= table-2
+
+////= lines-37	readTheTable	key	table[key
+
+////= read-2
+
+function readOrDefault(key) {
+  return table[key] || "missing";
+}
+
+function readTwice(key) {
+  return table[key] === table[key];
+}
+
+const log = [];
+globalThis.log = log;
+
+////= keys
+
+let total = 0;
+const honest = ["a", "b", "length", "null", "missing"];
+////= for-114
+console.log("2000 honest rounds", total);
+
+////= for-29
+attempt("honest again", () => [readTheTable("a"), read(table, "b"), readOrDefault("nothing"), readTwice("a")]);
+//// keys-that-are-not-strings-store-into-a-table.js
+////= show-26
+
+////= lines-196	store	object	key	object[key
+
+function describeKeys(object) {
+  return Reflect.ownKeys(object).map(key => (typeof key === "symbol" ? key.toString() : JSON.stringify(key))).join(" ");
+}
+
+function count(counts, key) {
+  counts[key] = (counts[key] || 0) + 1;
+}
+
+const log = [];
+globalThis.log = log;
+
+////= keys
+
+////= for-98
+
+const everything = {};
+const withoutAPrototype = Object.create(null);
+const counts = {};
+////= for-20
+
+console.log("order:", describeKeys(everything));
+console.log("order without a prototype:", describeKeys(withoutAPrototype));
+console.log("Object.keys:", JSON.stringify(Object.keys(everything)));
+console.log("JSON:", JSON.stringify(everything));
+console.log("counts:", JSON.stringify(counts));
+const inOrder = [];
+for (const key in everything) inOrder.push(key);
+console.log("for-in:", JSON.stringify(inOrder));
+console.log("the last store wins:", everything[1], "|", everything.a, "|", everything[""], "|", everything[Symbol.for("a")]);
+console.log("prototype of the common table kept:", Object.getPrototypeOf(everything) === Object.prototype, Object.getPrototypeOf(withoutAPrototype) === null);
+//// keys-that-are-not-strings-store-into-a-table-in-sloppy-commonjs/main.cjs
+////= show-26
+
+////= lines-196	store	object	key	object[key
+
+function describeKeys(object) {
+  return Reflect.ownKeys(object).map(key => (typeof key === "symbol" ? key.toString() : JSON.stringify(key))).join(" ");
+}
+
+function count(counts, key) {
+  counts[key] = (counts[key] || 0) + 1;
+}
+
+const log = [];
+globalThis.log = log;
+
+////= keys
+
+////= for-98
+
+const everything = {};
+const withoutAPrototype = Object.create(null);
+const counts = {};
+////= for-20
+
+console.log("order:", describeKeys(everything));
+console.log("order without a prototype:", describeKeys(withoutAPrototype));
+console.log("Object.keys:", JSON.stringify(Object.keys(everything)));
+console.log("JSON:", JSON.stringify(everything));
+console.log("counts:", JSON.stringify(counts));
+const inOrder = [];
+for (const key in everything) inOrder.push(key);
+console.log("for-in:", JSON.stringify(inOrder));
+console.log("the last store wins:", everything[1], "|", everything.a, "|", everything[""], "|", everything[Symbol.for("a")]);
+console.log("prototype of the common table kept:", Object.getPrototypeOf(everything) === Object.prototype, Object.getPrototypeOf(withoutAPrototype) === null);
+//// keys-that-are-not-strings-store-into-a-table-with-the-values-in-plain-sight.js
+////= show-36
+
+////= lines-196	store	object	key	object[key
+
+function describeKeys(object) {
+  return Reflect.ownKeys(object).map(key => (typeof key === "symbol" ? key.toString() : JSON.stringify(key))).join(" ");
+}
+
+function count(counts, key) {
+  counts[key] = (counts[key] || 0) + 1;
+}
+
+const log = [];
+globalThis.log = log;
+
+////= keys
+
+////= for-98
+
+const everything = {};
+const withoutAPrototype = Object.create(null);
+const counts = {};
+////= for-20
+
+console.log("order:", describeKeys(everything));
+console.log("order without a prototype:", describeKeys(withoutAPrototype));
+console.log("Object.keys:", JSON.stringify(Object.keys(everything)));
+console.log("JSON:", JSON.stringify(everything));
+console.log("counts:", JSON.stringify(counts));
+const inOrder = [];
+for (const key in everything) inOrder.push(key);
+console.log("for-in:", JSON.stringify(inOrder));
+console.log("the last store wins:", everything[1], "|", everything.a, "|", everything[""], "|", everything[Symbol.for("a")]);
+console.log("prototype of the common table kept:", Object.getPrototypeOf(everything) === Object.prototype, Object.getPrototypeOf(withoutAPrototype) === null);
+//// lazy-getters-and-state-shared-through-the-prototype.cjs
+const log = [];
+
+////= show-41
+
+////= lines-35	Report	title	this.title	title
+
+Object.defineProperty(Report.prototype, "body", {
+  get: function () {
+    log.push("compute body of " + this.title);
+    var body = "body of " + this.title;
+    Object.defineProperty(this, "body", { value: body, writable: true, enumerable: true, configurable: true });
+    return body;
+  },
+  configurable: true,
+});
+
+Object.defineProperty(Report.prototype, "cached", {
+  get: function () {
+    if (this._cached === undefined) {
+      log.push("fill the cache of " + this.title);
+      this._cached = this.title.length;
+    }
+    return this._cached;
+  },
+});
+
+Report.prototype.tags = [];
+Report.prototype.options = { color: "shared color" };
+Report.prototype.visits = 0;
+
+Report.prototype.addTag = function (tag) {
+  this.tags.push(tag);
+  return this.tags.length;
+};
+////= lines-206	Report	visit	visits
+Report.prototype.paint = function (color) {
+  this.options.color = color;
+  return this.options.color;
+};
+
+////= lines-7	bodyOf	report	report.body
+
+function bodyTwice(report) {
+  return [report.body, report.body];
+}
+
+////= lines-7	cachedOf	report	report.cached
+
+////= lines-5	visit	report	report.visit
+
+////= lines-7	visitsOf	report	report.visits
+
+var length = 0;
+for (var i = 0; i < 2000; i++) {
+  var honest = new Report("r" + (i % 4));
+  length += bodyOf(honest).length + bodyTwice(honest).length + cachedOf(honest) + visit(honest) + visitsOf(honest);
+}
+log.length = 0;
+console.log("2000 honest reports", length);
+
+var report = new Report("first");
+attempt("keys before any read", function () { return Object.keys(report); });
+attempt("the first read computes", function () { return bodyOf(report); });
+attempt("the second read does not", function () { return bodyOf(report); });
+attempt("keys after the read", function () { return Object.keys(report); });
+attempt("two reads in one function on a new report", function () { return bodyTwice(new Report("second")); });
+attempt("a store before any read", function () { var fresh = new Report("third"); fresh.body = "stored"; return [bodyOf(fresh), Object.keys(fresh)]; });
+attempt("a delete brings the getter back", function () { delete report.body; return bodyOf(report); });
+attempt("a frozen report cannot keep its body", function () { return bodyTwice(Object.freeze(new Report("frozen"))); });
+attempt("the prototype itself", function () { return bodyOf(Report.prototype); });
+attempt("after that, a new report", function () { return [bodyOf(new Report("fourth")), Object.getOwnPropertyDescriptor(Report.prototype, "body").get === undefined]; });
+
+attempt("the cache fills once", function () { var fresh = new Report("cache"); return [cachedOf(fresh), cachedOf(fresh), Object.keys(fresh)]; });
+attempt("a cache that holds 0 is kept", function () { var fresh = new Report(""); return [cachedOf(fresh), cachedOf(fresh)]; });
+attempt("a literal under the prototype", function () { return cachedOf({ __proto__: Report.prototype, title: "literal" }); });
+attempt("a literal with a cache already", function () { return cachedOf({ __proto__: Report.prototype, _cached: "already" }); });
+attempt("a literal without a title", function () { return cachedOf({ __proto__: Report.prototype }); });
+
+var one = new Report("one");
+var two = new Report("two");
+attempt("tags pushed through one show up in the other", function () { return [one.addTag("a"), two.addTag("b"), one.tags, one.tags === two.tags, Object.hasOwn(one, "tags")]; });
+attempt("a color painted through one shows up in the other", function () { return [one.paint("red"), two.options.color, Object.hasOwn(one, "options")]; });
+attempt("visits++ makes an own member", function () { return [visit(one), visit(one), visitsOf(one), visitsOf(two), Report.prototype.visits, Object.hasOwn(one, "visits"), Object.hasOwn(two, "visits")]; });
+Report.prototype.visits = 100;
+attempt("after the shared count changed", function () { return [visitsOf(one), visitsOf(two), visit(two), visitsOf(two)]; });
+Report.prototype.visits = "7";
+attempt("after the shared count became a string", function () { var fresh = new Report("fresh"); return [visitsOf(fresh), visit(fresh), visitsOf(fresh)]; });
+Object.defineProperty(Report.prototype, "visits", { value: 5, writable: false, configurable: true });
+attempt("after the shared count became read-only", function () { var fresh = new Report("fresh"); return [visit(fresh), visitsOf(fresh), Object.hasOwn(fresh, "visits")]; });
+delete Report.prototype.visits;
+attempt("after the shared count was deleted", function () { var fresh = new Report("fresh"); return [visitsOf(fresh), visit(fresh), visitsOf(one)]; });
+//// listing-the-keys-aborts-after-a-parent-constructor-stored-past-the-setter-of-a-subclass.js
+////= lines-66	Parent	level	level	level	second	2
+////= withSetter
+const Child = withSetter(Parent);
+console.log(Object.keys(new Child(1)).length);
+//// lists-of-mixed-values-are-sorted-as-texts.js
+////= show-26
+
+const log = [];
+
+function sorted(values) {
+  return values.slice().sort();
+}
+
+function sortedByOrder(values) {
+  return values.slice().sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+function sortedByLocale(values) {
+  return values.slice().sort((a, b) => a.localeCompare(b));
+}
+
+function sortedByLength(values) {
+  return values.slice().sort((a, b) => a.length - b.length);
+}
+
+function sortedByCollator(values) {
+  return values.slice().sort(new Intl.Collator("en").compare);
+}
+
+////= lines-5	sortedCopy	values	values.toSorted
+
+function smallestText(values) {
+  return values.reduce((best, value) => (value < best ? value : best));
+}
+
+////= lines-25	joined	values	separator	values.join
+
+const uses = [
+  ["sort()", sorted],
+  ["sort by < and >", sortedByOrder],
+  ["sort by localeCompare", sortedByLocale],
+  ["sort by length", sortedByLength],
+  ["sort by a collator", sortedByCollator],
+  ["toSorted()", sortedCopy],
+  ["smallest", smallestText],
+];
+
+const lists = [
+  "['b', 'a', 'c']",
+  "['b', 'A', 'a', 'B']",
+  "[10, 9, 1, 100]",
+  "['10', 9, '1', 100]",
+  "[-1, -2, 0, -0]",
+  "['b', undefined, 'a', undefined]",
+  "['b', , 'a']",
+  "['b', null, 'a']",
+  "[true, false, 'maybe']",
+  "[[2, 1], [10], [1, 5]]",
+  "[{}, 'a', '[']",
+  "['\\u00e9', 'z', 'e', 'E']",
+  "['\\uffff', '\\ud800\\udc00', 'a']",
+  "['a', new String('a'), 'A']",
+  "[1n, 2, '3', 10n]",
+  "['a', Symbol('s')]",
+  "['', ' ', '0', 0]",
+  "[NaN, 'N', 'O', Infinity]",
+  "['aa', 'a', 'aaa', '']",
+  "[1e21, 1e3, 2]",
+];
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  for (const [, use] of uses) total += use(["b", "a", "c"]).length;
+  total += joined(["a", "b"], "-").length;
+}
+console.log("2000 honest rounds", total);
+
+for (const [name, use] of uses) {
+  for (const text of lists) attempt(name + " of " + text, () => use(make(text)));
+}
+
+attempt("how often elements are converted by sort()", () => {
+  const noisy = name => ({ toString() { log.push(name); return name; } });
+  const result = sorted([noisy("b"), noisy("a"), noisy("c")]).map(String);
+  const conversions = log.splice(0);
+  return [result, conversions.length >= 6];
+});
+attempt("a comparator that returns texts", () => [3, 1, 2].sort((a, b) => String(a - b)));
+attempt("a comparator that returns nothing", () => [3, 1, 2].sort(() => undefined));
+attempt("a comparator that returns true and false", () => [3, 1, 2].sort((a, b) => a > b));
+attempt("a comparator that returns a BigInt", () => [3, 1, 2].sort((a, b) => BigInt(a - b)));
+attempt("a comparator that returns an object", () => [3, 1, 2].sort((a, b) => ({ valueOf: () => a - b })));
+attempt("a comparator that is a text", () => [3, 1, 2].sort("ascending"));
+attempt("a comparator that is null", () => [3, 1, 2].sort(null));
+
+for (const separator of ["'-'", "''", "undefined", "null", "0", "[]", "['+']", "{ toString() { return '~'; } }", "new String('=')", "Symbol('-')", "1n", "true"]) {
+  attempt("joined by " + separator, () => joined(["a", 1, null, undefined, ["b", "c"]], make(separator)));
+}
+attempt("the separator is converted before the elements and after the length", () => {
+  const values = { get length() { log.push("length"); return 2; }, get 0() { log.push("0"); return "a"; }, get 1() { log.push("1"); return "b"; } };
+  return [Array.prototype.join.call(values, { toString() { log.push("separator"); return "-"; } }), log.splice(0)];
+});
+attempt("a list that holds itself", () => {
+  const values = ["a"];
+  values.push(values, "b");
+  return joined(values, "-");
+});
+//// lists-that-mix-honest-values-and-impostors-go-through-one-loop-sloppy.cjs
+const log = [];
+
+////= show-35
+const patterns = ["0000", "0100", "1000", "0001", "0101", "1111", "012340", "0011223344", "43210"];
+
+console.log("strict:", (function () { return this === undefined; })());
+////= for-104
+//// lists-that-mix-honest-values-and-impostors-go-through-one-loop-strict.js
+"use strict";
+
+const log = [];
+
+////= show-35
+const patterns = ["0000", "0100", "1000", "0001", "0101", "1111", "012340", "0011223344", "43210"];
+
+console.log("strict:", (function () { return this === undefined; })());
+////= for-104
+//// literals-whose-text-misleads-about-their-shape.js
+const log = [];
+
+////= show-23	value.map(show	..
+
+function describe(value) {
+  return Reflect.ownKeys(value)
+    .map(key => {
+      const found = Reflect.getOwnPropertyDescriptor(value, key);
+      const flags = (found.writable ? "w" : "-") + (found.enumerable ? "e" : "-") + (found.configurable ? "c" : "-");
+      return String(key) + " " + flags + " " + ("value" in found ? show(found.value) : (found.get ? "get" : "") + (found.set ? "set" : ""));
+    })
+    .join("; ");
+}
+
+////= lines-7	widthOf	box	box.width
+
+////= lines-7	heightOf	box	box.height
+
+////= lines-256	honest	width	height
+
+const forms = [
+  ["a name twice", (key, other) => ({ width: 1, height: 2, width: 3 })],
+  ["a value, then a getter of the same name", (key, other) => ({ width: 1, height: 2, get width() { return "getter"; } })],
+  ["a getter, then a value of the same name", (key, other) => ({ get width() { return "getter"; }, height: 2, width: 3 })],
+  ["a getter and a setter apart", (key, other) => ({ get width() { return "getter"; }, height: 2, set width(value) {} })],
+  ["a getter, a value, a setter", (key, other) => ({ get width() { return "getter"; }, width: 1, set width(value) {}, height: 2 })],
+  ["a computed key that is width", (key, other) => ({ width: 1, height: 2, [key]: "computed" })],
+  ["a computed key that is width, first", (key, other) => ({ [key]: "computed", width: 1, height: 2 })],
+  ["a computed getter over a value", (key, other) => ({ width: 1, height: 2, get [key]() { return "computed getter"; } })],
+  ["a spread that overrides", (key, other) => ({ width: 1, height: 2, ...other })],
+  ["a spread that is overridden", (key, other) => ({ ...other, width: 1, height: 2 })],
+  ["a spread in the middle", (key, other) => ({ width: 1, ...other, height: 2 })],
+  ["a spread of a getter", (key, other) => ({ width: 1, height: 2, ...{ get width() { log.push("get width"); return "flattened"; } } })],
+  ["a spread over a setter", (key, other) => ({ set width(value) { log.push("set width"); }, height: 2, ...other })],
+  ["a spread of null and undefined", (key, other) => ({ width: 1, ...null, ...undefined, height: 2 })],
+  ["a spread of a string", (key, other) => ({ width: 1, ..."ab", height: 2 })],
+  ["a spread of an array", (key, other) => ({ width: 1, ...["x", "y"], height: 2 })],
+  ["a spread of a number", (key, other) => ({ width: 1, ...5, height: 2 })],
+  ["numeric-looking names between", (key, other) => ({ width: 1, 2: "two", height: 2, 1: "one", "-1": "minus one", "01": "zero one" })],
+  ["a symbol between", (key, other) => ({ width: 1, [Symbol.for("between")]: "symbol", height: 2 })],
+  ["a method named width", (key, other) => ({ width() { return "method"; }, height: 2 })],
+  ["undefined values", (key, other) => ({ width: undefined, height: void 0 })],
+  ["a conditional spread that adds nothing", (key, other) => ({ width: 1, ...(key === "no" && { height: 2 }) })],
+  ["a conditional spread that adds height", (key, other) => ({ width: 1, ...(key === "width" && { height: 2 }) })],
+  ["values evaluated in order", (key, other) => ({ width: (log.push("width"), 1), [(log.push("key"), "depth")]: (log.push("depth"), 2), height: (log.push("height"), 3) })],
+  ["a value that throws halfway", (key, other) => ({ width: 1, height: (() => { throw new RangeError("halfway"); })(), depth: log.push("never") })],
+  ["Object.assign over a literal", (key, other) => Object.assign({ width: 1, height: 2 }, other)],
+  ["Object.fromEntries", (key, other) => Object.fromEntries([["height", 2], [key, 1], ["height", 3]])],
+  ["the honest factory with holes in its arguments", (key, other) => honest()],
+];
+
+for (let i = 0; i < 2000; i++) {
+  const box = honest(i % 5, 2);
+  widthOf(box);
+  heightOf(box);
+}
+
+for (let round = 0; round < 2; round++) {
+  for (const [label, make] of forms) {
+    let line = "round " + round + " | " + label + " -> ";
+    try {
+      const box = make(["wid", "th"].join(""), JSON.parse('{"height":"other height","width":"other width","depth":"other depth"}'));
+      line += describe(box) + " | width " + show(widthOf(box)) + " | height " + show(heightOf(box)) + " | json " + JSON.stringify(box);
+    } catch (error) {
+      line += "threw " + error.constructor.name;
+    }
+    console.log(line + (log.length ? " | log " + log.splice(0).join(", ") : ""));
+  }
+  console.log("honest again", describe(honest(1, 2)), widthOf(honest(1, 2)), heightOf(honest(1, 2)));
+}
+
+const base = { greet() { return "base"; } };
+const other = { greet() { return "other"; } };
+const child = {
+  __proto__: base,
+  greet() {
+    return "child, then " + super.greet();
+  },
+};
+////= lines-5	greet	thing	thing.greet
+for (let i = 0; i < 2000; i++) greet(child);
+console.log("super in a literal's method", greet(child));
+Object.setPrototypeOf(child, other);
+console.log("after the literal moved under another prototype", greet(child));
+const borrower = { __proto__: base, greet: child.greet };
+console.log("the method borrowed by another literal still uses its home", greet(borrower));
+Object.setPrototypeOf(child, null);
+try {
+  console.log("after the home lost its prototype", greet(borrower));
+} catch (error) {
+  console.log("after the home lost its prototype threw", error.constructor.name);
+}
+//// lone-surrogates-go-through-everything-a-text-goes-through.js
+////= show-26
+
+const texts = [
+  ["a high half", "\ud83d"],
+  ["a low half", "\ude00"],
+  ["a pair", "😀"],
+  ["the halves swapped", "\ude00\ud83d"],
+  ["a high half in the middle", "a\ud83db"],
+  ["a high half at the end", "ab\ud83d"],
+  ["a low half at the start", "\ude00ab"],
+  ["two high halves and a low one", "\ud83d😀"],
+  ["made by slicing a pair", make("'\\ud83d\\ude00'.slice(0, 1)")],
+  ["made by indexing a pair", make("'\\ud83d\\ude00'[1]")],
+  ["made from a code", String.fromCharCode(0xd83d)],
+  ["made by JSON", JSON.parse('"\\ud83d"')],
+];
+
+////= lines-5	isWellFormed	text	text.isWellFormed
+
+////= lines-5	toWellFormed	text	text.toWellFormed
+
+function codePoints(text) {
+  const seen = [];
+  for (const character of text) seen.push(character.codePointAt(0).toString(16));
+  return seen;
+}
+
+function codePointAtEach(text) {
+  const seen = [];
+  for (let i = 0; i < text.length; i++) seen.push(text.codePointAt(i).toString(16));
+  return seen;
+}
+
+////= lines-27	encoded	text	encodeURIComponent	text
+
+////= lines-3	asJson	text	JSON.stringify	text
+
+function asJsonKey(text) {
+  return JSON.stringify({ [text]: text });
+}
+
+function asBytes(text) {
+  return Array.from(new TextEncoder().encode(text));
+}
+
+function asBuffer(text) {
+  return Array.from(Buffer.from(text));
+}
+
+////= lines-3	byteLength	text	Buffer.byteLength	text
+
+function normalized(text) {
+  return text.normalize("NFC") === text;
+}
+
+function cases(text) {
+  return [text.toUpperCase() === text, text.toLowerCase() === text];
+}
+
+function matchedByDot(text) {
+  return [text.match(/./g).length, text.match(/./gu).length, /^.$/u.test(text), /\ud83d/.test(text), /\ud83d/u.test(text), /\p{Cs}/u.test(text)];
+}
+
+function splitAndJoined(text) {
+  return [text.split("").length, [...text].length, Array.from(text).length, text.split("").join("") === text, [...text].join("") === text];
+}
+
+function asAKey(text) {
+  const table = {};
+  table[text] = 1;
+  const map = new Map([[text, 1]]);
+  return [Object.keys(table)[0] === text, table[text], map.has(text), text in table, new Set([text, text + ""]).size];
+}
+
+function roundTrip(text) {
+  return [JSON.parse(JSON.stringify(text)) === text, structuredClone(text) === text, new TextDecoder().decode(new TextEncoder().encode(text)) === text, Buffer.from(text, "utf16le").toString("utf16le") === text];
+}
+
+const uses = [
+  ["is well formed", isWellFormed],
+  ["to well formed", toWellFormed],
+  ["code points", codePoints],
+  ["code point at each", codePointAtEach],
+  ["encodeURIComponent", encoded],
+  ["JSON", asJson],
+  ["JSON key", asJsonKey],
+  ["TextEncoder", asBytes],
+  ["Buffer.from", asBuffer],
+  ["byte length", byteLength],
+  ["normalized", normalized],
+  ["cases", cases],
+  ["matched", matchedByDot],
+  ["split and joined", splitAndJoined],
+  ["as a key", asAKey],
+  ["round trip", roundTrip],
+];
+
+let total = 0;
+////= for-179	"hello"
+console.log("2000 honest rounds", total);
+
+for (const [name, use] of uses) {
+  for (const [label, text] of texts) attempt(name + " of " + label, () => use(text));
+}
+//// look-alikes-in-plain-sight-are-used-like-strings.js
+////= show-26
+
+class Rope {
+  constructor(left, right) {
+    this.left = left;
+    this.right = right;
+  }
+  get length() {
+    return this.left.length + this.right.length;
+  }
+  charCodeAt(index) {
+    return index < this.left.length ? this.left.charCodeAt(index) : this.right.charCodeAt(index - this.left.length);
+  }
+  slice(from, to) {
+    return this.toString().slice(from, to);
+  }
+  toUpperCase() {
+    return new Rope(this.left.toUpperCase(), this.right.toUpperCase());
+  }
+  indexOf(piece) {
+    return this.toString().indexOf(piece);
+  }
+  toString() {
+    return this.left.toString() + this.right.toString();
+  }
+}
+
+class Repeated {
+  constructor(text, times) {
+    this.text = text;
+    this.length = text.length * times;
+  }
+  charCodeAt(index) {
+    return index < this.length ? this.text.charCodeAt(index % this.text.length) : NaN;
+  }
+  slice() {
+    return this;
+  }
+  toUpperCase() {
+    return "REPEATED";
+  }
+  indexOf() {
+    return -2;
+  }
+  [Symbol.toPrimitive](hint) {
+    return hint === "number" ? this.length : this.text + "*";
+  }
+}
+
+function OldStyle(text) {
+  this.text = text;
+  this.length = text.length;
+}
+OldStyle.prototype.charCodeAt = function (index) {
+  return -this.text.charCodeAt(index);
+};
+OldStyle.prototype.slice = function (from, to) {
+  return new OldStyle(this.text.slice(from, to));
+};
+OldStyle.prototype.toUpperCase = function () {
+  return this.text.toUpperCase() + " (old style)";
+};
+OldStyle.prototype.indexOf = function (piece) {
+  return String(this.text.indexOf(piece));
+};
+////= lines-36	OldStyle	valueOf	"old "	text
+
+class Loud extends String {
+  toUpperCase() {
+    return super.toUpperCase() + "!";
+  }
+  charCodeAt(index) {
+    return super.charCodeAt(index) + 1000;
+  }
+}
+
+const literal = {
+  length: 2,
+  charCodeAt: index => 65 + index,
+  slice: () => "literal slice",
+  toUpperCase: () => "LITERAL",
+  indexOf: () => 0,
+  toString: () => "literal",
+};
+
+const listWithMethods = Object.assign(["l", "i", "s", "t"], { charCodeAt: index => index, toUpperCase: () => "LIST" });
+
+////= hash
+
+////= lines-33	head	text	text.slice	0	2
+
+////= lines-5	shout	text	text.toUpperCase
+
+////= lines-3	find	text	text.indexOf	"l"
+
+////= label
+
+////= lines-235	template	text
+
+function isHello(text) {
+  return [text === "hello", text == "hello", text < "i"];
+}
+
+function asKey(text) {
+  return { hello: "by hello", "he*": "by he*", "old hello": "by valueOf", "[object Object]": "by object", literal: "by literal", "l,i,s,t": "by list" }[text];
+}
+
+function print(name, result) {
+  console.log(name + " -> " + (result instanceof Rope ? "Rope " + result : result instanceof OldStyle ? "OldStyle " + result.text : result instanceof Repeated ? "Repeated " + result.text : show(result)));
+}
+
+function all(round) {
+  print(round + " hash of a text", hash("hello"));
+  print(round + " hash of a rope", hash(new Rope("he", "llo")));
+  print(round + " hash of a rope of ropes", hash(new Rope(new Rope("h", "e"), new Rope("l", new Rope("l", "o")))));
+  print(round + " hash of repeated", hash(new Repeated("he", 2)));
+  print(round + " hash of old style", hash(new OldStyle("hello")));
+  print(round + " hash of loud", hash(new Loud("hello")));
+  print(round + " hash of a wrapped text", hash(new String("hello")));
+  print(round + " hash of the literal", hash(literal));
+  print(round + " hash of the list", hash(listWithMethods));
+
+  print(round + " head of a text", head("hello"));
+  print(round + " head of a rope", head(new Rope("he", "llo")));
+  print(round + " head of repeated", head(new Repeated("he", 2)));
+  print(round + " head of old style", head(new OldStyle("hello")));
+  print(round + " head of loud", head(new Loud("hello")));
+  print(round + " head of the literal", head(literal));
+  print(round + " head of the list", head(listWithMethods));
+  print(round + " head of a plain list", head(["h", "e", "l"]));
+
+  print(round + " shout of a text", shout("hello"));
+  print(round + " shout of a rope", shout(new Rope("he", "llo")));
+  print(round + " shout of repeated", shout(new Repeated("he", 2)));
+  print(round + " shout of old style", shout(new OldStyle("hello")));
+  print(round + " shout of loud", shout(new Loud("hello")));
+  print(round + " shout of the literal", shout(literal));
+  print(round + " shout of the list", shout(listWithMethods));
+
+  print(round + " find in a text", find("hello"));
+  print(round + " find in a rope", find(new Rope("he", "llo")));
+  print(round + " find in repeated", find(new Repeated("he", 2)));
+  print(round + " find in old style", find(new OldStyle("hello")));
+  print(round + " find in loud", find(new Loud("hello")));
+  print(round + " find in the literal", find(literal));
+  print(round + " find in the list", find(listWithMethods));
+
+  for (const [name, value] of [["a text", "hello"], ["a rope", new Rope("he", "llo")], ["repeated", new Repeated("he", 2)], ["old style", new OldStyle("hello")], ["loud", new Loud("hello")], ["the literal", literal], ["the list", listWithMethods]]) {
+    print(round + " label of " + name, label(value));
+    print(round + " template of " + name, template(value));
+    print(round + " comparisons of " + name, isHello(value));
+    print(round + " key " + name, asKey(value));
+  }
+}
+
+all("first");
+let total = 0;
+for (let i = 0; i < 2000; i++) total += hash("hello") + head("hello").length + shout("hello").length + find("hello") + label("hello").length + template("hello").length;
+console.log("2000 honest rounds", total);
+all("second");
+//// many-callers-and-a-hole-that-native-code-hands-to-the-callback-as-undefined.js
+////= show-5
+
+const log = [];
+
+////= attempt-14
+
+const seen = [];
+
+////= lines-32	halfOne
+
+////= lines-32	halfTwo
+
+////= lines-32	halfThree
+
+////= lines-32	halfFour
+
+////= lines-32	halfFive
+
+////= lines-32	halfSix
+
+////= lines-32	halfSeven
+
+////= lines-32	halfEight
+
+////= lines-32	halfNine
+
+////= lines-32	halfTen
+
+////= lines-32	halfEleven
+
+////= halfTwelve-2
+
+////= lines-32	halfThirteen
+
+////= lines-32	halfFourteen
+
+////= halfFifteen
+
+////= lines-186	lowSixteen
+
+////= lines-186	lowSeventeen
+
+////= lines-50	sizeEighteen
+
+////= lines-50	sizeNineteen
+
+////= lines-126	firstTwenty
+
+async function main() {
+  await attempt("find over a hole", () => [0, , 3].find(halfOne));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfOne(4)), show(halfOne(3)), show(halfOne(0.5)), show(halfOne(-8)), seen.splice(0).length);
+  console.log("honest", show(halfTwo(4)), show(halfTwo(3)), show(halfTwo(0.5)), show(halfTwo(-8)), seen.splice(0).length);
+  await attempt("findIndex over a hole", () => [0, , 3].findIndex(halfTwo));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfTwo(4)), show(halfTwo(3)), show(halfTwo(0.5)), show(halfTwo(-8)), seen.splice(0).length);
+  await attempt("findLast over a hole", () => [3, , 0].findLast(halfThree));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfThree(4)), show(halfThree(3)), show(halfThree(0.5)), show(halfThree(-8)), seen.splice(0).length);
+  console.log("honest", show(halfFour(4)), show(halfFour(3)), show(halfFour(0.5)), show(halfFour(-8)), seen.splice(0).length);
+  await attempt("findLastIndex over a hole", () => [3, , 0].findLastIndex(halfFour));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfFour(4)), show(halfFour(3)), show(halfFour(0.5)), show(halfFour(-8)), seen.splice(0).length);
+  await attempt("map skips a hole", () => [1, , 3].map(halfFive));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfFive(4)), show(halfFive(3)), show(halfFive(0.5)), show(halfFive(-8)), seen.splice(0).length);
+  console.log("honest", show(halfSix(4)), show(halfSix(3)), show(halfSix(0.5)), show(halfSix(-8)), seen.splice(0).length);
+  await attempt("forEach skips a hole", () => [1, , 3].forEach(halfSix));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfSix(4)), show(halfSix(3)), show(halfSix(0.5)), show(halfSix(-8)), seen.splice(0).length);
+  await attempt("Array.from over a hole", () => Array.from([1, , 3], halfSeven));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfSeven(4)), show(halfSeven(3)), show(halfSeven(0.5)), show(halfSeven(-8)), seen.splice(0).length);
+  console.log("honest", show(halfEight(4)), show(halfEight(3)), show(halfEight(0.5)), show(halfEight(-8)), seen.splice(0).length);
+  await attempt("Array.from over a length alone", () => Array.from({ length: 2 }, halfEight));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfEight(4)), show(halfEight(3)), show(halfEight(0.5)), show(halfEight(-8)), seen.splice(0).length);
+  await attempt("the map of an iterator over a hole", () => [1, , 3].values().map(halfNine).toArray());
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfNine(4)), show(halfNine(3)), show(halfNine(0.5)), show(halfNine(-8)), seen.splice(0).length);
+  console.log("honest", show(halfTen(4)), show(halfTen(3)), show(halfTen(0.5)), show(halfTen(-8)), seen.splice(0).length);
+  await attempt("a spread of a hole into the arguments", () => [halfTen(...[, 1]), halfTen(...new Array(1))]);
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfTen(4)), show(halfTen(3)), show(halfTen(0.5)), show(halfTen(-8)), seen.splice(0).length);
+  await attempt("apply with a hole", () => halfEleven.apply(null, [, 1]));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfEleven(4)), show(halfEleven(3)), show(halfEleven(0.5)), show(halfEleven(-8)), seen.splice(0).length);
+  console.log("honest", show(halfTwelve(4)), show(halfTwelve(3)), show(halfTwelve(0.5)), show(halfTwelve(-8)), seen.splice(0).length);
+  await attempt("apply with a length alone", () => halfTwelve.apply(null, { length: 1 }));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfTwelve(4)), show(halfTwelve(3)), show(halfTwelve(0.5)), show(halfTwelve(-8)), seen.splice(0).length);
+  await attempt("find over new Array(2)", () => new Array(2).find(halfThirteen));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfThirteen(4)), show(halfThirteen(3)), show(halfThirteen(0.5)), show(halfThirteen(-8)), seen.splice(0).length);
+  console.log("honest", show(halfFourteen(4)), show(halfFourteen(3)), show(halfFourteen(0.5)), show(halfFourteen(-8)), seen.splice(0).length);
+  await attempt("find over an array whose length was raised", () => { const list = [0]; list.length = 2; return list.find(halfFourteen); });
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfFourteen(4)), show(halfFourteen(3)), show(halfFourteen(0.5)), show(halfFourteen(-8)), seen.splice(0).length);
+  await attempt("find over an array with a deleted element", () => { const list = [1, 2]; delete list[0]; return list.find(halfFifteen); });
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(halfFifteen(4)), show(halfFifteen(3)), show(halfFifteen(0.5)), show(halfFifteen(-8)), seen.splice(0).length);
+  console.log("honest", show(lowSixteen(4)), show(lowSixteen(3)), show(lowSixteen(7)), show(lowSixteen(-1)), seen.splice(0).length);
+  await attempt("find over a hole, bits", () => [0, , 3].find(lowSixteen));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(lowSixteen(4)), show(lowSixteen(3)), show(lowSixteen(7)), show(lowSixteen(-1)), seen.splice(0).length);
+  await attempt("Array.from over a length alone, bits", () => Array.from({ length: 2 }, lowSeventeen));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(lowSeventeen(4)), show(lowSeventeen(3)), show(lowSeventeen(7)), show(lowSeventeen(-1)), seen.splice(0).length);
+  console.log("honest", show(sizeEighteen("ab")), show(sizeEighteen("")), show(sizeEighteen("xyz")), show(sizeEighteen(`a${1}`)), seen.splice(0).length);
+  await attempt("find over a hole among strings", () => ["", , "c"].find(sizeEighteen));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(sizeEighteen("ab")), show(sizeEighteen("")), show(sizeEighteen("xyz")), show(sizeEighteen(`a${1}`)), seen.splice(0).length);
+  await attempt("Array.from over a hole among strings", () => Array.from(["a", , "c"], sizeNineteen));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(sizeNineteen("ab")), show(sizeNineteen("")), show(sizeNineteen("xyz")), show(sizeNineteen(`a${1}`)), seen.splice(0).length);
+  console.log("honest", show(firstTwenty([1, 2])), show(firstTwenty([])), show(firstTwenty(new Array(4, 5))), show(firstTwenty([0.5])), seen.splice(0).length);
+  await attempt("find over a hole among arrays", () => [[0], , [3]].find(firstTwenty));
+  console.log("  the callback computed:", seen.splice(0).join(" "));
+  console.log("honest", show(firstTwenty([1, 2])), show(firstTwenty([])), show(firstTwenty(new Array(4, 5))), show(firstTwenty([0.5])), seen.splice(0).length);
+}
+
+main();
+//// many-callers-and-an-impostor-through-a-computed-method-name.js
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-52
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-4
+
+const nameOf = name => name.split("").join("");
+
+const holder = { total, append, firstCode, tail, half, below, low, pick, invoke, build, sumOf, move };
+
+////= honestFirst
+
+////= honestSecond
+
+console.log("strict:", (function () { return this === undefined; })());
+honestSecond("before");
+////= for-176	notSmallIntegers	"low of "	"low"	"pick at "	"pick"
+attempt("low of a literal", () => holder[nameOf("low")](4294967297.5));
+attempt("pick at a literal", () => holder[nameOf("pick")]("length"));
+////= for-176	notFunctions	"invoke of "	"invoke"	"build from "	"build"
+attempt("invoke of a literal", () => holder[nameOf("invoke")](class {}));
+attempt("build from a literal", () => holder[nameOf("build")](() => {}));
+////= for-176	notPoints	"sumOf "	"sumOf"	"move "	"move"
+attempt("sumOf a literal", () => holder[nameOf("sumOf")]({ y: 2, x: 1 }));
+attempt("move a literal", () => holder[nameOf("move")]({ get x() { return 1; }, y: 2 }));
+////= for-176	notArrays	"total of "	"total"	"append to "	"append"
+attempt("total of a literal", () => holder[nameOf("total")]("12"));
+attempt("append to a literal", () => holder[nameOf("append")]({ push: () => "a literal's push" }));
+////= for-176	notStrings	"firstCode of "	"firstCode"	"tail of "	"tail"
+attempt("firstCode of a literal", () => holder[nameOf("firstCode")]([65]));
+attempt("tail of a literal", () => holder[nameOf("tail")]([1, 2, 3]));
+////= for-176	notNumbers	"half of "	"half"	"below from "	"below"
+attempt("half of a literal", () => holder[nameOf("half")]("4"));
+attempt("below from a literal", () => holder[nameOf("below")]("1"));
+honestFirst("after");
+honestSecond("after");
+//// many-callers-and-an-impostor-through-a-copy-of-its-holder.js
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-56
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-5
+
+const holder = { total, append, firstCode, tail, half, below, low, pick, invoke, build, sumOf, move };
+
+////= honestFirst-7
+
+console.log("strict:", (function () { return this === undefined; })());
+honestSecond("before");
+////= for-174	notPoints	"sumOf "	sumOf	"move "	move
+attempt("sumOf a literal", () => ({ ...holder }).sumOf({ y: 2, x: 1 }));
+attempt("move a literal", () => ({ ...holder }).move({ get x() { return 1; }, y: 2 }));
+////= for-174	notArrays	"total of "	total	"append to "	append
+attempt("total of a literal", () => ({ ...holder }).total("12"));
+attempt("append to a literal", () => ({ ...holder }).append({ push: () => "a literal's push" }));
+////= for-174	notStrings	"firstCode of "	firstCode	"tail of "	tail
+attempt("firstCode of a literal", () => ({ ...holder }).firstCode([65]));
+attempt("tail of a literal", () => ({ ...holder }).tail([1, 2, 3]));
+////= for-174	notNumbers	"half of "	half	"below from "	below
+attempt("half of a literal", () => ({ ...holder }).half("4"));
+attempt("below from a literal", () => ({ ...holder }).below("1"));
+////= for-174	notSmallIntegers	"low of "	low	"pick at "	pick
+attempt("low of a literal", () => ({ ...holder }).low(4294967297.5));
+attempt("pick at a literal", () => ({ ...holder }).pick("length"));
+////= for-174	notFunctions	"invoke of "	invoke	"build from "	build
+attempt("invoke of a literal", () => ({ ...holder }).invoke(class {}));
+attempt("build from a literal", () => ({ ...holder }).build(() => {}));
+honestFirst("after");
+honestSecond("after");
+//// many-callers-and-an-impostor-through-a-destructured-field.cjs
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-55
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-10
+
+const holder = { total, append, firstCode, tail, half, below, low, pick, invoke, build, sumOf, move };
+
+////= honestFirst-8
+
+console.log("strict:", (function () { return this === undefined; })());
+honestSecond("before");
+////= for-170	notArrays	"total of "	total	"append to "	append
+attempt("total of a literal", () => (({ total: run }) => run("12"))(holder));
+attempt("append to a literal", () => (({ append: run }) => run({ push: () => "a literal's push" }))(holder));
+////= for-170	notStrings	"firstCode of "	firstCode	"tail of "	tail
+attempt("firstCode of a literal", () => (({ firstCode: run }) => run([65]))(holder));
+attempt("tail of a literal", () => (({ tail: run }) => run([1, 2, 3]))(holder));
+////= for-170	notNumbers	"half of "	half	"below from "	below
+attempt("half of a literal", () => (({ half: run }) => run("4"))(holder));
+attempt("below from a literal", () => (({ below: run }) => run("1"))(holder));
+////= for-170	notSmallIntegers	"low of "	low	"pick at "	pick
+attempt("low of a literal", () => (({ low: run }) => run(4294967297.5))(holder));
+attempt("pick at a literal", () => (({ pick: run }) => run("length"))(holder));
+////= for-170	notFunctions	"invoke of "	invoke	"build from "	build
+attempt("invoke of a literal", () => (({ invoke: run }) => run(class {}))(holder));
+attempt("build from a literal", () => (({ build: run }) => run(() => {}))(holder));
+////= for-170	notPoints	"sumOf "	sumOf	"move "	move
+attempt("sumOf a literal", () => (({ sumOf: run }) => run({ y: 2, x: 1 }))(holder));
+attempt("move a literal", () => (({ move: run }) => run({ get x() { return 1; }, y: 2 }))(holder));
+honestFirst("after");
+honestSecond("after");
+//// many-callers-and-an-impostor-through-a-field.cjs
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-52
+
+////= invoke
+
+////= build
+
+////= sumOf-3
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-9
+
+const holder = { total, append, firstCode, tail, half, below, low, pick, invoke, build, sumOf, move };
+
+////= honestFirst-6
+
+////= honestSecond-6
+
+console.log("strict:", (function () { return this === undefined; })());
+honestSecond("before");
+////= for-171	notFunctions	"invoke of "	invoke	"build from "	build
+attempt("invoke of a literal", () => holder.invoke(class {}));
+attempt("build from a literal", () => holder.build(() => {}));
+////= for-171	notPoints	"sumOf "	sumOf	"move "	move
+attempt("sumOf a literal", () => holder.sumOf({ y: 2, x: 1 }));
+attempt("move a literal", () => holder.move({ get x() { return 1; }, y: 2 }));
+////= for-171	notArrays	"total of "	total	"append to "	append
+attempt("total of a literal", () => holder.total("12"));
+attempt("append to a literal", () => holder.append({ push: () => "a literal's push" }));
+////= for-171	notStrings	"firstCode of "	firstCode	"tail of "	tail
+attempt("firstCode of a literal", () => holder.firstCode([65]));
+attempt("tail of a literal", () => holder.tail([1, 2, 3]));
+////= for-171	notNumbers	"half of "	half	"below from "	below
+attempt("half of a literal", () => holder.half("4"));
+attempt("below from a literal", () => holder.below("1"));
+////= for-171	notSmallIntegers	"low of "	low	"pick at "	pick
+attempt("low of a literal", () => holder.low(4294967297.5));
+attempt("pick at a literal", () => holder.pick("length"));
+honestFirst("after");
+honestSecond("after");
+//// many-callers-and-an-impostor-through-a-function-that-an-array-method-hands-back.js
+////= show-11
+
+let last;
+
+////= attempt-53
+
+////= lines-251	totalThirteen
+
+////= lines-284	halfThirteen
+
+////= lines-251	totalFourteen
+
+////= lines-284	halfFourteen
+
+console.log("strict:", (function () { return this === undefined; })());
+for (const [name, make] of notLists) attempt("at, total of " + name, () => [totalOne].at(0)(make()));
+for (const [name, make] of notNumbers) attempt("at, half of " + name, () => [halfOne].at(0)(make()));
+console.log("honest", totalOne([1, 2, 3]), totalOne([]), totalOne(new Array(4, 5)), totalOne([0.5]), halfOne(4), halfOne(3), halfOne(0.5), halfOne(-8));
+console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+for (const [name, make] of notLists) attempt("shift, total of " + name, () => [totalTwo].shift()(make()));
+for (const [name, make] of notNumbers) attempt("shift, half of " + name, () => [halfTwo].shift()(make()));
+console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+for (const [name, make] of notLists) attempt("flat, total of " + name, () => [[totalThree]].flat()[0](make()));
+for (const [name, make] of notNumbers) attempt("flat, half of " + name, () => [[halfThree]].flat()[0](make()));
+console.log("honest", totalThree([1, 2, 3]), totalThree([]), totalThree(new Array(4, 5)), totalThree([0.5]), halfThree(4), halfThree(3), halfThree(0.5), halfThree(-8));
+console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+for (const [name, make] of notLists) attempt("concat, total of " + name, () => [].concat([totalFour])[0](make()));
+for (const [name, make] of notNumbers) attempt("concat, half of " + name, () => [].concat([halfFour])[0](make()));
+console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+for (const [name, make] of notLists) attempt("slice, total of " + name, () => [totalFive].slice()[0](make()));
+for (const [name, make] of notNumbers) attempt("slice, half of " + name, () => [halfFive].slice()[0](make()));
+console.log("honest", totalFive([1, 2, 3]), totalFive([]), totalFive(new Array(4, 5)), totalFive([0.5]), halfFive(4), halfFive(3), halfFive(0.5), halfFive(-8));
+console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+for (const [name, make] of notLists) attempt("reverse, total of " + name, () => [0, totalSix].reverse()[0](make()));
+for (const [name, make] of notNumbers) attempt("reverse, half of " + name, () => [0, halfSix].reverse()[0](make()));
+console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+for (const [name, make] of notLists) attempt("find, total of " + name, () => [totalSeven].find(() => true)(make()));
+for (const [name, make] of notNumbers) attempt("find, half of " + name, () => [halfSeven].find(() => true)(make()));
+console.log("honest", totalSeven([1, 2, 3]), totalSeven([]), totalSeven(new Array(4, 5)), totalSeven([0.5]), halfSeven(4), halfSeven(3), halfSeven(0.5), halfSeven(-8));
+console.log("honest", totalEight([1, 2, 3]), totalEight([]), totalEight(new Array(4, 5)), totalEight([0.5]), halfEight(4), halfEight(3), halfEight(0.5), halfEight(-8));
+for (const [name, make] of notLists) attempt("filter, total of " + name, () => [totalEight].filter(() => true)[0](make()));
+for (const [name, make] of notNumbers) attempt("filter, half of " + name, () => [halfEight].filter(() => true)[0](make()));
+console.log("honest", totalEight([1, 2, 3]), totalEight([]), totalEight(new Array(4, 5)), totalEight([0.5]), halfEight(4), halfEight(3), halfEight(0.5), halfEight(-8));
+for (const [name, make] of notLists) attempt("map, total of " + name, () => [totalNine].map(f => f)[0](make()));
+for (const [name, make] of notNumbers) attempt("map, half of " + name, () => [halfNine].map(f => f)[0](make()));
+console.log("honest", totalNine([1, 2, 3]), totalNine([]), totalNine(new Array(4, 5)), totalNine([0.5]), halfNine(4), halfNine(3), halfNine(0.5), halfNine(-8));
+console.log("honest", totalTen([1, 2, 3]), totalTen([]), totalTen(new Array(4, 5)), totalTen([0.5]), halfTen(4), halfTen(3), halfTen(0.5), halfTen(-8));
+for (const [name, make] of notLists) attempt("reduce, total of " + name, () => [totalTen].reduce((found, f) => f, null)(make()));
+for (const [name, make] of notNumbers) attempt("reduce, half of " + name, () => [halfTen].reduce((found, f) => f, null)(make()));
+console.log("honest", totalTen([1, 2, 3]), totalTen([]), totalTen(new Array(4, 5)), totalTen([0.5]), halfTen(4), halfTen(3), halfTen(0.5), halfTen(-8));
+for (const [name, make] of notLists) attempt("fill, total of " + name, () => [null].fill(totalEleven)[0](make()));
+for (const [name, make] of notNumbers) attempt("fill, half of " + name, () => [null].fill(halfEleven)[0](make()));
+console.log("honest", totalEleven([1, 2, 3]), totalEleven([]), totalEleven(new Array(4, 5)), totalEleven([0.5]), halfEleven(4), halfEleven(3), halfEleven(0.5), halfEleven(-8));
+console.log("honest", totalTwelve([1, 2, 3]), totalTwelve([]), totalTwelve(new Array(4, 5)), totalTwelve([0.5]), halfTwelve(4), halfTwelve(3), halfTwelve(0.5), halfTwelve(-8));
+for (const [name, make] of notLists) attempt("splice, total of " + name, () => [totalTwelve].splice(0, 1)[0](make()));
+for (const [name, make] of notNumbers) attempt("splice, half of " + name, () => [halfTwelve].splice(0, 1)[0](make()));
+console.log("honest", totalTwelve([1, 2, 3]), totalTwelve([]), totalTwelve(new Array(4, 5)), totalTwelve([0.5]), halfTwelve(4), halfTwelve(3), halfTwelve(0.5), halfTwelve(-8));
+for (const [name, make] of notLists) attempt("toReversed, total of " + name, () => [0, totalThirteen].toReversed()[0](make()));
+for (const [name, make] of notNumbers) attempt("toReversed, half of " + name, () => [0, halfThirteen].toReversed()[0](make()));
+console.log("honest", totalThirteen([1, 2, 3]), totalThirteen([]), totalThirteen(new Array(4, 5)), totalThirteen([0.5]), halfThirteen(4), halfThirteen(3), halfThirteen(0.5), halfThirteen(-8));
+console.log("honest", totalFourteen([1, 2, 3]), totalFourteen([]), totalFourteen(new Array(4, 5)), totalFourteen([0.5]), halfFourteen(4), halfFourteen(3), halfFourteen(0.5), halfFourteen(-8));
+for (const [name, make] of notLists) attempt("with, total of " + name, () => [0].with(0, totalFourteen)[0](make()));
+for (const [name, make] of notNumbers) attempt("with, half of " + name, () => [0].with(0, halfFourteen)[0](make()));
+console.log("honest", totalFourteen([1, 2, 3]), totalFourteen([]), totalFourteen(new Array(4, 5)), totalFourteen([0.5]), halfFourteen(4), halfFourteen(3), halfFourteen(0.5), halfFourteen(-8));
+//// many-callers-and-an-impostor-through-a-function-that-another-built-in-hands-back.js
+////= show-11
+
+let last;
+
+////= attempt-53
+
+////= lines-251	totalThirteen
+
+////= lines-284	halfThirteen
+
+////= lines-251	totalFourteen
+
+////= lines-284	halfFourteen
+
+console.log("strict:", (function () { return this === undefined; })());
+for (const [name, make] of notLists) attempt("Array.of, total of " + name, () => Array.of(totalOne)[0](make()));
+for (const [name, make] of notNumbers) attempt("Array.of, half of " + name, () => Array.of(halfOne)[0](make()));
+console.log("honest", totalOne([1, 2, 3]), totalOne([]), totalOne(new Array(4, 5)), totalOne([0.5]), halfOne(4), halfOne(3), halfOne(0.5), halfOne(-8));
+console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+for (const [name, make] of notLists) attempt("Array.from, total of " + name, () => Array.from([totalTwo])[0](make()));
+for (const [name, make] of notNumbers) attempt("Array.from, half of " + name, () => Array.from([halfTwo])[0](make()));
+console.log("honest", totalTwo([1, 2, 3]), totalTwo([]), totalTwo(new Array(4, 5)), totalTwo([0.5]), halfTwo(4), halfTwo(3), halfTwo(0.5), halfTwo(-8));
+for (const [name, make] of notLists) attempt("new Array, total of " + name, () => new Array(totalThree)[0](make()));
+for (const [name, make] of notNumbers) attempt("new Array, half of " + name, () => new Array(halfThree)[0](make()));
+console.log("honest", totalThree([1, 2, 3]), totalThree([]), totalThree(new Array(4, 5)), totalThree([0.5]), halfThree(4), halfThree(3), halfThree(0.5), halfThree(-8));
+console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+for (const [name, make] of notLists) attempt("the iterator of an array, total of " + name, () => [totalFour].values().next().value(make()));
+for (const [name, make] of notNumbers) attempt("the iterator of an array, half of " + name, () => [halfFour].values().next().value(make()));
+console.log("honest", totalFour([1, 2, 3]), totalFour([]), totalFour(new Array(4, 5)), totalFour([0.5]), halfFour(4), halfFour(3), halfFour(0.5), halfFour(-8));
+for (const [name, make] of notLists) attempt("a spread, total of " + name, () => [...[totalFive]][0](make()));
+for (const [name, make] of notNumbers) attempt("a spread, half of " + name, () => [...[halfFive]][0](make()));
+console.log("honest", totalFive([1, 2, 3]), totalFive([]), totalFive(new Array(4, 5)), totalFive([0.5]), halfFive(4), halfFive(3), halfFive(0.5), halfFive(-8));
+console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+for (const [name, make] of notLists) attempt("Object.entries, total of " + name, () => Object.entries({ run: totalSix })[0][1](make()));
+for (const [name, make] of notNumbers) attempt("Object.entries, half of " + name, () => Object.entries({ run: halfSix })[0][1](make()));
+console.log("honest", totalSix([1, 2, 3]), totalSix([]), totalSix(new Array(4, 5)), totalSix([0.5]), halfSix(4), halfSix(3), halfSix(0.5), halfSix(-8));
+for (const [name, make] of notLists) attempt("Object.fromEntries, total of " + name, () => Object.fromEntries([["run", totalSeven]]).run(make()));
+for (const [name, make] of notNumbers) attempt("Object.fromEntries, half of " + name, () => Object.fromEntries([["run", halfSeven]]).run(make()));
+console.log("honest", totalSeven([1, 2, 3]), totalSeven([]), totalSeven(new Array(4, 5)), totalSeven([0.5]), halfSeven(4), halfSeven(3), halfSeven(0.5), halfSeven(-8));
+console.log("honest", totalEight([1, 2, 3]), totalEight([]), totalEight(new Array(4, 5)), totalEight([0.5]), halfEight(4), halfEight(3), halfEight(0.5), halfEight(-8));
+for (const [name, make] of notLists) attempt("Object.assign, total of " + name, () => Object.assign({}, { run: totalEight }).run(make()));
+for (const [name, make] of notNumbers) attempt("Object.assign, half of " + name, () => Object.assign({}, { run: halfEight }).run(make()));
+console.log("honest", totalEight([1, 2, 3]), totalEight([]), totalEight(new Array(4, 5)), totalEight([0.5]), halfEight(4), halfEight(3), halfEight(0.5), halfEight(-8));
+for (const [name, make] of notLists) attempt("Object.create, total of " + name, () => Object.create({ run: totalNine }).run(make()));
+for (const [name, make] of notNumbers) attempt("Object.create, half of " + name, () => Object.create({ run: halfNine }).run(make()));
+console.log("honest", totalNine([1, 2, 3]), totalNine([]), totalNine(new Array(4, 5)), totalNine([0.5]), halfNine(4), halfNine(3), halfNine(0.5), halfNine(-8));
+console.log("honest", totalTen([1, 2, 3]), totalTen([]), totalTen(new Array(4, 5)), totalTen([0.5]), halfTen(4), halfTen(3), halfTen(0.5), halfTen(-8));
+for (const [name, make] of notLists) attempt("Object.create with descriptors, total of " + name, () => Object.create(null, { run: { value: totalTen } }).run(make()));
+for (const [name, make] of notNumbers) attempt("Object.create with descriptors, half of " + name, () => Object.create(null, { run: { value: halfTen } }).run(make()));
+console.log("honest", totalTen([1, 2, 3]), totalTen([]), totalTen(new Array(4, 5)), totalTen([0.5]), halfTen(4), halfTen(3), halfTen(0.5), halfTen(-8));
+for (const [name, make] of notLists) attempt("Object.getOwnPropertyDescriptor, total of " + name, () => Object.getOwnPropertyDescriptor({ run: totalEleven }, "run").value(make()));
+for (const [name, make] of notNumbers) attempt("Object.getOwnPropertyDescriptor, half of " + name, () => Object.getOwnPropertyDescriptor({ run: halfEleven }, "run").value(make()));
+console.log("honest", totalEleven([1, 2, 3]), totalEleven([]), totalEleven(new Array(4, 5)), totalEleven([0.5]), halfEleven(4), halfEleven(3), halfEleven(0.5), halfEleven(-8));
+console.log("honest", totalTwelve([1, 2, 3]), totalTwelve([]), totalTwelve(new Array(4, 5)), totalTwelve([0.5]), halfTwelve(4), halfTwelve(3), halfTwelve(0.5), halfTwelve(-8));
+for (const [name, make] of notLists) attempt("a WeakMap, total of " + name, () => { const key = {}; return new WeakMap([[key, totalTwelve]]).get(key)(make()); });
+for (const [name, make] of notNumbers) attempt("a WeakMap, half of " + name, () => { const key = {}; return new WeakMap([[key, halfTwelve]]).get(key)(make()); });
+console.log("honest", totalTwelve([1, 2, 3]), totalTwelve([]), totalTwelve(new Array(4, 5)), totalTwelve([0.5]), halfTwelve(4), halfTwelve(3), halfTwelve(0.5), halfTwelve(-8));
+for (const [name, make] of notLists) attempt("the keys of a Map, total of " + name, () => [...new Map([[totalThirteen, 1]]).keys()][0](make()));
+for (const [name, make] of notNumbers) attempt("the keys of a Map, half of " + name, () => [...new Map([[halfThirteen, 1]]).keys()][0](make()));
+console.log("honest", totalThirteen([1, 2, 3]), totalThirteen([]), totalThirteen(new Array(4, 5)), totalThirteen([0.5]), halfThirteen(4), halfThirteen(3), halfThirteen(0.5), halfThirteen(-8));
+console.log("honest", totalFourteen([1, 2, 3]), totalFourteen([]), totalFourteen(new Array(4, 5)), totalFourteen([0.5]), halfFourteen(4), halfFourteen(3), halfFourteen(0.5), halfFourteen(-8));
+for (const [name, make] of notLists) attempt("Object.groupBy, total of " + name, () => Object.groupBy([totalFourteen], () => "group").group[0](make()));
+for (const [name, make] of notNumbers) attempt("Object.groupBy, half of " + name, () => Object.groupBy([halfFourteen], () => "group").group[0](make()));
+console.log("honest", totalFourteen([1, 2, 3]), totalFourteen([]), totalFourteen(new Array(4, 5)), totalFourteen([0.5]), halfFourteen(4), halfFourteen(3), halfFourteen(0.5), halfFourteen(-8));
+//// many-callers-and-an-impostor-through-a-getter.js
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-52
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-7
+
+console.log("strict:", (function () { return this === undefined; })());
+honestSecond("before");
+attempt("low gets nothing", () => Object.defineProperty({}, "value", { get: low }).value);
+attempt("pick gets nothing", () => Object.defineProperty({}, "value", { get: pick }).value);
+attempt("invoke gets nothing", () => Object.defineProperty({}, "value", { get: invoke }).value);
+attempt("build gets nothing", () => Object.defineProperty({}, "value", { get: build }).value);
+attempt("sumOf gets nothing", () => Object.defineProperty({}, "value", { get: sumOf }).value);
+attempt("move gets nothing", () => Object.defineProperty({}, "value", { get: move }).value);
+attempt("total gets nothing", () => Object.defineProperty({}, "value", { get: total }).value);
+attempt("append gets nothing", () => Object.defineProperty({}, "value", { get: append }).value);
+attempt("firstCode gets nothing", () => Object.defineProperty({}, "value", { get: firstCode }).value);
+attempt("tail gets nothing", () => Object.defineProperty({}, "value", { get: tail }).value);
+attempt("half gets nothing", () => Object.defineProperty({}, "value", { get: half }).value);
+attempt("below gets nothing", () => Object.defineProperty({}, "value", { get: below }).value);
+honestFirst("after");
+honestSecond("after");
+//// many-callers-and-an-impostor-through-a-json-stringify-replacer.js
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-52
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-7
+
+console.log("strict:", (function () { return this === undefined; })());
+honestSecond("before");
+attempt("low gets the keys", () => JSON.stringify({ a: 1 }, low));
+attempt("pick gets the keys", () => JSON.stringify({ a: 1 }, pick));
+attempt("invoke gets the keys", () => JSON.stringify({ a: 1 }, invoke));
+attempt("build gets the keys", () => JSON.stringify({ a: 1 }, build));
+attempt("sumOf gets the keys", () => JSON.stringify({ a: 1 }, sumOf));
+attempt("move gets the keys", () => JSON.stringify({ a: 1 }, move));
+attempt("total gets the keys", () => JSON.stringify({ a: 1 }, total));
+attempt("append gets the keys", () => JSON.stringify({ a: 1 }, append));
+attempt("firstCode gets the keys", () => JSON.stringify({ a: 1 }, firstCode));
+attempt("tail gets the keys", () => JSON.stringify({ a: 1 }, tail));
+attempt("half gets the keys", () => JSON.stringify({ a: 1 }, half));
+attempt("below gets the keys", () => JSON.stringify({ a: 1 }, below));
+honestFirst("after");
+honestSecond("after");
+//// many-callers-and-an-impostor-through-a-listener-of-an-event-target.cjs
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-55
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-6
+
+process.on("uncaughtException", error => log.push("uncaught " + error.constructor.name));
+
+////= honestFirst-8
+
+console.log("strict:", (function () { return this === undefined; })());
+honestSecond("before");
+attempt("total gets an event", () => { const target = new EventTarget(); target.addEventListener("go", total); return target.dispatchEvent(new Event("go")); });
+attempt("append gets an event", () => { const target = new EventTarget(); target.addEventListener("go", append); return target.dispatchEvent(new Event("go")); });
+attempt("firstCode gets an event", () => { const target = new EventTarget(); target.addEventListener("go", firstCode); return target.dispatchEvent(new Event("go")); });
+attempt("tail gets an event", () => { const target = new EventTarget(); target.addEventListener("go", tail); return target.dispatchEvent(new Event("go")); });
+attempt("half gets an event", () => { const target = new EventTarget(); target.addEventListener("go", half); return target.dispatchEvent(new Event("go")); });
+attempt("below gets an event", () => { const target = new EventTarget(); target.addEventListener("go", below); return target.dispatchEvent(new Event("go")); });
+attempt("low gets an event", () => { const target = new EventTarget(); target.addEventListener("go", low); return target.dispatchEvent(new Event("go")); });
+attempt("pick gets an event", () => { const target = new EventTarget(); target.addEventListener("go", pick); return target.dispatchEvent(new Event("go")); });
+attempt("invoke gets an event", () => { const target = new EventTarget(); target.addEventListener("go", invoke); return target.dispatchEvent(new Event("go")); });
+attempt("build gets an event", () => { const target = new EventTarget(); target.addEventListener("go", build); return target.dispatchEvent(new Event("go")); });
+attempt("sumOf gets an event", () => { const target = new EventTarget(); target.addEventListener("go", sumOf); return target.dispatchEvent(new Event("go")); });
+attempt("move gets an event", () => { const target = new EventTarget(); target.addEventListener("go", move); return target.dispatchEvent(new Event("go")); });
+honestFirst("after");
+honestSecond("after");
+//// many-callers-and-an-impostor-through-a-parameter.js
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-56
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-5
+
+////= lines-82	callWith	f	value	f	value
+
+////= honestFirst-7
+
+console.log("strict:", (function () { return this === undefined; })());
+honestSecond("before");
+////= for-175	notPoints	"sumOf "	sumOf	"move "	move
+attempt("sumOf a literal", () => callWith(sumOf, { y: 2, x: 1 }));
+attempt("move a literal", () => callWith(move, { get x() { return 1; }, y: 2 }));
+////= for-175	notArrays	"total of "	total	"append to "	append
+attempt("total of a literal", () => callWith(total, "12"));
+attempt("append to a literal", () => callWith(append, { push: () => "a literal's push" }));
+////= for-175	notStrings	"firstCode of "	firstCode	"tail of "	tail
+attempt("firstCode of a literal", () => callWith(firstCode, [65]));
+attempt("tail of a literal", () => callWith(tail, [1, 2, 3]));
+////= for-175	notNumbers	"half of "	half	"below from "	below
+attempt("half of a literal", () => callWith(half, "4"));
+attempt("below from a literal", () => callWith(below, "1"));
+////= for-175	notSmallIntegers	"low of "	low	"pick at "	pick
+attempt("low of a literal", () => callWith(low, 4294967297.5));
+attempt("pick at a literal", () => callWith(pick, "length"));
+////= for-175	notFunctions	"invoke of "	invoke	"build from "	build
+attempt("invoke of a literal", () => callWith(invoke, class {}));
+attempt("build from a literal", () => callWith(build, () => {}));
+honestFirst("after");
+honestSecond("after");
+//// many-callers-and-an-impostor-through-a-promise-that-resolves-to-it.js
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-54
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-4
+
+////= honestFirst
+
+////= honestSecond
+
+async function main() {
+  console.log("strict:", (function () { return this === undefined; })());
+  honestSecond("before");
+  for (const [name, make] of notSmallIntegers) {
+    await attempt("low of " + name, () => Promise.resolve(low).then(run => run(make())));
+    await attempt("pick at " + name, () => Promise.resolve(pick).then(run => run(make())));
+  }
+  await attempt("low of a literal", () => Promise.resolve(low).then(run => run(4294967297.5)));
+  await attempt("pick at a literal", () => Promise.resolve(pick).then(run => run("length")));
+  for (const [name, make] of notFunctions) {
+    await attempt("invoke of " + name, () => Promise.resolve(invoke).then(run => run(make())));
+    await attempt("build from " + name, () => Promise.resolve(build).then(run => run(make())));
+  }
+  await attempt("invoke of a literal", () => Promise.resolve(invoke).then(run => run(class {})));
+  await attempt("build from a literal", () => Promise.resolve(build).then(run => run(() => {})));
+  for (const [name, make] of notPoints) {
+    await attempt("sumOf " + name, () => Promise.resolve(sumOf).then(run => run(make())));
+    await attempt("move " + name, () => Promise.resolve(move).then(run => run(make())));
+  }
+  await attempt("sumOf a literal", () => Promise.resolve(sumOf).then(run => run({ y: 2, x: 1 })));
+  await attempt("move a literal", () => Promise.resolve(move).then(run => run({ get x() { return 1; }, y: 2 })));
+  for (const [name, make] of notArrays) {
+    await attempt("total of " + name, () => Promise.resolve(total).then(run => run(make())));
+    await attempt("append to " + name, () => Promise.resolve(append).then(run => run(make())));
+  }
+  await attempt("total of a literal", () => Promise.resolve(total).then(run => run("12")));
+  await attempt("append to a literal", () => Promise.resolve(append).then(run => run({ push: () => "a literal's push" })));
+  for (const [name, make] of notStrings) {
+    await attempt("firstCode of " + name, () => Promise.resolve(firstCode).then(run => run(make())));
+    await attempt("tail of " + name, () => Promise.resolve(tail).then(run => run(make())));
+  }
+  await attempt("firstCode of a literal", () => Promise.resolve(firstCode).then(run => run([65])));
+  await attempt("tail of a literal", () => Promise.resolve(tail).then(run => run([1, 2, 3])));
+  for (const [name, make] of notNumbers) {
+    await attempt("half of " + name, () => Promise.resolve(half).then(run => run(make())));
+    await attempt("below from " + name, () => Promise.resolve(below).then(run => run(make())));
+  }
+  await attempt("half of a literal", () => Promise.resolve(half).then(run => run("4")));
+  await attempt("below from a literal", () => Promise.resolve(below).then(run => run("1")));
+  honestFirst("after");
+  honestSecond("after");
+}
+
+main();
+//// many-callers-and-an-impostor-through-a-script-from-node-vm.js
+////= show-5
+
+let last;
+const log = [];
+
+////= attempt-52
+
+////= firstCode-2
+
+const letters = ["a", "b", "c", "d"];
+
+////= low-3
+
+////= notStrings
+
+////= notNumbers-4
+
+////= notArrays
+
+import vm from "node:vm";
+
+////= honestFirst-9
+
+console.log("strict:", (function () { return this === undefined; })());
+honestSecond("before");
+////= for-177	notStrings	"firstCode of "	firstCode	"tail of "	tail
+attempt("firstCode of a literal", () => vm.runInThisContext("(f, value) => f(value)")(firstCode, [65]));
+attempt("tail of a literal", () => vm.runInThisContext("(f, value) => f(value)")(tail, [1, 2, 3]));
+////= for-177	notNumbers	"half of "	half	"below from "	below
+attempt("half of a literal", () => vm.runInThisContext("(f, value) => f(value)")(half, "4"));
+attempt("below from a literal", () => vm.runInThisContext("(f, value) => f(value)")(below, "1"));
+////= for-177	notSmallIntegers	"low of "	low	"pick at "	pick
+attempt("low of a literal", () => vm.runInThisContext("(f, value) => f(value)")(low, 4294967297.5));
+attempt("pick at a literal", () => vm.runInThisContext("(f, value) => f(value)")(pick, "length"));
+////= for-177	notFunctions	"invoke of "	invoke	"build from "	build
+attempt("invoke of a literal", () => vm.runInThisContext("(f, value) => f(value)")(invoke, class {}));
+attempt("build from a literal", () => vm.runInThisContext("(f, value) => f(value)")(build, () => {}));
+////= for-177	notPoints	"sumOf "	sumOf	"move "	move
+attempt("sumOf a literal", () => vm.runInThisContext("(f, value) => f(value)")(sumOf, { y: 2, x: 1 }));
+attempt("move a literal", () => vm.runInThisContext("(f, value) => f(value)")(move, { get x() { return 1; }, y: 2 }));
+////= for-177	notArrays	"total of "	total	"append to "	append
+attempt("total of a literal", () => vm.runInThisContext("(f, value) => f(value)")(total, "12"));
+attempt("append to a literal", () => vm.runInThisContext("(f, value) => f(value)")(append, { push: () => "a literal's push" }));
+honestFirst("after");
+honestSecond("after");

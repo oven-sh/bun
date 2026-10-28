@@ -52,6 +52,25 @@ fn dec_distances() {
     println!("ok: results and how many streams gave them: {stats:?}");
 }
 
+/// The input ends at every place of a stream with the longest read that does not look for the end of the input.
+fn dec_longest_read(seed0: u64, iters: u64) {
+    let mut stats = std::collections::BTreeMap::<i32, u64>::new();
+    for it in 0..iters {
+        let seed = seed0.wrapping_add(it);
+        let mut rng = Rng(seed);
+        let large_window = rng.chance(1, 2);
+        let stream = grammar::longest_read(&mut rng, large_window);
+        for end in 0..=stream.len() {
+            let case = DecCase { stream: stream[..end].to_vec(), large_window, no_realloc: false, dicts: Vec::new(), schedule: 0, max_output: usize::MAX };
+            match compare(&case, None) {
+                Ok(o) => *stats.entry(if o.result == 0 { o.error } else { o.result }).or_default() += 1,
+                Err(e) => panic!("seed {seed}, large window {large_window}, the first {end} of {} bytes: {e}", stream.len()),
+            }
+        }
+    }
+    println!("ok: results and how many inputs gave them: {stats:?}");
+}
+
 /// Streams from the grammar. `evil`: one chance in this many, at each opportunity, to break a rule (0: never).
 fn dec_gen(seed0: u64, iters: u64, evil: usize) {
     let mut stats = std::collections::BTreeMap::<String, u64>::new();
@@ -243,6 +262,7 @@ pub fn run(args: &[String]) -> bool {
     match args.get(1).map(String::as_str) {
         Some("dec-gen") => dec_gen(num(2, 1), num(3, 1000), num(4, 0) as usize),
         Some("dec-distances") => dec_distances(),
+        Some("dec-longest-read") => dec_longest_read(num(2, 1), num(3, 300)),
         Some("dec-stream") => dec_stream(num(2, 1), num(3, 1000), num(4, 1 << 20) as usize),
         Some("dec-empty-commands") => {
             for distances in [false, true] {

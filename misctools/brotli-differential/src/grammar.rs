@@ -297,6 +297,11 @@ fn write_code(w: &mut Bits, rng: &mut Rng, evil: &mut Evil, used: &BTreeSet<usiz
         let s = *rng.pick(&symbols);
         lengths[s] = if rng.chance(1, 2) { lengths[s] % 15 + 1 } else { 0 };
     }
+    write_lengths(w, rng, evil, lengths)
+}
+
+/// Writes a complex prefix code with these lengths, and returns it.
+fn write_lengths(w: &mut Bits, rng: &mut Rng, evil: &mut Evil, lengths: Vec<u8>) -> Code {
     // The lengths as symbols 0 to 17, the last two with extra bits.
     let last = lengths.iter().rposition(|&l| l != 0).unwrap_or(0);
     let mut seq: Vec<(usize, u64)> = Vec::new();
@@ -616,6 +621,79 @@ pub fn one_long_copy(distance: usize) -> Vec<u8> {
     }
     w.put(24, 0xFF_FFFF);
     w.put(nbits, extra);
+    w.bytes
+}
+
+/// Writes a code of 16 symbols with 1 to 15 bits, `others` among them, of which `deep` has 15, and returns it.
+fn write_chain(w: &mut Bits, rng: &mut Rng, alphabet: usize, deep: usize, others: &[usize]) -> Code {
+    let mut symbols = vec![deep];
+    symbols.extend_from_slice(others);
+    while symbols.len() < 16 {
+        let s = rng.below(alphabet);
+        if !symbols.contains(&s) {
+            symbols.push(s);
+        }
+    }
+    for i in (2..16).rev() {
+        symbols.swap(i, rng.range(1, i));
+    }
+    let mut lengths = vec![0u8; alphabet];
+    for (&s, length) in symbols.iter().zip([15, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]) {
+        lengths[s] = length;
+    }
+    write_lengths(w, rng, &mut Evil::default(), lengths)
+}
+
+/// What takes the most bits of all that a decoder reads without looking how much input is left: a command without literals, the
+/// next block of distances, and a distance, each symbol with 15 bits and each number with as many extra bits as there are.
+/// There is no such distance, so it ends in an error. 40 more bytes follow. The command before ends with 24 extra bits and a
+/// symbol, which can leave the decoder with as few as 2 bits that it has loaded.
+pub fn longest_read(rng: &mut Rng, large_window: bool) -> Vec<u8> {
+    let mut w = Bits::default();
+    if large_window {
+        w.put(14, (24 << 8) | 0x11);
+    } else {
+        w.put(1, 0);
+    }
+    // The last meta-block, not empty, of 1 << 24 bytes, with one block type each for the literals and the commands.
+    w.put(4, 9);
+    w.put(24, 0xFF_FFFF);
+    w.put(2, 0);
+    let types = rng.range(14, 256);
+    put_count(&mut w, types);
+    let next_type = rng.below(types + 2);
+    let type_code = write_chain(&mut w, rng, types + 2, next_type, &[]);
+    let count_code = write_chain(&mut w, rng, 26, 25, &[0]);
+    // The first block has two distances.
+    count_code.put(&mut w, 0);
+    w.put(2, 1);
+    // NPOSTFIX, NDIRECT, the context mode, and one tree each for the literals and the distances.
+    w.put(10, 0);
+    w.put(4, 1);
+    w.put(8, 97);
+    let (first, long) = (command_symbol(1, 0, false), command_symbol(0, 23, false));
+    let command_code = write_chain(&mut w, rng, 704, long, &[first]);
+    let far = distance_alphabet(0, 0, large_window).1 - 1;
+    let (near, near_bits, near_extra) = distance_symbol(1, 0, 0);
+    let distance_code = write_chain(&mut w, rng, far + 1, far, &[near, 0]);
+    // A literal and a copy of it.
+    command_code.put(&mut w, first);
+    distance_code.put(&mut w, near);
+    w.put(near_bits, near_extra);
+    // A few thousand more, from the same distance.
+    command_code.put(&mut w, long);
+    w.put(24, rng.next() & 0xFFF);
+    distance_code.put(&mut w, 0);
+    command_code.put(&mut w, long);
+    w.put(24, rng.next());
+    type_code.put(&mut w, next_type);
+    count_code.put(&mut w, 25);
+    w.put(24, rng.next());
+    distance_code.put(&mut w, far);
+    w.put(1 + ((far as u32 - 16) >> 1), rng.next());
+    for _ in 0..40 {
+        w.put(8, rng.next());
+    }
     w.bytes
 }
 

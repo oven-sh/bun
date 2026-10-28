@@ -1450,9 +1450,6 @@ pub struct LinkerOptions {
     pub(crate) module_preload: bool,
     pub(crate) source_maps: SourceMapOption,
     pub(crate) target: Target,
-    /// The target CSS chunks are printed for, from `BundleOptions::css_target`.
-    /// A bake build's `target` is the server's, but its stylesheets go to the browser.
-    pub(crate) css_target: Target,
     pub(crate) compile_mode: CompileMode,
     pub(crate) metafile: bool,
     /// Path to write JSON metafile (for Bun.build API)
@@ -1518,7 +1515,6 @@ impl Default for LinkerOptions {
             module_preload: true,
             source_maps: SourceMapOption::None,
             target: Target::Browser,
-            css_target: Target::Browser,
             compile_mode: CompileMode::None,
             metafile: false,
             metafile_json_path: b"",

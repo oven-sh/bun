@@ -2373,6 +2373,8 @@ pub struct StyleSheet<AtRule> {
     /// [`ParserOptions::flags`] of the parse.
     pub flags: ParserFlags,
     pub layer_names: Vec<LayerName>,
+    /// Recorded by [`StyleSheet::minify`]; printing must lower for these same targets.
+    pub targets: Targets,
 
     /// Used when css modules is enabled. Maps `local name string` -> `Ref`.
     pub local_scope: LocalScope,
@@ -2394,6 +2396,7 @@ impl<AtRule> StyleSheet<AtRule> {
             css_modules: None,
             flags: ParserFlags::default(),
             layer_names: Vec::new(),
+            targets: Targets::default(),
             local_scope: LocalScope::default(),
             local_properties: LocalPropertyUsage::default(),
             composes: ComposesMap::default(),
@@ -2433,6 +2436,7 @@ mod stylesheet_impl {
         where
             AtRule: for<'b> generic::DeepClone<'b>,
         {
+            self.targets = options.targets;
             let ctx = PropertyHandlerContext::new(arena, &options.targets, &options.unused_symbols);
             let mut handler = DeclarationHandler::new(arena);
             let mut important_handler = DeclarationHandler::new(arena);
@@ -2727,6 +2731,7 @@ mod stylesheet_impl {
                     css_modules: options.css_modules,
                     flags: options.flags,
                     layer_names,
+                    targets: Targets::default(),
                     local_scope: parser_extra.local_scope,
                     local_properties,
                     composes,

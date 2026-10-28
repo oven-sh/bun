@@ -466,6 +466,48 @@ body { color: blue; }`,
     expect(exitCode).toBe(0);
   });
 
+  test("CLI --compile --target=browser prints the stylesheet for the targets it was minified for", async () => {
+    using dir = tempDir("compile-browser-cli-css-targets", {
+      "index.html": `<!DOCTYPE html>
+<html><head><link rel="stylesheet" href="./style.css"></head>
+<body></body></html>`,
+      "style.css": `
+.a {
+  .b:fullscreen {
+    color: blue;
+  }
+}
+@media (width >= 500px) {
+  .a {
+    color: green;
+  }
+}`,
+    });
+
+    const outdir = `${dir}/out`;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--target=browser", `${dir}/index.html`, "--outdir", outdir],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const html = await Bun.file(`${outdir}/index.html`)
+      .text()
+      .catch(() => stderr);
+    // Minify assigns the -webkit- prefix. Print flattens the nesting and lowers the media range.
+    expect(html).toContain(".a .b:-webkit-full-screen {");
+    expect(html).toContain(".a .b:fullscreen {");
+    expect(html).toContain("@media (min-width: 500px)");
+    expect(html).not.toContain(">=");
+
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("malformed HTML without closing tags still inlines JS and CSS", async () => {
     // This tests the cold fallback path when no </head>, </body>, or </html> tags exist.
     // The document is just a fragment - the loader must still inject both CSS and JS.

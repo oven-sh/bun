@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test";
-import { itBundled } from "./expectBundled";
+import { type BundlerTestBundleAPI, itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   // Basic test for bundling HTML with JS and CSS
@@ -1116,6 +1116,146 @@ body {
         between: "",
         tail: "</body></html>",
       });
+    },
+  });
+  // A stylesheet linked from an HTML file is built for the browser even when the
+  // build itself targets bun or node (the HTML is imported from server code for
+  // Bun.serve, or passed to a server build as an entry point), so it is minified
+  // for the default browser targets. It has to be printed for the same targets:
+  // nesting and media range syntax are only lowered while printing. This fixture
+  // reaches every place the linker prints CSS:
+  //
+  // - the stylesheet itself (nesting under a prefixed selector, the @media range)
+  // - the preserved external @import, whose media condition is printed on its own
+  // - the external @import behind a conditional internal @import, which is
+  //   printed into a data: URL stylesheet while the chunk is prepared
+  // - the bare "@layer foo;" left behind by the deduplicated layer import,
+  //   printed together with its wrapping media condition
+  // - an empty stylesheet (which the bundler never minifies), whose import
+  //   conditions are still printed around it as "@layer bar;"
+  const browserTargetFiles = {
+    "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body></body>
+</html>`,
+    "/styles.css": `
+@import "https://example.com/external.css" screen and (width >= 500px);
+@import "./dup.css" layer(foo) (width >= 600px);
+@import "./other.css";
+@import "./dup.css" layer(foo) (width >= 600px);
+@import "./nested.css" (width >= 700px);
+@import "./empty.css" layer(bar) (width >= 1000px);
+.a {
+  .b:fullscreen {
+    color: blue;
+  }
+}
+@media (width >= 800px) {
+  .c {
+    color: green;
+  }
+}`,
+    "/dup.css": ".dup { color: red; }",
+    "/other.css": ".other { color: red; }",
+    "/nested.css": `
+@import "https://example.com/nested.css" (width >= 900px);
+.nested { color: red; }`,
+    "/empty.css": "",
+  };
+
+  function expectPrintedForBrowsers(css: string) {
+    // Minify assigns the -webkit- prefix and print flattens the nesting.
+    expect(css).toContain(".a .b:-webkit-full-screen {");
+    expect(css).toContain(".a .b:fullscreen {");
+    expect(css).toContain("@media (min-width: 800px)");
+    expect(css).toContain('@import "https://example.com/external.css" screen and (min-width: 500px);');
+    expect(css).toContain(
+      '@import "data:text/css,@import \\"https://example.com/nested.css\\" (min-width: 900px);" (min-width: 700px);',
+    );
+    expect(css).toContain("@media (min-width: 600px) {\n  @layer foo;\n}");
+    expect(css).toContain("@media (min-width: 1000px) {\n  @layer bar;\n}");
+    expect(css).not.toContain(">=");
+  }
+
+  // The same fixture printed for targets that support everything it uses.
+  function expectPrintedAsWritten(css: string) {
+    expect(css).toContain("& .b:fullscreen {");
+    expect(css).not.toContain("-webkit-full-screen");
+    expect(css).toContain("@media (width >= 800px)");
+    expect(css).toContain('@import "https://example.com/external.css" screen and (width >= 500px);');
+    expect(css).toContain(
+      '@import "data:text/css,@import \\"https://example.com/nested.css\\" (width >= 900px);" (width >= 700px);',
+    );
+    expect(css).toContain("@media (width >= 600px) {\n  @layer foo;\n}");
+    expect(css).toContain("@media (width >= 1000px) {\n  @layer bar;\n}");
+    expect(css).not.toContain("min-width");
+  }
+
+  function readLinkedStylesheet(api: BundlerTestBundleAPI, htmlFile: string) {
+    const href = api.readFile(htmlFile).match(/href="(.*?\.css)"/)?.[1];
+    if (!href) throw new Error(`No stylesheet is linked from ${htmlFile}`);
+    return api.readFile("out/" + href);
+  }
+
+  // Reference: what a browser build prints. The server builds below must print
+  // the same stylesheet the same way.
+  itBundled("html/css-browser-targets/browser-build", {
+    outdir: "out/",
+    files: browserTargetFiles,
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      expectPrintedForBrowsers(readLinkedStylesheet(api, "out/index.html"));
+    },
+  });
+
+  for (const target of ["bun", "node"] as const) {
+    itBundled(`html/css-browser-targets/imported-from-${target}-build`, {
+      outdir: "out/",
+      target,
+      files: {
+        ...browserTargetFiles,
+        "/server.ts": `
+import html from "./index.html";
+console.log(html);`,
+      },
+      entryPoints: ["/server.ts"],
+      onAfterBundle(api) {
+        expectPrintedForBrowsers(readLinkedStylesheet(api, "out/index.html"));
+      },
+    });
+  }
+
+  itBundled("html/css-browser-targets/html-entry-point-of-bun-build", {
+    outdir: "out/",
+    target: "bun",
+    files: browserTargetFiles,
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      expectPrintedForBrowsers(readLinkedStylesheet(api, "out/index.html"));
+    },
+  });
+
+  // When the server code also imports the stylesheet itself, that copy belongs to
+  // the server build and is minified for the targets of the server. Each of the
+  // two emitted copies is printed for the targets it was minified for.
+  itBundled("html/css-browser-targets/stylesheet-shared-with-server-code", {
+    outdir: "out/",
+    target: "bun",
+    files: {
+      ...browserTargetFiles,
+      "/server.ts": `
+import html from "./index.html";
+import "./styles.css";
+console.log(html);`,
+    },
+    entryPoints: ["/server.ts"],
+    onAfterBundle(api) {
+      expectPrintedForBrowsers(readLinkedStylesheet(api, "out/index.html"));
+      expectPrintedAsWritten(api.readFile("out/server.css"));
     },
   });
 });

@@ -874,6 +874,61 @@ export default function IndexPage() {
     expect(unresolved.exitCode).toBe(1);
   });
 
+  const reactPackageJson = JSON.stringify({
+    "name": "test-app",
+    "version": "1.0.0",
+    "devDependencies": {
+      "react": "^18.0.0",
+      "react-dom": "^18.0.0",
+    },
+  });
+
+  // A framework without server components. `client.ts` is its client entry
+  // point. A page is the route's text with its stylesheets and scripts.
+  const clientEntryFramework = {
+    "server.ts": `
+      export function render(req, meta) {
+        return new Response(String(meta.pageModule.default()));
+      }
+      export async function prerender(meta) {
+        const styles = meta.styles.map(href => '<link rel="stylesheet" href="' + href + '">').join("");
+        const scripts = meta.modules.map(src => '<script type="module" src="' + src + '"></script>').join("");
+        const body = meta.pageModule.default() + scripts;
+        return { files: { "/index.html": "<head>" + styles + "</head><body>" + body + "</body>" } };
+      }
+    `,
+    "app.ts": `
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+      export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+    `,
+    "client.ts": `console.log("client");`,
+  };
+
+  const prefixedStylesheet = `
+.box:fullscreen {
+  color: red;
+}`;
+
+  // Builds the app in `dir`. `stylesheets` is every stylesheet the build
+  // wrote, by href. `links(page)` is what a built page links.
+  async function buildBakeApp(dir: string, entry: string) {
+    const built = await Bun.$`${bunExe()} build --app ${entry} --outdir ./dist`.cwd(dir).env(bunEnv).throws(false);
+    const dist = path.join(dir, "dist");
+    const stylesheets: Record<string, string> = {};
+    if (existsSync(dist)) {
+      for (const file of await Array.fromAsync(new Bun.Glob("**/*.css").scan(dist))) {
+        stylesheets["/" + normalizePath(file)] = await Bun.file(path.join(dist, file)).text();
+      }
+    }
+    const links = async (page: string) => {
+      const file = Bun.file(path.join(dist, page));
+      // A page that the build did not write shows the build's output.
+      if (!(await file.exists())) return built.stderr.toString();
+      return [...(await file.text()).matchAll(/<link rel="stylesheet"[^>]*?href="([^"]+)"/g)].map(match => match[1]);
+    };
+    return { exitCode: built.exitCode, stylesheets, links };
+  }
+
   test("css imported on the server gets browser-target processing", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-server-css", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,
@@ -896,28 +951,14 @@ export default function IndexPage() {
     color: blue;
   }
 }`,
-      "package.json": JSON.stringify({
-        "name": "test-app",
-        "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
-          "react-dom": "^18.0.0",
-        },
-      }),
+      "package.json": reactPackageJson,
     });
 
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
-      .cwd(dir)
-      .env(bunEnv)
-      .throws(false);
-    // A successful bake build still writes the experimental banner and
-    // progress lines to stderr, so assert on errors rather than emptiness.
-    expect(stderr.toString()).not.toContain("error:");
-    expect(exitCode).toBe(0);
-
-    const cssFiles = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(dir, "dist")));
-    expect(cssFiles).toHaveLength(1);
-    const css = await Bun.file(path.join(dir, "dist", cssFiles[0])).text();
+    const app = await buildBakeApp(dir, "./src/index.tsx");
+    const hrefs = Object.keys(app.stylesheets);
+    expect(await app.links("index.html")).toEqual(hrefs);
+    expect(hrefs).toHaveLength(1);
+    const css = app.stylesheets[hrefs[0]];
     // Minify assigns the -webkit- prefix and print flattens the nesting, so
     // the prefixed selector needs both to run with browser targets.
     expect(css).toContain(".a .b:-webkit-full-screen");
@@ -925,12 +966,13 @@ export default function IndexPage() {
     // Media range syntax is lowered at print.
     expect(css).toMatch(/\(min-width:\s*500px\)/);
     expect(css).not.toContain(">=");
+    expect(app.exitCode).toBe(0);
   });
 
-  test("css imported through a 'use client' component is bundled once", async () => {
-    // The boundary file is parsed into both the client and SSR graphs; its
-    // stylesheet must share one source index across graphs or the build emits
-    // two chunks whose identical content collides on one output path.
+  test("css imported through a 'use client' component is written once", async () => {
+    // The boundary file is in the client graph and in the SSR graph, and each
+    // graph has its own copy of the stylesheet. Equal copies are one file.
+    // The page does not link a stylesheet that only a client component imports.
     const dir = await tempDirWithBakeDeps("bake-production-client-css", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,
       "pages/index.tsx": `
@@ -944,34 +986,17 @@ import "../styles.css";
 export default function Client() {
   return <span>client</span>;
 }`,
-      "styles.css": `
-.box:fullscreen {
-  color: red;
-}`,
-      "package.json": JSON.stringify({
-        "name": "test-app",
-        "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
-          "react-dom": "^18.0.0",
-        },
-      }),
+      "styles.css": prefixedStylesheet,
+      "package.json": reactPackageJson,
     });
 
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
-      .cwd(dir)
-      .env(bunEnv)
-      .throws(false);
-    expect(stderr.toString()).not.toContain("DuplicateOutputPath");
-    expect(exitCode).toBe(0);
-
-    const cssFiles = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(dir, "dist")));
-    expect(cssFiles).toHaveLength(1);
-    const css = await Bun.file(path.join(dir, "dist", cssFiles[0])).text();
-    expect(css).toContain(":-webkit-full-screen");
+    const app = await buildBakeApp(dir, "./src/index.tsx");
+    expect(await app.links("index.html")).toEqual([]);
+    expect(Object.values(app.stylesheets)).toEqual([expect.stringContaining(":-webkit-full-screen")]);
+    expect(app.exitCode).toBe(0);
   });
 
-  test("css imported from both a page and a 'use client' component is bundled once", async () => {
+  test("css imported from both a page and a 'use client' component is written once", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-shared-css", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,
       "pages/index.tsx": `
@@ -986,38 +1011,17 @@ import "../styles.css";
 export default function Client() {
   return <span>client</span>;
 }`,
-      "styles.css": `
-.box:fullscreen {
-  color: red;
-}`,
-      "package.json": JSON.stringify({
-        "name": "test-app",
-        "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
-          "react-dom": "^18.0.0",
-        },
-      }),
+      "styles.css": prefixedStylesheet,
+      "package.json": reactPackageJson,
     });
 
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
-      .cwd(dir)
-      .env(bunEnv)
-      .throws(false);
-    expect(stderr.toString()).not.toContain("DuplicateOutputPath");
-    expect(exitCode).toBe(0);
-
-    const cssFiles = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(dir, "dist")));
-    expect(cssFiles).toHaveLength(1);
-    const css = await Bun.file(path.join(dir, "dist", cssFiles[0])).text();
-    expect(css).toContain(":-webkit-full-screen");
+    const app = await buildBakeApp(dir, "./src/index.tsx");
+    expect(await app.links("index.html")).toEqual(Object.keys(app.stylesheets));
+    expect(Object.values(app.stylesheets)).toEqual([expect.stringContaining(":-webkit-full-screen")]);
+    expect(app.exitCode).toBe(0);
   });
 
-  test("css resolved through an onResolve plugin is bundled once", async () => {
-    // The plugin success arm creates the source index directly from the
-    // plugin's returned path; it must share that index across graphs like the
-    // built-in resolver paths do, or the client and SSR copies collide on one
-    // content-hashed output path.
+  test("css resolved through an onResolve plugin is written once", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-plugin-css", {
       "src/index.tsx": `
 import path from "node:path";
@@ -1043,95 +1047,19 @@ import "virtual-styles";
 export default function Client() {
   return <span>client</span>;
 }`,
-      "styles.css": `
-.box:fullscreen {
-  color: red;
-}`,
-      "package.json": JSON.stringify({
-        "name": "test-app",
-        "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
-          "react-dom": "^18.0.0",
-        },
-      }),
+      "styles.css": prefixedStylesheet,
+      "package.json": reactPackageJson,
     });
 
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
-      .cwd(dir)
-      .env(bunEnv)
-      .throws(false);
-    expect(stderr.toString()).not.toContain("DuplicateOutputPath");
-    expect(exitCode).toBe(0);
-
-    const cssFiles = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(dir, "dist")));
-    expect(cssFiles).toHaveLength(1);
-    const css = await Bun.file(path.join(dir, "dist", cssFiles[0])).text();
-    expect(css).toContain(":-webkit-full-screen");
+    const app = await buildBakeApp(dir, "./src/index.tsx");
+    expect(await app.links("index.html")).toEqual(Object.keys(app.stylesheets));
+    expect(Object.values(app.stylesheets)).toEqual([expect.stringContaining(":-webkit-full-screen")]);
+    expect(app.exitCode).toBe(0);
   });
 
-  // A framework without server components. `client.ts` is its client entry
-  // point. The page is the route's text with its stylesheets and scripts.
-  const clientEntryFramework = {
-    "server.ts": `
-      export function render(req, meta) {
-        return new Response(String(meta.pageModule.default()));
-      }
-      export async function prerender(meta) {
-        const styles = meta.styles.map(href => '<link rel="stylesheet" href="' + href + '">').join("");
-        const scripts = meta.modules.map(src => '<script type="module" src="' + src + '"></script>').join("");
-        const body = meta.pageModule.default() + scripts;
-        return { files: { "index.html": "<head>" + styles + "</head><body>" + body + "</body>" } };
-      }
-    `,
-    "app.ts": `
-      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
-      export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
-    `,
-  };
-  const appWithPlugin = (plugin: string) => `
-    const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
-    const plugin = { name: "test-plugin", setup(build) { ${plugin} } };
-    export default { app: { framework: { fileSystemRouterTypes: [fsr] }, plugins: [plugin] } };
-  `;
-
-  // Builds the app in `dir` and reads back the page and the stylesheets.
-  async function buildClientEntryApp(dir: string) {
-    const built = await Bun.$`${bunExe()} build --app ./app.ts`.cwd(dir).env(bunEnv).throws(false);
-    const dist = path.join(dir, "dist");
-    const html = await Bun.file(path.join(dist, "index.html"))
-      .text()
-      .catch(() => built.stderr.toString());
-    const hrefs = existsSync(dist)
-      ? (await Array.fromAsync(new Bun.Glob("**/*.css").scan(dist))).map(file => "/" + normalizePath(file))
-      : [];
-    const stylesheets = await Promise.all(hrefs.map(href => Bun.file(path.join(dist, href)).text()));
-    return { exitCode: built.exitCode, html, hrefs, stylesheets, dist };
-  }
-
-  // Runs the client bundle that the page loads. It fails if the bundle imports a file that the build did not write.
-  async function runClientBundle({ html, dist }: { html: string; dist: string }) {
-    const script = html.match(/<script type="module" src="\/([^"]*_bun[^"]*\.js)"><\/script>/);
-    expect(script).toBeTruthy();
-    await using client = Bun.spawn({
-      cmd: [bunExe(), path.join(dist, script![1])],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const [stdout, exitCode] = await Promise.all([client.stdout.text(), client.exited]);
-    return { stdout, exitCode };
-  }
-
-  const prefixedStylesheet = `
-.box:fullscreen {
-  color: red;
-}`;
-
-  test("css imported by a client entry point and a route is bundled once without server components", async () => {
+  test("css imported by a client entry point and a route is written once without server components", async () => {
     // Without server components there is no SSR graph, but the client entry
-    // point and the route still import the stylesheet from two graphs. One
-    // copy must serve both.
+    // point and the route still import the stylesheet from two graphs.
     using dir = tempDir("bake-production-custom-framework-css", {
       ...clientEntryFramework,
       "client.ts": `import "./styles.css";`,
@@ -1142,26 +1070,28 @@ export default function Client() {
       "styles.css": prefixedStylesheet,
     });
 
-    const app = await buildClientEntryApp(String(dir));
-    expect(app.html).toContain("homepage");
-    expect(app.hrefs).toHaveLength(1);
-    expect(app.stylesheets[0]).toContain(":-webkit-full-screen");
-    // The page links that one stylesheet.
-    expect(app.html).toContain(`<link rel="stylesheet" href="${app.hrefs[0]}">`);
+    const app = await buildBakeApp(String(dir), "./app.ts");
+    expect(await app.links("index.html")).toEqual(Object.keys(app.stylesheets));
+    expect(Object.values(app.stylesheets)).toEqual([expect.stringContaining(":-webkit-full-screen")]);
     expect(app.exitCode).toBe(0);
   });
 
   test("css that an onLoad plugin loads for two graphs is written once", async () => {
-    // The loader of this file is only known after the plugin ran, so each
-    // graph has its own copy. The copies print the same bytes and are one file.
     using dir = tempDir("bake-production-plugin-loaded-css", {
       ...clientEntryFramework,
-      "app.ts": appWithPlugin(`
-        build.onLoad({ filter: /\\.styl$/ }, async args => ({
-          contents: await Bun.file(args.path).text(),
-          loader: "css",
-        }));
-      `),
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        const stylus = {
+          name: "stylus",
+          setup(build) {
+            build.onLoad({ filter: /\\.styl$/ }, async args => ({
+              contents: await Bun.file(args.path).text(),
+              loader: "css",
+            }));
+          },
+        };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] }, plugins: [stylus] } };
+      `,
       "client.ts": `import "./styles.styl";`,
       "routes/index.ts": `
         import "../styles.styl";
@@ -1170,148 +1100,35 @@ export default function Client() {
       "styles.styl": prefixedStylesheet,
     });
 
-    const app = await buildClientEntryApp(String(dir));
-    expect(app.html).toContain("homepage");
-    expect(app.hrefs).toHaveLength(1);
-    expect(app.stylesheets[0]).toContain(":-webkit-full-screen");
-    expect(app.html).toContain(`<link rel="stylesheet" href="${app.hrefs[0]}">`);
+    const app = await buildBakeApp(String(dir), "./app.ts");
+    expect(await app.links("index.html")).toEqual(Object.keys(app.stylesheets));
+    expect(Object.values(app.stylesheets)).toEqual([expect.stringContaining(":-webkit-full-screen")]);
     expect(app.exitCode).toBe(0);
   });
 
-  test("json imported by a client entry point and a route stays in both bundles", async () => {
-    // Only a stylesheet is one module for every graph. A JSON module is
-    // JavaScript, and a copy that only the server bundle has is missing from
-    // the client bundle.
-    using dir = tempDir("bake-production-custom-framework-json", {
+  test("two routes with equal stylesheets link one file", async () => {
+    // The file name of a stylesheet is the hash of its bytes.
+    using dir = tempDir("bake-production-equal-stylesheets", {
       ...clientEntryFramework,
-      "client.ts": `
-        import data from "./data.json";
-        console.log("client " + data.name);
-      `,
       "routes/index.ts": `
-        import data from "../data.json";
-        export default () => "page " + data.name;
+        import "../home.css";
+        export default () => "home";
       `,
-      "data.json": `{ "name": "shared" }`,
+      "routes/about.ts": `
+        import "../about.css";
+        export default () => "about";
+      `,
+      "home.css": prefixedStylesheet,
+      "about.css": prefixedStylesheet,
     });
 
-    const app = await buildClientEntryApp(String(dir));
-    expect(app.html).toContain("page shared");
-    expect(app.exitCode).toBe(0);
-    expect(await runClientBundle(app)).toEqual({ stdout: "client shared\n", exitCode: 0 });
-  });
-
-  test("a stylesheet that a route imports as text stays text", async () => {
-    // The client's stylesheet is shared only with a graph that imports it as CSS.
-    using dir = tempDir("bake-production-css-as-text", {
-      ...clientEntryFramework,
-      "client.ts": `import "./styles.css";`,
-      "routes/index.ts": `
-        import text from "../styles.css" with { type: "text" };
-        export default () => "page " + text.trim();
-      `,
-      "styles.css": `.box:fullscreen { color: red; }`,
+    const app = await buildBakeApp(String(dir), "./app.ts");
+    const hrefs = Object.keys(app.stylesheets);
+    expect({ home: await app.links("index.html"), about: await app.links("about/index.html") }).toEqual({
+      home: hrefs,
+      about: hrefs,
     });
-
-    const app = await buildClientEntryApp(String(dir));
-    expect(app.html).toContain("page .box:fullscreen { color: red; }");
-    expect(app.hrefs).toHaveLength(1);
-    expect(app.stylesheets[0]).toContain(":-webkit-full-screen");
+    expect(Object.values(app.stylesheets)).toEqual([expect.stringContaining(":-webkit-full-screen")]);
     expect(app.exitCode).toBe(0);
-  });
-
-  test("a .css file that an onLoad plugin loads as JavaScript stays one module per graph", async () => {
-    // An onLoad filter that matches the path can change the loader, so the file is not shared.
-    using dir = tempDir("bake-production-css-as-js", {
-      ...clientEntryFramework,
-      "app.ts": appWithPlugin(`
-        build.onLoad({ filter: /\\.css$/ }, async args => ({
-          contents: "export default " + JSON.stringify((await Bun.file(args.path).text()).trim()),
-          loader: "js",
-        }));
-      `),
-      "client.ts": `
-        import text from "./styles.css";
-        console.log("client " + text);
-      `,
-      "routes/index.ts": `
-        import text from "../styles.css";
-        export default () => "page " + text;
-      `,
-      "styles.css": `.box { color: red; }`,
-    });
-
-    const app = await buildClientEntryApp(String(dir));
-    expect(app.html).toContain("page .box { color: red; }");
-    expect(app.exitCode).toBe(0);
-    expect(await runClientBundle(app)).toEqual({ stdout: "client .box { color: red; }\n", exitCode: 0 });
-  });
-
-  test("a css module that the client and SSR graphs share gets the class name of a client build", async () => {
-    // A dependency of a "use client" file is in the client graph and in the
-    // SSR graph. The one copy of its CSS module is a client file, so its class
-    // name does not depend on which graph imports it first.
-    using dir = tempDir("bake-production-shared-css-module", {
-      "server.ts": `
-        export function render(req, meta) {
-          return new Response(String(meta.pageModule.default()));
-        }
-        export async function prerender(meta) {
-          return { files: { "index.html": "<body>" + meta.pageModule.default() + "</body>" } };
-        }
-        export function registerClientReference(value, file, uid) {
-          return { value, file, uid };
-        }
-      `,
-      "routes/index.ts": `
-        import Client from "../Client";
-        export default () => "homepage " + typeof Client;
-      `,
-      "Client.ts": `
-        "use client";
-        import { box } from "./Button";
-        export default function Client() {
-          return box;
-        }
-      `,
-      "Button.ts": `
-        import styles from "./a.module.css";
-        export const box = styles.box;
-      `,
-      "a.module.css": `.box { color: red; }`,
-      "client-only.ts": `
-        import styles from "./a.module.css";
-        console.log(styles.box);
-      `,
-      "app.ts": `
-        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
-        const serverComponents = {
-          separateSSRGraph: true,
-          serverRuntimeImportSource: "./server.ts",
-          serverRegisterClientReferenceExport: "registerClientReference",
-        };
-        export default { app: { framework: { fileSystemRouterTypes: [fsr], serverComponents } } };
-      `,
-    });
-    const className = async (outdir: string) => {
-      const files = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(String(dir), outdir)));
-      expect(files).toHaveLength(1);
-      const css = await Bun.file(path.join(String(dir), outdir, files[0])).text();
-      return css.match(/\.(box_[\w-]+)/)?.[1];
-    };
-
-    const app = await Bun.$`${bunExe()} build --app ./app.ts`.cwd(String(dir)).env(bunEnv).throws(false);
-    expect(app.stderr.toString()).not.toContain("error:");
-    expect(app.exitCode).toBe(0);
-
-    const control = await Bun.$`${bunExe()} build ./client-only.ts --outdir ./control`
-      .cwd(String(dir))
-      .env(bunEnv)
-      .throws(false);
-    expect(control.exitCode).toBe(0);
-
-    const expected = await className("control");
-    expect(expected).toStartWith("box_");
-    expect(await className("dist")).toBe(expected);
   });
 });

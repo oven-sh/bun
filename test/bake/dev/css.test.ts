@@ -983,6 +983,37 @@ devTest("css layer statements are printed with browser targets", {
   },
 });
 
+devTest("import conditions next to an empty stylesheet are printed with browser targets", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import "../styles.css";
+      export default function (req, meta) {
+        return new Response(JSON.stringify(meta.styles), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    `,
+    // An empty stylesheet is never minified. It is the first stylesheet of
+    // this chunk, and the chunk prints the external import with its targets.
+    "styles.css": `
+      @import "./empty.css";
+      @import url("https://example.com/x.css") screen and (width >= 500px);
+      .a {
+        color: red;
+      }
+    `,
+    "empty.css": ``,
+  },
+  async test(dev) {
+    const styles = await (await dev.fetch("/")).json();
+    expect(styles).toHaveLength(1);
+    const css = await (await dev.fetch(styles[0])).text();
+    expect(css).toContain('@import "https://example.com/x.css" screen and (min-width: 500px)');
+    expect(css).not.toContain(">=");
+  },
+});
+
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);
   if (!url) {

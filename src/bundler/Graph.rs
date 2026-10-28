@@ -1,12 +1,13 @@
 use crate::BundledAst as JSAst;
 use bun_alloc::Arena as ThreadLocalArena;
-use bun_alloc::{AstAlloc, AstVec};
+use bun_alloc::{AllocError, AstAlloc, AstVec};
 use bun_ast::server_component_boundary;
 use bun_collections::MultiArrayList;
 use enum_map::EnumMap;
 
 use crate::IndexStringMap::IndexStringMap;
 use crate::PathToSourceIndexMap::PathToSourceIndexMap;
+use crate::bundled_ast::BundledAstColumns as _;
 use crate::options;
 use crate::{AdditionalFile, BundleV2, ThreadPool};
 
@@ -29,12 +30,12 @@ pub struct Graph<'a> {
     /// Maps entry point source indices to their original specifiers (for virtual entries resolved by plugins)
     pub(crate) entry_point_original_names: IndexStringMap,
     /// Every source index has an associated InputFile
-    pub input_files: MultiArrayList<InputFile<'a>>,
+    pub input_files: SourceRows<InputFile<'a>>,
     /// Every source index has an associated Ast
     /// When a parse is in progress / queued, it is `Ast.empty`
     // `JSAst<'a>` borrows from the arena behind `self.heap`; `'a` ties the AST
     // entries to that arena's lifetime (sibling-field relationship).
-    pub ast: MultiArrayList<JSAst<'a>>,
+    pub ast: SourceRows<JSAst<'a>>,
 
     /// During the scan + parse phase, this value keeps a count of the remaining
     /// tasks. Once it hits zero, the scan phase ends and linking begins. Note
@@ -145,6 +146,61 @@ bun_collections::multi_array_columns! {
     }
 }
 
+/// A list of [`Graph`] that has one row for each source index. It reads like the
+/// `MultiArrayList` inside. It has no `DerefMut`: the writes that keep the length are forwarded
+/// by name, and only [`Graph::add_source`] adds a row, to both lists at once.
+#[repr(transparent)]
+pub struct SourceRows<T>(MultiArrayList<T>);
+
+impl<T> core::ops::Deref for SourceRows<T> {
+    type Target = MultiArrayList<T>;
+
+    #[inline]
+    fn deref(&self) -> &MultiArrayList<T> {
+        &self.0
+    }
+}
+
+impl<T> SourceRows<T> {
+    #[inline]
+    pub(crate) fn set(&mut self, index: usize, elem: T) {
+        self.0.set(index, elem);
+    }
+}
+
+macro_rules! forward_columns_mut {
+    ($($name:ident: $column:ty),* $(,)?) => {
+        $(
+            #[inline]
+            pub(crate) fn $name(&mut self) -> &mut [$column] {
+                self.0.$name()
+            }
+        )*
+    };
+}
+
+impl<'a> SourceRows<InputFile<'a>> {
+    forward_columns_mut! {
+        items_source_mut: bun_ast::Source<'a>,
+        items_secondary_path_mut: AstVec<u8>,
+        items_loader_mut: options::Loader,
+        items_side_effects_mut: SideEffects,
+        items_additional_files_mut: AstVec<AdditionalFile>,
+        items_unique_key_for_additional_file_mut: Box<[u8], AstAlloc>,
+        items_content_hash_for_additional_file_mut: u64,
+        items_flags_mut: InputFileFlags,
+    }
+}
+
+impl<'a> SourceRows<JSAst<'a>> {
+    forward_columns_mut! {
+        items_import_records_mut: bun_ast::import_record::List<'a>,
+        items_parts_mut: bun_ast::part::List<'a>,
+        items_css_mut: crate::bundled_ast::CssCol,
+        items_tla_check_mut: bun_ast::TlaCheck,
+    }
+}
+
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy, PartialEq, Eq)]
     pub struct InputFileFlags: u8 {
@@ -164,8 +220,8 @@ impl<'a> Graph<'a> {
             heap,
             entry_points: Vec::new(),
             entry_point_original_names: IndexStringMap::default(),
-            input_files: MultiArrayList::default(),
-            ast: MultiArrayList::default(),
+            input_files: SourceRows(MultiArrayList::default()),
+            ast: SourceRows(MultiArrayList::default()),
             pending_items: 0,
             deferred_pending: 0,
             defer_epoch: 0,
@@ -219,6 +275,43 @@ impl<'a> Graph<'a> {
         target: options::Target,
     ) -> &mut PathToSourceIndexMap {
         &mut self.build_graphs[target]
+    }
+
+    /// The index that the next `add_source` returns.
+    #[inline]
+    pub(crate) fn next_source_index(&self) -> Index {
+        debug_assert_eq!(self.input_files.len(), self.ast.len());
+        Index::source(self.input_files.len())
+    }
+
+    /// Makes room for `additional` sources in both lists. `add_source` needs no reservation,
+    /// so this is only for a caller that can still return the error: one with no work on the pool.
+    pub(crate) fn reserve_sources(&mut self, additional: usize) -> Result<(), AllocError> {
+        self.input_files.0.ensure_unused_capacity(additional)?;
+        self.ast.0.ensure_unused_capacity(additional)
+    }
+
+    /// Adds the rows of a new source and returns its index. The `ast` row is empty until the
+    /// parse of the file completes.
+    #[inline]
+    pub(crate) fn add_source(&mut self, input_file: InputFile<'a>) -> Index {
+        let ast = JSAst::empty_in(self.heap);
+        self.add_source_with_ast(input_file, ast)
+    }
+
+    /// Adds the `input_files` row and the `ast` row of a new source, or neither: when a list
+    /// cannot grow, the process ends with the out-of-memory report.
+    #[inline]
+    pub(crate) fn add_source_with_ast(
+        &mut self,
+        input_file: InputFile<'a>,
+        ast: JSAst<'a>,
+    ) -> Index {
+        let index = self.next_source_index();
+        bun_core::handle_oom(self.reserve_sources(1));
+        self.input_files.0.append_assume_capacity(input_file);
+        self.ast.0.append_assume_capacity(ast);
+        index
     }
 
     /// Schedule a task to be run on the JS thread which resolves the promise of

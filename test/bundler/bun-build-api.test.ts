@@ -561,6 +561,76 @@ describe("Bun.build", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A module is a row in `graph.input_files` and a row in `graph.ast`. Native allocations over 1 MiB fail in
+  // these children, which stops the growth of the two lists.
+  describe.skipIf(!isASAN)("when the module graph cannot grow", () => {
+    async function runCapped(script: string) {
+      await using proc = Bun.spawn({
+        // The flag makes a debug build print the crash report of a release build, which has no slow stack trace.
+        cmd: [bunExe(), "-e", script, "--debug-crash-handler-use-trace-string"],
+        env: {
+          ...bunEnv,
+          // detect_leaks=0: LeakSanitizer cannot see through JSC cells to the natives they own.
+          ASAN_OPTIONS: [
+            bunEnv.ASAN_OPTIONS,
+            "allocator_may_return_null=1",
+            "max_allocation_size_mb=1",
+            "detect_leaks=0",
+          ]
+            .filter(Boolean)
+            .join(":"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // ASAN logs a warning for each allocation that it refuses.
+      const lines = stderr
+        .split("\n")
+        .filter(line => line !== "" && !line.includes("AddressSanitizer failed to allocate"));
+      return { stdout, stderr: lines, exitCode, signalCode: proc.signalCode };
+    }
+
+    // The first build has the same imports of one file: the parser and the resolver do the same work, and the
+    // graph stays small.
+    test("a build with too many modules ends in the out-of-memory report", async () => {
+      const { stdout, stderr, exitCode, signalCode } = await runCapped(/* js */ `
+        async function build(distinctFiles) {
+          const files = {};
+          let entry = "";
+          for (let i = 0; i < 2000; i++) {
+            const file = "/m" + (i % distinctFiles) + ".ts";
+            files[file] = "export default 0;";
+            entry += 'import ".' + file + '";\\n';
+          }
+          files["/entry.ts"] = entry;
+          const result = await Bun.build({ entrypoints: ["/entry.ts"], files });
+          console.log(distinctFiles, result.success);
+        }
+        await build(1);
+        await build(2000);
+      `);
+      const report = stderr.filter(line => line.startsWith("panic") || line.startsWith("oh no: "));
+      expect({ stdout, report }).toEqual({ stdout: "1 true\n", report: ["oh no: Bun has run out of memory."] });
+      expect(signalCode).toBe("SIGABRT");
+      expect(exitCode).not.toBe(0);
+    });
+
+    // The rows of the entry points are reserved before the first parse task is scheduled. A build that cannot
+    // reserve them has no work on the pool: it rejects, and the next build works.
+    test("a build with too many entry points rejects", async () => {
+      const { stdout, stderr, exitCode } = await runCapped(/* js */ `
+        const files = {};
+        for (let i = 0; i < 8000; i++) files["/entry" + i + ".ts"] = "export default " + i + ";";
+        const error = await Bun.build({ entrypoints: Object.keys(files), files }).then(() => undefined, e => e);
+        const next = await Bun.build({ entrypoints: ["/entry.ts"], files: { "/entry.ts": "console.log(1)" } });
+        console.log(JSON.stringify([error?.message, next.success]));
+      `);
+      expect({ stdout, stderr }).toEqual({ stdout: '["Bundle failed",true]\n', stderr: [] });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test("invalid options throws", async () => {
     expect(() => Bun.build({} as any)).toThrow();
     expect(() =>

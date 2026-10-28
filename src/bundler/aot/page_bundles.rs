@@ -175,8 +175,7 @@ fn run<'h>(
     bundle.enqueue_entry_points_normal::<&[u8]>(&[])?;
 
     let mut source = create_entry_source(pages, heap);
-    let index =
-        bundle.enqueue_parse_task2(&mut source, Loader::Js, Target::Bun, ModuleType::Esm)?;
+    let index = bundle.enqueue_parse_task2(&mut source, Loader::Js, Target::Bun, ModuleType::Esm);
     bundle.graph.entry_points.push(Index::init(index));
 
     bundle.wait_for_parse();

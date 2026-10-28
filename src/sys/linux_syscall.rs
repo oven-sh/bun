@@ -103,44 +103,24 @@ pub(crate) fn is_android_kernel() -> bool {
     })
 }
 
-#[inline]
-pub(crate) fn openat2_beneath(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
-    if is_android_kernel() {
-        return Err(libc::ENOSYS);
-    }
-    let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
-    let mode = rustix::fs::Mode::from_raw_mode(mode);
-    let dir = dir.as_borrowed_fd();
-    retry(|| {
-        rustix::fs::openat2(
-            dir,
-            path.as_cstr(),
-            oflags,
-            mode,
-            rustix::fs::ResolveFlags::BENEATH,
-        )
-    })
-    .map(own_fd)
-}
+pub(crate) use rustix::fs::ResolveFlags;
 
 #[inline]
-pub(crate) fn openat2_in_root(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
-    if is_android_kernel() {
+pub(crate) fn openat2(
+    dir: Fd,
+    path: &ZStr,
+    flags: i32,
+    mode: Mode,
+    resolve: ResolveFlags,
+) -> Result<Fd, i32> {
+    use bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH as DISABLED;
+    if is_android_kernel() || DISABLED.get().unwrap_or(false) {
         return Err(libc::ENOSYS);
     }
     let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
     let mode = rustix::fs::Mode::from_raw_mode(mode);
     let dir = dir.as_borrowed_fd();
-    retry(|| {
-        rustix::fs::openat2(
-            dir,
-            path.as_cstr(),
-            oflags,
-            mode,
-            rustix::fs::ResolveFlags::IN_ROOT | rustix::fs::ResolveFlags::NO_MAGICLINKS,
-        )
-    })
-    .map(own_fd)
+    retry(|| rustix::fs::openat2(dir, path.as_cstr(), oflags, mode, resolve)).map(own_fd)
 }
 
 #[inline]

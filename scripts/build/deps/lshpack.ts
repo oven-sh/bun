@@ -63,7 +63,9 @@ export const lshpack: Dependency = {
         LS_HPACK_LAZY_LARGE_TABLES: 1,
       },
     };
-    if (cfg.windows) spec.cflags = ["-w"];
+    // The patch reports a failed allocation of the tables through this function.
+    // The value is a function name, and a `defines` entry would quote it.
+    spec.cflags = ["-DLS_HPACK_OOM=Bun__outOfMemory", ...(cfg.windows ? ["-w"] : [])];
     return spec;
   },
 

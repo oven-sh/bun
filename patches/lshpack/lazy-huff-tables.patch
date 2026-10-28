@@ -1,6 +1,6 @@
 --- a/lshpack.c	2026-10-28 13:31:41.835028034 +0000
-+++ b/lshpack.c	2026-10-28 13:38:15.655042428 +0000
-@@ -52,6 +52,116 @@
++++ b/lshpack.c	2026-10-28 15:53:38.267339303 +0000
+@@ -52,6 +52,125 @@
  
  #include "huff-tables.h"
  
@@ -18,6 +18,10 @@
 +struct lshpack_huff_tables *lshpack_huff_tables;
 +#define hencs (__atomic_load_n(&lshpack_huff_tables, __ATOMIC_RELAXED)->encs)
 +#define hdecs (__atomic_load_n(&lshpack_huff_tables, __ATOMIC_RELAXED)->decs)
++#ifdef LS_HPACK_OOM
++/* Reports out of memory and does not return. */
++void LS_HPACK_OOM(void);
++#endif
 +
 +#if __BYTE_ORDER == __LITTLE_ENDIAN
 +#define HENC_I(i,j) (((j)<<8)|(i))
@@ -38,7 +42,12 @@
 +    tables = calloc(1, sizeof(*tables));
 +    lut = calloc(1 << 15, sizeof(*lut));
 +    if (!tables || !lut)
++    {
++#ifdef LS_HPACK_OOM
++        LS_HPACK_OOM();
++#endif
 +        abort();
++    }
 +
 +    /* hencs: combine two encode_table entries. {64,0} marks pairs whose
 +     * combined width overflows 32 bits (handled by the slow loop). */
@@ -117,7 +126,7 @@
  #define HPACK_STATIC_TABLE_SIZE   61
  #define INITIAL_DYNAMIC_TABLE_SIZE  4096
  
-@@ -290,6 +400,9 @@
+@@ -290,6 +409,9 @@
  int
  lshpack_enc_init (struct lshpack_enc *enc)
  {
@@ -127,7 +136,7 @@
      struct lshpack_double_enc_head *buckets;
      unsigned nbits = 2;
      unsigned i;
-@@ -1269,6 +1382,9 @@
+@@ -1269,6 +1391,9 @@
  void
  lshpack_dec_init (struct lshpack_dec *dec)
  {

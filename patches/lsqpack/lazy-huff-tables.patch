@@ -1,5 +1,5 @@
 --- a/lsqpack.c	2026-10-28 13:33:26.015031842 +0000
-+++ b/lsqpack.c	2026-10-28 13:38:15.667042428 +0000
++++ b/lsqpack.c	2026-10-28 15:53:38.559339313 +0000
 @@ -69,6 +69,16 @@
  #include <xxhash.h>
  #endif
@@ -17,17 +17,18 @@
  #include "huff-tables.h"
  
  #define MIN(a, b) ((a) < (b) ? (a) : (b))
-@@ -502,6 +512,9 @@
-                   unsigned max_risked_streams, enum lsqpack_enc_opts enc_opts,
-                   unsigned char *tsu_buf, size_t *tsu_buf_sz)
+@@ -486,6 +496,10 @@
+ void
+ lsqpack_enc_preinit (struct lsqpack_enc *enc, void *logger_ctx)
  {
 +#if LS_QPACK_USE_LARGE_TABLES && LS_HPACK_LAZY_LARGE_TABLES
++    /* An encoder that is only preinitialized encodes with the tables too. */
 +    lshpack_huff_tables_init();
 +#endif
-     struct lsqpack_double_enc_head *buckets;
-     unsigned char *p;
-     unsigned nbits = 2;
-@@ -2775,6 +2788,9 @@
+     memset(enc, 0, sizeof(*enc));
+     STAILQ_INIT(&enc->qpe_all_entries);
+     STAILQ_INIT(&enc->qpe_hinfo_arrs);
+@@ -2775,6 +2789,9 @@
      unsigned dyn_table_size, unsigned max_risked_streams,
      const struct lsqpack_dec_hset_if *dh_if, enum lsqpack_dec_opts opts)
  {

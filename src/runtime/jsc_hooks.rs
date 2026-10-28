@@ -1053,8 +1053,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         let has_pending_immediate = has_yielded_tasks
             || uv_idle_started
             || !unsafe { &*el }.immediate_tasks.is_empty()
-            || unsafe { &*el }.has_pending_tasks()
-            || unsafe { &*el }.await_pool_job();
+            || unsafe { &*el }.has_pending_tasks();
         // Fold the QUIC deadline into the poll timeout.
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {
@@ -1087,7 +1086,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             let mut now: Option<bun_core::Timespec> = None;
             // SAFETY: `state` is the live per-thread `RuntimeState`; the
             // `timer` field address is stable for the VM lifetime.
-            let have_timeout = unsafe {
+            let mut have_timeout = unsafe {
                 timer::All::get_timeout(
                     &mut (*state).timer,
                     &mut timespec,
@@ -1097,6 +1096,13 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                     &mut now,
                 )
             };
+            // SAFETY: `el` is the live per-thread event loop.
+            let awaited = !has_pending_immediate
+                && unsafe { &*el }.await_pool_job(have_timeout.then_some(&timespec));
+            if awaited {
+                timespec = bun_core::Timespec { sec: 0, nsec: 0 };
+                have_timeout = true;
+            }
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe {
@@ -1199,8 +1205,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         let has_pending_immediate = has_yielded_tasks
             || uv_idle_started
             || !unsafe { &*el }.immediate_tasks.is_empty()
-            || unsafe { &*el }.has_pending_tasks()
-            || unsafe { &*el }.await_pool_job();
+            || unsafe { &*el }.has_pending_tasks();
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {
             let ild = &(*loop_).internal_loop_data;
@@ -1222,7 +1227,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             let mut now: Option<bun_core::Timespec> = None;
             // SAFETY: `state` is the live per-thread `RuntimeState`; see
             // Note on `auto_tick` re: aliased-&mut across `fire()`.
-            let have_timeout = unsafe {
+            let mut have_timeout = unsafe {
                 timer::All::get_timeout(
                     &mut (*state).timer,
                     &mut timespec,
@@ -1232,6 +1237,13 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
                     &mut now,
                 )
             };
+            // SAFETY: `el` is the live per-thread event loop.
+            let awaited = !has_pending_immediate
+                && unsafe { &*el }.await_pool_job(have_timeout.then_some(&timespec));
+            if awaited {
+                timespec = bun_core::Timespec { sec: 0, nsec: 0 };
+                have_timeout = true;
+            }
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe {

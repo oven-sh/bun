@@ -13,7 +13,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU64, Ordering};
 
 use bun_io::{self as Async, Waker};
-use bun_threading::brief_wait::Patience;
+use bun_threading::brief_wait::{self, Patience};
 use bun_uws as uws;
 
 use crate::js_promise::Status as PromiseStatus;
@@ -791,9 +791,11 @@ impl EventLoop {
             || self.has_concurrent_tasks()
     }
 
-    /// Before a poll that would sleep: waits briefly for the result of a task that this thread gave the work pool and that is still out.
-    pub fn await_pool_job(&self) -> bool {
-        WorkPool::take_scheduled_by_this_thread()
+    /// Before a poll that would sleep for `timeout`: waits briefly for the result of a task that this thread gave the work pool and that is still out.
+    pub fn await_pool_job(&self, timeout: Option<&bun_core::Timespec>) -> bool {
+        // A timer that is due sooner than the wait ends is not held.
+        timeout.is_none_or(|timeout| u128::from(timeout.ns()) >= brief_wait::LENGTH.as_nanos())
+            && WorkPool::take_scheduled_by_this_thread()
             && self.vm_ref().handle_ref().tickets_outstanding() > 0
             && self.pool_job_patience.allows_wait()
             && self

@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 /// A sleep and its wake cost about as much, and a small task and the turn of the loop that awaits it fit in it.
-const LENGTH: Duration = Duration::from_micros(20);
+pub const LENGTH: Duration = Duration::from_micros(20);
 
 fn length() -> Duration {
     // Test suite only: a debug build takes longer than `LENGTH` for the other thread's turn.
@@ -16,7 +16,7 @@ fn length() -> Duration {
     LENGTH
 }
 
-/// Brief waits for one kind of event. One that was in vain skips the next 1, 2, 4, ... `MAX_SKIPS` waits, until one ends in time.
+/// Brief waits for one kind of event. One in vain skips the next 1, 2, 4, ... `MAX_SKIPS` waits, and a late one `MAX_SKIPS`, until one ends in time.
 #[derive(Default)]
 pub struct Patience {
     skips_left: AtomicU32,
@@ -37,7 +37,7 @@ impl Patience {
 
     /// Whether to wait now. A `false` uses up one skip.
     pub fn allows_wait(&self) -> bool {
-        // Relaxed, here and in `record`: the counts are advice, and one that another thread overwrites changes nothing.
+        // Relaxed, here and in `wait_for`: the counts are advice, and one that another thread overwrites changes nothing.
         let skips_left = self.skips_left.load(Ordering::Relaxed);
         if skips_left == 0 {
             return true;
@@ -67,19 +67,17 @@ impl Patience {
             }
             std::thread::yield_now();
         };
-        // Ready but late: the processor went to another program meanwhile, and a sleep would have cost no more.
-        self.record(is_ready && elapsed() <= length.saturating_mul(Self::LATE));
-        is_ready
-    }
-
-    fn record(&self, ended_in_time: bool) {
-        let skips = if ended_in_time {
+        let skips = if elapsed() > length.saturating_mul(Self::LATE) {
+            // Late, ready or not: a yield gave the processor to another program, and the next one would too.
+            Self::MAX_SKIPS
+        } else if is_ready {
             0
         } else {
             (self.skips_of_last_miss.load(Ordering::Relaxed) * 2).clamp(1, Self::MAX_SKIPS)
         };
         self.skips_of_last_miss.store(skips, Ordering::Relaxed);
         self.skips_left.store(skips, Ordering::Relaxed);
+        is_ready
     }
 }
 
@@ -87,8 +85,6 @@ impl Patience {
 mod tests {
     use super::*;
     use core::cell::Cell;
-
-    const LENGTH: Duration = Duration::from_micros(20);
 
     /// A wait of `LENGTH` on a clock that `is_ready` sets: it returns the time at which it is ready, if it is.
     fn wait(patience: &Patience, mut is_ready: impl FnMut() -> (Duration, bool)) -> bool {
@@ -163,11 +159,16 @@ mod tests {
     }
 
     #[test]
-    fn a_wait_that_ends_late_counts_as_in_vain() {
-        let patience = Patience::new();
+    fn a_wait_that_ends_late_skips_the_most_waits_at_once() {
         let late = LENGTH * Patience::LATE + Duration::from_nanos(1);
-        assert!(wait(&patience, || (late, true)));
-        assert!(!patience.allows_wait());
-        assert!(patience.allows_wait());
+        for is_ready in [true, false] {
+            let patience = Patience::new();
+            assert_eq!(wait(&patience, || (late, is_ready)), is_ready);
+            let mut skipped = 0;
+            while !patience.allows_wait() {
+                skipped += 1;
+            }
+            assert_eq!(skipped, Patience::MAX_SKIPS);
+        }
     }
 }

@@ -144,6 +144,7 @@ fn create() -> ThreadPool {
         stack_size: crate::thread_pool::POOL_THREAD_STACK_SIZE,
     })
     .lingering()
+    .without_spare_threads()
 }
 
 impl WorkPool {

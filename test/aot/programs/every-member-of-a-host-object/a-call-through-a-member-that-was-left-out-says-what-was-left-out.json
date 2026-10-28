@@ -1,0 +1,1 @@
+{ "skipInShell": "it asks for objects of the host, which the jsc shell does not provide", "alone": "what it prints hangs on what else the executable holds: which modules and members were compiled in, and whether anything evaluates text" }

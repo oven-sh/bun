@@ -89,7 +89,7 @@ _bun_completions() {
     declare -A PACKAGE_OPTIONS;
     declare -A PM_OPTIONS;
 
-    local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update audit dedupe prune outdated publish link unlink build check lint fmt";
+    local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update audit dedupe prune outdated publish link unlink build compile check lint fmt";
 
     GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port";
     GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p";
@@ -200,8 +200,11 @@ _bun_completions() {
         x)
             COMPREPLY=( $(compgen -W "--bun --package --no-install --cwd --env-file --minimum-release-age --trust --verbose --silent --help -p -h" -- "${cur_word}") );
             return;;
+        compile)
+            COMPREPLY=( $(compgen -f -W "--outfile --target --define --env --asset --external --minify --sourcemap --tsconfig-override --compile-exec-argv --disallow-code-generation-from-strings --explain --aot-log-type-mismatches --aot-huge-heap --aot-allow-code-from-disk --obfuscate --compile-inspector --compile-in-place --no-compile-function-source --no-aot --trim --trim-locales --library --outdir --no-script --cwd --help -h" -- "${cur_word}") );
+            return;;
         check)
-            COMPREPLY=( $(compgen -f -W "--project --pretty --build --no-pretty --all --threads --timing --cwd --no-script --help -p -b -h" -- "${cur_word}") );
+            COMPREPLY=( $(compgen -f -W "--project --pretty --build --no-pretty --all --threads --timing --cwd --no-script --aot --explain --define --help -p -b -h" -- "${cur_word}") );
             return;;
         lint)
             COMPREPLY=( $(compgen -f -W "--config --no-config-lookup --rule --rules --explain --init --global --no-inline-config --report-unused-disable-directives --print-config --doctor --allow-unsupported --staged --changed --ignore-pattern --ignore-path --no-ignore --ext --stdin --stdin-filename --list-files --no-error-on-unmatched-pattern --cwd --format --all --output-file --quiet --max-warnings --color --no-color --timing --fix --fix-dry-run --fix-type --fix-suggestions --fix-dangerously --type-aware --no-type-aware --tsconfig --type-check --infer-globals --no-infer-globals --threads --no-script --version --help --help-all --flavor --project --parser-options --parser --plugin --native-plugin-rules --no-native-plugin-rules --report-unused-disable-directives-severity --report-unused-inline-configs --no-warn-ignored --suppress-all --suppress-rule --suppressions-location --prune-suppressions --pass-on-unpruned-suppressions --pass-on-no-patterns --exit-on-fatal-error --concurrency --env-info --no-eslintrc --env --rulesdir --resolve-plugins-relative-to --allow --warn --deny --deny-warnings --silent --disable-nested-config --import-plugin --react-plugin --jsdoc-plugin --jest-plugin --vitest-plugin --jsx-a11y-plugin --nextjs-plugin --react-perf-plugin --promise-plugin --node-plugin --vue-plugin --disable-unicorn-plugin --disable-oxc-plugin --disable-typescript-plugin -c -f -o -v -h -p -A -W -D" -- "${cur_word}") );

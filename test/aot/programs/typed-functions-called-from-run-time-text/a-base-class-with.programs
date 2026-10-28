@@ -1,0 +1,372 @@
+//// a-base-class-with-heirs.ts
+// A typed function is handed to text that becomes code at run time, and called from there: a parameter of a base class that gets its heirs.
+function open<F>(f: F): F { (globalThis as any).held = f; return (0, eval)("globalThis.held"); }
+abstract class Shape { constructor(public id: number) {} abstract area(): number; }
+class Square extends Shape { constructor(id: number, public side: number) { super(id); } area() { return this.side ** 2; } }
+class Circle extends Shape { constructor(id: number, public r: number) { super(id); } area() { return this.r * 3; } }
+function probe(shapes: Shape[], square: Square): number {
+  let sum = square.id + square.side;
+  for (const s of shapes) sum += s.area() + s.id;
+  return sum;
+}
+console.log(open(probe)([new Square(1, 2), new Circle(2, 3)], new Square(3, 4)));
+//// a-callback-whose-parameter-is-typed-by-its-context.ts
+// A typed function is handed to text that becomes code at run time, and called from there: a callback whose parameter gets its type from the context.
+interface Point { x: number; y: number }
+function open<F>(f: F): F { (globalThis as any).held = f; return (0, eval)("globalThis.held"); }
+function pointAt(i: number): Point { return { x: i, y: i * 2 }; }
+function probe(points: Point[]): number {
+  let sum = 0;
+  points.forEach(p => { sum += p.x; });
+  return sum + points.map(p => p.y).reduce((a, b) => a + b, 0);
+}
+console.log(open(probe)([pointAt(1), pointAt(2)]));
+//// a-field-read-through-keyof.ts
+// A typed function is handed to text that becomes code at run time, and called from there: a field read through a key of type keyof and a result of an indexed access type.
+interface Point { x: number; y: number }
+function open<F>(f: F): F { (globalThis as any).held = f; return (0, eval)("globalThis.held"); }
+function pointAt(i: number): Point { return { x: i, y: i * 2 }; }
+function get<T, K extends keyof T>(o: T, k: K): T[K] { return o[k]; }
+function probe(p: Point): number {
+  const x = get(p, "x");
+  return x + 1;
+}
+console.log(open(probe)(pointAt(1)));
+//// a-function-type-and-an-interface-method.ts
+// A typed function is handed to text that becomes code at run time, and called from there: a parameter of a function type and a method of an interface.
+interface Point { x: number; y: number }
+function open<F>(f: F): F { (globalThis as any).held = f; return (0, eval)("globalThis.held"); }
+function pointAt(i: number): Point { return { x: i, y: i * 2 }; }
+type Measure = (p: Point) => number;
+interface Maker { make(i: number): Point }
+function probe(f: Measure, m: Maker, p: Point): number {
+  return f(p) + 1 + m.make(1).x;
+}
+console.log(open(probe)(p => p.x, { make: pointAt }, pointAt(1)));
+//// a-literal-in-run-time-text-has-the-names-of-a-type-that-the-text-was-handed.ts
+// An object literal in text that becomes code at run time has the names of a declared type, one of whose objects the text was handed, and reaches a function that takes the type.
+interface Payload { value: unknown; issues: string[]; aborted?: boolean }
+function check(p: Payload): number { return p.issues.length + (p.aborted ? 1 : 0) + (typeof p.value === "number" ? p.value : 0); }
+const text = process.env.OTHER_TEXT ?? "return check(i & 1 ? { value: i & 2 ? i : 'text', issues: [] } : given)";
+const made = new Function("check", "given", "i", text) as (c: typeof check, given: Payload, i: number) => number;
+const turns = 1000;
+const given: Payload = { value: turns > 1 ? String(turns) : turns, issues: [] };
+let sum = 0;
+for (let i = 0; i < turns; i++) sum += made(check, given, i | 1);
+console.log(sum);
+//// a-literal-in-run-time-text-holds-undefined-and-null.ts
+// Object literals in run-time text reach typed code with undefined, null, arrays of every storage and things like arrays in their fields: where the field's type has them, and where it has not.
+interface Payload { value: unknown; issues: string[]; aborted?: boolean }
+interface Row { name: string | null; count: number | undefined; next: Row | null; tags: string[] }
+function describe(v: unknown): string { return v === undefined ? "undefined" : v === null ? "null" : typeof v === "object" ? JSON.stringify(v) : typeof v + ":" + String(v); }
+function check(p: Payload): string { return describe(p.value) + "," + describe(p.issues) + "," + describe(p.aborted) + "," + ("value" in p) + "," + Object.keys(p).join("+") + "," + JSON.stringify(p); }
+function read(r: Row): string { return describe(r.name) + "," + describe(r.count) + "," + describe(r.next) + "," + describe(r.tags) + "," + Object.keys(r).join("+") + "," + JSON.stringify(r); }
+function own(i: number): string { return check({ value: i, issues: [] }) + read({ name: "n", count: i, next: null, tags: [] }); }
+const payload = new Function("check", "v", "w", "return check({ value: v, issues: w })") as (c: typeof check, v: unknown, w: unknown) => string;
+const whole = new Function("check", "v", "w", "a", "return check({ value: v, issues: w, aborted: a })") as (c: typeof check, v: unknown, w: unknown, a: unknown) => string;
+const row = new Function("read", "a", "b", "c", "d", "return read({ name: a, count: b, next: c, tags: d })") as (r: typeof read, a: unknown, b: unknown, c: unknown, d: unknown) => string;
+class List extends Array<string> {}
+const values: unknown[] = [undefined, null, 0, 1.5, "text", true, false, [], ["a"], {}, { name: null, count: undefined, next: null, tags: [] }, Symbol.iterator, 10n, () => 1,
+  [1], [1.5], [, "hole"], List.of("l"), new Uint8Array(2), Object.freeze(["f"]), new Proxy(["p"], {}), Object.assign(["e"], { extra: 1 }), { length: 1, 0: "like" }, new Set(["s"])];
+const seen = new Map<string, number>();
+function note(line: string) { seen.set(line, (seen.get(line) ?? 0) + 1); }
+note(own(1));
+for (let turn = 0; turn < 40; turn++) {
+  for (const v of values) {
+    const s = typeof v === "symbol" || typeof v === "bigint" || typeof v === "function";
+    if (s) {
+      note(new Function("p", "v", "const o = { value: v, issues: [] }; return typeof p(o)")((p: Payload) => p.value, v));
+      continue;
+    }
+    note(payload(check, v, []));
+    note(payload(check, 1, v));
+    note(whole(check, v, [], v));
+    note(row(read, v, 1, null, []));
+    note(row(read, "n", v, null, []));
+    note(row(read, "n", 1, v, []));
+    note(row(read, "n", 1, null, v));
+    note(row(read, v, v, v, v));
+  }
+}
+for (const [line, count] of seen) console.log(count, line);
+//// a-literal-in-run-time-text-reaches-a-type-whose-fields-are-any.ts
+// An object literal in run-time text reaches typed code. The fields of the type are any.
+interface Payload { value: unknown; issues: any; aborted?: any }
+function check(p: Payload): number { return p.issues.length + (p.aborted ? 1 : 0) + (typeof p.value === "number" ? p.value : 0); }
+function own(i: number): number { return check({ value: i, issues: [] }); }
+const text = "return check({ value: i, issues: [] })";
+const made = new Function("check", "i", text) as (c: typeof check, i: number) => number;
+const turns = 1000;
+let sum = own(1);
+for (let i = 0; i < turns; i++) sum += made(check, i & 7);
+console.log(sum);
+//// a-literal-in-run-time-text-reaches-a-type-whose-fields-are-any-beside-parsed-json.ts
+// An object literal in run-time text reaches typed code. The fields of the type are any.
+interface Payload { value: unknown; issues: any; aborted?: any }
+function check(p: Payload): number { return p.issues.length + (p.aborted ? 1 : 0) + (typeof p.value === "number" ? p.value : 0); }
+function own(i: number): number { return check({ value: i, issues: [] }); }
+const text = "return check({ value: i, issues: [] })";
+const made = new Function("check", "i", text) as (c: typeof check, i: number) => number;
+const turns = 1000;
+let sum = own(1) + check(JSON.parse("{\"value\":1,\"issues\":[]}"));
+for (let i = 0; i < turns; i++) sum += made(check, i & 7);
+console.log(sum);
+//// a-literal-in-run-time-text-reaches-a-type-whose-fields-are-declared.ts
+// An object literal in run-time text reaches typed code. The fields of the type are typed.
+interface Payload { value: unknown; issues: string[]; aborted?: boolean }
+function check(p: Payload): number { return p.issues.length + (p.aborted ? 1 : 0) + (typeof p.value === "number" ? p.value : 0); }
+function own(i: number): number { return check({ value: i, issues: [] }); }
+const text = "return check({ value: i, issues: [] })";
+const made = new Function("check", "i", text) as (c: typeof check, i: number) => number;
+const turns = 1000;
+let sum = own(1);
+for (let i = 0; i < turns; i++) sum += made(check, i & 7);
+console.log(sum);
+//// a-literal-in-run-time-text-reaches-a-type-whose-fields-are-declared-beside-parsed-json.ts
+// An object literal in run-time text reaches typed code. The fields of the type are typed.
+interface Payload { value: unknown; issues: string[]; aborted?: boolean }
+function check(p: Payload): number { return p.issues.length + (p.aborted ? 1 : 0) + (typeof p.value === "number" ? p.value : 0); }
+function own(i: number): number { return check({ value: i, issues: [] }); }
+const text = "return check({ value: i, issues: [] })";
+const made = new Function("check", "i", text) as (c: typeof check, i: number) => number;
+const turns = 1000;
+let sum = own(1) + check(JSON.parse("{\"value\":1,\"issues\":[]}"));
+for (let i = 0; i < turns; i++) sum += made(check, i & 7);
+console.log(sum);
+//// a-literal-in-run-time-text-spells-members-that-only-the-type-spells.ts
+// An object literal in text that becomes code at run time spells members of a declared type that the program itself never stores or reads, and a member of a union of texts that it never makes.
+interface Settings { stored: number; neverStored?: string; neverStoredMode?: "one" | "two" }
+function describe(s: Settings): string { return s.stored % 8 + " " + Object.keys(s).join() + " " + JSON.stringify(s).length; }
+const text = process.env.OTHER_TEXT ?? `
+  switch (i % 5) {
+  case 0: return describe({ stored: i });
+  case 1: return describe({ stored: i, neverStored: "x" });
+  case 2: return describe({ neverStoredMode: "two", stored: i, neverStored: "y" });
+  case 3: return describe({ stored: i, neverStoredMode: "three" });
+  default: given.neverStored = "z"; given.stored = i; return describe(given) + " " + given.neverStored + ("neverStoredMode" in given);
+  }`;
+const made = new Function("describe", "given", "i", text) as (d: typeof describe, given: Settings, i: number) => string;
+const given: Settings = { stored: -1 };
+const counts = new Map<string, number>();
+for (let i = 0; i < 2000; i++) {
+  const said = made(describe, given, i);
+  counts.set(said, (counts.get(said) ?? 0) + 1);
+}
+console.log([...counts].sort().map(([said, count]) => count + " x " + said).join("\n"));
+console.log(Object.keys(given).join(), JSON.stringify(given));
+//// a-literal-that-satisfies-a-type.ts
+// A typed function is handed to text that becomes code at run time, and called from there: a literal behind satisfies.
+function open<F>(f: F): F { (globalThis as any).held = f; return (0, eval)("globalThis.held"); }
+interface Config { port: number; host: string; tags?: string[] }
+const config = { port: 80, host: "h", tags: ["a"] } satisfies Config;
+function probe(c: typeof config): number {
+  return c.port + c.host.length + c.tags.length;
+}
+console.log(open(probe)(config));
+//// a-promise-a-map-and-a-set.ts
+// A typed function is handed to text that becomes code at run time, and called from there: a Promise, a Map and a Set of a declared type.
+interface Point { x: number; y: number }
+function open<F>(f: F): F { (globalThis as any).held = f; return (0, eval)("globalThis.held"); }
+function pointAt(i: number): Point { return { x: i, y: i * 2 }; }
+async function load(i: number): Promise<Point> { return pointAt(i); }
+async function probe(map: Map<string, Point>, set: Set<Point>, pending: Promise<Point>): Promise<number> {
+  let n = (await open(load)(1)).x + (await pending).y + map.get("a")!.x;
+  for (const [, v] of map) n += v.y;
+  for (const v of set) n += v.x;
+  return n;
+}
+open(probe)(new Map([["a", pointAt(1)]]), new Set([pointAt(2)]), load(3)).then(console.log);
+//// a-readonly-array-and-constants-as-const.ts
+// A typed function is handed to text that becomes code at run time, and called from there: a readonly array, and a list and an object declared as const.
+function open<F>(f: F): F { (globalThis as any).held = f; return (0, eval)("globalThis.held"); }
+const sizes = [1, 2, 4] as const;
+const table = { a: 1, b: "two" } as const;
+function probe(list: readonly number[], i: number): number {
+  let sum = 0;
+  for (let k = 0; k < list.length; k++) sum += list[k];
+  return sum + sizes[i % 3] + sizes[1] + table.a + table.b.length;
+}
+console.log(open(probe)([1, 2], 1));
+//// a-tuple.ts
+// A typed function is handed to text that becomes code at run time, and called from there: a tuple that is read by index and taken apart by a pattern.
+interface Point { x: number; y: number }
+function open<F>(f: F): F { (globalThis as any).held = f; return (0, eval)("globalThis.held"); }
+function pointAt(i: number): Point { return { x: i, y: i * 2 }; }
+function probe(t: [number, string, Point]): number {
+  const [a, b, c] = t;
+  return t[0] + t[1].length + t[2].x + a + b.length + c.y;
+}
+console.log(open(probe)([1, "ab", pointAt(1)]));
+//// a-union-told-apart-by-a-field.ts
+// A typed function is handed to text that becomes code at run time, and called from there: a union whose members are told apart by a field.
+function open<F>(f: F): F { (globalThis as any).held = f; return (0, eval)("globalThis.held"); }
+type S = { kind: "a"; x: number } | { kind: "b"; y: string };
+function probe(s: S): number {
+  if (s.kind === "a") return s.x + 1;
+  return s.y.length;
+}
+const f = open(probe);
+console.log(f({ kind: "a", x: 1 }), f({ kind: "b", y: "yy" }));
+//// a-union-told-apart-by-a-switch.ts
+// A typed function is handed to text that becomes code at run time, and called from there: a union that a switch over a field tells apart.
+function open<F>(f: F): F { (globalThis as any).held = f; return (0, eval)("globalThis.held"); }
+interface Square { kind: 0; side: number } interface Circle { kind: 1; r: number } interface Re { kind: 2; w: number; h: number }
+function probe(s: Square | Circle | Re): number {
+  switch (s.kind) {
+    case 0: return s.side * s.side;
+    case 1: return s.r * 3;
+    default: return s.w * s.h;
+  }
+}
+const f = open(probe);
+console.log(f({ kind: 0, side: 2 }), f({ kind: 1, r: 1 }), f({ kind: 2, w: 2, h: 3 }));
+//// a-union-told-apart-by-instanceof-in-and-truthiness.ts
+// A typed function is handed to text that becomes code at run time, and called from there: unions that instanceof, in and truthiness tell apart.
+interface Point { x: number; y: number }
+function open<F>(f: F): F { (globalThis as any).held = f; return (0, eval)("globalThis.held"); }
+function pointAt(i: number): Point { return { x: i, y: i * 2 }; }
+class A { a = 1 } class B { b = 2 }
+function probe(v: A | B, w: Point | { z: number }, p?: Point): number {
+  let n = v instanceof A ? v.a : v.b;
+  n += "x" in w ? w.x : w.z;
+  if (p) n += p.y;
+  return n;
+}
+console.log(open(probe)(new A, { z: 3 }, pointAt(1)), open(probe)(new B, pointAt(1)));
+//// a-union-told-apart-by-typeof.ts
+// A typed function is handed to text that becomes code at run time, and called from there: a union that typeof tells apart.
+function open<F>(f: F): F { (globalThis as any).held = f; return (0, eval)("globalThis.held"); }
+function probe(v: string | number): number {
+  if (typeof v === "string") return v.length;
+  return v + 1;
+}
+const f = open(probe);
+console.log(f("abc"), f(1));
+//// a-value-narrowed-by-a-type-guard.ts
+// A typed function is handed to text that becomes code at run time, and called from there: a value that a function with a type predicate narrows.
+interface Point { x: number; y: number }
+function open<F>(f: F): F { (globalThis as any).held = f; return (0, eval)("globalThis.held"); }
+function pointAt(i: number): Point { return { x: i, y: i * 2 }; }
+function isPoint(v: unknown): v is Point { return typeof v === "object" && v !== null && "x" in v; }
+function probe(v: unknown): number {
+  if (isPoint(v)) return v.x + v.y;
+  return 0;
+}
+console.log(open(probe)(pointAt(1)), open(probe)(1));
+//// an-inferred-return-type.ts
+// A typed function is handed to text that becomes code at run time, and called from there: the result of a function whose return type is inferred.
+function open<F>(f: F): F { (globalThis as any).held = f; return (0, eval)("globalThis.held"); }
+function make(i: number) { return { x: i, y: String(i) }; }
+function pick(i: number) { return i > 0 ? make(i) : undefined; }
+function probe(i: number): number {
+  const m = open(make)(i);
+  const q = open(pick)(i);
+  return m.x + m.y.length + (q ? q.x : 0);
+}
+console.log(open(probe)(1));
+//// an-intersection-and-a-brand.ts
+// A typed function is handed to text that becomes code at run time, and called from there: an intersection type and a branded number.
+interface Point { x: number; y: number }
+function open<F>(f: F): F { (globalThis as any).held = f; return (0, eval)("globalThis.held"); }
+function pointAt(i: number): Point { return { x: i, y: i * 2 }; }
+type Named = Point & { name: string };
+type Branded = number & { __brand: "id" };
+function probe(n: Named, id: Branded): number {
+  return n.x + n.name.length + id + 1;
+}
+console.log(open(probe)({ ...pointAt(1), name: "n" }, 4 as Branded));
+//// constants-imported-from-another-file/constants.ts
+import { open, pointAt } from "./open";
+export const origin = open(pointAt)(0);
+export const registry = new Map([["a", open(pointAt)(1)]]);
+export let limit = open((n: number) => n * 2)(4);
+//// constants-imported-from-another-file/main.ts
+// A typed function is handed to text that becomes code at run time, and called from there: constants and a variable imported from another file, whose types are inferred.
+import { open } from "./open";
+import { origin, registry, limit } from "./constants";
+function probe(i: number): number {
+  return origin.x + registry.get("a")!.y + limit + i;
+}
+console.log(open(probe)(1));
+//// constants-imported-from-another-file/open.ts
+export interface Point { x: number; y: number }
+export function open<F>(f: F): F { (globalThis as any).held = f; return (0, eval)("globalThis.held"); }
+export function pointAt(i: number): Point { return { x: i, y: i * 2 }; }
+//// enums.ts
+// A typed function is handed to text that becomes code at run time, and called from there: parameters of a numeric and of a string enum.
+function open<F>(f: F): F { (globalThis as any).held = f; return (0, eval)("globalThis.held"); }
+enum Flags { None = 0, A = 1, B = 2, C = 4 }
+enum Color { Red = "r", Green = "g" }
+function probe(f: Flags, c: Color): number {
+  return (f & Flags.B) + (f | Flags.C) + (c === Color.Red ? 1 : 0);
+}
+console.log(open(probe)(Flags.A | Flags.B, Color.Red));
+//// literals-in-run-time-text-get-many-kinds-of-values-for-declared-fields-with-collections-in-between.ts
+// Object literals in text that becomes code at run time have the names of a declared type whose fields are an array, a record, a function and a number. They get many kinds of values, with collections in between.
+interface Inner { id: number; name: string }
+interface Holder { list: string[]; inner: Inner; call: (n: number) => number; count: number; any: unknown }
+function read(h: Holder): string {
+  let text = "";
+  try { text += h.list.length + ":" + h.list[0]; } catch (e) { text += "E1"; }
+  try { text += "," + h.inner.id + h.inner.name; } catch (e) { text += "E2"; }
+  try { text += "," + h.call(2); } catch (e) { text += "E3"; }
+  try { text += "," + (h.count + 1); } catch (e) { text += "E4"; }
+  return text + "," + typeof h.any + "," + Object.keys(h).join("");
+}
+class Heir extends Array<string> {}
+const marked: any = ["m"]; marked.extra = 1;
+const lists: unknown[] = [["a"], [], [1.5], [{}], new Heir("x", "y"), marked, new Proxy(["p"], {}), new Uint8Array(2), "text", { length: 1, 0: "o" }, null, undefined, Symbol.iterator, 5n, (function () { return arguments; })()];
+const inners: unknown[] = [{ id: 1, name: "n" }, { name: "n", id: 1 }, { id: "s", name: 2 }, { id: 1 }, { id: 1, name: "n", more: 1 }, Object.create({ id: 3, name: "up" }), [], null, 7];
+const calls: unknown[] = [(n: number) => n + 1, function (n: number) { return n * 2; }, Math.abs, class {}, {}, null, read.bind(null)];
+const counts: unknown[] = [1, 1.5, -0, NaN, 2 ** 31, "1", null, undefined, true, 3n, {}];
+const given: Holder = { list: ["g"], inner: { id: 0, name: "g" }, call: n => n, count: process.argv.length > 9 ? 1.5 : 0, any: process.argv.length > 9 ? 1 : "s" };
+const make = new Function("read", "given", "list", "inner", "call", "count", process.env.OTHER_TEXT ?? "return read({ list: list, inner: inner, call: call, count: count, any: given }) + ';' + read({ any: 1, count, call, inner, list })") as (...all: unknown[]) => string;
+let turn = 0;
+for (let round = 0; round < 3; round++) {
+  for (const list of lists) for (const inner of inners) {
+    console.log(make(read, given, list, inner, calls[turn % calls.length], counts[turn % counts.length]));
+    if (++turn % 37 === 0) Bun.gc(true);
+  }
+}
+//// literals-in-run-time-text-whose-values-fit-and-do-not-fit-the-declared-fields.ts
+// Object literals in text that becomes code at run time have the names of a declared type. Some of their values fit the fields, some do not.
+interface Payload { value: unknown; issues: string[]; aborted?: boolean }
+function describe(p: Payload): string { return JSON.stringify(p) + " " + Object.keys(p).join() + " " + typeof p.issues + " " + String(p.aborted) + " " + (Object.getPrototypeOf(p) === Object.prototype); }
+const make = new Function("describe", "given", "issues", "aborted", process.env.OTHER_TEXT ?? "given.value = 2; return describe({ value: given, issues: issues, aborted: aborted }) + '|' + describe({ issues: issues, value: 1 }) + '|' + describe({ value: 1, issues })") as (d: typeof describe, given: Payload, issues: unknown, aborted: unknown) => string;
+const given: Payload = { value: 1, issues: [] };
+for (const issues of [[], ["a"], [1], "text", 7, null, undefined, { length: 2 }, new Array(3)])
+  for (const aborted of [true, false, undefined, null, 0, "yes", {}])
+    console.log(make(describe, given, issues, aborted));
+for (const value of [Symbol.iterator, 10n, 1.5, -0, "s", () => 1, null, undefined])
+  console.log(String(new Function("describe", "given", "value", process.env.OTHER_TEXT_2 ?? "const made = { value: 1, issues: value, aborted: value }; return typeof made.issues + typeof made.aborted + Object.keys(made) + (given === made)")(describe, given, value)));
+//// optional-fields-and-non-null-assertions.ts
+// A typed function is handed to text that becomes code at run time, and called from there: optional fields, optional parameters and non-null assertions.
+interface Point { x: number; y: number }
+function open<F>(f: F): F { (globalThis as any).held = f; return (0, eval)("globalThis.held"); }
+function pointAt(i: number): Point { return { x: i, y: i * 2 }; }
+interface Node { value: number; next?: Node; at: Point | null }
+function probe(n: Node): number {
+  return n.value + (n.next?.value ?? 0) + n.at!.x + (n.next ? n.next.value : 0);
+}
+console.log(open(probe)({ value: 1, next: { value: 2, at: null }, at: pointAt(1) }));
+//// the-result-of-a-generic-function.ts
+// A typed function is handed to text that becomes code at run time, and called from there: the result of a generic function that is instantiated at the call.
+interface Point { x: number; y: number }
+function open<F>(f: F): F { (globalThis as any).held = f; return (0, eval)("globalThis.held"); }
+function pointAt(i: number): Point { return { x: i, y: i * 2 }; }
+function first<T>(list: T[]): T { return list[0]; }
+function probe(points: Point[]): number {
+  const p = first(points);
+  return p.x + p.y;
+}
+console.log(open(probe)([pointAt(1), pointAt(2)]));
+//// what-a-generic-class-holds.ts
+// A typed function is handed to text that becomes code at run time, and called from there: what an instance of a generic class holds and hands out.
+interface Point { x: number; y: number }
+function open<F>(f: F): F { (globalThis as any).held = f; return (0, eval)("globalThis.held"); }
+function pointAt(i: number): Point { return { x: i, y: i * 2 }; }
+class Box<T> { constructor(public held: T) {} get(): T { return this.held; } }
+function probe(box: Box<Point>): number {
+  return box.get().x + box.held.y;
+}
+console.log(open(probe)(new Box(pointAt(1))), new Box("s").get());

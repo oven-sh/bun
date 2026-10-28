@@ -1,0 +1,4 @@
+{
+  "build": ["--aot-check=verify-each-pass"],
+  "skipInShell": "it uses what Bun provides and the jsc shell does not: URLSearchParams"
+}

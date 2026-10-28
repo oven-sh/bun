@@ -2445,6 +2445,9 @@ mod spawn_process_body {
 
             #[cfg(windows)]
             pub windows: WindowsOptions,
+            /// Whether the child gets this process's descriptor `3 + index`, under the same number.
+            #[cfg(windows)]
+            pub inherited_extra_fds: Box<[bool]>,
         }
 
         #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2513,6 +2516,8 @@ mod spawn_process_body {
                     argv0: None,
                     #[cfg(windows)]
                     windows: Default::default(),
+                    #[cfg(windows)]
+                    inherited_extra_fds: Box::default(),
                 }
             }
         }
@@ -2532,6 +2537,15 @@ mod spawn_process_body {
                     new_process_group,
                     #[cfg(windows)]
                     windows: self.windows.clone(),
+                    #[cfg(windows)]
+                    extra_fds: self
+                        .inherited_extra_fds
+                        .iter()
+                        .map(|&is_inherited| match is_inherited {
+                            true => WindowsStdio::Inherit,
+                            false => WindowsStdio::Ignore,
+                        })
+                        .collect(),
                     ..Default::default()
                 }
             }

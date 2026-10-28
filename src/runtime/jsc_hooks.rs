@@ -73,9 +73,9 @@ pub(crate) struct RuntimeState {
     /// Same cycle-break story as `sql_rare`.
     pub(crate) ssl_ctx_cache: crate::api::SSLContextCache::SSLContextCache,
     /// `RareData.global_dns_data` — per-VM resolver + its channel.
-    /// Lazy-init by [`crate::dns_jsc::global_resolver`]; freed when this box
-    /// drops in [`deinit_runtime_state`].
-    pub(crate) global_dns_data: core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>>,
+    /// Lazy-init by [`crate::dns_jsc::global_resolver`]; this ref is released
+    /// when this box drops in [`deinit_runtime_state`].
+    pub(crate) global_resolver: core::cell::OnceCell<bun_ptr::RefPtr<crate::dns_jsc::Resolver>>,
     /// Synthetic `bun:main` wrapper source.
     pub(crate) entry_point: ServerEntryPoint,
     /// Backing arena for `vm.transpiler` (spec passes `bun.default_allocator`;
@@ -184,16 +184,17 @@ pub(crate) fn cron_jobs_mut() -> Option<&'static mut Vec<bun_ptr::RefPtr<crate::
 /// lookup re-enters [`crate::dns_jsc::global_resolver`] while a `&Resolver` derived
 /// from this cell is live, so a `&mut` accessor would alias.
 #[inline]
-pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>> {
+pub(crate) fn global_resolver()
+-> &'static core::cell::OnceCell<bun_ptr::RefPtr<crate::dns_jsc::Resolver>> {
     let state = runtime_state();
     debug_assert!(
         !state.is_null(),
-        "global_dns_data before init_runtime_state"
+        "global_resolver before init_runtime_state"
     );
     // SAFETY: `state` is the live per-thread `RuntimeState` box; the field
     // address is stable for the VM's lifetime and only read (interior
     // mutability via `OnceCell`).
-    unsafe { &(*state).global_dns_data }
+    unsafe { &(*state).global_resolver }
 }
 
 /// [`RuntimeState::lint`] of this thread's VM.
@@ -201,7 +202,7 @@ pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_
 pub(crate) fn lint_vm() -> &'static core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>> {
     let state = runtime_state();
     debug_assert!(!state.is_null(), "lint_vm before init_runtime_state");
-    // SAFETY: as `global_dns_data`.
+    // SAFETY: as `global_resolver`.
     unsafe { &(*state).lint }
 }
 
@@ -351,7 +352,7 @@ unsafe fn init_runtime_state(
             postgresql_context: Default::default(),
         },
         ssl_ctx_cache: Default::default(),
-        global_dns_data: core::cell::OnceCell::new(),
+        global_resolver: core::cell::OnceCell::new(),
         entry_point: ServerEntryPoint::default(),
         // `borrowing_default()` wraps `mi_heap_main()` so `Transpiler`-level
         // allocations use the same heap as the global allocator and skip the
@@ -1807,14 +1808,17 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
     let mut result = SweepResult::Idle;
     // SAFETY: `state` is the live per-thread `RuntimeState` box; shared borrow
     // of the `OnceCell` only (the resolver's own state is interior-mutable).
-    if let Some(gd) = unsafe { &(*state).global_dns_data }.get() {
-        // SAFETY: the VM-global resolver, pinned by `GlobalData` (its own ref
-        // never drops here).
-        result = result.and(unsafe {
-            crate::dns_jsc::Resolver::close_channel_for_terminate(gd.resolver.as_ctx_ptr())
-        });
-        #[cfg(windows)]
-        gd.resolver.cancel_pending_uv_requests_for_teardown();
+    if let Some(resolver) = unsafe { &(*state).global_resolver }.get() {
+        // Closing the channel reaches most of the resolver, and only `Dns` makes one.
+        result = result.and(bun_removable_features::removable_body!(Dns, Abort, {
+            // SAFETY: the VM-global resolver, which `RuntimeState`'s ref keeps alive.
+            let closed = unsafe {
+                crate::dns_jsc::Resolver::close_channel_for_terminate(resolver.as_ctx_ptr())
+            };
+            #[cfg(windows)]
+            resolver.cancel_pending_uv_requests_for_teardown();
+            closed
+        }));
     }
     #[cfg(target_os = "macos")]
     crate::dns_jsc::dns_sd::SharedConnection::close_for_terminate();

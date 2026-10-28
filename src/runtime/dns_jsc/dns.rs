@@ -73,20 +73,25 @@ type Sockaddr = netc::sockaddr;
 
 /// Helper: fetch the per-VM global DNS resolver (port of
 /// `RareData::globalDNSResolver`). The storage is
-/// [`crate::jsc_hooks::RuntimeState::global_dns_data`] — concrete
-/// `Option<Box<GlobalData>>`, freed by `deinit_runtime_state` on VM teardown.
+/// [`crate::jsc_hooks::RuntimeState::global_resolver`], whose ref
+/// `deinit_runtime_state` releases on VM teardown.
 ///
 /// R-2: returns `&Resolver` (shared). All Resolver mutation routes through
 /// `Cell` / `RefCell` / `JsCell` fields, so a shared borrow is sufficient when
 /// script run by a settled lookup re-enters the same global resolver.
 #[inline]
 fn global_resolver(global_this: &JSGlobalObject) -> &'static Resolver {
-    let gd = crate::jsc_hooks::global_dns_data().get_or_init(|| {
-        let gd = GlobalData::init(global_this.bun_vm());
-        gd.resolver.ref_(); // pin for the VM's lifetime
-        gd
-    });
-    &gd.resolver
+    crate::jsc_hooks::global_resolver().get_or_init(|| {
+        // The VM-global resolver serves every context of the realm.
+        RefPtr::new(Resolver::setup(
+            global_this.bun_vm(),
+            None,
+            bun_dns_resolver::Options {
+                timeout_ms: None,
+                tries: Some(DEFAULT_TRIES),
+            },
+        ))
+    })
 }
 
 /// Send-wrapper for raw pointers handed to the threaded work pool. The DNS
@@ -949,30 +954,6 @@ impl Drop for DNSLookup {
         self.poll_ref.unref(Async::posix_event_loop::get_vm_ctx(
             Async::AllocatorType::Js,
         ));
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// GlobalData
-// ──────────────────────────────────────────────────────────────────────────
-
-pub(crate) struct GlobalData {
-    pub(crate) resolver: Resolver,
-}
-
-impl GlobalData {
-    pub(crate) fn init(vm: &VirtualMachine) -> Box<Self> {
-        Box::new(Self {
-            // The VM-global resolver serves every context of the realm.
-            resolver: Resolver::setup(
-                vm,
-                None,
-                bun_dns_resolver::Options {
-                    timeout_ms: None,
-                    tries: Some(DEFAULT_TRIES),
-                },
-            ),
-        })
     }
 }
 
@@ -2389,6 +2370,7 @@ impl Requests {
 // `channel` or `requests` is held across `settle`.
 /// `DNSResolver`, declared in `dns_internals.bind.ts`.
 #[derive(bun_ptr::RefCounted)]
+#[ref_count(destroy = Self::destroy)]
 pub(crate) struct Resolver {
     pub(crate) ref_count: bun_ptr::RefCount<Resolver>,
     /// Opened by the first request.
@@ -2423,6 +2405,20 @@ bun_jsc::impl_abort_handle_owner!(Resolver, abort_handle, |this, _cause| {
 impl Drop for Resolver {
     fn drop(&mut self) {
         self.destroy_channel();
+    }
+}
+
+impl Resolver {
+    /// The last ref is gone. Closing the channel reaches most of the resolver, and code that
+    /// `--trim` keeps without `Dns` holds refs too. Only `Dns` makes a resolver.
+    ///
+    /// # Safety
+    /// `this` was boxed, and nothing refers to it any more.
+    unsafe fn destroy(this: *mut Self) {
+        bun_removable_features::removable_body!(Dns, Abort, {
+            // SAFETY: fn contract.
+            drop(unsafe { bun_core::heap::take(this) });
+        });
     }
 }
 

@@ -288,11 +288,11 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v0: 0 = Integer
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v0, v1)
-# CHECK-NEXT: b1(v2: number, v3: int[0, 300]):
+# CHECK-NEXT: b1(v2: number ~ int|whole, v3: int[0, 300]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v5: 300 = Integer integer=300
 # CHECK-NEXT: v6: boolean = Less v3, v5
-# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b21()
+# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b25()
 # CHECK-NEXT: b2(v7: int[0, 299]):
 # CHECK-NEXT: v8: 59 = Integer integer=59
 # CHECK-NEXT: v9: int[0, 58] = Mod v7, v8
@@ -358,8 +358,8 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v53: boolean = TypeTest v52 testedType=int[-2147483643, 2147483647]
 # CHECK-NEXT: Branch v53 -> taken b13(| 0), notTaken b14()
 # CHECK-NEXT: b13(v54: int[-2147483638, 2147483647]):
-# CHECK-NEXT: v55: number = Add v2, v54
-# CHECK-NEXT: Jump -> next b20(v55)
+# CHECK-NEXT: v55: number ~ int|whole = Add v2, v54
+# CHECK-NEXT: Jump -> next b24(v55)
 # CHECK-NEXT: b14() frequency=Unlikely:
 # CHECK-NEXT: v56: null = Null
 # CHECK-NEXT: v57: 0 = Integer
@@ -382,27 +382,38 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Branch v71 -> taken b17(| 0), notTaken b18()
 # CHECK-NEXT: b17(v72: guard) frequency=Unlikely:
 # CHECK-NEXT: v73: int[-2147483643, 2147483647] = GetSlot v70, v72 key="n" receivers=[L2] level=Expected accessSite=11 [holdsDeclaredType]
-# CHECK-NEXT: v74: number = Add v2, v73
-# CHECK-NEXT: Jump -> next b20(v74)
+# CHECK-NEXT: v74: number ~ int|whole = Add v2, v73
+# CHECK-NEXT: Jump -> next b24(v74)
 # CHECK-NEXT: b18() frequency=Rare handler=b19():
 # CHECK-NEXT: v75: anything ~ int[-2147483643, 2147483647] = PropGet v70 key="n" accessSite=11 receivers=[L2]
 # CHECK-NEXT: v76: int|whole ~ int[-2147483643, 2147483647] = AssumeType v75 provenType=int|whole
-# CHECK-NEXT: v77: number = Add v2, v76
-# CHECK-NEXT: Jump -> next b20(v77)
+# CHECK-NEXT: v77: number ~ int|whole = Add v2, v76
+# CHECK-NEXT: Jump -> next b24(v77)
 # CHECK-NEXT: b19() role=CatchHandler:
 # CHECK-NEXT: v78: anything = CatchValue
-# CHECK-NEXT: v79: anything = PropGet v78 key="n" accessSite=12 receivers=[L0, L2, ..]
-# CHECK-NEXT: v80: 1000 = Integer integer=1000
-# CHECK-NEXT: v81: number = Mul v79, v80
-# CHECK-NEXT: v82: number = Add v2, v81
-# CHECK-NEXT: Jump -> next b20(v82)
-# CHECK-NEXT: b20(v83: number):
-# CHECK-NEXT: v84: int[1, 300] = Increment v7
-# CHECK-NEXT: Jump -> next b1(v83, v84)
-# CHECK-NEXT: b21():
-# CHECK-NEXT: v85: undefined = CallBuiltin -, v2 overload=ConsoleLog/0 accessSite=15
-# CHECK-NEXT: v86: undefined = Undefined
-# CHECK-NEXT: Return v86
+# CHECK-NEXT: v79: boolean = TypeTest v78 testedType=L0|L2
+# CHECK-NEXT: Branch v79 -> taken b20(| 0), notTaken b22()
+# CHECK-NEXT: b20(v80: L0|L2):
+# CHECK-NEXT: v81: boolean = IsSlotFilled v80 key="n" receivers=[L0, L2] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v81 -> taken b21(| 0), notTaken b22()
+# CHECK-NEXT: b21(v82: guard):
+# CHECK-NEXT: v83: int[-2147483643, 2147483647] = GetSlot v80, v82 key="n" receivers=[L0, L2] level=Expected accessSite=12 [holdsDeclaredType]
+# CHECK-NEXT: Jump -> next b23(v83)
+# CHECK-NEXT: b22() frequency=Unlikely:
+# CHECK-NEXT: v84: anything = PropGet v78 key="n" accessSite=12 receivers=[L0, L2, ..]
+# CHECK-NEXT: Jump -> next b23(v84)
+# CHECK-NEXT: b23(v85: anything ~ int[-2147483643, 2147483647]):
+# CHECK-NEXT: v86: 1000 = Integer integer=1000
+# CHECK-NEXT: v87: number ~ int[-2147483643000, 2147483647000] = Mul v85, v86
+# CHECK-NEXT: v88: number ~ int|whole = Add v2, v87
+# CHECK-NEXT: Jump -> next b24(v88)
+# CHECK-NEXT: b24(v89: number ~ int|whole):
+# CHECK-NEXT: v90: int[1, 300] = Increment v7
+# CHECK-NEXT: Jump -> next b1(v89, v90)
+# CHECK-NEXT: b25():
+# CHECK-NEXT: v91: undefined = CallBuiltin -, v2 overload=ConsoleLog/0 accessSite=15
+# CHECK-NEXT: v92: undefined = Undefined
+# CHECK-NEXT: Return v92
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="spy"
 # CHECK: module=m0 position=334 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=int[0, 299]}] results=[{type=L0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

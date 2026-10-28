@@ -744,5 +744,5 @@ runtimefunction id=131091 function=f46 visibility=Private
 # CHECK-NEXT: end of function f13
 # CHECK-LABEL: function f17 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 12, patchpoints: 0
+# CHECK-NEXT: instructions: 10, patchpoints: 0
 # CHECK-NEXT: end of function f17

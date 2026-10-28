@@ -9,6 +9,9 @@ pub struct MappedFile {
     pointer: *mut u8,
     length: usize,
     mapped_length: usize,
+    /// `move_down` moves pages of this size whole: a multiple of the system's.
+    #[cfg(not(windows))]
+    page: usize,
 }
 
 impl MappedFile {
@@ -51,6 +54,7 @@ impl MappedFile {
             pointer,
             length,
             mapped_length,
+            page: MappedFile::page_size(),
         })
     }
 
@@ -366,7 +370,7 @@ impl ExactSizeIterator for Blocks<'_> {}
 impl crate::image::ImageBytes for MappedFile {
     // Pages that nothing wrote stay pages of the file.
     fn move_down(&mut self, source: core::ops::Range<usize>, target: usize) {
-        let page = MappedFile::page_size();
+        let page = self.page;
         let distance = source.start - target;
         if distance == 0 || source.is_empty() {
             return;
@@ -375,27 +379,10 @@ impl crate::image::ImageBytes for MappedFile {
             self.copy_within(source, target);
             return;
         }
-        let length = source
-            .len()
-            .next_multiple_of(page)
-            .min(self.mapped_length - source.start);
-        if self.remap_pages(source.start, target, length) {
-            return;
-        }
-        // What has been copied is let go of, so that only the copy stays in memory.
-        const MOST_BYTES_AT_ONCE: usize = 4 << 20;
-        let mut copied = 0;
-        while copied < length {
-            let size = distance.min(MOST_BYTES_AT_ONCE).min(length - copied);
-            self.map_zero_pages(target + copied, target + copied + size);
-            // SAFETY: both ranges lie in this mapping. `size` is at most the distance between them, so they don't overlap.
-            unsafe {
-                let from = self.pointer.add(source.start + copied);
-                core::ptr::copy_nonoverlapping(from, self.pointer.add(target + copied), size);
-            }
-            self.map_zero_pages(source.start + copied, source.start + copied + size);
-            copied += size;
-        }
+        // What follows `source` in its last page stays where it is.
+        let length = source.len() / page * page;
+        self.move_pages_down(source.start, target, length);
+        self.copy_within(source.start + length..source.end, target + length);
     }
 
     fn truncate(&mut self, len: usize) {
@@ -419,6 +406,31 @@ impl crate::image::ImageBytes for MappedFile {
     }
 }
 
+#[cfg(not(windows))]
+impl MappedFile {
+    /// `source`, `target` and `length` are multiples of the size of a page.
+    fn move_pages_down(&mut self, source: usize, target: usize, length: usize) {
+        if length == 0 || self.remap_pages(source, target, length) {
+            return;
+        }
+        let distance = source - target;
+        // What has been copied is let go of, so that only the copy stays in memory.
+        const MOST_BYTES_AT_ONCE: usize = 4 << 20;
+        let mut copied = 0;
+        while copied < length {
+            let size = distance.min(MOST_BYTES_AT_ONCE).min(length - copied);
+            self.map_zero_pages(target + copied, target + copied + size);
+            // SAFETY: both ranges lie in this mapping. `size` is at most the distance between them, so they don't overlap.
+            unsafe {
+                let from = self.pointer.add(source + copied);
+                core::ptr::copy_nonoverlapping(from, self.pointer.add(target + copied), size);
+            }
+            self.map_zero_pages(source + copied, source + copied + size);
+            copied += size;
+        }
+    }
+}
+
 /// The bytes of a file that is made from a template: a vector, or a private mapping of the template with room behind it.
 pub enum FileBytes {
     Vector(Vec<u8>),
@@ -426,7 +438,8 @@ pub enum FileBytes {
 }
 
 impl FileBytes {
-    pub fn is_mapping(&self) -> bool {
+    #[cfg(all(test, not(windows)))]
+    pub(crate) fn is_mapping(&self) -> bool {
         matches!(self, FileBytes::Mapping(_))
     }
 
@@ -684,6 +697,46 @@ pub(crate) mod tests {
         #[test]
         fn parts_of_pages_move_like_bytes_of_a_vector() {
             check_edit("parts-of-pages", move_parts_of_pages, None);
+        }
+
+        #[test]
+        fn what_follows_a_moved_range_in_its_last_page_stays() {
+            let page = MappedFile::page_size();
+            let large_page = 4 * page;
+            let original: Vec<u8> = (0..large_page * 6)
+                .map(|index| (index / 13) as u8)
+                .collect();
+            let kept = [
+                large_page * 2..large_page * 3 + page,
+                large_page * 3 + page * 2..large_page * 6,
+            ];
+            for (name, split_at) in [
+                ("large-pages", None),
+                ("large-pages-copied", Some(large_page * 2)),
+            ] {
+                let file = TemporaryFile::create(name, &original);
+                let mut mapped = MappedFile::open(&file.0).unwrap();
+                mapped.page = large_page;
+                let mut vector = original.clone();
+                if let Some(start) = split_at {
+                    mapped.map_zero_pages(start, start + page);
+                    vector[start..start + page].fill(0);
+                }
+                let edit = |bytes: &mut dyn ImageBytes| {
+                    bytes[kept[1].start] = 0xEE;
+                    let mut target = large_page;
+                    for source in kept.clone() {
+                        bytes.move_down(source.clone(), target);
+                        target += source.len();
+                    }
+                    bytes.truncate(target);
+                };
+                edit(&mut mapped);
+                edit(&mut vector);
+                assert!(*mapped == *vector);
+                assert!(!has_unmapped_page(&mapped));
+                assert!(file.read() == original);
+            }
         }
 
         #[test]

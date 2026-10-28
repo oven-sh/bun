@@ -110,8 +110,10 @@ pub enum ModuleObjectUse {
     Parent,
     /// `module.children`, read or stored: the objects of the files that the owner requires.
     Children,
-    /// The object is held, handed on, compared, stored into, or asked for a member that is none of the above.
+    /// The object is held, compared, stored into, or asked for a member that is none of the above.
     Object,
+    /// The object, or the list of them, goes where nothing follows it. Whoever gets it reads any member, `parent` and `children` among them.
+    HandedOn,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

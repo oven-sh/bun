@@ -17,7 +17,8 @@ attempt("promisify", () => util.promisify(5 as any));
 attempt("inherits", () => util.inherits(1 as any, 2 as any));
 attempt("format", () => util.styleText("nope" as any, "x"));
 attempt("url", () => new URL("nope"));
-attempt("kill", () => process.kill(1.5 as any));
+// A number that no process has, and signal 0, which only asks whether the process is there.
+attempt("kill", () => process.kill(2147483646.5 as any, 0));
 attempt("chdir", () => process.chdir(5 as any));
 attempt("abort", () => { const c = new AbortController(); c.abort(); c.signal.throwIfAborted(); });
 attempt("aborted", () => util.aborted(1 as any, {}));

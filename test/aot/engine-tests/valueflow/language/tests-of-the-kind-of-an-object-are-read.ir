@@ -1,12 +1,13 @@
 # function tell(given: any) { const value: object = given;
-#   if ($isProxyObject(value)) proxy(); if (!$isMap(value)) noMap(); if (value instanceof Error) error(); if (Array.isArray(value)) list(); if (!Array.isArray(value)) noList(); }    tell({});
-# What arrives is an object that the program made: no proxy, no map, no list, and Error.prototype does not stand above it. The arms behind those tests do not run, the arms behind their negations do.
+#   if ($isProxyObject(value)) proxy(); if (!$isMap(value)) noMap(); if (value instanceof Error) error(); if (Array.isArray(value)) list(); if (!Array.isArray(value)) noList(); if (ArrayBuffer.isView(value)) view(); }    tell({});
+# What arrives is an object that the program made: no proxy, no map, no list, no view, and Error.prototype does not stand above it. The arms behind those tests do not run, the arms behind their negations do.
 # RUN: valueflow-solve unreached
 # CHECK: unreached f2
 # CHECK-NOT: unreached f3
 # CHECK: unreached f4
 # CHECK: unreached f5
 # CHECK-NOT: unreached f6
+# CHECK: unreached f7
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -72,8 +73,20 @@ function f1 name="tell" role=Library length=1 parameters=[{type=anything}] resul
   b13(v35):
     v36 = NewClosure function=f6
     v37 = Call v36
-    Return
+    Jump -> next b15()
   b14(v38):
+    Jump -> next b15()
+  b15():
+    v39 = Builtin builtin=ArrayBuffer
+    v40 = Builtin builtin=ArrayBufferIsView
+    v41 = Call v40, v39, v1
+    v42 = ToBoolean v41
+    Branch v42 -> taken b16(| 0), notTaken b17(| 0)
+  b16(v43):
+    v44 = NewClosure function=f7
+    v45 = Call v44
+    Return
+  b17(v46):
     Return
 }
 function f2 name="proxy" results=[{type=anything}] {
@@ -89,5 +102,8 @@ function f5 name="list" results=[{type=anything}] {
     Return
 }
 function f6 name="noList" results=[{type=anything}] {
+    Return
+}
+function f7 name="view" results=[{type=anything}] {
     Return
 }

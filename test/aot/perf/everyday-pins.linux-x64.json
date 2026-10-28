@@ -1868,8 +1868,8 @@
     "untyped": 10
   },
   "everyday-emitters/a-class-below-emits-to-itself": {
-    "typed": 97,
-    "untyped": 174
+    "typed": 72,
+    "untyped": 76
   },
   "everyday-emitters/emitter-made-listened-to-and-dropped": {
     "typed": 500.4,

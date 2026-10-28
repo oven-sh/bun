@@ -37,6 +37,8 @@ pub(crate) struct RuntimeHost<'a> {
     pub manifest: &'static Manifest,
     /// `None`: every import of a file that is read is followed.
     pub reach: Option<ReachWhileLoading<'a>>,
+    /// False: no code of the library is compiled, so nothing asks for a type.
+    pub reads_types: bool,
 }
 
 impl RuntimeHost<'_> {
@@ -88,6 +90,19 @@ impl Host for RuntimeHost<'_> {
         }
         let text = self.runtime_modules.read(path);
         text.unwrap_or_else(|| self.record_unreadable(path))
+    }
+
+    fn is_seen_in_part(&self, path: &[u8]) -> bool {
+        is_host_path(path) && self.runtime_modules.is_seen_in_part(path)
+    }
+
+    fn read_part_seen_by_every_file(&self, path: &[u8]) -> Cow<'static, [u8]> {
+        let text = self.runtime_modules.read_part_seen_by_every_file(path);
+        text.unwrap_or_else(|| self.record_unreadable(path))
+    }
+
+    fn is_seen_by_every_file(&self, path: &[u8], position: u32) -> bool {
+        self.runtime_modules.is_seen_by_every_file(path, position)
     }
 
     fn is_file(&self, path: &[u8]) -> bool {
@@ -154,7 +169,7 @@ impl CodeHost for RuntimeHost<'_> {
     }
 
     fn is_seen_only_by_name(&self, path: &[u8]) -> bool {
-        self.runtime_modules.is_seen_only_by_name(path)
+        !self.reads_types || self.runtime_modules.is_seen_only_by_name(path)
     }
 
     fn parse_code<'s>(

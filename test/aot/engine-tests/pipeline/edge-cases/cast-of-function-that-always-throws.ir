@@ -681,34 +681,42 @@ function f35 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v3: "returned" = String string="returned"
 # CHECK-NEXT: v4: anything = Call v1 calleeName="run" accessSite=25 callees=[f8, f9, f10, f11, f12, f13, f14, f15]
 # CHECK-NEXT: v5: undefined = CallBuiltin v2, v0, v3, v4 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=26
-# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: Jump -> next b7()
 # CHECK-NEXT: b1() role=CatchHandler:
 # CHECK-NEXT: v6: anything = CatchValue
 # CHECK-NEXT: v7: anything ~ undefined|null|Error = Upcast v6 castType=anything
 # CHECK-NEXT: v8: anything = PropGet v7 key="name" accessSite=29
 # CHECK-NEXT: v9: boolean = TypeTest v8 testedType=undefined|null|string
-# CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b6()
+# CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b9()
 # CHECK-NEXT: b2(v10: undefined|null|string):
-# CHECK-NEXT: v11: anything = PropGet v7 key="message" accessSite=30
-# CHECK-NEXT: v12: boolean = TypeTest v11 testedType=undefined|null|string
-# CHECK-NEXT: Branch v12 -> taken b3(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b3(v13: undefined|null|string):
-# CHECK-NEXT: v14: undefined = CallBuiltin -, v0, v10, v13 overload=ConsoleLog/0 accessSite=31
-# CHECK-NEXT: Jump -> next b4()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v15: undefined = Undefined
-# CHECK-NEXT: Return v15
-# CHECK-NEXT: b5(v16: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b7(v16)
-# CHECK-NEXT: b6() frequency=Unlikely:
-# CHECK-NEXT: v17: anything = PropGet v7 key="message" accessSite=30
-# CHECK-NEXT: v18: anything ~ undefined|null|string = Expect v17 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b7(v18)
-# CHECK-NEXT: b7(v19: anything) frequency=Unlikely:
-# CHECK-NEXT: v20: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v21: undefined = CallBuiltin v20, v0, v8, v19 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=31
-# CHECK-NEXT: v22: undefined = Undefined
-# CHECK-NEXT: Return v22
+# CHECK-NEXT: v11: boolean = TypeTest v7 testedType=Error
+# CHECK-NEXT: Branch v11 -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b3(v12: Error):
+# CHECK-NEXT: v13: anything = CallBuiltin v12 overload=ErrorPrototypeMessage/0 accessSite=30
+# CHECK-NEXT: Jump -> next b5(v13)
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: v14: anything = PropGet v7 key="message" accessSite=30
+# CHECK-NEXT: Jump -> next b5(v14)
+# CHECK-NEXT: b5(v15: anything):
+# CHECK-NEXT: v16: boolean = TypeTest v15 testedType=undefined|null|string
+# CHECK-NEXT: Branch v16 -> taken b6(| 0), notTaken b8(| 0)
+# CHECK-NEXT: b6(v17: undefined|null|string):
+# CHECK-NEXT: v18: undefined = CallBuiltin -, v0, v10, v17 overload=ConsoleLog/0 accessSite=31
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v19: undefined = Undefined
+# CHECK-NEXT: Return v19
+# CHECK-NEXT: b8(v20: boolean|number|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b10(v20)
+# CHECK-NEXT: b9() frequency=Unlikely:
+# CHECK-NEXT: v21: anything = PropGet v7 key="message" accessSite=30
+# CHECK-NEXT: v22: anything ~ undefined|null|string = Expect v21 expectedType=undefined|null|string
+# CHECK-NEXT: Jump -> next b10(v22)
+# CHECK-NEXT: b10(v23: anything) frequency=Unlikely:
+# CHECK-NEXT: v24: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v25: undefined = CallBuiltin v24, v0, v8, v23 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=31
+# CHECK-NEXT: v26: undefined = Undefined
+# CHECK-NEXT: Return v26
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="read"
 # CHECK: module=m0 position=580 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f7}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f7} creator=Entrypoint{target=f7 arguments=Registers} {

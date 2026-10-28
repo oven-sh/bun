@@ -1031,17 +1031,23 @@ const socketOptions = [
   ),
 ];
 
+// The options are the first operand where that is no list, and the second where it is.
 const startsSubprocess = (returns: b.TableType): b.FunctionField[] => [
   {
     ...startedByOptions,
-    args: { command: b.instance("Array"), options: b.any.optional },
+    args: { commandOrOptions: b.instance("Array"), options: b.any.optional },
     returns,
     uses: {
-      command: [b.readsContents(), b.runsTransitively("OwnValues", "ToPrimitive")],
+      commandOrOptions: [b.readsContents(), b.runsTransitively("OwnValues", "ToPrimitive")],
       options: subprocessOptions,
     },
   },
-  { ...startedByOptions, args: { options: b.object }, returns, uses: { options: subprocessOptions } },
+  {
+    ...startedByOptions,
+    args: { commandOrOptions: b.object },
+    returns,
+    uses: { commandOrOptions: subprocessOptions },
+  },
 ];
 
 // js_bun_spawn_bindings.rs: what the child has printed is a new Buffer, the number of the descriptor it was told to write to, or undefined where the output was ignored or inherited.

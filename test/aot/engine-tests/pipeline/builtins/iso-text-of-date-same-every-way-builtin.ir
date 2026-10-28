@@ -412,7 +412,7 @@ runtimefunction id=131091 function=f51 visibility=Private
 # -- generated: f0 fromParts
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 181, patchpoints: 24, rare instructions: 52, polls: 2
+# CHECK-NEXT: instructions: 238, patchpoints: 21, rare instructions: 54, polls: 2
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="fromParts"
 # CHECK: role=Source

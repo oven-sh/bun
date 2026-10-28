@@ -1,7 +1,8 @@
 use super::module_list::collect_module_list;
 use super::summary::{collect_entry_point_paths, collect_folder_paths, collect_source_texts};
 use super::{BoundBuild, Build, FrontEndOutput, LoadedBuild, ProgramPlace};
-use crate::ir::generated::ModuleFlags;
+use crate::ir::Id;
+use crate::ir::generated::{ModuleFlags, ModuleKind};
 use crate::link::{
     self, LinkError, LinkInput, LinkProject, LinkUnit, Linked, ProgramKeys, ProgramModule,
     ProgramVariableKey,
@@ -178,9 +179,13 @@ impl Build<'_> {
         };
         self.leftovers.push(leftovers);
         let names_way = ModuleFlags::NAMES_WAY_TO_MODULE_OBJECTS;
+        let application_graph = &bound.projects.application.graph;
         Ok(FrontEndOutput {
             names_way_to_module_objects: (program.modules.iter())
                 .any(|module| module.flags.contains(names_way)),
+            has_commonjs_entry_point: (program.entries.iter())
+                .any(|entry| program.modules[entry.module.index()].kind == ModuleKind::CommonJs),
+            ways_not_followed_out_of_sight: application_graph.ways_not_followed_out_of_sight(),
             writes_preload,
             held_library_code: core::mem::take(&mut self.held_library_code),
             program,

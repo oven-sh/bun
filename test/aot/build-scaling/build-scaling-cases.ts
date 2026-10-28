@@ -20,7 +20,8 @@
 // The allocator hands freed memory back to the system a while after it was freed, by the clock. So a build has resident what it needs and, on top, what an
 // earlier stage has freed and the system has not got back yet: up to 30 MB more in one run than in the next. Where the smaller size adds under 100 MB, three
 // such numbers make a quotient that is off by a half. A growth in memory that is over its bound is measured again, and each of the three sizes keeps the
-// least that it was seen to take: what a build needs it takes every time.
+// least that it was seen to take: what a build needs it takes every time. For the growth, size 0 keeps the least of all the shapes of the file that are the
+// same program there.
 //
 // One more build has all the shapes as its entry points, on four threads. The stages of a build run one after another, and a stage takes the memory that
 // the stage before it has freed, so the build needs what its largest stage needs. On one thread that is so by itself. On several threads it also takes
@@ -176,6 +177,8 @@ function partOf(shape: Shape, parts: number) {
   return 1 + Math.min(place, 2 * parts - 1 - place);
 }
 
+const leastPeakOfNothing = new Map<string, number>();
+
 export const buildScaling = (part: number, parts: number) =>
   describe.skipIf(!!skipped)("compile/aot/build scaling", () => {
     const carrier = skipped ? [] : withoutDebugInformation();
@@ -208,7 +211,13 @@ export const buildScaling = (part: number, parts: number) =>
             // What the smaller size adds may be next to nothing, or little beside what wavers from run to run: then the quotient says little more than "much".
             return addedByTwice < least ? undefined : addedByTwice / Math.max(added, leastDivisor);
           };
-          const grownInMemory = (costs: Costs) => grown(costs, "peakBytes", leastBytesJudged, leastBytesJudged / 2);
+          // Most shapes are the same program at size 0, so each of its builds says what that program needs.
+          const nothing = JSON.stringify([shape.write(0), shape.entry, shape.flags, shape.isBundledFirst]);
+          const grownInMemory = ([none, once, twice]: Costs) => {
+            const peakBytes = Math.min(none.peakBytes, leastPeakOfNothing.get(nothing) ?? Infinity);
+            leastPeakOfNothing.set(nothing, peakBytes);
+            return grown([{ ...none, peakBytes }, once, twice], "peakBytes", leastBytesJudged, leastBytesJudged / 2);
+          };
           const grownInCount = ([none, once, twice]: Costs, name: string) =>
             (twice.counts[name] - none.counts[name]) / Math.max(once!.counts[name] - none.counts[name], 1);
           const allowedGrowth = (what: keyof Cost) =>

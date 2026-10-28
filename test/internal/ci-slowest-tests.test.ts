@@ -210,20 +210,22 @@ describe("scripts/update-test-durations.mjs parseLog", () => {
     ]);
   });
 
-  test("does not charge the programs compiled ahead of time to the preceding test, and times none of them", () => {
-    // Many programs share a build, so a program's line has a share of that
-    // build's time. They stay out of the table and are dealt out evenly.
+  test("does not charge the programs compiled ahead of time to the preceding test, and times the long ones by what they say", () => {
+    // A program's line says what it took: its own build or its share of one,
+    // and its run. The short ones stay out of the table and are dealt out evenly.
     const log = [
-      bk(0, `--- ${gray("[1/4]")} test/last-serial.test.ts`),
-      bk(700, `--- Running 2 programs compiled ahead of time (3-wide)`),
-      bk(90000, `${gray("[2/4]")} test/aot/parallel/a.ts ${gray("(compile 1400 ms, run 14 ms)")}`),
-      bk(90001, `${gray("[3/4]")} test/aot/parallel/b/main.ts ${gray("(compile 1400 ms, run 9 ms)")}`),
-      bk(90100, `--- ${gray("[4/4]")} vendor/x/package.json`),
+      bk(0, `--- ${gray("[1/5]")} test/last-serial.test.ts`),
+      bk(700, `--- Running 3 programs compiled ahead of time (4-wide)`),
+      bk(90000, `${gray("[2/5]")} test/aot/parallel/a.ts ${gray("(compile 1400 ms, run 14 ms)")}`),
+      bk(90001, `${gray("[3/5]")} test/aot/parallel/b/main.ts ${gray("(compile 2990 ms, run 9 ms)")}`),
+      bk(90002, `${gray("[4/5]")} test/aot/parallel/workers/c.mjs ${gray("(compile 9400 ms, run 310 ms)")}`),
+      bk(90100, `--- ${gray("[5/5]")} vendor/x/package.json`),
       bk(90300, `--- End`),
     ].join("\r\r\n");
 
     expect(parseDurations(log)).toEqual([
       ["test/last-serial.test.ts", 700],
+      ["test/aot/parallel/workers/c.mjs", 9710],
       ["vendor/x/package.json", 200],
     ]);
     expect(Object.fromEntries(parseLog(log))).toEqual({

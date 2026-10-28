@@ -10,3 +10,9 @@ const start = (how: string, worker: Worker) =>
 await start("a text", new Worker("./worker.ts", { preload: "./first.ts" }));
 await start("a list", new Worker("./worker.ts", { preload: ["./second.ts", "./first.ts"] }));
 await start("no extensions", new Worker("./worker", { preload: ["./first", "./third"] }));
+const options = { preload: ["./fourth.ts"] };
+await start("options in a constant", new Worker("./worker.ts", options));
+const more = { preload: "./fifth.ts" };
+await start("options that are spread", new Worker("./worker.ts", { name: "spread", ...more }));
+const preload = ["./sixth.ts", "./first.ts"];
+await start("a list in a constant", new Worker("./worker.ts", { preload }));

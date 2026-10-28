@@ -709,23 +709,23 @@ runtimefunction id=69 function=f11
 # CHECK-NEXT: Jump -> next b2(v9, v15)
 # CHECK-NEXT: b5(v16: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b6(v0, v2)
-# CHECK-NEXT: b6(v17: int|whole, v18: i32) frequency=Rare:
+# CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v20: boolean = Less v18, v16
-# CHECK-NEXT: Branch v20 -> taken b7(), notTaken b9(v17)
-# CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v21: int|whole = Increment v17
-# CHECK-NEXT: v22: 8 = Integer integer=8
-# CHECK-NEXT: v23: boolean = GreaterEq v21, v22
-# CHECK-NEXT: Branch v23 -> taken b9(v21), notTaken b8()
+# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b9(v17)
+# CHECK-NEXT: b7(v21: i32) frequency=Rare:
+# CHECK-NEXT: v22: int|whole = Increment v17
+# CHECK-NEXT: v23: 8 = Integer integer=8
+# CHECK-NEXT: v24: boolean = GreaterEq v22, v23
+# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v24: 1 = Integer integer=1
-# CHECK-NEXT: v25: int[-2147483647, 2147483648] = Add v18, v24
-# CHECK-NEXT: v26: 0 = Integer
-# CHECK-NEXT: v27: i32 = BitOr v25, v26
-# CHECK-NEXT: Jump -> next b6(v21, v27)
-# CHECK-NEXT: b9(v28: int|whole):
-# CHECK-NEXT: Return v28
+# CHECK-NEXT: v25: 1 = Integer integer=1
+# CHECK-NEXT: v26: int[-2147483647, 2147483648] = Add v21, v25
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: i32 = BitOr v26, v27
+# CHECK-NEXT: Jump -> next b6(v22, v28)
+# CHECK-NEXT: b9(v29: int|whole):
+# CHECK-NEXT: Return v29
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="atMost"
 # CHECK: module=m0 position=759 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w6}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -754,23 +754,23 @@ runtimefunction id=69 function=f11
 # CHECK-NEXT: Jump -> next b2(v9, v15)
 # CHECK-NEXT: b5(v16: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b6(v0, v2)
-# CHECK-NEXT: b6(v17: int|whole, v18: i32) frequency=Rare:
+# CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v20: boolean = LessEq v18, v16
-# CHECK-NEXT: Branch v20 -> taken b7(), notTaken b9(v17)
-# CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v21: int|whole = Increment v17
-# CHECK-NEXT: v22: 8 = Integer integer=8
-# CHECK-NEXT: v23: boolean = GreaterEq v21, v22
-# CHECK-NEXT: Branch v23 -> taken b9(v21), notTaken b8()
+# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b9(v17)
+# CHECK-NEXT: b7(v21: i32) frequency=Rare:
+# CHECK-NEXT: v22: int|whole = Increment v17
+# CHECK-NEXT: v23: 8 = Integer integer=8
+# CHECK-NEXT: v24: boolean = GreaterEq v22, v23
+# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v24: 1 = Integer integer=1
-# CHECK-NEXT: v25: int[-2147483647, 2147483648] = Add v18, v24
-# CHECK-NEXT: v26: 0 = Integer
-# CHECK-NEXT: v27: i32 = BitOr v25, v26
-# CHECK-NEXT: Jump -> next b6(v21, v27)
-# CHECK-NEXT: b9(v28: int|whole):
-# CHECK-NEXT: Return v28
+# CHECK-NEXT: v25: 1 = Integer integer=1
+# CHECK-NEXT: v26: int[-2147483647, 2147483648] = Add v21, v25
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: i32 = BitOr v26, v27
+# CHECK-NEXT: Jump -> next b6(v22, v28)
+# CHECK-NEXT: b9(v29: int|whole):
+# CHECK-NEXT: Return v29
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="above"
 # CHECK: module=m0 position=908 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -799,23 +799,23 @@ runtimefunction id=69 function=f11
 # CHECK-NEXT: Jump -> next b2(v9, v15)
 # CHECK-NEXT: b5(v16: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b6(v0, v2)
-# CHECK-NEXT: b6(v17: int|whole, v18: i32) frequency=Rare:
+# CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v20: boolean = Greater v18, v16
-# CHECK-NEXT: Branch v20 -> taken b7(), notTaken b9(v17)
-# CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v21: int|whole = Increment v17
-# CHECK-NEXT: v22: 8 = Integer integer=8
-# CHECK-NEXT: v23: boolean = GreaterEq v21, v22
-# CHECK-NEXT: Branch v23 -> taken b9(v21), notTaken b8()
+# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b9(v17)
+# CHECK-NEXT: b7(v21: i32) frequency=Rare:
+# CHECK-NEXT: v22: int|whole = Increment v17
+# CHECK-NEXT: v23: 8 = Integer integer=8
+# CHECK-NEXT: v24: boolean = GreaterEq v22, v23
+# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v24: 1 = Integer integer=1
-# CHECK-NEXT: v25: int[-2147483649, 2147483646] = Sub v18, v24
-# CHECK-NEXT: v26: 0 = Integer
-# CHECK-NEXT: v27: i32 = BitOr v25, v26
-# CHECK-NEXT: Jump -> next b6(v21, v27)
-# CHECK-NEXT: b9(v28: int|whole):
-# CHECK-NEXT: Return v28
+# CHECK-NEXT: v25: 1 = Integer integer=1
+# CHECK-NEXT: v26: int[-2147483649, 2147483646] = Sub v21, v25
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: i32 = BitOr v26, v27
+# CHECK-NEXT: Jump -> next b6(v22, v28)
+# CHECK-NEXT: b9(v29: int|whole):
+# CHECK-NEXT: Return v29
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="atLeast"
 # CHECK: module=m0 position=1055 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -844,23 +844,23 @@ runtimefunction id=69 function=f11
 # CHECK-NEXT: Jump -> next b2(v9, v15)
 # CHECK-NEXT: b5(v16: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b6(v0, v2)
-# CHECK-NEXT: b6(v17: int|whole, v18: i32) frequency=Rare:
+# CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v20: boolean = GreaterEq v18, v16
-# CHECK-NEXT: Branch v20 -> taken b7(), notTaken b9(v17)
-# CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v21: int|whole = Increment v17
-# CHECK-NEXT: v22: 8 = Integer integer=8
-# CHECK-NEXT: v23: boolean = GreaterEq v21, v22
-# CHECK-NEXT: Branch v23 -> taken b9(v21), notTaken b8()
+# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b9(v17)
+# CHECK-NEXT: b7(v21: i32) frequency=Rare:
+# CHECK-NEXT: v22: int|whole = Increment v17
+# CHECK-NEXT: v23: 8 = Integer integer=8
+# CHECK-NEXT: v24: boolean = GreaterEq v22, v23
+# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v24: 1 = Integer integer=1
-# CHECK-NEXT: v25: int[-2147483649, 2147483646] = Sub v18, v24
-# CHECK-NEXT: v26: 0 = Integer
-# CHECK-NEXT: v27: i32 = BitOr v25, v26
-# CHECK-NEXT: Jump -> next b6(v21, v27)
-# CHECK-NEXT: b9(v28: int|whole):
-# CHECK-NEXT: Return v28
+# CHECK-NEXT: v25: 1 = Integer integer=1
+# CHECK-NEXT: v26: int[-2147483649, 2147483646] = Sub v21, v25
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: i32 = BitOr v26, v27
+# CHECK-NEXT: Jump -> next b6(v22, v28)
+# CHECK-NEXT: b9(v29: int|whole):
+# CHECK-NEXT: Return v29
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="boundOnLeftAbove"
 # CHECK: module=m0 position=1205 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w9}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -889,23 +889,23 @@ runtimefunction id=69 function=f11
 # CHECK-NEXT: Jump -> next b2(v9, v15)
 # CHECK-NEXT: b5(v16: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b6(v0, v2)
-# CHECK-NEXT: b6(v17: int|whole, v18: i32) frequency=Rare:
+# CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v20: boolean = Greater v16, v18
-# CHECK-NEXT: Branch v20 -> taken b7(), notTaken b9(v17)
-# CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v21: int|whole = Increment v17
-# CHECK-NEXT: v22: 8 = Integer integer=8
-# CHECK-NEXT: v23: boolean = GreaterEq v21, v22
-# CHECK-NEXT: Branch v23 -> taken b9(v21), notTaken b8()
+# CHECK-NEXT: Branch v20 -> taken b7(| 1), notTaken b9(v17)
+# CHECK-NEXT: b7(v21: i32) frequency=Rare:
+# CHECK-NEXT: v22: int|whole = Increment v17
+# CHECK-NEXT: v23: 8 = Integer integer=8
+# CHECK-NEXT: v24: boolean = GreaterEq v22, v23
+# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v24: 1 = Integer integer=1
-# CHECK-NEXT: v25: int[-2147483647, 2147483648] = Add v18, v24
-# CHECK-NEXT: v26: 0 = Integer
-# CHECK-NEXT: v27: i32 = BitOr v25, v26
-# CHECK-NEXT: Jump -> next b6(v21, v27)
-# CHECK-NEXT: b9(v28: int|whole):
-# CHECK-NEXT: Return v28
+# CHECK-NEXT: v25: 1 = Integer integer=1
+# CHECK-NEXT: v26: int[-2147483647, 2147483648] = Add v21, v25
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: i32 = BitOr v26, v27
+# CHECK-NEXT: Jump -> next b6(v22, v28)
+# CHECK-NEXT: b9(v29: int|whole):
+# CHECK-NEXT: Return v29
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="boundOnLeftAtLeast"
 # CHECK: module=m0 position=1363 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w10}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -934,23 +934,23 @@ runtimefunction id=69 function=f11
 # CHECK-NEXT: Jump -> next b2(v9, v15)
 # CHECK-NEXT: b5(v16: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b6(v0, v2)
-# CHECK-NEXT: b6(v17: int|whole, v18: i32) frequency=Rare:
+# CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v20: boolean = GreaterEq v16, v18
-# CHECK-NEXT: Branch v20 -> taken b7(), notTaken b9(v17)
-# CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v21: int|whole = Increment v17
-# CHECK-NEXT: v22: 8 = Integer integer=8
-# CHECK-NEXT: v23: boolean = GreaterEq v21, v22
-# CHECK-NEXT: Branch v23 -> taken b9(v21), notTaken b8()
+# CHECK-NEXT: Branch v20 -> taken b7(| 1), notTaken b9(v17)
+# CHECK-NEXT: b7(v21: i32) frequency=Rare:
+# CHECK-NEXT: v22: int|whole = Increment v17
+# CHECK-NEXT: v23: 8 = Integer integer=8
+# CHECK-NEXT: v24: boolean = GreaterEq v22, v23
+# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v24: 1 = Integer integer=1
-# CHECK-NEXT: v25: int[-2147483647, 2147483648] = Add v18, v24
-# CHECK-NEXT: v26: 0 = Integer
-# CHECK-NEXT: v27: i32 = BitOr v25, v26
-# CHECK-NEXT: Jump -> next b6(v21, v27)
-# CHECK-NEXT: b9(v28: int|whole):
-# CHECK-NEXT: Return v28
+# CHECK-NEXT: v25: 1 = Integer integer=1
+# CHECK-NEXT: v26: int[-2147483647, 2147483648] = Add v21, v25
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: i32 = BitOr v26, v27
+# CHECK-NEXT: Jump -> next b6(v22, v28)
+# CHECK-NEXT: b9(v29: int|whole):
+# CHECK-NEXT: Return v29
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="boundOnLeftBelow"
 # CHECK: module=m0 position=1524 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w11}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -979,23 +979,23 @@ runtimefunction id=69 function=f11
 # CHECK-NEXT: Jump -> next b2(v9, v15)
 # CHECK-NEXT: b5(v16: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b6(v0, v2)
-# CHECK-NEXT: b6(v17: int|whole, v18: i32) frequency=Rare:
+# CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v20: boolean = Less v16, v18
-# CHECK-NEXT: Branch v20 -> taken b7(), notTaken b9(v17)
-# CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v21: int|whole = Increment v17
-# CHECK-NEXT: v22: 8 = Integer integer=8
-# CHECK-NEXT: v23: boolean = GreaterEq v21, v22
-# CHECK-NEXT: Branch v23 -> taken b9(v21), notTaken b8()
+# CHECK-NEXT: Branch v20 -> taken b7(| 1), notTaken b9(v17)
+# CHECK-NEXT: b7(v21: i32) frequency=Rare:
+# CHECK-NEXT: v22: int|whole = Increment v17
+# CHECK-NEXT: v23: 8 = Integer integer=8
+# CHECK-NEXT: v24: boolean = GreaterEq v22, v23
+# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v24: 1 = Integer integer=1
-# CHECK-NEXT: v25: int[-2147483649, 2147483646] = Sub v18, v24
-# CHECK-NEXT: v26: 0 = Integer
-# CHECK-NEXT: v27: i32 = BitOr v25, v26
-# CHECK-NEXT: Jump -> next b6(v21, v27)
-# CHECK-NEXT: b9(v28: int|whole):
-# CHECK-NEXT: Return v28
+# CHECK-NEXT: v25: 1 = Integer integer=1
+# CHECK-NEXT: v26: int[-2147483649, 2147483646] = Sub v21, v25
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: i32 = BitOr v26, v27
+# CHECK-NEXT: Jump -> next b6(v22, v28)
+# CHECK-NEXT: b9(v29: int|whole):
+# CHECK-NEXT: Return v29
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="boundOnLeftAtMost"
 # CHECK: module=m0 position=1682 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w12}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1024,23 +1024,23 @@ runtimefunction id=69 function=f11
 # CHECK-NEXT: Jump -> next b2(v9, v15)
 # CHECK-NEXT: b5(v16: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b6(v0, v2)
-# CHECK-NEXT: b6(v17: int|whole, v18: i32) frequency=Rare:
+# CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v20: boolean = LessEq v16, v18
-# CHECK-NEXT: Branch v20 -> taken b7(), notTaken b9(v17)
-# CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v21: int|whole = Increment v17
-# CHECK-NEXT: v22: 8 = Integer integer=8
-# CHECK-NEXT: v23: boolean = GreaterEq v21, v22
-# CHECK-NEXT: Branch v23 -> taken b9(v21), notTaken b8()
+# CHECK-NEXT: Branch v20 -> taken b7(| 1), notTaken b9(v17)
+# CHECK-NEXT: b7(v21: i32) frequency=Rare:
+# CHECK-NEXT: v22: int|whole = Increment v17
+# CHECK-NEXT: v23: 8 = Integer integer=8
+# CHECK-NEXT: v24: boolean = GreaterEq v22, v23
+# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v24: 1 = Integer integer=1
-# CHECK-NEXT: v25: int[-2147483649, 2147483646] = Sub v18, v24
-# CHECK-NEXT: v26: 0 = Integer
-# CHECK-NEXT: v27: i32 = BitOr v25, v26
-# CHECK-NEXT: Jump -> next b6(v21, v27)
-# CHECK-NEXT: b9(v28: int|whole):
-# CHECK-NEXT: Return v28
+# CHECK-NEXT: v25: 1 = Integer integer=1
+# CHECK-NEXT: v26: int[-2147483649, 2147483646] = Sub v21, v25
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: i32 = BitOr v26, v27
+# CHECK-NEXT: Jump -> next b6(v22, v28)
+# CHECK-NEXT: b9(v29: int|whole):
+# CHECK-NEXT: Return v29
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="nearTheTop"
 # CHECK: module=m0 position=1842 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w13}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1069,21 +1069,21 @@ runtimefunction id=69 function=f11
 # CHECK-NEXT: Jump -> next b2(v9, v15)
 # CHECK-NEXT: b5(v16: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b6(v0, v2)
-# CHECK-NEXT: b6(v17: int|whole, v18: i32) frequency=Rare:
+# CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 2147483645) frequency=Rare:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v20: boolean = Less v18, v16
-# CHECK-NEXT: Branch v20 -> taken b7(), notTaken b9(v17)
-# CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v21: int|whole = Increment v17
-# CHECK-NEXT: v22: 8 = Integer integer=8
-# CHECK-NEXT: v23: boolean = GreaterEq v21, v22
-# CHECK-NEXT: Branch v23 -> taken b9(v21), notTaken b8()
+# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b9(v17)
+# CHECK-NEXT: b7(v21: i32) frequency=Rare:
+# CHECK-NEXT: v22: int|whole = Increment v17
+# CHECK-NEXT: v23: 8 = Integer integer=8
+# CHECK-NEXT: v24: boolean = GreaterEq v22, v23
+# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v24: 1 = Integer integer=1
-# CHECK-NEXT: v25: int[-2147483647, 2147483648] = Add v18, v24
-# CHECK-NEXT: v26: 0 = Integer
-# CHECK-NEXT: v27: i32 = BitOr v25, v26
-# CHECK-NEXT: Jump -> next b6(v21, v27)
-# CHECK-NEXT: b9(v28: int|whole):
-# CHECK-NEXT: Return v28
+# CHECK-NEXT: v25: 1 = Integer integer=1
+# CHECK-NEXT: v26: int[-2147483647, 2147483648] = Add v21, v25
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: i32 = BitOr v26, v27
+# CHECK-NEXT: Jump -> next b6(v22, v28)
+# CHECK-NEXT: b9(v29: int|whole):
+# CHECK-NEXT: Return v29
 # CHECK-NEXT: }

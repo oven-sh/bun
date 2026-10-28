@@ -268,7 +268,7 @@ const aotDriver = "test/aot/run-parallel.ts";
 // `bun build --compile` writes a copy of the Bun that runs it, so a file that builds a hundred executables writes a hundred times the debug information of `bun-profile`.
 const strippedBuns = new Map<string, string>();
 const buildsManyExecutables = (testPath: string) =>
-  /^(?:aot\/|cli\/aot-|cli\/run\/run-aot\.)/.test(testPath.replaceAll("\\", "/"));
+  /^(?:aot\/|cli\/aot-|cli\/run\/run-aot\.|bundler\/compile-(?:aot|trim)-)/.test(testPath.replaceAll("\\", "/"));
 const withSymbols = (execPath: string) =>
   [...strippedBuns].find(([, stripped]) => stripped === execPath)?.[0] ?? execPath;
 const bunFor = (execPath: string, testPath: string) =>
@@ -1174,7 +1174,7 @@ async function runTests(): Promise<TestResult[]> {
       const range = `${getAnsi("gray")}[${i + 1}-${i + bucketFiles.length}/${total}]${getAnsi("reset")}`;
       const junitPath = join(
         cwd,
-        `parallel-bucket-junit-${(options.step || getOs()).replace(/[^a-zA-Z0-9._-]/g, "_")}-shard${options.shard ?? 0}-${basename(execPath, extname(execPath))}.xml`,
+        `parallel-bucket-junit-${(options.step || getOs()).replace(/[^a-zA-Z0-9._-]/g, "_")}-shard${options.shard ?? 0}-${i + 1}.xml`,
       );
       const isAsan = basename(execPath).includes("asan");
       const perTestTimeout = Math.ceil(testTimeout / 2) * (isAsan ? 3 : 1);
@@ -1495,16 +1495,16 @@ async function runTests(): Promise<TestResult[]> {
     const parallelSafeTests = tests.filter(t => isParallelSafeTest(t));
     const modifiedSerialTests = serialTests.filter(t => isModified(t));
     const bucketCandidates = serialTests.filter(t => !isModified(t) && isBucketCandidate(t));
-    // One process runs a bucket, so its files are those of one Bun.
-    const buckets = [...new Set(bucketCandidates.map(t => bunFor(execPath, t)))]
-      .map(bun => [bun, bucketCandidates.filter(t => bunFor(execPath, t) === bun)] as const)
-      .filter(([, files]) => files.length >= 8);
-    const bucketable = new Set(buckets.flatMap(([, files]) => files));
+    // The files that build many executables fill the disk and the memory for whatever runs beside them, so they run beside one another. One process runs a bucket, with one Bun.
+    const buckets = [true, false]
+      .map(builds => bucketCandidates.filter(t => buildsManyExecutables(t) === builds))
+      .filter(files => files.length >= 8);
+    const bucketable = new Set(buckets.flat());
     const restSerialTests = serialTests.filter(t => !isModified(t) && !bucketable.has(t));
 
     await Promise.all(modifiedSerialTests.map(t => limit(() => runOneTest(t, parallelism > 1))));
     await Promise.all(restSerialTests.map(t => limit(() => runOneTest(t, parallelism > 1))));
-    for (const [bun, files] of buckets) await runParallelBucket(bun, files);
+    for (const files of buckets) await runParallelBucket(bunFor(execPath, files[0]!), files);
     // Concurrent tests log their title without opening a group (interleaved
     // output can't nest), so give the phase its own group instead of letting
     // the log viewer fold every line under the last serial test's group.

@@ -849,19 +849,19 @@ runtimefunction id=131091 function=f35 visibility=Private
 # CHECK-NEXT: b1(v5: L1, v6: int|whole) frequency=Unlikely:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v8: boolean = Less v6, v1 form=Numbers
-# CHECK-NEXT: TestAndBranch v8 -> taken b2(), notTaken b5()
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v9: L1 = NewObject -, v6, v6 layout=L1 fields=[1, 2] allocationSite=18 allocationClass=1
-# CHECK-NEXT: v10: L1 = FinishObject v9
-# CHECK-NEXT: v11: 1 = Integer integer=1
-# CHECK-NEXT: v12: number = Sub v1, v11 form=Numbers
-# CHECK-NEXT: v13: boolean = StrictEq v6, v12 form=Numbers
-# CHECK-NEXT: TestAndBranch v13 -> taken b3(), notTaken b4()
+# CHECK-NEXT: TestAndBranch v8 -> taken b2(| 0), notTaken b5()
+# CHECK-NEXT: b2(v9: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v10: L1 = NewObject -, v9, v9 layout=L1 fields=[1, 2] allocationSite=18 allocationClass=1
+# CHECK-NEXT: v11: L1 = FinishObject v10
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: v13: number = Sub v1, v12 form=Numbers
+# CHECK-NEXT: v14: boolean = StrictEq v9, v13 form=Numbers
+# CHECK-NEXT: TestAndBranch v14 -> taken b3(), notTaken b4()
 # CHECK-NEXT: b3() frequency=Unlikely:
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v14: int|whole = Increment v6 form=Numbers
-# CHECK-NEXT: Jump -> next b1(v10, v14)
+# CHECK-NEXT: v15: int|whole = Increment v9 form=Numbers
+# CHECK-NEXT: Jump -> next b1(v11, v15)
 # CHECK-NEXT: b5() frequency=Unlikely:
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }

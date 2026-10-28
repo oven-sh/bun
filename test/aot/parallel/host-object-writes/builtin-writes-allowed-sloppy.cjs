@@ -1,3 +1,4 @@
+// Alone: what it prints depends on what else the executable holds: a member of a built-in object that another program calls cannot be written
 const f = function () {};
 const d = { value: f, configurable: true, writable: true };
 // prettier-ignore

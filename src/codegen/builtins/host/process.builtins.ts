@@ -1,11 +1,13 @@
 import * as b from "bun-builtins-table";
 import {
   argumentsCell,
+  closesChannelCell,
   environmentCell,
   featuresCell,
   handedWarningsCell,
   releaseCell,
   runtimeArgumentsCell,
+  sendsOverChannelCell,
   tickShownToHooksCell,
   versionsCell,
 } from "./native-cells.ts";
@@ -403,6 +405,13 @@ const createdOnFirstRead = (holds: b.TableType) => b.property(holds, { createdOn
 const objectCreatedOnFirstRead = (cell: string) =>
   b.property(b.object, { createdOnFirstRead: { capability: "heap", uses: { this: [b.returnedFrom(cell)] } } });
 
+// constructProcessSend and constructProcessDisconnect in BunProcess.cpp: the first read makes a function of native code in a process that was started with a channel, and finds undefined in any other. It opens nothing.
+// runtime-dependencies.builtins.ts describes the functions.
+const functionOfChannel = (cell: string) =>
+  b.property(b.union(b.callable, b.undefined), {
+    createdOnFirstRead: { capability: "heap", uses: { this: [b.returnedFrom(cell)] } },
+  });
+
 const declareEach = <Declared extends b.Field>(names: readonly string[], field: Declared) =>
   Object.fromEntries(names.map(name => [name, field]));
 
@@ -527,6 +536,8 @@ export default b.declarations(
       _eval: nativeState(b.union(b.string, b.undefined), ignoresValue),
       argv: listOfStringsKeptIn(argumentsCell),
       connected: nativeState(b.union(b.bool, b.undefined), ignoresValue),
+      disconnect: functionOfChannel(closesChannelCell),
+      send: functionOfChannel(sendsOverChannelCell),
       debugPort: nativeState(b.f64, {
         value: b.f64.loose,
         capability: "heap",

@@ -1825,7 +1825,7 @@ runtimefunction id=69 function=f31
 runtimefunction id=131091 function=f39 visibility=Private
 # -- generated: f0 show ofString ofOptionalString ofAnything f5 f6 f7 f8 f9 f10 f11 f15 valueOf next storeInNewArray joinedText finishJoin finishReduce
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f41 callPosition=55 parent=3 isTailCall=true module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f41 callPosition=55 parent=2 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: Array<undefined|null|string> = Data data=d0 allocationSite=0
 # CHECK-NEXT: v1: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
@@ -1944,112 +1944,132 @@ runtimefunction id=131091 function=f39 visibility=Private
 # CHECK-NEXT: Branch v111 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v112: "-0" = String string="-0"
-# CHECK-NEXT: Jump -> next b4(v112) @55:3 tail
+# CHECK-NEXT: Jump -> next b4(v112) @55:2 tail
 # CHECK-NEXT: b3() handler=b5():
 # CHECK-NEXT: v113: string = CallBuiltin -, v108 overload=String/0 accessSite=78 @0:5 tail
-# CHECK-NEXT: Jump -> next b4(v113) @55:3 tail
+# CHECK-NEXT: Jump -> next b4(v113) @55:2 tail
 # CHECK-NEXT: b4(v114: string) handler=b5():
 # CHECK-NEXT: v115: undefined = CallBuiltin -, v114 overload=ConsoleLog/0 accessSite=72
-# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b5() role=CatchHandler:
 # CHECK-NEXT: v116: anything = CatchValue
-# CHECK-NEXT: v117: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v118: anything ~ undefined|null|Error = Upcast v116 castType=anything
-# CHECK-NEXT: v119: anything = PropGet v118 key="name" accessSite=75
-# CHECK-NEXT: v120: anything ~ undefined|null|string = Expect v119 expectedType=undefined|null|string
-# CHECK-NEXT: v121: undefined = CallBuiltin v117, v120 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=76
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b6() handler=b10():
-# CHECK-NEXT: v122: number|bigint = ToNumeric v99 calledBuiltin=Number @0:4 tail
-# CHECK-NEXT: v123: number = CallBuiltin -, v122 overload=Number/1 accessSite=81 @0:4 tail
+# CHECK-NEXT: v117: anything ~ undefined|null|Error = Upcast v116 castType=anything
+# CHECK-NEXT: v118: anything = PropGet v117 key="name" accessSite=75
+# CHECK-NEXT: v119: anything ~ undefined|null|string = Expect v118 expectedType=undefined|null|string
+# CHECK-NEXT: v120: boolean ~ true = TypeTest v119 testedType=undefined|null|boolean|number|string|symbol
+# CHECK-NEXT: Branch v120 -> taken b6(| 0), notTaken b7(| 0)
+# CHECK-NEXT: b6(v121: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
+# CHECK-NEXT: v122: undefined = CallBuiltin -, v121 overload=ConsoleLog/0 accessSite=76
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b7(v123: bigint|object) frequency=Rare:
+# CHECK-NEXT: v124: undefined = CallBuiltin -, v123 overload=ConsoleLog/1 accessSite=76
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b8() handler=b12():
+# CHECK-NEXT: v125: number|bigint = ToNumeric v99 calledBuiltin=Number @0:4 tail
+# CHECK-NEXT: v126: number = CallBuiltin -, v125 overload=Number/1 accessSite=81 @0:4 tail
 # CHECK-NEXT: InitializeBuiltin builtin=ObjectIs
-# CHECK-NEXT: v125: whole = Double number=-0
-# CHECK-NEXT: v126: boolean = CallBuiltin -, v123, v125 overload=ObjectIs/0 accessSite=77
-# CHECK-NEXT: Branch v126 -> taken b7(), notTaken b8()
-# CHECK-NEXT: b7():
-# CHECK-NEXT: v127: "-0" = String string="-0"
-# CHECK-NEXT: Jump -> next b9(v127) @55:3 tail
-# CHECK-NEXT: b8() handler=b10():
-# CHECK-NEXT: v128: string = CallBuiltin -, v123 overload=String/0 accessSite=78 @0:5 tail
-# CHECK-NEXT: Jump -> next b9(v128) @55:3 tail
-# CHECK-NEXT: b9(v129: string) handler=b10():
-# CHECK-NEXT: v130: undefined = CallBuiltin -, v129 overload=ConsoleLog/0 accessSite=72
-# CHECK-NEXT: Jump -> next b11()
-# CHECK-NEXT: b10() role=CatchHandler:
-# CHECK-NEXT: v131: anything = CatchValue
-# CHECK-NEXT: v132: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v133: anything ~ undefined|null|Error = Upcast v131 castType=anything
-# CHECK-NEXT: v134: anything = PropGet v133 key="name" accessSite=75
-# CHECK-NEXT: v135: anything ~ undefined|null|string = Expect v134 expectedType=undefined|null|string
-# CHECK-NEXT: v136: undefined = CallBuiltin v132, v135 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=76
-# CHECK-NEXT: Jump -> next b11()
-# CHECK-NEXT: b11() handler=b15():
-# CHECK-NEXT: v137: number|bigint = ToNumeric v102 calledBuiltin=Number @0:4 tail
-# CHECK-NEXT: v138: number = CallBuiltin -, v137 overload=Number/1 accessSite=81 @0:4 tail
+# CHECK-NEXT: v128: whole = Double number=-0
+# CHECK-NEXT: v129: boolean = CallBuiltin -, v126, v128 overload=ObjectIs/0 accessSite=77
+# CHECK-NEXT: Branch v129 -> taken b9(), notTaken b10()
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v130: "-0" = String string="-0"
+# CHECK-NEXT: Jump -> next b11(v130) @55:2 tail
+# CHECK-NEXT: b10() handler=b12():
+# CHECK-NEXT: v131: string = CallBuiltin -, v126 overload=String/0 accessSite=78 @0:5 tail
+# CHECK-NEXT: Jump -> next b11(v131) @55:2 tail
+# CHECK-NEXT: b11(v132: string) handler=b12():
+# CHECK-NEXT: v133: undefined = CallBuiltin -, v132 overload=ConsoleLog/0 accessSite=72
+# CHECK-NEXT: Jump -> next b15()
+# CHECK-NEXT: b12() role=CatchHandler:
+# CHECK-NEXT: v134: anything = CatchValue
+# CHECK-NEXT: v135: anything ~ undefined|null|Error = Upcast v134 castType=anything
+# CHECK-NEXT: v136: anything = PropGet v135 key="name" accessSite=75
+# CHECK-NEXT: v137: anything ~ undefined|null|string = Expect v136 expectedType=undefined|null|string
+# CHECK-NEXT: v138: boolean ~ true = TypeTest v137 testedType=undefined|null|boolean|number|string|symbol
+# CHECK-NEXT: Branch v138 -> taken b13(| 0), notTaken b14(| 0)
+# CHECK-NEXT: b13(v139: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
+# CHECK-NEXT: v140: undefined = CallBuiltin -, v139 overload=ConsoleLog/0 accessSite=76
+# CHECK-NEXT: Jump -> next b15()
+# CHECK-NEXT: b14(v141: bigint|object) frequency=Rare:
+# CHECK-NEXT: v142: undefined = CallBuiltin -, v141 overload=ConsoleLog/1 accessSite=76
+# CHECK-NEXT: Jump -> next b15()
+# CHECK-NEXT: b15() handler=b19():
+# CHECK-NEXT: v143: number|bigint = ToNumeric v102 calledBuiltin=Number @0:4 tail
+# CHECK-NEXT: v144: number = CallBuiltin -, v143 overload=Number/1 accessSite=81 @0:4 tail
 # CHECK-NEXT: InitializeBuiltin builtin=ObjectIs
-# CHECK-NEXT: v140: whole = Double number=-0
-# CHECK-NEXT: v141: boolean = CallBuiltin -, v138, v140 overload=ObjectIs/0 accessSite=77
-# CHECK-NEXT: Branch v141 -> taken b12(), notTaken b13()
-# CHECK-NEXT: b12():
-# CHECK-NEXT: v142: "-0" = String string="-0"
-# CHECK-NEXT: Jump -> next b14(v142) @55:3 tail
-# CHECK-NEXT: b13() handler=b15():
-# CHECK-NEXT: v143: string = CallBuiltin -, v138 overload=String/0 accessSite=78 @0:5 tail
-# CHECK-NEXT: Jump -> next b14(v143) @55:3 tail
-# CHECK-NEXT: b14(v144: string) handler=b15():
-# CHECK-NEXT: v145: undefined = CallBuiltin -, v144 overload=ConsoleLog/0 accessSite=72
-# CHECK-NEXT: Jump -> next b16()
-# CHECK-NEXT: b15() role=CatchHandler:
-# CHECK-NEXT: v146: anything = CatchValue
-# CHECK-NEXT: v147: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v148: anything ~ undefined|null|Error = Upcast v146 castType=anything
-# CHECK-NEXT: v149: anything = PropGet v148 key="name" accessSite=75
-# CHECK-NEXT: v150: anything ~ undefined|null|string = Expect v149 expectedType=undefined|null|string
-# CHECK-NEXT: v151: undefined = CallBuiltin v147, v150 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=76
-# CHECK-NEXT: Jump -> next b16()
-# CHECK-NEXT: b16() handler=b20():
-# CHECK-NEXT: v152: Array<int[1, 5], proven, pristine[Storage, Names, Dense]>|Boolean|Date|Number|Object|String = Upcast v105 castType=undefined|null|boolean|number|string|bigint|symbol("s")@m0:45|L0|L1|L2|L3|f14|Array<int[1, 5], proven, pristine[Storage, Names, Dense]>|Boolean|Date|Number|Object|String
-# CHECK-NEXT: v153: number|bigint = ToNumeric v152 calledBuiltin=Number @0:4 tail
-# CHECK-NEXT: v154: number = CallBuiltin -, v153 overload=Number/1 accessSite=81 @0:4 tail
+# CHECK-NEXT: v146: whole = Double number=-0
+# CHECK-NEXT: v147: boolean = CallBuiltin -, v144, v146 overload=ObjectIs/0 accessSite=77
+# CHECK-NEXT: Branch v147 -> taken b16(), notTaken b17()
+# CHECK-NEXT: b16():
+# CHECK-NEXT: v148: "-0" = String string="-0"
+# CHECK-NEXT: Jump -> next b18(v148) @55:2 tail
+# CHECK-NEXT: b17() handler=b19():
+# CHECK-NEXT: v149: string = CallBuiltin -, v144 overload=String/0 accessSite=78 @0:5 tail
+# CHECK-NEXT: Jump -> next b18(v149) @55:2 tail
+# CHECK-NEXT: b18(v150: string) handler=b19():
+# CHECK-NEXT: v151: undefined = CallBuiltin -, v150 overload=ConsoleLog/0 accessSite=72
+# CHECK-NEXT: Jump -> next b22()
+# CHECK-NEXT: b19() role=CatchHandler:
+# CHECK-NEXT: v152: anything = CatchValue
+# CHECK-NEXT: v153: anything ~ undefined|null|Error = Upcast v152 castType=anything
+# CHECK-NEXT: v154: anything = PropGet v153 key="name" accessSite=75
+# CHECK-NEXT: v155: anything ~ undefined|null|string = Expect v154 expectedType=undefined|null|string
+# CHECK-NEXT: v156: boolean ~ true = TypeTest v155 testedType=undefined|null|boolean|number|string|symbol
+# CHECK-NEXT: Branch v156 -> taken b20(| 0), notTaken b21(| 0)
+# CHECK-NEXT: b20(v157: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
+# CHECK-NEXT: v158: undefined = CallBuiltin -, v157 overload=ConsoleLog/0 accessSite=76
+# CHECK-NEXT: Jump -> next b22()
+# CHECK-NEXT: b21(v159: bigint|object) frequency=Rare:
+# CHECK-NEXT: v160: undefined = CallBuiltin -, v159 overload=ConsoleLog/1 accessSite=76
+# CHECK-NEXT: Jump -> next b22()
+# CHECK-NEXT: b22() handler=b26():
+# CHECK-NEXT: v161: Array<int[1, 5], proven, pristine[Storage, Names, Dense]>|Boolean|Date|Number|Object|String = Upcast v105 castType=undefined|null|boolean|number|string|bigint|symbol("s")@m0:45|L0|L1|L2|L3|f14|Array<int[1, 5], proven, pristine[Storage, Names, Dense]>|Boolean|Date|Number|Object|String
+# CHECK-NEXT: v162: number|bigint = ToNumeric v161 calledBuiltin=Number @0:4 tail
+# CHECK-NEXT: v163: number = CallBuiltin -, v162 overload=Number/1 accessSite=81 @0:4 tail
 # CHECK-NEXT: InitializeBuiltin builtin=ObjectIs
-# CHECK-NEXT: v156: whole = Double number=-0
-# CHECK-NEXT: v157: boolean = CallBuiltin -, v154, v156 overload=ObjectIs/0 accessSite=77
-# CHECK-NEXT: Branch v157 -> taken b17(), notTaken b18()
-# CHECK-NEXT: b17():
-# CHECK-NEXT: v158: "-0" = String string="-0"
-# CHECK-NEXT: Jump -> next b19(v158) @55:3 tail
-# CHECK-NEXT: b18() handler=b20():
-# CHECK-NEXT: v159: string = CallBuiltin -, v154 overload=String/0 accessSite=78 @0:5 tail
-# CHECK-NEXT: Jump -> next b19(v159) @55:3 tail
-# CHECK-NEXT: b19(v160: string) handler=b20():
-# CHECK-NEXT: v161: undefined = CallBuiltin -, v160 overload=ConsoleLog/0 accessSite=72
-# CHECK-NEXT: Jump -> next b21()
-# CHECK-NEXT: b20() role=CatchHandler:
-# CHECK-NEXT: v162: anything = CatchValue
-# CHECK-NEXT: v163: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v164: anything ~ undefined|null|Error = Upcast v162 castType=anything
-# CHECK-NEXT: v165: anything = PropGet v164 key="name" accessSite=75
-# CHECK-NEXT: v166: anything ~ undefined|null|string = Expect v165 expectedType=undefined|null|string
-# CHECK-NEXT: v167: undefined = CallBuiltin v163, v166 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=76
-# CHECK-NEXT: Jump -> next b21()
-# CHECK-NEXT: b21():
-# CHECK-NEXT: v168: 0 = Integer
-# CHECK-NEXT: v169: string = CallDirect v168 function=f41 @55:2 tail
-# CHECK-NEXT: v170: "3" = String string="3"
-# CHECK-NEXT: v171: number = CallBuiltin -, v170 overload=Number/0 accessSite=61
-# CHECK-NEXT: v172: string = CallDirect v171 function=f41 @55:1 tail
-# CHECK-NEXT: v173: "6" = String string="6"
-# CHECK-NEXT: v174: number = ToNumeric v173 calledBuiltin=Number
-# CHECK-NEXT: v175: Number = CallBuiltin -, v174 overload=Number/2 accessSite=63
-# CHECK-NEXT: v176: anything = PropGet v175 key="valueOf" accessSite=64
-# CHECK-NEXT: v177: builtin(NumberPrototypeValueOf)|builtin(ObjectPrototypeValueOf) = AssumeType v176 provenType=builtin(NumberPrototypeValueOf)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: v178: anything = Call v177, v175 calleeKey="valueOf" calleeName="valueOf" accessSite=65 callees=[builtin(NumberPrototypeValueOf), builtin(ObjectPrototypeValueOf)]
-# CHECK-NEXT: v179: number|Number = AssumeType v178 provenType=number|Number
-# CHECK-NEXT: v180: number|Number ~ number = Expect v179 expectedType=number
-# CHECK-NEXT: v181: string = CallDirect v180 function=f1 accessSite=66
-# CHECK-NEXT: v182: undefined = CallBuiltin -, v169, v172, v181 overload=ConsoleLog/0 accessSite=67
-# CHECK-NEXT: v183: undefined = Undefined
-# CHECK-NEXT: Return v183
+# CHECK-NEXT: v165: whole = Double number=-0
+# CHECK-NEXT: v166: boolean = CallBuiltin -, v163, v165 overload=ObjectIs/0 accessSite=77
+# CHECK-NEXT: Branch v166 -> taken b23(), notTaken b24()
+# CHECK-NEXT: b23():
+# CHECK-NEXT: v167: "-0" = String string="-0"
+# CHECK-NEXT: Jump -> next b25(v167) @55:2 tail
+# CHECK-NEXT: b24() handler=b26():
+# CHECK-NEXT: v168: string = CallBuiltin -, v163 overload=String/0 accessSite=78 @0:5 tail
+# CHECK-NEXT: Jump -> next b25(v168) @55:2 tail
+# CHECK-NEXT: b25(v169: string) handler=b26():
+# CHECK-NEXT: v170: undefined = CallBuiltin -, v169 overload=ConsoleLog/0 accessSite=72
+# CHECK-NEXT: Jump -> next b29()
+# CHECK-NEXT: b26() role=CatchHandler:
+# CHECK-NEXT: v171: anything = CatchValue
+# CHECK-NEXT: v172: anything ~ undefined|null|Error = Upcast v171 castType=anything
+# CHECK-NEXT: v173: anything = PropGet v172 key="name" accessSite=75
+# CHECK-NEXT: v174: anything ~ undefined|null|string = Expect v173 expectedType=undefined|null|string
+# CHECK-NEXT: v175: boolean ~ true = TypeTest v174 testedType=undefined|null|boolean|number|string|symbol
+# CHECK-NEXT: Branch v175 -> taken b27(| 0), notTaken b28(| 0)
+# CHECK-NEXT: b27(v176: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
+# CHECK-NEXT: v177: undefined = CallBuiltin -, v176 overload=ConsoleLog/0 accessSite=76
+# CHECK-NEXT: Jump -> next b29()
+# CHECK-NEXT: b28(v178: bigint|object) frequency=Rare:
+# CHECK-NEXT: v179: undefined = CallBuiltin -, v178 overload=ConsoleLog/1 accessSite=76
+# CHECK-NEXT: Jump -> next b29()
+# CHECK-NEXT: b29():
+# CHECK-NEXT: v180: 0 = Integer
+# CHECK-NEXT: v181: string = CallDirect v180 function=f41 @55:3 tail
+# CHECK-NEXT: v182: "3" = String string="3"
+# CHECK-NEXT: v183: number = CallBuiltin -, v182 overload=Number/0 accessSite=61
+# CHECK-NEXT: v184: string = CallDirect v183 function=f41 @55:1 tail
+# CHECK-NEXT: v185: "6" = String string="6"
+# CHECK-NEXT: v186: number = ToNumeric v185 calledBuiltin=Number
+# CHECK-NEXT: v187: Number = CallBuiltin -, v186 overload=Number/2 accessSite=63
+# CHECK-NEXT: v188: anything = PropGet v187 key="valueOf" accessSite=64
+# CHECK-NEXT: v189: builtin(NumberPrototypeValueOf)|builtin(ObjectPrototypeValueOf) = AssumeType v188 provenType=builtin(NumberPrototypeValueOf)|builtin(ObjectPrototypeValueOf)
+# CHECK-NEXT: v190: anything = Call v189, v187 calleeKey="valueOf" calleeName="valueOf" accessSite=65 callees=[builtin(NumberPrototypeValueOf), builtin(ObjectPrototypeValueOf)]
+# CHECK-NEXT: v191: number|Number = AssumeType v190 provenType=number|Number
+# CHECK-NEXT: v192: number|Number ~ number = Expect v191 expectedType=number
+# CHECK-NEXT: v193: string = CallDirect v192 function=f1 accessSite=66
+# CHECK-NEXT: v194: undefined = CallBuiltin -, v181, v184, v193 overload=ConsoleLog/0 accessSite=67
+# CHECK-NEXT: v195: undefined = Undefined
+# CHECK-NEXT: Return v195
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: module=m0 position=55 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0 flags=[IsExpected]}] results=[{type=string site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f41 fallback=f43} {

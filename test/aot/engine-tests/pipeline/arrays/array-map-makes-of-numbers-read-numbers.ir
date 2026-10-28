@@ -814,7 +814,7 @@ runtimefunction id=131091 function=f30 visibility=Private
 # CHECK-NEXT: Branch v15 -> taken b6(| 0), notTaken b18()
 # CHECK-NEXT: b6(v16: int[0, 4294967294]):
 # CHECK-NEXT: v17: int[0, 4294967294] = Sub v16, v6
-# CHECK-NEXT: v18: boolean = IsPristine v2 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: v18: boolean = IsPristine v2 builtinClass=Array aspects=[Storage]
 # CHECK-NEXT: Branch v18 -> taken b7(| 0), notTaken b14()
 # CHECK-NEXT: b7(v19: guard):
 # CHECK-NEXT: v20: boolean = HasArrayStorage v2 arrayStorage=Double

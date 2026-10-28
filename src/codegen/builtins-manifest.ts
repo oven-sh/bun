@@ -17,6 +17,7 @@ import {
 } from "./builtins-manifest-model";
 import { encodeNumbers, moveBundledNamesToSecondText } from "./bundled-positions";
 import { writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
+import { rangesSeenByEveryFile } from "./part-seen-by-every-file";
 import { define, globalsToPrefix } from "./replacements";
 
 const output = process.argv[3];
@@ -155,12 +156,15 @@ for (const listing of listOfModules.listings.keys()) {
   lines.push(`declarations\t${listing}`);
 }
 
-// What `declare global` and `declare module "name"` add is seen by files that do not name the file, so every build reads it.
+// What `declare global` and `declare module "name"` add is seen by files that do not name the file, so every build reads it:
+// the part of the file that these declarations lead to, and the rest once a file that is read names the file.
 for (const [file, text] of [
   ...[...sourceFiles, ...functionFiles].map((file): [string, string] => [file, fs.readFileSync(locate(file), "utf8")]),
   ...engineTexts,
 ]) {
-  if (/^\s*declare\s+(global\b|module\s*["'])/m.test(text)) lines.push(`declares-for-every-file\t${file}`);
+  if (!/^\s*declare\s+(global\b|module\s*["'])/m.test(text)) continue;
+  const { seen, asked } = rangesSeenByEveryFile(file, text);
+  lines.push(`declares-for-every-file\t${file}\t${seen.join(" ")}\t${asked.join(" ") || "-"}`);
 }
 
 // The positions of each module stand behind its id and their length.

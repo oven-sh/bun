@@ -1470,6 +1470,8 @@ pub struct BoundIn<S: Storage> {
     pub ran_out_of_stack: bool,
     /// `Bound::unbound_in`
     pub is_unbound: bool,
+    /// These are the side tables of `Host::read_part_seen_by_every_file`.
+    pub is_bound_in_part: bool,
     pub symbols: S::Symbols,
     pub scopes: S::List<Scope>,
     /// Each table is a contiguous range of `entries`, in symbol creation order.
@@ -2524,6 +2526,7 @@ impl BoundBuilder {
         let BoundIn {
             ran_out_of_stack,
             is_unbound,
+            is_bound_in_part,
             symbols,
             scopes,
             tables,
@@ -2618,6 +2621,7 @@ impl BoundBuilder {
         } = self;
         *ran_out_of_stack = Default::default();
         *is_unbound = Default::default();
+        *is_bound_in_part = Default::default();
         symbols.clear();
         scopes.clear();
         tables.clear();
@@ -2717,6 +2721,7 @@ impl BoundBuilder {
         Bound {
             ran_out_of_stack: self.ran_out_of_stack,
             is_unbound: self.is_unbound,
+            is_bound_in_part: self.is_bound_in_part,
             symbols: {
                 let exact = Symbols::of(&self.symbols, arena);
                 self.symbols.clear();
@@ -2853,6 +2858,7 @@ impl Bound<'_> {
         Bound {
             ran_out_of_stack: self.ran_out_of_stack,
             is_unbound: self.is_unbound,
+            is_bound_in_part: self.is_bound_in_part,
             symbols: self.symbols.copy_in(arena),
             scopes: Fixed::shared(&self.scopes),
             tables: Fixed::shared(&self.tables),

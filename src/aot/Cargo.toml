@@ -16,7 +16,7 @@ linked_names = ["bun_aot_builtins/linked_names"]
 # The printer of IR text. Bun writes the program as bytes: only tests read text.
 ir_text = []
 # What only tests use, those in `tests/` too.
-test_support = ["bun_aot_interface/test_support"]
+test_support = ["bun_aot_interface/test_support", "bun_sema/test_support"]
 
 [dependencies]
 bun_aot_builtins.workspace = true

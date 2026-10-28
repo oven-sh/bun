@@ -1,4 +1,4 @@
-// Alone: TODO: as one of many entry points it answers otherwise than alone
+// Alone: it prints the path that one of its files has in the executable
 import * as again from "./again.ts";
 import { honestElsewhere } from "./honest-caller.ts";
 import code, { halved, insideTheLibrary, Scale, sum, total } from "./library.ts";

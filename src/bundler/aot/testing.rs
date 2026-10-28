@@ -8,11 +8,13 @@ use bun_alloc::Arena;
 use bun_aot::engine::ExecutableIdentity;
 use bun_aot::{Options, SourceProvider};
 use bun_ast::Log;
+use bun_dotenv::Loader;
 use bun_options_types::aot_options::AotOptions;
 use bun_options_types::schema::api;
 use bun_resolver::fs::{DirnameStore, FileSystem};
 use bun_sema_driver::Libs;
 use core::ptr::NonNull;
+use std::sync::OnceLock;
 
 const MODULE_PREFIX: &[u8] = if cfg!(windows) {
     b"B:/~BUN/root/"
@@ -21,11 +23,22 @@ const MODULE_PREFIX: &[u8] = if cfg!(windows) {
 };
 
 pub struct FrontEndInputs<'r> {
-    /// Of the process from here on: the builds of a process come one after another.
+    /// Of the process from here on: builds that run side by side have the same one.
     pub working_directory: &'r [u8],
     pub entry_points: &'r [&'r [u8]],
     pub options: &'r AotOptions,
     pub typescript_libs: Libs<'r>,
+}
+
+/// What `main` does once in Bun, before there is a second thread.
+fn set_up_process(directory: &'static [u8]) -> bool {
+    static IS_SET_UP: OnceLock<bool> = OnceLock::new();
+    *IS_SET_UP.get_or_init(|| {
+        // `Transpiler::init` takes the first loader it is handed for the one of the process, which outlives every build.
+        bun_dotenv::set_instance(bun_core::heap::into_raw(Box::new(Loader::init())));
+        // The file system of the resolver is made once, with the folder of the first build.
+        FileSystem::init(Some(directory)).is_ok()
+    })
 }
 
 /// The options and the services of `bun build --compile --aot <entry points>` in that folder. `None`: the build ends before the
@@ -35,6 +48,8 @@ pub fn with_front_end_inputs<R>(
     log: &mut Log,
     then: impl FnOnce(&Options<'_>, &dyn SourceProvider, &mut Log) -> R,
 ) -> Option<R> {
+    // A build fills the loader it is handed, so each has its own, as in `Bun.build`.
+    let mut environment = Loader::init();
     let mut event_loop = bun_event_loop::AnyEventLoop::default();
     let arena = Arena::new();
     let transform_options = crate::options::TransformOptions {
@@ -42,14 +57,18 @@ pub fn with_front_end_inputs<R>(
         target: Some(api::Target::Bun),
         ..Default::default()
     };
-    // The file system of the resolver is made once, with the folder of the first build.
     let directory = DirnameStore::instance().append_slice(inputs.working_directory);
     let directory = directory.ok()?;
-    FileSystem::init(Some(directory)).ok()?;
+    if !set_up_process(directory) {
+        return None;
+    }
     FileSystem::get().set_top_level_dir(directory);
-    let transpiler = Transpiler::init(&arena, &raw mut *log, transform_options, None).ok()?;
-    let transpiler = arena.alloc(transpiler);
+    let environment = Some(&raw mut environment);
+    let transpiler = Transpiler::init(&arena, &raw mut *log, transform_options, environment);
+    let transpiler = arena.alloc(transpiler.ok()?);
     transpiler.options.compile_mode = crate::options::CompileMode::Executable;
+    // As the command line has it without `--env`.
+    transpiler.options.env.behavior = api::DotEnvBehavior::disable;
     transpiler.configure_defines().ok()?;
     transpiler.configure_linker();
     let input = OptionsInput {

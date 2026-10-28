@@ -23,11 +23,13 @@ fn split_binding_text(text: &str) -> Option<(BuiltinName, BuiltinName)> {
     Some((find_name(file)?, find_name(symbol)?))
 }
 
-// Native code makes these from host functions of its own and hands them to the library, so no text names them.
-const HANDED_OVER_BY_NATIVE_CODE: [BuiltinId; 12] = [
+// Native code makes these from host functions of its own and hands them to the library or to the program, so no text names them.
+const HANDED_OVER_BY_NATIVE_CODE: [BuiltinId; 14] = [
+    BuiltinId::NativeNewCppFunctionBunProcessCppBun__Process__disconnect,
     BuiltinId::NativeNewCppFunctionBunProcessCppJsFunctionDrainMicrotaskQueue,
     BuiltinId::NativeNewCppFunctionBunProcessCppJsFunction_emitWarning,
     BuiltinId::NativeNewCppFunctionBunProcessCppJsFunction_throwValue,
+    BuiltinId::NativeNewCppFunctionBunProcessCppJsSend,
     BuiltinId::NativeNewCppFunctionBunProcessCppProcess_functionEmitHelper,
     BuiltinId::NativeNewCppFunctionBunProcessCppProcess_functionWriteWarning,
     BuiltinId::NativeNewCppFunctionErrorCodeCppNodeError_proto_toString,

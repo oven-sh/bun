@@ -34,7 +34,8 @@ for (let turn = 0; turn < 3; turn++) {
   attempt("randomUUIDv7", () => Bun.randomUUIDv7("no-such-encoding"));
   attempt("getRandomValues", () => crypto.getRandomValues(1));
   attempt("chdir", () => process.chdir("/nonexistent-directory/entry"));
-  attempt("kill", () => process.kill("nobody"));
+  // Signal 0 only asks whether the process is there.
+  attempt("kill", () => process.kill("nobody", 0));
   attempt("hrtime", () => process.hrtime(1));
   attempt("Buffer.alloc", () => Buffer.alloc(-1));
   attempt("Buffer.byteLength", () => Buffer.byteLength(1));

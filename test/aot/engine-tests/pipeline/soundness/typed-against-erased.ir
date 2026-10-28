@@ -3431,63 +3431,63 @@ runtimefunction id=65580 function=f37
 # CHECK-NEXT: Jump -> next b8(v12, v13, v22)
 # CHECK-NEXT: b8(v23: number|string|bigint ~ number, v24: int|whole, v25: anything ~ number) frequency=Rare:
 # CHECK-NEXT: v26: boolean = Less v24, v25
-# CHECK-NEXT: Branch v26 -> taken b9(), notTaken b23()
-# CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v27: null|boolean|number|string|object ~ null|number|string|object = Upcast v9 castType=anything
-# CHECK-NEXT: v28: anything = PropGet v27 key="one" accessSite=9
-# CHECK-NEXT: v29: boolean ~ true = TypeTest v23 testedType=number
-# CHECK-NEXT: Branch v29 -> taken b10(| 0), notTaken b12()
-# CHECK-NEXT: b10(v30: number) frequency=Rare:
-# CHECK-NEXT: Jump -> next b11(v30, v24, v28)
-# CHECK-NEXT: b11(v31: number, v32: int|whole, v33: anything):
-# CHECK-NEXT: v34: undefined = Undefined
-# CHECK-NEXT: v35: undefined|null|boolean|number|string|object = AssumeType v33 provenType=undefined|null|boolean|number|string|object
-# CHECK-NEXT: v36: anything ~ number = AwaitCallBySavingFrame v1, v34, v35 function=f110 accessSite=10
-# CHECK-NEXT: v37: boolean ~ true = TypeTest v36 testedType=number
-# CHECK-NEXT: Branch v37 -> taken b13(| 0), notTaken b14(| 0)
+# CHECK-NEXT: Branch v26 -> taken b9(| 0), notTaken b23()
+# CHECK-NEXT: b9(v27: int|whole) frequency=Rare:
+# CHECK-NEXT: v28: null|boolean|number|string|object ~ null|number|string|object = Upcast v9 castType=anything
+# CHECK-NEXT: v29: anything = PropGet v28 key="one" accessSite=9
+# CHECK-NEXT: v30: boolean ~ true = TypeTest v23 testedType=number
+# CHECK-NEXT: Branch v30 -> taken b10(| 0), notTaken b12()
+# CHECK-NEXT: b10(v31: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b11(v31, v27, v29)
+# CHECK-NEXT: b11(v32: number, v33: int|whole, v34: anything):
+# CHECK-NEXT: v35: undefined = Undefined
+# CHECK-NEXT: v36: undefined|null|boolean|number|string|object = AssumeType v34 provenType=undefined|null|boolean|number|string|object
+# CHECK-NEXT: v37: anything ~ number = AwaitCallBySavingFrame v1, v35, v36 function=f110 accessSite=10
+# CHECK-NEXT: v38: boolean ~ true = TypeTest v37 testedType=number
+# CHECK-NEXT: Branch v38 -> taken b13(| 0), notTaken b14(| 0)
 # CHECK-NEXT: b12() frequency=Rare:
-# CHECK-NEXT: v38: undefined = Undefined
-# CHECK-NEXT: v39: fact = Specified
-# CHECK-NEXT: v40: undefined|null|boolean|number|string|object = AssumeType v28, v39 provenType=undefined|null|boolean|number|string|object
-# CHECK-NEXT: v41: Promise = NewPromise
-# CHECK-NEXT: v42: anything = CallDirect v38, v40, v41 function=f110
-# CHECK-NEXT: v43: Promise<number|string, proven, pristine[Storage, Names]> = AssumeType v42 provenType=Promise<number|string, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v44: anything ~ number = AwaitBySavingFrame v43, v1
-# CHECK-NEXT: Jump -> next b15(v23, v24, v44)
-# CHECK-NEXT: b13(v45: number):
-# CHECK-NEXT: v46: number = Add v31, v45
-# CHECK-NEXT: v47: int|whole = Increment v32
-# CHECK-NEXT: Jump -> next b2(v46, v47)
-# CHECK-NEXT: b14(v48: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b15(v31, v32, v48)
-# CHECK-NEXT: b15(v49: number|string|bigint ~ number, v50: int|whole, v51: anything ~ number) frequency=Rare:
-# CHECK-NEXT: v52: number|string|bigint ~ number = Add v49, v51
-# CHECK-NEXT: v53: int|whole = Increment v50
-# CHECK-NEXT: v54: boolean ~ true = TypeTest v52 testedType=number
-# CHECK-NEXT: Branch v54 -> taken b16(| 0), notTaken b19()
-# CHECK-NEXT: b16(v55: number) frequency=Rare:
-# CHECK-NEXT: v56: boolean = TypeTest v53 testedType=int[0, 2147483647]
-# CHECK-NEXT: Branch v56 -> taken b17(| 0), notTaken b18()
-# CHECK-NEXT: b17(v57: int[0, 2147483647]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b1(v55, v57)
+# CHECK-NEXT: v39: undefined = Undefined
+# CHECK-NEXT: v40: fact = Specified
+# CHECK-NEXT: v41: undefined|null|boolean|number|string|object = AssumeType v29, v40 provenType=undefined|null|boolean|number|string|object
+# CHECK-NEXT: v42: Promise = NewPromise
+# CHECK-NEXT: v43: anything = CallDirect v39, v41, v42 function=f110
+# CHECK-NEXT: v44: Promise<number|string, proven, pristine[Storage, Names]> = AssumeType v43 provenType=Promise<number|string, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v45: anything ~ number = AwaitBySavingFrame v44, v1
+# CHECK-NEXT: Jump -> next b15(v23, v27, v45)
+# CHECK-NEXT: b13(v46: number):
+# CHECK-NEXT: v47: number = Add v32, v46
+# CHECK-NEXT: v48: int|whole = Increment v33
+# CHECK-NEXT: Jump -> next b2(v47, v48)
+# CHECK-NEXT: b14(v49: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b15(v32, v33, v49)
+# CHECK-NEXT: b15(v50: number|string|bigint ~ number, v51: int|whole, v52: anything ~ number) frequency=Rare:
+# CHECK-NEXT: v53: number|string|bigint ~ number = Add v50, v52
+# CHECK-NEXT: v54: int|whole = Increment v51
+# CHECK-NEXT: v55: boolean ~ true = TypeTest v53 testedType=number
+# CHECK-NEXT: Branch v55 -> taken b16(| 0), notTaken b19()
+# CHECK-NEXT: b16(v56: number) frequency=Rare:
+# CHECK-NEXT: v57: boolean = TypeTest v54 testedType=int[0, 2147483647]
+# CHECK-NEXT: Branch v57 -> taken b17(| 0), notTaken b18()
+# CHECK-NEXT: b17(v58: int[0, 2147483647]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b1(v56, v58)
 # CHECK-NEXT: b18() frequency=Rare:
 # CHECK-NEXT: Jump -> next b20()
 # CHECK-NEXT: b19() frequency=Rare:
 # CHECK-NEXT: Jump -> next b20()
 # CHECK-NEXT: b20() frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v59: null|boolean|number|string|object ~ null|number|string|object = Upcast v9 castType=anything
-# CHECK-NEXT: v60: anything = PropGet v59 key="rounds" accessSite=8
-# CHECK-NEXT: v61: boolean ~ true = TypeTest v52 testedType=number
-# CHECK-NEXT: Branch v61 -> taken b21(| 0), notTaken b22()
-# CHECK-NEXT: b21(v62: number) frequency=Rare:
-# CHECK-NEXT: Jump -> next b3(v62, v53, v60)
+# CHECK-NEXT: v60: null|boolean|number|string|object ~ null|number|string|object = Upcast v9 castType=anything
+# CHECK-NEXT: v61: anything = PropGet v60 key="rounds" accessSite=8
+# CHECK-NEXT: v62: boolean ~ true = TypeTest v53 testedType=number
+# CHECK-NEXT: Branch v62 -> taken b21(| 0), notTaken b22()
+# CHECK-NEXT: b21(v63: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b3(v63, v54, v61)
 # CHECK-NEXT: b22() frequency=Rare:
-# CHECK-NEXT: v63: anything ~ number = Upcast v60 castType=anything
-# CHECK-NEXT: Jump -> next b8(v52, v53, v63)
+# CHECK-NEXT: v64: anything ~ number = Upcast v61 castType=anything
+# CHECK-NEXT: Jump -> next b8(v53, v54, v64)
 # CHECK-NEXT: b23() frequency=Rare:
-# CHECK-NEXT: v64: anything = ReturnAsyncResult v1, v23
-# CHECK-NEXT: Return v64
+# CHECK-NEXT: v65: anything = ReturnAsyncResult v1, v23
+# CHECK-NEXT: Return v65
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="main"
 # CHECK: module=m0 position=4567 role=CoroutineBody flags=[IsAsync, HasThis, IsChecked, HasExplicitName] thisType={type=undefined} parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f21 parameterMap=[{original=0}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f21 body=f112 entryWithoutPromise=f112 promiseType=Promise promiseParameter=1} {

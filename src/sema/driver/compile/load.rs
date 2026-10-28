@@ -67,7 +67,8 @@ fn load<'u: 's, 's>(
         | EntryPoints::Imported(paths)
         | EntryPoints::Configured(paths, _) => paths.to_vec(),
     };
-    debug_assert!(!entry_paths.is_empty());
+    // A project that is named may be loaded for no code at all.
+    debug_assert!(!entry_paths.is_empty() || request.code.tsconfig_override.is_some());
     let mut project = find_project(host, request, &entry_paths)?;
     let is_configured = matches!(request.entry_points, EntryPoints::Configured(..));
     if request.code.tsconfig_override.is_none() && !is_configured {

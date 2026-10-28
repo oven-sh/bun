@@ -4884,18 +4884,18 @@ runtimefunction id=131091 function=f129 visibility=Private
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f8 module=
-# CHECK: m0 position=734 kind=Arrow role=ResultWrapper length=2 thisType={type=anything} parameters=[{type=int[0, 39]}, {type=Array<WeakRef<pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]>}] results=[{type=f23}] functionTypes=[f38] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f204} {
+# CHECK: m0 position=734 kind=Arrow role=ResultWrapper length=2 thisType={type=anything} parameters=[{type=int[0, 39]}, {type=Array<WeakRef<pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]>}] results=[{type=f23}] functionTypes=[f38] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f206} {
 # CHECK-NEXT: b0(v0: int[0, 39], v1: Array<WeakRef<pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v2: undefined = CallDirect v0, v1 function=f204
+# CHECK-NEXT: v2: undefined = CallDirect v0, v1 function=f206
 # CHECK-NEXT: v3: env L2 = ResultAt v2
 # CHECK-NEXT: v4: int[0, 39] = ResultAt v2 index=1
 # CHECK-NEXT: v5: f23 = NewClosure v3, v4 function=f23 allocationSite=37
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f10 module=
-# CHECK: m0 position=4374 kind=Arrow role=ResultWrapper length=2 thisType={type=anything} parameters=[{type=int[0, 39]}, {type=Array<WeakRef<pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]>}] results=[{type=f32}] functionTypes=[f47] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f205} {
+# CHECK: m0 position=4374 kind=Arrow role=ResultWrapper length=2 thisType={type=anything} parameters=[{type=int[0, 39]}, {type=Array<WeakRef<pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]>}] results=[{type=f32}] functionTypes=[f47] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f207} {
 # CHECK-NEXT: b0(v0: int[0, 39], v1: Array<WeakRef<pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v2: env L4 = CallDirect v0, v1 function=f205
+# CHECK-NEXT: v2: env L4 = CallDirect v0, v1 function=f207
 # CHECK-NEXT: v3: f32 = NewClosure v2 function=f32 allocationSite=48
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
@@ -5090,9 +5090,9 @@ runtimefunction id=131091 function=f129 visibility=Private
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f58 module=
-# CHECK: m1 position=25259 kind=Method role=ResultWrapper flags=[IsChecked] length=4 enclosingRuntimeFunction=65574 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string site=w2 flags=[IsExpected, OmitsNull]}, {type=undefined|null|Array<undefined|null|string> site=w3 flags=[IsExpected, OmitsNull]}, {type=undefined|null|function site=w4 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=f62 site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f206} {
+# CHECK: m1 position=25259 kind=Method role=ResultWrapper flags=[IsChecked] length=4 enclosingRuntimeFunction=65574 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string site=w2 flags=[IsExpected, OmitsNull]}, {type=undefined|null|Array<undefined|null|string> site=w3 flags=[IsExpected, OmitsNull]}, {type=undefined|null|function site=w4 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=f62 site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f208} {
 # CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything, v3: anything):
-# CHECK-NEXT: v4: undefined = CallDirect v0, v1, v2, v3 function=f206
+# CHECK-NEXT: v4: undefined = CallDirect v0, v1, v2, v3 function=f208
 # CHECK-NEXT: v5: env L9 = ResultAt v4
 # CHECK-NEXT: v6: builtin(Process) = ResultAt v4 index=1
 # CHECK-NEXT: v7: f61 = ResultAt v4 index=2
@@ -5101,9 +5101,9 @@ runtimefunction id=131091 function=f129 visibility=Private
 # CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
-# CHECK: module=m2 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f207 layout=L(IteratorResult)} {
+# CHECK: module=m2 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f209 layout=L(IteratorResult)} {
 # CHECK-NEXT: b0(v0: anything):
-# CHECK-NEXT: v1: undefined = CallDirect v0 function=f207
+# CHECK-NEXT: v1: undefined = CallDirect v0 function=f209
 # CHECK-NEXT: v2: anything = ResultAt v1
 # CHECK-NEXT: v3: boolean = ResultAt v1 index=1
 # CHECK-NEXT: v4: L(IteratorResult) = NewObject -, v2, v3 layout=L(IteratorResult) fields=[0, 1]
@@ -5184,7 +5184,7 @@ runtimefunction id=131091 function=f129 visibility=Private
 # CHECK-NEXT: ReturnCall v2 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="row"
-# CHECK: module=m0 position=461 role=CalleeVersion flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|int|string}, {type=f8|f9|f10}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f4} inlineFrames=[{}, {callee=f205 callPosition=4294967295 module=m0}, {callee=f9 callPosition=4294967295 module=m0}, {callee=f204 callPosition=4294967295 module=m0}, {callee=f19 callPosition=4294967295 parent=1 isTailCall=true module=m0}, {callee=f7 callPosition=4294967295 parent=1 module=m0}, {callee=f18 callPosition=4294967295 parent=2 isTailCall=true module=m0}, {callee=f7 callPosition=4294967295 parent=2 module=m0}, {callee=f17 callPosition=4294967295 parent=3 isTailCall=true module=m0}, {callee=f7 callPosition=4294967295 parent=3 module=m0}, {callee=f133 callPosition=751 parent=8 module=m0}, {callee=f134 callPosition=4391 parent=4 module=m0}, {callee=f3 callPosition=4294967295 parent=11 module=m0}, {callee=f132 callPosition=3879 parent=12 module=m0}] {
+# CHECK: module=m0 position=461 role=CalleeVersion flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|int|string}, {type=f8|f9|f10}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f4} inlineFrames=[{}, {callee=f207 callPosition=4294967295 module=m0}, {callee=f9 callPosition=4294967295 module=m0}, {callee=f206 callPosition=4294967295 module=m0}, {callee=f19 callPosition=4294967295 parent=1 isTailCall=true module=m0}, {callee=f7 callPosition=4294967295 parent=1 module=m0}, {callee=f18 callPosition=4294967295 parent=2 isTailCall=true module=m0}, {callee=f7 callPosition=4294967295 parent=2 module=m0}, {callee=f17 callPosition=4294967295 parent=3 isTailCall=true module=m0}, {callee=f7 callPosition=4294967295 parent=3 module=m0}, {callee=f133 callPosition=751 parent=8 module=m0}, {callee=f134 callPosition=4391 parent=4 module=m0}, {callee=f3 callPosition=4294967295 parent=11 module=m0}, {callee=f132 callPosition=3879 parent=12 module=m0}] {
 # CHECK-NEXT: b0(v0: undefined|int|string, v1: f8|f9|f10):
 # CHECK-NEXT: v2: Array<WeakRef<pristine[Storage, Names]>, Contiguous> = NewArray contents=WeakRef<pristine[Storage, Names]> allocationSite=19 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v3: Array<WeakRef<pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<WeakRef<pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]>

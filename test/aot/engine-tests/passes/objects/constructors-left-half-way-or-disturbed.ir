@@ -243,15 +243,15 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b1(v3: int|whole) frequency=Unlikely:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v5: boolean = Less v3, v1 form=NumberAndValue
-# CHECK-NEXT: TestAndBranch v5 -> taken b2(), notTaken b3()
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v6: anything = PropGet v0 key="n" accessSite=9
-# CHECK-NEXT: v7: number|string|bigint = Add v6, v3 form=Generic
-# CHECK-NEXT: v8: int|whole = Increment v3 form=Numbers
-# CHECK-NEXT: Jump -> next b1(v8)
+# CHECK-NEXT: TestAndBranch v5 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v6: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v7: anything = PropGet v0 key="n" accessSite=9
+# CHECK-NEXT: v8: number|string|bigint = Add v7, v6 form=Generic
+# CHECK-NEXT: v9: int|whole = Increment v6 form=Numbers
+# CHECK-NEXT: Jump -> next b1(v9)
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v9: undefined = Undefined
-# CHECK-NEXT: Return v9
+# CHECK-NEXT: v10: undefined = Undefined
+# CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="ByName"
 # CHECK: module=m0 position=1306 role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers} inlineFrames=[{}, {callee=f3 callPosition=1306 isTailCall=true module=m0}] {

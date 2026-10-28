@@ -1962,90 +1962,103 @@ runtimefunction id=131091 function=f17 visibility=Private
 # CHECK-NEXT: v48: 0 = Integer
 # CHECK-NEXT: v49: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: Jump -> next b21(v48, v47)
-# CHECK-NEXT: b21(v50: int|whole ~ 0, v51: int[0, 2147483647] ~ 0):
+# CHECK-NEXT: b21(v50: int[0, 4294967295] ~ 0, v51: int[0, 4294967295] ~ 0):
 # CHECK-NEXT: Jump -> next b22(v50, v51)
-# CHECK-NEXT: b22(v52: int|whole ~ 0, v53: int|whole ~ 0):
+# CHECK-NEXT: b22(v52: int[0, 4294967295] ~ 0, v53: int[0, 4294967295] ~ 0):
 # CHECK-NEXT: Jump -> next b23(v52, v53)
-# CHECK-NEXT: b23(v54: int|whole, v55: int|whole ~ int[0, 4294967295]):
+# CHECK-NEXT: b23(v54: int[0, 4294967295], v55: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v57: boolean = Less v55, v46
-# CHECK-NEXT: Branch v57 -> taken b24(| 0), notTaken b45()
-# CHECK-NEXT: b24(v58: int|whole ~ int[0, 4294967294]):
-# CHECK-NEXT: v59: int|whole ~ int[0, 4294967294] = Sub v58, v47
+# CHECK-NEXT: Branch v57 -> taken b24(| 0), notTaken b51()
+# CHECK-NEXT: b24(v58: int[0, 4294967294]):
+# CHECK-NEXT: v59: int[0, 4294967294] = Sub v58, v47
 # CHECK-NEXT: v60: boolean = HasArrayStorage v2 arrayStorage=Double
-# CHECK-NEXT: Branch v60 -> taken b25(| 0), notTaken b34()
+# CHECK-NEXT: Branch v60 -> taken b25(| 0), notTaken b29()
 # CHECK-NEXT: b25(v61: guard):
-# CHECK-NEXT: v62: boolean = HasArrayElement v2, v58, v61 arrayStorage=Double level=Expected accessSite=95 [keyIsIntegral]
-# CHECK-NEXT: Branch v62 -> taken b26(), notTaken b32()
+# CHECK-NEXT: Jump -> next b26()
 # CHECK-NEXT: b26():
-# CHECK-NEXT: v63: undefined|number = GetArrayElement v2, v58, v61 arrayStorage=Double level=Expected accessSite=96 [keyIsIntegral]
-# CHECK-NEXT: v64: undefined|number ~ number = Upcast v63 castType=undefined|number
-# CHECK-NEXT: v65: boolean ~ true = TypeTest v64 testedType=number
-# CHECK-NEXT: Branch v65 -> taken b27(| 0), notTaken b31()
-# CHECK-NEXT: b27(v66: number):
-# CHECK-NEXT: v67: 16 = Integer integer=16
-# CHECK-NEXT: v68: string = CallBuiltin v66, v67 overload=NumberPrototypeToString/1 accessSite=74 @0:8 tail
-# CHECK-NEXT: Jump -> next b28(v54)
-# CHECK-NEXT: b28(v69: int|whole):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v71: boolean = Less v69, v59
-# CHECK-NEXT: Branch v71 -> taken b29(), notTaken b30()
-# CHECK-NEXT: b29():
-# CHECK-NEXT: StringBuilderAppend v49, v45
-# CHECK-NEXT: v73: int|whole = Increment v69
-# CHECK-NEXT: Jump -> next b28(v73)
-# CHECK-NEXT: b30():
-# CHECK-NEXT: StringBuilderAppend v49, v68
-# CHECK-NEXT: Jump -> next b33(v69)
-# CHECK-NEXT: b31() frequency=Rare:
-# CHECK-NEXT: v75: string = CallDirect v64 function=f24 @1511:7 tail
-# CHECK-NEXT: Jump -> next b37(v75, v58, v59)
-# CHECK-NEXT: b32() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b33(v54)
-# CHECK-NEXT: b33(v76: int|whole):
-# CHECK-NEXT: v77: int|whole ~ int[1, 4294967295] = Increment v58
-# CHECK-NEXT: Jump -> next b23(v76, v77)
-# CHECK-NEXT: b34() frequency=Rare:
+# CHECK-NEXT: v62: boolean = HasArrayElement v2, v58, v61 arrayStorage=Double level=Expected accessSite=95 [keyIsIntegral]
+# CHECK-NEXT: Branch v62 -> taken b27(), notTaken b42()
+# CHECK-NEXT: b27():
+# CHECK-NEXT: v63: boolean = IsInBounds v2, v58
+# CHECK-NEXT: Branch v63 -> taken b28(| 0), notTaken b46()
+# CHECK-NEXT: b28(v64: guard):
+# CHECK-NEXT: v65: guard = AllGuards v61, v64
+# CHECK-NEXT: v66: number = GetArrayElement v2, v58, v65 arrayStorage=Double level=Expected accessSite=96 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: Jump -> next b37(v66)
+# CHECK-NEXT: b29() frequency=Rare:
 # CHECK-NEXT: ConvertToDoubleStorage v2
-# CHECK-NEXT: Jump -> next b35(v58, v59)
-# CHECK-NEXT: b35(v79: int|whole ~ int[0, 4294967294], v80: int|whole ~ int[0, 4294967294]) frequency=Rare:
-# CHECK-NEXT: v81: boolean = ElemHas v2, v79 accessSite=95 [keyIsIntegral]
-# CHECK-NEXT: Branch v81 -> taken b36(), notTaken b41()
-# CHECK-NEXT: b36() frequency=Rare:
-# CHECK-NEXT: v82: undefined|number = ElemGet v2, v79 accessSite=96 [keyIsIntegral]
-# CHECK-NEXT: v83: string = CallDirect v82 function=f6 accessSite=99 [calleeIsPredicted]
-# CHECK-NEXT: Jump -> next b37(v83, v79, v80)
-# CHECK-NEXT: b37(v84: string, v85: int|whole ~ int[0, 4294967294], v86: int|whole ~ int[0, 4294967294]) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b30()
+# CHECK-NEXT: b30() frequency=Rare:
+# CHECK-NEXT: v68: boolean = HasArrayStorage v2 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v68 -> taken b31(| 0), notTaken b44()
+# CHECK-NEXT: b31(v69: guard) frequency=Rare:
+# CHECK-NEXT: Jump -> next b32()
+# CHECK-NEXT: b32() frequency=Unlikely:
+# CHECK-NEXT: v70: boolean = HasArrayElement v2, v58, v69 arrayStorage=Contiguous level=Expected accessSite=95 [keyIsIntegral]
+# CHECK-NEXT: Branch v70 -> taken b33(), notTaken b42()
+# CHECK-NEXT: b33() frequency=Unlikely:
+# CHECK-NEXT: v71: boolean = IsInBounds v2, v58
+# CHECK-NEXT: Branch v71 -> taken b34(| 0), notTaken b46()
+# CHECK-NEXT: b34(v72: guard) frequency=Unlikely:
+# CHECK-NEXT: v73: guard = AllGuards v69, v72
+# CHECK-NEXT: v74: undefined|number = GetArrayElement v2, v58, v73 arrayStorage=Contiguous level=Expected accessSite=96 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v75: boolean = TypeTest v74 testedType=number
+# CHECK-NEXT: Branch v75 -> taken b35(| 0), notTaken b41(| 0)
+# CHECK-NEXT: b35(v76: number) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b36(v76)
+# CHECK-NEXT: b36(v77: number) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b37(v77)
+# CHECK-NEXT: b37(v78: number):
+# CHECK-NEXT: v79: 16 = Integer integer=16
+# CHECK-NEXT: v80: string = CallBuiltin v78, v79 overload=NumberPrototypeToString/1 accessSite=74 @0:8 tail
 # CHECK-NEXT: Jump -> next b38(v54)
-# CHECK-NEXT: b38(v87: int|whole) frequency=Unlikely:
+# CHECK-NEXT: b38(v81: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v89: boolean = Less v87, v86
-# CHECK-NEXT: Branch v89 -> taken b39(), notTaken b40()
-# CHECK-NEXT: b39() frequency=Unlikely:
+# CHECK-NEXT: v83: boolean = Less v81, v59
+# CHECK-NEXT: Branch v83 -> taken b39(| 0), notTaken b40()
+# CHECK-NEXT: b39(v84: int[0, 4294967293]):
 # CHECK-NEXT: StringBuilderAppend v49, v45
-# CHECK-NEXT: v91: int|whole = Increment v87
-# CHECK-NEXT: Jump -> next b38(v91)
-# CHECK-NEXT: b40() frequency=Unlikely:
-# CHECK-NEXT: StringBuilderAppend v49, v84
-# CHECK-NEXT: v93: int|whole ~ int[1, 4294967295] = Increment v85
-# CHECK-NEXT: Jump -> next b22(v87, v93)
-# CHECK-NEXT: b41() frequency=Rare:
-# CHECK-NEXT: v94: int|whole ~ int[1, 4294967295] = Increment v79
-# CHECK-NEXT: v95: boolean = TypeTest v94 testedType=int[0, 2147483647]
-# CHECK-NEXT: Branch v95 -> taken b42(| 0), notTaken b43()
-# CHECK-NEXT: b42(v96: int[0, 2147483647] ~ int[1, 2147483647]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b21(v54, v96)
-# CHECK-NEXT: b43() frequency=Rare:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v98: boolean = Less v94, v46
-# CHECK-NEXT: Branch v98 -> taken b44(), notTaken b45()
+# CHECK-NEXT: v86: int[1, 4294967294] = Increment v84
+# CHECK-NEXT: Jump -> next b38(v86)
+# CHECK-NEXT: b40():
+# CHECK-NEXT: StringBuilderAppend v49, v80
+# CHECK-NEXT: Jump -> next b43(v81)
+# CHECK-NEXT: b41(v88: undefined) frequency=Rare:
+# CHECK-NEXT: Jump -> next b46()
+# CHECK-NEXT: b42() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b43(v54)
+# CHECK-NEXT: b43(v89: int[0, 4294967295]):
+# CHECK-NEXT: v90: int[1, 4294967295] = Increment v58
+# CHECK-NEXT: Jump -> next b23(v89, v90)
 # CHECK-NEXT: b44() frequency=Rare:
-# CHECK-NEXT: v99: int|whole ~ int[1, 4294967295] = Sub v94, v47
-# CHECK-NEXT: Jump -> next b35(v94, v99)
-# CHECK-NEXT: b45():
-# CHECK-NEXT: v100: string = StringBuilderFinish v49 @0:4 tail
-# CHECK-NEXT: v101: string = CallDirect v100, v45, v54, v46 function=f15 accessSite=127 @0:4 tail
-# CHECK-NEXT: Return v101
+# CHECK-NEXT: v91: boolean = ElemHas v2, v58 accessSite=95 [keyIsIntegral]
+# CHECK-NEXT: Branch v91 -> taken b45(), notTaken b50()
+# CHECK-NEXT: b45() frequency=Rare:
+# CHECK-NEXT: Jump -> next b46()
+# CHECK-NEXT: b46() frequency=Rare:
+# CHECK-NEXT: v92: undefined|number = ElemGet v2, v58 accessSite=96 [keyIsIntegral]
+# CHECK-NEXT: v93: string = CallDirect v92 function=f6 accessSite=99 [calleeIsPredicted]
+# CHECK-NEXT: Jump -> next b47(v54)
+# CHECK-NEXT: b47(v94: int[0, 4294967295]) frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v96: boolean = Less v94, v59
+# CHECK-NEXT: Branch v96 -> taken b48(| 0), notTaken b49()
+# CHECK-NEXT: b48(v97: int[0, 4294967293]) frequency=Unlikely:
+# CHECK-NEXT: StringBuilderAppend v49, v45
+# CHECK-NEXT: v99: int[1, 4294967294] = Increment v97
+# CHECK-NEXT: Jump -> next b47(v99)
+# CHECK-NEXT: b49() frequency=Unlikely:
+# CHECK-NEXT: StringBuilderAppend v49, v93
+# CHECK-NEXT: v101: int[1, 4294967295] = Increment v58
+# CHECK-NEXT: Jump -> next b22(v94, v101)
+# CHECK-NEXT: b50() frequency=Rare:
+# CHECK-NEXT: v102: int[1, 4294967295] = Increment v58
+# CHECK-NEXT: Jump -> next b21(v54, v102)
+# CHECK-NEXT: b51():
+# CHECK-NEXT: v103: string = StringBuilderFinish v49 @0:4 tail
+# CHECK-NEXT: v104: string = CallDirect v103, v45, v54, v46 function=f15 accessSite=127 @0:4 tail
+# CHECK-NEXT: Return v104
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="backwards"
 # CHECK: module=m0 position=1653 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|string site=w13 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w14 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

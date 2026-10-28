@@ -38,7 +38,7 @@ pub use self::paths::{EntryPointPaths, FolderPaths};
 pub use bun_aot_interface::compile::{EntryPointPaths, FolderPaths};
 
 use self::import_graph::ImportGraph;
-use self::load_stage::AssetReads;
+use self::load_stage::{AssetReads, SharedByLoads};
 use self::module_list::ListedModules;
 use self::program_reach::LeftOutCode;
 use self::runtime_reach::{HeldLibraryCode, KnownRegions, loads_modules_by_computed_names};
@@ -53,7 +53,8 @@ use crate::diagnostics::{
 };
 use crate::emit::{ProgramBytes, emit_from, emit_with_external_bodies};
 use crate::engine::{
-    self, EngineOptions, EngineRequest, EngineResult, builtin_of, feature_of, position_of,
+    self, EngineOptions, EngineRequest, EngineResult, FlowFindings, JudgeOfFlowFindings,
+    builtin_of, feature_of, position_of,
 };
 use crate::ir::Program;
 use crate::ir::generated::{BuiltinUse, FeatureUseKind, UnseenCodeCause};
@@ -66,7 +67,9 @@ use crate::load::worker_files::WorkerFile;
 use crate::load::{PerProject, ProjectId, Sources, host_platform};
 use crate::module_list::{ImportTarget, ModuleInput, ModuleList};
 use crate::modules::{ApplicationGraph, DeferredData, ModuleGraph};
-use crate::options::{EntryText, LibraryCode, LoadOptions, Options, PathOptions};
+use crate::options::{
+    EntryText, LibraryCode, LoadOptions, Options, PathOptions, WaysBetweenModuleObjects,
+};
 use crate::report::{ModuleLocator, SourceTexts};
 use crate::statistics::{LimitId, LimitValues, Stage, StageClock, StatisticId, Statistics};
 use bun_ast::{Kind, Loader, Log, Msg};
@@ -83,6 +86,7 @@ use bun_sema_driver::{
     for_each_parallel_in_runs, run_on_one_thread_while,
 };
 use bun_sys::{Fd, File};
+use bun_threading::Guarded;
 use bun_trim::Feature;
 use core::cell::{Cell, RefCell};
 use core::fmt;
@@ -125,6 +129,8 @@ pub struct Compilation {
     library_code_lacked: RuntimeUses,
     /// A program reads `process.mainModule`, by the word of the engine, and none of its files names a way to a module object.
     reads_main_module_without_its_name: bool,
+    /// A program reads them, by the word of the engine, and lets a module object go where the front end has not followed them.
+    ways_read_out_of_sight: WaysBetweenModuleObjects,
 }
 
 /// What the files that were loaded say about the code that their Workers start from. The later one holds of two loads together.
@@ -336,9 +342,16 @@ struct FrontEndOutput {
     writes_preload: bool,
     held_library_code: HeldLibraryCode,
     names_way_to_module_objects: bool,
+    has_commonjs_entry_point: bool,
+    ways_not_followed_out_of_sight: WaysBetweenModuleObjects,
 }
 
 impl FrontEndOutput {
+    // There is a main module, and the executable does not keep track of which file it is.
+    fn lacks_main_module(&self) -> bool {
+        self.has_commonjs_entry_point && !self.names_way_to_module_objects
+    }
+
     fn into_parts(self, statistics: Statistics) -> (Program, ProgramSummary) {
         let summary = ProgramSummary {
             entry_points: self.entry_points,
@@ -621,15 +634,15 @@ fn names(program: &EngineResult, feature: Feature) -> bool {
 
 // The engine follows values, so it sees what no name in a source tells.
 fn find_library_code_lacked(
-    engine: &EngineResult,
+    found: FlowFindings<'_>,
     held: &HeldLibraryCode,
     platform: Platforms,
 ) -> RuntimeUses {
-    let used = engine.builtins_used().iter();
+    let used = found.builtins_used.iter();
     let used = used.filter_map(|record| builtin_of(record.builtin));
     let mut needed = RuntimeUses::of_entries_used(used, platform);
     // It has followed nothing, and keeps all that it was handed.
-    let has_followed_nothing = engine.unseen_code().iter().any(|record| {
+    let has_followed_nothing = found.unseen_code.iter().any(|record| {
         matches!(
             record.cause,
             UnseenCodeCause::FlowResultDisabled | UnseenCodeCause::LimitReached
@@ -642,7 +655,7 @@ fn find_library_code_lacked(
     let holds_named_functions_of_host_alone = table::STARTUP_MODULES
         .iter()
         .all(|module| held.holds_module(*module) || needed.modules.contains(module));
-    let entered = engine.library_functions_lacked().iter();
+    let entered = found.library_functions_lacked.iter();
     let entered = entered.map(|record| RuntimeFunction(record.function));
     let functions = entered.filter(|&function| {
         table::runtime_function(function).is_some_and(|data| {
@@ -660,13 +673,30 @@ fn find_library_code_lacked(
 
 // An executable keeps track of which file is the main module where the front end has seen somebody ask.
 // Code that the build does not see counts as reading all that it can get at, and is handed no module object of the program.
-fn reads_main_module(engine: &EngineResult) -> bool {
-    engine.unseen_code().is_empty()
-        && engine.builtins_used().iter().any(|record| {
+fn reads_main_module(found: FlowFindings<'_>) -> bool {
+    found.unseen_code.is_empty()
+        && found.builtins_used.iter().any(|record| {
             record.uses.contains(BuiltinUse::READ)
                 && builtin_of(record.builtin).map(table::canonical_id)
                     == Some(BuiltinId::ProcessMainModule)
         })
+}
+
+// The files around a module object keep theirs where the front end has seen somebody ask for them. Where it has lost sight of the object the engine says whether anybody asks.
+fn find_ways_read_out_of_sight(
+    found: FlowFindings<'_>,
+    not_followed: WaysBetweenModuleObjects,
+) -> WaysBetweenModuleObjects {
+    let is_used = |wanted: BuiltinId| {
+        found
+            .builtins_used
+            .iter()
+            .any(|record| builtin_of(record.builtin).map(table::canonical_id) == Some(wanted))
+    };
+    WaysBetweenModuleObjects {
+        children: not_followed.children && is_used(BuiltinId::ModuleObjectChildren),
+        parent: not_followed.parent && is_used(BuiltinId::ModuleObjectParent),
+    }
 }
 
 pub(crate) fn library_code_of(numbers: &LibraryCode) -> RuntimeUses {
@@ -715,15 +745,15 @@ fn chooses_library_code_by_names(options: &Options<'_>) -> bool {
 // Which of Bun's own code a program needs is a guess where a member is read by its name. The engine knows.
 fn find_load_options_with_library_code_lacked(
     options: &Options<'_>,
-    compiled: &Compilation,
+    lacked: &RuntimeUses,
 ) -> Option<LoadOptions> {
-    if !chooses_library_code_by_names(options) || compiled.library_code_lacked.is_empty() {
+    if !chooses_library_code_by_names(options) || lacked.is_empty() {
         return None;
     }
     let mut load = options.load.clone();
     let asked_before = library_code_of(&load.library_code_lacked);
     let mut asked = asked_before.clone();
-    asked.add(&compiled.library_code_lacked);
+    asked.add(lacked);
     // There is no such code to be had.
     if asked == asked_before {
         return None;
@@ -738,8 +768,27 @@ fn find_load_options_with_what_engine_found(
     options: &Options<'_>,
     compiled: &Compilation,
 ) -> Option<LoadOptions> {
-    let mut load = find_load_options_with_library_code_lacked(options, compiled);
-    if compiled.reads_main_module_without_its_name
+    find_load_options_with(
+        options,
+        &compiled.library_code_lacked,
+        compiled.reads_main_module_without_its_name,
+        compiled.ways_read_out_of_sight,
+    )
+}
+
+fn find_load_options_with(
+    options: &Options<'_>,
+    library_code_lacked: &RuntimeUses,
+    reads_main_module_without_its_name: bool,
+    ways_read_out_of_sight: WaysBetweenModuleObjects,
+) -> Option<LoadOptions> {
+    let mut load = find_load_options_with_library_code_lacked(options, library_code_lacked);
+    if !ways_read_out_of_sight.is_empty() && !options.aot.checks_only {
+        let load = load.get_or_insert_with(|| options.load.clone());
+        load.ways_read_out_of_sight.children |= ways_read_out_of_sight.children;
+        load.ways_read_out_of_sight.parent |= ways_read_out_of_sight.parent;
+    }
+    if reads_main_module_without_its_name
         && !options.load.reads_main_module_without_its_name
         && !options.aot.checks_only
     {
@@ -770,7 +819,8 @@ pub fn compile(
     log: &mut Log,
 ) -> Result<Compilation, BuildFailed> {
     let said_before = (log.msgs.len(), log.warnings, log.errors);
-    let runs_before = ENGINE_RUNS.get();
+    let runs_before = (ENGINE_RUNS.get(), WHOLE_ENGINE_RUNS.get());
+    SharedByLoads::begin_build();
     let mut changed: Option<Options<'_>> = None;
     let mut compiled = loop {
         let options = changed.as_ref().unwrap_or(options);
@@ -786,10 +836,13 @@ pub fn compile(
         options.load = load;
         changed = Some(options);
     };
+    SharedByLoads::end_build();
     if let Ok(compiled) = &mut compiled {
-        let runs = ENGINE_RUNS.get() - runs_before;
+        let runs = ENGINE_RUNS.get() - runs_before.0;
+        let whole_runs = WHOLE_ENGINE_RUNS.get() - runs_before.1;
         let statistics = &mut compiled.summary.statistics;
         statistics.count(StatisticId::EngineRuns, runs);
+        statistics.count(StatisticId::WholeEngineRuns, whole_runs);
     }
     compiled
 }
@@ -797,6 +850,8 @@ pub fn compile(
 thread_local! {
     // How often this thread has run the engine, also for programs that a build then threw away. A build runs it on the thread that called `compile`.
     static ENGINE_RUNS: Cell<u64> = const { Cell::new(0) };
+    // Those that did not end behind the flow analysis.
+    static WHOLE_ENGINE_RUNS: Cell<u64> = const { Cell::new(0) };
 }
 
 fn compile_with_options(
@@ -1157,6 +1212,8 @@ fn add_program(first: &mut Compilation, program: Compilation) {
     first.started_workers.add(program.started_workers);
     first.library_code_lacked.add(&program.library_code_lacked);
     first.reads_main_module_without_its_name |= program.reads_main_module_without_its_name;
+    first.ways_read_out_of_sight.children |= program.ways_read_out_of_sight.children;
+    first.ways_read_out_of_sight.parent |= program.ways_read_out_of_sight.parent;
 }
 
 fn compile_written_entry_points(
@@ -1252,6 +1309,7 @@ fn compile_program_at_each_entry_point(
                         None => {
                             program.library_code_lacked = RuntimeUses::default();
                             program.reads_main_module_without_its_name = false;
+                            program.ways_read_out_of_sight = WaysBetweenModuleObjects::default();
                             programs[index] = Some(program);
                         }
                     }
@@ -1448,8 +1506,6 @@ fn compile_programs<'a>(
         if options.aot.checks_only {
             engine_options.check_only();
         }
-        let held = &output.held_library_code;
-        // What such a program lacks is added, and then it is compiled again: nothing is made of it now.
         let own = match (place, programs) {
             (ProgramPlace::OneOfSeveral(index), Some(all)) => {
                 let position = all.indexes.iter().position(|&it| it == index);
@@ -1457,17 +1513,18 @@ fn compile_programs<'a>(
             }
             _ => options,
         };
-        let is_guess = chooses_library_code_by_names(own)
-            && own.load.library_code_lacked == LibraryCode::default()
-            && !(table::STARTUP_MODULES.iter()).all(|&module| held.holds_module(module));
-        engine_options.stop_where_library_code_is_lacked(is_guess);
-        let engine = build.run_engine(bytes, &engine_options, &output);
-        let held = &output.held_library_code;
-        let mut lacked = find_library_code_lacked(&engine, held, build.platform);
-        let has_stopped = is_guess && engine.image().is_none() && !build.diagnostics.has_errors();
-        if has_stopped && lacked.is_empty() {
-            lacked = RuntimeUses::of_unseen_code(build.platform);
-        }
+        let (held, platform) = (&output.held_library_code, build.platform);
+        let lacks_main_module = output.lacks_main_module();
+        let ways_not_followed = output.ways_not_followed_out_of_sight;
+        // A program that is compiled again, with what the engine has found: nothing is made of it now.
+        let goes_on = |found: FlowFindings<'_>| {
+            let lacked = find_library_code_lacked(found, held, platform);
+            let reads_main_module = lacks_main_module && reads_main_module(found);
+            let ways = find_ways_read_out_of_sight(found, ways_not_followed);
+            find_load_options_with(own, &lacked, reads_main_module, ways).is_none()
+        };
+        let engine = build.run_engine(bytes, &engine_options, &output, &goes_on);
+        let lacked = find_library_code_lacked(engine.flow_findings(), held, platform);
         library_code_lacked.push(lacked);
         if let Some(modules) = &mut output.modules {
             modules.count_code(engine.functions(), &output.names);
@@ -1541,10 +1598,15 @@ fn compile_programs<'a>(
         .zip(library_code_lacked)
         .map(|((place, engine, output), library_code_lacked)| {
             let reads_main_module_without_its_name =
-                !output.names_way_to_module_objects && reads_main_module(&engine);
+                output.lacks_main_module() && reads_main_module(engine.flow_findings());
+            let ways_read_out_of_sight = find_ways_read_out_of_sight(
+                engine.flow_findings(),
+                output.ways_not_followed_out_of_sight,
+            );
             let (_, summary) = output.into_parts(statistics.clone());
             let compilation = Compilation {
                 reads_main_module_without_its_name,
+                ways_read_out_of_sight,
                 engine,
                 summary,
                 further_programs: Vec::new(),
@@ -1854,23 +1916,42 @@ impl<'a> Build<'a> {
         bytes: ProgramBytes,
         engine_options: &EngineOptions,
         output: &FrontEndOutput,
+        goes_on: JudgeOfFlowFindings<'_>,
     ) -> EngineResult {
         self.clock.stop();
         ENGINE_RUNS.set(ENGINE_RUNS.get() + 1);
         let leftovers = core::mem::take(&mut self.leftovers);
         let started = Instant::now();
+        let has_ended_behind_flow_analysis = AtomicBool::new(false);
+        // It serves the load of the program that is compiled in place of this one. Where there is none, it goes while the engine goes on.
+        let mut shared_by_loads = Guarded::new(SharedByLoads::take());
         let ((), engine) = run_beside(
             &self.beside_runner(),
             move || drop(leftovers),
-            || engine::compile(bytes, engine_options),
+            || {
+                engine::compile(bytes, engine_options, &|found| {
+                    let goes_on = goes_on(found);
+                    has_ended_behind_flow_analysis.store(!goes_on, Ordering::Relaxed);
+                    if goes_on {
+                        drop(shared_by_loads.lock().take());
+                    }
+                    goes_on
+                })
+            },
         );
         self.count_time(StatisticId::EngineCallNanoseconds, started);
+        if let Some(shared) = shared_by_loads.get_mut().take() {
+            SharedByLoads::keep(shared);
+        }
+        let has_ended_behind_flow_analysis = has_ended_behind_flow_analysis.into_inner();
+        WHOLE_ENGINE_RUNS.set(WHOLE_ENGINE_RUNS.get() + u64::from(!has_ended_behind_flow_analysis));
 
         let returned = Instant::now();
         self.statistics.add_values(engine.statistics());
         self.diagnostics
             .add_engine_records(&engine, &output.names, &output.texts);
         if engine_options.makes_image()
+            && !has_ended_behind_flow_analysis
             && engine.image().is_none()
             && !self.diagnostics.has_errors()
         {

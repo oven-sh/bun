@@ -1,5 +1,4 @@
 // A union of five or more object types, one of which has only primitive fields, receives parsed JSON and literals.
-// Alone: TODO: as one of many entry points it answers otherwise than alone
 type Leaf = { tag: 0; v: number }
 type Pair = { tag: 1; l: Term; r: Term }
 type Triple = { tag: 2; a: Term; b: Term; c: Term }

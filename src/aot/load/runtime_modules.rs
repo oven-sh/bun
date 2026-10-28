@@ -1,7 +1,8 @@
 use std::borrow::Cow;
 
 use bun_ast::Target;
-use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
+use bun_builtin_sources::{Archive, Manifest, PartSeenByEveryFile, VIRTUAL_ROOT};
+use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_resolve_builtins::HardcodedModule::BUN_ALIASES;
@@ -135,6 +136,39 @@ impl RuntimeModules {
             Some(contents) => Some(Cow::Borrowed(contents)),
             None => Archive::read(&file.archive_name).map(Cow::Owned),
         }
+    }
+
+    fn part_seen_by_every_file(&self, path: &[u8]) -> Option<&'static PartSeenByEveryFile> {
+        let file = self.files.get(path).filter(|it| it.contents.is_none())?;
+        let manifest = self.archive.manifest();
+        manifest.part_seen_by_every_file(&file.archive_name)
+    }
+
+    /// Whether a file that does not name the file at `path` sees only a part of it.
+    pub(crate) fn is_seen_in_part(&self, path: &[u8]) -> bool {
+        self.part_seen_by_every_file(path).is_some()
+    }
+
+    pub(crate) fn read_part_seen_by_every_file(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
+        let part = self.part_seen_by_every_file(path)?;
+        let mut text = self.read(path)?.into_owned();
+        let mut kept: Vec<(u32, u32)> = part.seen.iter().chain(&part.asked).copied().collect();
+        kept.push((text.len() as u32, 0));
+        kept.sort_unstable();
+        let mut blank_from = 0;
+        for (start, end) in kept {
+            leave_blank(&mut text[blank_from..start as usize]);
+            blank_from = end as usize;
+        }
+        Some(Cow::Owned(text))
+    }
+
+    pub(crate) fn is_seen_by_every_file(&self, path: &[u8], position: u32) -> bool {
+        let Some(part) = self.part_seen_by_every_file(path) else {
+            return true;
+        };
+        let after = part.seen.partition_point(|it| it.0 <= position);
+        after > 0 && position < part.seen[after - 1].1
     }
 
     pub(crate) fn resolve_module(
@@ -324,6 +358,26 @@ fn collect_public_specifiers(manifest: &Manifest) -> Vec<(HostModuleId, &'static
     specifiers
 }
 
+/// Every line stays as long as it is, so what follows stands where it stood.
+fn leave_blank(text: &mut [u8]) {
+    let mut rest = &mut *text;
+    while let Some(line_end) = strings::index_of_char_usize(rest, b'\n') {
+        rest[..line_end].fill(b' ');
+        rest = &mut rest[line_end + 1..];
+    }
+    rest.fill(b' ');
+    let (open, close) = (
+        strings::index_of(text, b"  "),
+        strings::last_index_of(text, b"  "),
+    );
+    if let (Some(open), Some(close)) = (open, close)
+        && open + 2 <= close
+    {
+        text[open..open + 2].copy_from_slice(b"/*");
+        text[close..close + 2].copy_from_slice(b"*/");
+    }
+}
+
 fn collect_files(archive: &'static Archive) -> FxHashMap<Vec<u8>, RuntimeFile> {
     let manifest = archive.manifest();
     let mut files = FxHashMap::default();
@@ -504,6 +558,58 @@ mod tests {
         for path in runtime.declaration_paths() {
             assert!(!runtime.is_seen_only_by_name(&path));
         }
+    }
+
+    #[test]
+    fn the_part_that_every_file_sees_asks_and_declares_what_the_whole_file_does() {
+        use bun_sema::hir::ModuleName;
+        use bun_sema_parser::{CompileParseOptions, parse_for_compile};
+        let runtime = runtime_modules();
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let (mut whole_length, mut seen_length) = (0, 0);
+        for path in runtime
+            .files
+            .keys()
+            .filter(|path| runtime.is_seen_in_part(path))
+        {
+            let options = CompileParseOptions {
+                path,
+                script_kind: None,
+                experimental_decorators: false,
+                every_file_is_a_module: true,
+                reads_jsdoc: false,
+                keeps_function_directives: false,
+            };
+            let name = BStr::new(path);
+            let whole = runtime.read(path).unwrap();
+            let part = runtime.read_part_seen_by_every_file(path).unwrap();
+            assert_eq!(whole.len(), part.len(), "{name}");
+            let lines = |text: &[u8]| text.iter().filter(|&&byte| byte == b'\n').count();
+            assert_eq!(lines(&whole), lines(&part), "{name}");
+            let [whole, part] = [&whole, &part]
+                .map(|text| parse_for_compile(session.arena(), &options, text, &atoms));
+            assert!(!part.has_errors, "{name}");
+            let asked = |hir: &bun_sema::hir::File| -> Vec<_> {
+                let uses = hir.specifier_uses.iter();
+                uses.map(|it| (it.spec, it.pos, it.kind.is_dynamic()))
+                    .collect()
+            };
+            assert_eq!(asked(&whole), asked(&part), "{name}");
+            let declared = |hir: &bun_sema::hir::File| {
+                let names = hir.modules.iter().map(|module| module.name);
+                names
+                    .filter(|it| !matches!(it, ModuleName::Ident(_)))
+                    .count()
+            };
+            assert_eq!(declared(&whole), declared(&part), "{name}");
+            whole_length += whole.source_len as usize;
+            let kept = runtime.part_seen_by_every_file(path).unwrap();
+            let kept = kept.seen.iter().chain(&kept.asked);
+            seen_length += kept.map(|it| (it.1 - it.0) as usize).sum::<usize>();
+        }
+        assert!(whole_length > 1_000_000);
+        assert!(seen_length * 3 < whole_length);
     }
 
     #[test]

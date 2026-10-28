@@ -1,5 +1,4 @@
 // The agent that requests use by default is one object for node:http and node:_http_agent. It can be replaced from either, and `undefined` stays once it is stored.
-// Alone: TODO: as one of many entry points it answers otherwise than alone
 const http = require("node:http");
 const agents = require("node:_http_agent");
 console.log("names", Object.keys(agents).join());

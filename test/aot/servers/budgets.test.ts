@@ -96,7 +96,9 @@ const budgets: Record<string, StoredBudget> = existsSync(budgetsPath)
   ? JSON.parse(readFileSync(budgetsPath, "utf8"))
   : {};
 const mode = process.env.AOT_BUDGETS;
-const measuresThisPlatform = isLinux && process.arch === "x64";
+// CI tests Linux on x64 under three distributions (EXPECTED_PLATFORM_DISTRO, .buildkite/ci.ts). The numbers are the same under each, so one counts them.
+const distribution = process.env.EXPECTED_PLATFORM_DISTRO;
+const measuresThisPlatform = isLinux && process.arch === "x64" && (!distribution || distribution === "debian");
 const measuresThisBuild = !isDebug && !isASAN;
 
 const exchanges: Exchange[] = routes.map(route => ({

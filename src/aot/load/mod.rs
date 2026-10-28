@@ -56,7 +56,6 @@ pub(crate) fn is_host_path(path: &[u8]) -> bool {
     path.starts_with(HOST_ROOT)
 }
 
-#[cfg(any(test, feature = "test_support"))]
 pub(crate) fn is_in_archive_of_bun(path: &[u8]) -> bool {
     bun_sema_driver::host::is_bundled(path)
         || path.starts_with(bun_builtin_sources::VIRTUAL_ROOT)

@@ -5,7 +5,7 @@ use crate::align_up as align_size;
 use crate::image::KnownSection;
 use crate::macho_types as macho;
 use crate::macho_types::{BlobIndex, CodeDirectory, CommandKind, SuperBlob, command_kind};
-use crate::mapped_file::{FileBytes, ReadOnce};
+use crate::mapped_file::{Blocks, FileBytes, ReadOnce};
 use crate::{read_struct, write_struct};
 
 use bun_core::env_var::feature_flag;
@@ -640,19 +640,23 @@ fn for_each_run_in_parallel(
     hashes: &mut [u8],
     work: impl Fn(ReadOnce<'_>, &mut [u8]) + Sync,
 ) {
+    let (runs, pages_per_run) = split_into_runs(bytes);
+    if hashes.is_empty() {
+        return bun_core::for_each_in_parallel(runs, |run| work(run, &mut []));
+    }
+    let runs = runs.zip(hashes.chunks_mut(pages_per_run * MachoSigner::SIGNATURE_HASH_SIZE));
+    bun_core::for_each_in_parallel(runs, |(run, hashes)| work(run, hashes));
+}
+
+/// `bytes` in runs of whole pages, about one for each thread, and the number of pages in every run but the last.
+fn split_into_runs(bytes: ReadOnce<'_>) -> (Blocks<'_>, usize) {
     const PAGE_SIZE: usize = MachoSigner::SIGNATURE_PAGE_SIZE;
-    const HASH_SIZE: usize = MachoSigner::SIGNATURE_HASH_SIZE;
     let pages_per_run = bytes
         .len()
         .div_ceil(PAGE_SIZE)
         .div_ceil(usize::from(bun_core::get_thread_count()).clamp(1, 16))
         .max(1024);
-    let runs = bytes.blocks(pages_per_run * PAGE_SIZE);
-    if hashes.is_empty() {
-        return bun_core::for_each_in_parallel(runs, |run| work(run, &mut []));
-    }
-    let runs = runs.zip(hashes.chunks_mut(pages_per_run * HASH_SIZE));
-    bun_core::for_each_in_parallel(runs, |(run, hashes)| work(run, hashes));
+    (bytes.blocks(pages_per_run * PAGE_SIZE), pages_per_run)
 }
 
 struct Shifter {

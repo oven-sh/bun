@@ -112,7 +112,7 @@ export default b.declarations(
       path: b.property(b.string, constantUnlessWritten),
       loaded: b.property(b.bool, constantUnlessWritten),
       paths: b.property(b.any),
-      // The graph of requests says which module objects these two lead to. To whoever has come to the object in a way that the build did not follow they are undefined.
+      // The graph of requests says which module objects these two lead to.
       parent: b.property(b.union(moduleObject, b.null)),
       children: b.property(b.union(b.instance("Array").holding({ element: moduleObject }), b.undefined)),
     },

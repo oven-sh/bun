@@ -58,6 +58,8 @@ NativeBindgenNode_cluster_bindingBindTsClusterCloseHandle/1: it is not called: i
 NativeBindgenNode_cluster_bindingBindTsClusterRawBind/0: it is not called: it asks the name servers about every string that is no address, and waits for them
 NativeBindgenNode_cluster_bindingBindTsClusterRawBind/1: it is not called: it asks the name servers about every string that is no address, and waits for them
 NativeBindgenNode_fs_bindingBindTsBinding/0: it is not called: this realm does not have it
+NativeBindgenUdp_socketBindTsConnect/0: it is not called: it asks the name servers about every string that is no address, and waits for them
+NativeBindgenUdp_socketBindTsConnect/1: it is not called: it asks the name servers about every string that is no address, and waits for them
 NativeBindgenUdp_socketBindTsDgramAdoptFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeBindgenUdp_socketBindTsDgramAdoptFd/1: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeBindgenUdp_socketBindTsDgramBindFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
@@ -75,10 +77,12 @@ NativeFunctionsBake_pluginsBindTsCheckFramework/0: it is not called: it changes 
 NativeFunctionsBake_pluginsBindTsRestartProcess/0: it is not called: it ends the process or makes it fail
 NativeFunctionsBake_pluginsBindTsSetConfigPlugins/0: it is not called: it changes how modules are loaded
 NativeFunctionsBake_pluginsBindTsSetPages/0: it is not called: it changes how modules are loaded
+NativeFunctionsBunProcessCppBun__Process__disconnect/0: it is not called: this realm does not have its holder
 NativeFunctionsBunProcessCppJsFunctionDrainMicrotaskQueue/0: it is not called: this realm does not have its holder
 NativeFunctionsBunProcessCppJsFunctionReportUncaughtException/0: it is not called: it ends the process or makes it fail
 NativeFunctionsBunProcessCppJsFunction_emitWarning/0: it is not called: this realm does not have its holder
 NativeFunctionsBunProcessCppJsFunction_throwValue/0: it is not called: this realm does not have its holder
+NativeFunctionsBunProcessCppJsSend/0: it is not called: this realm does not have its holder
 NativeFunctionsBunProcessCppProcess_functionEmitHelper/0: it is not called: this realm does not have its holder
 NativeFunctionsBunProcessCppProcess_functionWriteWarning/0: it is not called: this realm does not have its holder
 NativeFunctionsChecker_queries_testingBindTsDescribeCheckerQueries/0: it is not called: a helper of Bun's own tests that takes the kinds of its operands on trust or reads freed memory on purpose
@@ -125,17 +129,22 @@ NativeFunctionsStatBindTsCreateStatsForIno/0: it is not called: a helper of Bun'
 NativeFunctionsSubprocessBindTsInjectStdioReadError/0: it is not called: it changes how the rest of the process behaves
 NativeFunctionsTrim_testingBindTsReadTrimTable/0: it is not called: it works on files that its operands name outside the folder of the test
 NativeFunctionsTrim_testingBindTsTrimExecutable/0: it is not called: it works on files that its operands name outside the folder of the test
+NativeFunctionsUdp_socketBindTsConnect/0: it is not called: it asks the name servers about every string that is no address, and waits for them
 NativeFunctionsUdp_socketBindTsDgramAdoptFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeFunctionsUdp_socketBindTsDgramBindFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeFunctionsUdp_socketBindTsDgramCloseFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeFunctionsUdp_socketBindTsDgramListenFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeFunctionsVirtual_machine_exportsBindTsSetSyntheticAllocationLimitForTesting/0: it is not called: it ends the process or makes it fail
+NativeNewCppFunctionBunProcessCppBun__Process__disconnect/0: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppBun__Process__disconnect/1: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppJsFunctionDrainMicrotaskQueue/0: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppJsFunctionDrainMicrotaskQueue/1: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppJsFunction_emitWarning/0: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppJsFunction_emitWarning/1: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppJsFunction_throwValue/0: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppJsFunction_throwValue/1: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppJsSend/0: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppJsSend/1: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppProcess_functionEmitHelper/0: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppProcess_functionEmitHelper/1: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppProcess_functionWriteWarning/0: it is not called: this realm does not have it

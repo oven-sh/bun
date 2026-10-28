@@ -1,5 +1,4 @@
 // Each CommonJS file hands out a function declaration in another way. The importer reads them by named imports, by the default import and through a namespace.
-// Alone: TODO: as one of many entry points it answers otherwise than alone
 import { viaExports, viaModuleExports, viaThis, viaComputed } from "./members.cjs";
 import literal from "./literal.cjs";
 import { shorthand } from "./literal.cjs";

@@ -400,83 +400,98 @@ runtimefunction id=69 function=f9
 # CHECK-NEXT: Branch v42 -> taken b4(| 0), notTaken b5(| 0)
 # CHECK-NEXT: b4(v43: undefined|null|boolean|number|string|symbol ~ undefined|int) handler=b6():
 # CHECK-NEXT: v44: undefined = CallBuiltin -, v38, v43 overload=ConsoleLog/0 accessSite=24
-# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: Jump -> next b9()
 # CHECK-NEXT: b5(v45: bigint|object) frequency=Rare handler=b6():
 # CHECK-NEXT: v46: undefined = CallBuiltin -, v38, v45 overload=ConsoleLog/1 accessSite=24
-# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: Jump -> next b9()
 # CHECK-NEXT: b6() role=CatchHandler:
 # CHECK-NEXT: v47: anything = CatchValue
-# CHECK-NEXT: v48: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v49: "wrong type" = String string="wrong type"
-# CHECK-NEXT: v50: anything ~ undefined|null|Error = Upcast v47 castType=anything
-# CHECK-NEXT: v51: anything = PropGet v50 key="constructor" accessSite=27
-# CHECK-NEXT: v52: anything ~ undefined|null|function = Expect v51 expectedType=undefined|null|function
-# CHECK-NEXT: v53: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v52 name="name"
-# CHECK-NEXT: v54: anything = PropGet v53 key="name" accessSite=28
-# CHECK-NEXT: v55: anything ~ undefined|null|string = Expect v54 expectedType=undefined|null|string
-# CHECK-NEXT: v56: undefined = CallBuiltin v48, v49, v55 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=29
-# CHECK-NEXT: Jump -> next b7()
-# CHECK-NEXT: b7() handler=b12():
-# CHECK-NEXT: v57: "wrong type" = String string="wrong type"
-# CHECK-NEXT: v58: anything ~ undefined|number = PropGet v34 key="size" accessSite=31 receivers=[L0]
-# CHECK-NEXT: v59: boolean ~ true = TypeTest v58 testedType=undefined|number
-# CHECK-NEXT: Branch v59 -> taken b9(), notTaken b8()
-# CHECK-NEXT: b8() frequency=Unlikely:
+# CHECK-NEXT: v48: "wrong type" = String string="wrong type"
+# CHECK-NEXT: v49: anything ~ undefined|null|Error = Upcast v47 castType=anything
+# CHECK-NEXT: v50: anything = PropGet v49 key="constructor" accessSite=27
+# CHECK-NEXT: v51: anything ~ undefined|null|function = Expect v50 expectedType=undefined|null|function
+# CHECK-NEXT: v52: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v51 name="name"
+# CHECK-NEXT: v53: anything = PropGet v52 key="name" accessSite=28
+# CHECK-NEXT: v54: anything ~ undefined|null|string = Expect v53 expectedType=undefined|null|string
+# CHECK-NEXT: v55: boolean ~ true = TypeTest v54 testedType=undefined|null|boolean|number|string|symbol
+# CHECK-NEXT: Branch v55 -> taken b7(| 0), notTaken b8(| 0)
+# CHECK-NEXT: b7(v56: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
+# CHECK-NEXT: v57: undefined = CallBuiltin -, v48, v56 overload=ConsoleLog/0 accessSite=29
 # CHECK-NEXT: Jump -> next b9()
-# CHECK-NEXT: b9():
-# CHECK-NEXT: v60: anything ~ undefined|int = Expect v58 expectedType=undefined|int
-# CHECK-NEXT: v61: boolean ~ true = TypeTest v60 testedType=undefined|null|boolean|number|string|symbol
-# CHECK-NEXT: Branch v61 -> taken b10(| 0), notTaken b11(| 0)
-# CHECK-NEXT: b10(v62: undefined|null|boolean|number|string|symbol ~ undefined|int) handler=b12():
-# CHECK-NEXT: v63: undefined = CallBuiltin -, v57, v62 overload=ConsoleLog/0 accessSite=24
-# CHECK-NEXT: Jump -> next b13()
-# CHECK-NEXT: b11(v64: bigint|object) frequency=Rare handler=b12():
-# CHECK-NEXT: v65: undefined = CallBuiltin -, v57, v64 overload=ConsoleLog/1 accessSite=24
-# CHECK-NEXT: Jump -> next b13()
-# CHECK-NEXT: b12() role=CatchHandler:
-# CHECK-NEXT: v66: anything = CatchValue
-# CHECK-NEXT: v67: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v68: "wrong type" = String string="wrong type"
-# CHECK-NEXT: v69: anything ~ undefined|null|Error = Upcast v66 castType=anything
-# CHECK-NEXT: v70: anything = PropGet v69 key="constructor" accessSite=27
-# CHECK-NEXT: v71: anything ~ undefined|null|function = Expect v70 expectedType=undefined|null|function
-# CHECK-NEXT: v72: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v71 name="name"
-# CHECK-NEXT: v73: anything = PropGet v72 key="name" accessSite=28
-# CHECK-NEXT: v74: anything ~ undefined|null|string = Expect v73 expectedType=undefined|null|string
-# CHECK-NEXT: v75: undefined = CallBuiltin v67, v68, v74 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=29
-# CHECK-NEXT: Jump -> next b13()
-# CHECK-NEXT: b13() handler=b18():
-# CHECK-NEXT: v76: "wrong type" = String string="wrong type"
-# CHECK-NEXT: v77: anything ~ undefined|number = PropGet v35 key="size" accessSite=31 receivers=[L0]
-# CHECK-NEXT: v78: boolean ~ true = TypeTest v77 testedType=undefined|number
-# CHECK-NEXT: Branch v78 -> taken b15(), notTaken b14()
-# CHECK-NEXT: b14() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b15()
-# CHECK-NEXT: b15():
-# CHECK-NEXT: v79: anything ~ undefined|int = Expect v77 expectedType=undefined|int
-# CHECK-NEXT: v80: boolean ~ true = TypeTest v79 testedType=undefined|null|boolean|number|string|symbol
-# CHECK-NEXT: Branch v80 -> taken b16(| 0), notTaken b17(| 0)
-# CHECK-NEXT: b16(v81: undefined|null|boolean|number|string|symbol ~ undefined|int) handler=b18():
-# CHECK-NEXT: v82: undefined = CallBuiltin -, v76, v81 overload=ConsoleLog/0 accessSite=24
-# CHECK-NEXT: Jump -> next b19()
-# CHECK-NEXT: b17(v83: bigint|object) frequency=Rare handler=b18():
-# CHECK-NEXT: v84: undefined = CallBuiltin -, v76, v83 overload=ConsoleLog/1 accessSite=24
-# CHECK-NEXT: Jump -> next b19()
-# CHECK-NEXT: b18() role=CatchHandler:
-# CHECK-NEXT: v85: anything = CatchValue
-# CHECK-NEXT: v86: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v87: "wrong type" = String string="wrong type"
-# CHECK-NEXT: v88: anything ~ undefined|null|Error = Upcast v85 castType=anything
-# CHECK-NEXT: v89: anything = PropGet v88 key="constructor" accessSite=27
-# CHECK-NEXT: v90: anything ~ undefined|null|function = Expect v89 expectedType=undefined|null|function
-# CHECK-NEXT: v91: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v90 name="name"
-# CHECK-NEXT: v92: anything = PropGet v91 key="name" accessSite=28
-# CHECK-NEXT: v93: anything ~ undefined|null|string = Expect v92 expectedType=undefined|null|string
-# CHECK-NEXT: v94: undefined = CallBuiltin v86, v87, v93 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=29
+# CHECK-NEXT: b8(v58: bigint|object) frequency=Rare:
+# CHECK-NEXT: v59: undefined = CallBuiltin -, v48, v58 overload=ConsoleLog/1 accessSite=29
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b9() handler=b14():
+# CHECK-NEXT: v60: "wrong type" = String string="wrong type"
+# CHECK-NEXT: v61: anything ~ undefined|number = PropGet v34 key="size" accessSite=31 receivers=[L0]
+# CHECK-NEXT: v62: boolean ~ true = TypeTest v61 testedType=undefined|number
+# CHECK-NEXT: Branch v62 -> taken b11(), notTaken b10()
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b11()
+# CHECK-NEXT: b11():
+# CHECK-NEXT: v63: anything ~ undefined|int = Expect v61 expectedType=undefined|int
+# CHECK-NEXT: v64: boolean ~ true = TypeTest v63 testedType=undefined|null|boolean|number|string|symbol
+# CHECK-NEXT: Branch v64 -> taken b12(| 0), notTaken b13(| 0)
+# CHECK-NEXT: b12(v65: undefined|null|boolean|number|string|symbol ~ undefined|int) handler=b14():
+# CHECK-NEXT: v66: undefined = CallBuiltin -, v60, v65 overload=ConsoleLog/0 accessSite=24
+# CHECK-NEXT: Jump -> next b17()
+# CHECK-NEXT: b13(v67: bigint|object) frequency=Rare handler=b14():
+# CHECK-NEXT: v68: undefined = CallBuiltin -, v60, v67 overload=ConsoleLog/1 accessSite=24
+# CHECK-NEXT: Jump -> next b17()
+# CHECK-NEXT: b14() role=CatchHandler:
+# CHECK-NEXT: v69: anything = CatchValue
+# CHECK-NEXT: v70: "wrong type" = String string="wrong type"
+# CHECK-NEXT: v71: anything ~ undefined|null|Error = Upcast v69 castType=anything
+# CHECK-NEXT: v72: anything = PropGet v71 key="constructor" accessSite=27
+# CHECK-NEXT: v73: anything ~ undefined|null|function = Expect v72 expectedType=undefined|null|function
+# CHECK-NEXT: v74: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v73 name="name"
+# CHECK-NEXT: v75: anything = PropGet v74 key="name" accessSite=28
+# CHECK-NEXT: v76: anything ~ undefined|null|string = Expect v75 expectedType=undefined|null|string
+# CHECK-NEXT: v77: boolean ~ true = TypeTest v76 testedType=undefined|null|boolean|number|string|symbol
+# CHECK-NEXT: Branch v77 -> taken b15(| 0), notTaken b16(| 0)
+# CHECK-NEXT: b15(v78: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
+# CHECK-NEXT: v79: undefined = CallBuiltin -, v70, v78 overload=ConsoleLog/0 accessSite=29
+# CHECK-NEXT: Jump -> next b17()
+# CHECK-NEXT: b16(v80: bigint|object) frequency=Rare:
+# CHECK-NEXT: v81: undefined = CallBuiltin -, v70, v80 overload=ConsoleLog/1 accessSite=29
+# CHECK-NEXT: Jump -> next b17()
+# CHECK-NEXT: b17() handler=b22():
+# CHECK-NEXT: v82: "wrong type" = String string="wrong type"
+# CHECK-NEXT: v83: anything ~ undefined|number = PropGet v35 key="size" accessSite=31 receivers=[L0]
+# CHECK-NEXT: v84: boolean ~ true = TypeTest v83 testedType=undefined|number
+# CHECK-NEXT: Branch v84 -> taken b19(), notTaken b18()
+# CHECK-NEXT: b18() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b19()
 # CHECK-NEXT: b19():
-# CHECK-NEXT: v95: undefined = Undefined
-# CHECK-NEXT: Return v95
+# CHECK-NEXT: v85: anything ~ undefined|int = Expect v83 expectedType=undefined|int
+# CHECK-NEXT: v86: boolean ~ true = TypeTest v85 testedType=undefined|null|boolean|number|string|symbol
+# CHECK-NEXT: Branch v86 -> taken b20(| 0), notTaken b21(| 0)
+# CHECK-NEXT: b20(v87: undefined|null|boolean|number|string|symbol ~ undefined|int) handler=b22():
+# CHECK-NEXT: v88: undefined = CallBuiltin -, v82, v87 overload=ConsoleLog/0 accessSite=24
+# CHECK-NEXT: Jump -> next b25()
+# CHECK-NEXT: b21(v89: bigint|object) frequency=Rare handler=b22():
+# CHECK-NEXT: v90: undefined = CallBuiltin -, v82, v89 overload=ConsoleLog/1 accessSite=24
+# CHECK-NEXT: Jump -> next b25()
+# CHECK-NEXT: b22() role=CatchHandler:
+# CHECK-NEXT: v91: anything = CatchValue
+# CHECK-NEXT: v92: "wrong type" = String string="wrong type"
+# CHECK-NEXT: v93: anything ~ undefined|null|Error = Upcast v91 castType=anything
+# CHECK-NEXT: v94: anything = PropGet v93 key="constructor" accessSite=27
+# CHECK-NEXT: v95: anything ~ undefined|null|function = Expect v94 expectedType=undefined|null|function
+# CHECK-NEXT: v96: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v95 name="name"
+# CHECK-NEXT: v97: anything = PropGet v96 key="name" accessSite=28
+# CHECK-NEXT: v98: anything ~ undefined|null|string = Expect v97 expectedType=undefined|null|string
+# CHECK-NEXT: v99: boolean ~ true = TypeTest v98 testedType=undefined|null|boolean|number|string|symbol
+# CHECK-NEXT: Branch v99 -> taken b23(| 0), notTaken b24(| 0)
+# CHECK-NEXT: b23(v100: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
+# CHECK-NEXT: v101: undefined = CallBuiltin -, v92, v100 overload=ConsoleLog/0 accessSite=29
+# CHECK-NEXT: Jump -> next b25()
+# CHECK-NEXT: b24(v102: bigint|object) frequency=Rare:
+# CHECK-NEXT: v103: undefined = CallBuiltin -, v92, v102 overload=ConsoleLog/1 accessSite=29
+# CHECK-NEXT: Jump -> next b25()
+# CHECK-NEXT: b25():
+# CHECK-NEXT: v104: undefined = Undefined
+# CHECK-NEXT: Return v104
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="make"
 # CHECK: module=m0 position=325 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

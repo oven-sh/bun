@@ -13,6 +13,7 @@ use crate::builtins::RuntimeModule;
 use crate::ir::generated::ModuleRequestKind;
 use crate::ir::parallel::{InParallel, for_each_mut};
 use crate::load::sources::EntryPoint;
+use crate::options::WaysBetweenModuleObjects;
 use bun_sema::atom::Atom;
 use bun_sema::bind::SymbolId;
 use bun_sema::hir::{ExprId, FnId, ImportEqualsId, StmtId};
@@ -124,6 +125,7 @@ pub(super) struct Plan {
     inner_callbacks: Vec<FnId>,
     keeps_module_object: Vec<bool>,
     names_way_to_module_objects: Vec<bool>,
+    ways_not_followed_out_of_sight: WaysBetweenModuleObjects,
     /// A `require` of a file may run before the loader has come to a CommonJS file, and code names a way between module objects: whether one did says which file has the id ".".
     is_first_require_seen: bool,
     is_namespace_seen: Vec<bool>,
@@ -148,6 +150,7 @@ impl Plan {
             inner_callbacks: inner_modules.map(|inner| inner.1).collect(),
             keeps_module_object: vec![false; order.numbers.len()],
             names_way_to_module_objects: vec![false; order.numbers.len()],
+            ways_not_followed_out_of_sight: WaysBetweenModuleObjects::default(),
             is_first_require_seen: false,
             is_namespace_seen: vec![false; order.numbers.len()],
             is_marker_stored: vec![false; order.numbers.len()],
@@ -550,6 +553,15 @@ impl ModuleGraph {
     pub fn set_keeps_module_object(&mut self, module: ModuleRef) {
         self.plan.add(|plan| &mut plan.keeps_module_object, module);
         self.look_at(module);
+    }
+
+    /// A module object goes where nothing follows it, and the files that these lead to from there have no module objects.
+    pub fn ways_not_followed_out_of_sight(&self) -> WaysBetweenModuleObjects {
+        self.plan.ways_not_followed_out_of_sight
+    }
+
+    pub fn set_ways_not_followed_out_of_sight(&mut self, ways: WaysBetweenModuleObjects) {
+        self.plan.ways_not_followed_out_of_sight = ways;
     }
 
     pub fn set_names_way_to_module_objects(&mut self, module: ModuleRef) {

@@ -1,7 +1,6 @@
 // A guard of one field is held across a call on the word of the callee's summary; the callee is then taken in. Once its body was pasted with its accesses by name,
 // which count as unknown code, and the build stopped: GuardNotAvailable. One of link-attacks' random programs, as it was made.
 // Made by test/aot/generate-relations-at-random.ts, seed 7301: helpers that do by chance what a function can do with what it is handed. What is still held at the end is printed as a graph.
-// Alone: TODO: as one of many entry points it answers otherwise than alone
 const kept = [];
 const keptFunctions = [];
 let slot = null;

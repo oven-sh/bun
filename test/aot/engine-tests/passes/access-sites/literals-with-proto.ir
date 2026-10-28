@@ -765,54 +765,54 @@ runtimefunction id=131091 function=f48 visibility=Private
 # CHECK-NEXT: Branch v23 -> taken b10(| 0), notTaken b15()
 # CHECK-NEXT: b10(v24: int[0, 4294967294]):
 # CHECK-NEXT: v25: boolean = HasArrayStorage v16 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v25 -> taken b11(| 0), notTaken b13()
-# CHECK-NEXT: b11(v26: guard):
-# CHECK-NEXT: v27: boolean = IsElementPresent v16, v24, v26 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v27 -> taken b12(), notTaken b14()
+# CHECK-NEXT: Branch v25 -> taken b11(), notTaken b13()
+# CHECK-NEXT: b11():
+# CHECK-NEXT: v26: boolean = IsInBounds v16, v24
+# CHECK-NEXT: Branch v26 -> taken b12(), notTaken b14()
 # CHECK-NEXT: b12():
-# CHECK-NEXT: v28: "own" = String string="own"
+# CHECK-NEXT: v27: "own" = String string="own"
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v30: f45 = GetModuleVariable variable=g11
-# CHECK-NEXT: v31: undefined|null|string = Call v30, -, v28 calleeName="joinedText" accessSite=20 callees=[f45, ..]
-# CHECK-NEXT: StringBuilderAppend v19, v31
-# CHECK-NEXT: v33: int[1, 4294967295] = Increment v24
-# CHECK-NEXT: Jump -> next b9(v33)
+# CHECK-NEXT: v29: f45 = GetModuleVariable variable=g11
+# CHECK-NEXT: v30: undefined|null|string = Call v29, -, v27 calleeName="joinedText" accessSite=20 callees=[f45, ..]
+# CHECK-NEXT: StringBuilderAppend v19, v30
+# CHECK-NEXT: v32: int[1, 4294967295] = Increment v24
+# CHECK-NEXT: Jump -> next b9(v32)
 # CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: v34: boolean = ElemHas v16, v24 accessSite=15 [keyIsIntegral]
+# CHECK-NEXT: v33: boolean = ElemHas v16, v24 accessSite=15 [keyIsIntegral]
 # CHECK-NEXT: Jump -> next b14()
 # CHECK-NEXT: b14() frequency=Rare:
-# CHECK-NEXT: v35: undefined|"own" = ElemGet v16, v24 accessSite=16 [keyIsIntegral]
-# CHECK-NEXT: v36: string = CallBuiltin -, v35 overload=String/0 accessSite=19
-# CHECK-NEXT: v37: string ~ "own" = Upcast v36 castType=string
+# CHECK-NEXT: v34: undefined|"own" = ElemGet v16, v24 accessSite=16 [keyIsIntegral]
+# CHECK-NEXT: v35: string = CallBuiltin -, v34 overload=String/0 accessSite=19
+# CHECK-NEXT: v36: string ~ "own" = Upcast v35 castType=string
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v39: f45 = GetModuleVariable variable=g11
-# CHECK-NEXT: v40: undefined|null|string = Call v39, -, v37 calleeName="joinedText" accessSite=20 callees=[f45, ..]
-# CHECK-NEXT: StringBuilderAppend v19, v40
-# CHECK-NEXT: v42: int[1, 4294967295] = Increment v24
-# CHECK-NEXT: Jump -> next b8(v42)
+# CHECK-NEXT: v38: f45 = GetModuleVariable variable=g11
+# CHECK-NEXT: v39: undefined|null|string = Call v38, -, v36 calleeName="joinedText" accessSite=20 callees=[f45, ..]
+# CHECK-NEXT: StringBuilderAppend v19, v39
+# CHECK-NEXT: v41: int[1, 4294967295] = Increment v24
+# CHECK-NEXT: Jump -> next b8(v41)
 # CHECK-NEXT: b15():
-# CHECK-NEXT: v43: "] below " = String string="] below "
-# CHECK-NEXT: v44: ", own=" = String string=", own="
-# CHECK-NEXT: v45: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: v46: string = StringBuilderFinish v19
-# CHECK-NEXT: v47: "[" = String string="["
-# CHECK-NEXT: StringBuilderAppend v45, v47, v46, v43, v14, v44
-# CHECK-NEXT: v49: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v50: anything = Call v49, -, v0 calleeName="ownOf" accessSite=8 callees=[f1]
-# CHECK-NEXT: v51: string = CallBuiltin -, v50 overload=String/0 builtinCallForm=AnyReceiver accessSite=9
-# CHECK-NEXT: v52: ", inherited=" = String string=", inherited="
-# CHECK-NEXT: StringBuilderAppend v45, v51, v52
-# CHECK-NEXT: v54: f2 = GetModuleVariable variable=g1
-# CHECK-NEXT: v55: anything = Call v54, -, v0 calleeName="inheritedOf" accessSite=10 callees=[f2]
-# CHECK-NEXT: v56: string = CallBuiltin -, v55 overload=String/0 builtinCallForm=AnyReceiver accessSite=11
-# CHECK-NEXT: v57: ", shared=" = String string=", shared="
-# CHECK-NEXT: StringBuilderAppend v45, v56, v57
-# CHECK-NEXT: v59: f3 = GetModuleVariable variable=g2
-# CHECK-NEXT: v60: anything = Call v59, -, v0 calleeName="sharedOf" accessSite=12 callees=[f3]
-# CHECK-NEXT: v61: string = CallBuiltin -, v60 overload=String/0 builtinCallForm=AnyReceiver accessSite=13
-# CHECK-NEXT: StringBuilderAppend v45, v61
-# CHECK-NEXT: v63: string = StringBuilderFinish v45
-# CHECK-NEXT: Return v63
+# CHECK-NEXT: v42: "] below " = String string="] below "
+# CHECK-NEXT: v43: ", own=" = String string=", own="
+# CHECK-NEXT: v44: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: v45: string = StringBuilderFinish v19
+# CHECK-NEXT: v46: "[" = String string="["
+# CHECK-NEXT: StringBuilderAppend v44, v46, v45, v42, v14, v43
+# CHECK-NEXT: v48: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v49: anything = Call v48, -, v0 calleeName="ownOf" accessSite=8 callees=[f1]
+# CHECK-NEXT: v50: string = CallBuiltin -, v49 overload=String/0 builtinCallForm=AnyReceiver accessSite=9
+# CHECK-NEXT: v51: ", inherited=" = String string=", inherited="
+# CHECK-NEXT: StringBuilderAppend v44, v50, v51
+# CHECK-NEXT: v53: f2 = GetModuleVariable variable=g1
+# CHECK-NEXT: v54: anything = Call v53, -, v0 calleeName="inheritedOf" accessSite=10 callees=[f2]
+# CHECK-NEXT: v55: string = CallBuiltin -, v54 overload=String/0 builtinCallForm=AnyReceiver accessSite=11
+# CHECK-NEXT: v56: ", shared=" = String string=", shared="
+# CHECK-NEXT: StringBuilderAppend v44, v55, v56
+# CHECK-NEXT: v58: f3 = GetModuleVariable variable=g2
+# CHECK-NEXT: v59: anything = Call v58, -, v0 calleeName="sharedOf" accessSite=12 callees=[f3]
+# CHECK-NEXT: v60: string = CallBuiltin -, v59 overload=String/0 builtinCallForm=AnyReceiver accessSite=13
+# CHECK-NEXT: StringBuilderAppend v44, v60
+# CHECK-NEXT: v62: string = StringBuilderFinish v44
+# CHECK-NEXT: Return v62
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="finishJoin"
 # CHECK: module=m3 position=1934 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=string site=w11 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w12 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=0 site=w13}, {type=1 site=w14}] results=[{type=string site=w15 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

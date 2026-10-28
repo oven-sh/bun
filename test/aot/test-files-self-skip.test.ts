@@ -28,6 +28,7 @@ const files = [...testFiles("")]
 const needNoCompiler = [
   "aot/fold/constant-expressions.test.ts",
   "aot/numbers-checked-against-ranges.test.ts",
+  "aot/a-busy-caller-unbinds-no-child.test.ts",
   "aot/an-operation-that-does-not-collect-puts-collections-off.test.ts",
   "aot/any-two-sources-of-the-compiler-can-share-a-translation-unit.test.ts",
   "aot/emitters-append-in-the-order-written.test.ts",

@@ -32,7 +32,7 @@ use crate::modules::{
     KnownObjects, Member, ModuleExport, ModuleGraph, ModuleKind, ModuleRef, ModuleRequest, Shape,
     Site, SiteAnswer, SyntheticExportId, Validity, View, is_enum,
 };
-use crate::options::RemovableOptions;
+use crate::options::{RemovableOptions, WaysBetweenModuleObjects};
 use crate::statistics::LimitValues;
 
 pub(crate) struct ProgramReachInput<'a, 's> {
@@ -43,6 +43,8 @@ pub(crate) struct ProgramReachInput<'a, 's> {
     pub limits: &'a LimitValues,
     /// `LoadOptions::reads_main_module_without_its_name`
     pub reads_main_module_without_its_name: bool,
+    /// `LoadOptions::ways_read_out_of_sight`
+    pub ways_read_out_of_sight: WaysBetweenModuleObjects,
 }
 
 impl<'a, 's> ProgramReachInput<'a, 's> {
@@ -1644,6 +1646,10 @@ struct Walk<'a, 's> {
     // Whether reached code reads `children`, and `parent` for more than a test, of such an object.
     follows_children: bool,
     follows_parents: bool,
+    // Those that reached code lets go where nothing follows them, and those that `children` and `parent` lead to from there, as far as somebody reads the two.
+    out_of_sight: FxHashSet<ModuleRef>,
+    // One that `children` or `parent` has led to, or that a binding holds, goes there too.
+    lets_related_object_out_of_sight: bool,
     // The files that only test their own `module.parent`. There is one to find where the files that require them have objects.
     tests_own_parent: FxHashSet<ModuleRef>,
     // The files in which reached code names a way from one such object to another.
@@ -1763,6 +1769,8 @@ impl<'a, 's> Walk<'a, 's> {
             newly_handed_out: Vec::new(),
             follows_children: false,
             follows_parents: false,
+            out_of_sight: FxHashSet::default(),
+            lets_related_object_out_of_sight: false,
             tests_own_parent: FxHashSet::default(),
             files_naming_ways: Vec::new(),
             required: FxHashSet::default(),
@@ -2308,6 +2316,14 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
+    // Whoever gets the object reads `children` and `parent` of it, and of what he finds there.
+    fn let_module_object_out_of_sight(&mut self, module: ModuleRef) {
+        self.keep_module_object(module);
+        if self.has_module_object.contains(&module) && self.out_of_sight.insert(module) {
+            self.newly_handed_out.push(module);
+        }
+    }
+
     fn find_commonjs_main(&self) -> Option<FileId> {
         let entry_points = self.input.sources.entry_points();
         self.input.graph.find_commonjs_main(entry_points)
@@ -2387,14 +2403,22 @@ impl<'a, 's> Walk<'a, 's> {
 
     // Which object a read of `children` or `parent` is made on is not followed: every object that is handed out may be the one.
     fn follow_module_object(&mut self, module: ModuleRef) {
-        if self.follows_children {
-            for required in self.find_required_modules(module) {
-                self.keep_module_object(required);
-            }
+        let is_out_of_sight = self.out_of_sight.contains(&module);
+        let read = self.input.ways_read_out_of_sight;
+        let mut related = Vec::new();
+        if self.follows_children || (is_out_of_sight && read.children) {
+            related = self.find_required_modules(module);
         }
-        if self.follows_parents || self.tests_own_parent.contains(&module) {
-            for requirer in self.find_requirers(module) {
-                self.keep_module_object(requirer);
+        if self.follows_parents
+            || (is_out_of_sight && read.parent)
+            || self.tests_own_parent.contains(&module)
+        {
+            related.extend(self.find_requirers(module));
+        }
+        for related in related {
+            match is_out_of_sight {
+                true => self.let_module_object_out_of_sight(related),
+                false => self.keep_module_object(related),
             }
         }
     }
@@ -2405,7 +2429,15 @@ impl<'a, 's> Walk<'a, 's> {
         owner: ModuleObjectOwner,
         object_use: ModuleObjectUse,
     ) {
-        let follows = match object_use {
+        // Under an entry point that is an ES module `require.main` and `process.mainModule` answer undefined, as they do in a program that names no way.
+        let (entry_points, graph) = (self.input.sources.entry_points(), self.input.graph);
+        let is_commonjs = |file: FileId| graph.kind(file) == ModuleKind::CommonJs;
+        if owner == ModuleObjectOwner::EntryPoint
+            && !entry_points.iter().any(|it| is_commonjs(it.file))
+        {
+            return;
+        }
+        let (follows_children, follows_parents) = match object_use {
             // The run time says which file has the id ".", and it keeps track in a program that names a way.
             ModuleObjectUse::Field(ModuleField::Id) if self.find_commonjs_main().is_none() => {
                 return self.files_naming_ways.push(ModuleRef::File(file));
@@ -2414,30 +2446,48 @@ impl<'a, 's> Walk<'a, 's> {
             ModuleObjectUse::Field(_) => return,
             // The host answers whether there is such an object, and it answers undefined in a program that names no way.
             ModuleObjectUse::Tested => return self.files_naming_ways.push(ModuleRef::File(file)),
-            ModuleObjectUse::Object => None,
+            ModuleObjectUse::Object => (false, false),
             ModuleObjectUse::ParentTested if owner == ModuleObjectOwner::OwnFile => {
                 let own = ModuleRef::File(file);
                 if self.tests_own_parent.insert(own) && self.has_module_object.contains(&own) {
                     self.newly_handed_out.push(own);
                 }
-                None
+                (false, false)
             }
-            ModuleObjectUse::ParentTested | ModuleObjectUse::Parent => {
-                Some(&mut self.follows_parents)
+            ModuleObjectUse::ParentTested | ModuleObjectUse::Parent => (false, true),
+            ModuleObjectUse::Children => (true, false),
+            // Which object it is is not known.
+            ModuleObjectUse::HandedOn if owner == ModuleObjectOwner::Related => {
+                self.lets_related_object_out_of_sight = true;
+                let read = self.input.ways_read_out_of_sight;
+                (read.children, read.parent)
             }
-            ModuleObjectUse::Children => Some(&mut self.follows_children),
+            ModuleObjectUse::HandedOn => (false, false),
         };
-        if follows.is_some_and(|follows| !replace(follows, true)) {
+        let follows_more = (follows_children && !self.follows_children)
+            || (follows_parents && !self.follows_parents);
+        self.follows_children |= follows_children;
+        self.follows_parents |= follows_parents;
+        if follows_more {
             self.newly_handed_out.clone_from(&self.modules_with_objects);
         }
-        if object_use != ModuleObjectUse::Object || owner == ModuleObjectOwner::EntryPoint {
+        let names_way = match object_use {
+            ModuleObjectUse::Object => false,
+            ModuleObjectUse::HandedOn => !self.input.ways_read_out_of_sight.is_empty(),
+            _ => true,
+        };
+        if names_way || owner == ModuleObjectOwner::EntryPoint {
             self.files_naming_ways.push(ModuleRef::File(file));
         }
+        let mut keep = |module: ModuleRef| match object_use {
+            ModuleObjectUse::HandedOn => self.let_module_object_out_of_sight(module),
+            _ => self.keep_module_object(module),
+        };
         match owner {
-            ModuleObjectOwner::OwnFile => self.keep_module_object(ModuleRef::File(file)),
+            ModuleObjectOwner::OwnFile => keep(ModuleRef::File(file)),
             ModuleObjectOwner::EntryPoint => {
-                for entry_point in self.input.sources.entry_points() {
-                    self.keep_module_object(ModuleRef::File(entry_point.file));
+                for entry_point in entry_points.iter().filter(|it| is_commonjs(it.file)) {
+                    keep(ModuleRef::File(entry_point.file));
                 }
             }
             // Whatever led to the object has been counted.
@@ -2571,8 +2621,8 @@ impl<'a, 's> Walk<'a, 's> {
         for entry_point in self.input.sources.entry_points() {
             self.reach_every_export(ModuleRef::File(entry_point.file));
             if self.input.reads_main_module_without_its_name {
-                let (owner, object_use) = (ModuleObjectOwner::EntryPoint, ModuleObjectUse::Object);
-                self.reach_module_object(entry_point.file, owner, object_use);
+                let owner = ModuleObjectOwner::EntryPoint;
+                self.reach_module_object(entry_point.file, owner, ModuleObjectUse::HandedOn);
             }
         }
         loop {
@@ -2750,6 +2800,8 @@ pub(crate) struct ReachedModules {
     pub with_module_objects: Vec<ModuleRef>,
     // Code that is reached in the file names `children` or `parent` of such an object, or `require.main` or `process.mainModule` for more than a test or a field that is a constant.
     pub naming_ways: Vec<ModuleRef>,
+    // A module object goes where nothing follows it, and nothing has been kept for whoever reads these there.
+    pub ways_not_followed_out_of_sight: WaysBetweenModuleObjects,
     // Modules that are written inside a file and that nothing calls.
     pub left_out_inner_modules: Vec<ModuleRef>,
     required: FxHashSet<(ModuleRef, ModuleRef)>,
@@ -2852,6 +2904,13 @@ pub(crate) fn find_left_out_code(
         .collect();
     reached_modules.required = take(&mut walk.required);
     reached_modules.naming_ways = take(&mut walk.files_naming_ways);
+    let is_some_out_of_sight =
+        !walk.out_of_sight.is_empty() || walk.lets_related_object_out_of_sight;
+    let read = input.ways_read_out_of_sight;
+    reached_modules.ways_not_followed_out_of_sight = WaysBetweenModuleObjects {
+        children: is_some_out_of_sight && !walk.follows_children && !read.children,
+        parent: is_some_out_of_sight && !walk.follows_parents && !read.parent,
+    };
     for enumeration in walk.files_reading_members.keys() {
         let declarations = &mut left_out.declarations;
         declarations.note_object_never_handed_on(enumeration.file, enumeration.id);

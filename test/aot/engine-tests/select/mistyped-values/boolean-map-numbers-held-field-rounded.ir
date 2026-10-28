@@ -1024,17 +1024,17 @@ runtimefunction id=70 function=f16 visibility=Private
 # CHECK-NEXT: Throw v10
 # CHECK-NEXT: b3() frequency=Rare:
 # CHECK-NEXT: Return v10
-# CHECK-NEXT: b4() handler=b23():
+# CHECK-NEXT: b4() handler=b26():
 # CHECK-NEXT: v12: 1 = Integer integer=1
 # CHECK-NEXT: v13: undefined = YieldBySavingFrame v4, v12, v1, v5, v6
 # CHECK-NEXT: v14: anything = ResultAt v13
 # CHECK-NEXT: v15: int[0, 2] = ResultAt v13 index=1
 # CHECK-NEXT: Switch v15 cases=[1, 2] -> case b5(), case b6(), otherwise b7()
-# CHECK-NEXT: b5() frequency=Rare handler=b23():
+# CHECK-NEXT: b5() frequency=Rare handler=b26():
 # CHECK-NEXT: Throw v14
 # CHECK-NEXT: b6() frequency=Rare:
 # CHECK-NEXT: Return v14
-# CHECK-NEXT: b7() handler=b23():
+# CHECK-NEXT: b7() handler=b26():
 # CHECK-NEXT: v16: string = TypeOf v5
 # CHECK-NEXT: v17: undefined = CallDirect v16 function=f2 accessSite=21
 # CHECK-NEXT: v18: boolean = ToBoolean v5
@@ -1052,14 +1052,14 @@ runtimefunction id=70 function=f16 visibility=Private
 # CHECK-NEXT: b8() frequency=Rare:
 # CHECK-NEXT: v29: undefined = Undefined
 # CHECK-NEXT: Jump -> next b10(v29)
-# CHECK-NEXT: b9(v30: boolean) frequency=Rare handler=b23():
+# CHECK-NEXT: b9(v30: boolean) frequency=Rare handler=b26():
 # CHECK-NEXT: v31: undefined = Undefined
 # CHECK-NEXT: v32: L3 = NewObject -, v31 layout=L3 fields=[0] allocationSite=12 allocationClass=2
 # CHECK-NEXT: PropSet v32, v30 key="held"
 # CHECK-NEXT: v34: L3 = FinishObject v32
 # CHECK-NEXT: v35: anything ~ number = CallDirect v34 function=f6 accessSite=27 [calleeIsPredicted]
 # CHECK-NEXT: Jump -> next b10(v35)
-# CHECK-NEXT: b10(v36: anything ~ number) frequency=Rare handler=b23():
+# CHECK-NEXT: b10(v36: anything ~ number) frequency=Rare handler=b26():
 # CHECK-NEXT: v37: -3 = Integer integer=-3
 # CHECK-NEXT: v38: boolean = Eq v36, v37
 # CHECK-NEXT: v39: undefined = CallDirect v38 function=f2 accessSite=28
@@ -1073,86 +1073,98 @@ runtimefunction id=70 function=f16 visibility=Private
 # CHECK-NEXT: b11(v46: number):
 # CHECK-NEXT: v47: number = ToNumber v46 calledBuiltin=MathFloor
 # CHECK-NEXT: Jump -> next b13(v47)
-# CHECK-NEXT: b12(v48: undefined|null|boolean|string|symbol|bigint|object) frequency=Rare handler=b23():
+# CHECK-NEXT: b12(v48: undefined|null|boolean|string|symbol|bigint|object) frequency=Rare handler=b26():
 # CHECK-NEXT: v49: number = ToNumber v48 calledBuiltin=MathFloor
 # CHECK-NEXT: Jump -> next b13(v49)
-# CHECK-NEXT: b13(v50: number) handler=b23():
+# CHECK-NEXT: b13(v50: number) handler=b26():
 # CHECK-NEXT: v51: int|whole = CallBuiltin -, v50 overload=MathFloor/0 accessSite=31
 # CHECK-NEXT: v52: undefined = CallDirect v51 function=f2 accessSite=32
 # CHECK-NEXT: v53: 4 = Integer integer=4
-# CHECK-NEXT: v54: Array<int[1, 2], Int32> = Data data=d5 allocationSite=15 arrayStorage=Int32
-# CHECK-NEXT: v55: Array<int[1, 2], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v54 provenType=Array<int[1, 2], proven, Int32, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v56: int[0, 4294967295] = CallBuiltin v55 overload=ArrayPrototypeLength/0 accessSite=55
-# CHECK-NEXT: v57: 0 = Integer
-# CHECK-NEXT: Jump -> next b14(v57, v53)
-# CHECK-NEXT: b14(v58: int[0, 4294967295], v59: int|whole) handler=b23():
+# CHECK-NEXT: v54: 1 = Integer integer=1
+# CHECK-NEXT: v55: 2 = Integer integer=2
+# CHECK-NEXT: v56: Array<int[1, 2], Int32> = NewArray v54, v55 contents=int[1, 2] allocationSite=15 arrayStorage=Int32 [contentsAreProven]
+# CHECK-NEXT: v57: Array<int[1, 2], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v56 provenType=Array<int[1, 2], proven, Int32, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v58: int[0, 4294967295] = CallBuiltin v57 overload=ArrayPrototypeLength/0 accessSite=55
+# CHECK-NEXT: v59: 0 = Integer
+# CHECK-NEXT: Jump -> next b14(v59, v53)
+# CHECK-NEXT: b14(v60: int[0, 4294967295] ~ 0, v61: int|whole ~ 4):
+# CHECK-NEXT: Jump -> next b15(v60, v61)
+# CHECK-NEXT: b15(v62: int[0, 4294967295], v63: int|whole) handler=b26():
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v61: boolean = Less v58, v56
-# CHECK-NEXT: Branch v61 -> taken b15(| 0), notTaken b22()
-# CHECK-NEXT: b15(v62: int[0, 4294967294]):
-# CHECK-NEXT: v63: boolean = HasArrayElement v55, v62 arrayStorage=Int32 level=Proven accessSite=56 [keyIsIntegral]
-# CHECK-NEXT: Branch v63 -> taken b16(), notTaken b20()
-# CHECK-NEXT: b16():
-# CHECK-NEXT: v64: int[0, 4294967294] ~ int[0, 2147483647] = Upcast v62 castType=int[0, 9007199254740990]
-# CHECK-NEXT: v65: undefined|int[1, 2] = GetArrayElement v55, v64 arrayStorage=Int32 level=Proven accessSite=57 [keyIsIntegral]
-# CHECK-NEXT: v66: undefined|int[1, 2] ~ int[1, 2] = Upcast v65 castType=undefined|int[1, 2]
-# CHECK-NEXT: v67: boolean ~ true = TypeTest v66 testedType=number
-# CHECK-NEXT: Branch v67 -> taken b17(| 0), notTaken b18()
-# CHECK-NEXT: b17(v68: int[1, 2]):
-# CHECK-NEXT: v69: int|whole = Add v59, v68
-# CHECK-NEXT: Jump -> next b19(v69)
-# CHECK-NEXT: b18() frequency=Unlikely:
-# CHECK-NEXT: v70: number ~ int|whole = Add v59, v66
-# CHECK-NEXT: v71: int|whole = AssumeType v70 provenType=int|whole
-# CHECK-NEXT: Jump -> next b19(v71)
-# CHECK-NEXT: b19(v72: int|whole):
-# CHECK-NEXT: Jump -> next b21(v72)
-# CHECK-NEXT: b20() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b21(v59)
-# CHECK-NEXT: b21(v73: int|whole):
-# CHECK-NEXT: v74: int[1, 4294967295] = Increment v62
-# CHECK-NEXT: Jump -> next b14(v74, v73)
-# CHECK-NEXT: b22() handler=b23():
-# CHECK-NEXT: v75: "abc" = String string="abc"
-# CHECK-NEXT: v76: number = ToNumber v6 calledBuiltin=StringPrototypeCharAt
-# CHECK-NEXT: v77: int|whole = ToIntegerOrInfinity v76
-# CHECK-NEXT: v78: string = CallBuiltin v75, v77 overload=StringPrototypeCharAt/0 accessSite=38
-# CHECK-NEXT: v79: undefined = CallDirect v78 function=f2 accessSite=39
-# CHECK-NEXT: v80: " " = String string=" "
-# CHECK-NEXT: v81: fractional = Double number=0.25
-# CHECK-NEXT: v82: 0 = Integer
-# CHECK-NEXT: v83: string = Strcat v59, v80, v81, v80, v80, v80, v82
-# CHECK-NEXT: v84: undefined = CallDirect v83 function=f2 accessSite=45
-# CHECK-NEXT: Jump -> next b30()
-# CHECK-NEXT: b23() role=CatchHandler:
-# CHECK-NEXT: v85: anything = CatchValue
-# CHECK-NEXT: v86: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v85 castType=anything
-# CHECK-NEXT: v87: boolean = TypeTest v86 testedType=undefined|null
-# CHECK-NEXT: Branch v87 -> taken b24(), notTaken b25(| 0)
-# CHECK-NEXT: b24():
-# CHECK-NEXT: v88: undefined = Undefined
-# CHECK-NEXT: Jump -> next b26(v88)
-# CHECK-NEXT: b25(v89: boolean|number|string|symbol|bigint|object ~ number|string|symbol|bigint|object):
-# CHECK-NEXT: v90: anything = PropGet v89 key="name" accessSite=46
-# CHECK-NEXT: Jump -> next b26(v90)
-# CHECK-NEXT: b26(v91: anything):
-# CHECK-NEXT: v92: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v85 castType=anything
-# CHECK-NEXT: v93: undefined = CallDirect v91 function=f2 accessSite=47
-# CHECK-NEXT: v94: boolean = TypeTest v92 testedType=undefined|null
-# CHECK-NEXT: Branch v94 -> taken b27(), notTaken b28(| 0)
+# CHECK-NEXT: v65: boolean = Less v62, v58
+# CHECK-NEXT: Branch v65 -> taken b16(| 0), notTaken b25()
+# CHECK-NEXT: b16(v66: int[0, 4294967294]):
+# CHECK-NEXT: v67: boolean = HasArrayElement v57, v66 arrayStorage=Int32 level=Proven accessSite=56 [keyIsIntegral]
+# CHECK-NEXT: Branch v67 -> taken b17(), notTaken b23()
+# CHECK-NEXT: b17():
+# CHECK-NEXT: v68: int[0, 4294967294] ~ int[0, 2147483647] = Upcast v66 castType=int[0, 9007199254740990]
+# CHECK-NEXT: v69: boolean = IsInBounds v57, v68
+# CHECK-NEXT: Branch v69 -> taken b18(| 0), notTaken b19()
+# CHECK-NEXT: b18(v70: guard):
+# CHECK-NEXT: v71: int[1, 2] = GetArrayElement v57, v68, v70 arrayStorage=Int32 level=Proven accessSite=57 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v72: int|whole = Add v63, v71
+# CHECK-NEXT: Jump -> next b24(v72)
+# CHECK-NEXT: b19() frequency=Rare:
+# CHECK-NEXT: v73: undefined|int[1, 2] = GetArrayElement v57, v68 arrayStorage=Int32 level=Proven accessSite=57 [keyIsIntegral]
+# CHECK-NEXT: v74: undefined|int[1, 2] ~ int[1, 2] = Upcast v73 castType=undefined|int[1, 2]
+# CHECK-NEXT: v75: boolean ~ true = TypeTest v74 testedType=number
+# CHECK-NEXT: Branch v75 -> taken b20(| 0), notTaken b21()
+# CHECK-NEXT: b20(v76: int[1, 2]) frequency=Rare:
+# CHECK-NEXT: v77: int|whole = Add v63, v76
+# CHECK-NEXT: Jump -> next b22(v77)
+# CHECK-NEXT: b21() frequency=Rare:
+# CHECK-NEXT: v78: number ~ int|whole = Add v63, v74
+# CHECK-NEXT: v79: int|whole = AssumeType v78 provenType=int|whole
+# CHECK-NEXT: Jump -> next b22(v79)
+# CHECK-NEXT: b22(v80: int|whole) frequency=Rare:
+# CHECK-NEXT: v81: int[1, 4294967295] = Increment v66
+# CHECK-NEXT: Jump -> next b14(v81, v80)
+# CHECK-NEXT: b23() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b24(v63)
+# CHECK-NEXT: b24(v82: int|whole):
+# CHECK-NEXT: v83: int[1, 4294967295] = Increment v66
+# CHECK-NEXT: Jump -> next b15(v83, v82)
+# CHECK-NEXT: b25() handler=b26():
+# CHECK-NEXT: v84: "abc" = String string="abc"
+# CHECK-NEXT: v85: number = ToNumber v6 calledBuiltin=StringPrototypeCharAt
+# CHECK-NEXT: v86: int|whole = ToIntegerOrInfinity v85
+# CHECK-NEXT: v87: string = CallBuiltin v84, v86 overload=StringPrototypeCharAt/0 accessSite=38
+# CHECK-NEXT: v88: undefined = CallDirect v87 function=f2 accessSite=39
+# CHECK-NEXT: v89: " " = String string=" "
+# CHECK-NEXT: v90: fractional = Double number=0.25
+# CHECK-NEXT: v91: 0 = Integer
+# CHECK-NEXT: v92: string = Strcat v63, v89, v90, v89, v89, v89, v91
+# CHECK-NEXT: v93: undefined = CallDirect v92 function=f2 accessSite=45
+# CHECK-NEXT: Jump -> next b33()
+# CHECK-NEXT: b26() role=CatchHandler:
+# CHECK-NEXT: v94: anything = CatchValue
+# CHECK-NEXT: v95: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v94 castType=anything
+# CHECK-NEXT: v96: boolean = TypeTest v95 testedType=undefined|null
+# CHECK-NEXT: Branch v96 -> taken b27(), notTaken b28(| 0)
 # CHECK-NEXT: b27():
-# CHECK-NEXT: v95: undefined = Undefined
-# CHECK-NEXT: Jump -> next b29(v95)
-# CHECK-NEXT: b28(v96: boolean|number|string|symbol|bigint|object ~ number|string|symbol|bigint|object):
-# CHECK-NEXT: v97: anything = PropGet v96 key="message" accessSite=50
+# CHECK-NEXT: v97: undefined = Undefined
 # CHECK-NEXT: Jump -> next b29(v97)
-# CHECK-NEXT: b29(v98: anything):
-# CHECK-NEXT: v99: string = CallBuiltin -, v98 overload=String/0 builtinCallForm=AnyReceiver accessSite=51
-# CHECK-NEXT: v100: undefined = CallBuiltin -, v99 overload=ConsoleError/0 accessSite=52
-# CHECK-NEXT: Jump -> next b30()
+# CHECK-NEXT: b28(v98: boolean|number|string|symbol|bigint|object ~ number|string|symbol|bigint|object):
+# CHECK-NEXT: v99: anything = PropGet v98 key="name" accessSite=46
+# CHECK-NEXT: Jump -> next b29(v99)
+# CHECK-NEXT: b29(v100: anything):
+# CHECK-NEXT: v101: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v94 castType=anything
+# CHECK-NEXT: v102: undefined = CallDirect v100 function=f2 accessSite=47
+# CHECK-NEXT: v103: boolean = TypeTest v101 testedType=undefined|null
+# CHECK-NEXT: Branch v103 -> taken b30(), notTaken b31(| 0)
 # CHECK-NEXT: b30():
-# CHECK-NEXT: v101: undefined = Undefined
-# CHECK-NEXT: Return v101
+# CHECK-NEXT: v104: undefined = Undefined
+# CHECK-NEXT: Jump -> next b32(v104)
+# CHECK-NEXT: b31(v105: boolean|number|string|symbol|bigint|object ~ number|string|symbol|bigint|object):
+# CHECK-NEXT: v106: anything = PropGet v105 key="message" accessSite=50
+# CHECK-NEXT: Jump -> next b32(v106)
+# CHECK-NEXT: b32(v107: anything):
+# CHECK-NEXT: v108: string = CallBuiltin -, v107 overload=String/0 builtinCallForm=AnyReceiver accessSite=51
+# CHECK-NEXT: v109: undefined = CallBuiltin -, v108 overload=ConsoleError/0 accessSite=52
+# CHECK-NEXT: Jump -> next b33()
+# CHECK-NEXT: b33():
+# CHECK-NEXT: v110: undefined = Undefined
+# CHECK-NEXT: Return v110
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m1 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] enclosingRuntimeFunction=69 captures=[{type=f13}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f13} creator=Entrypoint{target=f13 arguments=Registers} {

@@ -893,30 +893,39 @@ runtimefunction id=70 function=f8 visibility=Private
 # CHECK-NEXT: v14: 0 = Integer
 # CHECK-NEXT: v15: 0 = Integer
 # CHECK-NEXT: Jump -> next b8(v14, v15)
-# CHECK-NEXT: b8(v16: i32, v17: int|whole):
+# CHECK-NEXT: b8(v16: i32 ~ 0, v17: int|whole ~ 0):
+# CHECK-NEXT: Jump -> next b9(v16, v17)
+# CHECK-NEXT: b9(v18: i32, v19: int|whole):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v19: anything = PropGet v6 key="length" accessSite=9
-# CHECK-NEXT: v20: anything ~ number = Upcast v19 castType=anything
-# CHECK-NEXT: v21: boolean = ShouldFailPrediction
-# CHECK-NEXT: Branch v21 -> taken b11(), notTaken b9()
-# CHECK-NEXT: b9():
-# CHECK-NEXT: v22: boolean ~ true = TypeTest v20 testedType=number
-# CHECK-NEXT: Branch v22 -> taken b10(| 0), notTaken b11()
-# CHECK-NEXT: b10(v23: number):
-# CHECK-NEXT: v24: boolean = Less v17, v23
-# CHECK-NEXT: Branch v24 -> taken b12(), notTaken b13()
-# CHECK-NEXT: b11() frequency=Rare:
-# CHECK-NEXT: v25: boolean = Less v17, v20
-# CHECK-NEXT: Branch v25 -> taken b12(), notTaken b13()
+# CHECK-NEXT: v21: anything = PropGet v6 key="length" accessSite=9
+# CHECK-NEXT: v22: anything ~ number = Upcast v21 castType=anything
+# CHECK-NEXT: v23: boolean = ShouldFailPrediction
+# CHECK-NEXT: Branch v23 -> taken b13(), notTaken b10()
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v24: boolean ~ true = TypeTest v22 testedType=number
+# CHECK-NEXT: Branch v24 -> taken b11(| 0), notTaken b13()
+# CHECK-NEXT: b11(v25: number):
+# CHECK-NEXT: v26: boolean = Less v19, v25
+# CHECK-NEXT: Branch v26 -> taken b12(), notTaken b15()
 # CHECK-NEXT: b12():
-# CHECK-NEXT: v26: 31 = Integer integer=31
-# CHECK-NEXT: v27: i32 = CallBuiltin -, v16, v26 overload=MathImul/0 accessSite=10
-# CHECK-NEXT: v28: 0 = Integer
-# CHECK-NEXT: v29: i32 = BitOr v27, v28
-# CHECK-NEXT: v30: int|whole = Increment v17
-# CHECK-NEXT: Jump -> next b8(v29, v30)
-# CHECK-NEXT: b13():
-# CHECK-NEXT: Return v16
+# CHECK-NEXT: v27: 31 = Integer integer=31
+# CHECK-NEXT: v28: i32 = CallBuiltin -, v18, v27 overload=MathImul/0 accessSite=10
+# CHECK-NEXT: v29: 0 = Integer
+# CHECK-NEXT: v30: i32 = BitOr v28, v29
+# CHECK-NEXT: v31: int|whole = Increment v19
+# CHECK-NEXT: Jump -> next b9(v30, v31)
+# CHECK-NEXT: b13() frequency=Rare:
+# CHECK-NEXT: v32: boolean = Less v19, v22
+# CHECK-NEXT: Branch v32 -> taken b14(| 0), notTaken b15()
+# CHECK-NEXT: b14(v33: int|whole) frequency=Rare:
+# CHECK-NEXT: v34: 31 = Integer integer=31
+# CHECK-NEXT: v35: i32 = CallBuiltin -, v18, v34 overload=MathImul/0 accessSite=10
+# CHECK-NEXT: v36: 0 = Integer
+# CHECK-NEXT: v37: i32 = BitOr v35, v36
+# CHECK-NEXT: v38: int|whole = Increment v33
+# CHECK-NEXT: Jump -> next b8(v37, v38)
+# CHECK-NEXT: b15():
+# CHECK-NEXT: Return v18
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="foldBox"
 # CHECK: module=m0 position=1070 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w1 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=i32 site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}] {

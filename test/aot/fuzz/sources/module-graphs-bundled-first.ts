@@ -40,7 +40,9 @@ const drawn: Drawn = (seed, bed) => {
     const { [file]: text, ...chunks } = Object.fromEntries(
       readdirSync(join(folder, "bundle")).map(name => [name, readFileSync(join(folder, "bundle", name), "utf8")]),
     );
-    const made = text === undefined ? undefined : asProgram({ file, text, files: chunks });
+    // `import.meta` in the CommonJS format is no valid program.
+    if (text === undefined || (format === "cjs" && text.includes("import.meta"))) return;
+    const made = asProgram({ file, text, files: chunks });
     return made && { seed, ...made, notes: `format ${format} ${shape.join(" ")}`, group: format, standsAlone: true };
   } finally {
     rmSync(folder, { recursive: true, force: true });

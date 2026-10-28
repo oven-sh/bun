@@ -690,10 +690,10 @@ runtimefunction id=131091 function=f14 visibility=Private
 # CHECK-NEXT: Branch v13 -> taken b3(| 0), notTaken b24(v9, v10)
 # CHECK-NEXT: b3(v14: int[0, 4294967294]):
 # CHECK-NEXT: v15: int[0, 4294967294] = Sub v14, v5
-# CHECK-NEXT: v16: boolean = IsElementPresent v2, v14 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: v16: boolean = IsInBounds v2, v14
 # CHECK-NEXT: Branch v16 -> taken b4(| 0), notTaken b7()
 # CHECK-NEXT: b4(v17: guard):
-# CHECK-NEXT: v18: int[-2147483648, 4294967296] = GetArrayElement v2, v14, v17 arrayStorage=Double level=Proven accessSite=20 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v18: int[-2147483648, 4294967296] = GetArrayElement v2, v14, v17 arrayStorage=Double level=Proven accessSite=20 [keyIsIntegral, isInBounds]
 # CHECK-NEXT: v19: " -> " = String string=" -> "
 # CHECK-NEXT: v20: boolean = IsInsideView v8, v18 typedArrayType=2 [keyIsIntegral]
 # CHECK-NEXT: Branch v20 -> taken b5(| 0), notTaken b6()
@@ -734,10 +734,10 @@ runtimefunction id=131091 function=f14 visibility=Private
 # CHECK-NEXT: Branch v44 -> taken b14(| 0), notTaken b24(v40, v41)
 # CHECK-NEXT: b14(v45: int[0, 4294967294]):
 # CHECK-NEXT: v46: int[0, 4294967294] = Sub v45, v5
-# CHECK-NEXT: v47: boolean = IsElementPresent v2, v45 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: v47: boolean = IsInBounds v2, v45
 # CHECK-NEXT: Branch v47 -> taken b15(| 0), notTaken b19()
 # CHECK-NEXT: b15(v48: guard):
-# CHECK-NEXT: v49: int[-2147483648, 4294967296] = GetArrayElement v2, v45, v48 arrayStorage=Double level=Proven accessSite=20 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v49: int[-2147483648, 4294967296] = GetArrayElement v2, v45, v48 arrayStorage=Double level=Proven accessSite=20 [keyIsIntegral, isInBounds]
 # CHECK-NEXT: v50: " -> " = String string=" -> "
 # CHECK-NEXT: v51: boolean = HasArrayStorage v39 arrayStorage=Int32
 # CHECK-NEXT: Branch v51 -> taken b16(| 0), notTaken b18()

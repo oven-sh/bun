@@ -26,6 +26,7 @@ fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
     for &module in &reached.naming_ways {
         graph.set_names_way_to_module_objects(module);
     }
+    graph.set_ways_not_followed_out_of_sight(reached.ways_not_followed_out_of_sight);
     graph.leave_out_inner_modules(&reached.left_out_inner_modules);
     graph.limit_requests(|referrer, request| reached.keeps_request(referrer, request));
 }
@@ -124,6 +125,7 @@ impl Build<'_> {
                     limits: &self.limits,
                     reads_main_module_without_its_name: (self.options.load)
                         .reads_main_module_without_its_name,
+                    ways_read_out_of_sight: self.options.load.ways_read_out_of_sight,
                 };
                 let (left_out, reached) = find_left_out_code(&input, &in_parallel);
                 finish_modules(&mut graph, &reached);

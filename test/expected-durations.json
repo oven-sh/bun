@@ -2383,169 +2383,157 @@
     "windows-aarch64": 100
   },
   "aot/parallel/access-sites/main-thread-workers-teach-same-sites.ts": {
-    "default": 8300
-  },
-  "aot/parallel/arrays/array-methods-function-written-call-cold.ts": {
-    "default": 10600
-  },
-  "aot/parallel/arrays/callback-map-spreads-text-list-verified.js": {
-    "default": 3900
-  },
-  "aot/parallel/arrays/elements-copied-by-between-views-buffer.ts": {
-    "default": 6100
-  },
-  "aot/parallel/arrays/hundreds-of-names-no-index-validated.ts": {
-    "default": 5600
-  },
-  "aot/parallel/arrays/long-arrays-that-hold-little-are-joined.ts": {
-    "default": 6000
-  },
-  "aot/parallel/arrays/parts-of-views-of-two-classes-verified.ts": {
-    "default": 4600
-  },
-  "aot/parallel/arrays/push-grows-long-arrays.ts": {
-    "default": 7300
-  },
-  "aot/parallel/arrays/searches-of-arrays-count-in-integers.ts": {
-    "default": 4200
-  },
-  "aot/parallel/arrays/typed-array-accesses-outside.ts": {
-    "default": 3800
-  },
-  "aot/parallel/async/async-generator-stepped-read-builtin.js": {
-    "default": 3900
-  },
-  "aot/parallel/async/first-suspensions-of-many-frame-sizes.ts": {
-    "default": 8900
-  },
-  "aot/parallel/async/suspended-async-keeps-alive/main.ts": {
-    "default": 4100
-  },
-  "aot/parallel/async/suspended-generator-keeps-alive/main.ts": {
-    "default": 4300
-  },
-  "aot/parallel/builtin-modules/console-methods-replaced-import-worker.ts": {
-    "default": 7600
-  },
-  "aot/parallel/builtin-modules/console-methods-replaced-value-nobody.js": {
-    "default": 6100
-  },
-  "aot/parallel/builtin-modules/default-export-namespace-every-module.js": {
-    "default": 18700
-  },
-  "aot/parallel/builtin-modules/inspect-zip-keyed-take-descriptors-apart-validated.js": {
-    "default": 12700
-  },
-  "aot/parallel/builtin-modules/inspect-zip-keyed-take-descriptors-apart.js": {
-    "default": 9300
-  },
-  "aot/parallel/builtin-modules/native-module-import-error-is-cached.mjs": {
     "default": 8200
   },
-  "aot/parallel/builtin-modules/native-module-import-reads-user.mjs": {
-    "default": 8600
-  },
-  "aot/parallel/builtin-modules/socket-connects-name-function-program.mjs": {
-    "default": 7700
-  },
-  "aot/parallel/builtin-modules/sqlite-in-memory-with-no-optional-pass.ts": {
-    "default": 3700
-  },
-  "aot/parallel/builtins/first-map-in-worker/main.ts": {
-    "default": 15100
-  },
-  "aot/parallel/bundler/define-global-path.ts": {
-    "default": 4700
-  },
-  "aot/parallel/bundler/drop-console/main.ts": {
-    "default": 5100
-  },
-  "aot/parallel/calls-fast-paths/class-as-value/main.ts": {
-    "default": 5600
-  },
-  "aot/parallel/calls-fast-paths/intl-constant-formatters-time-zone.ts": {
+  "aot/parallel/arrays/array-methods-function-written-call-cold.ts": {
     "default": 4500
   },
-  "aot/parallel/calls-fast-paths/to-locale-string-with-constant-arguments.ts": {
-    "default": 4200
-  },
-  "aot/parallel/calls/deep-tail-recursion-fills-list-closures.ts": {
-    "default": 5200
-  },
-  "aot/parallel/calls/handler-try-ended-stays-every-depth.mjs": {
-    "default": 4200
-  },
-  "aot/parallel/calls/spread-resolved-behind-the-last-round.js": {
-    "default": 3100
-  },
-  "aot/parallel/calls/stack-ends-entry-function-reads-args.ts": {
-    "default": 4000
-  },
-  "aot/parallel/classes-and-closures/made-closure-typed-param-another-kind.ts": {
+  "aot/parallel/arrays/callback-map-spreads-text-list-verified.js": {
     "default": 4600
   },
+  "aot/parallel/arrays/elements-copied-by-between-views-buffer.ts": {
+    "default": 3800
+  },
+  "aot/parallel/arrays/hundreds-of-names-no-index-validated.ts": {
+    "default": 6600
+  },
+  "aot/parallel/arrays/parts-of-views-of-two-classes-verified.ts": {
+    "default": 5400
+  },
+  "aot/parallel/arrays/runtime-code-clears-pristine-flag.ts": {
+    "default": 3600
+  },
+  "aot/parallel/arrays/stores-under-numbers-no-index-validated.js": {
+    "default": 3500
+  },
+  "aot/parallel/arrays/typed-array-accesses-outside.ts": {
+    "default": 4400
+  },
+  "aot/parallel/async/async-generator-stepped-read-builtin.js": {
+    "default": 4000
+  },
+  "aot/parallel/async/for-await-over-sync-iterables-in-place.ts": {
+    "default": 3200
+  },
+  "aot/parallel/builtin-modules/console-methods-replaced-import-worker.ts": {
+    "default": 8000
+  },
+  "aot/parallel/builtin-modules/console-methods-replaced-value-nobody.js": {
+    "default": 5800
+  },
+  "aot/parallel/builtin-modules/default-export-namespace-every-module.js": {
+    "default": 19400
+  },
+  "aot/parallel/builtin-modules/exports-that-only-the-namespace-holds-validated.js": {
+    "default": 3400
+  },
+  "aot/parallel/builtin-modules/functions-library-host-objects-read.mjs": {
+    "default": 3200
+  },
+  "aot/parallel/builtin-modules/inspect-zip-keyed-take-descriptors-apart-validated.js": {
+    "default": 12800
+  },
+  "aot/parallel/builtin-modules/native-module-import-error-is-cached.mjs": {
+    "default": 8600
+  },
+  "aot/parallel/builtin-modules/native-module-import-reads-user.mjs": {
+    "default": 9400
+  },
+  "aot/parallel/builtin-modules/socket-connects-name-function-program.mjs": {
+    "default": 3300
+  },
+  "aot/parallel/builtin-modules/sqlite-in-memory-with-no-optional-pass.ts": {
+    "default": 4400
+  },
+  "aot/parallel/builtin-modules/views-buffers-can-resized-filled-read.js": {
+    "default": 3200
+  },
+  "aot/parallel/builtins/first-map-in-worker/main.ts": {
+    "default": 15000
+  },
+  "aot/parallel/bundler/drop-console/main.ts": {
+    "default": 5400
+  },
+  "aot/parallel/calls/deep-tail-recursion-fills-list-closures.ts": {
+    "default": 4800
+  },
+  "aot/parallel/calls/spread-resolved-behind-the-last-round.js": {
+    "default": 3300
+  },
+  "aot/parallel/calls/stack-ends-entry-function-reads-args.ts": {
+    "default": 4200
+  },
+  "aot/parallel/classes-and-closures/made-closure-typed-param-another-kind.ts": {
+    "default": 5200
+  },
   "aot/parallel/closed-world/calls-into-loaded-modules-admitted.js": {
-    "default": 11500
+    "default": 11800
   },
   "aot/parallel/closed-world/calls-into-loaded-modules-refused.js": {
-    "default": 9900
+    "default": 9300
   },
   "aot/parallel/closed-world/calls-into-required-modules-refused.js": {
-    "default": 8800
+    "default": 8100
   },
   "aot/parallel/closed-world/calls-required-modules-refused-validated.js": {
-    "default": 27500
+    "default": 27700
   },
   "aot/parallel/closed-world/code-computed-path-without-js-eval.cjs": {
-    "default": 4700
+    "default": 5200
   },
   "aot/parallel/closed-world/code-computed-path-without-js-extension.cjs": {
-    "default": 4700
+    "default": 5200
   },
   "aot/parallel/closed-world/external-package-finds-the-realm-locked/main.cjs": {
-    "default": 7000
-  },
-  "aot/parallel/closed-world/external-package-stores-equal-compiled/main.cjs": {
-    "default": 7000
-  },
-  "aot/parallel/closed-world/files-that-load-as-host-objects-by-name.cjs": {
-    "default": 4700
-  },
-  "aot/parallel/closed-world/import-of-text-refused.js": {
-    "default": 4700
-  },
-  "aot/parallel/closed-world/library-code-evaluated-text-admitted.js": {
-    "default": 6800
-  },
-  "aot/parallel/closed-world/members-module-node-listed-nobody.mjs": {
     "default": 7200
   },
+  "aot/parallel/closed-world/external-package-stores-equal-compiled/main.cjs": {
+    "default": 7200
+  },
+  "aot/parallel/closed-world/files-that-load-as-host-objects-by-name.cjs": {
+    "default": 5200
+  },
+  "aot/parallel/closed-world/import-of-text-refused.js": {
+    "default": 5100
+  },
+  "aot/parallel/closed-world/library-code-evaluated-text-admitted.js": {
+    "default": 6900
+  },
+  "aot/parallel/closed-world/members-module-node-listed-nobody.mjs": {
+    "default": 7500
+  },
   "aot/parallel/closed-world/members-process-listed-builtin-kept-back.mjs": {
-    "default": 14600
+    "default": 9300
   },
   "aot/parallel/closed-world/modules-by-name-admitted/main.cjs": {
     "default": 9600
   },
   "aot/parallel/closed-world/package-outside-sees-no-module-object/main.cjs": {
-    "default": 8000
+    "default": 8300
   },
   "aot/parallel/closed-world/parent-package-outside-outlives/main.cjs": {
-    "default": 6900
+    "default": 7200
   },
   "aot/parallel/closed-world/script-declarations-constant-admitted.js": {
-    "default": 6700
+    "default": 7000
   },
   "aot/parallel/closed-world/script-declarations-every-global.js": {
-    "default": 4400
+    "default": 4500
   },
   "aot/parallel/closed-world/worker-from-text-admitted.js": {
-    "default": 7000
+    "default": 7400
+  },
+  "aot/parallel/commonjs/imported-files-jobs-run-import-ends-load/main.mjs": {
+    "default": 8300
   },
   "aot/parallel/define-property/descriptors-leave-getter-descriptors-verified.js": {
     "default": 3900
   },
-  "aot/parallel/escape-analysis/callbacks-all-the-way-down.js": {
-    "default": 8100
+  "aot/parallel/escape-analysis/arrays-many-values-made-await-validated.js": {
+    "default": 3200
+  },
+  "aot/parallel/escape-analysis/callback-scope-function-calls-function.js": {
+    "default": 3200
   },
   "aot/parallel/escape-analysis/closure-of-async-function-never-calls-verified.js": {
     "default": 3900
@@ -2553,668 +2541,449 @@
   "aot/parallel/escape-analysis/function-objects-without-captures-called.js": {
     "default": 3900
   },
-  "aot/parallel/escape-analysis/list-literal-written-goes-callback-place.ts": {
-    "default": 4600
-  },
-  "aot/parallel/escape-analysis/list-texts-written-goes-callback-place.ts": {
-    "default": 4600
-  },
-  "aot/parallel/escape-analysis/literal-list-written-goes-callback-place.ts": {
-    "default": 4600
-  },
-  "aot/parallel/escape-analysis/object-frozen-goes-callback-place.ts": {
-    "default": 4600
-  },
-  "aot/parallel/escape-analysis/object-gets-name-goes-callback-place.ts": {
-    "default": 4600
-  },
-  "aot/parallel/escape-analysis/object-goes-function-hands-place-closure.ts": {
-    "default": 4600
-  },
-  "aot/parallel/escape-analysis/object-kept-goes-callback-place-closure.ts": {
-    "default": 4600
-  },
-  "aot/parallel/escape-analysis/object-read-goes-callback-place-closure.ts": {
-    "default": 4600
-  },
-  "aot/parallel/escape-analysis/object-written-goes-callback-place.ts": {
-    "default": 4600
-  },
-  "aot/parallel/external-data/conversions-in-place-collector-marks.ts": {
-    "default": 4000
-  },
-  "aot/parallel/external-data/json-parse-drawn-texts-types-hold-other.ts": {
-    "default": 4500
-  },
-  "aot/parallel/external-data/json-parse-type-argument-every-byte-cut.ts": {
-    "default": 6000
-  },
-  "aot/parallel/external-data/json-parse-type-argument-learned-outer.ts": {
-    "default": 4900
-  },
-  "aot/parallel/external-data/json-parse-type-argument-more-orders.ts": {
-    "default": 3600
-  },
   "aot/parallel/external-data/json-parse-type-argument-mutated-against.ts": {
-    "default": 6600
-  },
-  "aot/parallel/external-data/json-parse-type-argument-mutated-texts.ts": {
-    "default": 3500
-  },
-  "aot/parallel/external-data/json-parse-type-argument-public-test/main.ts": {
-    "default": 6200
+    "default": 3700
   },
   "aot/parallel/external-data/json-parse-type-argument-workers-ended/main.ts": {
-    "default": 15500
+    "default": 18800
   },
   "aot/parallel/external-data/json-stringify-long-and-wide-strings.ts": {
-    "default": 6800
-  },
-  "aot/parallel/external-data/objects-many-orders-names-collections.js": {
-    "default": 6400
-  },
-  "aot/parallel/external-data/sql-rows-whatever-holds-the-query-function.ts": {
-    "default": 4700
+    "default": 3000
   },
   "aot/parallel/external-data/sql-typed-rows.ts": {
-    "default": 4000
+    "default": 4800
   },
   "aot/parallel/function-prototypes/constructor-fn-called-objects-others-verified.js": {
     "default": 3900
   },
-  "aot/parallel/gc/collector-runs-all-kinds-allocation.ts": {
-    "default": 9300
-  },
-  "aot/parallel/gc/flags-kept-line-read-last-holder-object-gc-at-every-allocation-1.ts": {
-    "default": 3000
-  },
-  "aot/parallel/gc/flags-kept-line-read-last-holder-object-gc-at-every-allocation-3.ts": {
-    "default": 3000
-  },
-  "aot/parallel/gc/flags-kept-line-read-last-holder-object-gc-at-every-allocation-4.ts": {
-    "default": 3100
-  },
-  "aot/parallel/gc/flags-kept-line-read-last-holder-object.ts": {
-    "default": 4100
-  },
-  "aot/parallel/gc/operation-that-throws-allocates-throws.ts": {
-    "default": 5700
-  },
   "aot/parallel/gc/workers-allocate-beside-each-other.ts": {
-    "default": 22900
+    "default": 9500
   },
   "aot/parallel/gc/workers-make-first-request-collector.js": {
-    "default": 8700
+    "default": 8600
   },
   "aot/parallel/globals/worker-globals/main.mjs": {
-    "default": 15300
-  },
-  "aot/parallel/host-classes/builtin-modules-load-locked-prototypes.ts": {
-    "default": 12900
-  },
-  "aot/parallel/host-classes/environment-shared-worker-seen-every.ts": {
-    "default": 7900
-  },
-  "aot/parallel/host-classes/json-of-fetched-bodies-without-json.ts": {
-    "default": 3100
-  },
-  "aot/parallel/host-classes/keys-of-process-after-a-loop-over-bun.js": {
-    "default": 15400
-  },
-  "aot/parallel/host-classes/keys-of-process-after-a-rest-pattern.js": {
-    "default": 7300
-  },
-  "aot/parallel/host-classes/keys-of-process-after-a-spread.js": {
-    "default": 7200
-  },
-  "aot/parallel/host-classes/keys-of-process-after-copies-bun-process.js": {
-    "default": 14700
-  },
-  "aot/parallel/host-classes/keys-of-process-global-object-inspected.js": {
     "default": 15600
   },
+  "aot/parallel/host-classes/bodies-every-holder-parsed-alike.ts": {
+    "default": 5300
+  },
+  "aot/parallel/host-classes/builtin-modules-load-locked-prototypes.ts": {
+    "default": 13100
+  },
+  "aot/parallel/host-classes/environment-shared-worker-seen-every.ts": {
+    "default": 8400
+  },
+  "aot/parallel/host-classes/keys-of-process-after-a-loop-over-bun.js": {
+    "default": 10100
+  },
+  "aot/parallel/host-classes/keys-of-process-after-a-rest-pattern.js": {
+    "default": 7500
+  },
+  "aot/parallel/host-classes/keys-of-process-after-a-spread.js": {
+    "default": 7400
+  },
+  "aot/parallel/host-classes/keys-of-process-after-copies-bun-process.js": {
+    "default": 9800
+  },
+  "aot/parallel/host-classes/keys-of-process-global-object-inspected.js": {
+    "default": 8600
+  },
   "aot/parallel/host-classes/keys-process-object-assign-frozen-object.js": {
-    "default": 7100
+    "default": 7700
   },
   "aot/parallel/host-classes/keys-process-pattern-takes-member-known.js": {
-    "default": 7600
+    "default": 8500
   },
   "aot/parallel/host-classes/keys-process-rest-pattern-names-member.js": {
-    "default": 14500
-  },
-  "aot/parallel/host-classes/locked-prototypes.ts": {
-    "default": 3100
+    "default": 9000
   },
   "aot/parallel/host-classes/part-part-view-becomes-buffer-verified.ts": {
-    "default": 4600
-  },
-  "aot/parallel/host-classes/printed-aggregate-error-holds-a-stream.ts": {
-    "default": 3100
-  },
-  "aot/parallel/host-classes/printed-error-cause-holds-a-stream.ts": {
-    "default": 3100
-  },
-  "aot/parallel/host-classes/printed-error-cause-is-a-reader.ts": {
-    "default": 3100
-  },
-  "aot/parallel/host-classes/printed-error-cause-is-a-stream.ts": {
-    "default": 3100
-  },
-  "aot/parallel/host-classes/printed-error-index-holds-a-stream.ts": {
-    "default": 3100
+    "default": 5100
   },
   "aot/parallel/host-classes/process-members-computed-once.ts": {
-    "default": 7900
+    "default": 8400
   },
   "aot/parallel/host-classes/reviver-answers-bag-console-value.js": {
     "default": 3900
   },
   "aot/parallel/host-object-members/member-left-reads-function-call-throws.js": {
-    "default": 5800
-  },
-  "aot/parallel/host-object-members/names-lengths-every-function-walk-finds.js": {
-    "default": 42800
-  },
-  "aot/parallel/host-object-writes/loaders-of-node-module-in-a-worker/main.mjs": {
-    "default": 9900
-  },
-  "aot/parallel/inner-objects/collection-meets-outer-object-booleans.ts": {
-    "default": 6900
-  },
-  "aot/parallel/inner-objects/many-hold-inner-object-several-threads.ts": {
-    "default": 21300
-  },
-  "aot/parallel/inner-objects/objects-all-kinds-slot-around-calls-predictions-fail-half-gc-3.ts": {
-    "default": 3200
-  },
-  "aot/parallel/inner-objects/objects-all-kinds-slot-around-calls-predictions-fail-half-gc-5.ts": {
     "default": 5300
   },
-  "aot/parallel/inner-objects/objects-all-kinds-slot-around-calls.ts": {
-    "default": 24700
+  "aot/parallel/host-object-members/names-lengths-every-function-walk-finds.js": {
+    "default": 21900
   },
-  "aot/parallel/language/operators-outside-loops.ts": {
-    "default": 33400
+  "aot/parallel/host-object-writes/loaders-of-node-module-in-a-worker/main.mjs": {
+    "default": 8500
   },
-  "aot/parallel/layout-mismatches/nodes-made-tag-read-modules-objects/main.ts": {
-    "default": 18200
-  },
-  "aot/parallel/library-module-access/members-that-lead-to-modules-taken-out-by-a-walk.cjs": {
-    "default": 8400
-  },
-  "aot/parallel/library-module-access/process-main-module-taken-out-by-object-entries.cjs": {
-    "default": 14900
-  },
-  "aot/parallel/library-modules/choice-between-two-constant-names.js": {
-    "default": 17000
-  },
-  "aot/parallel/library-modules/file-handle-method-under-a-computed-key/main.mjs": {
-    "default": 5500
-  },
-  "aot/parallel/library-modules/global-agent-is-one-object-for-modules.cjs": {
-    "default": 10400
-  },
-  "aot/parallel/library-modules/loader-compiler-not-follow-refused.mjs": {
-    "default": 7600
-  },
-  "aot/parallel/library-modules/members-never-reads-library-function.ts": {
-    "default": 7700
-  },
-  "aot/parallel/library-modules/message-header-frozen-given-descriptor.js": {
-    "default": 7700
-  },
-  "aot/parallel/library-modules/name-imported-and-loader-taken-value.mjs": {
-    "default": 10400
-  },
-  "aot/parallel/library-modules/name-imported-evaluated-text-loads.mjs": {
-    "default": 10500
-  },
-  "aot/parallel/library-modules/name-program-writes-comes-to-require-way.cjs": {
-    "default": 10600
-  },
-  "aot/parallel/library-modules/node-events-and-nothing-else.js": {
+  "aot/parallel/host-objects/functions-of-bun-nobody-names-show-as-in-plain-bun.js": {
     "default": 3100
   },
-  "aot/parallel/library-modules/plugin-module-of-a-compiled-path/main.ts": {
-    "default": 3000
+  "aot/parallel/inner-objects/many-hold-inner-object-several-threads.ts": {
+    "default": 7100
   },
-  "aot/parallel/library-modules/program-adds-map-found-class-library.js": {
-    "default": 7700
-  },
-  "aot/parallel/library-modules/program-names-cluster-serves-from-worker.mjs": {
-    "default": 24100
-  },
-  "aot/parallel/library-modules/worker-program-never-names-cluster-http.mjs": {
-    "default": 11000
-  },
-  "aot/parallel/library-modules/worker-thread-and-message-channels.js": {
-    "default": 7900
-  },
-  "aot/parallel/method-tables/two-workers-main-thread-cover-method.ts": {
-    "default": 7900
-  },
-  "aot/parallel/method-tables/workers-run-a-file-of-their-own/main.ts": {
-    "default": 15500
-  },
-  "aot/parallel/modules/bun-main-imported-required-asked-names/main.mjs": {
-    "default": 10100
-  },
-  "aot/parallel/modules/constant-import-data-url-admits-text.js": {
-    "default": 8600
-  },
-  "aot/parallel/modules/default-export-names-type-exports/main.ts": {
-    "default": 3600
-  },
-  "aot/parallel/modules/dynamic-import-builtin-settled-steps/main.mjs": {
+  "aot/parallel/inner-objects/objects-all-kinds-slot-around-calls.ts": {
     "default": 5700
   },
-  "aot/parallel/modules/external-bare-specifiers/main.ts": {
-    "default": 22500
+  "aot/parallel/language/operators-outside-loops.ts": {
+    "default": 31800
   },
-  "aot/parallel/modules/external-package-by-computed-name/main.cjs": {
-    "default": 7300
+  "aot/parallel/layout-mismatches/nodes-made-tag-read-modules-objects/main.ts": {
+    "default": 17800
   },
-  "aot/parallel/modules/external-package-copies-ambiguous/main.js": {
-    "default": 7000
-  },
-  "aot/parallel/modules/external-package-star-exports/main.ts": {
-    "default": 14800
-  },
-  "aot/parallel/modules/external-package/main.ts": {
-    "default": 14500
-  },
-  "aot/parallel/modules/first-graph-imports-builtin-module/main.mjs": {
-    "default": 6000
-  },
-  "aot/parallel/modules/first-turn-ticks-in-worker/main.ts": {
-    "default": 15100
-  },
-  "aot/parallel/modules/folder-file-name-loaded-computed-names/main.cjs": {
-    "default": 3200
-  },
-  "aot/parallel/modules/function-export-read-by-name-caches/main.ts": {
-    "default": 6000
-  },
-  "aot/parallel/modules/further-entry-points-by-path/main.mjs": {
-    "default": 10600
-  },
-  "aot/parallel/modules/paths-and-cache/main.js": {
-    "default": 8000
-  },
-  "aot/parallel/modules/require-and-resolve/main.js": {
-    "default": 3800
-  },
-  "aot/parallel/modules/spy-on-compiled-namespace/main.js": {
-    "default": 8100
-  },
-  "aot/parallel/modules/typescript-re-export-external-package/main.ts": {
-    "default": 16100
-  },
-  "aot/parallel/narrowing/object-tagged-union-replaced-turn-loop.ts": {
-    "default": 4600
-  },
-  "aot/parallel/native-property-puts/native-functions-define-props-read.mjs": {
-    "default": 16000
-  },
-  "aot/parallel/nested-objects/several-outer-layouts-share-the-name.ts": {
-    "default": 7700
-  },
-  "aot/parallel/nested-objects/several-places-make-the-same-pair.ts": {
-    "default": 7900
-  },
-  "aot/parallel/nested-objects/two-names-of-one-outer-object.ts": {
-    "default": 7700
-  },
-  "aot/parallel/nested-objects/value-goes-into-objects-in-two-forms.ts": {
-    "default": 7700
-  },
-  "aot/parallel/nested-objects/what-the-inner-object-held-is-let-go.ts": {
-    "default": 8000
-  },
-  "aot/parallel/node-http/accessors-added-between-socket-and-owner.ts": {
-    "default": 8000
-  },
-  "aot/parallel/node-http/accessors-added-names-response-stores.ts": {
-    "default": 7900
-  },
-  "aot/parallel/node-http/changed-member-throws-request-ends.ts": {
-    "default": 8100
-  },
-  "aot/parallel/node-http/field-stores.ts": {
+  "aot/parallel/library-module-access/members-that-lead-to-modules-taken-out-by-a-walk.cjs": {
     "default": 8300
   },
-  "aot/parallel/node-http/frozen-sealed-and-closed-objects.ts": {
-    "default": 7400
-  },
-  "aot/parallel/node-http/head-is-decided-at-the-first-write.ts": {
-    "default": 8700
-  },
-  "aot/parallel/node-http/header-storm.ts": {
-    "default": 7900
-  },
-  "aot/parallel/node-http/headers-map-removed-before-end.js": {
-    "default": 7300
-  },
-  "aot/parallel/node-http/incoming-heads.ts": {
-    "default": 7800
-  },
-  "aot/parallel/node-http/inside-listeners.ts": {
-    "default": 8700
-  },
-  "aot/parallel/node-http/listener-lists.ts": {
-    "default": 8200
-  },
-  "aot/parallel/node-http/map-of-headers-stored-first-header-predictions-fail-seventh.js": {
-    "default": 11000
-  },
-  "aot/parallel/node-http/map-of-headers-stored-first-header-predictions-fail.js": {
-    "default": 9600
-  },
-  "aot/parallel/node-http/objects-closed-proxies-without-traps.ts": {
-    "default": 7900
-  },
-  "aot/parallel/node-http/process-state.ts": {
-    "default": 8000
-  },
-  "aot/parallel/node-http/replaced-accessors-of-a-socket.ts": {
-    "default": 8200
-  },
-  "aot/parallel/node-http/replaced-accessors.ts": {
-    "default": 8100
-  },
-  "aot/parallel/node-http/replaced-call-pending-callbacks.ts": {
-    "default": 8000
-  },
-  "aot/parallel/node-http/replaced-methods-of-response.ts": {
+  "aot/parallel/library-module-access/process-main-module-taken-out-by-object-entries.cjs": {
     "default": 9000
   },
-  "aot/parallel/node-http/request-that-ends-reads-its-socket.ts": {
+  "aot/parallel/library-modules/choice-between-two-constant-names.js": {
+    "default": 17200
+  },
+  "aot/parallel/library-modules/file-handle-method-under-a-computed-key/main.mjs": {
+    "default": 10100
+  },
+  "aot/parallel/library-modules/loader-compiler-not-follow-refused.mjs": {
+    "default": 7100
+  },
+  "aot/parallel/library-modules/members-never-reads-library-function.ts": {
+    "default": 3200
+  },
+  "aot/parallel/library-modules/message-header-frozen-given-descriptor.js": {
+    "default": 3200
+  },
+  "aot/parallel/library-modules/name-imported-and-loader-taken-value.mjs": {
+    "default": 10800
+  },
+  "aot/parallel/library-modules/name-imported-evaluated-text-loads.mjs": {
+    "default": 9700
+  },
+  "aot/parallel/library-modules/name-program-writes-comes-to-require-way.cjs": {
+    "default": 11000
+  },
+  "aot/parallel/library-modules/program-adds-map-found-class-library.js": {
     "default": 8000
   },
-  "aot/parallel/node-http/stores-of-a-response-in-their-order.ts": {
-    "default": 8000
+  "aot/parallel/library-modules/program-names-cluster-serves-from-worker.mjs": {
+    "default": 15000
   },
-  "aot/parallel/node-vm/builtins-new-context-written-javascript.mjs": {
+  "aot/parallel/library-modules/worker-program-never-names-cluster-http.mjs": {
+    "default": 9600
+  },
+  "aot/parallel/library-modules/worker-thread-and-message-channels.js": {
+    "default": 8100
+  },
+  "aot/parallel/method-tables/two-workers-main-thread-cover-method.ts": {
+    "default": 8300
+  },
+  "aot/parallel/method-tables/workers-run-a-file-of-their-own/main.ts": {
+    "default": 15200
+  },
+  "aot/parallel/modules/all-kinds-path-starts-folder-executable/main.cjs": {
+    "default": 7500
+  },
+  "aot/parallel/modules/bun-main-imported-required-asked-names/main.mjs": {
+    "default": 10900
+  },
+  "aot/parallel/modules/code-outside-the-image-is-refused/main.js": {
+    "default": 7100
+  },
+  "aot/parallel/modules/constant-import-data-url-admits-text.js": {
     "default": 7300
   },
-  "aot/parallel/node-vm/contexts-with-promises-are-collected.cjs": {
-    "default": 30700
+  "aot/parallel/modules/dynamic-import-builtin-settled-steps/main.mjs": {
+    "default": 5900
   },
-  "aot/parallel/node-vm/stores-to-context-variables.js": {
-    "default": 7300
+  "aot/parallel/modules/entry-imports-around-an-absent-module/main.mjs": {
+    "default": 7100
   },
-  "aot/parallel/object-footprint/pool-keys-https-agent-many-certificates.js": {
-    "default": 7300
+  "aot/parallel/modules/external-bare-specifiers/main.ts": {
+    "default": 22000
   },
-  "aot/parallel/objects/accessor-defined-three-times-around.mjs": {
-    "default": 7300
+  "aot/parallel/modules/external-package-by-computed-name/main.cjs": {
+    "default": 7200
   },
-  "aot/parallel/objects/accessors-every-make-read-stored-often.ts": {
-    "default": 8200
+  "aot/parallel/modules/external-package-copies-ambiguous/main.js": {
+    "default": 7100
   },
-  "aot/parallel/objects/accessors-getters-nobody-can-list.ts": {
-    "default": 7900
+  "aot/parallel/modules/external-package-star-exports/main.ts": {
+    "default": 14700
   },
-  "aot/parallel/objects/accessors-loop-defines-created-objects.ts": {
-    "default": 7900
+  "aot/parallel/modules/external-package/main.ts": {
+    "default": 7100
   },
-  "aot/parallel/objects/booleans-and-doubles-read-by-name.ts": {
-    "default": 7900
-  },
-  "aot/parallel/objects/callee-strict-args-read-stored-deleted.js": {
-    "default": 7300
-  },
-  "aot/parallel/objects/chains-that-change-behind-warm-reads/object-becomes-a-dictionary.js": {
-    "default": 7300
-  },
-  "aot/parallel/objects/copies-object-many-names-time-proportion.ts": {
-    "default": 3300
-  },
-  "aot/parallel/objects/keys-added-removed-around-fields-created.ts": {
-    "default": 3300
-  },
-  "aot/parallel/objects/large-map-set-keep-entry-thousand.ts": {
+  "aot/parallel/modules/first-graph-imports-builtin-module/main.mjs": {
     "default": 6200
   },
+  "aot/parallel/modules/first-turn-ticks-in-worker/main.ts": {
+    "default": 15800
+  },
+  "aot/parallel/modules/folder-file-name-loaded-computed-names/main.cjs": {
+    "default": 3700
+  },
+  "aot/parallel/modules/function-export-read-by-name-caches/main.ts": {
+    "default": 7000
+  },
+  "aot/parallel/modules/further-entry-points-by-path/main.mjs": {
+    "default": 10800
+  },
+  "aot/parallel/modules/glob-symlink-chdir-start-folder/main.cjs": {
+    "default": 4300
+  },
+  "aot/parallel/modules/load-ends-module-not-another-waits/main.cjs": {
+    "default": 8200
+  },
+  "aot/parallel/modules/name-library-module-lacks-read-binds-validated.mjs": {
+    "default": 3200
+  },
+  "aot/parallel/modules/require-and-resolve/main.js": {
+    "default": 7400
+  },
+  "aot/parallel/modules/spy-on-compiled-namespace/main.js": {
+    "default": 7400
+  },
+  "aot/parallel/modules/typescript-re-export-external-package/main.ts": {
+    "default": 7300
+  },
+  "aot/parallel/modules/working-directory-executable/main.cjs": {
+    "default": 5400
+  },
+  "aot/parallel/modules/working-directory-folder-of-executable/main.cjs": {
+    "default": 8300
+  },
+  "aot/parallel/narrowing/members-changed-behind-the-checker-validated.ts": {
+    "default": 3200
+  },
+  "aot/parallel/narrowing/object-tagged-union-replaced-turn-loop.ts": {
+    "default": 5100
+  },
+  "aot/parallel/native-property-puts/native-functions-define-props-read.mjs": {
+    "default": 8100
+  },
+  "aot/parallel/node-http/frozen-sealed-and-closed-objects.ts": {
+    "default": 3000
+  },
+  "aot/parallel/node-http/map-of-headers-stored-first-header-predictions-fail-seventh.js": {
+    "default": 11600
+  },
+  "aot/parallel/node-http/map-of-headers-stored-first-header-predictions-fail.js": {
+    "default": 10400
+  },
+  "aot/parallel/node-http/objects-closed-proxies-without-traps.ts": {
+    "default": 34700
+  },
+  "aot/parallel/node-http/request-without-body-watched.cjs": {
+    "default": 5600
+  },
+  "aot/parallel/node-http/request-without-body.cjs": {
+    "default": 5600
+  },
+  "aot/parallel/node-vm/contexts-with-promises-are-collected.cjs": {
+    "default": 7400
+  },
+  "aot/parallel/objects/builtins-copy-restrict-props-validated.js": {
+    "default": 3200
+  },
+  "aot/parallel/objects/copies-object-many-names-time-proportion.ts": {
+    "default": 4600
+  },
+  "aot/parallel/objects/large-map-set-keep-entry-thousand.ts": {
+    "default": 4400
+  },
   "aot/parallel/objects/map-and-set-with-a-million-entries.ts": {
-    "default": 7900
+    "default": 3100
   },
   "aot/parallel/objects/maps-sets-ordinary-storage-walked-native.js": {
-    "default": 7800
+    "default": 3300
   },
-  "aot/parallel/packages/arithmetic/many-1/main.mjs": {
-    "default": 3000
-  },
-  "aot/parallel/packages/class-idioms/many-1/main.mjs": {
-    "default": 3000
-  },
-  "aot/parallel/packages/commonjs-interop/many-1/main.mjs": {
-    "default": 3000
+  "aot/parallel/packages/builtin-names/many-1/main.mjs": {
+    "default": 3100
   },
   "aot/parallel/packages/declarations-wrong-about-their-own-code/many-1/main.mjs": {
-    "default": 4700
+    "default": 3500
   },
-  "aot/parallel/packages/exports-conditions/many-1/main.mjs": {
-    "default": 3000
-  },
-  "aot/parallel/packages/library-idioms/many-1/main.mjs": {
-    "default": 3000
-  },
-  "aot/parallel/packages/main-field/many-1/main.mjs": {
+  "aot/parallel/packages/patching-globals/many-1/main.mjs": {
     "default": 3000
   },
   "aot/parallel/pass-conditions/loop-that-never-ends-still-runs.mjs": {
-    "default": 8600
-  },
-  "aot/parallel/process/exit-code.js": {
-    "default": 7300
-  },
-  "aot/parallel/process/platform-in-a-worker/main.mjs": {
-    "default": 14900
-  },
-  "aot/parallel/property-copies/rests-leave-name-object-got-key-name-gc-at-allocations-9.ts": {
-    "default": 4500
-  },
-  "aot/parallel/runtime-caches/workers-come-go-every-thread-changes.ts": {
-    "default": 13300
-  },
-  "aot/parallel/soundness/members-process-stored-process-arrives.mjs": {
-    "default": 18700
-  },
-  "aot/parallel/soundness/module-loader-taken-values-process/main.mjs": {
-    "default": 18900
-  },
-  "aot/parallel/soundness/new-names-come-builtin-prototype-ten.mjs": {
-    "default": 7700
-  },
-  "aot/parallel/soundness/sizes-at-which-representations-change.js": {
-    "default": 3300
-  },
-  "aot/parallel/static-modules/rulings/computed-key-require-shows-ways/main.cjs": {
-    "default": 11400
-  },
-  "aot/parallel/stress/fields-of-narrow-types/sample-boolean-null-interface-literal.ts": {
-    "default": 9900
-  },
-  "aot/parallel/stress/fields-of-narrow-types/sample-number-null-inherited-field-table.ts": {
-    "default": 5400
-  },
-  "aot/parallel/stress/fields-of-narrow-types/sample-number-optional-subclass-field.ts": {
-    "default": 5300
-  },
-  "aot/parallel/stress/fields-of-narrow-types/sample-number-plain-interface-literal.ts": {
-    "default": 5100
-  },
-  "aot/parallel/stress/fields-of-narrow-types/sample-object-null-interface-literal.ts": {
-    "default": 10300
-  },
-  "aot/parallel/stress/fields-of-narrow-types/sample-text-optional-constructor-fn.ts": {
-    "default": 10600
-  },
-  "aot/parallel/stress/objects-with-fixed-fields/kept-arrays-on-their-own.ts": {
-    "default": 4700
-  },
-  "aot/parallel/strings/fixed-count-group-repeats-duplicate.js": {
-    "default": 3300
-  },
-  "aot/parallel/strings/json-text-of-object-that-holds-long-text.js": {
-    "default": 3200
-  },
-  "aot/parallel/strings/workers-use-names-texts-program-first.ts": {
-    "default": 8100
-  },
-  "aot/parallel/structural-types/twenty-subclasses-override-program.ts": {
-    "default": 17000
-  },
-  "aot/parallel/typed-objects/copies-of-thousands-kinds-typed-object.ts": {
-    "default": 7200
-  },
-  "aot/parallel/typed-objects/field-replaced-through-a-wider-type.ts": {
-    "default": 4600
-  },
-  "aot/parallel/typed-objects/objects-read-made-stores-may-missing.ts": {
-    "default": 4600
-  },
-  "aot/parallel/typed-objects/old-typed-objects-gain-fields.ts": {
-    "default": 3100
-  },
-  "aot/parallel/typed-objects/stores-environment-copied-frame-verified.ts": {
-    "default": 4600
-  },
-  "aot/parallel/typed-objects/structured-clone-uncloneable-marker.ts": {
-    "default": 7500
-  },
-  "aot/parallel/typed-objects/young-objects-between-old-ones-verified.ts": {
-    "default": 5200
-  },
-  "aot/parallel/unexpected-values/arrays/this-is-used-like-array-in-sloppy-code.js": {
-    "default": 9000
-  },
-  "aot/parallel/unexpected-values/projects-without-types/main.mjs": {
-    "default": 23000
-  },
-  "aot/parallel/untyped-code/barrier-after-escape.ts": {
-    "default": 3100
-  },
-  "aot/parallel/untyped-code/contents-survive-added-props-elements.js": {
-    "default": 3800
-  },
-  "aot/parallel/untyped-code/names-answered-chains-few-many-receivers.js": {
-    "default": 7800
-  },
-  "aot/parallel/untyped-code/names-answered-objects-created-step-step.js": {
-    "default": 7800
-  },
-  "aot/parallel/untyped-code/operators-in-runtime-code.js": {
-    "default": 6500
-  },
-  "aot/parallel/untyped-code/stores-made-late-seen-objects-created.js": {
-    "default": 7800
-  },
-  "aot/parallel/untyped-speed/listener-added-counted-removed-vs-class.js": {
-    "default": 4200
-  },
-  "aot/parallel/workers/api-of-node-worker-threads.ts": {
-    "default": 8600
-  },
-  "aot/parallel/workers/code-that-is-not-in-the-executable.ts": {
-    "default": 8100
-  },
-  "aot/parallel/workers/commonjs-worker-calls-really-exit-last.cjs": {
-    "default": 7700
-  },
-  "aot/parallel/workers/data-urls-that-build-knows-start-workers/main.ts": {
-    "default": 10400
-  },
-  "aot/parallel/workers/entry-is-another-module/main.ts": {
-    "default": 8100
-  },
-  "aot/parallel/workers/entry-throw-origin-in-place/main.mjs": {
-    "default": 7800
-  },
-  "aot/parallel/workers/entry-throw-origin/main.mjs": {
-    "default": 22800
-  },
-  "aot/parallel/workers/exit-codes/main.js": {
-    "default": 10300
-  },
-  "aot/parallel/workers/features-of-the-host-inside-workers.ts": {
-    "default": 8100
-  },
-  "aot/parallel/workers/files-named-by-paths-start-workers/main.ts": {
-    "default": 10500
-  },
-  "aot/parallel/workers/global-scope-of-a-worker.js": {
     "default": 8300
   },
-  "aot/parallel/workers/how-a-worker-ends.ts": {
-    "default": 8800
-  },
-  "aot/parallel/workers/how-a-worker-of-text-fails.js": {
-    "default": 8200
-  },
-  "aot/parallel/workers/import-finds-data-url-worker-starts/main.js": {
-    "default": 4800
-  },
-  "aot/parallel/workers/main-module-of-a-worker/main.js": {
-    "default": 9300
-  },
-  "aot/parallel/workers/members-of-worker-threads-handed-on-by-key.js": {
+  "aot/parallel/process/exit-code.js": {
     "default": 7900
   },
+  "aot/parallel/process/platform-in-a-worker/main.mjs": {
+    "default": 15700
+  },
+  "aot/parallel/property-copies/rests-leave-name-object-got-key-name-gc-at-allocations-9.ts": {
+    "default": 3000
+  },
+  "aot/parallel/soundness/builtins-change-receiver-reached-call.js": {
+    "default": 3200
+  },
+  "aot/parallel/soundness/hidden-native-function-defines-twenty.mjs": {
+    "default": 3200
+  },
+  "aot/parallel/soundness/members-process-stored-process-arrives.mjs": {
+    "default": 9500
+  },
+  "aot/parallel/soundness/module-loader-taken-values-process/main.mjs": {
+    "default": 9300
+  },
+  "aot/parallel/soundness/new-names-come-builtin-prototype-ten.mjs": {
+    "default": 3200
+  },
+  "aot/parallel/static-modules/rulings/computed-key-require-shows-ways/main.cjs": {
+    "default": 9800
+  },
+  "aot/parallel/strings/json-text-of-object-that-holds-long-text.js": {
+    "default": 3000
+  },
+  "aot/parallel/strings/replace-matching-non-matching-untyped.js": {
+    "default": 3300
+  },
+  "aot/parallel/strings/workers-use-names-texts-program-first.ts": {
+    "default": 8800
+  },
+  "aot/parallel/structural-types/twenty-subclasses-override-program.ts": {
+    "default": 14500
+  },
+  "aot/parallel/typed-objects/copies-of-thousands-kinds-typed-object.ts": {
+    "default": 4400
+  },
+  "aot/parallel/typed-objects/entries-object-listed-store-another.ts": {
+    "default": 3200
+  },
+  "aot/parallel/typed-objects/field-replaced-through-a-wider-type.ts": {
+    "default": 5000
+  },
+  "aot/parallel/typed-objects/objects-read-made-stores-may-missing.ts": {
+    "default": 5000
+  },
+  "aot/parallel/typed-objects/stores-environment-copied-frame-verified.ts": {
+    "default": 4900
+  },
+  "aot/parallel/typed-objects/structured-clone-uncloneable-marker.ts": {
+    "default": 8500
+  },
+  "aot/parallel/unexpected-values/arrays/this-is-used-like-array-in-sloppy-code.js": {
+    "default": 4400
+  },
+  "aot/parallel/unexpected-values/projects-without-types/main.mjs": {
+    "default": 17900
+  },
+  "aot/parallel/untyped-code/contents-survive-added-props-elements.js": {
+    "default": 4100
+  },
+  "aot/parallel/untyped-code/names-answered-objects-created-step-step.js": {
+    "default": 4400
+  },
+  "aot/parallel/untyped-code/operators-in-runtime-code.js": {
+    "default": 3200
+  },
+  "aot/parallel/untyped-code/stores-made-late-seen-objects-created.js": {
+    "default": 4300
+  },
+  "aot/parallel/workers/api-of-node-worker-threads.ts": {
+    "default": 9600
+  },
+  "aot/parallel/workers/code-that-is-not-in-the-executable.ts": {
+    "default": 9300
+  },
+  "aot/parallel/workers/commonjs-worker-calls-really-exit-last.cjs": {
+    "default": 9100
+  },
+  "aot/parallel/workers/data-urls-that-build-knows-start-workers/main.ts": {
+    "default": 11900
+  },
+  "aot/parallel/workers/embedded-worker-paths-read-back-global/main.ts": {
+    "default": 3700
+  },
+  "aot/parallel/workers/entry-is-another-module/main.ts": {
+    "default": 9300
+  },
+  "aot/parallel/workers/entry-throw-origin-in-place/main.mjs": {
+    "default": 9300
+  },
+  "aot/parallel/workers/entry-throw-origin/main.mjs": {
+    "default": 23700
+  },
+  "aot/parallel/workers/exit-codes/main.js": {
+    "default": 12900
+  },
+  "aot/parallel/workers/features-of-the-host-inside-workers.ts": {
+    "default": 9300
+  },
+  "aot/parallel/workers/files-named-by-paths-start-workers/main.ts": {
+    "default": 12500
+  },
+  "aot/parallel/workers/global-scope-of-a-worker.js": {
+    "default": 9400
+  },
+  "aot/parallel/workers/how-a-worker-ends.ts": {
+    "default": 9600
+  },
+  "aot/parallel/workers/how-a-worker-of-text-fails.js": {
+    "default": 9400
+  },
+  "aot/parallel/workers/main-module-of-a-worker/main.js": {
+    "default": 10700
+  },
+  "aot/parallel/workers/members-of-worker-threads-handed-on-by-key.js": {
+    "default": 9100
+  },
   "aot/parallel/workers/spellings-of-a-worker-file/main.ts": {
-    "default": 3600
+    "default": 3800
   },
   "aot/parallel/workers/terminated-in-its-error-listener.ts": {
-    "default": 8400
+    "default": 9300
   },
   "aot/parallel/workers/terminated-in-middle-of-native-call.ts": {
-    "default": 5200
+    "default": 6100
   },
   "aot/parallel/workers/terminated-message-listener-worker-ends.ts": {
     "default": 9600
   },
   "aot/parallel/workers/terminated-validator-looks-method.ts": {
-    "default": 3200
+    "default": 3800
   },
   "aot/parallel/workers/terminated-while-entry-runs.ts": {
-    "default": 8500
+    "default": 9700
   },
   "aot/parallel/workers/texts-that-the-build-knows-start-workers.ts": {
-    "default": 9900
+    "default": 10700
   },
   "aot/parallel/workers/what-text-finds-that-worker-starts-from/main.js": {
-    "default": 9100
+    "default": 10300
   },
   "aot/parallel/workers/what-waits-when-a-thread-meets-its-end.ts": {
-    "default": 9600
+    "default": 9900
   },
   "aot/parallel/workers/worker-of-text-from-module-handed-on-evaluates.js": {
-    "default": 7900
+    "default": 9100
   },
   "aot/parallel/workers/worker-of-text-from-module-handed-on-requires.js": {
-    "default": 8000
+    "default": 9000
   },
   "aot/parallel/workers/worker-of-text-from-module-handed-on.js": {
-    "default": 8000
+    "default": 8800
   },
   "aot/parallel/workers/worker-of-text-loads-modules-of-bun.js": {
-    "default": 8600
+    "default": 9300
   },
   "aot/parallel/workers/worker-of-text-runs-compiled-workers/main.js": {
-    "default": 3200
+    "default": 3500
   },
   "aot/parallel/workers/worker-printed-before-exits-printed.ts": {
-    "default": 8200
+    "default": 9500
   },
   "aot/parallel/workers/worker-sees-started-from-data-url.ts": {
-    "default": 21800
+    "default": 12000
   },
   "aot/parallel/workers/worker-that-parsed-a-text-ends/main.cjs": {
-    "default": 16100
+    "default": 16800
   },
   "aot/parallel/workers/workers-that-nobody-holds.ts": {
-    "default": 7900
+    "default": 9200
   },
   "aot/paths-of-the-tsconfigs-above-a-file.test.ts": {
     "default": 1800,

@@ -984,17 +984,35 @@ impl Walk<'_, '_> {
 
     // `new Worker(path, { preload: "./first.ts" })` and `{ preload: ["./first.ts", ..] }`: the Worker loads those files in front of its own.
     fn follow_preloads(&mut self, file: FileId, options: ExprId) {
-        let Ok(Some(preload)) = self.find_property(file, options, b"preload") else {
+        self.variables_left = (self.limits).get(LimitId::MaxVariablesFollowedToLoader);
+        let mut names = Vec::new();
+        self.find_preloads(file, options, &mut names);
+        for name in names {
+            self.follow(file, name);
+        }
+    }
+
+    /// Adds what every `preload` names that the object literal writes, or a literal that it spreads.
+    fn find_preloads(&mut self, file: FileId, options: ExprId, names: &mut Vec<ExprId>) {
+        let (hir, atoms) = (self.files.hir(file), &self.files.atoms);
+        let ExprKind::Object(properties) = hir[self.find_initializer(file, options)].kind else {
             return;
         };
-        let hir = self.files.hir(file);
-        match hir[hir.skip_type_assertions(preload)].kind {
-            ExprKind::Array(names) => {
-                for name in hir.ids(names) {
-                    self.follow(file, name);
+        for property in properties.iter().map(|property| hir[property]) {
+            let key = property.key.name();
+            match property.kind {
+                PropKind::Spread => self.find_preloads(file, property.value, names),
+                PropKind::Init | PropKind::Shorthand
+                    if key.is_some_and(|key| atoms.bytes(key) == b"preload") =>
+                {
+                    let preload = self.find_initializer(file, property.value);
+                    match hir[preload].kind {
+                        ExprKind::Array(list) => names.extend(hir.ids(list)),
+                        _ => names.push(preload),
+                    }
                 }
+                _ => {}
             }
-            _ => self.follow(file, preload),
         }
     }
 

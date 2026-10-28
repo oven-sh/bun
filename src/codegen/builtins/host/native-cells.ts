@@ -39,6 +39,9 @@ export const printsErrorWithCodeCell = "ErrorWithCode.toString";
 export const reportsExceptionCell = "EventListener.reportsException";
 export const flushesDirectStreamCell = "DirectStreamController.flushesAtEndOfTick";
 export const emitsProcessEventCell = "Process.emitsEvent";
+// The functions that process.send and process.disconnect hold in a process that was started with a channel.
+export const sendsOverChannelCell = "Process.send";
+export const closesChannelCell = "Process.disconnect";
 // What is stored under a name of a native object, which native code calls for each event.
 export const keptHandlerCell = (path: string) => `Handler.${path}`;
 // The one object that process.env, Bun.env and import.meta.env answer.

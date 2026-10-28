@@ -11,7 +11,6 @@ use crate::load::fold_inputs::{
     ProgramFacts, create_application_fold_inputs, create_runtime_fold_inputs,
 };
 use crate::load::host::{LoadHost, LoadHostInput, create_disk};
-#[cfg(any(test, feature = "test_support"))]
 use crate::load::is_in_archive_of_bun;
 use crate::load::named_loads::resolve_loads_through_imported_loaders;
 use crate::load::runtime_host::RuntimeHost;
@@ -43,8 +42,9 @@ use bun_sema_driver::{
 };
 use bun_threading::Guarded;
 use core::sync::atomic::Ordering;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::mem::take;
+use std::sync::Arc;
 #[cfg(any(test, feature = "test_support"))]
 use std::sync::OnceLock;
 use std::thread::Scope;
@@ -109,8 +109,8 @@ struct ApplicationLoad<'l, 'scope, 'env, 'h, 's> {
 enum ParsedBefore<'s> {
     Nothing,
     ByThisBuild(&'s Run<'s>),
-    #[cfg(any(test, feature = "test_support"))]
-    ByBuildsOfTestProgram(&'static Run<'static>),
+    /// In a session that outlives those of the load.
+    ByEarlierLoads(&'s Run<'static>),
 }
 
 impl<'s> ParsedBefore<'s> {
@@ -125,11 +125,71 @@ impl<'s> ParsedBefore<'s> {
             ParsedBefore::ByThisBuild(parsed) => {
                 load_program_with_parsed_files(session, host, request, Some(parsed))
             }
-            #[cfg(any(test, feature = "test_support"))]
-            ParsedBefore::ByBuildsOfTestProgram(parsed) => {
+            ParsedBefore::ByEarlierLoads(parsed) => {
                 load_program_with_parsed_files(session, host, request, Some(parsed))
             }
         }
+    }
+}
+
+/// A build loads once for each time that a program is compiled again, and once for each program that is loaded by itself. What a load
+/// reads out of the archive of Bun is parsed and bound for the first.
+pub(super) struct SharedByLoads {
+    parsed: Run<'static>,
+    atoms: Interner<'static>,
+    /// Behind the two, which borrow it.
+    _session: Box<Session>,
+}
+
+thread_local! {
+    /// `Some`: `compile` runs on this thread. The loads of a build run on the thread that called it.
+    static SHARED_BY_LOADS: RefCell<Option<Option<Arc<SharedByLoads>>>> = const { RefCell::new(None) };
+}
+
+impl SharedByLoads {
+    fn new() -> SharedByLoads {
+        let session = Box::new(Session::new());
+        // SAFETY: the session stays where it is and outlives `parsed` and `atoms`, and both are handed out only for as long as `self` is borrowed.
+        let borrowed: &'static Session =
+            unsafe { &*std::ptr::from_ref::<Session>(session.as_ref()) };
+        let atoms = Interner::new_in(borrowed);
+        SharedByLoads {
+            parsed: Run::of_compile_builds(borrowed, atoms, is_in_archive_of_bun),
+            atoms,
+            _session: session,
+        }
+    }
+
+    pub(super) fn begin_build() {
+        SHARED_BY_LOADS.set(Some(None));
+    }
+
+    pub(super) fn end_build() {
+        SHARED_BY_LOADS.set(None);
+    }
+
+    /// Whoever takes it decides whether a further load finds it: see `keep`.
+    pub(super) fn take() -> Option<Arc<SharedByLoads>> {
+        SHARED_BY_LOADS.with_borrow_mut(|of_build| of_build.as_mut()?.take())
+    }
+
+    pub(super) fn keep(shared: Arc<SharedByLoads>) {
+        SHARED_BY_LOADS.with_borrow_mut(|of_build| {
+            if let Some(kept) = of_build {
+                *kept = Some(shared);
+            }
+        });
+    }
+
+    fn of_running_build(options: &Options<'_>) -> Option<Arc<SharedByLoads>> {
+        if preload_of(options).is_some() {
+            return None;
+        }
+        SHARED_BY_LOADS.with_borrow_mut(|of_build| {
+            let kept = of_build.as_mut()?;
+            let shared = kept.get_or_insert_with(|| Arc::new(SharedByLoads::new()));
+            Some(Arc::clone(shared))
+        })
     }
 }
 
@@ -261,7 +321,11 @@ impl<'a> Build<'a> {
         };
         let disk = create_disk(options, self.threads);
         let application_session = sessions.application;
-        let atoms = Interner::new_in(application_session);
+        let shared_by_loads = SharedByLoads::of_running_build(options);
+        let atoms = match &shared_by_loads {
+            Some(shared) => shared.atoms,
+            None => Interner::new_in(application_session),
+        };
         #[cfg(any(test, feature = "test_support"))]
         let shared_by_builds =
             SharedByBuilds::serves(options).then(SharedByBuilds::of_test_program);
@@ -282,16 +346,17 @@ impl<'a> Build<'a> {
             &self.limits,
             self.platform,
         );
-        let parsed_before = match preload_of(options) {
-            None => ParsedBefore::Nothing,
-            Some(_) => ParsedBefore::ByThisBuild(
+        let parsed_before = match (preload_of(options), &shared_by_loads) {
+            (None, None) => ParsedBefore::Nothing,
+            (None, Some(shared)) => ParsedBefore::ByEarlierLoads(&shared.parsed),
+            (Some(_), _) => ParsedBefore::ByThisBuild(
                 (application_session.arena())
                     .alloc(Run::of_compile_build(application_session, atoms)),
             ),
         };
         #[cfg(any(test, feature = "test_support"))]
         let parsed_before = shared_by_builds.map_or(parsed_before, |shared| {
-            ParsedBefore::ByBuildsOfTestProgram(&shared.parsed)
+            ParsedBefore::ByEarlierLoads(&shared.parsed)
         });
         let shared = SharedLoadInputs {
             disk: &disk,
@@ -306,7 +371,12 @@ impl<'a> Build<'a> {
             messages: &messages,
             parsed_before,
         };
+        let parses_before = shared_by_loads.as_ref().map(|it| it.parsed.parses());
         let result = self.load_projects(&shared, asset_reads, then);
+        if let (Some(shared), Some(before)) = (&shared_by_loads, parses_before) {
+            let parses = (shared.parsed.parses() - before) as u64;
+            (self.statistics).count(StatisticId::SourceFilesOfBunParsed, parses);
+        }
         self.leftovers.push(Box::new(disk));
         result
     }
@@ -590,7 +660,7 @@ impl<'a> Build<'a> {
             let started = Instant::now();
             let asks = join_asks(group.iter().map(|&index| &roots[index].asks));
             let of_group = group.iter().map(|&index| &roots[index]);
-            let root_paths = join_root_paths(shared.runtime_modules, of_group);
+            let mut root_paths = join_root_paths(shared.runtime_modules, of_group);
             let roots = &roots[group[0]];
             let session = match group_index {
                 0 => shared.sessions.runtime,
@@ -599,6 +669,9 @@ impl<'a> Build<'a> {
             // What is loaded ahead of a program serves whatever that program asks for.
             let asks = preload_of(options).is_none().then_some(&asks);
             let inputs = self.create_runtime_load_inputs(shared, session, roots, asks);
+            if !inputs.host.reads_types {
+                root_paths.clear();
+            }
             let runtime_request = self.create_runtime_request(shared, &inputs, &root_paths);
             let RuntimeLoadInputs {
                 host: ref runtime_host,
@@ -729,6 +802,7 @@ impl<'a> Build<'a> {
                 manifest: shared.manifest,
                 // Code that the build does not see may use all that a file holds, so all that a file asks for is read.
                 reach: (asks.filter(|_| !can_load_code_at_run_time)).map(ReachWhileLoading::new),
+                reads_types: can_load_code_at_run_time || asks.is_none_or(|asks| !asks.is_empty()),
             },
             can_load_code_at_run_time,
             loads_code_by_unknown_names_alone,

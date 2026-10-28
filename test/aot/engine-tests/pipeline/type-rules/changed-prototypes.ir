@@ -481,7 +481,7 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v7: undefined|null|string = CallDirect function=f13 accessSite=3
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: Jump -> next b12()
 # CHECK-NEXT: b6() role=CatchHandler:
 # CHECK-NEXT: v8: anything = CatchValue
 # CHECK-NEXT: v9: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
@@ -491,19 +491,38 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v13: anything ~ undefined|null|string = Expect v12 expectedType=undefined|null|string
 # CHECK-NEXT: v14: ": " = String string=": "
 # CHECK-NEXT: v15: string = Add v13, v14
-# CHECK-NEXT: v16: anything = PropGet v11 key="message" accessSite=6
-# CHECK-NEXT: v17: anything ~ undefined|null|string = Expect v16 expectedType=undefined|null|string
-# CHECK-NEXT: v18: boolean|number|string|symbol|bigint|object ~ string = RequireObjectCoercible v17 name="split"
-# CHECK-NEXT: v19: anything = PropGet v18 key="split" accessSite=7
-# CHECK-NEXT: v20: "\n" = String string="\n"
-# CHECK-NEXT: v21: anything = Call v19, v18, v20 calleeKey="split" calleeName="e.message.split" accessSite=8 callees=[builtin(StringPrototypeSplit), ..]
-# CHECK-NEXT: v22: anything ~ undefined|null|Array<undefined|null|string> = Expect v21 expectedType=undefined|null|Array<undefined|null|string>
-# CHECK-NEXT: v23: 0 = Integer
-# CHECK-NEXT: v24: boolean|number|string|symbol|bigint|object ~ Array<undefined|null|string> = RequireObjectCoercible v22
-# CHECK-NEXT: v25: anything ~ undefined|null|string = ElemGet v24, v23 accessSite=9 [keyIsIntegral]
-# CHECK-NEXT: v26: string = Add v15, v25
-# CHECK-NEXT: Jump -> next b7()
-# CHECK-NEXT: b7():
-# CHECK-NEXT: v27: undefined = Undefined
-# CHECK-NEXT: Return v27
+# CHECK-NEXT: v16: boolean = TypeTest v11 testedType=Error
+# CHECK-NEXT: Branch v16 -> taken b7(| 0), notTaken b8()
+# CHECK-NEXT: b7(v17: Error):
+# CHECK-NEXT: v18: anything = CallBuiltin v17 overload=ErrorPrototypeMessage/0 accessSite=6
+# CHECK-NEXT: Jump -> next b9(v18)
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v19: anything = PropGet v11 key="message" accessSite=6
+# CHECK-NEXT: Jump -> next b9(v19)
+# CHECK-NEXT: b9(v20: anything):
+# CHECK-NEXT: v21: anything ~ undefined|null|string = Expect v20 expectedType=undefined|null|string
+# CHECK-NEXT: v22: boolean|number|string|symbol|bigint|object ~ string = RequireObjectCoercible v21 name="split"
+# CHECK-NEXT: v23: boolean ~ true = TypeTest v22 testedType=string
+# CHECK-NEXT: Branch v23 -> taken b10(| 0), notTaken b11(| 0)
+# CHECK-NEXT: b10(v24: string):
+# CHECK-NEXT: v25: "\n" = String string="\n"
+# CHECK-NEXT: v26: undefined = CallBuiltin v24, v25 overload=StringPrototypeSplit/0 builtinCallForm=Prefix prefixLength=1 accessSite=8
+# CHECK-NEXT: v27: int[-1, 2147483647] = ResultAt v26 index=1
+# CHECK-NEXT: v28: int[-1, 2147483647] = ResultAt v26 index=2
+# CHECK-NEXT: v29: undefined|string = SubstringOrUndefined v24, v27, v28
+# CHECK-NEXT: v30: string = Add v15, v29
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b11(v31: boolean|number|symbol|bigint|object) frequency=Rare:
+# CHECK-NEXT: v32: anything = PropGet v31 key="split" accessSite=7
+# CHECK-NEXT: v33: "\n" = String string="\n"
+# CHECK-NEXT: v34: anything = Call v32, v22, v33 calleeKey="split" calleeName="e.message.split" accessSite=8 callees=[builtin(StringPrototypeSplit), ..]
+# CHECK-NEXT: v35: anything ~ undefined|null|Array<undefined|null|string> = Expect v34 expectedType=undefined|null|Array<undefined|null|string>
+# CHECK-NEXT: v36: 0 = Integer
+# CHECK-NEXT: v37: boolean|number|string|symbol|bigint|object ~ Array<undefined|null|string> = RequireObjectCoercible v35
+# CHECK-NEXT: v38: anything ~ undefined|null|string = ElemGet v37, v36 accessSite=9 [keyIsIntegral]
+# CHECK-NEXT: v39: string = Add v15, v38
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v40: undefined = Undefined
+# CHECK-NEXT: Return v40
 # CHECK-NEXT: }

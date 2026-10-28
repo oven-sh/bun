@@ -49,7 +49,7 @@ export const neverCalled: ReadonlyMap<RegExp, string> = new Map([
   [/^Atomics\.wait$/, "it blocks the thread"],
   [/^%NodeJSFS%\.prototype\.(close|ftruncate)(Sync|Cb)?$|^native:Bindgen:(udp_socket\.bind\.ts:dgram(Close|Adopt|Bind|Listen)Fd|node_cluster_binding\.bind\.ts:clusterCloseHandle)$|^%NativeFunctions%\.(Udp_socketBindTsDgram(Close|Adopt|Bind|Listen)Fd|Node_cluster_bindingBindTsClusterCloseHandle)$/, "it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too"],
   [/^(Worker|WebSocket)$/, "it starts a thread or opens a connection"],
-  [/^native:Bindgen:node_cluster_binding\.bind\.ts:clusterRawBind$/, "it asks the name servers about every string that is no address, and waits for them"],
+  [/^native:Bindgen:(node_cluster_binding\.bind\.ts:clusterRawBind|udp_socket\.bind\.ts:connect)$/, "it asks the name servers about every string that is no address, and waits for them"],
   [/^bun:(ffi|test|jsc|sqlite|internal-for-testing)\./, "it reaches outside JavaScript"],
   [/^native:Bindgen:bake_plugins\.bind\.ts:setPages$/, "it changes how modules are loaded"],
   [/^%CompilerHelpers%\.(ownEntriesFlat|definePropertiesFrom)$/, "it works on the instance of a compiled program, and this process has none"],

@@ -1335,7 +1335,7 @@ runtimefunction id=131086 function=f28
 # CHECK-NEXT: v129: string = ToString v125
 # CHECK-NEXT: v130: " " = String string=" "
 # CHECK-NEXT: v131: string = Strcat v126, v130, v127, v128, v129
-# CHECK-NEXT: Jump -> next b49(v131)
+# CHECK-NEXT: Jump -> next b52(v131)
 # CHECK-NEXT: b40(v132: boolean, v133: string):
 # CHECK-NEXT: v134: "" = String string=""
 # CHECK-NEXT: Jump -> next b41(v134, v132, v133)
@@ -1345,45 +1345,53 @@ runtimefunction id=131086 function=f28
 # CHECK-NEXT: v140: string = ToString v136
 # CHECK-NEXT: v141: " " = String string=" "
 # CHECK-NEXT: v142: string = Strcat v137, v141, v138, v139, v140
-# CHECK-NEXT: Jump -> next b45(v142)
+# CHECK-NEXT: Jump -> next b48(v142)
 # CHECK-NEXT: b42() role=CatchHandler:
 # CHECK-NEXT: v143: anything = CatchValue
 # CHECK-NEXT: v144: anything ~ undefined|null|Error = Upcast v143 castType=anything
 # CHECK-NEXT: v145: anything = PropGet v144 key="name" accessSite=90
 # CHECK-NEXT: v146: boolean = TypeTest v145 testedType=undefined|null|string
-# CHECK-NEXT: Branch v146 -> taken b43(| 0), notTaken b47(| 0)
+# CHECK-NEXT: Branch v146 -> taken b43(| 0), notTaken b50(| 0)
 # CHECK-NEXT: b43(v147: undefined|null|string):
 # CHECK-NEXT: v148: ": " = String string=": "
 # CHECK-NEXT: v149: string = Add v147, v148
-# CHECK-NEXT: v150: anything = PropGet v144 key="message" accessSite=91
-# CHECK-NEXT: v151: boolean = TypeTest v150 testedType=undefined|null|string
-# CHECK-NEXT: Branch v151 -> taken b44(| 0), notTaken b46(| 0)
-# CHECK-NEXT: b44(v152: undefined|null|string):
-# CHECK-NEXT: v153: string = Add v149, v152
-# CHECK-NEXT: Jump -> next b45(v153)
-# CHECK-NEXT: b45(v154: string):
-# CHECK-NEXT: v155: ":" = String string=":"
-# CHECK-NEXT: v156: string = Add v0, v155
-# CHECK-NEXT: v157: undefined = CallBuiltin -, v156, v154 overload=ConsoleLog/0 accessSite=94
-# CHECK-NEXT: v158: undefined = Undefined
-# CHECK-NEXT: Return v158
-# CHECK-NEXT: b46(v159: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b48(v149, v159)
-# CHECK-NEXT: b47(v160: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v161: ": " = String string=": "
-# CHECK-NEXT: v162: string = Add v160, v161
-# CHECK-NEXT: v163: anything = PropGet v144 key="message" accessSite=91
-# CHECK-NEXT: v164: anything ~ undefined|null|string = Expect v163 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b48(v162, v164)
-# CHECK-NEXT: b48(v165: string, v166: anything) frequency=Unlikely:
-# CHECK-NEXT: v167: string = Add v165, v166
-# CHECK-NEXT: Jump -> next b49(v167)
-# CHECK-NEXT: b49(v168: string) frequency=Unlikely:
-# CHECK-NEXT: v169: ":" = String string=":"
-# CHECK-NEXT: v170: string = Add v0, v169
-# CHECK-NEXT: v171: undefined = CallBuiltin -, v170, v168 overload=ConsoleLog/0 accessSite=94
-# CHECK-NEXT: v172: undefined = Undefined
-# CHECK-NEXT: Return v172
+# CHECK-NEXT: v150: boolean = TypeTest v144 testedType=Error
+# CHECK-NEXT: Branch v150 -> taken b44(| 0), notTaken b45()
+# CHECK-NEXT: b44(v151: Error):
+# CHECK-NEXT: v152: anything = CallBuiltin v151 overload=ErrorPrototypeMessage/0 accessSite=91
+# CHECK-NEXT: Jump -> next b46(v152)
+# CHECK-NEXT: b45() frequency=Rare:
+# CHECK-NEXT: v153: anything = PropGet v144 key="message" accessSite=91
+# CHECK-NEXT: Jump -> next b46(v153)
+# CHECK-NEXT: b46(v154: anything):
+# CHECK-NEXT: v155: boolean = TypeTest v154 testedType=undefined|null|string
+# CHECK-NEXT: Branch v155 -> taken b47(| 0), notTaken b49(| 0)
+# CHECK-NEXT: b47(v156: undefined|null|string):
+# CHECK-NEXT: v157: string = Add v149, v156
+# CHECK-NEXT: Jump -> next b48(v157)
+# CHECK-NEXT: b48(v158: string):
+# CHECK-NEXT: v159: ":" = String string=":"
+# CHECK-NEXT: v160: string = Add v0, v159
+# CHECK-NEXT: v161: undefined = CallBuiltin -, v160, v158 overload=ConsoleLog/0 accessSite=94
+# CHECK-NEXT: v162: undefined = Undefined
+# CHECK-NEXT: Return v162
+# CHECK-NEXT: b49(v163: boolean|number|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b51(v149, v163)
+# CHECK-NEXT: b50(v164: boolean|number|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: v165: ": " = String string=": "
+# CHECK-NEXT: v166: string = Add v164, v165
+# CHECK-NEXT: v167: anything = PropGet v144 key="message" accessSite=91
+# CHECK-NEXT: v168: anything ~ undefined|null|string = Expect v167 expectedType=undefined|null|string
+# CHECK-NEXT: Jump -> next b51(v166, v168)
+# CHECK-NEXT: b51(v169: string, v170: anything) frequency=Unlikely:
+# CHECK-NEXT: v171: string = Add v169, v170
+# CHECK-NEXT: Jump -> next b52(v171)
+# CHECK-NEXT: b52(v172: string) frequency=Unlikely:
+# CHECK-NEXT: v173: ":" = String string=":"
+# CHECK-NEXT: v174: string = Add v0, v173
+# CHECK-NEXT: v175: undefined = CallBuiltin -, v174, v172 overload=ConsoleLog/0 accessSite=94
+# CHECK-NEXT: v176: undefined = Undefined
+# CHECK-NEXT: Return v176
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="withElements"
 # CHECK: module=m0 position=1066 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[0, 4294967295] site=w14}, {type=Object site=w15 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array site=w16 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f49 callPosition=4294967295 module=m0}] {

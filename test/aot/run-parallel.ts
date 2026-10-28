@@ -16,8 +16,8 @@
 // So are the programs of the second build: the first has asked each as it is alone.
 // What the compiler leaves out of an executable goes by how much it knows, and it knows less beside others: a program that is refused something
 // there, and not by plain Bun, is built again alone and judged by that.
-// Not one with a stored Output: what an executable leaves out goes by all that it holds. Nor one that writes to a built-in object, unless
-// it names much of the library: what may be written goes by what the others call, and what the others may rely on by what is written.
+// Not one with a stored Output: what an executable leaves out goes by all that it holds. Those that write to a built-in object and name no
+// module of the library share only among themselves, and only if they bring much of the library: what the others may rely on goes by what is written.
 //
 // A program may begin with comment lines that say how it is built and run:
 //   // Flags: --aot-validate           more flags for the build. A word that begins with ./ or ../ is a path from the folder of the program
@@ -87,6 +87,7 @@ type Program = {
   isBuiltErased: boolean;
   isAlone: boolean;
   weight: number;
+  namesModules: boolean;
   writesToBuiltIn: boolean;
   exitCode: number;
   todo?: string;
@@ -100,7 +101,7 @@ type Program = {
 const programsInOneExecutable = 64;
 // The library is compiled once for each such program, so the fewer the better.
 const entryPointsOfOneProgram = 256;
-// Whoever names one of these brings thousands of functions of Bun's library, and takes as long to build as eight other programs.
+// Whoever names one of these, in whichever of its files, brings thousands of functions of Bun's library, and takes as long to build as eight other programs.
 const namesMuchOfTheLibrary =
   /["'`](?:node:)?(?:assert|child_process|cluster|console|crypto|dgram|diagnostics_channel|dns|events|fs|https?|http2|inspector|net|perf_hooks|readline|repl|stream|tls|tty|util|v8|worker_threads|zlib)(?:\/[a-z]+)?["'`]|\bWorker\b|\bprocess\.std(?:in|out|err)\b/;
 const builtIn =
@@ -112,6 +113,24 @@ const writesToBuiltIn = new RegExp(
     `\\bdelete\\s+${builtIn}\\b`,
   ].join("|"),
 );
+// So does whoever lets one of these stand as a value: all that hangs on it is out of the compiler's sight.
+const handsOutObjectOfHost = /(?<![.\w$"'`:])(?:globalThis|process|Bun)\b(?!\s*\??\.\s*[A-Za-z_$])(?!["'`:])/;
+/** Asks the file and the files that it names by relative paths, and those that they name. */
+function someFileOf(path: string, holds: (text: string) => boolean) {
+  const paths = [path];
+  for (const path of paths) {
+    const text = readFileSync(path, "utf8");
+    if (holds(text)) return true;
+    for (const [, name] of text.matchAll(/(?:\bfrom|\bimport|\bimport\(|\brequire\()\s*["'](\.\.?\/[^"'\n]+)["']/g)) {
+      const named = resolve(dirname(path), name);
+      const found = ["", ".ts", ".js", ".mjs", ".cjs", ".tsx", ".mts", ".cts"]
+        .map(extension => named + extension)
+        .find(candidate => statSync(candidate, { throwIfNoEntry: false })?.isFile());
+      if (found && /\.[cm]?[jt]sx?$/.test(found) && !paths.includes(found)) paths.push(found);
+    }
+  }
+  return false;
+}
 const saysWhatWasLeftOut = /was not compiled into this executable|the compiler couldn't tell at build time/;
 const sharesLibrary = ({ weight, output, way, writesToBuiltIn }: Program) =>
   output === undefined && (weight > 1 || (!writesToBuiltIn && (way === "erased" || firstBuildIsOneProgram)));
@@ -441,6 +460,7 @@ function fail(program: Program, stage: string, message: string, actual?: Output,
 function read(file: string): Program {
   const path = resolve(file);
   const text = readFileSync(path, "utf8");
+  const namesModules = someFileOf(path, text => namesMuchOfTheLibrary.test(text));
   const head =
     /^(?:#!.*\r?\n)?(?:\/\/.*\r?\n)*/.exec(text)![0] +
     (/\n((?:\/\/.*\r?\n)+)\/\* (?:Output|Build errors):\r?\n(?:(?!\*\/)[^])*\*\/\s*$/.exec(text)?.[1] ?? "");
@@ -468,7 +488,8 @@ function read(file: string): Program {
     erasedIsAsPlain: lines("Erased types").includes("as plain Bun"),
     isBuiltErased: !lines("Erased types").some(line => line.startsWith("not built")),
     isAlone: lines("Alone").length > 0,
-    weight: namesMuchOfTheLibrary.test(text) ? 8 : 1,
+    weight: namesModules || someFileOf(path, text => handsOutObjectOfHost.test(text)) ? 8 : 1,
+    namesModules,
     writesToBuiltIn: writesToBuiltIn.test(text),
     exitCode: Number(lines("Exit code")[0] ?? 0),
     todo: lines("Todo")[0],
@@ -894,6 +915,8 @@ const groups = Map.groupBy(all, program =>
     nearestProject(program.path),
     isBuiltAlone(program) && program.path,
     sharesLibrary(program),
+    // Among themselves: they take nothing from whoever writes nothing.
+    !program.namesModules && program.writesToBuiltIn,
     twins.get(withoutExtension(program.path))!.findIndex(({ path }) => path === program.path),
   ]),
 );

@@ -1,5 +1,4 @@
 // The first use of a built-in may come in the handler of a stack overflow, and the host creates some built-ins by running JavaScript: process.nextTick sets up its queue. Plain Bun reports the RangeError of that set-up as uncaught, exits with 1 and leaves process.nextTick undefined. Compiled code has the built-in as a constant, so the run time keeps stack for its creation.
-// Alone: TODO: as one of many entry points it answers otherwise than alone
 let handlers = 0;
 let failedUses = 0;
 function deep(depth) {

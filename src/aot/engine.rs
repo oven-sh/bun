@@ -200,19 +200,6 @@ impl EngineOptions {
         self.record.action = CompileAction::CheckOnly;
     }
 
-    /// `stops`: the engine ends behind the flow analysis, without an image, where that finds the program to lack code of Bun's own.
-    pub fn stop_where_library_code_is_lacked(&mut self, stops: bool) {
-        match (self.record.action, stops) {
-            (CompileAction::Compile, true) => {
-                self.record.action = CompileAction::CompileUnlessLibraryCodeIsLacked;
-            }
-            (CompileAction::CompileUnlessLibraryCodeIsLacked, false) => {
-                self.record.action = CompileAction::Compile;
-            }
-            _ => {}
-        }
-    }
-
     pub fn makes_image(&self) -> bool {
         self.record.action == CompileAction::Compile
     }
@@ -248,8 +235,24 @@ pub fn check_option_word(
     apply_option_word(&mut record, word)
 }
 
+/// What the flow analysis says a program uses of Bun's own code.
+#[derive(Copy, Clone)]
+pub struct FlowFindings<'a> {
+    pub unseen_code: &'a [UnseenCodeRecord],
+    pub builtins_used: &'a [BuiltinUseRecord],
+    pub library_functions_lacked: &'a [LackedFunctionRecord],
+}
+
+/// Asked on a thread of the engine's.
+pub type JudgeOfFlowFindings<'a> = &'a (dyn Fn(FlowFindings<'_>) -> bool + Sync);
+
 /// The engine frees the program as soon as it has read it, long before it returns.
-pub fn compile(program: ProgramBytes, options: &EngineOptions) -> EngineResult {
+/// `goes_on`: asked when the flow analysis has ended. False: the engine ends there, with its report and without an image.
+pub fn compile(
+    program: ProgramBytes,
+    options: &EngineOptions,
+    goes_on: JudgeOfFlowFindings<'_>,
+) -> EngineResult {
     let record = options.record_for(program.size_with_external_bodies());
     let bytes = BunAOTBytes::from_slice(program.as_slice());
     let external_bodies = program
@@ -258,9 +261,10 @@ pub fn compile(program: ProgramBytes, options: &EngineOptions) -> EngineResult {
     let mut owner = ProgramOwner {
         program: Some(program),
         frees_on_pool_thread: record.thread_count > 1,
+        goes_on,
     };
-    // SAFETY: the engine reads the program until it calls `release_program` or returns, calls that at most once,
-    // reads the record only until it returns, and its result has no other owner.
+    // SAFETY: the engine reads the program until it calls `release_program` or returns, calls that and `goes_on_behind_flow_analysis`
+    // at most once, one after the other, reads the record only until it returns, and its result has no other owner.
     unsafe {
         let result = Bun__AOT__compile(
             bytes,
@@ -268,6 +272,7 @@ pub fn compile(program: ProgramBytes, options: &EngineOptions) -> EngineResult {
                 .as_ref()
                 .map_or(core::ptr::null(), core::ptr::from_ref),
             release_program,
+            goes_on_behind_flow_analysis,
             (&raw mut owner).cast::<c_void>(),
             &raw const record,
             &raw const REGION_THREADS,
@@ -276,15 +281,56 @@ pub fn compile(program: ProgramBytes, options: &EngineOptions) -> EngineResult {
     }
 }
 
-struct ProgramOwner {
+struct ProgramOwner<'a> {
     program: Option<ProgramBytes>,
     frees_on_pool_thread: bool,
+    goes_on: JudgeOfFlowFindings<'a>,
+}
+
+/// `JSC::AOT::FlowFindings`.
+#[repr(C)]
+struct FlowFindingsOfEngine {
+    unseen_code: *const UnseenCodeRecord,
+    unseen_code_count: usize,
+    builtins_used: *const BuiltinUseRecord,
+    builtins_used_count: usize,
+    library_functions_lacked: *const LackedFunctionRecord,
+    library_functions_lacked_count: usize,
+}
+
+/// SAFETY: `owner` is the `ProgramOwner` of a running `compile`, which nothing else touches until the engine returns, and the lists of
+/// `findings` are readable until this returns.
+unsafe extern "C" fn goes_on_behind_flow_analysis(
+    owner: *mut c_void,
+    findings: *const FlowFindingsOfEngine,
+) -> bool {
+    /// SAFETY: `first` is readable for `count` records, or `count` is 0.
+    unsafe fn list<'a, T>(first: *const T, count: usize) -> &'a [T] {
+        match count {
+            0 => &[],
+            // SAFETY: the caller's promise.
+            _ => unsafe { core::slice::from_raw_parts(first, count) },
+        }
+    }
+    // SAFETY: the caller's promise.
+    unsafe {
+        let owner = &*owner.cast::<ProgramOwner<'_>>();
+        let findings = &*findings;
+        (owner.goes_on)(FlowFindings {
+            unseen_code: list(findings.unseen_code, findings.unseen_code_count),
+            builtins_used: list(findings.builtins_used, findings.builtins_used_count),
+            library_functions_lacked: list(
+                findings.library_functions_lacked,
+                findings.library_functions_lacked_count,
+            ),
+        })
+    }
 }
 
 /// SAFETY: `owner` is the `ProgramOwner` of a running `compile`, which nothing else touches until the engine returns.
 unsafe extern "C" fn release_program(owner: *mut c_void) {
     // SAFETY: the caller's promise.
-    let owner = unsafe { &mut *owner.cast::<ProgramOwner>() };
+    let owner = unsafe { &mut *owner.cast::<ProgramOwner<'_>>() };
     let Some(program) = owner.program.take() else {
         return;
     };
@@ -361,6 +407,14 @@ impl EngineResult {
         self.elements(ResultSection::Symbols)
     }
 
+    pub fn flow_findings(&self) -> FlowFindings<'_> {
+        FlowFindings {
+            unseen_code: self.unseen_code(),
+            builtins_used: self.builtins_used(),
+            library_functions_lacked: self.library_functions_lacked(),
+        }
+    }
+
     fn elements<T>(&self, section: ResultSection) -> &[T] {
         // SAFETY: the section is readable until `drop`, and the engine, built from the same schema, wrote the `T` of each caller.
         unsafe { self.sections[section as usize].as_slice() }
@@ -432,6 +486,10 @@ unsafe extern "C" {
         program: BunAOTBytes,
         external_bodies: *const ExternalFunctionBodies,
         release_program: unsafe extern "C" fn(owner: *mut c_void),
+        goes_on_behind_flow_analysis: unsafe extern "C" fn(
+            owner: *mut c_void,
+            findings: *const FlowFindingsOfEngine,
+        ) -> bool,
         program_owner: *mut c_void,
         options: *const CompileOptions,
         thread_pool: *const HostThreadPool,

@@ -756,160 +756,165 @@ runtimefunction id=12 function=f30
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v46: 40 = Integer integer=40
 # CHECK-NEXT: v47: boolean = Less v44, v46
-# CHECK-NEXT: Branch v47 -> taken b5(| 0), notTaken b44()
+# CHECK-NEXT: Branch v47 -> taken b5(| 0), notTaken b46()
 # CHECK-NEXT: b5(v48: int[0, 39]):
 # CHECK-NEXT: v49: 2 = Integer integer=2
 # CHECK-NEXT: v50: boolean = AreMembersUnchanged conditions=[{layout=L4 side=Static key="prototype"}]
-# CHECK-NEXT: Branch v50 -> taken b6(), notTaken b10()
+# CHECK-NEXT: Branch v50 -> taken b6(), notTaken b11()
 # CHECK-NEXT: b6():
 # CHECK-NEXT: v51: L4 = NewObject layout=L4 allocationClass=3
 # CHECK-NEXT: v52: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L4}]
 # CHECK-NEXT: Branch v52 -> taken b7(| 0), notTaken b8()
 # CHECK-NEXT: b7(v53: guard):
 # CHECK-NEXT: PutSlot v51, v53, v48 key="a" receivers=[L4] level=Expected accessSite=55
-# CHECK-NEXT: Jump -> next b14(v51)
+# CHECK-NEXT: Jump -> next b16(v51)
 # CHECK-NEXT: b8() frequency=Unlikely handler=b9():
 # CHECK-NEXT: PropSet v51, v48 key="a" accessSite=55 receivers=[L4]
-# CHECK-NEXT: Jump -> next b14(v51)
-# CHECK-NEXT: b9() role=CatchHandler handler=b42():
-# CHECK-NEXT: PropSet v51, v48 key="a" accessSite=80 receivers=[L4]
-# CHECK-NEXT: Jump -> next b14(v51)
-# CHECK-NEXT: b10() frequency=Unlikely handler=b42():
-# CHECK-NEXT: v57: object = GetConstructPrototype v42 layout=L4
-# CHECK-NEXT: v58: L4 = NewObject v57 layout=L4 allocationClass=3
-# CHECK-NEXT: Jump -> next b11()
-# CHECK-NEXT: b11() frequency=Unlikely handler=b12():
-# CHECK-NEXT: PropSet v58, v48 key="a" accessSite=55 receivers=[L4]
-# CHECK-NEXT: Jump -> next b13()
-# CHECK-NEXT: b12() role=CatchHandler frequency=Unlikely handler=b42():
-# CHECK-NEXT: PropSet v58, v48 key="a" accessSite=80 receivers=[L4]
-# CHECK-NEXT: Jump -> next b13()
-# CHECK-NEXT: b13() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b14(v58)
-# CHECK-NEXT: b14(v61: L4):
-# CHECK-NEXT: v62: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L4}]
-# CHECK-NEXT: Branch v62 -> taken b15(| 0), notTaken b17()
-# CHECK-NEXT: b15(v63: guard):
-# CHECK-NEXT: v64: "second" = String string="second"
-# CHECK-NEXT: PutSlot v61, v63, v64 key="tag" receivers=[L4] level=Expected accessSite=81
-# CHECK-NEXT: PutSlot v61, v63, v49 key="b" receivers=[L4] level=Expected accessSite=82
-# CHECK-NEXT: v67: 5 = Integer integer=5
-# CHECK-NEXT: v68: int[0, 4] = Mod v48, v67
-# CHECK-NEXT: v69: 3 = Integer integer=3
-# CHECK-NEXT: v70: boolean = StrictEq v68, v69
-# CHECK-NEXT: Branch v70 -> taken b16(), notTaken b20()
-# CHECK-NEXT: b16() handler=b42():
-# CHECK-NEXT: v71: undefined = Undefined
-# CHECK-NEXT: PropSet v61, v71 key="size" accessSite=60 receivers=[L4]
-# CHECK-NEXT: Jump -> next b20()
-# CHECK-NEXT: b17() frequency=Unlikely handler=b42():
-# CHECK-NEXT: v73: "second" = String string="second"
-# CHECK-NEXT: PropSet v61, v73 key="tag" accessSite=81 receivers=[L4]
-# CHECK-NEXT: PropSet v61, v49 key="b" accessSite=82 receivers=[L4]
-# CHECK-NEXT: v76: 5 = Integer integer=5
-# CHECK-NEXT: v77: int[0, 4] = Mod v48, v76
-# CHECK-NEXT: v78: 3 = Integer integer=3
-# CHECK-NEXT: v79: boolean = StrictEq v77, v78
-# CHECK-NEXT: Branch v79 -> taken b18(), notTaken b19()
-# CHECK-NEXT: b18() frequency=Unlikely handler=b42():
-# CHECK-NEXT: v80: undefined = Undefined
-# CHECK-NEXT: PropSet v61, v80 key="size" accessSite=60 receivers=[L4]
-# CHECK-NEXT: Jump -> next b19()
-# CHECK-NEXT: b19() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b20()
-# CHECK-NEXT: b20() handler=b42():
-# CHECK-NEXT: v82: builtin(GlobalThis) = Builtin builtin=GlobalThis
-# CHECK-NEXT: v83: anything ~ Array = PropGet v82 key="lines" accessSite=61 [isFreeName]
-# CHECK-NEXT: v84: boolean ~ true = TypeTest v83 testedType=Array
-# CHECK-NEXT: Branch v84 -> taken b21(| 0), notTaken b32()
-# CHECK-NEXT: b21(v85: Array):
-# CHECK-NEXT: v86: boolean = IsPristine v85 builtinClass=Array aspects=[Names]
-# CHECK-NEXT: Branch v86 -> taken b22(), notTaken b32()
-# CHECK-NEXT: b22():
-# CHECK-NEXT: v87: builtin(ArrayPrototypePush) = Builtin builtin=ArrayPrototypePush
-# CHECK-NEXT: v88: boolean = AreMembersUnchanged conditions=[{layout=L4 key="size"}, {kind=PrototypeLinkUnchanged layout=L4}, {kind=MemberNotHidden layout=L4 key="size"}]
-# CHECK-NEXT: Branch v88 -> taken b23(), notTaken b26()
-# CHECK-NEXT: b23():
-# CHECK-NEXT: v89: undefined|int = GetSlot v61 key="a" receivers=[L4] level=Proven accessSite=71
-# CHECK-NEXT: v90: undefined|int ~ int = Upcast v89 castType=anything
-# CHECK-NEXT: v91: 0 = Integer
-# CHECK-NEXT: v92: boolean ~ true = TypeTest v90 testedType=number
-# CHECK-NEXT: Branch v92 -> taken b24(| 0), notTaken b25(| 0)
-# CHECK-NEXT: b24(v93: int):
-# CHECK-NEXT: v94: int|whole = Add v93, v91
-# CHECK-NEXT: Jump -> next b29(v94)
-# CHECK-NEXT: b25(v95: undefined) frequency=Unlikely handler=b42():
-# CHECK-NEXT: v96: number = Add v95, v91
-# CHECK-NEXT: v97: int|whole = AssumeType v96 provenType=int|whole
-# CHECK-NEXT: v98: string = CallBuiltin -, v97 overload=String/0 accessSite=20 @0:4 tail
-# CHECK-NEXT: v99: boolean = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L4 key="size"}]
-# CHECK-NEXT: Branch v99 -> taken b30(v98), notTaken b40(v87, v98)
-# CHECK-NEXT: b26() frequency=Unlikely:
-# CHECK-NEXT: v100: boolean = HasNoExtraProperties v61
-# CHECK-NEXT: Branch v100 -> taken b27(), notTaken b35(v87)
-# CHECK-NEXT: b27() frequency=Unlikely:
-# CHECK-NEXT: v101: boolean = AreMembersUnchanged conditions=[{layout=L4 key="size"}, {kind=PrototypeLinkUnchanged layout=L4}]
-# CHECK-NEXT: Branch v101 -> taken b28(), notTaken b35(v87)
+# CHECK-NEXT: Jump -> next b16(v51)
+# CHECK-NEXT: b9() role=CatchHandler:
+# CHECK-NEXT: v56: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L4}]
+# CHECK-NEXT: Branch v56 -> taken b10(| 0), notTaken b14(v51)
+# CHECK-NEXT: b10(v57: guard):
+# CHECK-NEXT: PutSlot v51, v57, v48 key="a" receivers=[L4] level=Expected accessSite=80
+# CHECK-NEXT: Jump -> next b16(v51)
+# CHECK-NEXT: b11() frequency=Unlikely handler=b44():
+# CHECK-NEXT: v59: object = GetConstructPrototype v42 layout=L4
+# CHECK-NEXT: v60: L4 = NewObject v59 layout=L4 allocationClass=3
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b12() frequency=Unlikely handler=b13():
+# CHECK-NEXT: PropSet v60, v48 key="a" accessSite=55 receivers=[L4]
+# CHECK-NEXT: Jump -> next b15(v60)
+# CHECK-NEXT: b13() role=CatchHandler frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b14(v60)
+# CHECK-NEXT: b14(v62: L4) frequency=Unlikely handler=b44():
+# CHECK-NEXT: PropSet v62, v48 key="a" accessSite=80 receivers=[L4]
+# CHECK-NEXT: Jump -> next b15(v62)
+# CHECK-NEXT: b15(v64: L4) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b16(v64)
+# CHECK-NEXT: b16(v65: L4):
+# CHECK-NEXT: v66: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L4}]
+# CHECK-NEXT: Branch v66 -> taken b17(| 0), notTaken b19()
+# CHECK-NEXT: b17(v67: guard):
+# CHECK-NEXT: v68: "second" = String string="second"
+# CHECK-NEXT: PutSlot v65, v67, v68 key="tag" receivers=[L4] level=Expected accessSite=81
+# CHECK-NEXT: PutSlot v65, v67, v49 key="b" receivers=[L4] level=Expected accessSite=82
+# CHECK-NEXT: v71: 5 = Integer integer=5
+# CHECK-NEXT: v72: int[0, 4] = Mod v48, v71
+# CHECK-NEXT: v73: 3 = Integer integer=3
+# CHECK-NEXT: v74: boolean = StrictEq v72, v73
+# CHECK-NEXT: Branch v74 -> taken b18(), notTaken b22()
+# CHECK-NEXT: b18() handler=b44():
+# CHECK-NEXT: v75: undefined = Undefined
+# CHECK-NEXT: PropSet v65, v75 key="size" accessSite=60 receivers=[L4]
+# CHECK-NEXT: Jump -> next b22()
+# CHECK-NEXT: b19() frequency=Unlikely handler=b44():
+# CHECK-NEXT: v77: "second" = String string="second"
+# CHECK-NEXT: PropSet v65, v77 key="tag" accessSite=81 receivers=[L4]
+# CHECK-NEXT: PropSet v65, v49 key="b" accessSite=82 receivers=[L4]
+# CHECK-NEXT: v80: 5 = Integer integer=5
+# CHECK-NEXT: v81: int[0, 4] = Mod v48, v80
+# CHECK-NEXT: v82: 3 = Integer integer=3
+# CHECK-NEXT: v83: boolean = StrictEq v81, v82
+# CHECK-NEXT: Branch v83 -> taken b20(), notTaken b21()
+# CHECK-NEXT: b20() frequency=Unlikely handler=b44():
+# CHECK-NEXT: v84: undefined = Undefined
+# CHECK-NEXT: PropSet v65, v84 key="size" accessSite=60 receivers=[L4]
+# CHECK-NEXT: Jump -> next b21()
+# CHECK-NEXT: b21() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b22()
+# CHECK-NEXT: b22() handler=b44():
+# CHECK-NEXT: v86: builtin(GlobalThis) = Builtin builtin=GlobalThis
+# CHECK-NEXT: v87: anything ~ Array = PropGet v86 key="lines" accessSite=61 [isFreeName]
+# CHECK-NEXT: v88: boolean ~ true = TypeTest v87 testedType=Array
+# CHECK-NEXT: Branch v88 -> taken b23(| 0), notTaken b34()
+# CHECK-NEXT: b23(v89: Array):
+# CHECK-NEXT: v90: boolean = IsPristine v89 builtinClass=Array aspects=[Names]
+# CHECK-NEXT: Branch v90 -> taken b24(), notTaken b34()
+# CHECK-NEXT: b24():
+# CHECK-NEXT: v91: builtin(ArrayPrototypePush) = Builtin builtin=ArrayPrototypePush
+# CHECK-NEXT: v92: boolean = AreMembersUnchanged conditions=[{layout=L4 key="size"}, {kind=PrototypeLinkUnchanged layout=L4}, {kind=MemberNotHidden layout=L4 key="size"}]
+# CHECK-NEXT: Branch v92 -> taken b25(), notTaken b28()
+# CHECK-NEXT: b25():
+# CHECK-NEXT: v93: undefined|int = GetSlot v65 key="a" receivers=[L4] level=Proven accessSite=71
+# CHECK-NEXT: v94: undefined|int ~ int = Upcast v93 castType=anything
+# CHECK-NEXT: v95: 0 = Integer
+# CHECK-NEXT: v96: boolean ~ true = TypeTest v94 testedType=number
+# CHECK-NEXT: Branch v96 -> taken b26(| 0), notTaken b27(| 0)
+# CHECK-NEXT: b26(v97: int):
+# CHECK-NEXT: v98: int|whole = Add v97, v95
+# CHECK-NEXT: Jump -> next b31(v98)
+# CHECK-NEXT: b27(v99: undefined) frequency=Unlikely handler=b44():
+# CHECK-NEXT: v100: number = Add v99, v95
+# CHECK-NEXT: v101: int|whole = AssumeType v100 provenType=int|whole
+# CHECK-NEXT: v102: string = CallBuiltin -, v101 overload=String/0 accessSite=20 @0:4 tail
+# CHECK-NEXT: v103: boolean = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L4 key="size"}]
+# CHECK-NEXT: Branch v103 -> taken b32(v102), notTaken b42(v91, v102)
 # CHECK-NEXT: b28() frequency=Unlikely:
-# CHECK-NEXT: v102: undefined|int = GetSlot v61 key="a" receivers=[L4] level=Proven accessSite=71
-# CHECK-NEXT: v103: undefined|int ~ int = Upcast v102 castType=anything
-# CHECK-NEXT: v104: 0 = Integer
-# CHECK-NEXT: v105: number ~ int|whole = Add v103, v104
-# CHECK-NEXT: v106: int|whole = AssumeType v105 provenType=int|whole
-# CHECK-NEXT: Jump -> next b29(v106)
-# CHECK-NEXT: b29(v107: int|whole) handler=b42():
-# CHECK-NEXT: v108: string = CallBuiltin -, v107 overload=String/0 accessSite=20 @0:4 tail
-# CHECK-NEXT: v109: boolean = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L4 key="size"}]
-# CHECK-NEXT: Branch v109 -> taken b30(v108), notTaken b40(v87, v108)
-# CHECK-NEXT: b30(v110: string) handler=b42():
-# CHECK-NEXT: v111: false = Boolean
-# CHECK-NEXT: v112: string = CallBuiltin -, v111 overload=String/0 accessSite=66
-# CHECK-NEXT: v113: string = Add v110, v112
-# CHECK-NEXT: v114: boolean = IsPristine v85 builtinClass=Array aspects=[Storage]
-# CHECK-NEXT: Branch v114 -> taken b31(), notTaken b41(v87, v113)
-# CHECK-NEXT: b31() handler=b42():
-# CHECK-NEXT: v115: int[0, 4294967295] = CallBuiltin v85, v113 overload=ArrayPrototypePush/0 accessSite=67 [needsPristineReceiver]
-# CHECK-NEXT: Jump -> next b43()
-# CHECK-NEXT: b32() frequency=Unlikely handler=b42():
-# CHECK-NEXT: v116: anything = PropGet v83 key="push" accessSite=62
-# CHECK-NEXT: v117: boolean = AreMembersUnchanged conditions=[{layout=L4 key="size"}, {kind=PrototypeLinkUnchanged layout=L4}, {kind=MemberNotHidden layout=L4 key="size"}]
-# CHECK-NEXT: Branch v117 -> taken b33(), notTaken b34()
-# CHECK-NEXT: b33() frequency=Unlikely:
-# CHECK-NEXT: v118: int|whole = CallDirect v61 function=f12 accessSite=63
-# CHECK-NEXT: Jump -> next b39(v118, v116)
-# CHECK-NEXT: b34() frequency=Rare:
-# CHECK-NEXT: Jump -> next b35(v116)
-# CHECK-NEXT: b35(v119: anything) frequency=Rare:
-# CHECK-NEXT: v120: boolean = AreMembersUnchanged conditions=[{layout=L4 key="size"}, {kind=PrototypeLinkUnchanged layout=L4}, {kind=MemberNotHidden layout=L4 key="size"}]
-# CHECK-NEXT: Branch v120 -> taken b36(), notTaken b37()
+# CHECK-NEXT: v104: boolean = HasNoExtraProperties v65
+# CHECK-NEXT: Branch v104 -> taken b29(), notTaken b37(v91)
+# CHECK-NEXT: b29() frequency=Unlikely:
+# CHECK-NEXT: v105: boolean = AreMembersUnchanged conditions=[{layout=L4 key="size"}, {kind=PrototypeLinkUnchanged layout=L4}]
+# CHECK-NEXT: Branch v105 -> taken b30(), notTaken b37(v91)
+# CHECK-NEXT: b30() frequency=Unlikely:
+# CHECK-NEXT: v106: undefined|int = GetSlot v65 key="a" receivers=[L4] level=Proven accessSite=71
+# CHECK-NEXT: v107: undefined|int ~ int = Upcast v106 castType=anything
+# CHECK-NEXT: v108: 0 = Integer
+# CHECK-NEXT: v109: number ~ int|whole = Add v107, v108
+# CHECK-NEXT: v110: int|whole = AssumeType v109 provenType=int|whole
+# CHECK-NEXT: Jump -> next b31(v110)
+# CHECK-NEXT: b31(v111: int|whole) handler=b44():
+# CHECK-NEXT: v112: string = CallBuiltin -, v111 overload=String/0 accessSite=20 @0:4 tail
+# CHECK-NEXT: v113: boolean = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L4 key="size"}]
+# CHECK-NEXT: Branch v113 -> taken b32(v112), notTaken b42(v91, v112)
+# CHECK-NEXT: b32(v114: string) handler=b44():
+# CHECK-NEXT: v115: false = Boolean
+# CHECK-NEXT: v116: string = CallBuiltin -, v115 overload=String/0 accessSite=66
+# CHECK-NEXT: v117: string = Add v114, v116
+# CHECK-NEXT: v118: boolean = IsPristine v89 builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: Branch v118 -> taken b33(), notTaken b43(v91, v117)
+# CHECK-NEXT: b33() handler=b44():
+# CHECK-NEXT: v119: int[0, 4294967295] = CallBuiltin v89, v117 overload=ArrayPrototypePush/0 accessSite=67 [needsPristineReceiver]
+# CHECK-NEXT: Jump -> next b45()
+# CHECK-NEXT: b34() frequency=Unlikely handler=b44():
+# CHECK-NEXT: v120: anything = PropGet v87 key="push" accessSite=62
+# CHECK-NEXT: v121: boolean = AreMembersUnchanged conditions=[{layout=L4 key="size"}, {kind=PrototypeLinkUnchanged layout=L4}, {kind=MemberNotHidden layout=L4 key="size"}]
+# CHECK-NEXT: Branch v121 -> taken b35(), notTaken b36()
+# CHECK-NEXT: b35() frequency=Unlikely:
+# CHECK-NEXT: v122: int|whole = CallDirect v65 function=f12 accessSite=63
+# CHECK-NEXT: Jump -> next b41(v122, v120)
 # CHECK-NEXT: b36() frequency=Rare:
-# CHECK-NEXT: v121: int|whole = CallDirect v61 function=f12 accessSite=63
-# CHECK-NEXT: Jump -> next b38(v121)
-# CHECK-NEXT: b37() frequency=Rare handler=b42():
-# CHECK-NEXT: v122: anything = PropGet v61 key="size" accessSite=63 receivers=[L4]
-# CHECK-NEXT: v123: undefined|int|whole = AssumeType v122 provenType=undefined|int|whole
-# CHECK-NEXT: Jump -> next b38(v123)
-# CHECK-NEXT: b38(v124: undefined|int|whole) frequency=Rare:
-# CHECK-NEXT: Jump -> next b39(v124, v119)
-# CHECK-NEXT: b39(v125: undefined|int|whole, v126: anything) frequency=Unlikely handler=b42():
-# CHECK-NEXT: v127: string = CallDirect v125 function=f1 accessSite=64
-# CHECK-NEXT: Jump -> next b40(v126, v127)
-# CHECK-NEXT: b40(v128: anything ~ builtin(ArrayPrototypePush), v129: string) frequency=Unlikely handler=b42():
-# CHECK-NEXT: v130: boolean = PropHasOwn v61 key="size" calledBuiltin=ObjectHasOwn accessSite=65
-# CHECK-NEXT: v131: string = CallBuiltin -, v130 overload=String/0 accessSite=66
-# CHECK-NEXT: v132: string = Add v129, v131
-# CHECK-NEXT: Jump -> next b41(v128, v132)
-# CHECK-NEXT: b41(v133: anything ~ builtin(ArrayPrototypePush), v134: string) frequency=Unlikely handler=b42():
-# CHECK-NEXT: v135: anything = Call v133, v83, v134 calleeKey="push" calleeName="lines.push" accessSite=67 callees=[builtin(ArrayPrototypePush), ..]
-# CHECK-NEXT: Jump -> next b43()
-# CHECK-NEXT: b42() role=CatchHandler:
-# CHECK-NEXT: Jump -> next b43()
-# CHECK-NEXT: b43():
-# CHECK-NEXT: v136: int[1, 40] = Increment v48
-# CHECK-NEXT: Jump -> next b4(v136)
-# CHECK-NEXT: b44():
-# CHECK-NEXT: v137: undefined = Undefined
-# CHECK-NEXT: Return v137
+# CHECK-NEXT: Jump -> next b37(v120)
+# CHECK-NEXT: b37(v123: anything) frequency=Rare:
+# CHECK-NEXT: v124: boolean = AreMembersUnchanged conditions=[{layout=L4 key="size"}, {kind=PrototypeLinkUnchanged layout=L4}, {kind=MemberNotHidden layout=L4 key="size"}]
+# CHECK-NEXT: Branch v124 -> taken b38(), notTaken b39()
+# CHECK-NEXT: b38() frequency=Rare:
+# CHECK-NEXT: v125: int|whole = CallDirect v65 function=f12 accessSite=63
+# CHECK-NEXT: Jump -> next b40(v125)
+# CHECK-NEXT: b39() frequency=Rare handler=b44():
+# CHECK-NEXT: v126: anything = PropGet v65 key="size" accessSite=63 receivers=[L4]
+# CHECK-NEXT: v127: undefined|int|whole = AssumeType v126 provenType=undefined|int|whole
+# CHECK-NEXT: Jump -> next b40(v127)
+# CHECK-NEXT: b40(v128: undefined|int|whole) frequency=Rare:
+# CHECK-NEXT: Jump -> next b41(v128, v123)
+# CHECK-NEXT: b41(v129: undefined|int|whole, v130: anything) frequency=Unlikely handler=b44():
+# CHECK-NEXT: v131: string = CallDirect v129 function=f1 accessSite=64
+# CHECK-NEXT: Jump -> next b42(v130, v131)
+# CHECK-NEXT: b42(v132: anything ~ builtin(ArrayPrototypePush), v133: string) frequency=Unlikely handler=b44():
+# CHECK-NEXT: v134: boolean = PropHasOwn v65 key="size" calledBuiltin=ObjectHasOwn accessSite=65
+# CHECK-NEXT: v135: string = CallBuiltin -, v134 overload=String/0 accessSite=66
+# CHECK-NEXT: v136: string = Add v133, v135
+# CHECK-NEXT: Jump -> next b43(v132, v136)
+# CHECK-NEXT: b43(v137: anything ~ builtin(ArrayPrototypePush), v138: string) frequency=Unlikely handler=b44():
+# CHECK-NEXT: v139: anything = Call v137, v87, v138 calleeKey="push" calleeName="lines.push" accessSite=67 callees=[builtin(ArrayPrototypePush), ..]
+# CHECK-NEXT: Jump -> next b45()
+# CHECK-NEXT: b44() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b45()
+# CHECK-NEXT: b45():
+# CHECK-NEXT: v140: int[1, 40] = Increment v48
+# CHECK-NEXT: Jump -> next b4(v140)
+# CHECK-NEXT: b46():
+# CHECK-NEXT: v141: undefined = Undefined
+# CHECK-NEXT: Return v141
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: module=m0 position=157 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|int|whole}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1241,27 +1246,33 @@ runtimefunction id=12 function=f30
 # CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v5: guard):
 # CHECK-NEXT: PutSlot v0, v5, v1 key="a" receivers=[L4] level=Expected accessSite=55
-# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b2() frequency=Unlikely handler=b3():
 # CHECK-NEXT: PropSet v0, v1 key="a" accessSite=55 receivers=[L4]
-# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b3() role=CatchHandler:
+# CHECK-NEXT: v8: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L4}]
+# CHECK-NEXT: Branch v8 -> taken b4(| 0), notTaken b5()
+# CHECK-NEXT: b4(v9: guard):
+# CHECK-NEXT: PutSlot v0, v9, v1 key="a" receivers=[L4] level=Expected accessSite=80
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b5() frequency=Unlikely:
 # CHECK-NEXT: PropSet v0, v1 key="a" accessSite=80 receivers=[L4]
-# CHECK-NEXT: Jump -> next b4()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v9: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L4}]
-# CHECK-NEXT: Branch v9 -> taken b5(| 0), notTaken b6()
-# CHECK-NEXT: b5(v10: guard):
-# CHECK-NEXT: PutSlot v0, v10, v3 key="tag" receivers=[L4] level=Expected accessSite=81
-# CHECK-NEXT: PutSlot v0, v10, v2 key="b" receivers=[L4] level=Expected accessSite=82
-# CHECK-NEXT: Jump -> next b7()
-# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v12: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L4}]
+# CHECK-NEXT: Branch v12 -> taken b7(| 0), notTaken b8()
+# CHECK-NEXT: b7(v13: guard):
+# CHECK-NEXT: PutSlot v0, v13, v3 key="tag" receivers=[L4] level=Expected accessSite=81
+# CHECK-NEXT: PutSlot v0, v13, v2 key="b" receivers=[L4] level=Expected accessSite=82
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b8() frequency=Unlikely:
 # CHECK-NEXT: PropSet v0, v3 key="tag" accessSite=81 receivers=[L4]
 # CHECK-NEXT: PropSet v0, v2 key="b" accessSite=82 receivers=[L4]
-# CHECK-NEXT: Jump -> next b7()
-# CHECK-NEXT: b7():
-# CHECK-NEXT: v15: undefined = Undefined
-# CHECK-NEXT: Return v15
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v18: undefined = Undefined
+# CHECK-NEXT: Return v18
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="apply"
 # CHECK: module=m1 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=4 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {

@@ -1141,11 +1141,11 @@ runtimefunction id=131091 function=f71 visibility=Private
 # CHECK-NEXT: v18: boolean = HasArrayElement v1, v14, v17 arrayStorage=Contiguous level=Expected accessSite=76 [keyIsIntegral]
 # CHECK-NEXT: Branch v18 -> taken b6(), notTaken b8()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v19: boolean = IsElementPresent v1, v14, v17 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: v19: boolean = IsInBounds v1, v14
 # CHECK-NEXT: Branch v19 -> taken b7(| 0), notTaken b11()
 # CHECK-NEXT: b7(v20: guard):
 # CHECK-NEXT: v21: guard = AllGuards v17, v20
-# CHECK-NEXT: v22: undefined|string = GetArrayElement v1, v14, v21 arrayStorage=Contiguous level=Expected accessSite=77 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v22: undefined|string = GetArrayElement v1, v14, v21 arrayStorage=Contiguous level=Expected accessSite=77 [keyIsIntegral, isInBounds]
 # CHECK-NEXT: v23: undefined|null|string = Call v10, -, v22 calleeName="show" accessSite=73 callees=[f1, ..] @0:6 tail
 # CHECK-NEXT: Jump -> next b12(v23)
 # CHECK-NEXT: b8() frequency=Unlikely:

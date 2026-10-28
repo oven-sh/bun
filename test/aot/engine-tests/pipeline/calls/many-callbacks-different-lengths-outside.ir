@@ -3532,12 +3532,14 @@ runtimefunction id=131091 function=f141 visibility=Private
 # CHECK: m0 position=2412 kind=Arrow length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=boolean}] functionTypes=[f104] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything ~ number):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=number
-# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v2: number):
 # CHECK-NEXT: v3: boolean = StrictEq v2, v2
-# CHECK-NEXT: Return v3
-# CHECK-NEXT: b2(v4: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v5: boolean = StrictEq v4, v4
+# CHECK-NEXT: Jump -> next b3(v3)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v4: true = Boolean boolean=true
+# CHECK-NEXT: Jump -> next b3(v4)
+# CHECK-NEXT: b3(v5: boolean):
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f52 module=

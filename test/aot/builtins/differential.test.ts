@@ -71,6 +71,7 @@ const isChecked = (overload: DumpedOverload) =>
 type CheckedCall = { entry: DumpedEntry; mode: CallMode; overloads: DumpedOverload[] };
 
 const keyOf = (entry: string, mode: CallMode) => `${entry} ${mode}`;
+const endedOrStayedAway = "the process ended or did not come back";
 
 const declaredOverloads = dump.entries.flatMap(entry =>
   entry.overloads.filter(needsDifferentialTest).map(overload => ({ entry, overload })),
@@ -536,7 +537,7 @@ function defineTests(): void {
     const key = keyOf(entry.token, mode);
     const report = reports.get(key);
     if (report?.failure !== undefined) return [`${overload.token}: the test itself threw: ${report.failure}`];
-    if (endedProcess.has(key)) return [`${overload.token}: the process ended or did not come back`];
+    if (endedProcess.has(key)) return [`${overload.token}: ${endedOrStayedAway}: ${endedProcess.get(key)}`];
     if (!report) return [`${overload.token}: no report`];
     if (report.unreachable !== undefined) return [`${overload.token}: it is not called: ${report.unreachable}`];
     if (report.setNotMade !== undefined)
@@ -550,6 +551,8 @@ function defineTests(): void {
     const checked = reports.get(keyOf(entry.token, mode))?.overloads.find(({ token }) => token === overload.token);
     const [problem] = findProblems({ entry, mode, overloads: [overload] }, overload);
     if (problem === undefined) return null;
+    // How it ended differs from one machine to the next, and a failing test says it.
+    if (problem.startsWith(`${overload.token}: ${endedOrStayedAway}`)) return endedOrStayedAway;
     if (!checked || checked.differences.length === 0) {
       const [firstLine] = problem.slice(`${overload.token}: `.length).split("\n", 1);
       const thrown = /^error: (.*)$/m.exec(problem)?.[1];

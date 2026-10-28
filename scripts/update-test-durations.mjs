@@ -98,6 +98,18 @@ export function parseLog(raw) {
         concurrent = false;
         continue;
       }
+      // A program compiled ahead of time says what it took: its own build, or its
+      // share of a build that it shares with others, and its run. Most take
+      // under a second and the runner deals those out evenly (aotProgramCostMs):
+      // only the long ones get an entry, so the table stays a table of files.
+      const program = /^(.+\.[cm]?[jt]sx?) \(compile (\d+) ms, run (\d+) ms\)$/.exec(title);
+      if (program) {
+        const ms = Number(program[2]) + Number(program[3]);
+        if (ms >= 3000) out.push([program[1], ms]);
+        path = start = null;
+        concurrent = false;
+        continue;
+      }
       const isPath = /\.(?:[cm]?[jt]sx?|json)$/.test(title);
       path = isPath ? title : null;
       start = isPath ? ts : null;

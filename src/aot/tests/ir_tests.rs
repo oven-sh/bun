@@ -946,8 +946,14 @@ fn hide_function_texts(output: &str) -> String {
 mod tests {
     use super::*;
     use bun_aot::ir::generated::{InternalErrorKind, StatisticId, UserDiagnosticKind};
+    use std::sync::Barrier;
 
     const PROGRAM_WITH_IMPORT: &str = "lower-entry-functions.ts";
+    /// The program sets it for the copies that `builds_run_side_by_side` starts.
+    const BUILDS_SIDE_BY_SIDE_VARIABLE: &str = "AOT_IR_BUILDS_SIDE_BY_SIDE";
+    const PROCESSES_THAT_BUILD: usize = 32;
+    const BUILDS_SIDE_BY_SIDE: usize = 4;
+    const BUILDS_OF_A_THREAD: usize = 2;
 
     #[test]
     fn text_of_a_module_is_hidden_from_the_check_lines() {
@@ -1079,6 +1085,37 @@ mod tests {
             // FIRST: NoSuchOperation\n\
             // SECOND: name=\"add\"\n";
         expect_failures_on_program(directives, &[2, 3]);
+    }
+
+    fn build_side_by_side() {
+        let path = test_root().join("commands").join(PROGRAM_WITH_IMPORT);
+        let directives = "// RUN: lower\n// CHECK-LABEL: name=\"add\"\n// CHECK: Return\n";
+        let start = Barrier::new(BUILDS_SIDE_BY_SIDE);
+        for_each_parallel(BUILDS_SIDE_BY_SIDE, BUILDS_SIDE_BY_SIDE, |_| {
+            start.wait();
+            for _ in 0..BUILDS_OF_A_THREAD {
+                let failures = run_test_text(&path, directives).failures;
+                assert!(failures.is_empty(), "{failures:?}");
+            }
+        });
+    }
+
+    // Only its first builds meet what a process sets up once, so there are many processes.
+    #[test]
+    fn builds_run_side_by_side() {
+        if std::env::var_os(BUILDS_SIDE_BY_SIDE_VARIABLE).is_some() {
+            return build_side_by_side();
+        }
+        let program = std::env::current_exe().expect("a test program knows its path");
+        for_each_parallel(PROCESSES_THAT_BUILD, PROCESSES_THAT_BUILD, |_| {
+            let output = Process::new(&program)
+                .args(["tests::builds_run_side_by_side", "--exact", "--nocapture"])
+                .env(BUILDS_SIDE_BY_SIDE_VARIABLE, "1")
+                .output()
+                .unwrap_or_else(|error| panic!("cannot start {}: {error}", program.display()));
+            let errors = String::from_utf8_lossy(&output.stderr);
+            assert!(output.status.success(), "{}: {errors}", output.status);
+        });
     }
 
     #[test]

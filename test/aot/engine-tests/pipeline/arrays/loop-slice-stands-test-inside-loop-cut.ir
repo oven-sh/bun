@@ -1430,11 +1430,13 @@ runtimefunction id=131091 function=f9 visibility=Private
 # CHECK-NEXT: Return v10
 # CHECK-NEXT: b5():
 # CHECK-NEXT: v11: boolean = Less v0, v1
-# CHECK-NEXT: Branch v11 -> taken b6(v0), notTaken b6(v1)
-# CHECK-NEXT: b6(v12: anything ~ number):
-# CHECK-NEXT: v13: 0 = Integer
-# CHECK-NEXT: v14: int[0, 4294967295] = URShift v12, v13
-# CHECK-NEXT: Return v14
+# CHECK-NEXT: Branch v11 -> taken b6(| 0), notTaken b7(v1)
+# CHECK-NEXT: b6(v12: number):
+# CHECK-NEXT: Jump -> next b7(v12)
+# CHECK-NEXT: b7(v13: anything ~ number):
+# CHECK-NEXT: v14: 0 = Integer
+# CHECK-NEXT: v15: int[0, 4294967295] = URShift v13, v14
+# CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="storeInNewArray"
 # CHECK: module=m1 position=955 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|Array site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=int[0, 4294967295] site=w4}, {type=anything}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

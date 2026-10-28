@@ -1,6 +1,5 @@
 // The TypeError for calling `o.m(..)` when `m` is not a function names `m`.
 // @ts-ignore
-// Alone: TODO: as one of many entry points it answers otherwise than alone
 import untyped from "./untyped.js";
 declare const console: any;
 const m: any = untyped;

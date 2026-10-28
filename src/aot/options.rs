@@ -64,6 +64,21 @@ pub struct LoadOptions {
     pub keeps_library_code_without_names: bool,
     /// An earlier compile of the same program read `process.mainModule` where no file names a way to a module object, by the word of the engine.
     pub reads_main_module_without_its_name: bool,
+    /// An earlier compile of the same program read them, by the word of the engine, where a module object goes where the front end does not follow it.
+    pub ways_read_out_of_sight: WaysBetweenModuleObjects,
+}
+
+/// The members of a module object that lead to other module objects.
+#[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
+pub struct WaysBetweenModuleObjects {
+    pub children: bool,
+    pub parent: bool,
+}
+
+impl WaysBetweenModuleObjects {
+    pub fn is_empty(self) -> bool {
+        !self.children && !self.parent
+    }
 }
 
 /// Code that the program holds as a text and starts a Worker with.
@@ -130,6 +145,7 @@ impl LoadOptions {
             library_code_lacked: LibraryCode::default(),
             keeps_library_code_without_names: false,
             reads_main_module_without_its_name: false,
+            ways_read_out_of_sight: WaysBetweenModuleObjects::default(),
         }
     }
 }

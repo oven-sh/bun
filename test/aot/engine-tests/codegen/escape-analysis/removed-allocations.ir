@@ -276,5 +276,5 @@ runtimefunction id=69 function=f10
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 120, patchpoints: 13, rare instructions: 53, polls: 1
+# CHECK-NEXT: instructions: 134, patchpoints: 13, rare instructions: 64, polls: 1
 # CHECK-NEXT: end of function f0

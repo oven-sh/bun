@@ -288,6 +288,19 @@ static bool isOpaqueProperty(JSGlobalObject* globalObject, JSObject* object, Pro
     return object->type() == ProxyObjectType;
 }
 
+// Lets a spy replace a property of a locked built-in. No JavaScript may run meanwhile, and the traps of an opaque object are JavaScript.
+class ThroughLockOfBuiltins {
+public:
+    ThroughLockOfBuiltins(VM& vm, bool isOpaque)
+    {
+        if (!isOpaque)
+            m_allow.emplace(vm);
+    }
+
+private:
+    std::optional<JSC::AllowLazyMaterializationOfImmutableProperties> m_allow;
+};
+
 static void putOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object, PropertyName key, JSValue storage, unsigned attributes, bool isOpaque)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -948,8 +961,9 @@ private:
         JSValue original = m_spyOriginal.get();
         JSC::Identifier identifier = m_spyIdentifier;
         unsigned attributes = m_spyAttributes;
+        bool isOpaque = attributes & SpyAttributeOpaque;
 
-        JSC::AllowLazyMaterializationOfImmutableProperties throughLock(globalObject->vm());
+        ThroughLockOfBuiltins throughLock(globalObject->vm(), isOpaque);
         if (attributes & SpyAttributeESModuleNamespace) {
             auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target);
             if (moduleNamespaceObject && original) {
@@ -970,7 +984,6 @@ private:
         }
 
         scope.release();
-        bool isOpaque = attributes & SpyAttributeOpaque;
         if (original) {
             putOwnPropertyStorage(globalObject, target, identifier, original, attributes & ~(SpyAttributeAccessor | SpyAttributeOpaque), isOpaque);
         } else if (!isOpaque && target->inherits<NodeVMGlobalObject>()) {
@@ -3096,7 +3109,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             wrapFunction(globalObject, mock, value);
             RETURN_IF_EXCEPTION(scope, {});
 
-            JSC::AllowLazyMaterializationOfImmutableProperties throughLock(vm);
+            ThroughLockOfBuiltins throughLock(vm, isOpaque);
             if (moduleNamespaceObject) {
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
             } else {
@@ -3118,7 +3131,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             mock->pushImpl(globalObject, JSMockImplementation::Kind::ReturnValue, value);
             RETURN_IF_EXCEPTION(scope, {});
 
-            JSC::AllowLazyMaterializationOfImmutableProperties throughLock(vm);
+            ThroughLockOfBuiltins throughLock(vm, isOpaque);
             if (moduleNamespaceObject) {
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
             } else {
@@ -3200,7 +3213,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     }
 
     // Always configurable, so that restoring can delete or redefine it.
-    JSC::AllowLazyMaterializationOfImmutableProperties throughLock(vm);
+    ThroughLockOfBuiltins throughLock(vm, isOpaque);
     putOwnPropertyStorage(globalObject, object, propertyKey, JSC::GetterSetter::create(vm, globalObject, getter, setter), PropertyAttribute::Accessor | (descriptor.attributes() & PropertyAttribute::DontEnum), isOpaque);
     RETURN_IF_EXCEPTION(scope, {});
 

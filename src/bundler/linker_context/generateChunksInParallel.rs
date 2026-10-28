@@ -16,11 +16,12 @@ use crate::Chunk;
 use crate::Index;
 use crate::analyze_transpiled_module;
 use crate::cheap_prefix_normalizer;
-use crate::chunk::{ReferencePathStyle, SourceMapShiftTracking};
+use crate::chunk::{NamedBy, ReferencePathStyle, SourceMapShiftTracking};
 use crate::options;
 use crate::options::Loader;
 
 use crate::LinkerContext;
+use crate::linker_context::compute_chunks::chunk_named_by;
 use crate::linker_context::generate_compile_result_for_css_chunk::generate_compile_result_for_css_chunk;
 use crate::linker_context::generate_compile_result_for_html_chunk::generate_compile_result_for_html_chunk;
 use crate::linker_context::generate_compile_result_for_js_chunk::generate_compile_result_for_js_chunk;
@@ -492,14 +493,13 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             let mut msg: Vec<u8> = Vec::new();
             // errdefer msg.deinit() — handled by Drop
 
-            let mut entry_naming: Option<&[u8]> = None;
-            let mut chunk_naming: Option<&[u8]> = None;
-            let mut asset_naming: Option<&[u8]> = None;
+            // One option can have two templates: `--compile` names the browser chunks with fixed ones.
+            let mut entry_naming: Vec<&[u8]> = Vec::new();
+            let mut chunk_naming: Vec<&[u8]> = Vec::new();
+            let mut asset_naming: Vec<&[u8]> = Vec::new();
             let mut only_chunks = true;
 
             writeln!(&mut msg, "Multiple files share the same output path")?;
-
-            let kinds = c.graph.files.items_entry_point_kind();
 
             for (key, dup) in duplicates_map
                 .keys()
@@ -511,21 +511,19 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                     let source_index = match output {
                         Output::Chunk(i) => {
                             let chunk = &chunks[i as usize];
-                            let source_index = chunk.entry_point.source_index();
-                            if chunk.entry_point.is_entry_point()
-                                && kinds[source_index as usize] == EntryPoint::Kind::UserSpecified
-                            {
-                                entry_naming = Some(&chunk.template.data);
-                            } else {
-                                chunk_naming = Some(&chunk.template.data);
+                            match chunk_named_by(c, chunk) {
+                                NamedBy::Entry => entry_naming.push(&chunk.template.data),
+                                NamedBy::Chunk => chunk_naming.push(&chunk.template.data),
+                                NamedBy::Outfile => {}
                             }
-                            source_index
+                            chunk.entry_point.source_index()
                         }
                         Output::Asset(i) => {
                             only_chunks = false;
                             // The default template has `[hash]`: an asset with other bytes gets another name.
-                            asset_naming =
-                                Some(c.options.asset_naming).filter(|naming| !naming.is_empty());
+                            if !c.options.asset_naming.is_empty() {
+                                asset_naming.push(c.options.asset_naming);
+                            }
                             let Some(source_index) = assets[i as usize].source_index.get() else {
                                 continue;
                             };
@@ -544,41 +542,43 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
 
             c.log_disjoint().add_error(None, bun_ast::Loc::EMPTY, msg);
 
-            for (name, template) in [
+            for (name, mut templates) in [
                 ("entry", entry_naming),
                 ("chunk", chunk_naming),
                 ("asset", asset_naming),
             ] {
-                let Some(template) = template else { continue };
-
-                let mut text: Vec<u8> = Vec::new();
-                if crate::options::path_template_hash_len(template).is_some() {
-                    // Only chunks that share a path under a `[hash]` template are known to have the same content.
-                    if !only_chunks {
-                        continue;
+                templates.sort_unstable();
+                templates.dedup();
+                for template in templates {
+                    let mut text: Vec<u8> = Vec::new();
+                    if crate::options::path_template_hash_len(template).is_some() {
+                        // Only chunks that share a path under a `[hash]` template are known to have the same content.
+                        if !only_chunks {
+                            continue;
+                        }
+                        write!(
+                            &mut text,
+                            "{} naming is '{}'; these inputs produce identical content",
+                            name,
+                            bstr::BStr::new(template),
+                        )?;
+                    } else {
+                        write!(
+                            &mut text,
+                            "{} naming is '{}', consider adding '[hash]' to make filenames unique",
+                            name,
+                            bstr::BStr::new(template),
+                        )?;
                     }
-                    write!(
-                        &mut text,
-                        "{} naming is '{}'; these inputs produce identical content",
-                        name,
-                        bstr::BStr::new(template),
-                    )?;
-                } else {
-                    write!(
-                        &mut text,
-                        "{} naming is '{}', consider adding '[hash]' to make filenames unique",
-                        name,
-                        bstr::BStr::new(template),
-                    )?;
-                }
-                c.log_disjoint().add_msg(bun_ast::Msg {
-                    kind: bun_ast::Kind::Note,
-                    data: bun_ast::Data {
-                        text: Cow::Owned(text),
+                    c.log_disjoint().add_msg(bun_ast::Msg {
+                        kind: bun_ast::Kind::Note,
+                        data: bun_ast::Data {
+                            text: Cow::Owned(text),
+                            ..Default::default()
+                        },
                         ..Default::default()
-                    },
-                    ..Default::default()
-                });
+                    });
+                }
             }
 
             return Err(crate::Error::DuplicateOutputPath);
@@ -2089,6 +2089,5 @@ fn output_path_key_is_one_per_file() {
     assert_ne!(key(b"assets/../x.js"), key(b"x.js"));
 }
 
-use crate::EntryPoint;
 use crate::options::SourceMapOption;
 use crate::output_file::{BakeExtra, BakeRouteKind};

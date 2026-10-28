@@ -100,8 +100,20 @@ bitflags::bitflags! {
         const IS_EXECUTABLE = 1 << 0;
         const HAS_HTML_CHUNK = 1 << 1;
         const IS_BROWSER_CHUNK_FROM_SERVER_BUILD = 1 << 2;
-        // _padding: u5 = 0
+        /// `template` is `./[name]` with the name of the output file. No naming option sets it.
+        const NAMED_BY_OUTFILE = 1 << 3;
+        // _padding: u4 = 0
     }
+}
+
+/// What chose a chunk's `template`. `compute_chunks::chunk_named_by` computes it.
+pub(crate) enum NamedBy {
+    /// The name of the output file, see `Flags::NAMED_BY_OUTFILE`.
+    Outfile,
+    /// `naming.entry`.
+    Entry,
+    /// `naming.chunk`.
+    Chunk,
 }
 
 impl Default for Content<'_> {

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import { ESBUILD, itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -19,6 +20,112 @@ describe("bundler", () => {
       // expectBundled does not support newlines.
       "<bun>": [`Multiple files share the same output path`],
     },
+  });
+  // Each note names the option that named the chunk. A page takes the entry template, also when only `import()`
+  // reaches it. Its script and its stylesheet take the chunk template, as a shared chunk does. No option names the
+  // entry point of an executable.
+  describe.concurrent("naming/CollisionNote", () => {
+    const page = `<!doctype html><html><head><link rel="stylesheet" href="./index.css"><script type="module" src="./index.js"></script></head></html>`;
+    const files = {
+      "a/index.html": page,
+      "a/index.js": `console.log("a");`,
+      "a/index.css": `body { color: red; }`,
+      "b/index.html": page,
+      "b/index.js": `console.log("b");`,
+      "b/index.css": `body { color: blue; }`,
+      "imports-pages.js": `import("./a/index.html"); import("./b/index.html");`,
+      "one.js": `export const one = 1;`,
+      "imports-one.js": `import { one } from "./one.js"; console.log(one);`,
+      "server.ts": `console.log("server");`,
+      "imports-lazy.ts": `import("./x/lazy.ts");`,
+      "embeds-app-bin.ts": `import file from "./data/app.bin" with { type: "file" }; console.log(file);`,
+      "data/app.bin": "the bytes",
+      "same/a/index.html": `<!doctype html><html><head><link rel="stylesheet" href="./index.css"></head></html>`,
+      "same/a/index.css": `body { color: red; }`,
+      "same/b/index.html": `<!doctype html><html><head><link rel="stylesheet" href="./index.css"></head></html>`,
+      "same/b/index.css": `body { color: red; }`,
+      "x/lazy.ts": `export const x = 1;`,
+      "y/lazy.ts": `export const y = 2;`,
+      "serves-pages.ts": `import a from "./same/a/index.html"; import b from "./same/b/index.html"; console.log(a, b); import("./x/lazy.ts"); import("./y/lazy.ts");`,
+    };
+    const note = (option: string, template: string) =>
+      `note: ${option} naming is '${template}', consider adding '[hash]' to make filenames unique`;
+    const rows: [name: string, entrypoints: string[], options: Partial<Bun.BuildConfig>, notes: string[]][] = [
+      [
+        "PageChunks",
+        ["a/index.html", "b/index.html"],
+        { naming: { chunk: "js/[name].[ext]" } },
+        [note("chunk", "./js/[name].[ext]")],
+      ],
+      [
+        "PagesAndPageChunks",
+        ["a/index.html", "b/index.html"],
+        { naming: { entry: "[name].[ext]", chunk: "js/[name].[ext]" } },
+        [note("entry", "./[name].[ext]"), note("chunk", "./js/[name].[ext]")],
+      ],
+      [
+        "ImportedPages",
+        ["imports-pages.js"],
+        { splitting: true, naming: { entry: "[name].[ext]", chunk: "js/[name]-[hash].[ext]" } },
+        [note("entry", "./[name].[ext]")],
+      ],
+      [
+        "EntryPointAndSharedChunk",
+        ["one.js", "imports-one.js"],
+        { splitting: true, naming: { chunk: "[name].[ext]" } },
+        [note("entry", "[dir]/[name].[ext]"), note("chunk", "./[name].[ext]")],
+      ],
+      [
+        "ExecutableAndPageChunk",
+        ["a/index.html", "server.ts"],
+        { target: "bun", compile: { outfile: "app.js" }, naming: { chunk: "app.[ext]" } },
+        [note("chunk", "./app.[ext]")],
+      ],
+      [
+        "ExecutableAndImportedChunk",
+        ["imports-lazy.ts"],
+        { target: "bun", splitting: true, compile: { outfile: "app" }, naming: { chunk: "app" } },
+        [note("chunk", "./app")],
+      ],
+      [
+        "ExecutableAndAsset",
+        ["embeds-app-bin.ts"],
+        { compile: { outfile: "app.bin" }, naming: { asset: "[name].[ext]" } },
+        [note("asset", "./[name].[ext]")],
+      ],
+      // An executable names the chunks of its pages `./chunk-[hash].[ext]`: the two stylesheets have the same bytes.
+      [
+        "TwoChunkTemplates",
+        ["serves-pages.ts"],
+        {
+          target: "bun",
+          splitting: true,
+          minify: true,
+          compile: { outfile: "app" },
+          naming: { chunk: "js/[name].[ext]" },
+        },
+        [
+          "note: chunk naming is './chunk-[hash].[ext]'; these inputs produce identical content",
+          note("chunk", "./js/[name].[ext]"),
+        ],
+      ],
+    ];
+    for (const [name, entrypoints, options, notes] of rows) {
+      test(name, async () => {
+        using dir = tempDir("naming-collision-note", files);
+        const { logs } = await Bun.build({
+          ...options,
+          entrypoints: entrypoints.map(entry => join(String(dir), entry)),
+          root: String(dir),
+          outdir: String(dir),
+          throw: false,
+        });
+        expect(logs.map(log => `${log.level}: ${log.message.split("\n")[0]}`)).toEqual([
+          "error: Multiple files share the same output path",
+          ...notes,
+        ]);
+      });
+    }
   });
   itBundled("naming/ImplicitOutbase1", {
     files: {

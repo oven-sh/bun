@@ -71,6 +71,24 @@ pub(crate) use crate::linker_context::post_process_html_chunk::post_process_html
 pub(crate) use crate::linker_context::post_process_js_chunk::post_process_js_chunk;
 pub(crate) use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in_chunk;
 
+/// The runtime module makes `__require` from its own file (`import.meta.require`,
+/// `createRequire(import.meta.url)`), so `__require` resolves from the chunk that holds that module. A chunk
+/// in another directory makes its own for the uses that depend on the file: it declares
+/// `function NAME() { return NAME.c || (NAME.c = <initializer>); }`, and such a use prints as `NAME()`. A
+/// function declaration has a value before the body of its chunk runs, which a `var` does not have.
+/// See `declare_chunk_requires`.
+pub(crate) struct OwnRequire {
+    /// The runtime module's `__require`.
+    pub(crate) runtime_ref: Ref,
+    /// `NAME`: one symbol, which every chunk with a `require` of its own declares.
+    pub(crate) ref_: Ref,
+    /// What the runtime module's declaration of `__require` assigns.
+    pub(crate) initializer: Expr,
+    /// The initializer is `import.meta.require`. User code can assign to that, so the chunk reads it before
+    /// its own code runs, as the runtime module does.
+    pub(crate) reads_import_meta_require: bool,
+}
+
 pub struct LinkerContext<'a> {
     pub(crate) parse_graph: *mut Graph<'a>,
     pub graph: LinkerGraph<'a>,
@@ -101,6 +119,8 @@ pub struct LinkerContext<'a> {
     /// `__preload` / `__chunks`: modulepreload for split browser `import()`s.
     pub(crate) preload_runtime_ref: Ref,
     pub(crate) chunks_runtime_ref: Ref,
+    /// Set when a chunk can have a `require` of its own. See `OwnRequire`.
+    pub(crate) own_require: Option<OwnRequire>,
 
     pub(crate) options: LinkerOptions,
 
@@ -167,6 +187,7 @@ impl<'a> Default for LinkerContext<'a> {
             promise_all_runtime_ref: Ref::NONE,
             preload_runtime_ref: Ref::NONE,
             chunks_runtime_ref: Ref::NONE,
+            own_require: None,
             options: Default::default(),
             r#loop: None,
             unique_key_buf: Box::default(),
@@ -357,6 +378,75 @@ impl<'a> LinkerContext<'a> {
             && self.options.target == Target::Browser
             && self.options.output_format == Format::Esm
             && self.chunks_runtime_ref.is_valid()
+    }
+
+    /// `Some` in a split build whose runtime module makes `__require` from its own file, and a chunk can make
+    /// one the same way.
+    fn read_own_require(&mut self) -> Option<OwnRequire> {
+        if !self.graph.code_splitting || self.options.output_format != Format::Esm {
+            return None;
+        }
+        let runtime = Index::RUNTIME.get();
+        let runtime_ref = self.graph.runtime_function(b"__require");
+        // The runtime module declares each of its exports in one statement, which is one part.
+        let &part_index = self
+            .graph
+            .top_level_symbol_to_parts(runtime, runtime_ref)
+            .first()?;
+        let part = &self.graph.ast.items_parts()[runtime as usize].as_slice()[part_index as usize];
+        let [stmt] = part.stmts.slice() else {
+            return None;
+        };
+        let bun_ast::StmtData::SLocal(local) = stmt.data else {
+            return None;
+        };
+        let [decl] = local.decls.slice() else {
+            return None;
+        };
+        let initializer = decl.value?;
+
+        let is_import_meta = |expr: Expr, name: &[u8]| {
+            matches!(expr.data, bun_ast::ExprData::EDot(dot)
+                if dot.optional_chain.is_none()
+                    && dot.name.slice() == name
+                    && matches!(dot.target.data, bun_ast::ExprData::EImportMeta(_)))
+        };
+        // `RUNTIME_REQUIRE_BUN` and `RUNTIME_REQUIRE_NODE`. A `--define` of `import.meta.require` or
+        // `import.meta.url` makes the declaration another one, and so does `RUNTIME_REQUIRE_OTHER`: then
+        // `__require` does not depend on the file that declares it.
+        let reads_import_meta_require = is_import_meta(initializer, b"require");
+        let creates_require = matches!(initializer.data, bun_ast::ExprData::ECall(call)
+            if matches!(call.args.slice(), [url] if is_import_meta(*url, b"url")));
+        if !reads_import_meta_require && !creates_require {
+            return None;
+        }
+
+        Some(OwnRequire {
+            runtime_ref,
+            ref_: self.graph.generate_new_symbol(
+                runtime,
+                bun_ast::symbol::Kind::Other,
+                b"__requireHere",
+            ),
+            initializer,
+            reads_import_meta_require,
+        })
+    }
+
+    /// `js_printer::Options::chunk_require_ref` and `chunk_imports_runtime_require` for `chunk`.
+    pub(crate) fn chunk_require(&self, chunk: &Chunk) -> (Option<Ref>, bool) {
+        match (&self.own_require, &chunk.content) {
+            (Some(own), crate::chunk::Content::Javascript(js)) if js.declares_require => {
+                (Some(own.ref_), js.imports_runtime_require)
+            }
+            _ => (None, false),
+        }
+    }
+
+    /// Disk output sanitizes leading `..`; `--compile` keeps it so runtime bunfs references to out-of-root
+    /// entrypoints resolve.
+    pub(crate) fn sanitizes_output_paths(&self) -> bool {
+        !self.options.compile_mode.is_executable()
     }
 
     /// An `import()` — or a split `require()` — whose target is a
@@ -608,6 +698,7 @@ impl<'a> LinkerContext<'a> {
         self.chunks_runtime_ref = runtime_named_exports
             .get(b"__chunks")
             .map_or(Ref::NONE, |export| export.ref_);
+        self.own_require = self.read_own_require();
 
         if self.options.output_format == Format::Cjs {
             self.unbound_module_ref = self.graph.generate_new_symbol(
@@ -1823,6 +1914,8 @@ pub struct ChunkMeta {
     /// Split `require()` targets, kept apart from `dynamic_imports`
     /// only so the metafile labels them `require-call`.
     pub(crate) require_imports: ArrayHashMap<crate::IndexInt, ()>,
+    /// A live part holds a `require()` of a builtin module (`ImportRecordFlags::REQUIRES_BUILTIN`).
+    pub(crate) requires_builtin: bool,
 }
 
 pub(crate) type ChunkMetaMap = ArrayHashMap<Ref, ()>;
@@ -2394,6 +2487,7 @@ impl<'a> LinkerContext<'a> {
         to_esm_ref: Ref,
         to_commonjs_ref: Ref,
         runtime_require_ref: Option<Ref>,
+        (chunk_require_ref, chunk_imports_runtime_require): (Option<Ref>, bool),
         source_index: Index,
         source: &Source,
         module_info: Option<&mut crate::analyze_transpiled_module::ModuleInfo>,
@@ -2473,6 +2567,8 @@ impl<'a> LinkerContext<'a> {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
             },
+            chunk_require_ref,
+            chunk_imports_runtime_require,
             require_or_import_meta_for_source_callback:
                 js_printer::RequireOrImportMetaCallback::init(self),
             line_offset_tables: Some(line_offset_table),

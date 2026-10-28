@@ -340,6 +340,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,
     pub(crate) commonjs_named_exports_deoptimized: bool,
     pub(crate) commonjs_module_exports_assigned_deoptimized: bool,
+    /// `Ast::assigns_require`.
+    pub(crate) assigns_require: bool,
+    /// How many uses make `Ast::uses_require_value` true.
+    pub(crate) require_value_uses: u32,
     /// Uses of `module` that became `module.exports` and stay in its use count.
     pub(crate) module_exports_rewrite_count: u32,
     pub(crate) commonjs_named_exports_needs_conversion: u32,
@@ -1738,7 +1742,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => {
                 let _ = self.check_dynamic_specifier(arg, arg.loc, "require()");
-                self.record_usage_of_runtime_require();
+                self.record_usage_of_require_value();
                 self.new_expr(
                     E::Call {
                         target: self.value_for_require(arg.loc),
@@ -5967,6 +5971,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// `record_usage_of_runtime_require` for a use that `Ast::uses_require_value` counts.
+    pub(crate) fn record_usage_of_require_value(&mut self) {
+        self.record_usage_of_runtime_require();
+        if !self.is_control_flow_dead && !self.is_revisit_for_substitution {
+            self.require_value_uses += 1;
+        }
+    }
+
+    /// The use that `record_usage_of_require_value` counted turned out to read nothing that depends on the
+    /// file: `require.main`, `typeof require`.
+    pub(crate) fn ignore_usage_of_require_value(&mut self) {
+        if !self.is_control_flow_dead && !self.is_revisit_for_substitution {
+            self.require_value_uses = self.require_value_uses.saturating_sub(1);
+        }
+    }
+
     pub(crate) fn ignore_usage_of_runtime_require(&mut self) {
         if self.options.features.auto_polyfill_require {
             debug_assert!(!self.runtime_imports.__require.is_empty());
@@ -9374,6 +9394,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             uses_module_ref,
             uses_exports_ref,
             uses_require_ref,
+            assigns_require: self.assigns_require,
+            uses_require_value: self.require_value_uses > 0,
             commonjs_module_exports_assigned_deoptimized: self
                 .commonjs_module_exports_assigned_deoptimized,
             top_level_await_keyword: self.top_level_await_keyword,
@@ -9744,6 +9766,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             unwrap_all_requires,
             commonjs_named_exports: Default::default(),
             commonjs_module_exports_assigned_deoptimized: false,
+            assigns_require: false,
+            require_value_uses: 0,
             module_exports_rewrite_count: 0,
             commonjs_named_exports_needs_conversion: u32::MAX,
             had_commonjs_named_exports_this_visit: false,

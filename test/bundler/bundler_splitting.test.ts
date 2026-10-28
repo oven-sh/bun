@@ -4220,6 +4220,893 @@ describe("bundler", () => {
     run: { file: "/out/main.js", stdout: "main\ntool evaluated\ntool:helped" },
   });
 
+  // `import.meta.require` and `createRequire(import.meta.url)` resolve from the file that evaluates them, and the
+  // runtime module declares `__require` in one chunk. A chunk in another directory makes a `require` of its own
+  // for the uses that depend on the file: it declares a function that returns it, and such a use calls that
+  // function. A request then resolves from the output file that holds the call, like `import()` there. For a file
+  // in the chunk of its entry point, that is what a build without code splitting does.
+  const requireFormsEntry = (name: string, up: string) => /* js */ `
+    import { attempt, fromRoot } from "${up}shared.js";
+    import { elsewhere } from "${up}elsewhere/${name}.js";
+    const beside = file => "${up}" + file;
+    console.log(JSON.stringify({
+      literal: attempt(() => require("${up}lib.js")),
+      computed: attempt(() => require(beside("lib.js"))),
+      twoArguments: attempt(() => require("${up}lib.js", {})),
+      optional: attempt(() => require?.(beside("lib.js"))),
+      resolve: attempt(() => fromRoot(require.resolve("${up}lib.js"))),
+      resolveComputed: attempt(() => fromRoot(require.resolve(beside("lib.js")))),
+      passed: attempt(() => (load => load(beside("lib.js")))(require)),
+      paths: attempt(() => fromRoot(require.resolve.paths("pkg")[0])),
+      package: attempt(() => require("pkg")),
+      addon: attempt(() => require("./${name}.node")),
+      importedAddon: attempt(() => require("./${name}-addon.js")),
+      elsewhere: attempt(elsewhere),
+      cache: typeof require.cache,
+    }));
+  `;
+  const requireFormsFiles = (entries: { a: string; b: string }) => {
+    const files: Record<string, string> = {
+      "/src/shared.js": /* js */ `
+        import path from "node:path";
+        export function attempt(fn) {
+          try {
+            return fn();
+          } catch (e) {
+            return e.code;
+          }
+        }
+        export const fromRoot = file => path.relative(process.cwd(), file).replaceAll("\\\\", "/");
+      `,
+    };
+    for (const [name, entry] of Object.entries(entries)) {
+      const dir = entry.slice(0, entry.lastIndexOf("/"));
+      files[entry] = requireFormsEntry(name, dir === "/src" ? "./" : "../");
+      files[`${dir}/${name}.node`] = `not an addon: ${name}`;
+      files[`${dir}/${name}-addon.js`] = `import addon from "./${name}-imported.node"; export default addon;`;
+      files[`${dir}/${name}-imported.node`] = `not an addon: ${name}, imported`;
+      // A specifier stays as written. This file is in the chunk of its entry point, so "./" is that chunk's
+      // directory.
+      files[`/src/elsewhere/${name}.js`] = `export const elsewhere = () => require("./data.js");`;
+    }
+    return files;
+  };
+  // Each file exports its own path. `wrong` lists what the chunk of the runtime module resolves the requests to.
+  const pathModules = (right: string[], wrong: string[] = []) =>
+    Object.fromEntries([...right, ...wrong].map(file => [file, `module.exports = ${JSON.stringify(file.slice(1))};`]));
+  const requireFormsRun = (runtime: "bun" | "node", file: string, lib: string, nodeModules: string) => ({
+    file,
+    runtime,
+    setCwd: true,
+    validate({ stdout }: { stdout: string }) {
+      expect(JSON.parse(stdout)).toEqual({
+        literal: lib,
+        computed: lib,
+        twoArguments: lib,
+        optional: lib,
+        resolve: lib,
+        resolveComputed: lib,
+        passed: lib,
+        paths: nodeModules,
+        package: nodeModules + "/pkg/index.js",
+        addon: "ERR_DLOPEN_FAILED",
+        importedAddon: "ERR_DLOPEN_FAILED",
+        elsewhere: file.slice(1, file.lastIndexOf("/")) + "/data.js",
+        cache: "object",
+      });
+    },
+  });
+  // What a chunk with a `require` of its own prints after its imports. For Bun it reads `import.meta.require`
+  // before its own code runs, because that code can assign to it.
+  const ownRequire = {
+    bun: "function __requireHere() {\n  return __requireHere.c || (__requireHere.c = import.meta.require);\n}\n__requireHere();\n",
+    node: "function __requireHere() {\n  return __requireHere.c || (__requireHere.c = /* @__PURE__ */ createRequire(import.meta.url));\n}\n",
+  };
+  const declaresOwnRequire = /^function __requireHere\d*\(\)/m;
+  // The runtime module's `__require`, not `__requireHere`.
+  const runtimeRequire = /\b__require\b/;
+  const outputFiles = (api: BundlerTestBundleAPI, directory = ""): string[] =>
+    readdirSync(join(api.outdir, directory), { withFileTypes: true }).flatMap(entry =>
+      entry.isDirectory()
+        ? outputFiles(api, join(directory, entry.name))
+        : entry.name.endsWith(".js")
+          ? [api.readFile(join("/out", directory, entry.name))]
+          : [],
+    );
+
+  for (const target of ["bun", "node"] as const) {
+    // The build without code splitting is the reference: it answers the same requests the same way.
+    // For target bun, `require()` of an ES module is a chunk of its own by default. That chunk is beside the chunk
+    // of the runtime module, so `importedAddon` loads from there with `__require` too. `splitRequire: false` keeps
+    // that file in the chunk of its entry point.
+    const modes: { name: string; splitting: boolean; splitRequire?: false }[] = [
+      { name: "-unsplit", splitting: false },
+      { name: "", splitting: true, splitRequire: false },
+      ...(target === "bun" ? [{ name: "-splitRequire", splitting: true }] : []),
+    ];
+    for (const { name, splitting, splitRequire } of modes) {
+      // With code splitting the runtime module is in /out/entry-[hash].js.
+      itBundled(`splitting/RequireResolvesFromItsChunk-EntriesInTwoDirectories-${target}${name}`, {
+        files: requireFormsFiles({ a: "/src/a/entry.js", b: "/src/b/entry.js" }),
+        entryPoints: ["/src/a/entry.js", "/src/b/entry.js"],
+        outputPaths: ["/out/a/entry.js", "/out/b/entry.js"],
+        external: ["*/lib.js", "*/data.js", "pkg"],
+        splitting,
+        splitRequire,
+        target,
+        format: "esm",
+        outdir: "/out",
+        backend: "cli",
+        runtimeFiles: pathModules(
+          [
+            "/out/lib.js",
+            "/out/a/node_modules/pkg/index.js",
+            "/out/b/node_modules/pkg/index.js",
+            "/out/a/data.js",
+            "/out/b/data.js",
+          ],
+          ["/lib.js", "/out/node_modules/pkg/index.js", "/out/data.js"],
+        ),
+        onAfterBundle(api) {
+          if (!splitting) return;
+          for (const entry of ["/out/a/entry.js", "/out/b/entry.js"]) {
+            const code = api.readFile(entry);
+            expect(code).toContain(ownRequire[target]);
+            expect(code).toContain(`literal: attempt(() => __requireHere()("../lib.js"))`);
+            expect(code).not.toMatch(runtimeRequire);
+            expect(code).not.toContain("node:module");
+          }
+        },
+        run: [
+          requireFormsRun(target, "/out/a/entry.js", "out/lib.js", "out/a/node_modules"),
+          requireFormsRun(target, "/out/b/entry.js", "out/lib.js", "out/b/node_modules"),
+        ],
+      });
+
+      // With code splitting the runtime module is in /out/chunks/a-[hash].js.
+      itBundled(`splitting/RequireResolvesFromItsChunk-ChunksInTheirOwnDirectory-${target}${name}`, {
+        files: requireFormsFiles({ a: "/src/a.js", b: "/src/b.js" }),
+        entryPoints: ["/src/a.js", "/src/b.js"],
+        external: ["*/lib.js", "*/data.js", "pkg"],
+        splitting,
+        splitRequire,
+        target,
+        format: "esm",
+        outdir: "/out",
+        chunkNaming: "chunks/[name]-[hash].[ext]",
+        minifyIdentifiers: true,
+        minifySyntax: true,
+        minifyWhitespace: true,
+        backend: "api",
+        runtimeFiles: pathModules(
+          ["/out/lib.js", "/out/node_modules/pkg/index.js", "/out/data.js"],
+          ["/out/chunks/lib.js", "/out/chunks/node_modules/pkg/index.js", "/out/chunks/data.js"],
+        ),
+        run: [
+          requireFormsRun(target, "/out/a.js", "out/lib.js", "out/node_modules"),
+          requireFormsRun(target, "/out/b.js", "out/lib.js", "out/node_modules"),
+        ],
+      });
+    }
+
+    // A chunk beside the chunk of the runtime module resolves the same from either. It imports `__require`, and
+    // the output has no `require` of a chunk's own.
+    itBundled(`splitting/RequireBesideTheRuntimeModuleIsImported-${target}`, {
+      files: {
+        "/src/a.js": /* js */ `
+          import { shared } from "./shared.js";
+          console.log("a", shared, require("./lib.js"), typeof require("node:fs").readFileSync);
+        `,
+        "/src/b.js": /* js */ `
+          import { shared } from "./shared.js";
+          console.log("b", shared, require("./lib.js"));
+        `,
+        "/src/shared.js": `export const shared = "shared";`,
+      },
+      entryPoints: ["/src/a.js", "/src/b.js"],
+      external: ["*/lib.js"],
+      splitting: true,
+      target,
+      format: "esm",
+      outdir: "/out",
+      runtimeFiles: pathModules(["/out/lib.js"]),
+      onAfterBundle(api) {
+        for (const code of outputFiles(api)) expect(code).not.toContain("__requireHere");
+        for (const entry of ["/out/a.js", "/out/b.js"]) {
+          expect(api.readFile(entry)).toMatch(/import \{\s+__require,\s+shared\s+\} from "\.\/a-[a-z0-9]+\.js";/);
+          expect(api.readFile(entry)).not.toContain("import.meta");
+        }
+      },
+      run: [
+        { file: "/out/a.js", runtime: target, stdout: "a shared out/lib.js function" },
+        { file: "/out/b.js", runtime: target, stdout: "b shared out/lib.js" },
+      ],
+    });
+
+    // One build with the three kinds of chunk. The chunk of the runtime module calls `__require` itself.
+    // /out/main.js is beside it and imports `__require`. /out/sub/entry.js is in another directory: it makes
+    // its own `require` for "../lib.js", and imports `__require` for the builtin module, which every file
+    // resolves the same.
+    for (const minify of [false, true]) {
+      itBundled(`splitting/RequireInTheRuntimeChunkBesideItAndElsewhere-${target}${minify ? "-minify" : ""}`, {
+        files: {
+          "/src/main.js": /* js */ `
+            import { load } from "./shared.js";
+            console.log("main", load("./x.js"), require("./lib.js"), typeof require("node:fs").readFileSync);
+          `,
+          "/src/sub/entry.js": /* js */ `
+            import { load } from "../shared.js";
+            console.log("sub", load("./x.js"), require("../lib.js"), typeof require("node:fs").readFileSync);
+          `,
+          // This file is in a chunk that both entry points share, so "./" is the directory of that chunk.
+          "/src/shared.js": `export const load = name => require(name);`,
+        },
+        entryPoints: ["/src/main.js", "/src/sub/entry.js"],
+        outputPaths: ["/out/main.js", "/out/sub/entry.js"],
+        external: ["*/lib.js"],
+        splitting: true,
+        target,
+        format: "esm",
+        outdir: "/out",
+        minifyIdentifiers: minify,
+        minifySyntax: minify,
+        minifyWhitespace: minify,
+        runtimeFiles: pathModules(["/out/x.js", "/out/lib.js"], ["/out/sub/x.js", "/lib.js"]),
+        onAfterBundle(api) {
+          if (minify) return;
+          const main = api.readFile("/out/main.js");
+          expect(main).toMatch(/import \{[^}]*\b__require\b[^}]*\} from/);
+          expect(main).not.toContain("__requireHere");
+          expect(main).not.toContain("import.meta");
+          const sub = api.readFile("/out/sub/entry.js");
+          expect(sub).toContain(ownRequire[target]);
+          expect(sub).toContain(`__requireHere()("../lib.js")`);
+          expect(sub).toMatch(/import \{[^}]*\b__require\b[^}]*\} from/);
+          expect(sub).toMatch(/typeof __require\("(node:)?fs"\)\.readFileSync/);
+        },
+        run: [
+          { file: "/out/main.js", runtime: target, stdout: "main out/x.js out/lib.js function" },
+          { file: "/out/sub/entry.js", runtime: target, stdout: "sub out/x.js out/lib.js function" },
+        ],
+      });
+    }
+
+    // A chunk in another directory whose `require` uses read nothing that depends on the file: builtin modules,
+    // `require.main`, `typeof require`. It imports `__require` as it does without a `require` of its own.
+    itBundled(`splitting/RequireOfBuiltinModulesOnlyIsImported-${target}`, {
+      files: {
+        "/src/a/entry.js": /* js */ `
+          import { shared } from "../shared.js";
+          const os = require("node:os");
+          const path = require("path");
+          console.log("a", shared, typeof os.EOL, path.posix.sep, typeof require, require.main === undefined);
+        `,
+        "/src/b/entry.js": /* js */ `
+          import { shared } from "../shared.js";
+          console.log("b", shared, typeof require("node:os").EOL);
+        `,
+        "/src/shared.js": `export const shared = "shared";`,
+      },
+      entryPoints: ["/src/a/entry.js", "/src/b/entry.js"],
+      outputPaths: ["/out/a/entry.js", "/out/b/entry.js"],
+      splitting: true,
+      target,
+      format: "esm",
+      outdir: "/out",
+      onAfterBundle(api) {
+        for (const code of outputFiles(api)) expect(code).not.toContain("__requireHere");
+        expect(api.readFile("/out/a/entry.js")).toMatch(/import \{[^}]*\b__require\b[^}]*\} from/);
+      },
+      run: [
+        { file: "/out/a/entry.js", runtime: target, stdout: "a shared string / function true" },
+        { file: "/out/b/entry.js", runtime: target, stdout: "b shared string" },
+      ],
+    });
+
+    // Every position a use of `require` can print in. A call cannot be the callee of `new` as it is.
+    itBundled(`splitting/RequireOfItsChunkInEveryPosition-${target}`, {
+      files: {
+        "/src/a/entry.js": /* js */ `
+          import { shared } from "../shared.js";
+          export const uncalled = {
+            construct: () => new require("../lib.js"),
+            constructMember: () => new require.cache.constructor(),
+            constructResolve: () => new require.resolve("../lib.js"),
+            tag: () => require\`../lib.js\`,
+            spread: () => require(...["../lib.js"]),
+            typeOf: value => typeof value === typeof require.resolve,
+            main: () => require.main,
+            remove: key => delete require.cache[key],
+          };
+          console.log("a", shared, require("../lib.js"), Object.keys(uncalled).length);
+        `,
+        "/src/b/entry.js": /* js */ `
+          import { shared } from "../shared.js";
+          console.log("b", shared, require("../lib.js"));
+        `,
+        "/src/shared.js": `export const shared = "shared";`,
+      },
+      entryPoints: ["/src/a/entry.js", "/src/b/entry.js"],
+      outputPaths: ["/out/a/entry.js", "/out/b/entry.js"],
+      external: ["*/lib.js"],
+      splitting: true,
+      target,
+      format: "esm",
+      outdir: "/out",
+      runtimeFiles: pathModules(["/out/lib.js"], ["/lib.js"]),
+      onAfterBundle(api) {
+        const code = api.readFile("/out/a/entry.js");
+        for (const printed of [
+          `construct: () => new (__requireHere())("../lib.js")`,
+          `constructMember: () => new (__requireHere()).cache.constructor`,
+          `constructResolve: () => new (__requireHere()).resolve("../lib.js")`,
+          "tag: () => __requireHere()`../lib.js`",
+          `spread: () => __requireHere()(...["../lib.js"])`,
+          `typeof __requireHere().resolve`,
+          `main: () => __requireHere().main`,
+          `delete __requireHere().cache[key]`,
+        ]) {
+          expect(code).toContain(printed);
+        }
+      },
+      run: [
+        { file: "/out/a/entry.js", runtime: target, stdout: "a shared out/lib.js 8" },
+        { file: "/out/b/entry.js", runtime: target, stdout: "b shared out/lib.js" },
+      ],
+    });
+
+    // The names the bundler gives its own bindings stay clear of the same names in user code. The linker counts no
+    // use of `__require` for a destructured `require()` of an external: the `require("node:fs")` beside it does.
+    itBundled(`splitting/RequireOfItsChunkKeepsUserNames-${target}`, {
+      files: {
+        "/src/a/entry.js": /* js */ `
+          import { createRequire } from "node:module";
+          import { shared } from "../shared.js";
+          const __require = createRequire(import.meta.url);
+          const __requireHere = "here";
+          const fs = require("node:fs");
+          const { at } = require("pkg");
+          console.log("a", shared, require("../lib.js"), __require("../lib.js"), __requireHere, at, typeof fs.readFileSync);
+        `,
+        "/src/b/entry.js": /* js */ `
+          import { shared } from "../shared.js";
+          console.log("b", shared, require("../lib.js"));
+        `,
+        "/src/shared.js": `import { name } from "./name.cjs"; export const shared = name;`,
+        "/src/name.cjs": `exports.name = "shared";`,
+      },
+      entryPoints: ["/src/a/entry.js", "/src/b/entry.js"],
+      outputPaths: ["/out/a/entry.js", "/out/b/entry.js"],
+      external: ["*/lib.js", "pkg"],
+      splitting: true,
+      target,
+      format: "esm",
+      outdir: "/out",
+      runtimeFiles: {
+        ...pathModules(["/out/lib.js"], ["/lib.js"]),
+        "/out/a/node_modules/pkg/index.js": `exports.at = "out/a/node_modules";`,
+        "/out/node_modules/pkg/index.js": `exports.at = "out/node_modules";`,
+      },
+      run: [
+        {
+          file: "/out/a/entry.js",
+          runtime: target,
+          stdout: "a shared out/lib.js out/lib.js here out/a/node_modules function",
+        },
+        { file: "/out/b/entry.js", runtime: target, stdout: "b shared out/lib.js" },
+      ],
+    });
+
+    // Chunks that are not entry points, in directories of their own: one that two entry points share, and one
+    // that `import()` loads. A `[hash]` in a directory has no name while the chunks are linked, and such a chunk
+    // makes its own `require` too.
+    for (const chunkNaming of ["[dir]/chunks/[name]-[hash].[ext]", "[hash]/[name].[ext]"]) {
+      itBundled(
+        `splitting/RequireOfItsChunkInASharedAndALazyChunk-${target}${chunkNaming.startsWith("[hash]") ? "-HashedDirectories" : ""}`,
+        {
+          files: {
+            "/src/a.js": /* js */ `
+              import { fromShared } from "./shared.js";
+              console.log("a", fromShared(), (await import("./lazy.js")).fromLazy());
+            `,
+            "/src/b.js": /* js */ `
+              import { fromShared } from "./shared.js";
+              console.log("b", fromShared());
+            `,
+            // Where the file of a chunk is, is where its own `require` looks first.
+            "/src/shared.js": /* js */ `
+              import { dirname } from "node:path";
+              import { fileURLToPath } from "node:url";
+              export const here = url => dirname(fileURLToPath(url));
+              export const fromShared = () => require.resolve.paths("./x")[0] === here(import.meta.url);
+            `,
+            "/src/lazy.js": /* js */ `
+              import { here } from "./shared.js";
+              export const fromLazy = () => require.resolve.paths("./x")[0] === here(import.meta.url);
+            `,
+          },
+          entryPoints: ["/src/a.js", "/src/b.js"],
+          splitting: true,
+          chunkNaming,
+          target,
+          format: "esm",
+          outdir: "/out",
+          run: [
+            { file: "/out/a.js", runtime: target, stdout: "a true true" },
+            { file: "/out/b.js", runtime: target, stdout: "b true" },
+          ],
+        },
+      );
+    }
+
+    // `--define` can change what the runtime module makes `__require` from. A chunk would not make its own from
+    // the same, so no chunk does, and every chunk imports `__require`.
+    {
+      const [define, global] =
+        target === "bun" ? ["import.meta.require", "hostRequire"] : ["import.meta.url", "hostUrl"];
+      const preload = [target === "bun" ? "--preload" : "--import", "./preload.mjs"];
+      itBundled(`splitting/RequireWithDefinedImportMetaIsImported-${target}`, {
+        files: {
+          "/src/a/entry.js": /* js */ `
+            import { shared } from "../shared.js";
+            const ${global} = "a";
+            console.log(${global}, shared, require(String("node:path")).posix.sep);
+          `,
+          "/src/b/entry.js": /* js */ `
+            import { shared } from "../shared.js";
+            console.log("b", shared, require(String("node:path")).posix.sep);
+          `,
+          "/src/shared.js": `export const shared = "shared";`,
+          "/preload.mjs": /* js */ `
+            import { createRequire } from "node:module";
+            globalThis.hostRequire = createRequire(import.meta.url);
+            globalThis.hostUrl = import.meta.url;
+          `,
+        },
+        entryPoints: ["/src/a/entry.js", "/src/b/entry.js"],
+        outputPaths: ["/out/a/entry.js", "/out/b/entry.js"],
+        define: { [define]: global },
+        splitting: true,
+        target,
+        format: "esm",
+        outdir: "/out",
+        backend: "cli",
+        onAfterBundle(api) {
+          for (const code of outputFiles(api)) expect(code).not.toContain("__requireHere");
+          for (const entry of ["/out/a/entry.js", "/out/b/entry.js"]) {
+            expect(api.readFile(entry)).toMatch(/import \{[^}]*\b__require\b[^}]*\} from/);
+          }
+        },
+        run: [
+          { file: "/out/a/entry.js", runtime: target, setCwd: true, bunArgs: preload, stdout: "a shared /" },
+          { file: "/out/b/entry.js", runtime: target, setCwd: true, bunArgs: preload, stdout: "b shared /" },
+        ],
+      });
+    }
+
+    // A store to `require` throws where the binding is an import, when the store runs and assigns. A chunk that
+    // holds one keeps that import: with a `require` of its own it would have no binding to print the store to.
+    itBundled(`splitting/RequireWithAStoreIsImported-${target}`, {
+      files: {
+        "/src/a/entry.js": /* js */ `
+          import { shared } from "../shared.js";
+          export const stores = [
+            w => { require = w; },
+            w => { require ||= w; },
+            w => { require ??= w; },
+            w => { require &&= w; },
+            w => { require += w; },
+            () => { require++; },
+            () => { --require; },
+            w => { [require] = [w]; },
+            w => { ({ require } = { require: w }); },
+            w => { ({ a: require } = { a: w }); },
+            w => { for (require of [w]) {} },
+            w => { for (require in w) {} },
+            w => { [...require] = [w]; },
+            w => { ({ ...require } = w); },
+            w => { [require = 1] = [w]; },
+          ];
+          const thrown = stores.map(store => {
+            try {
+              store({});
+              return "stored";
+            } catch (e) {
+              return e.constructor.name;
+            }
+          });
+          console.log("a", shared, [...new Set(thrown)].join(), typeof require(String("node:os")).EOL);
+        `,
+        "/src/b/entry.js": /* js */ `
+          import { shared } from "../shared.js";
+          console.log("b", shared, typeof require(String("node:os")).EOL);
+        `,
+        "/src/shared.js": `export const shared = "shared";`,
+      },
+      entryPoints: ["/src/a/entry.js", "/src/b/entry.js"],
+      outputPaths: ["/out/a/entry.js", "/out/b/entry.js"],
+      splitting: true,
+      target,
+      format: "esm",
+      outdir: "/out",
+      onAfterBundle(api) {
+        expect(api.readFile("/out/a/entry.js")).not.toContain("__requireHere");
+        expect(api.readFile("/out/a/entry.js")).toMatch(/import \{[^}]*\b__require\b[^}]*\} from/);
+        expect(api.readFile("/out/b/entry.js")).toContain(ownRequire[target]);
+      },
+      run: [
+        { file: "/out/a/entry.js", runtime: target, stdout: "a shared TypeError,stored string" },
+        { file: "/out/b/entry.js", runtime: target, stdout: "b shared string" },
+      ],
+    });
+
+    // A store in the chunk of the runtime module is a store to the one `__require`, and every chunk that imports
+    // it reads what was stored. So no chunk makes its own.
+    itBundled(`splitting/RequireStoredInTheRuntimeChunkIsImported-${target}`, {
+      files: {
+        "/src/a/entry.js": /* js */ `
+          import { shared } from "../shared.js";
+          console.log("a", shared, require(String("virtual:x")));
+        `,
+        "/src/b/entry.js": /* js */ `
+          import { shared } from "../shared.js";
+          console.log("b", shared, require(String("virtual:x")));
+        `,
+        "/src/shared.js": /* js */ `
+          export const shared = "shared";
+          require = id => "hooked " + id;
+        `,
+      },
+      entryPoints: ["/src/a/entry.js", "/src/b/entry.js"],
+      outputPaths: ["/out/a/entry.js", "/out/b/entry.js"],
+      splitting: true,
+      target,
+      format: "esm",
+      outdir: "/out",
+      onAfterBundle(api) {
+        for (const code of outputFiles(api)) expect(code).not.toContain("__requireHere");
+      },
+      run: [
+        { file: "/out/a/entry.js", runtime: target, stdout: "a shared hooked virtual:x" },
+        { file: "/out/b/entry.js", runtime: target, stdout: "b shared hooked virtual:x" },
+      ],
+    });
+
+    // An ES module outside the bundle imports the entry point back and calls its export while the entry point
+    // still waits for its imports. The function that returns the chunk's own `require` is declared, so it has a
+    // value by then, as the imported `__require` has.
+    itBundled(`splitting/RequireInAFunctionCalledBeforeItsChunkRuns-FromAnExternalModule-${target}`, {
+      files: {
+        "/src/a/entry.js": /* js */ `
+          import { shared } from "../shared.js";
+          import { load } from "./config.js";
+          import "../plugin.js";
+          export { load };
+          console.log("a body", shared, load("./data.js"));
+        `,
+        "/src/a/config.js": `export function load(name) { return require(name); }`,
+        "/src/b/entry.js": /* js */ `
+          import { shared } from "../shared.js";
+          console.log("b body", shared, typeof require(String("node:os")).EOL);
+        `,
+        "/src/shared.js": `export const shared = "shared";`,
+      },
+      entryPoints: ["/src/a/entry.js", "/src/b/entry.js"],
+      outputPaths: ["/out/a/entry.js", "/out/b/entry.js"],
+      external: ["*/plugin.js"],
+      splitting: true,
+      target,
+      format: "esm",
+      outdir: "/out",
+      runtimeFiles: {
+        ...pathModules(["/out/a/data.js"], ["/out/data.js"]),
+        "/out/plugin.js": /* js */ `
+          import { load } from "./a/entry.js";
+          console.log("plugin body:", load("./data.js"));
+        `,
+      },
+      run: {
+        file: "/out/a/entry.js",
+        runtime: target,
+        stdout: "plugin body: out/a/data.js\na body shared out/a/data.js",
+      },
+    });
+
+    // Function text with a use of the chunk's own `require` still parses outside a module.
+    itBundled(`splitting/RequireOfItsChunkInFunctionTextParses-${target}`, {
+      files: {
+        "/src/a/entry.js": /* js */ `
+          import { shared } from "../shared.js";
+          function load(name) { return [require(name), require.resolve(name), require("../lib.js")]; }
+          console.log("a", shared, typeof new Function("return " + load.toString())(), load("../lib.js")[2]);
+        `,
+        "/src/b/entry.js": /* js */ `
+          import { shared } from "../shared.js";
+          console.log("b", shared, require("../lib.js"));
+        `,
+        "/src/shared.js": `export const shared = "shared";`,
+      },
+      entryPoints: ["/src/a/entry.js", "/src/b/entry.js"],
+      outputPaths: ["/out/a/entry.js", "/out/b/entry.js"],
+      external: ["*/lib.js"],
+      splitting: true,
+      target,
+      format: "esm",
+      outdir: "/out",
+      runtimeFiles: pathModules(["/out/lib.js"], ["/lib.js"]),
+      run: { file: "/out/a/entry.js", runtime: target, stdout: "a shared function out/lib.js" },
+    });
+
+    // One output file that is loaded as two modules. Each has its own `require`.
+    itBundled(`splitting/RequireOfItsChunkInAFileLoadedTwice-${target}`, {
+      files: {
+        "/src/a/entry.js": /* js */ `
+          import { shared } from "../shared.js";
+          console.log("a", shared, require("../lib.js"));
+        `,
+        "/src/b/entry.js": /* js */ `
+          import { shared } from "../shared.js";
+          console.log("b", shared, require("../lib.js"));
+        `,
+        "/src/shared.js": `export const shared = "shared";`,
+      },
+      entryPoints: ["/src/a/entry.js", "/src/b/entry.js"],
+      outputPaths: ["/out/a/entry.js", "/out/b/entry.js"],
+      external: ["*/lib.js"],
+      splitting: true,
+      target,
+      format: "esm",
+      outdir: "/out",
+      runtimeFiles: {
+        ...pathModules(["/out/lib.js"], ["/lib.js"]),
+        "/out/twice.mjs": `await import("./a/entry.js?v=1"); await import("./a/entry.js?v=2");`,
+      },
+      run: { file: "/out/twice.mjs", runtime: target, stdout: "a shared out/lib.js\na shared out/lib.js" },
+    });
+  }
+
+  // A plugin can bundle `node:module`. The `createRequire` that the runtime module calls is then the export of
+  // that file, and a chunk makes its own `require` with the same one.
+  itBundled("splitting/RequireOfItsChunkWithBundledNodeModule", ({ root }) => ({
+    files: {
+      "/src/a/entry.js": /* js */ `
+        import { shared } from "../shared.js";
+        console.log("a", shared, require(String("node:path")).posix.sep);
+      `,
+      "/src/b/entry.js": /* js */ `
+        import { shared } from "../shared.js";
+        console.log("b", shared, require(String("node:path")).posix.sep);
+      `,
+      "/src/shared.js": `export const shared = "shared";`,
+      "/src/shim.js": /* js */ `
+        import * as path from "node:path";
+        export function createRequire() {
+          return id => (id === "node:path" ? path : undefined);
+        }
+      `,
+    },
+    entryPoints: ["/src/a/entry.js", "/src/b/entry.js"],
+    outputPaths: ["/out/a/entry.js", "/out/b/entry.js"],
+    plugins(builder) {
+      builder.onResolve({ filter: /^node:module$/ }, () => ({ path: join(root, "src", "shim.js") }));
+    },
+    splitting: true,
+    target: "node",
+    format: "esm",
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/a/entry.js")).toContain(ownRequire.node);
+    },
+    run: [
+      { file: "/out/a/entry.js", runtime: "node", stdout: "a shared /" },
+      { file: "/out/b/entry.js", runtime: "node", stdout: "b shared /" },
+    ],
+  }));
+
+  // A bundle for Bun still loads where `import.meta.require` does not exist, as long as nothing calls `require`.
+  itBundled("splitting/RequireOfItsChunkLoadsWithoutImportMetaRequire", {
+    files: {
+      "/src/a/entry.js": /* js */ `
+        import { shared } from "../shared.js";
+        export const load = name => require(name);
+        console.log("a", shared);
+      `,
+      "/src/b/entry.js": /* js */ `
+        import { shared } from "../shared.js";
+        export const load = name => require(name);
+        console.log("b", shared);
+      `,
+      "/src/shared.js": `export const shared = "shared";`,
+    },
+    entryPoints: ["/src/a/entry.js", "/src/b/entry.js"],
+    outputPaths: ["/out/a/entry.js", "/out/b/entry.js"],
+    splitting: true,
+    target: "bun",
+    format: "esm",
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/a/entry.js")).toContain(ownRequire.bun);
+    },
+    run: { file: "/out/a/entry.js", runtime: "node", stdout: "a shared" },
+  });
+
+  // User code can assign to `import.meta.require`. The chunk has read it before that code runs, so a hook that
+  // forwards to `require` reaches the real one, as it does through the imported `__require`.
+  itBundled("splitting/RequireOfItsChunkIsReadBeforeItsCodeRuns", {
+    files: {
+      "/src/a/entry.js": /* js */ `
+        import { shared } from "../shared.js";
+        const seen = [];
+        import.meta.require = function hooked(id) {
+          seen.push(id);
+          return require(id);
+        };
+        console.log("a", shared, require("../lib.js"), seen.length, import.meta.require("../lib.js"), seen.length);
+      `,
+      "/src/b/entry.js": /* js */ `
+        import { shared } from "../shared.js";
+        console.log("b", shared, require("../lib.js"));
+      `,
+      "/src/shared.js": `export const shared = "shared";`,
+    },
+    entryPoints: ["/src/a/entry.js", "/src/b/entry.js"],
+    outputPaths: ["/out/a/entry.js", "/out/b/entry.js"],
+    external: ["*/lib.js"],
+    splitting: true,
+    target: "bun",
+    format: "esm",
+    outdir: "/out",
+    runtimeFiles: pathModules(["/out/lib.js"], ["/lib.js"]),
+    run: { file: "/out/a/entry.js", stdout: "a shared out/lib.js 0 out/lib.js 1" },
+  });
+
+  // Code can call a function of a chunk before that chunk has run: here through a `require()` of a file whose
+  // chunk still waits for its imports. A chunk's own `require` comes from a function declaration, which has a
+  // value by then. A variable that the body of the chunk sets would have none.
+  //
+  // x.js and y.js share a chunk that imports the chunk of d1.js. d1.js loads b.js while that first chunk still
+  // waits, and b.js calls `fx()` there. With chunks in directories of their own, the chunk of x.js makes its
+  // own `require`, which looks in that chunk's directory first.
+  for (const chunkNaming of [undefined, "[hash]/[name].[ext]"]) {
+    itBundled(
+      `splitting/RequireInAFunctionCalledBeforeItsChunkRuns${chunkNaming ? "-ChunksInDirectoriesOfTheirOwn" : ""}`,
+      {
+        files: {
+          "/e.js": /* js */ `
+          import { fx } from "./x.js";
+          import "./y.js";
+          console.log("e body:", fx());
+        `,
+          "/e2.js": /* js */ `
+          import { tag } from "./d1.js";
+          console.log("e2 body:", tag);
+        `,
+          "/b.js": /* js */ `
+          import { fx } from "./x.js";
+          import "./y.js";
+          export const value = fx();
+          console.log("b body:", value);
+        `,
+          "/d1.js": /* js */ `
+          export const tag = "d1";
+          console.log("d1 body start", typeof require(String("node:os")).EOL);
+          const b = require("./b.js");
+          console.log("d1 body end, b.value =", b.value);
+        `,
+          "/x.js": /* js */ `
+          export function fx() {
+            return require.resolve.paths("./x")[0] === import.meta.dirname;
+          }
+          console.log("x body");
+        `,
+          "/y.js": /* js */ `
+          import { tag } from "./d1.js";
+          console.log("y body", tag);
+        `,
+        },
+        entryPoints: ["/e.js", "/e2.js"],
+        splitting: true,
+        chunkNaming,
+        target: "bun",
+        format: "esm",
+        outdir: "/out",
+        run: {
+          file: "/out/e.js",
+          stdout: "d1 body start string\nb body: true\nd1 body end, b.value = true\nx body\ny body d1\ne body: true",
+        },
+      },
+    );
+  }
+
+  // store.js is in a chunk that both entry points import. It loads the first entry point with `require()` while
+  // that one still waits for its imports, and calls `data()` there.
+  for (const chunkNaming of [undefined, "chunks/[name]-[hash].[ext]"]) {
+    itBundled(
+      `splitting/RequireInAFunctionCalledBeforeItsChunkRuns-EntriesInTwoDirectories${chunkNaming ? "-ChunksInTheirOwnDirectory" : ""}`,
+      {
+        files: {
+          "/src/a/entry.js": /* js */ `
+            import { data } from "./platform.js";
+            import { Store } from "../store.js";
+            export { data };
+            console.log("a body:", new Store().name, data());
+          `,
+          "/src/a/platform.js": `export function data() { return require("./data.js"); }`,
+          "/src/b/entry.js": /* js */ `
+            import { Store } from "../store.js";
+            console.log("b body:", new Store().name);
+          `,
+          "/src/store.js": /* js */ `
+            import dep from "./dep.cjs";
+            const { data } = require("./a/entry.js");
+            console.log("store body:", data());
+            export class Store { name = "app" + dep.tag; }
+          `,
+          "/src/dep.cjs": `module.exports = { tag: "!" };`,
+        },
+        entryPoints: ["/src/a/entry.js", "/src/b/entry.js"],
+        outputPaths: ["/out/a/entry.js", "/out/b/entry.js"],
+        external: ["*/data.js"],
+        splitting: true,
+        chunkNaming,
+        target: "bun",
+        format: "esm",
+        outdir: "/out",
+        runtimeFiles: pathModules(["/out/a/data.js"], ["/out/data.js", "/out/chunks/data.js"]),
+        run: { file: "/out/a/entry.js", stdout: "store body: out/a/data.js\na body: app! out/a/data.js" },
+      },
+    );
+  }
+
+  // d1.js loads b.js with `await import()` at its top level while the chunk of x.js still waits for d1.js. Bun
+  // then runs b.js, which calls `fx()` in that chunk.
+  itBundled("splitting/RequireInAFunctionCalledBeforeItsChunkRuns-FromATopLevelAwait", {
+    files: {
+      "/e.js": /* js */ `
+        import { fx } from "./x.js";
+        import "./y.js";
+        console.log("e body:", fx());
+      `,
+      "/e2.js": /* js */ `
+        import { tag } from "./d1.js";
+        console.log("e2 body:", tag);
+      `,
+      "/b.js": /* js */ `
+        import { fx } from "./x.js";
+        import "./y.js";
+        export const value = fx();
+        console.log("b body:", value);
+      `,
+      // The `require` here puts the runtime module into the chunk of d1.js, which has run by then.
+      "/d1.js": /* js */ `
+        export const tag = "d1";
+        console.log("d1 body start", typeof require(String("node:os")).EOL);
+        const b = await import("./b.js");
+        console.log("d1 body end, b.value =", b.value);
+      `,
+      "/x.js": /* js */ `
+        export function fx() {
+          return require.resolve.paths("./x")[0] === import.meta.dirname;
+        }
+        console.log("x body");
+      `,
+      "/y.js": /* js */ `
+        import { tag } from "./d1.js";
+        console.log("y body", tag);
+      `,
+    },
+    entryPoints: ["/e.js", "/e2.js"],
+    splitting: true,
+    chunkNaming: "[hash]/[name].[ext]",
+    target: "bun",
+    format: "esm",
+    outdir: "/out",
+    run: {
+      file: "/out/e.js",
+      stdout: "d1 body start string\nb body: true\nd1 body end, b.value = true\nx body\ny body d1\ne body: true",
+    },
+  });
+
   // Browser ESM: every split `import()` first inserts <link rel=modulepreload>
   // for the chunks its target statically imports (transitively), so a deep
   // chunk chain downloads in parallel instead of one round trip per level.

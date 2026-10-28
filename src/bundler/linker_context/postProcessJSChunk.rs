@@ -155,6 +155,8 @@ pub(crate) fn post_process_js_chunk(
         )
     };
 
+    let (chunk_require_ref, chunk_imports_runtime_require) = c.chunk_require(chunk);
+
     // The chunk's module record, assembled in output order: the printer records
     // the cross-chunk prefix imports below, then the per-part-range results
     // (printed in parallel into their own ModuleInfo) are appended, then the
@@ -202,6 +204,8 @@ pub(crate) fn post_process_js_chunk(
             has_run_symbol_renamer: true,
 
             require_ref: runtime_require_ref,
+            chunk_require_ref,
+            chunk_imports_runtime_require,
             minify_whitespace: c.options.minify_whitespace,
             minify_identifiers: c.options.minify_identifiers,
             minify_syntax: c.options.minify_syntax,

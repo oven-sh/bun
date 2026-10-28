@@ -26,8 +26,11 @@ pub(crate) fn compute_cross_chunk_dependencies<'a>(
             exports: ChunkMetaMap::default(),
             dynamic_imports: ArrayHashMap::<IndexInt, ()>::default(),
             require_imports: ArrayHashMap::<IndexInt, ()>::default(),
+            requires_builtin: false,
         })
         .collect();
+
+    let mut require_initializer_names: Vec<Ref> = Vec::new();
 
     {
         // Constructed on the stack and dropped at scope end.
@@ -73,6 +76,7 @@ pub(crate) fn compute_cross_chunk_dependencies<'a>(
             resolved_exports: meta.resolved_exports,
             ctx: ctx_ref,
             symbols: symbols_ref,
+            require_initializer_names: &mut require_initializer_names,
         };
 
         for (idx, chunk) in chunks.iter_mut().enumerate() {
@@ -80,6 +84,7 @@ pub(crate) fn compute_cross_chunk_dependencies<'a>(
         }
     }
 
+    declare_chunk_requires(c, chunks, &mut chunk_metas, &require_initializer_names);
     compute_cross_chunk_dependencies_with_chunk_metas(c, chunks, &mut chunk_metas)
 }
 
@@ -113,6 +118,9 @@ struct CrossChunkDependencies<'a, 'bump> {
     // (which also reaches `c.graph.symbols`); `BackRef::Deref` yields the
     // shared `&Map` each `walk` call needs.
     symbols: bun_ptr::BackRef<bun_ast::symbol::Map>,
+    /// What `OwnRequire::initializer` names: `createRequire` for node. A chunk with a `require` of its own
+    /// imports them.
+    require_initializer_names: &'a mut Vec<Ref>,
 }
 
 impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
@@ -162,10 +170,23 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                 if !parts_live.is_set(part_index) {
                     continue;
                 }
+                let declares_runtime_require = source_index == Index::RUNTIME.get()
+                    && ctx.own_require.as_ref().is_some_and(|own| {
+                        part.declared_symbols
+                            .refs()
+                            .iter()
+                            .any(|declared| declared.eql(own.runtime_ref))
+                    });
 
                 // Rewrite external dynamic imports to point to the chunk for that entry point
                 for &import_record_id in part.import_record_indices.slice() {
                     let import_record = &mut import_records[import_record_id as usize];
+                    if import_record
+                        .flags
+                        .contains(bun_ast::ImportRecordFlags::REQUIRES_BUILTIN)
+                    {
+                        chunk_meta.requires_builtin = true;
+                    }
                     if import_record.source_index.is_valid()
                         && ctx.is_external_dynamic_import(import_record, source_index)
                     {
@@ -252,6 +273,10 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                             bstr::BStr::new(name),
                             ref_to_use,
                         );
+                    }
+
+                    if declares_runtime_require {
+                        deps.require_initializer_names.push(ref_to_use);
                     }
 
                     // We must record this relationship even for symbols that are not
@@ -442,6 +467,16 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             continue;
         }
 
+        // A chunk with a `require` of its own reads the runtime module's `__require` for builtin modules
+        // only (`declare_chunk_requires`).
+        let unread_runtime_require = {
+            let js = chunks[chunk_index].content.javascript();
+            match &c.own_require {
+                Some(own) if js.declares_require && !js.imports_runtime_require => own.runtime_ref,
+                _ => Ref::NONE,
+            }
+        };
+
         // Find all uses in this chunk of symbols from other chunks
         // reshaped for borrowck — collect keys first to avoid holding a borrow on
         // chunk_metas[chunk_index] while mutating chunk_metas[other_chunk_index].
@@ -452,6 +487,22 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             // Ignore uses that aren't top-level symbols
             if let Some(other_chunk_index) = symbol.chunk_index() {
                 if other_chunk_index as usize != chunk_index {
+                    if unread_runtime_require.is_valid() && import_ref.eql(unread_runtime_require) {
+                        // The chunk still loads the chunk of the runtime module where it does today, so
+                        // the code there runs in the same order. It does not when loading runs nothing.
+                        if inert.is_none() {
+                            inert = Some(inert_chunks(c, chunks)?);
+                        }
+                        if !inert.as_ref().unwrap().is_set(other_chunk_index as usize) {
+                            let js = chunks[chunk_index].content.javascript_mut();
+                            let _ = js.imports_from_other_chunks.get_or_put_value(
+                                other_chunk_index,
+                                CrossChunkImportItemList::default(),
+                            )?;
+                        }
+                        continue;
+                    }
+
                     if cfg!(debug_assertions) {
                         // SAFETY: arena slices valid for the link pass.
                         let name = symbol.original_name.slice();
@@ -725,6 +776,11 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             }
 
             let repr = chunks[chunk_index].content.javascript_mut();
+            if repr.declares_require
+                && let Some(own) = &c.own_require
+            {
+                own.declare(c.arena(), &mut cross_chunk_prefix_stmts);
+            }
             repr.cross_chunk_prefix_stmts = cross_chunk_prefix_stmts;
             repr.imports_from_other_chunks = imports_from_other_chunks;
             chunks[chunk_index].cross_chunk_imports = cross_chunk_imports;
@@ -732,6 +788,160 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     }
 
     Ok(())
+}
+
+/// Decides which chunks have a `require` of their own (`OwnRequire`): a chunk that reads the runtime module's
+/// `__require` from another chunk, for a use that depends on the file, and is not known to be in the directory
+/// of that chunk. Every other chunk is printed as it is without this.
+fn declare_chunk_requires(
+    c: &LinkerContext,
+    chunks: &mut [Chunk],
+    chunk_metas: &mut [ChunkMeta],
+    require_initializer_names: &[Ref],
+) {
+    use crate::bundled_ast::Flags as AstFlags;
+
+    let Some(own) = &c.own_require else {
+        return;
+    };
+    let Some(runtime_chunk) = c
+        .graph
+        .symbols
+        .get_const(own.runtime_ref)
+        .unwrap()
+        .chunk_index()
+    else {
+        return;
+    };
+    let runtime_chunk = runtime_chunk as usize;
+
+    let ast_flags = c.graph.ast.items_flags();
+    let holds = |chunk: &Chunk, flag: AstFlags| {
+        chunk
+            .files_with_parts_in_chunk
+            .keys()
+            .iter()
+            .any(|&source_index| ast_flags[source_index as usize].contains(flag))
+    };
+    // A store to `require` in the chunk of the runtime module reaches every chunk through the binding that
+    // they import. A chunk with a `require` of its own would not see it.
+    if holds(&chunks[runtime_chunk], AstFlags::ASSIGNS_REQUIRE) {
+        return;
+    }
+
+    let sanitize = c.sanitizes_output_paths();
+    let runtime_directory = chunks[runtime_chunk]
+        .template
+        .output_directory_without_hash(sanitize);
+
+    for chunk_index in 0..chunks.len() {
+        let chunk = &chunks[chunk_index];
+        if chunk_index == runtime_chunk
+            || !matches!(chunk.content, chunk::Content::Javascript(_))
+            || !chunk_metas[chunk_index].imports.contains(&own.runtime_ref)
+            || chunk
+                .flags
+                .contains(chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
+            || !holds(chunk, AstFlags::HAS_FILE_BOUND_REQUIRE)
+            // The store throws where the binding is an import. With a `require` of its own the chunk
+            // would have none to print the store to.
+            || holds(chunk, AstFlags::ASSIGNS_REQUIRE)
+        {
+            continue;
+        }
+        // In one directory `__require` resolves the same from either chunk. A directory with a `[hash]` has
+        // no name yet, so it is not known to be that of any other chunk.
+        if runtime_directory.is_some()
+            && chunk.template.output_directory_without_hash(sanitize) == runtime_directory
+        {
+            continue;
+        }
+
+        let js = chunks[chunk_index].content.javascript_mut();
+        js.declares_require = true;
+        js.imports_runtime_require = chunk_metas[chunk_index].requires_builtin;
+        for &name in require_initializer_names {
+            let _ = chunk_metas[chunk_index].imports.put(name, ()); // OOM-only Result
+        }
+    }
+}
+
+impl crate::linker_context_mod::OwnRequire {
+    /// `function NAME() { return NAME.c || (NAME.c = <initializer>); }`, then `NAME();` when the chunk reads
+    /// `import.meta.require` before its own code runs.
+    fn declare(&self, arena: &bun_alloc::Arena, stmts: &mut Vec<bun_ast::Stmt>) {
+        use bun_ast::{E, Expr, G, Loc, S, Stmt};
+
+        let name = || Expr::init_identifier(self.ref_, Loc::EMPTY);
+        let memo = || {
+            Expr::allocate(
+                arena,
+                E::Dot {
+                    target: name(),
+                    name: bun_ast::StoreStr::new(b"c"),
+                    name_loc: Loc::EMPTY,
+                    ..Default::default()
+                },
+                Loc::EMPTY,
+            )
+        };
+        let value = Expr::allocate(
+            arena,
+            E::Binary {
+                op: bun_ast::OpCode::BinLogicalOr,
+                left: memo(),
+                right: Expr::allocate(
+                    arena,
+                    E::Binary {
+                        op: bun_ast::OpCode::BinAssign,
+                        left: memo(),
+                        right: self.initializer,
+                    },
+                    Loc::EMPTY,
+                ),
+            },
+            Loc::EMPTY,
+        );
+        let body = [Stmt::allocate(
+            arena,
+            S::Return { value: Some(value) },
+            Loc::EMPTY,
+        )];
+        stmts.push(Stmt::allocate(
+            arena,
+            S::Function {
+                func: G::Fn {
+                    name: Some(bun_ast::LocRef {
+                        ref_: self.ref_,
+                        loc: Loc::EMPTY,
+                    }),
+                    body: G::FnBody {
+                        loc: Loc::EMPTY,
+                        stmts: bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&body)),
+                    },
+                    ..Default::default()
+                },
+            },
+            Loc::EMPTY,
+        ));
+        if self.reads_import_meta_require {
+            stmts.push(Stmt::allocate(
+                arena,
+                S::SExpr {
+                    value: Expr::allocate(
+                        arena,
+                        E::Call {
+                            target: name(),
+                            ..Default::default()
+                        },
+                        Loc::EMPTY,
+                    ),
+                    does_not_affect_tree_shaking: false,
+                },
+                Loc::EMPTY,
+            ));
+        }
+    }
 }
 
 // `Format` is the bundler output-format enum (Esm/Cjs/Iife/...);

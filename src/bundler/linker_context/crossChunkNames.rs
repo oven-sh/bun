@@ -76,7 +76,16 @@ pub(crate) fn assign_unminified(
     c: &mut LinkerContext,
     chunks: &[Chunk],
 ) -> Result<(), crate::Error> {
-    let refs = cross_chunk_refs(chunks);
+    let mut refs = cross_chunk_refs(chunks);
+    // A chunk's own `require` (`OwnRequire`) is one symbol of the runtime module that each such chunk
+    // declares. A chunk's renamer names a symbol of a file that the chunk does not hold from this table.
+    if let Some(own) = &c.own_require
+        && chunks
+            .iter()
+            .any(|chunk| matches!(&chunk.content, Content::Javascript(js) if js.declares_require))
+    {
+        refs.push(own.ref_);
+    }
     if refs.is_empty() {
         return Ok(());
     }

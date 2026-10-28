@@ -1331,6 +1331,11 @@ pub struct JavaScriptChunk {
     pub(crate) imports_from_other_chunks: ImportsFromOtherChunks,
     pub(crate) cross_chunk_prefix_stmts: Vec<Stmt>,
     pub(crate) cross_chunk_suffix_stmts: Vec<Stmt>,
+    /// The chunk has a `require` of its own (`OwnRequire`), declared in `cross_chunk_prefix_stmts`.
+    pub(crate) declares_require: bool,
+    /// With `declares_require`: the chunk imports the runtime module's `__require` too, for a `require()`
+    /// of a builtin module.
+    pub(crate) imports_runtime_require: bool,
 
     /// Indexes to CSS chunks. Currently this will only ever be zero or one
     /// items long, but smarter css chunking will allow multiple js entry points

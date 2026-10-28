@@ -103,6 +103,10 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// An external `require()` of a builtin module: every file resolves it the same. The linker of a
+        /// split build sets it where a chunk can have a `require` of its own (`LinkerContext::own_require`).
+        const REQUIRES_BUILTIN = 1 << 19;
     }
 }
 

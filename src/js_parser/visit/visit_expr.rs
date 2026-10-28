@@ -317,6 +317,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Substitute uncalled "require" for the require target
             if p.require_ref.eql(e_.ref_) && !p.is_source_runtime() {
+                if in_.assign_target != js_ast::AssignTarget::None {
+                    p.assigns_require = true;
+                }
                 // mark a reference to __require only if this is not about to be used for a call target
                 if !(matches!(p.call_target.tag(), Tag::EIdentifier)
                     && expr.data.e_identifier().unwrap().ref_.eql(
@@ -327,7 +330,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ))
                     && p.options.features.allow_runtime
                 {
-                    p.record_usage_of_runtime_require();
+                    p.record_usage_of_require_value();
                 }
 
                 *e = p.value_for_require(expr.loc);
@@ -1209,6 +1212,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if matches!(e_.value.data, Data::ERequireCallTarget) {
                     p.ignore_usage_of_runtime_require();
+                    p.ignore_usage_of_require_value();
                     *e = p.new_expr(
                         E::String {
                             data: b"function".into(),
@@ -2240,7 +2244,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if p.options.features.allow_runtime {
-                p.record_usage_of_runtime_require();
+                p.record_usage_of_require_value();
             }
 
             return;

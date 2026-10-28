@@ -33,6 +33,12 @@ pub struct Ast<'a> {
     pub uses_exports_ref: bool,
     pub uses_module_ref: bool,
     pub uses_require_ref: bool,
+    /// The file stores to the free variable `require`: `require = x`, `require ||= x`, a destructuring target.
+    pub assigns_require: bool,
+    /// The file uses the free variable `require` in a way that resolves from the file that holds the use:
+    /// read as a value, `require.resolve`, or a call whose argument is not one string literal. Not
+    /// `require("literal")`, which is an import record, and not `require.main`.
+    pub uses_require_value: bool,
     pub commonjs_module_exports_assigned_deoptimized: bool,
 
     pub force_cjs_to_esm: bool,
@@ -116,6 +122,8 @@ impl<'a> Ast<'a> {
             uses_exports_ref: false,
             uses_module_ref: false,
             uses_require_ref: false,
+            assigns_require: false,
+            uses_require_value: false,
             commonjs_module_exports_assigned_deoptimized: false,
             force_cjs_to_esm: false,
             commonjs_lifted_to_esm: false,

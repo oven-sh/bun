@@ -187,7 +187,12 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         list
     };
 
+    // The chunk's own `require` (`OwnRequire`) is a top-level symbol that the chunk declares outside its
+    // files' parts, as it declares `entry_point_cjs_export_copies`.
+    let own_require_ref = c.chunk_require(chunk).0;
+
     if c.options.minify_identifiers {
+        let mut own_require_uses: u32 = 0;
         let first_top_level_slots: SlotCounts = {
             let mut slots = SlotCounts::default();
             for &i in files_in_order {
@@ -252,6 +257,12 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
                     &part.symbol_uses,
                     stable_source_indices,
                 )?;
+                if let Some(own) = &c.own_require
+                    && own_require_ref.is_some()
+                    && let Some(uses) = part.symbol_uses.get(&own.runtime_ref)
+                {
+                    own_require_uses = own_require_uses.saturating_add(uses.count_estimate());
+                }
 
                 for declared_ref in part.declared_symbols.refs() {
                     minify_renamer.accumulate_symbol_use_count(
@@ -283,6 +294,14 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
                 &mut top_level_symbols,
                 copy,
                 1,
+                stable_source_indices,
+            )?;
+        }
+        if let Some(ref_) = own_require_ref {
+            minify_renamer.accumulate_symbol_use_count(
+                &mut top_level_symbols,
+                ref_,
+                own_require_uses.saturating_add(1),
                 stable_source_indices,
             )?;
         }
@@ -321,6 +340,11 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         if let Some(name) = c.cross_chunk_names.get(&ref_) {
             r.pin_top_level_symbol(ref_, name);
         }
+    }
+    if let Some(ref_) = own_require_ref
+        && let Some(name) = c.cross_chunk_names.get(&ref_)
+    {
+        r.pin_top_level_symbol(ref_, name);
     }
 
     // Renamed in a second pass, once every top-level symbol in the chunk is

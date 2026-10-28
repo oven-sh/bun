@@ -157,7 +157,14 @@ bitflags::bitflags! {
         const HAS_IMPORT_META = 1 << 8;
         /// See `Ast::commonjs_lifted_to_esm`.
         const COMMONJS_LIFTED_TO_ESM = 1 << 9;
-        // _padding: u6 fills the rest
+        /// See `Ast::assigns_require`.
+        const ASSIGNS_REQUIRE = 1 << 10;
+        /// The file holds a `require` that resolves from the file that holds it: `Ast::uses_require_value`,
+        /// a literal `require()` that stays in the output and is not of a builtin module
+        /// (`scan_imports_and_exports`), or the `require()` of an embedded asset
+        /// (`generate_code_for_lazy_export`).
+        const HAS_FILE_BOUND_REQUIRE = 1 << 11;
+        // _padding: u4 fills the rest
     }
 }
 
@@ -275,6 +282,8 @@ impl<'arena> BundledAst<'arena> {
                 None
             },
             has_import_meta: self.flags.contains(Flags::HAS_IMPORT_META),
+            assigns_require: self.flags.contains(Flags::ASSIGNS_REQUIRE),
+            uses_require_value: self.flags.contains(Flags::HAS_FILE_BOUND_REQUIRE),
             ..Ast::empty_in(arena)
         }
     }
@@ -297,6 +306,8 @@ impl<'arena> BundledAst<'arena> {
             ast.directive.is_some_and(|d| d == b"use strict"),
         );
         flags.set(Flags::HAS_IMPORT_META, ast.has_import_meta);
+        flags.set(Flags::ASSIGNS_REQUIRE, ast.assigns_require);
+        flags.set(Flags::HAS_FILE_BOUND_REQUIRE, ast.uses_require_value);
 
         Self {
             approximate_newline_count: ast.approximate_newline_count as u32,

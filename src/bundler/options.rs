@@ -2392,6 +2392,53 @@ fn path_template_print_tolerates_malformed_brackets() {
     assert_eq!(find_unterminated_placeholder(b"[foo]-[name].[ext]"), None);
 }
 
+#[cfg(test)]
+#[test]
+fn output_directory_is_one_spelling_per_directory() {
+    fn template(data: &[u8], dir: &[u8]) -> PathTemplate {
+        PathTemplate {
+            data: data.into(),
+            placeholder: Placeholder {
+                dir: dir.into(),
+                name: b"N".as_slice().into(),
+                ext: b"js".as_slice().into(),
+                hash: None,
+                target: Box::default(),
+            },
+        }
+    }
+    let directory =
+        |data: &[u8], dir: &[u8]| template(data, dir).output_directory_without_hash(true);
+    let named = |directory: &[u8]| Some(directory.to_vec());
+
+    // The default entry template, and a user template (which gets `./` in front), name one directory.
+    assert_eq!(directory(b"[dir]/[name].[ext]", b"a"), named(b"a"));
+    assert_eq!(directory(b"./[dir]/[name]-[hash].[ext]", b"a"), named(b"a"));
+    assert_eq!(directory(b"./a/[name]-[hash].[ext]", b""), named(b"a"));
+    assert_eq!(directory(b"[dir]/[name].[ext]", b"a/b"), named(b"a/b"));
+    // The output directory itself.
+    assert_eq!(directory(b"[dir]/[name].[ext]", b""), named(b""));
+    assert_eq!(directory(b"./[dir]/[name].[ext]", b""), named(b""));
+    assert_eq!(directory(b"./[name]-[hash].[ext]", b""), named(b""));
+    assert_eq!(directory(b"[name].[ext]", b""), named(b""));
+    // A `[hash]` in the directory is not known yet. It is one segment when it is.
+    assert_eq!(directory(b"[hash]/[name].[ext]", b""), None);
+    assert_eq!(directory(b"a/c-[hash]/[name].[ext]", b""), None);
+    let hashed = template(b"a/c-[hash]/[name].[ext]", b"");
+    let with_hash = hashed
+        .output_directory(Some(hashed.content_hash(0)), true)
+        .unwrap();
+    assert!(with_hash.starts_with(b"a/c-") && with_hash.len() > b"a/c-".len());
+    assert_eq!(with_hash.iter().filter(|&&byte| byte == b'/').count(), 1);
+    // Disk output rewrites `..`. A standalone executable keeps it, and then the directory is not under the
+    // output directory.
+    assert_eq!(directory(b"[dir]/[name].[ext]", b"../x"), named(b"_.._/x"));
+    assert_eq!(
+        template(b"[dir]/[name].[ext]", b"../x").output_directory_without_hash(false),
+        None
+    );
+}
+
 impl PathTemplate {
     pub(crate) fn needs(&self, field: PlaceholderField) -> bool {
         path_template_needs(&self.data, field)
@@ -2492,6 +2539,71 @@ impl PathTemplate {
             &self.placeholder.target,
             sanitize_parent_dirs,
         )
+    }
+
+    /// The path of the output file, relative to the output directory, with `hash` for `[hash]`.
+    pub(crate) fn output_path(
+        &self,
+        hash: Option<bun_core::fmt::ContentHash>,
+        sanitize_parent_dirs: bool,
+    ) -> Vec<u8> {
+        let mut path: Vec<u8> = Vec::new();
+        // The byte-writer, not `Display`: that goes through `from_utf8_lossy`, which would replace
+        // non-UTF-8 dir bytes with U+FFFD and corrupt the output path.
+        path_template_print(
+            &mut path,
+            &self.data,
+            &self.placeholder.dir,
+            &self.placeholder.name,
+            &self.placeholder.ext,
+            hash,
+            &self.placeholder.target,
+            sanitize_parent_dirs,
+        )
+        .expect("write to Vec<u8>");
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut path);
+
+        // A `./[dir]/…` template with `[dir] == "."` yields `././x.js`,
+        // which importers of the chunk would copy verbatim.
+        while let Some(i) = strings::index_of(&path, b"/./") {
+            path.drain(i..i + 2);
+        }
+        path
+    }
+
+    /// The directory of `output_path` from the output directory: `a/b`, or empty. It has no `.` segment and
+    /// no `/` at either end. `None`: a `..` segment leaves the output directory.
+    pub(crate) fn output_directory(
+        &self,
+        hash: Option<bun_core::fmt::ContentHash>,
+        sanitize_parent_dirs: bool,
+    ) -> Option<Vec<u8>> {
+        let path = self.output_path(hash, sanitize_parent_dirs);
+        let directory = &path[..strings::last_index_of_char(&path, b'/').map_or(0, |i| i as usize)];
+        let mut normalized: Vec<u8> = Vec::with_capacity(directory.len());
+        for segment in directory.split(|&byte| byte == b'/') {
+            match segment {
+                b"" | b"." => {}
+                b".." => return None,
+                _ => {
+                    if !normalized.is_empty() {
+                        normalized.push(b'/');
+                    }
+                    normalized.extend_from_slice(segment);
+                }
+            }
+        }
+        Some(normalized)
+    }
+
+    /// `output_directory` when the final one is known before the chunks are printed: it has no `[hash]`.
+    pub(crate) fn output_directory_without_hash(
+        &self,
+        sanitize_parent_dirs: bool,
+    ) -> Option<Vec<u8>> {
+        let directory = self.output_directory(None, sanitize_parent_dirs)?;
+        let with_hash = self.output_directory(Some(self.content_hash(0)), sanitize_parent_dirs)?;
+        (directory == with_hash).then_some(directory)
     }
 
     /// Max output path length. A `PathBuffer` also needs room for a `.map` or `.jsc` suffix and the NUL.

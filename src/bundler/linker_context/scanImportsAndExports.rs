@@ -80,6 +80,8 @@ pub(crate) fn scan_imports_and_exports(
 ) -> Result<(), ScanImportsAndExportsError> {
     let _outer_trace = perf::trace("Bundler.scanImportsAndExports");
     let output_format = this.options.output_format;
+    let target = this.options.target;
+    let own_require = this.own_require.is_some();
 
     // `reachable_files` is borrowed out of `this.graph` while the
     // body also calls `&mut this.graph` methods. Snapshot the indices.
@@ -1147,6 +1149,19 @@ pub(crate) fn scan_imports_and_exports(
                                 && should_call_runtime_require(output_format)
                             {
                                 runtime_require_uses += 1;
+
+                                // A chunk can have a `require` of its own for what depends on the
+                                // requiring file (`declare_chunk_requires`). A builtin module does not.
+                                if own_require {
+                                    let record = &mut col!(import_records_list)[id].as_mut_slice()
+                                        [import_record_index as usize];
+                                    if requires_builtin(record, target) {
+                                        record.flags.insert(ImportRecordFlags::REQUIRES_BUILTIN);
+                                    } else {
+                                        col!(ast_flags_list)[id]
+                                            .insert(AstFlags::HAS_FILE_BOUND_REQUIRE);
+                                    }
+                                }
                             }
 
                             // A split `require()` whose target is CommonJS at link
@@ -1443,6 +1458,16 @@ pub(crate) fn scan_imports_and_exports(
 #[inline]
 fn should_call_runtime_require(format: options::Format) -> bool {
     format != Format::Cjs
+}
+
+/// A `require()` of `record`, which stays in the output, gets the same module from every file.
+fn requires_builtin(record: &ImportRecord, target: options::Target) -> bool {
+    matches!(
+        record.tag,
+        bun_ast::ImportRecordTag::Builtin | bun_ast::ImportRecordTag::Bun
+    ) || record.path.text.starts_with(b"node:")
+        || record.path.text.starts_with(b"bun:")
+        || (target == options::Target::Node && options::is_node_builtin(record.path.text))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

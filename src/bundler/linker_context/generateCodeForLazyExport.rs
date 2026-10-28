@@ -427,6 +427,11 @@ pub(crate) fn generate_code_for_lazy_export(
     let calls_runtime_require = matches!(expr.data, ExprData::ECall(ref c)
         if matches!(c.target.data, ExprData::ERequireCallTarget))
         && this.options.output_format != crate::options::OutputFormat::Cjs;
+    if calls_runtime_require {
+        // The asset path is written for the chunk that holds this file.
+        this.graph.ast.items_flags_mut()[source_index as usize]
+            .insert(crate::bundled_ast::Flags::HAS_FILE_BOUND_REQUIRE);
+    }
 
     match exports_kind {
         bun_ast::ExportsKind::Cjs => {

@@ -220,6 +220,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 Ref::NONE,
                 Ref::NONE,
                 None,
+                (None, false),
                 part_range.source_index,
                 source,
                 module_info,
@@ -968,6 +969,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         });
     }
 
+    let chunk_require = c.chunk_require(chunk);
     c.print_code_for_file_in_chunk_js(
         r,
         arena,
@@ -978,6 +980,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         to_esm_ref,
         to_common_js_ref,
         runtime_require_ref,
+        chunk_require,
         part_range.source_index,
         source_ref,
         module_info,

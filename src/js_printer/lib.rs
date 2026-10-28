@@ -1321,6 +1321,13 @@ pub struct Options<'a> {
     /// `__preload`: when set, an `import()` of a chunk is printed as `(__preload(chunkId), import(path))`.
     pub module_preload_ref: Ref,
     pub require_ref: Option<Ref>,
+    /// A function in this chunk that returns the chunk's own `require`. With it, a use of `require_ref`
+    /// prints as the call `NAME()`. The linker sets it for a chunk that declares one
+    /// (`JavaScriptChunk::declares_require`).
+    pub chunk_require_ref: Option<Ref>,
+    /// With `chunk_require_ref`: the chunk imports `require_ref` too, and a `require()` of a builtin module
+    /// prints that.
+    pub chunk_imports_runtime_require: bool,
     pub import_meta_ref: Ref,
     pub hmr_ref: Ref,
     pub indent: Indentation,
@@ -1408,6 +1415,8 @@ impl<'a> Default for Options<'a> {
             to_esm_ref: Ref::NONE,
             module_preload_ref: Ref::NONE,
             require_ref: None,
+            chunk_require_ref: None,
+            chunk_imports_runtime_require: false,
             import_meta_ref: Ref::NONE,
             hmr_ref: Ref::NONE,
             indent: Indentation::default(),
@@ -2462,6 +2471,24 @@ pub(crate) mod __gated_printer {
             self.print_identifier(name);
         }
 
+        /// `require`, as `Options::require_ref` spells it. In a chunk with a `require` of its own that is the
+        /// call `NAME()` (`Options::chunk_require_ref`). `wrap_call`: a call cannot stand here as it is, like
+        /// the callee of `new`.
+        fn print_require_ref(&mut self, require_ref: Ref, wrap_call: bool) {
+            let Some(chunk_require_ref) = self.options.chunk_require_ref else {
+                self.print_symbol(require_ref);
+                return;
+            };
+            if wrap_call {
+                self.print(b"(");
+            }
+            self.print_symbol(chunk_require_ref);
+            self.print(b"()");
+            if wrap_call {
+                self.print(b")");
+            }
+        }
+
         pub(crate) fn print_clause_alias(&mut self, alias: &[u8]) {
             if !strings::contains_non_bmp_code_point_or_is_invalid_identifier(alias) {
                 self.print_space_before_identifier();
@@ -2960,7 +2987,14 @@ pub(crate) mod __gated_printer {
                     }
                     self.print(b"import.meta.require");
                 } else if let Some(ref_) = self.options.require_ref {
-                    self.print_symbol(ref_);
+                    // Every file resolves a builtin module the same, so the shared `require_ref` does.
+                    if self.options.chunk_imports_runtime_require
+                        && record.flags.contains(ImportRecordFlags::REQUIRES_BUILTIN)
+                    {
+                        self.print_symbol(ref_);
+                    } else {
+                        self.print_require_ref(ref_, false);
+                    }
                 } else {
                     self.print(b"require");
                 }
@@ -3349,7 +3383,7 @@ pub(crate) mod __gated_printer {
                         self.add_source_mapping(expr.loc);
 
                         if let Some(require) = self.options.require_ref {
-                            self.print_symbol(require);
+                            self.print_require_ref(require, false);
                         } else {
                             self.print(b"require");
                         }
@@ -3363,7 +3397,7 @@ pub(crate) mod __gated_printer {
                         if self.options.target == bun_ast::Target::Node {
                             // "__require.module"
                             if let Some(require) = self.options.require_ref {
-                                self.print_symbol(require);
+                                self.print_require_ref(require, false);
                                 self.print(b".module");
                             } else {
                                 self.print(b"module");
@@ -3562,7 +3596,7 @@ pub(crate) mod __gated_printer {
                     self.add_source_mapping(expr.loc);
 
                     if let Some(require_ref) = self.options.require_ref {
-                        self.print_symbol(require_ref);
+                        self.print_require_ref(require_ref, flags.contains(ExprFlag::ForbidCall));
                         self.print(b".main");
                     } else if self.options.module_type == bundle_opts::Format::InternalBakeDev {
                         self.print(b"false"); // there is no true main entry point
@@ -3575,7 +3609,10 @@ pub(crate) mod __gated_printer {
                     self.add_source_mapping(expr.loc);
 
                     if let Some(require_ref) = self.options.require_ref {
-                        self.print_symbol(require_ref);
+                        self.print_require_ref(
+                            require_ref,
+                            level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall),
+                        );
                     } else if self.options.module_type == bundle_opts::Format::InternalBakeDev {
                         self.print_symbol(self.options.hmr_ref);
                         self.print(b".require");
@@ -3588,7 +3625,7 @@ pub(crate) mod __gated_printer {
                     self.add_source_mapping(expr.loc);
 
                     if let Some(require_ref) = self.options.require_ref {
-                        self.print_symbol(require_ref);
+                        self.print_require_ref(require_ref, flags.contains(ExprFlag::ForbidCall));
                         self.print(b".resolve");
                     } else if self.options.module_type == bundle_opts::Format::InternalBakeDev {
                         self.print_symbol(self.options.hmr_ref);
@@ -3618,7 +3655,7 @@ pub(crate) mod __gated_printer {
                     self.add_source_mapping(expr.loc);
 
                     if let Some(require_ref) = self.options.require_ref {
-                        self.print_symbol(require_ref);
+                        self.print_require_ref(require_ref, false);
                         self.print(b".resolve");
                     } else if self.options.module_type == bundle_opts::Format::InternalBakeDev {
                         self.print_symbol(self.options.hmr_ref);

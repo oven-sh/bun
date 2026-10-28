@@ -2839,6 +2839,32 @@ describe("HEADERS on a closed stream (RFC 9113 §5.1)", () => {
     }
   });
 
+  test("a request with an id below that of a push is not on a closed stream", async () => {
+    const srv = http2.createServer();
+    srv.on("stream", stream => {
+      stream.on("error", () => {});
+      for (const path of stream.id === 1 ? ["/a", "/b"] : []) {
+        stream.pushStream({ ":path": path }, (_, push) => push?.on("error", () => {}).end());
+      }
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.PUSH_PROMISE && f.payload.readUInt32BE(0) === 4);
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
+      expect((await c.waitFor(headersOrGoaway(3))).type).toBe(FrameType.HEADERS);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
   test.each([
     ["trailers", trailers],
     ["a response", Buffer.concat([Buffer.from([0x88]), trailers])],
@@ -3517,7 +3543,9 @@ describe("HPACK (RFC 7541)", () => {
       }
       stream.on("wantTrailers", () => {
         // Given up on before anything was encoded, so there is nothing to take back.
-        expect(() => stream.sendTrailers({ "x bad": "1" })).toThrow();
+        expect(() => stream.sendTrailers({ "x bad": "1" })).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_HTTP_TOKEN" }),
+        );
         sizes["nothing encoded"] = size();
         stream.sendTrailers({ "x-trailer": "1" });
       });

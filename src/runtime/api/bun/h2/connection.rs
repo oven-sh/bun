@@ -391,6 +391,8 @@ pub(crate) struct Connection {
 
     preface_received: usize,
     pub last_stream_id: u32,
+    /// The highest id the peer has used for a stream of its own.
+    last_peer_stream_id: u32,
     pub going_away: bool,
 }
 
@@ -432,6 +434,7 @@ impl Connection {
             evict_buf: Vec::new(),
             preface_received: 0,
             last_stream_id: 0,
+            last_peer_stream_id: 0,
             going_away: false,
         }
     }
@@ -1149,9 +1152,7 @@ impl Connection {
             // Must advance even for refused streams: §5.1 treats anything at or below the
             // high-water mark as having existed, so frames a client pipelined behind the
             // refused HEADERS (RST_STREAM especially) are tolerated instead of GOAWAY'd.
-            if hdr.stream_id > self.last_stream_id {
-                self.last_stream_id = hdr.stream_id;
-            }
+            self.note_inbound_stream_id(hdr.stream_id);
             if disposition == BlockDisposition::Deliver {
                 sink.on_stream_open(hdr.stream_id);
             }
@@ -1667,7 +1668,22 @@ impl Connection {
         }
     }
 
+    fn is_peer_initiated(&self, stream_id: u32) -> bool {
+        stream_id.is_multiple_of(2) != self.is_server
+    }
+
+    fn note_inbound_stream_id(&mut self, stream_id: u32) {
+        self.last_stream_id = self.last_stream_id.max(stream_id);
+        if self.is_peer_initiated(stream_id) {
+            self.last_peer_stream_id = self.last_peer_stream_id.max(stream_id);
+        }
+    }
+
     fn has_existed(&self, sink: &impl Sink, stream_id: u32) -> bool {
+        // §5.1.1: each side numbers its own streams, and the other two marks count those of both.
+        if self.is_peer_initiated(stream_id) {
+            return stream_id <= self.last_peer_stream_id;
+        }
         stream_id <= self.last_stream_id || stream_id <= sink.highest_started_stream_id()
     }
 
@@ -1965,9 +1981,7 @@ impl Connection {
             .entry(promised)
             .or_insert_with(|| Stream::new(send_init, recv_init));
         entry.state = State::ReservedRemote;
-        if promised > self.last_stream_id {
-            self.last_stream_id = promised;
-        }
+        self.note_inbound_stream_id(promised);
 
         self.header_block.clear();
         self.header_block.extend_from_slice(&payload[off..end]);

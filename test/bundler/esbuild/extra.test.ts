@@ -258,6 +258,15 @@ describe("bundler", () => {
     run: { stdout: "works" },
   });
 
+  // A key with an implicit extension names a file that does not exist.
+  itBundled("extra/BrowserFieldSubpathKeyWithExtFileAbsent", {
+    files: {
+      "entry.js": `require('pkg/foo/bar')`,
+      "node_modules/pkg/package.json": `{ "browser": { "./foo/bar.js": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
   // Browserify lets "./pkg" match `require('pkg')` only from the package that
   // owns the map. A "./pkg2" entry in the project does not reach into a
   // dependency that requires "pkg2".
@@ -374,6 +383,24 @@ describe("bundler", () => {
     },
     run: { stdout: `["object",["default"],"object",0,"undefined"]` },
   });
+  itBundled("extra/BrowserFieldDisabledModuleDynamicImport", {
+    files: {
+      "entry.js": `import('pkg').then(pkg => pkg.info).then(info => console.log(JSON.stringify(info)))`,
+      "node_modules/pkg/package.json": `{ "main": "index.js", "browser": { "./node.js": false } }`,
+      "node_modules/pkg/index.js": `export const info = import('./node.js').then(ns => [typeof ns, Object.keys(ns), ns.default])`,
+      "node_modules/pkg/node.js": `throw 'fail'`,
+    },
+    run: { stdout: `["object",["default"],{}]` },
+  });
+  itBundled("extra/BrowserFieldDisabledModuleDefaultAndStarMinified", {
+    files: {
+      "entry.js": `import def, * as ns from './node.js'; console.log(JSON.stringify([def, Object.keys(ns)]))`,
+      "package.json": `{ "browser": { "./node.js": false } }`,
+      "node.js": `throw 'fail'`,
+    },
+    minifyWhitespace: true,
+    run: { stdout: `[{},["default"]]` },
+  });
   // The empty module is CommonJS also when the disabled file is ".mjs" or ".mts".
   // esbuild treats it as ESM, and fails the build on the default import.
   itBundled("extra/BrowserFieldDisabledModuleWithEsmExtension", {
@@ -390,8 +417,8 @@ describe("bundler", () => {
     },
     run: { stdout: `[{},{},{},{}]` },
   });
-  // A re-export from a disabled module behaves as in esbuild. `export *` has
-  // nothing to re-export. A named re-export is undefined, with a warning.
+  // A re-export from a disabled module. `export *` has nothing to re-export. A
+  // named re-export is undefined, with a warning.
   const disabledReExport = {
     "package.json": `{ "browser": { "./node.js": false } }`,
     "node.js": `throw 'fail'`,
@@ -415,14 +442,18 @@ describe("bundler", () => {
     },
     run: { stdout: `[[],"undefined",{},["default"]]` },
   });
+  // A name that only `export *` from the disabled module can give is undefined,
+  // with a warning. On main it is a property read at run time. esbuild fails the build.
   itBundled("extra/BrowserFieldDisabledModuleReExportStarMissingName", {
+    skipOnEsbuild: true,
     files: {
       "entry.js": `import { x } from './star'; console.log(x)`,
       ...disabledReExport,
     },
-    bundleErrors: {
-      "/entry.js": [`No matching export in "star.js" for import "x"`],
+    bundleWarnings: {
+      "/entry.js": [`Import "x" will always be undefined because there is no matching export in "star.js"`],
     },
+    run: { stdout: "undefined" },
   });
   // A subpath the package disables is also disabled when imported from outside
   // the package, and it stays a separate module from the enabled file.
@@ -437,19 +468,20 @@ describe("bundler", () => {
     },
     run: { stdout: "object {}" },
   });
-  // A package whose "module" entry is disabled: `import` gets the empty module
-  // and `require` falls back to "main", as in esbuild.
+  // A package whose "module" entry is disabled and whose "main" entry is not:
+  // "main" stands in for it, for `import` and for `require`.
   const disabledModuleEntry = {
     "node_modules/pkg/package.json": `{ "main": "./main.js", "module": "./module.js", "browser": { "./module.js": false } }`,
     "node_modules/pkg/main.js": `module.exports = 'main'`,
     "node_modules/pkg/module.js": `throw 'fail'`,
   };
   itBundled("extra/BrowserFieldDisabledModuleEntryImport", {
+    skipOnEsbuild: true, // esbuild gives an `import` alone the empty module
     files: {
       "entry.js": `import v from 'pkg'; console.log(JSON.stringify([typeof v, v]))`,
       ...disabledModuleEntry,
     },
-    run: { stdout: `["object",{}]` },
+    run: { stdout: `["string","main"]` },
   });
   itBundled("extra/BrowserFieldDisabledModuleEntryRequire", {
     files: {
@@ -458,8 +490,6 @@ describe("bundler", () => {
     },
     run: { stdout: "main" },
   });
-  // Once a `require` bundles "main", the `import` is redirected to it as well
-  // (the dual package hazard rule), so the disabled module is not in the output.
   itBundled("extra/BrowserFieldDisabledModuleEntryImportAndRequire", {
     files: {
       "entry.js": `import v from 'pkg'; console.log(JSON.stringify([typeof v, v]), require('pkg'))`,

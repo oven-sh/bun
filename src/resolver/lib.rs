@@ -376,21 +376,6 @@ pub mod fs {
                 .ok_or(bun_errno::SystemErrno::ENAMETOOLONG)
         }
 
-        /// Like `abs`, but interns the joined path into `DirnameStore` and
-        /// returns the `'static` copy.
-        pub(crate) fn abs_alloc(
-            &self,
-            parts: &[&[u8]],
-        ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-            use bun_paths::resolve_path::{join_abs_string, platform};
-            let joined = join_abs_string::<platform::Loose>(self.top_level_dir(), parts);
-            // Route through DirnameStore so
-            // the resolver's `&'static [u8]` storage contract holds.
-            DirnameStore::instance()
-                .append_slice(joined)
-                .map_err(|_| bun_alloc::AllocError)
-        }
-
         /// Relative path from `from` to `to`. Returns a slice into the
         /// resolver-shared threadlocal relative buffer; caller must dup
         /// before the next call.
@@ -539,6 +524,7 @@ pub mod fs {
                 },
                 is_symlink: self.is_symlink,
                 is_disabled: self.is_disabled,
+                is_disabled_module: self.is_disabled_module,
             };
 
             if core::ptr::eq(self.text.as_ptr(), self.pretty.as_ptr())
@@ -551,8 +537,7 @@ pub mod fs {
                 let text = FilenameStore::instance().append_slice(self.text)?;
                 let mut new_path = Path::<'static>::init(text);
                 new_path.namespace = dupe_namespace(self.namespace)?;
-                new_path.is_symlink = self.is_symlink;
-                new_path.is_disabled = self.is_disabled;
+                new_path.copy_flags_from(self);
                 Ok(new_path)
             } else if self.pretty.is_empty() {
                 if let Some(text) = as_interned_path(self.text) {
@@ -562,8 +547,7 @@ pub mod fs {
                 let mut new_path = Path::<'static>::init(text);
                 new_path.pretty = b"";
                 new_path.namespace = dupe_namespace(self.namespace)?;
-                new_path.is_symlink = self.is_symlink;
-                new_path.is_disabled = self.is_disabled;
+                new_path.copy_flags_from(self);
                 Ok(new_path)
             } else if let Some([offset, len]) =
                 bun_alloc::range_of_slice_in_buffer(self.pretty, self.text)
@@ -579,8 +563,7 @@ pub mod fs {
                 let mut new_path = Path::<'static>::init(text);
                 new_path.pretty = &text[offset as usize..][..len as usize];
                 new_path.namespace = dupe_namespace(self.namespace)?;
-                new_path.is_symlink = self.is_symlink;
-                new_path.is_disabled = self.is_disabled;
+                new_path.copy_flags_from(self);
                 Ok(new_path)
             } else {
                 if let (Some(text), Some(pretty)) =
@@ -620,13 +603,11 @@ pub mod fs {
                             b"" | b"file" => b"file",
                             ns => as_interned_path(ns).unwrap_or_else(|| arena_z(ns)),
                         };
-                        p.is_symlink = self.is_symlink;
-                        p.is_disabled = self.is_disabled;
+                        p.copy_flags_from(self);
                         return Ok(p);
                     };
                 new_path.namespace = dupe_namespace(self.namespace)?;
-                new_path.is_symlink = self.is_symlink;
-                new_path.is_disabled = self.is_disabled;
+                new_path.copy_flags_from(self);
                 Ok(new_path)
             }
         }

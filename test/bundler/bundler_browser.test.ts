@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { mkdirSync, readdirSync, symlinkSync } from "node:fs";
 import path from "node:path";
+import { bun, layouts, table } from "./browser-field-matrix";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -297,21 +298,179 @@ describe("bundler", () => {
   // module, `(disabled):<path>`, as in esbuild. Bun's own stubs for Node.js
   // builtins (see "browser/NodeFS") are not that module.
   itBundled("browser/BrowserFieldDisabledModuleIsNotTheBuiltinStub", {
+    skipOnEsbuild: true, // esbuild has no stubs for Node.js builtins
     files: {
       "/entry.js": /* js */ `
         import fromPackage from "pkg";
         const own = require("fs");
-        console.log(typeof own, typeof fromPackage, Object.keys(fromPackage).length);
+        console.log(typeof fromPackage, Object.keys(fromPackage).length, own === fromPackage);
       `,
       "/node_modules/pkg/package.json": `{ "main": "./index.js", "browser": { "fs": false } }`,
       "/node_modules/pkg/index.js": `module.exports = require("fs");`,
     },
     target: "browser",
     onAfterBundle(api) {
-      api.expectFile("out.js").toInclude("(disabled):fs");
+      expect(api.readFile("out.js").match(/^\/\/ \(disabled\):.*$/gm)).toEqual(["// (disabled):fs"]);
     },
     run: {
-      stdout: "function object 0",
+      stdout: "object 0 false",
+    },
+  });
+
+  // A bare name that the map disables is the empty module. The same file is
+  // also live when another import reaches it by its path. Both are in the
+  // bundle, whatever the order of the two imports.
+  for (const order of ["DisabledFirst", "LiveFirst"] as const) {
+    const requires = [
+      `const empty = require("nodeonly");`,
+      `const live = require("./node_modules/nodeonly/index.js");`,
+    ];
+    if (order === "LiveFirst") requires.reverse();
+    itBundled(`browser/BrowserFieldDisabledAndLiveFileInOneImporter${order}`, {
+      files: {
+        "/entry.js": /* js */ `
+          ${requires.join("\n")}
+          console.log(JSON.stringify([empty, live]), empty === require("nodeonly"));
+        `,
+        "/package.json": `{ "browser": { "nodeonly": false } }`,
+        "/node_modules/nodeonly/index.js": `module.exports = "live";`,
+      },
+      target: "browser",
+      onAfterBundle(api) {
+        api.expectFile("out.js").toMatch(/\/\/ \(disabled\):\S*node_modules\/nodeonly\/index\.js\n/);
+        api.expectFile("out.js").toMatch(/\/\/ (?!\(disabled\):)\S*node_modules\/nodeonly\/index\.js\n/);
+      },
+      run: {
+        stdout: `[{},"live"] true`,
+      },
+    });
+    // One importer each: the dependency has a map of its own, so the name is live there.
+    const importers = [`const empty = require("./app.js");`, `const live = require("dep");`];
+    if (order === "LiveFirst") importers.reverse();
+    itBundled(`browser/BrowserFieldDisabledAndLiveFileInTwoImporters${order}`, {
+      files: {
+        "/entry.js": /* js */ `
+          ${importers.join("\n")}
+          console.log(JSON.stringify([empty, live]));
+        `,
+        "/app.js": `module.exports = require("nodeonly");`,
+        "/package.json": `{ "browser": { "nodeonly": false } }`,
+        "/node_modules/dep/package.json": `{ "main": "./index.js", "browser": { "./unused.js": "./index.js" } }`,
+        "/node_modules/dep/index.js": `module.exports = require("nodeonly");`,
+        "/node_modules/nodeonly/index.js": `module.exports = "live";`,
+      },
+      target: "browser",
+      run: {
+        stdout: `[{},"live"]`,
+      },
+    });
+  }
+
+  // One `false` entry is one empty module, with and without a slash after the
+  // directory, so the bundle does not depend on which import is seen first.
+  itBundled("browser/BrowserFieldDisabledDirectoryTrailingSlash", {
+    files: {
+      "/entry.js": /* js */ `
+        const a = require("./a.js"), b = require("./b.js");
+        console.log(a.dir === b.noSlash, b.slash === b.noSlash, a.pkg === b.pkgSlash, JSON.stringify(a.dir));
+      `,
+      "/a.js": `exports.dir = require("./dir"); exports.pkg = require("pkg/dir");`,
+      "/b.js": `exports.slash = require("./dir/"); exports.noSlash = require("./dir"); exports.pkgSlash = require("pkg/dir/");`,
+      "/package.json": `{ "browser": { "./dir/index.js": false } }`,
+      "/dir/index.js": `throw "fail";`,
+      "/node_modules/pkg/package.json": `{ "browser": { "./dir/index.js": false } }`,
+      "/node_modules/pkg/dir/index.js": `throw "fail";`,
+    },
+    target: "browser",
+    run: {
+      stdout: "true true true {}",
+    },
+  });
+
+  // An import that does not use the value of the empty module leaves nothing in the bundle.
+  itBundled("browser/BrowserFieldDisabledModuleUnusedImportIsDropped", {
+    files: {
+      "/entry.js": /* js */ `
+        import unusedDefault from "./node.js";
+        import * as unusedStar from "./node.js";
+        import "./node.js";
+        console.log("done");
+      `,
+      "/package.json": `{ "browser": { "./node.js": false } }`,
+      "/node.js": `throw "fail";`,
+    },
+    target: "browser",
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude("(disabled):");
+    },
+    run: {
+      stdout: "done",
+    },
+  });
+
+  // Only an `import`, a `require()` or an `import()` loads the empty module.
+  // `require.resolve` of a disabled path stays as written, as on main.
+  itBundled("browser/BrowserFieldDisabledRequireResolveStaysAsWritten", {
+    files: {
+      "/entry.js": `module.exports = () => require.resolve("./node.js");`,
+      "/package.json": `{ "browser": { "./node.js": false } }`,
+      "/node.js": `throw "fail";`,
+    },
+    target: "browser",
+    onAfterBundle(api) {
+      api.expectFile("out.js").toInclude(`.resolve("./node.js")`);
+      api.expectFile("out.js").not.toInclude("(disabled):");
+    },
+  });
+
+  // A script tag that names a disabled path stays as written, as on main.
+  itBundled("browser/BrowserFieldDisabledHtmlScriptStaysAsWritten", {
+    skipOnEsbuild: true, // esbuild has no HTML entry points
+    files: {
+      "/index.html": `<!doctype html><html><head><script type="module" src="./node.js"></script><script type="module" src="./ok.js"></script></head></html>`,
+      "/ok.js": `console.log("ok");`,
+      "/node.js": `throw "fail";`,
+      "/package.json": `{ "browser": { "./node.js": false } }`,
+    },
+    entryPoints: ["/index.html"],
+    outdir: "/out",
+    target: "browser",
+    onAfterBundle(api) {
+      const html = api.readFile("/out/index.html");
+      expect(html).toContain(`<script type="module" src="./node.js">`);
+      for (const name of readdirSync(api.outdir)) {
+        if (name.endsWith(".js")) api.expectFile(`/out/${name}`).not.toInclude("fail");
+      }
+    },
+  });
+
+  // A name that only `export *` from a disabled file can give is undefined. In a
+  // dependency that is not the user's to fix, so the build says nothing. This
+  // is the shape of @smithy/shared-ini-file-loader in a browser build.
+  itBundled("browser/BrowserFieldExportStarFromDisabledInNodeModules", {
+    skipOnEsbuild: true, // esbuild fails the build
+    files: {
+      "/entry.js": /* js */ `
+        import { fromSso } from "user";
+        console.log(JSON.stringify(fromSso()));
+      `,
+      "/node_modules/user/package.json": `{ "main": "./index.js" }`,
+      "/node_modules/user/index.js": /* js */ `
+        import { fromFile, home } from "loader";
+        export const fromSso = () => [home, typeof fromFile];
+      `,
+      "/node_modules/loader/package.json": `{ "main": "./index.js", "browser": { "./fromFile.js": false } }`,
+      "/node_modules/loader/index.js": /* js */ `
+        export * from "./home.js";
+        export * from "./fromFile.js";
+      `,
+      "/node_modules/loader/home.js": `export const home = "home";`,
+      "/node_modules/loader/fromFile.js": `throw "fail";`,
+    },
+    target: "browser",
+    bundleWarnings: {},
+    run: {
+      stdout: `["home","undefined"]`,
     },
   });
 
@@ -324,12 +483,12 @@ describe("bundler", () => {
         import "fs";
         console.log(JSON.stringify(info));
       `,
-      "node_modules/pkg/package.json": `{ "main": "index.js", "browser": { "./node.js": false, "nodeonly": false } }`,
+      "node_modules/pkg/package.json": `{ "main": "index.js", "browser": { "./node.js": false, "nodeonly": false, "no-file": false } }`,
       "node_modules/pkg/index.js": /* js */ `
         import * as ns from "./node.js";
         import nodeonly from "nodeonly";
         import { named } from "./node.js";
-        export default [typeof ns, typeof ns.default, typeof nodeonly, typeof named, require("./node.js") === require("./node.js")];
+        export default [typeof ns, typeof ns.default, typeof nodeonly, typeof named, require("./node.js") === require("./node.js"), typeof require("no-file")];
       `,
       "node_modules/pkg/node.js": `throw 'fail'`,
       "node_modules/nodeonly/index.js": `throw 'fail'`,
@@ -371,7 +530,7 @@ describe("bundler", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout).toBe(`["object","object","object","undefined",true]\n`);
+    expect(stdout).toBe(`["object","object","object","undefined",true,"object"]\n`);
     expect(exitCode).toBe(0);
   });
 
@@ -387,6 +546,7 @@ describe("bundler", () => {
         "/node_modules/pkg/index.js": `module.exports = [JSON.stringify(require("./node.js")), JSON.stringify(require("nodeonly"))];`,
         "/node_modules/pkg/node.js": `module.exports = "node-only contents";`,
       },
+      skipOnEsbuild: true, // esbuild calls the plugin for a disabled path
       target: "browser",
       plugins: [
         {
@@ -408,9 +568,11 @@ describe("bundler", () => {
     };
   });
 
-  // Only a JavaScript import of a disabled path becomes the empty module. A
-  // stylesheet that names one keeps the "@import" and the "url()" as written.
-  itBundled("browser/BrowserFieldDisabledCssImportStaysAsWritten", {
+  // Only a JavaScript import of a disabled path loads the empty module. A
+  // stylesheet that names one builds, and does not bundle it. The "@import"
+  // and the "url()" stay in the output as on main. esbuild drops them.
+  itBundled("browser/BrowserFieldDisabledCssImportIsNotBundled", {
+    skipOnEsbuild: true, // esbuild drops the import
     files: {
       "/entry.js": `import "pkg";`,
       "/node_modules/pkg/package.json": `{ "main": "index.js", "browser": { "./node.css": false, "./img.png": false } }`,
@@ -423,9 +585,9 @@ describe("bundler", () => {
     outdir: "/out",
     onAfterBundle(api) {
       const css = api.readFile("/out/entry.css");
-      expect(css).toContain(`@import "./node.css";`);
-      expect(css).toContain(`url("./img.png")`);
+      expect(css).toContain("color: red");
       expect(css).not.toContain("blue");
+      expect(readdirSync(api.outdir).sort()).toEqual(["entry.css", "entry.js"]);
     },
   });
 
@@ -434,6 +596,17 @@ describe("bundler", () => {
   test("browser/BrowserFieldDisabledModuleIsTypeCheckedAsWritten", async () => {
     using dir = tempDir("browser-field-check", {
       "package.json": JSON.stringify({ name: "project", browser: { "./src/node-only.ts": false } }),
+      // No DOM or Node.js type definitions to load, which keeps the check fast.
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          noEmit: true,
+          module: "esnext",
+          moduleResolution: "bundler",
+          lib: ["esnext"],
+          types: [],
+        },
+      }),
       "src/node-only.ts": `export const x: number = 1;`,
       "entry.ts": `import { x } from "./src/node-only";\nexport const y: number = x;\n`,
     });
@@ -449,8 +622,9 @@ describe("bundler", () => {
     expect(exitCode).toBe(0);
   });
 
-  // One disabled file is one empty module, also when one import reaches it
-  // through a symlinked package directory and another through its real path.
+  // A disabled file that the imports name with its extension is one empty
+  // module, also when one import reaches it through a symlinked package
+  // directory and another through its real path.
   test("browser/BrowserFieldDisabledModuleBehindSymlink", async () => {
     using dir = tempDir("browser-field-symlink", {
       "entry.js": /* js */ `
@@ -534,6 +708,7 @@ describe("bundler", () => {
   // splitting. This differs from esbuild on purpose: esbuild resolves to `{}`
   // here, but only with splitting and only when nothing else requires the module.
   itBundled("browser/BrowserFieldDisabledModuleDynamicImportSplitting", {
+    skipOnEsbuild: true, // esbuild resolves to `{}` here
     files: {
       "/entry.js": /* js */ `
         import { load } from "pkg";
@@ -850,6 +1025,85 @@ describe("bundler", () => {
       ],
     },
   });
+
+  // A "browser" map key with a slash ("pkg/sub", "@scope/pkg") matches the
+  // import specifier on Windows too. The keys were stored with the native
+  // separator there, so "pkg/sub" became "pkg\sub" and matched nothing.
+  itBundled("browser/BrowserFieldDisablesPackageSubpath", {
+    files: {
+      "/entry.js": /* js */ `
+        const sub = require("pkg/sub");
+        const scoped = require("@scope/pkg");
+        console.log(typeof sub.value, typeof scoped.value);
+      `,
+      "/package.json": /* json */ `
+        { "name": "app", "browser": { "pkg/sub": false, "@scope/pkg": false } }
+      `,
+      "/node_modules/pkg/package.json": /* json */ `
+        { "name": "pkg" }
+      `,
+      "/node_modules/pkg/sub.js": /* js */ `
+        module.exports = { value: "node-only-sub" };
+      `,
+      "/node_modules/@scope/pkg/package.json": /* json */ `
+        { "name": "@scope/pkg" }
+      `,
+      "/node_modules/@scope/pkg/index.js": /* js */ `
+        module.exports = { value: "node-only-scoped" };
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "undefined undefined",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      assert(!out.includes("node-only-sub"), 'browser:{"pkg/sub":false} should keep pkg/sub.js out of the bundle');
+      assert(
+        !out.includes("node-only-scoped"),
+        'browser:{"@scope/pkg":false} should keep @scope/pkg out of the bundle',
+      );
+    },
+  });
+  itBundled("browser/BrowserFieldRemapsPackageSubpath", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("pkg/sub").value);
+      `,
+      "/package.json": /* json */ `
+        { "name": "app", "browser": { "pkg/sub": "./sub-shim.js" } }
+      `,
+      "/sub-shim.js": /* js */ `
+        module.exports = { value: "shim" };
+      `,
+      "/node_modules/pkg/package.json": /* json */ `
+        { "name": "pkg" }
+      `,
+      "/node_modules/pkg/sub.js": /* js */ `
+        module.exports = { value: "node-only-sub" };
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "shim",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      assert(
+        !out.includes("node-only-sub"),
+        'browser:{"pkg/sub":"./sub-shim.js"} should keep pkg/sub.js out of the bundle',
+      );
+    },
+  });
+
+  // Which files each import of browser-field-matrix.ts loads. scripts/browser-field-matrix.ts compares the tables
+  // with esbuild's. They differ where Bun applies the map to the target of "exports".
+  for (const [group, all] of Object.entries(Object.groupBy(layouts(), layout => layout.group))) {
+    test(`browser/BrowserFieldMatrix: ${group}`, async () => {
+      using dir = tempDir("browser-field-matrix", {});
+      expect(await table(String(dir), all!, bun)).toMatchSnapshot();
+    });
+  }
 
   // unsure: do we want polyfills or no-op stuff like node:* has
   // right now all error except bun:wrap which errors at resolve time, but is included if external

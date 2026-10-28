@@ -356,6 +356,41 @@ it.if(isWindows)("import() of a missing file at the drive root rejects", async (
   await expect(import(`${drive}///doesnotexist.ts`)).rejects.toThrow();
 });
 
+// The "browser" map of a package.json is for browser builds. The runtime loads the file.
+it('the runtime does not apply a package.json "browser" map to a package subpath', async () => {
+  using dir = tempDir("runtime-ignores-browser-map", {
+    "entry.js": `
+      const path = require("node:path");
+      const base = specifier => path.basename(require.resolve(specifier));
+      console.log(base("demo-pkg/no-ext"), base("demo-pkg/ext"), base("demo-pkg/off"), base("global-pkg/no-ext"));
+      console.log(require("demo-pkg/no-ext"), require("demo-pkg/off"), path.basename(Bun.resolveSync("demo-pkg/ext", __dirname)));
+    `,
+    "node_modules/demo-pkg/package.json": JSON.stringify({
+      browser: { "./no-ext": "./browser.js", "./ext.js": "./browser.js", "./off": false },
+    }),
+    "node_modules/demo-pkg/no-ext.js": `module.exports = "node";`,
+    "node_modules/demo-pkg/ext.js": `module.exports = "node";`,
+    "node_modules/demo-pkg/off.js": `module.exports = "off";`,
+    "node_modules/demo-pkg/browser.js": `module.exports = "browser";`,
+    "global/global-pkg/package.json": JSON.stringify({ browser: { "./no-ext": "./browser.js" } }),
+    "global/global-pkg/no-ext.js": `module.exports = "node";`,
+    "global/global-pkg/browser.js": `module.exports = "browser";`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: { ...bunEnv, NODE_PATH: join(String(dir), "global") },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({
+    stdout: "no-ext.js ext.js off.js no-ext.js\nnode off ext.js\n",
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 describe("NODE_PATH test", () => {
   const prepareTest = () => {
     const tempDir = tempDirWithFiles("node_path", {

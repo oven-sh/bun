@@ -24,7 +24,6 @@ use bun_js_parser as js_parser;
 // ASTs (arena outlives the link step). Use the crate-level alias so the
 // `Success`/helper signatures don't carry an explicit `'static` everywhere.
 use crate::JSAst;
-use crate::PathToSourceIndexMap::PathLike as _;
 /// `js_parser.Parser.Options` — the real parser-entry options struct.
 pub use bun_js_parser::parser::ParserOptions;
 
@@ -258,10 +257,7 @@ impl<'a> ParseTask<'a> {
         // provenance to read-only, making the later `&mut *ctx` UB).
         ctx: *mut BundleV2<'a>,
     ) -> ParseTask<'a> {
-        // Every empty module gets the same attributes, whichever import creates it.
-        let is_empty_module = path.is_disabled_module();
-        let package_json = resolve_result.package_json.filter(|_| !is_empty_module);
-        let (package_name, package_version) = match package_json {
+        let (package_name, package_version) = match resolve_result.package_json {
             // SAFETY: `package_json` is `Option<*const PackageJSON>`; the resolver
             // arena outlives the bundle pass, so deref'ing the raw pointer here to
             // borrow `name`/`version` is sound.
@@ -282,32 +278,22 @@ impl<'a> ParseTask<'a> {
         ParseTask {
             ctx: Some(ctx_ref),
             path,
-            contents_or_fd: if is_empty_module {
+            contents_or_fd: if path.is_disabled_module {
                 ContentsOrFd::Contents(b"")
-            } else if path.text == resolve_result.path_pair.primary.text {
+            } else {
                 ContentsOrFd::Fd {
                     dir: resolve_result.dirname_fd,
                     file: resolve_result.file_fd,
                 }
-            } else {
-                // The fds are the primary path's. The secondary path is opened by name.
-                ContentsOrFd::Fd {
-                    dir: Fd::INVALID,
-                    file: Fd::INVALID,
-                }
             },
-            side_effects: if is_empty_module {
-                crate::PathToSourceIndexMap::DISABLED_MODULE_SIDE_EFFECTS
-            } else {
-                resolve_result.primary_side_effects_data
-            },
+            side_effects: resolve_result.primary_side_effects_data,
             // D042: resolver-side and bundler-side `jsx::Pragma` are the SAME
             // nominal type (`bun_options_types::jsx::Pragma`). Preserves
             // jsxImportSource/runtime/etc. from tsconfig.json.
             jsx: resolve_result.jsx.clone(),
             source_index,
-            // `module.exports = {}`, also for a disabled ".mjs" or ".mts".
-            module_type: if is_empty_module {
+            // The empty module is `module.exports = {}`, also for an ".mjs" file.
+            module_type: if path.is_disabled_module {
                 options::ModuleType::Cjs
             } else {
                 resolve_result.module_type
@@ -673,6 +659,7 @@ pub mod parse_worker {
                 pretty: b"",
                 is_disabled: false,
                 is_symlink: false,
+                is_disabled_module: false,
             },
             contents: std::borrow::Cow::Borrowed(runtime_code),
             // `Source.index` is `bun_ast::Index` (newtype `u32`),
@@ -1663,7 +1650,7 @@ pub mod parse_worker {
                 break 'brk false;
             }
 
-            if file_path.namespace == b"node" || file_path.is_disabled {
+            if file_path.namespace == b"node" || file_path.is_disabled_module {
                 break 'brk false;
             }
             true

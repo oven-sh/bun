@@ -305,18 +305,6 @@ pub(crate) fn scan_imports_and_exports(
 
                 match record.kind {
                     ImportKind::Stmt => {
-                        // The rule below, for the empty module: its lazy export fails that condition.
-                        if col_ref!(input_files)[other_file].path.is_disabled {
-                            if record.flags.intersects(
-                                ImportRecordFlags::CONTAINS_IMPORT_STAR
-                                    | ImportRecordFlags::CONTAINS_DEFAULT_ALIAS,
-                            ) {
-                                col!(exports_kind)[other_file] = ExportsKind::Cjs;
-                                col!(flags)[other_file].wrap = WrapKind::Cjs;
-                            }
-                            continue;
-                        }
-
                         // Importing using ES6 syntax from a file without any ES6 syntax
                         // causes that module to be considered CommonJS-style, even if it
                         // doesn't have any CommonJS exports.

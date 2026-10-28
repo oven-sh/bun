@@ -331,7 +331,6 @@ pub struct Bufs {
     pub(crate) tsconfig_match_full_buf: PathBuffer,
     pub(crate) tsconfig_match_full_buf3: PathBuffer,
 
-    pub(crate) esm_subpath: [u8; 512],
     pub(crate) esm_absolute_package_path: PathBuffer,
     pub(crate) esm_absolute_package_path_joined: PathBuffer,
 
@@ -404,7 +403,7 @@ fn bufs_storage_get() -> *mut Bufs {
 #[cold]
 fn bufs_storage_init() -> *mut Bufs {
     // SAFETY: every field of `Bufs` is a byte/integer array (`PathBuffer` =
-    // `[u8; N]`, `[u8; 512]`, `[FD; 256]` where `Fd` is a `#[repr(transparent)]`
+    // `[u8; N]`, `[FD; 256]` where `Fd` is a `#[repr(transparent)]`
     // integer newtype with no niche) or `[MaybeUninit<_>; 256]`, so the
     // all-zero bit-pattern is a valid `Bufs`. `new_zeroed` (not `new_uninit`)
     // because integers must be initialized: a never-written `[u8; N]` is UB
@@ -473,8 +472,8 @@ pub struct Resolver<'a> {
     /// Read the "browser" field in package.json files?
     /// For Bun's runtime, we don't.
     pub(crate) care_about_browser_field: bool,
-    /// Depth of nested "browser" map target lookups. A map can send a subpath back to itself.
-    browser_remap_depth: u8,
+    /// The "browser" map entries whose targets are being resolved, by address.
+    browser_remap_stack: BoundedArray<usize, MAX_BROWSER_REMAP_DEPTH>,
 
     pub debug_logs: Option<DebugLogs>,
     pub elapsed: u64, // tracing
@@ -618,7 +617,7 @@ impl<'a> Resolver<'a> {
             care_about_bin_folder: from.care_about_bin_folder,
             care_about_scripts: from.care_about_scripts,
             care_about_browser_field: from.care_about_browser_field,
-            browser_remap_depth: 0,
+            browser_remap_stack: BoundedArray::default(),
             // `DebugLogs` owns Vecs — per-worker fresh.
             debug_logs: None,
             elapsed: 0,
@@ -985,7 +984,7 @@ impl<'a> Resolver<'a> {
             log,
             extension_order: options::ExtOrder::DefaultDefault,
             care_about_browser_field,
-            browser_remap_depth: 0,
+            browser_remap_stack: BoundedArray::default(),
             care_about_bin_folder: false,
             care_about_scripts: false,
             debug_logs: None,
@@ -1893,28 +1892,40 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // A disabled path names a module too: a symlinked directory must not make it two.
+        // Like a live file, a disabled path that names a directory entry gets the real path of the entry.
         let PathPair { primary, secondary } = &mut result.path_pair;
         for path in core::iter::once(primary).chain(secondary.as_mut()) {
-            if !path.is_disabled || !path.is_file() || !bun_paths::is_absolute(path.text()) {
+            if !path.is_disabled {
                 continue;
             }
             let name = path.name();
             let Ok(Some(dir)) = self.read_dir_info(name.dir) else {
                 continue;
             };
-            if dir.abs_real_path.is_empty() {
+            let Some(query) = dir.get_entry(self.generation, name.filename) else {
                 continue;
+            };
+            // SAFETY: `rfs_ptr` is the process-global RealFS. `symlink()` locks the entry.
+            let mut symlink = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
+            if symlink.is_empty() && !dir.abs_real_path.is_empty() {
+                let mut buf = bun_paths::path_buffer_pool::get();
+                let Some(real) = ::bun_paths::resolve_path::join_abs_string_buf_z_checked::<
+                    ::bun_paths::platform::Loose,
+                >(
+                    self.fs_ref().top_level_dir(),
+                    &mut buf[..],
+                    &[dir.abs_real_path, query.entry().base()],
+                ) else {
+                    continue;
+                };
+                symlink = Fs::FilenameStore::instance().append_slice(real.as_bytes())?;
+                let _entry_guard = query.entry().mutex.lock_guard();
+                query
+                    .entry()
+                    .set_cache_symlink(Interned::from_static(symlink));
             }
-            let mut buf = bun_paths::path_buffer_pool::get();
-            if let Some(real) = ::bun_paths::resolve_path::join_abs_string_buf_z_checked::<
-                ::bun_paths::platform::Loose,
-            >(
-                self.fs_ref().top_level_dir(),
-                &mut buf[..],
-                &[dir.abs_real_path, name.filename],
-            ) {
-                path.set_realpath(Fs::FilenameStore::instance().append_slice(real.as_bytes())?);
+            if !symlink.is_empty() {
+                path.set_realpath(symlink);
             }
         }
 
@@ -2315,16 +2326,9 @@ impl<'a> Resolver<'a> {
                     {
                         // Is the path disabled?
                         if remap.is_empty() {
-                            let mut _path = Path::init(
-                                self.fs_ref()
-                                    .dirname_store
-                                    .append_slice(abs_path)
-                                    .expect("unreachable"),
-                            );
-                            _path.is_disabled = true;
                             return ResultUnion::Success(Result {
                                 path_pair: PathPair {
-                                    primary: _path,
+                                    primary: self.disabled_path(abs_path),
                                     secondary: None,
                                 },
                                 ..Default::default()
@@ -2456,7 +2460,6 @@ impl<'a> Resolver<'a> {
             }
         };
 
-        let mut relative_remap_scope: Option<DirInfoRef> = None;
         if self.care_about_browser_field {
             // Support remapping one package path to another via the "browser" field
             if let Some(browser_scope) = source_dir_info.get_enclosing_browser_scope() {
@@ -2511,9 +2514,6 @@ impl<'a> Resolver<'a> {
                             }
                         }
 
-                        if !is_package_path(remapped) {
-                            relative_remap_scope = Some(browser_scope);
-                        }
                         import_path = remapped;
                         source_dir_info = browser_scope;
                     }
@@ -2558,11 +2558,10 @@ impl<'a> Resolver<'a> {
                     return ResultUnion::Success(result);
                 }
 
-                // A file that no "browser" map lookup picked gets one, in the map nearest to it.
-                if self.care_about_browser_field
+                // esbuild has no lookup here. It stays for the target of "exports", unless a package candidate already had its lookup.
+                if res.package_json.is_some()
+                    && self.care_about_browser_field
                     && !res.browser_remapped
-                    && !res.is_external
-                    && !result.path_pair.primary.is_disabled
                 {
                     let base_dir_info = match res.dir_info {
                         Some(d) => d,
@@ -2571,11 +2570,7 @@ impl<'a> Resolver<'a> {
                             _ => return ResultUnion::Success(result),
                         },
                     };
-                    // The map that sent the specifier to a relative path does not apply to it again.
-                    if let Some(browser_scope) = base_dir_info
-                        .get_enclosing_browser_scope()
-                        .filter(|scope| relative_remap_scope != Some(*scope))
-                    {
+                    if let Some(browser_scope) = base_dir_info.get_enclosing_browser_scope() {
                         if let Some(remap) = self
                             .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
                                 base_dir_info,
@@ -2583,7 +2578,15 @@ impl<'a> Resolver<'a> {
                             )
                         {
                             if remap.is_empty() {
-                                result.path_pair.primary.is_disabled = true;
+                                // A live "main" stands in for a disabled "module" entry.
+                                match result.path_pair.secondary.take_if(|main| !main.is_disabled) {
+                                    Some(main) => {
+                                        result.path_pair.primary = main;
+                                        result.file_fd = FD::INVALID;
+                                        result.dirname_fd = FD::INVALID;
+                                    }
+                                    None => result.path_pair.primary.is_disabled = true,
+                                }
                             } else {
                                 let mut remapped = MatchResult::default();
                                 if self
@@ -2826,7 +2829,9 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        let esm_ = crate::package_json::Package::parse(import_path, bufs!(esm_subpath));
+        // On the frame: a "browser" map target can re-enter this function.
+        let mut esm_subpath_buf = [0u8; 512];
+        let esm_ = crate::package_json::Package::parse(import_path, &mut esm_subpath_buf);
 
         let source_dir_info = dir_info;
         let mut any_node_modules_folder = false;
@@ -5382,7 +5387,7 @@ impl<'a> Resolver<'a> {
         )
     }
 
-    /// Like esbuild's `tryToResolvePackage`: the package's "browser" map, then the file lookup.
+    /// A package candidate of a browser build. esbuild does one lookup before the file. Here a key with an implicit extension applies only to the file that loads.
     fn load_package_file_with_browser_map(
         &mut self,
         pkg_dir_info: Option<DirInfoRef>,
@@ -5391,59 +5396,154 @@ impl<'a> Resolver<'a> {
         global_cache: GlobalCache,
         out: &mut MatchResult,
     ) -> MatchStatus {
-        let remap = match pkg_dir_info {
-            Some(pkg_dir_info) if self.care_about_browser_field => self
-                .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(pkg_dir_info, abs_path)
-                .zip(pkg_dir_info.get_enclosing_browser_scope()),
-            _ => None,
-        };
-        let Some((remap, browser_scope)) = remap else {
+        let Some(pkg_dir_info) = pkg_dir_info.filter(|_| self.care_about_browser_field) else {
             return self.load_as_file_or_directory(abs_path, kind, out);
         };
+        // The lookup of a target reuses the scratch that `abs_path` can live in.
+        let mut abs_path_buf = bun_paths::path_buffer_pool::get();
+        let Ok(abs_path) = strings::concat_buf_t(&mut **abs_path_buf, &[abs_path]) else {
+            return MatchStatus::NotFound;
+        };
 
+        // A key that names the path as it is spelled wins over the file.
+        let spelled = self.check_browser_map_with::<{ BrowserMapPathKind::AbsolutePath }>(
+            pkg_dir_info,
+            abs_path,
+            ImplicitExtensions::Skip,
+        );
+        if let Some(remap) = spelled {
+            if self.load_browser_map_entry(pkg_dir_info, remap, abs_path, kind, global_cache, out) {
+                return MatchStatus::Success;
+            }
+            // Like esbuild, an unresolved target falls back to the file itself.
+            let status = self.load_as_file_or_directory(abs_path, kind, out);
+            out.browser_remapped = status.is_success();
+            return status;
+        }
+
+        // Else the file loads, and the key that names the loaded file applies to it.
+        if self.load_as_file_match(abs_path, out) {
+            self.remap_loaded_file(out, abs_path, kind, global_cache);
+            return MatchStatus::Success;
+        }
+        // A directory has its own lookups, for its "main" file and for its index file.
+        if self.load_as_directory(abs_path, kind, out).is_success() {
+            // Like esbuild, an index file that this map disables has the name that the import spells.
+            if out.path_pair.primary.is_disabled
+                && self
+                    .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
+                        pkg_dir_info,
+                        abs_path,
+                    )
+                    .is_some_and(<[u8]>::is_empty)
+            {
+                out.path_pair.primary = self.disabled_path(abs_path);
+            }
+            return MatchStatus::Success;
+        }
+
+        // A key with an implicit extension can only name a file that does not exist.
+        match self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(pkg_dir_info, abs_path)
+        {
+            Some(remap)
+                if self.load_browser_map_entry(
+                    pkg_dir_info,
+                    remap,
+                    abs_path,
+                    kind,
+                    global_cache,
+                    out,
+                ) =>
+            {
+                MatchStatus::Success
+            }
+            _ => MatchStatus::NotFound,
+        }
+    }
+
+    /// Loads what a "browser" map entry names: the disabled `abs_path` for `false`, else the target.
+    fn load_browser_map_entry(
+        &mut self,
+        dir_info: DirInfoRef,
+        remap: &'static [u8],
+        abs_path: &[u8],
+        kind: ast::ImportKind,
+        global_cache: GlobalCache,
+        out: &mut MatchResult,
+    ) -> bool {
+        let Some(browser_scope) = dir_info.get_enclosing_browser_scope() else {
+            return false;
+        };
         if remap.is_empty() {
-            let mut path = Path::init(
-                self.fs_ref()
-                    .dirname_store
-                    .append_slice(abs_path)
-                    .expect("oom"),
-            );
-            path.is_disabled = true;
             *out = MatchResult {
                 path_pair: PathPair {
-                    primary: path,
+                    primary: self.disabled_path(abs_path),
                     secondary: None,
                 },
                 package_json: browser_scope.package_json().map(std::ptr::from_ref),
                 browser_remapped: true,
                 ..Default::default()
             };
-            return MatchStatus::Success;
+            return true;
         }
 
-        // The nested lookup reuses the scratch that `abs_path` may live in.
-        let mut abs_path_buf = bun_paths::path_buffer_pool::get();
-        let Ok(abs_path) = strings::concat_buf_t(&mut **abs_path_buf, &[abs_path]) else {
-            return MatchStatus::NotFound;
+        // A target that is a package path can lead back to this entry.
+        let entry = remap.as_ptr() as usize;
+        if self.browser_remap_stack.const_slice().contains(&entry)
+            || self.browser_remap_stack.append(entry).is_err()
+        {
+            return false;
+        }
+        let resolved = self
+            .resolve_without_remapping(browser_scope, remap, kind, global_cache, out)
+            .is_success();
+        self.browser_remap_stack.pop();
+        if resolved {
+            out.browser_remapped = true;
+        }
+        resolved
+    }
+
+    /// Applies the "browser" map nearest to the file that loaded, by the name of that file.
+    fn remap_loaded_file(
+        &mut self,
+        out: &mut MatchResult,
+        spelled: &[u8],
+        kind: ast::ImportKind,
+        global_cache: GlobalCache,
+    ) {
+        out.browser_remapped = true;
+        let loaded = out.path_pair.primary;
+        let Ok(Some(dir_info)) = self.read_dir_info(loaded.name().dir) else {
+            return;
         };
-
-        if self.browser_remap_depth < MAX_BROWSER_REMAP_DEPTH {
-            // It also parses into the scratch the caller's `esm.subpath` points at.
-            let caller_esm_subpath = *bufs!(esm_subpath);
-            self.browser_remap_depth += 1;
-            let resolved = self
-                .resolve_without_remapping(browser_scope, remap, kind, global_cache, out)
-                .is_success();
-            self.browser_remap_depth -= 1;
-            *bufs!(esm_subpath) = caller_esm_subpath;
-            if resolved {
-                out.browser_remapped = true;
-                return MatchStatus::Success;
-            }
+        let Some(remap) =
+            self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(dir_info, loaded.text())
+        else {
+            return;
+        };
+        // Like a relative import, a disabled file has the name that the import spells.
+        let mut target = MatchResult::default();
+        if self.load_browser_map_entry(dir_info, remap, spelled, kind, global_cache, &mut target) {
+            *out = target;
         }
+    }
 
-        // Like esbuild, an unresolved target falls back to the file itself.
-        self.load_as_file_or_directory(abs_path, kind, out)
+    /// The path of a disabled file: no trailing separator, and one copy of each distinct path.
+    fn disabled_path(&mut self, abs_path: &[u8]) -> Path {
+        let text = ::bun_paths::string_paths::without_trailing_slash_windows_path(abs_path);
+        let text = DISABLED_PATHS.with_borrow_mut(|paths| {
+            if let Some((interned, ())) = paths.get_key_value(text) {
+                return *interned;
+            }
+            let interned: &'static [u8] =
+                bun_core::handle_oom(self.fs_ref().dirname_store.append_slice(text));
+            paths.insert(interned, ());
+            interned
+        });
+        let mut path = Path::init(text);
+        path.is_disabled = true;
+        path
     }
 
     /// The remap target of `input_path_`, relative to the browser scope. Empty means disabled.
@@ -5451,6 +5551,19 @@ impl<'a> Resolver<'a> {
         &mut self,
         resolve_dir_info: DirInfoRef,
         input_path_: &[u8],
+    ) -> Option<&'static [u8]> {
+        self.check_browser_map_with::<KIND>(
+            resolve_dir_info,
+            input_path_,
+            ImplicitExtensions::Include,
+        )
+    }
+
+    fn check_browser_map_with<const KIND: BrowserMapPathKind>(
+        &mut self,
+        resolve_dir_info: DirInfoRef,
+        input_path_: &[u8],
+        implicit_extensions: ImplicitExtensions,
     ) -> Option<&'static [u8]> {
         let browser_scope = resolve_dir_info.get_enclosing_browser_scope()?;
         let package_json = browser_scope.package_json()?;
@@ -5480,7 +5593,7 @@ impl<'a> Resolver<'a> {
             map: &package_json.browser_map,
         };
 
-        if checker.check_path(input_path, ImplicitExtensions::Include) {
+        if checker.check_path(input_path, implicit_extensions) {
             return Some(checker.remapped);
         }
 
@@ -5490,7 +5603,7 @@ impl<'a> Resolver<'a> {
             match KIND {
                 BrowserMapPathKind::AbsolutePath => {
                     let candidate = strings::concat_buf_t(abs_to_rel, &[b"./", input_path]).ok()?;
-                    if checker.check_path(candidate, ImplicitExtensions::Include) {
+                    if checker.check_path(candidate, implicit_extensions) {
                         return Some(checker.remapped);
                     }
                 }
@@ -5578,7 +5691,6 @@ impl<'a> Resolver<'a> {
             dec_ret!(MatchStatus::NotFound);
         };
 
-        let mut browser_remapped = false;
         if self.care_about_browser_field {
             // Potentially remap using the "browser" field
             if let Some(browser_scope) = dir_info.get_enclosing_browser_scope() {
@@ -5591,13 +5703,9 @@ impl<'a> Resolver<'a> {
                     {
                         // Is the path disabled?
                         if remap.is_empty() {
-                            let paths = [path, field_rel_path];
-                            let new_path = self.fs_ref().abs_alloc(&paths).expect("unreachable");
-                            let mut _path = Path::init(new_path);
-                            _path.is_disabled = true;
                             *out = MatchResult {
                                 path_pair: PathPair {
-                                    primary: _path,
+                                    primary: self.disabled_path(field_abs_path),
                                     secondary: None,
                                 },
                                 package_json: Some(std::ptr::from_ref(browser_json)),
@@ -5614,7 +5722,6 @@ impl<'a> Resolver<'a> {
                             Some(remapped) => remapped,
                             None => dec_ret!(MatchStatus::NotFound),
                         };
-                        browser_remapped = true;
                     }
                 }
             }
@@ -5622,14 +5729,25 @@ impl<'a> Resolver<'a> {
 
         // Is this a file?
         if let Some(result) = self.load_as_file(field_abs_path, extension_order) {
+            if let Some(package_json) = dir_info.package_json() {
+                *out = MatchResult {
+                    path_pair: PathPair {
+                        primary: Fs::Path::init(result.path),
+                        secondary: None,
+                    },
+                    package_json: Some(std::ptr::from_ref(package_json)),
+                    dirname_fd: result.dirname_fd,
+                    ..Default::default()
+                };
+                dec_ret!(MatchStatus::Success);
+            }
+
             *out = MatchResult {
                 path_pair: PathPair {
                     primary: Fs::Path::init(result.path),
                     secondary: None,
                 },
-                package_json: dir_info.package_json().map(std::ptr::from_ref),
                 dirname_fd: result.dirname_fd,
-                browser_remapped,
                 ..Default::default()
             };
             dec_ret!(MatchStatus::Success);
@@ -5646,9 +5764,6 @@ impl<'a> Resolver<'a> {
             extension_order,
             out,
         );
-        if browser_remapped && r.is_success() {
-            out.browser_remapped = true;
-        }
         if let Some(d) = self.debug_logs.as_mut() {
             d.decrease_indent();
         }
@@ -5852,13 +5967,9 @@ impl<'a> Resolver<'a> {
                     {
                         // Is the path disabled?
                         if remap.is_empty() {
-                            let new_path =
-                                self.fs_ref().abs_alloc(&index_paths).expect("unreachable");
-                            let mut _path = Path::init(new_path);
-                            _path.is_disabled = true;
                             *out = MatchResult {
                                 path_pair: PathPair {
-                                    primary: _path,
+                                    primary: self.disabled_path(index_abs_path),
                                     secondary: None,
                                 },
                                 package_json: Some(std::ptr::from_ref(browser_json)),
@@ -5884,7 +5995,6 @@ impl<'a> Resolver<'a> {
                                     primary: Path::init(file_result.path),
                                     secondary: None,
                                 },
-                                browser_remapped: true,
                                 ..Default::default()
                             };
                             return MatchStatus::Success;
@@ -5896,7 +6006,6 @@ impl<'a> Resolver<'a> {
                                 .load_as_index(new_dir, extension_order, out)
                                 .is_success()
                             {
-                                out.browser_remapped = true;
                                 return MatchStatus::Success;
                             }
                         }
@@ -5916,6 +6025,14 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         out: &mut MatchResult,
     ) -> MatchStatus {
+        if self.load_as_file_match(path, out) {
+            return MatchStatus::Success;
+        }
+        self.load_as_directory(path, kind, out)
+    }
+
+    /// The file half of `load_as_file_or_directory`.
+    fn load_as_file_match(&mut self, path: &[u8], out: &mut MatchResult) -> bool {
         let extension_order = self.extension_order;
 
         // Is this a file?
@@ -5942,7 +6059,7 @@ impl<'a> Resolver<'a> {
                                 file_fd: file.file_fd,
                                 ..Default::default()
                             };
-                            return MatchStatus::Success;
+                            return true;
                         }
                     }
                 }
@@ -5959,8 +6076,20 @@ impl<'a> Resolver<'a> {
                 file_fd: file.file_fd,
                 ..Default::default()
             };
-            return MatchStatus::Success;
+            return true;
         }
+
+        false
+    }
+
+    /// The directory half of `load_as_file_or_directory`.
+    fn load_as_directory(
+        &mut self,
+        path: &[u8],
+        kind: ast::ImportKind,
+        out: &mut MatchResult,
+    ) -> MatchStatus {
+        let extension_order = self.extension_order;
 
         // Is this a directory?
         if let Some(debug) = self.debug_logs.as_mut() {
@@ -6105,7 +6234,13 @@ impl<'a> Resolver<'a> {
                             //
                             // Additionally, if this is for the runtime, use the "main" field.
                             // If it doesn't exist, the "module" field will be used.
-                            if self.prefer_module_field && kind != ast::ImportKind::Require {
+                            // A live "main" stands in for a "module" entry that the "browser" map disables.
+                            let module_is_disabled = out.path_pair.primary.is_disabled
+                                && !auto_main_result.path_pair.primary.is_disabled;
+                            if self.prefer_module_field
+                                && kind != ast::ImportKind::Require
+                                && !module_is_disabled
+                            {
                                 if let Some(debug) = self.debug_logs.as_mut() {
                                     debug.add_note_fmt(format_args!(
                                         "Resolved to \"{}\" using the \"{}\" field in \"{}\"",
@@ -6129,7 +6264,6 @@ impl<'a> Resolver<'a> {
                                     dirname_fd: out.dirname_fd,
                                     package_json,
                                     file_fd: auto_main_result.file_fd,
-                                    browser_remapped: out.browser_remapped,
                                     ..Default::default()
                                 };
                                 dec_ret!(MatchStatus::Success);
@@ -7167,8 +7301,14 @@ enum ImplicitExtensions {
     Skip,
 }
 
-/// A longer chain of "browser" map targets is a cycle, and the remap stops applying.
-const MAX_BROWSER_REMAP_DEPTH: u8 = 16;
+/// A "browser" map target that is a package path can name another entry. A real chain is short.
+const MAX_BROWSER_REMAP_DEPTH: usize = 16;
+
+thread_local! {
+    /// The paths that `Resolver::disabled_path` interned. The keys point into `DirnameStore`.
+    static DISABLED_PATHS: core::cell::RefCell<bun_collections::HashMap<&'static [u8], ()>> =
+        core::cell::RefCell::new(bun_collections::HashMap::new());
+}
 
 pub(crate) struct BrowserMapPath<'b> {
     pub(crate) remapped: &'static [u8],

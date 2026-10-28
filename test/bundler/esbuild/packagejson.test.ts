@@ -2522,8 +2522,9 @@ describe("bundler", () => {
       "/Users/user/project/src/entry.js": /* js */ `
         import scoped from '@scope/pkg/x.js'
         import scopedNoExt from '@scope/pkg/y'
+        import scopedLoadedFile from '@scope/pkg/x'
         import unscoped from 'pkg/x.js'
-        console.log(scoped, scopedNoExt, unscoped, JSON.stringify(require('@scope/pkg/node.js')))
+        console.log(scoped, scopedNoExt, scopedLoadedFile, unscoped, JSON.stringify(require('@scope/pkg/node.js')))
       `,
       "/Users/user/project/node_modules/@scope/pkg/package.json": `{ "browser": { "./x.js": "./x-browser.js", "./y": "./y-browser.js", "./node.js": false } }`,
       "/Users/user/project/node_modules/@scope/pkg/x.js": `module.exports = 'scoped-node'`,
@@ -2537,19 +2538,23 @@ describe("bundler", () => {
     },
     target: "browser",
     run: {
-      stdout: "scoped-browser scoped-browser-no-ext unscoped-browser {}",
+      stdout: "scoped-browser scoped-browser-no-ext scoped-browser unscoped-browser {}",
     },
   });
   // A package found through NODE_PATH has its "browser" map applied to subpath
-  // imports too.
+  // imports too. Bun has no "exports" step for NODE_PATH, so a package with
+  // "exports" keeps the plain file lookup there.
   itBundled("packagejson/BrowserMapNodePathSubpath", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import sub from 'demo-pkg/x.js'
         import scoped from '@scope/pkg/x'
         import main from 'demo-pkg'
-        console.log(sub, scoped, main, JSON.stringify(require('demo-pkg/node.js')))
+        console.log(sub, scoped, main, JSON.stringify(require('demo-pkg/node.js')), require('with-exports/x.js'))
       `,
+      "/Users/user/global/with-exports/package.json": `{ "exports": { "./x.js": "./x.js" }, "browser": { "./x.js": "./x-browser.js" } }`,
+      "/Users/user/global/with-exports/x.js": `module.exports = 'exports-node'`,
+      "/Users/user/global/with-exports/x-browser.js": `module.exports = 'exports-browser'`,
       "/Users/user/global/demo-pkg/package.json": `{ "main": "./main.js", "browser": { "./x.js": "./x-browser.js", "./main.js": "./main-browser.js", "./node.js": false } }`,
       "/Users/user/global/demo-pkg/x.js": `module.exports = 'node'`,
       "/Users/user/global/demo-pkg/x-browser.js": `module.exports = 'browser'`,
@@ -2566,7 +2571,7 @@ describe("bundler", () => {
       NODE_PATH: "{{root}}/Users/user/global",
     },
     run: {
-      stdout: "browser scoped-browser main-browser {}",
+      stdout: "browser scoped-browser main-browser {} exports-node",
     },
   });
   // When "main" points at a directory, the implicit "<dir>/index" is checked
@@ -2596,6 +2601,7 @@ describe("bundler", () => {
   // esbuild's TestPackageJsonDisabledTypeModuleIssue3367. The empty module is
   // CommonJS also when the disabled file is in a "type": "module" package.
   itBundled("packagejson/DisabledTypeModuleESBuildIssue3367", {
+    skipOnEsbuild: true, // the esbuild of this harness (0.18.6) is older than the fix
     files: {
       "/entry.js": /* js */ `
         import foo from 'foo'
@@ -2652,10 +2658,27 @@ describe("bundler", () => {
       },
     });
   }
+  // A disabled "main" with a trailing separator and the same directory as a
+  // subpath are one empty module.
+  itBundled("packagejson/BrowserMapDisabledMainTrailingSlash", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        const main = require('demo-pkg'), sub = require('demo-pkg/lib')
+        console.log(typeof main, typeof sub, main === sub)
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": `{ "main": "./lib/", "browser": { "./lib": false } }`,
+      "/Users/user/project/node_modules/demo-pkg/lib/index.js": `throw 'fail'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "object object true",
+    },
+  });
   // Bun applies the "browser" map to the file that "exports" or "imports"
   // resolves to. esbuild does not. Packages depend on it: the first three
   // packages have the shape of typeorm, yaml@1 and @huggingface/hub.
   itBundled("packagejson/BrowserMapAppliesToExportsTarget", {
+    skipOnEsbuild: true, // esbuild has no lookup after resolution
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import hubImport from 'hub-shape'
@@ -2731,6 +2754,7 @@ describe("bundler", () => {
   // A file below a nested package.json is remapped by the map of that
   // package.json, whether a relative import or a package subpath reaches it.
   itBundled("packagejson/BrowserMapNestedPackageJsonSubpath", {
+    skipOnEsbuild: true, // esbuild has no lookup after resolution
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         console.log(require('demo-pkg/sub/x.js'), require('demo-pkg/sub/x'), require('demo-pkg/sub/node.js'), require('demo-pkg'))
@@ -2748,15 +2772,15 @@ describe("bundler", () => {
       stdout: "x-browser x-browser browser x-browser",
     },
   });
-  // An import that tsconfig "paths" or "baseUrl" resolves is remapped by the map
-  // of the file that it resolves to. esbuild does not apply the map on the
-  // "baseUrl" route.
+  // A tsconfig "paths" target inside node_modules is remapped by the map of its
+  // package, as on main. esbuild does not remap it. A project file that
+  // "baseUrl" resolves is not matched by name, as in esbuild.
   itBundled("packagejson/BrowserMapAppliesToTsconfigPathsTarget", {
+    skipOnEsbuild: true, // esbuild has no lookup after resolution
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import server from 'react-dom/server'
         console.log(server, require('lib/node'), require('lib/node.js'))
-        console.log(JSON.stringify(require('lib/off')), JSON.stringify(require('lib/off.js')))
       `,
       "/Users/user/project/tsconfig.json": /* json */ `
         {
@@ -2766,17 +2790,101 @@ describe("bundler", () => {
           }
         }
       `,
-      "/Users/user/project/package.json": `{"browser":{"./lib/node.js":"./lib/browser.js","./lib/off.js":false}}`,
+      "/Users/user/project/package.json": `{"browser":{"./lib/node.js":"./lib/browser.js"}}`,
       "/Users/user/project/lib/node.js": `module.exports = 'node'`,
       "/Users/user/project/lib/browser.js": `module.exports = 'browser'`,
-      "/Users/user/project/lib/off.js": `throw 'fail'`,
       "/Users/user/project/node_modules/react-dom/package.json": `{"main":"./index.js","browser":{"./server.js":"./server.browser.js"}}`,
       "/Users/user/project/node_modules/react-dom/server.js": `module.exports = 'server-node'`,
       "/Users/user/project/node_modules/react-dom/server.browser.js": `module.exports = 'server-browser'`,
     },
     target: "browser",
     run: {
-      stdout: "server-browser browser browser\n{} {}",
+      stdout: "server-browser node node",
+    },
+  });
+  // The file that a key picked is final: another key that names it does not apply.
+  itBundled("packagejson/BrowserMapSubpathKeyAppliedOnce", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        console.log(require('demo-pkg/x'), require('demo-pkg/absent'))
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": `{"browser":{"./x":"./a.js","./absent.js":"./a.js","./a.js":"./b.js"}}`,
+      "/Users/user/project/node_modules/demo-pkg/x.js": `module.exports = 'x'`,
+      "/Users/user/project/node_modules/demo-pkg/a.js": `module.exports = 'a'`,
+      "/Users/user/project/node_modules/demo-pkg/b.js": `module.exports = 'b'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "a a",
+    },
+  });
+  // A key with an implicit extension applies to the file that loads. `require`
+  // loads "x.js" here, so the key for "x.mjs" does not apply to it.
+  itBundled("packagejson/BrowserMapKeyNamesTheFileThatLoads", {
+    skipOnEsbuild: true, // esbuild loads "x.js" for the import too
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import viaImport from 'dual/x'
+        console.log(require('dual/x'), viaImport)
+      `,
+      "/Users/user/project/node_modules/dual/package.json": `{"browser":{"./x.mjs":"./browser.js"}}`,
+      "/Users/user/project/node_modules/dual/x.js": `module.exports = 'x.js'`,
+      "/Users/user/project/node_modules/dual/x.mjs": `export default 'x.mjs'`,
+      "/Users/user/project/node_modules/dual/browser.js": `module.exports = 'browser.js'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "x.js browser.js",
+    },
+  });
+  // The "browser" map is for browser builds only.
+  for (const target of ["node", "bun"] as const) {
+    itBundled(`packagejson/BrowserMapSubpathIgnoredForTarget_${target}`, {
+      files: {
+        "/Users/user/project/src/entry.js": /* js */ `
+          console.log(require('demo-pkg/no-ext'), require('demo-pkg/ext'), require('demo-pkg/off'), require('demo-pkg/absent.js'), require('global-pkg/no-ext'))
+        `,
+        "/Users/user/project/node_modules/demo-pkg/package.json": `{"browser":{"./no-ext":"./browser.js","./ext.js":"./browser.js","./off":false,"./absent":"./browser.js"}}`,
+        "/Users/user/project/node_modules/demo-pkg/no-ext.js": `module.exports = 'node'`,
+        "/Users/user/project/node_modules/demo-pkg/ext.js": `module.exports = 'node'`,
+        "/Users/user/project/node_modules/demo-pkg/off.js": `module.exports = 'off'`,
+        "/Users/user/project/node_modules/demo-pkg/absent.js": `module.exports = 'absent'`,
+        "/Users/user/project/node_modules/demo-pkg/browser.js": `module.exports = 'browser'`,
+        "/Users/user/global/global-pkg/package.json": `{"browser":{"./no-ext":"./browser.js"}}`,
+        "/Users/user/global/global-pkg/no-ext.js": `module.exports = 'global-node'`,
+        "/Users/user/global/global-pkg/browser.js": `module.exports = 'browser'`,
+      },
+      backend: "cli",
+      target,
+      env: {
+        NODE_PATH: "{{root}}/Users/user/global",
+      },
+      run: {
+        stdout: "node node off absent global-node",
+      },
+    });
+  }
+  // A target that is a package path can name another entry. The chain is
+  // followed, and a chain that leads back to an entry stops at once, also when
+  // the package has a copy in every node_modules directory on the way up.
+  itBundled("packagejson/BrowserMapSubpathTargetChain", {
+    skipOnEsbuild: true, // esbuild overflows its stack on a remap cycle
+    files: {
+      "/Users/user/project/a/b/src/entry.js": /* js */ `
+        console.log(require('first/x'))
+        try { require('cycle/x') } catch { console.log('cycle is not found') }
+      `,
+      "/Users/user/project/node_modules/first/package.json": `{"browser":{"./x":"second/y"}}`,
+      "/Users/user/project/node_modules/second/package.json": `{"browser":{"./y":"third/z"}}`,
+      "/Users/user/project/node_modules/third/z.js": `module.exports = 'third'`,
+      "/Users/user/project/node_modules/cycle/package.json": `{"browser":{"./x":"cycle/x"}}`,
+      "/Users/user/project/a/node_modules/cycle/package.json": `{"browser":{"./x":"cycle/x"}}`,
+      "/Users/user/project/a/b/node_modules/cycle/package.json": `{"browser":{"./x":"cycle/x"}}`,
+      "/Users/user/project/a/b/src/node_modules/cycle/package.json": `{"browser":{"./x":"cycle/x"}}`,
+    },
+    target: "browser",
+    run: {
+      stdout: "third\ncycle is not found",
     },
   });
   // An extensionless target inside node_modules is one file, whichever import
@@ -2795,409 +2903,6 @@ describe("bundler", () => {
     target: "browser",
     run: {
       stdout: "browser.js browser.js",
-    },
-  });
-  // A "browser" map lookup that picks a package's entry file runs before
-  // resolution. The lookup after resolution does not run on the file it picked,
-  // so another key of the map that names that file does not apply: a chain
-  // stops after one step, and a map that swaps two files does not give the
-  // "main" file back. The same file imported as a subpath is still remapped by
-  // its own key.
-  itBundled("packagejson/BrowserMapMainFieldAppliedOnce", {
-    files: {
-      "/Users/user/project/src/entry.js": /* js */ `
-        import chain from 'chain'
-        import chain3 from 'chain3'
-        import swap from 'swap'
-        import single from 'single'
-        import subpath from 'subpath/x.js'
-        import chainSubpath from 'chain/a.js'
-        console.log(chain, chain3, swap, single, subpath, chainSubpath)
-      `,
-      "/Users/user/project/node_modules/chain/package.json": `{"main":"./main.js","browser":{"./main.js":"./a.js","./a.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/chain/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/chain/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/chain/b.js": `module.exports = 'b'`,
-      "/Users/user/project/node_modules/chain3/package.json": `{"main":"./main.js","browser":{"./main.js":"./a.js","./a.js":"./b.js","./b.js":"./c.js"}}`,
-      "/Users/user/project/node_modules/chain3/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/chain3/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/chain3/b.js": `module.exports = 'b'`,
-      "/Users/user/project/node_modules/chain3/c.js": `module.exports = 'c'`,
-      "/Users/user/project/node_modules/swap/package.json": `{"main":"./main.js","browser":{"./main.js":"./a.js","./a.js":"./main.js"}}`,
-      "/Users/user/project/node_modules/swap/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/swap/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/single/package.json": `{"main":"./main.js","browser":{"./main.js":"./a.js"}}`,
-      "/Users/user/project/node_modules/single/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/single/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/subpath/package.json": `{"main":"./main.js","browser":{"./x.js":"./a.js","./a.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/subpath/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/subpath/x.js": `module.exports = 'x'`,
-      "/Users/user/project/node_modules/subpath/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/subpath/b.js": `module.exports = 'b'`,
-    },
-    target: "browser",
-    run: {
-      stdout: "a a a a a b",
-    },
-  });
-  // The same rule for each way that a package's entry file is found. In the
-  // last two packages the text of "main" is a key, and the file that it maps
-  // to is a key too.
-  itBundled("packagejson/BrowserMapMainFieldAppliedOnceForms", {
-    files: {
-      "/Users/user/project/src/entry.js": /* js */ `
-        import noExt from 'no-ext'
-        import mainDir from 'main-dir'
-        import scoped from '@scope/pkg'
-        import moduleField from 'module-field'
-        import nestedMain from 'nested-main/dir'
-        import mainDirKey from 'main-dir-key'
-        import noExtKey from 'no-ext-key'
-        console.log(noExt, require('no-ext'), mainDir, require('main-dir'), scoped)
-        console.log(moduleField, require('main-field'), nestedMain, mainDirKey, noExtKey)
-      `,
-      "/Users/user/project/node_modules/no-ext/package.json": `{"main":"./main","browser":{"./main.js":"./a.js","./a.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/no-ext/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/no-ext/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/no-ext/b.js": `module.exports = 'b'`,
-      "/Users/user/project/node_modules/main-dir/package.json": `{"main":"./lib","browser":{"./lib/index.js":"./a.js","./a.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/main-dir/lib/index.js": `module.exports = 'lib'`,
-      "/Users/user/project/node_modules/main-dir/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/main-dir/b.js": `module.exports = 'b'`,
-      "/Users/user/project/node_modules/@scope/pkg/package.json": `{"main":"./main.js","browser":{"./main.js":"./a.js","./a.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/@scope/pkg/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/@scope/pkg/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/@scope/pkg/b.js": `module.exports = 'b'`,
-      "/Users/user/project/node_modules/module-field/package.json": `{"main":"./main.js","module":"./module.js","browser":{"./module.js":"./a.js","./a.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/module-field/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/module-field/module.js": `export default 'module'`,
-      "/Users/user/project/node_modules/module-field/a.js": `export default 'a'`,
-      "/Users/user/project/node_modules/module-field/b.js": `export default 'b'`,
-      "/Users/user/project/node_modules/main-field/package.json": `{"main":"./main.js","module":"./module.js","browser":{"./main.js":"./a.js","./a.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/main-field/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/main-field/module.js": `export default 'module'`,
-      "/Users/user/project/node_modules/main-field/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/main-field/b.js": `module.exports = 'b'`,
-      "/Users/user/project/node_modules/nested-main/package.json": `{"browser":{"./dir/main.js":"./a.js","./a.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/nested-main/dir/package.json": `{"main":"./main.js"}`,
-      "/Users/user/project/node_modules/nested-main/dir/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/nested-main/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/nested-main/b.js": `module.exports = 'b'`,
-      "/Users/user/project/node_modules/main-dir-key/package.json": `{"main":"./lib","browser":{"./lib":"./lib/index.js","./lib/index.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/main-dir-key/lib/index.js": `module.exports = 'lib'`,
-      "/Users/user/project/node_modules/main-dir-key/b.js": `module.exports = 'b'`,
-      "/Users/user/project/node_modules/no-ext-key/package.json": `{"main":"./index","browser":{"./index":"./index.js","./index.js":"./browser.js"}}`,
-      "/Users/user/project/node_modules/no-ext-key/index.js": `module.exports = 'index'`,
-      "/Users/user/project/node_modules/no-ext-key/browser.js": `module.exports = 'browser'`,
-    },
-    target: "browser",
-    run: {
-      stdout: "a a a a a\na a a lib index",
-    },
-  });
-  // The file that the map picks for an entry file is final also when it is in
-  // the scope of another package.json whose map names it. Bun 1.3.14 and
-  // esbuild give the same answer.
-  itBundled("packagejson/BrowserMapMainFieldAppliedOnceOtherScope", {
-    files: {
-      "/Users/user/project/src/entry.js": /* js */ `
-        import toSibling from 'to-sibling'
-        import toNested from 'to-nested'
-        console.log(toSibling, toNested)
-      `,
-      "/Users/user/project/node_modules/to-sibling/package.json": `{"main":"./main.js","browser":{"./main.js":"../sibling/a.js"}}`,
-      "/Users/user/project/node_modules/to-sibling/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/sibling/package.json": `{"browser":{"./a.js":"./browser.js"}}`,
-      "/Users/user/project/node_modules/sibling/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/sibling/browser.js": `module.exports = 'browser'`,
-      "/Users/user/project/node_modules/to-nested/package.json": `{"main":"./main.js","browser":{"./main.js":"./sub/a.js"}}`,
-      "/Users/user/project/node_modules/to-nested/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/to-nested/sub/package.json": `{"browser":{"./a.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/to-nested/sub/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/to-nested/sub/b.js": `module.exports = 'b'`,
-    },
-    target: "browser",
-    run: {
-      stdout: "a a",
-    },
-  });
-  itBundled("packagejson/BrowserMapMainFieldAppliedOnceTsconfigPaths", {
-    files: {
-      "/Users/user/project/src/entry.js": /* js */ `
-        import value from 'alias'
-        console.log(value)
-      `,
-      "/Users/user/project/tsconfig.json": /* json */ `
-        {
-          "compilerOptions": {
-            "baseUrl": ".",
-            "paths": { "alias": ["./node_modules/demo-pkg"] }
-          }
-        }
-      `,
-      "/Users/user/project/node_modules/demo-pkg/package.json": `{"main":"./main.js","browser":{"./main.js":"./a.js","./a.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/demo-pkg/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/demo-pkg/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/demo-pkg/b.js": `module.exports = 'b'`,
-    },
-    target: "browser",
-    run: {
-      stdout: "a",
-    },
-  });
-  // The implicit "index" file of a package is an entry file too.
-  itBundled("packagejson/BrowserMapIndexAppliedOnce", {
-    files: {
-      "/Users/user/project/src/entry.js": /* js */ `
-        import chain from 'chain'
-        import swap from 'swap'
-        import nested from 'nested/dir'
-        import indexKey from 'index-key'
-        console.log(chain, swap, nested, require('module-only'), indexKey)
-      `,
-      "/Users/user/project/node_modules/chain/package.json": `{"browser":{"./index.js":"./a.js","./a.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/chain/index.js": `module.exports = 'index'`,
-      "/Users/user/project/node_modules/chain/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/chain/b.js": `module.exports = 'b'`,
-      "/Users/user/project/node_modules/swap/package.json": `{"browser":{"./index.js":"./a.js","./a.js":"./index.js"}}`,
-      "/Users/user/project/node_modules/swap/index.js": `module.exports = 'index'`,
-      "/Users/user/project/node_modules/swap/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/nested/package.json": `{"browser":{"./dir/index.js":"./a.js","./a.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/nested/dir/package.json": `{}`,
-      "/Users/user/project/node_modules/nested/dir/index.js": `module.exports = 'index'`,
-      "/Users/user/project/node_modules/nested/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/nested/b.js": `module.exports = 'b'`,
-      "/Users/user/project/node_modules/module-only/package.json": `{"module":"./module.js","browser":{"./index.js":"./a.js","./a.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/module-only/module.js": `export default 'module'`,
-      "/Users/user/project/node_modules/module-only/index.js": `module.exports = 'index'`,
-      "/Users/user/project/node_modules/module-only/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/module-only/b.js": `module.exports = 'b'`,
-      "/Users/user/project/node_modules/index-key/package.json": `{"browser":{"./index":"./index.js","./index.js":"./browser.js"}}`,
-      "/Users/user/project/node_modules/index-key/index.js": `module.exports = 'index'`,
-      "/Users/user/project/node_modules/index-key/browser.js": `module.exports = 'browser'`,
-    },
-    target: "browser",
-    run: {
-      stdout: "a a a a index",
-    },
-  });
-  // A key that maps the picked file to false does not disable it. The scoped
-  // package is a control: its answer is the same before and after.
-  itBundled("packagejson/BrowserMapAppliedOnceThenDisabledKey", {
-    files: {
-      "/Users/user/project/src/entry.js": /* js */ `
-        import mainField from 'main-field'
-        import builtin from 'builtin'
-        import scopedBuiltin from '@scope/builtin'
-        console.log(mainField, builtin, scopedBuiltin)
-      `,
-      "/Users/user/project/node_modules/main-field/package.json": `{"main":"./main.js","browser":{"./main.js":"./a.js","./a.js":false}}`,
-      "/Users/user/project/node_modules/main-field/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/main-field/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/builtin/package.json": `{"main":"./main.js","browser":{"fs":"./shim.js","./shim.js":false}}`,
-      "/Users/user/project/node_modules/builtin/main.js": `module.exports = require('fs')`,
-      "/Users/user/project/node_modules/builtin/shim.js": `module.exports = 'shim'`,
-      "/Users/user/project/node_modules/@scope/builtin/package.json": `{"main":"./main.js","browser":{"fs":"./shim.js","./shim.js":false}}`,
-      "/Users/user/project/node_modules/@scope/builtin/main.js": `module.exports = require('fs')`,
-      "/Users/user/project/node_modules/@scope/builtin/shim.js": `module.exports = 'shim'`,
-    },
-    target: "browser",
-    run: {
-      stdout: "a shim shim",
-    },
-  });
-  // When the map sends the entry file to a directory, the lookup after
-  // resolution does not run on the index file of that directory. In the first
-  // package the key "./dir/index.js.js" is the resolved file name plus an
-  // implicit extension, so only that lookup can match it. The third package
-  // shows what stays: on the "main" route the index of the picked directory is
-  // still looked up before resolution, as in esbuild.
-  itBundled("packagejson/BrowserMapAppliedOnceTargetIsDirectory", {
-    files: {
-      "/Users/user/project/src/entry.js": /* js */ `
-        import mainField from 'main-field'
-        import index from 'index'
-        import mainFieldIndexKey from 'main-field-index-key'
-        console.log(mainField, index, mainFieldIndexKey)
-      `,
-      "/Users/user/project/node_modules/main-field/package.json": `{"main":"./main.js","browser":{"./main.js":"./dir","./dir/index.js.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/main-field/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/main-field/dir/index.js": `module.exports = 'dir'`,
-      "/Users/user/project/node_modules/main-field/b.js": `module.exports = 'b'`,
-      "/Users/user/project/node_modules/index/package.json": `{"browser":{"./index.js":"./dir","./dir/index.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/index/index.js": `module.exports = 'index'`,
-      "/Users/user/project/node_modules/index/dir/index.js": `module.exports = 'dir'`,
-      "/Users/user/project/node_modules/index/b.js": `module.exports = 'b'`,
-      "/Users/user/project/node_modules/main-field-index-key/package.json": `{"main":"./main.js","browser":{"./main.js":"./dir","./dir/index.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/main-field-index-key/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/main-field-index-key/dir/index.js": `module.exports = 'dir'`,
-      "/Users/user/project/node_modules/main-field-index-key/b.js": `module.exports = 'b'`,
-    },
-    target: "browser",
-    run: {
-      stdout: "dir dir b",
-    },
-  });
-  // The map that sends a specifier to a relative path does not apply to that
-  // path again. The other imports are controls. The scoped package gives the
-  // same answer before and after. A specifier that the map sends to a bare
-  // package specifier is resolved as a package, and a map applies to the
-  // resolved file ("to-package", "bare"). When the relative path is a file that
-  // the map of another package.json names, that map still applies once (the
-  // last three imports).
-  itBundled("packagejson/BrowserMapSpecifierAppliedOnce", {
-    files: {
-      "/Users/user/project/src/entry.js": /* js */ `
-        import toFile from 'to-file'
-        import scopedToFile from '@scope/to-file'
-        import builtin from 'builtin'
-        import toPackage from 'to-package'
-        import bare from 'bare'
-        import app from 'dep'
-        import nested from 'nested'
-        import sibling from 'sibling'
-        console.log(toFile, scopedToFile, builtin, toPackage, bare, app, nested, sibling)
-      `,
-      "/Users/user/project/package.json": /* json */ `
-        {
-          "name": "app",
-          "browser": {
-            "bare": "plain/a.js",
-            "./node_modules/plain/a.js": "./app-shim.js",
-            "dep": "./node_modules/readable/readable.js"
-          }
-        }
-      `,
-      "/Users/user/project/app-shim.js": `module.exports = 'app-shim'`,
-      "/Users/user/project/node_modules/plain/package.json": `{"main":"./main.js"}`,
-      "/Users/user/project/node_modules/plain/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/to-file/package.json": `{"main":"./main.js","browser":{"dep":"./local.js","./local.js":"./other.js"}}`,
-      "/Users/user/project/node_modules/to-file/main.js": `module.exports = require('dep')`,
-      "/Users/user/project/node_modules/to-file/local.js": `module.exports = 'local'`,
-      "/Users/user/project/node_modules/to-file/other.js": `module.exports = 'other'`,
-      "/Users/user/project/node_modules/@scope/to-file/package.json": `{"main":"./main.js","browser":{"dep":"./local.js","./local.js":"./other.js"}}`,
-      "/Users/user/project/node_modules/@scope/to-file/main.js": `module.exports = require('dep')`,
-      "/Users/user/project/node_modules/@scope/to-file/local.js": `module.exports = 'local'`,
-      "/Users/user/project/node_modules/@scope/to-file/other.js": `module.exports = 'other'`,
-      "/Users/user/project/node_modules/builtin/package.json": `{"main":"./main.js","browser":{"fs":"./shim.js","./shim.js":"./other.js"}}`,
-      "/Users/user/project/node_modules/builtin/main.js": `module.exports = require('fs')`,
-      "/Users/user/project/node_modules/builtin/shim.js": `module.exports = 'shim'`,
-      "/Users/user/project/node_modules/builtin/other.js": `module.exports = 'other'`,
-      "/Users/user/project/node_modules/to-package/package.json": `{"main":"./main.js","browser":{"dep":"target/a.js"}}`,
-      "/Users/user/project/node_modules/to-package/main.js": `module.exports = require('dep')`,
-      "/Users/user/project/node_modules/target/package.json": `{"browser":{"./a.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/target/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/target/b.js": `module.exports = 'b'`,
-      "/Users/user/project/node_modules/readable/package.json": `{"main":"./readable.js","browser":{"./readable.js":"./readable-browser.js"}}`,
-      "/Users/user/project/node_modules/readable/readable.js": `module.exports = 'readable'`,
-      "/Users/user/project/node_modules/readable/readable-browser.js": `module.exports = 'readable-browser'`,
-      "/Users/user/project/node_modules/nested/package.json": `{"main":"./main.js","browser":{"dep":"./vendor/dep/lib.js"}}`,
-      "/Users/user/project/node_modules/nested/main.js": `module.exports = require('dep')`,
-      "/Users/user/project/node_modules/nested/vendor/dep/package.json": `{"browser":{"./lib.js":"./lib.browser.js"}}`,
-      "/Users/user/project/node_modules/nested/vendor/dep/lib.js": `module.exports = 'lib'`,
-      "/Users/user/project/node_modules/nested/vendor/dep/lib.browser.js": `module.exports = 'lib.browser'`,
-      "/Users/user/project/node_modules/sibling/package.json": `{"main":"./main.js","browser":{"dep":"../target/a.js"}}`,
-      "/Users/user/project/node_modules/sibling/main.js": `module.exports = require('dep')`,
-    },
-    target: "browser",
-    run: {
-      stdout: "local local shim b app-shim readable-browser lib.browser b",
-    },
-  });
-  // A package with "module" and "main" that is imported and required in one
-  // bundle uses the "main" file for both. That also holds when the map picks
-  // one of the two files and another key names the picked file.
-  itBundled("packagejson/BrowserMapDualPackageAppliedOnce", {
-    files: {
-      "/Users/user/project/src/entry.js": /* js */ `
-        import moduleChain from 'module-chain'
-        import mainChain from 'main-chain'
-        console.log(moduleChain, require('module-chain'), mainChain, require('main-chain'))
-      `,
-      "/Users/user/project/node_modules/module-chain/package.json": `{"main":"./main.js","module":"./module.js","browser":{"./module.js":"./a.js","./a.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/module-chain/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/module-chain/module.js": `export default 'module'`,
-      "/Users/user/project/node_modules/module-chain/a.js": `export default 'a'`,
-      "/Users/user/project/node_modules/module-chain/b.js": `export default 'b'`,
-      "/Users/user/project/node_modules/main-chain/package.json": `{"main":"./main.js","module":"./module.js","browser":{"./main.js":"./a.js","./a.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/main-chain/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/main-chain/module.js": `export default 'module'`,
-      "/Users/user/project/node_modules/main-chain/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/main-chain/b.js": `module.exports = 'b'`,
-    },
-    target: "browser",
-    run: {
-      stdout: "main main a a",
-    },
-  });
-  // Controls: these results have no lookup before resolution that picks them,
-  // so the lookup after resolution still applies the map once. It uses the map
-  // of the resolved file's directory, which for an entry file can be a nested
-  // package.json or another package.
-  itBundled("packagejson/BrowserMapLookupAfterResolution", {
-    files: {
-      "/Users/user/project/src/entry.js": /* js */ `
-        import nestedScope from 'nested-scope'
-        import moduleNested from 'module-nested'
-        import leaves from 'leaves'
-        import importsTarget from 'imports-target'
-        import alias from 'alias'
-        console.log(nestedScope, moduleNested, leaves, importsTarget, alias)
-      `,
-      "/Users/user/project/tsconfig.json": `{"compilerOptions":{"baseUrl":".","paths":{"alias":["./node_modules/paths-file/x.js"]}}}`,
-      "/Users/user/project/node_modules/nested-scope/package.json": `{"main":"./lib/index.js","browser":{"./unrelated.js":"./unrelated2.js"}}`,
-      "/Users/user/project/node_modules/nested-scope/lib/package.json": `{"browser":{"./index.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/nested-scope/lib/index.js": `module.exports = 'index'`,
-      "/Users/user/project/node_modules/nested-scope/lib/b.js": `module.exports = 'b'`,
-      "/Users/user/project/node_modules/module-nested/package.json": `{"main":"./main.js","module":"./esm/index.js"}`,
-      "/Users/user/project/node_modules/module-nested/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/module-nested/esm/package.json": `{"browser":{"./index.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/module-nested/esm/index.js": `export default 'index'`,
-      "/Users/user/project/node_modules/module-nested/esm/b.js": `export default 'b'`,
-      "/Users/user/project/node_modules/leaves/package.json": `{"main":"../other/x.js"}`,
-      "/Users/user/project/node_modules/other/package.json": `{"browser":{"./x.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/other/x.js": `module.exports = 'x'`,
-      "/Users/user/project/node_modules/other/b.js": `module.exports = 'b'`,
-      "/Users/user/project/node_modules/imports-target/package.json": `{"main":"./main.js","imports":{"#x":"./x.js"},"browser":{"./x.js":"./a.js","./a.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/imports-target/main.js": `module.exports = require('#x')`,
-      "/Users/user/project/node_modules/imports-target/x.js": `module.exports = 'x'`,
-      "/Users/user/project/node_modules/imports-target/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/imports-target/b.js": `module.exports = 'b'`,
-      "/Users/user/project/node_modules/paths-file/package.json": `{"main":"./main.js","browser":{"./x.js":"./a.js","./a.js":"./b.js"}}`,
-      "/Users/user/project/node_modules/paths-file/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/paths-file/x.js": `module.exports = 'x'`,
-      "/Users/user/project/node_modules/paths-file/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/paths-file/b.js": `module.exports = 'b'`,
-    },
-    target: "browser",
-    run: {
-      stdout: "b b b a a",
-    },
-  });
-  // Control: a file that "exports" resolves to has no lookup before resolution.
-  // The lookup after resolution applies the map to it once. Bun does this since
-  // at least 1.3.14. esbuild does not apply the map to an "exports" target.
-  itBundled("packagejson/BrowserMapExportsTargetAppliedOnce", {
-    files: {
-      "/Users/user/project/src/entry.js": /* js */ `
-        import root from 'demo-pkg'
-        import subpath from 'demo-pkg/x'
-        console.log(root, subpath)
-      `,
-      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
-        {
-          "exports": { ".": "./main.js", "./x": "./x.js" },
-          "browser": { "./main.js": "./a.js", "./x.js": "./a.js", "./a.js": "./b.js" }
-        }
-      `,
-      "/Users/user/project/node_modules/demo-pkg/main.js": `module.exports = 'main'`,
-      "/Users/user/project/node_modules/demo-pkg/x.js": `module.exports = 'x'`,
-      "/Users/user/project/node_modules/demo-pkg/a.js": `module.exports = 'a'`,
-      "/Users/user/project/node_modules/demo-pkg/b.js": `module.exports = 'b'`,
-    },
-    target: "browser",
-    run: {
-      stdout: "a a",
     },
   });
 });

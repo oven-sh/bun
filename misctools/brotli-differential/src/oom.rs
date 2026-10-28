@@ -309,8 +309,9 @@ pub fn sites(corpus: &r#gen::Corpus) {
     set_hooks();
     let mut rng = Rng(1);
     let mixed = r#gen::data(&mut rng, corpus, 300_000);
-    // Text, for which the literals get a context map below quality 10, too.
-    let text: Vec<u8> = corpus.files.iter().filter(|f| f.len() > 5000 && f.is_ascii()).flat_map(|f| f[..5000].to_vec()).take(200_000).collect();
+    // Text in letters of two bytes, for which the literals get a context map below quality 10, too. ASCII does not.
+    let text: String = (0..100_000).map(|_| if rng.chance(1, 6) { ' ' } else { char::from_u32(0x430 + rng.below(32) as u32).unwrap() }).collect();
+    let text = text.as_bytes();
     // Stretches of a hundred kinds: many block types, and many histograms to cluster.
     let kinds: Vec<Vec<u8>> = (0..100).map(|_| (0..rng.range(2, 12)).map(|_| rng.next() as u8).collect()).collect();
     let mut blocks = Vec::new();
@@ -333,7 +334,7 @@ pub fn sites(corpus: &r#gen::Corpus) {
         cases.push(case(&mixed[..70_000], &[(2, 16)], Some(&mixed[100_000..130_000]), 900, true));
         cases.push(case(&mixed[..150_000], &[(6, 1), (2, 25), (5, 1 << 20)], None, 5000, false));
         cases.push(case(&mixed[..100], &[(9, 3)], None, usize::MAX, false));
-        cases.push(case(&text, &[], None, usize::MAX, false));
+        cases.push(case(text, &[], None, usize::MAX, false));
         // A flush within the first KiB, then 36,000 bytes at once.
         cases.push(case(&mixed[..70_000], &[], None, 900, true));
     }

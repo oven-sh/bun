@@ -21,7 +21,7 @@
  *   bun run rust:miri -p bun_foo   # extra args go straight to one `cargo miri test`
  */
 
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { resolve } from "node:path";
@@ -116,56 +116,56 @@ if (run("cargo", ["miri", "test", "--no-run", ...allCrates], { env }).status !==
 // its tests. Past that the crate is stopped and fails, and its output is
 // printed: under Miri libtest runs one test at a time and prints each name
 // first, so the output ends at the test that did not finish.
-const CRATE_LIMIT_MINUTES = 45;
+const requestedLimit = Number(process.env.BUN_MIRI_CRATE_LIMIT_MINUTES);
+const CRATE_LIMIT_MINUTES = requestedLimit > 0 ? requestedLimit : 45;
+// A longer delay than this overflows in `setTimeout` and fires at once.
+const CRATE_LIMIT_MS = Math.min(CRATE_LIMIT_MINUTES * 60_000, 2 ** 31 - 1);
 
 type Result = { crate: string; ok: boolean; overLimit: boolean; seconds: number; output: string };
 
-const windows = process.platform === "win32";
-const running = new Set<ChildProcess>();
-
-// Stops `cargo miri test` together with the Miri process it started.
-function stop(child: ChildProcess) {
+// Stops `cargo miri test` and every process under it, Miri among them. A
+// process is frozen before its children are listed, so that it starts no more.
+function stopTree(pid: number) {
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/pid", `${pid}`, "/t", "/f"], { stdio: "ignore" });
+    return;
+  }
   try {
-    if (windows || child.pid === undefined) child.kill();
-    else process.kill(-child.pid, "SIGKILL");
+    process.kill(pid, "SIGSTOP");
+  } catch {
+    return;
+  }
+  const children = spawnSync("pgrep", ["-P", `${pid}`], { encoding: "utf8" }).stdout ?? "";
+  children.split("\n").filter(Boolean).map(Number).forEach(stopTree);
+  try {
+    process.kill(pid, "SIGKILL");
   } catch {
     // Already gone.
   }
-}
-
-// Each `cargo miri test` leads its own process group so that `stop` reaches
-// Miri too. A Ctrl-C in the terminal no longer reaches that group: pass it on.
-for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-  process.on(signal, () => {
-    running.forEach(stop);
-    process.exit(1);
-  });
 }
 
 function testCrate(crate: string): Promise<Result> {
   return new Promise(done => {
     const started = Date.now();
     const chunks: Buffer[] = [];
-    const child = spawn("cargo", ["miri", "test", "-p", crate, "--color", "always"], {
-      cwd: repo,
-      env,
-      detached: !windows,
-    });
-    running.add(child);
+    const child = spawn("cargo", ["miri", "test", "-p", crate, "--color", "always"], { cwd: repo, env });
     let overLimit = false;
-    const limit = setTimeout(() => {
+    let timer = setTimeout(() => {
       overLimit = true;
-      stop(child);
-    }, CRATE_LIMIT_MINUTES * 60_000);
-    child.stdout.on("data", chunk => chunks.push(chunk));
-    child.stderr.on("data", chunk => chunks.push(chunk));
-    child.on("close", code => {
-      clearTimeout(limit);
-      running.delete(child);
+      if (child.pid !== undefined) stopTree(child.pid);
+      // `close` comes when every process that holds the pipes is gone. Do not
+      // wait for one that `stopTree` did not reach.
+      timer = setTimeout(finish, 5_000, null);
+    }, CRATE_LIMIT_MS);
+    const finish = (code: number | null) => {
+      clearTimeout(timer);
       const ok = code === 0;
       const seconds = (Date.now() - started) / 1000;
       done({ crate, ok, overLimit: overLimit && !ok, seconds, output: Buffer.concat(chunks).toString() });
-    });
+    };
+    child.stdout.on("data", chunk => chunks.push(chunk));
+    child.stderr.on("data", chunk => chunks.push(chunk));
+    child.on("close", finish);
   });
 }
 
@@ -188,9 +188,9 @@ async function worker() {
     }
     if (result.overLimit) {
       console.log(
-        `\x1b[31m[miri]\x1b[0m ${result.crate} was stopped at the limit of ${CRATE_LIMIT_MINUTES} minutes. ` +
-          "Its output ends at the test that did not finish. Give that test less to do under `cfg!(miri)`, " +
-          "or skip it there with `#[cfg_attr(miri, ignore)]`.",
+        `\x1b[31m[miri]\x1b[0m ${result.crate} was stopped at the limit of ${CRATE_LIMIT_MINUTES} minutes ` +
+          "(BUN_MIRI_CRATE_LIMIT_MINUTES). Its output ends at the test that did not finish. Give that test " +
+          "less to do under `cfg!(miri)`, or skip it there with `#[cfg_attr(miri, ignore)]`.",
       );
     }
   }

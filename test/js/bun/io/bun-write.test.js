@@ -1825,25 +1825,51 @@ describe.concurrent("Bun.write(file, file) between ends that are not regular fil
         }
       };
     }
-    // A FIFO that the test has open for both ends: a pipe for the child, whose other end does only what the
-    // test does. `take(length)` reads that many bytes out of it.
-    function heldFifo(dir, name, flags = fs.constants.O_RDWR) {
+    // An fd that closes once: with close(), or else at the end of its scope.
+    const owned = fd => ({
+      fd,
+      close() {
+        if (this.fd !== -1) fs.closeSync(this.fd);
+        this.fd = -1;
+      },
+      [Symbol.dispose]() {
+        this.close();
+      },
+    });
+    // Both ends of `fifo`: a read end, and a write end with `writeFlags`. An open(2) of one end waits for the
+    // other end, which `both` is for these two. Neither end is also the other one: when the last of one kind
+    // closes, a read(2) or a write(2) of the other kind ends, and does not wait for ever.
+    function openEnds(fifo, writeFlags = 0) {
+      using both = owned(fs.openSync(fifo, fs.constants.O_RDWR));
+      const reader = owned(fs.openSync(fifo, fs.constants.O_RDONLY));
+      const writer = owned(fs.openSync(fifo, fs.constants.O_WRONLY | writeFlags));
+      return { reader, writer, [Symbol.dispose]: () => (reader.close(), writer.close()) };
+    }
+    // A new FIFO for what the child writes. `fd` is its write end: a pipe that the child did not open.
+    // `take(length)` reads that many bytes from the other end. It first closes the test's copy of `fd`, so
+    // that the FIFO ends when the child does: a read for bytes that will never come then fails. If it waited,
+    // it would keep a thread that the other tests of this process need.
+    function outputFifo(dir, name, writeFlags = 0) {
       const fifo = join(String(dir), name);
       mkfifo(fifo);
-      const fd = fs.openSync(fifo, flags);
+      const ends = openEnds(fifo, writeFlags);
       return {
-        fd,
+        fd: ends.writer.fd,
         async take(length) {
-          const reader = await fs.promises.open(fifo, "r");
-          try {
-            const taken = Buffer.alloc(length);
-            for (let at = 0; at < length;) at += (await reader.read(taken, at, length - at)).bytesRead;
-            return taken;
-          } finally {
-            await reader.close();
+          ends.writer.close();
+          const taken = Buffer.alloc(length);
+          for (let at = 0; at < length;) {
+            const { promise, resolve, reject } = Promise.withResolvers();
+            fs.read(ends.reader.fd, taken, at, length - at, null, (error, bytesRead) =>
+              error ? reject(error) : resolve(bytesRead),
+            );
+            const bytesRead = await promise;
+            if (bytesRead === 0) throw new Error(`the child closed the FIFO after ${at} of ${length} bytes`);
+            at += bytesRead;
           }
+          return taken;
         },
-        [Symbol.dispose]: () => fs.closeSync(fd),
+        [Symbol.dispose]: () => ends[Symbol.dispose](),
       };
     }
 
@@ -1851,7 +1877,7 @@ describe.concurrent("Bun.write(file, file) between ends that are not regular fil
       using dir = tempDir("bun-write-fifo-late-writer", {});
       const fifo = join(String(dir), "fifo");
       mkfifo(fifo);
-      using stdout = heldFifo(dir, "stdout");
+      using stdout = outputFifo(dir, "stdout");
       // The copy has the FIFO open, and the fd that wakes its wait.
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", untilWaiting(`Bun.write(Bun.stdout, Bun.file(${JSON.stringify(fifo)}))`, 2)],
@@ -1861,17 +1887,16 @@ describe.concurrent("Bun.write(file, file) between ends that are not regular fil
       });
       const rest = await waiting(proc);
       // No writer has had the FIFO open yet: a read of it now is an end of file.
-      const writer = await fs.promises.open(fifo, "w");
+      using source = openEnds(fifo);
+      // The child has the read end: a write fails if the child is gone.
+      source.reader.close();
       const parts = [Buffer.alloc(100_000, "a"), Buffer.alloc(100_000, "b")];
       const copied = [];
-      try {
-        // After each part the copy has taken all there is, and the writer is still there: the copy waits again.
-        for (const part of parts) {
-          copied.push((await Promise.all([stdout.take(part.length), writer.write(part)]))[0]);
-        }
-      } finally {
-        await writer.close();
+      // After each part the copy has taken all there is, and the writer is still there: the copy waits again.
+      for (const part of parts) {
+        copied.push((await Promise.all([stdout.take(part.length), fs.promises.writeFile(source.writer.fd, part)]))[0]);
       }
+      source.writer.close();
       const [stderr, exitCode] = await Promise.all([rest(), proc.exited]);
       expect({ stderr, same: Buffer.concat(copied).equals(Buffer.concat(parts)) }).toEqual({
         stderr: "waiting\nresolved 200000\n",
@@ -1886,37 +1911,31 @@ describe.concurrent("Bun.write(file, file) between ends that are not regular fil
       using dir = tempDir("bun-write-fifo-fd-source", {});
       const fifo = join(String(dir), "fifo");
       mkfifo(fifo);
-      using stdout = heldFifo(dir, "stdout");
-      // The only writer. With it open, the open(2) for the child's end returns at once.
-      let writer = fs.openSync(fifo, "r+");
-      const stdin = fs.openSync(fifo, "r");
-      try {
-        // The copy opens no file. It has the fd that wakes its wait.
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "-e", untilWaiting(`Bun.write(Bun.stdout, Bun.stdin)`, 1)],
-          env: bunEnv,
-          stdin,
-          stdout: stdout.fd,
-          stderr: "pipe",
-        });
-        const rest = await waiting(proc);
-        const parts = [Buffer.alloc(100_000, "a"), Buffer.alloc(100_000, "b")];
-        const copied = [];
-        for (const part of parts) {
-          copied.push((await Promise.all([stdout.take(part.length), fs.promises.writeFile(writer, part)]))[0]);
-        }
-        fs.closeSync(writer);
-        writer = -1;
-        const [stderr, exitCode] = await Promise.all([rest(), proc.exited]);
-        expect({ stderr, same: Buffer.concat(copied).equals(Buffer.concat(parts)) }).toEqual({
-          stderr: "waiting\nresolved 200000\n",
-          same: true,
-        });
-        expect(exitCode).toBe(0);
-      } finally {
-        if (writer !== -1) fs.closeSync(writer);
-        fs.closeSync(stdin);
+      using stdout = outputFifo(dir, "stdout");
+      using source = openEnds(fifo);
+      // The copy opens no file. It has the fd that wakes its wait.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", untilWaiting(`Bun.write(Bun.stdout, Bun.stdin)`, 1)],
+        env: bunEnv,
+        stdin: source.reader.fd,
+        stdout: stdout.fd,
+        stderr: "pipe",
+      });
+      // The child has the only read end now: a write fails if the child is gone.
+      source.reader.close();
+      const rest = await waiting(proc);
+      const parts = [Buffer.alloc(100_000, "a"), Buffer.alloc(100_000, "b")];
+      const copied = [];
+      for (const part of parts) {
+        copied.push((await Promise.all([stdout.take(part.length), fs.promises.writeFile(source.writer.fd, part)]))[0]);
       }
+      source.writer.close();
+      const [stderr, exitCode] = await Promise.all([rest(), proc.exited]);
+      expect({ stderr, same: Buffer.concat(copied).equals(Buffer.concat(parts)) }).toEqual({
+        stderr: "waiting\nresolved 200000\n",
+        same: true,
+      });
+      expect(exitCode).toBe(0);
     });
 
     // Linux copies these two with splice(), which sleeps in a socket that has nothing to read.
@@ -1924,7 +1943,7 @@ describe.concurrent("Bun.write(file, file) between ends that are not regular fil
       "Bun.stdin (a socket) into Bun.stdout (a pipe): bytes that come in two parts",
       async () => {
         using dir = tempDir("bun-write-socket-to-pipe", {});
-        using stdout = heldFifo(dir, "stdout");
+        using stdout = outputFifo(dir, "stdout");
         // The copy opens no file. It has the fd that wakes its wait.
         await using proc = Bun.spawn({
           cmd: [bunExe(), "-e", untilWaiting(`Bun.write(Bun.stdout, Bun.stdin)`, 1)],
@@ -2029,7 +2048,7 @@ describe.concurrent("Bun.write(file, file) between ends that are not regular fil
 
       it("Bun.stdout, with two copies at once", async () => {
         using dir = tempDir("bun-write-full-stdout", { "source.bin": Buffer.alloc(size, "x") });
-        using stdout = heldFifo(dir, "stdout");
+        using stdout = outputFifo(dir, "stdout");
         const one = `Bun.write(Bun.stdout, Bun.file(${JSON.stringify(join(String(dir), "source.bin"))}))`;
         // Each copy has its source open, and the fd that wakes its wait.
         await using proc = Bun.spawn({
@@ -2052,7 +2071,7 @@ describe.concurrent("Bun.write(file, file) between ends that are not regular fil
       it("Bun.file(fd) of a pipe that has O_NONBLOCK", async () => {
         const source = Buffer.alloc(size, "abcdefghij");
         using dir = tempDir("bun-write-full-nonblocking", { "source.bin": source });
-        using pipe = heldFifo(dir, "pipe", fs.constants.O_RDWR | fs.constants.O_NONBLOCK);
+        using pipe = outputFifo(dir, "pipe", fs.constants.O_NONBLOCK);
         const copy = `Bun.write(Bun.file(3), Bun.file(${JSON.stringify(join(String(dir), "source.bin"))}))`;
         await using proc = Bun.spawn({
           cmd: [bunExe(), "-e", untilWaiting(copy, 2)],

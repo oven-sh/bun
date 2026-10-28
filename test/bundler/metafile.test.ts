@@ -357,6 +357,7 @@ describe("bundler metafile", () => {
       },
       { route: "import() without splitting", source: dynamicImport, kind: "dynamic-import" },
       {
+        // The path of the plugin takes its loader from the extension: the database is copied as a plain file.
         route: "an onResolve plugin that returns a path",
         source: `import db from "virtual-db" with ${attributes}; console.log(db);`,
         original: "virtual-db",
@@ -417,7 +418,7 @@ describe("bundler metafile", () => {
       });
     });
 
-    // Tree shaking drops the import. Only `external` is checked: which files `inputs` lists then is another rule.
+    // Tree shaking drops the import, so `inputs` does not have to list the database. The entry stays.
     test("metafile does not mark an embedded database that nothing uses as external", async () => {
       using dir = tempDir("metafile-sqlite-embed-unused", {
         "index.js": `import db from "./app.db" with ${attributes}; console.log("no database");`,
@@ -428,7 +429,10 @@ describe("bundler metafile", () => {
 
       expect(result.success).toBe(true);
       const { inputs } = result.metafile as Metafile;
-      expect(inputs[inputKey(inputs, "index.js")].imports.filter(imp => imp.external)).toEqual([]);
+      const index = inputKey(inputs, "index.js");
+      expect(inputs[index].imports).toEqual([
+        { path: index.replace(/index\.js$/, "app.db"), kind: "import-statement", original: "./app.db" },
+      ]);
     });
 
     // The runtime opens these databases by path: they are not inputs of the build.
@@ -470,9 +474,11 @@ describe("bundler metafile", () => {
 
       expect(result.success).toBe(true);
       const { inputs } = result.metafile as Metafile;
-      const [, plainImport] = inputs[inputKey(inputs, "index.js")].imports;
       const entry = await result.outputs.find(output => output.kind === "entry-point")!.text();
-      expect(plainImport.external === true).toBe(entry.includes(`from "/app.db"`));
+      expect(inputs[inputKey(inputs, "index.js")].imports.map(imp => imp.external === true)).toEqual([
+        false,
+        entry.includes(`from "/app.db"`),
+      ]);
     });
 
     test("metafile names the chunk that a split import() of an embedded database loads", async () => {
@@ -1635,8 +1641,13 @@ describe("bun build --metafile", () => {
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The build copies the database to the output directory.
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: expect.stringMatching(/app-[a-z0-9]+\.db\s+1 bytes\s+\(asset\)/),
+      stderr: "",
+      exitCode: 0,
+    });
 
     const { inputs } = (await Bun.file(`${dir}/meta.json`).json()) as Metafile;
     expect(inputs["index.js"].imports).toEqual([{ path: "app.db", kind: "import-statement", original: "./app.db" }]);

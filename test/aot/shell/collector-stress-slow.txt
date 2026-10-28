@@ -1,0 +1,47 @@
+# Programs that run out of time under collector-stress.py, so that nothing is learnt from them, and under which collections. `all` leaves them out; named by hand they run.
+arrays/named-properties-under-mutators    full
+arrays/named-properties-under-mutators-untyped    full
+arrays/sort-write-back-after-mutation    full
+async-and-generators/first-await    full
+async-and-generators/gc-marks-promises-functions-and-dates    full
+async-and-generators/values-held-by-suspended-async    full
+calls-fast-paths/super-in-untyped-classes    full
+calls/allocation-out-of-line    full
+counterexamples/grown-frozen-object-keeps-names-after-gc    full
+data-from-outside/json-parse-behind-generic-functions    full, young
+data-from-outside/json-parse-into-declared-types    full, young
+data-from-outside/json-parse-type-argument-every-byte-cut-and-changed    full, young
+data-from-outside/json-parse-type-argument-more-orders-of-keys-than-a-table-holds    full, young
+data-from-outside/json-parse-type-argument-nesting-to-the-end-of-the-stack    full, young
+data-from-outside/json-parse-type-argument-strings-and-keys-of-every-kind    full, young
+data-from-outside/json-parse-without-a-type    full
+literal-strings/unknown-strings-survive-gc    full
+small-benchmarks/binary-trees    full
+strings/dynamic-lookup-keys    full
+strings/dynamic-lookup-keys-untyped    full
+strings/rope-equality    full
+strings/rope-equality-untyped    full
+strings/substring-and-trim-around-loops    full
+strings/substring-and-trim-around-loops-untyped    full
+type-rules/define-property-with-value    full, young
+type-rules/every-rule-100k-times    full, young
+type-rules/stores-100k-times    full, young
+typed-objects/more-names-than-layout-orders    young
+typed-objects/objects-maps-ropes-survive-gc    full
+typed-objects/old-containers-hold-young-objects    full
+typed-objects/reachable-objects-survive-gc    full
+typed-objects/young-objects-between-old-ones    full
+untyped-code/accessors-in-literals    full
+untyped-code/callbacks-kept-by-overridden-array-methods    full
+untyped-code/constant-array-literals    full
+untyped-code/contents-survive-added-properties-and-elements    full
+untyped-code/keyed-stores-grow-old-objects    full
+untyped-code/method-read-before-arguments-2    full
+untyped-code/objects-from-runtime-code    full
+untyped-code/old-objects-gain-non-cell-properties    full
+untyped-stress/cache-of-young-structure-in-old-code    young
+untyped-stress/runs-of-stores-under-fresh-symbols    full, young
+untyped-stress/stack-overflow-in-prologue-native-caller    full, young
+untyped-stress/write-barriers-by-epoch    full
+untyped-stress/write-barriers-by-epoch-stress-1    full
+untyped-stress/write-barriers-by-epoch-stress-2    full

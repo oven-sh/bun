@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <JavaScriptCore/AOTFunctionDescription.h>
+#include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/WasmIndexOrName.h>
@@ -63,6 +65,7 @@ private:
 
     bool m_isFunctionOrEval = false;
     bool m_isAsync = false;
+    bool m_isAOTCompiled = false;
 
     enum class SourcePositionsState {
         NotCalculated,
@@ -99,6 +102,8 @@ public:
     bool isWasmFrame() const { return m_isWasmFrame; }
     bool isEval()
     {
+        if (m_isAOTCompiled)
+            return m_stackFrame->codeType() == JSC::EvalCode;
         if (m_codeBlock) {
             if (m_codeBlock->codeType() == JSC::EvalCode) {
                 return true;
@@ -129,6 +134,8 @@ public:
     }
     bool isConstructor() const
     {
+        if (m_isAOTCompiled)
+            return m_stackFrame->isConstructor() && !m_stackFrame->isBuiltinFunction();
         return m_codeBlock && (JSC::CodeSpecializationKind::CodeForConstruct == m_codeBlock->specializationKind());
     }
 
@@ -186,6 +193,34 @@ private:
 
 bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor);
 bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame);
+
+#if ENABLE(AOT)
+// The names and positions of such an executable are in a source map that is not shipped with it.
+inline bool hasExternalSourceMap()
+{
+    const JSC::AOT::Image* image = JSC::AOT::Image::current();
+    return image && image->isObfuscated();
+}
+
+// The file that every compiled frame of such an executable names. The line and column of a frame are a position in the map.
+String externalSourceMapFileURL();
+
+String sourceURL(const JSC::AOT::SourcePosition&);
+#endif
+
+// The position of a compiled frame was recorded at build time, in the original source or in an external source map: no source map applies to it at run time.
+inline bool hasOriginalSourcePosition(const JSC::StackFrame& frame)
+{
+#if ENABLE(AOT)
+    if (frame.isCompiledFrame()) [[unlikely]] {
+        auto position = frame.compiledPosition();
+        return position && (position->source || hasExternalSourceMap());
+    }
+#else
+    UNUSED_PARAM(frame);
+#endif
+    return false;
+}
 
 String sourceURL(const JSC::SourceOrigin& origin);
 String sourceURL(JSC::SourceProvider* sourceProvider);

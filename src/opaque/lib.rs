@@ -339,7 +339,7 @@ pub mod ffi {
     /// excluding) the first NUL. Single audited funnel for the hand-rolled
     /// `while *p.add(n) != 0 { n += 1 }` loop that appeared at every
     /// `LPCWSTR` / `char16_t*` ingestion point (Windows path APIs, N-API
-    /// `napi_create_string_utf16`, libarchive `_w` accessors, env-block
+    /// `napi_create_string_utf16`, env-block
     /// scan). Adds a `debug_assert!(!p.is_null())` — same precondition as
     /// `CStr::from_ptr`.
     ///

@@ -1,0 +1,12 @@
+before -> [2, "yes!", 7, 12, "Green", ["0", "1", "Red", "Green"], ["Yes", "No"], ["depth", "width", "area"]] 
+2000 rounds 50000
+a member of a numeric enum is stored to -> [1, 2, 50, "Green", undefined] 
+a member of a string enum is stored to -> ["yes", "yes!", "maybe"] 
+an exported const of a namespace is stored to -> [30, 34, 120] 
+an exported let of a namespace is stored to -> [40, 70, 1200] 
+an exported function of a namespace is replaced -> -1 
+the let is stored to by name -> [5, 5, 35] 
+read by a computed name -> [0, 50] 
+a member is deleted through an optional view -> [0, undefined, false, ["0", "1", "Green"]] 
+frozen threw TypeError 
+handed to a function that takes an object -> [3, 2, 3, ["maybe", "no"]] 

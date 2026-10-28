@@ -1,0 +1,8 @@
+{
+  "skipInShell": "it uses CustomEvent and Buffer, which the jsc shell does not have",
+  "skipInVariants": "its output is what a program refuses that the flow analysis found closed, and a variant without the results of the analysis refuses nothing",
+  "skipInVariant": {
+    "trimmed-runtime": "it asks for node:vm by a name that is decoded at run time: with --trim the load is refused by the error of a module that was left out"
+  },
+  "alone": "what it prints hangs on what else the executable holds: which modules and members were compiled in, and whether anything evaluates text"
+}

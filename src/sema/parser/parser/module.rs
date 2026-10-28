@@ -153,7 +153,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             })
         ) && !self.is_parenthesized(expression);
         if !is_missing {
-            self.flag(DiagnosticKind::Checker, 1141, (at, self.prev_end()), &[]);
+            let class = DiagnosticClass::EarlyError;
+            self.flag_with_class(DiagnosticKind::Checker, class, 1141, (at, self.prev_end()));
         }
         !is_missing
     }
@@ -201,8 +202,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             return self.import_attributes_after_specifier(is_export);
         }
         if self.token() == T::Assert && !self.newline_before() {
-            // A syntax error in the native parser, a grammar error in TypeScript 5.
-            match self.options.dialect.typescript_5 {
+            // A syntax error in the native parser, a grammar error in TypeScript 5. `bun run` accepts it.
+            match self.options.dialect.typescript_5 || self.options.compiles {
                 true => self.flag(
                     DiagnosticKind::Grammar,
                     2880,
@@ -494,7 +495,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 let start = self.s.ids.get(index).copied();
                 let end = self.s.ids.get(index + 1).copied();
                 if let (Some(start), Some(end)) = (start, end) {
-                    self.flag(DiagnosticKind::Grammar, 1003, (start, end), &[]);
+                    self.flag_early_error(1003, (start, end), &[]);
                 }
             }
         }
@@ -651,7 +652,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             true => SpecifierKind::Import,
             false => SpecifierKind::SideEffect,
         };
+        let attributes_base = self.f.import_attributes.len();
         let (spec, mode) = self.module_specifier(kind, false, type_only);
+        let attributes = self.attributes_since(attributes_base);
         self.semicolon();
         for index in specs..self.s.import_specs.len() {
             let ImportSpec { local, pos, .. } = self.s.import_specs[index];
@@ -682,6 +685,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             is_deferred,
             mode,
             stmt: StmtId::NONE,
+            attributes,
         });
         let statement = self.add_stmt(StmtKind::Import(declaration), start, modifiers);
         self.f[declaration].stmt = statement;
@@ -845,7 +849,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 }
             }
             self.expect(T::From);
+            let attributes_base = self.f.import_attributes.len();
             let (spec, mode) = self.module_specifier(SpecifierKind::Import, true, type_only);
+            let attributes = self.attributes_since(attributes_base);
             self.semicolon();
             if alias.is_some() {
                 self.note_identifier(alias, alias_pos);
@@ -858,7 +864,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 star_pos,
                 alias_pos,
             };
-            return self.add_stmt(kind, start, modifiers);
+            let statement = self.add_stmt(kind, start, modifiers);
+            if attributes.is_some() {
+                self.f.export_star_attributes.push((statement, attributes));
+            }
+            return statement;
         }
         let declaration = ExportId(self.f.exports.len() as u32);
         let specs = self.s.export_specs.len();
@@ -909,6 +919,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if self.s.ids.len() != unusual_locals {
             self.report_locals_of_export(unusual_locals, has_module_specifier);
         }
+        let attributes_base = self.f.import_attributes.len();
         let (spec, mode) = match has_module_specifier {
             true => {
                 self.expect(T::From);
@@ -916,6 +927,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             false => (Atom::NONE, ResolutionMode::None),
         };
+        let attributes = self.attributes_since(attributes_base);
         self.semicolon();
         let items = take_span!(self, export_specs, specs);
         let declaration = self.f.add_export(Export {
@@ -925,6 +937,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             type_only,
             mode,
             stmt: StmtId::NONE,
+            attributes,
         });
         let statement = self.add_stmt(StmtKind::ExportNamed(declaration), start, modifiers);
         self.f[declaration].stmt = statement;

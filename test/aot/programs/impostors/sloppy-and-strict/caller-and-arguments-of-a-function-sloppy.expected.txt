@@ -1,0 +1,42 @@
+strict: false
+caller from the top level "null"
+caller from a named function "null"
+arguments of a running caller "null"
+arguments of itself "null"
+notRunning.caller null
+notRunning.arguments null
+notRunning has its own caller [false, false, true]
+notRunning.caller stored to "no error"
+notRunning.arguments stored to "no error"
+arrow.caller threw TypeError
+arrow.arguments threw TypeError
+arrow has its own caller [false, false, true]
+arrow.caller stored to threw TypeError
+arrow.arguments stored to threw TypeError
+method.caller threw TypeError
+method.arguments threw TypeError
+method has its own caller [false, false, true]
+method.caller stored to threw TypeError
+method.arguments stored to threw TypeError
+Klass.caller threw TypeError
+Klass.arguments threw TypeError
+Klass has its own caller [false, false, true]
+Klass.caller stored to threw TypeError
+Klass.arguments stored to threw TypeError
+bound.caller threw TypeError
+bound.arguments threw TypeError
+bound has its own caller [false, false, true]
+bound.caller stored to threw TypeError
+bound.arguments stored to threw TypeError
+asynchronous.caller threw TypeError
+asynchronous.arguments threw TypeError
+asynchronous has its own caller [false, false, true]
+asynchronous.caller stored to threw TypeError
+asynchronous.arguments stored to threw TypeError
+generator.caller threw TypeError
+generator.arguments threw TypeError
+generator has its own caller [false, false, true]
+generator.caller stored to threw TypeError
+generator.arguments stored to threw TypeError
+on Function.prototype ["arguments", "caller"]
+the getter on a stranger threw TypeError

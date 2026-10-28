@@ -1,0 +1,4 @@
+the constructor written out, 400,000: 80000200000; the run time was entered under 100 times
+no constructor of its own, 400,000: 80000200000; the run time was entered under 100 times
+a forwarder, 400,000: 80000200000; the run time was entered under 100 times
+a base class that keeps the rest, 400,000: 80000600000; the run time was entered under 100 times

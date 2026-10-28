@@ -1,0 +1,3004 @@
+////: attempt-43
+attempt(«1», () => {
+  const n: number = «2»;
+  const tag: Kind.«3» = n;
+  return petNumber({ kind: tag, «4»: «5» });
+});
+////: lines-133
+class «1» {
+  tag = «2»;
+  greet(): string {
+    return «3» + this.tag;
+  }
+  get title(): string {
+    return «4»;
+  }
+}
+////: lines-195
+try {
+  console.log(«1»());
+} catch (error) {
+  console.log(error instanceof TypeError);
+}
+////: lines-196
+try {
+  console.log(«1»());
+} catch (error) {
+  console.log(error instanceof TypeError);
+}
+////: lines-197
+try {
+  console.log(«1»[1].«2»);
+} catch (error) {
+  console.log(error instanceof TypeError);
+}
+////: lines-232
+function «1»(«2»: «3»): boolean {
+  return ask(() => «2» === «4»);
+}
+////: lines-263
+function «1»(x: Tested): boolean {
+  return ask(() => typeof x !== «2»);
+}
+////: sent
+function* sent(): Generator<boolean, void, number> {
+  let answer = false;
+  for (;;) {
+    const n: number = yield answer;
+    answer = «1»;
+  }
+}
+//// spread-json-and-keys-of-primitives-under-object-types.ts
+////= show-30
+
+type HasLength = { length: number };
+
+////= lines-152	spread	item	HasLength
+
+function spreadWithMore(item: HasLength): { first: number; length: number; last: number } {
+  return { first: 1, ...item, last: 2 };
+}
+
+function spreadThenOverride(item: HasLength): HasLength {
+  return { ...item, length: -1 };
+}
+
+function lengthOfSpread(item: HasLength): number {
+  const copy = { ...item };
+  return copy.length;
+}
+
+////= lines-36	json	item	HasLength	string	JSON.stringify	item
+
+function jsonInside(item: HasLength): string {
+  return JSON.stringify({ item, list: [item] });
+}
+
+////= lines-224	keys	item	HasLength
+
+function entries(item: HasLength): [string, unknown][] {
+  return Object.entries(item);
+}
+
+function rest(item: HasLength): {} {
+  const { length, ...others } = item;
+  return { length, others };
+}
+
+const makers: [string, () => HasLength][] = [
+  ["literal", () => ({ length: 2 })],
+  ["wider literal", () => ({ z: 1, length: 2, a: 3 })],
+  ["string", () => "ab"],
+  ["empty string", () => ""],
+  ["array", () => [7, 8]],
+  ["function", () => spread],
+  ["typed array", () => new Uint8Array([5, 6])],
+  ["String object", () => new String("ab")],
+  ["function with members", () => Object.assign((a: number) => a, { extra: true })],
+];
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const honest = { length: i };
+  warm += spread(honest).length + spreadWithMore(honest).length + spreadThenOverride(honest).length + lengthOfSpread(honest);
+  warm += json(honest).length + jsonInside(honest).length + keys(honest).length + entries(honest).length + Object.keys(rest(honest)).length;
+}
+console.log("after 2000 literals", warm);
+
+for (const [name, make] of makers) {
+  attempt(name + ": spread", () => spread(make()));
+  attempt(name + ": spread between members", () => spreadWithMore(make()));
+  attempt(name + ": keys of that", () => Object.keys(spreadWithMore(make())));
+  attempt(name + ": spread, then length", () => spreadThenOverride(make()));
+  attempt(name + ": the length of the spread", () => lengthOfSpread(make()));
+  attempt(name + ": JSON", () => json(make()));
+  attempt(name + ": JSON inside", () => jsonInside(make()));
+  attempt(name + ": keys", () => keys(make()));
+  attempt(name + ": entries", () => entries(make()));
+  attempt(name + ": rest", () => rest(make()));
+}
+//// spread-rest-and-destructuring-of-a-polluted-array.ts
+////= show-33
+
+function polluted(): Dog[] {
+  const dogs = [new Dog("rex"), new Dog("fido")];
+  const animals: Animal[] = dogs;
+  animals.splice(1, 0, new Cat("tom"));
+  return dogs;
+}
+
+function honest(): Dog[] {
+  return [new Dog("rex"), new Dog("max"), new Dog("fido")];
+}
+
+function legsOfAll(...dogs: Dog[]): number[] {
+  return dogs.map(dog => dog.legs);
+}
+
+function legsOfThree(a: Dog, b: Dog, c: Dog): number {
+  return a.legs + b.legs + c.legs;
+}
+
+function secondLegs([, second]: Dog[]): number {
+  return second.legs + 1;
+}
+
+function secondLegsByPattern([, { legs }]: Dog[]): number {
+  return legs + 1;
+}
+
+function secondLegsWithDefault([, { legs = -1 }]: Dog[]): number {
+  return legs + 1;
+}
+
+function restLegs([, ...others]: Dog[]): number[] {
+  return others.map(dog => dog.legs);
+}
+
+function copied(dogs: Dog[]): number {
+  const copy = [...dogs];
+  return copy[1].legs + 1;
+}
+
+function copiedElement(dogs: Dog[]): Dog {
+  return { ...dogs[1], bark: dogs[1].bark };
+}
+
+function tagsByForOf(dogs: Dog[]): string[] {
+  const tags: string[] = [];
+  for (const { tag, owner } of dogs) tags.push(tag + "/" + typeof owner);
+  return tags;
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const dogs = honest();
+  const [a, b, c] = dogs;
+  warm += legsOfAll(...dogs)[1] + legsOfThree(a, b, c) + secondLegs(dogs) + secondLegsByPattern(dogs) + secondLegsWithDefault(dogs);
+  warm += restLegs(dogs)[0] + copied(dogs) + copiedElement(dogs).legs + tagsByForOf(dogs).length;
+}
+console.log("after 2000 honest arrays", warm);
+
+for (const [name, make] of [["polluted", polluted], ["honest", honest]] satisfies [string, () => Dog[]][]) {
+  attempt(name + ": spread into a rest parameter", () => legsOfAll(...make()));
+  attempt(name + ": destructured, then passed", () => {
+    const [a, b, c] = make();
+    return legsOfThree(a, b, c);
+  });
+  attempt(name + ": the second by a pattern in the parameter", () => secondLegs(make()));
+  attempt(name + ": its legs by a nested pattern", () => secondLegsByPattern(make()));
+  attempt(name + ": its legs with a default", () => secondLegsWithDefault(make()));
+  attempt(name + ": the rest", () => restLegs(make()));
+  attempt(name + ": a copy by spread", () => copied(make()));
+  attempt(name + ": a copy of the element", () => Object.keys(copiedElement(make())));
+  attempt(name + ": the copy's legs", () => copiedElement(make()).legs + 1);
+  attempt(name + ": patterns in a for-of", () => tagsByForOf(make()));
+  attempt(name + ": concat", () => make().concat(make()).map(dog => dog.legs));
+  attempt(name + ": slice", () => make().slice(1).map(dog => dog.legs));
+  attempt(name + ": with", () => make().with(0, new Dog("new")).map(dog => dog.legs));
+  attempt(name + ": toReversed", () => make().toReversed().map(dog => dog.legs));
+  attempt(name + ": at", () => make().at(1)?.legs);
+  attempt(name + ": pop and shift", () => {
+    const dogs = make();
+    dogs.pop();
+    dogs.shift();
+    return [dogs.pop()?.legs, dogs.length];
+  });
+  attempt(name + ": structuredClone", () => structuredClone(make()).map(dog => dog.legs));
+  attempt(name + ": JSON", () => JSON.stringify(make()));
+}
+//// spreads-with-undefined-and-forgotten-members-that-never-leave-their-function.ts
+////= show-10
+
+interface Size {
+  width: number;
+  scale: number;
+  unit: string;
+}
+
+function blankWidth(): string {
+  const full: Size = { width: 2, scale: 0.5, unit: "m" };
+  const change: Partial<Size> = { width: undefined };
+  const merged: Size = { ...full, ...change };
+  return typeof merged.width + " " + show(merged.width) + " " + show(merged.width + 1) + " " + show(merged.width * merged.scale) + " " + show(merged.width | 0) + " " + Object.keys(merged).join() + " " + JSON.stringify(merged);
+}
+
+function blankScale(): string {
+  const full: Size = { width: 2, scale: 0.5, unit: "m" };
+  const change: Partial<Size> = { scale: undefined };
+  const merged: Size = { ...full, ...change };
+  return typeof merged.scale + " " + show(merged.scale + 1) + " " + show(merged.width * merged.scale) + " " + JSON.stringify(merged);
+}
+
+function blankUnit(): string {
+  const full: Size = { width: 2, scale: 0.5, unit: "m" };
+  const change: Partial<Size> = { unit: undefined };
+  const merged: Size = { ...full, ...change };
+  let upper: string;
+  try {
+    upper = merged.unit.toUpperCase();
+  } catch (error) {
+    upper = "threw " + (error instanceof TypeError);
+  }
+  return typeof merged.unit + " " + show(merged.unit + "!") + " " + upper + " " + JSON.stringify(merged);
+}
+
+function forgotten(): string {
+  const wide = { width: "wide", extra: true };
+  const onlyExtra: { extra: boolean } = wide;
+  const full = { width: 2, extra: false };
+  const merged: { width: number; extra: boolean } = { ...full, ...onlyExtra };
+  return typeof merged.width + " " + show(merged.width + 1) + " " + show(merged.width * 2) + " " + JSON.stringify(merged);
+}
+
+function omitted(): string {
+  const full: Size = { width: 2, scale: 0.5, unit: "m" };
+  const rest: Omit<Size, "width"> = full;
+  const merged: { width: string; scale: number; unit: string } = { width: "text", ...rest };
+  let upper: string;
+  try {
+    upper = merged.width.toUpperCase();
+  } catch (error) {
+    upper = "threw " + (error instanceof TypeError);
+  }
+  return typeof merged.width + " " + show(merged.width + "!") + " " + show(merged.width.length) + " " + upper + " " + JSON.stringify(merged);
+}
+
+function assigned(): string {
+  const full: Size = { width: 2, scale: 0.5, unit: "m" };
+  const change: Partial<Size> = { width: undefined, scale: undefined };
+  Object.assign(full, change);
+  return typeof full.width + " " + show(full.width + 1) + " " + show(full.scale * 2) + " " + JSON.stringify(full);
+}
+
+function restOfADestructuring(): string {
+  const full: Size = { width: 2, scale: 0.5, unit: "m" };
+  const narrow: { width: number } = full;
+  const { width, ...rest } = narrow;
+  return show(width) + " " + Object.keys(rest).join() + " " + JSON.stringify(rest);
+}
+
+function honest(i: number): number {
+  const full: Size = { width: i, scale: 0.5, unit: "m" };
+  const change: Partial<Size> = { width: i + 1 };
+  const merged: Size = { ...full, ...change };
+  return merged.width * merged.scale + merged.unit.length;
+}
+
+let total = 0;
+for (let i = 0; i < 2000; i++) total += honest(i);
+console.log("2000 honest rounds: " + total);
+console.log("width: undefined: " + blankWidth());
+console.log("scale: undefined: " + blankScale());
+console.log("unit: undefined: " + blankUnit());
+console.log("a forgotten member: " + forgotten());
+console.log("an omitted member: " + omitted());
+console.log("assigned: " + assigned());
+console.log("the rest of a destructuring: " + restOfADestructuring());
+
+export {};
+//// standard-decorators-add-initializers-and-run-in-order.ts
+const seen: string[] = [];
+
+function mark(label: string) {
+  seen.push("evaluated " + label);
+  return function (target: unknown, context: DecoratorContext): void {
+    seen.push("applied " + label + " to " + context.kind + " " + String(context.name) + (context.kind !== "class" && context.static ? " (static)" : ""));
+    context.addInitializer(function () {
+      seen.push("initializer of " + label);
+    });
+  };
+}
+
+@mark("class one")
+@mark("class two")
+class Meter {
+  @mark("field") amount = (seen.push("the field's own initializer"), 2);
+  @mark("static field") static shared = 1;
+  @mark("method")
+  read(): number {
+    return this.amount;
+  }
+  @mark("static method")
+  static make(): Meter {
+    return new Meter();
+  }
+  @mark("getter")
+  get twice(): number {
+    return this.amount * 2;
+  }
+  @mark("private method")
+  #hidden(): number {
+    return 1;
+  }
+  constructor() {
+    seen.push("constructor body " + this.#hidden());
+  }
+}
+
+console.log("after the definition:");
+for (const line of seen) console.log("  " + line);
+seen.length = 0;
+const made = Meter.make();
+console.log("after one construction:");
+for (const line of seen) console.log("  " + line);
+console.log("members: " + made.amount + " " + made.read() + " " + made.twice + " " + Meter.shared + " keys [" + Object.keys(made).join(" ") + "]");
+//// standard-decorators-replace-methods-accessors-and-fields.ts
+////= describe
+
+const seen: string[] = [];
+
+function doubled(target: (this: Meter) => number, context: ClassMethodDecoratorContext<Meter, (this: Meter) => number>) {
+  seen.push("method " + String(context.name));
+  return function (this: Meter): number {
+    return target.call(this) * 2;
+  };
+}
+
+function plusOne(target: (this: Meter) => number, context: ClassGetterDecoratorContext<Meter, number>) {
+  seen.push("getter " + String(context.name));
+  return function (this: Meter): number {
+    return target.call(this) + 1;
+  };
+}
+
+function tripled(target: undefined, context: ClassFieldDecoratorContext<Meter, number>) {
+  seen.push("field " + String(context.name));
+  return function (this: Meter, initial: number): number {
+    return initial * 3;
+  };
+}
+
+function watched(target: ClassAccessorDecoratorTarget<Meter, number>, context: ClassAccessorDecoratorContext<Meter, number>): ClassAccessorDecoratorResult<Meter, number> {
+  seen.push("accessor " + String(context.name));
+  return {
+    get() {
+      seen.push("read");
+      return target.get.call(this);
+    },
+    set(value) {
+      seen.push("write " + value);
+      target.set.call(this, value);
+    },
+    init(initial) {
+      return initial + 100;
+    },
+  };
+}
+
+class Meter {
+  @tripled amount = 2;
+  @watched accessor level = 1;
+  @doubled
+  read(): number {
+    return this.amount;
+  }
+  @plusOne
+  get next(): number {
+    return this.amount;
+  }
+}
+
+const made = new Meter();
+console.log(describe(made));
+console.log("amount " + made.amount + " read " + made.read() + " next " + made.next + " level " + made.level);
+made.level = 5;
+console.log("level " + made.level);
+console.log(seen.join(", "));
+//// static-fields-and-static-blocks-in-the-wrong-order.ts
+////= text-12
+
+const log: string[] = [];
+
+class Config {
+  static first: number = Config.readSecond();
+  static firstPlusOne: number = Config.readSecond() + 1;
+  static firstText: string = Config.readLabel();
+  static keysSoFar: string = Object.keys(Config).join("+");
+  static {
+    log.push("block one: second " + typeof Config.readSecond() + " " + Config.readSecond());
+    log.push("block one: label " + typeof Config.readLabel());
+    log.push("block one: own second " + Object.hasOwn(Config, "second"));
+  }
+  static second: number = 2;
+  static label: string = "label";
+  static {
+    log.push("block two: second " + typeof Config.readSecond() + " " + Config.readSecond());
+    log.push("block two: label " + Config.readLabel());
+  }
+  static third: number = Config.readSecond();
+  static never: number;
+  static neverText: string;
+  static neverList: number[];
+  static readSecond(): number {
+    return Config.second;
+  }
+  static readLabel(): string {
+    return Config.label;
+  }
+}
+
+for (const entry of log) console.log(entry);
+show("first", () => Config.first);
+show("firstPlusOne", () => Config.firstPlusOne);
+show("firstText", () => Config.firstText);
+show("keysSoFar", () => Config.keysSoFar);
+show("second", () => Config.second);
+show("third", () => Config.third);
+show("never", () => Config.never);
+show("never + 1", () => Config.never + 1);
+show("never | 0", () => Config.never | 0);
+show("neverText", () => Config.neverText);
+show("neverText.length", () => Config.neverText.length);
+show("neverList", () => Config.neverList);
+show("neverList.length", () => Config.neverList.length);
+show("own never", () => Object.hasOwn(Config, "never"));
+show("keys", () => Object.keys(Config).join());
+
+function makeEarly(): string {
+  try {
+    return String(new Registry().id);
+  } catch (error) {
+    return error instanceof Error ? error.constructor.name : typeof error;
+  }
+}
+class Registry {
+  static early: string = makeEarly();
+  static instance: Registry = new Registry();
+  static next: number = 100;
+  id: number = Registry.next++;
+}
+show("an instance made by a function in a static initializer", () => Registry.early);
+show("an instance made before the counter is set: id", () => Registry.instance.id);
+show("typeof", () => typeof Registry.instance.id);
+show("next", () => Registry.next);
+show("an instance made afterwards", () => new Registry().id);
+show("next", () => Registry.next);
+
+class Parent {
+  static kind: string = "parent";
+  static describe(): string {
+    return this.kind + " " + this.size();
+  }
+  static size(): number {
+    return 0;
+  }
+  static described: string = Parent.describe();
+}
+class Child extends Parent {
+  static described: string = Child.describe();
+  static kind: string = "child";
+  static width: number = 4;
+  static size(): number {
+    return this.width;
+  }
+  static describedAgain: string = Child.describe();
+}
+show("parent", () => Parent.described);
+show("child, too early", () => Child.described);
+show("child, in time", () => Child.describedAgain);
+//// static-fields-are-frozen-redefined-deleted-and-listed.ts
+const log: string[] = [];
+
+class Limits {
+  static depth = 3;
+  static width?: number = 4;
+  static title = "limits";
+  static twice(): number {
+    return Limits.depth * 2;
+  }
+  static viaThis(): number {
+    return this.depth * 2;
+  }
+  static raise(): number {
+    return ++Limits.depth;
+  }
+}
+
+class Tight extends Limits {}
+
+function attempt(label: string, body: () => unknown): void {
+  try {
+    console.log(label + ": " + String(body()) + (log.length ? " [" + log.join(", ") + "]" : ""));
+  } catch (error) {
+    console.log(label + ": threw " + (error instanceof Error ? error.constructor.name : typeof error) + (log.length ? " [" + log.join(", ") + "]" : ""));
+  }
+  log.length = 0;
+}
+
+function read(): string {
+  return Limits.depth + " " + Limits.twice() + " " + Limits.viaThis() + " " + Tight.depth + " " + Tight.viaThis() + " " + Limits.width;
+}
+
+////= lines-239	store	value	number	Limits.depth	value
+
+function flags(holder: object, name: string): string {
+  const d = Object.getOwnPropertyDescriptor(holder, name);
+  if (!d) return "nothing";
+  return ("value" in d ? "value " + String(d.value) : "accessor") + " " + (d.writable ? "w" : "-") + (d.enumerable ? "e" : "-") + (d.configurable ? "c" : "-");
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += store(i % 5) + Limits.twice() + Tight.viaThis();
+store(3);
+console.log("2000 honest: " + warm);
+attempt("before", read);
+attempt("listed", () => Object.keys(Limits).join() + " | " + JSON.stringify({ ...Limits }) + " | " + Object.entries(Limits).join(";") + " | " + flags(Limits, "depth"));
+attempt("the subclass lists", () => Object.keys(Tight).join() + "|" + flags(Tight, "depth") + "|" + ("depth" in Tight));
+
+Object.defineProperty(Limits, "depth", { writable: false });
+attempt("read-only, read", read);
+attempt("read-only, a store", () => store(9));
+attempt("read-only, an increment in a static method", () => Limits.raise());
+attempt("read-only, a store on the subclass", () => (Tight.depth = 9));
+attempt("read-only, flags", () => flags(Limits, "depth"));
+Object.defineProperty(Limits, "depth", { writable: true });
+attempt("writable again", () => store(5) + " " + read());
+
+Object.defineProperty(Limits, "depth", {
+  get() {
+    log.push("get");
+    return 100;
+  },
+  set(value: number) {
+    log.push("set " + value);
+  },
+  configurable: true,
+});
+attempt("an accessor, read", read);
+attempt("an accessor, a store", () => store(9));
+attempt("an accessor, an increment", () => Limits.raise());
+attempt("an accessor, a store on the subclass", () => (Tight.depth = 9) + " own " + Object.hasOwn(Tight, "depth"));
+Object.defineProperty(Limits, "depth", { value: 6, writable: true, enumerable: true, configurable: true });
+attempt("a value again", read);
+
+delete Limits.width;
+attempt("the optional one deleted", () => read() + " | " + Object.keys(Limits).join());
+Limits.width = 8;
+attempt("stored again", () => read() + " | " + Object.keys(Limits).join());
+
+Reflect.deleteProperty(Limits, "depth");
+attempt("depth deleted", () => read() + " | " + Object.keys(Limits).join());
+attempt("stored again", () => store(7) + " " + read() + " | " + Object.keys(Limits).join());
+
+Tight.depth = 1;
+attempt("the subclass has its own", () => read() + " | " + Object.keys(Tight).join());
+Reflect.deleteProperty(Tight, "depth");
+attempt("and loses it", read);
+
+Object.freeze(Limits);
+attempt("frozen, a store", () => store(9));
+attempt("frozen, a static method replaced", () => {
+  Limits.twice = () => -1;
+  return "stored";
+});
+attempt("frozen, read", () => read() + " | " + flags(Limits, "depth") + " | " + Object.isFrozen(Limits));
+attempt("frozen, a store on the subclass", () => (Tight.depth = 2));
+
+export {};
+//// static-fields-getters-and-function-fields-are-replaced.ts
+const log: string[] = [];
+
+class Settings {
+  static limit = 10;
+  static format: (n: number) => string = n => "<" + n + ">";
+  static readonly version: string = "one";
+  static get doubled(): number {
+    log.push("get doubled");
+    return Settings.limit * 2;
+  }
+  static check(n: number): string {
+    return n < Settings.limit ? Settings.format(n) : "over " + this.limit;
+  }
+  allowed(n: number): boolean {
+    return n < Settings.limit;
+  }
+}
+
+class Strict extends Settings {}
+
+function checkOf(n: number): string {
+  return Settings.check(n) + " " + Settings.format(n) + " " + Settings.doubled + " " + Settings.version;
+}
+
+function through(c: typeof Settings, n: number): string {
+  return c.check(n) + " " + c.format(n) + " " + c.doubled + " " + c.limit;
+}
+
+const instance = new Settings();
+
+function round(label: string): void {
+  console.log(label + ": " + checkOf(5) + " | " + through(Settings, 5) + " | " + through(Strict, 5) + " | " + instance.allowed(5) + " [" + log.length + " getter runs]");
+  log.length = 0;
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += checkOf(i % 20).length + through(Strict, i % 20).length;
+log.length = 0;
+console.log("2000 honest: " + warm);
+round("before");
+
+Settings.limit = 3;
+round("the limit stored to");
+
+Settings.limit = 2.5;
+round("a fraction");
+
+const format = Settings.format;
+Settings.format = n => "[" + n + "]";
+Settings.limit = 10;
+round("the function field replaced");
+
+Settings.format = String;
+round("by a built-in");
+
+Strict.limit = 1;
+round("the subclass gets a limit of its own");
+
+Strict.format = () => "strict";
+round("and a format of its own");
+
+Reflect.deleteProperty(Strict, "limit");
+Reflect.deleteProperty(Strict, "format");
+Settings.format = format;
+round("restored");
+
+Object.defineProperty(Settings, "doubled", { value: -1, configurable: true });
+round("the static getter covered by a value");
+
+Object.defineProperty(Settings, "doubled", {
+  get() {
+    log.push("another getter");
+    return 1000;
+  },
+  configurable: true,
+});
+round("by another getter");
+
+const loose: { version: string } = Settings;
+loose.version = "two";
+round("the readonly member stored through a view");
+
+export {};
+//// static-getters-and-symbol-named-methods-run-with-another-this.ts
+////= show-6
+
+const tag = Symbol("tag");
+
+class Meter {
+  static base: number = 100;
+  static get doubled(): number {
+    return this.base * 2;
+  }
+  static set doubled(value: number) {
+    this.base = value / 2;
+  }
+  unit: string = "m";
+  value: number = 5;
+  [tag](): string {
+    return this.value + this.unit;
+  }
+  [Symbol.toPrimitive](hint: string): string | number {
+    return hint === "number" ? this.value : this.value + this.unit;
+  }
+  get [Symbol.toStringTag](): string {
+    return "Meter of " + this.unit;
+  }
+  ["computed" + "Name"](): number {
+    return this.value;
+  }
+}
+class Sub extends Meter {
+  static base: number = 7;
+}
+
+const meter = new Meter();
+const like = { value: 50, unit: "km" };
+
+show("honest static getter", () => Meter.doubled);
+show("on the subclass", () => Sub.doubled);
+show("Reflect.get with a look-alike", () => Reflect.get(Meter, "doubled", { base: 1 }));
+show("Reflect.get with nothing to read", () => Reflect.get(Meter, "doubled", {}));
+show("Reflect.get with an instance", () => Reflect.get(Meter, "doubled", meter));
+show("Reflect.set with a look-alike", () => {
+  const target = { base: 0 };
+  return Reflect.set(Meter, "doubled", 10, target) + " " + target.base + " " + Meter.base;
+});
+Sub.doubled = 40;
+show("a store on the subclass", () => Sub.base + " " + Meter.base);
+
+show("honest symbol-named method", () => meter[tag]());
+show("taken off", () => {
+  const f = meter[tag];
+  return f();
+});
+show("on a look-alike", () => meter[tag].call(like));
+show("borrowed under the same symbol", () => ({ value: 1, unit: "cm", [tag]: meter[tag] })[tag]());
+show("honest conversion", () => `${meter}` + " " + +meter);
+show("the converter, taken off", () => {
+  const convert = meter[Symbol.toPrimitive];
+  return convert("number");
+});
+show("the converter, borrowed", () => {
+  const borrowed = { value: 9, unit: "mm", [Symbol.toPrimitive]: meter[Symbol.toPrimitive] };
+  return `${borrowed}` + " " + +borrowed;
+});
+show("the converter, borrowed without fields", () => {
+  const borrowed = { [Symbol.toPrimitive]: meter[Symbol.toPrimitive] };
+  return `${borrowed}` + " " + +borrowed;
+});
+show("the tag getter", () => Object.prototype.toString.call(meter));
+show("the tag getter on a child", () => Object.prototype.toString.call(Object.create(meter)));
+show("the tag getter on the prototype", () => Object.prototype.toString.call(Meter.prototype));
+show("the tag getter with a receiver", () => Reflect.get(meter, Symbol.toStringTag, like));
+//// static-members-are-inherited-through-a-mixin.ts
+////= describe-9
+
+class Base {
+  static count = 0;
+  static label = "label of the base";
+  static create<T>(this: new () => T): T {
+    return new this();
+  }
+  static bump(): number {
+    return ++this.count;
+  }
+  x = 1;
+}
+
+function Tagged(Parent: typeof Base) {
+  return class extends Parent {
+    static own = "own static";
+    tag = "tagged";
+  };
+}
+
+const Made = Tagged(Base);
+console.log("inherited: " + Made.label + " " + Made.count + " own: " + Made.own + " own keys: " + Object.keys(Made).join(" "));
+console.log("created: " + describe(Made.create()) + " " + (Made.create() instanceof Made));
+console.log("bump: " + Made.bump() + " " + Made.bump() + " base " + Base.count + " made " + Made.count + " own keys: " + Object.keys(Made).join(" "));
+console.log("base bump: " + Base.bump() + " made still " + Made.count);
+//// static-members-declared-on-built-in-constructors-are-never-written.ts
+////= text-11
+
+declare global {
+  interface ArrayConstructor {
+    range(n: number): number[];
+    limit: number;
+  }
+  interface ObjectConstructor {
+    size(value: object): number;
+  }
+  interface NumberConstructor {
+    TAU: number;
+    clamp(n: number, low: number, high: number): number;
+  }
+  interface StringConstructor {
+    EMPTY: string;
+  }
+  interface Math {
+    TAU: number;
+    half(n: number): number;
+  }
+  interface JSON {
+    version: number;
+    clone<T>(value: T): T;
+  }
+  interface PromiseConstructor {
+    delay(ms: number): Promise<void>;
+  }
+  interface DateConstructor {
+    EPOCH: number;
+  }
+  interface Console {
+    level: number;
+    shout(text: string): void;
+  }
+}
+
+////= lines-88	circle	radius	number	Math.TAU	radius
+
+function honestCircle(radius: number): number {
+  return Math.PI * 2 * radius;
+}
+
+show("Array.range", () => Array.range(3));
+show("typeof Array.range", () => typeof Array.range);
+show("Array.limit", () => [Array.limit, Array.limit + 1]);
+show("Object.size", () => Object.size({ a: 1 }));
+show("Number.TAU", () => [Number.TAU, Number.TAU * 2, typeof Number.TAU]);
+show("Number.clamp", () => Number.clamp(5, 0, 1));
+show("String.EMPTY", () => [String.EMPTY, String.EMPTY + "x", String.EMPTY === ""]);
+show("the length of String.EMPTY", () => String.EMPTY.length);
+show("Math.TAU", () => [Math.TAU, Math.TAU * 2, Math.TAU > 6, typeof Math.TAU]);
+show("Math.TAU in a function", () => circle(1));
+show("Math.half", () => Math.half(4));
+show("JSON.version", () => [JSON.version, JSON.version + 1]);
+show("JSON.clone", () => JSON.clone({ a: 1 }));
+show("Promise.delay", () => Promise.delay(1));
+show("Date.EPOCH", () => [Date.EPOCH, Date.EPOCH + 1]);
+show("console.level", () => [console.level, console.level + 1]);
+show("console.shout", () => console.shout("x"));
+show("in", () => ["TAU" in Math, "PI" in Math, "range" in Array, "from" in Array]);
+show("the real ones still work", () => [Array.from({ length: 2 }, (_, i) => i), Number.MAX_SAFE_INTEGER, Math.max(1, 2), JSON.stringify([1]), honestCircle(1) > 6]);
+
+let nans = 0;
+for (let i = 0; i < 2000; i++) if (Number.isNaN(circle(i)) && !Number.isNaN(honestCircle(i))) nans++;
+show("2000 rounds", () => nans);
+
+export {};
+//// static-methods-getters-setters-and-function-fields-in-every-place-honest.ts
+class Ids {
+  static last = 0;
+  static next(): number {
+    return ++Ids.last;
+  }
+  static pair(): string {
+    return Ids.next() + "," + this.next();
+  }
+}
+
+class Tank {
+  liters = 5;
+  step: (n: number) => number;
+  constructor(amount: number) {
+    this.step = n => n + amount;
+  }
+  get level(): number {
+    return this.liters;
+  }
+  set level(value: number) {
+    this.liters = value;
+  }
+  fill(): number {
+    this.level += 1;
+    return this.level;
+  }
+  run(n: number): number {
+    return this.step(this.step(n));
+  }
+}
+
+class Holder {
+  source: typeof Ids = Ids;
+  tank: Tank;
+  constructor(tank: Tank) {
+    this.tank = tank;
+  }
+  ask(): number {
+    return this.source.next() + this.tank.level + this.tank.step(1);
+  }
+}
+
+function byParameter(c: typeof Ids, t: Tank): number {
+  return c.next() + t.level + t.step(1);
+}
+
+function byElement(classes: (typeof Ids)[], tanks: Tank[]): number {
+  return classes[0].next() + tanks[0].level + tanks[0].step(1);
+}
+
+function write(t: Tank, value: number): number {
+  t.level = value;
+  return t.liters;
+}
+
+const meter = {
+  reading: 3,
+  read() {
+    return this.reading * 2;
+  },
+  get level(): number {
+    return this.reading + 100;
+  },
+};
+
+function readOf(m: typeof meter): number {
+  return m.read() + m.level;
+}
+
+const tank = new Tank(1);
+const holder = new Holder(tank);
+const captured = (): number => Ids.next() + tank.level + tank.step(1);
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += byParameter(Ids, tank) + holder.ask() + byElement([Ids], [tank]) + captured() + write(tank, i % 7) + tank.fill() + tank.run(i) + readOf(meter);
+Ids.last = 0;
+tank.liters = 5;
+console.log("2000 rounds: " + warm);
+console.log("directly: " + Ids.next() + " " + tank.level + " " + tank.step(1) + " " + Ids.pair());
+console.log("a parameter: " + byParameter(Ids, tank));
+console.log("a field: " + holder.ask());
+console.log("an element: " + byElement([Ids], [tank]));
+console.log("captured: " + captured());
+console.log("a store: " + write(tank, 9) + " " + tank.fill() + " " + tank.run(1));
+console.log("a literal: " + readOf(meter) + " " + meter.read() + " " + meter.level);
+
+export {};
+//// static-methods-that-use-this-are-taken-off-their-class.ts
+////= show-6
+
+class Registry {
+  static count: number = 3;
+  static label: string = "registry";
+  static #made: number = 0;
+  static read(): number {
+    return this.count;
+  }
+  static title(): string {
+    return this.label.toUpperCase();
+  }
+  static bump(): number {
+    return ++this.count;
+  }
+  static make(): Registry {
+    return new this();
+  }
+  static made(): number {
+    return ++this.#made;
+  }
+  static viaName(): number {
+    return Registry.count;
+  }
+  static kind(): string {
+    return typeof this;
+  }
+  static twice(): number {
+    return this.read() * 2;
+  }
+  id: number = 1;
+}
+
+class Child extends Registry {
+  static count: number = 30;
+  extra: number = 2;
+}
+
+const { read, title, bump, make, made, viaName, kind, twice } = Registry;
+
+show("read", () => read());
+show("title", () => title());
+show("bump", () => bump());
+show("make", () => make());
+show("made", () => made());
+show("viaName", () => viaName());
+show("kind", () => kind());
+show("twice", () => twice());
+show("map read", () => [0].map(Registry.read)[0]);
+show("map read with the class as this", () => [0].map(Registry.read, Registry)[0]);
+show("map read with the child as this", () => [0].map(Registry.read, Child)[0]);
+show("map read with an instance as this", () => [0].map(Registry.read, new Registry())[0]);
+
+show("on the child: read", () => Child.read());
+show("on the child: bump", () => Child.bump());
+show("on the child: make", () => Object.keys(Child.make()).join());
+show("on the child: made", () => Child.made());
+show("on the child: twice", () => Child.twice());
+show("call with the child: read", () => Registry.read.call(Child));
+show("call with a look-alike: read", () => Registry.read.call({ count: 300 }));
+show("call with a look-alike: title", () => Registry.title.call({ label: "small" }));
+show("call with a wrong look-alike: title", () => Registry.title.call({ label: 5 }));
+show("call with a look-alike: twice", () => Registry.twice.call({ count: 1, read: () => 21 }));
+show("call with another class: make", () => Object.keys(Registry.make.call(Child)).join());
+show("call with Map: make", () => String(Registry.make.call(Map)));
+show("call with a function: make", () => typeof Registry.make.call(function Plain() {}));
+show("call with an arrow: make", () => Registry.make.call(() => {}));
+show("call with a look-alike: made", () => Registry.made.call({}));
+
+const holder = { count: 7, read: Registry.read, bump: Registry.bump };
+show("as a member of an object: read", () => holder.read());
+show("as a member of an object: bump", () => holder.bump());
+show("the class afterwards", () => Registry.count + " " + Child.count);
+//// stores-that-still-work-on-frozen-objects.ts
+const log: string[] = [];
+
+////= attempt-15
+
+////= lines-28	Dial	level	number
+
+function turn(d: Dial, level: number): number {
+  d.level = level;
+  return d.level;
+}
+
+let outside = 0;
+
+class Remote {
+  get level(): number {
+    return outside;
+  }
+  set level(value: number) {
+    log.push("setter of the class " + value);
+    outside = value;
+  }
+}
+
+class Hidden {
+  #level = 0;
+  get level(): number {
+    return this.#level;
+  }
+  set level(value: number) {
+    log.push("private store " + value);
+    this.#level = value;
+  }
+  bump(): number {
+    return ++this.#level;
+  }
+}
+
+class Backed {
+  backing = 0;
+  get level(): number {
+    return this.backing;
+  }
+  set level(value: number) {
+    log.push("store to a field " + value);
+    this.backing = value;
+  }
+}
+
+const ownAccessor: Dial = Object.freeze({
+  get level(): number {
+    return outside;
+  },
+  set level(value: number) {
+    log.push("own setter " + value);
+    outside = value;
+  },
+});
+
+attempt("a plain frozen member", () => turn(Object.freeze({ level: 0 }), 1));
+attempt("a frozen object with its own accessor", () => turn(ownAccessor, 2));
+attempt("a frozen instance, the class has a setter", () => turn(Object.freeze(new Remote()), 3));
+attempt("a frozen instance, the setter stores to a private name", () => turn(Object.freeze(new Hidden()), 4));
+attempt("a frozen instance, a method stores to a private name", () => Object.freeze(new Hidden()).bump());
+attempt("a frozen instance, the setter stores to a field", () => turn(Object.freeze(new Backed()), 5));
+attempt("a frozen child of an object with a setter", () => turn(Object.freeze(Object.create(new Remote())), 6));
+
+interface Holder {
+  list: number[];
+  map: Map<string, number>;
+  inner: Dial;
+}
+
+const holder: Holder = Object.freeze({ list: [1], map: new Map<string, number>(), inner: { level: 0 } });
+attempt("what a frozen object points to: an array", () => holder.list.push(2));
+attempt("a map", () => holder.map.set("a", 1).size);
+attempt("an object", () => turn(holder.inner, 7));
+attempt("the members themselves", () => {
+  holder.list = [];
+  return "replaced";
+});
+console.log("holds: " + JSON.stringify(holder) + " " + holder.map.size);
+
+const notes = new WeakMap<object, string>();
+const frozenKey = Object.freeze({ level: 0 });
+notes.set(frozenKey, "noted");
+console.log("a frozen object as a weak key: " + notes.get(frozenKey));
+
+const frozenMap = Object.freeze(new Map<string, number>());
+attempt("a frozen map still takes entries", () => frozenMap.set("k", 1).size);
+const frozenSet = Object.freeze(new Set<number>());
+attempt("a frozen set still takes values", () => frozenSet.add(1).size);
+const frozenDate = Object.freeze(new Date(0));
+attempt("a frozen date still moves", () => frozenDate.setTime(5));
+attempt("a typed array with elements cannot be frozen", () => Object.freeze(new Uint8Array(2)).length);
+attempt("an empty typed array can", () => Object.isFrozen(Object.freeze(new Uint8Array(0))));
+attempt("a typed array with elements cannot be sealed", () => Object.seal(new Uint8Array(2)).length);
+const closedBytes = Object.preventExtensions(new Uint8Array(2));
+attempt("a typed array that is not extensible is stored to", () => ((closedBytes[0] = 7), closedBytes.join()));
+
+const open: Dial = { level: 0 };
+for (let i = 0; i < 2000; i++) turn(open, i);
+console.log("2000 honest: " + open.level);
+attempt("then frozen with a class setter", () => turn(Object.freeze(new Remote()), 8));
+attempt("then frozen and plain", () => turn(Object.freeze({ level: 0 }), 9));
+attempt("then frozen with a private name", () => turn(Object.freeze(new Hidden()), 10));
+attempt("then open", () => turn(open, 11));
+
+export {};
+//// straight-line-a-cell-of-numbers-takes-a-string-through-a-wider-type-argument.ts
+class Cell<T> {
+  value: T;
+  constructor(value: T) {
+    this.value = value;
+  }
+}
+
+const integers = new Cell(1);
+const wideIntegers: Cell<number | string> = integers;
+wideIntegers.value = "text";
+console.log(typeof integers.value);
+console.log(integers.value + 1);
+console.log(integers.value * 2);
+console.log(JSON.stringify(integers));
+
+const fractions = new Cell(0.5);
+const wideFractions: Cell<number | null> = fractions;
+wideFractions.value = null;
+console.log(typeof fractions.value);
+console.log(fractions.value + 1);
+console.log(JSON.stringify(fractions));
+
+const strings = new Cell("s");
+const wideStrings: Cell<string | number> = strings;
+wideStrings.value = 7;
+console.log(typeof strings.value);
+console.log(strings.value + "!");
+console.log(strings.value.length);
+
+const functions = new Cell(() => 1);
+const wideFunctions: Cell<(() => number) | undefined> = functions;
+wideFunctions.value = undefined;
+console.log(typeof functions.value);
+////= lines-196	functions.value
+
+export {};
+//// straight-line-a-field-of-type-this-holds-an-instance-of-the-base.ts
+class Link {
+  next: this | null = null;
+  weight = 1;
+}
+
+class NamedLink extends Link {
+  size = 2;
+  name = "named";
+  shout(): string {
+    return this.name.toUpperCase();
+  }
+}
+
+const head = new NamedLink();
+const seenAsBase: Link = head;
+seenAsBase.next = new Link();
+const next = head.next;
+if (next !== null) {
+  console.log(next instanceof NamedLink);
+  console.log(typeof next.size);
+  console.log(next.size * 2);
+  console.log(typeof next.name);
+  console.log(next.name + "!");
+  console.log(next.weight + 1);
+  console.log(Object.keys(next).join());
+  try {
+    console.log(next.shout());
+  } catch (error) {
+    console.log(error instanceof TypeError);
+  }
+}
+console.log(JSON.stringify(head));
+
+export {};
+//// straight-line-a-generic-factory-gets-a-constructor-that-returns-a-literal.ts
+function create<T>(ctor: new () => T): T {
+  return new ctor();
+}
+
+const spare = { x: "spare", y: 20 };
+const standIn = { x: 10, y: 20, extra: true };
+
+////= Point-20
+
+class Odd {
+  x = 1;
+  y = 2;
+  constructor() {
+    return standIn;
+  }
+}
+
+const trapped = new Proxy(Point, {
+  construct() {
+    return spare;
+  },
+});
+
+const honest = create(Point);
+console.log(honest.x + honest.y);
+const odd = create(Odd);
+console.log(odd instanceof Odd);
+console.log(odd.x + odd.y);
+console.log(Object.keys(odd).join());
+console.log(JSON.stringify(odd));
+const direct = new Odd();
+console.log(direct.x + direct.y);
+console.log(Object.keys(direct).join());
+const fromTheTrap = create(trapped);
+console.log(fromTheTrap instanceof Point);
+console.log(typeof fromTheTrap.x);
+console.log(fromTheTrap.x + 1);
+console.log(fromTheTrap.x * 2);
+console.log(fromTheTrap.y + 1);
+const directly = new trapped();
+console.log(typeof directly.x);
+console.log(directly.x + 1);
+
+export {};
+//// straight-line-a-parameter-of-type-this-is-an-instance-of-the-base.ts
+class Money {
+  amount = 5;
+  plus(other: this): number {
+    return this.amount + other.amount;
+  }
+}
+
+class Priced extends Money {
+  rate = 1.5;
+  unit = "eur";
+  plus(other: this): number {
+    return this.amount * this.rate + other.amount * other.rate;
+  }
+  units(other: this): string {
+    return this.unit + other.unit;
+  }
+  width(other: this): number {
+    return other.unit.length;
+  }
+}
+
+const priced = new Priced();
+const seenAsBase: Money = priced;
+console.log(priced.plus(priced));
+console.log(seenAsBase.plus(new Money()));
+console.log(new Money().plus(priced));
+const both: (other: Priced) => string = priced.units.bind(priced);
+console.log(both(priced));
+
+////= lines-245	HasUnits	units	other	Money	width
+const loose: HasUnits = priced;
+console.log(loose.units(new Money()));
+////= lines-307	loose.width(new Money())
+
+export {};
+//// straight-line-a-record-misses-a-name-and-inherits-another.ts
+const ages: Record<string, number> = { ann: 30 };
+const missing: number = ages.bob;
+console.log(typeof missing);
+console.log(missing + 1);
+console.log(missing | 0);
+console.log(missing === 0);
+console.log(missing > 0);
+console.log(missing ?? -1);
+console.log(JSON.stringify({ missing }));
+const word: string = "constructor";
+const inherited: number = ages[word];
+console.log(typeof inherited);
+console.log(inherited * 2);
+console.log(inherited === inherited);
+console.log(typeof (inherited + 1));
+const parent: number = ages["__proto__"];
+console.log(typeof parent);
+console.log(parent * 2);
+let total = 0;
+for (const name of ["ann", "bob"]) total += ages[name];
+console.log(total);
+ages.bob++;
+console.log(ages.bob);
+console.log(Object.keys(ages).join());
+////= lines-307	missing.toFixed(1)
+
+const names: Record<string, string> = { a: "ann" };
+const none: string = names.b;
+console.log(typeof none);
+console.log(none + "!");
+console.log(none === "");
+////= lines-307	none.length
+
+const tasks: Record<string, () => number> = { one: () => 1 };
+console.log(typeof tasks.two);
+////= lines-196	tasks.two
+
+export {};
+//// straight-line-a-swap-puts-an-instance-of-the-base-into-a-field-of-the-subclass.ts
+////= lines-18	Shape	sides	0
+
+class Square extends Shape {
+  edge = 3;
+  area(): number {
+    return this.edge * this.edge;
+  }
+}
+
+class Drawing {
+  front = new Square();
+  back = new Shape();
+  size(): number {
+    return this.front.edge * 2;
+  }
+}
+
+////= swap
+
+const drawing = new Drawing();
+console.log(drawing.size());
+swap(drawing, "front", "back");
+console.log(drawing.front instanceof Square);
+console.log(typeof drawing.front.edge);
+console.log(drawing.front.edge * 2);
+console.log(drawing.size());
+console.log(drawing.back.sides);
+console.log(JSON.stringify(drawing));
+////= lines-195	drawing.front.area
+
+export {};
+//// straight-line-a-tuple-is-reversed-popped-and-pushed-to.ts
+const reversed: [number, string] = [1, "a"];
+reversed.reverse();
+console.log(typeof reversed[0]);
+console.log(typeof reversed[1]);
+console.log(reversed[0] + 1);
+console.log(reversed[0] * 2);
+console.log(reversed[1] + "!");
+console.log(reversed[1].length);
+const [first, second] = reversed;
+console.log(typeof first);
+console.log(typeof second);
+////= lines-307	reversed[1].toUpperCase()
+
+const popped: [number, string] = [1, "a"];
+popped.pop();
+console.log(popped.length);
+console.log(popped.length === 2);
+console.log(typeof popped[1]);
+console.log(popped[1] + "!");
+////= lines-197	popped	length
+
+const pushed: [number, string] = [1, "a"];
+pushed.push(2);
+console.log(pushed.length);
+console.log(pushed.length === 2);
+console.log(JSON.stringify(pushed));
+console.log([...pushed].length);
+
+const shifted: [number, string] = [1, "a"];
+shifted.shift();
+console.log(typeof shifted[0]);
+console.log(shifted[0] + 1);
+console.log(shifted.length);
+
+export {};
+//// straight-line-a-typed-array-is-read-past-its-end-and-after-its-buffer-is-gone.ts
+const view = new Float64Array([0.5, 1.5]);
+const past: number = view[2];
+console.log(typeof past);
+console.log(past + 1);
+console.log(past | 0);
+console.log(past === 0);
+console.log(view[-1]);
+console.log(view[0.5]);
+console.log(view[-0]);
+view[2] = 9;
+view[-1] = 9;
+console.log(view.length);
+console.log(Object.keys(view).join());
+
+const ints = new Int32Array([1, 2]);
+const pastInts: number = ints[2];
+console.log(typeof pastInts);
+console.log(pastInts + 1);
+console.log(pastInts | 0);
+
+const moved = view.buffer.transfer();
+console.log(moved.byteLength);
+console.log(view.length);
+const gone: number = view[0];
+console.log(typeof gone);
+console.log(gone + 1);
+view[0] = 3;
+console.log(view[0]);
+console.log(view.byteLength);
+
+const buffer = new ArrayBuffer(16, { maxByteLength: 32 });
+const tracking = new Float64Array(buffer);
+tracking[1] = 2.5;
+console.log(tracking.length);
+buffer.resize(8);
+console.log(tracking.length);
+const cutOff: number = tracking[1];
+console.log(typeof cutOff);
+console.log(cutOff + 1);
+buffer.resize(24);
+console.log(tracking.length);
+console.log(tracking[1]);
+console.log(tracking[2]);
+
+export {};
+//// straight-line-a-union-key-puts-an-instance-of-the-base-into-a-field-of-the-subclass.ts
+////= Animal-2
+
+class Dog extends Animal {
+  legs = 4;
+  bark(): string {
+    return this.name + " barks";
+  }
+}
+
+////= lines-27	Zoo	dog	Dog	animal	Animal
+
+////= set
+
+const yes: boolean = process.argv.length > 0;
+const zoo: Zoo = { dog: new Dog(), animal: new Animal() };
+console.log(zoo.dog.legs * 2);
+set(zoo, yes ? "dog" : "animal", new Animal());
+console.log(zoo.dog instanceof Dog);
+console.log(typeof zoo.dog.legs);
+console.log(zoo.dog.legs * 2);
+console.log(zoo.dog.name);
+console.log(Object.keys(zoo.dog).join());
+console.log(JSON.stringify(zoo));
+////= lines-195	zoo.dog.bark
+
+export {};
+//// straight-line-a-wider-record-stores-deletes-and-adds-members-of-a-literal.ts
+const point = { x: 1, y: 0.5, name: "p" };
+const wider: Record<string, number | string | null> = point;
+console.log(point.x + point.y);
+wider.x = "text";
+console.log(typeof point.x);
+console.log(point.x + 1);
+console.log(point.x * 2);
+wider["y"] = null;
+console.log(typeof point.y);
+console.log(point.y + 1);
+wider.name = 7;
+console.log(typeof point.name);
+console.log(point.name + "!");
+console.log(point.name.length);
+wider.extra = 1;
+console.log(Object.keys(point).join());
+delete wider.x;
+console.log(typeof point.x);
+console.log(point.x + 1);
+console.log("x" in point);
+console.log(Object.keys(point).join());
+console.log(JSON.stringify(point));
+wider.x = 5;
+console.log(point.x + 1);
+console.log(Object.keys(point).join());
+////= lines-195	point.name.toUpperCase
+
+export {};
+//// straight-line-arrays-of-four-kinds-are-made-longer-and-read.ts
+////= Point-10
+
+const integers = [1, 2];
+integers.length = 3;
+console.log(typeof integers[2]);
+console.log(integers[2] + 1);
+console.log(integers[2] | 0);
+console.log(integers[2] === 0);
+
+const fractions = [0.5];
+fractions.length = 2;
+console.log(typeof fractions[1]);
+console.log(fractions[1] * 2);
+console.log(fractions[1] === undefined);
+
+const strings = ["a"];
+strings.length = 2;
+console.log(typeof strings[1]);
+console.log(strings[1] + "!");
+console.log(strings[1] === "");
+////= lines-197	strings	length
+
+const points = [new Point()];
+points.length = 2;
+console.log(typeof points[1]);
+console.log(points[1] === null);
+////= lines-197	points	x
+
+const functions = [() => 1];
+functions.length = 2;
+console.log(typeof functions[1]);
+////= lines-307	functions[1]()
+
+export {};
+//// straight-line-one-shared-empty-array-is-pushed-to-as-numbers-and-read-as-strings.ts
+const NONE: never[] = [];
+
+function none<T>(): T[] {
+  return NONE;
+}
+
+const numbers = none<number>();
+const strings = none<string>();
+console.log(NONE.length);
+numbers.push(1);
+numbers.push(0.5);
+console.log(NONE.length);
+console.log(typeof strings[0]);
+console.log(strings[0] + "!");
+console.log(strings[1] + "!");
+console.log(strings[0].length);
+strings.push("text");
+console.log(typeof numbers[2]);
+console.log(numbers[2] + 1);
+console.log(numbers[2] * 2);
+console.log(numbers[0] + numbers[1]);
+console.log(JSON.stringify(NONE));
+let sum = 0;
+for (let i = 0; i < numbers.length; i++) sum += numbers[i];
+console.log(sum);
+////= lines-307	strings[0].toUpperCase()
+
+export {};
+//// straight-line-one-shared-empty-box-is-filled-as-a-number-and-read-as-a-string.ts
+class Box<T> {
+  static readonly EMPTY: Box<never> = new Box<never>();
+  value: T | undefined = undefined;
+  static empty<T>(): Box<T> {
+    return Box.EMPTY;
+  }
+}
+
+const numbers = Box.empty<number>();
+const strings = Box.empty<string>();
+console.log(typeof numbers.value);
+numbers.value = 41;
+console.log(typeof strings.value);
+console.log(strings.value === undefined ? "nothing" : strings.value + "!");
+console.log(strings.value === undefined ? "nothing" : strings.value.length);
+console.log(typeof Box.EMPTY.value);
+console.log(JSON.stringify(Box.EMPTY));
+strings.value = "text";
+console.log(typeof numbers.value);
+console.log(numbers.value === undefined ? -1 : numbers.value + 1);
+console.log(numbers.value === undefined ? -1 : numbers.value * 2);
+////= lines-307	numbers.value === undefined ? "nothing" : numbers.value.toFixed(1)
+
+export {};
+//// straight-line-the-end-of-an-exhaustive-switch-is-reached-after-a-generic-increment.ts
+interface Dial {
+  step: 1 | 2;
+}
+
+function bump<K extends string>(target: Record<K, number>, key: K): void {
+  target[key] += 1;
+}
+
+function nameOf(dial: Dial): string {
+  switch (dial.step) {
+    case 1:
+      return "one";
+    case 2:
+      return "two";
+  }
+}
+
+function chain(dial: Dial): string {
+  if (dial.step === 1) return "one";
+  if (dial.step === 2) return "two";
+  const never: never = dial.step;
+  return "never " + String(never);
+}
+
+const dial: Dial = { step: 1 };
+console.log(nameOf(dial));
+console.log(chain(dial));
+bump(dial, "step");
+console.log(nameOf(dial));
+console.log(chain(dial));
+bump(dial, "step");
+console.log(dial.step);
+console.log(typeof nameOf(dial));
+console.log(nameOf(dial));
+console.log(chain(dial));
+console.log(dial.step === 1 || dial.step === 2);
+console.log(dial.step !== 1 && dial.step !== 2);
+console.log(dial.step > 2);
+console.log(JSON.stringify(dial));
+
+export {};
+//// straight-line-the-reverse-mapping-of-an-enum-misses.ts
+////= Color
+
+const missing: string = Color[999];
+console.log(typeof missing);
+console.log(missing + "!");
+console.log(missing === "");
+console.log(missing === undefined);
+console.log(`${missing}`);
+console.log([missing].length);
+console.log(JSON.stringify({ missing }));
+console.log(JSON.stringify([missing]));
+const index: number = 7;
+const byVariable: string = Color[index];
+console.log(typeof byVariable);
+console.log(byVariable ?? "nothing");
+console.log(byVariable || "nothing");
+console.log(byVariable ? "truthy" : "falsy");
+const there: string = Color[1];
+console.log(there.length);
+////= lines-307	missing.length
+////= lines-196	byVariable.toUpperCase
+
+export {};
+//// string-keys-that-look-like-indexes-on-a-record.ts
+////= show-32
+
+////= lines-153	read	record	string	number
+
+function write(record: Record<string, number>, key: string, value: number): void {
+  record[key] = value;
+}
+
+function state(record: object): string {
+  return Object.keys(record).join("|") + " " + JSON.stringify(record);
+}
+
+let total = 0;
+const warm: Record<string, number> = {};
+for (let i = 0; i < 2000; i++) {
+  write(warm, "k" + (i % 5), i);
+  total += read(warm, "k" + (i % 5));
+}
+console.log("2000 honest rounds: " + total);
+
+const keys = ["b", "2", "a", "1", "01", "1.0", "-1", "-0", "0", "1.5", "4294967294", "4294967295", "4294967296", "10", "9", "1e3", "+1", " 1", "", "NaN"];
+const record: Record<string, number> = {};
+keys.forEach((key, position) => write(record, key, position));
+console.log("the order of the keys: " + state(record));
+attempt("each is read back", () => keys.map(key => read(record, key)));
+attempt("for in", () => {
+  const seen: string[] = [];
+  for (const key in record) seen.push(key);
+  return seen.join("|");
+});
+attempt("entries", () => Object.entries(record).map(([key, value]) => key + "=" + value).join("|"));
+attempt("a spread keeps the order", () => state({ ...record }));
+attempt("by numbers", () => {
+  const byNumber: Record<number, number> = record;
+  return [byNumber[1], byNumber[1.0], byNumber[-0], byNumber[0], byNumber[-1], byNumber[1.5], byNumber[1e3], byNumber[4294967295], byNumber[NaN], byNumber[10]];
+});
+
+const literal = { b: 1, 2: 2, a: 3, 1: 4, "01": 5, "-1": 6, 1.5: 7, 1e3: 8, 0x10: 9, 1_0: 10 };
+console.log("a literal: " + state(literal));
+attempt("its members", () => [literal[1], literal["1"], literal["01"], literal[2], literal["-1"], literal[1.5], literal["1.5"], literal[1000], literal["1000"], literal[16], literal[10]]);
+
+const one: number = 1;
+const oneAsText: string = "1";
+const minusZero: number = -0;
+const zero: number = 0;
+const computed: Record<string, number> = { [one]: 1, [oneAsText]: 2, ["01"]: 4, [minusZero]: 5, ["-0"]: 6, [zero]: 7 };
+console.log("computed names collide: " + state(computed));
+
+attempt("deleted and stored again", () => {
+  const r: Record<string, number> = { a: 1, 5: 2, b: 3, 3: 4 };
+  delete r["5"];
+  delete r.a;
+  r.a = 5;
+  r[5] = 6;
+  return state(r);
+});
+attempt("many index keys out of order", () => {
+  const r: Record<string, number> = {};
+  for (const key of [1000, 5, 70000, 0, 3, 2 ** 31, 2 ** 32 - 2, 2 ** 32 - 1, 7]) r[key] = key;
+  return state(r);
+});
+
+class Shelf {
+  [slot: string]: number;
+  z = 1;
+  a = 2;
+}
+const shelf = new Shelf();
+shelf["1"] = 3;
+shelf["01"] = 4;
+shelf["0"] = 5;
+console.log("a class with an index signature: " + state(shelf) + " " + (shelf.z + shelf.a + shelf[1] + shelf["01"]) + " " + typeof shelf.missing);
+
+export {};
+//// string-keys-that-look-like-indexes-on-an-array.ts
+////= show-32
+
+const none: Record<string, number> = {};
+
+function fresh(): number[] & Record<string, number> {
+  return Object.assign([10, 20, 30], none);
+}
+
+function read(list: number[] & Record<string, number>, key: string): number {
+  return list[key];
+}
+
+function write(list: number[] & Record<string, number>, key: string, value: number): void {
+  list[key] = value;
+}
+
+function state(list: number[]): string {
+  return "length " + list.length + ", keys " + Object.keys(list).join("|") + ", " + (list.length < 10 ? JSON.stringify(list) : "long");
+}
+
+let total = 0;
+const warm = fresh();
+for (let i = 0; i < 2000; i++) {
+  write(warm, String(i % 3), i);
+  total += read(warm, String(i % 3)) + warm[i % 3];
+}
+console.log("2000 honest rounds: " + total);
+
+const keys = ["1", "01", "1.0", "1.", "+1", " 1", "1 ", "1e0", "0x1", "-0", "-1", "1.5", "3", "4294967294", "4294967295", "4294967296", "9007199254740992", "NaN", "Infinity", "", "1n"];
+for (const key of keys) {
+  attempt("read " + show(key), () => {
+    const list = fresh();
+    return [typeof read(list, key), read(list, key), key in list];
+  });
+  attempt("write " + show(key), () => {
+    const list = fresh();
+    write(list, key, 7);
+    return [state(list), read(list, key), list[1]];
+  });
+}
+
+const list = fresh();
+attempt("written out: reads", () => [list["1"], list["01"], list["1.0"], list["-0"], list["+1"], list["1e0"], list["4294967295"]]);
+list["1"] = 21;
+list["01"] = 1;
+list["1.0"] = 2;
+list["-0"] = 3;
+list["+1"] = 4;
+list["1e0"] = 5;
+list["4294967295"] = 6;
+console.log("written out: after seven stores: " + state(list));
+attempt("written out: reads again", () => [list[1], list["1"], list["01"], list["1.0"], list[0], list["-0"], list["+1"], list["1e0"], list["4294967295"], list[4294967295]]);
+attempt("the elements alone", () => [list.reduce((a, b) => a + b, 0), [...list], list.length]);
+list["3"] = 40;
+console.log("'3' appends: " + state(list));
+list["length"] = 1;
+console.log("'length' cuts: " + state(list));
+
+attempt("narrowed by in", () => {
+  const plain: number[] = [1, 2, 3];
+  const seen: unknown[] = [];
+  if ("1" in plain) seen.push(plain["1"]);
+  if ("01" in plain) seen.push(plain["01"]);
+  else seen.push("no 01");
+  if ("length" in plain) seen.push(plain["length"]);
+  return seen;
+});
+attempt("for in gives strings", () => {
+  const plain: number[] = [5, 6];
+  const seen: string[] = [];
+  for (const key in plain) seen.push(typeof key + " " + key + " " + (plain[key] + 1) + " " + (key + 1));
+  return seen;
+});
+
+export {};
+//// string-tag-mismatch.ts
+type Circle = { kind: "circle"; r: number };
+type Ring = { kind: "ring"; r: number; inner: number };
+type Square = { kind: "square"; side: number };
+type Shape = Circle | Ring | Square;
+
+function area(s: Shape): number {
+  switch (s.kind) {
+    case "circle": return s.r * s.r * 3;
+    case "ring": return (s.r * s.r - s.inner * s.inner) * 3;
+    case "square": return s.side * s.side;
+  }
+}
+function radius(c: Circle): number { return c.r; }
+function describe(c: Circle): string { return c.kind + ":" + c.r + ":" + Object.keys(c).join(); }
+function isCircle(s: Shape): s is Circle { return s.kind === "circle"; }
+
+const lines: string[] = [];
+function show(name: string, ...values: unknown[]) { lines.push(name + ": " + values.join(" ")); }
+function often<T>(f: () => T): T { let last = f(); for (let i = 0; i < 3000; i++) last = f(); return last; }
+
+const circle: Circle = { kind: "circle", r: 2 };
+const ring: Ring = { kind: "ring", r: 5, inner: 1 };
+const square: Square = { kind: "square", side: 3 };
+show("as they are", often(() => area(circle)), often(() => area(ring)), often(() => area(square)), often(() => radius(circle)), often(() => describe(circle)));
+
+show("cast", often(() => radius(ring as unknown as Circle)), often(() => describe(ring as unknown as Circle)));
+const untyped: any = ring;
+show("any", often(() => radius(untyped)), often(() => describe(untyped)));
+
+const circles: Circle[] = [circle];
+(circles as Shape[]).push(ring, square);
+show("array", often(() => circles.map(radius).join()), often(() => circles.map(describe).join(";")));
+
+class Holder { held: Circle; constructor(held: Circle) { this.held = held; } read(): number { return this.held.r; } }
+const holder = new Holder(circle);
+show("field", often(() => holder.read()));
+(holder as any).held = ring;
+show("field, a ring", often(() => holder.read()), often(() => describe(holder.held)));
+let current: Circle = circle;
+function readCurrent(): number { return current.r; }
+show("variable", often(readCurrent));
+current = untyped;
+show("variable, a ring", often(readCurrent));
+
+const turned: Ring = { kind: "ring", r: 7, inner: 2 };
+show("before the turn", often(() => area(turned)), isCircle(turned));
+(turned as any).kind = "circle";
+show("behind the turn", often(() => area(turned)), isCircle(turned), often(() => (isCircle(turned) ? radius(turned) : -1)), describe(turned as unknown as Circle));
+const emptied: Circle = { kind: "circle", r: 4 };
+(emptied as any).kind = undefined;
+show("no tag", String(often(() => area(emptied))), often(() => radius(emptied)));
+
+const wide: Circle = { ...ring, kind: "circle" };
+show("spread", often(() => area(wide)), often(() => radius(wide)), describe(wide));
+
+const parsed = JSON.parse('[{"kind":"circle","r":6},{"kind":"ring","r":6,"inner":3},{"kind":"circle","r":6,"inner":3}]') as Shape[];
+show("parsed", often(() => parsed.map(area).join()), often(() => radius(parsed[1] as Circle)), describe(parsed[2] as Circle));
+
+console.log(lines.join("\n"));
+//// string-tag-unusual-texts.ts
+type Zero = { tag: "0"; a: number };
+type One = { tag: "1"; b: number };
+type Empty = { tag: ""; c: number };
+type Proto = { tag: "__proto__"; d: number };
+type Length = { tag: "length"; e: number };
+type Own = { tag: "tag"; f: number };
+type Built = { tag: "built"; g: number };
+type Any = Zero | One | Empty | Proto | Length | Own | Built;
+
+function read(x: Any): number {
+  switch (x.tag) {
+    case "0": return x.a;
+    case "1": return x.b + 10;
+    case "": return x.c + 20;
+    case "__proto__": return x.d + 30;
+    case "length": return x.e + 40;
+    case "tag": return x.f + 50;
+    case "built": return x.g + 60;
+  }
+}
+const all: Any[] = [
+  { tag: "0", a: 1 }, { tag: "1", b: 1 }, { tag: "", c: 1 }, { tag: "__proto__", d: 1 }, { tag: "length", e: 1 }, { tag: "tag", f: 1 }, { tag: "built", g: 1 },
+  { tag: ["bu", "ilt"].join("") as "built", g: 2 },
+];
+let sum = 0;
+for (let i = 0; i < 40000; i++) sum += read(all[i & 7]);
+
+const table: Record<string, number> = {};
+for (const x of all) table[x.tag] = (table[x.tag] ?? 0) + 1;
+const list = [10, 20];
+console.log(sum, JSON.stringify(table), Object.keys(table).join("|"), list[all[0].tag as unknown as number], list[all[4].tag as "length"], all.map(x => x[all[5].tag as "tag"]).join("|"));
+//// structured-clones-of-subclasses-of-built-ins.ts
+////= show-30
+
+class Stack extends Array<number> {
+  label = "stack";
+  top(): number | undefined {
+    return this[this.length - 1];
+  }
+}
+
+class Registry extends Map<string, number> {
+  label = "registry";
+  total(): number {
+    let sum = 0;
+    for (const value of this.values()) sum += value;
+    return sum;
+  }
+}
+
+class Bag extends Set<number> {
+  first(): number | undefined {
+    return [...this][0];
+  }
+}
+
+class Failure extends Error {
+  code = 7;
+  name = "Failure";
+  describe(): string {
+    return this.name + " " + this.code;
+  }
+}
+
+////= lines-120	Moment	Date	label	"at "	this.getTime
+
+////= Bytes	byte
+
+function stackOf(...values: number[]): Stack {
+  const stack = new Stack();
+  stack.push(...values);
+  return stack;
+}
+
+function topOf(stack: Stack): number | undefined {
+  return stack.top();
+}
+
+////= lines-19	total	registry	Registry	number	registry.total
+
+////= lines-19	describe	failure	Failure	string	failure.describe
+
+////= lines-19	sum	bytes	Bytes	number	bytes.sum
+
+let warm = 0;
+for (let i = 0; i < 1000; i++) {
+  warm += (topOf(stackOf(i)) ?? 0) + total(new Registry([["a", i]])) + describe(new Failure("f")).length + sum(new Bytes([1, 2])) + (new Bag([i]).first() ?? 0) + new Moment(i).label().length;
+}
+console.log("after 1000 honest values", warm);
+
+attempt("a stack: elements and length", () => {
+  const clone = structuredClone(stackOf(1, 2, 3));
+  return [clone.length, clone[2], Array.isArray(clone), [...clone]];
+});
+attempt("a stack: its class and its field", () => {
+  const clone = structuredClone(stackOf(1, 2, 3));
+  return [clone instanceof Stack, clone.constructor === Array, clone.label, Object.keys(clone)];
+});
+attempt("a stack: its method", () => topOf(structuredClone(stackOf(1, 2, 3))));
+attempt("a stack: push still works", () => structuredClone(stackOf(1)).push(2));
+attempt("a registry: entries", () => {
+  const clone = structuredClone(new Registry([["a", 1]]));
+  return [clone.size, clone.get("a"), clone instanceof Registry, clone instanceof Map, clone.label];
+});
+attempt("a registry: its method", () => total(structuredClone(new Registry([["a", 1]]))));
+attempt("a bag", () => {
+  const clone = structuredClone(new Bag([4, 5]));
+  return [clone.size, clone.has(4), clone instanceof Bag, typeof clone.first];
+});
+attempt("a bag: its method", () => structuredClone(new Bag([4, 5])).first());
+attempt("a failure", () => {
+  const clone = structuredClone(new Failure("broken"));
+  return [clone.message, clone.name, clone.code, clone instanceof Failure, clone instanceof Error, typeof clone.stack];
+});
+attempt("a failure: its method", () => describe(structuredClone(new Failure("broken"))));
+attempt("a moment", () => {
+  const clone = structuredClone(new Moment(5));
+  return [clone.getTime(), clone instanceof Moment, clone instanceof Date];
+});
+attempt("a moment: its method", () => structuredClone(new Moment(5)).label());
+attempt("bytes", () => {
+  const clone = structuredClone(new Bytes([1, 2, 3]));
+  return [clone.length, clone[1], clone instanceof Bytes, clone instanceof Uint8Array];
+});
+attempt("bytes: its method", () => sum(structuredClone(new Bytes([1, 2, 3]))));
+attempt("honest again", () => [topOf(stackOf(1, 2)), total(new Registry([["a", 1]])), describe(new Failure("f")), sum(new Bytes([1, 2]))]);
+//// super-calls-a-method-after-the-prototype-got-a-parent-made-by-object-create.ts
+////= First
+////= Child-3
+const child = new Child();
+console.log("zq " + child.greet());
+const between = Object.create(First.prototype, { greet: { value: () => "between", configurable: true } });
+Object.setPrototypeOf(Child.prototype, between);
+console.log("zq " + child.greet());
+//// super-calls-after-the-prototype-got-another-parent.ts
+////= lines-133	First	"t"	"first "	"first title"
+
+////= lines-133	Second	"unused"	"second "	"second title"
+
+class Child extends First {
+  greet(): string {
+    return "child > " + super.greet();
+  }
+  get title(): string {
+    return "child > " + super.title;
+  }
+  inherited(): string {
+    return super.greet() + " / " + super.title;
+  }
+}
+
+class Plain extends First {}
+
+////= lines-53	greet	f	First	f.greet	" | "	f.title
+
+const child = new Child();
+const plain = new Plain();
+
+function round(label: string): void {
+  console.log(label + ": " + greet(child) + " | " + child.inherited() + " || " + greet(plain) + " || " + (child instanceof First) + " " + (child instanceof Second) + " " + (plain instanceof First));
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += greet(child).length + child.inherited().length + greet(plain).length;
+console.log("2000 honest: " + warm);
+round("before");
+
+Object.setPrototypeOf(Child.prototype, Second.prototype);
+round("the child's prototype hangs under the second class");
+
+Object.setPrototypeOf(Plain.prototype, Second.prototype);
+round("the plain subclass too");
+
+Object.setPrototypeOf(Child.prototype, First.prototype);
+Object.setPrototypeOf(Plain.prototype, First.prototype);
+round("both back");
+
+const between = Object.create(First.prototype, {
+  greet: {
+    value(this: First): string {
+      return "between " + this.tag;
+    },
+    configurable: true,
+  },
+});
+Object.setPrototypeOf(Child.prototype, between);
+Object.setPrototypeOf(Plain.prototype, between);
+round("a new link in the middle of the chain");
+
+Reflect.deleteProperty(between, "greet");
+round("the link loses its method");
+
+Object.setPrototypeOf(Child.prototype, null);
+try {
+  round("no parent at all");
+} catch (error) {
+  console.log("no parent at all: threw " + (error instanceof Error ? error.constructor.name : typeof error));
+}
+Object.setPrototypeOf(Child.prototype, First.prototype);
+Object.setPrototypeOf(Plain.prototype, First.prototype);
+round("restored");
+
+export {};
+//// super-calls-and-inherited-members-through-three-levels-honest.ts
+class Base {
+  name = "instance";
+  greet(): string {
+    return "base(" + this.name + ")";
+  }
+  get rank(): number {
+    return 1;
+  }
+  who(): string {
+    return "who " + this.name;
+  }
+  static make(): string {
+    return "base make by " + this.name;
+  }
+}
+
+class Middle extends Base {
+  greet(): string {
+    return "middle(" + super.greet() + ")";
+  }
+  get rank(): number {
+    return super.rank + 10;
+  }
+}
+
+class Leaf extends Middle {
+  greet(): string {
+    return "leaf(" + super.greet() + ")";
+  }
+  viaArrow(): string {
+    const inner = (): string => super.greet();
+    return "arrow(" + inner() + ")";
+  }
+  static make(): string {
+    return "leaf > " + super.make();
+  }
+}
+
+class Quiet extends Middle {}
+
+function greet(b: Base): string {
+  return b.greet() + " " + b.rank + " " + b.who();
+}
+
+function leafGreet(l: Leaf): string {
+  return l.greet() + " " + l.rank + " " + l.who();
+}
+
+function quietGreet(q: Quiet): string {
+  return q.greet() + " " + q.rank + " " + q.who();
+}
+
+const leaf = new Leaf();
+const quiet = new Quiet();
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += greet(leaf).length + leafGreet(leaf).length + quietGreet(quiet).length + leaf.viaArrow().length + Leaf.make().length + Quiet.make().length;
+console.log("2000 rounds: " + warm);
+console.log("typed as the base: " + [leaf, quiet, new Middle(), new Base()].map(greet).join(" | "));
+console.log("typed as the leaf: " + leafGreet(leaf) + " | " + leaf.viaArrow());
+console.log("typed as a subclass that overrides nothing: " + quietGreet(quiet));
+console.log("static: " + [Leaf.make(), Quiet.make(), Middle.make(), Base.make()].join(" | "));
+console.log("instanceof: " + (leaf instanceof Base) + " " + (quiet instanceof Leaf));
+
+export {};
+//// super-calls-run-whatever-the-parent-has-now.ts
+class Base {
+  name = "instance";
+  greet(): string {
+    return "base(" + this.name + ")";
+  }
+}
+
+class Middle extends Base {
+  greet(): string {
+    return "middle(" + super.greet() + ")";
+  }
+}
+
+class Leaf extends Middle {
+  greet(): string {
+    return "leaf(" + super.greet() + ")";
+  }
+  viaArrow(): string {
+    const inner = (): string => super.greet();
+    return "arrow(" + inner() + ")";
+  }
+  viaCallback(): string {
+    return [1, 2].map(() => super.greet()).join("+");
+  }
+}
+
+class Quiet extends Middle {}
+
+////= lines-19	greet	b	Base	string	b.greet
+
+const leaf = new Leaf();
+const quiet = new Quiet();
+
+function round(label: string): void {
+  console.log(label + ": " + leaf.greet() + " | " + greet(leaf) + " | " + leaf.viaArrow() + " | " + leaf.viaCallback() + " | " + greet(quiet) + " | " + greet(new Middle()) + " | " + greet(new Base()));
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += greet(leaf).length + leaf.viaArrow().length + greet(quiet).length;
+console.log("2000 honest: " + warm);
+round("before");
+
+const baseGreet = Base.prototype.greet;
+const middleGreet = Middle.prototype.greet;
+
+Base.prototype.greet = function () {
+  return "BASE(" + this.name + ")";
+};
+round("the base replaced");
+
+Middle.prototype.greet = function () {
+  return "MIDDLE(" + this.name + ")";
+};
+round("the middle replaced by one without super");
+
+Base.prototype.greet = baseGreet;
+round("the base put back");
+
+Middle.prototype.greet = middleGreet;
+round("the middle put back");
+
+leaf.greet = () => "own";
+round("an own member: super does not see it");
+console.log("the leaf's method on that instance: " + Leaf.prototype.greet.call(leaf));
+Reflect.deleteProperty(leaf, "greet");
+
+const middleView: { greet?: () => string } = Middle.prototype;
+delete middleView.greet;
+round("the middle's method deleted");
+
+Middle.prototype.greet = middleGreet;
+round("restored");
+
+Base.prototype.greet = Quiet.prototype.toString;
+round("the base runs a built-in");
+Base.prototype.greet = baseGreet;
+round("restored again");
+
+export {};
+//// super-in-static-methods-after-a-replacement-and-another-parent.ts
+class First {
+  static label = "first label";
+  static make(): string {
+    return "first make, this is " + this.name + ", " + this.label;
+  }
+}
+
+class Second {
+  static label = "second label";
+  static make(): string {
+    return "second make, this is " + this.name + ", " + this.label;
+  }
+}
+
+class Child extends First {
+  static make(): string {
+    return "child > " + super.make();
+  }
+  static labelAbove(): string {
+    return super.label;
+  }
+}
+
+class Plain extends First {}
+
+////= lines-259	makeWith	First	string	make
+
+function round(label: string): void {
+  console.log(label + ": " + Child.make() + " | " + makeWith(Child) + " | " + Child.labelAbove() + " | " + Child.label);
+  console.log(label + ", the plain subclass: " + Plain.make() + " | " + makeWith(Plain) + " | " + Plain.label + " | own " + Object.hasOwn(Plain, "make"));
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += Child.make().length + makeWith(Plain).length + Child.labelAbove().length;
+console.log("2000 honest: " + warm);
+round("before");
+
+const original = First.make;
+////= lines-247	First.make	"replaced, this is "	name
+round("the parent's static method replaced");
+
+First.make = () => "an arrow";
+round("by an arrow");
+
+First.make = original;
+First.label = "first label, stored to";
+round("put back, and the label stored to");
+
+Plain.make = () => "own of the plain subclass";
+round("the plain subclass covers it");
+const view: { make?: () => string } = Plain;
+delete view.make;
+round("uncovered");
+
+Object.setPrototypeOf(Child, Second);
+Object.setPrototypeOf(Plain, Second);
+round("both classes hang under the second class");
+
+Object.setPrototypeOf(Child, First);
+Object.setPrototypeOf(Plain, First);
+round("restored");
+
+export {};
+//// super-is-called-late-twice-or-never.ts
+////= describe-9
+
+////= Point-4
+
+function Odd(Base: new () => Point, how: string) {
+  return class extends Base {
+    constructor() {
+      if (how === "twice") {
+        super();
+        super();
+      } else if (how === "never") {
+        return;
+      } else if (how === "never, an object is returned") {
+        return new Point();
+      } else if (how === "in a finally") {
+        try {
+          how.length;
+        } finally {
+          super();
+        }
+      } else {
+        super();
+      }
+    }
+  };
+}
+
+for (const how of ["at once", "twice", "never", "never, an object is returned", "in a finally"]) {
+  try {
+    const made = new (Odd(Point, how))();
+    console.log(how + ": " + describe(made) + " sum " + made.sum());
+  } catch (error) {
+    console.log(how + ": threw " + kind(error));
+  }
+}
+//// super-misses-a-link-that-was-created-with-the-method.ts
+////= First
+
+////= Child-3
+
+const child = new Child();
+console.log(child.greet());
+const between = Object.create(First.prototype, { greet: { value: () => "between" } });
+Object.setPrototypeOf(Child.prototype, between);
+console.log(child.greet());
+
+export {};
+//// super-runs-a-bound-class-and-the-instance-gets-the-prototype-of-the-base.ts
+////= lines-142	Base	x	1	sum
+const Bound = Base.bind(null);
+Object.defineProperty(Bound, "prototype", { value: Base.prototype });
+class Derived extends Bound {
+  twice(): number {
+    return this.sum() * 2;
+  }
+}
+const made = new Derived();
+console.log("zq prototype is the subclass's: " + (Object.getPrototypeOf(made) === Derived.prototype) + " the base's: " + (Object.getPrototypeOf(made) === Base.prototype));
+console.log("zq typeof twice " + typeof made.twice + " typeof sum " + typeof made.sum);
+//// symbol-keys-are-members-too.ts
+const id: unique symbol = Symbol("id");
+const note: unique symbol = Symbol("note");
+
+interface Tagged {
+  [id]: number;
+  name: string;
+}
+
+interface Noted extends Tagged {
+  [note]?: string;
+}
+
+const log: string[] = [];
+
+function read(t: Tagged): string {
+  return t.name + "#" + t[id];
+}
+
+function listing(t: Tagged): string {
+  const walked: string[] = [];
+  for (const key in t) walked.push(key);
+  const copy = { ...t };
+  return [
+    "keys " + Object.keys(t).join(),
+    "for-in " + walked.join(),
+    "json " + JSON.stringify(t),
+    "symbols " + Object.getOwnPropertySymbols(t).map(String).join(),
+    "own keys " + Reflect.ownKeys(t).map(String).join(),
+    "copy " + Reflect.ownKeys(copy).map(String).join() + " " + copy[id],
+    "assign " + Reflect.ownKeys(Object.assign({}, t)).map(String).join(),
+    "has " + (id in t) + " " + Object.hasOwn(t, id),
+  ].join("; ");
+}
+
+function bump(t: Tagged): number {
+  t[id] += 1;
+  return t[id];
+}
+
+class Entity {
+  [id] = 10;
+  name = "entity";
+}
+
+class Derived {
+  name = "derived";
+  get [id](): number {
+    log.push("get id");
+    return 20;
+  }
+  set [id](value: number) {
+    log.push("set id " + value);
+  }
+}
+
+const first: Tagged = { [id]: 1, name: "symbol first" };
+const lastKey: Tagged = { name: "symbol last", [id]: 2 };
+const extra = { [note]: "noted", name: "two symbols", [id]: 3, other: true };
+const hidden: Tagged = Object.defineProperty({ name: "hidden", [id]: 4 }, id, { enumerable: false });
+const inherited: Tagged = Object.assign(Object.create({ [id]: 5 }), { name: "inherited" });
+
+const table: Tagged[] = [first, lastKey, extra, hidden, inherited, new Entity(), new Derived()];
+
+for (const t of table) {
+  console.log(read(t) + " | " + listing(t) + " [" + log.join() + "]");
+  log.length = 0;
+}
+
+for (const t of table) {
+  console.log(t.name + ", bumped: " + bump(t) + " [" + log.join() + "]");
+  log.length = 0;
+}
+
+const noted: Noted = extra;
+console.log("an optional symbol key: " + noted[note] + " " + (note in noted) + " " + (note in first));
+delete noted[note];
+console.log("deleted: " + noted[note] + " " + (note in noted) + " " + Reflect.ownKeys(noted).map(String).join());
+
+const sameDescription = Symbol("id");
+const confusing = { [sameDescription]: -1, [id]: 6, name: "two symbols that print alike" };
+console.log(read(confusing) + " " + Object.getOwnPropertySymbols(confusing).length);
+
+let total = 0;
+for (let i = 0; i < 2000; i++) total += first[id] + read(first).length;
+console.log("2000 honest: " + total);
+console.log("then: " + table.map(read).join());
+log.length = 0;
+
+interface Money {
+  amount: number;
+  [Symbol.toPrimitive](hint: string): number | string;
+}
+
+const hints: string[] = [];
+const price: Money = {
+  amount: 5,
+  [Symbol.toPrimitive](hint) {
+    hints.push(hint);
+    return hint === "string" ? "five" : this.amount;
+  },
+};
+console.log("conversions: " + `${price}` + " " + String(price) + " " + Number(price) + " " + [price].join() + " " + hints.join());
+
+interface Bag {
+  items: string[];
+  [Symbol.iterator](): Iterator<string>;
+  readonly [Symbol.toStringTag]: string;
+}
+
+const bag: Bag = {
+  items: ["a", "b"],
+  [Symbol.iterator]() {
+    return [...this.items].reverse()[Symbol.iterator]();
+  },
+  [Symbol.toStringTag]: "Bag",
+};
+console.log("iterated: " + [...bag].join() + " " + Array.from(bag).join() + " " + Object.prototype.toString.call(bag) + " " + JSON.stringify(bag));
+
+export {};
+//// tags-that-are-numbers-booleans-null-and-enum-members.ts
+////= show-4
+
+const log: string[] = [];
+
+////= attempt-2
+
+////= lines-208	Kind	Dog	Cat
+
+type Pet = { kind: Kind.Dog; legs: number } | { kind: Kind.Cat; lives: string };
+type Result = { ok: true; value: number } | { ok: false; error: string };
+type Versioned = { version: 0; old: string } | { version: 1; fresh: number };
+type Maybe = { rest: null; last: number } | { rest: { n: number }; more: string };
+
+function petNumber(p: Pet): number {
+  return p.kind === Kind.Dog ? p.legs + 1 : p.lives.length;
+}
+
+function unwrap(r: Result): number {
+  return r.ok ? r.value + 1 : -r.error.length;
+}
+
+function unwrapNegated(r: Result): number {
+  if (!r.ok) return -r.error.length;
+  return r.value + 1;
+}
+
+function read(v: Versioned): number {
+  switch (v.version) {
+    case 0:
+      return v.old.length;
+    case 1:
+      return v.fresh + 1;
+  }
+}
+
+function tail(m: Maybe): number {
+  return m.rest === null ? m.last + 1 : m.rest.n + m.more.length;
+}
+
+attempt("honest", () => [petNumber({ kind: Kind.Dog, legs: 4 }), petNumber({ kind: Kind.Cat, lives: "nine" }), unwrap({ ok: true, value: 1 }), unwrap({ ok: false, error: "bad" }), unwrapNegated({ ok: true, value: 1 }), read({ version: 0, old: "old" }), read({ version: 1, fresh: 1 }), tail({ rest: null, last: 1 }), tail({ rest: { n: 1 }, more: "m" })]);
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += petNumber(i & 1 ? { kind: Kind.Dog, legs: i } : { kind: Kind.Cat, lives: "nine" }) + unwrap(i & 1 ? { ok: true, value: i } : { ok: false, error: "e" }) + read(i & 1 ? { version: 0, old: "o" } : { version: 1, fresh: i }) + tail({ rest: null, last: i });
+console.log("2000 honest rounds", warm);
+
+////= attempt-43	"a number forges the tag of a dog"	1	Dog	legs	4
+////= attempt-43	"a number forges the tag of a cat"	0	Cat	lives	"nine"
+////= attempt-43	"a number outside the enum as a tag"	7	Dog	legs	4
+attempt("a fraction and NaN as tags", () => {
+  const half: number = 0.5;
+  const nan: number = NaN;
+  const a: Kind.Dog = half;
+  const b: Kind.Dog = nan;
+  return [a, b].map(tag => {
+    try {
+      return petNumber({ kind: tag, legs: 4 });
+    } catch (error) {
+      return error instanceof Error ? error.constructor.name : "other";
+    }
+  });
+});
+attempt("negative zero as the tag 0", () => [read({ version: -0, old: "old" }), petNumber({ kind: -0, legs: 4 })]);
+attempt("ok is flipped through a wider view", () => {
+  const r: Result = [{ ok: true, value: 1 } satisfies Result][0];
+  const open: { ok: boolean } = r;
+  open.ok = false;
+  return unwrap(r);
+});
+attempt("ok is flipped the other way", () => {
+  const r: Result = [{ ok: false, error: "bad" } satisfies Result][0];
+  const open: { ok: boolean } = r;
+  open.ok = true;
+  return [unwrap(r), unwrapNegated(r)];
+});
+attempt("the version is raised through a wider view", () => {
+  const v: Versioned = [{ version: 0, old: "old" } satisfies Versioned][0];
+  const open: { version: number } = v;
+  open.version = 1;
+  const first = read(v);
+  open.version = 2;
+  return [first, read(v), typeof read(v)];
+});
+attempt("rest is cleared through a wider view", () => {
+  const m: Maybe = [{ rest: { n: 1 }, more: "m" } satisfies Maybe][0];
+  const open: { rest: { n: number } | null } = m;
+  open.rest = null;
+  return tail(m);
+});
+attempt("rest is filled through a wider view", () => {
+  const m: Maybe = [{ rest: null, last: 1 } satisfies Maybe][0];
+  const open: { rest: { n: number } | null } = m;
+  open.rest = { n: 5 };
+  return tail(m);
+});
+attempt("honest again", () => [petNumber({ kind: Kind.Dog, legs: 4 }), unwrap({ ok: true, value: 1 }), read({ version: 1, fresh: 1 }), tail({ rest: null, last: 1 })]);
+//// template-literal-types-hold-every-spelling-of-a-number.ts
+////= show-35
+
+type Id = `id-${number}`;
+type Size = `${number}px`;
+type Switch = `is-${boolean}`;
+type Big = `${bigint}n`;
+
+function make(n: number): Id {
+  return `id-${n}`;
+}
+function numberOf(id: Id): number {
+  return Number(id.slice(3));
+}
+////= lines-60	pixels	size	Size	number	parseFloat	size
+////= lines-101	isOn	value	Switch	"is-true"
+function isId(text: string): text is Id {
+  return text.startsWith("id-") && text.length > 3 && !Number.isNaN(Number(text.slice(3)));
+}
+
+const table: Record<Id, number> = {};
+function remember(id: Id, n: number): number {
+  table[id] = n;
+  return table[id];
+}
+
+const numbers: number[] = [0, -0, 1, 1.5, -1, NaN, Infinity, -Infinity, 1e21, 1e-7, 2 ** 31, 2 ** 53, 0xff, 1_000];
+for (const n of numbers) {
+  attempt(show(n), () => {
+    const id = make(n);
+    const size: Size = `${n}px`;
+    return [id, id.length, numberOf(id), remember(id, n), size, pixels(size)];
+  });
+}
+attempt("the table", () => [Object.keys(table), JSON.stringify(table)]);
+attempt("a key that was never stored", () => {
+  const missing: Id = "id-404";
+  const held: number = table[missing];
+  return [held, held + 1, typeof held, missing in table];
+});
+attempt("switches", () => {
+  const flags: boolean[] = [true, false];
+  const made: Switch[] = flags.map((flag): Switch => `is-${flag}`);
+  return [made, made.map(isOn)];
+});
+attempt("bigints", () => {
+  const values: bigint[] = [0n, -0n, -5n, 2n ** 64n];
+  const made: Big[] = values.map((value): Big => `${value}n`);
+  return made;
+});
+attempt("texts that a guard lets in", () =>
+  ["id-1", "id- 1", "id-0x10", "id-1e3", "id-", "id--0", "id-Infinity", "id-1n", "id-١", "ID-1", "id-\n2"].map(text => (isId(text) ? [text, numberOf(text)] : "no: " + text)),
+);
+attempt("written out", () => {
+  const ids: Id[] = ["id-1", "id-1.50", "id-1e3", "id-0x1F", "id--0", "id-+1", "id-.5", "id-5."];
+  return ids.map(numberOf);
+});
+//// tests-for-undefined-inside-closures-on-every-form-of-binding-typed-as-a-number.ts
+const list: number[] = [1, 2, 3];
+const holes = new Array<number>(2);
+
+////= ask-3
+
+////= lines-232	plainParameter	n	number	undefined
+
+function objectPattern({ n }: { n: number }): boolean {
+  return ask(() => n === undefined);
+}
+
+function listPattern([n]: number[]): boolean {
+  return ask(() => n === undefined);
+}
+
+function restElement(...[, n]: number[]): boolean {
+  return ask(() => n === undefined);
+}
+
+function restList(...rest: number[]): boolean {
+  return ask(() => rest[0] === undefined);
+}
+
+function defaultValue(n: number = list[9]): boolean {
+  return ask(() => n === undefined);
+}
+
+function capturedParameter(n: number): () => boolean {
+  return () => ask(() => n === undefined);
+}
+
+function localFromAnIndex(index: number): boolean {
+  const n = list[index];
+  return ask(() => n === undefined);
+}
+
+function reassignedLocal(index: number): boolean {
+  let n = 5;
+  n = list[index];
+  return ask(() => n === undefined);
+}
+
+function resultOfACall(index: number): boolean {
+  return ask(() => at(index) === undefined);
+}
+
+////= lines-40	at	index	number	number	list[index
+
+////= lines-217	apply	test	n	number	boolean
+
+class Holder {
+  n: number;
+  static kept: number = 1;
+  constructor(n: number) {
+    this.n = n;
+  }
+  field(): boolean {
+    return ask(() => this.n === undefined);
+  }
+  method(n: number): boolean {
+    return ask(() => n === undefined);
+  }
+  static check(n: number): boolean {
+    return ask(() => n === undefined);
+  }
+  get missing(): boolean {
+    return ask(() => this.n === undefined);
+  }
+  get value(): number {
+    return this.n;
+  }
+  answer = false;
+  set tested(n: number) {
+    this.answer = ask(() => n === undefined);
+  }
+}
+
+////= sent	ask(() => n === undefined)
+
+async function awaited(promise: Promise<number>): Promise<boolean> {
+  const n = await promise;
+  return ask(() => n === undefined);
+}
+
+function line(label: string, missing: boolean, there: boolean): void {
+  console.log(label + " " + missing + " " + there);
+}
+
+line("a parameter", plainParameter(list[9]), plainParameter(list[0]));
+const narrow = { n: 1 };
+const wide: { n: number | undefined } = narrow;
+wide.n = undefined;
+line("an object pattern", objectPattern(narrow), objectPattern({ n: 1 }));
+line("a list pattern", listPattern([]), listPattern([1]));
+line("an element of a rest pattern", restElement(1), restElement(1, 2));
+line("a rest list", restList(), restList(1));
+line("a rest list fed by holes", restList(...holes), restList(...list));
+line("a default value", defaultValue(), defaultValue(1));
+line("a captured parameter", capturedParameter(list[9])(), capturedParameter(list[0])());
+line("a local", localFromAnIndex(9), localFromAnIndex(0));
+line("a local that is stored to", reassignedLocal(9), reassignedLocal(0));
+line("the result of a call", resultOfACall(9), resultOfACall(0));
+line("a callback of the program's own function", apply(n => n === undefined, list[9]), apply(n => n === undefined, list[0]));
+line("a field", new Holder(list[9]).field(), new Holder(list[0]).field());
+line("a parameter of a method", new Holder(1).method(list[9]), new Holder(1).method(list[0]));
+line("a parameter of a static method", Holder.check(list[9]), Holder.check(list[0]));
+line("a field inside a getter", new Holder(list[9]).missing, new Holder(list[0]).missing);
+const missingHolder = new Holder(list[9]);
+const honestHolder = new Holder(list[0]);
+const fromAGetter = missingHolder.value === undefined;
+const fromAnHonestGetter = honestHolder.value === undefined;
+line("the result of a getter", fromAGetter, fromAnHonestGetter);
+missingHolder.tested = list[9];
+honestHolder.tested = list[0];
+line("the parameter of a setter", missingHolder.answer, honestHolder.answer);
+Holder.kept = list[9];
+const staticMissing = Holder.kept === undefined;
+Holder.kept = list[0];
+const staticThere = Holder.kept === undefined;
+line("a static field", staticMissing, staticThere);
+const answers: boolean[] = [];
+for (const n of holes) answers.push(ask(() => n === undefined));
+for (const n of list) answers.push(ask(() => n === undefined));
+console.log("the variable of for of " + answers.join());
+const steps = sent();
+steps.next(0);
+line("a value sent into a generator", steps.next(list[9]).value === true, steps.next(list[0]).value === true);
+line("an awaited value", await awaited(Promise.resolve(list[9])), await awaited(Promise.resolve(list[0])));
+const pair: [number, number] = [1, 2];
+pair.pop();
+const placeMissing = pair[1] === undefined;
+const placeThere = pair[0] === undefined;
+line("a place of a tuple", placeMissing, placeThere);
+const mapped = holes.concat(list).map((n, i, all) => all[i] === undefined);
+console.log("an element inside map " + mapped.join());
+console.log("Array.from " + Array.from(holes, n => n === undefined).join());
+console.log("find " + [holes.findIndex(n => n === undefined), holes.findLastIndex(n => n === undefined), list.findIndex(n => n === undefined)].join());
+
+export {};
+//// tests-for-undefined-used-as-values-on-every-form-of-binding-typed-as-a-number.ts
+const list: number[] = [1, 2, 3];
+const holes = new Array<number>(2);
+
+////= lines-101	plainParameter	n	number	undefined
+
+function objectPattern({ n }: { n: number }): boolean {
+  return n === undefined;
+}
+
+function listPattern([n]: number[]): boolean {
+  return n === undefined;
+}
+
+function restElement(...[, n]: number[]): boolean {
+  return n === undefined;
+}
+
+function restList(...rest: number[]): boolean {
+  return rest[0] === undefined;
+}
+
+function defaultValue(n: number = list[9]): boolean {
+  return n === undefined;
+}
+
+function capturedParameter(n: number): () => boolean {
+  return () => n === undefined;
+}
+
+function localFromAnIndex(index: number): boolean {
+  const n = list[index];
+  return n === undefined;
+}
+
+function reassignedLocal(index: number): boolean {
+  let n = 5;
+  n = list[index];
+  return n === undefined;
+}
+
+function resultOfACall(index: number): boolean {
+  return at(index) === undefined;
+}
+
+////= lines-40	at	index	number	number	list[index
+
+////= lines-217	apply	test	n	number	boolean
+
+class Holder {
+  n: number;
+  static kept: number = 1;
+  constructor(n: number) {
+    this.n = n;
+  }
+  field(): boolean {
+    return this.n === undefined;
+  }
+  method(n: number): boolean {
+    return n === undefined;
+  }
+  static check(n: number): boolean {
+    return n === undefined;
+  }
+  get missing(): boolean {
+    return this.n === undefined;
+  }
+  get value(): number {
+    return this.n;
+  }
+  answer = false;
+  set tested(n: number) {
+    this.answer = n === undefined;
+  }
+}
+
+////= sent	n === undefined
+
+async function awaited(promise: Promise<number>): Promise<boolean> {
+  const n = await promise;
+  return n === undefined;
+}
+
+function line(label: string, missing: boolean, there: boolean): void {
+  console.log(label + " " + missing + " " + there);
+}
+
+line("a parameter", plainParameter(list[9]), plainParameter(list[0]));
+const narrow = { n: 1 };
+const wide: { n: number | undefined } = narrow;
+wide.n = undefined;
+line("an object pattern", objectPattern(narrow), objectPattern({ n: 1 }));
+line("a list pattern", listPattern([]), listPattern([1]));
+line("an element of a rest pattern", restElement(1), restElement(1, 2));
+line("a rest list", restList(), restList(1));
+line("a rest list fed by holes", restList(...holes), restList(...list));
+line("a default value", defaultValue(), defaultValue(1));
+line("a captured parameter", capturedParameter(list[9])(), capturedParameter(list[0])());
+line("a local", localFromAnIndex(9), localFromAnIndex(0));
+line("a local that is stored to", reassignedLocal(9), reassignedLocal(0));
+line("the result of a call", resultOfACall(9), resultOfACall(0));
+line("a callback of the program's own function", apply(n => n === undefined, list[9]), apply(n => n === undefined, list[0]));
+line("a field", new Holder(list[9]).field(), new Holder(list[0]).field());
+line("a parameter of a method", new Holder(1).method(list[9]), new Holder(1).method(list[0]));
+line("a parameter of a static method", Holder.check(list[9]), Holder.check(list[0]));
+line("a field inside a getter", new Holder(list[9]).missing, new Holder(list[0]).missing);
+const missingHolder = new Holder(list[9]);
+const honestHolder = new Holder(list[0]);
+const fromAGetter = missingHolder.value === undefined;
+const fromAnHonestGetter = honestHolder.value === undefined;
+line("the result of a getter", fromAGetter, fromAnHonestGetter);
+missingHolder.tested = list[9];
+honestHolder.tested = list[0];
+line("the parameter of a setter", missingHolder.answer, honestHolder.answer);
+Holder.kept = list[9];
+const staticMissing = Holder.kept === undefined;
+Holder.kept = list[0];
+const staticThere = Holder.kept === undefined;
+line("a static field", staticMissing, staticThere);
+const answers: boolean[] = [];
+for (const n of holes) answers.push(n === undefined);
+for (const n of list) answers.push(n === undefined);
+console.log("the variable of for of " + answers.join());
+const steps = sent();
+steps.next(0);
+line("a value sent into a generator", steps.next(list[9]).value === true, steps.next(list[0]).value === true);
+line("an awaited value", await awaited(Promise.resolve(list[9])), await awaited(Promise.resolve(list[0])));
+const pair: [number, number] = [1, 2];
+pair.pop();
+const placeMissing = pair[1] === undefined;
+const placeThere = pair[0] === undefined;
+line("a place of a tuple", placeMissing, placeThere);
+const mapped = holes.concat(list).map((n, i, all) => all[i] === undefined);
+console.log("an element inside map " + mapped.join());
+console.log("Array.from " + Array.from(holes, n => n === undefined).join());
+console.log("find " + [holes.findIndex(n => n === undefined), holes.findLastIndex(n => n === undefined), list.findIndex(n => n === undefined)].join());
+
+export {};
+//// tests-inside-closures-ask-about-a-captured-parameter-typed-as-an-enum-member.ts
+////= Color
+
+type Tested = Color;
+
+////= ask-3
+
+////= lines-232	isUndefined	x	Tested	undefined
+
+function isNotUndefined(x: Tested): boolean {
+  return ask(() => x !== undefined);
+}
+
+////= lines-232	isNull	x	Tested	null
+
+function isNullish(x: Tested): boolean {
+  return ask(() => x == null);
+}
+
+////= lines-115	kindIsUndefined	Tested	"undefined"
+
+////= lines-115	kindIsNumber	Tested	"number"
+
+////= lines-263	kindIsNotNumber	"number"
+
+////= lines-115	kindIsString	Tested	"string"
+
+////= lines-263	kindIsNotString	"string"
+
+////= lines-115	kindIsBoolean	Tested	"boolean"
+
+////= lines-115	kindIsObject	Tested	"object"
+
+////= lines-263	kindIsNotObject	"object"
+
+////= lines-115	kindIsFunction	Tested	"function"
+
+function isFalsy(x: Tested): boolean {
+  return ask(() => !x);
+}
+
+function isTruthy(x: Tested): boolean {
+  return ask(() => !!x);
+}
+
+////= lines-232	isItself	x	Tested	x
+
+function isAList(x: Tested): boolean {
+  return ask(() => Array.isArray(x));
+}
+
+const honest: Tested = Color.Green;
+let warm = 0;
+////= for-19
+console.log("2000 honest rounds: " + warm);
+
+const values: Tested[] = [honest];
+const wide: unknown[] = values;
+wide.push(undefined, null, 0, -0, NaN, 5, 1.5, "", "text", false, true, {}, [], () => 1, 10n, Symbol.iterator);
+const labels = ["honest", "undefined", "null", "zero", "minus zero", "not a number", "five", "one and a half", "an empty string", "a text", "false", "true", "an object", "a list", "a function", "a big integer", "a symbol", "past the end"];
+
+////= for-14
+
+export {};
+//// tests-inside-closures-ask-about-a-captured-parameter-typed-as-an-instance.ts
+////= Point-10
+
+type Tested = Point;
+
+////= ask-3
+
+////= lines-232	isUndefined	x	Tested	undefined
+
+function isNotUndefined(x: Tested): boolean {
+  return ask(() => x !== undefined);
+}
+
+////= lines-232	isNull	x	Tested	null
+
+function isNullish(x: Tested): boolean {
+  return ask(() => x == null);
+}
+
+////= lines-115	kindIsUndefined	Tested	"undefined"
+
+////= lines-115	kindIsNumber	Tested	"number"
+
+////= lines-263	kindIsNotNumber	"number"
+
+////= lines-115	kindIsString	Tested	"string"
+
+////= lines-263	kindIsNotString	"string"
+
+////= lines-115	kindIsBoolean	Tested	"boolean"
+
+////= lines-115	kindIsObject	Tested	"object"
+
+////= lines-263	kindIsNotObject	"object"
+
+////= lines-115	kindIsFunction	Tested	"function"
+
+function isFalsy(x: Tested): boolean {
+  return ask(() => !x);
+}
+
+function isTruthy(x: Tested): boolean {
+  return ask(() => !!x);
+}
+
+////= lines-232	isItself	x	Tested	x
+
+function isAList(x: Tested): boolean {
+  return ask(() => Array.isArray(x));
+}
+
+function isAnObject(x: Tested): boolean {
+  return ask(() => x instanceof Object);
+}
+
+const honest: Tested = new Point();
+let warm = 0;
+////= for-18
+console.log("2000 honest rounds: " + warm);
+
+const values: Tested[] = [honest];
+const wide: unknown[] = values;
+wide.push(undefined, null, 0, -0, NaN, 5, 1.5, "", "text", false, true, {}, [], () => 1, 10n, Symbol.iterator);
+const labels = ["honest", "undefined", "null", "zero", "minus zero", "not a number", "five", "one and a half", "an empty string", "a text", "false", "true", "an object", "a list", "a function", "a big integer", "a symbol", "past the end"];
+
+////= for-11
+
+export {};

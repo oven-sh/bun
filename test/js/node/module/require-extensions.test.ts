@@ -64,6 +64,10 @@ test("custom require extension overwrite default loader with other default loade
 // Node's `.js` handler picks the format from the file name, so assigning it to
 // a TypeScript extension still strips types. @playwright/test 1.64 does this.
 test.concurrent("the .js handler assigned to TypeScript extensions still strips types", async () => {
+  const jsx = `
+      /** @jsxRuntime classic */
+      /** @jsx h */
+      const h = (tag, props, ...children) => ({ tag, children });`;
   using dir = tempDir("extensions-js-handler-by-name", {
     "types.ts": `export type Foo = { value: number };`,
     "spec.ts": `
@@ -76,22 +80,33 @@ test.concurrent("the .js handler assigned to TypeScript extensions still strips 
       const value: number = (2 as number)!;
       module.exports = { value };
     `,
-    "comp.tsx": `
-      const value: number = (3 as number)!;
+    "comp.tsx": `${jsx}
+      const value: number = (<div>3</div>).children[0] as any;
+      module.exports = { value: Number(value) };
+    `,
+    "comp.jsx": `${jsx}
+      module.exports = { value: Number((<div>4</div>).children[0]) };
+    `,
+    "a.spec.ts": `
+      const value: number = (5 as number)!;
       module.exports = { value };
     `,
-    "comp.jsx": `module.exports = { value: 4 };`,
     "plain.foo": `module.exports = { foo: true };`,
     "run.cjs": `
       const Module = require("module");
       const path = require("path");
-      for (const ext of [".ts", ".cts", ".tsx", ".jsx", ".foo"]) {
-        Module._extensions[ext] = Module._extensions[".js"];
+      const origJS = Module._extensions[".js"];
+      // Compound keys win the longest-extension match; the loader is still the one for ".ts".
+      for (const ext of [".ts", ".tsx", ".jsx", ".spec.ts", ".foo"]) {
+        Module._extensions[ext] = origJS;
       }
-      const required = ["./spec.ts", "./spec.cts", "./comp.tsx", "./comp.jsx", "./plain.foo"].map(f => require(f));
-      // Calling the handler directly, as a wrapping hook does.
+      // A hook that wraps the .js handler, as pirates, ts-node and Playwright do.
+      Module._extensions[".cts"] = (m, f) => origJS(m, f);
+      const files = ["./spec.ts", "./spec.cts", "./comp.tsx", "./comp.jsx", "./a.spec.ts", "./plain.foo"];
+      const required = files.map(f => require(f));
+      // Calling the handler directly.
       const direct = new Module("direct");
-      Module._extensions[".js"](direct, path.join(__dirname, "spec.ts"));
+      origJS(direct, path.join(__dirname, "spec.ts"));
       console.log(JSON.stringify({ required, direct: direct.exports }));
     `,
   });
@@ -106,8 +121,48 @@ test.concurrent("the .js handler assigned to TypeScript extensions still strips 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual({
-    required: [{ value: 1 }, { value: 2 }, { value: 3 }, { value: 4 }, { foo: true }],
+    required: [{ value: 1 }, { value: 2 }, { value: 3 }, { value: 4 }, { value: 5 }, { foo: true }],
     direct: { value: 1 },
+  });
+  expect(exitCode).toBe(0);
+});
+// The .js handler gives a .js file the same loader as a plain require(), so a
+// hook that wraps and restores it does not turn JSX in .js files into a parse error.
+test.concurrent("the .js handler keeps the default loader for .js files", async () => {
+  using dir = tempDir("extensions-js-handler-js-file", {
+    "jsx-in-js.js": `
+      /** @jsxRuntime classic */
+      /** @jsx h */
+      const h = (tag, props, ...children) => ({ tag, children });
+      module.exports = (<div>hello</div>).children[0];
+    `,
+    "ts-in-js.js": `const value: string = "typescript"; module.exports = value;`,
+    "run.cjs": `
+      const Module = require("module");
+      const origJS = Module._extensions[".js"];
+      const load = f => { try { return require(f); } catch (e) { return "threw " + e.name; } };
+      const results = {};
+      Module._extensions[".js"] = (m, f) => origJS(m, f);
+      results.wrapped = [load("./jsx-in-js.js"), load("./ts-in-js.js")];
+      Module._extensions[".js"] = origJS;
+      for (const f of ["./jsx-in-js.js", "./ts-in-js.js"]) delete require.cache[require.resolve(f)];
+      results.restored = [load("./jsx-in-js.js"), load("./ts-in-js.js")];
+      console.log(JSON.stringify(results));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.cjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    wrapped: ["hello", "threw AggregateError"],
+    restored: ["hello", "threw AggregateError"],
   });
   expect(exitCode).toBe(0);
 });

@@ -42,7 +42,9 @@ test("Module._extensions override should not allow TypeScript syntax in .js file
   expect(stdout).toContain("SUCCESS: Correctly rejected TypeScript syntax in .js file");
 });
 
-test("Module._extensions override should not allow JSX syntax in .js files", async () => {
+// The built-in .js handler gives a .js file the loader a plain require() uses
+// (Bun parses JSX in .js files), so a wrapper around it is transparent.
+test("Module._extensions override should keep the default loader for .js files", async () => {
   using dir = tempDir("module-extensions-jsx-in-js", {
     "index.js": `
       const Module = require("module");
@@ -54,17 +56,14 @@ test("Module._extensions override should not allow JSX syntax in .js files", asy
         return orig(m, f);
       };
 
-      // This should error because it has JSX syntax in a .js file
-      try {
-        require("./jsx-syntax.js");
-        console.log("ERROR: Should have failed to parse JSX syntax in .js file");
-        process.exit(1);
-      } catch (err) {
-        console.log("SUCCESS: Correctly rejected JSX syntax in .js file");
-        process.exit(0);
-      }
+      // JSX in a .js file loads, as it does without the override
+      const { element } = require("./jsx-syntax.js");
+      console.log("SUCCESS: JSX in .js file loaded:", element.tag);
     `,
     "jsx-syntax.js": `
+      /** @jsxRuntime classic */
+      /** @jsx h */
+      const h = (tag, props, ...children) => ({ tag, children });
       const element = <div>Hello</div>;
       export { element };
     `,
@@ -80,8 +79,8 @@ test("Module._extensions override should not allow JSX syntax in .js files", asy
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stdout).toContain("SUCCESS: JSX in .js file loaded: div");
   expect(exitCode).toBe(0);
-  expect(stdout).toContain("SUCCESS: Correctly rejected JSX syntax in .js file");
 });
 
 test("Module._extensions override should preserve loader type for each extension", async () => {
@@ -249,13 +248,14 @@ test("Module._extensions override should handle cross-assignment correctly", asy
         process.exit(1);
       }
 
-      // And .ts files should reject TypeScript syntax
+      // The .js handler picks the loader from the file name, as Node's does,
+      // so .ts files still strip types
       try {
-        require("./typescript-syntax.ts");
-        console.log("ERROR: .ts with JS loader should reject TypeScript");
-        process.exit(1);
+        const tsWithJS = require("./typescript-syntax.ts");
+        console.log("SUCCESS: .ts with JS handler still strips types:", tsWithJS.value);
       } catch (err) {
-        console.log("SUCCESS: .ts with JS loader correctly rejects TypeScript");
+        console.log("ERROR: .ts with JS handler failed:", err.message);
+        process.exit(1);
       }
     `,
     "typescript-syntax.js": `
@@ -280,7 +280,7 @@ test("Module._extensions override should handle cross-assignment correctly", asy
 
   expect(exitCode).toBe(0);
   expect(stdout).toContain("SUCCESS: .js with TS loader accepts TypeScript");
-  expect(stdout).toContain("SUCCESS: .ts with JS loader correctly rejects TypeScript");
+  expect(stdout).toContain("SUCCESS: .ts with JS handler still strips types: typescript");
 });
 
 test("Module._extensions override chain should preserve correct loader", async () => {

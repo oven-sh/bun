@@ -128,20 +128,34 @@ impl Default for CustomLoader {
     }
 }
 
-/// The loader a built-in `Module._extensions` handler stands for once it is
-/// stored under the extension `ext`.
+/// The loader the built-in `Module._extensions[".js"]` handler uses for a file
+/// with the extension `ext` (with its leading `.`).
 ///
-/// Node's `.js` handler does not force a format. It picks one from the file
-/// name it is given, so `Module._extensions[".ts"] = Module._extensions[".js"]`
-/// still strips types from `.ts` files. The `.ts` and `.json` handlers have no
-/// Node counterpart and keep their fixed loader, so `.js = .ts` parses `.js`
-/// files as TypeScript.
+/// Node's `.js` handler does not force a format. It picks a JavaScript flavor
+/// from the file name it is given (`.ts`, `.cts` and `.mts` strip types), and
+/// compiles any other file as JavaScript. Bun does the same with its loader
+/// map, so `.js` files get the JSX-enabled loader that a plain `require()`
+/// gives them.
+pub(crate) fn js_handler_loader(vm: &VirtualMachine, ext: &[u8]) -> Loader {
+    match vm.transpiler.options.loader(ext) {
+        loader if loader.is_javascript_like() => loader,
+        _ => Loader::Js,
+    }
+}
+
+/// The loader a built-in `Module._extensions` handler stands for once it is
+/// stored under the extension key `ext`.
+///
+/// Node's `.json` and `.node` handlers, and Bun's own `.ts` handler, each mean
+/// one fixed loader, so `.js = .ts` parses `.js` files as TypeScript. The
+/// `.js` handler picks the loader from the file name, so `.ts = .js` still
+/// strips types.
 fn builtin_handler_loader(vm: &VirtualMachine, ext: &[u8], handler: ApiLoader) -> Loader {
     if handler == ApiLoader::JS {
         // `ext` starts with `.`, so the last `.` always exists. For a key such
         // as `.test.ts` the file's own extension is `.ts`.
         let last_dot = strings::last_index_of_char(ext, b'.').unwrap_or(0);
-        return crate::module_loader::default_loader_for_ext(vm, &ext[last_dot..]);
+        return js_handler_loader(vm, &ext[last_dot..]);
     }
     Loader::from_api(handler.to_schema())
 }
@@ -258,4 +272,16 @@ extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
     if on_require_extension_modify_non_function(global, str_slice.slice()).is_err() {
         bun_core::out_of_memory();
     }
+}
+
+/// C++ entry point for a direct call of the built-in `.js` handler: the loader
+/// for `filename`, as a `BunLoaderType`.
+#[unsafe(no_mangle)]
+extern "C" fn NodeModuleModule__jsHandlerLoader(
+    global: &JSGlobalObject,
+    filename: &BunString,
+) -> ApiLoader {
+    let filename = filename.to_utf8();
+    let ext = bun_paths::fs::PathName::find_extname(filename.slice());
+    ApiLoader(js_handler_loader(global.bun_vm(), ext).to_api() as u8)
 }

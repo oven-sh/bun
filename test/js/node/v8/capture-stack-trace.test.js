@@ -1249,6 +1249,60 @@ test.each([
   });
 });
 
+// The getter of the context collects and then compiles functions, so the cells that the collection freed are in use
+// again before the trace is formatted. With the JSC option, a collection drops the code of `mid` and `top`, which wait.
+const collectingGetterInVm = `import vm from "node:vm";
+     const context = vm.createContext({ collect: () => Bun.gc(true), print: console.log });
+     vm.runInContext(\`
+       function compileMany() { for (let i = 0; i < 150; i++) new Function("a", "return a + " + i)(i); }
+       Object.defineProperty(Error, "prepareStackTrace", { get() { collect(); compileMany(); } });
+       var printFrames = target => print(target.stack.split("\\\\n").map(line => line.trim().split(" (")[0]).join(" | "));
+     \`, context);`;
+const capturedUnderAwaitChain = (target, printFrames) => `
+       async function leaf() {
+         await null;
+         const target = ${target};
+         Error.captureStackTrace(target);
+         ${printFrames}(target);
+       }
+       async function mid() { await leaf(); }
+       async function top() { await mid(); }
+       top();`;
+test.concurrent.each([
+  [
+    "Error.captureStackTrace(object) in that context",
+    `${collectingGetterInVm}
+     vm.runInContext(\`${capturedUnderAwaitChain("{}", "printFrames")}\`, context);`,
+    "Error | at leaf | at async mid | at async top",
+  ],
+  [
+    "Error.captureStackTrace(error already read) in that context",
+    `${collectingGetterInVm}
+     vm.runInContext(\`${capturedUnderAwaitChain(`(error => (error.stack, error))(new RangeError("boom"))`, "printFrames")}\`, context);`,
+    "RangeError: boom | at leaf | at async mid | at async top",
+  ],
+  [
+    "Error.captureStackTrace(object of that context) in the main context",
+    `${collectingGetterInVm}
+     const objectOfContext = vm.runInContext("({})", context);
+     ${capturedUnderAwaitChain("objectOfContext", `vm.runInContext("printFrames", context)`)}`,
+    "Error | at leaf | at async mid | at async top",
+  ],
+])(
+  "a node:vm Error.prepareStackTrace getter that collects cannot invalidate the trace of %s",
+  async (_, source, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: { ...bunEnv, BUN_JSC_forceCodeBlockToJettisonDueToOldAge: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({ stdout: expected, signalCode: null });
+    expect(exitCode).toBe(0);
+  },
+);
+
 test("Error.captureStackTrace inside error constructor works", () => {
   class ExtendedError extends Error {
     constructor() {
@@ -2405,26 +2459,6 @@ test.concurrent("Error.captureStackTrace replaces a stack that a collection mate
 // not retain them either, and they are garbage by the time `.stack` is first read. The `finally`
 // blocks keep each `return` out of tail position, so every frame stays in the trace.
 const errorWithDeadFrames = `new Function('"use strict"; function inner() { try { return new Error("x"); } finally {} } try { return inner(); } finally {}')()`;
-// The getter of the context collects and then compiles functions, so the cells that the collection freed are in use
-// again before the trace is formatted. With the JSC option, a collection drops the code of `mid` and `top`, which wait.
-const jettisonWaitingCode = { BUN_JSC_forceCodeBlockToJettisonDueToOldAge: "1" };
-const collectingGetterInVm = `import vm from "node:vm";
-     const context = vm.createContext({ collect: () => Bun.gc(true), print: console.log });
-     vm.runInContext(\`
-       function compileMany() { for (let i = 0; i < 600; i++) new Function("a", "return a + " + i)(i); }
-       Object.defineProperty(Error, "prepareStackTrace", { get() { collect(); compileMany(); } });
-       var printFrames = target => print(target.stack.split("\\\\n").map(line => line.trim().split(" (")[0]).join(" | "));
-     \`, context);`;
-const capturedUnderAwaitChain = (target, printFrames) => `
-       async function leaf() {
-         await null;
-         const target = ${target};
-         Error.captureStackTrace(target);
-         ${printFrames}(target);
-       }
-       async function mid() { await leaf(); }
-       async function top() { await mid(); }
-       top();`;
 test.concurrent.each([
   [
     "Bun.gc(true) in Error.prepareStackTrace",
@@ -2483,42 +2517,17 @@ test.concurrent.each([
      console.log(e.stack.split("\\n")[0] + " | " + /at (\\w+)/.exec(e.stack)?.[1]);`,
     "Error: x | capture",
   ],
-  [
-    "a node:vm Error.prepareStackTrace getter collects during Error.captureStackTrace(object) in that context",
-    `${collectingGetterInVm}
-     vm.runInContext(\`${capturedUnderAwaitChain("{}", "printFrames")}\`, context);`,
-    "Error | at leaf | at async mid | at async top",
-    jettisonWaitingCode,
-  ],
-  [
-    "a node:vm Error.prepareStackTrace getter collects during Error.captureStackTrace(error already read) in that context",
-    `${collectingGetterInVm}
-     vm.runInContext(\`${capturedUnderAwaitChain(`(error => (error.stack, error))(new RangeError("boom"))`, "printFrames")}\`, context);`,
-    "RangeError: boom | at leaf | at async mid | at async top",
-    jettisonWaitingCode,
-  ],
-  [
-    "a node:vm Error.prepareStackTrace getter collects during Error.captureStackTrace(object of that context) in the main context",
-    `${collectingGetterInVm}
-     const objectOfContext = vm.runInContext("({})", context);
-     ${capturedUnderAwaitChain("objectOfContext", `vm.runInContext("printFrames", context)`)}`,
-    "Error | at leaf | at async mid | at async top",
-    jettisonWaitingCode,
-  ],
-])(
-  "user JS that runs while .stack is being formatted cannot invalidate the trace: %s",
-  async (_, source, expected, ...[env]) => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", source],
-      env: { ...bunEnv, ...env },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({ stdout: expected, signalCode: null });
-    expect(exitCode).toBe(0);
-  },
-);
+])("user JS that runs while .stack is being formatted cannot invalidate the trace: %s", async (_, source, expected) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", source],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({ stdout: expected, signalCode: null });
+  expect(exitCode).toBe(0);
+});
 
 test("Error.prepareStackTrace call sites keep their own file when a hidden frame is on the stack", async () => {
   // A bound function call is a frame with private implementation visibility. JSC omits it from the

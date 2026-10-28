@@ -643,8 +643,11 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
     return jsString(vm, result);
 }
 
+// A trace of the default length is rooted on the stack, with no allocation.
+using FrameCells = JSC::MarkedArgumentBufferWithSize<2 * DEFAULT_ERROR_STACK_TRACE_LIMIT>;
+
 // ErrorInstance holds a frame's callee and code block weakly. Root them while user JS can run.
-static void protectFrameCells(JSC::MarkedArgumentBuffer& cells, const Vector<StackFrame>& stackTrace)
+static void protectFrameCells(FrameCells& cells, const Vector<StackFrame>& stackTrace)
 {
     cells.ensureCapacity(stackTrace.size() * 2);
     for (auto& frame : stackTrace) {
@@ -658,7 +661,7 @@ static void protectFrameCells(JSC::MarkedArgumentBuffer& cells, const Vector<Sta
 static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance)
 {
     // Nothing else roots the frames: a collection, or the program's getter or formatter, can run while they are formatted.
-    JSC::MarkedArgumentBuffer protectedFrameCells;
+    FrameCells protectedFrameCells;
     protectFrameCells(protectedFrameCells, stackTrace);
     if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);

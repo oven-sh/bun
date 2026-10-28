@@ -875,8 +875,7 @@ impl UnresolvedColor {
         Err(input.new_custom_error(ParserError::invalid_value))
     }
 
-    /// A channel keyword in the alpha needs the origin, which the folded form does not keep.
-    /// Fails before the alpha is buffered: a later failure makes the caller parse it again, 2^depth when nested.
+    /// Fails when the alpha names a channel of the origin. Runs before the alpha is buffered.
     fn expect_no_channel_keyword(
         input: &mut Parser,
         parser: &css_values::color::ComponentParser,

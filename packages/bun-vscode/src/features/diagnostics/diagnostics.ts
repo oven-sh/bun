@@ -2,13 +2,9 @@ import { Socket } from "node:net";
 import * as os from "node:os";
 import { inspect } from "node:util";
 import * as vscode from "vscode";
-import {
-  getAvailablePort,
-  NodeSocketDebugAdapter,
-  TCPSocketSignal,
-  UnixSignal,
-} from "../../../../bun-debug-adapter-protocol";
+import { getAvailablePort, TCPSocketSignal, UnixSignal } from "../../../../bun-debug-adapter-protocol";
 import type { JSC } from "../../../../bun-inspector-protocol";
+import { NodeSocketInspector } from "../../../../bun-inspector-protocol/src/inspector/node-socket";
 import { getConfig } from "../../extension";
 
 const output = vscode.window.createOutputChannel("Bun - Diagnostics");
@@ -120,40 +116,37 @@ class BunDiagnosticsManager {
    * Called when Bun pings BUN_INSPECT_NOTIFY (indicating a program has started).
    */
   private async handleSocketConnection(socket: Socket) {
-    const debugAdapter = new NodeSocketDebugAdapter(socket);
+    const inspector = new NodeSocketInspector(socket);
 
     this.editorState.clearAll("A new socket connected");
 
-    debugAdapter.on("LifecycleReporter.reload", async () => {
+    inspector.on("LifecycleReporter.reload", async () => {
       this.editorState.clearAll("LifecycleReporter reported a reload event");
     });
 
-    debugAdapter.on("Inspector.event", e => {
+    inspector.on("Inspector.event", e => {
       output.appendLine(`Received inspector event: ${e.method}`);
     });
 
-    debugAdapter.on("Inspector.error", e => {
+    inspector.on("Inspector.error", e => {
       output.appendLine(inspect(e, true, null));
     });
 
-    debugAdapter.on("LifecycleReporter.error", event => this.handleLifecycleError(event));
+    inspector.on("LifecycleReporter.error", event => this.handleLifecycleError(event));
 
-    const ok = await debugAdapter.start();
+    const ok = await inspector.start();
 
     if (!ok) {
       await vscode.window.showErrorMessage("Failed to start debug adapter");
-      debugAdapter.removeAllListeners();
+      inspector.removeAllListeners();
 
       return;
     }
 
-    debugAdapter.initialize({
-      adapterID: "bun-vsc-terminal-debug-adapter",
-      enableControlFlowProfiler: false,
-      enableLifecycleAgentReporter: true,
-      sendImmediatePreventExit: false,
-      enableDebugger: false, // Performance overhead when debugger is enabled
-    });
+    // No debug adapter here: its initialize() also enables Console and breakpoints in every process that connects.
+    inspector
+      .send("LifecycleReporter.enable")
+      .catch(error => output.appendLine(`LifecycleReporter.enable failed: ${error.message}`));
   }
 
   private handleLifecycleError(event: JSC.LifecycleReporter.ErrorEvent) {

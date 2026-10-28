@@ -3,8 +3,8 @@
 import assert from "node:assert";
 import {
   asciiLiteral,
-  Builtin,
   BufferSourceType,
+  Builtin,
   ByteSpanType,
   type CalledFromRustFunction,
   type Capability,

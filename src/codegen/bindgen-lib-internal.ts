@@ -4,12 +4,12 @@ import assert from "node:assert";
 import util from "node:util";
 import type {
   ClassColumns,
-  Conversion as TableConversion,
   DirectForm,
   EntryColumns,
   ParameterType,
   Primitive,
   SignatureColumns,
+  Conversion as TableConversion,
   TypeSpec,
 } from "./builtins/vocabulary.ts";
 import { parseDeclaredAlternative, typeScriptOf, type DeclaredAlternative } from "./declared-type-checks.ts";

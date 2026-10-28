@@ -1,0 +1,4 @@
+{
+  "build": ["--define", "process.env.NODE_ENV=\"production\""],
+  "reference": "compiled"
+}

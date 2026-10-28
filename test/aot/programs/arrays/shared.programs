@@ -1,0 +1,3299 @@
+////: attempt
+function attempt(run: () => string): string {
+  let text: string;
+  try {
+    text = run();
+  } catch (error) {
+    text = "threw " + (error as Error).constructor.name;
+  }
+  if (events !== "") text += " (" + events.trim() + ")";
+  events = "";
+  return text;
+}
+////: attempt-5
+function attempt(action) {
+  try {
+    return String(action());
+  } catch (error) {
+    return error.«1»e;
+  }
+}
+////: build
+function build<T>(n: number, element: (k: number) => T, holes: number): T[] {
+  const a: T[] = [];
+  for (let k = 0; k < n; k++) a.push(element(k));
+  if (holes) for (let k = 1; k < n; k += holes) delete a[k];
+  return a;
+}
+////: changed
+function changed(a: number[], change: (a: number[]) => void): number[] {
+  change(a);
+  return a;
+}
+////: digest
+function digest(list«1» {
+  let sum = 0;
+  let holes = 0;
+  for (let i = 0; i < list.length; i++) {
+    const value = list[i];
+    if (value === undefined) holes++;
+    else sum = (sum + value * (i + 1)) % 1000003;
+  }
+  return list.length + «2» + sum + «2» + holes;
+}
+////: inRuns
+function inRuns(parts: string[]): string {
+  let text = "";
+  for (let i = 0; i < parts.length; ) {
+    let end = i + 1;
+    while (end < parts.length && parts[end] === parts[i]) end++;
+    text += (i > 0 ? " ; " : "") + parts[i] + (end - i > 1 ? "*" + (end - i) : "");
+    i = end;
+  }
+  return text;
+}
+////: lines-19
+function «1»(«2»: number[]): number {
+  let «3» = 0;
+  for (let «4» = 0; «4» < «2».length; «4»++) «3» += «5»];
+  return «3»;
+}
+////: lines-35
+function «1»(«2»: number): number[] {
+  const «3»: number[] = [];
+  for (let i = 0; i < «2»; i++) «3».push(i + «4»);
+  return «3»;
+}
+////: lines-38
+function «1»(«2»: number[]): number {
+  let «3» = 0;
+  for (const value of «2») «3» += value;
+  return «3»;
+}
+////: lines-58
+function «1»): string {
+  let total = 0, bits = 0;
+  for (let i = 0; i < a.length; i++) {
+    if (i === when) «2»;
+    total += a[i];
+    bits = (bits << 1) ^ (a[i] * 4);
+  }
+  return show(total) + " " + bits;
+}
+////: lines-71
+try {
+  «1»);
+} catch (error) {
+  console.log(error instanceof TypeError);
+}
+////: otherPrototypeOf
+function otherPrototypeOf(x: any): any {
+    const p: any = Object.create(Object.getPrototypeOf(x));
+    if (Array.isArray(x)) { p.map = () => [-21]; p.includes = () => true; p.join = () => "join of another prototype"; p.some = () => true; p.filter = () => [-22]; }
+    else { p.has = () => true; p.get = () => -21; p.forEach = () => { marks += 1000; }; }
+    return p;
+}
+////: outcome
+function outcome«1»): string {
+  let text: string;
+  try {
+    text = «2»);
+  } catch (error) {
+    text = "threw " + (error as Error).constructor.name;
+  }
+  return text + " " + list(a);
+}
+////: plain-array-aNamedProperty
+function plain_array_aNamedProperty(): string {
+    const seen: string[] = [];
+    seen.push(show(array_aNamedProperty.map((x: number) => x * 2)));
+    seen.push(show(array_aNamedProperty.includes(99)));
+    seen.push(show(array_aNamedProperty.join("-")));
+    seen.push(show(array_aNamedProperty.some((x: number) => x > 50)));
+    seen.push(show(array_aNamedProperty.length));
+    seen.push(show([...array_aNamedProperty]));
+    seen.push(show(sumOf_array_aNamedProperty()));
+    seen.push(show(eachOf_array_aNamedProperty()));
+    seen.push(show(array_aNamedProperty.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-anHeirAtBirth
+function plain_array_anHeirAtBirth(): string {
+    const seen: string[] = [];
+    seen.push(show(array_anHeirAtBirth.map((x: number) => x * 2)));
+    seen.push(show(array_anHeirAtBirth.includes(99)));
+    seen.push(show(array_anHeirAtBirth.join("-")));
+    seen.push(show(array_anHeirAtBirth.some((x: number) => x > 50)));
+    seen.push(show(array_anHeirAtBirth.length));
+    seen.push(show([...array_anHeirAtBirth]));
+    seen.push(show(sumOf_array_anHeirAtBirth()));
+    seen.push(show(eachOf_array_anHeirAtBirth()));
+    seen.push(show(array_anHeirAtBirth.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-anHeirLater
+function plain_array_anHeirLater(): string {
+    const seen: string[] = [];
+    seen.push(show(array_anHeirLater.map((x: number) => x * 2)));
+    seen.push(show(array_anHeirLater.includes(99)));
+    seen.push(show(array_anHeirLater.join("-")));
+    seen.push(show(array_anHeirLater.some((x: number) => x > 50)));
+    seen.push(show(array_anHeirLater.length));
+    seen.push(show([...array_anHeirLater]));
+    seen.push(show(sumOf_array_anHeirLater()));
+    seen.push(show(eachOf_array_anHeirLater()));
+    seen.push(show(array_anHeirLater.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-anotherLater
+function plain_array_anotherLater(): string {
+    const seen: string[] = [];
+    seen.push(show(array_anotherLater.map((x: number) => x * 2)));
+    seen.push(show(array_anotherLater.includes(99)));
+    seen.push(show(array_anotherLater.join("-")));
+    seen.push(show(array_anotherLater.some((x: number) => x > 50)));
+    seen.push(show(array_anotherLater.length));
+    seen.push(show([...array_anotherLater]));
+    seen.push(show(sumOf_array_anotherLater()));
+    seen.push(show(eachOf_array_anotherLater()));
+    seen.push(show(array_anotherLater.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-anotherLaterThatIsKept
+function plain_array_anotherLaterThatIsKept(): string {
+    const seen: string[] = [];
+    seen.push(show(array_anotherLaterThatIsKept.map((x: number) => x * 2)));
+    seen.push(show(array_anotherLaterThatIsKept.includes(99)));
+    seen.push(show(array_anotherLaterThatIsKept.join("-")));
+    seen.push(show(array_anotherLaterThatIsKept.some((x: number) => x > 50)));
+    seen.push(show(array_anotherLaterThatIsKept.length));
+    seen.push(show([...array_anotherLaterThatIsKept]));
+    seen.push(show(sumOf_array_anotherLaterThatIsKept()));
+    seen.push(show(eachOf_array_anotherLaterThatIsKept()));
+    seen.push(show(array_anotherLaterThatIsKept.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-argumentsObject
+function plain_array_argumentsObject(): string {
+    const seen: string[] = [];
+    seen.push(show(array_argumentsObject.map((x: number) => x * 2)));
+    seen.push(show(array_argumentsObject.includes(99)));
+    seen.push(show(array_argumentsObject.join("-")));
+    seen.push(show(array_argumentsObject.some((x: number) => x > 50)));
+    seen.push(show(array_argumentsObject.length));
+    seen.push(show([...array_argumentsObject]));
+    seen.push(show(sumOf_array_argumentsObject()));
+    seen.push(show(eachOf_array_argumentsObject()));
+    seen.push(show(array_argumentsObject.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-argumentsObjectByKey
+function plain_array_argumentsObjectByKey(): string {
+    const seen: string[] = [];
+    seen.push(show(array_argumentsObjectByKey.map((x: number) => x * 2)));
+    seen.push(show(array_argumentsObjectByKey.includes(99)));
+    seen.push(show(array_argumentsObjectByKey.join("-")));
+    seen.push(show(array_argumentsObjectByKey.some((x: number) => x > 50)));
+    seen.push(show(array_argumentsObjectByKey.length));
+    seen.push(show([...array_argumentsObjectByKey]));
+    seen.push(show(sumOf_array_argumentsObjectByKey()));
+    seen.push(show(eachOf_array_argumentsObjectByKey()));
+    seen.push(show(array_argumentsObjectByKey.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-assignedAtBirth
+function plain_array_assignedAtBirth(): string {
+    const seen: string[] = [];
+    seen.push(show(array_assignedAtBirth.map((x: number) => x * 2)));
+    seen.push(show(array_assignedAtBirth.includes(99)));
+    seen.push(show(array_assignedAtBirth.join("-")));
+    seen.push(show(array_assignedAtBirth.some((x: number) => x > 50)));
+    seen.push(show(array_assignedAtBirth.length));
+    seen.push(show([...array_assignedAtBirth]));
+    seen.push(show(sumOf_array_assignedAtBirth()));
+    seen.push(show(eachOf_array_assignedAtBirth()));
+    seen.push(show(array_assignedAtBirth.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-awaited
+function plain_array_awaited(): string {
+    const seen: string[] = [];
+    seen.push(show(array_awaited.map((x: number) => x * 2)));
+    seen.push(show(array_awaited.includes(99)));
+    seen.push(show(array_awaited.join("-")));
+    seen.push(show(array_awaited.some((x: number) => x > 50)));
+    seen.push(show(array_awaited.length));
+    seen.push(show([...array_awaited]));
+    seen.push(show(sumOf_array_awaited()));
+    seen.push(show(eachOf_array_awaited()));
+    seen.push(show(array_awaited.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-callbackBound
+function plain_array_callbackBound(): string {
+    const seen: string[] = [];
+    seen.push(show(array_callbackBound.map((x: number) => x * 2)));
+    seen.push(show(array_callbackBound.includes(99)));
+    seen.push(show(array_callbackBound.join("-")));
+    seen.push(show(array_callbackBound.some((x: number) => x > 50)));
+    seen.push(show(array_callbackBound.length));
+    seen.push(show([...array_callbackBound]));
+    seen.push(show(sumOf_array_callbackBound()));
+    seen.push(show(eachOf_array_callbackBound()));
+    seen.push(show(array_callbackBound.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-callbackNotKnown
+function plain_array_callbackNotKnown(): string {
+    const seen: string[] = [];
+    seen.push(show(array_callbackNotKnown.map((x: number) => x * 2)));
+    seen.push(show(array_callbackNotKnown.includes(99)));
+    seen.push(show(array_callbackNotKnown.join("-")));
+    seen.push(show(array_callbackNotKnown.some((x: number) => x > 50)));
+    seen.push(show(array_callbackNotKnown.length));
+    seen.push(show([...array_callbackNotKnown]));
+    seen.push(show(sumOf_array_callbackNotKnown()));
+    seen.push(show(eachOf_array_callbackNotKnown()));
+    seen.push(show(array_callbackNotKnown.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-callbackOneOfTwo
+function plain_array_callbackOneOfTwo(): string {
+    const seen: string[] = [];
+    seen.push(show(array_callbackOneOfTwo.map((x: number) => x * 2)));
+    seen.push(show(array_callbackOneOfTwo.includes(99)));
+    seen.push(show(array_callbackOneOfTwo.join("-")));
+    seen.push(show(array_callbackOneOfTwo.some((x: number) => x > 50)));
+    seen.push(show(array_callbackOneOfTwo.length));
+    seen.push(show([...array_callbackOneOfTwo]));
+    seen.push(show(sumOf_array_callbackOneOfTwo()));
+    seen.push(show(eachOf_array_callbackOneOfTwo()));
+    seen.push(show(array_callbackOneOfTwo.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-callbackOutOfAField
+function plain_array_callbackOutOfAField(): string {
+    const seen: string[] = [];
+    seen.push(show(array_callbackOutOfAField.map((x: number) => x * 2)));
+    seen.push(show(array_callbackOutOfAField.includes(99)));
+    seen.push(show(array_callbackOutOfAField.join("-")));
+    seen.push(show(array_callbackOutOfAField.some((x: number) => x > 50)));
+    seen.push(show(array_callbackOutOfAField.length));
+    seen.push(show([...array_callbackOutOfAField]));
+    seen.push(show(sumOf_array_callbackOutOfAField()));
+    seen.push(show(eachOf_array_callbackOutOfAField()));
+    seen.push(show(array_callbackOutOfAField.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-compared
+function plain_array_compared(): string {
+    const seen: string[] = [];
+    seen.push(show(array_compared.map((x: number) => x * 2)));
+    seen.push(show(array_compared.includes(99)));
+    seen.push(show(array_compared.join("-")));
+    seen.push(show(array_compared.some((x: number) => x > 50)));
+    seen.push(show(array_compared.length));
+    seen.push(show([...array_compared]));
+    seen.push(show(sumOf_array_compared()));
+    seen.push(show(eachOf_array_compared()));
+    seen.push(show(array_compared.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-concatSpreadable
+function plain_array_concatSpreadable(): string {
+    const seen: string[] = [];
+    seen.push(show(array_concatSpreadable.map((x: number) => x * 2)));
+    seen.push(show(array_concatSpreadable.includes(99)));
+    seen.push(show(array_concatSpreadable.join("-")));
+    seen.push(show(array_concatSpreadable.some((x: number) => x > 50)));
+    seen.push(show(array_concatSpreadable.length));
+    seen.push(show([...array_concatSpreadable]));
+    seen.push(show(sumOf_array_concatSpreadable()));
+    seen.push(show(eachOf_array_concatSpreadable()));
+    seen.push(show(array_concatSpreadable.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-constructorSpecies
+function plain_array_constructorSpecies(): string {
+    const seen: string[] = [];
+    seen.push(show(array_constructorSpecies.map((x: number) => x * 2)));
+    seen.push(show(array_constructorSpecies.includes(99)));
+    seen.push(show(array_constructorSpecies.join("-")));
+    seen.push(show(array_constructorSpecies.some((x: number) => x > 50)));
+    seen.push(show(array_constructorSpecies.length));
+    seen.push(show([...array_constructorSpecies]));
+    seen.push(show(sumOf_array_constructorSpecies()));
+    seen.push(show(eachOf_array_constructorSpecies()));
+    seen.push(show(array_constructorSpecies.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-defaultFromArguments
+function plain_array_defaultFromArguments(): string {
+    const seen: string[] = [];
+    seen.push(show(array_defaultFromArguments.map((x: number) => x * 2)));
+    seen.push(show(array_defaultFromArguments.includes(99)));
+    seen.push(show(array_defaultFromArguments.join("-")));
+    seen.push(show(array_defaultFromArguments.some((x: number) => x > 50)));
+    seen.push(show(array_defaultFromArguments.length));
+    seen.push(show([...array_defaultFromArguments]));
+    seen.push(show(sumOf_array_defaultFromArguments()));
+    seen.push(show(eachOf_array_defaultFromArguments()));
+    seen.push(show(array_defaultFromArguments.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-defineProperties
+function plain_array_defineProperties(): string {
+    const seen: string[] = [];
+    seen.push(show(array_defineProperties.map((x: number) => x * 2)));
+    seen.push(show(array_defineProperties.includes(99)));
+    seen.push(show(array_defineProperties.join("-")));
+    seen.push(show(array_defineProperties.some((x: number) => x > 50)));
+    seen.push(show(array_defineProperties.length));
+    seen.push(show([...array_defineProperties]));
+    seen.push(show(sumOf_array_defineProperties()));
+    seen.push(show(eachOf_array_defineProperties()));
+    seen.push(show(array_defineProperties.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-defineProperty
+function plain_array_defineProperty(): string {
+    const seen: string[] = [];
+    seen.push(show(array_defineProperty.map((x: number) => x * 2)));
+    seen.push(show(array_defineProperty.includes(99)));
+    seen.push(show(array_defineProperty.join("-")));
+    seen.push(show(array_defineProperty.some((x: number) => x > 50)));
+    seen.push(show(array_defineProperty.length));
+    seen.push(show([...array_defineProperty]));
+    seen.push(show(sumOf_array_defineProperty()));
+    seen.push(show(eachOf_array_defineProperty()));
+    seen.push(show(array_defineProperty.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-elementByAStringKey
+function plain_array_elementByAStringKey(): string {
+    const seen: string[] = [];
+    seen.push(show(array_elementByAStringKey.map((x: number) => x * 2)));
+    seen.push(show(array_elementByAStringKey.includes(99)));
+    seen.push(show(array_elementByAStringKey.join("-")));
+    seen.push(show(array_elementByAStringKey.some((x: number) => x > 50)));
+    seen.push(show(array_elementByAStringKey.length));
+    seen.push(show([...array_elementByAStringKey]));
+    seen.push(show(sumOf_array_elementByAStringKey()));
+    seen.push(show(eachOf_array_elementByAStringKey()));
+    seen.push(show(array_elementByAStringKey.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-elementDeleted
+function plain_array_elementDeleted(): string {
+    const seen: string[] = [];
+    seen.push(show(array_elementDeleted.map((x: number) => x * 2)));
+    seen.push(show(array_elementDeleted.includes(99)));
+    seen.push(show(array_elementDeleted.join("-")));
+    seen.push(show(array_elementDeleted.some((x: number) => x > 50)));
+    seen.push(show(array_elementDeleted.length));
+    seen.push(show([...array_elementDeleted]));
+    seen.push(show(sumOf_array_elementDeleted()));
+    seen.push(show(eachOf_array_elementDeleted()));
+    seen.push(show(array_elementDeleted.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-elementFarAway
+function plain_array_elementFarAway(): string {
+    const seen: string[] = [];
+    seen.push(show(array_elementFarAway.map((x: number) => x * 2)));
+    seen.push(show(array_elementFarAway.includes(99)));
+    seen.push(show(array_elementFarAway.join("-")));
+    seen.push(show(array_elementFarAway.some((x: number) => x > 50)));
+    seen.push(show(array_elementFarAway.length));
+    seen.push(show([...array_elementFarAway]));
+    seen.push(show(sumOf_array_elementFarAway()));
+    seen.push(show(eachOf_array_elementFarAway()));
+    seen.push(show(array_elementFarAway.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-elementOfAnArray
+function plain_array_elementOfAnArray(): string {
+    const seen: string[] = [];
+    seen.push(show(array_elementOfAnArray.map((x: number) => x * 2)));
+    seen.push(show(array_elementOfAnArray.includes(99)));
+    seen.push(show(array_elementOfAnArray.join("-")));
+    seen.push(show(array_elementOfAnArray.some((x: number) => x > 50)));
+    seen.push(show(array_elementOfAnArray.length));
+    seen.push(show([...array_elementOfAnArray]));
+    seen.push(show(sumOf_array_elementOfAnArray()));
+    seen.push(show(eachOf_array_elementOfAnArray()));
+    seen.push(show(array_elementOfAnArray.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-elementVeryFarAway
+function plain_array_elementVeryFarAway(): string {
+    const seen: string[] = [];
+    seen.push(show(array_elementVeryFarAway.map((x: number) => x * 2)));
+    seen.push(show(array_elementVeryFarAway.includes(99)));
+    seen.push(show(array_elementVeryFarAway.join("-")));
+    seen.push(show(array_elementVeryFarAway.some((x: number) => x > 50)));
+    seen.push(show(array_elementVeryFarAway.length));
+    seen.push(show([...array_elementVeryFarAway]));
+    seen.push(show(sumOf_array_elementVeryFarAway()));
+    seen.push(show(eachOf_array_elementVeryFarAway()));
+    seen.push(show(array_elementVeryFarAway.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-fillYieldsIt
+function plain_array_fillYieldsIt(): string {
+    const seen: string[] = [];
+    seen.push(show(array_fillYieldsIt.map((x: number) => x * 2)));
+    seen.push(show(array_fillYieldsIt.includes(99)));
+    seen.push(show(array_fillYieldsIt.join("-")));
+    seen.push(show(array_fillYieldsIt.some((x: number) => x > 50)));
+    seen.push(show(array_fillYieldsIt.length));
+    seen.push(show([...array_fillYieldsIt]));
+    seen.push(show(sumOf_array_fillYieldsIt()));
+    seen.push(show(eachOf_array_fillYieldsIt()));
+    seen.push(show(array_fillYieldsIt.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-fourthParameterOfReduce
+function plain_array_fourthParameterOfReduce(): string {
+    const seen: string[] = [];
+    seen.push(show(array_fourthParameterOfReduce.map((x: number) => x * 2)));
+    seen.push(show(array_fourthParameterOfReduce.includes(99)));
+    seen.push(show(array_fourthParameterOfReduce.join("-")));
+    seen.push(show(array_fourthParameterOfReduce.some((x: number) => x > 50)));
+    seen.push(show(array_fourthParameterOfReduce.length));
+    seen.push(show([...array_fourthParameterOfReduce]));
+    seen.push(show(sumOf_array_fourthParameterOfReduce()));
+    seen.push(show(eachOf_array_fourthParameterOfReduce()));
+    seen.push(show(array_fourthParameterOfReduce.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-frozen
+function plain_array_frozen(): string {
+    const seen: string[] = [];
+    seen.push(show(array_frozen.map((x: number) => x * 2)));
+    seen.push(show(array_frozen.includes(99)));
+    seen.push(show(array_frozen.join("-")));
+    seen.push(show(array_frozen.some((x: number) => x > 50)));
+    seen.push(show(array_frozen.length));
+    seen.push(show([...array_frozen]));
+    seen.push(show(sumOf_array_frozen()));
+    seen.push(show(eachOf_array_frozen()));
+    seen.push(show(array_frozen.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-frozenAtBirth
+function plain_array_frozenAtBirth(): string {
+    const seen: string[] = [];
+    seen.push(show(array_frozenAtBirth.map((x: number) => x * 2)));
+    seen.push(show(array_frozenAtBirth.includes(99)));
+    seen.push(show(array_frozenAtBirth.join("-")));
+    seen.push(show(array_frozenAtBirth.some((x: number) => x > 50)));
+    seen.push(show(array_frozenAtBirth.length));
+    seen.push(show([...array_frozenAtBirth]));
+    seen.push(show(sumOf_array_frozenAtBirth()));
+    seen.push(show(eachOf_array_frozenAtBirth()));
+    seen.push(show(array_frozenAtBirth.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-givenLater
+function plain_array_givenLater(): string {
+    const seen: string[] = [];
+    seen.push(show(array_givenLater.map((x: number) => x * 2)));
+    seen.push(show(array_givenLater.includes(99)));
+    seen.push(show(array_givenLater.join("-")));
+    seen.push(show(array_givenLater.some((x: number) => x > 50)));
+    seen.push(show(array_givenLater.length));
+    seen.push(show([...array_givenLater]));
+    seen.push(show(sumOf_array_givenLater()));
+    seen.push(show(eachOf_array_givenLater()));
+    seen.push(show(array_givenLater.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-globalThisProperty
+function plain_array_globalThisProperty(): string {
+    const seen: string[] = [];
+    seen.push(show(array_globalThisProperty.map((x: number) => x * 2)));
+    seen.push(show(array_globalThisProperty.includes(99)));
+    seen.push(show(array_globalThisProperty.join("-")));
+    seen.push(show(array_globalThisProperty.some((x: number) => x > 50)));
+    seen.push(show(array_globalThisProperty.length));
+    seen.push(show([...array_globalThisProperty]));
+    seen.push(show(sumOf_array_globalThisProperty()));
+    seen.push(show(eachOf_array_globalThisProperty()));
+    seen.push(show(array_globalThisProperty.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-handedOnARoadNotTaken
+function plain_array_handedOnARoadNotTaken(): string {
+    const seen: string[] = [];
+    seen.push(show(array_handedOnARoadNotTaken.map((x: number) => x * 2)));
+    seen.push(show(array_handedOnARoadNotTaken.includes(99)));
+    seen.push(show(array_handedOnARoadNotTaken.join("-")));
+    seen.push(show(array_handedOnARoadNotTaken.some((x: number) => x > 50)));
+    seen.push(show(array_handedOnARoadNotTaken.length));
+    seen.push(show([...array_handedOnARoadNotTaken]));
+    seen.push(show(sumOf_array_handedOnARoadNotTaken()));
+    seen.push(show(eachOf_array_handedOnARoadNotTaken()));
+    seen.push(show(array_handedOnARoadNotTaken.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-handedOnOneRoad
+function plain_array_handedOnOneRoad(): string {
+    const seen: string[] = [];
+    seen.push(show(array_handedOnOneRoad.map((x: number) => x * 2)));
+    seen.push(show(array_handedOnOneRoad.includes(99)));
+    seen.push(show(array_handedOnOneRoad.join("-")));
+    seen.push(show(array_handedOnOneRoad.some((x: number) => x > 50)));
+    seen.push(show(array_handedOnOneRoad.length));
+    seen.push(show([...array_handedOnOneRoad]));
+    seen.push(show(sumOf_array_handedOnOneRoad()));
+    seen.push(show(eachOf_array_handedOnOneRoad()));
+    seen.push(show(array_handedOnOneRoad.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-handedToABuiltin
+function plain_array_handedToABuiltin(): string {
+    const seen: string[] = [];
+    seen.push(show(array_handedToABuiltin.map((x: number) => x * 2)));
+    seen.push(show(array_handedToABuiltin.includes(99)));
+    seen.push(show(array_handedToABuiltin.join("-")));
+    seen.push(show(array_handedToABuiltin.some((x: number) => x > 50)));
+    seen.push(show(array_handedToABuiltin.length));
+    seen.push(show([...array_handedToABuiltin]));
+    seen.push(show(sumOf_array_handedToABuiltin()));
+    seen.push(show(eachOf_array_handedToABuiltin()));
+    seen.push(show(array_handedToABuiltin.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-handedToAConstructor
+function plain_array_handedToAConstructor(): string {
+    const seen: string[] = [];
+    seen.push(show(array_handedToAConstructor.map((x: number) => x * 2)));
+    seen.push(show(array_handedToAConstructor.includes(99)));
+    seen.push(show(array_handedToAConstructor.join("-")));
+    seen.push(show(array_handedToAConstructor.some((x: number) => x > 50)));
+    seen.push(show(array_handedToAConstructor.length));
+    seen.push(show([...array_handedToAConstructor]));
+    seen.push(show(sumOf_array_handedToAConstructor()));
+    seen.push(show(eachOf_array_handedToAConstructor()));
+    seen.push(show(array_handedToAConstructor.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-handedToFunction
+function plain_array_handedToFunction(): string {
+    const seen: string[] = [];
+    seen.push(show(array_handedToFunction.map((x: number) => x * 2)));
+    seen.push(show(array_handedToFunction.includes(99)));
+    seen.push(show(array_handedToFunction.join("-")));
+    seen.push(show(array_handedToFunction.some((x: number) => x > 50)));
+    seen.push(show(array_handedToFunction.length));
+    seen.push(show([...array_handedToFunction]));
+    seen.push(show(sumOf_array_handedToFunction()));
+    seen.push(show(eachOf_array_handedToFunction()));
+    seen.push(show(array_handedToFunction.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-inATemplate
+function plain_array_inATemplate(): string {
+    const seen: string[] = [];
+    seen.push(show(array_inATemplate.map((x: number) => x * 2)));
+    seen.push(show(array_inATemplate.includes(99)));
+    seen.push(show(array_inATemplate.join("-")));
+    seen.push(show(array_inATemplate.some((x: number) => x > 50)));
+    seen.push(show(array_inATemplate.length));
+    seen.push(show([...array_inATemplate]));
+    seen.push(show(sumOf_array_inATemplate()));
+    seen.push(show(eachOf_array_inATemplate()));
+    seen.push(show(array_inATemplate.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-instanceOfAClassWithHasInstance
+function plain_array_instanceOfAClassWithHasInstance(): string {
+    const seen: string[] = [];
+    seen.push(show(array_instanceOfAClassWithHasInstance.map((x: number) => x * 2)));
+    seen.push(show(array_instanceOfAClassWithHasInstance.includes(99)));
+    seen.push(show(array_instanceOfAClassWithHasInstance.join("-")));
+    seen.push(show(array_instanceOfAClassWithHasInstance.some((x: number) => x > 50)));
+    seen.push(show(array_instanceOfAClassWithHasInstance.length));
+    seen.push(show([...array_instanceOfAClassWithHasInstance]));
+    seen.push(show(sumOf_array_instanceOfAClassWithHasInstance()));
+    seen.push(show(eachOf_array_instanceOfAClassWithHasInstance()));
+    seen.push(show(array_instanceOfAClassWithHasInstance.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-iteratorKept
+function plain_array_iteratorKept(): string {
+    const seen: string[] = [];
+    seen.push(show(array_iteratorKept.map((x: number) => x * 2)));
+    seen.push(show(array_iteratorKept.includes(99)));
+    seen.push(show(array_iteratorKept.join("-")));
+    seen.push(show(array_iteratorKept.some((x: number) => x > 50)));
+    seen.push(show(array_iteratorKept.length));
+    seen.push(show([...array_iteratorKept]));
+    seen.push(show(sumOf_array_iteratorKept()));
+    seen.push(show(eachOf_array_iteratorKept()));
+    seen.push(show(array_iteratorKept.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-jsonReplacer
+function plain_array_jsonReplacer(): string {
+    const seen: string[] = [];
+    seen.push(show(array_jsonReplacer.map((x: number) => x * 2)));
+    seen.push(show(array_jsonReplacer.includes(99)));
+    seen.push(show(array_jsonReplacer.join("-")));
+    seen.push(show(array_jsonReplacer.some((x: number) => x > 50)));
+    seen.push(show(array_jsonReplacer.length));
+    seen.push(show([...array_jsonReplacer]));
+    seen.push(show(sumOf_array_jsonReplacer()));
+    seen.push(show(eachOf_array_jsonReplacer()));
+    seen.push(show(array_jsonReplacer.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-keyOfAWeakMap
+function plain_array_keyOfAWeakMap(): string {
+    const seen: string[] = [];
+    seen.push(show(array_keyOfAWeakMap.map((x: number) => x * 2)));
+    seen.push(show(array_keyOfAWeakMap.includes(99)));
+    seen.push(show(array_keyOfAWeakMap.join("-")));
+    seen.push(show(array_keyOfAWeakMap.some((x: number) => x > 50)));
+    seen.push(show(array_keyOfAWeakMap.length));
+    seen.push(show([...array_keyOfAWeakMap]));
+    seen.push(show(sumOf_array_keyOfAWeakMap()));
+    seen.push(show(eachOf_array_keyOfAWeakMap()));
+    seen.push(show(array_keyOfAWeakMap.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-lengthStored
+function plain_array_lengthStored(): string {
+    const seen: string[] = [];
+    seen.push(show(array_lengthStored.map((x: number) => x * 2)));
+    seen.push(show(array_lengthStored.includes(99)));
+    seen.push(show(array_lengthStored.join("-")));
+    seen.push(show(array_lengthStored.some((x: number) => x > 50)));
+    seen.push(show(array_lengthStored.length));
+    seen.push(show([...array_lengthStored]));
+    seen.push(show(sumOf_array_lengthStored()));
+    seen.push(show(eachOf_array_lengthStored()));
+    seen.push(show(array_lengthStored.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-liveAcrossAnAwait
+function plain_array_liveAcrossAnAwait(): string {
+    const seen: string[] = [];
+    seen.push(show(array_liveAcrossAnAwait.map((x: number) => x * 2)));
+    seen.push(show(array_liveAcrossAnAwait.includes(99)));
+    seen.push(show(array_liveAcrossAnAwait.join("-")));
+    seen.push(show(array_liveAcrossAnAwait.some((x: number) => x > 50)));
+    seen.push(show(array_liveAcrossAnAwait.length));
+    seen.push(show([...array_liveAcrossAnAwait]));
+    seen.push(show(sumOf_array_liveAcrossAnAwait()));
+    seen.push(show(eachOf_array_liveAcrossAnAwait()));
+    seen.push(show(array_liveAcrossAnAwait.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-liveAcrossAnAwaitAndAlteredMeanwhile
+function plain_array_liveAcrossAnAwaitAndAlteredMeanwhile(): string {
+    const seen: string[] = [];
+    seen.push(show(array_liveAcrossAnAwaitAndAlteredMeanwhile.map((x: number) => x * 2)));
+    seen.push(show(array_liveAcrossAnAwaitAndAlteredMeanwhile.includes(99)));
+    seen.push(show(array_liveAcrossAnAwaitAndAlteredMeanwhile.join("-")));
+    seen.push(show(array_liveAcrossAnAwaitAndAlteredMeanwhile.some((x: number) => x > 50)));
+    seen.push(show(array_liveAcrossAnAwaitAndAlteredMeanwhile.length));
+    seen.push(show([...array_liveAcrossAnAwaitAndAlteredMeanwhile]));
+    seen.push(show(sumOf_array_liveAcrossAnAwaitAndAlteredMeanwhile()));
+    seen.push(show(eachOf_array_liveAcrossAnAwaitAndAlteredMeanwhile()));
+    seen.push(show(array_liveAcrossAnAwaitAndAlteredMeanwhile.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-notExtensible
+function plain_array_notExtensible(): string {
+    const seen: string[] = [];
+    seen.push(show(array_notExtensible.map((x: number) => x * 2)));
+    seen.push(show(array_notExtensible.includes(99)));
+    seen.push(show(array_notExtensible.join("-")));
+    seen.push(show(array_notExtensible.some((x: number) => x > 50)));
+    seen.push(show(array_notExtensible.length));
+    seen.push(show([...array_notExtensible]));
+    seen.push(show(sumOf_array_notExtensible()));
+    seen.push(show(eachOf_array_notExtensible()));
+    seen.push(show(array_notExtensible.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-nothing
+function plain_array_nothing(): string {
+    const seen: string[] = [];
+    seen.push(show(array_nothing.map((x: number) => x * 2)));
+    seen.push(show(array_nothing.includes(99)));
+    seen.push(show(array_nothing.join("-")));
+    seen.push(show(array_nothing.some((x: number) => x > 50)));
+    seen.push(show(array_nothing.length));
+    seen.push(show([...array_nothing]));
+    seen.push(show(sumOf_array_nothing()));
+    seen.push(show(eachOf_array_nothing()));
+    seen.push(show(array_nothing.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-nullLater
+function plain_array_nullLater(): string {
+    const seen: string[] = [];
+    seen.push(show(array_nullLater.map((x: number) => x * 2)));
+    seen.push(show(array_nullLater.includes(99)));
+    seen.push(show(array_nullLater.join("-")));
+    seen.push(show(array_nullLater.some((x: number) => x > 50)));
+    seen.push(show(array_nullLater.length));
+    seen.push(show([...array_nullLater]));
+    seen.push(show(sumOf_array_nullLater()));
+    seen.push(show(eachOf_array_nullLater()));
+    seen.push(show(array_nullLater.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-objectAssign
+function plain_array_objectAssign(): string {
+    const seen: string[] = [];
+    seen.push(show(array_objectAssign.map((x: number) => x * 2)));
+    seen.push(show(array_objectAssign.includes(99)));
+    seen.push(show(array_objectAssign.join("-")));
+    seen.push(show(array_objectAssign.some((x: number) => x > 50)));
+    seen.push(show(array_objectAssign.length));
+    seen.push(show([...array_objectAssign]));
+    seen.push(show(sumOf_array_objectAssign()));
+    seen.push(show(eachOf_array_objectAssign()));
+    seen.push(show(array_objectAssign.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-onlyRead
+function plain_array_onlyRead(): string {
+    const seen: string[] = [];
+    seen.push(show(array_onlyRead.map((x: number) => x * 2)));
+    seen.push(show(array_onlyRead.includes(99)));
+    seen.push(show(array_onlyRead.join("-")));
+    seen.push(show(array_onlyRead.some((x: number) => x > 50)));
+    seen.push(show(array_onlyRead.length));
+    seen.push(show([...array_onlyRead]));
+    seen.push(show(sumOf_array_onlyRead()));
+    seen.push(show(eachOf_array_onlyRead()));
+    seen.push(show(array_onlyRead.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-ownMethod
+function plain_array_ownMethod(): string {
+    const seen: string[] = [];
+    seen.push(show(array_ownMethod.map((x: number) => x * 2)));
+    seen.push(show(array_ownMethod.includes(99)));
+    seen.push(show(array_ownMethod.join("-")));
+    seen.push(show(array_ownMethod.some((x: number) => x > 50)));
+    seen.push(show(array_ownMethod.length));
+    seen.push(show([...array_ownMethod]));
+    seen.push(show(sumOf_array_ownMethod()));
+    seen.push(show(eachOf_array_ownMethod()));
+    seen.push(show(array_ownMethod.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-ownMethodByKey
+function plain_array_ownMethodByKey(): string {
+    const seen: string[] = [];
+    seen.push(show(array_ownMethodByKey.map((x: number) => x * 2)));
+    seen.push(show(array_ownMethodByKey.includes(99)));
+    seen.push(show(array_ownMethodByKey.join("-")));
+    seen.push(show(array_ownMethodByKey.some((x: number) => x > 50)));
+    seen.push(show(array_ownMethodByKey.length));
+    seen.push(show([...array_ownMethodByKey]));
+    seen.push(show(sumOf_array_ownMethodByKey()));
+    seen.push(show(eachOf_array_ownMethodByKey()));
+    seen.push(show(array_ownMethodByKey.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-popped
+function plain_array_popped(): string {
+    const seen: string[] = [];
+    seen.push(show(array_popped.map((x: number) => x * 2)));
+    seen.push(show(array_popped.includes(99)));
+    seen.push(show(array_popped.join("-")));
+    seen.push(show(array_popped.some((x: number) => x > 50)));
+    seen.push(show(array_popped.length));
+    seen.push(show([...array_popped]));
+    seen.push(show(sumOf_array_popped()));
+    seen.push(show(eachOf_array_popped()));
+    seen.push(show(array_popped.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-protoAssigned
+function plain_array_protoAssigned(): string {
+    const seen: string[] = [];
+    seen.push(show(array_protoAssigned.map((x: number) => x * 2)));
+    seen.push(show(array_protoAssigned.includes(99)));
+    seen.push(show(array_protoAssigned.join("-")));
+    seen.push(show(array_protoAssigned.some((x: number) => x > 50)));
+    seen.push(show(array_protoAssigned.length));
+    seen.push(show([...array_protoAssigned]));
+    seen.push(show(sumOf_array_protoAssigned()));
+    seen.push(show(eachOf_array_protoAssigned()));
+    seen.push(show(array_protoAssigned.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-pushed
+function plain_array_pushed(): string {
+    const seen: string[] = [];
+    seen.push(show(array_pushed.map((x: number) => x * 2)));
+    seen.push(show(array_pushed.includes(99)));
+    seen.push(show(array_pushed.join("-")));
+    seen.push(show(array_pushed.some((x: number) => x > 50)));
+    seen.push(show(array_pushed.length));
+    seen.push(show([...array_pushed]));
+    seen.push(show(sumOf_array_pushed()));
+    seen.push(show(eachOf_array_pushed()));
+    seen.push(show(array_pushed.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-reflectDefineProperty
+function plain_array_reflectDefineProperty(): string {
+    const seen: string[] = [];
+    seen.push(show(array_reflectDefineProperty.map((x: number) => x * 2)));
+    seen.push(show(array_reflectDefineProperty.includes(99)));
+    seen.push(show(array_reflectDefineProperty.join("-")));
+    seen.push(show(array_reflectDefineProperty.some((x: number) => x > 50)));
+    seen.push(show(array_reflectDefineProperty.length));
+    seen.push(show([...array_reflectDefineProperty]));
+    seen.push(show(sumOf_array_reflectDefineProperty()));
+    seen.push(show(eachOf_array_reflectDefineProperty()));
+    seen.push(show(array_reflectDefineProperty.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-reflectSet
+function plain_array_reflectSet(): string {
+    const seen: string[] = [];
+    seen.push(show(array_reflectSet.map((x: number) => x * 2)));
+    seen.push(show(array_reflectSet.includes(99)));
+    seen.push(show(array_reflectSet.join("-")));
+    seen.push(show(array_reflectSet.some((x: number) => x > 50)));
+    seen.push(show(array_reflectSet.length));
+    seen.push(show([...array_reflectSet]));
+    seen.push(show(sumOf_array_reflectSet()));
+    seen.push(show(eachOf_array_reflectSet()));
+    seen.push(show(array_reflectSet.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-reflectSetPrototypeOf
+function plain_array_reflectSetPrototypeOf(): string {
+    const seen: string[] = [];
+    seen.push(show(array_reflectSetPrototypeOf.map((x: number) => x * 2)));
+    seen.push(show(array_reflectSetPrototypeOf.includes(99)));
+    seen.push(show(array_reflectSetPrototypeOf.join("-")));
+    seen.push(show(array_reflectSetPrototypeOf.some((x: number) => x > 50)));
+    seen.push(show(array_reflectSetPrototypeOf.length));
+    seen.push(show([...array_reflectSetPrototypeOf]));
+    seen.push(show(sumOf_array_reflectSetPrototypeOf()));
+    seen.push(show(eachOf_array_reflectSetPrototypeOf()));
+    seen.push(show(array_reflectSetPrototypeOf.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-resolved
+function plain_array_resolved(): string {
+    const seen: string[] = [];
+    seen.push(show(array_resolved.map((x: number) => x * 2)));
+    seen.push(show(array_resolved.includes(99)));
+    seen.push(show(array_resolved.join("-")));
+    seen.push(show(array_resolved.some((x: number) => x > 50)));
+    seen.push(show(array_resolved.length));
+    seen.push(show([...array_resolved]));
+    seen.push(show(sumOf_array_resolved()));
+    seen.push(show(eachOf_array_resolved()));
+    seen.push(show(array_resolved.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-restBehindOne
+function plain_array_restBehindOne(): string {
+    const seen: string[] = [];
+    seen.push(show(array_restBehindOne.map((x: number) => x * 2)));
+    seen.push(show(array_restBehindOne.includes(99)));
+    seen.push(show(array_restBehindOne.join("-")));
+    seen.push(show(array_restBehindOne.some((x: number) => x > 50)));
+    seen.push(show(array_restBehindOne.length));
+    seen.push(show([...array_restBehindOne]));
+    seen.push(show(sumOf_array_restBehindOne()));
+    seen.push(show(eachOf_array_restBehindOne()));
+    seen.push(show(array_restBehindOne.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-restBehindTwo
+function plain_array_restBehindTwo(): string {
+    const seen: string[] = [];
+    seen.push(show(array_restBehindTwo.map((x: number) => x * 2)));
+    seen.push(show(array_restBehindTwo.includes(99)));
+    seen.push(show(array_restBehindTwo.join("-")));
+    seen.push(show(array_restBehindTwo.some((x: number) => x > 50)));
+    seen.push(show(array_restBehindTwo.length));
+    seen.push(show([...array_restBehindTwo]));
+    seen.push(show(sumOf_array_restBehindTwo()));
+    seen.push(show(eachOf_array_restBehindTwo()));
+    seen.push(show(array_restBehindTwo.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-restLengthAndLast
+function plain_array_restLengthAndLast(): string {
+    const seen: string[] = [];
+    seen.push(show(array_restLengthAndLast.map((x: number) => x * 2)));
+    seen.push(show(array_restLengthAndLast.includes(99)));
+    seen.push(show(array_restLengthAndLast.join("-")));
+    seen.push(show(array_restLengthAndLast.some((x: number) => x > 50)));
+    seen.push(show(array_restLengthAndLast.length));
+    seen.push(show([...array_restLengthAndLast]));
+    seen.push(show(sumOf_array_restLengthAndLast()));
+    seen.push(show(eachOf_array_restLengthAndLast()));
+    seen.push(show(array_restLengthAndLast.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-restParameter
+function plain_array_restParameter(): string {
+    const seen: string[] = [];
+    seen.push(show(array_restParameter.map((x: number) => x * 2)));
+    seen.push(show(array_restParameter.includes(99)));
+    seen.push(show(array_restParameter.join("-")));
+    seen.push(show(array_restParameter.some((x: number) => x > 50)));
+    seen.push(show(array_restParameter.length));
+    seen.push(show([...array_restParameter]));
+    seen.push(show(sumOf_array_restParameter()));
+    seen.push(show(eachOf_array_restParameter()));
+    seen.push(show(array_restParameter.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-restSpreadOn
+function plain_array_restSpreadOn(): string {
+    const seen: string[] = [];
+    seen.push(show(array_restSpreadOn.map((x: number) => x * 2)));
+    seen.push(show(array_restSpreadOn.includes(99)));
+    seen.push(show(array_restSpreadOn.join("-")));
+    seen.push(show(array_restSpreadOn.some((x: number) => x > 50)));
+    seen.push(show(array_restSpreadOn.length));
+    seen.push(show([...array_restSpreadOn]));
+    seen.push(show(sumOf_array_restSpreadOn()));
+    seen.push(show(eachOf_array_restSpreadOn()));
+    seen.push(show(array_restSpreadOn.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-reverseYieldsIt
+function plain_array_reverseYieldsIt(): string {
+    const seen: string[] = [];
+    seen.push(show(array_reverseYieldsIt.map((x: number) => x * 2)));
+    seen.push(show(array_reverseYieldsIt.includes(99)));
+    seen.push(show(array_reverseYieldsIt.join("-")));
+    seen.push(show(array_reverseYieldsIt.some((x: number) => x > 50)));
+    seen.push(show(array_reverseYieldsIt.length));
+    seen.push(show([...array_reverseYieldsIt]));
+    seen.push(show(sumOf_array_reverseYieldsIt()));
+    seen.push(show(eachOf_array_reverseYieldsIt()));
+    seen.push(show(array_reverseYieldsIt.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-sealed
+function plain_array_sealed(): string {
+    const seen: string[] = [];
+    seen.push(show(array_sealed.map((x: number) => x * 2)));
+    seen.push(show(array_sealed.includes(99)));
+    seen.push(show(array_sealed.join("-")));
+    seen.push(show(array_sealed.some((x: number) => x > 50)));
+    seen.push(show(array_sealed.length));
+    seen.push(show([...array_sealed]));
+    seen.push(show(sumOf_array_sealed()));
+    seen.push(show(eachOf_array_sealed()));
+    seen.push(show(array_sealed.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-setPrototypeOf
+function plain_array_setPrototypeOf(): string {
+    const seen: string[] = [];
+    seen.push(show(array_setPrototypeOf.map((x: number) => x * 2)));
+    seen.push(show(array_setPrototypeOf.includes(99)));
+    seen.push(show(array_setPrototypeOf.join("-")));
+    seen.push(show(array_setPrototypeOf.some((x: number) => x > 50)));
+    seen.push(show(array_setPrototypeOf.length));
+    seen.push(show([...array_setPrototypeOf]));
+    seen.push(show(sumOf_array_setPrototypeOf()));
+    seen.push(show(eachOf_array_setPrototypeOf()));
+    seen.push(show(array_setPrototypeOf.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-sortYieldsIt
+function plain_array_sortYieldsIt(): string {
+    const seen: string[] = [];
+    seen.push(show(array_sortYieldsIt.map((x: number) => x * 2)));
+    seen.push(show(array_sortYieldsIt.includes(99)));
+    seen.push(show(array_sortYieldsIt.join("-")));
+    seen.push(show(array_sortYieldsIt.some((x: number) => x > 50)));
+    seen.push(show(array_sortYieldsIt.length));
+    seen.push(show([...array_sortYieldsIt]));
+    seen.push(show(sumOf_array_sortYieldsIt()));
+    seen.push(show(eachOf_array_sortYieldsIt()));
+    seen.push(show(array_sortYieldsIt.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-spliced
+function plain_array_spliced(): string {
+    const seen: string[] = [];
+    seen.push(show(array_spliced.map((x: number) => x * 2)));
+    seen.push(show(array_spliced.includes(99)));
+    seen.push(show(array_spliced.join("-")));
+    seen.push(show(array_spliced.some((x: number) => x > 50)));
+    seen.push(show(array_spliced.length));
+    seen.push(show([...array_spliced]));
+    seen.push(show(sumOf_array_spliced()));
+    seen.push(show(eachOf_array_spliced()));
+    seen.push(show(array_spliced.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-structuredCloned
+function plain_array_structuredCloned(): string {
+    const seen: string[] = [];
+    seen.push(show(array_structuredCloned.map((x: number) => x * 2)));
+    seen.push(show(array_structuredCloned.includes(99)));
+    seen.push(show(array_structuredCloned.join("-")));
+    seen.push(show(array_structuredCloned.some((x: number) => x > 50)));
+    seen.push(show(array_structuredCloned.length));
+    seen.push(show([...array_structuredCloned]));
+    seen.push(show(sumOf_array_structuredCloned()));
+    seen.push(show(eachOf_array_structuredCloned()));
+    seen.push(show(array_structuredCloned.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-thirdParameter
+function plain_array_thirdParameter(): string {
+    const seen: string[] = [];
+    seen.push(show(array_thirdParameter.map((x: number) => x * 2)));
+    seen.push(show(array_thirdParameter.includes(99)));
+    seen.push(show(array_thirdParameter.join("-")));
+    seen.push(show(array_thirdParameter.some((x: number) => x > 50)));
+    seen.push(show(array_thirdParameter.length));
+    seen.push(show([...array_thirdParameter]));
+    seen.push(show(sumOf_array_thirdParameter()));
+    seen.push(show(eachOf_array_thirdParameter()));
+    seen.push(show(array_thirdParameter.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-thirdParameterOfANamedFunction
+function plain_array_thirdParameterOfANamedFunction(): string {
+    const seen: string[] = [];
+    seen.push(show(array_thirdParameterOfANamedFunction.map((x: number) => x * 2)));
+    seen.push(show(array_thirdParameterOfANamedFunction.includes(99)));
+    seen.push(show(array_thirdParameterOfANamedFunction.join("-")));
+    seen.push(show(array_thirdParameterOfANamedFunction.some((x: number) => x > 50)));
+    seen.push(show(array_thirdParameterOfANamedFunction.length));
+    seen.push(show([...array_thirdParameterOfANamedFunction]));
+    seen.push(show(sumOf_array_thirdParameterOfANamedFunction()));
+    seen.push(show(eachOf_array_thirdParameterOfANamedFunction()));
+    seen.push(show(array_thirdParameterOfANamedFunction.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-thisArgument
+function plain_array_thisArgument(): string {
+    const seen: string[] = [];
+    seen.push(show(array_thisArgument.map((x: number) => x * 2)));
+    seen.push(show(array_thisArgument.includes(99)));
+    seen.push(show(array_thisArgument.join("-")));
+    seen.push(show(array_thisArgument.some((x: number) => x > 50)));
+    seen.push(show(array_thisArgument.length));
+    seen.push(show([...array_thisArgument]));
+    seen.push(show(sumOf_array_thisArgument()));
+    seen.push(show(eachOf_array_thisArgument()));
+    seen.push(show(array_thisArgument.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-throughAClosureMadeEarly
+function plain_array_throughAClosureMadeEarly(): string {
+    const seen: string[] = [];
+    seen.push(show(array_throughAClosureMadeEarly.map((x: number) => x * 2)));
+    seen.push(show(array_throughAClosureMadeEarly.includes(99)));
+    seen.push(show(array_throughAClosureMadeEarly.join("-")));
+    seen.push(show(array_throughAClosureMadeEarly.some((x: number) => x > 50)));
+    seen.push(show(array_throughAClosureMadeEarly.length));
+    seen.push(show([...array_throughAClosureMadeEarly]));
+    seen.push(show(sumOf_array_throughAClosureMadeEarly()));
+    seen.push(show(eachOf_array_throughAClosureMadeEarly()));
+    seen.push(show(array_throughAClosureMadeEarly.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-throughAField
+function plain_array_throughAField(): string {
+    const seen: string[] = [];
+    seen.push(show(array_throughAField.map((x: number) => x * 2)));
+    seen.push(show(array_throughAField.includes(99)));
+    seen.push(show(array_throughAField.join("-")));
+    seen.push(show(array_throughAField.some((x: number) => x > 50)));
+    seen.push(show(array_throughAField.length));
+    seen.push(show([...array_throughAField]));
+    seen.push(show(sumOf_array_throughAField()));
+    seen.push(show(eachOf_array_throughAField()));
+    seen.push(show(array_throughAField.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-throughAGetter
+function plain_array_throughAGetter(): string {
+    const seen: string[] = [];
+    seen.push(show(array_throughAGetter.map((x: number) => x * 2)));
+    seen.push(show(array_throughAGetter.includes(99)));
+    seen.push(show(array_throughAGetter.join("-")));
+    seen.push(show(array_throughAGetter.some((x: number) => x > 50)));
+    seen.push(show(array_throughAGetter.length));
+    seen.push(show([...array_throughAGetter]));
+    seen.push(show(sumOf_array_throughAGetter()));
+    seen.push(show(eachOf_array_throughAGetter()));
+    seen.push(show(array_throughAGetter.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-throughAJoin
+function plain_array_throughAJoin(): string {
+    const seen: string[] = [];
+    seen.push(show(array_throughAJoin.map((x: number) => x * 2)));
+    seen.push(show(array_throughAJoin.includes(99)));
+    seen.push(show(array_throughAJoin.join("-")));
+    seen.push(show(array_throughAJoin.some((x: number) => x > 50)));
+    seen.push(show(array_throughAJoin.length));
+    seen.push(show([...array_throughAJoin]));
+    seen.push(show(sumOf_array_throughAJoin()));
+    seen.push(show(eachOf_array_throughAJoin()));
+    seen.push(show(array_throughAJoin.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-throughAJoinNotTaken
+function plain_array_throughAJoinNotTaken(): string {
+    const seen: string[] = [];
+    seen.push(show(array_throughAJoinNotTaken.map((x: number) => x * 2)));
+    seen.push(show(array_throughAJoinNotTaken.includes(99)));
+    seen.push(show(array_throughAJoinNotTaken.join("-")));
+    seen.push(show(array_throughAJoinNotTaken.some((x: number) => x > 50)));
+    seen.push(show(array_throughAJoinNotTaken.length));
+    seen.push(show([...array_throughAJoinNotTaken]));
+    seen.push(show(sumOf_array_throughAJoinNotTaken()));
+    seen.push(show(eachOf_array_throughAJoinNotTaken()));
+    seen.push(show(array_throughAJoinNotTaken.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-throughALiteral
+function plain_array_throughALiteral(): string {
+    const seen: string[] = [];
+    seen.push(show(array_throughALiteral.map((x: number) => x * 2)));
+    seen.push(show(array_throughALiteral.includes(99)));
+    seen.push(show(array_throughALiteral.join("-")));
+    seen.push(show(array_throughALiteral.some((x: number) => x > 50)));
+    seen.push(show(array_throughALiteral.length));
+    seen.push(show([...array_throughALiteral]));
+    seen.push(show(sumOf_array_throughALiteral()));
+    seen.push(show(eachOf_array_throughALiteral()));
+    seen.push(show(array_throughALiteral.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-throughAProxy
+function plain_array_throughAProxy(): string {
+    const seen: string[] = [];
+    seen.push(show(array_throughAProxy.map((x: number) => x * 2)));
+    seen.push(show(array_throughAProxy.includes(99)));
+    seen.push(show(array_throughAProxy.join("-")));
+    seen.push(show(array_throughAProxy.some((x: number) => x > 50)));
+    seen.push(show(array_throughAProxy.length));
+    seen.push(show([...array_throughAProxy]));
+    seen.push(show(sumOf_array_throughAProxy()));
+    seen.push(show(eachOf_array_throughAProxy()));
+    seen.push(show(array_throughAProxy.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-throughAWeakRef
+function plain_array_throughAWeakRef(): string {
+    const seen: string[] = [];
+    seen.push(show(array_throughAWeakRef.map((x: number) => x * 2)));
+    seen.push(show(array_throughAWeakRef.includes(99)));
+    seen.push(show(array_throughAWeakRef.join("-")));
+    seen.push(show(array_throughAWeakRef.some((x: number) => x > 50)));
+    seen.push(show(array_throughAWeakRef.length));
+    seen.push(show([...array_throughAWeakRef]));
+    seen.push(show(sumOf_array_throughAWeakRef()));
+    seen.push(show(eachOf_array_throughAWeakRef()));
+    seen.push(show(array_throughAWeakRef.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-throughAnArrow
+function plain_array_throughAnArrow(): string {
+    const seen: string[] = [];
+    seen.push(show(array_throughAnArrow.map((x: number) => x * 2)));
+    seen.push(show(array_throughAnArrow.includes(99)));
+    seen.push(show(array_throughAnArrow.join("-")));
+    seen.push(show(array_throughAnArrow.some((x: number) => x > 50)));
+    seen.push(show(array_throughAnArrow.length));
+    seen.push(show([...array_throughAnArrow]));
+    seen.push(show(sumOf_array_throughAnArrow()));
+    seen.push(show(eachOf_array_throughAnArrow()));
+    seen.push(show(array_throughAnArrow.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-throughAnObjectLiteral
+function plain_array_throughAnObjectLiteral(): string {
+    const seen: string[] = [];
+    seen.push(show(array_throughAnObjectLiteral.map((x: number) => x * 2)));
+    seen.push(show(array_throughAnObjectLiteral.includes(99)));
+    seen.push(show(array_throughAnObjectLiteral.join("-")));
+    seen.push(show(array_throughAnObjectLiteral.some((x: number) => x > 50)));
+    seen.push(show(array_throughAnObjectLiteral.length));
+    seen.push(show([...array_throughAnObjectLiteral]));
+    seen.push(show(sumOf_array_throughAnObjectLiteral()));
+    seen.push(show(eachOf_array_throughAnObjectLiteral()));
+    seen.push(show(array_throughAnObjectLiteral.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-throughAnotherVariable
+function plain_array_throughAnotherVariable(): string {
+    const seen: string[] = [];
+    seen.push(show(array_throughAnotherVariable.map((x: number) => x * 2)));
+    seen.push(show(array_throughAnotherVariable.includes(99)));
+    seen.push(show(array_throughAnotherVariable.join("-")));
+    seen.push(show(array_throughAnotherVariable.some((x: number) => x > 50)));
+    seen.push(show(array_throughAnotherVariable.length));
+    seen.push(show([...array_throughAnotherVariable]));
+    seen.push(show(sumOf_array_throughAnotherVariable()));
+    seen.push(show(eachOf_array_throughAnotherVariable()));
+    seen.push(show(array_throughAnotherVariable.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-throughApply
+function plain_array_throughApply(): string {
+    const seen: string[] = [];
+    seen.push(show(array_throughApply.map((x: number) => x * 2)));
+    seen.push(show(array_throughApply.includes(99)));
+    seen.push(show(array_throughApply.join("-")));
+    seen.push(show(array_throughApply.some((x: number) => x > 50)));
+    seen.push(show(array_throughApply.length));
+    seen.push(show([...array_throughApply]));
+    seen.push(show(sumOf_array_throughApply()));
+    seen.push(show(eachOf_array_throughApply()));
+    seen.push(show(array_throughApply.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-throughBind
+function plain_array_throughBind(): string {
+    const seen: string[] = [];
+    seen.push(show(array_throughBind.map((x: number) => x * 2)));
+    seen.push(show(array_throughBind.includes(99)));
+    seen.push(show(array_throughBind.join("-")));
+    seen.push(show(array_throughBind.some((x: number) => x > 50)));
+    seen.push(show(array_throughBind.length));
+    seen.push(show([...array_throughBind]));
+    seen.push(show(sumOf_array_throughBind()));
+    seen.push(show(eachOf_array_throughBind()));
+    seen.push(show(array_throughBind.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-throughDestructuring
+function plain_array_throughDestructuring(): string {
+    const seen: string[] = [];
+    seen.push(show(array_throughDestructuring.map((x: number) => x * 2)));
+    seen.push(show(array_throughDestructuring.includes(99)));
+    seen.push(show(array_throughDestructuring.join("-")));
+    seen.push(show(array_throughDestructuring.some((x: number) => x > 50)));
+    seen.push(show(array_throughDestructuring.length));
+    seen.push(show([...array_throughDestructuring]));
+    seen.push(show(sumOf_array_throughDestructuring()));
+    seen.push(show(eachOf_array_throughDestructuring()));
+    seen.push(show(array_throughDestructuring.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-throughIdentity
+function plain_array_throughIdentity(): string {
+    const seen: string[] = [];
+    seen.push(show(array_throughIdentity.map((x: number) => x * 2)));
+    seen.push(show(array_throughIdentity.includes(99)));
+    seen.push(show(array_throughIdentity.join("-")));
+    seen.push(show(array_throughIdentity.some((x: number) => x > 50)));
+    seen.push(show(array_throughIdentity.length));
+    seen.push(show([...array_throughIdentity]));
+    seen.push(show(sumOf_array_throughIdentity()));
+    seen.push(show(eachOf_array_throughIdentity()));
+    seen.push(show(array_throughIdentity.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-throughNullish
+function plain_array_throughNullish(): string {
+    const seen: string[] = [];
+    seen.push(show(array_throughNullish.map((x: number) => x * 2)));
+    seen.push(show(array_throughNullish.includes(99)));
+    seen.push(show(array_throughNullish.join("-")));
+    seen.push(show(array_throughNullish.some((x: number) => x > 50)));
+    seen.push(show(array_throughNullish.length));
+    seen.push(show([...array_throughNullish]));
+    seen.push(show(sumOf_array_throughNullish()));
+    seen.push(show(eachOf_array_throughNullish()));
+    seen.push(show(array_throughNullish.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-throughReflectApply
+function plain_array_throughReflectApply(): string {
+    const seen: string[] = [];
+    seen.push(show(array_throughReflectApply.map((x: number) => x * 2)));
+    seen.push(show(array_throughReflectApply.includes(99)));
+    seen.push(show(array_throughReflectApply.join("-")));
+    seen.push(show(array_throughReflectApply.some((x: number) => x > 50)));
+    seen.push(show(array_throughReflectApply.length));
+    seen.push(show([...array_throughReflectApply]));
+    seen.push(show(sumOf_array_throughReflectApply()));
+    seen.push(show(eachOf_array_throughReflectApply()));
+    seen.push(show(array_throughReflectApply.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-throughSpreadArguments
+function plain_array_throughSpreadArguments(): string {
+    const seen: string[] = [];
+    seen.push(show(array_throughSpreadArguments.map((x: number) => x * 2)));
+    seen.push(show(array_throughSpreadArguments.includes(99)));
+    seen.push(show(array_throughSpreadArguments.join("-")));
+    seen.push(show(array_throughSpreadArguments.some((x: number) => x > 50)));
+    seen.push(show(array_throughSpreadArguments.length));
+    seen.push(show([...array_throughSpreadArguments]));
+    seen.push(show(sumOf_array_throughSpreadArguments()));
+    seen.push(show(eachOf_array_throughSpreadArguments()));
+    seen.push(show(array_throughSpreadArguments.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-throughThis
+function plain_array_throughThis(): string {
+    const seen: string[] = [];
+    seen.push(show(array_throughThis.map((x: number) => x * 2)));
+    seen.push(show(array_throughThis.includes(99)));
+    seen.push(show(array_throughThis.join("-")));
+    seen.push(show(array_throughThis.some((x: number) => x > 50)));
+    seen.push(show(array_throughThis.length));
+    seen.push(show([...array_throughThis]));
+    seen.push(show(sumOf_array_throughThis()));
+    seen.push(show(eachOf_array_throughThis()));
+    seen.push(show(array_throughThis.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-thrownAndCaught
+function plain_array_thrownAndCaught(): string {
+    const seen: string[] = [];
+    seen.push(show(array_thrownAndCaught.map((x: number) => x * 2)));
+    seen.push(show(array_thrownAndCaught.includes(99)));
+    seen.push(show(array_thrownAndCaught.join("-")));
+    seen.push(show(array_thrownAndCaught.some((x: number) => x > 50)));
+    seen.push(show(array_thrownAndCaught.length));
+    seen.push(show([...array_thrownAndCaught]));
+    seen.push(show(sumOf_array_thrownAndCaught()));
+    seen.push(show(eachOf_array_thrownAndCaught()));
+    seen.push(show(array_thrownAndCaught.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-undefinedLater
+function plain_array_undefinedLater(): string {
+    const seen: string[] = [];
+    seen.push(show(array_undefinedLater.map((x: number) => x * 2)));
+    seen.push(show(array_undefinedLater.includes(99)));
+    seen.push(show(array_undefinedLater.join("-")));
+    seen.push(show(array_undefinedLater.some((x: number) => x > 50)));
+    seen.push(show(array_undefinedLater.length));
+    seen.push(show([...array_undefinedLater]));
+    seen.push(show(sumOf_array_undefinedLater()));
+    seen.push(show(eachOf_array_undefinedLater()));
+    seen.push(show(array_undefinedLater.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-undefinedOnOneRoad
+function plain_array_undefinedOnOneRoad(): string {
+    const seen: string[] = [];
+    seen.push(show(array_undefinedOnOneRoad.map((x: number) => x * 2)));
+    seen.push(show(array_undefinedOnOneRoad.includes(99)));
+    seen.push(show(array_undefinedOnOneRoad.join("-")));
+    seen.push(show(array_undefinedOnOneRoad.some((x: number) => x > 50)));
+    seen.push(show(array_undefinedOnOneRoad.length));
+    seen.push(show([...array_undefinedOnOneRoad]));
+    seen.push(show(sumOf_array_undefinedOnOneRoad()));
+    seen.push(show(eachOf_array_undefinedOnOneRoad()));
+    seen.push(show(array_undefinedOnOneRoad.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-undefinedThenAnother
+function plain_array_undefinedThenAnother(): string {
+    const seen: string[] = [];
+    seen.push(show(array_undefinedThenAnother.map((x: number) => x * 2)));
+    seen.push(show(array_undefinedThenAnother.includes(99)));
+    seen.push(show(array_undefinedThenAnother.join("-")));
+    seen.push(show(array_undefinedThenAnother.some((x: number) => x > 50)));
+    seen.push(show(array_undefinedThenAnother.length));
+    seen.push(show([...array_undefinedThenAnother]));
+    seen.push(show(sumOf_array_undefinedThenAnother()));
+    seen.push(show(eachOf_array_undefinedThenAnother()));
+    seen.push(show(array_undefinedThenAnother.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-usedBeforeItsDeclaration
+function plain_array_usedBeforeItsDeclaration(): string {
+    const seen: string[] = [];
+    seen.push(show(array_usedBeforeItsDeclaration.map((x: number) => x * 2)));
+    seen.push(show(array_usedBeforeItsDeclaration.includes(99)));
+    seen.push(show(array_usedBeforeItsDeclaration.join("-")));
+    seen.push(show(array_usedBeforeItsDeclaration.some((x: number) => x > 50)));
+    seen.push(show(array_usedBeforeItsDeclaration.length));
+    seen.push(show([...array_usedBeforeItsDeclaration]));
+    seen.push(show(sumOf_array_usedBeforeItsDeclaration()));
+    seen.push(show(eachOf_array_usedBeforeItsDeclaration()));
+    seen.push(show(array_usedBeforeItsDeclaration.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-valueOfAMap
+function plain_array_valueOfAMap(): string {
+    const seen: string[] = [];
+    seen.push(show(array_valueOfAMap.map((x: number) => x * 2)));
+    seen.push(show(array_valueOfAMap.includes(99)));
+    seen.push(show(array_valueOfAMap.join("-")));
+    seen.push(show(array_valueOfAMap.some((x: number) => x > 50)));
+    seen.push(show(array_valueOfAMap.length));
+    seen.push(show([...array_valueOfAMap]));
+    seen.push(show(sumOf_array_valueOfAMap()));
+    seen.push(show(eachOf_array_valueOfAMap()));
+    seen.push(show(array_valueOfAMap.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-varUsedBeforeItsDeclaration
+function plain_array_varUsedBeforeItsDeclaration(): string {
+    const seen: string[] = [];
+    seen.push(show(array_varUsedBeforeItsDeclaration.map((x: number) => x * 2)));
+    seen.push(show(array_varUsedBeforeItsDeclaration.includes(99)));
+    seen.push(show(array_varUsedBeforeItsDeclaration.join("-")));
+    seen.push(show(array_varUsedBeforeItsDeclaration.some((x: number) => x > 50)));
+    seen.push(show(array_varUsedBeforeItsDeclaration.length));
+    seen.push(show([...array_varUsedBeforeItsDeclaration]));
+    seen.push(show(sumOf_array_varUsedBeforeItsDeclaration()));
+    seen.push(show(eachOf_array_varUsedBeforeItsDeclaration()));
+    seen.push(show(array_varUsedBeforeItsDeclaration.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-array-yielded
+function plain_array_yielded(): string {
+    const seen: string[] = [];
+    seen.push(show(array_yielded.map((x: number) => x * 2)));
+    seen.push(show(array_yielded.includes(99)));
+    seen.push(show(array_yielded.join("-")));
+    seen.push(show(array_yielded.some((x: number) => x > 50)));
+    seen.push(show(array_yielded.length));
+    seen.push(show([...array_yielded]));
+    seen.push(show(sumOf_array_yielded()));
+    seen.push(show(eachOf_array_yielded()));
+    seen.push(show(array_yielded.filter(isLarge)));
+    return seen.join(" ");
+}
+////: plain-map-aNamedProperty
+function plain_map_aNamedProperty(): string {
+    const seen: string[] = [];
+    seen.push(show(map_aNamedProperty.get("a")));
+    seen.push(show(map_aNamedProperty.has("zz")));
+    seen.push(show(map_aNamedProperty.size));
+    seen.push(show([...map_aNamedProperty.keys()]));
+    seen.push(show(sumOf_map_aNamedProperty()));
+    seen.push(show(eachOf_map_aNamedProperty()));
+    return seen.join(" ");
+}
+////: plain-map-anHeirAtBirth
+function plain_map_anHeirAtBirth(): string {
+    const seen: string[] = [];
+    seen.push(show(map_anHeirAtBirth.get("a")));
+    seen.push(show(map_anHeirAtBirth.has("zz")));
+    seen.push(show(map_anHeirAtBirth.size));
+    seen.push(show([...map_anHeirAtBirth.keys()]));
+    seen.push(show(sumOf_map_anHeirAtBirth()));
+    seen.push(show(eachOf_map_anHeirAtBirth()));
+    return seen.join(" ");
+}
+////: plain-map-anHeirLater
+function plain_map_anHeirLater(): string {
+    const seen: string[] = [];
+    seen.push(show(map_anHeirLater.get("a")));
+    seen.push(show(map_anHeirLater.has("zz")));
+    seen.push(show(map_anHeirLater.size));
+    seen.push(show([...map_anHeirLater.keys()]));
+    seen.push(show(sumOf_map_anHeirLater()));
+    seen.push(show(eachOf_map_anHeirLater()));
+    return seen.join(" ");
+}
+////: plain-map-anotherLater
+function plain_map_anotherLater(): string {
+    const seen: string[] = [];
+    seen.push(show(map_anotherLater.get("a")));
+    seen.push(show(map_anotherLater.has("zz")));
+    seen.push(show(map_anotherLater.size));
+    seen.push(show([...map_anotherLater.keys()]));
+    seen.push(show(sumOf_map_anotherLater()));
+    seen.push(show(eachOf_map_anotherLater()));
+    return seen.join(" ");
+}
+////: plain-map-anotherLaterThatIsKept
+function plain_map_anotherLaterThatIsKept(): string {
+    const seen: string[] = [];
+    seen.push(show(map_anotherLaterThatIsKept.get("a")));
+    seen.push(show(map_anotherLaterThatIsKept.has("zz")));
+    seen.push(show(map_anotherLaterThatIsKept.size));
+    seen.push(show([...map_anotherLaterThatIsKept.keys()]));
+    seen.push(show(sumOf_map_anotherLaterThatIsKept()));
+    seen.push(show(eachOf_map_anotherLaterThatIsKept()));
+    return seen.join(" ");
+}
+////: plain-map-argumentsObject
+function plain_map_argumentsObject(): string {
+    const seen: string[] = [];
+    seen.push(show(map_argumentsObject.get("a")));
+    seen.push(show(map_argumentsObject.has("zz")));
+    seen.push(show(map_argumentsObject.size));
+    seen.push(show([...map_argumentsObject.keys()]));
+    seen.push(show(sumOf_map_argumentsObject()));
+    seen.push(show(eachOf_map_argumentsObject()));
+    return seen.join(" ");
+}
+////: plain-map-argumentsObjectByKey
+function plain_map_argumentsObjectByKey(): string {
+    const seen: string[] = [];
+    seen.push(show(map_argumentsObjectByKey.get("a")));
+    seen.push(show(map_argumentsObjectByKey.has("zz")));
+    seen.push(show(map_argumentsObjectByKey.size));
+    seen.push(show([...map_argumentsObjectByKey.keys()]));
+    seen.push(show(sumOf_map_argumentsObjectByKey()));
+    seen.push(show(eachOf_map_argumentsObjectByKey()));
+    return seen.join(" ");
+}
+////: plain-map-assignedAtBirth
+function plain_map_assignedAtBirth(): string {
+    const seen: string[] = [];
+    seen.push(show(map_assignedAtBirth.get("a")));
+    seen.push(show(map_assignedAtBirth.has("zz")));
+    seen.push(show(map_assignedAtBirth.size));
+    seen.push(show([...map_assignedAtBirth.keys()]));
+    seen.push(show(sumOf_map_assignedAtBirth()));
+    seen.push(show(eachOf_map_assignedAtBirth()));
+    return seen.join(" ");
+}
+////: plain-map-awaited
+function plain_map_awaited(): string {
+    const seen: string[] = [];
+    seen.push(show(map_awaited.get("a")));
+    seen.push(show(map_awaited.has("zz")));
+    seen.push(show(map_awaited.size));
+    seen.push(show([...map_awaited.keys()]));
+    seen.push(show(sumOf_map_awaited()));
+    seen.push(show(eachOf_map_awaited()));
+    return seen.join(" ");
+}
+////: plain-map-callbackBound
+function plain_map_callbackBound(): string {
+    const seen: string[] = [];
+    seen.push(show(map_callbackBound.get("a")));
+    seen.push(show(map_callbackBound.has("zz")));
+    seen.push(show(map_callbackBound.size));
+    seen.push(show([...map_callbackBound.keys()]));
+    seen.push(show(sumOf_map_callbackBound()));
+    seen.push(show(eachOf_map_callbackBound()));
+    return seen.join(" ");
+}
+////: plain-map-callbackNotKnown
+function plain_map_callbackNotKnown(): string {
+    const seen: string[] = [];
+    seen.push(show(map_callbackNotKnown.get("a")));
+    seen.push(show(map_callbackNotKnown.has("zz")));
+    seen.push(show(map_callbackNotKnown.size));
+    seen.push(show([...map_callbackNotKnown.keys()]));
+    seen.push(show(sumOf_map_callbackNotKnown()));
+    seen.push(show(eachOf_map_callbackNotKnown()));
+    return seen.join(" ");
+}
+////: plain-map-callbackOneOfTwo
+function plain_map_callbackOneOfTwo(): string {
+    const seen: string[] = [];
+    seen.push(show(map_callbackOneOfTwo.get("a")));
+    seen.push(show(map_callbackOneOfTwo.has("zz")));
+    seen.push(show(map_callbackOneOfTwo.size));
+    seen.push(show([...map_callbackOneOfTwo.keys()]));
+    seen.push(show(sumOf_map_callbackOneOfTwo()));
+    seen.push(show(eachOf_map_callbackOneOfTwo()));
+    return seen.join(" ");
+}
+////: plain-map-callbackOutOfAField
+function plain_map_callbackOutOfAField(): string {
+    const seen: string[] = [];
+    seen.push(show(map_callbackOutOfAField.get("a")));
+    seen.push(show(map_callbackOutOfAField.has("zz")));
+    seen.push(show(map_callbackOutOfAField.size));
+    seen.push(show([...map_callbackOutOfAField.keys()]));
+    seen.push(show(sumOf_map_callbackOutOfAField()));
+    seen.push(show(eachOf_map_callbackOutOfAField()));
+    return seen.join(" ");
+}
+////: plain-map-cleared
+function plain_map_cleared(): string {
+    const seen: string[] = [];
+    seen.push(show(map_cleared.get("a")));
+    seen.push(show(map_cleared.has("zz")));
+    seen.push(show(map_cleared.size));
+    seen.push(show([...map_cleared.keys()]));
+    seen.push(show(sumOf_map_cleared()));
+    seen.push(show(eachOf_map_cleared()));
+    return seen.join(" ");
+}
+////: plain-map-compared
+function plain_map_compared(): string {
+    const seen: string[] = [];
+    seen.push(show(map_compared.get("a")));
+    seen.push(show(map_compared.has("zz")));
+    seen.push(show(map_compared.size));
+    seen.push(show([...map_compared.keys()]));
+    seen.push(show(sumOf_map_compared()));
+    seen.push(show(eachOf_map_compared()));
+    return seen.join(" ");
+}
+////: plain-map-defaultFromArguments
+function plain_map_defaultFromArguments(): string {
+    const seen: string[] = [];
+    seen.push(show(map_defaultFromArguments.get("a")));
+    seen.push(show(map_defaultFromArguments.has("zz")));
+    seen.push(show(map_defaultFromArguments.size));
+    seen.push(show([...map_defaultFromArguments.keys()]));
+    seen.push(show(sumOf_map_defaultFromArguments()));
+    seen.push(show(eachOf_map_defaultFromArguments()));
+    return seen.join(" ");
+}
+////: plain-map-defineProperties
+function plain_map_defineProperties(): string {
+    const seen: string[] = [];
+    seen.push(show(map_defineProperties.get("a")));
+    seen.push(show(map_defineProperties.has("zz")));
+    seen.push(show(map_defineProperties.size));
+    seen.push(show([...map_defineProperties.keys()]));
+    seen.push(show(sumOf_map_defineProperties()));
+    seen.push(show(eachOf_map_defineProperties()));
+    return seen.join(" ");
+}
+////: plain-map-defineProperty
+function plain_map_defineProperty(): string {
+    const seen: string[] = [];
+    seen.push(show(map_defineProperty.get("a")));
+    seen.push(show(map_defineProperty.has("zz")));
+    seen.push(show(map_defineProperty.size));
+    seen.push(show([...map_defineProperty.keys()]));
+    seen.push(show(sumOf_map_defineProperty()));
+    seen.push(show(eachOf_map_defineProperty()));
+    return seen.join(" ");
+}
+////: plain-map-elementOfAnArray
+function plain_map_elementOfAnArray(): string {
+    const seen: string[] = [];
+    seen.push(show(map_elementOfAnArray.get("a")));
+    seen.push(show(map_elementOfAnArray.has("zz")));
+    seen.push(show(map_elementOfAnArray.size));
+    seen.push(show([...map_elementOfAnArray.keys()]));
+    seen.push(show(sumOf_map_elementOfAnArray()));
+    seen.push(show(eachOf_map_elementOfAnArray()));
+    return seen.join(" ");
+}
+////: plain-map-frozen
+function plain_map_frozen(): string {
+    const seen: string[] = [];
+    seen.push(show(map_frozen.get("a")));
+    seen.push(show(map_frozen.has("zz")));
+    seen.push(show(map_frozen.size));
+    seen.push(show([...map_frozen.keys()]));
+    seen.push(show(sumOf_map_frozen()));
+    seen.push(show(eachOf_map_frozen()));
+    return seen.join(" ");
+}
+////: plain-map-frozenAtBirth
+function plain_map_frozenAtBirth(): string {
+    const seen: string[] = [];
+    seen.push(show(map_frozenAtBirth.get("a")));
+    seen.push(show(map_frozenAtBirth.has("zz")));
+    seen.push(show(map_frozenAtBirth.size));
+    seen.push(show([...map_frozenAtBirth.keys()]));
+    seen.push(show(sumOf_map_frozenAtBirth()));
+    seen.push(show(eachOf_map_frozenAtBirth()));
+    return seen.join(" ");
+}
+////: plain-map-givenLater
+function plain_map_givenLater(): string {
+    const seen: string[] = [];
+    seen.push(show(map_givenLater.get("a")));
+    seen.push(show(map_givenLater.has("zz")));
+    seen.push(show(map_givenLater.size));
+    seen.push(show([...map_givenLater.keys()]));
+    seen.push(show(sumOf_map_givenLater()));
+    seen.push(show(eachOf_map_givenLater()));
+    return seen.join(" ");
+}
+////: plain-map-globalThisProperty
+function plain_map_globalThisProperty(): string {
+    const seen: string[] = [];
+    seen.push(show(map_globalThisProperty.get("a")));
+    seen.push(show(map_globalThisProperty.has("zz")));
+    seen.push(show(map_globalThisProperty.size));
+    seen.push(show([...map_globalThisProperty.keys()]));
+    seen.push(show(sumOf_map_globalThisProperty()));
+    seen.push(show(eachOf_map_globalThisProperty()));
+    return seen.join(" ");
+}
+////: plain-map-handedOnARoadNotTaken
+function plain_map_handedOnARoadNotTaken(): string {
+    const seen: string[] = [];
+    seen.push(show(map_handedOnARoadNotTaken.get("a")));
+    seen.push(show(map_handedOnARoadNotTaken.has("zz")));
+    seen.push(show(map_handedOnARoadNotTaken.size));
+    seen.push(show([...map_handedOnARoadNotTaken.keys()]));
+    seen.push(show(sumOf_map_handedOnARoadNotTaken()));
+    seen.push(show(eachOf_map_handedOnARoadNotTaken()));
+    return seen.join(" ");
+}
+////: plain-map-handedOnOneRoad
+function plain_map_handedOnOneRoad(): string {
+    const seen: string[] = [];
+    seen.push(show(map_handedOnOneRoad.get("a")));
+    seen.push(show(map_handedOnOneRoad.has("zz")));
+    seen.push(show(map_handedOnOneRoad.size));
+    seen.push(show([...map_handedOnOneRoad.keys()]));
+    seen.push(show(sumOf_map_handedOnOneRoad()));
+    seen.push(show(eachOf_map_handedOnOneRoad()));
+    return seen.join(" ");
+}
+////: plain-map-handedToABuiltin
+function plain_map_handedToABuiltin(): string {
+    const seen: string[] = [];
+    seen.push(show(map_handedToABuiltin.get("a")));
+    seen.push(show(map_handedToABuiltin.has("zz")));
+    seen.push(show(map_handedToABuiltin.size));
+    seen.push(show([...map_handedToABuiltin.keys()]));
+    seen.push(show(sumOf_map_handedToABuiltin()));
+    seen.push(show(eachOf_map_handedToABuiltin()));
+    return seen.join(" ");
+}
+////: plain-map-handedToAConstructor
+function plain_map_handedToAConstructor(): string {
+    const seen: string[] = [];
+    seen.push(show(map_handedToAConstructor.get("a")));
+    seen.push(show(map_handedToAConstructor.has("zz")));
+    seen.push(show(map_handedToAConstructor.size));
+    seen.push(show([...map_handedToAConstructor.keys()]));
+    seen.push(show(sumOf_map_handedToAConstructor()));
+    seen.push(show(eachOf_map_handedToAConstructor()));
+    return seen.join(" ");
+}
+////: plain-map-handedToFunction
+function plain_map_handedToFunction(): string {
+    const seen: string[] = [];
+    seen.push(show(map_handedToFunction.get("a")));
+    seen.push(show(map_handedToFunction.has("zz")));
+    seen.push(show(map_handedToFunction.size));
+    seen.push(show([...map_handedToFunction.keys()]));
+    seen.push(show(sumOf_map_handedToFunction()));
+    seen.push(show(eachOf_map_handedToFunction()));
+    return seen.join(" ");
+}
+////: plain-map-instanceOfAClassWithHasInstance
+function plain_map_instanceOfAClassWithHasInstance(): string {
+    const seen: string[] = [];
+    seen.push(show(map_instanceOfAClassWithHasInstance.get("a")));
+    seen.push(show(map_instanceOfAClassWithHasInstance.has("zz")));
+    seen.push(show(map_instanceOfAClassWithHasInstance.size));
+    seen.push(show([...map_instanceOfAClassWithHasInstance.keys()]));
+    seen.push(show(sumOf_map_instanceOfAClassWithHasInstance()));
+    seen.push(show(eachOf_map_instanceOfAClassWithHasInstance()));
+    return seen.join(" ");
+}
+////: plain-map-iteratorKept
+function plain_map_iteratorKept(): string {
+    const seen: string[] = [];
+    seen.push(show(map_iteratorKept.get("a")));
+    seen.push(show(map_iteratorKept.has("zz")));
+    seen.push(show(map_iteratorKept.size));
+    seen.push(show([...map_iteratorKept.keys()]));
+    seen.push(show(sumOf_map_iteratorKept()));
+    seen.push(show(eachOf_map_iteratorKept()));
+    return seen.join(" ");
+}
+////: plain-map-keyOfAWeakMap
+function plain_map_keyOfAWeakMap(): string {
+    const seen: string[] = [];
+    seen.push(show(map_keyOfAWeakMap.get("a")));
+    seen.push(show(map_keyOfAWeakMap.has("zz")));
+    seen.push(show(map_keyOfAWeakMap.size));
+    seen.push(show([...map_keyOfAWeakMap.keys()]));
+    seen.push(show(sumOf_map_keyOfAWeakMap()));
+    seen.push(show(eachOf_map_keyOfAWeakMap()));
+    return seen.join(" ");
+}
+////: plain-map-liveAcrossAnAwait
+function plain_map_liveAcrossAnAwait(): string {
+    const seen: string[] = [];
+    seen.push(show(map_liveAcrossAnAwait.get("a")));
+    seen.push(show(map_liveAcrossAnAwait.has("zz")));
+    seen.push(show(map_liveAcrossAnAwait.size));
+    seen.push(show([...map_liveAcrossAnAwait.keys()]));
+    seen.push(show(sumOf_map_liveAcrossAnAwait()));
+    seen.push(show(eachOf_map_liveAcrossAnAwait()));
+    return seen.join(" ");
+}
+////: plain-map-liveAcrossAnAwaitAndAlteredMeanwhile
+function plain_map_liveAcrossAnAwaitAndAlteredMeanwhile(): string {
+    const seen: string[] = [];
+    seen.push(show(map_liveAcrossAnAwaitAndAlteredMeanwhile.get("a")));
+    seen.push(show(map_liveAcrossAnAwaitAndAlteredMeanwhile.has("zz")));
+    seen.push(show(map_liveAcrossAnAwaitAndAlteredMeanwhile.size));
+    seen.push(show([...map_liveAcrossAnAwaitAndAlteredMeanwhile.keys()]));
+    seen.push(show(sumOf_map_liveAcrossAnAwaitAndAlteredMeanwhile()));
+    seen.push(show(eachOf_map_liveAcrossAnAwaitAndAlteredMeanwhile()));
+    return seen.join(" ");
+}
+////: plain-map-notExtensible
+function plain_map_notExtensible(): string {
+    const seen: string[] = [];
+    seen.push(show(map_notExtensible.get("a")));
+    seen.push(show(map_notExtensible.has("zz")));
+    seen.push(show(map_notExtensible.size));
+    seen.push(show([...map_notExtensible.keys()]));
+    seen.push(show(sumOf_map_notExtensible()));
+    seen.push(show(eachOf_map_notExtensible()));
+    return seen.join(" ");
+}
+////: plain-map-nothing
+function plain_map_nothing(): string {
+    const seen: string[] = [];
+    seen.push(show(map_nothing.get("a")));
+    seen.push(show(map_nothing.has("zz")));
+    seen.push(show(map_nothing.size));
+    seen.push(show([...map_nothing.keys()]));
+    seen.push(show(sumOf_map_nothing()));
+    seen.push(show(eachOf_map_nothing()));
+    return seen.join(" ");
+}
+////: plain-map-nullLater
+function plain_map_nullLater(): string {
+    const seen: string[] = [];
+    seen.push(show(map_nullLater.get("a")));
+    seen.push(show(map_nullLater.has("zz")));
+    seen.push(show(map_nullLater.size));
+    seen.push(show([...map_nullLater.keys()]));
+    seen.push(show(sumOf_map_nullLater()));
+    seen.push(show(eachOf_map_nullLater()));
+    return seen.join(" ");
+}
+////: plain-map-objectAssign
+function plain_map_objectAssign(): string {
+    const seen: string[] = [];
+    seen.push(show(map_objectAssign.get("a")));
+    seen.push(show(map_objectAssign.has("zz")));
+    seen.push(show(map_objectAssign.size));
+    seen.push(show([...map_objectAssign.keys()]));
+    seen.push(show(sumOf_map_objectAssign()));
+    seen.push(show(eachOf_map_objectAssign()));
+    return seen.join(" ");
+}
+////: plain-map-onlyRead
+function plain_map_onlyRead(): string {
+    const seen: string[] = [];
+    seen.push(show(map_onlyRead.get("a")));
+    seen.push(show(map_onlyRead.has("zz")));
+    seen.push(show(map_onlyRead.size));
+    seen.push(show([...map_onlyRead.keys()]));
+    seen.push(show(sumOf_map_onlyRead()));
+    seen.push(show(eachOf_map_onlyRead()));
+    return seen.join(" ");
+}
+////: plain-map-ownMethod
+function plain_map_ownMethod(): string {
+    const seen: string[] = [];
+    seen.push(show(map_ownMethod.get("a")));
+    seen.push(show(map_ownMethod.has("zz")));
+    seen.push(show(map_ownMethod.size));
+    seen.push(show([...map_ownMethod.keys()]));
+    seen.push(show(sumOf_map_ownMethod()));
+    seen.push(show(eachOf_map_ownMethod()));
+    return seen.join(" ");
+}
+////: plain-map-ownMethodByKey
+function plain_map_ownMethodByKey(): string {
+    const seen: string[] = [];
+    seen.push(show(map_ownMethodByKey.get("a")));
+    seen.push(show(map_ownMethodByKey.has("zz")));
+    seen.push(show(map_ownMethodByKey.size));
+    seen.push(show([...map_ownMethodByKey.keys()]));
+    seen.push(show(sumOf_map_ownMethodByKey()));
+    seen.push(show(eachOf_map_ownMethodByKey()));
+    return seen.join(" ");
+}
+////: plain-map-protoAssigned
+function plain_map_protoAssigned(): string {
+    const seen: string[] = [];
+    seen.push(show(map_protoAssigned.get("a")));
+    seen.push(show(map_protoAssigned.has("zz")));
+    seen.push(show(map_protoAssigned.size));
+    seen.push(show([...map_protoAssigned.keys()]));
+    seen.push(show(sumOf_map_protoAssigned()));
+    seen.push(show(eachOf_map_protoAssigned()));
+    return seen.join(" ");
+}
+////: plain-map-reflectDefineProperty
+function plain_map_reflectDefineProperty(): string {
+    const seen: string[] = [];
+    seen.push(show(map_reflectDefineProperty.get("a")));
+    seen.push(show(map_reflectDefineProperty.has("zz")));
+    seen.push(show(map_reflectDefineProperty.size));
+    seen.push(show([...map_reflectDefineProperty.keys()]));
+    seen.push(show(sumOf_map_reflectDefineProperty()));
+    seen.push(show(eachOf_map_reflectDefineProperty()));
+    return seen.join(" ");
+}
+////: plain-map-reflectSet
+function plain_map_reflectSet(): string {
+    const seen: string[] = [];
+    seen.push(show(map_reflectSet.get("a")));
+    seen.push(show(map_reflectSet.has("zz")));
+    seen.push(show(map_reflectSet.size));
+    seen.push(show([...map_reflectSet.keys()]));
+    seen.push(show(sumOf_map_reflectSet()));
+    seen.push(show(eachOf_map_reflectSet()));
+    return seen.join(" ");
+}
+////: plain-map-reflectSetPrototypeOf
+function plain_map_reflectSetPrototypeOf(): string {
+    const seen: string[] = [];
+    seen.push(show(map_reflectSetPrototypeOf.get("a")));
+    seen.push(show(map_reflectSetPrototypeOf.has("zz")));
+    seen.push(show(map_reflectSetPrototypeOf.size));
+    seen.push(show([...map_reflectSetPrototypeOf.keys()]));
+    seen.push(show(sumOf_map_reflectSetPrototypeOf()));
+    seen.push(show(eachOf_map_reflectSetPrototypeOf()));
+    return seen.join(" ");
+}
+////: plain-map-resolved
+function plain_map_resolved(): string {
+    const seen: string[] = [];
+    seen.push(show(map_resolved.get("a")));
+    seen.push(show(map_resolved.has("zz")));
+    seen.push(show(map_resolved.size));
+    seen.push(show([...map_resolved.keys()]));
+    seen.push(show(sumOf_map_resolved()));
+    seen.push(show(eachOf_map_resolved()));
+    return seen.join(" ");
+}
+////: plain-map-restBehindOne
+function plain_map_restBehindOne(): string {
+    const seen: string[] = [];
+    seen.push(show(map_restBehindOne.get("a")));
+    seen.push(show(map_restBehindOne.has("zz")));
+    seen.push(show(map_restBehindOne.size));
+    seen.push(show([...map_restBehindOne.keys()]));
+    seen.push(show(sumOf_map_restBehindOne()));
+    seen.push(show(eachOf_map_restBehindOne()));
+    return seen.join(" ");
+}
+////: plain-map-restBehindTwo
+function plain_map_restBehindTwo(): string {
+    const seen: string[] = [];
+    seen.push(show(map_restBehindTwo.get("a")));
+    seen.push(show(map_restBehindTwo.has("zz")));
+    seen.push(show(map_restBehindTwo.size));
+    seen.push(show([...map_restBehindTwo.keys()]));
+    seen.push(show(sumOf_map_restBehindTwo()));
+    seen.push(show(eachOf_map_restBehindTwo()));
+    return seen.join(" ");
+}
+////: plain-map-restLengthAndLast
+function plain_map_restLengthAndLast(): string {
+    const seen: string[] = [];
+    seen.push(show(map_restLengthAndLast.get("a")));
+    seen.push(show(map_restLengthAndLast.has("zz")));
+    seen.push(show(map_restLengthAndLast.size));
+    seen.push(show([...map_restLengthAndLast.keys()]));
+    seen.push(show(sumOf_map_restLengthAndLast()));
+    seen.push(show(eachOf_map_restLengthAndLast()));
+    return seen.join(" ");
+}
+////: plain-map-restParameter
+function plain_map_restParameter(): string {
+    const seen: string[] = [];
+    seen.push(show(map_restParameter.get("a")));
+    seen.push(show(map_restParameter.has("zz")));
+    seen.push(show(map_restParameter.size));
+    seen.push(show([...map_restParameter.keys()]));
+    seen.push(show(sumOf_map_restParameter()));
+    seen.push(show(eachOf_map_restParameter()));
+    return seen.join(" ");
+}
+////: plain-map-restSpreadOn
+function plain_map_restSpreadOn(): string {
+    const seen: string[] = [];
+    seen.push(show(map_restSpreadOn.get("a")));
+    seen.push(show(map_restSpreadOn.has("zz")));
+    seen.push(show(map_restSpreadOn.size));
+    seen.push(show([...map_restSpreadOn.keys()]));
+    seen.push(show(sumOf_map_restSpreadOn()));
+    seen.push(show(eachOf_map_restSpreadOn()));
+    return seen.join(" ");
+}
+////: plain-map-sealed
+function plain_map_sealed(): string {
+    const seen: string[] = [];
+    seen.push(show(map_sealed.get("a")));
+    seen.push(show(map_sealed.has("zz")));
+    seen.push(show(map_sealed.size));
+    seen.push(show([...map_sealed.keys()]));
+    seen.push(show(sumOf_map_sealed()));
+    seen.push(show(eachOf_map_sealed()));
+    return seen.join(" ");
+}
+////: plain-map-setPrototypeOf
+function plain_map_setPrototypeOf(): string {
+    const seen: string[] = [];
+    seen.push(show(map_setPrototypeOf.get("a")));
+    seen.push(show(map_setPrototypeOf.has("zz")));
+    seen.push(show(map_setPrototypeOf.size));
+    seen.push(show([...map_setPrototypeOf.keys()]));
+    seen.push(show(sumOf_map_setPrototypeOf()));
+    seen.push(show(eachOf_map_setPrototypeOf()));
+    return seen.join(" ");
+}
+////: plain-map-setYieldsIt
+function plain_map_setYieldsIt(): string {
+    const seen: string[] = [];
+    seen.push(show(map_setYieldsIt.get("a")));
+    seen.push(show(map_setYieldsIt.has("zz")));
+    seen.push(show(map_setYieldsIt.size));
+    seen.push(show([...map_setYieldsIt.keys()]));
+    seen.push(show(sumOf_map_setYieldsIt()));
+    seen.push(show(eachOf_map_setYieldsIt()));
+    return seen.join(" ");
+}
+////: plain-map-structuredCloned
+function plain_map_structuredCloned(): string {
+    const seen: string[] = [];
+    seen.push(show(map_structuredCloned.get("a")));
+    seen.push(show(map_structuredCloned.has("zz")));
+    seen.push(show(map_structuredCloned.size));
+    seen.push(show([...map_structuredCloned.keys()]));
+    seen.push(show(sumOf_map_structuredCloned()));
+    seen.push(show(eachOf_map_structuredCloned()));
+    return seen.join(" ");
+}
+////: plain-map-symbolIterator
+function plain_map_symbolIterator(): string {
+    const seen: string[] = [];
+    seen.push(show(map_symbolIterator.get("a")));
+    seen.push(show(map_symbolIterator.has("zz")));
+    seen.push(show(map_symbolIterator.size));
+    seen.push(show([...map_symbolIterator.keys()]));
+    seen.push(show(sumOf_map_symbolIterator()));
+    seen.push(show(eachOf_map_symbolIterator()));
+    return seen.join(" ");
+}
+////: plain-map-thirdParameter
+function plain_map_thirdParameter(): string {
+    const seen: string[] = [];
+    seen.push(show(map_thirdParameter.get("a")));
+    seen.push(show(map_thirdParameter.has("zz")));
+    seen.push(show(map_thirdParameter.size));
+    seen.push(show([...map_thirdParameter.keys()]));
+    seen.push(show(sumOf_map_thirdParameter()));
+    seen.push(show(eachOf_map_thirdParameter()));
+    return seen.join(" ");
+}
+////: plain-map-thirdParameterOfANamedFunction
+function plain_map_thirdParameterOfANamedFunction(): string {
+    const seen: string[] = [];
+    seen.push(show(map_thirdParameterOfANamedFunction.get("a")));
+    seen.push(show(map_thirdParameterOfANamedFunction.has("zz")));
+    seen.push(show(map_thirdParameterOfANamedFunction.size));
+    seen.push(show([...map_thirdParameterOfANamedFunction.keys()]));
+    seen.push(show(sumOf_map_thirdParameterOfANamedFunction()));
+    seen.push(show(eachOf_map_thirdParameterOfANamedFunction()));
+    return seen.join(" ");
+}
+////: plain-map-thisArgument
+function plain_map_thisArgument(): string {
+    const seen: string[] = [];
+    seen.push(show(map_thisArgument.get("a")));
+    seen.push(show(map_thisArgument.has("zz")));
+    seen.push(show(map_thisArgument.size));
+    seen.push(show([...map_thisArgument.keys()]));
+    seen.push(show(sumOf_map_thisArgument()));
+    seen.push(show(eachOf_map_thisArgument()));
+    return seen.join(" ");
+}
+////: plain-map-throughAClosureMadeEarly
+function plain_map_throughAClosureMadeEarly(): string {
+    const seen: string[] = [];
+    seen.push(show(map_throughAClosureMadeEarly.get("a")));
+    seen.push(show(map_throughAClosureMadeEarly.has("zz")));
+    seen.push(show(map_throughAClosureMadeEarly.size));
+    seen.push(show([...map_throughAClosureMadeEarly.keys()]));
+    seen.push(show(sumOf_map_throughAClosureMadeEarly()));
+    seen.push(show(eachOf_map_throughAClosureMadeEarly()));
+    return seen.join(" ");
+}
+////: plain-map-throughAField
+function plain_map_throughAField(): string {
+    const seen: string[] = [];
+    seen.push(show(map_throughAField.get("a")));
+    seen.push(show(map_throughAField.has("zz")));
+    seen.push(show(map_throughAField.size));
+    seen.push(show([...map_throughAField.keys()]));
+    seen.push(show(sumOf_map_throughAField()));
+    seen.push(show(eachOf_map_throughAField()));
+    return seen.join(" ");
+}
+////: plain-map-throughAGetter
+function plain_map_throughAGetter(): string {
+    const seen: string[] = [];
+    seen.push(show(map_throughAGetter.get("a")));
+    seen.push(show(map_throughAGetter.has("zz")));
+    seen.push(show(map_throughAGetter.size));
+    seen.push(show([...map_throughAGetter.keys()]));
+    seen.push(show(sumOf_map_throughAGetter()));
+    seen.push(show(eachOf_map_throughAGetter()));
+    return seen.join(" ");
+}
+////: plain-map-throughAJoin
+function plain_map_throughAJoin(): string {
+    const seen: string[] = [];
+    seen.push(show(map_throughAJoin.get("a")));
+    seen.push(show(map_throughAJoin.has("zz")));
+    seen.push(show(map_throughAJoin.size));
+    seen.push(show([...map_throughAJoin.keys()]));
+    seen.push(show(sumOf_map_throughAJoin()));
+    seen.push(show(eachOf_map_throughAJoin()));
+    return seen.join(" ");
+}
+////: plain-map-throughAJoinNotTaken
+function plain_map_throughAJoinNotTaken(): string {
+    const seen: string[] = [];
+    seen.push(show(map_throughAJoinNotTaken.get("a")));
+    seen.push(show(map_throughAJoinNotTaken.has("zz")));
+    seen.push(show(map_throughAJoinNotTaken.size));
+    seen.push(show([...map_throughAJoinNotTaken.keys()]));
+    seen.push(show(sumOf_map_throughAJoinNotTaken()));
+    seen.push(show(eachOf_map_throughAJoinNotTaken()));
+    return seen.join(" ");
+}
+////: plain-map-throughALiteral
+function plain_map_throughALiteral(): string {
+    const seen: string[] = [];
+    seen.push(show(map_throughALiteral.get("a")));
+    seen.push(show(map_throughALiteral.has("zz")));
+    seen.push(show(map_throughALiteral.size));
+    seen.push(show([...map_throughALiteral.keys()]));
+    seen.push(show(sumOf_map_throughALiteral()));
+    seen.push(show(eachOf_map_throughALiteral()));
+    return seen.join(" ");
+}
+////: plain-map-throughAProxy
+function plain_map_throughAProxy(): string {
+    const seen: string[] = [];
+    seen.push(show(map_throughAProxy.get("a")));
+    seen.push(show(map_throughAProxy.has("zz")));
+    seen.push(show(map_throughAProxy.size));
+    seen.push(show([...map_throughAProxy.keys()]));
+    seen.push(show(sumOf_map_throughAProxy()));
+    seen.push(show(eachOf_map_throughAProxy()));
+    return seen.join(" ");
+}
+////: plain-map-throughAWeakRef
+function plain_map_throughAWeakRef(): string {
+    const seen: string[] = [];
+    seen.push(show(map_throughAWeakRef.get("a")));
+    seen.push(show(map_throughAWeakRef.has("zz")));
+    seen.push(show(map_throughAWeakRef.size));
+    seen.push(show([...map_throughAWeakRef.keys()]));
+    seen.push(show(sumOf_map_throughAWeakRef()));
+    seen.push(show(eachOf_map_throughAWeakRef()));
+    return seen.join(" ");
+}
+////: plain-map-throughAnArrow
+function plain_map_throughAnArrow(): string {
+    const seen: string[] = [];
+    seen.push(show(map_throughAnArrow.get("a")));
+    seen.push(show(map_throughAnArrow.has("zz")));
+    seen.push(show(map_throughAnArrow.size));
+    seen.push(show([...map_throughAnArrow.keys()]));
+    seen.push(show(sumOf_map_throughAnArrow()));
+    seen.push(show(eachOf_map_throughAnArrow()));
+    return seen.join(" ");
+}
+////: plain-map-throughAnObjectLiteral
+function plain_map_throughAnObjectLiteral(): string {
+    const seen: string[] = [];
+    seen.push(show(map_throughAnObjectLiteral.get("a")));
+    seen.push(show(map_throughAnObjectLiteral.has("zz")));
+    seen.push(show(map_throughAnObjectLiteral.size));
+    seen.push(show([...map_throughAnObjectLiteral.keys()]));
+    seen.push(show(sumOf_map_throughAnObjectLiteral()));
+    seen.push(show(eachOf_map_throughAnObjectLiteral()));
+    return seen.join(" ");
+}
+////: plain-map-throughAnotherVariable
+function plain_map_throughAnotherVariable(): string {
+    const seen: string[] = [];
+    seen.push(show(map_throughAnotherVariable.get("a")));
+    seen.push(show(map_throughAnotherVariable.has("zz")));
+    seen.push(show(map_throughAnotherVariable.size));
+    seen.push(show([...map_throughAnotherVariable.keys()]));
+    seen.push(show(sumOf_map_throughAnotherVariable()));
+    seen.push(show(eachOf_map_throughAnotherVariable()));
+    return seen.join(" ");
+}
+////: plain-map-throughApply
+function plain_map_throughApply(): string {
+    const seen: string[] = [];
+    seen.push(show(map_throughApply.get("a")));
+    seen.push(show(map_throughApply.has("zz")));
+    seen.push(show(map_throughApply.size));
+    seen.push(show([...map_throughApply.keys()]));
+    seen.push(show(sumOf_map_throughApply()));
+    seen.push(show(eachOf_map_throughApply()));
+    return seen.join(" ");
+}
+////: plain-map-throughBind
+function plain_map_throughBind(): string {
+    const seen: string[] = [];
+    seen.push(show(map_throughBind.get("a")));
+    seen.push(show(map_throughBind.has("zz")));
+    seen.push(show(map_throughBind.size));
+    seen.push(show([...map_throughBind.keys()]));
+    seen.push(show(sumOf_map_throughBind()));
+    seen.push(show(eachOf_map_throughBind()));
+    return seen.join(" ");
+}
+////: plain-map-throughDestructuring
+function plain_map_throughDestructuring(): string {
+    const seen: string[] = [];
+    seen.push(show(map_throughDestructuring.get("a")));
+    seen.push(show(map_throughDestructuring.has("zz")));
+    seen.push(show(map_throughDestructuring.size));
+    seen.push(show([...map_throughDestructuring.keys()]));
+    seen.push(show(sumOf_map_throughDestructuring()));
+    seen.push(show(eachOf_map_throughDestructuring()));
+    return seen.join(" ");
+}
+////: plain-map-throughIdentity
+function plain_map_throughIdentity(): string {
+    const seen: string[] = [];
+    seen.push(show(map_throughIdentity.get("a")));
+    seen.push(show(map_throughIdentity.has("zz")));
+    seen.push(show(map_throughIdentity.size));
+    seen.push(show([...map_throughIdentity.keys()]));
+    seen.push(show(sumOf_map_throughIdentity()));
+    seen.push(show(eachOf_map_throughIdentity()));
+    return seen.join(" ");
+}
+////: plain-map-throughNullish
+function plain_map_throughNullish(): string {
+    const seen: string[] = [];
+    seen.push(show(map_throughNullish.get("a")));
+    seen.push(show(map_throughNullish.has("zz")));
+    seen.push(show(map_throughNullish.size));
+    seen.push(show([...map_throughNullish.keys()]));
+    seen.push(show(sumOf_map_throughNullish()));
+    seen.push(show(eachOf_map_throughNullish()));
+    return seen.join(" ");
+}
+////: plain-map-throughReflectApply
+function plain_map_throughReflectApply(): string {
+    const seen: string[] = [];
+    seen.push(show(map_throughReflectApply.get("a")));
+    seen.push(show(map_throughReflectApply.has("zz")));
+    seen.push(show(map_throughReflectApply.size));
+    seen.push(show([...map_throughReflectApply.keys()]));
+    seen.push(show(sumOf_map_throughReflectApply()));
+    seen.push(show(eachOf_map_throughReflectApply()));
+    return seen.join(" ");
+}
+////: plain-map-throughSpreadArguments
+function plain_map_throughSpreadArguments(): string {
+    const seen: string[] = [];
+    seen.push(show(map_throughSpreadArguments.get("a")));
+    seen.push(show(map_throughSpreadArguments.has("zz")));
+    seen.push(show(map_throughSpreadArguments.size));
+    seen.push(show([...map_throughSpreadArguments.keys()]));
+    seen.push(show(sumOf_map_throughSpreadArguments()));
+    seen.push(show(eachOf_map_throughSpreadArguments()));
+    return seen.join(" ");
+}
+////: plain-map-throughThis
+function plain_map_throughThis(): string {
+    const seen: string[] = [];
+    seen.push(show(map_throughThis.get("a")));
+    seen.push(show(map_throughThis.has("zz")));
+    seen.push(show(map_throughThis.size));
+    seen.push(show([...map_throughThis.keys()]));
+    seen.push(show(sumOf_map_throughThis()));
+    seen.push(show(eachOf_map_throughThis()));
+    return seen.join(" ");
+}
+////: plain-map-thrownAndCaught
+function plain_map_thrownAndCaught(): string {
+    const seen: string[] = [];
+    seen.push(show(map_thrownAndCaught.get("a")));
+    seen.push(show(map_thrownAndCaught.has("zz")));
+    seen.push(show(map_thrownAndCaught.size));
+    seen.push(show([...map_thrownAndCaught.keys()]));
+    seen.push(show(sumOf_map_thrownAndCaught()));
+    seen.push(show(eachOf_map_thrownAndCaught()));
+    return seen.join(" ");
+}
+////: plain-map-undefinedLater
+function plain_map_undefinedLater(): string {
+    const seen: string[] = [];
+    seen.push(show(map_undefinedLater.get("a")));
+    seen.push(show(map_undefinedLater.has("zz")));
+    seen.push(show(map_undefinedLater.size));
+    seen.push(show([...map_undefinedLater.keys()]));
+    seen.push(show(sumOf_map_undefinedLater()));
+    seen.push(show(eachOf_map_undefinedLater()));
+    return seen.join(" ");
+}
+////: plain-map-undefinedOnOneRoad
+function plain_map_undefinedOnOneRoad(): string {
+    const seen: string[] = [];
+    seen.push(show(map_undefinedOnOneRoad.get("a")));
+    seen.push(show(map_undefinedOnOneRoad.has("zz")));
+    seen.push(show(map_undefinedOnOneRoad.size));
+    seen.push(show([...map_undefinedOnOneRoad.keys()]));
+    seen.push(show(sumOf_map_undefinedOnOneRoad()));
+    seen.push(show(eachOf_map_undefinedOnOneRoad()));
+    return seen.join(" ");
+}
+////: plain-map-undefinedThenAnother
+function plain_map_undefinedThenAnother(): string {
+    const seen: string[] = [];
+    seen.push(show(map_undefinedThenAnother.get("a")));
+    seen.push(show(map_undefinedThenAnother.has("zz")));
+    seen.push(show(map_undefinedThenAnother.size));
+    seen.push(show([...map_undefinedThenAnother.keys()]));
+    seen.push(show(sumOf_map_undefinedThenAnother()));
+    seen.push(show(eachOf_map_undefinedThenAnother()));
+    return seen.join(" ");
+}
+////: plain-map-usedBeforeItsDeclaration
+function plain_map_usedBeforeItsDeclaration(): string {
+    const seen: string[] = [];
+    seen.push(show(map_usedBeforeItsDeclaration.get("a")));
+    seen.push(show(map_usedBeforeItsDeclaration.has("zz")));
+    seen.push(show(map_usedBeforeItsDeclaration.size));
+    seen.push(show([...map_usedBeforeItsDeclaration.keys()]));
+    seen.push(show(sumOf_map_usedBeforeItsDeclaration()));
+    seen.push(show(eachOf_map_usedBeforeItsDeclaration()));
+    return seen.join(" ");
+}
+////: plain-map-valueOfAMap
+function plain_map_valueOfAMap(): string {
+    const seen: string[] = [];
+    seen.push(show(map_valueOfAMap.get("a")));
+    seen.push(show(map_valueOfAMap.has("zz")));
+    seen.push(show(map_valueOfAMap.size));
+    seen.push(show([...map_valueOfAMap.keys()]));
+    seen.push(show(sumOf_map_valueOfAMap()));
+    seen.push(show(eachOf_map_valueOfAMap()));
+    return seen.join(" ");
+}
+////: plain-map-varUsedBeforeItsDeclaration
+function plain_map_varUsedBeforeItsDeclaration(): string {
+    const seen: string[] = [];
+    seen.push(show(map_varUsedBeforeItsDeclaration.get("a")));
+    seen.push(show(map_varUsedBeforeItsDeclaration.has("zz")));
+    seen.push(show(map_varUsedBeforeItsDeclaration.size));
+    seen.push(show([...map_varUsedBeforeItsDeclaration.keys()]));
+    seen.push(show(sumOf_map_varUsedBeforeItsDeclaration()));
+    seen.push(show(eachOf_map_varUsedBeforeItsDeclaration()));
+    return seen.join(" ");
+}
+////: plain-map-yielded
+function plain_map_yielded(): string {
+    const seen: string[] = [];
+    seen.push(show(map_yielded.get("a")));
+    seen.push(show(map_yielded.has("zz")));
+    seen.push(show(map_yielded.size));
+    seen.push(show([...map_yielded.keys()]));
+    seen.push(show(sumOf_map_yielded()));
+    seen.push(show(eachOf_map_yielded()));
+    return seen.join(" ");
+}
+////: plain-set-aNamedProperty
+function plain_set_aNamedProperty(): string {
+    const seen: string[] = [];
+    seen.push(show(set_aNamedProperty.has("zz")));
+    seen.push(show(set_aNamedProperty.size));
+    seen.push(show([...set_aNamedProperty]));
+    seen.push(show(sumOf_set_aNamedProperty()));
+    seen.push(show(eachOf_set_aNamedProperty()));
+    return seen.join(" ");
+}
+////: plain-set-addYieldsIt
+function plain_set_addYieldsIt(): string {
+    const seen: string[] = [];
+    seen.push(show(set_addYieldsIt.has("zz")));
+    seen.push(show(set_addYieldsIt.size));
+    seen.push(show([...set_addYieldsIt]));
+    seen.push(show(sumOf_set_addYieldsIt()));
+    seen.push(show(eachOf_set_addYieldsIt()));
+    return seen.join(" ");
+}
+////: plain-set-anHeirAtBirth
+function plain_set_anHeirAtBirth(): string {
+    const seen: string[] = [];
+    seen.push(show(set_anHeirAtBirth.has("zz")));
+    seen.push(show(set_anHeirAtBirth.size));
+    seen.push(show([...set_anHeirAtBirth]));
+    seen.push(show(sumOf_set_anHeirAtBirth()));
+    seen.push(show(eachOf_set_anHeirAtBirth()));
+    return seen.join(" ");
+}
+////: plain-set-anHeirLater
+function plain_set_anHeirLater(): string {
+    const seen: string[] = [];
+    seen.push(show(set_anHeirLater.has("zz")));
+    seen.push(show(set_anHeirLater.size));
+    seen.push(show([...set_anHeirLater]));
+    seen.push(show(sumOf_set_anHeirLater()));
+    seen.push(show(eachOf_set_anHeirLater()));
+    return seen.join(" ");
+}
+////: plain-set-anotherLater
+function plain_set_anotherLater(): string {
+    const seen: string[] = [];
+    seen.push(show(set_anotherLater.has("zz")));
+    seen.push(show(set_anotherLater.size));
+    seen.push(show([...set_anotherLater]));
+    seen.push(show(sumOf_set_anotherLater()));
+    seen.push(show(eachOf_set_anotherLater()));
+    return seen.join(" ");
+}
+////: plain-set-anotherLaterThatIsKept
+function plain_set_anotherLaterThatIsKept(): string {
+    const seen: string[] = [];
+    seen.push(show(set_anotherLaterThatIsKept.has("zz")));
+    seen.push(show(set_anotherLaterThatIsKept.size));
+    seen.push(show([...set_anotherLaterThatIsKept]));
+    seen.push(show(sumOf_set_anotherLaterThatIsKept()));
+    seen.push(show(eachOf_set_anotherLaterThatIsKept()));
+    return seen.join(" ");
+}
+////: plain-set-argumentsObject
+function plain_set_argumentsObject(): string {
+    const seen: string[] = [];
+    seen.push(show(set_argumentsObject.has("zz")));
+    seen.push(show(set_argumentsObject.size));
+    seen.push(show([...set_argumentsObject]));
+    seen.push(show(sumOf_set_argumentsObject()));
+    seen.push(show(eachOf_set_argumentsObject()));
+    return seen.join(" ");
+}
+////: plain-set-argumentsObjectByKey
+function plain_set_argumentsObjectByKey(): string {
+    const seen: string[] = [];
+    seen.push(show(set_argumentsObjectByKey.has("zz")));
+    seen.push(show(set_argumentsObjectByKey.size));
+    seen.push(show([...set_argumentsObjectByKey]));
+    seen.push(show(sumOf_set_argumentsObjectByKey()));
+    seen.push(show(eachOf_set_argumentsObjectByKey()));
+    return seen.join(" ");
+}
+////: plain-set-assignedAtBirth
+function plain_set_assignedAtBirth(): string {
+    const seen: string[] = [];
+    seen.push(show(set_assignedAtBirth.has("zz")));
+    seen.push(show(set_assignedAtBirth.size));
+    seen.push(show([...set_assignedAtBirth]));
+    seen.push(show(sumOf_set_assignedAtBirth()));
+    seen.push(show(eachOf_set_assignedAtBirth()));
+    return seen.join(" ");
+}
+////: plain-set-awaited
+function plain_set_awaited(): string {
+    const seen: string[] = [];
+    seen.push(show(set_awaited.has("zz")));
+    seen.push(show(set_awaited.size));
+    seen.push(show([...set_awaited]));
+    seen.push(show(sumOf_set_awaited()));
+    seen.push(show(eachOf_set_awaited()));
+    return seen.join(" ");
+}
+////: plain-set-callbackBound
+function plain_set_callbackBound(): string {
+    const seen: string[] = [];
+    seen.push(show(set_callbackBound.has("zz")));
+    seen.push(show(set_callbackBound.size));
+    seen.push(show([...set_callbackBound]));
+    seen.push(show(sumOf_set_callbackBound()));
+    seen.push(show(eachOf_set_callbackBound()));
+    return seen.join(" ");
+}
+////: plain-set-callbackNotKnown
+function plain_set_callbackNotKnown(): string {
+    const seen: string[] = [];
+    seen.push(show(set_callbackNotKnown.has("zz")));
+    seen.push(show(set_callbackNotKnown.size));
+    seen.push(show([...set_callbackNotKnown]));
+    seen.push(show(sumOf_set_callbackNotKnown()));
+    seen.push(show(eachOf_set_callbackNotKnown()));
+    return seen.join(" ");
+}
+////: plain-set-callbackOneOfTwo
+function plain_set_callbackOneOfTwo(): string {
+    const seen: string[] = [];
+    seen.push(show(set_callbackOneOfTwo.has("zz")));
+    seen.push(show(set_callbackOneOfTwo.size));
+    seen.push(show([...set_callbackOneOfTwo]));
+    seen.push(show(sumOf_set_callbackOneOfTwo()));
+    seen.push(show(eachOf_set_callbackOneOfTwo()));
+    return seen.join(" ");
+}
+////: plain-set-callbackOutOfAField
+function plain_set_callbackOutOfAField(): string {
+    const seen: string[] = [];
+    seen.push(show(set_callbackOutOfAField.has("zz")));
+    seen.push(show(set_callbackOutOfAField.size));
+    seen.push(show([...set_callbackOutOfAField]));
+    seen.push(show(sumOf_set_callbackOutOfAField()));
+    seen.push(show(eachOf_set_callbackOutOfAField()));
+    return seen.join(" ");
+}
+////: plain-set-cleared
+function plain_set_cleared(): string {
+    const seen: string[] = [];
+    seen.push(show(set_cleared.has("zz")));
+    seen.push(show(set_cleared.size));
+    seen.push(show([...set_cleared]));
+    seen.push(show(sumOf_set_cleared()));
+    seen.push(show(eachOf_set_cleared()));
+    return seen.join(" ");
+}
+////: plain-set-compared
+function plain_set_compared(): string {
+    const seen: string[] = [];
+    seen.push(show(set_compared.has("zz")));
+    seen.push(show(set_compared.size));
+    seen.push(show([...set_compared]));
+    seen.push(show(sumOf_set_compared()));
+    seen.push(show(eachOf_set_compared()));
+    return seen.join(" ");
+}
+////: plain-set-defaultFromArguments
+function plain_set_defaultFromArguments(): string {
+    const seen: string[] = [];
+    seen.push(show(set_defaultFromArguments.has("zz")));
+    seen.push(show(set_defaultFromArguments.size));
+    seen.push(show([...set_defaultFromArguments]));
+    seen.push(show(sumOf_set_defaultFromArguments()));
+    seen.push(show(eachOf_set_defaultFromArguments()));
+    return seen.join(" ");
+}
+////: plain-set-defineProperties
+function plain_set_defineProperties(): string {
+    const seen: string[] = [];
+    seen.push(show(set_defineProperties.has("zz")));
+    seen.push(show(set_defineProperties.size));
+    seen.push(show([...set_defineProperties]));
+    seen.push(show(sumOf_set_defineProperties()));
+    seen.push(show(eachOf_set_defineProperties()));
+    return seen.join(" ");
+}
+////: plain-set-defineProperty
+function plain_set_defineProperty(): string {
+    const seen: string[] = [];
+    seen.push(show(set_defineProperty.has("zz")));
+    seen.push(show(set_defineProperty.size));
+    seen.push(show([...set_defineProperty]));
+    seen.push(show(sumOf_set_defineProperty()));
+    seen.push(show(eachOf_set_defineProperty()));
+    return seen.join(" ");
+}
+////: plain-set-elementOfAnArray
+function plain_set_elementOfAnArray(): string {
+    const seen: string[] = [];
+    seen.push(show(set_elementOfAnArray.has("zz")));
+    seen.push(show(set_elementOfAnArray.size));
+    seen.push(show([...set_elementOfAnArray]));
+    seen.push(show(sumOf_set_elementOfAnArray()));
+    seen.push(show(eachOf_set_elementOfAnArray()));
+    return seen.join(" ");
+}
+////: plain-set-frozen
+function plain_set_frozen(): string {
+    const seen: string[] = [];
+    seen.push(show(set_frozen.has("zz")));
+    seen.push(show(set_frozen.size));
+    seen.push(show([...set_frozen]));
+    seen.push(show(sumOf_set_frozen()));
+    seen.push(show(eachOf_set_frozen()));
+    return seen.join(" ");
+}
+////: plain-set-frozenAtBirth
+function plain_set_frozenAtBirth(): string {
+    const seen: string[] = [];
+    seen.push(show(set_frozenAtBirth.has("zz")));
+    seen.push(show(set_frozenAtBirth.size));
+    seen.push(show([...set_frozenAtBirth]));
+    seen.push(show(sumOf_set_frozenAtBirth()));
+    seen.push(show(eachOf_set_frozenAtBirth()));
+    return seen.join(" ");
+}
+////: plain-set-givenLater
+function plain_set_givenLater(): string {
+    const seen: string[] = [];
+    seen.push(show(set_givenLater.has("zz")));
+    seen.push(show(set_givenLater.size));
+    seen.push(show([...set_givenLater]));
+    seen.push(show(sumOf_set_givenLater()));
+    seen.push(show(eachOf_set_givenLater()));
+    return seen.join(" ");
+}
+////: plain-set-globalThisProperty
+function plain_set_globalThisProperty(): string {
+    const seen: string[] = [];
+    seen.push(show(set_globalThisProperty.has("zz")));
+    seen.push(show(set_globalThisProperty.size));
+    seen.push(show([...set_globalThisProperty]));
+    seen.push(show(sumOf_set_globalThisProperty()));
+    seen.push(show(eachOf_set_globalThisProperty()));
+    return seen.join(" ");
+}
+////: plain-set-handedOnARoadNotTaken
+function plain_set_handedOnARoadNotTaken(): string {
+    const seen: string[] = [];
+    seen.push(show(set_handedOnARoadNotTaken.has("zz")));
+    seen.push(show(set_handedOnARoadNotTaken.size));
+    seen.push(show([...set_handedOnARoadNotTaken]));
+    seen.push(show(sumOf_set_handedOnARoadNotTaken()));
+    seen.push(show(eachOf_set_handedOnARoadNotTaken()));
+    return seen.join(" ");
+}
+////: plain-set-handedOnOneRoad
+function plain_set_handedOnOneRoad(): string {
+    const seen: string[] = [];
+    seen.push(show(set_handedOnOneRoad.has("zz")));
+    seen.push(show(set_handedOnOneRoad.size));
+    seen.push(show([...set_handedOnOneRoad]));
+    seen.push(show(sumOf_set_handedOnOneRoad()));
+    seen.push(show(eachOf_set_handedOnOneRoad()));
+    return seen.join(" ");
+}
+////: plain-set-handedToABuiltin
+function plain_set_handedToABuiltin(): string {
+    const seen: string[] = [];
+    seen.push(show(set_handedToABuiltin.has("zz")));
+    seen.push(show(set_handedToABuiltin.size));
+    seen.push(show([...set_handedToABuiltin]));
+    seen.push(show(sumOf_set_handedToABuiltin()));
+    seen.push(show(eachOf_set_handedToABuiltin()));
+    return seen.join(" ");
+}
+////: plain-set-handedToAConstructor
+function plain_set_handedToAConstructor(): string {
+    const seen: string[] = [];
+    seen.push(show(set_handedToAConstructor.has("zz")));
+    seen.push(show(set_handedToAConstructor.size));
+    seen.push(show([...set_handedToAConstructor]));
+    seen.push(show(sumOf_set_handedToAConstructor()));
+    seen.push(show(eachOf_set_handedToAConstructor()));
+    return seen.join(" ");
+}
+////: plain-set-handedToFunction
+function plain_set_handedToFunction(): string {
+    const seen: string[] = [];
+    seen.push(show(set_handedToFunction.has("zz")));
+    seen.push(show(set_handedToFunction.size));
+    seen.push(show([...set_handedToFunction]));
+    seen.push(show(sumOf_set_handedToFunction()));
+    seen.push(show(eachOf_set_handedToFunction()));
+    return seen.join(" ");
+}
+////: plain-set-instanceOfAClassWithHasInstance
+function plain_set_instanceOfAClassWithHasInstance(): string {
+    const seen: string[] = [];
+    seen.push(show(set_instanceOfAClassWithHasInstance.has("zz")));
+    seen.push(show(set_instanceOfAClassWithHasInstance.size));
+    seen.push(show([...set_instanceOfAClassWithHasInstance]));
+    seen.push(show(sumOf_set_instanceOfAClassWithHasInstance()));
+    seen.push(show(eachOf_set_instanceOfAClassWithHasInstance()));
+    return seen.join(" ");
+}
+////: plain-set-iteratorKept
+function plain_set_iteratorKept(): string {
+    const seen: string[] = [];
+    seen.push(show(set_iteratorKept.has("zz")));
+    seen.push(show(set_iteratorKept.size));
+    seen.push(show([...set_iteratorKept]));
+    seen.push(show(sumOf_set_iteratorKept()));
+    seen.push(show(eachOf_set_iteratorKept()));
+    return seen.join(" ");
+}
+////: plain-set-keyOfAWeakMap
+function plain_set_keyOfAWeakMap(): string {
+    const seen: string[] = [];
+    seen.push(show(set_keyOfAWeakMap.has("zz")));
+    seen.push(show(set_keyOfAWeakMap.size));
+    seen.push(show([...set_keyOfAWeakMap]));
+    seen.push(show(sumOf_set_keyOfAWeakMap()));
+    seen.push(show(eachOf_set_keyOfAWeakMap()));
+    return seen.join(" ");
+}
+////: plain-set-liveAcrossAnAwait
+function plain_set_liveAcrossAnAwait(): string {
+    const seen: string[] = [];
+    seen.push(show(set_liveAcrossAnAwait.has("zz")));
+    seen.push(show(set_liveAcrossAnAwait.size));
+    seen.push(show([...set_liveAcrossAnAwait]));
+    seen.push(show(sumOf_set_liveAcrossAnAwait()));
+    seen.push(show(eachOf_set_liveAcrossAnAwait()));
+    return seen.join(" ");
+}
+////: plain-set-liveAcrossAnAwaitAndAlteredMeanwhile
+function plain_set_liveAcrossAnAwaitAndAlteredMeanwhile(): string {
+    const seen: string[] = [];
+    seen.push(show(set_liveAcrossAnAwaitAndAlteredMeanwhile.has("zz")));
+    seen.push(show(set_liveAcrossAnAwaitAndAlteredMeanwhile.size));
+    seen.push(show([...set_liveAcrossAnAwaitAndAlteredMeanwhile]));
+    seen.push(show(sumOf_set_liveAcrossAnAwaitAndAlteredMeanwhile()));
+    seen.push(show(eachOf_set_liveAcrossAnAwaitAndAlteredMeanwhile()));
+    return seen.join(" ");
+}
+////: plain-set-notExtensible
+function plain_set_notExtensible(): string {
+    const seen: string[] = [];
+    seen.push(show(set_notExtensible.has("zz")));
+    seen.push(show(set_notExtensible.size));
+    seen.push(show([...set_notExtensible]));
+    seen.push(show(sumOf_set_notExtensible()));
+    seen.push(show(eachOf_set_notExtensible()));
+    return seen.join(" ");
+}
+////: plain-set-nothing
+function plain_set_nothing(): string {
+    const seen: string[] = [];
+    seen.push(show(set_nothing.has("zz")));
+    seen.push(show(set_nothing.size));
+    seen.push(show([...set_nothing]));
+    seen.push(show(sumOf_set_nothing()));
+    seen.push(show(eachOf_set_nothing()));
+    return seen.join(" ");
+}
+////: plain-set-nullLater
+function plain_set_nullLater(): string {
+    const seen: string[] = [];
+    seen.push(show(set_nullLater.has("zz")));
+    seen.push(show(set_nullLater.size));
+    seen.push(show([...set_nullLater]));
+    seen.push(show(sumOf_set_nullLater()));
+    seen.push(show(eachOf_set_nullLater()));
+    return seen.join(" ");
+}
+////: plain-set-objectAssign
+function plain_set_objectAssign(): string {
+    const seen: string[] = [];
+    seen.push(show(set_objectAssign.has("zz")));
+    seen.push(show(set_objectAssign.size));
+    seen.push(show([...set_objectAssign]));
+    seen.push(show(sumOf_set_objectAssign()));
+    seen.push(show(eachOf_set_objectAssign()));
+    return seen.join(" ");
+}
+////: plain-set-onlyRead
+function plain_set_onlyRead(): string {
+    const seen: string[] = [];
+    seen.push(show(set_onlyRead.has("zz")));
+    seen.push(show(set_onlyRead.size));
+    seen.push(show([...set_onlyRead]));
+    seen.push(show(sumOf_set_onlyRead()));
+    seen.push(show(eachOf_set_onlyRead()));
+    return seen.join(" ");
+}
+////: plain-set-ownMethod
+function plain_set_ownMethod(): string {
+    const seen: string[] = [];
+    seen.push(show(set_ownMethod.has("zz")));
+    seen.push(show(set_ownMethod.size));
+    seen.push(show([...set_ownMethod]));
+    seen.push(show(sumOf_set_ownMethod()));
+    seen.push(show(eachOf_set_ownMethod()));
+    return seen.join(" ");
+}
+////: plain-set-ownMethodByKey
+function plain_set_ownMethodByKey(): string {
+    const seen: string[] = [];
+    seen.push(show(set_ownMethodByKey.has("zz")));
+    seen.push(show(set_ownMethodByKey.size));
+    seen.push(show([...set_ownMethodByKey]));
+    seen.push(show(sumOf_set_ownMethodByKey()));
+    seen.push(show(eachOf_set_ownMethodByKey()));
+    return seen.join(" ");
+}
+////: plain-set-protoAssigned
+function plain_set_protoAssigned(): string {
+    const seen: string[] = [];
+    seen.push(show(set_protoAssigned.has("zz")));
+    seen.push(show(set_protoAssigned.size));
+    seen.push(show([...set_protoAssigned]));
+    seen.push(show(sumOf_set_protoAssigned()));
+    seen.push(show(eachOf_set_protoAssigned()));
+    return seen.join(" ");
+}
+////: plain-set-reflectDefineProperty
+function plain_set_reflectDefineProperty(): string {
+    const seen: string[] = [];
+    seen.push(show(set_reflectDefineProperty.has("zz")));
+    seen.push(show(set_reflectDefineProperty.size));
+    seen.push(show([...set_reflectDefineProperty]));
+    seen.push(show(sumOf_set_reflectDefineProperty()));
+    seen.push(show(eachOf_set_reflectDefineProperty()));
+    return seen.join(" ");
+}
+////: plain-set-reflectSet
+function plain_set_reflectSet(): string {
+    const seen: string[] = [];
+    seen.push(show(set_reflectSet.has("zz")));
+    seen.push(show(set_reflectSet.size));
+    seen.push(show([...set_reflectSet]));
+    seen.push(show(sumOf_set_reflectSet()));
+    seen.push(show(eachOf_set_reflectSet()));
+    return seen.join(" ");
+}
+////: plain-set-reflectSetPrototypeOf
+function plain_set_reflectSetPrototypeOf(): string {
+    const seen: string[] = [];
+    seen.push(show(set_reflectSetPrototypeOf.has("zz")));
+    seen.push(show(set_reflectSetPrototypeOf.size));
+    seen.push(show([...set_reflectSetPrototypeOf]));
+    seen.push(show(sumOf_set_reflectSetPrototypeOf()));
+    seen.push(show(eachOf_set_reflectSetPrototypeOf()));
+    return seen.join(" ");
+}
+////: plain-set-resolved
+function plain_set_resolved(): string {
+    const seen: string[] = [];
+    seen.push(show(set_resolved.has("zz")));
+    seen.push(show(set_resolved.size));
+    seen.push(show([...set_resolved]));
+    seen.push(show(sumOf_set_resolved()));
+    seen.push(show(eachOf_set_resolved()));
+    return seen.join(" ");
+}
+////: plain-set-restBehindOne
+function plain_set_restBehindOne(): string {
+    const seen: string[] = [];
+    seen.push(show(set_restBehindOne.has("zz")));
+    seen.push(show(set_restBehindOne.size));
+    seen.push(show([...set_restBehindOne]));
+    seen.push(show(sumOf_set_restBehindOne()));
+    seen.push(show(eachOf_set_restBehindOne()));
+    return seen.join(" ");
+}
+////: plain-set-restBehindTwo
+function plain_set_restBehindTwo(): string {
+    const seen: string[] = [];
+    seen.push(show(set_restBehindTwo.has("zz")));
+    seen.push(show(set_restBehindTwo.size));
+    seen.push(show([...set_restBehindTwo]));
+    seen.push(show(sumOf_set_restBehindTwo()));
+    seen.push(show(eachOf_set_restBehindTwo()));
+    return seen.join(" ");
+}
+////: plain-set-restLengthAndLast
+function plain_set_restLengthAndLast(): string {
+    const seen: string[] = [];
+    seen.push(show(set_restLengthAndLast.has("zz")));
+    seen.push(show(set_restLengthAndLast.size));
+    seen.push(show([...set_restLengthAndLast]));
+    seen.push(show(sumOf_set_restLengthAndLast()));
+    seen.push(show(eachOf_set_restLengthAndLast()));
+    return seen.join(" ");
+}
+////: plain-set-restParameter
+function plain_set_restParameter(): string {
+    const seen: string[] = [];
+    seen.push(show(set_restParameter.has("zz")));
+    seen.push(show(set_restParameter.size));
+    seen.push(show([...set_restParameter]));
+    seen.push(show(sumOf_set_restParameter()));
+    seen.push(show(eachOf_set_restParameter()));
+    return seen.join(" ");
+}
+////: plain-set-restSpreadOn
+function plain_set_restSpreadOn(): string {
+    const seen: string[] = [];
+    seen.push(show(set_restSpreadOn.has("zz")));
+    seen.push(show(set_restSpreadOn.size));
+    seen.push(show([...set_restSpreadOn]));
+    seen.push(show(sumOf_set_restSpreadOn()));
+    seen.push(show(eachOf_set_restSpreadOn()));
+    return seen.join(" ");
+}
+////: plain-set-sealed
+function plain_set_sealed(): string {
+    const seen: string[] = [];
+    seen.push(show(set_sealed.has("zz")));
+    seen.push(show(set_sealed.size));
+    seen.push(show([...set_sealed]));
+    seen.push(show(sumOf_set_sealed()));
+    seen.push(show(eachOf_set_sealed()));
+    return seen.join(" ");
+}
+////: plain-set-setPrototypeOf
+function plain_set_setPrototypeOf(): string {
+    const seen: string[] = [];
+    seen.push(show(set_setPrototypeOf.has("zz")));
+    seen.push(show(set_setPrototypeOf.size));
+    seen.push(show([...set_setPrototypeOf]));
+    seen.push(show(sumOf_set_setPrototypeOf()));
+    seen.push(show(eachOf_set_setPrototypeOf()));
+    return seen.join(" ");
+}
+////: plain-set-structuredCloned
+function plain_set_structuredCloned(): string {
+    const seen: string[] = [];
+    seen.push(show(set_structuredCloned.has("zz")));
+    seen.push(show(set_structuredCloned.size));
+    seen.push(show([...set_structuredCloned]));
+    seen.push(show(sumOf_set_structuredCloned()));
+    seen.push(show(eachOf_set_structuredCloned()));
+    return seen.join(" ");
+}
+////: plain-set-symbolIterator
+function plain_set_symbolIterator(): string {
+    const seen: string[] = [];
+    seen.push(show(set_symbolIterator.has("zz")));
+    seen.push(show(set_symbolIterator.size));
+    seen.push(show([...set_symbolIterator]));
+    seen.push(show(sumOf_set_symbolIterator()));
+    seen.push(show(eachOf_set_symbolIterator()));
+    return seen.join(" ");
+}
+////: plain-set-thirdParameter
+function plain_set_thirdParameter(): string {
+    const seen: string[] = [];
+    seen.push(show(set_thirdParameter.has("zz")));
+    seen.push(show(set_thirdParameter.size));
+    seen.push(show([...set_thirdParameter]));
+    seen.push(show(sumOf_set_thirdParameter()));
+    seen.push(show(eachOf_set_thirdParameter()));
+    return seen.join(" ");
+}
+////: plain-set-thirdParameterOfANamedFunction
+function plain_set_thirdParameterOfANamedFunction(): string {
+    const seen: string[] = [];
+    seen.push(show(set_thirdParameterOfANamedFunction.has("zz")));
+    seen.push(show(set_thirdParameterOfANamedFunction.size));
+    seen.push(show([...set_thirdParameterOfANamedFunction]));
+    seen.push(show(sumOf_set_thirdParameterOfANamedFunction()));
+    seen.push(show(eachOf_set_thirdParameterOfANamedFunction()));
+    return seen.join(" ");
+}
+////: plain-set-thisArgument
+function plain_set_thisArgument(): string {
+    const seen: string[] = [];
+    seen.push(show(set_thisArgument.has("zz")));
+    seen.push(show(set_thisArgument.size));
+    seen.push(show([...set_thisArgument]));
+    seen.push(show(sumOf_set_thisArgument()));
+    seen.push(show(eachOf_set_thisArgument()));
+    return seen.join(" ");
+}
+////: plain-set-throughAClosureMadeEarly
+function plain_set_throughAClosureMadeEarly(): string {
+    const seen: string[] = [];
+    seen.push(show(set_throughAClosureMadeEarly.has("zz")));
+    seen.push(show(set_throughAClosureMadeEarly.size));
+    seen.push(show([...set_throughAClosureMadeEarly]));
+    seen.push(show(sumOf_set_throughAClosureMadeEarly()));
+    seen.push(show(eachOf_set_throughAClosureMadeEarly()));
+    return seen.join(" ");
+}
+////: plain-set-throughAField
+function plain_set_throughAField(): string {
+    const seen: string[] = [];
+    seen.push(show(set_throughAField.has("zz")));
+    seen.push(show(set_throughAField.size));
+    seen.push(show([...set_throughAField]));
+    seen.push(show(sumOf_set_throughAField()));
+    seen.push(show(eachOf_set_throughAField()));
+    return seen.join(" ");
+}
+////: plain-set-throughAGetter
+function plain_set_throughAGetter(): string {
+    const seen: string[] = [];
+    seen.push(show(set_throughAGetter.has("zz")));
+    seen.push(show(set_throughAGetter.size));
+    seen.push(show([...set_throughAGetter]));
+    seen.push(show(sumOf_set_throughAGetter()));
+    seen.push(show(eachOf_set_throughAGetter()));
+    return seen.join(" ");
+}
+////: plain-set-throughAJoin
+function plain_set_throughAJoin(): string {
+    const seen: string[] = [];
+    seen.push(show(set_throughAJoin.has("zz")));
+    seen.push(show(set_throughAJoin.size));
+    seen.push(show([...set_throughAJoin]));
+    seen.push(show(sumOf_set_throughAJoin()));
+    seen.push(show(eachOf_set_throughAJoin()));
+    return seen.join(" ");
+}
+////: plain-set-throughAJoinNotTaken
+function plain_set_throughAJoinNotTaken(): string {
+    const seen: string[] = [];
+    seen.push(show(set_throughAJoinNotTaken.has("zz")));
+    seen.push(show(set_throughAJoinNotTaken.size));
+    seen.push(show([...set_throughAJoinNotTaken]));
+    seen.push(show(sumOf_set_throughAJoinNotTaken()));
+    seen.push(show(eachOf_set_throughAJoinNotTaken()));
+    return seen.join(" ");
+}
+////: plain-set-throughALiteral
+function plain_set_throughALiteral(): string {
+    const seen: string[] = [];
+    seen.push(show(set_throughALiteral.has("zz")));
+    seen.push(show(set_throughALiteral.size));
+    seen.push(show([...set_throughALiteral]));
+    seen.push(show(sumOf_set_throughALiteral()));
+    seen.push(show(eachOf_set_throughALiteral()));
+    return seen.join(" ");
+}
+////: plain-set-throughAProxy
+function plain_set_throughAProxy(): string {
+    const seen: string[] = [];
+    seen.push(show(set_throughAProxy.has("zz")));
+    seen.push(show(set_throughAProxy.size));
+    seen.push(show([...set_throughAProxy]));
+    seen.push(show(sumOf_set_throughAProxy()));
+    seen.push(show(eachOf_set_throughAProxy()));
+    return seen.join(" ");
+}
+////: plain-set-throughAWeakRef
+function plain_set_throughAWeakRef(): string {
+    const seen: string[] = [];
+    seen.push(show(set_throughAWeakRef.has("zz")));
+    seen.push(show(set_throughAWeakRef.size));
+    seen.push(show([...set_throughAWeakRef]));
+    seen.push(show(sumOf_set_throughAWeakRef()));
+    seen.push(show(eachOf_set_throughAWeakRef()));
+    return seen.join(" ");
+}
+////: plain-set-throughAnArrow
+function plain_set_throughAnArrow(): string {
+    const seen: string[] = [];
+    seen.push(show(set_throughAnArrow.has("zz")));
+    seen.push(show(set_throughAnArrow.size));
+    seen.push(show([...set_throughAnArrow]));
+    seen.push(show(sumOf_set_throughAnArrow()));
+    seen.push(show(eachOf_set_throughAnArrow()));
+    return seen.join(" ");
+}
+////: plain-set-throughAnObjectLiteral
+function plain_set_throughAnObjectLiteral(): string {
+    const seen: string[] = [];
+    seen.push(show(set_throughAnObjectLiteral.has("zz")));
+    seen.push(show(set_throughAnObjectLiteral.size));
+    seen.push(show([...set_throughAnObjectLiteral]));
+    seen.push(show(sumOf_set_throughAnObjectLiteral()));
+    seen.push(show(eachOf_set_throughAnObjectLiteral()));
+    return seen.join(" ");
+}
+////: plain-set-throughAnotherVariable
+function plain_set_throughAnotherVariable(): string {
+    const seen: string[] = [];
+    seen.push(show(set_throughAnotherVariable.has("zz")));
+    seen.push(show(set_throughAnotherVariable.size));
+    seen.push(show([...set_throughAnotherVariable]));
+    seen.push(show(sumOf_set_throughAnotherVariable()));
+    seen.push(show(eachOf_set_throughAnotherVariable()));
+    return seen.join(" ");
+}
+////: plain-set-throughApply
+function plain_set_throughApply(): string {
+    const seen: string[] = [];
+    seen.push(show(set_throughApply.has("zz")));
+    seen.push(show(set_throughApply.size));
+    seen.push(show([...set_throughApply]));
+    seen.push(show(sumOf_set_throughApply()));
+    seen.push(show(eachOf_set_throughApply()));
+    return seen.join(" ");
+}
+////: plain-set-throughBind
+function plain_set_throughBind(): string {
+    const seen: string[] = [];
+    seen.push(show(set_throughBind.has("zz")));
+    seen.push(show(set_throughBind.size));
+    seen.push(show([...set_throughBind]));
+    seen.push(show(sumOf_set_throughBind()));
+    seen.push(show(eachOf_set_throughBind()));
+    return seen.join(" ");
+}
+////: plain-set-throughDestructuring
+function plain_set_throughDestructuring(): string {
+    const seen: string[] = [];
+    seen.push(show(set_throughDestructuring.has("zz")));
+    seen.push(show(set_throughDestructuring.size));
+    seen.push(show([...set_throughDestructuring]));
+    seen.push(show(sumOf_set_throughDestructuring()));
+    seen.push(show(eachOf_set_throughDestructuring()));
+    return seen.join(" ");
+}
+////: plain-set-throughIdentity
+function plain_set_throughIdentity(): string {
+    const seen: string[] = [];
+    seen.push(show(set_throughIdentity.has("zz")));
+    seen.push(show(set_throughIdentity.size));
+    seen.push(show([...set_throughIdentity]));
+    seen.push(show(sumOf_set_throughIdentity()));
+    seen.push(show(eachOf_set_throughIdentity()));
+    return seen.join(" ");
+}
+////: plain-set-throughNullish
+function plain_set_throughNullish(): string {
+    const seen: string[] = [];
+    seen.push(show(set_throughNullish.has("zz")));
+    seen.push(show(set_throughNullish.size));
+    seen.push(show([...set_throughNullish]));
+    seen.push(show(sumOf_set_throughNullish()));
+    seen.push(show(eachOf_set_throughNullish()));
+    return seen.join(" ");
+}
+////: plain-set-throughReflectApply
+function plain_set_throughReflectApply(): string {
+    const seen: string[] = [];
+    seen.push(show(set_throughReflectApply.has("zz")));
+    seen.push(show(set_throughReflectApply.size));
+    seen.push(show([...set_throughReflectApply]));
+    seen.push(show(sumOf_set_throughReflectApply()));
+    seen.push(show(eachOf_set_throughReflectApply()));
+    return seen.join(" ");
+}
+////: plain-set-throughSpreadArguments
+function plain_set_throughSpreadArguments(): string {
+    const seen: string[] = [];
+    seen.push(show(set_throughSpreadArguments.has("zz")));
+    seen.push(show(set_throughSpreadArguments.size));
+    seen.push(show([...set_throughSpreadArguments]));
+    seen.push(show(sumOf_set_throughSpreadArguments()));
+    seen.push(show(eachOf_set_throughSpreadArguments()));
+    return seen.join(" ");
+}
+////: plain-set-throughThis
+function plain_set_throughThis(): string {
+    const seen: string[] = [];
+    seen.push(show(set_throughThis.has("zz")));
+    seen.push(show(set_throughThis.size));
+    seen.push(show([...set_throughThis]));
+    seen.push(show(sumOf_set_throughThis()));
+    seen.push(show(eachOf_set_throughThis()));
+    return seen.join(" ");
+}
+////: plain-set-thrownAndCaught
+function plain_set_thrownAndCaught(): string {
+    const seen: string[] = [];
+    seen.push(show(set_thrownAndCaught.has("zz")));
+    seen.push(show(set_thrownAndCaught.size));
+    seen.push(show([...set_thrownAndCaught]));
+    seen.push(show(sumOf_set_thrownAndCaught()));
+    seen.push(show(eachOf_set_thrownAndCaught()));
+    return seen.join(" ");
+}
+////: plain-set-undefinedLater
+function plain_set_undefinedLater(): string {
+    const seen: string[] = [];
+    seen.push(show(set_undefinedLater.has("zz")));
+    seen.push(show(set_undefinedLater.size));
+    seen.push(show([...set_undefinedLater]));
+    seen.push(show(sumOf_set_undefinedLater()));
+    seen.push(show(eachOf_set_undefinedLater()));
+    return seen.join(" ");
+}
+////: plain-set-undefinedOnOneRoad
+function plain_set_undefinedOnOneRoad(): string {
+    const seen: string[] = [];
+    seen.push(show(set_undefinedOnOneRoad.has("zz")));
+    seen.push(show(set_undefinedOnOneRoad.size));
+    seen.push(show([...set_undefinedOnOneRoad]));
+    seen.push(show(sumOf_set_undefinedOnOneRoad()));
+    seen.push(show(eachOf_set_undefinedOnOneRoad()));
+    return seen.join(" ");
+}
+////: plain-set-undefinedThenAnother
+function plain_set_undefinedThenAnother(): string {
+    const seen: string[] = [];
+    seen.push(show(set_undefinedThenAnother.has("zz")));
+    seen.push(show(set_undefinedThenAnother.size));
+    seen.push(show([...set_undefinedThenAnother]));
+    seen.push(show(sumOf_set_undefinedThenAnother()));
+    seen.push(show(eachOf_set_undefinedThenAnother()));
+    return seen.join(" ");
+}
+////: plain-set-usedBeforeItsDeclaration
+function plain_set_usedBeforeItsDeclaration(): string {
+    const seen: string[] = [];
+    seen.push(show(set_usedBeforeItsDeclaration.has("zz")));
+    seen.push(show(set_usedBeforeItsDeclaration.size));
+    seen.push(show([...set_usedBeforeItsDeclaration]));
+    seen.push(show(sumOf_set_usedBeforeItsDeclaration()));
+    seen.push(show(eachOf_set_usedBeforeItsDeclaration()));
+    return seen.join(" ");
+}
+////: plain-set-valueOfAMap
+function plain_set_valueOfAMap(): string {
+    const seen: string[] = [];
+    seen.push(show(set_valueOfAMap.has("zz")));
+    seen.push(show(set_valueOfAMap.size));
+    seen.push(show([...set_valueOfAMap]));
+    seen.push(show(sumOf_set_valueOfAMap()));
+    seen.push(show(eachOf_set_valueOfAMap()));
+    return seen.join(" ");
+}
+////: plain-set-varUsedBeforeItsDeclaration
+function plain_set_varUsedBeforeItsDeclaration(): string {
+    const seen: string[] = [];
+    seen.push(show(set_varUsedBeforeItsDeclaration.has("zz")));
+    seen.push(show(set_varUsedBeforeItsDeclaration.size));
+    seen.push(show([...set_varUsedBeforeItsDeclaration]));
+    seen.push(show(sumOf_set_varUsedBeforeItsDeclaration()));
+    seen.push(show(eachOf_set_varUsedBeforeItsDeclaration()));
+    return seen.join(" ");
+}
+////: plain-set-yielded
+function plain_set_yielded(): string {
+    const seen: string[] = [];
+    seen.push(show(set_yielded.has("zz")));
+    seen.push(show(set_yielded.size));
+    seen.push(show([...set_yielded]));
+    seen.push(show(sumOf_set_yielded()));
+    seen.push(show(eachOf_set_yielded()));
+    return seen.join(" ");
+}
+////: report
+function report(name: string, plain: () => string, guarded: () => string, meddle: () => void): void {
+    const take = (f: () => string): string => { try { return f(); } catch (e) { return thrown(e); } };
+    lines.push(name + " before: " + take(plain) + " || " + take(guarded));
+    let how = "";
+    try { meddle(); } catch (e) { how = " (" + thrown(e) + ")"; }
+    lines.push(name + " behind" + how + ": " + take(plain) + " || " + take(guarded) + " marks " + marks);
+    marks = 0;
+}
+////: show
+function show(v: unknown): string {
+    if (Array.isArray(v)) return "[" + Array.prototype.map.call(v, show).join(",") + "]";
+    if (v instanceof Map) return "Map(" + Map.prototype.entries.call(v).toArray().map(show).join(",") + ")";
+    if (v instanceof Set) return "Set(" + Set.prototype.values.call(v).toArray().map(show).join(",") + ")";
+    if (typeof v === "function") return "function";
+    if (v === undefined) return "undefined";
+    if (v === null) return "null";
+    return typeof v === "string" ? JSON.stringify(v) : String(v);
+}
+////: show-2
+function show(value: unknown): string {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "bigint") return value + "n";
+  return typeof value === "string" ? JSON.stringify(value) : String(value);
+}
+////: show-3
+function show(value: unknown): string {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  return typeof value === "string" ? JSON.stringify(value) : String(value);
+}
+////: twice
+function twice(run: () => unknown): string {
+  return attempt(() => {
+    const first = show(run()), second = show(run());
+    return first === second ? first : first + " then " + second;
+  });
+}

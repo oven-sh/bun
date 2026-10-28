@@ -1,0 +1,10 @@
+import fs from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const folder = fs.mkdtempSync(join(tmpdir(), "deletes-a-file-"));
+const file = join(folder, "file.txt");
+fs.writeFileSync(file, "hello");
+const result = fs.unlinkSync(file);
+console.log(result === undefined);
+console.log(fs.existsSync(file));
+fs.rmSync(folder, { recursive: true });

@@ -1,7 +1,7 @@
 /// <reference types="../../build/types/generated.d.ts" />
 /// <reference types="../../build/types/ErrorCode.d.ts" />
-/// <reference types="../../build/types/ZigGeneratedClasses.d.ts" />
 /// <reference types="../../build/types/WebCoreJSBuiltins.d.ts" />
+/// <reference types="../../build/types/Bindgen.d.ts" />
 
 // Typedefs for JSC intrinsics. Instead of @, we use $
 type TODO = any;
@@ -40,6 +40,25 @@ declare function $isPromiseRejected(promise: Promise<any>): boolean;
 declare function $isPromisePending(promise: Promise<any>): boolean;
 
 declare const IS_BUN_DEVELOPMENT: boolean;
+/** False in an executable that was compiled ahead of time without `--compile-inspector` and without `--external`. */
+declare const CAN_LOAD_CODE_AT_RUN_TIME: boolean;
+/** False in an executable that was compiled ahead of time from a program that never names `node:cluster`. */
+declare const CAN_BE_CLUSTER_WORKER: boolean;
+/** True in an executable that was compiled ahead of time, false in `bun run`. Only for a choice between two ways that a program cannot tell apart. */
+declare const IS_COMPILED_AHEAD_OF_TIME: boolean;
+/** Calls `callee`. A compiled executable never inlines the call. Only a compiled executable has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`. */
+declare function $callNoInline<This, Arguments extends unknown[], Result>(
+  callee: (this: This, ...args: Arguments) => Result,
+  thisValue: This,
+  ...args: Arguments
+): Result;
+
+/**
+ * True only where a lookup of `name` on `object` finds the method or accessor that the class of `object` declares or inherits, as the source text defines it.
+ * That class may be an heir of the one you mean: ask for the prototype of `object` as well. False says nothing: ask the object and its prototypes then.
+ * Only a compiled executable has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`.
+ */
+declare function $findsDeclaredMember(object: object, name: string): boolean;
 
 /** Place this directly above a function declaration (like a decorator) to make it a getter. */
 declare const $getter: never;
@@ -155,6 +174,13 @@ type $NotAny<T> = 0 extends 1 & T ? never : unknown;
 /** Keeps the members of `T` that can be a `U`. */
 type $GuardNarrow<T, U> = T extends U ? T : U extends T ? U : never;
 type $AnyObject = Record<PropertyKey, any>;
+/** `x.$$iterator` is `x[Symbol.iterator]` without a look at `Symbol`. Any value may be asked for it. */
+declare interface Object {
+  $$asyncDispose: any;
+  $$asyncIterator: any;
+  $$dispose: any;
+  $$iterator: any;
+}
 type $AnyCallable = ((...args: any[]) => any) & $AnyObject;
 /**
  * True for object-like `JSCell`s. That is, this is roughly equivalent to this
@@ -178,7 +204,7 @@ declare function $isArray(obj: any): obj is any[];
 declare function $isCallable<T>(fn: T & $NotAny<T>): fn is $GuardNarrow<T, CallableFunction> & $NotAny<T>;
 declare function $isCallable(fn: any): fn is $AnyCallable;
 declare function $isJSArray(obj: unknown): obj is any[];
-declare function $isProxyObject(obj: unknown): obj is Proxy;
+declare function $isProxyObject(obj: unknown): boolean;
 declare function $isRegExpObject(obj: unknown): obj is RegExp;
 declare function $isMap<K, V>(obj: unknown): obj is Map<K, V>;
 declare function $isSet<V>(obj: unknown): obj is Set<V>;
@@ -260,6 +286,9 @@ declare function $esmNamespaceForCjs(key: string, requirer?: JSCommonJSModule): 
 declare function $esmRegistryDelete(key: string, requirer?: JSCommonJSModule): boolean;
 declare function $esmRegistryEvaluatedKeys(requirer?: JSCommonJSModule): string[];
 declare function $esmRegistryHasEvaluated(key: string, requirer?: JSCommonJSModule): boolean;
+declare function $requireCacheWillSet(key: string, value: unknown, requirer?: JSCommonJSModule): void;
+/** Without a key: does this process hide any file from require.cache? */
+declare function $isHiddenFromRequireCache(key?: string | symbol): boolean;
 declare function $esmLoadSync(key: string, requirer?: JSCommonJSModule): any;
 declare function $get(): TODO;
 declare function $handleEvent(): TODO;
@@ -288,7 +317,16 @@ declare function $removeAbortAlgorithmFromSignal(signal: AbortSignal, algorithmI
 declare function $redirect(): TODO;
 declare function $relative(): TODO;
 declare function $require(): TODO;
+/** Loads `id` into `mod`. Returns -1 when the module is ESM and must be loaded from the ESM registry. */
+declare function $requireCommonJS(
+  id: string,
+  mod: JSCommonJSModule,
+  parentFilename: unknown,
+  userArgumentCount: number,
+  userOptions: unknown,
+): JSCommonJSModule | -1;
 declare function $requireESM(path: string, requirer?: JSCommonJSModule): any;
+declare function $requireNativeModule(id: string): any;
 declare const $requireMap: Map<string, JSCommonJSModule>;
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;
 declare function $resolve(name: string, from: string): Promise<string>;
@@ -340,14 +378,36 @@ interface InternalFieldObject<T extends any[]> {
   [__internal]: T;
 }
 
-// You can also `@` on any method on a classes to avoid prototype pollution and secret internals
-type ClassWithIntrinsics<T> = { [K in keyof T as T[K] extends Function ? `$${K}` : never]: T[K] };
-
-declare interface Map<K, V> extends ClassWithIntrinsics<Map<K, V>> {}
-declare interface CallableFunction extends ClassWithIntrinsics<CallableFunction> {}
-declare interface Promise<T> extends ClassWithIntrinsics<Promise<T>> {}
-declare interface ArrayBufferConstructor extends ClassWithIntrinsics<ArrayBufferConstructor> {}
-declare interface PromiseConstructor extends ClassWithIntrinsics<PromiseConstructor> {}
+// You can also `@` on any method on a classes to avoid prototype pollution and secret internals.
+declare interface CallableFunction {
+  $call: CallableFunction["call"];
+  $bind: CallableFunction["bind"];
+  $toString: CallableFunction["toString"];
+}
+// `apply` takes any array-like list; the standard library's declaration leaves out `arguments`.
+declare interface CallableFunction {
+  $apply<T, R>(this: (this: T) => R, thisArg: T): R;
+  $apply<T, A extends any[], R>(this: (this: T, ...args: A) => R, thisArg: T, args: A): R;
+  $apply<T, R>(this: (this: T, ...args: any[]) => R, thisArg: T, args: IArguments | $AnyObject): R;
+}
+declare interface Promise<T> {
+  $then: Promise<T>["then"];
+  $catch: Promise<T>["catch"];
+  $finally: Promise<T>["finally"];
+}
+declare interface ArrayBufferConstructor {
+  $isView: ArrayBufferConstructor["isView"];
+}
+declare interface PromiseConstructor {
+  $all: PromiseConstructor["all"];
+  $allSettled: PromiseConstructor["allSettled"];
+  $any: PromiseConstructor["any"];
+  $race: PromiseConstructor["race"];
+  $reject: PromiseConstructor["reject"];
+  $resolve: PromiseConstructor["resolve"];
+  $try: PromiseConstructor["try"];
+  $withResolvers: PromiseConstructor["withResolvers"];
+}
 
 declare interface UnderlyingSource {
   $lazy?: boolean;
@@ -399,19 +459,24 @@ interface String {
   // add others as needed
 }
 
-interface Set {
-  $add: Set["add"];
-  $clear: Set["clear"];
-  $delete: Set["delete"];
-  $has: Set["has"];
+interface Set<T> {
+  $add: Set<T>["add"];
+  $clear: Set<T>["clear"];
+  $delete: Set<T>["delete"];
+  $has: Set<T>["has"];
 }
 
-interface Map {
-  $clear: Map["clear"];
-  $delete: Map["delete"];
-  $has: Map["has"];
-  $set: Map["set"];
-  $get: Map["get"];
+interface Map<K, V> {
+  $clear: Map<K, V>["clear"];
+  $delete: Map<K, V>["delete"];
+  $has: Map<K, V>["has"];
+  $set: Map<K, V>["set"];
+  $get: Map<K, V>["get"];
+  $forEach: Map<K, V>["forEach"];
+  $entries: Map<K, V>["entries"];
+  $keys: Map<K, V>["keys"];
+  $values: Map<K, V>["values"];
+  readonly $size: Map<K, V>["size"];
 }
 
 declare var $Array: ArrayConstructor;
@@ -451,6 +516,7 @@ declare function $ERR_MISSING_ARGS(...args: [string, ...string[]]): TypeError;
 declare function $ERR_MISSING_ARGS(oneOf: string[]): TypeError;
 declare function $ERR_INVALID_RETURN_VALUE(expected_type: string, name: string, actual_value: any): TypeError;
 declare function $ERR_TLS_INVALID_PROTOCOL_VERSION(a: string, b: string): TypeError;
+declare function $ERR_TLS_PROTOCOL_VERSION_CONFLICT(version: string, secureProtocol: string): TypeError;
 declare function $ERR_INVALID_IP_ADDRESS(ip: any): TypeError;
 declare function $ERR_INVALID_ADDRESS_FAMILY(addressType, host, port): RangeError;
 declare function $ERR_OUT_OF_RANGE(name: string, reason: string, value): RangeError;
@@ -490,6 +556,7 @@ declare function $ERR_AMBIGUOUS_ARGUMENT(arg, message): TypeError;
 declare function $ERR_INVALID_FD_TYPE(type): TypeError;
 declare function $ERR_IP_BLOCKED(ip): Error;
 
+declare function $ERR_IPC_CHANNEL_CLOSED(): Error;
 declare function $ERR_IPC_DISCONNECTED(): Error;
 declare function $ERR_INSPECTOR_ALREADY_ACTIVATED(message?: string): Error;
 declare function $ERR_INSPECTOR_NOT_ACTIVE(): Error;
@@ -527,6 +594,7 @@ declare function $ERR_TLS_RENEGOTIATION_UNSUPPORTED(): Error;
 declare function $ERR_TLS_INVALID_STATE(): Error;
 declare function $ERR_UNAVAILABLE_DURING_EXIT(): Error;
 declare function $ERR_TLS_CERT_ALTNAME_FORMAT(): SyntaxError;
+declare function $ERR_TLS_REQUIRED_SERVER_NAME(): Error;
 declare function $ERR_TLS_SNI_FROM_SERVER(): Error;
 declare function $ERR_SSL_NO_CIPHER_MATCH(): Error;
 declare function $ERR_INVALID_URI(): URIError;
@@ -586,11 +654,6 @@ declare function $ERR_HTTP2_PING_CANCEL(): Error;
 declare function $toClass(fn: Function, name: string, base?: Function | undefined | null);
 
 declare function $min(a: number, b: number): number;
-
-interface Map<K, V> {
-  $get: typeof Map.prototype.get;
-  $set: typeof Map.prototype.set;
-}
 
 interface Set<T> {
   $forEach: Set<T>["forEach"];

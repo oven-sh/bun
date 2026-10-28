@@ -1,0 +1,967 @@
+////: changes
+const changes = {
+  "nothing": w => {},
+  "becomes a value": w => Object.defineProperty(w.holder, "k", { value: 7, writable: true, configurable: true, enumerable: true }),
+  "becomes an accessor": w => Object.defineProperty(w.holder, "k", accessor("b")),
+  "becomes read-only": w => Object.defineProperty(w.holder, "k", { value: 8, writable: false, configurable: true, enumerable: true }),
+  "is deleted": w => { delete w.holder.k; },
+  "is deleted, another takes its place": w => { Reflect.deleteProperty(w.holder, "k"); Reflect.set(w.holder, "late", 297); Reflect.set(w.holder, "later", 298); },
+  "is stored to by name": w => attempt(() => write(w.holder, 9)),
+  "names come and go": w => passingNames(w.holder, 61),
+  "names come and go, then a store by name": w => { passingNames(w.holder, 131); writeOther(w.holder, 2); },
+  "another is deleted, then a store by name": w => { Reflect.set(w.holder, "early", 1); passingNames(w.holder, 131); Reflect.deleteProperty(w.holder, "early"); writeOther(w.holder, 3); },
+  "the one between gets the name": w => Object.defineProperty(w.between, "k", { value: "between", writable: true, configurable: true, enumerable: true }),
+  "the one between gets an accessor": w => Object.defineProperty(w.between, "k", accessor("c")),
+  "the one between gets another prototype": w => Object.setPrototypeOf(w.between, { k: "elsewhere" }),
+  "the one between loses its prototype": w => Object.setPrototypeOf(w.between, null),
+  "the holder gets a prototype with the name": w => attempt(() => Object.setPrototypeOf(w.holder, { k: "higher" })),
+  "the one between is assigned the name": w => Object.assign(w.between, { k: "assigned" }),
+  "the holder is assigned the name and others": w => attempt(() => Object.assign(w.holder, { first: 1, k: "assigned", second: 2 })),
+  "the one between gets another prototype by __proto__": w => { w.between.__proto__ = { k: "by __proto__" }; },
+  "the one between gets another prototype by Reflect": w => Reflect.setPrototypeOf(w.between, { get k() { return "by Reflect"; } }),
+  "the holder gets a getter the old way": w => attempt(() => Object.prototype.__defineGetter__.call(w.holder, "k", () => "the old way")),
+  "several are defined at once": w => Object.defineProperties(w.holder, { early: { value: 1, configurable: true }, k: { value: "at once", configurable: true, writable: true }, late: accessor("d") }),
+  "the holder is frozen": w => Object.freeze(w.holder),
+  "the holder is sealed, then stored to": w => { Object.seal(w.holder); attempt(() => write(w.holder, 10)); },
+};
+////: changes-2
+const changes = {
+  "nothing": w => {},
+  "becomes a value": w => Object.defineProperty(w.holder, "k", { value: 7, writable: true, configurable: true, enumerable: true }),
+  "becomes an accessor": w => Object.defineProperty(w.holder, "k", accessor("b")),
+  "becomes read-only": w => Object.defineProperty(w.holder, "k", { value: 8, writable: false, configurable: true, enumerable: true }),
+  "is deleted": w => { delete w.holder.k; },
+  "is deleted, another takes its place": w => { Reflect.deleteProperty(w.holder, "k"); Reflect.set(w.holder, "late", 297); Reflect.set(w.holder, "later", 298); },
+  "is stored to by name": w => attempt(() => write(w.holder, 9)),
+  "names come and go": w => passingNames(w.holder, 61),
+  "names come and go, then a store by name": w => { passingNames(w.holder, 131); writeOther(w.holder, 2); },
+  "another is deleted, then a store by name": w => { Reflect.set(w.holder, "early", 1); passingNames(w.holder, 131); Reflect.deleteProperty(w.holder, "early"); writeOther(w.holder, 3); },
+  "the one between gets the name": w => Object.defineProperty(w.between, "k", { value: "between", writable: true, configurable: true, enumerable: true }),
+  "the one between gets an accessor": w => Object.defineProperty(w.between, "k", accessor("c")),
+  "the one between gets another prototype": w => Object.setPrototypeOf(w.between, { k: "elsewhere" }),
+  "the one between loses its prototype": w => Object.setPrototypeOf(w.between, null),
+  "the holder gets a prototype with the name": w => attempt(() => Object.setPrototypeOf(w.holder, { k: "higher" })),
+  "the holder is frozen": w => Object.freeze(w.holder),
+  "the holder is sealed, then stored to": w => { Object.seal(w.holder); attempt(() => write(w.holder, 10)); },
+};
+////: for-2
+for (const holderKind of ['literal', 'literal', 'literal']) {
+  for (const keeping of ['names came and went']) {
+    for (const state of ['accessor']) {
+      for (const change of ['names come and go, then a store by name']) {
+        for (const betweenKind of ["literal", "parsed"]) {
+          const holder = holders[holderKind]();
+          keepings[keeping](holder);
+          states[state](holder);
+          const between = holders[betweenKind]();
+          Object.setPrototypeOf(between, holder);
+          const w = { holder, between, heirs: [Object.create(between), Object.create(between), Object.create(holder)] };
+          w.heirs[1].own = 1;
+          log = "";
+          let before = "";
+          for (let i = 0; i < 4; i++) before = look(w) + " | " + store(w, i);
+          attempt(() => changes[change](w));
+          let after = "";
+          for (let i = 0; i < 3; i++) after = look(w) + " | " + store(w, i);
+          console.log(`${holderKind}, ${keeping}, ${state}, ${change}, below a ${betweenKind}: ${before} => ${after} ${log}`);
+        }
+      }
+    }
+  }
+}
+////: holders
+const holders = {
+  "literal": () => { const p = {}; p.tag = 1; return p; },
+  "literal with the name": () => ({ tag: 1, k: undefined, last: 2 }),
+  "parsed": () => JSON.parse('{"z0":0,"z1":1}'),
+  "class prototype": () => (class { tagged() { return 1; } }).prototype,
+  "function prototype": () => { function F() {} return F.prototype; },
+  "without prototype": () => Object.create(null),
+};
+////: keepings
+const keepings = {
+  "fresh": p => {},
+  "names came and went": p => passingNames(p, 40),
+  "dictionary": p => passingNames(p, 130),
+  "packed anew": p => { passingNames(p, 130); writeOther(p, 1); },
+  "dictionary again": p => { passingNames(p, 130); writeOther(p, 1); read(Object.create(p)); read(Object.create(p)); passingNames(p, 130); },
+};
+////: look
+function look(w) {
+  const seen = [];
+  for (const o of w.heirs) {
+    seen.push(show(attempt(() => read(o))), has(o) ? "+" : "-", owns(o) ? "o" : ".", show(attempt(() => call(o))), show(attempt(() => readAgain(o))));
+    for (const key of keys) seen.push(show(attempt(() => readByKey(o, key))) + (hasByKey(o, key) ? "+" : "-"));
+  }
+  return seen.join(" ");
+}
+////: passingNames
+function passingNames(p, count) {
+  for (let i = 0; i < count; i++) {
+    Reflect.set(p, "passing" + i, i);
+    if (i) Reflect.deleteProperty(p, "passing" + (i - 1));
+  }
+}
+////: passingNames-2
+////= passingNames
+
+////= holders
+////= keepings
+////: self-on
+self.on("message", message => {
+  console.log("child got", JSON.stringify(message));
+  setTimeout(() => self.exit(0), 10);
+});
+////: self-on-2
+self.on("message", () => {
+  console.log("child got a message");
+  self.exitCode = 0;
+  setTimeout(() => self.exit(), 10);
+});
+////: states
+const states = {
+  "absent": p => { delete p.k; },
+  "value": p => Object.defineProperty(p, "k", { value: 296, writable: true, configurable: true, enumerable: true }),
+  "method": p => Object.defineProperty(p, "k", { value() { return "called"; }, writable: true, configurable: true, enumerable: false }),
+  "accessor": p => Object.defineProperty(p, "k", accessor("a")),
+  "read-only": p => Object.defineProperty(p, "k", { value: 5, writable: false, configurable: true, enumerable: true }),
+};
+////: states-2
+////= states
+////= changes
+
+////= look
+
+////= store
+////: store
+function store(w, v) {
+  const fresh = Object.create(w.between);
+  const strict = Object.create(w.between);
+  return [show(attempt(() => write(fresh, v))), owns(fresh) ? "o" : ".", show(attempt(() => read(fresh))), show(attempt(() => strictWrite(strict, v))), owns(strict) ? "o" : "."].join(" ");
+}
+//// members-of-process/cliff-borrow.js
+// A loop goes over arrays, strings, a String object and objects that only borrow Array.prototype[Symbol.iterator].
+// Each receiver is iterated by the method that it finds itself, and what the steps hand out is what it holds.
+////= lines-15	Row	id
+
+class Shelf {
+  constructor(...rows) {
+    this.length = rows.length;
+    rows.forEach((row, index) => (this[index] = row));
+  }
+}
+Shelf.prototype[Symbol.iterator] = Array.prototype[Symbol.iterator];
+
+const borrowed = { 0: new Row(7), 1: new Row(8), length: 2, [Symbol.iterator]: Array.prototype.values };
+
+function describe(value) {
+  return value instanceof Row ? `row ${value.id}` : `${typeof value} ${String(value)}`;
+}
+
+function list(iterable) {
+  const seen = [];
+  for (const value of iterable) seen.push(describe(value));
+  return seen;
+}
+
+function first([value]) {
+  return describe(value);
+}
+
+const iterables = [[new Row(1), new Row(2)], "ab", new String("cd"), new Shelf(new Row(3), new Row(4)), borrowed, new Set([new Row(5)]), new Map([[new Row(6), 1]]).keys()];
+for (const iterable of iterables) console.log(JSON.stringify(list(iterable)), first(iterable), JSON.stringify([...iterable].map(describe)));
+
+Promise.all([new Row(9)]).then(([row]) => console.log(describe(row), row.id));
+//// members-of-process/cpu-by-key.js
+// Members of process: cpu by key. It prints what plain Bun prints.
+function read(o, k) { return o[k]; }
+function has(o, k) { return k in o; }
+const rounds = Number(process.argv[2] ?? 1);
+const mode = process.argv[3] ?? "parsed";
+const source = [];
+for (let i = 0; i < 2000; i++) source.push(`{"k${i}": ${i}, "a": ${i}}`);
+const parsed = JSON.parse("[" + source.join(",") + "]");
+const spread = parsed.map((p, i) => ({ first: i, ...p }));
+const keys = ["a", "missing", "first"];
+let sum = 0;
+for (let r = 0; r < rounds; r++) {
+  for (let i = 0; i < 2000; i++) {
+    const o = mode.startsWith("parsed") ? parsed[i] : spread[i];
+    const k = keys[mode.endsWith("absent") ? 1 : 0];
+    sum += mode.includes("in-") ? (has(o, k) ? 1 : 0) : (read(o, k) ?? 1);
+  }
+}
+console.log(rounds, mode, sum);
+//// members-of-process/cpu-many-absent.js
+// Members of process: cpu many absent. It prints what plain Bun prints.
+function read(o) { return o.missing; }
+function has(o) { return "missing" in o; }
+class Base { method() { return 1; } get got() { return 2; } }
+function call(o) { return o.method(); }
+function got(o) { return o.got; }
+const rounds = Number(process.argv[2] ?? 1);
+const mode = process.argv[3] ?? "absent";
+const source = [];
+for (let i = 0; i < 2000; i++) source.push(`{"k${i}": ${i}, "a": ${i}}`);
+const parsed = JSON.parse("[" + source.join(",") + "]");
+const assigned = parsed.map((p, i) => Object.assign({ first: i }, p));
+const spread = parsed.map((p, i) => ({ first: i, ...p }));
+function a(o) { return o.a; }
+let sum = 0;
+for (let r = 0; r < rounds; r++) {
+  for (let i = 0; i < 2000; i++) {
+    if (mode === "parsed") sum += a(parsed[i]);
+    else if (mode === "assigned") sum += a(assigned[i]);
+    else if (mode === "spread") sum += a(spread[i]);
+    else if (mode === "parsed-absent") sum += read(parsed[i]) === undefined ? 1 : 0;
+    else if (mode === "spread-absent") sum += read(spread[i]) === undefined ? 1 : 0;
+  }
+}
+console.log(rounds, mode, sum);
+//// members-of-process/cpu-misses.js
+// Members of process: cpu misses. It prints what plain Bun prints.
+function read(o) { return o.a; }
+function has(o) { return "a" in o; }
+const objects = [{ a: 1 }, { a: 2, b: 1 }, { a: 3, c: 1 }, JSON.parse('{"a":4}'), function f() {}, [1], new Map(), Object.assign({ z: 1 }, JSON.parse('{"a":5,"q":1}'))];
+let sum = 0;
+for (let i = 0; i < 4; i++) {
+  for (const o of objects) {
+    if (has(o)) sum += read(o);
+  }
+}
+console.log(sum, read("text"));
+//// members-of-process/cpu-names2.js
+// Members of process: cpu names2. It prints what plain Bun prints.
+function nameOf(f) { return f.name; }
+function lengthOf(f) { return f.length; }
+const makers = [() => () => 1, () => function named(a, b) {}, () => async () => {}];
+const which = Number(process.argv[2] ?? 0);
+const mode = process.argv[3] ?? "name";
+let total = 0;
+for (let i = 0; i < 1000; i++) {
+  const f = makers[which]();
+  if (mode === "name") total += nameOf(f).length;
+  else if (mode === "length") total += lengthOf(f);
+  else if (mode === "name-length") total += nameOf(f).length + lengthOf(f);
+  else if (mode === "length-name") total += lengthOf(f) + nameOf(f).length;
+  else if (mode === "name-name") total += nameOf(f).length + nameOf(f).length;
+}
+console.log(which, mode, total);
+//// members-of-process/crash-m1.js
+// Heirs, and the holder itself, read, ask for, store to and call a name that lies above them (or in them, or nowhere), by name and by key, often enough for every answer to be remembered. Then the holder, or an object between, changes in one way,
+// and they do it all again. Every kind of holder, every way its properties are kept, every state of the name and every change: one line each.
+const read = o => o.k, readAgain = o => o.k, has = o => "k" in o, owns = o => Object.hasOwn(o, "k"), call = o => o.k(), write = (o, v) => { o.k = v; }, writeOther = (o, v) => { o.other = v; };
+const strictWrite = (o, v) => { "use strict"; o.k = v; };
+const readByKey = (o, key) => o[key], hasByKey = (o, key) => key in o, keys = ["k", "before", "after", "nowhere"];
+let log = "";
+const attempt = run => { try { return run(); } catch (error) { return error instanceof TypeError ? "TypeError" : "Error"; } };
+const show = v => (typeof v === "function" ? "function" : typeof v === "object" && v ? "object" : String(v));
+
+////= passingNames-2
+const accessor = tag => ({ get() { return "got " + tag; }, set(v) { log += tag + v; }, configurable: true, enumerable: true });
+////= states-2
+
+for (const holderKind in holders) {
+  for (const keeping in keepings) {
+    for (const state in states) {
+      for (const change in changes) {
+        for (const betweenKind of ["literal", "parsed"]) {
+          const holder = holders[holderKind]();
+          keepings[keeping](holder);
+          // Neighbors of other kinds, so that an answer taken from the wrong place shows.
+          Object.defineProperty(holder, "before", { value: 296, writable: true, configurable: true, enumerable: false });
+          states[state](holder);
+          Object.defineProperty(holder, "after", accessor("n"));
+          Reflect.set(holder, "last", "the last neighbor");
+          const between = holders[betweenKind]();
+          Object.setPrototypeOf(between, holder);
+          const w = { holder, between, heirs: [Object.create(between), Object.create(between), Object.create(holder), between, holder] };
+          w.heirs[1].own = 1;
+          log = "";
+          let before = "";
+          for (let i = 0; i < 4; i++) before = look(w) + " | " + store(w, i);
+          attempt(() => changes[change](w));
+          let after = "";
+          for (let i = 0; i < 3; i++) after = look(w) + " | " + store(w, i);
+          console.log(`${holderKind}, ${keeping}, ${state}, ${change}, below a ${betweenKind}: ${before} => ${after} ${log}`);
+        }
+      }
+    }
+  }
+}
+//// members-of-process/crash-m2.js
+// Heirs read, ask for, store to and call a name that lies above them (or nowhere), often enough for every answer to be remembered. Then the holder, or an object between, changes in one way,
+// and they do it all again. Every kind of holder, every way its properties are kept, every state of the name and every change: one line each.
+const read = o => o.k, readAgain = o => o.k, has = o => "k" in o, owns = o => Object.hasOwn(o, "k"), call = o => o.k(), write = (o, v) => { o.k = v; }, writeOther = (o, v) => { o.other = v; };
+const strictWrite = (o, v) => { "use strict"; o.k = v; };
+let log = "";
+const attempt = run => { try { return run(); } catch (error) { return error instanceof TypeError ? "TypeError" : "Error"; } };
+const show = v => (typeof v === "function" ? "function" : typeof v === "object" && v ? "object" : String(v));
+
+////= passingNames-2
+const accessor = tag => ({ get() { return "got " + tag; }, set(v) { log += tag + v; }, configurable: true, enumerable: true });
+////= states
+////= changes-2
+
+function look(w) {
+  const seen = [];
+  for (const o of w.heirs) seen.push(show(attempt(() => read(o))), has(o) ? "+" : "-", owns(o) ? "o" : ".", show(attempt(() => call(o))), show(attempt(() => readAgain(o))));
+  return seen.join(" ");
+}
+
+////= store
+
+////= for-2
+//// members-of-process/crash-m3.js
+// Heirs read, ask for, store to and call a name that lies above them (or nowhere), often enough for every answer to be remembered. Then the holder, or an object between, changes in one way,
+// and they do it all again. Every kind of holder, every way its properties are kept, every state of the name and every change: one line each.
+const read = o => o.k, readAgain = o => o.k, has = o => "k" in o, owns = o => Object.hasOwn(o, "k"), call = o => o.k(), write = (o, v) => { o.k = v; }, writeOther = (o, v) => { o.other = v; };
+const strictWrite = (o, v) => { "use strict"; o.k = v; };
+let log = "";
+const attempt = run => { try { return run(); } catch (error) { return error instanceof TypeError ? "TypeError" : "Error"; } };
+const show = v => (typeof v === "function" ? "function" : typeof v === "object" && v ? "object" : String(v));
+
+////= passingNames-2
+const accessor = tag => ({ get() { return "got " + tag; }, set(v) { log += tag + v; }, configurable: true, enumerable: true });
+const states = {
+  "absent": p => { delete p.k; },
+  "value": p => Object.defineProperty(p, "k", { value: 296, writable: true, configurable: true, enumerable: true }),
+  "method": p => Object.defineProperty(p, "k", { value() { return "called"; }, writable: true, configurable: true, enumerable: false }),
+  "accessor": p => { Object.defineProperty(p, "next", { value: 296, writable: true, configurable: true, enumerable: false }); Object.defineProperty(p, "k", accessor("a")); },
+  "read-only": p => Object.defineProperty(p, "k", { value: 5, writable: false, configurable: true, enumerable: true }),
+};
+////= changes-2
+
+function look(w) {
+  const seen = [];
+  for (const o of w.heirs) seen.push(show(attempt(() => read(o))), has(o) ? "+" : "-", owns(o) ? "o" : ".", show(attempt(() => call(o))), show(attempt(() => readAgain(o))));
+  return seen.join(" ");
+}
+
+////= store
+
+////= for-2
+//// members-of-process/crash-m4.js
+// Heirs, and the holder itself, read, ask for, store to and call a name that lies above them (or in them, or nowhere), by name and by key, so often that each place in the program remembers the answer for itself. Then the holder, or an object between, changes in one way,
+// and they do it all again. Every kind of holder, every way its properties are kept, every state of the name and every change: one line each.
+const read = o => o.k, readAgain = o => o.k, has = o => "k" in o, owns = o => Object.hasOwn(o, "k"), call = o => o.k(), write = (o, v) => { o.k = v; }, writeOther = (o, v) => { o.other = v; };
+const strictWrite = (o, v) => { "use strict"; o.k = v; };
+const readByKey = (o, key) => o[key], hasByKey = (o, key) => key in o, keys = ["k", "before", "after", "nowhere"];
+let log = "";
+const attempt = run => { try { return run(); } catch (error) { return error instanceof TypeError ? "TypeError" : "Error"; } };
+const show = v => (typeof v === "function" ? "function" : typeof v === "object" && v ? "object" : String(v));
+
+////= passingNames-2
+const accessor = tag => ({ get() { return "got " + tag; }, set(v) { log += tag + v; }, configurable: true, enumerable: true });
+////= states-2
+
+for (const holderKind in holders) {
+  for (const keeping of ["fresh", "names came and went", "packed anew"]) {
+    for (const state in states) {
+      for (const change in changes) {
+        for (const betweenKind of ["literal"]) {
+          const holder = holders[holderKind]();
+          keepings[keeping](holder);
+          // Neighbors of other kinds, so that an answer taken from the wrong place shows.
+          Object.defineProperty(holder, "before", { value: 296, writable: true, configurable: true, enumerable: false });
+          states[state](holder);
+          Object.defineProperty(holder, "after", accessor("n"));
+          Reflect.set(holder, "last", "the last neighbor");
+          const between = holders[betweenKind]();
+          Object.setPrototypeOf(between, holder);
+          const w = { holder, between, heirs: [Object.create(between), Object.create(between)] };
+          log = "";
+          let before = "";
+          for (let i = 0; i < 80; i++) before = look(w) + " | " + store(w, i);
+          attempt(() => changes[change](w));
+          let after = "";
+          for (let i = 0; i < 3; i++) after = look(w) + " | " + store(w, i);
+          console.log(`${holderKind}, ${keeping}, ${state}, ${change}, below a ${betweenKind}: ${before} => ${after} ${log}`);
+        }
+      }
+    }
+  }
+}
+//// members-of-process/crash-r1.js
+// Members of process, one probe of many. It prints what plain Bun prints.
+function read(o) { return o.c; }
+const show = v => (typeof v === "function" ? "function" : String(v));
+function churn(p, n) { for (let i = 0; i < n; i++) { Reflect.set(p, "passing" + i, i); if (i) Reflect.deleteProperty(p, "passing" + (i - 1)); } }
+function scenario(name, make, steps) {
+  const p = make(); p.tag = 1;
+  const heir = Object.create(p); heir.own = 1;
+  const out = [];
+  for (const step of steps) { step(p); for (let i = 0; i < 4; i++) out.push(show(read(heir))); }
+  console.log(name, out.filter((v, i) => i % 4 === 3).join(" "));
+}
+const accessor = p => Object.defineProperty(p, "c", { get() { return "got"; }, set(v) {}, configurable: true, enumerable: true });
+const data = v => p => Object.defineProperty(p, "c", { value: v, writable: true, configurable: true, enumerable: true });
+const other = (k, v) => p => { p[k] = v; };
+const drop = k => p => { delete p[k]; };
+for (const [kind, make] of [["literal", () => ({})], ["parsed", () => JSON.parse('{"z0":0,"z1":1,"z2":2}')]]) {
+  scenario(kind + " accessor, churn", make, [accessor, p => churn(p, 100)]);
+  scenario(kind + " accessor, churn twice", make, [accessor, p => churn(p, 100), p => churn(p, 100)]);
+  scenario(kind + " data before, accessor, churn, drop, churn", make, [other("first", 296), accessor, p => churn(p, 100), drop("first"), p => churn(p, 100), other("late", 297)]);
+  scenario(kind + " accessor, churn, data", make, [accessor, p => churn(p, 100), data(5)]);
+  scenario(kind + " accessor, churn, drop c, other", make, [accessor, p => churn(p, 100), drop("c"), other("late", 298)]);
+  scenario(kind + " accessor, churn, churn, drop c, other", make, [accessor, p => churn(p, 100), p => churn(p, 60), drop("c"), other("late", 298), other("later", 299)]);
+  scenario(kind + " accessor, churn, churn, data, other", make, [accessor, p => churn(p, 100), p => churn(p, 60), data(6), other("late", 298)]);
+}
+//// members-of-process/crash-r2.js
+// Members of process, one probe of many. It prints what plain Bun prints.
+const NAMES = ["key", "next", "method", "other"];
+const read = [o => o.key, o => o.next, o => o.method, o => o.other];
+const has = [o => "key" in o, o => "next" in o, o => "method" in o, o => "other" in o];
+const setMethod = (o, v) => { o.method = v; };
+const show = v => (typeof v === "function" ? "function" : String(v));
+function churn(p, n) { for (let i = 0; i < n; i++) { Reflect.set(p, "passing" + i, i); if (i) Reflect.deleteProperty(p, "passing" + (i - 1)); } }
+function look(heirs) { const out = []; for (const o of heirs) for (let k = 0; k < NAMES.length; k++) out.push(show(read[k](o)) + (has[k](o) ? "+" : "-")); return out.join(" "); }
+function scenario(label, make, rounds) {
+  const p = make(); p.tag = 1;
+  const heirs = []; for (let i = 0; i < 3; i++) { const o = Object.create(p); for (let j = 0; j < i; j++) o["own" + j] = j; heirs.push(o); }
+  console.log(label, "start", look(heirs));
+  churn(p, 40);
+  Object.defineProperty(p, "next", { value: 296, writable: true, configurable: true, enumerable: false });
+  Object.defineProperty(p, "key", { get() { return "got"; }, set(v) {}, configurable: true, enumerable: true });
+  for (let i = 0; i < rounds; i++) console.log(label, "defined", look(heirs));
+  churn(p, 61);
+  setMethod(p, 297);
+  for (let i = 0; i < rounds; i++) console.log(label, "stored", look(heirs));
+}
+for (const rounds of [1, 2, 3]) {
+  scenario("literal " + rounds, () => ({}), rounds);
+  scenario("parsed " + rounds, () => JSON.parse('{"z0":0,"z1":1,"z2":2}'), rounds);
+}
+//// members-of-process/crash-t1.js
+// A prototype that is an object literal keeps the names it gets later beside its fields. Names come and go until those are kept as a dictionary; a store by name then packs them
+// anew, and every one of them may lie elsewhere. Heirs that have read a getter, a value and an absent name through the prototype before read them again.
+const NAMES = ["key", "next", "method", "other"];
+const read = [o => o.key, o => o.next, o => o.method, o => o.other];
+const has = [o => "key" in o, o => "next" in o, o => "method" in o, o => "other" in o];
+const write = [(o, v) => { o.key = v; }, (o, v) => { o.next = v; }, (o, v) => { o.method = v; }, (o, v) => { o.other = v; }];
+const show = v => (typeof v === "function" ? "function" : String(v));
+let log = "";
+
+////= passingNames
+
+function look(heirs) {
+  const seen = [];
+  for (const o of heirs) {
+    for (let k = 0; k < NAMES.length; k++) seen.push(show(read[k](o)) + (has[k](o) ? "+" : "-"));
+  }
+  return seen.join(" ");
+}
+
+function scenario(label, make, rounds) {
+  const p = make();
+  p.tag = 1;
+  const heirs = [];
+  for (let i = 0; i < 3; i++) {
+    const o = Object.create(p);
+    for (let j = 0; j < i; j++) o["own" + j] = j;
+    heirs.push(o);
+  }
+  console.log(label, "start", look(heirs));
+  passingNames(p, 40);
+  Object.defineProperty(p, "next", { value: 296, writable: true, configurable: true, enumerable: false });
+  Object.defineProperty(p, "key", { get() { return "got"; }, set(v) { log += v; }, configurable: true, enumerable: true });
+  for (let i = 0; i < rounds; i++) {
+    console.log(label, "defined", look(heirs));
+    write[0](heirs[i % 3], "s" + i);
+  }
+  passingNames(p, 61);
+  write[2](p, 297);
+  for (let i = 0; i < rounds; i++) {
+    console.log(label, "stored", look(heirs));
+    write[0](heirs[i % 3], "t" + i);
+  }
+  console.log(label, log, Object.keys(p).join());
+}
+
+for (const rounds of [1, 2, 3, 4]) {
+  scenario("literal " + rounds, () => ({}), rounds);
+  scenario("parsed " + rounds, () => JSON.parse('{"z0":0,"z1":1,"z2":2}'), rounds);
+}
+//// members-of-process/launder-module.js
+// Members of process: launder module. It prints what plain Bun prints.
+const startedFromExecutable = /[$~]bun/i.test(process.argv[1]);
+if (process.env.CHILD_WITH_CHANNEL) {
+  const self = require("node:module").createRequire(import.meta.url)("node:process");
+  self.on("message", message => {
+    self.send({ answered: message });
+    self.disconnect();
+  });
+} else {
+  const received = [];
+  const child = Bun.spawn({
+    cmd: startedFromExecutable ? [process.execPath] : [process.execPath, process.argv[1]],
+    env: { ...process.env, CHILD_WITH_CHANNEL: "1" },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    ipc(message) { received.push(message); },
+  });
+  child.send("first");
+  const [output, errors, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+  console.log(JSON.stringify(received), output.trim(), errors.trim().split("\n").filter(line => /error/i.test(line)).join(" | "), exitCode);
+}
+//// members-of-process/lost-als.js
+// Members of process: lost als. It prints what plain Bun prints.
+const self = (() => { const { AsyncLocalStorage } = require("node:async_hooks"); const s = new AsyncLocalStorage(); return s.run(process, () => s.getStore()); })();
+////= self-on
+//// members-of-process/lost-apply.js
+// Members of process: lost apply. It prints what plain Bun prints.
+const self = Reflect.apply(x => x, undefined, [process]);
+////= self-on
+//// members-of-process/lost-array-from.js
+// Members of process: lost array from. It prints what plain Bun prints.
+const self = Array.from([process])[0];
+////= self-on
+//// members-of-process/lost-assign.js
+// Members of process: lost assign. It prints what plain Bun prints.
+const self = Object.assign({}, { p: process }).p;
+////= self-on
+//// members-of-process/lost-at.js
+// Members of process: lost at. It prints what plain Bun prints.
+const self = [process].at(Number(process.argv.length) - 2);
+////= self-on
+//// members-of-process/lost-computed-global.js
+// Members of process: lost computed global. It prints what plain Bun prints.
+const self = globalThis[["pro", "cess"].join("")];
+////= self-on
+//// members-of-process/lost-direct.js
+// Members of process: lost direct. It prints what plain Bun prints.
+const self = process;
+////= self-on
+//// members-of-process/lost-emitter-this.js
+// Members of process: lost emitter this. It prints what plain Bun prints.
+const self = (() => { let found; process.once("warning", function () { found = this; }); process.emit("warning", {}); return found; })();
+////= self-on
+//// members-of-process/lost-find.js
+// Members of process: lost find. It prints what plain Bun prints.
+const self = [1, process].find(x => typeof x === "object");
+////= self-on
+//// members-of-process/lost-flat.js
+// Members of process: lost flat. It prints what plain Bun prints.
+const self = [[process]].flat()[0];
+////= self-on
+//// members-of-process/lost-from-entries.js
+// Members of process: lost from entries. It prints what plain Bun prints.
+const self = Object.fromEntries([["p", process]]).p;
+////= self-on
+//// members-of-process/lost-get-builtin.js
+// Members of process: lost get builtin. It prints what plain Bun prints.
+const self = process.getBuiltinModule("node:process");
+////= self-on
+//// members-of-process/lost-iterator.js
+// Members of process: lost iterator. It prints what plain Bun prints.
+const self = [process].values().next().value;
+////= self-on
+//// members-of-process/lost-json-reviver.js
+// Members of process: lost json reviver. It prints what plain Bun prints.
+const self = JSON.parse("[0]", (key, value) => (key === "0" ? process : value))[0];
+////= self-on
+//// members-of-process/lost-microtask.js
+// Members of process: lost microtask. It prints what plain Bun prints.
+const self = await new Promise(resolve => queueMicrotask(() => resolve(process)));
+////= self-on
+//// members-of-process/lost-promise.js
+// Members of process: lost promise. It prints what plain Bun prints.
+const self = await Promise.resolve(process);
+////= self-on
+//// members-of-process/lost-proxy.js
+// Members of process: lost proxy. It prints what plain Bun prints.
+const self = new Proxy({}, { get: () => process }).anything;
+////= self-on
+//// members-of-process/lost-reduce.js
+// Members of process: lost reduce. It prints what plain Bun prints.
+const self = [process].reduce((a, b) => b, null);
+////= self-on
+//// members-of-process/lost-reflect-get.js
+// Members of process: lost reflect get. It prints what plain Bun prints.
+const self = Reflect.get(globalThis, "process");
+////= self-on
+//// members-of-process/lost-sort.js
+// Members of process: lost sort. It prints what plain Bun prints.
+const self = [process, process].sort(() => 0)[1];
+////= self-on
+//// members-of-process/lost-timer.js
+// Members of process: lost timer. It prints what plain Bun prints.
+const self = await new Promise(resolve => setTimeout(resolve, 1, process));
+////= self-on
+//// members-of-process/lost-weakmap.js
+// Members of process: lost weakmap. It prints what plain Bun prints.
+const self = (() => { const k = {}; return new WeakMap([[k, process]]).get(k); })();
+////= self-on
+//// members-of-process/lost-weakref.js
+// Members of process: lost weakref. It prints what plain Bun prints.
+const self = new WeakRef(process).deref();
+////= self-on
+//// members-of-process/lost2-abort-reason.js
+// Members of process: lost2 abort reason. It prints what plain Bun prints.
+const self = AbortSignal.abort(process).reason;
+////= self-on
+//// members-of-process/lost2-aggregate.js
+// Members of process: lost2 aggregate. It prints what plain Bun prints.
+const self = new AggregateError([process]).errors[0];
+////= self-on
+//// members-of-process/lost2-all-settled.js
+// Members of process: lost2 all settled. It prints what plain Bun prints.
+const self = (await Promise.allSettled([process]))[0].value;
+////= self-on
+//// members-of-process/lost2-arguments.js
+// Members of process: lost2 arguments. It prints what plain Bun prints.
+const self = (function () { return arguments[0]; })(process);
+////= self-on
+//// members-of-process/lost2-concat.js
+// Members of process: lost2 concat. It prints what plain Bun prints.
+const self = [].concat(process)[0];
+////= self-on
+//// members-of-process/lost2-construct-return.js
+// Members of process: lost2 construct return. It prints what plain Bun prints.
+const self = new (class { constructor() { return process; } })();
+////= self-on
+//// members-of-process/lost2-custom-event.js
+// Members of process: lost2 custom event. It prints what plain Bun prints.
+const self = new CustomEvent("e", { detail: process }).detail;
+////= self-on
+//// members-of-process/lost2-error-cause.js
+// Members of process: lost2 error cause. It prints what plain Bun prints.
+const self = new Error("x", { cause: process }).cause;
+////= self-on
+//// members-of-process/lost2-error-event.js
+// Members of process: lost2 error event. It prints what plain Bun prints.
+const self = new ErrorEvent("e", { error: process }).error;
+////= self-on
+//// members-of-process/lost2-event-target.js
+// Members of process: lost2 event target. It prints what plain Bun prints.
+const self = await new Promise(resolve => { const t = new EventTarget(); t.addEventListener("e", e => resolve(e.detail)); t.dispatchEvent(new CustomEvent("e", { detail: process })); });
+////= self-on
+//// members-of-process/lost2-finalization.js
+// Members of process: lost2 finalization. It prints what plain Bun prints.
+const self = (() => { const holder = []; holder.push(process); return holder.pop(); })();
+////= self-on
+//// members-of-process/lost2-group-by.js
+// Members of process: lost2 group by. It prints what plain Bun prints.
+const self = Object.groupBy([process], () => "p").p[0];
+////= self-on
+//// members-of-process/lost2-inspect-custom.js
+// Members of process: lost2 inspect custom. It prints what plain Bun prints.
+const self = (() => { let got; Bun.inspect({ [Bun.inspect.custom]() { got = process; return ""; } }); return got; })();
+////= self-on
+//// members-of-process/lost2-iterator-from.js
+// Members of process: lost2 iterator from. It prints what plain Bun prints.
+const self = Iterator.from([process]).toArray()[0];
+////= self-on
+//// members-of-process/lost2-next-tick.js
+// Members of process: lost2 next tick. It prints what plain Bun prints.
+const self = await new Promise(resolve => process.nextTick(resolve, process));
+////= self-on
+//// members-of-process/lost2-peek.js
+// Members of process: lost2 peek. It prints what plain Bun prints.
+const self = Bun.peek(Promise.resolve(process));
+////= self-on
+//// members-of-process/lost2-suppressed.js
+// Members of process: lost2 suppressed. It prints what plain Bun prints.
+const self = new SuppressedError(process, null).error;
+////= self-on
+//// members-of-process/lost2-to-sorted.js
+// Members of process: lost2 to sorted. It prints what plain Bun prints.
+const self = [process].toSorted()[0];
+////= self-on
+//// members-of-process/lost2-url-pattern.js
+// Members of process: lost2 url pattern. It prints what plain Bun prints.
+const self = new Headers().constructor === Headers ? AbortSignal.any([AbortSignal.abort(process)]).reason : null;
+////= self-on
+//// members-of-process/lost2-with-resolvers.js
+// Members of process: lost2 with resolvers. It prints what plain Bun prints.
+const self = (() => { const { promise, resolve } = Promise.withResolvers(); resolve(process); return promise; })().then(p => p) && await Promise.resolve(process);
+////= self-on
+//// members-of-process/lost3-abort-reason.js
+// Members of process: lost3 abort reason. It prints what plain Bun prints.
+const self = AbortSignal.abort(process).reason;
+////= self-on-2
+//// members-of-process/lost3-custom-event.js
+// Members of process: lost3 custom event. It prints what plain Bun prints.
+const self = new CustomEvent("e", { detail: process }).detail;
+////= self-on-2
+//// members-of-process/lost3-direct.js
+// Members of process: lost3 direct. It prints what plain Bun prints.
+const self = process;
+////= self-on-2
+//// members-of-process/lost3-error-cause.js
+// Members of process: lost3 error cause. It prints what plain Bun prints.
+const self = new Error("x", { cause: process }).cause;
+////= self-on-2
+//// members-of-process/lost3-error-event.js
+// Members of process: lost3 error event. It prints what plain Bun prints.
+const self = new ErrorEvent("e", { error: process }).error;
+////= self-on-2
+//// members-of-process/lost3-peek.js
+// Members of process: lost3 peek. It prints what plain Bun prints.
+const self = Bun.peek(Promise.resolve(process));
+////= self-on-2
+//// members-of-process/lost3-proxy.js
+// Members of process: lost3 proxy. It prints what plain Bun prints.
+const self = new Proxy({}, { get: () => process }).anything;
+////= self-on-2
+//// members-of-process/lost3-weakref.js
+// Members of process: lost3 weakref. It prints what plain Bun prints.
+const self = new WeakRef(process).deref();
+////= self-on-2
+//// members-of-process/probes-subclass.js
+// Members of process: probes subclass. It prints what plain Bun prints.
+class E extends Error {
+  describe() { return this.message; }
+  unused() { return 1; }
+}
+console.log(new E("a").describe());
+//// members-of-process/programs-arr-a.js
+// Members of process: programs arr a. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class A extends Array {} console.log(new A().length);
+}
+console.log("hello");
+//// members-of-process/programs-arr-b.js
+// Members of process: programs arr b. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class A extends Array {} new A().push(1);
+}
+console.log("hello");
+//// members-of-process/programs-arr-c.js
+// Members of process: programs arr c. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class A extends Array {} console.log(new A()[0] === undefined);
+}
+console.log("hello");
+//// members-of-process/programs-arr-d.js
+// Members of process: programs arr d. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class A extends Array {} new A().pop();
+}
+console.log("hello");
+//// members-of-process/programs-arr-e.js
+// Members of process: programs arr e. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class A extends Array {} new A();
+}
+console.log("hello");
+//// members-of-process/programs-arr-f.js
+// Members of process: programs arr f. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class A extends Array { constructor() { super(); } } new A().push(1);
+}
+console.log("hello");
+//// members-of-process/programs-arr-g.js
+// Members of process: programs arr g. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class A extends Array {} new A().map(x => x);
+}
+console.log("hello");
+//// members-of-process/programs-arr-h.js
+// Members of process: programs arr h. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class A extends Array {} new A().indexOf(1);
+}
+console.log("hello");
+//// members-of-process/programs-arr-i.js
+// Members of process: programs arr i. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class A extends Array {} for (const x of new A()) console.log(x === 1);
+}
+console.log("hello");
+//// members-of-process/programs-arr-j.js
+// Members of process: programs arr j. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class A extends Array {} A.from([1]);
+}
+console.log("hello");
+//// members-of-process/programs-arr-k.js
+// Members of process: programs arr k. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class A extends Array {} new A().forEach(x => x);
+}
+console.log("hello");
+//// members-of-process/programs-arr-l.js
+// Members of process: programs arr l. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class A extends Array {} new A().join();
+}
+console.log("hello");
+//// members-of-process/programs-error-catch.js
+// Members of process: programs error catch. It prints what plain Bun prints.
+if (process.argv.length > 99) { try { JSON.parse(process.argv[2]); } catch (e) { console.log(e.message); } }
+console.log("hello");
+//// members-of-process/programs-error-message.js
+// Members of process: programs error message. It prints what plain Bun prints.
+if (process.argv.length > 99) console.log(new Error("a").message.length);
+console.log("hello");
+//// members-of-process/programs-error-stack.js
+// Members of process: programs error stack. It prints what plain Bun prints.
+if (process.argv.length > 99) console.log(new Error("a").stack);
+console.log("hello");
+//// members-of-process/programs-error-subclass.js
+// Members of process: programs error subclass. It prints what plain Bun prints.
+if (process.argv.length > 99) { class E extends Error {} console.log(new E("a").message); }
+console.log("hello");
+//// members-of-process/programs-events-import.js
+// Members of process: programs events import. It prints what plain Bun prints.
+import "node:events";
+console.log("hello");
+//// members-of-process/programs-events-new.js
+// Members of process: programs events new. It prints what plain Bun prints.
+const K = process.argv[2];
+if (process.argv.length > 99) {
+  new (require("node:events"))();
+}
+console.log("hello");
+export {};
+//// members-of-process/programs-events-on.js
+// Members of process: programs events on. It prints what plain Bun prints.
+if (process.argv.length > 99) new (require("node:events"))().on("a", () => {});
+console.log("hello");
+//// members-of-process/programs-events-require.js
+// Members of process: programs events require. It prints what plain Bun prints.
+const K = process.argv[2];
+if (process.argv.length > 99) {
+  require("node:events");
+}
+console.log("hello");
+export {};
+//// members-of-process/programs-fs-read.js
+// Members of process: programs fs read. It prints what plain Bun prints.
+const K = process.argv[2];
+if (process.argv.length > 99) require("node:fs").readFileSync(K);
+console.log("hello");
+//// members-of-process/programs-hello.js
+// Members of process: programs hello. It prints what plain Bun prints.
+console.log("hello");
+//// members-of-process/programs-next-tick.js
+// Members of process: programs next tick. It prints what plain Bun prints.
+if (process.argv.length > 99) process.nextTick((a) => a, { a: 1 });
+console.log("hello");
+//// members-of-process/programs-process-on-exit.js
+// Members of process: programs process on exit. It prints what plain Bun prints.
+process.on("exit", () => {});
+console.log("hello");
+//// members-of-process/programs-process-stdout.js
+// Members of process: programs process stdout. It prints what plain Bun prints.
+const K = process.argv[2];
+if (process.argv.length > 99) process.stdout.write(K);
+console.log("hello");
+//// members-of-process/programs-stream-require.js
+// Members of process: programs stream require. It prints what plain Bun prints.
+if (process.argv.length > 99) require("node:stream");
+console.log("hello");
+//// members-of-process/programs-util-promisify.js
+// Members of process: programs util promisify. It prints what plain Bun prints.
+if (process.argv.length > 99) require("node:util").promisify((cb) => cb())();
+console.log("hello");
+//// members-of-process/sub-sub-01.js
+// Members of process: sub sub. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class M extends Map {} new M().set(1, 2);
+}
+console.log("hello");
+//// members-of-process/sub-sub-02.js
+// Members of process: sub sub. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class M extends Map {} new M().get(1);
+}
+console.log("hello");
+//// members-of-process/sub-sub-03.js
+// Members of process: sub sub. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class M extends Map {} new M().set({}, 2);
+}
+console.log("hello");
+//// members-of-process/sub-sub-04.js
+// Members of process: sub sub. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class M extends Map {} new M().set(() => 1, 2);
+}
+console.log("hello");
+//// members-of-process/sub-sub-05.js
+// Members of process: sub sub. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class M extends Map {} new M().set(Array.prototype, 1);
+}
+console.log("hello");
+//// members-of-process/sub-sub-06.js
+// Members of process: sub sub. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class M extends Map { constructor(i) { super(i); } } new M().set(Array.prototype, 1);
+}
+console.log("hello");
+//// members-of-process/sub-sub-07.js
+// Members of process: sub sub. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class S extends Set {} new S().add({});
+}
+console.log("hello");
+//// members-of-process/sub-sub-08.js
+// Members of process: sub sub. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class S extends Set {} new S().add(Array.prototype);
+}
+console.log("hello");
+//// members-of-process/sub-sub-09.js
+// Members of process: sub sub. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class A extends Array {} new A().push(Array.prototype);
+}
+console.log("hello");
+//// members-of-process/sub-sub-10.js
+// Members of process: sub sub. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class E extends Error {} console.log(new E("a").message);
+}
+console.log("hello");
+//// members-of-process/sub-sub-11.js
+// Members of process: sub sub. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class W extends WeakMap {} new W().set(Array.prototype, 1);
+}
+console.log("hello");
+//// members-of-process/sub-sub-12.js
+// Members of process: sub sub. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class M extends Map {} Map.prototype.set.call(new M(), Array.prototype, 1);
+}
+console.log("hello");
+//// members-of-process/sub-sub-13.js
+// Members of process: sub sub. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class P extends Promise {} new P(r => r(1)).then(v => v);
+}
+console.log("hello");
+//// members-of-process/sub-sub-14.js
+// Members of process: sub sub. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class W extends WeakSet {} new W().add({});
+}
+console.log("hello");
+//// members-of-process/sub-sub-15.js
+// Members of process: sub sub. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class U extends Uint8Array {} new U(4).fill(1);
+}
+console.log("hello");
+//// members-of-process/sub-sub-16.js
+// Members of process: sub sub. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class D extends Date {} new D(0).getTime();
+}
+console.log("hello");
+//// members-of-process/sub-sub-17.js
+// Members of process: sub sub. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class R extends RegExp {} new R("a").test("a");
+}
+console.log("hello");
+//// members-of-process/sub-sub-18.js
+// Members of process: sub sub. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  class O extends Object {} new O().toString();
+}
+console.log("hello");

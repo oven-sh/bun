@@ -1,0 +1,133 @@
+------------------
+{ printWidth: 80 }
+------------------
+const a = (
+  <A
+    b={
+      {
+        // comment
+      }
+    }
+    c="d"
+  />
+);
+const e = <A b={{/* comment */}} />;
+const f = (
+  <A
+    b={
+      [
+        // comment
+      ]
+    }
+  />
+);
+const g = (
+  <A
+    b={
+      h(
+        // comment
+      )
+    }
+  />
+);
+const i = (
+  <A
+    b={
+      new J(
+        // comment
+      )
+    }
+  />
+);
+const k = (
+  <A>
+    {
+      {
+        // comment
+      }
+    }
+  </A>
+);
+const l = (
+  <A
+    b={{
+      // comment
+      m: 1,
+    }}
+  />
+);
+const n = (
+  <A
+    b={() => {
+      // comment
+    }}
+  />
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const a = (
+  <A
+    b={
+      {
+        // comment
+      }
+    }
+    c="d"
+  />
+);
+const e = <A b={{/* comment */}} />;
+const f = (
+  <A
+    b={
+      [
+        // comment
+      ]
+    }
+  />
+);
+const g = (
+  <A
+    b={
+      h(
+        // comment
+      )
+    }
+  />
+);
+const i = (
+  <A
+    b={
+      new J(
+        // comment
+      )
+    }
+  />
+);
+const k = (
+  <A>
+    {
+      {
+        // comment
+      }
+    }
+  </A>
+);
+const l = (
+  <A
+    b={{
+      // comment
+      m: 1,
+    }}
+  />
+);
+const n = (
+  <A
+    b={() => {
+      // comment
+    }}
+  />
+);
+
+===================== End =====================

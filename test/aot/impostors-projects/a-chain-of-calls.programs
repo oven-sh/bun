@@ -1,0 +1,4137 @@
+////: Animal
+var Animal = (function () {
+    function Animal(name) {
+        this.name = name;
+        this.legs = 4;
+    }
+    Animal.prototype.speak = function () {
+        return this.name + " makes a sound";
+    };
+    Animal.count = function () {
+        return "counted by " + this.name;
+    };
+    return Animal;
+}());
+////: Dog
+var Dog = (function (_super) {
+    __extends(Dog, _super);
+    function Dog() {
+        return _super !== null && _super.apply(this, arguments) || this;
+    }
+    Dog.prototype.speak = function () {
+        return _super.prototype.speak.call(this) + ": woof";
+    };
+    return Dog;
+}(Animal));
+////: Object-defineProperty
+Object.defineProperty(exports, "counted", {
+  enumerable: true,
+  get: function () {
+    return ++reads;
+  },
+});
+////: Object-keys
+Object.keys(«1»).forEach(function («2») {
+  Object.keys(uses).forEach(function (use) {
+    attempt(use + "(" + «2» + ")", function () {
+      return uses[use](«3»]());
+    });
+  });
+});
+////: Point
+var Point = /*#__PURE__*/ (function () {
+  function Point(x, y) {
+    this.x = x;
+    this.y = y;
+  }
+  Point.prototype.sum = function sum() {
+    return this.x + this.y;
+  };
+  return Point;
+})();
+////: assign
+var __assign = (this && this.__assign) || function () {
+    __assign = Object.assign || function(t) {
+        for (var s, i = 1, n = arguments.length; i < n; i++) {
+            s = arguments[i];
+            for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p))
+                t[p] = s[p];
+        }
+        return t;
+    };
+    return __assign.apply(this, arguments);
+};
+////: extends
+var __extends = (this && this.__extends) || (function () {
+    var extendStatics = function (d, b) {
+        extendStatics = Object.setPrototypeOf ||
+            ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
+            function (d, b) { for (var p in b) if (Object.prototype.hasOwnProperty.call(b, p)) d[p] = b[p]; };
+        return extendStatics(d, b);
+    };
+    return function (d, b) {
+        if (typeof b !== "function" && b !== null)
+            throw new TypeError("Class extends value " + String(b) + " is not a constructor or null");
+        extendStatics(d, b);
+        function __() { this.constructor = d; }
+        d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+    };
+})();
+////: lines-13
+export function «1»(«2») {
+  return «3»(«4»);
+}
+////: lines-14
+export function «1»(«2») {
+  return «3»;
+}
+////: lines-16
+exports.«1» = function (list) {
+  return «2»(«3»);
+};
+////: lines-18
+export function «1»(point) {
+  point.x = 10;
+  return point.x;
+}
+////: lines-2
+export function «1»() {
+  return «2»;
+}
+////: lines-20
+exports.«1» = function («2») {
+  return «3»;
+};
+////: lines-3
+export class «1» extends Shape {
+  sides = «2»;
+  name = «3»;
+  extra = «4»;
+  area() {
+    return «5»;
+  }
+}
+////: lines-4
+{
+  "items": [
+    {
+      "name": "a",
+      "price": «1»,
+      "tags": [
+        "x"
+      ]
+    },
+    {
+      "name": "b",
+      "price": «2»,
+      "tags": [
+        "y",
+        "z"
+      ]
+    }
+  ],
+  "count": «2»,
+  "limit": «3»
+}
+////: lines-7
+export function «1»() {
+  const box = { width: «2», height: «3» };
+  return [area(box), perimeter(box), scaled(box, 2).width, widest([box, { width: 9, height: 1 }]).width];
+}
+////: tried
+function tried(run) {
+  try {
+    return show(run());
+  } catch (error) {
+    return "threw " + error.constructor.name;
+  }
+}
+//// a-chain-of-calls-ends-in-another-kind-than-it-began/main.js
+import { from } from "./query.js";
+import { honest, odd } from "./rows.js";
+import { attempt } from "./show.js";
+
+////= console-log
+
+const chains = {
+  sumOfIds: rows => from(rows).pluck("id").sum(),
+  firstName: rows => from(rows).where(row => row.id > 1).first().name,
+  countTaken: rows => from(rows).take(2).count(),
+  firstIdPlusOne: rows => from(rows).pluck("id").first() + 1,
+  lengthOfFirstName: rows => from(rows).pluck("name").first().length,
+  maybe: rows => from(rows).where(row => row.id > 2).orNothing().count(),
+  optional: rows => from(rows).where(row => row.id > 2).orNothing()?.count(),
+  unwrapped: rows => from(rows).take(1).unwrap().length,
+  asANumber: rows => from(rows) + 1,
+  compared: rows => from(rows) > 1,
+};
+let sum = 0;
+for (let i = 0; i < 2000; i++) for (const name in chains) sum += Number(chains[name](honest())) || 1;
+console.log("sum", sum);
+for (const name in chains) attempt(name + "(honest)", () => chains[name](honest()));
+for (const rows in odd) for (const name in chains) attempt(name + "(" + rows + ")", () => chains[name](odd[rows]()));
+//// a-chain-of-calls-ends-in-another-kind-than-it-began/package.json
+////= lines	"name"	"chains"	"type"	"module"
+//// a-chain-of-calls-ends-in-another-kind-than-it-began/query.js
+export class Query {
+  constructor(items) {
+    this.items = items;
+  }
+  where(test) {
+    return new Query(this.items.filter(test));
+  }
+  take(count) {
+    this.items = this.items.slice(0, count);
+    return this;
+  }
+  pluck(name) {
+    return new Query(this.items.map(item => item[name]));
+  }
+  first() {
+    return this.items[0];
+  }
+  count() {
+    return this.items.length;
+  }
+  sum() {
+    return this.items.reduce((sum, item) => sum + item, 0);
+  }
+  orNothing() {
+    return this.items.length ? this : null;
+  }
+  unwrap() {
+    return this.items;
+  }
+  valueOf() {
+    return this.items.length;
+  }
+}
+export const from = items => new Query(items);
+//// a-chain-of-calls-ends-in-another-kind-than-it-began/rows.js
+export const honest = () => [{ id: 1, name: "a", tags: ["x"] }, { id: 2, name: "b", tags: [] }, { id: 3, name: "c", tags: ["y", "z"] }];
+export const odd = {
+  textIds: () => [{ id: "1", name: "a" }, { id: "2", name: "b" }],
+  mixedIds: () => [{ id: 1 }, { id: "2" }, { id: null }, { id: 4n }],
+  missingIds: () => [{ name: "a" }, {}, { id: 3 }],
+  holes: () => [{ id: 1 }, , { id: 3 }],
+  primitives: () => [1, "two", null],
+  aText: () => "abc",
+  anArrayLike: () => ({ 0: { id: 1 }, length: 1 }),
+  aSet: () => new Set([{ id: 1 }]),
+  empty: () => [],
+  getters: () => [{ get id() { return 5; } }, Object.create({ id: 6 })],
+};
+//// a-chain-of-calls-ends-in-another-kind-than-it-began/show.js
+////= show-4
+//// a-commonjs-cycle-sees-a-half-filled-exports-object/a.js
+exports.early = [1, 2];
+exports.step = 1;
+var b = require("./b");
+exports.late = [3, 4, 5];
+exports.count = 2;
+exports.step = "two";
+exports.double = function (n) {
+  return n * 2;
+};
+exports.whatBSaw = b.seen;
+//// a-commonjs-cycle-sees-a-half-filled-exports-object/b.js
+var show = require("./show").show;
+var a = require("./a");
+var late = a.late;
+var count = a.count;
+var double = a.double;
+
+////= tried
+function lengthOfLate() {
+  return a.late.length;
+}
+function nextCount() {
+  return a.count + 1;
+}
+function doubled() {
+  return a.double(4);
+}
+function nextStep() {
+  return a.step + 1;
+}
+
+exports.seen = {
+  keys: Object.keys(a).join(),
+  early: tried(function () { return a.early.length; }),
+  late: tried(lengthOfLate),
+  count: tried(nextCount),
+  doubled: tried(doubled),
+  step: tried(nextStep),
+};
+exports.now = function () {
+  return [Object.keys(a).join(), tried(lengthOfLate), tried(nextCount), tried(doubled), tried(nextStep)];
+};
+exports.copies = function () {
+  return [tried(function () { return late.length; }), tried(function () { return count + 1; }), tried(function () { return double(4); })];
+};
+//// a-commonjs-cycle-sees-a-half-filled-exports-object/c.js
+exports.kind = "the first object";
+exports.list = [1];
+var d = require("./d");
+module.exports = function replaced() {
+  return "the function that replaced the object";
+};
+module.exports.kind = "the function";
+module.exports.list = "not a list";
+module.exports.d = d;
+//// a-commonjs-cycle-sees-a-half-filled-exports-object/d.js
+var c = require("./c");
+exports.kindNow = function () {
+  return c.kind;
+};
+exports.sizeNow = function () {
+  return c.list.length;
+};
+exports.pushNow = function () {
+  return c.list.push(2);
+};
+exports.callNow = function () {
+  return c();
+};
+exports.freshKind = function () {
+  return require("./c").kind;
+};
+exports.freshPush = function () {
+  return require("./c").list.push(2);
+};
+exports.freshCall = function () {
+  return require("./c")();
+};
+//// a-commonjs-cycle-sees-a-half-filled-exports-object/main.js
+var attempt = require("./show").attempt;
+var a = require("./a");
+var b = require("./b");
+var c = require("./c");
+
+////= console-log
+
+attempt("what b saw while a was half filled", function () { return a.whatBSaw; });
+attempt("what b sees now", b.now);
+attempt("what b copied", b.copies);
+for (var i = 0; i < 2000; i++) b.now();
+attempt("what b sees after 2000 looks", b.now);
+a.late = "late";
+a.count = 2n;
+a.double = "not a function";
+attempt("what b sees after stores from outside", b.now);
+Object.keys(c.d).forEach(function (name) {
+  attempt("d." + name, c.d[name]);
+});
+attempt("typeof c", function () { return typeof c; });
+//// a-commonjs-cycle-sees-a-half-filled-exports-object/package.json
+////= lines	"name"	"cycle"	"version"	"1.0.0"
+//// a-commonjs-cycle-sees-a-half-filled-exports-object/show.js
+////= show-3
+
+module.exports = { show: show, attempt: attempt };
+//// a-cycle-of-es-modules-reads-bindings-before-they-are-set/first.js
+import { early, look } from "./second.js";
+
+export const list = [1, 2, 3];
+export let count = 3;
+export var old = "set";
+export class Shape {
+  sides() {
+    return 4;
+  }
+}
+////= lines-2	hoisted	"hoisted"
+export function readsTheList() {
+  return list.length;
+}
+export function grow() {
+  count++;
+  list.push(count);
+}
+export { early, look };
+//// a-cycle-of-es-modules-reads-bindings-before-they-are-set/main.js
+import { early, grow, look } from "./first.js";
+import { attempt } from "./show.js";
+
+////= console-log
+
+attempt("while the first module had not run", () => early);
+attempt("afterwards", look);
+for (let i = 0; i < 2000; i++) look();
+grow();
+attempt("after 2000 looks and one more element", look);
+//// a-cycle-of-es-modules-reads-bindings-before-they-are-set/package.json
+////= lines	"name"	"es-cycle"	"type"	"module"
+//// a-cycle-of-es-modules-reads-bindings-before-they-are-set/second.js
+import { Shape, count, hoisted, list, old, readsTheList } from "./first.js";
+import { show } from "./show.js";
+
+////= tried
+const sizeOfList = () => list.length;
+const nextCount = () => count + 1;
+const sizeOfOld = () => old.length;
+const oldPlusOne = () => old + 1;
+const sides = () => new Shape().sides();
+const typeOfCount = () => typeof count;
+
+export function look() {
+  return {
+    list: tried(sizeOfList),
+    count: tried(nextCount),
+    typeOfCount: tried(typeOfCount),
+    sizeOfOld: tried(sizeOfOld),
+    oldPlusOne: tried(oldPlusOne),
+    sides: tried(sides),
+    hoisted: tried(hoisted),
+    readsTheList: tried(readsTheList),
+  };
+}
+export const early = look();
+//// a-cycle-of-es-modules-reads-bindings-before-they-are-set/show.js
+////= show-4
+//// a-getter-defined-on-exports-is-called-an-impossible-mutation/lazy.js
+Object.defineProperty(exports, "helper", {
+  enumerable: true,
+  get: function () {
+    return 1;
+  },
+});
+//// a-getter-defined-on-exports-is-called-an-impossible-mutation/main.js
+console.log(require("./lazy").helper);
+//// a-getter-defined-on-exports-is-handed-out-itself-at-the-second-read-under-a-computed-name/counted.js
+var reads = 0;
+////= Object-defineProperty
+//// a-getter-defined-on-exports-is-handed-out-itself-at-the-second-read-under-a-computed-name/main.js
+var read =
+  globalThis.noSuchThing ||
+  function (holder, key) {
+    return holder[key];
+  };
+var holder = require("./counted");
+for (var key in holder) {
+  console.log(typeof read(holder, key));
+  console.log(typeof read(holder, key));
+  console.log(read(holder, key));
+}
+//// a-global-made-by-one-file-changes-kind-under-another/main.cjs
+const { attempt } = require("./show.cjs");
+const maker = require("./maker.cjs");
+const reader = require("./reader.cjs");
+const strictReader = require("./strict-reader.mjs");
+
+////= console-log
+
+function all(when) {
+  for (const name in reader) attempt(when + " sloppy " + name, reader[name]);
+  for (const name of ["next", "kind", "size"]) attempt(when + " strict " + name, strictReader[name]);
+}
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += maker.bump() + reader.next() + reader.size() + strictReader.next() + strictReader.size();
+console.log("sum", sum);
+maker.replaceRegistry([1]);
+all("numbers");
+maker.become("a text");
+maker.replaceRegistry("a text");
+all("texts");
+maker.become({ valueOf: () => 41 });
+maker.replaceRegistry({ length: -1, push: () => "own push" });
+all("objects");
+maker.become(10n);
+maker.replaceRegistry(null);
+all("a bigint and null");
+attempt("a store by a strict module", strictReader.store);
+attempt("a store to an undeclared name by a strict module", strictReader.storeUndeclared);
+attempt("removed", maker.remove);
+all("removed");
+attempt("made again", maker.bump);
+//// a-global-made-by-one-file-changes-kind-under-another/maker.cjs
+counter = 0;
+registry = [];
+exports.bump = function () {
+  counter++;
+  registry.push(counter);
+  return counter;
+};
+exports.become = function (value) {
+  counter = value;
+};
+exports.replaceRegistry = function (value) {
+  registry = value;
+};
+exports.remove = function () {
+  return [delete globalThis.counter, delete globalThis.registry];
+};
+//// a-global-made-by-one-file-changes-kind-under-another/reader.cjs
+exports.next = function () {
+  return counter + 1;
+};
+exports.kind = function () {
+  return typeof counter;
+};
+exports.size = function () {
+  return registry.length;
+};
+////= lines-11	add	registry.push	"added"
+exports.throughTheGlobalObject = function () {
+  return [globalThis.counter, "counter" in globalThis, Object.getOwnPropertyDescriptor(globalThis, "counter")];
+};
+//// a-global-made-by-one-file-changes-kind-under-another/show.cjs
+////= show-3
+
+module.exports = { show: show, attempt: attempt };
+//// a-global-made-by-one-file-changes-kind-under-another/strict-reader.mjs
+export const next = () => counter + 1;
+export const kind = () => typeof counter;
+export const size = () => registry.length;
+export function store() {
+  counter = "stored by a strict module";
+  return counter;
+}
+export function storeUndeclared() {
+  neverDeclaredAnywhere = 1;
+  return typeof neverDeclaredAnywhere;
+}
+//// a-json-file-imported-and-required-is-one-object-or-two/data.json
+{
+  "items": [
+    1,
+    2
+  ],
+  "name": "data"
+}
+//// a-json-file-imported-and-required-is-one-object-or-two/load.cjs
+module.exports = function load() {
+  return require("./data.json");
+};
+//// a-json-file-imported-and-required-is-one-object-or-two/main.js
+import data from "./data.json";
+import * as space from "./data.json";
+import load from "./load.cjs";
+import { attempt } from "./show.js";
+
+////= console-log
+
+attempt("imported and required are one object", () => load() === data);
+attempt("their lists are one list", () => load().items === data.items);
+attempt("required twice", () => load() === load());
+attempt("the default of the namespace", () => space.default === data);
+const later = await import("./data.json");
+attempt("imported later", () => later.default === data);
+data.added = "added to what was imported";
+attempt("a member added to one shows in the other", () => [load().added, later.default.added]);
+//// a-json-file-imported-and-required-is-one-object-or-two/package.json
+////= lines	"name"	"json-twice"	"type"	"module"
+//// a-json-file-imported-and-required-is-one-object-or-two/show.js
+////= show-4
+//// a-json-file-imported-and-required-is-one-object-or-two.json
+{ "reference": "compiled" }
+//// a-module-imported-by-a-computed-name-makes-another-kind/consume.js
+////= lines-14	size	value	value.length
+export function first(value) {
+  return value[0];
+}
+export function total(value) {
+  var sum = 0;
+  for (var item of value) sum += item;
+  return sum;
+}
+export function indexed(value) {
+  var sum = 0;
+  for (var i = 0; i < value.length; i++) sum += value[i];
+  return sum;
+}
+export function sorted(value) {
+  return value.sort();
+}
+////= lines-14	counted	value	value.size
+////= lines-13	asked	value	value.has	1
+export function each(value) {
+  var seen = [];
+  value.forEach(function (item, key) {
+    seen.push(key + ":" + item);
+  });
+  return seen.join();
+}
+export function unpacked(value) {
+  var [a, b] = value;
+  return [a, b];
+}
+//// a-module-imported-by-a-computed-name-makes-another-kind/kinds/generator.js
+export default function () {
+  return (function* () {
+    yield 3;
+    yield 1;
+    yield 2;
+  })();
+}
+//// a-module-imported-by-a-computed-name-makes-another-kind/kinds/heir.js
+export default function () {
+  return Object.create([3, 1, 2]);
+}
+//// a-module-imported-by-a-computed-name-makes-another-kind/kinds/like.js
+export default function () {
+  return { 0: 3, 1: 1, 2: 2, length: 3 };
+}
+//// a-module-imported-by-a-computed-name-makes-another-kind/kinds/list.js
+export default function () {
+  return [3, 1, 2];
+}
+//// a-module-imported-by-a-computed-name-makes-another-kind/kinds/map.js
+export default function () {
+  return new Map([[0, 3], [1, 1], [2, 2]]);
+}
+//// a-module-imported-by-a-computed-name-makes-another-kind/kinds/nothing.js
+export default function () {
+  return undefined;
+}
+//// a-module-imported-by-a-computed-name-makes-another-kind/kinds/number.js
+export default function () {
+  return 312;
+}
+//// a-module-imported-by-a-computed-name-makes-another-kind/kinds/set.js
+export default function () {
+  return new Set([3, 1, 2]);
+}
+//// a-module-imported-by-a-computed-name-makes-another-kind/kinds/text.js
+export default function () {
+  return "312";
+}
+//// a-module-imported-by-a-computed-name-makes-another-kind/kinds/typed.js
+export default function () {
+  return new Float64Array([3, 1, 2]);
+}
+//// a-module-imported-by-a-computed-name-makes-another-kind/main.js
+import * as consume from "./consume.js";
+import { attempt } from "./show.js";
+
+////= console-log
+
+async function load(name) {
+  return (await import("./kinds/" + name + ".js")).default;
+}
+
+let sum = 0;
+const honest = await load("list");
+for (let i = 0; i < 2000; i++) {
+  const list = honest();
+  sum += consume.size(list) + consume.first(list) + consume.total(list) + consume.indexed(list) + consume.sorted(list)[0] + consume.each(list).length + consume.unpacked(list)[1];
+}
+console.log("sum", sum);
+
+for (const name of "list like text set map typed generator number heir nothing list".split(" ")) {
+  const make = await load(name);
+  for (const use in consume) attempt(use + "(" + name + ")", () => consume[use](make()));
+}
+try {
+  await load("absent");
+  console.log("a module that is not there was loaded");
+} catch (error) {
+  console.log("a module that is not there", error.constructor.name);
+}
+//// a-module-imported-by-a-computed-name-makes-another-kind/package.json
+////= lines	"name"	"kinds-by-name"	"type"	"module"
+//// a-module-imported-by-a-computed-name-makes-another-kind/show.js
+////= show-4
+//// a-module-that-exports-then-is-awaited/main.js
+import { show } from "./show.js";
+
+////= console-log
+
+async function sizeOfValue(name) {
+  const loaded = await import("./modules/" + name);
+  return loaded.value.length;
+}
+async function kind(name) {
+  return typeof (await import("./modules/" + name));
+}
+let sum = 0;
+for (let i = 0; i < 200; i++) sum += await sizeOfValue("plain.js");
+console.log("sum", sum);
+for (const name of ["plain.js", "with-then.js", "then-rejects.js", "then-throws.js", "then-is-a-number.js", "then-resolves-with-a-thenable.js", "commonjs-then.cjs", "plain.js"]) {
+  for (const [label, use] of Object.entries({ sizeOfValue, kind })) {
+    try {
+      console.log(label + "(" + name + ")", show(await use(name)));
+    } catch (error) {
+      console.log(label + "(" + name + ")", "threw", error.constructor.name);
+    }
+  }
+}
+//// a-module-that-exports-then-is-awaited/modules/commonjs-then.cjs
+exports.value = [1];
+exports.then = function (resolve) {
+  resolve({ value: "from a CommonJS then" });
+};
+//// a-module-that-exports-then-is-awaited/modules/plain.js
+export const value = [1, 2, 3];
+//// a-module-that-exports-then-is-awaited/modules/then-is-a-number.js
+export const then = 5;
+export const value = "then is a number";
+//// a-module-that-exports-then-is-awaited/modules/then-rejects.js
+export function then(resolve, reject) {
+  reject(new RangeError("rejected by then"));
+}
+//// a-module-that-exports-then-is-awaited/modules/then-resolves-with-a-thenable.js
+export function then(resolve) {
+  resolve({
+    then(inner) {
+      inner({ value: { length: "from the inner thenable" } });
+    },
+  });
+}
+//// a-module-that-exports-then-is-awaited/modules/then-throws.js
+export function then() {
+  throw new EvalError("thrown by then");
+}
+//// a-module-that-exports-then-is-awaited/modules/with-then.js
+export const value = [1, 2, 3];
+export function then(resolve) {
+  resolve("what then resolved with");
+}
+//// a-module-that-exports-then-is-awaited/package.json
+////= lines	"name"	"thenables"	"type"	"module"
+//// a-module-that-exports-then-is-awaited/show.js
+////= show-4
+//// a-namespace-object-goes-where-plain-objects-went/main.mjs
+import * as point from "./point.mjs";
+import { attempt } from "./show.mjs";
+import * as uses from "./uses.mjs";
+
+////= console-log
+
+let checksum = 0;
+////= for
+console.log("checksum", checksum);
+
+attempt("seen sum(namespace)", () => uses.sum(point));
+attempt("seen stored(namespace)", () => uses.stored(point));
+for (const name in uses) attempt(name + "(namespace)", () => uses[name](point));
+point.move(5);
+for (const name of ["sum", "spread", "written", "unpacked"]) attempt(name + "(namespace after move)", () => uses[name](point));
+for (const name in uses) attempt(name + "(namespace of the uses)", () => uses[name](uses));
+for (const name in uses) attempt(name + "(plain again)", () => uses[name]({ x: 1, y: 2 }));
+const later = await import("./point.mjs");
+attempt("the same object each time", () => later === point);
+//// a-namespace-object-goes-where-plain-objects-went/point.mjs
+export let y = 2;
+export let x = 1;
+export function move(by) {
+  x += by;
+  y += by;
+}
+export default "the default export";
+//// a-namespace-object-goes-where-plain-objects-went/show.mjs
+////= show-4
+//// a-namespace-object-goes-where-plain-objects-went/uses.mjs
+export function sum(point) {
+  return point.x + point.y;
+}
+////= lines-13	keys	point	Object.keys	point
+export function everyKey(point) {
+  return Reflect.ownKeys(point).map(String);
+}
+export function walked(point) {
+  var seen = [];
+  for (var key in point) seen.push(key + "=" + typeof point[key]);
+  return seen;
+}
+////= lines-18	stored
+////= lines-18	storedStrictly
+////= lines-21	export function added
+////= lines-21	export function addedStrictly
+export function removed(point) {
+  return delete point.y;
+}
+export function removedStrictly(point) {
+  return delete point.y;
+}
+export function copied(point) {
+  return Object.assign({}, point);
+}
+export function spread(point) {
+  return { ...point };
+}
+////= lines-13	written	point	JSON.stringify	point
+////= lines-13	asked	point	point.hasOwnProperty	"x"
+export function glued(point) {
+  return "" + point;
+}
+export function tagged(point) {
+  return Object.prototype.toString.call(point);
+}
+export function described(point) {
+  var property = Object.getOwnPropertyDescriptor(point, "x");
+  return [typeof property.value, typeof property.get, property.writable, property.enumerable, property.configurable];
+}
+export function redefined(point) {
+  return Reflect.defineProperty(point, "x", { value: 99 });
+}
+export function parent(point) {
+  return Object.getPrototypeOf(point) === Object.prototype;
+}
+export function unpacked(point) {
+  var { x, y, z = "default" } = point;
+  return [x, y, z];
+}
+export function absent(point) {
+  return [point.nothing, "nothing" in point, point.toString === undefined];
+}
+export function state(point) {
+  return [Object.isFrozen(point), Object.isSealed(point), Object.isExtensible(point)];
+}
+//// a-namespace-stored-to-and-copied-through-computed-calls-fails-verification/main.mjs
+import * as point from "./point.mjs";
+import * as uses from "./uses.mjs";
+
+function attempt(run) {
+  try {
+    console.log(typeof run());
+  } catch (error) {
+    console.log(error.constructor.name);
+  }
+}
+attempt(() => uses.stored(point));
+for (const name in uses) attempt(() => uses[name](point));
+//// a-namespace-stored-to-and-copied-through-computed-calls-fails-verification/point.mjs
+export let x = 1;
+export function move(by) {
+  x += by;
+}
+//// a-namespace-stored-to-and-copied-through-computed-calls-fails-verification/uses.mjs
+////= lines-18	stored
+export function copied(point) {
+  return Object.assign({}, point);
+}
+//// a-package-with-one-build-for-import-and-one-for-require/installed/point/build/point.cjs
+function Point(x, y) {
+  this.x = String(x);
+  this.y = String(y);
+}
+Point.prototype.sum = function () {
+  return this.x + this.y;
+};
+exports.Point = Point;
+exports.build = "the CommonJS build";
+exports.isPoint = function (value) {
+  return value instanceof Point;
+};
+//// a-package-with-one-build-for-import-and-one-for-require/installed/point/build/point.mjs
+export class Point {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+  }
+  sum() {
+    return this.x + this.y;
+  }
+}
+export const build = "the ES module build";
+export const isPoint = value => value instanceof Point;
+//// a-package-with-one-build-for-import-and-one-for-require/installed/point/package.json
+{
+  "name": "point",
+  "version": "1.0.0",
+  "main": "./build/point.cjs",
+  "exports": {
+    ".": {
+      "import": "./build/point.mjs",
+      "require": "./build/point.cjs"
+    }
+  }
+}
+//// a-package-with-one-build-for-import-and-one-for-require/main.js
+import * as imported from "point";
+import required from "./required.cjs";
+import { attempt } from "./show.js";
+
+////= console-log
+
+const sumOf = point => point.sum();
+const nextX = point => point.x + 1;
+let total = 0;
+for (let i = 0; i < 2000; i++) total += sumOf(new imported.Point(i, 1)) + nextX(new imported.Point(i, 1));
+console.log("total", total);
+const builds = { imported, required };
+attempt("builds", () => [imported.build, required.build, imported.Point === required.Point]);
+for (const maker in builds) {
+  attempt("sumOf(" + maker + ")", () => sumOf(new builds[maker].Point(1, 2)));
+  attempt("nextX(" + maker + ")", () => nextX(new builds[maker].Point(1, 2)));
+  for (const judge in builds) attempt(judge + ".isPoint(" + maker + ")", () => builds[judge].isPoint(new builds[maker].Point(1, 2)));
+  attempt(maker + " without new", () => builds[maker].Point(1, 2));
+}
+attempt("a method of one build on an object of the other", () => [imported.Point.prototype.sum.call(new required.Point(1, 2)), required.Point.prototype.sum.call(new imported.Point(1, 2))]);
+const later = await import("point");
+attempt("imported later", () => later.Point === imported.Point);
+//// a-package-with-one-build-for-import-and-one-for-require/package.json
+////= lines-6	"uses-both-builds"	"type"	"module"	"point"	"1.0.0"
+//// a-package-with-one-build-for-import-and-one-for-require/required.cjs
+module.exports = require("point");
+//// a-package-with-one-build-for-import-and-one-for-require/show.js
+////= show-4
+//// a-plugin-required-by-a-computed-name-makes-another-kind/consume.js
+////= lines-17	size	value	value.length
+function first(value) {
+  return value[0];
+}
+function total(value) {
+  var sum = 0;
+  for (var item of value) sum += item;
+  return sum;
+}
+function indexed(value) {
+  var sum = 0;
+  for (var i = 0; i < value.length; i++) sum += value[i];
+  return sum;
+}
+function sorted(value) {
+  return value.sort();
+}
+////= lines-17	counted	value	value.size
+////= lines-12	asked	value	value.has	1
+function each(value) {
+  var seen = [];
+  value.forEach(function (item, key) {
+    seen.push(key + ":" + item);
+  });
+  return seen.join();
+}
+function unpacked(value) {
+  var [a, b] = value;
+  return [a, b];
+}
+
+module.exports = { size: size, first: first, total: total, indexed: indexed, sorted: sorted, counted: counted, asked: asked, each: each, unpacked: unpacked };
+//// a-plugin-required-by-a-computed-name-makes-another-kind/main.js
+var consume = require("./consume");
+var attempt = require("./show").attempt;
+
+////= console-log
+
+function load(name) {
+  return require("./plugins/" + name + ".js");
+}
+function decoded(text) {
+  return Buffer.from(text, "hex").toString();
+}
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) {
+  var list = load("list").make();
+  sum += consume.size(list) + consume.first(list) + consume.total(list) + consume.indexed(list) + consume.sorted(list)[0] + consume.each(list).length + consume.unpacked(list)[1];
+}
+console.log("sum", sum);
+
+var names = "list like text set map typed generator number heir nothing list".split(" ");
+names.forEach(function (name) {
+  Object.keys(consume).forEach(function (use) {
+    attempt(use + "(" + name + ")", function () {
+      return consume[use](load(name).make());
+    });
+  });
+});
+attempt("a name that is decoded at run time", function () {
+  return consume.total(load(decoded("736574")).make());
+});
+attempt("a plugin that is not there", function () {
+  return load("absent").make();
+});
+//// a-plugin-required-by-a-computed-name-makes-another-kind/plugins/generator.js
+exports.make = function () {
+  return (function* () {
+    yield 3;
+    yield 1;
+    yield 2;
+  })();
+};
+//// a-plugin-required-by-a-computed-name-makes-another-kind/plugins/heir.js
+exports.make = function () {
+  return Object.create([3, 1, 2]);
+};
+//// a-plugin-required-by-a-computed-name-makes-another-kind/plugins/like.js
+exports.make = function () {
+  return { 0: 3, 1: 1, 2: 2, length: 3 };
+};
+//// a-plugin-required-by-a-computed-name-makes-another-kind/plugins/list.js
+exports.make = function () {
+  return [3, 1, 2];
+};
+//// a-plugin-required-by-a-computed-name-makes-another-kind/plugins/map.js
+exports.make = function () {
+  return new Map([[0, 3], [1, 1], [2, 2]]);
+};
+//// a-plugin-required-by-a-computed-name-makes-another-kind/plugins/nothing.js
+////= lines-15	make	undefined
+//// a-plugin-required-by-a-computed-name-makes-another-kind/plugins/number.js
+////= lines-15	make	312
+//// a-plugin-required-by-a-computed-name-makes-another-kind/plugins/set.js
+exports.make = function () {
+  return new Set([3, 1, 2]);
+};
+//// a-plugin-required-by-a-computed-name-makes-another-kind/plugins/text.js
+////= lines-15	make	"312"
+//// a-plugin-required-by-a-computed-name-makes-another-kind/plugins/typed.js
+exports.make = function () {
+  return new Float64Array([3, 1, 2]);
+};
+//// a-plugin-required-by-a-computed-name-makes-another-kind/show.js
+////= show-3
+
+module.exports = { show: show, attempt: attempt };
+//// a-subclass-in-another-module-overrides-what-the-base-uses/heirs.js
+import { Queue } from "./queue.js";
+
+export const log = [];
+export class TextItems extends Queue {
+  constructor() {
+    super();
+    this.items = "ab";
+  }
+}
+export class GetterItems extends Queue {
+  get items() {
+    log.push("get items");
+    return [1, 2];
+  }
+  set items(value) {
+    log.push("set items");
+  }
+}
+export class TextSize extends Queue {
+  size() {
+    return "2";
+  }
+}
+export class TextLimit extends Queue {
+  limit = "3";
+}
+export class FieldOverMethod extends Queue {
+  size = () => 1;
+}
+export class SetItems extends Queue {
+  constructor() {
+    super();
+    this.items = new Set([1, 2]);
+  }
+}
+export class LikeItems extends Queue {
+  constructor() {
+    super();
+    this.items = { length: 1, 0: 7, push: () => "own push", [Symbol.iterator]: () => [7, 8][Symbol.iterator]() };
+  }
+}
+export class NoItems extends Queue {
+  constructor() {
+    super();
+    delete this.items;
+  }
+}
+export class BigLimit extends Queue {
+  limit = 3n;
+}
+//// a-subclass-in-another-module-overrides-what-the-base-uses/main.js
+import * as heirs from "./heirs.js";
+import { Queue } from "./queue.js";
+import { attempt } from "./show.js";
+
+////= console-log
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  const queue = new Queue();
+  sum += queue.add(i) + queue.add(1) + queue.size() + queue.first() + queue.total() + queue.room();
+}
+console.log("sum", sum);
+const methods = ["add", "size", "first", "total", "room"];
+for (const name of Object.keys(heirs)) {
+  if (name === "log") continue;
+  for (const method of methods) {
+    heirs.log.length = 0;
+    attempt(name + "." + method, () => new heirs[name]()[method](5));
+    attempt(name + " through the method of the base: " + method, () => Queue.prototype[method].call(new heirs[name](), 5));
+    if (heirs.log.length) console.log(name + "." + method + " ran", heirs.log.join(", "));
+  }
+}
+attempt("the base again", () => {
+  const queue = new Queue();
+  return [queue.add(1), queue.size(), queue.first(), queue.total(), queue.room()];
+});
+//// a-subclass-in-another-module-overrides-what-the-base-uses/package.json
+////= lines	"name"	"queues"	"type"	"module"
+//// a-subclass-in-another-module-overrides-what-the-base-uses/queue.js
+export class Queue {
+  constructor() {
+    this.items = [];
+    this.limit = 3;
+  }
+  add(item) {
+    if (this.size() >= this.limit) return "full";
+    return this.items.push(item);
+  }
+  size() {
+    return this.items.length;
+  }
+  first() {
+    return this.items[0];
+  }
+  total() {
+    let sum = 0;
+    for (const item of this.items) sum += item;
+    return sum;
+  }
+  room() {
+    return this.limit - this.size();
+  }
+}
+//// a-subclass-in-another-module-overrides-what-the-base-uses/show.js
+////= show-4
+//// a-value-changes-kind-while-a-function-of-another-module-waits/main.js
+import { setCurrent, shared } from "./shared.js";
+import { show } from "./show.js";
+import * as waiters from "./waiters.js";
+
+////= console-log
+
+async function attempt(label, run) {
+  try {
+    console.log(label, show(await run()));
+  } catch (error) {
+    console.log(label, "threw", error.constructor.name);
+  }
+}
+function gate() {
+  let open;
+  const promise = new Promise(resolve => (open = resolve));
+  return { promise, open };
+}
+for (let i = 0; i < 500; i++) {
+  await waiters.sizeAroundAnAwait(0);
+  await waiters.countAroundAnAwait(0);
+  await waiters.parameterAroundAnAwait({ value: i }, 0);
+  await waiters.bindingAroundAnAwait(0);
+}
+const kinds = { text: "ab", like: { length: "long" }, number: 7, none: null, big: 2n, object: { valueOf: () => 5, length: 9 }, list: [4] };
+for (const kind in kinds) {
+  shared.list = [1, 2, 3];
+  shared.count = 1;
+  setCurrent([1, 2, 3]);
+  const box = { value: 1 };
+  const held = gate();
+  const waiting = [
+    attempt("size, " + kind, () => waiters.sizeAroundAnAwait(held.promise)),
+    attempt("count, " + kind, () => waiters.countAroundAnAwait(held.promise)),
+    attempt("parameter, " + kind, () => waiters.parameterAroundAnAwait(box, held.promise)),
+    attempt("binding, " + kind, () => waiters.bindingAroundAnAwait(held.promise)),
+    attempt("held in a local, " + kind, () => waiters.heldInALocal(held.promise)),
+  ];
+  shared.list = kinds[kind];
+  shared.count = kinds[kind];
+  box.value = kinds[kind];
+  setCurrent(kinds[kind]);
+  held.open();
+  await Promise.all(waiting);
+
+  shared.list = [1, 2, 3];
+  const steps = waiters.sizeAroundAYield();
+  const first = steps.next();
+  shared.list = kinds[kind];
+  await attempt("yield, " + kind, () => [first.value, steps.next(kinds[kind]).value]);
+
+  const streamBox = { value: 1 };
+  await attempt("stream, " + kind, async () => {
+    const seen = [];
+    for await (const item of waiters.streamed(streamBox)) {
+      seen.push(item);
+      streamBox.value = kinds[kind];
+    }
+    return seen;
+  });
+
+  const loopBox = { value: 1 };
+  const gates = [gate(), gate(), gate()];
+  const looping = attempt("loop, " + kind, () => waiters.loopWithAwaits(loopBox, gates.map(each => each.promise)));
+  gates[0].open();
+  await gates[0].promise;
+  loopBox.value = kinds[kind];
+  gates[1].open();
+  gates[2].open();
+  await looping;
+}
+//// a-value-changes-kind-while-a-function-of-another-module-waits/package.json
+////= lines	"name"	"waiting"	"type"	"module"
+//// a-value-changes-kind-while-a-function-of-another-module-waits/shared.js
+export const shared = { list: [1, 2, 3], count: 1, name: "abc" };
+export let current = [1, 2, 3];
+export function setCurrent(value) {
+  current = value;
+}
+//// a-value-changes-kind-while-a-function-of-another-module-waits/show.js
+////= show-4
+//// a-value-changes-kind-while-a-function-of-another-module-waits/waiters.js
+import { current, shared } from "./shared.js";
+
+export async function sizeAroundAnAwait(gate) {
+  const before = shared.list.length;
+  await gate;
+  return [before, shared.list.length];
+}
+export async function countAroundAnAwait(gate) {
+  const before = shared.count + 1;
+  await gate;
+  return [before, shared.count + 1];
+}
+export async function parameterAroundAnAwait(box, gate) {
+  const before = box.value * 2;
+  await gate;
+  return [before, box.value * 2];
+}
+export async function bindingAroundAnAwait(gate) {
+  const before = current.length;
+  await gate;
+  return [before, current.length];
+}
+export async function loopWithAwaits(box, gates) {
+  let sum = 0;
+  for (const gate of gates) {
+    sum += box.value;
+    await gate;
+  }
+  return sum;
+}
+export function* sizeAroundAYield() {
+  const before = shared.list.length;
+  const sent = yield before;
+  return [before, shared.list.length, sent.length];
+}
+export async function* streamed(box) {
+  for (let i = 0; i < 3; i++) yield box.value + 1;
+}
+export async function heldInALocal(gate) {
+  const list = shared.list;
+  await gate;
+  return [list.length, list === shared.list];
+}
+//// accessors-and-read-only-members-defined-on-exports-are-reached-under-computed-names/defined.js
+var reads = 0;
+var stored = [];
+////= Object-defineProperty
+Object.defineProperty(exports, "kept", {
+  enumerable: true,
+  get: function () {
+    return stored.length;
+  },
+  set: function (value) {
+    stored.push(value);
+  },
+});
+Object.defineProperty(exports, "fixed", { enumerable: true, value: 7, writable: false });
+Object.defineProperty(exports, "hidden", { enumerable: false, value: 8, writable: true });
+exports.plain = 9;
+exports.stored = stored;
+//// accessors-and-read-only-members-defined-on-exports-are-reached-under-computed-names/main.js
+var read =
+  globalThis.noSuchThing ||
+  function (holder, key) {
+    return holder[key];
+  };
+var write =
+  globalThis.noSuchThing ||
+  function (holder, key, value) {
+    holder[key] = value;
+  };
+var writeStrictly =
+  globalThis.noSuchThing ||
+  function (holder, key, value) {
+    "use strict";
+    holder[key] = value;
+  };
+var has =
+  globalThis.noSuchThing ||
+  function (holder, key) {
+    return key in holder;
+  };
+var holder = require("./defined");
+var names = ["counted", "kept", "fixed", "hidden", "plain"];
+for (var round = 0; round < 4; round++) {
+  for (var i = 0; i < names.length; i++) {
+    var name = names[i];
+    console.log(round, name, typeof read(holder, name), read(holder, name), has(holder, name));
+  }
+}
+for (var round = 0; round < 4; round++) {
+  for (var i = 0; i < names.length; i++) {
+    var name = names[i];
+    write(holder, name, 100 + round);
+    var thrown = "no";
+    try {
+      writeStrictly(holder, name, 200 + round);
+    } catch (error) {
+      thrown = error instanceof TypeError ? "TypeError" : "other";
+    }
+    console.log(round, name, thrown, read(holder, name));
+  }
+}
+console.log(holder.stored.join());
+for (var key in holder) console.log("for in", key, typeof read(holder, key));
+console.log(Object.keys(holder).join(), typeof Object.values(holder)[0], typeof Object.entries(holder)[1][1]);
+var copy = Object.assign({}, holder);
+console.log(typeof copy.counted, typeof copy.kept, copy.fixed, copy.hidden, copy.plain);
+var spread = { ...holder };
+console.log(typeof spread.counted, typeof spread.kept, spread.fixed, spread.hidden, spread.plain);
+console.log(JSON.stringify(holder).replace(/[0-9]+/g, "N"));
+var descriptor = Object.getOwnPropertyDescriptor(holder, "counted");
+console.log(typeof descriptor.get, descriptor.set, descriptor.enumerable, descriptor.configurable, "value" in descriptor);
+var { counted, kept, ...rest } = holder;
+console.log(typeof counted, typeof kept, Object.keys(rest).join());
+//// an-array-subclass-made-in-one-module-is-pushed-to-in-another/main.js
+import { makers } from "./make.js";
+import { attempt, show } from "./show.js";
+import { append, appendAll, ends, kept, sorted, total, walked } from "./use.js";
+
+////= console-log
+
+const uses = {
+  append: list => append(list, 4),
+  appendAll: list => appendAll(list, [5, 6]),
+  total,
+  ends,
+  sorted,
+  kept,
+  walked,
+};
+
+function everything(round) {
+  for (const maker of Object.keys(makers)) {
+    for (const use of Object.keys(uses)) {
+      const list = makers[maker]();
+      attempt(round + " " + use + "(" + maker + ")", () => show(uses[use](list)) + " leaves " + show(list));
+    }
+  }
+}
+
+attempt("seen append(counting)", () => append(makers.counting(), 4));
+attempt("seen append(honest)", () => append(makers.honest(), 4));
+everything("early");
+let checksum = 0;
+for (let i = 0; i < 2000; i++) {
+  const list = [i, 1, 2];
+  checksum += append(list, i) + appendAll(list, [1, 2]) + total(list) + ends(list)[1] + sorted(list).length + kept(list).length + walked(list).length;
+}
+console.log("checksum", checksum);
+everything("late");
+//// an-array-subclass-made-in-one-module-is-pushed-to-in-another/make.js
+class Counting extends Array {
+  push(value) {
+    return 42;
+  }
+}
+
+class Doubling extends Array {
+  push(value) {
+    super.push(value);
+    return super.push(value);
+  }
+  filter() {
+    return "filtered";
+  }
+  get length() {
+    return 2;
+  }
+  set length(value) {}
+}
+
+class Backwards extends Array {
+  *[Symbol.iterator]() {
+    for (let i = this.length - 1; i >= 0; i--) yield this[i];
+  }
+  sort() {
+    return this;
+  }
+  static get [Symbol.species]() {
+    return Array;
+  }
+}
+
+export const makers = {
+  honest: () => [3, 1, 2],
+  counting: () => Counting.from([3, 1, 2]),
+  doubling: () => Doubling.of(3, 1, 2),
+  backwards: () => Backwards.from([3, 1, 2]),
+  arrayLike: () => ({ 0: 3, 1: 1, 2: 2, length: 3 }),
+  borrowing: () => ({ 0: 3, 1: 1, 2: 2, length: 3, push: Array.prototype.push, sort: Array.prototype.sort, filter: Array.prototype.filter, [Symbol.iterator]: Array.prototype.values }),
+  shadowed: () => Object.assign([3, 1, 2], { push: () => "own push", filter: () => "own filter" }),
+  proxied: () => new Proxy([3, 1, 2], {}),
+  orphan: () => Object.setPrototypeOf([3, 1, 2], null),
+  frozen: () => Object.freeze([3, 1, 2]),
+  typed: () => new Int8Array([3, 1, 2]),
+  text: () => "312",
+  holes: () => [3, , 2],
+};
+//// an-array-subclass-made-in-one-module-is-pushed-to-in-another/package.json
+////= lines-5	"lists"	"private"	true	"type"	"module"
+//// an-array-subclass-made-in-one-module-is-pushed-to-in-another/show.js
+////= show-4
+//// an-array-subclass-made-in-one-module-is-pushed-to-in-another/use.js
+export function append(list, value) {
+  return list.push(value);
+}
+
+export function appendAll(list, values) {
+  let last = "nothing";
+  for (let i = 0; i < values.length; i++) {
+    last = list.push(values[i]);
+  }
+  return last;
+}
+
+export function total(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return sum;
+}
+
+export function ends(list) {
+  return [list[0], list[list.length - 1]];
+}
+
+export function sorted(list) {
+  return list.sort();
+}
+
+export function kept(list) {
+  return list.filter(item => item > 1);
+}
+
+export function walked(list) {
+  const seen = [];
+  for (const item of list) seen.push(item);
+  return seen;
+}
+//// an-es5-package-makes-a-collection-out-of-array-prototype/installed/collection/index.js
+function Collection() {
+  this.length = 0;
+  for (var i = 0; i < arguments.length; i++) this.push(arguments[i]);
+}
+Collection.prototype = Object.create(Array.prototype);
+Collection.prototype.constructor = Collection;
+Collection.prototype.first = function () {
+  return this[0];
+};
+
+function Loud() {
+  Collection.apply(this, arguments);
+}
+Loud.prototype = Object.create(Collection.prototype);
+Loud.prototype.constructor = Loud;
+Loud.prototype.push = function (item) {
+  Array.prototype.push.call(this, String(item).toUpperCase());
+  return "pushed loudly";
+};
+////= lines-10	Loud.prototype.map	"mapped loudly"
+////= lines-10	Loud.prototype.indexOf	"zero"
+
+function Stack() {
+  var list = [];
+  Object.setPrototypeOf(list, Stack.prototype);
+  list.push.apply(list, arguments);
+  return list;
+}
+Stack.prototype = Object.create(Array.prototype);
+Stack.prototype.constructor = Stack;
+Stack.prototype.pop = function () {
+  return "popped " + Array.prototype.pop.call(this);
+};
+
+module.exports = { Collection: Collection, Loud: Loud, Stack: Stack };
+//// an-es5-package-makes-a-collection-out-of-array-prototype/installed/collection/package.json
+////= lines	"name"	"collection"	"version"	"0.3.0"
+//// an-es5-package-makes-a-collection-out-of-array-prototype/main.js
+var collection = require("collection");
+var attempt = require("./show").attempt;
+var show = require("./show").show;
+var work = require("./work");
+
+////= console-log
+
+var makers = {
+  list: function () { return ["a", "b", "c"]; },
+  collection: function () { return new collection.Collection("a", "b", "c"); },
+  loud: function () { return new collection.Loud("a", "b", "c"); },
+  stack: function () { return new collection.Stack("a", "b", "c"); },
+  stackWithoutNew: function () { return collection.Stack("a", "b", "c"); },
+};
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) {
+  var list = makers.list();
+  sum += work.pushed(list) + work.popped(list).length + work.mapped(list).length + work.found(list) + work.size(list) + work.third(list).length + work.walked(list).length + work.glued(list) + work.written(list).length;
+}
+console.log("sum", sum);
+
+Object.keys(makers).forEach(function (maker) {
+  Object.keys(work).forEach(function (use) {
+    var value = makers[maker]();
+    attempt(use + "(" + maker + ")", function () {
+      return show(work[use](value)) + " leaves " + show(value);
+    });
+  });
+});
+//// an-es5-package-makes-a-collection-out-of-array-prototype/package.json
+////= lines	"name"	"uses-a-collection"	"private"	true
+//// an-es5-package-makes-a-collection-out-of-array-prototype/show.js
+////= show-3
+
+module.exports = { show: show, attempt: attempt };
+//// an-es5-package-makes-a-collection-out-of-array-prototype/work.js
+////= lines-16	pushed	list.push	"d"
+exports.popped = function (list) {
+  return list.pop();
+};
+exports.mapped = function (list) {
+  return list.map(function (item) { return item + item; });
+};
+////= lines-16	found	list.indexOf	"b"
+////= lines-20	size	list	list.length
+exports.third = function (list) {
+  return list[2];
+};
+exports.storedPastTheEnd = function (list) {
+  list[5] = "f";
+  return list.length;
+};
+exports.cut = function (list) {
+  list.length = 1;
+  return [list[0], list[1], 1 in list];
+};
+exports.walked = function (list) {
+  var seen = [];
+  for (var item of list) seen.push(item);
+  return seen;
+};
+exports.glued = function (list) {
+  return [].concat(list).length;
+};
+////= lines-16	isList	Array.isArray	list
+////= lines-16	written	JSON.stringify	list
+exports.sliced = function (list) {
+  var part = list.slice(1);
+  return [part.constructor.name, Array.isArray(part), part.length];
+};
+//// an-es5-package-with-constructor-functions-meets-strangers/installed/shapes/lib/circle.js
+var inherits = require("./inherits");
+var Shape = require("./shape");
+
+function Circle(radius) {
+  Shape.call(this, "circle");
+  this.radius = radius;
+}
+inherits(Circle, Shape);
+Circle.prototype.area = function () {
+  return 3 * this.radius * this.radius;
+};
+Circle.prototype.grow = function (by) {
+  this.radius += by;
+  return this;
+};
+module.exports = Circle;
+//// an-es5-package-with-constructor-functions-meets-strangers/installed/shapes/lib/index.js
+exports.Shape = require("./shape");
+exports.Circle = require("./circle");
+exports.Square = require("./square");
+exports.totalArea = function (shapes) {
+  var total = 0;
+  for (var i = 0; i < shapes.length; i++) total += shapes[i].area();
+  return total;
+};
+////= lines-20	radiusOf	circle	circle.radius
+//// an-es5-package-with-constructor-functions-meets-strangers/installed/shapes/lib/inherits.js
+module.exports = function inherits(ctor, superCtor) {
+  ctor.super_ = superCtor;
+  ctor.prototype = Object.create(superCtor.prototype, {
+    constructor: { value: ctor, enumerable: false, writable: true, configurable: true },
+  });
+};
+//// an-es5-package-with-constructor-functions-meets-strangers/installed/shapes/lib/shape.js
+function Shape(name) {
+  if (!(this instanceof Shape)) return new Shape(name);
+  this.name = name;
+  this.tags = [];
+}
+////= lines-10	Shape.prototype.area	0
+Shape.prototype.describe = function () {
+  return this.name + " of area " + this.area();
+};
+Shape.prototype.tag = function (tag) {
+  this.tags.push(tag);
+  return this.tags.length;
+};
+Shape.isShape = function (value) {
+  return value instanceof Shape;
+};
+module.exports = Shape;
+//// an-es5-package-with-constructor-functions-meets-strangers/installed/shapes/lib/square.js
+var Shape = require("./shape");
+
+function Square(side) {
+  Shape.call(this, "square");
+  this.side = side;
+}
+Square.prototype = new Shape("prototype of squares");
+Square.prototype.constructor = Square;
+Square.prototype.area = function () {
+  return this.side * this.side;
+};
+module.exports = Square;
+//// an-es5-package-with-constructor-functions-meets-strangers/installed/shapes/package.json
+{
+  "name": "shapes",
+  "version": "1.2.3",
+  "main": "lib/index.js",
+  "license": "MIT"
+}
+//// an-es5-package-with-constructor-functions-meets-strangers/main.js
+var shapes = require("shapes");
+var attempt = require("./show").attempt;
+var strangers = require("./strangers");
+
+////= console-log
+
+var uses = {
+  area: function (shape) { return shape.area(); },
+  borrowedArea: function (shape) { return shapes.Circle.prototype.area.call(shape); },
+  describe: function (shape) { return shape.describe(); },
+  borrowedDescribe: function (shape) { return shapes.Shape.prototype.describe.call(shape); },
+  tag: function (shape) { return shape.tag("t"); },
+  borrowedTag: function (shape) { return shapes.Shape.prototype.tag.call(shape, "t"); },
+  grow: function (shape) { return shape.grow(1).radius; },
+  borrowedGrow: function (shape) { return shapes.Circle.prototype.grow.call(shape, 1).radius; },
+  radiusOf: shapes.radiusOf,
+  totalArea: function (shape) { return shapes.totalArea([new shapes.Circle(1), shape]); },
+  isShape: shapes.Shape.isShape,
+  isCircle: function (shape) { return shape instanceof shapes.Circle; },
+  maker: function (shape) { return shape.constructor === shapes.Circle; },
+  keys: function (shape) { var keys = []; for (var key in shape) keys.push(key); return keys.join(); },
+};
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) {
+  var circle = new shapes.Circle(i % 5);
+  sum += uses.area(circle) + uses.borrowedArea(circle) + uses.describe(circle).length + uses.tag(circle) + uses.grow(circle) + uses.radiusOf(circle) + uses.totalArea(circle);
+}
+console.log("sum", sum);
+
+////= Object-keys	strangers	stranger	strangers[stranger
+attempt("squares share the tags of their prototype", function () {
+  delete new shapes.Square(1).tags;
+  var one = new shapes.Square(1);
+  delete one.tags;
+  one.tag("shared");
+  return shapes.Square.prototype.tags;
+});
+shapes.Circle.prototype.area = function () {
+  return "replaced";
+};
+attempt("after the method was replaced", function () {
+  return [uses.area(new shapes.Circle(2)), uses.describe(new shapes.Circle(2)), uses.totalArea(new shapes.Circle(2))];
+});
+//// an-es5-package-with-constructor-functions-meets-strangers/package.json
+////= lines-6	"drawing"	"version"	"1.0.0"	"shapes"	"^1.0.0"
+//// an-es5-package-with-constructor-functions-meets-strangers/show.js
+////= show-3
+
+module.exports = { show: show, attempt: attempt };
+//// an-es5-package-with-constructor-functions-meets-strangers/strangers.js
+var shapes = require("shapes");
+
+exports.circle = function () {
+  return new shapes.Circle(2);
+};
+exports.square = function () {
+  return new shapes.Square(2);
+};
+exports.literal = function () {
+  return { name: "literal", tags: [], radius: 2, area: function () { return "an area in words"; } };
+};
+exports.heirOfACircle = function () {
+  return Object.create(new shapes.Circle(2), { radius: { get: function () { return "a radius from a getter"; } } });
+};
+exports.circleWithATextRadius = function () {
+  return new shapes.Circle("2");
+};
+exports.circleWithoutTags = function () {
+  var circle = new shapes.Circle(2);
+  delete circle.tags;
+  return circle;
+};
+exports.circleWithTextTags = function () {
+  var circle = new shapes.Circle(2);
+  circle.tags = "tags";
+  return circle;
+};
+exports.circleWithItsOwnArea = function () {
+  var circle = new shapes.Circle(2);
+  circle.area = function () { return -0; };
+  return circle;
+};
+exports.circleMovedToSquares = function () {
+  return Object.setPrototypeOf(new shapes.Circle(2), shapes.Square.prototype);
+};
+////= lines-11	madeWithoutNew	shapes.Shape	"made without new"
+////= lines-11	bareObject	Object.create	null
+exports.frozenCircle = function () {
+  return Object.freeze(new shapes.Circle(2));
+};
+//// an-exported-let-changes-its-kind-after-it-was-imported/main.js
+import * as reader from "./reader.js";
+import { attempt } from "./show.js";
+import { become } from "./state.js";
+
+////= console-log
+
+function all(when) {
+  for (const name in reader) attempt(when + " " + name, reader[name]);
+}
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  sum += reader.size() + reader.first() + reader.walked().length + reader.throughTheAlias();
+  if (i % 500 === 0) sum += reader.pushed();
+}
+console.log("sum", sum);
+all("a list");
+const kinds = {
+  "a text": "text",
+  "an array-like": { length: 5, 0: "z" },
+  "a number": 7,
+  "null": null,
+  "undefined": undefined,
+  "a function": function five() {
+    return 5;
+  },
+  "a map": new Map([[0, "zero"]]),
+  "an object with valueOf": { valueOf: () => 20, length: "long" },
+  "a list again": [4, 5],
+};
+for (const when in kinds) {
+  become(kinds[when]);
+  all(when);
+}
+//// an-exported-let-changes-its-kind-after-it-was-imported/package.json
+////= lines	"name"	"live-bindings"	"type"	"module"
+//// an-exported-let-changes-its-kind-after-it-was-imported/reader.js
+import snapshot, { alias, current } from "./state.js";
+
+export const size = () => current.length;
+export const first = () => current[0];
+export const plusOne = () => current + 1;
+export const times = () => current * 2;
+export const pushed = () => current.push(9);
+export function walked() {
+  const seen = [];
+  for (const item of current) seen.push(item);
+  return seen;
+}
+export const called = () => current();
+export const kind = () => typeof current;
+export const isList = () => Array.isArray(current);
+export const throughTheAlias = () => alias.length;
+export const snapshotSize = () => snapshot.length;
+export const same = () => [alias === current, snapshot === current];
+//// an-exported-let-changes-its-kind-after-it-was-imported/show.js
+////= show-4
+//// an-exported-let-changes-its-kind-after-it-was-imported/state.js
+export let current = [1, 2, 3];
+export function become(value) {
+  current = value;
+}
+export { current as alias };
+export default current;
+//// arguments-objects-and-rest-lists-cross-modules/collect.js
+exports.sloppyArguments = function (a, b) {
+  return arguments;
+};
+exports.strictArguments = function (a, b) {
+  "use strict";
+  return arguments;
+};
+exports.rest = function (...rest) {
+  return rest;
+};
+exports.aliased = function (a, b) {
+  return { operands: arguments, read: function () { return [a, b]; }, write: function (value) { a = value; } };
+};
+exports.withDefaults = function (a = 0, b) {
+  return { operands: arguments, read: function () { return [a, b]; }, write: function (value) { a = value; } };
+};
+//// arguments-objects-and-rest-lists-cross-modules/main.js
+var collect = require("./collect");
+var attempt = require("./show").attempt;
+var work = require("./work");
+
+////= console-log
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) {
+  var list = collect.rest(i, 2, 3);
+  sum += work.size(list) + work.first(list) + work.total(list) + work.walked(list) + work.mapped(list)[0] + work.spread(list) + work.applied(list) + work.stored(list) + work.grown(list);
+}
+console.log("sum", sum);
+["rest", "sloppyArguments", "strictArguments"].forEach(function (maker) {
+  Object.keys(work).forEach(function (use) {
+    attempt(use + "(" + maker + ")", function () {
+      return work[use](collect[maker](1, 2, 3));
+    });
+  });
+});
+["aliased", "withDefaults"].forEach(function (maker) {
+  var held = collect[maker](1, 2);
+  attempt(maker + " at first", function () { return [held.read(), held.operands[0]]; });
+  attempt(maker + " after a store from another module", function () { return [work.stored(held.operands), held.read()]; });
+  held.write("written");
+  attempt(maker + " after a store to the parameter", function () { return [work.first(held.operands), held.read()]; });
+  attempt(maker + " after the element was removed", function () { delete held.operands[0]; held.write("again"); return [work.first(held.operands), held.read()]; });
+});
+//// arguments-objects-and-rest-lists-cross-modules/show.js
+////= show-3
+
+module.exports = { show: show, attempt: attempt };
+//// arguments-objects-and-rest-lists-cross-modules/work.js
+exports.size = function (list) { return list.length; };
+exports.first = function (list) { return list[0]; };
+exports.total = function (list) { var sum = 0; for (var i = 0; i < list.length; i++) sum += list[i]; return sum; };
+exports.walked = function (list) { var sum = 0; for (var item of list) sum += item; return sum; };
+exports.mapped = function (list) { return list.map(function (item) { return item * 2; }); };
+exports.borrowedMap = function (list) { return Array.prototype.map.call(list, function (item) { return item * 2; }); };
+exports.spread = function (list) { return Math.max(...list); };
+exports.applied = function (list) { return Math.max.apply(null, list); };
+exports.isList = function (list) { return Array.isArray(list); };
+exports.tag = function (list) { return Object.prototype.toString.call(list); };
+exports.stored = function (list) { list[0] = 100; return list[0]; };
+exports.grown = function (list) { list[list.length] = 7; return list.length; };
+exports.callee = function (list) { return typeof list.callee; };
+exports.keys = function (list) { return Reflect.ownKeys(list).map(String).join(); };
+//// callbacks-from-another-module-answer-with-other-kinds/callbacks.js
+var log = [];
+exports.log = log;
+exports.comparators = {
+  numbers: function (a, b) { return a - b; },
+  texts: function (a, b) { return String(a - b); },
+  booleans: function (a, b) { return a > b; },
+  notANumber: function () { return NaN; },
+  nothing: function () {},
+  objects: function (a, b) { return { valueOf: function () { log.push("valueOf"); return b - a; } }; },
+  big: function (a, b) { return BigInt(a - b); },
+  symbols: function () { return Symbol("no number"); },
+  throwing: function () { throw new EvalError("no order"); },
+  shrinking: function (a, b) { exports.victim.length = 1; return a - b; },
+};
+exports.mappers = {
+  numbers: function (item) { return item * 2; },
+  texts: function (item) { return String(item); },
+  nothing: function () {},
+  lists: function (item) { return [item, [item]]; },
+  growing: function (item, index, list) { if (list.length < 6) list.push(item + 10); return item; },
+  deleting: function (item, index, list) { delete list[index + 1]; return item; },
+  thisValue: function () { return typeof this; },
+  operands: function () { return arguments.length; },
+};
+exports.tests = {
+  booleans: function (item) { return item > 1; },
+  numbers: function (item) { return item - 1; },
+  texts: function (item) { return item > 1 ? "yes" : ""; },
+  objects: function () { return new Boolean(false); },
+  nothing: function () {},
+  notANumber: function () { return NaN; },
+  minusZero: function () { return -0; },
+  bigZero: function () { return 0n; },
+  documentAllLike: function () { return null; },
+};
+exports.reducers = {
+  sum: function (sum, item) { return sum + item; },
+  text: function (sum, item) { return sum + String(item); },
+  switching: function (sum, item) { return item === 2 ? String(sum) : sum + item; },
+  nothing: function () {},
+  big: function (sum, item) { return BigInt(sum) + BigInt(item); },
+};
+//// callbacks-from-another-module-answer-with-other-kinds/main.js
+var callbacks = require("./callbacks");
+var attempt = require("./show").attempt;
+var work = require("./work");
+
+////= console-log
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) {
+  sum += work.sorted([3, 1, 2], callbacks.comparators.numbers)[0] + work.mapped([3, 1, 2], callbacks.mappers.numbers)[0] + work.flat([1], callbacks.mappers.numbers)[0];
+  sum += work.kept([3, 1, 2], callbacks.tests.booleans).length + work.found([3, 1, 2], callbacks.tests.booleans)[0] + work.reduced([3, 1, 2], callbacks.reducers.sum) + work.made([1], callbacks.mappers.numbers)[0];
+}
+console.log("sum", sum);
+
+function table(uses, group) {
+  uses.forEach(function (use) {
+    Object.keys(callbacks[group]).forEach(function (name) {
+      var list = [3, 1, 2];
+      callbacks.victim = list;
+      callbacks.log.length = 0;
+      attempt(use + " with " + group + "." + name, function () {
+        return [work[use](list, callbacks[group][name]), list, callbacks.log.length];
+      });
+    });
+  });
+}
+table(["sorted"], "comparators");
+table(["mapped", "flat", "replaced", "made"], "mappers");
+table(["kept", "found"], "tests");
+table(["reduced", "reducedWithoutAStart"], "reducers");
+//// callbacks-from-another-module-answer-with-other-kinds/show.js
+////= show-3
+
+module.exports = { show: show, attempt: attempt };
+//// callbacks-from-another-module-answer-with-other-kinds/work.js
+////= lines-8	sorted	list	compare	list.sort
+////= lines-8	mapped	list	map	list.map
+////= lines-8	flat	list	map	list.flatMap
+////= lines-8	kept	list	test	list.filter
+exports.found = function (list, test) {
+  return [list.find(test), list.findIndex(test), list.some(test), list.every(test)];
+};
+exports.reduced = function (list, reduce) {
+  return list.reduce(reduce, 0) + 1;
+};
+////= lines-8	reducedWithoutAStart	list	reduce	list.reduce
+exports.replaced = function (list, map) {
+  return "1-2-3".replace(/\d/g, function (digit) { return map(Number(digit), 0, list); });
+};
+exports.made = function (list, map) {
+  return Array.from(list, map);
+};
+//// classes-that-nothing-constructs-by-name/main.js
+import * as shapes from "./shapes.js";
+import { attempt } from "./show.js";
+import * as use from "./use.js";
+
+////= console-log
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  const square = new shapes.Square(i % 5);
+  sum += use.describe(square).length + use.sides(square) + use.area(square) + use.keys(square).length;
+}
+console.log("sum", sum);
+
+const decoded = text => Buffer.from(text, "hex").toString();
+const table = { chosen: shapes.ByATable };
+class Listed extends Array {
+  static get [Symbol.species]() {
+    return shapes.BySpecies;
+  }
+}
+const makers = {
+  square: () => new shapes.Square(3),
+  byReflect: () => Reflect.construct(shapes.ByReflect, []),
+  byReflectWithAnotherTarget: () => Reflect.construct(shapes.Square, [3], shapes.ByReflect),
+  byATable: () => new table[decoded("63686f73656e")](),
+  bound: () => new (shapes.Bound.bind(null))(),
+  byItsInstance: () => new (Object.create(shapes.ByItsInstance.prototype).constructor)(),
+  byEvaluatedText: () => eval("new shapes.ByEvaluatedText()"),
+  byAFunctionMadeOfText: () => new Function("shapes", "return new shapes.ByAFunctionMadeOfText()")(shapes),
+  byAComputedName: () => new shapes[decoded("427941436f6d70757465644e616d65")](),
+  byApply: () => new (Function.prototype.bind.apply(shapes.ByApply, [null]))(),
+  bySpecies: () => new Listed().map(item => item),
+  asAParent: () => new (class extends shapes.AsAParent {})(),
+  oldStyle: () => new shapes.OldStyle(),
+  oldStyleByCall: () => {
+    const made = Object.create(shapes.OldStyle.prototype);
+    shapes.OldStyle.call(made);
+    return made;
+  },
+  onlyThePrototype: () => Object.create(shapes.Square.prototype),
+};
+for (const maker in makers) for (const name in use) attempt(name + "(" + maker + ")", () => use[name](makers[maker]()));
+//// classes-that-nothing-constructs-by-name/package.json
+////= lines	"name"	"unseen-constructions"	"type"	"module"
+//// classes-that-nothing-constructs-by-name/shapes.js
+export class Shape {
+  sides = 0;
+  name = "shape";
+  area() {
+    return 0;
+  }
+  describe() {
+    return this.name + " " + this.sides + " " + this.area();
+  }
+}
+export class Square extends Shape {
+  sides = 4;
+  name = "square";
+  constructor(side = 2) {
+    super();
+    this.side = side;
+  }
+  area() {
+    return this.side * this.side;
+  }
+}
+////= lines-3	ByReflect	5	"ByReflect"	"ByReflect has a field of its own"	"the area of ByReflect"
+////= lines-3	ByATable	6	"ByATable"	"ByATable has a field of its own"	"the area of ByATable"
+////= lines-3	Bound	7	"Bound"	"Bound has a field of its own"	"the area of Bound"
+////= lines-3	ByItsInstance	8	"ByItsInstance"	"ByItsInstance has a field of its own"	"the area of ByItsInstance"
+////= lines-3	ByEvaluatedText	9	"ByEvaluatedText"	"ByEvaluatedText has a field of its own"	"the area of ByEvaluatedText"
+////= lines-3	ByAFunctionMadeOfText	10	"ByAFunctionMadeOfText"	"ByAFunctionMadeOfText has a field of its own"	"the area of ByAFunctionMadeOfText"
+////= lines-3	ByAComputedName	11	"ByAComputedName"	"ByAComputedName has a field of its own"	"the area of ByAComputedName"
+////= lines-3	ByApply	12	"ByApply"	"ByApply has a field of its own"	"the area of ByApply"
+////= lines-3	BySpecies	13	"BySpecies"	"BySpecies has a field of its own"	"the area of BySpecies"
+////= lines-3	AsAParent	14	"AsAParent"	"AsAParent has a field of its own"	"the area of AsAParent"
+
+export function OldStyle() {
+  this.sides = 1;
+  this.name = "old style";
+}
+OldStyle.prototype = Object.create(Shape.prototype);
+////= lines-10	OldStyle.prototype.area	"the area of an old style shape"
+//// classes-that-nothing-constructs-by-name/show.js
+////= show-4
+//// classes-that-nothing-constructs-by-name/use.js
+export const describe = shape => shape.describe();
+export const sides = shape => shape.sides + 1;
+export const area = shape => shape.area();
+export const extra = shape => shape.extra;
+export const keys = shape => Object.keys(shape).join();
+//// commonjs-files-marked-as-es-modules-are-imported/lib/point.cjs
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.default = void 0;
+exports.origin = origin;
+////= Point
+exports.default = Point;
+function origin() {
+  return new Point(0, 0);
+}
+//// commonjs-files-marked-as-es-modules-are-imported/lib/unmarked.cjs
+exports.default = function (x, y) {
+  return { sum: () => "unmarked " + (x + y) };
+};
+exports.origin = function () {
+  return { sum: () => "unmarked origin" };
+};
+//// commonjs-files-marked-as-es-modules-are-imported/main.js
+import point, { origin } from "./lib/point.cjs";
+import unmarked, { origin as unmarkedOrigin } from "./lib/unmarked.cjs";
+import { attempt } from "./show.js";
+
+////= console-log
+
+function sumOf(made) {
+  return made.sum();
+}
+attempt("typeof the default of a marked file", () => typeof point);
+attempt("typeof the default of an unmarked file", () => typeof unmarked);
+attempt("origin of a marked file", () => sumOf(origin()));
+attempt("origin of an unmarked file", () => sumOf(unmarkedOrigin()));
+attempt("new of the default of a marked file", () => sumOf(new point(1, 2)));
+attempt("new of its member default", () => sumOf(new point.default(1, 2)));
+attempt("call of the default of an unmarked file", () => sumOf(unmarked(1, 2)));
+attempt("call of its member default", () => sumOf(unmarked.default(1, 2)));
+//// commonjs-files-marked-as-es-modules-are-imported/package.json
+////= lines	"name"	"marked"	"type"	"module"
+//// commonjs-files-marked-as-es-modules-are-imported/show.js
+////= show-4
+//// defaults-of-parameters-suggest-kinds-that-callers-in-other-modules-ignore/honest.js
+import * as library from "./library.js";
+
+export function honest() {
+  return [
+    library.next(1) + library.next(),
+    library.half(4) + library.half(),
+    library.bits(5) + library.bits(),
+    library.size([1]) + library.size(),
+    library.appended([1], 2).length + library.appended().length,
+    library.shout("a") + library.shout(),
+    library.glued("a", "b") + library.glued(),
+    library.chosen(true) + library.chosen(),
+    library.negated(true),
+    library.width({ width: 3 }),
+    library.area({ width: 2, height: 3 }) + library.area(),
+    library.first([4]) + library.first(),
+    library.called(() => 5) + library.called(),
+    library.repeated("x", 3) + library.repeated(),
+    library.nothing(null),
+  ];
+}
+//// defaults-of-parameters-suggest-kinds-that-callers-in-other-modules-ignore/library.js
+export function next(n = 0) {
+  return n + 1;
+}
+export function half(n = 10) {
+  return n / 2;
+}
+export function bits(n = 0) {
+  return n | 0;
+}
+export function size(list = []) {
+  return list.length;
+}
+export function appended(list = [], item = 0) {
+  list.push(item);
+  return list;
+}
+export function shout(text = "") {
+  return text.toUpperCase();
+}
+export function glued(text = "", more = "") {
+  return text + more;
+}
+export function chosen(flag = false) {
+  return flag ? "yes" : "no";
+}
+export function negated(flag = false) {
+  return !flag;
+}
+export function width(options = {}) {
+  return options.width;
+}
+export function area({ width = 1, height = 1 } = {}) {
+  return width * height;
+}
+export function first([head = 0] = []) {
+  return head + 1;
+}
+export function called(callback = () => 0) {
+  return callback() + 1;
+}
+export function repeated(text = "ab", times = 2) {
+  let out = "";
+  for (let i = 0; i < times; i++) out += text;
+  return out;
+}
+export function nothing(value = null) {
+  return value === null;
+}
+//// defaults-of-parameters-suggest-kinds-that-callers-in-other-modules-ignore/main.js
+import { honest } from "./honest.js";
+import * as library from "./library.js";
+import { values } from "./others.js";
+import { attempt } from "./show.js";
+
+////= console-log
+
+attempt("honest", honest);
+for (let i = 0; i < 2000; i++) honest();
+attempt("seen next(text)", () => library.next("7"));
+attempt("seen size(text)", () => library.size("word"));
+attempt("seen shout(number)", () => library.shout(5));
+for (const use in library) for (const value in values) attempt(use + "(" + value + ")", () => library[use](values[value], values[value]));
+attempt("honest again", honest);
+//// defaults-of-parameters-suggest-kinds-that-callers-in-other-modules-ignore/others.js
+export const values = {
+  number: 5,
+  fraction: 2.5,
+  minusZero: -0,
+  text: "7",
+  word: "word",
+  emptyText: "",
+  yes: true,
+  none: null,
+  list: [1, 2],
+  emptyList: [],
+  object: { width: "wide", height: 2, length: "long", push: () => "own push", toUpperCase: () => "own toUpperCase" },
+  big: 5n,
+  aFunction: () => "answered",
+  symbol: Symbol("s"),
+  valueOf: { valueOf: () => 9 },
+};
+//// defaults-of-parameters-suggest-kinds-that-callers-in-other-modules-ignore/package.json
+////= lines	"name"	"defaults"	"type"	"module"
+//// defaults-of-parameters-suggest-kinds-that-callers-in-other-modules-ignore/show.js
+////= show-4
+//// es5-heirs-of-event-emitter-get-odd-listeners-and-operands/main.js
+var EventEmitter = require("events");
+var Meter = require("./meter");
+var attempt = require("./show").attempt;
+
+////= console-log
+
+var heard = [];
+function listen(value, count) {
+  heard.push(typeof value + " " + count + " " + (this instanceof Meter));
+}
+var meter = new Meter("honest");
+meter.on("reading", listen);
+for (var i = 0; i < 2000; i++) meter.read(i % 7);
+console.log("honest", meter.total, meter.average(), heard.length, heard[1999]);
+
+var values = { text: "5", nothing: undefined, none: null, object: { valueOf: function () { return 5; } }, list: [5], big: 5n, yes: true, notANumber: NaN };
+Object.keys(values).forEach(function (name) {
+  var fresh = new Meter(name);
+  heard.length = 0;
+  fresh.on("reading", listen);
+  attempt("read(1), read(" + name + ")", function () {
+    return [fresh.read(1), fresh.read(values[name]), fresh.total, fresh.average(), heard.join("; ")];
+  });
+});
+attempt("is an emitter", function () { return [meter instanceof EventEmitter, Meter.super_ === EventEmitter, Object.keys(meter).indexOf("name") !== -1]; });
+attempt("made without new", function () { return Meter("no new"); });
+attempt("the method on a stranger", function () { return Meter.prototype.read.call({ total: 0, readings: [], emit: function () { return "own emit"; } }, 2); });
+attempt("the method on a stranger without emit", function () { return Meter.prototype.read.call({ total: 0, readings: [] }, 2); });
+attempt("a listener that is no function", function () { return new Meter("odd").on("reading", "not a function"); });
+attempt("readings replaced by a text", function () {
+  var odd = new Meter("odd");
+  odd.readings = "text";
+  return odd.read(1);
+});
+attempt("emit replaced on the instance", function () {
+  var odd = new Meter("odd");
+  odd.emit = function (name, value) { return name + value; };
+  return odd.read(1);
+});
+attempt("a listener that throws", function () {
+  var odd = new Meter("odd");
+  odd.on("reading", function () { throw new RangeError("too much"); });
+  return odd.read(1);
+});
+attempt("an error event that nobody hears", function () { return new Meter("odd").emit("error", new SyntaxError("unheard")); });
+//// es5-heirs-of-event-emitter-get-odd-listeners-and-operands/meter.js
+var EventEmitter = require("events");
+var util = require("util");
+
+function Meter(name) {
+  EventEmitter.call(this);
+  this.name = name;
+  this.total = 0;
+  this.readings = [];
+}
+util.inherits(Meter, EventEmitter);
+Meter.prototype.read = function (value) {
+  this.total += value;
+  this.readings.push(value);
+  return this.emit("reading", value, this.readings.length);
+};
+Meter.prototype.average = function () {
+  return this.total / this.readings.length;
+};
+module.exports = Meter;
+//// es5-heirs-of-event-emitter-get-odd-listeners-and-operands/package.json
+////= lines	"name"	"emitters"	"version"	"1.0.0"
+//// es5-heirs-of-event-emitter-get-odd-listeners-and-operands/show.js
+////= show-3
+
+module.exports = { show: show, attempt: attempt };
+//// exported-functions-are-handed-to-built-ins-that-pass-other-operands/honest.js
+import { labelled, noted, parsed, scaled, sizeOf, total } from "./library.js";
+
+export function honest() {
+  return [scaled(2), scaled(2, 3), labelled(1), labelled(1, "n"), sizeOf([1, 2]), noted(1, 2), total(1, 2), parsed("10", 10)];
+}
+//// exported-functions-are-handed-to-built-ins-that-pass-other-operands/library.js
+export const log = [];
+export function scaled(n, factor = 2) {
+  return n * factor;
+}
+export function labelled(n, label) {
+  return label === undefined ? "item " + n : label + " " + n;
+}
+////= lines-14	sizeOf	list	list.length
+export function noted(value, extra) {
+  log.push(typeof value + "/" + typeof extra + "/" + arguments.length);
+  return value;
+}
+export function total(sum, n) {
+  return sum + n;
+}
+export function parsed(text, base) {
+  return parseInt(text, base);
+}
+//// exported-functions-are-handed-to-built-ins-that-pass-other-operands/main.js
+import { EventEmitter } from "node:events";
+import { honest } from "./honest.js";
+import { labelled, log, noted, parsed, scaled, sizeOf, total } from "./library.js";
+import { attempt, show } from "./show.js";
+
+////= console-log
+
+for (let i = 0; i < 2000; i++) honest();
+log.length = 0;
+attempt("honest", honest);
+attempt("map(scaled)", () => [1, 2, 3].map(scaled));
+attempt("map(labelled)", () => [1, 2, 3].map(labelled));
+attempt("map(parsed)", () => ["10", "10", "10", "10"].map(parsed));
+attempt("map(sizeOf)", () => [[1], "ab", { length: "long" }, 5].map(sizeOf));
+attempt("Array.from(scaled)", () => Array.from({ length: 3 }, scaled));
+attempt("Array.from(a set, labelled)", () => Array.from(new Set(["a"]), labelled));
+attempt("reduce(total)", () => [1, 2, 3].reduce(total));
+attempt("reduce(total) over texts", () => ["1", 2, 3].reduce(total));
+attempt("reduce(scaled)", () => [1, 2, 3].reduce(scaled));
+attempt("sort(total)", () => [3, 1, 2].sort(total));
+attempt("replace(labelled)", () => "a-b".replace(/[ab]/g, labelled));
+attempt("replace(scaled)", () => "2-3".replace(/\d/g, scaled));
+attempt("a map's forEach(noted)", () => (new Map([["key", 1]]).forEach(noted), log.splice(0)));
+attempt("a set's forEach(noted)", () => (new Set(["only"]).forEach(noted), log.splice(0)));
+attempt("JSON.parse(noted)", () => [JSON.parse('{"a":[1]}', noted), log.splice(0)]);
+attempt("JSON.stringify(noted)", () => [JSON.stringify({ a: 1 }, noted), log.splice(0)]);
+attempt("flatMap(scaled)", () => [1, 2].flatMap(scaled));
+attempt("find(sizeOf)", () => ["", [], "ab"].find(sizeOf));
+attempt("a typed array's map(scaled)", () => new Uint8Array([1, 2, 200]).map(scaled));
+attempt("Reflect.apply(scaled)", () => Reflect.apply(scaled, null, ["3", "4"]));
+attempt("scaled.call", () => scaled.call(null, 3n, 4n));
+attempt("scaled.bind", () => scaled.bind(null, "3")());
+
+const emitter = new EventEmitter();
+emitter.on("noted", noted);
+emitter.emit("noted");
+emitter.emit("noted", "text", [1], 3);
+console.log("an emitter", log.splice(0).join(", "));
+const target = new EventTarget();
+target.addEventListener("noted", noted);
+target.dispatchEvent(new Event("noted"));
+console.log("an event target", log.splice(0).join(", "));
+
+console.log("then(scaled)", show(await Promise.resolve(4).then(scaled)));
+console.log("then(scaled) of a text", show(await Promise.resolve("4").then(scaled)));
+console.log("then(sizeOf) of nothing", await Promise.resolve().then(sizeOf).catch(error => "threw " + error.constructor.name));
+console.log("catch(sizeOf)", show(await Promise.reject("abc").catch(sizeOf)));
+await new Promise(resolve => setTimeout((...operands) => resolve(noted(...operands)), 0, "from a timer", 1));
+await new Promise(resolve => setTimeout(noted, 0) && setTimeout(resolve, 1));
+await new Promise(resolve => process.nextTick((...operands) => resolve(noted(...operands)), { from: "a tick" }));
+await new Promise(resolve => queueMicrotask(() => resolve(noted())));
+console.log("timers and ticks", log.splice(0).join(", "));
+attempt("honest again", honest);
+//// exported-functions-are-handed-to-built-ins-that-pass-other-operands/package.json
+////= lines	"name"	"handed-over"	"type"	"module"
+//// exported-functions-are-handed-to-built-ins-that-pass-other-operands/show.js
+////= show-4
+//// exports-added-and-replaced-after-the-first-require/lib.js
+////= lines-20	size	list	list.length
+exports.version = 1;
+exports.names = ["a", "b"];
+exports.gone = "still here";
+exports.change = function () {
+  exports.size = function (list) {
+    return "size " + list.length;
+  };
+  exports.version = "two";
+  exports.names = { 0: "a", length: 1, join: function () { return "own join"; } };
+  exports.extra = function () {
+    return "extra";
+  };
+  delete exports.gone;
+};
+exports.changeBack = function () {
+  exports.size = function (list) {
+    return list.length;
+  };
+  exports.version = 3;
+  exports.names = ["c"];
+};
+//// exports-added-and-replaced-after-the-first-require/main.js
+var attempt = require("./show").attempt;
+var user = require("./user");
+var lib = require("./lib");
+
+////= console-log
+
+function all(when) {
+  Object.keys(user).forEach(function (name) {
+    attempt(when + " " + name, function () {
+      return user[name]([1, 2, 3]);
+    });
+  });
+}
+
+all("at first");
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += user.throughTheObject([i]) + user.throughTheCopy([i]) + user.nextVersion() + user.count() + user.joined().length;
+console.log("sum", sum);
+lib.change();
+all("changed");
+lib.changeBack();
+all("changed back");
+for (var round = 0; round < 6; round++) {
+  if (round % 2) lib.change();
+  else lib.changeBack();
+  attempt("round " + round, function () {
+    return [user.throughTheObject([1]), user.nextVersion(), user.joined(), user.count()];
+  });
+}
+//// exports-added-and-replaced-after-the-first-require/show.js
+////= show-3
+
+module.exports = { show: show, attempt: attempt };
+//// exports-added-and-replaced-after-the-first-require/user.js
+var lib = require("./lib");
+var size = lib.size;
+var version = lib.version;
+
+exports.throughTheObject = function (list) {
+  return lib.size(list) + 1;
+};
+exports.throughTheCopy = function (list) {
+  return size(list) + 1;
+};
+exports.nextVersion = function () {
+  return lib.version + 1;
+};
+exports.nextCopiedVersion = function () {
+  return version + 1;
+};
+exports.joined = function () {
+  return lib.names.join("+");
+};
+exports.count = function () {
+  return lib.names.length;
+};
+exports.extra = function () {
+  return lib.extra();
+};
+exports.gone = function () {
+  return ["gone" in lib, lib.gone, Object.keys(lib).join()];
+};
+//// fields-get-other-kinds-through-stores-that-name-no-field/main.js
+var model = require("./model");
+var patch = require("./patch");
+var patches = require("./patches.json");
+var show = require("./show").show;
+
+////= console-log
+
+var methods = ["bump", "double", "title", "keep", "span"];
+var sum = 0;
+for (var i = 0; i < 2000; i++) {
+  for (var kind in model) {
+    var honest = model[kind]();
+    sum += honest.bump() + honest.double() + honest.title() + honest.keep(i) + honest.span();
+  }
+}
+console.log("sum", sum);
+
+Object.keys(model).forEach(function (kind) {
+  Object.keys(patch.ways).forEach(function (way) {
+    Object.keys(patches).forEach(function (name) {
+      var answers = methods.map(function (method) {
+        var object = model[kind]();
+        patch.ways[way](object, JSON.parse(JSON.stringify(patches[name])));
+        try {
+          return show(object[method](1));
+        } catch (error) {
+          return error.constructor.name;
+        }
+      });
+      console.log(kind + " " + way + " " + name + ":", answers.join(" "));
+    });
+  });
+});
+//// fields-get-other-kinds-through-stores-that-name-no-field/model.js
+function Counter() {
+  this.count = 0;
+  this.label = "";
+  this.items = [];
+  this.limits = { low: 0, high: 10 };
+}
+Counter.prototype.bump = function () {
+  this.count++;
+  return this.count;
+};
+Counter.prototype.double = function () {
+  return this.count * 2;
+};
+Counter.prototype.title = function () {
+  return this.label.length;
+};
+Counter.prototype.keep = function (item) {
+  return this.items.push(item);
+};
+Counter.prototype.span = function () {
+  return this.limits.high - this.limits.low;
+};
+
+class Modern {
+  count = 0;
+  label = "";
+  items = [];
+  limits = { low: 0, high: 10 };
+  bump() {
+    this.count++;
+    return this.count;
+  }
+  double() {
+    return this.count * 2;
+  }
+  title() {
+    return this.label.length;
+  }
+  keep(item) {
+    return this.items.push(item);
+  }
+  span() {
+    return this.limits.high - this.limits.low;
+  }
+}
+
+function literal() {
+  return {
+    count: 0,
+    label: "",
+    items: [],
+    limits: { low: 0, high: 10 },
+    bump: Counter.prototype.bump,
+    double: Counter.prototype.double,
+    title: Counter.prototype.title,
+    keep: Counter.prototype.keep,
+    span: Counter.prototype.span,
+  };
+}
+
+module.exports = {
+  Counter: function () { return new Counter(); },
+  Modern: function () { return new Modern(); },
+  literal: literal,
+};
+//// fields-get-other-kinds-through-stores-that-name-no-field/package.json
+////= lines	"name"	"patched"	"version"	"1.0.0"
+//// fields-get-other-kinds-through-stores-that-name-no-field/patch.js
+exports.ways = {
+  computedKeys: function (target, source) {
+    for (var key in source) target[key] = source[key];
+  },
+  assign: function (target, source) {
+    Object.assign(target, source);
+  },
+  reflect: function (target, source) {
+    Object.keys(source).forEach(function (key) {
+      Reflect.set(target, key, source[key]);
+    });
+  },
+  define: function (target, source) {
+    Object.keys(source).forEach(function (key) {
+      Object.defineProperty(target, key, { value: source[key], writable: true, enumerable: true, configurable: true });
+    });
+  },
+  defineAll: function (target, source) {
+    Object.defineProperties(target, Object.getOwnPropertyDescriptors(source));
+  },
+  evaluatedText: function (target, source) {
+    Object.keys(source).forEach(function (key) {
+      eval("target." + key + " = source." + key);
+    });
+  },
+  functionOfText: function (target, source) {
+    Object.keys(source).forEach(function (key) {
+      new Function("target", "value", "target." + key + " = value")(target, source[key]);
+    });
+  },
+  entries: function (target, source) {
+    for (var [key, value] of Object.entries(source)) target[key] = value;
+  },
+  proxy: function (target, source) {
+    var proxy = new Proxy(target, {});
+    for (var key in source) proxy[key] = source[key];
+  },
+};
+//// fields-get-other-kinds-through-stores-that-name-no-field/patches.json
+{
+  "nothing": {},
+  "texts": {
+    "count": "5",
+    "label": "five"
+  },
+  "fraction": {
+    "count": 0.5
+  },
+  "large": {
+    "count": 2147483647
+  },
+  "none": {
+    "count": null,
+    "label": null,
+    "items": null
+  },
+  "numberForText": {
+    "label": 5
+  },
+  "listForText": {
+    "label": [
+      1,
+      2,
+      3
+    ]
+  },
+  "textForList": {
+    "items": "abc"
+  },
+  "objectForList": {
+    "items": {
+      "length": 2
+    }
+  },
+  "textLimits": {
+    "limits": {
+      "low": "1",
+      "high": "10"
+    }
+  },
+  "fewerLimits": {
+    "limits": {
+      "high": 10
+    }
+  },
+  "otherOrder": {
+    "limits": {
+      "high": 10,
+      "low": 1
+    }
+  }
+}
+//// fields-get-other-kinds-through-stores-that-name-no-field/show.js
+////= show-3
+
+module.exports = { show: show, attempt: attempt };
+//// files-a-transpiler-wrote-load-each-other-through-interop-helpers/lib/helpers.js
+"use strict";
+
+exports.interopRequireDefault = function (obj) {
+  return obj && obj.__esModule ? obj : { default: obj };
+};
+exports.interopRequireWildcard = function (obj) {
+  if (obj && obj.__esModule) return obj;
+  var copy = {};
+  if (obj != null) {
+    for (var key in obj) {
+      if (Object.prototype.hasOwnProperty.call(obj, key)) copy[key] = obj[key];
+    }
+  }
+  copy.default = obj;
+  return copy;
+};
+//// files-a-transpiler-wrote-load-each-other-through-interop-helpers/lib/marked-with-a-false-flag.js
+exports.__esModule = false;
+exports.default = function (x, y) {
+  return { x: x, y: y, sum: function () { return "false flag"; } };
+};
+exports.origin = function () {
+  return { sum: function () { return "false flag origin"; } };
+};
+//// files-a-transpiler-wrote-load-each-other-through-interop-helpers/lib/marked-without-a-default.js
+"use strict";
+
+exports.__esModule = true;
+exports.origin = function () {
+  return { x: "0", y: "0", sum: function () { return this.x + this.y; } };
+};
+//// files-a-transpiler-wrote-load-each-other-through-interop-helpers/lib/plain.js
+module.exports = function Point(x, y) {
+  return { x: x, y: y, sum: function () { return "plain " + (x + y); } };
+};
+module.exports.origin = function () {
+  return module.exports(0, 0);
+};
+//// files-a-transpiler-wrote-load-each-other-through-interop-helpers/lib/point.js
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.default = void 0;
+exports.origin = origin;
+////= Point
+exports.default = Point;
+function origin() {
+  return new Point(0, 0);
+}
+//// files-a-transpiler-wrote-load-each-other-through-interop-helpers/main.js
+"use strict";
+
+var helpers = require("./lib/helpers");
+var attempt = require("./show").attempt;
+
+////= console-log
+
+function made(module) {
+  return new module.default(1, 2).sum();
+}
+function calledWithoutNew(module) {
+  return (0, module.default)(1, 2);
+}
+function origin(module) {
+  return module.origin().sum();
+}
+function keys(module) {
+  return Object.keys(module).join();
+}
+
+var point = helpers.interopRequireDefault(require("./lib/point"));
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += made(point) + origin(helpers.interopRequireWildcard(require("./lib/point")));
+console.log("sum", sum);
+
+["point", "plain", "marked-without-a-default", "marked-with-a-false-flag"].forEach(function (name) {
+  var loaded = require("./lib/" + name);
+  [["default", helpers.interopRequireDefault(loaded)], ["wildcard", helpers.interopRequireWildcard(loaded)], ["bare", loaded]].forEach(function (pair) {
+    attempt(name + " " + pair[0] + " made", function () { return made(pair[1]); });
+    attempt(name + " " + pair[0] + " called without new", function () { return calledWithoutNew(pair[1]); });
+    attempt(name + " " + pair[0] + " origin", function () { return origin(pair[1]); });
+    attempt(name + " " + pair[0] + " keys", function () { return keys(pair[1]); });
+  });
+});
+//// files-a-transpiler-wrote-load-each-other-through-interop-helpers/package.json
+////= lines-5	"transpiled"	"version"	"2.0.0"	"main"	"main.js"
+//// files-a-transpiler-wrote-load-each-other-through-interop-helpers/show.js
+////= show-3
+
+module.exports = { show: show, attempt: attempt };
+//// files-compiled-to-es5-and-helpers-that-only-look-like-the-compilers-helpers/honest/animals.js
+"use strict";
+////= extends
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Dog = exports.Animal = void 0;
+////= Animal
+exports.Animal = Animal;
+////= Dog
+exports.Dog = Dog;
+//// files-compiled-to-es5-and-helpers-that-only-look-like-the-compilers-helpers/honest/index.js
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.taken = "defined before the star";
+__exportStar(require("./animals"), exports);
+__exportStar(require("./odd-exports"), exports);
+//// files-compiled-to-es5-and-helpers-that-only-look-like-the-compilers-helpers/honest/odd-exports.js
+var reads = 0;
+exports.taken = "must not replace what is there";
+exports.default = "a default is not passed on";
+exports.changing = 1;
+exports.change = function () {
+  exports.changing = "changed";
+};
+////= Object-defineProperty
+Object.defineProperty(exports, "hidden", { value: "not enumerable", enumerable: false });
+Object.defineProperty(exports, "fixed", { value: "fixed", enumerable: true, writable: false, configurable: false });
+//// files-compiled-to-es5-and-helpers-that-only-look-like-the-compilers-helpers/honest/tools.js
+"use strict";
+////= assign
+var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
+    if (pack || arguments.length === 2) for (var i = 0, l = from.length, ar; i < l; i++) {
+        if (ar || !(i in from)) {
+            if (!ar) ar = Array.prototype.slice.call(from, 0, i);
+            ar[i] = from[i];
+        }
+    }
+    return to.concat(ar || Array.prototype.slice.call(from));
+};
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.merged = function () {
+    var parts = [];
+    for (var _i = 0; _i < arguments.length; _i++) {
+        parts[_i] = arguments[_i];
+    }
+    return __assign.apply(void 0, __spreadArray([{}], parts, false));
+};
+exports.withDefaults = function (options) {
+    return __assign(__assign({}, { width: 1, height: 1 }), options);
+};
+exports.joined = function (first, second) {
+    return __spreadArray(__spreadArray([], first, true), second, true);
+};
+exports.joinedWithoutPacking = function (first, second) {
+    return __spreadArray(__spreadArray([], first, false), second, false);
+};
+exports.defaultOf = function (loaded) {
+    return __importDefault(loaded).default;
+};
+//// files-compiled-to-es5-and-helpers-that-only-look-like-the-compilers-helpers/lookalikes/animals.js
+var log = [];
+var __extends = function (d, b) {
+    log.push("extends " + d.name + " " + (b && b.name));
+    d.prototype.speak = function () {
+        return "a look-alike linked nothing";
+    };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Dog = exports.Animal = void 0;
+////= Animal
+exports.Animal = Animal;
+////= Dog
+exports.Dog = Dog;
+exports.log = log;
+//// files-compiled-to-es5-and-helpers-that-only-look-like-the-compilers-helpers/lookalikes/replaced-later.js
+////= assign
+
+exports.withDefaults = function (options) {
+    return __assign(__assign({}, { width: 1 }), options);
+};
+exports.replace = function () {
+    __assign = function () {
+        return "replaced later";
+    };
+};
+//// files-compiled-to-es5-and-helpers-that-only-look-like-the-compilers-helpers/lookalikes/taken-from-this.js
+exports.__extends = function (d, b) {
+    d.prototype = { speak: function () { return "the helper came from this"; } };
+};
+exports.__assign = function () {
+    return "the helper came from this";
+};
+////= extends
+////= assign
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Dog = exports.Animal = void 0;
+////= Animal
+exports.Animal = Animal;
+////= Dog
+exports.Dog = Dog;
+exports.withDefaults = function (options) {
+    return __assign(__assign({}, { width: 1 }), options);
+};
+//// files-compiled-to-es5-and-helpers-that-only-look-like-the-compilers-helpers/lookalikes/tools.js
+var __assign = function (target) {
+    for (var i = arguments.length - 1; i >= 1; i--) for (var key in arguments[i]) target[key] = arguments[i][key];
+    return target;
+};
+var __spreadArray = function (to, from) {
+    return from.concat(to);
+};
+var __importDefault = function (mod) {
+    return { default: "always this" };
+};
+exports.withDefaults = function (options) {
+    return __assign(__assign({}, { width: 1, height: 1 }), options);
+};
+exports.lastWins = function () {
+    return __assign({}, { a: "first" }, { a: "second" });
+};
+exports.joined = function (first, second) {
+    return __spreadArray(__spreadArray([], first, true), second, true);
+};
+exports.defaultOf = function (loaded) {
+    return __importDefault(loaded).default;
+};
+//// files-compiled-to-es5-and-helpers-that-only-look-like-the-compilers-helpers/main.js
+var attempt = require("./show").attempt;
+var honest = require("./honest");
+var tools = require("./honest/tools");
+
+////= console-log
+
+function speak(animals) {
+  var dog = new animals.Dog("Rex");
+  return [dog.speak(), dog instanceof animals.Animal, dog.legs, Object.getPrototypeOf(animals.Dog) === animals.Animal, typeof animals.Dog.count === "function" ? animals.Dog.count() : "no count", dog.constructor === animals.Dog];
+}
+var length = 0;
+for (var i = 0; i < 2000; i++) length += speak(honest)[0].length + tools.withDefaults({ width: i }).width + tools.joined([i], [1]).length + tools.merged({ a: 1 }, { b: 2 }).a;
+console.log("length", length);
+
+attempt("honest", function () { return speak(honest); });
+attempt("a look-alike of __extends", function () { return speak(require("./lookalikes/animals")); });
+attempt("what it logged", function () { return require("./lookalikes/animals").log; });
+attempt("helpers taken from this", function () { return speak(require("./lookalikes/taken-from-this")); });
+attempt("__assign taken from this", function () { return require("./lookalikes/taken-from-this").withDefaults({ width: 2 }); });
+
+attempt("keys behind the star", function () { return Object.keys(honest).join(); });
+attempt("what was taken stays", function () { return honest.taken; });
+attempt("no default", function () { return ["default" in honest, "hidden" in honest]; });
+attempt("a getter runs each time", function () { return [honest.counted, honest.counted]; });
+attempt("a member that changes", function () { var before = honest.changing; honest.change(); return [before, honest.changing]; });
+attempt("a fixed member", function () { return Object.getOwnPropertyDescriptor(honest, "fixed"); });
+attempt("a store through the star", function () { "use strict"; honest.changing = 1; return honest.changing; });
+
+var operands = { nothing: undefined, none: null, text: "ab", number: 5, list: [1, 2], getter: { get width() { return "from a getter"; } }, inherited: Object.create({ width: "inherited" }), symbolKey: { [Symbol.iterator]: 1, width: 3 } };
+Object.keys(operands).forEach(function (name) {
+  attempt("honest withDefaults(" + name + ")", function () { return tools.withDefaults(operands[name]); });
+  attempt("look-alike withDefaults(" + name + ")", function () { return require("./lookalikes/tools").withDefaults(operands[name]); });
+});
+var lists = { list: [1, 2], holes: [1, , 3], like: { 0: "a", 1: "b", length: 2 }, text: "ab", set: new Set([1]), operands: (function () { return arguments; })(1, 2), none: null, heir: Object.create([1, 2]) };
+Object.keys(lists).forEach(function (name) {
+  attempt("honest joined(" + name + ")", function () { return tools.joined(lists[name], [9]); });
+  attempt("honest joinedWithoutPacking(" + name + ")", function () { return tools.joinedWithoutPacking(lists[name], [9]); });
+});
+attempt("look-alike joined", function () { return require("./lookalikes/tools").joined([1], [2]); });
+attempt("look-alike lastWins", function () { return require("./lookalikes/tools").lastWins(); });
+attempt("honest defaultOf", function () { return [tools.defaultOf({ __esModule: true, default: "marked" }), tools.defaultOf("unmarked"), tools.defaultOf(null), tools.defaultOf({ __esModule: 0, default: 1 })]; });
+attempt("look-alike defaultOf", function () { return require("./lookalikes/tools").defaultOf({ __esModule: true, default: "marked" }); });
+var later = require("./lookalikes/replaced-later");
+attempt("before it is replaced", function () { return later.withDefaults({ width: 2 }); });
+later.replace();
+attempt("after it was replaced", function () { return later.withDefaults({ width: 2 }); });
+//// files-compiled-to-es5-and-helpers-that-only-look-like-the-compilers-helpers/package.json
+////= lines-5	"compiled-to-es5"	"version"	"1.0.0"	"main"	"main.js"
+//// files-compiled-to-es5-and-helpers-that-only-look-like-the-compilers-helpers/show.js
+////= show-3
+
+module.exports = { show: show, attempt: attempt };
+//// first-values-of-fields-and-variables-suggest-kinds-that-later-stores-ignore/main.js
+var meddler = require("./meddler");
+var model = require("./model");
+var attempt = require("./show").attempt;
+
+////= console-log
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) {
+  var counter = new model.Counter();
+  var modern = new model.Modern();
+  sum += counter.bump() + counter.add(2) + counter.title().length + counter.keep(i) + counter.held() + counter.state().length + counter.span() + counter.ownerName().length;
+  sum += modern.bump() + modern.add(2) + modern.title().length + modern.keep(i) + modern.held() + model.record(1, "n")[0];
+}
+console.log("sum", sum, model.Modern.made);
+
+var methods = { Counter: ["bump", "add", "title", "keep", "held", "state", "span", "ownerName"], Modern: ["bump", "add", "title", "keep", "held"] };
+Object.keys(methods).forEach(function (kind) {
+  Object.keys(meddler.changes).forEach(function (change) {
+    var answers = methods[kind].map(function (method) {
+      var object = new model[kind]();
+      meddler.changes[change](object);
+      try {
+        return method + " " + require("./show").show(object[method](2));
+      } catch (error) {
+        return method + " threw " + error.constructor.name;
+      }
+    });
+    console.log(kind + " after " + change + ":", answers.join("; "));
+  });
+});
+model.overwrite("0", { length: 0, push: function () { return "own push"; } }, 5);
+attempt("variables of the module after stores of other kinds", function () { return model.record(1, "name"); });
+model.overwrite(1n, "abc", null);
+attempt("a bigint, a text and null", function () { return model.record(1, "name"); });
+model.overwrite(0, [], "");
+attempt("honest again", function () { return model.record(1, "name"); });
+model.Modern.made = "many";
+attempt("a static field after a text was stored", function () { new model.Modern(); return model.Modern.made; });
+//// first-values-of-fields-and-variables-suggest-kinds-that-later-stores-ignore/meddler.js
+exports.changes = {
+  nothing: function () {},
+  textCount: function (object) { object.count = "5"; },
+  fractionCount: function (object) { object.count = 0.5; },
+  largeCount: function (object) { object.count = 2147483647; },
+  bigCount: function (object) { object.count = 5n; },
+  objectCount: function (object) { object.count = { valueOf: function () { return 7; } }; },
+  missingCount: function (object) { delete object.count; },
+  getterCount: function (object) { Object.defineProperty(object, "count", { get: function () { return 3; }, set: function () {}, configurable: true }); },
+  numberLabel: function (object) { object.label = 5; },
+  listLabel: function (object) { object.label = ["a", "b"]; },
+  nullLabel: function (object) { object.label = null; },
+  textItems: function (object) { object.items = "abc"; },
+  likeItems: function (object) { object.items = { length: 2, push: function () { return "own push"; } }; },
+  setItems: function (object) { object.items = new Set([1]); },
+  frozenItems: function (object) { Object.freeze(object.items); },
+  textFlag: function (object) { object.isOpen = "false"; },
+  zeroFlag: function (object) { object.isOpen = 0; },
+  objectFlag: function (object) { object.isOpen = new Boolean(false); },
+  textLimits: function (object) { if (object.limits) object.limits.high = "10", object.limits.low = "1"; },
+  noLimits: function (object) { object.limits = undefined; },
+  undefinedOwner: function (object) { object.owner = undefined; },
+  textOwner: function (object) { object.owner = "a text"; },
+  realOwner: function (object) { object.owner = { name: "somebody" }; },
+};
+//// first-values-of-fields-and-variables-suggest-kinds-that-later-stores-ignore/model.js
+function Counter() {
+  this.count = 0;
+  this.label = "";
+  this.items = [];
+  this.isOpen = false;
+  this.owner = null;
+  this.limits = { low: 0, high: 10 };
+}
+Counter.prototype.bump = function () {
+  this.count++;
+  return this.count;
+};
+Counter.prototype.add = function (by) {
+  this.count += by;
+  return this.count;
+};
+Counter.prototype.title = function () {
+  return this.label.toUpperCase() + this.label.length;
+};
+Counter.prototype.keep = function (item) {
+  return this.items.push(item);
+};
+Counter.prototype.held = function () {
+  return this.items.length;
+};
+Counter.prototype.state = function () {
+  return this.isOpen ? "open" : "closed";
+};
+Counter.prototype.span = function () {
+  return this.limits.high - this.limits.low;
+};
+Counter.prototype.ownerName = function () {
+  return this.owner === null ? "nobody" : this.owner.name;
+};
+
+class Modern {
+  count = 0;
+  label = "";
+  items = [];
+  static made = 0;
+  constructor() {
+    Modern.made++;
+  }
+  bump() {
+    this.count++;
+    return this.count;
+  }
+  add(by) {
+    this.count += by;
+    return this.count;
+  }
+  title() {
+    return this.label.toUpperCase() + this.label.length;
+  }
+  keep(item) {
+    return this.items.push(item);
+  }
+  held() {
+    return this.items.length;
+  }
+}
+
+var total = 0;
+var names = [];
+var last = "";
+exports.record = function (value, name) {
+  total += value;
+  names.push(name);
+  last = name;
+  return [total, names.length, last.length];
+};
+exports.overwrite = function (newTotal, newNames, newLast) {
+  total = newTotal;
+  names = newNames;
+  last = newLast;
+};
+exports.Counter = Counter;
+exports.Modern = Modern;
+//// first-values-of-fields-and-variables-suggest-kinds-that-later-stores-ignore/show.js
+////= show-3
+
+module.exports = { show: show, attempt: attempt };
+//// five-honest-modules-and-one-liar-call-the-same-functions/callers/center.js
+import { area, perimeter, scaled, widest } from "../measure.js";
+
+////= lines-7	center	5	6
+//// five-honest-modules-and-one-liar-call-the-same-functions/callers/east.js
+import { area, perimeter, scaled, widest } from "../measure.js";
+
+////= lines-7	east	3	4
+//// five-honest-modules-and-one-liar-call-the-same-functions/callers/liar.js
+import * as measure from "../measure.js";
+import { area, perimeter, scaled, widest } from "../measure.js";
+
+export const log = [];
+const boxes = {
+  texts: () => ({ width: "3", height: "4" }),
+  otherOrder: () => ({ height: 4, width: 3 }),
+  extraMembers: () => ({ depth: 1, width: 3, name: "box", height: 4 }),
+  getters: () => ({
+    get width() {
+      log.push("width");
+      return 3;
+    },
+    get height() {
+      log.push("height");
+      return 4;
+    },
+  }),
+  changingGetter: () => {
+    let reads = 0;
+    return {
+      get width() {
+        return ++reads;
+      },
+      height: 4,
+    };
+  },
+  inherited: () => Object.create({ width: 3, height: 4 }),
+  proxy: () =>
+    new Proxy(
+      {},
+      {
+        get(target, key) {
+          log.push("get " + String(key));
+          return key === "width" ? 3 : 4;
+        },
+      },
+    ),
+  missingHeight: () => ({ width: 3 }),
+  big: () => ({ width: 3n, height: 4n }),
+  mixedBig: () => ({ width: 3n, height: 4 }),
+  objects: () => ({ width: { valueOf: () => (log.push("valueOf width"), 3) }, height: { valueOf: () => (log.push("valueOf height"), 4) } }),
+  list: () => [3, 4],
+  text: () => "box",
+  nothing: () => null,
+  aFunction: () => Object.assign(function box() {}, { width: 3, height: 4 }),
+};
+
+export function seen(name) {
+  const box = boxes[name]();
+  return [area(box), perimeter(box), scaled(box, 2), widest([box, { width: 2, height: 2 }]) === box];
+}
+export function halfSeen(name) {
+  const box = boxes[name]();
+  return [area.call(null, box), perimeter.apply(null, [box]), scaled.bind(null, box)(2), [[box, { width: 2, height: 2 }]].map(widest)[0] === box];
+}
+export function unseen(name) {
+  const box = boxes[name]();
+  const call = new Function("measure", "name", "operands", "return measure[name](...operands)");
+  return [call(measure, "area", [box]), call(measure, "perimeter", [box]), call(measure, "scaled", [box, 2]), call(measure, "widest", [[box, { width: 2, height: 2 }]]) === box];
+}
+export const names = Object.keys(boxes);
+//// five-honest-modules-and-one-liar-call-the-same-functions/callers/north.js
+import { area, perimeter, scaled, widest } from "../measure.js";
+
+////= lines-7	north	1	2
+//// five-honest-modules-and-one-liar-call-the-same-functions/callers/south.js
+import { area, perimeter, scaled, widest } from "../measure.js";
+
+////= lines-7	south	2	3
+//// five-honest-modules-and-one-liar-call-the-same-functions/callers/west.js
+import { area, perimeter, scaled, widest } from "../measure.js";
+
+////= lines-7	west	4	5
+//// five-honest-modules-and-one-liar-call-the-same-functions/main.js
+import { center } from "./callers/center.js";
+import { east } from "./callers/east.js";
+import { halfSeen, log, names, seen, unseen } from "./callers/liar.js";
+import { north } from "./callers/north.js";
+import { south } from "./callers/south.js";
+import { west } from "./callers/west.js";
+import { attempt, show } from "./show.js";
+
+////= console-log
+
+const honest = () => [north(), south(), east(), west(), center()];
+attempt("the liar goes first", () => seen("texts"));
+attempt("honest", honest);
+for (let i = 0; i < 2000; i++) honest();
+for (const [way, call] of Object.entries({ seen, halfSeen, unseen })) {
+  for (const name of names) {
+    log.length = 0;
+    attempt(way + " " + name, () => call(name));
+    if (log.length) console.log(way + " " + name + " ran", log.join(", "));
+  }
+}
+attempt("honest again", honest);
+//// five-honest-modules-and-one-liar-call-the-same-functions/measure.js
+export function area(box) {
+  return box.width * box.height;
+}
+export function perimeter(box) {
+  return 2 * (box.width + box.height);
+}
+export function scaled(box, by) {
+  return { width: box.width * by, height: box.height * by };
+}
+export function widest(boxes) {
+  let best = boxes[0];
+  for (let i = 1; i < boxes.length; i++) {
+    if (boxes[i].width > best.width) best = boxes[i];
+  }
+  return best;
+}
+//// five-honest-modules-and-one-liar-call-the-same-functions/package.json
+////= lines	"name"	"measures"	"type"	"module"
+//// five-honest-modules-and-one-liar-call-the-same-functions/show.js
+////= show-4
+//// functions-that-nothing-calls-by-name/library.js
+////= lines-2	byAComputedName	"byAComputedName ran"
+////= lines-2	byEvaluatedText	"byEvaluatedText ran"
+////= lines-2	byAFunctionMadeOfText	"byAFunctionMadeOfText ran"
+////= lines-2	throughTheGlobalObject	"throughTheGlobalObject ran"
+////= lines-2	byATimer	"byATimer ran"
+////= lines-2	byATick	"byATick ran"
+////= lines-2	byAMicrotask	"byAMicrotask ran"
+////= lines-2	byAReaction	"byAReaction ran"
+////= lines-2	byMap	"byMap ran"
+////= lines-2	byReplace	"byReplace ran"
+////= lines-2	asAGetter	"asAGetter ran"
+////= lines-2	asASetter	"asASetter ran"
+////= lines-2	asValueOf	"asValueOf ran"
+////= lines-2	asToString	"asToString ran"
+////= lines-2	asToPrimitive	"asToPrimitive ran"
+////= lines-2	asToJSON	"asToJSON ran"
+////= lines-2	asATrap	"asATrap ran"
+////= lines-2	asAReviver	"asAReviver ran"
+////= lines-2	asAListener	"asAListener ran"
+////= lines-2	asATag	"asATag ran"
+////= lines-2	asADefault	"asADefault ran"
+////= lines-2	byCall	"byCall ran"
+////= lines-2	byApply	"byApply ran"
+////= lines-2	byBind	"byBind ran"
+////= lines-2	byReflectApply	"byReflectApply ran"
+////= lines-2	byCallOfCall	"byCallOfCall ran"
+////= lines-2	atExit	"atExit ran"
+export function asAnIterator() {
+  return ["asAnIterator ran"][Symbol.iterator]();
+}
+export function asThen(resolve) {
+  resolve("asThen ran");
+}
+////= lines-2	asHasInstance	true
+export function bySort() {
+  ran.push("bySort ran");
+  return 0;
+}
+export function asAConstructor() {
+  this.said = "asAConstructor ran";
+}
+export function byReflectConstruct() {
+  this.said = "byReflectConstruct ran";
+}
+export const ran = [];
+//// functions-that-nothing-calls-by-name/main.js
+import { EventEmitter } from "node:events";
+import * as library from "./library.js";
+import App from "./methods.cjs";
+import { attempt, show } from "./show.js";
+
+////= console-log
+
+const decoded = text => Buffer.from(text, "hex").toString();
+attempt("by a computed name", () => library[decoded("627941436f6d70757465644e616d65")]());
+attempt("by evaluated text", () => eval("library.byEvaluatedText()"));
+attempt("by a function made of text", () => new Function("library", "return library.byAFunctionMadeOfText()")(library));
+globalThis.hookOfTheProgram = library.throughTheGlobalObject;
+attempt("through the global object", () => globalThis[decoded("686f6f6b4f6654686550726f6772616d")]());
+delete globalThis.hookOfTheProgram;
+attempt("by map", () => [0].map(library.byMap));
+attempt("by sort", () => ([2, 1].sort(library.bySort), library.ran.splice(0, 1)));
+attempt("by replace", () => "x".replace("x", library.byReplace));
+attempt("as a getter", () => Object.defineProperty({}, "read", { get: library.asAGetter })[decoded("72656164")]);
+attempt("as a setter", () => {
+  const seen = [];
+  const holder = Object.defineProperty({}, "stored", { set: value => seen.push(library.asASetter(value)) });
+  holder.stored = 1;
+  return seen;
+});
+attempt("as valueOf", () => ({ valueOf: library.asValueOf }) + "");
+attempt("as toString", () => `${{ toString: library.asToString }}`);
+attempt("as Symbol.toPrimitive", () => ({ [Symbol.toPrimitive]: library.asToPrimitive }) + "");
+attempt("as toJSON", () => JSON.stringify({ toJSON: library.asToJSON }));
+attempt("as an iterator", () => [...{ [Symbol.iterator]: library.asAnIterator }]);
+attempt("as Symbol.hasInstance", () => 1 instanceof { [Symbol.hasInstance]: library.asHasInstance });
+attempt("as a trap", () => new Proxy({}, { get: library.asATrap }).anything);
+attempt("as a reviver", () => JSON.parse("1", library.asAReviver));
+attempt("as a listener", () => {
+  const seen = [];
+  const emitter = new EventEmitter();
+  emitter.on("event", () => seen.push(library.asAListener()));
+  emitter.emit("event");
+  return seen;
+});
+attempt("as a tag", () => library.asATag``);
+attempt("as a default", () => ((value = library.asADefault()) => value)());
+attempt("by call", () => library.byCall.call(null));
+attempt("by apply", () => library.byApply.apply(null, []));
+attempt("by bind", () => library.byBind.bind(null)());
+attempt("by Reflect.apply", () => Reflect.apply(library.byReflectApply, null, []));
+attempt("by call of call", () => Function.prototype.call.call(library.byCallOfCall, null));
+attempt("as a constructor", () => new library[decoded("617341436f6e7374727563746f72")]().said);
+attempt("by Reflect.construct", () => Reflect.construct(library.byReflectConstruct, []).said);
+
+const app = new App();
+attempt("methods stored under computed names", () => app.get("/a").post("/b").remove("/c").describe());
+attempt("more of them", () => [app.count(), app.first]);
+
+console.log("as then", show(await { then: library.asThen }));
+console.log("by a reaction", show(await Promise.resolve().then(library.byAReaction)));
+console.log("by a timer", show(await new Promise(resolve => setTimeout(() => resolve(library.byATimer()), 0))));
+console.log("by a tick", show(await new Promise(resolve => process.nextTick(() => resolve(library.byATick())))));
+console.log("by a microtask", show(await new Promise(resolve => queueMicrotask(() => resolve(library.byAMicrotask())))));
+process.on("exit", () => console.log("at exit", show(library.atExit())));
+//// functions-that-nothing-calls-by-name/methods.cjs
+function App() {
+  this.routes = [];
+}
+["get", "post", "remove"].forEach(function (verb) {
+  App.prototype[verb] = function (path) {
+    this.routes.push(verb + " " + path);
+    return this;
+  };
+});
+var extras = { describe: function () { return this.routes.join(", "); }, count: function () { return this.routes.length; } };
+for (var name in extras) App.prototype[name] = extras[name];
+Object.defineProperty(App.prototype, "first", { get: function () { return this.routes[0]; } });
+module.exports = App;
+//// functions-that-nothing-calls-by-name/package.json
+////= lines	"name"	"unseen-callers"	"type"	"module"
+//// functions-that-nothing-calls-by-name/show.js
+////= show-4
+//// getters-on-an-exports-object-run-each-time/lazy.js
+var reads = [];
+exports.reads = reads;
+var turn = 0;
+Object.defineProperty(exports, "list", {
+  enumerable: true,
+  get: function () {
+    reads.push("list");
+    turn++;
+    return turn % 3 === 0 ? "a text" : turn % 3 === 1 ? [turn] : { length: "long" };
+  },
+});
+Object.defineProperty(exports, "once", {
+  enumerable: true,
+  configurable: true,
+  get: function () {
+    reads.push("once");
+    Object.defineProperty(exports, "once", { value: [1, 2, 3], enumerable: true });
+    return "the first answer";
+  },
+});
+Object.defineProperty(exports, "helper", {
+  enumerable: false,
+  get: function () {
+    reads.push("helper");
+    return function () {
+      return this === exports;
+    };
+  },
+});
+Object.defineProperty(exports, "fixed", { value: 1, writable: false, enumerable: true });
+Object.defineProperty(exports, "throwing", {
+  enumerable: true,
+  get: function () {
+    reads.push("throwing");
+    throw new RangeError("not ready");
+  },
+});
+//// getters-on-an-exports-object-run-each-time/main.js
+var lazy = require("./lazy");
+var attempt = require("./show").attempt;
+
+////= console-log
+
+function size() {
+  return lazy.list.length;
+}
+function sizeOfOnce() {
+  return lazy.once.length;
+}
+function helped() {
+  return lazy.helper();
+}
+function storedOverFixed() {
+  lazy.fixed = 2;
+  return lazy.fixed;
+}
+function storedOverGetter() {
+  lazy.list = "stored";
+  return typeof lazy.list;
+}
+for (var round = 0; round < 6; round++) attempt("size, round " + round, size);
+for (round = 0; round < 3; round++) attempt("size of once, round " + round, sizeOfOnce);
+attempt("helper", helped);
+attempt("store over a fixed member", storedOverFixed);
+attempt("store over a getter", storedOverGetter);
+attempt("a getter that throws", function () { return lazy.throwing; });
+attempt("keys", function () { return Object.keys(lazy).join(); });
+attempt("unpacked", function () {
+  var { list, once, fixed } = lazy;
+  return [list, once, fixed];
+});
+console.log("reads", lazy.reads.join(", "));
+//// getters-on-an-exports-object-run-each-time/show.js
+////= show-3
+
+module.exports = { show: show, attempt: attempt };
+//// impostors-pass-through-files-that-only-export-again/barrel.js
+export * from "./parts/lists.js";
+export * from "./parts/texts.js";
+export * as lists from "./parts/lists.js";
+export * as texts from "./parts/texts.js";
+export { make as makeList } from "./parts/lists.js";
+export { make as makeText } from "./parts/texts.js";
+export { value as current, change } from "./parts/changing.js";
+export { default as old } from "./parts/old.cjs";
+//// impostors-pass-through-files-that-only-export-again/main.js
+import * as barrel from "./barrel.js";
+import { change, current, lists, makeList, makeList2, makeText, old, texts } from "./outer-barrel.js";
+import { attempt } from "./show.js";
+
+////= console-log
+
+const size = value => value.length;
+const doubled = value => value.map(item => item * 2);
+const last = value => value[value.length - 1];
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += size(makeList()) + doubled(makeList())[0] + last(makeList()) + size(current);
+console.log("sum", sum);
+attempt("keys of the barrel", () => Object.keys(barrel).join());
+attempt("a name that two files export", () => [barrel.make, barrel.name, "make" in barrel]);
+const makers = { makeList, makeText, makeList2, "lists.make": lists.make, "texts.make": texts.make, "old.make": old.make };
+for (const name in makers) for (const [label, use] of Object.entries({ size, doubled, last })) attempt(label + "(" + name + "())", () => use(makers[name]()));
+attempt("the binding behind two barrels", () => [size(current), last(current)]);
+change("a text");
+attempt("after it became a text", () => [size(current), last(current), barrel.current]);
+change(undefined);
+attempt("after it became undefined", () => size(current));
+//// impostors-pass-through-files-that-only-export-again/outer-barrel.js
+export * from "./barrel.js";
+export { makeText as makeList2 } from "./barrel.js";
+//// impostors-pass-through-files-that-only-export-again/package.json
+////= lines	"name"	"barrels"	"type"	"module"
+//// impostors-pass-through-files-that-only-export-again/parts/changing.js
+export let value = [1, 2, 3];
+export function change(next) {
+  value = next;
+}
+//// impostors-pass-through-files-that-only-export-again/parts/lists.js
+export const make = () => [1, 2, 3];
+export const name = "lists";
+export const onlyInLists = true;
+//// impostors-pass-through-files-that-only-export-again/parts/old.cjs
+exports.make = function () {
+  return { length: 3, 0: 1 };
+};
+exports.name = "old";
+//// impostors-pass-through-files-that-only-export-again/parts/texts.js
+export const make = () => "123";
+export const name = "texts";
+export const onlyInTexts = true;
+//// impostors-pass-through-files-that-only-export-again/show.js
+////= show-4
+//// instances-cross-between-commonjs-and-es-modules/account.mjs
+export class Account {
+  #balance = 0;
+  owner;
+  constructor(owner, balance) {
+    this.owner = owner;
+    this.#balance = balance;
+  }
+  get balance() {
+    return this.#balance;
+  }
+  deposit(amount) {
+    this.#balance += amount;
+    return this.#balance;
+  }
+  static isAccount(value) {
+    return #balance in value;
+  }
+  static balanceOf(value) {
+    return value.#balance;
+  }
+}
+export function richest(accounts) {
+  let best = accounts[0];
+  for (const account of accounts) if (account.balance > best.balance) best = account;
+  return best.owner;
+}
+//// instances-cross-between-commonjs-and-es-modules/lookalikes.js
+////= lines-19	OldAccount	owner	balance
+OldAccount.prototype.deposit = function (amount) {
+  this.balance += amount;
+  return this.balance;
+};
+
+module.exports = function lookalikes(Account) {
+  class Savings extends Account {
+    deposit(amount) {
+      return "savings " + super.deposit(amount * 2);
+    }
+  }
+  return {
+    real: function () { return new Account("real", 1); },
+    heir: function () { return new Savings("heir", 1); },
+    old: function () { return new OldAccount("old", 1); },
+    literal: function () { return { owner: "literal", balance: "1", deposit: function (amount) { return this.balance += amount; } }; },
+    created: function () { return Object.create(Account.prototype); },
+    proxied: function () { return new Proxy(new Account("proxied", 1), {}); },
+    textBalance: function () { return new Account("text balance", "1"); },
+    reparented: function () { return Object.setPrototypeOf(new Account("reparented", 1), OldAccount.prototype); },
+  };
+};
+//// instances-cross-between-commonjs-and-es-modules/main.js
+var attempt = require("./show").attempt;
+var account = require("./account.mjs");
+var lookalikes = require("./lookalikes")(account.Account);
+
+////= console-log
+
+var uses = {
+  balance: function (value) { return value.balance; },
+  deposit: function (value) { return value.deposit(5); },
+  borrowedDeposit: function (value) { return account.Account.prototype.deposit.call(value, 5); },
+  isAccount: account.Account.isAccount,
+  balanceOf: account.Account.balanceOf,
+  isInstance: function (value) { return value instanceof account.Account; },
+  richest: function (value) { return account.richest([new account.Account("other", 0), value]); },
+  keys: function (value) { return Object.keys(value).join(); },
+};
+var sum = 0;
+for (var i = 0; i < 2000; i++) {
+  var real = new account.Account("real", i);
+  sum += uses.balance(real) + uses.deposit(real) + uses.borrowedDeposit(real) + uses.balanceOf(real) + uses.richest(real).length;
+}
+console.log("sum", sum);
+////= Object-keys	lookalikes	maker	lookalikes[maker
+//// instances-cross-between-commonjs-and-es-modules/package.json
+////= lines	"name"	"crossing"	"type"	"commonjs"
+//// instances-cross-between-commonjs-and-es-modules/show.js
+////= show-3
+
+module.exports = { show: show, attempt: attempt };
+//// js-files-of-both-kinds-with-no-package-json/both-in-one-file.js
+import { make } from "./es-lists.js";
+const other = require("./commonjs-lists.js");
+
+export function sizes(size) {
+  return [size(make()), size(other.make())];
+}
+export const mode = (function () {
+  return this === undefined ? "strict" : "sloppy";
+})();
+//// js-files-of-both-kinds-with-no-package-json/commonjs-lists.js
+exports.make = function () {
+  return { 0: 1, 1: 2, 2: 3, length: "3" };
+};
+////= lines-20	size	list	list.length
+exports.mode = (function () {
+  return this === undefined ? "strict" : "sloppy";
+})();
+//// js-files-of-both-kinds-with-no-package-json/es-lists.js
+export function make() {
+  return [1, 2, 3];
+}
+////= lines-14	size	list	list.length
+export const mode = (function () {
+  return this === undefined ? "strict" : "sloppy";
+})();
+//// js-files-of-both-kinds-with-no-package-json/main.js
+import * as both from "./both-in-one-file.js";
+import commonjs from "./commonjs-lists.js";
+import * as es from "./es-lists.js";
+import shown from "./show.js";
+
+////= console-log
+
+const { attempt } = shown;
+attempt("modes", () => [es.mode, commonjs.mode, both.mode]);
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += es.size(es.make()) + commonjs.size(es.make());
+console.log("sum", sum);
+attempt("an ES size of a CommonJS value", () => es.size(commonjs.make()) + 1);
+attempt("a CommonJS size of a CommonJS value", () => commonjs.size(commonjs.make()) + 1);
+attempt("an ES size of an ES value", () => es.size(es.make()) + 1);
+attempt("through the file with both", () => [both.sizes(es.size), both.sizes(commonjs.size)]);
+//// js-files-of-both-kinds-with-no-package-json/show.js
+////= show-3
+
+module.exports = { show: show, attempt: attempt };
+//// json-files-hold-other-kinds-than-the-code-has-seen/data/a-list-at-the-top.json
+[
+  1,
+  2,
+  3
+]
+//// json-files-hold-other-kinds-than-the-code-has-seen/data/a-text-at-the-top.json
+"just a text"
+//// json-files-hold-other-kinds-than-the-code-has-seen/data/an-object-for-the-list.json
+{
+  "items": {
+    "0": {
+      "name": "a",
+      "price": 1,
+      "tags": {
+        "0": "x",
+        "length": 1
+      }
+    },
+    "1": {
+      "name": "b",
+      "price": 2,
+      "tags": "yz"
+    },
+    "length": 2
+  },
+  "count": 2,
+  "limit": 10
+}
+//// json-files-hold-other-kinds-than-the-code-has-seen/data/fractions-and-large-numbers.json
+{
+  "items": [
+    {
+      "name": "a",
+      "price": 0.5,
+      "tags": []
+    },
+    {
+      "name": "b",
+      "price": 4294967296,
+      "tags": []
+    },
+    {
+      "name": "c",
+      "price": -0.0,
+      "tags": []
+    },
+    {
+      "name": "d",
+      "price": 1e+300,
+      "tags": []
+    }
+  ],
+  "count": 2147483647,
+  "limit": 2147483648
+}
+//// json-files-hold-other-kinds-than-the-code-has-seen/data/honest.json
+////= lines-4	1	2	10
+//// json-files-hold-other-kinds-than-the-code-has-seen/data/missing-and-null.json
+{
+  "items": [
+    {
+      "name": "a",
+      "price": null,
+      "tags": null
+    },
+    {
+      "name": "b"
+    },
+    null
+  ],
+  "count": null
+}
+//// json-files-hold-other-kinds-than-the-code-has-seen/data/odd-keys.json
+{
+  "items": [{ "name": "a", "price": 1, "tags": ["x"], "__proto__": { "price": 100, "inherited": true } }, { "name": "b", "__proto__": { "price": 100 }, "tags": [] }],
+  "count": 2,
+  "limit": 10,
+  "constructor": "a text",
+  "toString": null,
+  "hasOwnProperty": 1
+}
+//// json-files-hold-other-kinds-than-the-code-has-seen/data/texts-for-numbers.json
+////= lines-4	"1"	"2"	"10"
+//// json-files-hold-other-kinds-than-the-code-has-seen/load.cjs
+module.exports = function load(name) {
+  return require("./data/" + name + ".json");
+};
+//// json-files-hold-other-kinds-than-the-code-has-seen/main.js
+import list from "./data/a-list-at-the-top.json";
+import text from "./data/a-text-at-the-top.json";
+import objectForTheList from "./data/an-object-for-the-list.json";
+import fractions from "./data/fractions-and-large-numbers.json";
+import honest from "./data/honest.json";
+import missing from "./data/missing-and-null.json";
+import oddKeys from "./data/odd-keys.json";
+import texts from "./data/texts-for-numbers.json";
+import load from "./load.cjs";
+import { attempt } from "./show.js";
+import * as sums from "./sums.js";
+
+////= console-log
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += sums.total(honest) + sums.names(honest).length + sums.tagCount(honest) + sums.nextCount(honest) + sums.countBits(honest) + sums.room(honest) + sums.firstPrice(honest);
+console.log("sum", sum);
+
+const files = { honest, texts, objectForTheList, missing, fractions, oddKeys, list, text };
+for (const file in files) for (const use in sums) attempt(use + "(" + file + ")", () => sums[use](files[file]));
+const names = ["honest", "texts-for-numbers", "an-object-for-the-list", "missing-and-null", "fractions-and-large-numbers", "odd-keys"];
+for (const name of names) attempt("required by a computed name: total(" + name + ")", () => sums.total(load(name)));
+honest.items.push({ name: "c", price: "3", tags: "" });
+attempt("after a store into what was imported", () => [sums.total(honest), sums.total(load("honest")), sums.tagCount(honest)]);
+//// json-files-hold-other-kinds-than-the-code-has-seen/package.json
+////= lines	"name"	"prices"	"type"	"module"
+//// json-files-hold-other-kinds-than-the-code-has-seen/show.js
+////= show-4
+//// json-files-hold-other-kinds-than-the-code-has-seen/sums.js
+export function total(data) {
+  let sum = 0;
+  for (let i = 0; i < data.items.length; i++) sum += data.items[i].price;
+  return sum;
+}
+export function names(data) {
+  return data.items.map(item => item.name);
+}
+export function tagCount(data) {
+  let count = 0;
+  for (const item of data.items) count += item.tags.length;
+  return count;
+}
+export const nextCount = data => data.count + 1;
+export const countBits = data => data.count | 0;
+export const isUnderTheLimit = data => data.count < data.limit;
+export const room = data => data.limit - data.count;
+export const firstPrice = data => data.items[0].price;
+export const ownPrice = data => Object.keys(data.items[1]).join();
+export const text = data => "" + data;
+export const asked = data => data.hasOwnProperty("count");
+export const keys = data => Object.keys(data).join();
+//// keys-from-another-module-index-lists-texts-and-tables/keys.cjs
+var log = [];
+exports.log = log;
+exports.keys = {
+  one: function () { return 1; },
+  textOne: function () { return "1"; },
+  paddedOne: function () { return "01"; },
+  fraction: function () { return 1.5; },
+  minusZero: function () { return -0; },
+  minusOne: function () { return -1; },
+  large: function () { return 4294967296; },
+  lastIndex: function () { return 4294967294; },
+  notANumber: function () { return NaN; },
+  exponent: function () { return "1e0"; },
+  length: function () { return "length"; },
+  proto: function () { return "__proto__"; },
+  maker: function () { return "constructor"; },
+  none: function () { return null; },
+  nothing: function () { return undefined; },
+  yes: function () { return true; },
+  big: function () { return 1n; },
+  symbol: function () { return Symbol.iterator; },
+  listOfOne: function () { return [1]; },
+  withToString: function () { return { toString: function () { log.push("toString"); return "1"; } }; },
+  withToPrimitive: function () { return { [Symbol.toPrimitive]: function (hint) { log.push("toPrimitive " + hint); return 1; } }; },
+  throwing: function () { return { toString: function () { log.push("toString throws"); throw new RangeError("no key"); } }; },
+  boxed: function () { return new Number(1); },
+};
+//// keys-from-another-module-index-lists-texts-and-tables/main.js
+import odd from "./keys.cjs";
+import { show } from "./show.js";
+import * as uses from "./uses.js";
+
+////= console-log
+
+let count = 0;
+for (let i = 0; i < 2000; i++) for (const use in uses) count += uses[use](i % 3) === undefined ? 0 : 1;
+console.log("count", count);
+for (const key in odd.keys) {
+  for (const use in uses) {
+    odd.log.length = 0;
+    let said;
+    try {
+      said = show(uses[use](odd.keys[key]()));
+    } catch (error) {
+      said = "threw " + error.constructor.name;
+    }
+    console.log(use + "(" + key + ")", said, odd.log.length ? "after " + odd.log.join(", ") : "");
+  }
+}
+//// keys-from-another-module-index-lists-texts-and-tables/package.json
+////= lines	"name"	"odd-keys"	"type"	"module"
+//// keys-from-another-module-index-lists-texts-and-tables/show.js
+////= show-4
+//// keys-from-another-module-index-lists-texts-and-tables/uses.js
+export const readAList = key => ["a", "b", "c"][key];
+export const readAText = key => "abc"[key];
+export const readATable = key => ({ 0: "zero", 1: "one", a: "letter" })[key];
+export const readBytes = key => new Uint8Array([7, 8, 9])[key];
+export function storeIntoAList(key) {
+  const list = ["a", "b", "c"];
+  list[key] = "stored";
+  return [list.length, Object.keys(list).join()];
+}
+export function storeIntoATable(key) {
+  const table = { 1: "one" };
+  table[key] = "stored";
+  return Reflect.ownKeys(table).map(String).join();
+}
+export function storeIntoBytes(key) {
+  const bytes = new Uint8Array(3);
+  bytes[key] = 5;
+  return [Array.from(bytes).join(), Object.keys(bytes).length];
+}
+export const askAList = key => key in ["a", "b", "c"];
+export const askATable = key => Object.hasOwn({ 1: "one" }, key);
+export function removeFromAList(key) {
+  const list = ["a", "b", "c"];
+  return [delete list[key], 1 in list];
+}
+export const inALiteral = key => Object.keys({ [key]: 1 }).join();
+export const callByKey = key => typeof ["a"][key];
+//// look-alikes-from-another-module-are-used-like-texts/made.js
+var log = [];
+exports.log = log;
+exports.makers = {
+  text: function () { return "abc"; },
+  boxed: function () { return new String("abc"); },
+  list: function () { return ["a", "b", "c"]; },
+  bytes: function () { return Buffer.from("abc"); },
+  like: function () {
+    return {
+      length: 3,
+      0: "a",
+      charCodeAt: function () { return "own charCodeAt"; },
+      slice: function () { return "own slice"; },
+      indexOf: function () { return "own indexOf"; },
+      toUpperCase: function () { return "own toUpperCase"; },
+      split: function () { return "own split"; },
+      toString: function () { log.push("toString"); return "abc"; },
+    };
+  },
+  number: function () { return 123; },
+  none: function () { return null; },
+  nothing: function () { return undefined; },
+  symbol: function () { return Symbol("abc"); },
+  rope: function () { return "a".concat("b") + ["c"][0]; },
+  wide: function () { return "aб😀"; },
+  halfOfAPair: function () { return "ab\ud83d"; },
+  heir: function () { return Object.create(new String("abc")); },
+  aFunction: function () { return Object.assign(function abc(a, b, c) {}, { toString: function () { return "abc"; } }); },
+  date: function () { return new Date(0); },
+  expression: function () { return /abc/; },
+};
+//// look-alikes-from-another-module-are-used-like-texts/main.js
+var made = require("./made");
+var show = require("./show").show;
+var uses = require("./uses");
+
+////= console-log
+
+var total = 0;
+for (var i = 0; i < 2000; i++) for (var name in uses) total += String(uses[name]("abc")).length;
+console.log("total", total);
+Object.keys(made.makers).forEach(function (maker) {
+  Object.keys(uses).forEach(function (use) {
+    made.log.length = 0;
+    var said;
+    try {
+      said = show(uses[use](made.makers[maker]()));
+    } catch (error) {
+      said = "threw " + error.constructor.name;
+    }
+    console.log(use + "(" + maker + ")", said, made.log.length ? "after " + made.log.join(", ") : "");
+  });
+});
+//// look-alikes-from-another-module-are-used-like-texts/show.js
+////= show-3
+
+module.exports = { show: show, attempt: attempt };
+//// look-alikes-from-another-module-are-used-like-texts/uses.js
+exports.size = function (text) { return text.length; };
+exports.code = function (text) { return text.charCodeAt(1); };
+exports.first = function (text) { return text[0]; };
+exports.part = function (text) { return text.slice(1); };
+exports.found = function (text) { return text.indexOf("b"); };
+exports.upper = function (text) { return text.toUpperCase(); };
+exports.glued = function (text) { return text + "!"; };
+exports.inATemplate = function (text) { return "<" + `${text}` + ">"; };
+exports.isTheSame = function (text) { return text === "abc"; };
+exports.isLooselyTheSame = function (text) { return text == "abc"; };
+exports.isBefore = function (text) { return text < "b"; };
+exports.walked = function (text) { var seen = []; for (var piece of text) seen.push(piece); return seen.length; };
+exports.pieces = function (text) { return text.split(""); };
+exports.chosen = function (text) { switch (text) { case "abc": return "the case abc"; default: return "the default"; } };
+exports.asAKey = function (text) { return { abc: "found under abc" }[text]; };
+exports.written = function (text) { return JSON.stringify(text); };
+exports.kind = function (text) { return typeof text; };
+//// module-exports-replaced-by-things-that-get-called/callables/a-class.js
+module.exports = class Holder {
+  constructor(value) {
+    this.value = value;
+  }
+};
+//// module-exports-replaced-by-things-that-get-called/callables/a-generator.js
+module.exports = function* counted(value) {
+  yield value + 1;
+};
+//// module-exports-replaced-by-things-that-get-called/callables/a-method.js
+module.exports = {
+  method(value) {
+    return value + 1;
+  },
+}.method;
+//// module-exports-replaced-by-things-that-get-called/callables/a-number.js
+module.exports = 5;
+//// module-exports-replaced-by-things-that-get-called/callables/an-arrow.js
+module.exports = value => [typeof this, value + 1];
+//// module-exports-replaced-by-things-that-get-called/callables/an-object-with-call-and-apply.js
+module.exports = {
+  call: function (self, value) {
+    return "own call " + value;
+  },
+  apply: function (self, values) {
+    return "own apply " + values.length;
+  },
+  bind: function () {
+    return function () {
+      return "own bind";
+    };
+  },
+  length: 7,
+  name: "not a function",
+};
+//// module-exports-replaced-by-things-that-get-called/callables/bound.js
+function tagged(value) {
+  return [this.tag, value];
+}
+module.exports = tagged.bind({ tag: "bound" });
+//// module-exports-replaced-by-things-that-get-called/callables/nothing.js
+module.exports = undefined;
+//// module-exports-replaced-by-things-that-get-called/callables/plain.js
+module.exports = function plain(value) {
+  return value + 1;
+};
+module.exports.extra = "a member of the function";
+//// module-exports-replaced-by-things-that-get-called/callables/proxied.js
+var log = [];
+module.exports = new Proxy(function target(value) {
+  return value + 1;
+}, {
+  apply: function (target, self, operands) {
+    log.push("apply " + operands.length);
+    return "trapped " + Reflect.apply(target, self, operands);
+  },
+  construct: function (target, operands) {
+    log.push("construct " + operands.length);
+    return { made: operands[0] };
+  },
+  get: function (target, key, receiver) {
+    log.push("get " + String(key));
+    return key === "log" ? log : Reflect.get(target, key, receiver);
+  },
+});
+//// module-exports-replaced-by-things-that-get-called/callables/replaced-twice.js
+module.exports = function first() {
+  return "first";
+};
+exports.lost = "stored on the object that was replaced";
+module.exports = function second(value) {
+  return "second " + value;
+};
+//// module-exports-replaced-by-things-that-get-called/main.js
+var attempt = require("./show").attempt;
+
+////= console-log
+
+function invoke(callee, value) {
+  return callee(value);
+}
+function invokeByCall(callee, value) {
+  return callee.call(null, value);
+}
+function invokeByApply(callee, value) {
+  return callee.apply(null, [value]);
+}
+function invokeBound(callee, value) {
+  return callee.bind(null)(value);
+}
+function construct(callee, value) {
+  return new callee(value);
+}
+function reflect(callee, value) {
+  return Reflect.apply(callee, undefined, [value]);
+}
+function mapped(callee, value) {
+  return [value].map(callee);
+}
+function members(callee) {
+  return [typeof callee, callee.length, callee.name, typeof callee.prototype, callee.extra];
+}
+var uses = { invoke: invoke, invokeByCall: invokeByCall, invokeByApply: invokeByApply, invokeBound: invokeBound, construct: construct, reflect: reflect, mapped: mapped, members: members };
+
+var plain = require("./callables/plain");
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += invoke(plain, i) + invokeByCall(plain, i) + invokeByApply(plain, i) + invokeBound(plain, i) + reflect(plain, i) + mapped(plain, i)[0] + members(plain).length;
+console.log("sum", sum);
+
+attempt("seen a class", function () {
+  return require("./callables/a-class")(1);
+});
+attempt("seen an object", function () {
+  return require("./callables/an-object-with-call-and-apply")(1);
+});
+attempt("seen a number", function () {
+  return require("./callables/a-number")(1);
+});
+
+var names = ["plain", "a-class", "bound", "proxied", "an-object-with-call-and-apply", "an-arrow", "a-generator", "a-method", "replaced-twice", "a-number", "nothing"];
+names.forEach(function (name) {
+  var callee = require("./callables/" + name);
+  Object.keys(uses).forEach(function (use) {
+    attempt(use + "(" + name + ")", function () {
+      return uses[use](callee, 1);
+    });
+  });
+});
+console.log("traps", require("./callables/proxied").log.join(", "));
+attempt("plain again", function () {
+  return [invoke(plain, 1), invokeByCall(plain, 1), invokeByApply(plain, 1), construct(plain, 1)];
+});
+//// module-exports-replaced-by-things-that-get-called/package.json
+{
+  "name": "callables",
+  "version": "0.0.1",
+  "type": "commonjs",
+  "main": "main.js"
+}
+//// module-exports-replaced-by-things-that-get-called/show.js
+////= show-3
+
+module.exports = { show: show, attempt: attempt };
+//// names-imported-from-a-commonjs-file-change-later/main.js
+import * as reader from "./reader.js";
+import { attempt } from "./show.js";
+import state from "./state.cjs";
+
+////= console-log
+
+function all(when) {
+  for (const name in reader) attempt(when + " " + name, reader[name]);
+}
+all("at first");
+for (let i = 0; i < 2000; i++) {
+  reader.byName();
+  reader.throughTheDefault();
+  reader.throughTheNamespace();
+}
+state.changeInPlace();
+all("changed in place");
+state.change();
+all("changed");
+//// names-imported-from-a-commonjs-file-change-later/package.json
+////= lines	"name"	"late-names"	"type"	"module"
+//// names-imported-from-a-commonjs-file-change-later/reader.js
+import whole, { count, list, size } from "./state.cjs";
+import * as space from "./state.cjs";
+
+export const byName = () => [count + 1, list.length, size()];
+export const throughTheDefault = () => [whole.count + 1, whole.list.length, whole.size()];
+export const throughTheNamespace = () => [space.count + 1, space.list.length, space.size()];
+export const added = () => [whole.added, space.added, "added" in whole, "added" in space];
+export const same = () => [whole.list === list, space.list === list, space.default === whole];
+//// names-imported-from-a-commonjs-file-change-later/show.js
+////= show-4
+//// names-imported-from-a-commonjs-file-change-later/state.cjs
+exports.count = 1;
+exports.list = [1, 2, 3];
+exports.size = function () {
+  return exports.list.length;
+};
+exports.change = function () {
+  exports.count = "two";
+  exports.list = "a text";
+  exports.size = function () {
+    return "replaced";
+  };
+  exports.added = "added late";
+};
+exports.changeInPlace = function () {
+  exports.list.push(4);
+};
+//// number-like-values-from-a-cjs-file-are-calculated-with-in-es-modules/main.js
+import * as math from "./math.js";
+import numbers from "./numbers.cjs";
+import { show } from "./show.js";
+
+////= console-log
+
+let checksum = 0;
+for (let i = 0; i < 2000; i++) {
+  for (const use in math) {
+    const answer = math[use](i % 4);
+    checksum += typeof answer === "number" ? answer : 1;
+  }
+}
+console.log("checksum", checksum);
+
+for (const name of Object.keys(numbers.values)) {
+  for (const use of Object.keys(math)) {
+    const value = numbers.values[name]();
+    numbers.log.length = 0;
+    let said;
+    try {
+      said = show(math[use](value));
+    } catch (error) {
+      said = "threw " + error.constructor.name;
+    }
+    console.log(use + "(" + name + ")", said, numbers.log.length ? "after " + numbers.log.join(", ") : "");
+  }
+}
+console.log("honest again", math.twice(3), math.plusOne(3), math.incremented(3), math.sumBelow(3));
+//// number-like-values-from-a-cjs-file-are-calculated-with-in-es-modules/math.js
+export const twice = n => n * 2;
+export const plusOne = n => n + 1;
+export const minusOne = n => n - 1;
+export const negated = n => -n;
+export const bits = n => n | 0;
+export const shifted = n => n >>> 1;
+export function incremented(n) {
+  n++;
+  return n;
+}
+export const isLess = n => n < 4;
+export const looselyThree = n => n == 3;
+export const strictlyThree = n => n === 3;
+export const element = n => [10, 20, 30, 40][n];
+export function sumBelow(n) {
+  let sum = 0;
+  for (let i = 0; i < n; i++) sum += i;
+  return sum;
+}
+export const squared = n => n ** 2;
+export const remainder = n => n % 2;
+export const floored = n => Math.floor(n);
+export const inText = n => `${n}`;
+//// number-like-values-from-a-cjs-file-are-calculated-with-in-es-modules/numbers.cjs
+const log = [];
+exports.log = log;
+exports.values = {
+  three: () => 3,
+  text: () => "3",
+  emptyText: () => "",
+  wordText: () => "three",
+  valueOf: () => ({
+    valueOf() {
+      log.push("valueOf");
+      return 3;
+    },
+  }),
+  toStringOnly: () => ({
+    toString() {
+      log.push("toString");
+      return "3";
+    },
+  }),
+  both: () => ({
+    valueOf() {
+      log.push("valueOf");
+      return {};
+    },
+    toString() {
+      log.push("toString");
+      return "3";
+    },
+  }),
+  toPrimitive: () => ({
+    [Symbol.toPrimitive](hint) {
+      log.push("toPrimitive " + hint);
+      return hint === "string" ? "three" : 3;
+    },
+  }),
+  throwing: () => ({
+    valueOf() {
+      log.push("valueOf throws");
+      throw new RangeError("no value");
+    },
+  }),
+  big: () => 3n,
+  nothing: () => null,
+  missing: () => undefined,
+  yes: () => true,
+  date: () => new Date(3),
+  notANumber: () => NaN,
+  minusZero: () => -0,
+  boxed: () => new Number(3),
+  listOfOne: () => [3],
+  emptyList: () => [],
+  symbol: () => Symbol("3"),
+  fraction: () => 3.5,
+  large: () => 2147483647,
+};
+//// number-like-values-from-a-cjs-file-are-calculated-with-in-es-modules/package.json
+////= lines-5	"sums"	"version"	"1.0.0"	"type"	"module"
+//// number-like-values-from-a-cjs-file-are-calculated-with-in-es-modules/show.js
+////= show-4

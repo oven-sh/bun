@@ -1,0 +1,80 @@
+# Variables are grouped by region and first word, and a variable stores undefined as zero only if its reads are used only in nullish tests and no table describes it
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: place statics
+
+module m0 path="a.ts" displayPath="a.ts" body=f0 requests=[{target=m1 completes=true}] exports=[{name="x" variable=g7}]
+module m1 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource exportRule=RuntimeModule runtimeModule=BunSqlite body=f2
+entry module=m0
+variable g0 name="a" module=m0 declared={type=undefined|number} initialization=Undefined
+variable g1 name="b" module=m0 declared={type=undefined|int} initialization=Undefined
+variable g2 name="c" module=m0 declared={type=undefined|string} initialization=Undefined
+variable g3 name="d" module=m0 declared={type=undefined|string} initialization=Undefined
+variable g4 name="e" module=m0 declared={type=string|absent}
+variable g5 name="f" module=m0 declared={type=number|absent}
+variable g6 name="g" module=m0 declared={type=int[0, 255]|absent}
+variable g7 name="x" module=m0 declared={type=undefined|string} initialization=Undefined
+variable g8 name="r" module=m1 declared={type=undefined|number} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = ToString v2
+    v4 = Integer integer=255
+    v5 = BitAnd v2, v4
+    PutModuleVariable v2 variable=g5
+    PutModuleVariable v4 variable=g6
+    v8 = CallDirect function=f1
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v5 variable=g1
+    PutModuleVariable v3 variable=g2
+    PutModuleVariable v3 variable=g3
+    PutModuleVariable v3 variable=g4
+    PutModuleVariable v3 variable=g7
+    Return
+}
+function f1 name="readsBeforeTheStores" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = Add v0, v1
+    v3 = GetModuleVariable variable=g2
+    v4 = TypeTest v3 testedType=undefined|null
+    v5 = GetModuleVariable variable=g3
+    v6 = GetModuleVariable variable=g4
+    v7 = CheckInitialized v6 name="e"
+    v8 = GetModuleVariable variable=g5
+    v9 = CheckInitialized v8 name="f"
+    v10 = GetModuleVariable variable=g6
+    v11 = CheckInitialized v10 name="g"
+    v12 = GetModuleVariable variable=g7
+    v13 = TypeTest v12 testedType=undefined|null
+    Return v5
+}
+function f2 name="runtimeModule" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f3
+    v1 = Double number=1.5
+    PutModuleVariable v1 variable=g8
+    Return
+}
+function f3 name="readsInRuntimeModule" module=m1 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g8
+    Return v0
+}
+# CHECK: statics size=80 filledAtEntry=32
+# CHECK-NEXT: g0 offset=24 representation=OptionalDouble encoding=Plain region=FilledAtProgramEntry initial=[[undefinedDouble]]
+# CHECK-NEXT: g1 offset=16 representation=OptionalInt64 encoding=Plain region=FilledAtProgramEntry
+# CHECK-NEXT: g2 offset=40 representation=JSValue encoding=UndefinedAsZero region=FilledAtInstanceCreation initial=0x0000000000000000
+# CHECK-NEXT: g3 offset=0 representation=JSValue encoding=Plain region=FilledAtProgramEntry initial=0x000000000000000a
+# CHECK-NEXT: g4 offset=48 representation=JSValue encoding=Plain region=FilledAtInstanceCreation initial=0x0000000000000000
+# CHECK-NEXT: g5 offset=56 representation=Double
+# CHECK-NEXT: g6 offset=64 representation=Uint8
+# CHECK-NEXT: g7 offset=8 representation=JSValue encoding=Plain region=FilledAtProgramEntry initial=0x000000000000000a
+# Code of a runtime module may run before the program is entered.
+# CHECK-NEXT: g8 offset=32 representation=OptionalDouble encoding=Plain region=FilledAtInstanceCreation initial=[[undefinedDouble]]
+# CHECK-NEXT: module-value m1 @72
+# CHECK-NEXT: roots=[0 8 40 48 72]

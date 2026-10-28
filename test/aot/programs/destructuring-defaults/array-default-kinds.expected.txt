@@ -1,0 +1,80 @@
+-- []
+literals: 1 two null true 5n | open, next 0
+functions: function arrow function plain function inner | open, next 0
+locals: fallback fallback | open, next 0
+assigned: fallback old b | open, next 0
+containers: ["fallback",1,null,2] {"fallback":"fallback","nested":{"list":[]}} | open, next 0
+receiver: true | open, next 0
+operators: false string undefined -1 | open, next 0
+constants: undefined NaN Infinity 3.141592653589793 function floor | open, next 0
+calls: default a default b | open, next 0, default a, default b
+getters: get first get second | open, next 0, get first, get second
+conversions: toString -7 [1] ["toString","valueOf","own"] | open, next 0, toString, valueOf, spread, get own
+classes: function anonymous function Inner function computed | open, next 0, class key
+throwing: threw RangeError | open, next 0, default b
+dead zone: threw ReferenceError | open, next 0
+captured: 1 1 1 | open, next 0
+module variable: 1 1 1 | open, next 0
+global variable: 1 1 1 | open, next 0
+base constructor: true | open, next 0
+derived constructor: true | open, next 0, ReferenceError, open, next 0
+-- ["undefined","undefined","undefined","undefined"]
+literals: 1 two null true 5n | open, next 0, next 1, next 2, next 3, next 4
+functions: function arrow function plain function inner | open, next 0, next 1, next 2, return
+locals: fallback fallback | open, next 0, next 1, return
+assigned: fallback old b | open, next 0, next 1, next 2, return
+containers: ["fallback",1,null,2] {"fallback":"fallback","nested":{"list":[]}} | open, next 0, next 1, return
+receiver: true | open, next 0, return
+operators: false string undefined -1 | open, next 0, next 1, next 2, next 3, return
+constants: undefined NaN Infinity 3.141592653589793 function floor | open, next 0, next 1, next 2, next 3, next 4
+calls: default a default b | open, next 0, default a, next 1, default b, return
+getters: get first get second | open, next 0, get first, next 1, get second, return
+conversions: toString -7 [1] ["toString","valueOf","own"] | open, next 0, toString, next 1, valueOf, next 2, spread, next 3, get own, return
+classes: function anonymous function Inner function computed | open, next 0, next 1, next 2, class key, return
+throwing: threw RangeError | open, next 0, next 1, default b, next 2, return
+dead zone: threw ReferenceError | open, next 0, return
+captured: 1 2 3 | open, next 0, next 1, next 2, return
+module variable: 1 2 3 | open, next 0, next 1, next 2, return
+global variable: 1 2 3 | open, next 0, next 1, next 2, return
+base constructor: true | open, next 0, return
+derived constructor: true | open, next 0, return, ReferenceError, open, next 0
+-- ["0","null"]
+literals: 0 null null true 5n | open, next 0, next 1, next 2
+functions: 0 null function inner | open, next 0, next 1, next 2
+locals: 0 null | open, next 0, next 1, return
+assigned: fallback null | open, next 0, next 1, next 2
+containers: 0 null | open, next 0, next 1, return
+receiver: false | open, next 0, return
+operators: 0 null undefined -1 | open, next 0, next 1, next 2
+constants: 0 null Infinity 3.141592653589793 function floor | open, next 0, next 1, next 2
+calls: 0 null | open, next 0, next 1, return
+getters: 0 null | open, next 0, next 1, return
+conversions: 0 null [1] ["toString","valueOf","own"] | open, next 0, next 1, next 2, spread, get own
+classes: 0 null function computed | open, next 0, next 1, next 2, class key
+throwing: threw RangeError | open, next 0, next 1, next 2
+dead zone: 0 null | open, next 0, next 1, return
+captured: 0 null 3 | open, next 0, next 1, next 2
+module variable: 0 null 3 | open, next 0, next 1, next 2
+global variable: 0 null 3 | open, next 0, next 1, next 2
+base constructor: false | open, next 0, return
+derived constructor: true | open, next 0, return, read number, open, next 0
+-- ["v","w","x","y","z","more"]
+literals: v w x y z | open, next 0, next 1, next 2, next 3, next 4, return
+functions: v w x | open, next 0, next 1, next 2, return
+locals: v w | open, next 0, next 1, return
+assigned: x w | open, next 0, next 1, next 2, return
+containers: v w | open, next 0, next 1, return
+receiver: false | open, next 0, return
+operators: v w x y | open, next 0, next 1, next 2, next 3, return
+constants: v w x y z | open, next 0, next 1, next 2, next 3, next 4, return
+calls: v w | open, next 0, next 1, return
+getters: v w | open, next 0, next 1, return
+conversions: v w x ["0"] | open, next 0, next 1, next 2, next 3, return
+classes: v w x | open, next 0, next 1, next 2, return
+throwing: v w x y | open, next 0, next 1, next 2, next 3, return
+dead zone: v w | open, next 0, next 1, return
+captured: v w x | open, next 0, next 1, next 2, return
+module variable: v w x | open, next 0, next 1, next 2, return
+global variable: v w x | open, next 0, next 1, next 2, return
+base constructor: false | open, next 0, return
+derived constructor: true | open, next 0, return, read string, open, next 0

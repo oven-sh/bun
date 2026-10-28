@@ -124,7 +124,7 @@ if (import.meta.main) {
     await new Response(spawn({ cmd: ["bk", "build", "view", BUILD], stdout: "pipe" }).stdout).text(),
   );
   const jobs: Job[] = buildJson.jobs.filter(
-    (j: any) => j.name && j.raw_log_url && j.name.includes("test-bun") && !j.retried,
+    (j: any) => j.name && j.raw_log_url && /test-(?:bun|aot)/.test(j.name) && !j.retried,
   );
   console.error(
     `build #${BUILD}: ${jobs.length} test-bun jobs across ${new Set(jobs.map(j => j.name)).size} platforms`,
@@ -132,7 +132,7 @@ if (import.meta.main) {
 
   const platOf = (name: string) =>
     name
-      .replace(/ - test-bun$/, "")
+      .replace(/ - test-(?:bun|aot)$/, "")
       .replace(/^:([a-z]+):/, "$1")
       .trim();
 

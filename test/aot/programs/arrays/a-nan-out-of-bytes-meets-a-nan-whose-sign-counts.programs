@@ -1,0 +1,90 @@
+////: bytes-that-hold-nans-and-what-shows-the-bytes-of-a-number
+const hex = (value: number) => Array.from(new Uint8Array(new Float64Array([value]).buffer), byte => byte.toString(16).padStart(2, "0")).join("");
+const bytes = new Uint8Array([1, 2, 3, 4, 5, 6, 0xf8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0x40, 7, 0, 0, 0, 0, 0, 0xf0, 0x7f, 0, 0, 0, 0, 0, 0, 0xf8, 0x7f]);
+const view = new Float64Array(bytes.buffer), data = new DataView(bytes.buffer);
+//// a-nan-out-of-bytes-or-a-negated-nan-is-chosen-by-a-condition-and-written-into-bytes.ts
+////= bytes-that-hold-nans-and-what-shows-the-bytes-of-a-number
+function show(nothing: any) {
+  for (let k = 0; k < view.length; k++) {
+    const fromBytes = view[k]!, negated = -(nothing * 2);
+    const value = k & 1 ? negated : fromBytes;
+    console.log(k, hex(value));
+  }
+}
+show(undefined);
+//// a-nan-out-of-bytes-or-a-negated-nan-is-chosen-by-an-if-and-pushed.ts
+////= bytes-that-hold-nans-and-what-shows-the-bytes-of-a-number
+function show(number: number) {
+  const pushed: number[] = [];
+  for (let k = 0; k < view.length; k++) {
+    let value: number;
+    if (k % 3 === 0) value = view[k]!;
+    else value = -number;
+    pushed.push(value);
+    console.log(k, hex(pushed[pushed.length - 1]!));
+  }
+}
+show(Number("y"));
+//// a-nan-out-of-bytes-or-a-negated-nan-is-chosen-by-a-switch-and-kept-in-a-field.ts
+////= bytes-that-hold-nans-and-what-shows-the-bytes-of-a-number
+function show(nothing: any) {
+  const box = { value: 0.5 };
+  for (let k = 0; k < view.length; k++) {
+    let value: number;
+    switch (k & 3) {
+      case 0: value = view[k]!; break;
+      case 1: value = -(nothing * 2); break;
+      case 2: value = view[k]!; break;
+      default: value = -(nothing * 2);
+    }
+    box.value = value;
+    console.log(k, hex(box.value), Object.is(value, NaN));
+  }
+}
+show(undefined);
+//// a-nan-out-of-bytes-or-a-negated-nan-is-read-out-of-a-list-and-written-into-bytes.ts
+////= bytes-that-hold-nans-and-what-shows-the-bytes-of-a-number
+const nothing: any = [undefined][0];
+for (let k = 0; k < view.length; k++) {
+  const list = [view[k]!, -(nothing * 2), view[k]! + 1, nothing * 2];
+  for (let at = 0; at < list.length; at++) console.log(k, at, hex(list[at]!));
+}
+//// a-nan-out-of-a-data-view-or-a-negated-nan-out-of-a-parameter-is-chosen-and-written-into-bytes.ts
+////= bytes-that-hold-nans-and-what-shows-the-bytes-of-a-number
+function show(number: number) {
+  for (let k = 0; k < 4; k++) {
+    const value = k & 1 ? -(number + 1) : data.getFloat64(k * 8, true);
+    console.log(k, hex(value));
+  }
+}
+show(Number("y"));
+//// a-nan-out-of-bytes-or-a-negated-nan-out-of-a-field-is-chosen-and-written-into-bytes.ts
+////= bytes-that-hold-nans-and-what-shows-the-bytes-of-a-number
+const holder = { minus: -Number("x"), plus: Number("x") };
+function show() {
+  for (let k = 0; k < view.length; k++) {
+    const value = k & 1 ? holder.minus : view[k]!;
+    const other = k & 2 ? view[k]! : holder.plus;
+    console.log(k, hex(value), hex(other));
+  }
+}
+show();
+//// a-nan-out-of-bytes-or-a-negated-nan-out-of-a-list-is-chosen-and-written-into-bytes.ts
+////= bytes-that-hold-nans-and-what-shows-the-bytes-of-a-number
+const kept: number[] = [-Number("x"), 1.5, Number("x")];
+function show() {
+  for (let k = 0; k < view.length; k++) {
+    const value = k % 3 === 0 ? view[k & 3]! : -kept[k % 3]!;
+    console.log(k, hex(value));
+  }
+}
+show();
+//// half-of-a-nan-out-of-bytes-or-a-negated-nan-is-chosen-and-written-into-bytes.ts
+////= bytes-that-hold-nans-and-what-shows-the-bytes-of-a-number
+function show(number: number) {
+  for (let k = 0; k < view.length; k++) {
+    const value = k & 1 ? -number : view[k]! * 0.5;
+    console.log(k, hex(value));
+  }
+}
+show(Number("y"));

@@ -1,0 +1,508 @@
+//// a-server-of-node-http-answers-one-request.ts
+// A server of node:http answers one request of the program itself and closes. It brings in a large part of the library.
+import { createServer } from "node:http";
+const server = createServer((request, response) => {
+  response.writeHead(200, { "Content-Type": "text/plain" });
+  response.end(`${request.method} ${request.url}`);
+});
+server.listen(0, async () => {
+  const answer = await fetch(`http://127.0.0.1:${(server.address() as { port: number }).port}/one`);
+  console.log(answer.status, answer.headers.get("content-type"), await answer.text());
+  server.close();
+});
+//// async-functions-timers-and-promise-all.ts
+// Async functions, timers and what Promise offers, a little of each.
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+async function double(n: number): Promise<number> {
+  await sleep(1);
+  return n * 2;
+}
+async function fails(): Promise<never> {
+  await null;
+  throw new Error("failed");
+}
+async function* ticks(count: number) {
+  for (let i = 0; i < count; i++) {
+    await sleep(1);
+    yield i;
+  }
+}
+const results = await Promise.all([double(1), double(2)]);
+console.log(results);
+try {
+  await fails();
+} catch (error) {
+  console.log((error as Error).message);
+}
+for await (const tick of ticks(3)) console.log(tick);
+console.log((await Promise.allSettled([double(3), fails()])).map(each => (each.status === "fulfilled" ? each.value : (each.reason as Error).message)));
+const arrow = async () => (await double(4)) + 1;
+arrow().then(console.log);
+//// bun-serve-answers-two-requests.ts
+// Bun.serve with routes and a fetch handler answers two requests of the program itself and stops.
+const server = Bun.serve({
+  port: 0,
+  routes: {
+    "/health": new Response("ok"),
+    "/users/:id": request => Response.json({ id: request.params.id }),
+  },
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (request.method === "POST") return Response.json({ echo: await request.json() });
+    return new Response(`not found: ${url.pathname}`, { status: 404, headers: { "x-test": "1" } });
+  },
+});
+const response = await fetch(new URL("/users/7", server.url));
+console.log(response.status, await response.json());
+const posted = await fetch(server.url, { method: "POST", body: JSON.stringify({ a: 1 }) });
+console.log(await posted.json());
+await server.stop();
+//// calls-the-compiler-does-not-see.ts
+// Calls that no operation of the program spells out: the compiler fuses slice and join into a call of its own helper, and Function.prototype.call hands its arguments on.
+function attempt(f: () => unknown): string { try { return String(f()); } catch (e) { return "failed " + e; } }
+const list: any = [1, 2, 3, 4];
+const record: any = { a: 1, b: 2, c: 3, d: 4 };
+console.log(attempt(() => list.slice(0, 2).join()), attempt(() => Object.keys(record).slice(0, 2).join()), attempt(() => 1));
+
+function second(first: unknown, value?: unknown): string { return typeof first + " " + typeof value; }
+console.log(second.call(undefined, 1, "text"), second.call(undefined, 1), second.apply(undefined, [1, "text"]));
+
+type Point = { n: number };
+function put(point: Point, value: number): void { point.n = value; }
+const point: Point = { n: 2 };
+put.call(undefined, point, 2.5);
+console.log(point.n + 1);
+//// classes.ts
+// Classes: fields, methods, statics, accessors, inheritance.
+class Shape {
+  static count = 0;
+  constructor(public name: string) {
+    Shape.count++;
+  }
+  area(): number {
+    return 0;
+  }
+  describe(): string {
+    return `${this.name} has area ${this.area()}`;
+  }
+}
+class Circle extends Shape {
+  constructor(private radius: number) {
+    super("circle");
+  }
+  override area(): number {
+    return Math.PI * this.radius ** 2;
+  }
+}
+class Square extends Shape {
+  side: number;
+  constructor(side: number) {
+    super("square");
+    this.side = side;
+  }
+  override area(): number {
+    return this.side * this.side;
+  }
+  static unit(): Square {
+    return new Square(1);
+  }
+}
+const shapes: Shape[] = [new Circle(1), new Square(2), Square.unit()];
+for (const shape of shapes) console.log(shape.describe(), shape instanceof Circle);
+console.log(Shape.count);
+//// closures.ts
+// Closures that count, capture loop variables and are handed around.
+function counter(start: number) {
+  let value = start;
+  return {
+    next: () => ++value,
+    reset() {
+      value = start;
+    },
+  };
+}
+const a = counter(1);
+const b = counter(10);
+a.next();
+a.next();
+b.next();
+a.reset();
+console.log(a.next(), b.next());
+const callbacks: (() => number)[] = [];
+for (let i = 0; i < 3; i++) callbacks.push(() => i * i);
+console.log(callbacks.map(callback => callback()));
+function compose<A, B, C>(f: (a: A) => B, g: (b: B) => C): (a: A) => C {
+  return a => g(f(a));
+}
+console.log(compose((n: number) => n + 1, n => String(n) + "!")(41));
+//// commonjs-modules-require-one-another/commonjs-helper.js
+let loads = 0;
+loads++;
+module.exports = {
+  name: "helper",
+  twice(n) {
+    return n * 2;
+  },
+  loads,
+};
+//// commonjs-modules-require-one-another/main.js
+// A CommonJS module is required twice, whole and by a pattern; module.id, __filename and require.main of the entry point.
+const helper = require("./commonjs-helper.js");
+const { twice } = require("./commonjs-helper.js");
+console.log(helper.name, twice(21), module.id === ".", typeof __filename, require.main === module);
+exports.done = true;
+//// destructuring.ts
+// Patterns over objects and arrays, with defaults, rests and nesting.
+const point = { x: 1, y: 2, nested: { z: [3, 4, 5] }, extra: "e" };
+const {
+  x,
+  y: renamed,
+  nested: {
+    z: [first, , third = 9, fourth = 10],
+  },
+  missing = "default",
+  ...rest
+} = point as typeof point & { missing?: string };
+console.log(x, renamed, first, third, fourth, missing, rest);
+let p = 1,
+  q = 2;
+[p, q] = [q, p];
+console.log(p, q);
+function area({ width = 1, height = width }: { width?: number; height?: number } = {}): number {
+  return width * height;
+}
+console.log(area(), area({ width: 3 }), area({ width: 2, height: 5 }));
+const [head, ...tail] = "abc";
+console.log(head, tail);
+for (const [key, value] of Object.entries({ a: 1, b: 2 })) console.log(key, value);
+const key = "dynamic";
+const { [key]: computed = "none" } = { dynamic: "found" } as Record<string, string>;
+console.log(computed);
+//// enums.ts
+// Enums: numbers, strings, const enums and the way back from a number to its name.
+enum Color {
+  Red,
+  Green = 5,
+  Blue,
+}
+enum Direction {
+  Up = "UP",
+  Down = "DOWN",
+}
+const enum Flags {
+  None = 0,
+  A = 1 << 0,
+  B = 1 << 1,
+  Both = A | B,
+}
+enum Computed {
+  Length = "abc".length,
+  Next = 4,
+}
+function name(color: Color): string {
+  return Color[color];
+}
+console.log(Color.Red, Color.Blue, name(Color.Green), Direction.Down, Flags.Both, Computed.Next);
+console.log(Object.keys(Color), Object.values(Direction));
+namespace Geometry {
+  export const origin = { x: 0, y: 0 };
+  export function distance(x: number, y: number): number {
+    return Math.hypot(x - origin.x, y - origin.y);
+  }
+}
+console.log(Geometry.distance(3, 4));
+//// es-modules-import-one-another/es-exports.ts
+export const PI = 3.14159;
+export let counter = 0;
+export function increment(): void {
+  counter++;
+}
+export function area(radius: number): number {
+  return PI * radius * radius;
+}
+export interface Point {
+  x: number;
+  y: number;
+}
+export default function greet(name: string): string {
+  return "hello " + name;
+}
+//// es-modules-import-one-another/main.ts
+// Default, named, renamed, namespace and type imports, a re-export and a dynamic import of one module.
+import greet, { PI, area as circleArea, type Point } from "./es-exports.ts";
+import * as everything from "./es-exports.ts";
+export { PI } from "./es-exports.ts";
+const origin: Point = { x: 0, y: 0 };
+console.log(greet("world"), PI, circleArea(2), everything.counter, origin.x);
+everything.increment();
+console.log(everything.counter, Object.keys(everything).length);
+const lazy = await import("./es-exports.ts");
+console.log(lazy.default === greet);
+//// generators.ts
+// Generators: next, return, throw, delegation and spreads of them.
+function* range(from: number, to: number): Generator<number, string, number | undefined> {
+  for (let i = from; i < to; i++) {
+    const step = yield i;
+    if (step !== undefined) i += step;
+  }
+  return "done";
+}
+function* both() {
+  const result = yield* range(0, 2);
+  yield result;
+  try {
+    yield "inside";
+  } finally {
+    console.log("closed");
+  }
+}
+console.log([...range(0, 4)]);
+const it = range(0, 10);
+console.log(it.next(), it.next(3), it.return("early"), it.next());
+for (const value of both()) {
+  console.log(value);
+  if (value === "inside") break;
+}
+const object = {
+  *[Symbol.iterator]() {
+    yield 1;
+    yield 2;
+  },
+};
+console.log(Math.max(...object));
+//// getters-and-setters.ts
+// Getters and setters of classes and of literals.
+class Temperature {
+  #celsius = 0;
+  static #instances = 0;
+  constructor() {
+    Temperature.#instances++;
+  }
+  get fahrenheit(): number {
+    return this.#celsius * 1.8 + 32;
+  }
+  set fahrenheit(value: number) {
+    this.#celsius = (value - 32) / 1.8;
+  }
+  static get instances(): number {
+    return Temperature.#instances;
+  }
+}
+const t = new Temperature();
+t.fahrenheit = 212;
+console.log(t.fahrenheit, Temperature.instances);
+const object = {
+  _value: 1,
+  get value() {
+    return this._value;
+  },
+  set value(next: number) {
+    this._value = next * 2;
+  },
+};
+object.value = 5;
+object.value += 1;
+console.log(object.value, Object.getOwnPropertyDescriptor(object, "value")!.get !== undefined);
+const defined = Object.defineProperty({} as { lazy: number }, "lazy", { get: () => 42, enumerable: true });
+console.log(defined.lazy, JSON.stringify(defined));
+//// jsx-with-a-factory-of-its-own.tsx
+/** @jsxRuntime classic */
+/** @jsx h */
+/** @jsxFrag Fragment */
+type Child = string | number | Element | Child[];
+interface Element {
+  tag: string | Function | symbol;
+  props: Record<string, unknown> | null;
+  children: Child[];
+}
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      [name: string]: Record<string, unknown>;
+    }
+  }
+}
+const Fragment = Symbol("fragment");
+function h(tag: Element["tag"], props: Element["props"], ...children: Child[]): Element {
+  return { tag, props, children };
+}
+function Item({ label }: { label: string; key?: string | number }) {
+  return <li title={label}>{label}</li>;
+}
+const props = { id: "list", "data-x": 1 };
+const tree = (
+  <ul {...props} className="c">
+    <Item label="one" />
+    <li>
+      <b>2</b> &amp; more
+    </li>
+    <>
+      {[3, 4].map(n => (
+        <Item label={String(n)} key={n} />
+      ))}
+    </>
+  </ul>
+);
+console.log(tree.tag, tree.children.length, JSON.stringify(tree.props));
+//// labeled-loops.ts
+// break and continue with labels, in nested loops.
+const found: number[][] = [];
+outer: for (let i = 0; i < 4; i++) {
+  inner: for (let j = 0; j < 4; j++) {
+    if (j === 2) continue outer;
+    if (i === 3) break outer;
+    if (i === j) continue inner;
+    found.push([i, j]);
+  }
+}
+console.log(found);
+let n = 0;
+block: {
+  n++;
+  if (n === 1) break block;
+  n = 100;
+}
+do {
+  n += 2;
+} while (n < 6);
+while (true) {
+  if (++n > 8) break;
+}
+for (const key in { a: 1, b: 2 }) console.log(key);
+for (let i = 0, j = 10; i < j; i += 3, j -= 3) console.log(i, j);
+console.log(n);
+//// spread.ts
+// Spreads into calls, arrays and objects.
+const numbers = [1, 2, 3];
+const more = [0, ...numbers, 4, ...new Set([5, 5, 6])];
+console.log(more, Math.max(...more), [..."hi"]);
+const base = { a: 1, b: 2 };
+const nothing = null as { d: number } | null;
+const merged = { ...base, b: 3, ...{ c: 4 }, ...nothing };
+console.log(merged);
+function sum(...values: number[]): number {
+  return values.reduce((total, value) => total + value, 0);
+}
+console.log(sum(), sum(...numbers), sum(1, ...numbers, 2));
+class Pair {
+  constructor(
+    public left: number,
+    public right: number,
+  ) {}
+}
+const pair = new Pair(...([7, 8] as [number, number]));
+console.log(pair.left, pair.right);
+//// switch.ts
+// switch over numbers, strings and with cases that fall through.
+function classify(value: number | string | null): string {
+  switch (value) {
+    case 0:
+    case 1:
+      return "small";
+    case 2:
+      value = 3;
+    case 3: {
+      const inner = "three";
+      return inner + value;
+    }
+    case "text":
+      return "string";
+    case null:
+      return "null";
+    default:
+      break;
+  }
+  switch (typeof value) {
+    case "number":
+      return value > 100 ? "big" : "medium";
+    default:
+      return "other";
+  }
+}
+console.log([0, 1, 2, 3, "text", null, 50, 500, "x"].map(classify));
+function dynamic(x: number, y: number): string {
+  switch (true) {
+    case x > y:
+      return "greater";
+    case x === y:
+      return "equal";
+  }
+  return "less";
+}
+console.log(dynamic(1, 2), dynamic(2, 2), dynamic(3, 2));
+//// ten-built-in-modules-are-imported-and-one-required.ts
+// Ten modules of Node are imported, one is required, and a member of a few is asked for.
+import fs from "node:fs";
+import net from "node:net";
+import zlib from "node:zlib";
+import crypto from "node:crypto";
+import child_process from "node:child_process";
+import url from "node:url";
+import path from "node:path";
+import events from "node:events";
+import stream from "node:stream";
+import http from "node:http";
+const util = require("node:util");
+
+console.log(typeof fs, typeof net, typeof zlib, typeof crypto, typeof child_process);
+console.log(typeof url, typeof path, typeof events, typeof stream, typeof http, typeof util);
+console.log(path.join("a", "b"), typeof fs.existsSync, typeof util.inspect, typeof stream.Readable);
+//// the-rest-of-a-destructured-array.ts
+// `const [first, ...rest] = parts` on lists that were parsed: the rest of a list of one is empty.
+const MANY = "many";
+function head(parts: string[]): string {
+  const [first, ...rest] = parts;
+  if (first !== undefined && rest.length === 0) return first;
+  return MANY;
+}
+console.log(head(JSON.parse(process.argv.length > 5 ? "[]" : "[\"a\"]")), head(JSON.parse("[\"a\",\"b\"]")));
+//// the-standard-streams-of-process.ts
+// process.stdout, stderr and stdin are written to, asked and listened to.
+process.stdout.write("x\n");
+process.stderr.write("");
+console.log(typeof process.stdin.on, process.stdout.isTTY === undefined || typeof process.stdout.isTTY === "boolean");
+process.stdin.on("data", () => {});
+process.stdin.pause();
+export {};
+//// two-reads-of-an-element-behind-array-isarray.ts
+// `Array.isArray(x) && typeof x[0] === "object" && x[0] !== null && "k" in x[0]`: one element is read again and again behind tests that narrow it.
+function isList(x: unknown): boolean {
+  return Array.isArray(x) && typeof x[0] === "object" && x[0] !== null && "k" in x[0] && typeof x[0].k === "string";
+}
+const inputs = JSON.parse("[[{\"k\":\"a\"}],[1],[null],{},[{\"j\":1}]]");
+for (const input of inputs) console.log(isList(input));
+//// typed-parse.ts
+// `JSON.parse(text) as T`: the text is parsed by code compiled for T, and what that code gives up on goes to the parser of the engine.
+interface Address { city: string; zip?: string }
+interface User { id: number; name: string; tags: string[]; address: Address | null; active: boolean }
+
+const text = '{"id":7,"name":"Ada","tags":["a","b"],"address":{"city":"London"},"active":true}';
+const user = JSON.parse(text) as User;
+console.log(user.id + 1, user.name.length, user.tags.join("+"), user.address?.city, user.address?.zip, user.active);
+
+const users = JSON.parse("[" + text + "," + text.replace("7", "8").replace('{"city":"London"}', "null") + "]") as User[];
+let sum = 0;
+for (const each of users)
+    sum += each.id;
+console.log(users.length, sum, users[1].address);
+
+// With white space, escapes and members in another order the compiled parser may give up: the answer is the same.
+const spaced = JSON.parse(' {\n "active" : false , "tags" : [ ] , "name" : "A\\u0064a\\n" , "id" : 1e1 , "address" : { "zip" : "N1" , "city" : "Y" } , "extra" : [1, {"x": null}] } ') as User;
+console.log(spaced.id, JSON.stringify(spaced.name), spaced.tags.length, spaced.address?.zip, spaced.active);
+
+function tryParse(source: string): string {
+    try {
+        const parsed = JSON.parse(source) as User;
+        return "parsed " + typeof parsed;
+    } catch (error) {
+        return (error as Error).constructor.name;
+    }
+}
+console.log(tryParse("{"), tryParse(text));
+console.log((JSON.parse("42") as number) + 1, (JSON.parse('["x","y"]') as string[]).length, JSON.parse("null") as boolean | null);
+
+// Text that does not hold what the type says: the compiled parser gives up, and the value is what the text says.
+const misfit = JSON.parse('{"id":"seven","tags":7}') as User;
+console.log(typeof misfit, misfit.id, misfit.tags);
+// The key is spelled with an escape, which is the same key.
+console.log((JSON.parse('{"c\\u0069ty":"Rome"}') as Address).city);

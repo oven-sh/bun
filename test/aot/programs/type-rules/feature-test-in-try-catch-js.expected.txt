@@ -1,0 +1,9 @@
+fell back: TypeError
+defined
+assigned
+fell back: true
+finally
+replaced
+inner finally
+thrown in a function: TypeError
+1 3 function 2 true undefined

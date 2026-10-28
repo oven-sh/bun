@@ -1,0 +1,15 @@
+1 1
+own: ./one.cjs
+1
+own: ./one.cjs
+string
+own: ./one.cjs
+1
+own: ./one.cjs
+1,own: ./one.cjs
+1
+own: ./one.cjs
+1
+undefined
+MODULE_NOT_FOUND
+own: ./missing.cjs

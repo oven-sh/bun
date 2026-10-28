@@ -59,6 +59,8 @@ const {
 const { isIP } = require("internal/net/isIP");
 
 const EventEmitter = require("node:events");
+// Read once at load. The export is writable, and a listener under any other key would count as an 'error' handler.
+const kErrorMonitor = EventEmitter.errorMonitor;
 
 const { deprecate } = require("internal/util/deprecate");
 
@@ -689,7 +691,7 @@ Socket.prototype.bind = function (this: $Node.DgramSocket, port_, address_ /* , 
   const cb: unknown = arguments.length && arguments[arguments.length - 1];
   if (typeof cb === "function") {
     function removeListeners(this: $Node.DgramSocket) {
-      this.removeListener(EventEmitter.errorMonitor, removeListeners);
+      this.removeListener(kErrorMonitor, removeListeners);
       this.removeListener("listening", onListening);
     }
 
@@ -698,7 +700,7 @@ Socket.prototype.bind = function (this: $Node.DgramSocket, port_, address_ /* , 
       (cb as (this: $Node.DgramSocket) => void).$call(this);
     }
 
-    this.on(EventEmitter.errorMonitor, removeListeners);
+    this.on(kErrorMonitor, removeListeners);
     this.on("listening", onListening);
   }
 
@@ -1099,14 +1101,14 @@ function enqueue(self: $Node.DgramSocket, toEnqueue: () => void) {
   // event handler that flushes the send queue after binding is done.
   if (state.queue === undefined) {
     state.queue = [];
-    self.once(EventEmitter.errorMonitor, onListenError);
+    self.once(kErrorMonitor, onListenError);
     self.once("listening", onListenSuccess);
   }
   state.queue.push(toEnqueue);
 }
 
 function onListenSuccess(this: $Node.DgramSocket) {
-  this.removeListener(EventEmitter.errorMonitor, onListenError);
+  this.removeListener(kErrorMonitor, onListenError);
   clearQueue.$call(this);
 }
 

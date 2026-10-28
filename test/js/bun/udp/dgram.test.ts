@@ -445,6 +445,16 @@ describe("bind()", () => {
       "uncaughtException EADDRINUSE",
     ],
     [
+      "an overwritten events.errorMonitor export changes nothing",
+      `withTakenPort(port => {
+        require("node:events").errorMonitor = "error";
+        const socket = dgram.createSocket("udp4");
+        socket.bind(port, "127.0.0.1", () => console.log("callback"));
+        socket.send("x", port, "127.0.0.1", () => console.log("send callback"));
+      });`,
+      "uncaughtException EADDRINUSE",
+    ],
+    [
       "a lookup that fails asynchronously raises its error",
       `const failure = Object.assign(new Error("lookup failed"), { code: "ELOOKUP" });
       const lookup = (hostname, family, callback) => process.nextTick(callback, failure);

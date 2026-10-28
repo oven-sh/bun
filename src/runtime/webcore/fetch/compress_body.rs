@@ -318,8 +318,8 @@ pub(crate) struct PendingFetch {
 unsafe impl bun_jsc::job::JsAffine for PendingFetch {}
 
 jsc::impl_abort_handle_owner!(PendingFetch, abort_handle, |this, cause| {
-    // SAFETY: trait contract: `this` is live; JS thread.
     if let jsc::AbortCause::Signal(reason) = cause {
+        // SAFETY: trait contract: `this` is live; JS thread.
         unsafe { (*this).reject_aborted(reason) }
     }
 });
@@ -358,13 +358,13 @@ impl jsc::JobContext for CompressRequestBody {
     }
 
     fn then(this: Self, js: Box<PendingFetch>, cx: &jsc::JsThread<'_>) -> JsResult<()> {
+        // The signal holds the handle's boxed address: unfollow before the move.
+        js.abort_handle.unfollow();
         let PendingFetch {
             fetch_options,
             promise,
-            abort_handle,
             ..
         } = *js;
-        abort_handle.unfollow();
         // Rejected by the signal during the hop.
         if !promise.has_value() {
             return Ok(());
@@ -418,7 +418,7 @@ pub(crate) fn compress_then_queue(
     });
     if let Some(signal) = signal {
         // SAFETY: boxed, so the address holds until `then` or the release drops it.
-        unsafe { jsc::AbortHandle::follow_owner(&mut *pending as *mut PendingFetch, signal) };
+        unsafe { jsc::AbortHandle::follow_owner(&raw mut *pending, signal) };
         if !pending.promise.has_value() {
             return Ok(());
         }

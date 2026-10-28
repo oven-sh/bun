@@ -341,6 +341,23 @@ describe("fetch compress option", () => {
     expect(requests).toBe(1);
   });
 
+  test.concurrent("a signal that fires after a large compressed fetch completed is harmless", async () => {
+    using server = makeServer();
+    const controller = new AbortController();
+    const res = await fetch(server.url, {
+      method: "POST",
+      body: Buffer.alloc(600 * 1024, "abcdefghij").toString(),
+      compress: "gzip",
+      signal: controller.signal,
+    });
+    expect((await res.json()).encoding).toBe("gzip");
+    Bun.gc(true);
+    controller.abort(new Error("late"));
+    Bun.gc(true);
+    const again = await fetch(server.url, { method: "POST", body: "x" });
+    expect(again.status).toBe(200);
+  });
+
   // The HTTP thread serves every fetch socket in the process. Compressing a
   // body on that thread stalled every other in-flight response for the whole
   // codec time (#47164). zstd level 19 on 400 KiB takes long enough to show it

@@ -7,7 +7,18 @@ import zlib from "node:zlib";
 import { slow } from "./check";
 import { chunksOf, linesOf, type PngOptions } from "./observe";
 import { read } from "./read";
-import { formats, iccp, noise, randomBytes, RGBA, rgbaOf, write, writeAround, type Picture } from "./write";
+import {
+  filteredLines,
+  formats,
+  iccp,
+  noise,
+  randomBytes,
+  RGBA,
+  rgbaOf,
+  write,
+  writeAround,
+  type Picture,
+} from "./write";
 
 /** Pictures that favor different filters and compress differently. The same for the same size. */
 const contents: Record<string, (width: number, height: number) => Picture> = {
@@ -126,6 +137,95 @@ describe("RGBA", () => {
     const idat = Buffer.concat(chunks.filter(c => c.type === "IDAT").map(c => c.data));
     expect(Buffer.concat(parts).equals(idat)).toBe(true);
     expect(beforeTheEnd % 8192).toBe(8191);
+  });
+
+  // As libspng did: of the five ways to filter a row, the one whose bytes are nearest to zero in sum, where 255 is as
+  // near as 1. The first of equals.
+  test("each row gets the first of the filters with the lowest sum", async () => {
+    // In a row of each, two filters have the lowest sum and no third, or one has it and another has one more.
+    const close = `
+      1x2 02ff000301020000
+      2x1 00ffffffff01ff01
+      2x2 80c0c00040800000c0804040c0400000
+      2x2 01000100010100010000010100010000
+      2x2 fdff0300fffdfe00fcfffffffcfefd03
+      2x2 00000000010100010000000100000101
+      2x1 0000008080000080
+      2x2 0000400080c00080c000c00040804080
+      1x2 ff03fd01ff03fc01
+      2x2 000000c080c00080c040808000808080
+      2x2 01ff01ffff0001ff01010001ff01ffff
+      2x2 ff000101010000010001010000ff0001
+      2x2 01000101000001000001010001000000
+      2x2 00fdfefdfe01020302fd01fe0002fe01
+      2x2 0100010101ffffff01ffff000101ff01
+      2x2 01000101010001000001000101010101
+      2x2 01000100000001010001010000010100
+      2x2 0001010101ff00ffff010100ff0101ff
+      2x2 00000001010100000101010101000000
+      2x2 01010000000000000101010001010001
+      2x2 00000001000101010100010000010101
+      2x2 ff00000101ffff01ff00000201ffff01
+      2x1 1e148a1e0a8a1e14
+      2x1 0002000300020201
+      1x2 fc00ff01fc007f01
+      2x2 949e8a148a148a9e1e1e9e1e0a9e948a
+      2x2 00ff010001ff00ffffff0100ff01ff00
+      2x2 00000100000001000001010100010101
+      2x2 8180808181818180808080807f807f80
+      3x2 010101000001010100010001010001010000010101000001`;
+    // Paeth has the lowest sum only if, where b is as near as c, or a as near as c, it takes the first of the two.
+    const ties = `
+      2x2 00000102000001000000000300010000
+      2x2 00010000000000000003010000030000`;
+    const pictures = Array.from((close + ties).matchAll(/(\d+)x(\d+) (\w+)/g), ([, width, height, hex]) => {
+      const bytes = Buffer.from(hex, "hex");
+      return fill(+width, +height, (x, y) => [...bytes.subarray((y * +width + x) * 4, (y * +width + x + 1) * 4)]);
+    });
+    // And of few values that are near each other or near the middle, so that sums are close.
+    const random = randomBytes(5);
+    for (const values of [
+      [0, 1],
+      [0, 128],
+      [127, 128, 129],
+      [0, 1, 255],
+      [0, 64, 128, 192],
+    ]) {
+      for (let i = 0; i < (slow ? 8 : 200); i++) {
+        pictures.push(
+          fill(1 + (random() % 6), 1 + (random() % 3), () => [0, 0, 0, 0].map(() => values[random() % values.length])),
+        );
+      }
+    }
+
+    const met = new Set<string>();
+    const wrong = await Promise.all(
+      pictures.map(async picture => {
+        const candidates = [0, 1, 2, 3, 4].map(type => Buffer.from(filteredLines(picture, { filter: () => type })));
+        const length = 1 + picture.width * 4;
+        const expected = Buffer.concat(
+          Array.from({ length: picture.height }, (_, y) => {
+            const lines = candidates.map(all => all.subarray(y * length, (y + 1) * length));
+            const sums = lines.map(line => line.subarray(1).reduce((sum, x) => sum + Math.min(x, 256 - x), 0));
+            const lowest = Math.min(...sums);
+            const [first, second, third] = sums.flatMap((sum, type) => (sum === lowest ? [type] : []));
+            if (second !== undefined && third === undefined) met.add(`${first} = ${second}`);
+            if (second === undefined) sums.forEach((sum, type) => sum === lowest + 1 && met.add(`${first} < ${type}`));
+            return lines[first];
+          }),
+        );
+        const file = await new Bun.Image(write(picture)).png({ compressionLevel: 1 }).bytes();
+        const lines = linesOf([...chunksOf(file)]);
+        return lines.equals(expected) ? [] : [`${rgbaOf(picture).toString("hex")}: ${lines.toString("hex")}`];
+      }),
+    );
+    expect(wrong.flat()).toEqual([]);
+    const types = [0, 1, 2, 3, 4];
+    expect([...met].sort()).toEqual(
+      types
+        .flatMap(a => types.flatMap(b => (a === b ? [] : [`${a} < ${b}`, ...(a < b ? [`${a} = ${b}`] : [])])))
+        .sort(),
+    );
   });
 
   // libspng added up the bytes of a filtered row in 32 bits, and did not try with rows that could be too much for that.

@@ -2541,9 +2541,7 @@ impl JSValue {
         // SAFETY: the callee writes nothing when `capacity` is 0.
         let count = unsafe { Bun__JSArray__presentIndexes(self, core::ptr::null_mut(), 0) };
         let mut indexes = Vec::<u32>::new();
-        if indexes.try_reserve_exact(count as usize).is_err() {
-            return indexes;
-        }
+        bun_core::handle_oom(indexes.try_reserve_exact(count as usize));
         // SAFETY: `indexes` has room for `count` elements. The callee writes at
         // most `count` of them and initializes each one that it counts.
         unsafe {

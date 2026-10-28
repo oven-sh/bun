@@ -12,6 +12,20 @@ import { join } from "node:path";
 import zlib from "node:zlib";
 import { differences } from "../../archive-golden/observe";
 import { chunksOf, linesOf, loadCases, observeDecode, observeEncode, type PngOptions } from "./observe";
+import {
+  chunk,
+  GRAY,
+  GRAY_ALPHA,
+  iccp as profileChunk,
+  iend,
+  ihdr,
+  INDEXED,
+  paeth,
+  png,
+  randomBytes,
+  RGB,
+  RGBA,
+} from "./write";
 
 const cases = await loadCases(join(import.meta.dir, "cases.json.gz"));
 const files = new Map(cases.decode.map(c => [c.name, Buffer.from(c.data, "base64")]));
@@ -42,36 +56,8 @@ describe("Bun.Image reads and writes PNG the way it was recorded to", () => {
   });
 });
 
-const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-
-function chunk(type: string, data: Uint8Array | number[] | string = []) {
-  const body = Buffer.from(data as Uint8Array);
-  const out = Buffer.alloc(12 + body.length);
-  out.writeUInt32BE(body.length, 0);
-  out.write(type, 4, "latin1");
-  out.set(body, 8);
-  out.writeUInt32BE(zlib.crc32(out.subarray(4, 8 + body.length)), 8 + body.length);
-  return out;
-}
-
-const GRAY = 0;
-const RGB = 2;
-const INDEXED = 3;
-const GRAY_ALPHA = 4;
-const RGBA = 6;
-
-function ihdr(width: number, height: number, depth: number, colorType: number, interlace = 0) {
-  const data = Buffer.alloc(13);
-  data.writeUInt32BE(width, 0);
-  data.writeUInt32BE(height, 4);
-  data.set([depth, colorType, 0, 0, interlace], 8);
-  return chunk("IHDR", data);
-}
-
 /** `rows` are unfiltered. */
 const idat = (...rows: number[][]) => chunk("IDAT", zlib.deflateSync(Buffer.from(rows.flatMap(row => [0, ...row]))));
-const iend = chunk("IEND");
-const png = (...chunks: Buffer[]) => Buffer.concat([signature, ...chunks]);
 
 /** The pixels as `rrggbbaa`, and the color profile. */
 async function decodeToHex(file: Uint8Array, options: { maxPixels?: number } = {}) {
@@ -98,8 +84,7 @@ const profile = async (...chunks: Buffer[]) => (await decode(png(...chunks))).pr
 const rejects = (...chunks: Buffer[]) =>
   expect(decode(png(...chunks))).rejects.toMatchObject({ code: "ERR_IMAGE_DECODE_FAILED" });
 
-const iccp = (text: string, name = "name") =>
-  chunk("iCCP", Buffer.concat([Buffer.from(`${name}\0\0`, "latin1"), zlib.deflateSync(Buffer.from(text))]));
+const iccp = (text: string, name = "name") => profileChunk(name, text);
 
 // Each of these was so with libspng too, whatever the specification says, unless it says what libspng did.
 describe("chunks before the image", () => {
@@ -258,6 +243,9 @@ describe("chunks before the image", () => {
     expect((await decode(many(1001, ...Array(999).fill(text), chunk("eXIf", "x"), chunk("eXIf", "x")))).pixels).toEqual(
       ["01020304"],
     );
+    // But the first does.
+    await rejects(rgbaHeader, ...Array(1000).fill(text), chunk("eXIf", "x"), rgbaData, iend);
+    await rejects(rgbaHeader, chunk("eXIf", "x"), ...Array(1000).fill(text), rgbaData, iend);
   });
 
   test("a profile that inflates to more than the limit costs the image too", async () => {
@@ -339,6 +327,13 @@ describe("the image", () => {
     expect(await pixels(header, chunk("IDAT", stored), iend)).toEqual(expected);
   });
 
+  test("a row of 2^32 - 1 bytes is too long, however many pixels are allowed", async () => {
+    const code = (width: number) =>
+      decode(png(ihdr(width, 1, 8, RGB), idat([1, 2, 3]), iend)).catch(error => error.code);
+    expect(await code(1431655764)).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
+    expect(await code(1431655765)).toBe("ERR_IMAGE_DECODE_FAILED");
+  });
+
   test("a stream that ends early, or a filter that does not exist, is refused", async () => {
     await rejects(header, chunk("IDAT", zlib.deflateSync(Buffer.from([0, 1, 2, 0, 3]))), iend);
     await rejects(header, chunk("IDAT", zlib.deflateSync(Buffer.from([0, 1, 2, 5, 3, 4]))), iend);
@@ -347,7 +342,6 @@ describe("the image", () => {
     await rejects(header, iend);
   });
 
-  const randomBytes = (seed: number) => () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) >>> 24;
   /** Color type, bit depth, channels. */
   const pixelFormats = [
     [GRAY, 8, 1],
@@ -360,12 +354,6 @@ describe("the image", () => {
 
   /** A file whose rows have `filters` and the bytes that `filtered()` gives, with what it decodes to. */
   function filteredImage(format: number[], width: number, filters: number[], filtered: (predicted: number) => number) {
-    const paeth = (a: number, b: number, c: number) => {
-      const pa = Math.abs(b - c);
-      const pb = Math.abs(a - c);
-      const pc = Math.abs(a + b - 2 * c);
-      return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
-    };
     const [colorType, depth, channels] = format;
     const bpp = (channels * depth) / 8;
     const lines = Buffer.alloc(filters.length * (1 + width * bpp));

@@ -1257,7 +1257,7 @@ pub fn has_hpack_huffman_kernel() -> bool {
     false
 }
 
-/// What [`hpack_huffman_decode_short`] writes at a time: `kMaxSymbols` in `highway_hpack.cpp`.
+/// What [`hpack_huffman_decode_short`] writes at a time: `kStoreBytes` in `highway_hpack.cpp`.
 pub const HPACK_HUFFMAN_SPARE_OUT: usize = 16;
 
 /// Returns the bit it stopped at and how many symbols it put in `out`, where it may overwrite [`HPACK_HUFFMAN_SPARE_OUT`] bytes more. See `src/hpack/huffman_simd.md`.

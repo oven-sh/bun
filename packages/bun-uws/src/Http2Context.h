@@ -108,7 +108,8 @@ static constexpr uint32_t LOCAL_MAX_CONCURRENT_STREAMS = 256;
 /* Same cap as the HTTP/1 parser (UWS_HTTP_MAX_HEADERS_COUNT). */
 static constexpr size_t MAX_HEADER_FIELDS = 200;
 static constexpr unsigned MAX_SETTINGS_PER_FRAME = 32;
-/* What a decoded field counts towards the header list limits beside its name and value: the ": " and CRLF of HTTP/1. */
+/* What a decoded field counts towards the header list limits beside its name
+ * and value: the ": " and CRLF of HTTP/1. */
 static constexpr size_t DECODED_FIELD_OVERHEAD = 4;
 /* A header block may span this many CONTINUATION frames (the byte cap alone
  * doesn't bound a flood of empty ones). */
@@ -1516,8 +1517,8 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
         BunHpackField field = {};
         BunHpackResult result = Bun__Hpack__decode(hpack, block, length, &position, &field);
         if (result == BUN_HPACK_END_OF_BLOCK) break;
-        if (result == BUN_HPACK_INVALID) return connectionError(http2::ERR_COMPRESSION_ERROR);
         if (result == BUN_HPACK_TOO_LARGE) return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
+        if (result != BUN_HPACK_FIELD) return connectionError(http2::ERR_COMPRESSION_ERROR);
         size_t size = (size_t) field.nameLength + field.valueLength + http2::DECODED_FIELD_OVERHEAD;
         decoded += size;
         fields++;

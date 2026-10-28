@@ -2812,37 +2812,94 @@ describe("HEADERS on a closed stream (RFC 9113 §5.1)", () => {
     },
   };
 
-  test.each(Object.keys(closings))("that %s are decoded and dropped", async name => {
-    const srv = http2.createServer();
-    const seen: http2.IncomingHttpHeaders[] = [];
-    srv.on("stream", (stream, headers) => {
-      seen.push(headers);
-      stream.on("error", () => {});
-      if (headers[":method"] === "POST") return stream.close(http2.constants.NGHTTP2_CANCEL);
-      stream.respond({ ":status": 200 });
-      stream.end("ok");
-    });
-    srv.listen(0, "127.0.0.1");
-    await once(srv, "listening");
-    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+  // Each entry is a way to send that block on stream 1.
+  const shapes: Record<string, Buffer[]> = {
+    "in one frame": [encodeFrame(FrameType.HEADERS, 0x5, 1, trailers)],
+    "without END_STREAM": [encodeFrame(FrameType.HEADERS, 0x4, 1, trailers)],
+    "with a CONTINUATION frame": [
+      encodeFrame(FrameType.HEADERS, 0x1, 1, trailers.subarray(0, 3)),
+      encodeFrame(FrameType.CONTINUATION, 0x4, 1, trailers.subarray(3)),
+    ],
+    "padded and with a priority": [
+      encodeFrame(
+        FrameType.HEADERS,
+        0x2d,
+        1,
+        Buffer.concat([Buffer.from([2, 0, 0, 0, 0, 15]), trailers, Buffer.alloc(2)]),
+      ),
+    ],
+  };
+
+  test.each(Object.keys(closings).flatMap(name => Object.keys(shapes).map(shape => [name, shape])))(
+    "that %s are decoded and dropped, %s",
+    async (name, shape) => {
+      const srv = http2.createServer();
+      const seen: http2.IncomingHttpHeaders[] = [];
+      srv.on("stream", (stream, headers) => {
+        seen.push(headers);
+        stream.on("error", () => {});
+        if (headers[":method"] === "POST") return stream.close(http2.constants.NGHTTP2_CANCEL);
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+      srv.listen(0, "127.0.0.1");
+      await once(srv, "listening");
+      const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+      try {
+        c.sendPreface();
+        c.sendEmptySettings();
+        await closings[name](c);
+        c.send(Buffer.concat(shapes[shape]));
+        c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET")); // Not a new request either.
+        c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET", Buffer.from([0xbe])));
+        expect((await c.waitFor(headersOrGoaway(3))).type).toBe(FrameType.HEADERS);
+        expect(resets(c.frames)).toEqual([]);
+        expect(seen.map(headers => headers["x-late"])).toEqual([undefined, "1"]);
+      } finally {
+        c.destroy();
+        srv.close();
+      }
+    },
+  );
+
+  test("that do not decode are a COMPRESSION_ERROR all the same", async () => {
+    const c = await RawH2.connect(port);
     try {
       c.sendPreface();
       c.sendEmptySettings();
-      await closings[name](c);
-      c.sendFrame(FrameType.HEADERS, 0x5, 1, trailers);
-      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET")); // Not a new request either.
-      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET", Buffer.from([0xbe])));
-      expect((await c.waitFor(headersOrGoaway(3))).type).toBe(FrameType.HEADERS);
-      expect(resets(c.frames)).toEqual([]);
-      expect(seen.map(headers => headers["x-late"])).toEqual([undefined, "1"]);
+      await closings["the server answered"](c);
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, Buffer.from([0x80]));
+      expect(goawayErrorCode(await c.waitForGoaway())).toBe(ErrorCode.COMPRESSION_ERROR);
     } finally {
       c.destroy();
-      srv.close();
     }
   });
 
-  test("a request with an id below that of a push is not on a closed stream", async () => {
+  test("an id below one that was used is closed too (§5.1.1)", async () => {
+    const c = await RawH2.connect(port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5, 5, requestHeaderBlock("GET"));
+      await c.waitFor(headersOrGoaway(5));
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
+      c.sendFrame(FrameType.HEADERS, 0x5, 7, requestHeaderBlock("GET"));
+      expect((await c.waitFor(headersOrGoaway(7))).type).toBe(FrameType.HEADERS);
+      expect(c.frames.filter(f => f.streamId === 3)).toEqual([]);
+    } finally {
+      c.destroy();
+    }
+  });
+
+  const cancel = Buffer.from([0, 0, 0, ErrorCode.CANCEL]);
+
+  // The server has pushed streams 2 and 4 by then, which says nothing about the client's stream 3.
+  test.each([
+    ["a request with an id below that of a push is not on a closed stream", FrameType.HEADERS, FrameType.HEADERS],
+    ["RST_STREAM for an id below that of a push is for an idle stream (§6.4)", FrameType.RST_STREAM, FrameType.GOAWAY],
+  ])("%s", async (_, type, expected) => {
     const srv = http2.createServer();
+    srv.on("sessionError", () => {});
     srv.on("stream", stream => {
       stream.on("error", () => {});
       for (const path of stream.id === 1 ? ["/a", "/b"] : []) {
@@ -2859,11 +2916,54 @@ describe("HEADERS on a closed stream (RFC 9113 §5.1)", () => {
       c.sendEmptySettings();
       c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
       await c.waitFor(f => f.type === FrameType.PUSH_PROMISE && f.payload.readUInt32BE(0) === 4);
-      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
-      expect((await c.waitFor(headersOrGoaway(3))).type).toBe(FrameType.HEADERS);
+      if (type === FrameType.HEADERS) c.sendFrame(type, 0x5, 3, requestHeaderBlock("GET"));
+      else c.sendFrame(type, 0, 3, cancel);
+      const answer = await c.waitFor(headersOrGoaway(3));
+      expect(answer.type).toBe(expected);
+      if (answer.type === FrameType.GOAWAY) expect(goawayErrorCode(answer)).toBe(ErrorCode.PROTOCOL_ERROR);
     } finally {
       c.destroy();
       srv.close();
+    }
+  });
+
+  // Stream 2 was promised and is over, stream 4 never was. The client's own ids go up to 5.
+  test.each([
+    [2, FrameType.PING],
+    [4, FrameType.GOAWAY],
+  ])("RST_STREAM for stream %d of a server that has pushed stream 2", async (id, expected) => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    const pingAckOrGoaway = (n: number) => (f: Frame) =>
+      (f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload[0] === n) || f.type === FrameType.GOAWAY;
+    try {
+      client.on("error", () => {});
+      client.on("stream", pushed => pushed.on("error", () => {}).resume());
+      for (const own of [1, 3, 5]) {
+        client
+          .request({ ":path": "/" })
+          .on("error", () => {})
+          .resume();
+        await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === own);
+        if (own === 1) {
+          raw.sendFrame(FrameType.SETTINGS, 0, 0);
+          const promise = Buffer.concat([Buffer.from([0, 0, 0, 2, 0x82, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
+          raw.sendFrame(FrameType.PUSH_PROMISE, 0x4, 1, promise);
+          raw.sendFrame(FrameType.HEADERS, 0x5, 2, Buffer.from([0x88]));
+        }
+        raw.sendFrame(FrameType.HEADERS, 0x5, own, Buffer.from([0x88]));
+      }
+      // Whatever is closed is forgotten by the next read.
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8, 1));
+      expect((await raw.waitFor(pingAckOrGoaway(1))).type).toBe(FrameType.PING);
+      raw.sendFrame(FrameType.RST_STREAM, 0, id, cancel);
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8, 2));
+      const answer = await raw.waitFor(pingAckOrGoaway(2));
+      expect(answer.type).toBe(expected);
+      if (answer.type === FrameType.GOAWAY) expect(goawayErrorCode(answer)).toBe(ErrorCode.PROTOCOL_ERROR);
+    } finally {
+      client.destroy();
+      raw.close();
     }
   });
 
@@ -3097,6 +3197,7 @@ describe("HPACK (RFC 7541)", () => {
     }
   });
 
+  // nghttp2, and so Node, leaves such a field out and answers. Bun resets the stream (RFC 9113 §8.2.1).
   test.each([
     ["a value with LF", "x-a", "a\nb"],
     ["a value with NUL", "x-a", "a\0b"],
@@ -3583,6 +3684,35 @@ describe("HPACK (RFC 7541)", () => {
             ),
         ]),
       );
+    });
+
+    test("in respond() with an aborted signal, for a block that a listener of 'aborted' encodes", async () => {
+      const srv = http2.createServer();
+      srv.on("sessionError", () => {});
+      let held: http2.ServerHttp2Stream;
+      srv.on("stream", (stream, headers) => {
+        quiet(stream);
+        const fields = { ":status": 200, "x-new": "1" };
+        if (headers[":path"] === "/held") return void (held = stream);
+        if (headers[":path"] === "/give-up") {
+          stream.on("aborted", () => held.respond(fields, { endStream: true, sendDate: false }));
+          return attempt(() => stream.respond(fields, { signal: AbortSignal.abort(), sendDate: false }));
+        }
+        stream.respond({ ":status": 200, "x-old": "0" }, { endStream: true, sendDate: false });
+      });
+      srv.listen(0, "127.0.0.1");
+      await once(srv, "listening");
+      const client = http2.connect(`http://127.0.0.1:${(srv.address() as net.AddressInfo).port}`);
+      quiet(client);
+      try {
+        await get(client, { ":path": "/" });
+        const response = get(client, { ":path": "/held" });
+        quiet(client.request({ ":path": "/give-up", ":method": "POST" }));
+        expect(Object.keys(await response)).toEqual([":status", "x-new"]);
+      } finally {
+        client.destroy();
+        srv.close();
+      }
     });
 
     // The session ends for such a field, but not within the call. What is encoded before it does still goes out.

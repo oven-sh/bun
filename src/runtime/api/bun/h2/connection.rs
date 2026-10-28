@@ -295,7 +295,7 @@ pub(crate) trait Sink {
         false
     }
     /// Highest stream id the embedder has ever registered, in either direction. Monotonic across
-    /// stream eviction: ids at or below it have existed (closed at worst, never idle), which the
+    /// stream eviction: the embedder's own ids at or below it have existed (never idle), which the
     /// engine cannot tell on its own for locally-initiated streams whose HEADERS it never sent
     /// (nghttp2's session_detect_idle_stream uses the same allocation high-water marks).
     fn highest_started_stream_id(&self) -> u32 {
@@ -1081,9 +1081,7 @@ impl Connection {
         let recv_init = self.local_settings.initial_window_size;
         let is_new = !self.streams.contains_key(&hdr.stream_id);
         // RFC 9113 5.1.1: client-initiated streams use odd ids - a server receiving HEADERS that
-        // would open an even-id stream is a connection PROTOCOL_ERROR. (Monotonicity is not
-        // checked here: a client legitimately receives HEADERS on even promised ids that are
-        // numerically below its own latest odd id.)
+        // would open an even-id stream is a connection PROTOCOL_ERROR.
         if is_new && self.is_server && hdr.stream_id.is_multiple_of(2) {
             self.send_go_away(
                 sink,
@@ -1134,7 +1132,7 @@ impl Connection {
                     // half already ended (half-closed (remote)) is escalated to a CONNECTION error
                     // of type STREAM_CLOSED — node surfaces it as NghttpError "Stream was already
                     // closed or invalid" and tears the session down. A stream that closed for any
-                    // other reason (e.g. we reset it and the peer's trailers were already in
+                    // other reason (e.g. we reset it earlier in this read, with trailers already in
                     // flight) keeps the conservative stream-level handling: the block is still
                     // decoded for HPACK sync (§4.3), then refused with RST_STREAM(STREAM_CLOSED)
                     // by finish_header_block.
@@ -1690,7 +1688,7 @@ impl Connection {
         stream_id <= self.last_stream_id || stream_id <= sink.highest_started_stream_id()
     }
 
-    /// RFC 9113 §5.1 closed state. DATA on such a stream is dropped, as nghttp2 does.
+    /// RFC 9113 §5.1 closed state. DATA on such a stream is dropped, and HEADERS once it is evicted, as nghttp2 does.
     fn is_closed_stream(&self, sink: &impl Sink, stream_id: u32) -> bool {
         match self.streams.get(&stream_id) {
             Some(s) => s.state == State::Closed,
@@ -1888,9 +1886,7 @@ impl Connection {
             on_idle = false;
         }
         // §5.1: a stream evicted after full close (per-request memory release) is
-        // closed, not idle — a late RST_STREAM on it MUST be tolerated. Anything at or
-        // below the highest stream id either layer has started has existed; the embedder's
-        // mark covers locally-initiated streams this engine never saw HEADERS for.
+        // closed, not idle — a late RST_STREAM on it MUST be tolerated.
         if on_idle && self.has_existed(sink, hdr.stream_id) {
             return false;
         }

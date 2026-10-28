@@ -6958,6 +6958,8 @@ impl H2FrameParser {
                         stream.state = StreamState::IDLE;
                         let wrapped =
                             Bun__wrapAbortError(global_object, signal_.js_reason(global_object));
+                        // 'aborted' is emitted in there, and a listener may encode a block of its own.
+                        drop(encoded_headers);
                         self.abort_stream(&mut stream, wrapped);
                         return Ok(JSValue::js_number(stream_id as f64));
                     }

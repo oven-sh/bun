@@ -1,5 +1,7 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isCI, tempDir } from "harness";
 import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import { itBundled, type BundlerTestBundleAPI } from "./expectBundled";
 
 const fakeReactNodeModules = {
@@ -698,6 +700,113 @@ describe("bundler", () => {
       },
       run: { file: "/user.mjs", stdout: "default 1.2.3 function" },
     });
+  }
+  // The answer of the plugin and the import in `app.mjs` reach `index.cjs` in either order, and each order gave its
+  // own bundle: the file as a module (the answer first), an empty entry point (the import first), and `esm.mjs` as
+  // the entry point (the import first, and the file parsed).
+  {
+    const pluginEntryPointFiles = {
+      "app.mjs": readDefault("./index.cjs"),
+      "index.cjs": esModuleBehindRequire["/index.cjs"],
+      "esm.mjs": esModule,
+    };
+    // A debug build of bun starts in 1 to 2 seconds and bundles slowly.
+    const timeout = isCI ? undefined : 60_000;
+    // The hooks hold one request of the bundler until the other one ran.
+    test(
+      "cjs2esm/ModuleExportsEqualsRequireESModulePluginEntryPointInEveryOrder",
+      async () => {
+        using dir = tempDir("cjs2esm-plugin-entry-point-order", pluginEntryPointFiles);
+        const index = join(String(dir), "index.cjs");
+        const build = async (order: "the answer first" | "the import first" | "the file parsed first") => {
+          const asked = Promise.withResolvers<void>();
+          const answer = Promise.withResolvers<{ path: string }>();
+          const result = await Bun.build({
+            entrypoints: [join(String(dir), "app.mjs"), "virtual-entry"],
+            target: "node",
+            plugins: [
+              {
+                name: order,
+                setup(builder) {
+                  builder.onResolve({ filter: /^virtual-entry$/ }, () => {
+                    asked.resolve();
+                    return order === "the answer first" ? { path: index } : answer.promise;
+                  });
+                  if (order === "the answer first") {
+                    builder.onLoad({ filter: /app\.mjs$/ }, async () => {
+                      await asked.promise;
+                    });
+                  } else if (order === "the import first") {
+                    builder.onLoad({ filter: /index\.cjs$/ }, async () => {
+                      await asked.promise;
+                      answer.resolve({ path: index });
+                      await answer.promise;
+                    });
+                  } else {
+                    // The bundler asks for `esm.mjs` when it has the parse result of `index.cjs`.
+                    builder.onLoad({ filter: /esm\.mjs$/ }, () => answer.resolve({ path: index }));
+                  }
+                },
+              },
+            ],
+          });
+          return Promise.all(result.outputs.map(async output => `${output.path}\n${await output.text()}`));
+        };
+        const answerFirst = await build("the answer first");
+        expect(answerFirst).toHaveLength(2);
+        expect([await build("the import first"), await build("the file parsed first")]).toEqual([
+          answerFirst,
+          answerFirst,
+        ]);
+      },
+      timeout,
+    );
+    // 30 builds with one process each, and nothing holds a request.
+    test(
+      "cjs2esm/ModuleExportsEqualsRequireESModulePluginEntryPointIsOneBundle",
+      async () => {
+        using dir = tempDir("cjs2esm-plugin-entry-point", {
+          ...pluginEntryPointFiles,
+          "build.fixture.mjs": /* js */ `
+            import { join } from "node:path";
+            const result = await Bun.build({
+              entrypoints: [join(import.meta.dir, "app.mjs"), "virtual-entry"],
+              target: "node",
+              plugins: [
+                {
+                  name: "virtual entry",
+                  setup(builder) {
+                    builder.onResolve({ filter: /^virtual-entry$/ }, () => ({ path: join(import.meta.dir, "index.cjs") }));
+                  },
+                },
+              ],
+            });
+            for (const output of result.outputs) {
+              console.log(output.path + ": " + output.size + " bytes\\n" + (await output.text()));
+            }
+          `,
+        });
+        const build = async () => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "build.fixture.mjs"],
+            env: bunEnv,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return exitCode === 0 ? stdout : `exit code ${exitCode}\n${stdout}\n${stderr}`;
+        };
+        const builds: string[] = [];
+        // 6 at a time: one build takes 400 MB in a debug build of bun.
+        for (let round = 0; round < 5; round++) {
+          builds.push(...(await Promise.all(Array.from({ length: 6 }, build))));
+        }
+        expect(builds[0]).toContain("virtual-entry.js: ");
+        expect([...new Set(builds)]).toEqual([builds[0]]);
+      },
+      timeout,
+    );
   }
   // These pass before and after: what the file requires stands for it in every import, and the file adds no module.
   // Each is the one test of a kind that is not an ES module here: an ES module with a "module.exports" export, a

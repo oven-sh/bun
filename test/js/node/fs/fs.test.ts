@@ -7223,6 +7223,80 @@ it("fs.promises.writeFile keeps the source buffer attached while the write is in
   expect(readFileSync(file, "latin1")).toBe("EEEEEEEE");
 });
 
+// A pin cannot keep the bytes of a resizable ArrayBuffer mapped, so an operation that only reads
+// them takes a copy when it starts. Nothing reads the buffer after that, and it is not pinned:
+// a transfer moves it, as in Node, and the operation still reads the bytes it was given.
+describe("an operation that reads a resizable ArrayBuffer leaves it free to be transferred", () => {
+  type Started = { view: Uint8Array; result: Promise<unknown>; expected: unknown };
+  const bytes = Uint8Array.from({ length: 16 }, (_, i) => i + 1);
+  function resizable(content: Uint8Array) {
+    const view = new Uint8Array(new ArrayBuffer(content.length, { maxByteLength: content.length * 4 }));
+    view.set(content);
+    return view;
+  }
+  const cases: Array<[string, (dir: string) => Started]> = [
+    [
+      "fs.write",
+      dir => {
+        const file = join(dir, "written.bin");
+        const fd = openSync(file, "w");
+        const view = resizable(bytes);
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        fs.write(fd, view, 0, view.byteLength, 0, err => {
+          closeSync(fd);
+          if (err) reject(err);
+          else resolve();
+        });
+        return { view, result: promise.then(() => [...readFileSync(file)]), expected: [...bytes] };
+      },
+    ],
+    [
+      "fs.promises.writeFile",
+      dir => {
+        const file = join(dir, "written.bin");
+        const view = resizable(bytes);
+        const result = fs.promises.writeFile(file, view).then(() => [...readFileSync(file)]);
+        return { view, result, expected: [...bytes] };
+      },
+    ],
+    [
+      "fs.promises.stat of a Buffer path",
+      dir => {
+        const view = resizable(Buffer.from(join(dir, "file.txt")));
+        return { view, result: fs.promises.stat(view).then(stats => stats.size), expected: 11 };
+      },
+    ],
+    [
+      "Bun.zstdCompress",
+      () => {
+        const view = resizable(bytes);
+        const result = Bun.zstdCompress(view).then(compressed => [...Bun.zstdDecompressSync(compressed)]);
+        return { view, result, expected: [...bytes] };
+      },
+    ],
+  ];
+
+  it.each(cases)("%s", async (_name, start) => {
+    using dir = tempDir("fs-resizable-not-pinned", { "file.txt": "hello world" });
+    const { view, result, expected } = start(String(dir));
+    const sender = view.buffer;
+    const content = [...view];
+    const received: Uint8Array = structuredClone(view, { transfer: [sender] });
+    expect({
+      senderDetached: sender.detached,
+      received: [...received],
+      resizable: received.buffer.resizable,
+      maxByteLength: received.buffer.maxByteLength,
+    }).toEqual({
+      senderDetached: true,
+      received: content,
+      resizable: true,
+      maxByteLength: content.length * 4,
+    });
+    expect(await result).toEqual(expected);
+  });
+});
+
 // A pin stops a detach but not `ArrayBuffer.prototype.resize()`. The pool thread copies the path into
 // its own buffer, so it must read the bytes captured at call time, not the shrunk buffer.
 it("fs.promises.stat reads a Buffer path captured at call time when its resizable ArrayBuffer shrinks in flight", async () => {

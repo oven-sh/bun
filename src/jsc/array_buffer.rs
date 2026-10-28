@@ -694,6 +694,9 @@ impl ArrayBuffer {
 /// moved) for as long as this value lives; [`root`](Self::root) additionally
 /// GC-roots the cell. `Drop` releases what was taken. Constructed and dropped on the JS
 /// thread.
+///
+/// The one that [`copy_if_freeable_while_pinned`](Self::copy_if_freeable_while_pinned) copied holds
+/// no pin: its bytes are its own.
 pub struct PinnedArrayBuffer {
     buffer: ArrayBuffer,
     rooted: bool,
@@ -772,26 +775,28 @@ impl PinnedArrayBuffer {
     }
 
     /// Copies the bytes if they [`can_be_freed_while_pinned`](ArrayBuffer::can_be_freed_while_pinned),
-    /// so a later read can't fault. Returns `false` if the copy can't be allocated.
+    /// so a later read can't fault, and releases the pin: nothing reads the JS storage after that,
+    /// so a transfer is free to move it. Returns `false` if the copy can't be allocated.
     pub fn copy_if_freeable_while_pinned(&mut self, global: &JSGlobalObject) -> bool {
-        if !self.buffer.can_be_freed_while_pinned()
-            || self.buffer.byte_len == 0
-            || self.copy.is_some()
-        {
+        if self.copy.is_some() || !self.buffer.can_be_freed_while_pinned() {
             return true;
         }
-        let bytes = self.buffer.byte_slice();
-        let mut copy = Vec::new();
-        if copy.try_reserve_exact(bytes.len()).is_err() {
-            return false;
+        if self.buffer.byte_len != 0 {
+            let bytes = self.buffer.byte_slice();
+            let mut copy = Vec::new();
+            if copy.try_reserve_exact(bytes.len()).is_err() {
+                return false;
+            }
+            copy.extend_from_slice(bytes);
+            global.vm().report_extra_memory(copy.len());
+            self.buffer.ptr = copy.as_mut_ptr();
+            self.copy = Some(Box::new(NativeCopy {
+                bytes: copy,
+                write_back_to: None,
+            }));
         }
-        copy.extend_from_slice(bytes);
-        global.vm().report_extra_memory(copy.len());
-        self.buffer.ptr = copy.as_mut_ptr();
-        self.copy = Some(Box::new(NativeCopy {
-            bytes: copy,
-            write_back_to: None,
-        }));
+        self.buffer.unpin();
+        self.buffer.pinned = false;
         true
     }
 

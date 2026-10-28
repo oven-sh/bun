@@ -61,6 +61,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         self.parse_expr_common(level, None, flags, expr)
     }
+    /// What an arrow function body and the right side of an assignment get from the flags of their expression.
+    #[inline]
+    pub(crate) fn carried_flags(flags: EFlags) -> EFlags {
+        if Self::IS_TYPESCRIPT_ENABLED && flags.is_after_question_and_before_colon() {
+            flags
+        } else {
+            EFlags::None
+        }
+    }
     pub(crate) fn parse_expr_common(
         &mut self,
         level: Level,
@@ -426,6 +435,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .all(|invalid| invalid.kind == InvalidLocTag::RestInitializer)
     }
 
+    /// tsc decides at first sight that "()", "(...a", "(a:" and "(a?" start an arrow function. Ask while the first item is the only one: a later item sets the same records.
+    #[cold]
+    fn is_first_sight_arrow_head(
+        first: Option<&Expr>,
+        type_colon_range: bun_ast::Range,
+        errors: &DeferredErrors,
+    ) -> bool {
+        let has_type_or_question =
+            type_colon_range.len > 0 || errors.invalid_expr_after_question.is_some();
+        match first.map(|first| &first.data) {
+            None | Some(js_ast::expr::Data::ESpread(_)) => true,
+            Some(js_ast::expr::Data::EIdentifier(_)) => has_type_or_question,
+            // "(a: T = b"
+            Some(js_ast::expr::Data::EBinary(binary)) => {
+                has_type_or_question
+                    && binary.op == js_ast::op::Code::BinAssign
+                    && matches!(binary.left.data, js_ast::expr::Data::EIdentifier(_))
+            }
+            Some(_) => false,
+        }
+    }
+
     /// This assumes that the open parenthesis has already been parsed by the caller
     pub(crate) fn parse_paren_expr(
         &mut self,
@@ -440,6 +471,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut spread_range = bun_ast::Range::default();
         let mut type_colon_range = bun_ast::Range::default();
         let mut comma_after_spread = bun_ast::Loc::EMPTY;
+        let mut first_sight_at_comma: Option<bool> = None;
 
         // Push a scope assuming this is an arrow function. It may not be, in which
         // case we'll need to roll this change back. This has to be done ahead of
@@ -502,6 +534,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 break;
             }
 
+            if Self::IS_TYPESCRIPT_ENABLED
+                && opts.flags.is_after_question_and_before_colon()
+                && first_sight_at_comma.is_none()
+            {
+                first_sight_at_comma = Some(Self::is_first_sight_arrow_head(
+                    items_list.first(),
+                    type_colon_range,
+                    &errors,
+                ));
+            }
+
             // Spread arguments must come last. If there's a spread argument followed
             if is_spread {
                 comma_after_spread = p.lexer.loc();
@@ -530,7 +573,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && p.lexer.token == T::TColon
                 && level.lte(Level::Assign)
                 && !errors.has_erased_syntax
-                && !opts.is_cast_operand)
+                && opts.flags != EFlags::TsCastOperand)
         {
             // Arrow functions are not allowed inside certain expressions
             if level.gt(Level::Assign) {
@@ -578,6 +621,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             };
 
+            let is_after_question_and_before_colon =
+                Self::IS_TYPESCRIPT_ENABLED && opts.flags.is_after_question_and_before_colon();
+            let mut is_first_sight_arrow = false;
+            // The body of a first sight arrow function is a new expression, as in tsc. A body behind a return type is in a typed arrow function.
+            let mut body_flags = EFlags::None;
+            if is_after_question_and_before_colon {
+                is_first_sight_arrow = !opts.after_type_parameters
+                    && first_sight_at_comma.unwrap_or_else(|| {
+                        Self::is_first_sight_arrow_head(items.first(), type_colon_range, &errors)
+                    });
+                if !is_first_sight_arrow {
+                    body_flags = if is_arrow_fn {
+                        opts.flags
+                    } else {
+                        EFlags::AfterQuestionAndBeforeColonInTypedArrow
+                    };
+                }
+            }
+
             // Avoid parsing TypeScript code like "a ? (1 + 2) : (3 + 4)" as an arrow
             // function. The ":" after the ")" may be a return type annotation, so we
             // attempt to convert the expressions to bindings first before deciding
@@ -588,11 +650,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && (invalid_log.is_empty() || Self::has_only_rest_initializers(&invalid_log))
                 && !errors.has_erased_syntax
             {
-                if opts.is_after_question_and_before_colon {
+                // In a typed arrow function a first sight head is an arrow function without a second ":", as in tsc: the outer one waits for that ":".
+                let is_decided = opts.force_arrow_fn
+                    || (is_first_sight_arrow
+                        && opts.flags == EFlags::AfterQuestionAndBeforeColonInTypedArrow);
+                if is_after_question_and_before_colon && !is_decided {
                     // Only do this very expensive check if we must
                     is_arrow_fn = p
                         .is_type_script_arrow_return_type_after_question_and_before_colon(
                             &arrow_data,
+                            body_flags,
                         )?;
                     if is_arrow_fn {
                         // We know this will succeed because we've already done it once above
@@ -617,7 +684,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
-                let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data)?;
+                let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data, body_flags)?;
                 arrow.is_async = opts.is_async;
                 arrow.has_rest_arg = spread_range.len > 0;
                 p.pop_scope();
@@ -1676,7 +1743,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             needs_async_loc: async_range.loc,
                             ..Default::default()
                         };
-                        let arrow_body = p.parse_arrow_body(args, &mut data)?;
+                        let arrow_body = p.parse_arrow_body(args, &mut data, flags)?;
                         p.pop_scope();
                         return Ok(p.new_expr(arrow_body, async_range.loc));
                     }
@@ -1714,7 +1781,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 ..Default::default()
                             };
                             // Pop the scope on the error path too.
-                            let mut arrow_body = match p.parse_arrow_body(args, &mut data) {
+                            let mut arrow_body = match p.parse_arrow_body(args, &mut data, flags) {
                                 Ok(body) => body,
                                 Err(e) => {
                                     p.pop_scope();
@@ -1737,9 +1804,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         level,
                         ParenExprOpts {
                             is_async: true,
-                            is_after_question_and_before_colon: flags
-                                == EFlags::AfterQuestionAndBeforeColon,
-                            is_cast_operand: flags == EFlags::TsCastOperand,
+                            flags,
                             ..Default::default()
                         },
                     );
@@ -1764,7 +1829,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         is_async: true,
                                         force_arrow_fn: result
                                             == SkipTypeParameterResult::DefinitelyTypeParameters,
-                                        is_cast_operand: flags == EFlags::TsCastOperand,
+                                        flags: if p.is_jsx_enabled() {
+                                            EFlags::None
+                                        } else {
+                                            flags
+                                        },
+                                        after_type_parameters: true,
                                         ..Default::default()
                                     },
                                 );

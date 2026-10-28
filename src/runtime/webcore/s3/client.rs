@@ -31,7 +31,7 @@ pub(crate) use error_jsc::throw_sign_error;
 
 pub(crate) use bun_s3_signing::credentials::S3Credentials;
 pub(crate) use bun_s3_signing::credentials::S3CredentialsWithOptions;
-use bun_s3_signing::credentials::encode_uri_component;
+use bun_s3_signing::credentials::encode_uri_component_into;
 
 pub(crate) use crate::webcore::s3::list_objects::S3ListObjectsOptions;
 pub(crate) use crate::webcore::s3::list_objects::get_list_objects_options_from_js;
@@ -188,27 +188,17 @@ pub(crate) fn list_objects(
     let _ = search_params.append_slice(b"?"); // OOM/capacity: fire-and-forget
 
     if let Some(continuation_token) = list_options.continuation_token.as_ref().map(|s| s.slice()) {
-        let mut buff = vec![0u8; continuation_token.len() * 3];
-        let encoded =
-            encode_uri_component::<true>(continuation_token, &mut buff).expect("unreachable");
-        // OOM/capacity: fire-and-forget
-        let _ = search_params.append_fmt(format_args!(
-            "continuation-token={}",
-            bstr::BStr::new(encoded)
-        ));
+        let _ = search_params.append_slice(b"continuation-token="); // OOM/capacity: fire-and-forget
+        encode_uri_component_into::<true>(continuation_token, &mut search_params);
     }
 
     if let Some(delimiter) = list_options.delimiter.as_ref().map(|s| s.slice()) {
-        let mut buff = vec![0u8; delimiter.len() * 3];
-        let encoded = encode_uri_component::<true>(delimiter, &mut buff).expect("unreachable");
-
         if list_options.continuation_token.is_some() {
-            let _ =
-                search_params.append_fmt(format_args!("&delimiter={}", bstr::BStr::new(encoded))); // OOM/capacity: fire-and-forget
+            let _ = search_params.append_slice(b"&delimiter="); // OOM/capacity: fire-and-forget
         } else {
-            let _ =
-                search_params.append_fmt(format_args!("delimiter={}", bstr::BStr::new(encoded))); // OOM/capacity: fire-and-forget
+            let _ = search_params.append_slice(b"delimiter="); // OOM/capacity: fire-and-forget
         }
+        encode_uri_component_into::<true>(delimiter, &mut search_params);
     }
 
     if list_options.encoding_type.is_some() {
@@ -245,15 +235,13 @@ pub(crate) fn list_objects(
     }
 
     if let Some(prefix) = list_options.prefix.as_ref().map(|s| s.slice()) {
-        let mut buff = vec![0u8; prefix.len() * 3];
-        let encoded = encode_uri_component::<true>(prefix, &mut buff).expect("unreachable");
-        let _ = search_params.append_fmt(format_args!("&prefix={}", bstr::BStr::new(encoded))); // OOM/capacity: fire-and-forget
+        let _ = search_params.append_slice(b"&prefix="); // OOM/capacity: fire-and-forget
+        encode_uri_component_into::<true>(prefix, &mut search_params);
     }
 
     if let Some(start_after) = list_options.start_after.as_ref().map(|s| s.slice()) {
-        let mut buff = vec![0u8; start_after.len() * 3];
-        let encoded = encode_uri_component::<true>(start_after, &mut buff).expect("unreachable");
-        let _ = search_params.append_fmt(format_args!("&start-after={}", bstr::BStr::new(encoded))); // OOM/capacity: fire-and-forget
+        let _ = search_params.append_slice(b"&start-after="); // OOM/capacity: fire-and-forget
+        encode_uri_component_into::<true>(start_after, &mut search_params);
     }
 
     let result = match this.sign_request::<true>(

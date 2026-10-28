@@ -48,15 +48,6 @@ pub(crate) fn get_js_sign_error(err: SignError, global_this: &JSGlobalObject) ->
                 ),
             )
             .to_js(),
-        SignError::InvalidSessionToken => global_this
-            .err(
-                ErrorCode::S3_INVALID_SESSION_TOKEN,
-                format_args!(
-                    "{}",
-                    msg(get_sign_error_message(SignError::InvalidSessionToken))
-                ),
-            )
-            .to_js(),
         _ => global_this
             .err(
                 ErrorCode::S3_INVALID_SIGNATURE,
@@ -95,15 +86,6 @@ pub(crate) fn throw_sign_error(err: SignError, global_this: &JSGlobalObject) -> 
                 format_args!(
                     "{}",
                     msg(get_sign_error_message(SignError::InvalidEndpoint))
-                ),
-            )
-            .throw(),
-        SignError::InvalidSessionToken => global_this
-            .err(
-                ErrorCode::S3_INVALID_SESSION_TOKEN,
-                format_args!(
-                    "{}",
-                    msg(get_sign_error_message(SignError::InvalidSessionToken))
                 ),
             )
             .throw(),

@@ -555,7 +555,7 @@ pub struct PackageManager {
 
     pub(crate) global_link_dir: Option<bun_sys::Dir>,
     pub global_dir: Option<bun_sys::Dir>,
-    pub(crate) global_link_dir_path: Box<[u8]>,
+    pub(crate) global_link_dir_path: &'static [u8],
 
     pub(crate) on_wake: WakeHandler,
 
@@ -1707,7 +1707,7 @@ fn allocate_package_manager(
         wr!(postinstall_optimizer, Default::default());
         wr!(global_link_dir, None);
         wr!(global_dir, None);
-        wr!(global_link_dir_path, Box::default());
+        wr!(global_link_dir_path, b"");
         wr!(on_wake, WakeHandler::default());
         wr!(
             peer_dependencies,

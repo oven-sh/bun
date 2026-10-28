@@ -7142,7 +7142,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         assign_target: js_ast::AssignTarget,
         is_delete_target: bool,
-        define_data: &DefineData,
+        define_data: &'a DefineData,
     ) -> Expr {
         // Callers gate on `!valueless()` before reaching here, so `value` is a
         // real Expr.Data by contract.
@@ -7153,15 +7153,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // contract so `handle_identifier`'s trailing `find_symbol`
                 // rebind runs against the *resolved* scope ref, not the
                 // define-time ref silently passed through with `None`.
-                let original_name: &[u8] = define_data
+                let original_name = define_data
                     .original_name()
                     .expect("identifier define must have original_name");
-                // SAFETY: `define_data` borrows `p.define: &'a Define`; the
-                // backing `original_name` bytes live for `'a`. Erase the local
-                // borrow lifetime to satisfy `handle_identifier`'s
-                // `Option<&'a [u8]>` param.
-                let original_name: &'a [u8] =
-                    unsafe { bun_collections::detach_lifetime(original_name) };
                 return self.handle_identifier(
                     loc,
                     id,

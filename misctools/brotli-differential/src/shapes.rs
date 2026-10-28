@@ -999,3 +999,68 @@ pub fn run_dense(seed0: u64, iters: u64, qualities: u64) {
     }
     println!("ok: {iters} iterations, {total_in} -> {total_out}");
 }
+
+/// The rolling hasher, which a large window adds to the hashers of qualities 3 to 9, finds chunks of 32 bytes from far back,
+/// and starts anew with every block of input. Here blocks of about 32 bytes repeat chunks that only it still knows, and that
+/// are among the 64th part that it stores. Now and then the block starts just before the end of the ring buffer, where it
+/// does not start anew.
+pub fn run_rolling(seed0: u64, iters: u64, qualities: u64) {
+    let qs = crate::args::qualities(qualities, 3..10);
+    let (mut total_in, mut total_out) = (0usize, 0usize);
+    for it in 0..iters {
+        let seed = seed0.wrapping_add(it);
+        let mut rng = Rng(seed);
+        // One in 8 is at the end of the ring buffer: each of qualities 3 to 5, with the block 28 to 36 bytes before the end,
+        // and 30 to 34 bytes long, in turn.
+        let turn = seed as usize / 8;
+        let at_ring_end = seed % 8 == 0 && qs.contains(&(3 + turn as u32 % 3));
+        let q = if at_ring_end { 3 + turn as u32 % 3 } else { *rng.pick(&qs) };
+        let jump = if q < 5 { 4 } else { 1 };
+        let mut noise = |n: usize| -> Vec<u8> { (0..n.div_ceil(8)).flat_map(|_| rng.next().to_le_bytes()).take(n).collect() };
+        // More positions than the other hasher holds.
+        let forgotten = 3 * match q {
+            3 => 1 << 17,
+            4 => 1 << 20,
+            _ => 1usize << (15 + q - 1),
+        };
+        let ring = 1usize << 26;
+        let lead = if at_ring_end { ring - forgotten.max(8 << 20) - (1 << 18) } else { seed as usize % 5 };
+        let mut data = noise(lead);
+        let source_at = data.len();
+        data.extend(noise(1 << 18));
+        let filler = noise(if at_ring_end { ring - data.len() - 64 } else { forgotten });
+        data.extend(filler);
+        let mut rng = Rng(seed ^ 0x77);
+        // Where the chunks are whose hash is stored.
+        let stored: Vec<usize> = ((source_at + 4).next_multiple_of(jump)..source_at + (1 << 18) - 200)
+            .step_by(jump)
+            .filter(|&at| data[at..at + 32].iter().step_by(jump).fold(0u32, |state, &b| state.wrapping_mul(69069).wrapping_add(u32::from(b) + 1)) & ((1 << 30) - 1) < 1 << 24)
+            .collect();
+        let mut steps = vec![enc::Step { op: 1, n: data.len() }];
+        for trial in 0..if at_ring_end { 40 } else { 300 } {
+            // Other bytes, so that blocks start at all positions modulo `jump`, and near the end of the ring buffer at each.
+            let first = at_ring_end && trial == 0;
+            let gap = if first { 64 - (28 + turn / 3 % 9) } else { rng.below(6) };
+            if gap != 0 {
+                data.extend((0..gap).map(|_| rng.next() as u8));
+                steps.push(enc::Step { op: 1, n: gap });
+            }
+            let at = *rng.pick(&stored);
+            // The chunk has to be at a multiple of `jump` again.
+            let before = (jump - data.len() % jump) % jump;
+            let n = before + if first { 30 + turn / 27 % 5 } else if rng.chance(3, 4) { rng.range(30, 36) } else { rng.range(4, 100) };
+            data.extend_from_within(at - before..at - before + n);
+            steps.push(enc::Step { op: i32::from(first || rng.chance(7, 8)), n });
+        }
+        let params = vec![(6, 1), (1, q), (2, 25 + u32::from(!at_ring_end) * (seed % 3) as u32), (5, 1 << 20)];
+        let case = EncCase { data, params, dicts: Vec::new(), schedule: 0, misuse: false };
+        match enc::compare_steps(&case, &steps).and_then(|out| enc::round_trip(&out, &case.data, &[], true, 0).map(|()| out)) {
+            Ok(out) => {
+                total_in += case.data.len();
+                total_out += out.len();
+            }
+            Err(e) => panic!("seed {seed}: {e}\nparams {:?}, {} bytes, at the end of the ring buffer: {at_ring_end}", case.params, case.data.len()),
+        }
+    }
+    println!("ok: {iters} iterations, {total_in} -> {total_out}");
+}

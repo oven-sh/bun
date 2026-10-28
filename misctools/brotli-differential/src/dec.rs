@@ -103,6 +103,10 @@ pub fn compare(case: &DecCase, expect: Option<&[u8]>) -> Result<Outcome, String>
         if c.has_more_output() != r.has_more_output() {
             return Err(format!("has_more_output differs c={} at {}", c.has_more_output(), ctx()));
         }
+        // Output is only held back for want of room.
+        if rr == 2 && r.has_more_output() && rmade != n_out {
+            return Err(format!("more input is asked for while there is output left and room for it, at {}", ctx()));
+        }
         pos += cused;
         total_out += cmade;
         if expect.is_some() {

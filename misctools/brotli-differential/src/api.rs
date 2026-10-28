@@ -2,6 +2,7 @@
 use crate::enc::{EncCase, Pair, run_op};
 use crate::ffi::CDecoder;
 use crate::r#gen;
+use crate::grammar;
 use crate::rng::Rng;
 use bun_brotli::{Decoder, DecoderParameter, Encoder, EncoderMode, EncoderOperation, EncoderParameter, PreparedDictionary, SpareCapacity};
 
@@ -448,6 +449,22 @@ fn huge_dictionaries() -> Result<usize, String> {
             }
         }
         n += 1;
+    }
+    // A copy that starts near the end of the dictionaries and is longer than what is left of them. In the reference, where it
+    // starts and its length add up to more than an `int` holds, and it goes on.
+    assert_eq!(grammar::one_long_copy(1), [0xF2, 0xFF, 0xFF, 0x1F, 0x00, 0x04, 0x40, 0x1C, 0x16, 0xD0, 0xFF, 0xFF, 0x3F]);
+    for sizes in [&[MOST + 1 - (1 << 23)][..], &[MOST], &[1 << 30, (1 << 30) - 1]] {
+        for distance in [1, 2, 1000, 16_779_332] {
+            let mut r = Decoder::new();
+            assert!(sizes.iter().all(|&size| r.attach_dictionary(zeros(size))));
+            let mut out = vec![0u8; 1 << 16];
+            let mut room: &mut [u8] = &mut out;
+            let result = r.decompress_stream(&mut &grammar::one_long_copy(distance)[..], &mut room) as i32;
+            if result != 0 || r.error_code() as i32 != -18 || room.len() != 1 << 16 {
+                return Err(format!("decoder: dictionaries of {sizes:?}, a long copy from {distance} before their end: result {result}, error {:?}", r.error_code()));
+            }
+            n += 1;
+        }
     }
     // The encoder reads a dictionary to index it, and takes 4 bytes for each of its bytes while it does. So there are many.
     const PART: usize = 170_000_000;

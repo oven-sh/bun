@@ -69,10 +69,10 @@ impl Bits {
     }
 }
 
-const INSERT_BASE: [usize; 24] = [0, 1, 2, 3, 4, 5, 6, 8, 10, 14, 18, 26, 34, 50, 66, 98, 130, 194, 322, 578, 1090, 2114, 6210, 22594];
-const INSERT_EXTRA: [u32; 24] = [0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 9, 10, 12, 14, 24];
-const COPY_BASE: [usize; 24] = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 18, 22, 30, 38, 54, 70, 102, 134, 198, 326, 582, 1094, 2118];
-const COPY_EXTRA: [u32; 24] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 9, 10, 24];
+pub const INSERT_BASE: [usize; 24] = [0, 1, 2, 3, 4, 5, 6, 8, 10, 14, 18, 26, 34, 50, 66, 98, 130, 194, 322, 578, 1090, 2114, 6210, 22594];
+pub const INSERT_EXTRA: [u32; 24] = [0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 9, 10, 12, 14, 24];
+pub const COPY_BASE: [usize; 24] = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 18, 22, 30, 38, 54, 70, 102, 134, 198, 326, 582, 1094, 2118];
+pub const COPY_EXTRA: [u32; 24] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 9, 10, 24];
 const COUNT_BASE: [usize; 26] = [1, 5, 9, 13, 17, 25, 33, 41, 49, 65, 81, 97, 113, 145, 177, 209, 241, 305, 369, 497, 753, 1265, 2289, 4337, 8433, 16625];
 const COUNT_EXTRA: [u32; 26] = [2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 7, 8, 9, 10, 11, 12, 13, 24];
 
@@ -594,6 +594,27 @@ pub fn one_distance(large_window: bool, npostfix: u32, ndirect: usize, symbol: u
         let extra = 1 + ((symbol - 16 - ndirect) >> (npostfix + 1));
         w.put(extra.min(64) as u32, if ones { u64::MAX } else { 0 });
     }
+    w.bytes
+}
+
+/// Nothing but a copy of 16,779,333 bytes, which is more than the meta-block has, from `distance` before the start.
+pub fn one_long_copy(distance: usize) -> Vec<u8> {
+    let mut w = Bits::default();
+    // A window of 16 bits. The last meta-block, not empty, of 1 << 24 bytes, with one block type of each kind.
+    w.put(3, 2);
+    w.put(2, 2);
+    w.put(24, 0xFF_FFFF);
+    w.put(3, 0);
+    // NPOSTFIX, NDIRECT, the context mode, and one tree each for the literals and the distances.
+    w.put(10, 0);
+    // Command 391: no literal, and a copy of 2118 bytes and as many more as 24 bits say.
+    let (symbol, nbits, extra) = distance_symbol(distance, 0, 0);
+    for (bits, symbol) in [(8, 0), (10, 391), (6, symbol)] {
+        w.put(4, 1);
+        w.put(bits, symbol as u64);
+    }
+    w.put(24, 0xFF_FFFF);
+    w.put(nbits, extra);
     w.bytes
 }
 

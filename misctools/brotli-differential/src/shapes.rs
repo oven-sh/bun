@@ -1620,3 +1620,136 @@ pub fn run_utf8(seed0: u64, iters: u64, qualities: u64) {
     }
     println!("ok: {iters} iterations, {} -> {}", totals.0, totals.1);
 }
+
+/// What `run_commands` knows of the encoder while it lays out the input.
+struct Commands {
+    data: Vec<u8>,
+    /// The last distance and the one before.
+    last: [usize; 2],
+    /// After this position the encoder does not look for a match everywhere.
+    sparse_after: usize,
+    /// How many literals without a match it takes for that.
+    spree: usize,
+}
+
+impl Commands {
+    /// Whether the encoder looks for a match at `target`, if it finds none from the end of the data on.
+    fn looks_at(&self, target: usize) -> bool {
+        let mut position = self.data.len();
+        while position < target {
+            position += 1;
+            if position > self.sparse_after + 4 * self.spree {
+                position += 16;
+            } else if position > self.sparse_after {
+                position += 8;
+            }
+        }
+        position == target
+    }
+
+    /// A byte with which no copy from one of the last distances starts or goes on.
+    fn literal(&mut self, rng: &mut Rng) {
+        let at = self.data.len();
+        loop {
+            let byte = rng.next() as u8;
+            if self.last.iter().all(|&d| d > at || self.data[at - d] != byte) {
+                self.data.push(byte);
+                return;
+            }
+        }
+    }
+
+    /// `length` bytes from the last distance, or from the one before. `false`, and nothing is added, if both have the same
+    /// byte there.
+    fn copy(&mut self, length: usize, second: bool) -> bool {
+        let at = self.data.len();
+        if at < self.last[0].max(self.last[1]) || self.data[at - self.last[0]] == self.data[at - self.last[1]] {
+            return false;
+        }
+        if second {
+            self.last.swap(0, 1);
+        }
+        for i in at..at + length {
+            self.data.push(self.data[i - self.last[0]]);
+        }
+        self.sparse_after = at + 2 * length + self.spree;
+        true
+    }
+}
+
+/// Qualities 5 to 9: all 704 command symbols in one meta-block with fewer than 1024 commands, which have one histogram. Its
+/// code takes the largest tree there is. Every copy is from the last distance or the one before, 4 and 11 from the start, which
+/// the encoder tries without its table. After many literals it only looks at some positions, and the copy starts at one of
+/// them. A copy from the last distance right after another copy takes a word of the static dictionary in between, which
+/// leaves the last distances alone.
+pub fn run_commands(seed0: u64, iters: u64, qualities: u64) {
+    use crate::grammar::{COPY_BASE, COPY_EXTRA, INSERT_BASE, INSERT_EXTRA};
+    let qs = crate::args::qualities(qualities, 5..10);
+    let words: Vec<Vec<(usize, usize)>> = (0..10).map(|q| if qs.contains(&q) { words_found(q) } else { Vec::new() }).collect();
+    let mut totals = (0usize, 0usize);
+    for it in 0..iters {
+        let seed = seed0.wrapping_add(it);
+        let mut rng = Rng(seed);
+        let q = *rng.pick(&qs);
+        let spree = if q < 9 { 64 } else { 512 };
+        let mut c = Commands { data: Vec::new(), last: [4, 11], sparse_after: spree, spree };
+        // The codes of the insert and the copy length, and whether the distance is the last one. That only makes another
+        // symbol of it if both lengths are short.
+        let mut plan: Vec<(usize, usize, bool)> = (0..24 * 24).map(|i| (i / 24, i % 24, false)).collect();
+        plan.extend((16..8 * 16).map(|i| (i / 16, i % 16, true)));
+        for i in (1..plan.len()).rev() {
+            plan.swap(i, rng.below(i + 1));
+        }
+        // Enough literals for both distances come first.
+        let first = plan.iter().position(|p| p.0 == 9).unwrap();
+        let n = plan.len();
+        plan.swap(first, n - 1);
+        let mut with_word = 0;
+        let mut failures = 0;
+        while let Some((insert, copy, last)) = plan.pop() {
+            let start = c.data.len();
+            let most = INSERT_BASE[insert] + (1 << INSERT_EXTRA[insert].min(6)) - 1;
+            let Some(literals) = (INSERT_BASE[insert]..=most).find(|n| c.looks_at(start + n)) else {
+                panic!("seed {seed}: no place for a copy after {} to {most} literals", INSERT_BASE[insert]);
+            };
+            for _ in 0..literals {
+                c.literal(&mut rng);
+            }
+            let length = COPY_BASE[copy] + rng.below(1 << COPY_EXTRA[copy].min(4));
+            if !c.copy(length, !last) {
+                // Later, after other bytes.
+                c.data.truncate(start);
+                plan.insert(rng.below(plan.len() + 1), (insert, copy, last));
+                // Fewer than 4 literals leave the bytes at both distances as they are. One more command brings others.
+                if plan.iter().all(|p| p.0 < 4) {
+                    plan.push((9, 0, false));
+                }
+                failures += 1;
+                assert!(failures < 10_000, "seed {seed}");
+                continue;
+            }
+            // While the encoder still looks words up.
+            while with_word < 16 {
+                let at = c.data.len();
+                let &(len, index) = rng.pick(&words[q as usize]);
+                let word = crate::grammar::dictionary_word(len, index, 0);
+                if c.last.iter().any(|&d| c.data[at - d] == word[0]) {
+                    continue;
+                }
+                c.data.extend_from_slice(&word);
+                c.sparse_after = at + 2 * len + spree;
+                if c.copy(COPY_BASE[with_word] + rng.below(1 << COPY_EXTRA[with_word]), false) {
+                    with_word += 1;
+                } else {
+                    c.data.truncate(at);
+                }
+            }
+        }
+        for _ in 0..40 {
+            c.literal(&mut rng);
+        }
+        let params = vec![(1, q), (2, rng.range(16, 22) as u32), (3, 21)];
+        check("commands", seed, &mut rng, &c.data, &params, &[], &mut totals);
+    }
+    println!("ok: {iters} iterations, {} -> {}", totals.0, totals.1);
+}

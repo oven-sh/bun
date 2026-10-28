@@ -1,9 +1,56 @@
 import { beforeEach, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import path from "node:path";
+import { unsupported as aotUnsupported } from "../../../aot/supported";
 globalThis.importQueryFixtureOrder = [];
 const resolvedPath = require.resolve("./import-query-fixture.ts");
 const resolvedURL = Bun.pathToFileURL(resolvedPath).href;
+
+test.skipIf(isWindows || !!aotUnsupported)("compiled modules retain encoded file URL identity", async () => {
+  using dir = tempDir("compiled-file-url-identity", {
+    "entry.ts": `
+      import { pathToFileURL } from "node:url";
+      const name: string = process.argv[2] ?? "literal?dir/dep.ts";
+      const key = pathToFileURL(import.meta.dir + "/" + name).href;
+      const first = require(key);
+      const second = require(key.replace("%3F", "%3f"));
+      const dataKey = pathToFileURL(import.meta.dir + "/literal?dir/data.json").href;
+      const data = await import(dataKey, { with: { type: "json" } });
+      console.log(first.value, first === second, data.default.value);
+    `,
+    "literal?dir/dep.ts": "export const value = 42;",
+    "literal?dir/data.json": '{"value":42}',
+  });
+  const executable = path.join(String(dir), "app");
+  await using build = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      "entry.ts",
+      "literal?dir/dep.ts",
+      "literal?dir/data.json",
+      "--root",
+      ".",
+      "--outfile",
+      executable,
+    ],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [buildOut, buildError, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect({ buildOut: buildExit ? buildOut : "", buildError: buildExit ? buildError : "", buildExit }).toEqual({
+    buildOut: "",
+    buildError: "",
+    buildExit: 0,
+  });
+  await using proc = Bun.spawn({ cmd: [executable], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "42 true 42\n", stderr: "", exitCode: 0 });
+});
 
 beforeEach(() => {
   globalThis.importQueryFixtureOrder = [];
@@ -334,31 +381,36 @@ test.concurrent.skipIf(isWindows)(
   },
 );
 
-test.concurrent.skipIf(isWindows)("mock.module canonicalizes escapes in a file URL containing %3F", async () => {
-  using dir = tempDir("mock-file-url-literal-question", {
-    "target?copy.mjs": `export const value = "real";`,
-    "entry.test.mjs": `
+test.concurrent.skipIf(isWindows).each(["mjs", "cjs"])(
+  "mock.module canonicalizes escapes in a file URL containing %%3F (%s)",
+  async extension => {
+    using dir = tempDir("mock-file-url-literal-question", {
+      [`target?copy.${extension}`]:
+        extension === "mjs" ? `export const value = "real";` : `module.exports = { value: "real" };`,
+      "entry.test.mjs": `
       import { expect, mock, test } from "bun:test";
-      const target = new URL("./target%3fcopy.mjs?v=1", import.meta.url).href;
+      const target = new URL("./target%3fcopy.${extension}?v=1", import.meta.url).href;
       mock.module(target, () => ({ value: "mocked" }));
       test("mocked encoded path", async () => {
         expect(target).toContain("%3f");
+        expect(require(target).value).toBe("mocked");
         expect((await import(target)).value).toBe("mocked");
       });
     `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "entry.test.mjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("1 pass");
-  expect(stderr).toContain("0 fail");
-  expect(exitCode).toBe(0);
-});
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "entry.test.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent.skipIf(isWindows)("--isolate caches a file URL containing %3F under its module key", async () => {
   using dir = tempDir("isolate-file-url-literal-question", {

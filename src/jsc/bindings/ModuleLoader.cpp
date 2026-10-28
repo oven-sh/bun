@@ -709,16 +709,18 @@ JSValue fetchCommonJSModule(
         }
     }
     BunString specifier = Bun::toString(fileURLPath);
+    BunString specifierKey = Bun::toString(specifierWtfString);
+    auto* virtualSpecifier = preservePathDelimiters ? &specifierKey : &specifier;
 
     bool wasModuleMock = false;
 
     // When "bun test" is enabled, allow users to override builtin modules
     // This is important for being able to trivially mock things like the filesystem.
     if (isBunTest) {
-        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifier, wasModuleMock);
+        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, virtualSpecifier, wasModuleMock);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult) {
-            JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, &specifier, referrer, wasModuleMock, target);
+            JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, virtualSpecifier, referrer, wasModuleMock, target);
             RETURN_IF_EXCEPTION(scope, {});
 
             // If we assigned module.exports to the virtual module, we're done here.
@@ -784,10 +786,10 @@ JSValue fetchCommonJSModule(
 
     // When "bun test" is NOT enabled, disable users from overriding builtin modules
     if (!isBunTest) {
-        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifier, wasModuleMock);
+        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, virtualSpecifier, wasModuleMock);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult) {
-            JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, &specifier, referrer, wasModuleMock, target);
+            JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, virtualSpecifier, referrer, wasModuleMock, target);
             RETURN_IF_EXCEPTION(scope, {});
 
             // If we assigned module.exports to the virtual module, we're done here.
@@ -1340,7 +1342,7 @@ static JSValue fetchESMSourceCode(
 
     if (res->result.value.tag == SyntheticModuleType::ExportDefaultOnly) {
         JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
-        RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueExportDefaultOnlySourceCode(globalObject, value, specifier->toWTFString(BunString::ZeroCopy))));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueExportDefaultOnlySourceCode(globalObject, value, String(specifierKey))));
     }
 
     auto provider = Zig::SourceProvider::create(globalObject, res->result.value);

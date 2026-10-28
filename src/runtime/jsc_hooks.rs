@@ -4390,6 +4390,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
                     allow_promise,
                     is_commonjs_require,
                     force_loader,
+                    preserve_path_delimiters,
                     module_loader
                 )
             },
@@ -4403,6 +4404,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
             allow_promise,
             is_commonjs_require,
             force_loader,
+            preserve_path_delimiters,
             module_loader
         )
     }
@@ -4420,6 +4422,7 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
     allow_promise: bool,
     is_commonjs_require: bool,
     force_loader: u8,
+    preserve_path_delimiters: bool,
     module_loader: JSValue,
 ) -> *mut c_void {
     use bun_jsc::resolved_source::Tag as ResolvedSourceTag;

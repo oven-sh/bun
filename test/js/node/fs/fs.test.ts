@@ -509,6 +509,7 @@ describe("FileHandle", () => {
   );
 
   // open() returns the lowest free descriptor, which is 0 once stdin is closed.
+  // Not on Windows: fs.closeSync(0) does nothing there (libuv keeps fds 0 to 2 open), so open() never returns 0.
   // Not concurrent: a debug build needs about two seconds for this fixture when it runs alone.
   it.skipIf(isWindows)("FileHandle whose descriptor is 0 reads, serves a stream and closes", async () => {
     using dir = tempDir("filehandle-fd-0", { "data.txt": "a\nb\n" });
@@ -527,7 +528,8 @@ describe("FileHandle", () => {
         async createWriteStream(handle) {
           const { promise, resolve, reject } = Promise.withResolvers();
           const stream = handle.createWriteStream({ start: 0 });
-          stream.on("error", reject).end("c", resolve);
+          // "close" comes when the stream has closed the handle. The callback of end() comes before that.
+          stream.on("error", reject).on("close", resolve).end("c");
           await promise;
           return stream.bytesWritten;
         },

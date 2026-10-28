@@ -4244,7 +4244,7 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
     let paths: Vec<Option<Box<[u8]>>> = (0..count as u32)
         .map(|other| {
             is_project_source(checker, FileId(other))
-                .then(|| checker.p.files.module(FileId(other)).file_name().into())
+                .then(|| checker.p.files.module(FileId(other)).language_file_name().into())
         })
         .collect();
     let is_source = |file: FileId| paths.get(file.idx()).cloned().flatten();

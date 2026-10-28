@@ -1244,13 +1244,14 @@ async function build(check, entrypoint = "./main.ts", more = {}) {
       const program = `
 const { messages, ...built } = await build({ runExternalCode: true }, ${dts});
 const read = name => fs.readFileSync("out/" + name, "utf8");
-done({ ...built, declarations: fs.readdirSync("out").filter(name => /\\.d\\.(vue\\.)?ts$/.test(name)).sort().map(name => [name, read(name)]) });`;
+done({ ...built, declarations: fs.readdirSync("out").filter(name => name.endsWith(".ts")).sort().map(name => [name, read(name)]) });`;
       expect(await run({ mapper: `${recordsPid} serve();` }, program)).toEqual({
         success: true,
         started: 1,
         running: [],
         declarations: [
           ["App.d.vue.ts", "export type Count = number;\n"],
+          ["main.aot.ts", "// main.ts\ntype Count = number;\nconst one: Count = 1;\nexport {\n  one\n};\n"],
           ["main.d.ts", `import type { Count } from "./App.vue";\nexport declare const one: Count;\n`],
         ],
       });

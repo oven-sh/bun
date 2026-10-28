@@ -421,6 +421,29 @@ describe("Bun.Image", () => {
           dims(1000, 8, { fit: "inside" }),
         ]),
       ).toEqual(["13x6", "13x6", "15x8", "15x8", "16x8"]);
+
+      // Height bound: 10×4 at height 3 gives width 7.5 (to 8), at height 1
+      // gives 2.5 (to 2).
+      const short = dimsOf(makePng(10, 4, (x, y) => [x * 25, y * 60, 0, 255]));
+      expect(await Promise.all([short(1000, 3, { fit: "inside" }), short(1000, 1, { fit: "inside" })])).toEqual([
+        "8x3",
+        "2x1",
+      ]);
+    });
+
+    test("a derived height past the per-side cap keeps the ratio with fit:'inside'", async () => {
+      // 1×300000 at width 800 derives a height of 240,000,000. The cap holds
+      // it at 0x3FFFF, so the width follows the capped height instead of
+      // staying at 800 (an 800×262143 canvas). withoutEnlargement still
+      // returns the source: 800 is wider than 1.
+      const tall = dimsOf(makePng(1, 300000, (_x, y) => [y & 255, (y >> 8) & 255, 0, 255]));
+      expect(
+        await Promise.all([
+          tall(800, undefined, { fit: "inside" }),
+          tall(800, 1e9, { fit: "inside" }),
+          tall(800, undefined, { fit: "inside", withoutEnlargement: true }),
+        ]),
+      ).toEqual(["1x262143", "1x262143", "1x300000"]);
     });
   });
 

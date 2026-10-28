@@ -2036,6 +2036,11 @@ fn resolve_resize(r: Resize, sw: u32, sh: u32) -> (u32, u32) {
         // height the per-side cap clamped: the box lost the source ratio, so
         // the width follows the capped height instead.
         h = derive_side(w, sw, sh);
+        if r.without_enlargement && w > sw {
+            // A wider width means a taller height too. Decide before the cap
+            // can pull the width back under `sw`.
+            return (sw, sh);
+        }
         if r.fit == Fit::Inside && h == MAX_SIDE {
             w = derive_side(h, sh, sw);
         }

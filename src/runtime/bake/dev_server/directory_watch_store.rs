@@ -164,7 +164,8 @@ impl DirectoryWatchStore {
             }
             // Imports in CSS can resolve to relative files without './'
             // Imports in HTML can resolve to project-relative paths by
-            // prefixing with '/', but that is done in HTMLScanner.
+            // prefixing with '/'. The bundler rebases those onto the project
+            // root before it reports the failure, so `specifier` is absolute.
             Loader::Css | Loader::Html => {}
             // Multiple parts of DevServer rely on the fact that these
             // loaders do not depend on importing other files.

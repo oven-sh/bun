@@ -2,7 +2,6 @@ use core::marker::PhantomData;
 use std::borrow::Cow;
 
 use crate::Error;
-use crate::bun_fs as fs;
 use bun_alloc::AstAlloc;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Log, Range, Source};
@@ -69,16 +68,16 @@ impl<'a> HTMLScanner<'a> {
 
 impl<'a> HTMLScanner<'a> {
     fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
-        // In HTML, sometimes people do /src/index.js
-        // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
-        let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
-            resolve_path::join_abs_string::<platform::Auto>(
-                fs::FileSystem::instance().top_level_dir(),
-                &[&input_path[1..]],
-            )
-        }
+        // A root-relative URL (`/src/index.js`) is stored as written. The bundler
+        // rebases it onto the project root when it resolves the record, see
+        // `RootRelativeUrl`.
+        //
         // Check if imports to (e.g) "App.tsx" are actually relative imoprts w/o the "./"
-        else if input_path.len() > 2 && input_path[0] != b'.' && input_path[1] != b'/' {
+        let path_to_use: &[u8] = if input_path.len() > 2
+            && input_path[0] != b'.'
+            && input_path[0] != b'/'
+            && input_path[1] != b'/'
+        {
             'blk: {
                 let Some(index_of_dot) = bun_core::strings::last_index_of_char(input_path, b'.')
                 else {
@@ -105,8 +104,15 @@ impl<'a> HTMLScanner<'a> {
             input_path
         };
 
-        let owned: &'static [u8] =
-            Box::leak(AstAlloc::vec_from_slice(path_to_use).into_boxed_slice());
+        let leak = |bytes: &[u8]| -> &'static [u8] {
+            Box::leak(AstAlloc::vec_from_slice(bytes).into_boxed_slice())
+        };
+        let owned = leak(path_to_use);
+        let original_path = if core::ptr::eq(path_to_use, input_path) {
+            owned
+        } else {
+            leak(input_path)
+        };
         let record = ImportRecord {
             path: FsPath::init(owned),
             kind,
@@ -114,7 +120,7 @@ impl<'a> HTMLScanner<'a> {
             tag: ImportRecordTag::default(),
             loader: None,
             source_index: AstIndex::default(),
-            original_path: b"",
+            original_path,
             flags: ImportRecordFlags::default(),
         };
 
@@ -158,6 +164,60 @@ pub fn scan_import_records(
     let mut scanner = HTMLScanner::init(log, source);
     scanner.scan(&source.contents)?;
     Ok(scanner.import_records)
+}
+
+/// True for an HTML URL that names a file under the project root: one leading `/`.
+/// `//host/path` is protocol-relative and stays a URL.
+pub fn is_root_relative_url(url: &[u8]) -> bool {
+    url.len() > 1 && url[0] == b'/' && url[1] != b'/'
+}
+
+/// The file that a root-relative HTML URL names: `/favicon.png` under `root` is
+/// `<root>/favicon.png`. The result lives in a thread-local buffer until the next path join.
+pub fn rebase_root_relative_url<'r>(root: &'r [u8], url: &[u8]) -> &'r [u8] {
+    debug_assert!(is_root_relative_url(url));
+    resolve_path::join_abs_string::<platform::Auto>(root, &[&url[1..]])
+}
+
+/// A root-relative HTML URL and the directories the bundler looks it up under, in
+/// order: the project root, then the process cwd when that is a different directory
+/// (an entry point under `public/` whose `/src/app.tsx` lives beside `public/`).
+pub struct RootRelativeUrl<'a> {
+    url: &'a [u8],
+    project_root: &'a [u8],
+    /// The cwd candidate. `None` once used, or when the cwd is the project root.
+    cwd: Option<&'static [u8]>,
+}
+
+impl<'a> RootRelativeUrl<'a> {
+    pub fn init(url: &'a [u8], project_root: &'a [u8]) -> Self {
+        let cwd = bun_core::top_level_dir();
+        let cwd = (strip_trailing_sep(cwd) != strip_trailing_sep(project_root)).then_some(cwd);
+        Self {
+            url,
+            project_root,
+            cwd,
+        }
+    }
+
+    /// `<project root>/<url>`, copied into `arena`.
+    pub fn rebase_onto_project_root<'r>(&self, arena: &'r bun_alloc::Arena) -> &'r [u8] {
+        arena.alloc_slice_copy(rebase_root_relative_url(self.project_root, self.url))
+    }
+
+    /// `<cwd>/<url>`, copied into `arena`. `None` after the first call, or when the cwd is
+    /// the project root.
+    pub fn rebase_onto_cwd<'r>(&mut self, arena: &'r bun_alloc::Arena) -> Option<&'r [u8]> {
+        let cwd = self.cwd.take()?;
+        Some(arena.alloc_slice_copy(rebase_root_relative_url(cwd, self.url)))
+    }
+}
+
+fn strip_trailing_sep(dir: &[u8]) -> &[u8] {
+    match dir {
+        [rest @ .., last] if !rest.is_empty() && bun_paths::is_sep_native(*last) => rest,
+        _ => dir,
+    }
 }
 
 type Processor<'a> = HTMLProcessor<HTMLScanner<'a>, false>;

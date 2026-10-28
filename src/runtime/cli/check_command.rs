@@ -355,12 +355,9 @@ fn run_quietly<R>(
 /// Returns `provided` with `Provided::scripts_of_page` set.
 fn with_pages(cwd: &[u8], provided: Provided) -> Provided {
     use bun_sema_driver::host::{from_native, to_native};
-    // One thread at a time, because the first call initializes the `FileSystem` that the scanner
-    // reads.
-    let (cwd, turn) = (cwd.to_vec(), bun_threading::Guarded::new(()));
+    let cwd = cwd.to_vec();
     Provided {
         scripts_of_page: Some(Box::new(move |page| {
-            let _turn = turn.lock();
             let scripts = imports_of_page(&cwd, to_native(page)).into_iter();
             let scripts = scripts.filter(|path| has_types(path));
             scripts.map(|path| from_native(&path)).collect()
@@ -870,18 +867,21 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
     };
     let source = bun_ast::Source::init_path_string(&page[..], &contents[..]);
     let mut log = bun_ast::Log::init();
-    // The scanner resolves `/src/main.tsx` against `FileSystem`'s top-level directory, which
-    // `bun ./index.html` hasn't initialized yet.
-    if bun_resolver::fs::FileSystem::init(None).is_err() {
-        return Vec::new();
-    }
     let records = bun_bundler::html_scanner::scan_import_records(&mut log, &source);
     let directory = resolve_path::dirname::<Auto>(&page);
     let is_url = |path: &[u8]| path.starts_with(b"//") || bun_core::strings::contains(path, b"://");
+    // `bun ./index.html` serves the page with the cwd as the project root, so `/src/main.tsx`
+    // is `<cwd>/src/main.tsx`.
     (records.unwrap_or_default().iter())
         .map(|record| record.path.text())
         .filter(|path| !is_url(path))
-        .map(|path| resolve_path::join_abs_string::<Auto>(directory, &[path]).to_vec())
+        .map(|path| {
+            if bun_bundler::html_scanner::is_root_relative_url(path) {
+                bun_bundler::html_scanner::rebase_root_relative_url(cwd, path).to_vec()
+            } else {
+                resolve_path::join_abs_string::<Auto>(directory, &[path]).to_vec()
+            }
+        })
         .collect()
 }
 

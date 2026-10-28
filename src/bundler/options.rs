@@ -1440,6 +1440,17 @@ impl<'a> BundleOptions<'a> {
         }
     }
 
+    /// The directory that output paths and root-relative HTML URLs are relative to:
+    /// `root_dir` (`--root`, else the entry points' common directory) when a front end
+    /// set one, otherwise the process cwd.
+    pub fn project_root(&self) -> &[u8] {
+        if !self.root_dir.is_empty() {
+            &self.root_dir
+        } else {
+            bun_core::top_level_dir()
+        }
+    }
+
     /// Per-worker deep clone — replaces the prior bitwise
     /// `ptr::copy_nonoverlapping` of the parent `Transpiler` (which aliased
     /// every `Box`/`Vec` in here between parent and worker; reassigning any of

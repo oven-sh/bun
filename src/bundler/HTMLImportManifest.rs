@@ -43,7 +43,6 @@ use bun_core::strings;
 use bun_io::{FmtAdapter, Write};
 use bun_js_printer::Encoding;
 use bun_paths::resolve_path::{platform, platform_to_posix_in_place, relative_normalized};
-use bun_resolver::fs::FileSystem;
 
 use crate::Graph::Graph;
 use crate::chunk::Content;
@@ -205,12 +204,7 @@ pub(crate) fn write_with_assets<W: Write + ?Sized>(
     let mut chunks_to_write = AutoBitSet::init_empty(chunks.len())?;
     let mut chunks_to_visit: Vec<u32> = Vec::new();
 
-    let root_dir: &[u8] = if !options.root_dir.is_empty() {
-        &options.root_dir[..]
-    } else {
-        // SAFETY: FileSystem singleton is initialized before bundling.
-        FileSystem::get().top_level_dir()
-    };
+    let root_dir: &[u8] = options.project_root();
 
     writer.write_all(b"{")?;
 

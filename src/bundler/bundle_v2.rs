@@ -2686,13 +2686,37 @@ pub mod bv2_impl {
             let source_dir =
                 Fs::PathName::init(&import_record.source_file).dir_with_trailing_slash();
 
+            // Same as in `resolve_import_records`: a root-relative HTML URL is looked up
+            // under the project root, then under the cwd.
+            let mut specifier: &[u8] = &import_record.specifier;
+            let mut root_relative = None;
+            if self.graph.input_files.items_loader()[import_record.importer_source_index as usize]
+                == Loader::Html
+                && crate::html_scanner::is_root_relative_url(
+                    self.graph.ast.items_import_records()
+                        [import_record.importer_source_index as usize]
+                        .as_slice()[import_record.import_record_index as usize]
+                        .original_path,
+                )
+            {
+                // SAFETY: see `transpiler` note above.
+                let transpiler = unsafe { &*transpiler };
+                if transpiler.resolver.is_user_external(specifier) {
+                    return;
+                }
+                let url = crate::html_scanner::RootRelativeUrl::init(
+                    specifier,
+                    transpiler.options.project_root(),
+                );
+                specifier = url.rebase_onto_project_root(self.arena());
+                root_relative = Some(url);
+            }
+
             // Check the FileMap first for in-memory files
             if let Some(file_map) = self.file_map {
-                if let Some(_file_map_result) = file_map.resolve(
-                    self.arena(),
-                    &import_record.source_file,
-                    &import_record.specifier,
-                ) {
+                if let Some(_file_map_result) =
+                    file_map.resolve(self.arena(), &import_record.source_file, specifier)
+                {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
@@ -2766,33 +2790,40 @@ pub mod bv2_impl {
                 // SAFETY: see `transpiler` note above.
                 match unsafe { &mut *transpiler }.resolver.resolve(
                     source_dir,
-                    &import_record.specifier,
+                    specifier,
                     import_record.kind,
                 ) {
                     Ok(r) => break r,
                     Err(err) => {
                         // Only perform directory busting when hot-reloading is enabled
                         if err == _resolver::Error::ModuleNotFound {
-                            if let Some(dev) = &self.dev_server {
-                                if !had_busted_dir_cache {
-                                    // Only re-query if we previously had something cached.
-                                    // SAFETY: see `transpiler` note above.
-                                    if unsafe { &mut *transpiler }
-                                        .resolver
-                                        .bust_dir_cache_from_specifier(
-                                            &import_record.source_file,
-                                            &import_record.specifier,
-                                        )
-                                    {
-                                        had_busted_dir_cache = true;
-                                        continue;
-                                    }
+                            if self.dev_server.is_some() && !had_busted_dir_cache {
+                                // Only re-query if we previously had something cached.
+                                // SAFETY: see `transpiler` note above.
+                                if unsafe { &mut *transpiler }
+                                    .resolver
+                                    .bust_dir_cache_from_specifier(
+                                        &import_record.source_file,
+                                        specifier,
+                                    )
+                                {
+                                    had_busted_dir_cache = true;
+                                    continue;
                                 }
-
+                            }
+                            if let Some(under_cwd) = root_relative
+                                .as_mut()
+                                .and_then(|url| url.rebase_onto_cwd(self.arena()))
+                            {
+                                specifier = under_cwd;
+                                had_busted_dir_cache = false;
+                                continue;
+                            }
+                            if let Some(dev) = &self.dev_server {
                                 // Tell Bake's Dev Server to wait for the file to be imported.
                                 dev.track_resolution_failure(
                                     &import_record.source_file,
-                                    &import_record.specifier,
+                                    specifier,
                                     target.bake_graph(),
                                     self.graph.input_files.items_loader()
                                         [import_record.importer_source_index as usize],
@@ -6890,10 +6921,31 @@ pub mod bv2_impl {
                 // SAFETY: see note above — raw `*mut Transpiler` lives for `'a`.
                 let transpiler: &mut Transpiler<'a> = unsafe { &mut *transpiler_ptr };
 
+                // A root-relative HTML URL (`/favicon.png`) names a file under the
+                // project root. The record keeps the URL as written, so plugins,
+                // `external` and the error message see it. Resolution uses the
+                // rebased path, then the same path under the process cwd when the
+                // project root has no such file.
+                let mut specifier: &'a [u8] = import_record.path.text;
+                let mut root_relative = None;
+                if loader == Loader::Html
+                    && crate::html_scanner::is_root_relative_url(import_record.original_path)
+                {
+                    if transpiler.resolver.is_user_external(specifier) {
+                        continue;
+                    }
+                    let url = crate::html_scanner::RootRelativeUrl::init(
+                        specifier,
+                        transpiler.options.project_root(),
+                    );
+                    specifier = url.rebase_onto_project_root(self.arena());
+                    root_relative = Some(url);
+                }
+
                 // Check the FileMap first for in-memory files
                 if let Some(file_map) = self.file_map {
                     if let Some(_file_map_result) =
-                        file_map.resolve(self.arena(), source.path.text, import_record.path.text)
+                        file_map.resolve(self.arena(), source.path.text, specifier)
                     {
                         let mut file_map_result = _file_map_result;
                         let mut path_primary = file_map_result.path_pair.primary;
@@ -6953,7 +7005,7 @@ pub mod bv2_impl {
                 let resolve_result: _resolver::Result<'a> = 'inner: loop {
                     match transpiler.resolver.resolve_with_framework(
                         source_dir,
-                        import_record.path.text,
+                        specifier,
                         import_record.kind,
                     ) {
                         Ok(r) => break r,
@@ -6980,22 +7032,32 @@ pub mod bv2_impl {
                                             watcher,
                                             "busting dir cache {} -> {}",
                                             bstr::BStr::new(&source.path.text),
-                                            bstr::BStr::new(&import_record.path.text)
+                                            bstr::BStr::new(specifier)
                                         );
                                         // Only re-query if we previously had something cached.
                                         if transpiler.resolver.bust_dir_cache_from_specifier(
                                             source.path.text,
-                                            import_record.path.text,
+                                            specifier,
                                         ) {
                                             had_busted_dir_cache = true;
                                             continue 'inner;
                                         }
                                     }
+                                }
+                                if let Some(under_cwd) = root_relative
+                                    .as_mut()
+                                    .and_then(|url| url.rebase_onto_cwd(self.arena()))
+                                {
+                                    specifier = under_cwd;
+                                    had_busted_dir_cache = false;
+                                    continue 'inner;
+                                }
+                                if self.bun_watcher.is_some() {
                                     if let Some(dev) = self.dev_server {
                                         // Tell DevServer about the resolution failure.
                                         dev.track_resolution_failure(
                                             source.path.text,
-                                            import_record.path.text,
+                                            specifier,
                                             ctx.target.bake_graph(), // use the source file target not the altered one
                                             loader,
                                         )
@@ -7082,41 +7144,15 @@ pub mod bv2_impl {
                                             );
                                         }
                                     } else {
-                                        #[cfg(windows)]
-                                        let mut buf = bun_paths::path_buffer_pool::get();
-                                        let top_level_dir = Fs::FileSystem::get().top_level_dir();
-                                        let specifier_to_use: &[u8] = if loader == Loader::Html
-                                            && import_record.path.text.starts_with(top_level_dir)
-                                        {
-                                            let specifier_to_use =
-                                                &import_record.path.text[top_level_dir.len()..];
-                                            #[cfg(windows)]
-                                            {
-                                                if specifier_to_use.len() <= buf.len() {
-                                                    &*bun_paths::resolve_path::path_to_posix_buf::<u8>(
-                                                        specifier_to_use,
-                                                        &mut *buf,
-                                                    )
-                                                } else {
-                                                    specifier_to_use
-                                                }
-                                            }
-                                            #[cfg(not(windows))]
-                                            {
-                                                specifier_to_use
-                                            }
-                                        } else {
-                                            import_record.path.text
-                                        };
                                         add_error(
                                             log,
                                             Some(source),
                                             import_record.range,
                                             format_args!(
                                                 "Could not resolve: \"{}\"",
-                                                bstr::BStr::new(specifier_to_use)
+                                                bstr::BStr::new(&import_record.path.text)
                                             ),
-                                            specifier_to_use,
+                                            import_record.path.text,
                                             import_record.kind,
                                         );
                                     }

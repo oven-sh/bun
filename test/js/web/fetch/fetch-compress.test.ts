@@ -333,7 +333,11 @@ describe("fetch compress option", () => {
     })();
 
     const body = JSON.stringify(
-      Array.from({ length: 14_000 }, (_, id) => ({ id, name: `item-${(id * 2654435761) % 4294967296}`, value: id / 7 })),
+      Array.from({ length: 14_000 }, (_, id) => ({
+        id,
+        name: `item-${(id * 2654435761) % 4294967296}`,
+        value: id / 7,
+      })),
     );
     const start = performance.now();
     last = start;

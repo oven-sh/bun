@@ -3515,7 +3515,7 @@ impl<'a> HTTPClient<'a> {
                     let mut temporary_send_buffer: Vec<u8> = Vec::with_capacity(16 * 1024);
                     let writer = &mut temporary_send_buffer;
 
-                    let request = self.build_request(self.request_body().len());
+                    let request = self.build_request(self.state.original_request_body.len());
                     if let Err(e) = write_request(writer, &request) {
                         self.close_and_fail::<IS_SSL>(e, socket);
                         return;

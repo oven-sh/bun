@@ -332,8 +332,7 @@ fn finish(
     fetch_options.body.detach();
     match out {
         Ok(compressed) => {
-            fetch_options.body =
-                HTTPRequestBody::AnyBlob(blob::Any::from_owned_slice(compressed));
+            fetch_options.body = HTTPRequestBody::AnyBlob(blob::Any::from_owned_slice(compressed));
             // `queue` aborts on OOM.
             let _ = FetchTasklet::queue(cx, fetch_options, promise);
             Ok(())

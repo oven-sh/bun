@@ -4847,7 +4847,12 @@ describe("bundler", () => {
       expect(result.logs).toBeEmpty();
       const admin = result.outputs.find(o => o.path.replaceAll("\\", "/").endsWith("pages/admin/index.js"))!;
       const map = result.outputs.find(o => o.path === admin.path + ".map");
-      return { code: await admin.text(), map: map && JSON.parse(await map.text()) };
+      const code = await admin.text();
+      // The code without the hashes of the chunks and without the debug ID, which come from the hash.
+      const references = result.outputs
+        .reduce((text, output) => text.replaceAll(output.hash!, "[hash]"), code)
+        .replace(/debugId=\w+/, "debugId=[id]");
+      return { code, references, map: map && JSON.parse(await map.text()) };
     }
 
     // `util("admin")` follows the dynamic import on the same line, so the map
@@ -4905,9 +4910,11 @@ describe("bundler", () => {
       using dir = tempDir("splitting-reference-paths-outdir", files);
       const inMemory = await buildAdminEntry(String(dir), { sourcemap: "linked" });
       const onDisk = await buildAdminEntry(String(dir), { sourcemap: "linked", outdir: join(String(dir), "out") });
-      expect(onDisk.code).toBe(inMemory.code);
+      // A source map names its sources relative to the output directory, so the two maps differ.
+      // The hash of a chunk covers its map, so the hashes differ too. Nothing else does.
+      expect(onDisk.references).toBe(inMemory.references);
       expect(onDisk.map.mappings).toBe(inMemory.map.mappings);
-      expect(readFileSync(join(String(dir), "out", "pages", "admin", "index.js"), "utf8")).toBe(inMemory.code);
+      expect(readFileSync(join(String(dir), "out", "pages", "admin", "index.js"), "utf8")).toBe(onDisk.code);
       await expectUtilCallToBeMapped(onDisk.code, onDisk.map);
     });
   });

@@ -218,7 +218,7 @@ impl HotReloadEvent {
     }
 
     /// Moves the files of `first` and of the events behind it into `entry_points`, recycles the events, and returns the half-saved files.
-    /// SAFETY: the contract of `run`, for `first` and its owner `dev`.
+    /// SAFETY: `first` is a live event of `(*dev).watcher_atomics` that this thread owns. `dev` is its live owner and is not null: `run` has checked that, and `start_next_bundle_if_present` passes `self`. Must run on the DevServer thread.
     pub(crate) unsafe fn drain(
         first: *mut HotReloadEvent,
         dev: *mut DevServer,

@@ -2,7 +2,7 @@ whole, error: leaf@15 <anonymous>@1 inner@41 textMiddle@4 middle@46 viaNative@50
   again: same
 whole, throw: leaf@22 <anonymous>@1 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
   again: same
-whole, native error: <parse> parse leaf@24 <anonymous>@1 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
+whole, native error: parse leaf@24 <anonymous>@1 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
   again: same
 whole, text error: textThrower@5 leaf@27 <anonymous>@1 inner@41 textMiddle@4 middle@46 viaNative@50 replace outermost@55 ground@59
   again: same

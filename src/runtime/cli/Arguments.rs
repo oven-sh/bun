@@ -532,6 +532,7 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"no-ffi-cc"), Nothing),
         (Long(b"disallow-code-generation-from-strings"), Nothing),
         (Long(b"unhandled-rejections"), Nothing),
+        (Long(b"input-type"), Nothing),
         (Long(b"console-depth"), Nothing),
         (Long(b"user-agent"), Nothing),
         (Long(b"cron-title"), Nothing),

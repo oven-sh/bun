@@ -737,6 +737,31 @@ describe("bundler", () => {
       expect(exitCode).toBe(0);
     });
 
+    // "inputs" and "outputs" of the metafile give the output that an import() loads the same name: its key.
+    test.concurrent("Bun.build: metafile path of an import() of an entry point in a nested directory", async () => {
+      using dir = tempDir("compile-splitting-metafile-nested-entry", {
+        "main.ts": `import("./tools/tool.ts").then(tool => console.log("main loaded", tool.name));`,
+        "tools/tool.ts": `export const name = "tool";`,
+      });
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "main.ts"), join(String(dir), "tools", "tool.ts")],
+        compile: { outfile: join(String(dir), "dist", "out") },
+        splitting: true,
+        metafile: true,
+      });
+      expect(result.logs).toEqual([]);
+      expect(result.success).toBe(true);
+
+      const { inputs, outputs } = result.metafile!;
+      expect(Object.keys(outputs).sort()).toEqual(["./out", "tools/tool.js"]);
+      expect(outputs["./out"].imports).toEqual([{ path: "tools/tool.js", kind: "dynamic-import" }]);
+      expect(
+        Object.values(inputs)
+          .flatMap(input => input.imports)
+          .map(({ path, kind, original }) => ({ path, kind, original })),
+      ).toEqual([{ path: "tools/tool.js", kind: "dynamic-import", original: "./tools/tool.ts" }]);
+    });
+
     // Building the same inputs twice must write the same executable. Imports between chunks are printed with a
     // per-build placeholder as the specifier, and the linker swaps in the final path once chunk hashes are known.
     // With `--bytecode`, the module record used to keep the placeholder as an extra string, and it was written to the

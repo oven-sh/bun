@@ -34,10 +34,7 @@ pub(crate) fn merge_external_esm_imports<'a>(c: &mut LinkerContext<'a>, chunks: 
     if !c.options.output_format.keep_es6_import_export_syntax() {
         return;
     }
-    // Without splitting, a file is copied into the chunk of every entry point that
-    // reaches it. `symbols.merge` is graph-wide, and a chunk's renamer names only
-    // the symbols of its own files, so a statement is dropped only when its file is
-    // in one chunk: the binding it links to is then in every chunk that prints it.
+    // Without splitting, a file is in the chunk of every entry point that reaches it.
     let copies_files = !c.graph.code_splitting
         && chunks
             .iter()
@@ -134,6 +131,7 @@ pub(crate) fn merge_external_esm_imports<'a>(c: &mut LinkerContext<'a>, chunks: 
                                 )
                             })
                         })
+                        // `symbols.merge` is bundle-wide, so a dropped statement's file must be in this chunk only.
                         || (copies_files && entry_bits[source_index as usize].count() != 1);
 
                     if must_keep {

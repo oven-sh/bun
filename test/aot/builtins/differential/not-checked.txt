@@ -20,6 +20,10 @@ BunSpawnSync/1: it is not called: it blocks, starts a process or opens a socket
 BunTestJestSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestViSpyOn/0: it is not called: it reaches outside JavaScript
+BunTestVitestJestSpyOn/0: it is not called: it reaches outside JavaScript
+BunTestVitestSpyOn/0: it is not called: it reaches outside JavaScript
+BunTestVitestViSpyOn/0: it is not called: it reaches outside JavaScript
+BunTestVitestVitestSpyOn/0: it is not called: it reaches outside JavaScript
 BunUdpSocket/0: it is not called: it blocks, starts a process or opens a socket
 CompilerHelpersDefinePropertiesFrom/0: it is not called: it works on the instance of a compiled program, and this process has none
 CompilerHelpersGetAsyncDisposeMethod/0: it is not called: this realm does not have it
@@ -228,20 +232,43 @@ S3StatPrototypeEtag/0: no set of operands selects it
 S3StatPrototypeLastModified/0: no set of operands selects it
 S3StatPrototypeSize/0: no set of operands selects it
 S3StatPrototypeType/0: no set of operands selects it
+ScopeFunctionsPrototypeAfterAll/0: it is not called: this realm does not have its holder
+ScopeFunctionsPrototypeAfterEach/0: it is not called: this realm does not have its holder
+ScopeFunctionsPrototypeAroundAll/0: it is not called: this realm does not have its holder
+ScopeFunctionsPrototypeAroundEach/0: it is not called: this realm does not have its holder
+ScopeFunctionsPrototypeBeforeAll/0: it is not called: this realm does not have its holder
+ScopeFunctionsPrototypeBeforeEach/0: it is not called: this realm does not have its holder
 ScopeFunctionsPrototypeConcurrent/0: it is not called: this realm does not have its holder
 ScopeFunctionsPrototypeConcurrentIf/0: it is not called: this realm does not have its holder
+ScopeFunctionsPrototypeDescribe/0: it is not called: this realm does not have its holder
 ScopeFunctionsPrototypeEach/0: it is not called: this realm does not have its holder
+ScopeFunctionsPrototypeExtend/0: it is not called: this realm does not have its holder
 ScopeFunctionsPrototypeFailing/0: it is not called: this realm does not have its holder
 ScopeFunctionsPrototypeFailingIf/0: it is not called: this realm does not have its holder
+ScopeFunctionsPrototypeFails/0: it is not called: this realm does not have its holder
+ScopeFunctionsPrototypeFor/0: it is not called: this realm does not have its holder
 ScopeFunctionsPrototypeIf/0: it is not called: this realm does not have its holder
 ScopeFunctionsPrototypeOnly/0: it is not called: this realm does not have its holder
+ScopeFunctionsPrototypeOverride/0: it is not called: this realm does not have its holder
+ScopeFunctionsPrototypeRunIf/0: it is not called: this realm does not have its holder
+ScopeFunctionsPrototypeScoped/0: it is not called: this realm does not have its holder
+ScopeFunctionsPrototypeSequential/0: it is not called: this realm does not have its holder
 ScopeFunctionsPrototypeSerial/0: it is not called: this realm does not have its holder
 ScopeFunctionsPrototypeSerialIf/0: it is not called: this realm does not have its holder
+ScopeFunctionsPrototypeShuffle/0: it is not called: this realm does not have its holder
 ScopeFunctionsPrototypeSkip/0: it is not called: this realm does not have its holder
 ScopeFunctionsPrototypeSkipIf/0: it is not called: this realm does not have its holder
+ScopeFunctionsPrototypeSuite/0: it is not called: this realm does not have its holder
 ScopeFunctionsPrototypeTodo/0: it is not called: this realm does not have its holder
 ScopeFunctionsPrototypeTodoIf/0: it is not called: this realm does not have its holder
 ShadowRealmPrototypeImportValue/0: it is not called: it loads whatever its operand names
 ShellInterpreterPrototypeRun/0: no set of operands selects it
+TestContextPrototypeAnnotate/0: no set of operands selects it
+TestContextPrototypeExpect/0: no set of operands selects it
+TestContextPrototypeOnTestFailed/0: no set of operands selects it
+TestContextPrototypeOnTestFinished/0: no set of operands selects it
+TestContextPrototypeSignal/0: no set of operands selects it
+TestContextPrototypeSkip/0: no set of operands selects it
+TestContextPrototypeTask/0: no set of operands selects it
 Worker/1: it is not called: it starts a thread or opens a connection
 Worker/2: it is not called: it starts a thread or opens a connection

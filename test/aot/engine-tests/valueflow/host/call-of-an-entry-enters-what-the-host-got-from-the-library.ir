@@ -1,5 +1,5 @@
 # process.nextTick(callback)
-# Native code makes process.nextTick by a call of initializeNextTickQueue (runtimefunction 65580), and the entry holds what that call answers. So the call of the program enters that function
+# Native code makes process.nextTick by a call of initializeNextTickQueue (runtimefunction 65581), and the entry holds what that call answers. So the call of the program enters that function
 # with the operands of the call: the callback arrives at its parameter and has not escaped, as it would have by the overload of the entry, which retains it.
 # LIBRARY: own
 # RUN: valueflow-solve calls
@@ -11,7 +11,7 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=65580 function=f1
+runtimefunction id=65581 function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=Process
@@ -20,7 +20,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v3 = Call v1, v0, v2
     Return
 }
-function f1 name="initializeNextTickQueue" role=Library enclosingRuntimeFunction=65580 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="initializeNextTickQueue" role=Library enclosingRuntimeFunction=65581 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = NewClosure function=f2
     Return v3

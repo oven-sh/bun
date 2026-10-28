@@ -51,7 +51,7 @@ test.concurrent.each([
     "tsconfig.json": tsconfig,
     "marked.cts": `
       // A legacy method decorator gets (prototype, key, descriptor). The others get the class or the method first.
-      function mark(value: any, _: unknown, descriptor?: PropertyDescriptor) {
+      function mark(value: any, _?: unknown, descriptor?: PropertyDescriptor) {
         (descriptor ? descriptor.value : value).marked = true;
       }
       @mark class Marked {

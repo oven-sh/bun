@@ -10,14 +10,14 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=65580 function=f1
+runtimefunction id=65581 function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=Process
     v1 = PropGet v0 key="nextTick"
     Return
 }
-function f1 name="initializeNextTickQueue" role=Library enclosingRuntimeFunction=65580 parameters=[{type=anything}, {type=object}, {type=anything}] results=[{type=anything}] {
+function f1 name="initializeNextTickQueue" role=Library enclosingRuntimeFunction=65581 parameters=[{type=anything}, {type=object}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: object, v2: anything):
     v3 = NewClosure function=f2
     v4 = PutInternalField v1, v3 index=2

@@ -84,19 +84,19 @@ upload | a Blob | keys -> []
 upload | a Blob | for-in -> ["name", "size", "type"]
 upload | a Blob | spread -> []
 upload | a Blob | by name 0 -> 3
-upload | a Blob | by name 1 -> "text/plain;charset=utf-8"
+upload | a Blob | by name 1 -> "text/plain"
 upload | a Blob | by name 2 -> undefined
 upload | a Blob | by name 3 -> threw TypeError
-upload | a Blob | by name 4 -> [3, "text/plain;charset=utf-8"]
+upload | a Blob | by name 4 -> [3, "text/plain"]
 upload | a File | own -> [false, false, false]
 upload | a File | keys -> []
 upload | a File | for-in -> ["name", "size", "type"]
 upload | a File | spread -> []
 upload | a File | by name 0 -> 3
-upload | a File | by name 1 -> "text/plain;charset=utf-8"
+upload | a File | by name 1 -> "text/plain"
 upload | a File | by name 2 -> "a.txt"
 upload | a File | by name 3 -> threw TypeError
-upload | a File | by name 4 -> [3, "text/plain;charset=utf-8"]
+upload | a File | by name 4 -> [3, "text/plain"]
 upload | a Map | own -> [false, false, false]
 upload | a Map | keys -> []
 upload | a Map | for-in -> []

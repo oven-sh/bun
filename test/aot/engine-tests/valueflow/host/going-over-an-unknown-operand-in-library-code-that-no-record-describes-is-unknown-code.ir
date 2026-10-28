@@ -1,5 +1,5 @@
 # process.send("careful"), where parseHandle goes over its operand with for-of
-# parseHandle (runtimefunction 65561) stands behind no built-in: no record says what it does with its operand. It is entered with an object nobody knows, and going over that calls methods nobody knows:
+# parseHandle (runtimefunction 65562) stands behind no built-in: no record says what it does with its operand. It is entered with an object nobody knows, and going over that calls methods nobody knows:
 # code that nobody compiles runs.
 # With records: going-over-an-unknown-operand-in-the-code-behind-a-described-built-in-steps-nothing.ir
 # LIBRARY: own
@@ -10,7 +10,7 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=65561 function=f1
+runtimefunction id=65562 function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=Process
@@ -19,7 +19,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v3 = Call v1, v0, v2
     Return
 }
-function f1 name="parseHandle" role=Library enclosingRuntimeFunction=65561 parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="parseHandle" role=Library enclosingRuntimeFunction=65562 parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = IteratorOpen v0
     v2 = IteratorResume v1

@@ -1,0 +1,949 @@
+////: ask
+function ask() {
+  attempt("typeof", () => typeof DisposableStack);
+  attempt("typeof is not undefined", () => typeof DisposableStack !== "undefined");
+  attempt("typeof is undefined", () => (typeof DisposableStack === "undefined" ? "absent" : "present"));
+  attempt("typeof is the kind", () => typeof DisposableStack === "function");
+  attempt("used behind typeof", () => {
+    if (typeof DisposableStack === "undefined") return "went around";
+    return typeof DisposableStack.prototype;
+  });
+  attempt("bare read", () => DisposableStack === undefined);
+  attempt("bare read that is kept", () => {
+    const held = DisposableStack;
+    return [typeof held, typeof held].join();
+  });
+  attempt("call", () => typeof DisposableStack());
+  attempt("construction", () => typeof new DisposableStack());
+  attempt("member", () => typeof DisposableStack.prototype);
+  attempt("call of a member", () => typeof DisposableStack.toString());
+  attempt("instanceof", () => ({}) instanceof DisposableStack);
+  attempt("in", () => "DisposableStack" in globalThis);
+  attempt("hasOwn", () => Object.hasOwn(globalThis, "DisposableStack"));
+  attempt("descriptor", () => typeof Object.getOwnPropertyDescriptor(globalThis, "DisposableStack"));
+  attempt("member of globalThis", () => typeof globalThis.DisposableStack);
+  attempt("by a key that is written", () => typeof globalThis["DisposableStack"]);
+  attempt("by a key that is made", () => typeof globalThis[key]);
+  attempt("truth", () => (globalThis.DisposableStack ? "true" : "false"));
+  attempt("not", () => !globalThis.DisposableStack);
+  attempt("and", () => typeof (globalThis.DisposableStack && globalThis.DisposableStack.prototype));
+  attempt("nothing else", () => typeof (globalThis.DisposableStack ?? "nothing"));
+  attempt("optional member", () => typeof globalThis.DisposableStack?.prototype);
+  attempt("optional call", () => typeof globalThis.DisposableStack?.());
+  attempt("optional call of a member", () => typeof globalThis.DisposableStack?.toString?.());
+  attempt("taken apart", () => {
+    const { DisposableStack: held } = globalThis;
+    return typeof held;
+  });
+  attempt("taken apart with a default", () => {
+    const { DisposableStack: held = "default" } = globalThis;
+    return typeof held;
+  });
+}
+////: ask-2
+function ask() {
+  attempt("typeof", () => typeof ShadowRealm);
+  attempt("typeof is not undefined", () => typeof ShadowRealm !== "undefined");
+  attempt("typeof is undefined", () => (typeof ShadowRealm === "undefined" ? "absent" : "present"));
+  attempt("typeof is the kind", () => typeof ShadowRealm === "function");
+  attempt("used behind typeof", () => {
+    if (typeof ShadowRealm === "undefined") return "went around";
+    return typeof ShadowRealm.prototype;
+  });
+  attempt("bare read", () => ShadowRealm === undefined);
+  attempt("bare read that is kept", () => {
+    const held = ShadowRealm;
+    return [typeof held, typeof held].join();
+  });
+  attempt("call", () => typeof ShadowRealm());
+  attempt("construction", () => typeof new ShadowRealm());
+  attempt("member", () => typeof ShadowRealm.prototype);
+  attempt("call of a member", () => typeof ShadowRealm.toString());
+  attempt("instanceof", () => ({}) instanceof ShadowRealm);
+  attempt("in", () => "ShadowRealm" in globalThis);
+  attempt("hasOwn", () => Object.hasOwn(globalThis, "ShadowRealm"));
+  attempt("descriptor", () => typeof Object.getOwnPropertyDescriptor(globalThis, "ShadowRealm"));
+  attempt("member of globalThis", () => typeof globalThis.ShadowRealm);
+  attempt("by a key that is written", () => typeof globalThis["ShadowRealm"]);
+  attempt("by a key that is made", () => typeof globalThis[key]);
+  attempt("truth", () => (globalThis.ShadowRealm ? "true" : "false"));
+  attempt("not", () => !globalThis.ShadowRealm);
+  attempt("and", () => typeof (globalThis.ShadowRealm && globalThis.ShadowRealm.prototype));
+  attempt("nothing else", () => typeof (globalThis.ShadowRealm ?? "nothing"));
+  attempt("optional member", () => typeof globalThis.ShadowRealm?.prototype);
+  attempt("optional call", () => typeof globalThis.ShadowRealm?.());
+  attempt("optional call of a member", () => typeof globalThis.ShadowRealm?.toString?.());
+  attempt("taken apart", () => {
+    const { ShadowRealm: held } = globalThis;
+    return typeof held;
+  });
+  attempt("taken apart with a default", () => {
+    const { ShadowRealm: held = "default" } = globalThis;
+    return typeof held;
+  });
+}
+////: ask-3
+function ask() {
+  attempt("typeof", () => typeof SharedArrayBuffer);
+  attempt("typeof is not undefined", () => typeof SharedArrayBuffer !== "undefined");
+  attempt("typeof is undefined", () => (typeof SharedArrayBuffer === "undefined" ? "absent" : "present"));
+  attempt("typeof is the kind", () => typeof SharedArrayBuffer === "function");
+  attempt("used behind typeof", () => {
+    if (typeof SharedArrayBuffer === "undefined") return "went around";
+    return typeof SharedArrayBuffer.prototype;
+  });
+  attempt("bare read", () => SharedArrayBuffer === undefined);
+  attempt("bare read that is kept", () => {
+    const held = SharedArrayBuffer;
+    return [typeof held, typeof held].join();
+  });
+  attempt("call", () => typeof SharedArrayBuffer());
+  attempt("construction", () => typeof new SharedArrayBuffer(8));
+  attempt("member", () => typeof SharedArrayBuffer.prototype);
+  attempt("call of a member", () => typeof SharedArrayBuffer.toString());
+  attempt("instanceof", () => ({}) instanceof SharedArrayBuffer);
+  attempt("in", () => "SharedArrayBuffer" in globalThis);
+  attempt("hasOwn", () => Object.hasOwn(globalThis, "SharedArrayBuffer"));
+  attempt("descriptor", () => typeof Object.getOwnPropertyDescriptor(globalThis, "SharedArrayBuffer"));
+  attempt("member of globalThis", () => typeof globalThis.SharedArrayBuffer);
+  attempt("by a key that is written", () => typeof globalThis["SharedArrayBuffer"]);
+  attempt("by a key that is made", () => typeof globalThis[key]);
+  attempt("truth", () => (globalThis.SharedArrayBuffer ? "true" : "false"));
+  attempt("not", () => !globalThis.SharedArrayBuffer);
+  attempt("and", () => typeof (globalThis.SharedArrayBuffer && globalThis.SharedArrayBuffer.prototype));
+  attempt("nothing else", () => typeof (globalThis.SharedArrayBuffer ?? "nothing"));
+  attempt("optional member", () => typeof globalThis.SharedArrayBuffer?.prototype);
+  attempt("optional call", () => typeof globalThis.SharedArrayBuffer?.());
+  attempt("optional call of a member", () => typeof globalThis.SharedArrayBuffer?.toString?.());
+  attempt("taken apart", () => {
+    const { SharedArrayBuffer: held } = globalThis;
+    return typeof held;
+  });
+  attempt("taken apart with a default", () => {
+    const { SharedArrayBuffer: held = "default" } = globalThis;
+    return typeof held;
+  });
+}
+////: ask-4
+function ask() {
+  attempt("typeof", () => typeof Temporal);
+  attempt("typeof is not undefined", () => typeof Temporal !== "undefined");
+  attempt("typeof is undefined", () => (typeof Temporal === "undefined" ? "absent" : "present"));
+  attempt("typeof is the kind", () => typeof Temporal === "object");
+  attempt("used behind typeof", () => {
+    if (typeof Temporal === "undefined") return "went around";
+    return typeof Temporal.Now;
+  });
+  attempt("bare read", () => Temporal === undefined);
+  attempt("bare read that is kept", () => {
+    const held = Temporal;
+    return [typeof held, typeof held].join();
+  });
+  attempt("call", () => typeof Temporal());
+  attempt("construction", () => typeof new Temporal());
+  attempt("member", () => typeof Temporal.Now);
+  attempt("call of a member", () => typeof Temporal.toString());
+  attempt("instanceof", () => ({}) instanceof Temporal);
+  attempt("in", () => "Temporal" in globalThis);
+  attempt("hasOwn", () => Object.hasOwn(globalThis, "Temporal"));
+  attempt("descriptor", () => typeof Object.getOwnPropertyDescriptor(globalThis, "Temporal"));
+  attempt("member of globalThis", () => typeof globalThis.Temporal);
+  attempt("by a key that is written", () => typeof globalThis["Temporal"]);
+  attempt("by a key that is made", () => typeof globalThis[key]);
+  attempt("truth", () => (globalThis.Temporal ? "true" : "false"));
+  attempt("not", () => !globalThis.Temporal);
+  attempt("and", () => typeof (globalThis.Temporal && globalThis.Temporal.Now));
+  attempt("nothing else", () => typeof (globalThis.Temporal ?? "nothing"));
+  attempt("optional member", () => typeof globalThis.Temporal?.Now);
+  attempt("optional call", () => typeof globalThis.Temporal?.());
+  attempt("optional call of a member", () => typeof globalThis.Temporal?.toString?.());
+  attempt("taken apart", () => {
+    const { Temporal: held } = globalThis;
+    return typeof held;
+  });
+  attempt("taken apart with a default", () => {
+    const { Temporal: held = "default" } = globalThis;
+    return typeof held;
+  });
+}
+////: ask-5
+function ask() {
+  attempt("typeof", () => typeof WebAssembly);
+  attempt("typeof is not undefined", () => typeof WebAssembly !== "undefined");
+  attempt("typeof is undefined", () => (typeof WebAssembly === "undefined" ? "absent" : "present"));
+  attempt("typeof is the kind", () => typeof WebAssembly === "object");
+  attempt("used behind typeof", () => {
+    if (typeof WebAssembly === "undefined") return "went around";
+    return typeof WebAssembly.validate;
+  });
+  attempt("bare read", () => WebAssembly === undefined);
+  attempt("bare read that is kept", () => {
+    const held = WebAssembly;
+    return [typeof held, typeof held].join();
+  });
+  attempt("call", () => typeof WebAssembly());
+  attempt("construction", () => typeof new WebAssembly());
+  attempt("member", () => typeof WebAssembly.validate);
+  attempt("call of a member", () => typeof WebAssembly.toString());
+  attempt("instanceof", () => ({}) instanceof WebAssembly);
+  attempt("in", () => "WebAssembly" in globalThis);
+  attempt("hasOwn", () => Object.hasOwn(globalThis, "WebAssembly"));
+  attempt("descriptor", () => typeof Object.getOwnPropertyDescriptor(globalThis, "WebAssembly"));
+  attempt("member of globalThis", () => typeof globalThis.WebAssembly);
+  attempt("by a key that is written", () => typeof globalThis["WebAssembly"]);
+  attempt("by a key that is made", () => typeof globalThis[key]);
+  attempt("truth", () => (globalThis.WebAssembly ? "true" : "false"));
+  attempt("not", () => !globalThis.WebAssembly);
+  attempt("and", () => typeof (globalThis.WebAssembly && globalThis.WebAssembly.validate));
+  attempt("nothing else", () => typeof (globalThis.WebAssembly ?? "nothing"));
+  attempt("optional member", () => typeof globalThis.WebAssembly?.validate);
+  attempt("optional call", () => typeof globalThis.WebAssembly?.());
+  attempt("optional call of a member", () => typeof globalThis.WebAssembly?.toString?.());
+  attempt("taken apart", () => {
+    const { WebAssembly: held } = globalThis;
+    return typeof held;
+  });
+  attempt("taken apart with a default", () => {
+    const { WebAssembly: held = "default" } = globalThis;
+    return typeof held;
+  });
+}
+////: ask-6
+function ask() {
+  attempt("typeof", () => typeof Iterator.prototype.«1»);
+  attempt("typeof is function", () => typeof Iterator.prototype.«1» === "function");
+  attempt("typeof is undefined", () => (typeof Iterator.prototype.«1» === "undefined" ? "absent" : "present"));
+  attempt("truth", () => (Iterator.prototype.«1» ? "with" : "without"));
+  attempt("used behind a test", () => {
+    if (!Iterator.prototype.«1») return "went around";
+    return typeof Iterator.prototype.«1».name;
+  });
+  attempt("in", () => «2» in Iterator.prototype);
+  attempt("hasOwn", () => Object.hasOwn(Iterator.prototype, «2»));
+  attempt("by a key that is made", () => typeof Iterator.prototype[key]);
+  attempt("call", () => typeof [1, 2, 3].values().«1»(2));
+  attempt("optional call", () => typeof [1, 2, 3].values().«1»?.(2));
+  attempt("taken apart", () => {
+    const { «1»: held } = Iterator.prototype;
+    return [typeof held, typeof held].join();
+  });
+}
+////: ask-7
+function ask(when) {
+  attempt(when + " typeof", () => typeof «1»);
+  attempt(when + " bare read", () => String(«1»).slice(0, 12));
+  attempt(when + " in", () => «2» in globalThis);
+  attempt(when + " member of globalThis", () => typeof globalThis.«1»);
+  attempt(when + " call", () => «1»());
+}
+////: attempt
+function attempt(what, action) {
+  try {
+    told.push(what + ": " + String(action()));
+  } catch (error) {
+    told.push(what + ": " + error.name);
+  }
+}
+////: attempt-2
+attempt("definition", () => {
+  globalThis.«1» = () => "of the program";
+  return "done";
+});
+////: attempt-3
+attempt("store to the bare name", () => {
+  «1» = () => "stored";
+  return "done";
+});
+////: attempt-4
+attempt("store", () => {
+  «1» = { «2»: 1 };
+  return "done";
+});
+////: expect
+function expect(what, expected) {
+  for (let round = 0; round < 40; round++) {
+    if (!Object.is(read(), expected)) return void wrong.push(what + ": the read");
+    if (typeof «1» !== kindOf(expected)) return void wrong.push(what + ": typeof");
+  }
+}
+////: for
+for (let round = 0; round < 40; round++) {
+  told.length = 0;
+  ask();
+}
+////: for-2
+for (let round = 0; round < 40; round++) {
+  told.length = 0;
+  ask("before");
+}
+////: lines
+try {
+  vm.runInThisContext("let " + key + " = 'declared by the script'");
+  declared = "declared by the script";
+} catch (error) {
+  if (error.name !== "SyntaxError") wrong.push("the declaration: " + error.name);
+}
+////: read
+function read() {
+  try {
+    return «1»;
+  } catch {
+    return absent;
+  }
+}
+////: run
+function run(text) {
+  try {
+    vm.runInThisContext(text);
+  } catch (error) {
+    if (error.name !== "TypeError") wrong.push(text + ": " + error.name);
+  }
+}
+//// disposable-stack-asked-every-way.js
+// BUN_JSC_useExplicitResourceManagement=0 takes the global DisposableStack away. Nothing here stores to the name. Each way of asking for it answers as a lookup in the realm of the run does.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+const key = ["Dis", "posableStack"].join("");
+
+////= ask
+
+// Often enough for whatever remembers the first answer.
+////= for
+console.log(told.join("\n"));
+//// disposable-stack-defined-later.js
+// BUN_JSC_useExplicitResourceManagement=0 takes the global DisposableStack away. The program puts something of its own under the name, and every later read sees it.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+////= ask-7	DisposableStack	"DisposableStack"
+////= for-2
+////= attempt-3	DisposableStack
+ask("behind the store");
+////= attempt-2	DisposableStack
+ask("behind the definition");
+attempt("delete", () => delete globalThis.DisposableStack);
+ask("behind the delete");
+attempt("delete again", () => delete globalThis.DisposableStack);
+console.log(told.join("\n"));
+//// disposable-stack-named-in-types.ts
+// BUN_JSC_useExplicitResourceManagement=0 takes the global DisposableStack away. The types of the program still name the class, and code tests values against them.
+function isDisposed(stack: DisposableStack | undefined): string {
+  return stack === undefined ? "none" : String(stack.disposed);
+}
+function make(): DisposableStack | undefined {
+  return typeof DisposableStack === "function" ? new DisposableStack() : undefined;
+}
+function isStack(value: unknown): value is DisposableStack {
+  return typeof DisposableStack !== "undefined" && value instanceof DisposableStack;
+}
+let line = "";
+for (let round = 0; round < 300; round++) line = isDisposed(make()) + " " + isStack({}) + " " + isStack(make());
+console.log(line);
+//// disposable-stack-stored-by-sloppy-code.cjs
+// BUN_JSC_useExplicitResourceManagement=0 takes the global DisposableStack away. Sloppy code that stores to the bare name makes the global.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+attempt("typeof", () => typeof DisposableStack);
+attempt("bare read", () => typeof DisposableStack.prototype);
+////= attempt-4	DisposableStack	prototype
+attempt("typeof", () => typeof DisposableStack);
+attempt("bare read", () => typeof DisposableStack.prototype);
+attempt("delete", () => delete DisposableStack);
+attempt("typeof", () => typeof DisposableStack);
+console.log(told.join("\n"));
+//// disposable-stack-that-is-there-asked-every-way.js
+// The global DisposableStack is there, as in every run without an option. Nothing here stores to the name. Each way of asking for it answers as a lookup in the realm of the run does.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+const key = ["Dis", "posableStack"].join("");
+
+////= ask
+
+// Often enough for whatever remembers the first answer.
+////= for
+console.log(told.join("\n"));
+//// iterator-chunks-asked-every-way.js
+// BUN_JSC_useIteratorChunking=0 takes Iterator.prototype.chunks away. Nothing here stores to it. Each way of asking for the member answers as a lookup in the realm of the run does.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+const key = ["ch", "unks"].join("");
+
+////= ask-6	chunks	"chunks"
+
+// Often enough for whatever remembers the first answer.
+////= for
+console.log(told.join("\n"));
+//// iterator-concat-asked-every-way.js
+// BUN_JSC_useIteratorSequencing=0 takes Iterator.concat away. Nothing here stores to it. Each way of asking for the member answers as a lookup in the realm of the run does.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+const key = ["co", "ncat"].join("");
+
+function ask() {
+  attempt("typeof", () => typeof Iterator.concat);
+  attempt("typeof is function", () => typeof Iterator.concat === "function");
+  attempt("typeof is undefined", () => (typeof Iterator.concat === "undefined" ? "absent" : "present"));
+  attempt("truth", () => (Iterator.concat ? "with" : "without"));
+  attempt("used behind a test", () => {
+    if (!Iterator.concat) return "went around";
+    return typeof Iterator.concat.name;
+  });
+  attempt("in", () => "concat" in Iterator);
+  attempt("hasOwn", () => Object.hasOwn(Iterator, "concat"));
+  attempt("by a key that is made", () => typeof Iterator[key]);
+  attempt("call", () => typeof Iterator.concat([1], [2]));
+  attempt("optional call", () => typeof Iterator.concat?.([1], [2]));
+  attempt("taken apart", () => {
+    const { concat: held } = Iterator;
+    return [typeof held, typeof held].join();
+  });
+}
+
+// Often enough for whatever remembers the first answer.
+////= for
+console.log(told.join("\n"));
+//// iterator-windows-asked-every-way.js
+// BUN_JSC_useIteratorChunking=0 takes Iterator.prototype.windows away. Nothing here stores to it. Each way of asking for the member answers as a lookup in the realm of the run does.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+const key = ["wi", "ndows"].join("");
+
+////= ask-6	windows	"windows"
+
+// Often enough for whatever remembers the first answer.
+////= for
+console.log(told.join("\n"));
+//// iterator-zip-asked-every-way.js
+// BUN_JSC_useJointIteration=0 takes Iterator.zip away. Nothing here stores to it. Each way of asking for the member answers as a lookup in the realm of the run does.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+const key = ["zi", "p"].join("");
+
+function ask() {
+  attempt("typeof", () => typeof Iterator.zip);
+  attempt("typeof is function", () => typeof Iterator.zip === "function");
+  attempt("typeof is undefined", () => (typeof Iterator.zip === "undefined" ? "absent" : "present"));
+  attempt("truth", () => (Iterator.zip ? "with" : "without"));
+  attempt("used behind a test", () => {
+    if (!Iterator.zip) return "went around";
+    return typeof Iterator.zip.name;
+  });
+  attempt("in", () => "zip" in Iterator);
+  attempt("hasOwn", () => Object.hasOwn(Iterator, "zip"));
+  attempt("by a key that is made", () => typeof Iterator[key]);
+  attempt("call", () => typeof Iterator.zip([[1], [2]]));
+  attempt("optional call", () => typeof Iterator.zip?.([[1], [2]]));
+  attempt("taken apart", () => {
+    const { zip: held } = Iterator;
+    return [typeof held, typeof held].join();
+  });
+}
+
+// Often enough for whatever remembers the first answer.
+////= for
+console.log(told.join("\n"));
+//// iterator-zip-keyed-asked-every-way.js
+// BUN_JSC_useJointIteration=0 takes Iterator.zipKeyed away. Nothing here stores to it. Each way of asking for the member answers as a lookup in the realm of the run does.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+const key = ["zi", "pKeyed"].join("");
+
+function ask() {
+  attempt("typeof", () => typeof Iterator.zipKeyed);
+  attempt("typeof is function", () => typeof Iterator.zipKeyed === "function");
+  attempt("typeof is undefined", () => (typeof Iterator.zipKeyed === "undefined" ? "absent" : "present"));
+  attempt("truth", () => (Iterator.zipKeyed ? "with" : "without"));
+  attempt("used behind a test", () => {
+    if (!Iterator.zipKeyed) return "went around";
+    return typeof Iterator.zipKeyed.name;
+  });
+  attempt("in", () => "zipKeyed" in Iterator);
+  attempt("hasOwn", () => Object.hasOwn(Iterator, "zipKeyed"));
+  attempt("by a key that is made", () => typeof Iterator[key]);
+  attempt("call", () => typeof Iterator.zipKeyed({ a: [1] }));
+  attempt("optional call", () => typeof Iterator.zipKeyed?.({ a: [1] }));
+  attempt("taken apart", () => {
+    const { zipKeyed: held } = Iterator;
+    return [typeof held, typeof held].join();
+  });
+}
+
+// Often enough for whatever remembers the first answer.
+////= for
+console.log(told.join("\n"));
+//// shadow-realm-asked-every-way.js
+// BUN_JSC_useShadowRealm=0 takes the global ShadowRealm away. Nothing here stores to the name. Each way of asking for it answers as a lookup in the realm of the run does.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+const key = ["Sha", "dowRealm"].join("");
+
+////= ask-2
+
+// Often enough for whatever remembers the first answer.
+////= for
+console.log(told.join("\n"));
+//// shadow-realm-defined-later.js
+// BUN_JSC_useShadowRealm=0 takes the global ShadowRealm away. The program puts something of its own under the name, and every later read sees it.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+////= ask-7	ShadowRealm	"ShadowRealm"
+////= for-2
+////= attempt-3	ShadowRealm
+ask("behind the store");
+////= attempt-2	ShadowRealm
+ask("behind the definition");
+attempt("delete", () => delete globalThis.ShadowRealm);
+ask("behind the delete");
+attempt("delete again", () => delete globalThis.ShadowRealm);
+console.log(told.join("\n"));
+//// shadow-realm-named-in-types.ts
+// BUN_JSC_useShadowRealm=0 takes the global ShadowRealm away. The types of the program still name the class, and code tests values against them.
+declare class ShadowRealm {
+  evaluate(text: string): unknown;
+}
+function make(): ShadowRealm | undefined {
+  return typeof ShadowRealm === "function" ? new ShadowRealm() : undefined;
+}
+function isRealm(value: unknown): value is ShadowRealm {
+  return typeof ShadowRealm !== "undefined" && value instanceof ShadowRealm;
+}
+function kindOf(realm: ShadowRealm | undefined): string {
+  return realm === undefined ? "none" : typeof realm.evaluate;
+}
+let line = "";
+for (let round = 0; round < 50; round++) line = kindOf(make()) + " " + isRealm(make()) + " " + isRealm({});
+console.log(line);
+//// shadow-realm-stored-by-sloppy-code.cjs
+// BUN_JSC_useShadowRealm=0 takes the global ShadowRealm away. Sloppy code that stores to the bare name makes the global.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+attempt("typeof", () => typeof ShadowRealm);
+attempt("bare read", () => typeof ShadowRealm.prototype);
+////= attempt-4	ShadowRealm	prototype
+attempt("typeof", () => typeof ShadowRealm);
+attempt("bare read", () => typeof ShadowRealm.prototype);
+attempt("delete", () => delete ShadowRealm);
+attempt("typeof", () => typeof ShadowRealm);
+console.log(told.join("\n"));
+//// shadow-realm-that-a-script-stores-and-declares.js
+// BUN_JSC_useShadowRealm=0 takes the global ShadowRealm away, and a script that the build has not seen stores and declares under the name. Either it is refused and compiled code goes on finding nothing, or it is admitted and compiled code sees it from then on.
+const vm = require("node:vm");
+const key = ["Sha", "dowRealm"].join("");
+const absent = {};
+////= read	ShadowRealm
+const kindOf = value => (value === absent ? "undefined" : typeof value);
+
+const wrong = [];
+////= expect	ShadowRealm
+const inObject = () => (key in globalThis ? globalThis[key] : absent);
+
+// A refusal throws, in sloppy code too.
+////= run
+
+expect("at first", inObject());
+run("globalThis." + key + " = 'stored by the script'");
+expect("behind the store", inObject());
+run("delete globalThis." + key);
+expect("behind the delete", inObject());
+let declared = inObject();
+////= lines
+expect("behind the declaration", declared);
+console.log(wrong.length ? "compiled code does not see: " + wrong.join(", ") : "compiled code sees what was done");
+//// shadow-realm-that-is-there-asked-every-way.js
+// The global ShadowRealm is there, as in every run without an option. Nothing here stores to the name. Each way of asking for it answers as a lookup in the realm of the run does.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+const key = ["Sha", "dowRealm"].join("");
+
+////= ask-2
+
+// Often enough for whatever remembers the first answer.
+////= for
+console.log(told.join("\n"));
+//// shared-array-buffer-asked-every-way.js
+// BUN_JSC_useSharedArrayBuffer=0 takes the global SharedArrayBuffer away. Nothing here stores to the name. Each way of asking for it answers as a lookup in the realm of the run does.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+const key = ["Sha", "redArrayBuffer"].join("");
+
+////= ask-3
+
+// Often enough for whatever remembers the first answer.
+////= for
+console.log(told.join("\n"));
+//// shared-array-buffer-defined-later.js
+// BUN_JSC_useSharedArrayBuffer=0 takes the global SharedArrayBuffer away. The program puts something of its own under the name, and every later read sees it.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+////= ask-7	SharedArrayBuffer	"SharedArrayBuffer"
+////= for-2
+////= attempt-3	SharedArrayBuffer
+ask("behind the store");
+////= attempt-2	SharedArrayBuffer
+ask("behind the definition");
+attempt("delete", () => delete globalThis.SharedArrayBuffer);
+ask("behind the delete");
+attempt("delete again", () => delete globalThis.SharedArrayBuffer);
+console.log(told.join("\n"));
+//// shared-array-buffer-named-in-types.ts
+// BUN_JSC_useSharedArrayBuffer=0 takes the global SharedArrayBuffer away. The types of the program still name the class, and code tests values against them.
+function sizeOf(buffer: ArrayBuffer | SharedArrayBuffer): number {
+  return buffer.byteLength;
+}
+function isShared(value: unknown): value is SharedArrayBuffer {
+  return typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer;
+}
+function describe(value: ArrayBuffer | SharedArrayBuffer | string): string {
+  if (typeof value === "string") return "text";
+  return isShared(value) ? "shared " + sizeOf(value) : "alone " + sizeOf(value);
+}
+type Given = ArrayBuffer | SharedArrayBuffer | string;
+const given: unknown[] = [new ArrayBuffer(8), "text", new ArrayBuffer(3)];
+let line = "";
+for (let round = 0; round < 300; round++) line = given.map(value => describe(value as Given)).join();
+console.log(line);
+let kept: SharedArrayBuffer | undefined;
+try {
+  kept = new SharedArrayBuffer(4);
+} catch (error) {
+  console.log((error as Error).name);
+}
+console.log(kept === undefined ? "none" : sizeOf(kept));
+//// shared-array-buffer-stored-by-sloppy-code.cjs
+// BUN_JSC_useSharedArrayBuffer=0 takes the global SharedArrayBuffer away. Sloppy code that stores to the bare name makes the global.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+attempt("typeof", () => typeof SharedArrayBuffer);
+attempt("bare read", () => typeof SharedArrayBuffer.prototype);
+////= attempt-4	SharedArrayBuffer	prototype
+attempt("typeof", () => typeof SharedArrayBuffer);
+attempt("bare read", () => typeof SharedArrayBuffer.prototype);
+attempt("delete", () => delete SharedArrayBuffer);
+attempt("typeof", () => typeof SharedArrayBuffer);
+console.log(told.join("\n"));
+//// shared-array-buffer-that-a-script-stores-and-declares.js
+// BUN_JSC_useSharedArrayBuffer=0 takes the global SharedArrayBuffer away, and a script that the build has not seen stores and declares under the name. Either it is refused and compiled code goes on finding nothing, or it is admitted and compiled code sees it from then on.
+const vm = require("node:vm");
+const key = ["Sha", "redArrayBuffer"].join("");
+const absent = {};
+////= read	SharedArrayBuffer
+const kindOf = value => (value === absent ? "undefined" : typeof value);
+
+const wrong = [];
+////= expect	SharedArrayBuffer
+const inObject = () => (key in globalThis ? globalThis[key] : absent);
+
+// A refusal throws, in sloppy code too.
+////= run
+
+expect("at first", inObject());
+run("globalThis." + key + " = 'stored by the script'");
+expect("behind the store", inObject());
+run("delete globalThis." + key);
+expect("behind the delete", inObject());
+let declared = inObject();
+////= lines
+expect("behind the declaration", declared);
+console.log(wrong.length ? "compiled code does not see: " + wrong.join(", ") : "compiled code sees what was done");
+//// shared-array-buffer-that-is-there-asked-every-way.js
+// The global SharedArrayBuffer is there, as in every run without an option. Nothing here stores to the name. Each way of asking for it answers as a lookup in the realm of the run does.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+const key = ["Sha", "redArrayBuffer"].join("");
+
+////= ask-3
+
+// Often enough for whatever remembers the first answer.
+////= for
+console.log(told.join("\n"));
+//// temporal-asked-every-way.js
+// BUN_JSC_useTemporal=0 takes the global Temporal away. Nothing here stores to the name. Each way of asking for it answers as a lookup in the realm of the run does.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+const key = ["Tem", "poral"].join("");
+
+////= ask-4
+
+// Often enough for whatever remembers the first answer.
+////= for
+console.log(told.join("\n"));
+//// temporal-defined-later.js
+// BUN_JSC_useTemporal=0 takes the global Temporal away. The program puts something of its own under the name, and every later read sees it.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+////= ask-7	Temporal	"Temporal"
+////= for-2
+////= attempt-3	Temporal
+ask("behind the store");
+////= attempt-2	Temporal
+ask("behind the definition");
+attempt("delete", () => delete globalThis.Temporal);
+ask("behind the delete");
+attempt("delete again", () => delete globalThis.Temporal);
+console.log(told.join("\n"));
+//// temporal-named-in-types.ts
+// BUN_JSC_useTemporal=0 takes the global Temporal away. The types of the program still name its classes, and code tests values against them.
+function secondsOf(instant: Temporal.Instant | number): number {
+  return typeof instant === "number" ? instant : Number(instant.epochMilliseconds) / 1000;
+}
+function now(): Temporal.Instant | number {
+  return typeof Temporal !== "undefined" ? Temporal.Instant.fromEpochMilliseconds(5000) : 5;
+}
+function isInstant(value: unknown): value is Temporal.Instant {
+  return typeof Temporal !== "undefined" && value instanceof Temporal.Instant;
+}
+let line = "";
+for (let round = 0; round < 300; round++) line = secondsOf(now()) + " " + isInstant(now()) + " " + isInstant({});
+console.log(line);
+//// temporal-stored-by-sloppy-code.cjs
+// BUN_JSC_useTemporal=0 takes the global Temporal away. Sloppy code that stores to the bare name makes the global.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+attempt("typeof", () => typeof Temporal);
+attempt("bare read", () => typeof Temporal.Now);
+////= attempt-4	Temporal	Now
+attempt("typeof", () => typeof Temporal);
+attempt("bare read", () => typeof Temporal.Now);
+attempt("delete", () => delete Temporal);
+attempt("typeof", () => typeof Temporal);
+console.log(told.join("\n"));
+//// temporal-that-a-script-stores-and-declares.js
+// BUN_JSC_useTemporal=0 takes the global Temporal away, and a script that the build has not seen stores and declares under the name. Either it is refused and compiled code goes on finding nothing, or it is admitted and compiled code sees it from then on.
+const vm = require("node:vm");
+const key = ["Tem", "poral"].join("");
+const absent = {};
+////= read	Temporal
+const kindOf = value => (value === absent ? "undefined" : typeof value);
+
+const wrong = [];
+////= expect	Temporal
+const inObject = () => (key in globalThis ? globalThis[key] : absent);
+
+// A refusal throws, in sloppy code too.
+////= run
+
+expect("at first", inObject());
+run("globalThis." + key + " = 'stored by the script'");
+expect("behind the store", inObject());
+run("delete globalThis." + key);
+expect("behind the delete", inObject());
+let declared = inObject();
+////= lines
+expect("behind the declaration", declared);
+console.log(wrong.length ? "compiled code does not see: " + wrong.join(", ") : "compiled code sees what was done");
+//// temporal-that-is-there-asked-every-way.js
+// The global Temporal is there, as in every run without an option. Nothing here stores to the name. Each way of asking for it answers as a lookup in the realm of the run does.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+const key = ["Tem", "poral"].join("");
+
+////= ask-4
+
+// Often enough for whatever remembers the first answer.
+////= for
+console.log(told.join("\n"));
+//// web-assembly-asked-every-way.js
+// BUN_JSC_useWasm=0 takes the global WebAssembly away. Nothing here stores to the name. Each way of asking for it answers as a lookup in the realm of the run does.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+const key = ["Web", "Assembly"].join("");
+
+////= ask-5
+
+// Often enough for whatever remembers the first answer.
+////= for
+console.log(told.join("\n"));
+//// web-assembly-defined-later.js
+// BUN_JSC_useWasm=0 takes the global WebAssembly away. The program puts something of its own under the name, and every later read sees it.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+////= ask-7	WebAssembly	"WebAssembly"
+////= for-2
+////= attempt-3	WebAssembly
+ask("behind the store");
+////= attempt-2	WebAssembly
+ask("behind the definition");
+attempt("delete", () => delete globalThis.WebAssembly);
+ask("behind the delete");
+attempt("delete again", () => delete globalThis.WebAssembly);
+console.log(told.join("\n"));
+//// web-assembly-named-in-types.ts
+// BUN_JSC_useWasm=0 takes what the global WebAssembly holds away. The types of the program still name its classes, and code tests values against them.
+const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
+function load(): WebAssembly.Module | undefined {
+  return typeof WebAssembly !== "undefined" ? new WebAssembly.Module(bytes) : undefined;
+}
+function isModule(value: unknown): value is WebAssembly.Module {
+  return typeof WebAssembly === "object" && value instanceof WebAssembly.Module;
+}
+function exportsOf(module: WebAssembly.Module | undefined): number {
+  return module === undefined ? -1 : WebAssembly.Module.exports(module).length;
+}
+let line = "";
+for (let round = 0; round < 50; round++) line = exportsOf(load()) + " " + isModule(load()) + " " + isModule({});
+console.log(line);
+//// web-assembly-promising-asked-every-way.js
+// BUN_JSC_useJSPI=0 takes WebAssembly.promising away. Nothing here stores to it. Each way of asking for the member answers as a lookup in the realm of the run does.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+const key = ["pr", "omising"].join("");
+
+function ask() {
+  attempt("typeof", () => typeof WebAssembly.promising);
+  attempt("typeof is function", () => typeof WebAssembly.promising === "function");
+  attempt("typeof is undefined", () => (typeof WebAssembly.promising === "undefined" ? "absent" : "present"));
+  attempt("truth", () => (WebAssembly.promising ? "with" : "without"));
+  attempt("used behind a test", () => {
+    if (!WebAssembly.promising) return "went around";
+    return typeof WebAssembly.promising.name;
+  });
+  attempt("in", () => "promising" in WebAssembly);
+  attempt("hasOwn", () => Object.hasOwn(WebAssembly, "promising"));
+  attempt("by a key that is made", () => typeof WebAssembly[key]);
+  attempt("call", () => typeof WebAssembly.promising(() => 1));
+  attempt("optional call", () => typeof WebAssembly.promising?.(() => 1));
+  attempt("taken apart", () => {
+    const { promising: held } = WebAssembly;
+    return [typeof held, typeof held].join();
+  });
+}
+
+// Often enough for whatever remembers the first answer.
+////= for
+console.log(told.join("\n"));
+//// web-assembly-stored-by-sloppy-code.cjs
+// BUN_JSC_useWasm=0 takes the global WebAssembly away. Sloppy code that stores to the bare name makes the global.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+attempt("typeof", () => typeof WebAssembly);
+attempt("bare read", () => typeof WebAssembly.validate);
+////= attempt-4	WebAssembly	validate
+attempt("typeof", () => typeof WebAssembly);
+attempt("bare read", () => typeof WebAssembly.validate);
+attempt("delete", () => delete WebAssembly);
+attempt("typeof", () => typeof WebAssembly);
+console.log(told.join("\n"));
+//// web-assembly-suspend-error-asked-every-way.js
+// BUN_JSC_useJSPI=0 takes WebAssembly.SuspendError away. Nothing here stores to it. Each way of asking for the member answers as a lookup in the realm of the run does.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+const key = ["Su", "spendError"].join("");
+
+function ask() {
+  attempt("typeof", () => typeof WebAssembly.SuspendError);
+  attempt("typeof is function", () => typeof WebAssembly.SuspendError === "function");
+  attempt("typeof is undefined", () => (typeof WebAssembly.SuspendError === "undefined" ? "absent" : "present"));
+  attempt("truth", () => (WebAssembly.SuspendError ? "with" : "without"));
+  attempt("used behind a test", () => {
+    if (!WebAssembly.SuspendError) return "went around";
+    return typeof WebAssembly.SuspendError.name;
+  });
+  attempt("in", () => "SuspendError" in WebAssembly);
+  attempt("hasOwn", () => Object.hasOwn(WebAssembly, "SuspendError"));
+  attempt("by a key that is made", () => typeof WebAssembly[key]);
+  attempt("call", () => typeof new WebAssembly.SuspendError());
+  attempt("optional call", () => typeof WebAssembly.SuspendError?.());
+  attempt("taken apart", () => {
+    const { SuspendError: held } = WebAssembly;
+    return [typeof held, typeof held].join();
+  });
+}
+
+// Often enough for whatever remembers the first answer.
+////= for
+console.log(told.join("\n"));
+//// web-assembly-suspending-asked-every-way.js
+// BUN_JSC_useJSPI=0 takes WebAssembly.Suspending away. Nothing here stores to it. Each way of asking for the member answers as a lookup in the realm of the run does.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+const key = ["Su", "spending"].join("");
+
+function ask() {
+  attempt("typeof", () => typeof WebAssembly.Suspending);
+  attempt("typeof is function", () => typeof WebAssembly.Suspending === "function");
+  attempt("typeof is undefined", () => (typeof WebAssembly.Suspending === "undefined" ? "absent" : "present"));
+  attempt("truth", () => (WebAssembly.Suspending ? "with" : "without"));
+  attempt("used behind a test", () => {
+    if (!WebAssembly.Suspending) return "went around";
+    return typeof WebAssembly.Suspending.name;
+  });
+  attempt("in", () => "Suspending" in WebAssembly);
+  attempt("hasOwn", () => Object.hasOwn(WebAssembly, "Suspending"));
+  attempt("by a key that is made", () => typeof WebAssembly[key]);
+  attempt("call", () => typeof new WebAssembly.Suspending(() => 1));
+  attempt("optional call", () => typeof WebAssembly.Suspending?.(() => 1));
+  attempt("taken apart", () => {
+    const { Suspending: held } = WebAssembly;
+    return [typeof held, typeof held].join();
+  });
+}
+
+// Often enough for whatever remembers the first answer.
+////= for
+console.log(told.join("\n"));
+//// web-assembly-that-is-there-asked-every-way.js
+// The global WebAssembly is there, as in every run without an option. Nothing here stores to the name. Each way of asking for it answers as a lookup in the realm of the run does.
+const told = [];
+// The wording of an error is the engine's or the compiler's, so only its name is told.
+////= attempt
+
+const key = ["Web", "Assembly"].join("");
+
+////= ask-5
+
+// Often enough for whatever remembers the first answer.
+////= for
+console.log(told.join("\n"));

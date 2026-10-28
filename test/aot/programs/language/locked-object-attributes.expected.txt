@@ -1,0 +1,36 @@
+Object.prototype.hasOwnProperty: writable true, enumerable false, configurable true
+Object.prototype: extensible false, sealed false, frozen false
+Object.prototype: the same definition again: true
+Object.prototype: an empty definition: true
+Object.prototype: made read-only: true
+Object.prototype: another value defined: TypeError
+Object.prototype: its own prototype set again: true
+Array.prototype.push: writable true, enumerable false, configurable true
+Array.prototype: extensible true, sealed false, frozen false
+Array.prototype: the same definition again: true
+Array.prototype: an empty definition: true
+Array.prototype: made read-only: true
+Array.prototype: another value defined: TypeError
+Array.prototype: its own prototype set again: true
+Date.prototype.getTime: writable true, enumerable false, configurable true
+Date.prototype: extensible true, sealed false, frozen false
+Date.prototype: the same definition again: true
+Date.prototype: an empty definition: true
+Date.prototype: made read-only: true
+Date.prototype: another value defined: TypeError
+Date.prototype: its own prototype set again: true
+Error.prototype.toString: writable true, enumerable false, configurable true
+Error.prototype: extensible true, sealed false, frozen false
+Error.prototype: the same definition again: true
+Error.prototype: an empty definition: true
+Error.prototype: made read-only: true
+Error.prototype: another value defined: true
+Error.prototype: its own prototype set again: true
+Object.preventExtensions(Array.prototype): true
+Object.seal(Array.prototype): true
+Object.freeze(Array.prototype): true
+Array.prototype afterwards: extensible false, sealed true, frozen true
+Object.preventExtensions(Object.prototype): true
+Object.seal(Object.prototype): true
+Object.freeze(Object.prototype): true
+Object.prototype afterwards: extensible false, sealed true, frozen true

@@ -1,0 +1,20 @@
+# A worker runs the program once more in a VM of its own, and no object crosses over. So the program that starts one has one instance in its VM, with evaluated text or without,
+# and an object that passes a test for its layout needs no test for its instance.
+# FORM: AsRead
+# RUN: valueflow-results
+# CHECK: unseen-code EvaluatesText
+# CHECK: program instances AtMostOne
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=Function
+    v3 = Construct v2, -, v1
+    v4 = Call v3
+    v5 = Builtin builtin=Worker
+    v6 = Construct v5, -, v1
+    Return
+}

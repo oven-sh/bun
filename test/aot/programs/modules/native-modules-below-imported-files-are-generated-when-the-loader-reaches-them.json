@@ -1,0 +1,1 @@
+{ "env": { "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER": "1" }, "skipInShell": "it needs the built-in modules of Bun", "alone": "the steps depend on which built-in modules were imported earlier in the process" }

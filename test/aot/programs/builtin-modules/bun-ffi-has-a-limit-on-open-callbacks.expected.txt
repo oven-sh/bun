@@ -1,0 +1,2 @@
+256 RangeError: bun:ffi: a compiled executable can have 256 JSCallbacks open at a time. Close the ones that are no longer used
+256

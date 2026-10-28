@@ -1,0 +1,1 @@
+{ "build": ["--aot-refuse-code-from-disk"], "env": { "NAMES": "node:http,node:net,node:events,node:stream,node:repl" }, "skipInShell": "it asks for modules of Bun" }

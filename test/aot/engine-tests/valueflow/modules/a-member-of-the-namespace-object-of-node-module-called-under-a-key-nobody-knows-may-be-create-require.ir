@@ -1,0 +1,22 @@
+# import * as Module from "node:module"; Module[globalThis.key]("/app/main.js")(globalThis.name)
+# What the read answers is only called, so it may be createRequire.
+# The call of what that call returns loads code by name, and no other call does.
+# RUN: valueflow-solve unseen
+# CHECK: unseen LoadsCodeByName ModuleRequire f0:v7
+# CHECK-NOT: unseen LoadsCodeByName
+# CHECK: unseen-code yes
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0 requests=[{target=m1 completes=true}]
+module m1 path="node:module" displayPath="node:module" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="key" [isFreeName]
+    v2 = PropGet v0 key="name" [isFreeName]
+    v3 = ModuleNamespace module=m1
+    v4 = ElemGet v3, v1
+    v5 = String string="/app/main.js"
+    v6 = Call v4, v3, v5
+    v7 = Call v6, -, v2
+    Return v7
+}

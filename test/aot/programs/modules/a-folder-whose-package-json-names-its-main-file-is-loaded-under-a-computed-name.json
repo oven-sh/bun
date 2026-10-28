@@ -1,0 +1,13 @@
+{
+  "entryPoints": [
+    "./tool/start.js",
+    "./tool/index.js",
+    "./tool/inner/from.cjs",
+    "./kit/lib/index.js",
+    "./kit/index.js",
+    "./both/common.cjs",
+    "./both/es.mjs",
+    "./bare/index.js"
+  ],
+  "skipInShell": "it needs Bun's CommonJS modules"
+}

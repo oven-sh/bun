@@ -1,0 +1,1293 @@
+//// field-of-another-kind-is-defined-on-an-object-held-in-a-variable-declared-a-number.ts
+// The base of a class is a function that returns an object of another class, held in a variable declared a number: the field of the derived class replaces the field of that object.
+function scene(): void {
+  const inner = { inner: 1 };
+  class A {
+    c = inner as any;
+  }
+  const held: number = new A() as any;
+  function base(): any {
+    return held;
+  }
+  const list = [1, "e"];
+  class D extends (base as any) {
+    c = list as any;
+  }
+  new (D as any)();
+  console.log((held as any).c);
+}
+scene();
+//// new-field-is-defined-on-an-object-held-in-a-variable-declared-a-number.ts
+// The base of a class is a function that returns an object of another class, held in a variable declared a number: the field of the derived class is added to that object.
+function scene(): void {
+  class A {
+    a = 2;
+  }
+  const held: number = new A() as any;
+  function base(): any {
+    return held;
+  }
+  class D extends (base as any) {
+    value = "1";
+  }
+  new (D as any)();
+  console.log(typeof (held as any).value);
+}
+scene();
+//// new-field-is-defined-on-an-object-that-the-base-is-declared-to-return-as-a-number.ts
+// The base of a class is a function declared to return a number, which returns an object of another class: the field of the derived class is added to that object.
+function scene(): void {
+  class A {
+    a = 2;
+  }
+  const held: any = new A();
+  function base(): number {
+    return held;
+  }
+  class D extends (base as any) {
+    value = "1";
+  }
+  new (D as any)();
+  console.log(typeof held.value);
+}
+scene();
+//// base-that-returns-another-object-is-an-arrow-function.ts
+// The base of a class returns an object of another class through a variable or a result declared a number.
+class A {
+  a = 2;
+}
+const held: any = new A();
+const base = (): number => held;
+try {
+  class D extends (base as any) {
+    value = "1";
+  }
+  new (D as any)();
+} catch (error) {
+  console.log((error as Error).constructor.name);
+}
+console.log(typeof held.value);
+//// base-that-returns-another-object-is-a-bound-function.ts
+// The base of a class returns an object of another class through a variable or a result declared a number.
+class A {
+  a = 2;
+}
+const held: any = new A();
+function target(): number {
+  return held;
+}
+const base = target.bind(null);
+try {
+  class D extends (base as any) {
+    value = "1";
+  }
+  new (D as any)();
+} catch (error) {
+  console.log((error as Error).constructor.name);
+}
+console.log(typeof held.value);
+//// base-that-returns-another-object-is-a-class-below-a-class-that-returns.ts
+// The base of a class returns an object of another class through a variable or a result declared a number.
+class A {
+  a = 2;
+}
+const held: any = new A();
+class top {
+  constructor() {
+    const answer: number = held;
+    return answer as any;
+  }
+}
+class base extends top {}
+try {
+  class D extends (base as any) {
+    value = "1";
+  }
+  new (D as any)();
+} catch (error) {
+  console.log((error as Error).constructor.name);
+}
+console.log(typeof held.value);
+//// base-that-returns-another-object-is-a-class-that-returns.ts
+// The base of a class returns an object of another class through a variable or a result declared a number.
+class A {
+  a = 2;
+}
+const held: any = new A();
+class base {
+  constructor() {
+    const answer: number = held;
+    return answer as any;
+  }
+}
+try {
+  class D extends (base as any) {
+    value = "1";
+  }
+  new (D as any)();
+} catch (error) {
+  console.log((error as Error).constructor.name);
+}
+console.log(typeof held.value);
+//// base-that-returns-another-object-is-a-function-expression.ts
+// The base of a class returns an object of another class through a variable or a result declared a number.
+class A {
+  a = 2;
+}
+const held: any = new A();
+const base = function (): number {
+  return held;
+};
+try {
+  class D extends (base as any) {
+    value = "1";
+  }
+  new (D as any)();
+} catch (error) {
+  console.log((error as Error).constructor.name);
+}
+console.log(typeof held.value);
+//// base-that-returns-another-object-is-a-method-of-an-object.ts
+// The base of a class returns an object of another class through a variable or a result declared a number.
+class A {
+  a = 2;
+}
+const held: any = new A();
+const table = {
+  base: function (): number {
+    return held;
+  },
+};
+const base = table.base;
+try {
+  class D extends (base as any) {
+    value = "1";
+  }
+  new (D as any)();
+} catch (error) {
+  console.log((error as Error).constructor.name);
+}
+console.log(typeof held.value);
+//// base-that-returns-another-object-is-a-proxy-with-a-trap.ts
+// The base of a class returns an object of another class through a variable or a result declared a number.
+class A {
+  a = 2;
+}
+const held: any = new A();
+function target(): void {}
+const base = new Proxy(target, {
+  construct(): any {
+    const answer: number = held;
+    return answer;
+  },
+});
+try {
+  class D extends (base as any) {
+    value = "1";
+  }
+  new (D as any)();
+} catch (error) {
+  console.log((error as Error).constructor.name);
+}
+console.log(typeof held.value);
+//// base-that-returns-another-object-is-a-proxy.ts
+// The base of a class returns an object of another class through a variable or a result declared a number.
+class A {
+  a = 2;
+}
+const held: any = new A();
+function target(): number {
+  return held;
+}
+const base = new Proxy(target, {});
+try {
+  class D extends (base as any) {
+    value = "1";
+  }
+  new (D as any)();
+} catch (error) {
+  console.log((error as Error).constructor.name);
+}
+console.log(typeof held.value);
+//// base-returns-an-object-held-in-an-array-element.ts
+// The base of a class is a function that returns an object of another class, which is held where a primitive is declared.
+class A {
+  a = 2;
+}
+const list: number[] = [new A() as any];
+function base(): any {
+  return list[0];
+}
+class D extends (base as any) {
+  value = "1";
+}
+new (D as any)();
+console.log(typeof (list[0] as any).value);
+//// base-returns-an-object-held-in-a-field.ts
+// The base of a class is a function that returns an object of another class, which is held where a primitive is declared.
+class A {
+  a = 2;
+}
+class Holder {
+  held: number = new A() as any;
+}
+const holder = new Holder();
+function base(): any {
+  return holder.held;
+}
+class D extends (base as any) {
+  value = "1";
+}
+new (D as any)();
+console.log(typeof (holder.held as any).value);
+//// base-returns-an-object-held-in-a-let-variable.ts
+// The base of a class is a function that returns an object of another class, which is held where a primitive is declared.
+function scene(): void {
+  class A {
+    a = 2;
+  }
+  let held: number = new A() as any;
+  function base(): any {
+    return held;
+  }
+  class D extends (base as any) {
+    value = "1";
+  }
+  new (D as any)();
+  console.log(typeof (held as any).value);
+  held = 3;
+  console.log(held);
+}
+scene();
+//// base-returns-an-object-held-in-a-literal-field.ts
+// The base of a class is a function that returns an object of another class, which is held where a primitive is declared.
+class A {
+  a = 2;
+}
+const holder: { held: string } = { held: new A() as any };
+function base(): any {
+  return holder.held;
+}
+class D extends (base as any) {
+  value = "1";
+}
+new (D as any)();
+console.log(typeof (holder.held as any).value);
+//// base-returns-an-object-held-in-a-module-variable.ts
+// The base of a class is a function that returns an object of another class, which is held where a primitive is declared.
+class A {
+  a = 2;
+}
+const held: boolean = new A() as any;
+function base(): any {
+  return held;
+}
+class D extends (base as any) {
+  value = "1";
+}
+new (D as any)();
+console.log(typeof (held as any).value);
+//// base-returns-an-object-held-in-a-parameter-of-the-base.ts
+// The base of a class is a function that returns an object of another class, which is held where a primitive is declared.
+class A {
+  a = 2;
+}
+const held: any = new A();
+function base(given: number): any {
+  return given;
+}
+class D extends (base as any) {
+  value = "1";
+  constructor() {
+    super(held);
+  }
+}
+new (D as any)();
+console.log(typeof held.value);
+//// base-returns-an-object-held-in-a-parameter.ts
+// The base of a class is a function that returns an object of another class, which is held where a primitive is declared.
+class A {
+  a = 2;
+}
+function run(held: number): void {
+  function base(): any {
+    return held;
+  }
+  class D extends (base as any) {
+    value = "1";
+  }
+  new (D as any)();
+  console.log(typeof (held as any).value);
+}
+run(new A() as any);
+//// constructor-returns-another-object-after-storing-on-this.ts
+// A constructor declared to return a number returns an object of another class, however it is called.
+class A {
+  a = 2;
+}
+const held: any = new A();
+function Made(this: any): number {
+  this.own = 1;
+  return held;
+}
+const made: any = new (Made as any)();
+made.value = "1";
+console.log(typeof held.value, made === held, made.own);
+//// constructor-returns-another-object-from-a-derived-constructor.ts
+// A constructor declared to return a number returns an object of another class, however it is called.
+class A {
+  a = 2;
+}
+const held: any = new A();
+class Base {
+  b = 1;
+}
+class D extends Base {
+  constructor() {
+    super();
+    const answer: number = held;
+    return answer as any;
+  }
+}
+class E extends D {
+  value = "1";
+}
+new E();
+console.log(typeof held.value, held.b);
+//// constructor-returns-another-object-to-new-in-a-loop.ts
+// A constructor declared to return a number returns an object of another class, however it is called.
+class A {
+  a = 2;
+}
+const held: any = new A();
+function base(): number {
+  return held;
+}
+class D extends (base as any) {
+  value = "1";
+}
+for (let i = 0; i < 3; i++) new (D as any)();
+console.log(typeof held.value);
+//// constructor-returns-another-object-to-new-of-the-base.ts
+// A constructor declared to return a number returns an object of another class, however it is called.
+class A {
+  a = 2;
+}
+const held: any = new A();
+function base(): number {
+  return held;
+}
+class D extends (base as any) {
+  value = "1";
+}
+const made: any = new (base as any)();
+made.value = "1";
+console.log(typeof held.value);
+//// constructor-returns-another-object-to-new-through-a-variable.ts
+// A constructor declared to return a number returns an object of another class, however it is called.
+class A {
+  a = 2;
+}
+const held: any = new A();
+function base(): number {
+  return held;
+}
+class D extends (base as any) {
+  value = "1";
+}
+const table: any[] = [D];
+new table[0]();
+console.log(typeof held.value);
+//// constructor-returns-another-object-to-reflect-construct-of-the-base.ts
+// A constructor declared to return a number returns an object of another class, however it is called.
+class A {
+  a = 2;
+}
+const held: any = new A();
+function base(): number {
+  return held;
+}
+class D extends (base as any) {
+  value = "1";
+}
+const made: any = Reflect.construct(base as any, [], D as any);
+made.value = "1";
+console.log(typeof held.value);
+//// constructor-returns-another-object-to-reflect-construct.ts
+// A constructor declared to return a number returns an object of another class, however it is called.
+class A {
+  a = 2;
+}
+const held: any = new A();
+function base(): number {
+  return held;
+}
+class D extends (base as any) {
+  value = "1";
+}
+Reflect.construct(D as any, []);
+console.log(typeof held.value);
+//// constructor-returns-another-object-to-super-in-a-written-constructor.ts
+// A constructor declared to return a number returns an object of another class, however it is called.
+class A {
+  a = 2;
+}
+const held: any = new A();
+function base(): number {
+  return held;
+}
+class D extends (base as any) {
+  value = "1";
+  constructor() {
+    super();
+    (this as any).later = 5;
+  }
+}
+new (D as any)();
+console.log(typeof held.value, held.later);
+//// constructor-returns-another-object-and-the-result-of-super-is-stored.ts
+// A constructor declared to return a number returns an object of another class, however it is called.
+class A {
+  a = 2;
+}
+const held: any = new A();
+function base(): number {
+  return held;
+}
+let seen: any;
+class D extends (base as any) {
+  constructor() {
+    seen = super();
+    seen.value = "1";
+  }
+}
+new (D as any)();
+console.log(typeof held.value, seen === held);
+//// object-returned-by-the-base-gets-an-accessor-field.ts
+// The base of a class is declared to return a number and returns an object of another class: the members of the derived class are defined on that object.
+class A {
+  a: any = 2;
+}
+const held: any = new A();
+function base(): number {
+  return held;
+}
+class D extends (base as any) {
+  accessor value = "1";
+}
+new (D as any)();
+console.log(typeof held.value, Object.keys(held).join());
+//// object-returned-by-the-base-gets-an-arrow-function-field.ts
+// The base of a class is declared to return a number and returns an object of another class: the members of the derived class are defined on that object.
+class A {
+  a: any = 2;
+}
+const held: any = new A();
+function base(): number {
+  return held;
+}
+class D extends (base as any) {
+  value = (): any => this;
+}
+new (D as any)();
+console.log(held.value() === held);
+//// object-returned-by-the-base-gets-a-computed-field.ts
+// The base of a class is declared to return a number and returns an object of another class: the members of the derived class are defined on that object.
+class A {
+  a: any = 2;
+}
+const held: any = new A();
+const name: "value" = ("val" + "ue") as "value";
+function base(): number {
+  return held;
+}
+class D extends (base as any) {
+  [name] = "1";
+}
+new (D as any)();
+console.log(typeof held.value);
+//// object-returned-by-the-base-gets-a-field-of-another-kind.ts
+// The base of a class is declared to return a number and returns an object of another class: the members of the derived class are defined on that object.
+class A {
+  a: any = 2;
+}
+const held: any = new A();
+function base(): number {
+  return held;
+}
+class D extends (base as any) {
+  a = "text";
+}
+new (D as any)();
+console.log(typeof held.a, held.a);
+//// object-returned-by-the-base-gets-a-field-that-reads-this.ts
+// The base of a class is declared to return a number and returns an object of another class: the members of the derived class are defined on that object.
+class A {
+  a: any = 2;
+}
+const held: any = new A();
+function base(): number {
+  return held;
+}
+class D extends (base as any) {
+  value = (this as any).a + 1;
+}
+new (D as any)();
+console.log(held.value);
+//// object-returned-by-the-base-gets-a-field-without-a-value.ts
+// The base of a class is declared to return a number and returns an object of another class: the members of the derived class are defined on that object.
+class A {
+  a: any = 2;
+}
+const held: any = new A();
+function base(): number {
+  return held;
+}
+class D extends (base as any) {
+  a: any;
+}
+new (D as any)();
+console.log(typeof held.a, held.a);
+//// object-returned-by-the-base-gets-a-getter.ts
+// The base of a class is declared to return a number and returns an object of another class: the members of the derived class are defined on that object.
+class A {
+  a: any = 2;
+}
+const held: any = new A();
+function base(): number {
+  return held;
+}
+class D extends (base as any) {
+  get value(): string {
+    return "g";
+  }
+}
+new (D as any)();
+console.log(typeof held.value);
+//// object-returned-by-the-base-gets-an-indexed-field.ts
+// The base of a class is declared to return a number and returns an object of another class: the members of the derived class are defined on that object.
+class A {
+  a: any = 2;
+}
+const held: any = new A();
+function base(): number {
+  return held;
+}
+class D extends (base as any) {
+  0 = "1";
+}
+new (D as any)();
+console.log(typeof held[0]);
+//// object-returned-by-the-base-gets-a-method.ts
+// The base of a class is declared to return a number and returns an object of another class: the members of the derived class are defined on that object.
+class A {
+  a: any = 2;
+}
+const held: any = new A();
+function base(): number {
+  return held;
+}
+class D extends (base as any) {
+  method(): string {
+    return "m";
+  }
+}
+new (D as any)();
+console.log(typeof held.method);
+//// object-returned-by-the-base-gets-a-private-field.ts
+// The base of a class is declared to return a number and returns an object of another class: the members of the derived class are defined on that object.
+class A {
+  a: any = 2;
+}
+const held: any = new A();
+function base(): number {
+  return held;
+}
+class D extends (base as any) {
+  #value = "1";
+  static read(object: any): any {
+    return #value in object ? object.#value : "none";
+  }
+}
+new (D as any)();
+console.log((D as any).read(held));
+//// object-returned-by-the-base-gets-a-private-method.ts
+// The base of a class is declared to return a number and returns an object of another class: the members of the derived class are defined on that object.
+class A {
+  a: any = 2;
+}
+const held: any = new A();
+function base(): number {
+  return held;
+}
+class D extends (base as any) {
+  #method(): string {
+    return "m";
+  }
+  static read(object: any): any {
+    return #method in object ? object.#method() : "none";
+  }
+}
+new (D as any)();
+console.log((D as any).read(held));
+//// object-returned-by-the-base-gets-a-symbol-field.ts
+// The base of a class is declared to return a number and returns an object of another class: the members of the derived class are defined on that object.
+class A {
+  a: any = 2;
+}
+const held: any = new A();
+function base(): number {
+  return held;
+}
+class D extends (base as any) {
+  [Symbol.iterator] = "1";
+}
+new (D as any)();
+console.log(typeof held[Symbol.iterator]);
+//// constructor-returns-another-object-order-of-keys.ts
+// A constructor declared to return a number returns an object of another class.
+class A {
+  a = 1;
+}
+const held: any = new A();
+function Made(this: any): number {
+  this.x = 1;
+  this.y = 2;
+  return held;
+}
+const made: any = new (Made as any)();
+made.y = 1;
+made.x = 2;
+console.log(Object.keys(made).join(), JSON.stringify(held));
+//// base-declared-to-return-a-class-returns-an-object.ts
+// The base of a class is a function whose declared result is not what it returns, an object of another class: the field of the derived class is defined on that object.
+function scene(): void {
+  class Other {
+    o = 1;
+  }
+  class A {
+    a = 2;
+  }
+  const held: any = new A();
+  function base(): Other {
+    return held;
+  }
+  class D extends (base as any) {
+    value = "1";
+  }
+  const made: any = new (D as any)();
+  console.log(typeof held.value, made === held, Object.keys(held).join());
+}
+scene();
+//// base-declared-to-return-bigint-returns-an-object.ts
+// The base of a class is a function whose declared result is not what it returns, an object of another class: the field of the derived class is defined on that object.
+function scene(): void {
+  class Other {
+    o = 1;
+  }
+  class A {
+    a = 2;
+  }
+  const held: any = new A();
+  function base(): bigint {
+    return held;
+  }
+  class D extends (base as any) {
+    value = "1";
+  }
+  const made: any = new (D as any)();
+  console.log(typeof held.value, made === held, Object.keys(held).join());
+}
+scene();
+//// base-declared-to-return-boolean-returns-an-object.ts
+// The base of a class is a function whose declared result is not what it returns, an object of another class: the field of the derived class is defined on that object.
+function scene(): void {
+  class Other {
+    o = 1;
+  }
+  class A {
+    a = 2;
+  }
+  const held: any = new A();
+  function base(): boolean {
+    return held;
+  }
+  class D extends (base as any) {
+    value = "1";
+  }
+  const made: any = new (D as any)();
+  console.log(typeof held.value, made === held, Object.keys(held).join());
+}
+scene();
+//// base-declared-to-return-literal-returns-an-object.ts
+// The base of a class is a function whose declared result is not what it returns, an object of another class: the field of the derived class is defined on that object.
+function scene(): void {
+  class Other {
+    o = 1;
+  }
+  class A {
+    a = 2;
+  }
+  const held: any = new A();
+  function base(): 1 {
+    return held;
+  }
+  class D extends (base as any) {
+    value = "1";
+  }
+  const made: any = new (D as any)();
+  console.log(typeof held.value, made === held, Object.keys(held).join());
+}
+scene();
+//// base-declared-to-return-never-returns-an-object.ts
+// The base of a class is a function whose declared result is not what it returns, an object of another class: the field of the derived class is defined on that object.
+function scene(): void {
+  class Other {
+    o = 1;
+  }
+  class A {
+    a = 2;
+  }
+  const held: any = new A();
+  function base(): never {
+    return held as never;
+  }
+  class D extends (base as any) {
+    value = "1";
+  }
+  const made: any = new (D as any)();
+  console.log(typeof held.value, made === held, Object.keys(held).join());
+}
+scene();
+//// base-declared-to-return-null-returns-an-object.ts
+// The base of a class is a function whose declared result is not what it returns, an object of another class: the field of the derived class is defined on that object.
+function scene(): void {
+  class Other {
+    o = 1;
+  }
+  class A {
+    a = 2;
+  }
+  const held: any = new A();
+  function base(): null {
+    return held;
+  }
+  class D extends (base as any) {
+    value = "1";
+  }
+  const made: any = new (D as any)();
+  console.log(typeof held.value, made === held, Object.keys(held).join());
+}
+scene();
+//// base-declared-to-return-number-returns-an-object.ts
+// The base of a class is a function whose declared result is not what it returns, an object of another class: the field of the derived class is defined on that object.
+function scene(): void {
+  class Other {
+    o = 1;
+  }
+  class A {
+    a = 2;
+  }
+  const held: any = new A();
+  function base(): number {
+    return held;
+  }
+  class D extends (base as any) {
+    value = "1";
+  }
+  const made: any = new (D as any)();
+  console.log(typeof held.value, made === held, Object.keys(held).join());
+}
+scene();
+//// base-declared-to-return-string-returns-an-object.ts
+// The base of a class is a function whose declared result is not what it returns, an object of another class: the field of the derived class is defined on that object.
+function scene(): void {
+  class Other {
+    o = 1;
+  }
+  class A {
+    a = 2;
+  }
+  const held: any = new A();
+  function base(): string {
+    return held;
+  }
+  class D extends (base as any) {
+    value = "1";
+  }
+  const made: any = new (D as any)();
+  console.log(typeof held.value, made === held, Object.keys(held).join());
+}
+scene();
+//// base-declared-to-return-symbol-returns-an-object.ts
+// The base of a class is a function whose declared result is not what it returns, an object of another class: the field of the derived class is defined on that object.
+function scene(): void {
+  class Other {
+    o = 1;
+  }
+  class A {
+    a = 2;
+  }
+  const held: any = new A();
+  function base(): symbol {
+    return held;
+  }
+  class D extends (base as any) {
+    value = "1";
+  }
+  const made: any = new (D as any)();
+  console.log(typeof held.value, made === held, Object.keys(held).join());
+}
+scene();
+//// base-declared-to-return-undefined-returns-an-object.ts
+// The base of a class is a function whose declared result is not what it returns, an object of another class: the field of the derived class is defined on that object.
+function scene(): void {
+  class Other {
+    o = 1;
+  }
+  class A {
+    a = 2;
+  }
+  const held: any = new A();
+  function base(): undefined {
+    return held;
+  }
+  class D extends (base as any) {
+    value = "1";
+  }
+  const made: any = new (D as any)();
+  console.log(typeof held.value, made === held, Object.keys(held).join());
+}
+scene();
+//// base-declared-to-return-union-returns-an-object.ts
+// The base of a class is a function whose declared result is not what it returns, an object of another class: the field of the derived class is defined on that object.
+function scene(): void {
+  class Other {
+    o = 1;
+  }
+  class A {
+    a = 2;
+  }
+  const held: any = new A();
+  function base(): number | undefined {
+    return held;
+  }
+  class D extends (base as any) {
+    value = "1";
+  }
+  const made: any = new (D as any)();
+  console.log(typeof held.value, made === held, Object.keys(held).join());
+}
+scene();
+//// base-declared-to-return-void-returns-an-object.ts
+// The base of a class is a function whose declared result is not what it returns, an object of another class: the field of the derived class is defined on that object.
+function scene(): void {
+  class Other {
+    o = 1;
+  }
+  class A {
+    a = 2;
+  }
+  const held: any = new A();
+  function base(): void {
+    return held;
+  }
+  class D extends (base as any) {
+    value = "1";
+  }
+  const made: any = new (D as any)();
+  console.log(typeof held.value, made === held, Object.keys(held).join());
+}
+scene();
+//// constructor-returns-another-object-a-field-without-a-value-is-defined-over-a-number-below-a-function.ts
+// A constructor declared to return a number returns an object of another class.
+class A {
+  value: any = 5;
+}
+const held: any = new A();
+function Base(): number {
+  return held;
+}
+class D extends (Base as any) {
+  value: any;
+}
+new (D as any)();
+console.log(held.value);
+//// constructor-returns-another-object-a-field-without-a-value-is-defined-over-a-number.ts
+// A constructor declared to return a number returns an object of another class.
+class A {
+  value: any = 5;
+}
+const held: any = new A();
+class Base {
+  constructor() {
+    const answer: number = held;
+    return answer as any;
+  }
+}
+class D extends Base {
+  value: any;
+}
+new D();
+console.log(held.value);
+//// constructor-returns-another-object-async-and-generator-bases.ts
+// A constructor returns a value that is declared a primitive and is an object.
+class A {
+  a = 2;
+}
+const held: any = new A();
+async function base(): Promise<number> {
+  return held;
+}
+try {
+  class D extends (base as any) {
+    value = "1";
+  }
+  new (D as any)();
+} catch (error) {
+  console.log((error as Error).constructor.name);
+}
+console.log(typeof held.value);
+//// constructor-returns-another-object-conditional-return.ts
+// A constructor returns a value that is declared a primitive and is an object.
+class A {
+  a = 2;
+}
+const held: any = new A();
+function base(this: any, flag: boolean): number {
+  this.own = 1;
+  if (flag) return held;
+  return 5;
+}
+class D extends (base as any) {
+  value = "1";
+}
+const first: any = new (D as any)(false);
+const second: any = new (D as any)(true);
+console.log(first.own, first.value, first === held, second === held, held.value, held.own);
+//// constructor-returns-another-object-frozen-object-refuses.ts
+// A constructor returns a value that is declared a primitive and is an object.
+class A {
+  value = 5;
+}
+const held = Object.freeze(new A());
+class Base {
+  constructor() {
+    const answer: number = held as any;
+    return answer as any;
+  }
+}
+class D extends Base {
+  first: any;
+  value: any;
+}
+try {
+  new D();
+} catch (error) {
+  console.log((error as Error).constructor.name);
+}
+console.log(Object.keys(held).join(), held.value);
+//// constructor-returns-another-object-instanceof-and-prototype.ts
+// A constructor returns a value that is declared a primitive and is an object.
+class A {
+  a = 2;
+  who(): string {
+    return "A";
+  }
+}
+const held: any = new A();
+function base(): number {
+  return held;
+}
+class D extends (base as any) {
+  who(): string {
+    return "D";
+  }
+}
+const made: any = new (D as any)();
+console.log(made instanceof D, made instanceof A, made.who(), Object.getPrototypeOf(made) === A.prototype);
+//// constructor-returns-another-object-order-of-keys-below-a-class-that-returns.ts
+// A constructor returns a value that is declared a primitive and is an object.
+class A {
+  a = 1;
+}
+const held: any = new A();
+class Base {
+  b = 1;
+  constructor() {
+    const answer: number = held;
+    return answer as any;
+  }
+}
+class D extends Base {
+  d = 2;
+  e = 3;
+}
+const made: any = new D();
+console.log(Object.keys(made).join(), JSON.stringify(made), Object.keys(held).join());
+for (const key in made) console.log(key);
+console.log({ ...made });
+//// constructor-returns-another-object-order-of-keys-constructor-function.ts
+// A constructor returns a value that is declared a primitive and is an object.
+class A {
+  y = "y";
+  x = "x";
+}
+const held: any = new A();
+function Made(this: any): number {
+  this.x = 1;
+  this.y = 2;
+  return held;
+}
+class D extends (Made as any) {
+  z = 3;
+}
+const made: any = new (D as any)();
+console.log(Object.keys(made).join(), JSON.stringify(made));
+//// constructor-returns-another-object-order-of-keys-held-has-them-in-another-order.ts
+// A constructor returns a value that is declared a primitive and is an object.
+class A {
+  e = "e";
+  d = "d";
+}
+const held: any = new A();
+class Base {
+  constructor() {
+    const answer: boolean = held;
+    return answer as any;
+  }
+}
+class D extends Base {
+  d = 2;
+  e = 3;
+}
+const made: D = new D();
+console.log(Object.keys(made).join(), JSON.stringify(made), made.d, made.e);
+for (const key in made) console.log(key);
+console.log(Object.entries(made).join("|"));
+//// constructor-returns-another-object-returns-a-function-declared-a-number.ts
+// A constructor returns a value that is declared a primitive and is an object.
+function inner(): string {
+  return "inner";
+}
+function base(): number {
+  return inner as any;
+}
+class D extends (base as any) {
+  value = "1";
+}
+const made: any = new (D as any)();
+console.log(typeof made, (inner as any).value, made());
+//// constructor-returns-another-object-returns-a-literal-declared-a-number.ts
+// A constructor returns a value that is declared a primitive and is an object.
+const held = { a: 1 };
+function base(): number {
+  return held as any;
+}
+class D extends (base as any) {
+  a = "text";
+  b = 2;
+}
+new (D as any)();
+console.log(held.a, (held as any).b, JSON.stringify(held));
+//// constructor-returns-another-object-returns-an-array-declared-a-string.ts
+// A constructor returns a value that is declared a primitive and is an object.
+const list: number[] = [1, 2];
+function base(): string {
+  return list as any;
+}
+class D extends (base as any) {
+  value = "1";
+  2 = 3;
+}
+const made: any = new (D as any)();
+console.log(list.length, (list as any).value, made === list, list.join());
+//// constructor-returns-another-object-typed-result-of-new.ts
+// A constructor returns a value that is declared a primitive and is an object.
+class A {
+  a = 2;
+  who(): string {
+    return "A";
+  }
+}
+const held: any = new A();
+class Base {
+  constructor() {
+    const answer: number = held;
+    return answer as any;
+  }
+  who(): string {
+    return "Base";
+  }
+}
+class D extends Base {
+  d = 1;
+  who(): string {
+    return "D";
+  }
+}
+const made: D = new D();
+console.log(made.who(), made.d, made instanceof D);
+//// constructor-returns-another-object-undefined-over-a-number-two-levels.ts
+// A constructor returns a value that is declared a primitive and is an object.
+class A {
+  value = 5;
+  other = "o";
+}
+const held = new A();
+class Top {
+  constructor() {
+    const answer: string = held as any;
+    return answer as any;
+  }
+}
+class Base extends Top {}
+class D extends Base {
+  value: any;
+  other: any;
+}
+function sum(a: A): number {
+  return a.value + 1;
+}
+console.log(sum(held));
+new D();
+console.log(sum(held), held.other);
+//// constructor-returns-another-object-undefined-over-a-number.ts
+// A constructor returns a value that is declared a primitive and is an object.
+class A {
+  value = 5;
+}
+const held = new A();
+class Base {
+  constructor() {
+    const answer: number = held as any;
+    return answer as any;
+  }
+}
+class D extends Base {
+  value: any;
+}
+new D();
+console.log(held.value, held.value + 1, typeof held.value);
+//// constructor-returns-another-object-undefined-then-assigned.ts
+// A constructor returns a value that is declared a primitive and is an object.
+class A {
+  value = 5;
+}
+const held = new A();
+let seen: any = "nothing";
+class Base {
+  constructor() {
+    const answer: number = held as any;
+    return answer as any;
+  }
+}
+class D extends Base {
+  value: any;
+  constructor() {
+    super();
+    seen = held.value;
+    this.value = 7;
+  }
+}
+new D();
+console.log(seen, held.value);
+//// constructor-returns-one-of-two-mistyped-values-field.ts
+// A constructor returns a value that is declared a primitive and is an object.
+class A {
+  a = 5;
+}
+const held: any = new A();
+function base(flag: boolean): number {
+  const first: number = held;
+  const second: number = 7;
+  return flag ? first : second;
+}
+class D extends (base as any) {
+  value = "1";
+}
+new (D as any)(true);
+console.log(typeof held.value);
+//// constructor-returns-one-of-two-mistyped-values-order-of-keys.ts
+// A constructor returns a value that is declared a primitive and is an object.
+class A {
+  e = "e";
+  d = "d";
+}
+const held: any = new A();
+class Base {
+  constructor(flag: boolean) {
+    const first: number = held;
+    const second: number = 7;
+    return (flag ? first : second) as any;
+  }
+}
+class D extends Base {
+  d = 2;
+  e = 3;
+}
+const made: D = new D(true);
+const other: D = new D(false);
+console.log(Object.keys(made).join(), JSON.stringify(made), Object.keys(other).join(), JSON.stringify(other));
+for (const key in made) console.log(key);
+//// constructor-returns-one-of-two-mistyped-values-undefined-over-a-number.ts
+// A constructor returns a value that is declared a primitive and is an object.
+class A {
+  value = 5;
+}
+const held = new A();
+class Base {
+  constructor(flag: boolean) {
+    const first: number = held as any;
+    const second: number = 7;
+    return (flag ? first : second) as any;
+  }
+}
+class D extends Base {
+  value: any;
+}
+new D(true);
+console.log(held.value, held.value + 1, typeof held.value);
+//// constructor-returns-one-of-two-mistyped-values-undefined-then-read-in-the-constructor.ts
+// A constructor returns a value that is declared a primitive and is an object.
+class A {
+  value = 5;
+}
+const held = new A();
+let seen: any = "nothing";
+class Base {
+  constructor(flag: boolean) {
+    const first: string = held as any;
+    const second: string = "s";
+    return (flag ? first : second) as any;
+  }
+}
+class D extends Base {
+  value: any;
+  constructor(flag: boolean) {
+    super(flag);
+    seen = held.value;
+    this.value = 9;
+  }
+}
+new D(true);
+console.log(seen, held.value);
+//// constructor-returns-a-mistyped-value-loop-carried.ts
+// A constructor returns a value that is declared a primitive and is an object.
+class A {
+  value = 5;
+}
+const held = new A();
+class Base {
+  constructor(count: number) {
+    let answer: number = 1;
+    for (let i = 0; i < count; i++) answer = held as any;
+    return answer as any;
+  }
+}
+class D extends Base {
+  value: any;
+  more = "m";
+}
+new D(2);
+console.log(held.value, (held as any).more);

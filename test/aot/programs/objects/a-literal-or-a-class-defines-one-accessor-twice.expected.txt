@@ -1,0 +1,14 @@
+setter, method, setter d,between
+getter, method, getter d,between
+setter, value, setter d,between
+getter, setter, method, getter d,between
+setter three times d,first,second
+two names d,e,between
+getter, method, setter d,between
+value, method, getter d,between
+getter, method, value d,between
+setter, computed key, setter d,between
+setter, spread, setter d,between
+last d,between {"d":"last","between":1}
+class constructor,d,between
+static length,name,prototype,s,between

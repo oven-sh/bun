@@ -1,0 +1,24 @@
+# env = process.env; env.HOME.length; env.A = "text"; env.B = 1; env.C = true
+# A read of the environment, and a store of a string, a number or a boolean, bring in nothing that nobody knows: no value, and no row that speaks of a store into the object.
+# RUN: valueflow-why seeds
+# CHECK-NOT: UndescribedNativeResult
+# CHECK-NOT: ContentsOfEscapedObject
+# CHECK-NOT: ResultOfUnknownCallee
+# CHECK: seeds of bodies: 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="env"
+    v2 = PropGet v1 key="HOME"
+    v3 = PropGet v2 key="length"
+    v4 = String string="text"
+    PropSet v1, v4 key="A" mode=Strict
+    v6 = Integer integer=1
+    PropSet v1, v6 key="B" mode=Strict
+    v8 = Boolean boolean=true
+    PropSet v1, v8 key="C" mode=Strict
+    Return
+}

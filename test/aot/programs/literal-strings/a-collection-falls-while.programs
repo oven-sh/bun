@@ -1,0 +1,1312 @@
+//// a-collection-falls-while-a-list-of-very-many-keys-is-printed.ts
+// A record is parsed from a text with 65,534 more keys than its type names, and the number of its keys is printed. So much is allocated that a collection falls while the objects that printing makes are alive,
+// and some of their fields hold one of a few texts that no code of the program reads.
+const members: string[] = [];
+for (let i = 0; i < 65534; i++) members.push('"k' + i + '":' + i);
+type Row = { first: number };
+console.log(Object.keys(JSON.parse('{"first":0,' + members.join(",") + "}") as Row).length);
+//// a-field-is-compared-with-literals-whatever-it-holds.ts
+// A field whose type is a union of literal strings lies in a narrow slot: a small word for a literal, a reference for any other string. `===`, `!==`, `==`, `switch`, `typeof` and tests for
+// undefined and null look at the word as it was loaded. Every kind of content goes through the same readers: the literals, the same texts made at run time, other texts, undefined and null.
+type Kind = "circle" | "square" | "line" | "";
+class Shape {
+  kind: Kind;
+  other: Kind | undefined;
+  size: number;
+  next: Shape | null = null;
+  constructor(kind: Kind, size: number) {
+    this.kind = kind;
+    this.other = undefined;
+    this.size = size;
+  }
+}
+const out: string[] = [];
+const suffix = process.argv[2] ?? "";
+const hide = new Function("value", "return value" + suffix) as <V>(value: V) => V;
+const store = new Function("object", "key", "value", "object[key] = value" + suffix) as (object: object, key: string, value: unknown) => void;
+
+function compare(shape: Shape): string {
+  return [
+    shape.kind === "circle", shape.kind !== "square", shape.kind == "line", "circle" === shape.kind, shape.kind === "", shape.kind === shape.other, shape.other === "square",
+    shape.other === undefined, shape.other == null, shape.kind === (undefined as unknown as Kind), typeof shape.kind, typeof shape.other, !shape.kind, !!shape.other,
+  ].join(" ");
+}
+function choose(shape: Shape): string {
+  switch (shape.kind) {
+    case "circle":
+      return "round " + shape.size;
+    case "square":
+      return "four " + shape.size;
+    case "":
+      return "empty " + shape.size;
+    case "line":
+      return "thin " + shape.size;
+  }
+  return "none of them: " + String(shape.kind);
+}
+function chooseWithOthers(shape: Shape, text: string): string {
+  switch (shape.other as string | undefined) {
+    case "circle":
+      return "circle";
+    case "a text that no type lists":
+      return "listed nowhere";
+    case text:
+      return "the operand";
+    case undefined:
+      return "undefined";
+  }
+  return "default";
+}
+function area(first: Shape): number {
+  let sum = 0;
+  for (let shape: Shape | null = first; shape !== null; shape = shape.next) {
+    if (shape.kind === "circle") sum += 3 * shape.size * shape.size;
+    else if (shape.kind === "square") sum += shape.size * shape.size;
+    else if (shape.kind !== "line") sum -= 1;
+  }
+  return sum;
+}
+function show(name: string, shape: Shape) {
+  out.push(`${name}: ${compare(shape)} | ${choose(shape)} | ${chooseWithOthers(shape, "squ" + "are".slice(0, hide(3)))} | ${area(shape)}`);
+}
+
+const made = (text: string) => hide(text.slice(0, hide(1))) + hide(text.slice(1));
+for (const kind of ["circle", "square", "line", ""] as const) {
+  show(`the literal "${kind}"`, hide(new Shape(kind, 2)));
+  show(`"${kind}" made at run time`, hide(new Shape(made(kind) as Kind, 3)));
+  const both = hide(new Shape(kind, 4));
+  both.other = kind;
+  show(`"${kind}" in both fields`, both);
+  const bothMade = hide(new Shape(kind, 5));
+  bothMade.other = made(kind) as Kind;
+  show(`"${kind}" and the same text made at run time`, bothMade);
+  const unseen = hide(new Shape("line", 6));
+  store(unseen, "kind", made(kind));
+  store(unseen, "other", kind);
+  show(`"${kind}" stored by code that nobody sees`, unseen);
+}
+for (const [word, value] of [["another text", "triangle"], ["a text that no type lists", "a text that no type lists"], ["a long text", "circle".repeat(40)], ["undefined", undefined], ["null", null], ["a number", 7], ["an object", { toString: () => "circle" }]] as const) {
+  const cast = hide(new Shape(hide<unknown>(value) as Kind, 7));
+  show(`${word} behind a cast`, cast);
+  const stored = hide(new Shape("circle", 8));
+  store(stored, "kind", value);
+  store(stored, "other", value);
+  show(`${word} stored by code that nobody sees`, stored);
+  stored.kind = "square";
+  stored.other = "square";
+  show(`${word}, and then a literal again`, stored);
+}
+const chain = hide(new Shape("circle", 1));
+chain.next = hide(new Shape(made("square") as Kind, 2));
+chain.next.next = hide(new Shape("line", 3));
+chain.next.next.next = hide(new Shape(hide<unknown>("oval") as Kind, 4));
+show("a chain", chain);
+let total = 0;
+for (let turn = 0; turn < 2000; turn++) total += area(chain);
+out.push("many turns: " + total);
+console.log(out.join("\n"));
+//// a-listed-text-is-compared-and-then-handed-on-under-a-narrower-union.ts
+// A value of a union of listed texts is tested, compared with written texts and then handed on as what the comparisons have left of the union.
+type Mode = "a" | "b" | "c" | "d";
+type Ext = "a" | "b" | "c";
+const table: Record<string, Mode> = { one: "a", two: "b", three: "c", four: "d" };
+function fromString(s: string): Mode { return (table[s] ?? s.slice(1)) as Mode; }
+function isExt(m: Mode): m is Ext { return m !== "d"; }
+export function narrowedAndReturned(s: string | undefined): Ext | undefined {
+  const e = s ? fromString(s) : undefined;
+  return e && isExt(e) && e !== "c" ? e : undefined;
+}
+export function comparedAndReturned(list: string[], i: number): "a" | "b" | undefined {
+  const e = list[i] as Ext;
+  return e !== "c" ? e : undefined;
+}
+const kept: { mode: "a" | "b" }[] = [];
+export function comparedAndStored(list: string[], i: number): number {
+  const e = list[i] as Ext;
+  if (e === "c") return 0;
+  kept.push({ mode: e });
+  return kept.length;
+}
+export function truthyAndReturned(list: (string | undefined)[], i: number): Ext | "none" {
+  const e = list[i] as Ext | undefined;
+  return e ? e : "none";
+}
+export function switchedAndReturned(list: string[], i: number): "a" | "b" | "other" {
+  const e = list[i] as Ext;
+  switch (e) {
+    case "a": return e;
+    case "b": return e;
+    default: return "other";
+  }
+}
+const words = ["xa", "xb", "xc", "xd", "xe"].map(text => text.slice(1));
+for (let round = 0; round < 3; round++) {
+  for (const s of ["one", "two", "three", "four", "xa", "xc", "xz", "", undefined]) console.log(String(s), narrowedAndReturned(s));
+  for (let i = 0; i < 6; i++) console.log(i, comparedAndReturned(words, i), comparedAndStored(words, i), truthyAndReturned(words, i), switchedAndReturned(words, i));
+}
+console.log(JSON.stringify(kept));
+//// a-million-texts-from-outside-equal-a-member-that-no-code-spells.ts
+// A text from outside the program that equals a member of a union which no code spells is stored into a typed field, read, compared, switched on and passed on, a million times. The first argument names another text
+type Color = "red" | "amber" | "green" | "violet";
+class Signal { color: Color = "red"; }
+class Tally { red = 0; green = 0; other = 0; length = 0; same = 0; }
+const given: string = process.argv[2] ?? JSON.parse('["am","ber"]').join("");
+const texts: string[] = [];
+for (let at = 0; at < 8; at++) texts.push(JSON.parse(JSON.stringify(given)));
+function weigh(color: Color): number {
+  switch (color) {
+    case "red": return 1;
+    case "green": return 2;
+    default: return 3;
+  }
+}
+function step(signal: Signal, tally: Tally, text: string, previous: Color): Color {
+  signal.color = text as Color;
+  const color = signal.color;
+  if (color === "red") tally.red++;
+  else if (color === "green") tally.green++;
+  else tally.other++;
+  tally.length += weigh(color);
+  if (color === previous) tally.same++;
+  return color;
+}
+const signal = new Signal();
+const tally = new Tally();
+let previous: Color = "red";
+for (let round = 0; round < 1_000_000; round++) previous = step(signal, tally, texts[round & 7], previous);
+console.log(tally.red, tally.green, tally.other, tally.length, tally.same, previous.length);
+//// box-round-trip.ts
+// A literal-string value keeps its identity through fields, untyped calls, keys and concatenation.
+declare const console: { log(...values: unknown[]): void };
+type Method = "get" | "post" | undefined;
+type Verb = "get" | "post" | "trace";
+class Request {
+  method: Method;
+  constructor(method: Method) {
+    this.method = method;
+  }
+}
+const table: Record<string, number> = { get: 1, post: 2, undefined: 3 };
+function untyped(value: any): any {
+  return value;
+}
+function read(request: Request): Method {
+  return request.method;
+}
+function roundTrip(method: Method): string {
+  const returned = untyped(read(new Request(method))) as Method;
+  return [returned === method, returned === "get", table[returned as string], "<" + returned + ">"].join(" ");
+}
+console.log(roundTrip("get"));
+console.log(roundTrip("post"));
+console.log(roundTrip(undefined));
+function spelled(parts: string[]): any {
+  return parts.join("");
+}
+function accept(verb: Verb): Verb {
+  return verb;
+}
+const spelledVerb = accept(spelled(["tr", "ace"]));
+console.log(spelledVerb, spelledVerb.length, untyped(spelledVerb) === spelled(["tr", "ace"]), "<" + spelledVerb + ">");
+function requireMethod(method: Method): string {
+  return "accepted " + method;
+}
+const untypedCaller = untyped(requireMethod);
+console.log(untypedCaller("get"));
+console.log(untypedCaller(undefined));
+try {
+  console.log(untypedCaller("put"));
+} catch (error) {
+  console.log(error instanceof TypeError ? "TypeError" : "other");
+}
+//// compared-value-is-never-a-string.ts
+// A value that the compiler can prove is never a string is compared with a string literal, in every form a comparison takes. Every line is what plain Bun prints.
+function isY(value: any): boolean { return value === "y"; }
+function isNotY(value: any): boolean { return value !== "y"; }
+function literalFirst(value: any): string { return "longer text" === value ? "equal" : "different"; }
+function chained(value: any): string { if (value === "a") return "a"; else if (value === "b") return "b"; return "neither"; }
+function switched(value: any): string { switch (value) { case "a": return "a"; case "b": return "b"; default: return "neither"; } }
+const values: any[] = [undefined, null, true, 1, 1.5, 10n, Symbol.iterator, { a: 1 }, [1], () => 1];
+for (const check of [isY, isNotY, literalFirst, chained, switched]) console.log(check.name, values.map(value => check(value)).join(" "));
+
+const level: number | bigint = Date.now() > 0 ? 3 : 3n;
+console.log((level as any) === "r", (level as any) !== "r", "r" === (level as any));
+
+const segments: any[] = [{ a: 1 }, undefined, { a: 2 }];
+console.log(segments.some(() => segments.some((segment, at) => segment === "x" && segments[at + 1] === "y")));
+
+async function waits(value: any): Promise<string> {
+  try {
+    await Promise.reject(new Error("first")).catch(() => undefined);
+    if (value === "r") return "never";
+    return "done";
+  } catch {
+    return "caught";
+  } finally {
+    await undefined;
+  }
+}
+waits(level).then(console.log);
+//// concat-map-values-and-elements.ts
+// A field of a union of string literals joined with what a Map, an array, a generic function or a Promise yields, under `!`, `??`, `||`, `&&`, `?:` and the assignments made of them.
+type K = "a" | "b" | "c" | "";
+class H {
+    kind: K | undefined;
+    opt?: K;
+    must: K = "c";
+    constructor(k?: K) { this.kind = k; }
+}
+const table = new Map<string, K>([["x", "b"], ["e", ""]]);
+const list: K[] = ["c", "a", ""];
+function same<T extends string>(t: T): T { return t; }
+function first<T>(ts: T[]): T | undefined { return ts[0]; }
+function name(k: K | undefined | null): string { return k === "a" ? "A" : k === "b" ? "B" : k === "c" ? "C" : k === "" ? "E" : k == null ? "N" : "?"; }
+function fromMap(h: H, key: string): K { return (h.kind ?? table.get(key))!; }
+function fromElement(h: H, i: number): K { return (h.kind || list[i])!; }
+function chosen(c: boolean, h: H, i: number): K { return (c ? h.kind : list[i])!; }
+function both(h: H, key: string, i: number): K { return (table.get(key) ?? list[i] ?? h.must)!; }
+function guarded(h: H, key: string): K | undefined { return h.kind && table.get(key); }
+function generic(h: H, c: boolean): K { return (c ? same(h.must) : first(list))!; }
+function assigned(h: H, key: string, i: number): string {
+    let k = h.kind; k ??= table.get(key); let m = h.opt; m ||= list[i]; let n: K | undefined = h.must; n &&= table.get(key);
+    h.opt ??= list[i]; h.kind ||= table.get(key);
+    return [k, m, n, h.opt, h.kind].map(name).join("");
+}
+function carried(h: H): string {
+    let k: K | undefined = h.kind, trace = "";
+    for (const next of list) { trace += name(k); k = trace.length & 1 ? next : h.must; }
+    for (const [key, value] of table) { trace += key + name(k); k = value; }
+    return trace + name(k);
+}
+async function awaited(h: H, key: string): Promise<K> { return (h.kind ?? (await Promise.resolve(table.get(key))))!; }
+const out: string[] = [];
+for (const h of [() => new H(), () => new H("a"), () => new H("")]) {
+    out.push(name(fromMap(h(), "x")), name(fromMap(h(), "e")), name(fromElement(h(), 0)), name(fromElement(h(), 1)), name(chosen(false, h(), 2)), name(both(h(), "x", 0)), name(both(h(), "q", 1)), name(both(h(), "q", 9)));
+    out.push(name(guarded(h(), "x")), name(guarded(h(), "q")), name(generic(h(), true)), name(generic(h(), false)), assigned(h(), "x", 1), assigned(h(), "q", 0), carried(h()));
+}
+out.push(name(chosen(true, new H("b"), 0)));
+console.log(out.join(" "));
+Promise.all([awaited(new H(), "x"), awaited(new H("c"), "x"), awaited(new H(), "e")]).then(all => console.log(all.map(name).join("")));
+//// concat-numbers-and-strings.ts
+// Where a value of a union of string literals and a string that comes out of `any` meet: `!`, `??`, `||`, `&&`, `?:`, defaults, loops, handlers, destructuring. A string out of `any` goes on whether or not it spells one of the literals: a literal type promises the kind, string.
+type Kind = "alpha" | "beta" | "gamma" | "";
+interface Holder { kind?: Kind; other?: Kind | null }
+const outside: any = JSON.parse('{"kind":"beta","other":"delta","list":["gamma","alpha","zeta"],"empty":"","nothing":null}');
+function asserted(h: Holder, o: any): Kind { return (h.kind ?? o.kind)!; }
+function assertedOr(h: Holder, o: any): Kind { return (h.kind || o.other)!; }
+function assertedAnd(h: Holder, o: any): Kind { return (h.kind && o.kind)!; }
+function chosen(c: boolean, h: Holder, o: any): Kind | undefined { return c ? h.kind : o.kind; }
+function chosenAsserted(c: boolean, h: Holder, o: any): Kind { return (c ? h.kind : o.other)!; }
+function withDefault(o: any, kind: Kind = o.kind): Kind { return kind; }
+function fromPattern({ kind = "gamma" as Kind, other = outside.other as Kind }: Holder): string { return kind + "/" + other; }
+function carried(o: any): string {
+    let kind: Kind = "alpha", trace = "";
+    for (const next of o.list) { trace += kind === "alpha" ? "A" : kind === "gamma" ? "G" : "?"; kind = next; }
+    return trace + kind;
+}
+function caught(o: any, fails: boolean): Kind {
+    let kind: Kind = "alpha";
+    try { if (fails) throw o.other; kind = o.kind; } catch (thrown) { kind = thrown as Kind; }
+    return kind;
+}
+function nested(h: Holder, o: any, n: number): Kind { return (n === 0 ? h.kind : n === 1 ? o.kind : n === 2 ? (h.other ?? o.empty) : o.other)!; }
+function stored(h: Holder, o: any): Holder { h.kind = (h.other || o.kind)!; h.other = o.nothing ?? h.kind; return h; }
+function rank(kind: Kind | undefined | null): number { return kind === "alpha" ? 1 : kind === "beta" ? 2 : kind === "gamma" ? 3 : kind === "" ? 4 : kind == null ? 5 : 6; }
+async function awaited(o: any, h: Holder): Promise<Kind> { const kind: Kind = (await Promise.resolve(h.kind)) ?? (await o.kind); return kind; }
+function* yielded(o: any): Generator<Kind, Kind, Kind> { let kind: Kind = "alpha"; for (let i = 0; i < 3; i++) kind = (yield kind) ?? o.kind; return kind; }
+function attempt(f: () => unknown): unknown { try { return f(); } catch (e) { return (e as Error).constructor.name; } }
+const out: unknown[] = [];
+for (const h of [{}, { kind: "alpha" }, { kind: "", other: "gamma" }, { other: null }] as Holder[]) {
+    out.push(attempt(() => asserted(h, outside)), attempt(() => assertedOr(h, outside)), attempt(() => assertedAnd(h, outside)), attempt(() => chosen(true, h, outside)), attempt(() => chosen(false, h, outside)), attempt(() => chosenAsserted(true, h, outside)), attempt(() => chosenAsserted(false, h, outside)));
+    out.push(attempt(() => fromPattern(h)), attempt(() => rank(asserted(h, outside))), attempt(() => rank(assertedOr(h, outside))), attempt(() => rank(chosen(true, h, outside))));
+    for (let n = 0; n < 4; n++) out.push(attempt(() => nested(h, outside, n)), attempt(() => rank(nested(h, outside, n))));
+    out.push(attempt(() => JSON.stringify(stored({ ...h }, outside))));
+}
+out.push(attempt(() => withDefault(outside)), attempt(() => withDefault(outside, "gamma")), attempt(() => carried(outside)), attempt(() => caught(outside, false)), attempt(() => caught(outside, true)), attempt(() => rank(caught(outside, true))));
+const steps = yielded(outside);
+out.push(attempt(() => steps.next().value), attempt(() => steps.next("beta").value), attempt(() => steps.next(undefined as unknown as Kind).value), attempt(() => steps.next("zeta" as Kind).value));
+console.log(out.map(String).join(" | "));
+Promise.all([awaited(outside, {}), awaited(outside, { kind: "gamma" })]).then(all => console.log(all.join(), all.map(rank).join()));
+//// conversions-in.ts
+// A string from anywhere that spells one of the literals of a union enters the union, and is compared as what it spells. A string that spells none of them enters too, and compares unequal to each of them.
+type Kind = "leaf" | "node" | "root";
+interface Item { kind: Kind; size: number }
+
+function isLeaf(k: Kind): boolean {
+    return k === "leaf";
+}
+function which(k: Kind): number {
+    switch (k) {
+        case "leaf": return 1;
+        case "node": return 2;
+        case "root": return 3;
+        default: return 0;
+    }
+}
+function same(a: Kind, b: Kind): boolean {
+    return a === b;
+}
+function differ(a: Kind, b: Kind): boolean {
+    return a !== b;
+}
+function hold(k: Kind): Item {
+    return { kind: k, size: k.length };
+}
+function text(parts: string[]): string {
+    let made = "";
+    for (const part of parts) made += part;
+    return made;
+}
+function isKind(s: string): s is Kind {
+    return s === "leaf" || s === "node" || s === "root";
+}
+
+const rope = text(["le", "af"]) as Kind;
+const sliced = "a node!".slice(2, 6) as Kind;
+const parsed = JSON.parse('["root", "stranger", "stranger", "leaf", ""]') as Kind[];
+const fromAny: any = "no" + "de";
+const viaAny: Kind = fromAny;
+console.log(isLeaf(rope), which(rope), isLeaf(sliced), which(sliced), which(viaAny), same(viaAny, sliced), same(rope, "leaf"), differ(rope, parsed[3]));
+try {
+    for (const k of parsed)
+        console.log(k, isLeaf(k), which(k), same(k, parsed[1]), same(k, parsed[2]), differ(k, "root"), hold(k).kind, hold(k).size, JSON.stringify(hold(k)));
+} catch (e) {
+    console.log("a stranger passed:", (e as Error).constructor.name);
+}
+try {
+    const strangerA = hold(parsed[1]);
+    const strangerB = hold(text(["stran", "ger"]) as Kind);
+    console.log(strangerA.kind === strangerB.kind, same(strangerA.kind, strangerB.kind), strangerA.kind, typeof strangerB.kind, strangerB.kind.length, which(strangerB.kind));
+    strangerA.kind = "node";
+    strangerB.kind = strangerA.kind;
+    console.log(strangerA.kind === strangerB.kind, which(strangerB.kind));
+} catch (e) {
+    console.log("a stranger held:", (e as Error).constructor.name);
+}
+for (const s of ["leaf", "twig", text(["ro", "ot"])]) {
+    if (isKind(s))
+        console.log(s, which(s), hold(s).kind);
+    else
+        console.log(s, "is none");
+}
+let narrowed: string = text(["no", "de"]);
+if (narrowed === "node" || narrowed === "leaf") {
+    const item = hold(narrowed);
+    console.log(item.kind, which(item.kind), which(narrowed));
+}
+try {
+    const many: Item[] = [];
+    for (let i = 0; i < 2000; i++)
+        many.push(hold(text(["made", String(i % 7)]) as Kind));
+    let equal = 0;
+    for (let i = 1; i < many.length; i++)
+        equal += many[i].kind === many[i - 7 < 0 ? 0 : i - 7].kind ? 1 : 0;
+    console.log(equal, many[1999].kind);
+} catch (e) {
+    console.log("a stranger cast:", (e as Error).constructor.name);
+}
+//// conversions-in-leaf-functions.ts
+// A function small enough to need no frame still converts a literal string to a string: in a result, at a merge and
+// in an argument of a tail call.
+const opaque = new Function("value", "return value") as <T>(value: T) => T;
+
+type Kind = "circle" | "square" | "triangle" | "";
+interface Shape { kind: Kind; next: Kind | null }
+type Callback = (kind: any, index?: number) => string;
+
+function kindAsString(shape: Shape): string {
+    return shape.kind;
+}
+function nextAsUnknown(shape: Shape): unknown {
+    return shape.next;
+}
+function kindOrNext(shape: Shape, useNext: boolean): string | null {
+    return useNext ? shape.next : shape.kind;
+}
+function kindOr(shape: Shape, other: string, useOther: boolean): string {
+    return useOther ? other : shape.kind;
+}
+function passKind(kind: Kind, callback: Function): unknown {
+    return callback(kind);
+}
+function passField(shape: Shape, callback: (kind: string) => string): string {
+    return callback(shape.kind);
+}
+function passNext(shape: Shape, callback: (kind: unknown, index: number) => unknown): unknown {
+    return callback(shape.next, 1);
+}
+
+const kinds: Kind[] = ["circle", "square", "triangle", ""];
+const shapes: Shape[] = kinds.map((kind, i) => ({ kind, next: i % 2 ? null : kinds[(i + 1) % kinds.length] }));
+const callbacks: Callback[] = [
+    kind => `<${kind}>`,
+    kind => typeof kind + String(kind).length,
+    (kind, index) => `${kind}:${index}`,
+];
+
+function sumOfLengths(leaves: { kindAsString: typeof kindAsString; nextAsUnknown: typeof nextAsUnknown; kindOrNext: typeof kindOrNext; kindOr: typeof kindOr; passKind: typeof passKind; passField: typeof passField; passNext: typeof passNext }): number {
+    let sum = 0;
+    for (let round = 0; round < 20_000; round++) {
+        const shape = shapes[round % shapes.length];
+        const callback = callbacks[round % callbacks.length];
+        sum += leaves.kindAsString(shape).length + String(leaves.nextAsUnknown(shape)).length + String(leaves.kindOrNext(shape, round % 3 === 0)).length;
+        sum += leaves.kindOr(shape, "other", round % 5 === 0).length + String(leaves.passKind(shape.kind, callback)).length;
+        sum += leaves.passField(shape, callback).length + String(leaves.passNext(shape, callback)).length;
+    }
+    return sum;
+}
+
+console.log(sumOfLengths({ kindAsString, nextAsUnknown, kindOrNext, kindOr, passKind, passField, passNext }));
+// A callee the compiler cannot see is not inlined, so each leaf runs in a body of its own.
+console.log(sumOfLengths({
+    kindAsString: opaque(kindAsString),
+    nextAsUnknown: opaque(nextAsUnknown),
+    kindOrNext: opaque(kindOrNext),
+    kindOr: opaque(kindOr),
+    passKind: opaque(passKind),
+    passField: opaque(passField),
+    passNext: opaque(passNext),
+}));
+
+for (const shape of shapes) {
+    console.log(kindAsString(shape), nextAsUnknown(shape), kindOrNext(shape, true), kindOrNext(shape, false), kindOr(shape, "other", true), kindOr(shape, "other", false));
+    for (const callback of callbacks)
+        console.log(passKind(shape.kind, callback), passField(shape, callback), passNext(shape, callback));
+}
+//// conversions-out.ts
+// A value of a union of string literals goes everywhere a string goes.
+type Color = "red" | "green" | "blue" | "";
+interface Paint { color: Color; next?: Color; other: Color | null }
+
+function paint(color: Color, other: Color | null): Paint {
+    return { color, other };
+}
+function describe(p: Paint): string {
+    return `${p.color}/${p.next}/${p.other}`;
+}
+function lengthOf(c: Color): number {
+    return c.length;
+}
+function upper(c: Color): string {
+    return c.toUpperCase();
+}
+function first(c: Color): string | undefined {
+    return c[0];
+}
+function isSet(c: Color): boolean {
+    return c ? true : false;
+}
+function orDefault(c: Color | undefined): Color {
+    return c || "green";
+}
+function orFallback(c: Color | undefined | null): Color {
+    return c ?? "blue";
+}
+function kindOf(c: Color | undefined): string {
+    return typeof c;
+}
+function before(a: Color, b: Color): boolean {
+    return a < b;
+}
+function plus(a: Color, b: Color): string {
+    return a + b;
+}
+function anything(c: Color): unknown {
+    return c;
+}
+function loosely(c: Color | null | undefined): boolean {
+    return c == null;
+}
+function looselyEqual(a: Color, b: string): boolean {
+    return a == b;
+}
+const table: Record<Color, number> = { red: 1, green: 2, blue: 3, "": 0 };
+function lookUp(c: Color): number {
+    return table[c];
+}
+function has(c: Color): boolean {
+    return c in table;
+}
+
+const all: Color[] = ["red", "green", "blue", ""];
+const paints = all.map((c, i) => paint(c, i % 2 ? null : all[(i + 1) % 4]));
+paints[1].next = "red";
+paints[2].next = paints[0].color;
+for (const p of paints) {
+    console.log(describe(p), lengthOf(p.color), upper(p.color), first(p.color), isSet(p.color), orDefault(p.next), orFallback(p.other), kindOf(p.next), lookUp(p.color), has(p.color));
+    console.log(JSON.stringify(p), Object.keys(p).join(), Object.values(p).join("|"), Object.entries(p).length, String(p.color), [p.color, p.other].join("+"));
+    console.log(anything(p.color), loosely(p.other), loosely(p.next), looselyEqual(p.color, "red"), looselyEqual(p.color, ""));
+}
+console.log(before("blue", "green"), before("red", "blue"), before("", "red"), plus("red", "blue"), plus("", ""));
+console.log([...all].sort().join(), [...all].sort((a, b) => b.localeCompare(a)).join(), all.includes("blue"), all.indexOf("green"));
+const seen = new Set<Color>(all);
+const count = new Map<Color, number>();
+for (const p of paints) count.set(p.color, (count.get(p.color) ?? 0) + 1);
+console.log(seen.has("red"), seen.size, [...count.keys()].join(), count.get(""));
+const copy = { ...paints[1] };
+const assigned = Object.assign({}, paints[2]);
+const cloned = structuredClone(paints[1]);
+console.log(copy.color, copy.next, assigned.next, cloned.color, cloned.next, cloned.other);
+delete paints[1].next;
+console.log(paints[1].next, "next" in paints[1], describe(paints[1]));
+console.log(JSON.stringify(paints));
+//// fields-parameters-and-switches.ts
+type Kind = "leaf" | "node" | "root";
+interface Item { kind: Kind; weight: number; label?: Kind }
+function make(kind: Kind, weight: number): Item {
+    return { kind, weight };
+}
+function score(item: Item): number {
+    if (item.kind === "leaf") return 1;
+    if (item.kind !== "node") return 2;
+    return item.weight;
+}
+function name(kind: Kind): string {
+    switch (kind) {
+        case "leaf": return "a leaf";
+        case "node": return "a node";
+        default: return "the " + kind;
+    }
+}
+function same(a: Kind, b: Kind): boolean { return a === b; }
+function relabel(item: Item, to: Item): void { item.label = to.kind; item.kind = "root"; }
+const items: Item[] = [make("leaf", 1), make("node", 5), make("root", 9)];
+let total = 0;
+for (const item of items) total += score(item);
+relabel(items[0], items[1]);
+console.log(total, name("leaf"), name("root"), same(items[0].kind, items[1].kind), items[2].kind, JSON.stringify(items[0]), items[0].label ? "yes" : "no", items[1].label ?? "none");
+//// large-record-optional-fields.ts
+// A record with many optional fields, few of which are ever set: those of a union of string literals among them, which may be kept apart from the object. Another string passes a cast to the union, and typed code reads what untyped code stored into such a field as it is: a literal type promises the kind, string.
+type Scope = "params" | "typeParams" | "";
+type Side = "left" | "right";
+interface Links {
+    id: number;
+    n0?: number;
+    s0?: string;
+    n1?: number;
+    s1?: string;
+    n2?: number;
+    s2?: string;
+    n3?: number;
+    s3?: string;
+    n4?: number;
+    s4?: string;
+    n5?: number;
+    s5?: string;
+    n6?: number;
+    s6?: string;
+    n7?: number;
+    s7?: string;
+    n8?: number;
+    s8?: string;
+    n9?: number;
+    s9?: string;
+    n10?: number;
+    s10?: string;
+    n11?: number;
+    s11?: string;
+    n12?: number;
+    s12?: string;
+    n13?: number;
+    s13?: string;
+    n14?: number;
+    s14?: string;
+    n15?: number;
+    s15?: string;
+    n16?: number;
+    s16?: string;
+    n17?: number;
+    s17?: string;
+    n18?: number;
+    s18?: string;
+    n19?: number;
+    s19?: string;
+    n20?: number;
+    s20?: string;
+    n21?: number;
+    s21?: string;
+    n22?: number;
+    s22?: string;
+    n23?: number;
+    s23?: string;
+    scope?: Scope;
+    side?: Side | null;
+    last?: Scope;
+}
+function links(id: number): Links {
+    return { id };
+}
+function describe(l: Links): string {
+    try {
+        const scope = l.scope === "params" ? "P" : l.scope === "typeParams" ? "T" : l.scope === "" ? "E" : l.scope === undefined ? "-" : "?" + l.scope;
+        const side = l.side === "left" ? "L" : l.side === "right" ? "R" : l.side === null ? "N" : l.side === undefined ? "-" : "?";
+        return scope + side + (l.last ?? "none") + ("scope" in l ? "+" : "") + (l.n3 ?? "") + (l.s7 ?? "");
+    } catch (e) {
+        return (e as Error).constructor.name;
+    }
+}
+function anyRead(o: any): string { return String(o.scope) + "/" + String(o.side) + "/" + String(o.last); }
+function anyWrite(o: any, scope: unknown, side: unknown) { o.scope = scope; o.side = side; }
+const all: Links[] = [];
+let refused = 0;
+for (let i = 0; i < 3000; i++) {
+    const l = links(i);
+    if (i % 3 === 0) l.scope = i % 2 ? "params" : "typeParams";
+    if (i % 5 === 0) l.side = i % 2 ? "left" : i % 4 ? "right" : null;
+    if (i % 7 === 0) try { l.last = ("made " + i) as Scope; } catch (e) { refused++; }
+    if (i % 11 === 0) l.scope = "";
+    if (i % 13 === 0) { l.n3 = i; l.s7 = "s" + i; }
+    all.push(l);
+}
+console.log("casts refused:", refused);
+let garbage = 0;
+for (let i = 0; i < 200000; i++) garbage += ("g" + i).length;
+const seen = new Map<string, number>();
+for (const l of all) { const d = describe(l).replace(/[0-9]+/g, "#"); seen.set(d, (seen.get(d) ?? 0) + 1); }
+console.log([...seen].sort().map(e => e.join("=")).join(" "), garbage);
+console.log(describe(all[0]), describe(all[21]), describe(all[35]), describe(all[1001]), anyRead(all[0]), anyRead(all[1]), anyRead(all[7]), JSON.stringify(all[105]), Object.keys(all[2310]).join());
+for (let i = 0; i < all.length; i += 4) anyWrite(all[i], i % 8 ? "params" : "unknown " + i, i % 12 ? "right" : undefined);
+console.log(describe(all[4]), describe(all[8]), describe(all[12]), describe(all[24]), anyRead(all[16]), JSON.stringify(all[20]));
+delete all[4].scope;
+all[8].scope = undefined;
+console.log(describe(all[4]), describe(all[8]), "scope" in all[4], "scope" in all[8], JSON.stringify({ ...all[12] }));
+//// locals-concat-and-compare.ts
+// Local values of a union of string literals that come together from several paths: only printed, only tested, both, made from strings, in loops and around handlers. A string that is made at run time passes a cast to the union whether or not it is one of its members.
+type Mode = "read" | "write" | "append" | "";
+interface File { mode: Mode; name: string }
+const log: string[] = [];
+function onlyPrinted(a: boolean, b: boolean): string {
+    const mode: Mode = a ? "read" : b ? "write" : "append";
+    return "mode " + mode + "/" + mode.length;
+}
+function usedAsKey(writing: boolean, counts: Record<string, number>): number {
+    const key = writing ? "write" : "read";
+    counts[key] = (counts[key] ?? 0) + 1;
+    return counts[key];
+}
+function onlyTested(a: boolean, b: boolean): number {
+    const mode: Mode = a ? "read" : b ? "write" : "";
+    if (mode === "read") return 1;
+    if (!mode) return 2;
+    return mode === "write" ? 3 : 4;
+}
+function testedAndPrinted(n: number): string {
+    const mode: Mode = n === 0 ? "read" : n === 1 ? "write" : n === 2 ? "append" : "";
+    const tag = mode === "append" || mode === "write" ? "w" : mode === "" ? "-" : "r";
+    return tag + mode;
+}
+function fromString(text: string): number {
+    const mode = text as Mode;
+    return mode === "read" ? 1 : mode === "write" ? 2 : mode === "" ? 3 : 0;
+}
+function fromStringOrConstant(text: string | undefined): string {
+    const mode: Mode = text === undefined ? "append" : (text as Mode);
+    return (mode === "append" ? "A" : mode === "read" ? "R" : "?") + mode;
+}
+function intoField(text: string, constant: boolean): File {
+    const mode: Mode = constant ? "write" : (text as Mode);
+    return { mode, name: "f" + mode };
+}
+function inLoop(steps: number): string {
+    let mode: Mode = "read", trace = "";
+    for (let i = 0; i < steps; i++) {
+        trace += mode[0] ?? "_";
+        mode = mode === "read" ? "write" : mode === "write" ? "append" : mode === "append" ? "" : "read";
+    }
+    return trace + ":" + mode;
+}
+function aroundHandlers(n: number): string {
+    let mode: Mode = "read";
+    try {
+        if (n === 1) throw new Error("one");
+        mode = "write";
+        if (n === 2) throw new Error("two");
+        mode = "append";
+    } catch (error) {
+        log.push((error as Error).message + " at " + mode);
+        if (n === 2) mode = "";
+    } finally {
+        log.push("finally " + mode);
+    }
+    return mode;
+}
+function twoJoined(a: boolean, b: boolean): boolean {
+    const x: Mode = a ? "read" : "write", y: Mode = b ? "read" : "append";
+    return x === y;
+}
+function nullable(n: number): string {
+    const mode: Mode | undefined | null = n === 0 ? undefined : n === 1 ? null : n === 2 ? "" : "read";
+    return String(mode) + (mode == null ? " nil" : mode ? " set" : " empty") + (mode ?? "default");
+}
+function bySwitch(n: number): string {
+    let mode: Mode;
+    switch (n) {
+        case 0: mode = "read"; break;
+        case 1: mode = "write";
+        case 2: mode = "append"; break;
+        default: mode = "";
+    }
+    return `[${mode}]`;
+}
+function attempt(run: () => string | number): string | number {
+    try { return run(); } catch (error) { return (error as Error).constructor.name; }
+}
+const counts: Record<string, number> = {};
+const out: (string | number | boolean)[] = [];
+for (const a of [true, false]) for (const b of [true, false]) out.push(onlyPrinted(a, b), usedAsKey(a, counts), onlyTested(a, b), twoJoined(a, b));
+for (let n = 0; n < 4; n++) out.push(testedAndPrinted(n), aroundHandlers(n), nullable(n), bySwitch(n), inLoop(n * 3));
+for (const text of ["read", "wri" + "te", "", "other", "append".slice(0, 6), "xread".slice(1)]) out.push(attempt(() => fromString(text)), attempt(() => fromStringOrConstant(text)), attempt(() => JSON.stringify(intoField(text, false))), intoField(text, true).mode);
+out.push(fromStringOrConstant(undefined), JSON.stringify(counts));
+console.log(out.join(" | "));
+console.log(log.join(" | "));
+//// members-that-only-the-type-spells-are-put-together-at-run-time.ts
+// Members of a union of texts that only the type spells are put together at run time or parsed, and so are texts that are no member. They are printed, measured, compared, switched on, stored in fields, variables, arrays and maps, captured, and used as keys.
+type Color = "red" | "green" | "blue" | "ultraviolet" | "";
+type Box = { color: Color; next?: Color };
+function make(parts: string[]): Color { return parts.join("") as Color; }
+function fromJson(t: string): Box { return JSON.parse(t) as Box; }
+function show(c: Color): string { return "<" + c + ":" + c.length + ":" + c.toUpperCase() + ">"; }
+function pick(c: Color): number { switch (c) { case "red": return 1; case "green": return 2; default: return 9; } }
+class Holder { c: Color = "red"; set(c: Color) { this.c = c; return this; } get() { return this.c; } }
+let kept: Color = "red";
+function keep(c: Color) { kept = c; } function give(): Color { return kept; }
+const uv = make(["ultra", "vio", "let"]), bl = make(["bl", "ue"]), em = make([]), odd = make(["inf", "rared"]);
+for (const c of [uv, bl, em, odd, "green" as Color]) {
+  const h = new Holder().set(c); keep(c);
+  console.log(show(c), pick(c), show(h.get()), show(give()), h.get() === c, give() === c, c === "red", [c].includes(give()), JSON.stringify({ c, h }), typeof give(), Object.keys({ [give()]: 1 }).join());
+}
+const b = fromJson('{"color":"ultraviolet","next":"blue"}'); console.log(show(b.color), show(b.next!), b.color === uv, b.next === bl, pick(b.color), b.color + b.next, `${b.color}`, b.color.charAt(2), b.color > b.next!, [b.color, b.next].sort().join());
+const m = new Map<Color, number>(); m.set(uv, 1); m.set(b.color, 2); m.set(bl, 3); console.log(m.size, m.get("ultra" + "violet" as Color), m.get(b.next!), [...m.keys()].join());
+const rec: Record<Color, number> = { red: 1, green: 2, blue: 3, ultraviolet: 4, "": 5 }; console.log(rec[uv], rec[bl], rec[em], rec[odd], rec[b.color]);
+function eq(a: Color, b2: Color) { return a === b2; } console.log(eq(uv, b.color), eq(bl, b.next!), eq(uv, bl), eq(em, ""), eq(odd, odd), eq(odd, make(["infra", "red"])));
+const arr: Color[] = []; for (let i = 0; i < 6; i++) arr.push(make([["ultra", "bl", "re", "gre", "", "x"][i], ["violet", "ue", "d", "en", "", "y"][i]])); console.log(arr.join("|"), arr.indexOf(uv), arr.indexOf("blue"), arr.map(pick).join(), arr.map(show).join(""));
+type Kind = "alpha" | "beta" | "gamma"; interface Node_ { kind: Kind; v: number }
+const nodes: Node_[] = JSON.parse('[{"kind":"gamma","v":1},{"kind":"beta","v":2},{"kind":"delta","v":3}]'); let s = ""; for (const n of nodes) s += n.kind + (n.kind === "alpha" ? "A" : "-") + n.kind.length; console.log(s);
+function later(k: Kind) { return () => k; } console.log(nodes.map(n => later(n.kind)()).join());
+//// more-literals-than-the-limit.ts
+// The .json lowers the limit of string literal types to two, so nearly every literal here has no word of its own: it is an ordinary string, and a test for it compares texts.
+// Whatever the limit, the program answers as without one: tests, switches, comparisons, fields, keys of a Map, texts that come from outside.
+type Direction = "north" | "south" | "east" | "west";
+type Size = "s" | "m" | "l" | "extra-large-beyond-any-register";
+type Wide = "Ж" | "日本語" | "north";
+type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number } | { kind: "triangle-with-a-long-name"; base: number; height: number };
+
+const lines: string[] = [];
+const hide = <T,>(value: T): T => new CustomEvent("x", { detail: value }).detail;
+
+function isDirection(value: unknown): value is Direction { return value === "north" || value === "south" || value === "east" || value === "west"; }
+function isSize(value: unknown): value is Size { return value === "s" || value === "m" || value === "l" || value === "extra-large-beyond-any-register"; }
+function isWide(value: unknown): value is Wide { return value === "Ж" || value === "日本語" || value === "north"; }
+function opposite(direction: Direction): Direction {
+  switch (direction) {
+    case "north": return "south";
+    case "south": return "north";
+    case "east": return "west";
+    case "west": return "east";
+  }
+}
+function area(shape: Shape): number {
+  if (shape.kind === "circle") return Math.round(shape.radius * shape.radius * 3);
+  if (shape.kind === "square") return shape.side * shape.side;
+  return (shape.base * shape.height) / 2;
+}
+function rank(size: Size): number { return size === "s" ? 1 : size === "m" ? 2 : size === "l" ? 3 : 4; }
+
+const made: unknown[] = hide([
+  "north", "south", "east", "west", "nor" + String("th"), "xsouthx".slice(1, 6), ["e", "a", "s", "t"].join(""), "WEST".toLowerCase(), "North", "nort", "northh", "",
+  "s", "m", "l", "extra-large-" + "beyond-any-register", "extra-large-beyond-any-registeR", "Ж", "日本" + "語", "日本", "ж", 1, null, undefined, true, {}, ["north"], Symbol("north"),
+]);
+for (const value of made) lines.push(`${typeof value === "symbol" ? "a symbol" : JSON.stringify(value)}: ${isDirection(value)} ${isSize(value)} ${isWide(value)}`);
+for (const value of made) if (isDirection(value)) lines.push(value + " > " + opposite(value) + " > " + opposite(opposite(value)));
+for (const value of made) if (isSize(value)) lines.push(value + " " + rank(value));
+
+const shapes: Shape[] = hide<Shape[]>(JSON.parse('[{"kind":"circle","radius":2},{"kind":"square","side":3},{"kind":"triangle-with-a-long-name","base":4,"height":5}]'));
+shapes.push({ kind: "square", side: 7 }, { kind: "circle", radius: 1 });
+for (const shape of shapes) lines.push(shape.kind + " " + area(shape));
+
+const count = new Map<Direction, number>();
+const turns = Number(process.argv[2] ?? 2000);
+const all: Direction[] = ["north", "east", "south", "west"];
+let at: Direction = "north";
+for (let i = 0; i < turns; i++) {
+  at = i % 3 === 0 ? opposite(at) : all[(i * 7) % 4]!;
+  count.set(at, (count.get(at) ?? 0) + 1);
+}
+lines.push([...count].map(([direction, times]) => direction + "=" + times).sort().join(" "));
+
+// Literals that stand in types alone: no code names their texts, and still a value is tested for them where it comes in from code that knows nothing.
+type Encoding = "utf-eight" | "latin-one" | "hexadecimal-digits-only";
+type Level = "low" | "middling" | "high" | 7;
+function lengthOf(encoding: Encoding): number { return encoding.length; }
+function levelOf(level: Level): string { return typeof level + ":" + String(level).length; }
+function record(entry: { encoding: Encoding; level?: Level }): string { return entry.encoding.toUpperCase() + "/" + entry.level; }
+const unknownLengthOf: (value: any) => number = hide(lengthOf);
+const unknownLevelOf: (value: any) => string = hide(levelOf);
+const unknownRecord: (value: any) => string = hide(record);
+const join = (...parts: string[]) => hide(parts).join("-");
+for (const text of [join("utf", "eight"), join("latin", "one"), join("hexadecimal", "digits", "only"), join("utf", "nine"), join("low"), join("middling"), join("high"), join("")]) {
+  for (const [name, call] of [["length", unknownLengthOf], ["level", unknownLevelOf]] as const) {
+    try { lines.push(name + " " + text + ": " + call(text)); } catch (error) { lines.push(name + " " + text + ": " + (error as Error).constructor.name); }
+  }
+  try { lines.push("record " + unknownRecord({ encoding: text, level: text })); } catch (error) { lines.push("record " + text + ": " + (error as Error).constructor.name); }
+}
+lines.push(unknownLevelOf(7), unknownLevelOf(hide(3) + 4));
+
+// The names of an object's members as a type: the read by such a key tests for each name.
+const prices = { smallest: 1, "in-between": 2, largest: 3 } as const;
+type Name = keyof typeof prices;
+function priceOf(name: Name): number { return prices[name]; }
+const names: Name[] = hide<Name[]>([join("smallest") as Name, join("in", "between") as Name, join("largest") as Name, "largest", "smallest"]);
+for (const name of names) lines.push(name + " costs " + priceOf(name));
+lines.push(String(priceOf(join("no", "such", "name") as Name)));
+
+// A record by literal keys: the read and the store by such a key test for each of them. The text of one character is in no table of the program unless somebody asks for it.
+function countOf(record: Partial<Record<Size, number>>, size: Size): number { return (record[size] ?? 0) + 1; }
+const tally: Partial<Record<Size, number>> = {};
+for (const size of ["s", "m", "s", "l", "s", "extra-large-beyond-any-register", "m"] as Size[]) tally[size] = countOf(tally, size);
+for (const size of hide<Size[]>([join("s") as Size, join("l") as Size, join("extra", "large", "beyond", "any", "register") as Size])) tally[size] = countOf(tally, size);
+lines.push(JSON.stringify(tally));
+function narrowed(value: Size | number | undefined): string {
+  if (typeof value === "string") return value === "l" ? "large" : "text " + value;
+  return String(value);
+}
+lines.push(narrowed("l"), narrowed("s"), narrowed(4), narrowed(undefined), narrowed(hide<Size>(join("m") as Size)));
+
+// Literals that nobody wrote: the members of a template literal type.
+type Heading = `to-the-${Direction}`;
+function headingOf(direction: Direction): Heading { return `to-the-${direction}`; }
+function isEastward(heading: Heading): boolean { return heading === "to-the-east"; }
+function loosely(value: Direction | (string & {})): boolean { return value === "west"; }
+for (const direction of all) lines.push(headingOf(direction) + " " + isEastward(headingOf(direction)) + " " + loosely(direction) + " " + loosely(headingOf(direction)));
+for (const direction of hide<Direction[]>([join("east") as Direction, join("up") as Direction])) lines.push(headingOf(direction) + " " + isEastward(headingOf(direction)));
+
+class Sign { constructor(public direction: Direction, public size: Size) {} }
+const signs = all.map((direction, i) => new Sign(direction, (["s", "m", "l", "extra-large-beyond-any-register"] as const)[i]!));
+for (const sign of hide(signs)) lines.push(sign.direction + "/" + sign.size + " " + (sign.direction === "east") + " " + (sign.size === "extra-large-beyond-any-register") + " " + Object.values(sign).join());
+console.log(lines.join("\n"));
+//// related-types.ts
+// Types around unions of string literals: what is widened, what is a key, what is generic. A string that is no member of the union passes a cast to it. Handed on to a parameter that is written `never`, it throws a TypeError there.
+type Size = "s" | "m" | "l";
+type Loose = Size | (string & {});
+type Prefixed = `size-${Size}`;
+type Both = Size | 1 | 2;
+type Flag = "yes" | "no" | boolean;
+const sizes = { small: "s", medium: "m", large: "l" } as const;
+type FromObject = (typeof sizes)[keyof typeof sizes];
+type Keys = keyof typeof sizes;
+
+function widened(): string {
+    let s = "s";
+    s += "m";
+    return s;
+}
+function identity<T extends string>(value: T): T {
+    return value;
+}
+function firstOf<T>(values: T[]): T {
+    return values[0];
+}
+function loose(value: Loose): boolean {
+    return value === "m";
+}
+function prefixed(size: Size): Prefixed {
+    return `size-${size}`;
+}
+function isLargePrefixed(p: Prefixed): boolean {
+    return p === "size-l";
+}
+function both(value: Both): string {
+    return value === "s" ? "small" : value === 1 ? "one" : typeof value;
+}
+function flag(value: Flag): string {
+    return value === "yes" || value === true ? "on" : value === "no" ? "off" : "false";
+}
+function fromObject(value: FromObject): number {
+    return value === sizes.small ? 0 : value === sizes.medium ? 1 : 2;
+}
+function byKey(key: Keys): Size {
+    return sizes[key];
+}
+function count(record: Partial<Record<Size, number>>, size: Size): number {
+    return (record[size] ?? 0) + 1;
+}
+function overlap(a: "s" | "m", b: "m" | "l"): boolean {
+    return a === b;
+}
+function narrow(value: Size | number | undefined): string {
+    if (typeof value === "string")
+        return value === "l" ? "large" : "text " + value;
+    return String(value);
+}
+function assertNever(value: never): never {
+    throw new Error("unexpected " + value);
+}
+function attempt(run: () => unknown): unknown {
+    try { return run(); } catch (error) { return (error as Error).constructor.name; }
+}
+function exhaustive(size: Size): number {
+    switch (size) {
+        case "s": return 1;
+        case "m": return 2;
+        case "l": return 3;
+        default: return assertNever(size);
+    }
+}
+
+console.log(widened(), identity<Size>("m"), identity("free"), firstOf<Size>(["l", "s"]), loose("m"), loose("anything"), prefixed("l"), isLargePrefixed(prefixed("l")), isLargePrefixed(prefixed("s")));
+console.log(both("s"), both("m"), both(1), both(2), flag("yes"), flag(true), flag("no"), flag(false));
+console.log(fromObject("s"), fromObject(sizes.medium), fromObject("l"), byKey("small"), byKey("large"), Object.keys(sizes).map(k => byKey(k as Keys)).join());
+const tally: Partial<Record<Size, number>> = {};
+for (const size of ["s", "m", "s", "l", "s"] as Size[]) tally[size] = count(tally, size);
+console.log(JSON.stringify(tally), overlap("m", "m"), overlap("s", "m"), narrow("l"), narrow("s"), narrow(4), narrow(undefined));
+console.log(exhaustive("s") + exhaustive("m") + exhaustive("l"));
+try {
+    exhaustive("xl" as Size);
+} catch (error) {
+    console.log((error as Error).constructor.name);
+}
+for (const key in sizes) console.log(key, sizes[key as Keys]);
+const order: Size[] = ["m", "l", "s"];
+order.sort((a, b) => exhaustive(a) - exhaustive(b));
+console.log(order.join(""), order.map(identity).join(""), order.filter(s => s !== "m").length, order.find(s => s === "l"), attempt(() => order.some(s => s === ("x" as Size))));
+//// storage-kinds.ts
+// Every kind of place that holds a value of a union of string literals.
+type State = "idle" | "running" | "done";
+enum Level { Low = "low", High = "high" }
+
+let current: State = "idle";
+let maybe: State | undefined;
+const fixed = "done";
+
+class Task {
+    static shared: State = "idle";
+    state: State = "idle";
+    last: State | null = null;
+    level: Level = Level.Low;
+    #hidden: State = "running";
+    constructor(public readonly first: State) {}
+    advance(): State {
+        this.last = this.state;
+        this.state = this.state === "idle" ? "running" : "done";
+        return this.state;
+    }
+    get hidden(): State { return this.#hidden; }
+    set hidden(to: State) { this.#hidden = to; }
+}
+function counter(start: State): () => State {
+    let held = start;
+    return () => {
+        const was = held;
+        held = held === "idle" ? "running" : held === "running" ? "done" : "idle";
+        return was;
+    };
+}
+function* states(): Generator<State, State, State | undefined> {
+    const back = yield "idle";
+    yield back ?? "running";
+    return "done";
+}
+async function later(s: State): Promise<State> {
+    const now = s;
+    await null;
+    return now === "idle" ? "running" : now;
+}
+function pair(a: State, b: State = "done"): [State, State] {
+    return [b, a];
+}
+function pick({ state, last }: Task, ...rest: State[]): string {
+    return state + ":" + last + ":" + rest.length + ":" + rest.join("");
+}
+function level(l: Level): number {
+    switch (l) {
+        case Level.Low: return 1;
+        case Level.High: return 2;
+    }
+}
+
+const task = new Task("running");
+console.log(task.state, task.last, task.first, task.hidden, task.level, level(task.level), Task.shared);
+console.log(task.advance(), task.advance(), task.advance(), task.last);
+task.hidden = "done";
+task.level = Level.High;
+Task.shared = task.state;
+console.log(task.hidden, level(task.level), task.level === Level.High, Task.shared, JSON.stringify(task));
+const next = counter("idle");
+console.log(next(), next(), next(), next());
+const g = states();
+console.log(g.next().value, g.next("done").value, g.next().value, g.next().value);
+console.log(pair("idle").join(), pair("idle", "running").join(), pick(task), pick(task, "idle", "done"));
+console.log(current, maybe, fixed, maybe === undefined, current === "idle", fixed === "done");
+current = task.state;
+maybe = current;
+console.log(current, maybe, maybe === current, maybe !== undefined);
+maybe = undefined;
+console.log(maybe ?? "nothing", maybe === "idle");
+later("idle").then(async s => {
+    console.log(s, await later(s), await later("done"));
+    const all = await Promise.all([later("idle"), later("running")]);
+    console.log(all.join());
+});
+//// store-run-single-string-field.ts
+// Adjacent stores to old objects where one field alone can hold a cell: a union of string literals next to a number and a boolean. The string is a literal of the program, or one that is stored through `any` and that only the field keeps alive while the collector runs.
+type Tag = "open" | "closed" | "";
+class Entry {
+    constructor(public tag: Tag, public count: number, public isActive: boolean) {}
+}
+function fresh(i: number): string {
+    return "tag number " + i + " of " + (i * 7919) % 1000;
+}
+function churn(n: number): number {
+    let total = 0;
+    for (let i = 0; i < n; i++) total += [i, i + 1, i + 2].map(x => "garbage " + x).join().length;
+    return total;
+}
+function setUnknown(entry: Entry, i: number): void {
+    const tag = fresh(i);
+    (entry as any).tag = tag;
+    entry.count = i;
+    entry.isActive = (i & 1) === 0;
+}
+function setLiteral(entry: Entry, i: number): void {
+    entry.tag = "closed";
+    entry.count = i;
+    entry.isActive = false;
+}
+function setEither(entry: Entry, tag: string, i: number): void {
+    entry.count = i;
+    (entry as any).tag = tag;
+}
+
+const entries: Entry[] = [];
+const lastKind: number[] = [];
+const lastIndex: number[] = [];
+for (let i = 0; i < 2000; i++) {
+    entries.push(new Entry("open", i, true));
+    lastKind.push(-1);
+    lastIndex.push(i);
+}
+let waste = churn(60000);
+for (let round = 0; round < 24; round++) {
+    for (let k = round % 8; k < entries.length; k += 8) {
+        const i = k + round * 10000;
+        const kind = (k + round) % 4;
+        if (kind === 0) setUnknown(entries[k], i);
+        else if (kind === 1) setLiteral(entries[k], i);
+        else setEither(entries[k], kind === 2 ? fresh(i) : "open", i);
+        lastKind[k] = kind;
+        lastIndex[k] = i;
+    }
+    waste += churn(20000);
+}
+
+let wrong = 0, unknown = 0, length = 0;
+for (let k = 0; k < entries.length; k++) {
+    const entry = entries[k], kind = lastKind[k], i = lastIndex[k];
+    const tag = kind === 0 || kind === 2 ? fresh(i) : kind === 1 ? "closed" : "open";
+    const held: string = (entry as any).tag;
+    if (held !== tag || entry.count !== i) wrong++;
+    if (kind === 0 && entry.isActive !== ((i & 1) === 0)) wrong++;
+    if (kind === 1 && entry.isActive) wrong++;
+    if (kind === 0 || kind === 2) unknown++;
+    length += held.length;
+}
+console.log(wrong, unknown, length, waste > 0);
+//// texts-from-elsewhere-are-compared-with-the-listed-ones.ts
+type Level = "low" | "mid" | "high";
+interface Row {
+  level: Level;
+  n: number;
+}
+
+function worth(level: Level): number {
+  switch (level) {
+    case "low":
+      return 10;
+    case "mid":
+      return 20;
+    case "high":
+      return 30;
+  }
+}
+
+function name(level: Level): string {
+  return level === "low" ? "L" : level === "mid" ? "M" : level === "high" ? "H" : "none of them: " + level;
+}
+
+function keep(row: Row, level: Level): Level {
+  row.level = level;
+  return row.level;
+}
+
+type Mode = "off" | "read" | "write";
+let kept: "read" | "write" = "read";
+let last: Level = "low";
+
+function keepMode(mode: Mode): string {
+  if (mode !== "off") kept = mode;
+  switch (kept) {
+    case "read":
+      return "R";
+    case "write":
+      return "W";
+  }
+}
+
+function keepLast(value: any): number {
+  last = value;
+  return worth(last);
+}
+
+class Holder {
+  level: Level = "mid";
+  take(value: unknown): string {
+    this.level = value as Level;
+    return name(this.level);
+  }
+}
+const holder = new Holder();
+
+const texts: string[] = [
+  "low",
+  "mid",
+  "high",
+  "other",
+  "",
+  "lo" + "w".repeat(1),
+  "xhigh".slice(1),
+  "MID".toLowerCase(),
+];
+const cast = texts.map(text => text as Level);
+const parsed: Row[] = JSON.parse(
+  '[{"level":"low","n":1},{"level":"mid","n":2},{"level":"none","n":3},{"level":"high","n":4}]',
+);
+const byNumber = new Map<number, Level>(cast.map((level, index) => [index, level]));
+const loose: any[] = ["high", 7, null, undefined, { toString: () => "low" }, "mid"];
+const row: Row = { level: "low", n: 0 };
+const counts: Record<Level, number> = { low: 0, mid: 0, high: 0 };
+
+for (let round = 0; round < 3; round++) {
+  const lines: string[] = [];
+  for (const level of cast) lines.push(`${name(level)} ${worth(level)} ${keep(row, level)} ${typeof row.level}`);
+  for (const each of parsed) lines.push(`${name(each.level)} ${worth(each.level)} ${each.level === row.level}`);
+  for (let index = 0; index < 9; index++) {
+    const level = byNumber.get(index);
+    lines.push(level === undefined ? "absent" : `${name(level)} ${worth(level)}`);
+  }
+  for (const value of loose) {
+    const level = value as Level;
+    lines.push(`${level === "high"} ${level == "low"} ${worth(level)} ${String(keep(row, level))}`);
+  }
+  for (const text of texts)
+    lines.push(`${keepMode(text as Mode)} ${kept} ${keepLast(text)} ${last} ${holder.take(text)} ${holder.level}`);
+  for (const value of loose)
+    lines.push(
+      `${keepMode(value)} ${String(kept)} ${keepLast(value)} ${String(last)} ${holder.take(value)} ${String(holder.level)}`,
+    );
+  for (const level of cast) counts[level] = (counts[level] ?? 0) + 1;
+  console.log(lines.join("\n"));
+}
+console.log(JSON.stringify(counts), JSON.stringify(row));
+//// texts-from-outside-equal-members-that-no-code-spells.ts
+// Two members of a union of texts stand in the type alone: no code spells them. Texts equal to them come from a parser, from joined pieces and from a reversed text. They are stored into typed fields, read, compared, switched on, used as keys and printed, beside the two members that code does spell, a text that is no member and the empty text. Where narrowing leaves one such member, the value is printed as it came
+type Color = "red" | "amber" | "green" | "violet";
+interface Lamp { color: Color; next?: Color; watts: number }
+class Signal {
+  color: Color = "red";
+  changes = 0;
+  set(color: Color): void { if (this.color !== color) this.changes++; this.color = color; }
+}
+const pieces: string[] = JSON.parse('["am","ber","vio","let","re","d","gre","en","pi","nk"]');
+const reversed = (text: string): string => text.split("").reverse().join("");
+const joined = (at: number): string => pieces[at] + pieces[at + 1];
+const first: string[] = [joined(0), joined(2), joined(4), joined(6), joined(8), ""];
+const second: string[] = [reversed("rebma"), reversed("teloiv"), JSON.parse('"red"'), reversed("neerg"), reversed("knip"), pieces[0].slice(2)];
+function same(a: Color, b: Color): boolean { return a === b; }
+function differs(a: Color, b: Color): boolean { return a !== b; }
+function looselySame(a: Color, b: Color): boolean { return a == b; }
+function isRed(color: Color): boolean { return color === "red"; }
+function isNotGreen(color: Color): boolean { return "green" !== color; }
+function letter(color: Color): string {
+  switch (color) {
+    case "red": return "R";
+    case "green": return "G";
+    default: return "other:" + color;
+  }
+}
+function pass(color: Color): Color { return color; }
+function lamp(color: Color, watts: number): Lamp { return { color, watts }; }
+function follow(from: Lamp, to: Lamp): void { to.next = from.color; }
+function either(flag: boolean, outside: Color): Color { return flag ? "green" : outside; }
+
+let matrix = "";
+for (const a of first) {
+  for (const b of second) matrix += same(a as Color, b as Color) ? "1" : differs(a as Color, b as Color) ? "0" : "?";
+  matrix += " ";
+}
+console.log(matrix);
+console.log(first.map((a, at) => looselySame(a as Color, second[at] as Color) && Object.is(a, second[at])).join());
+
+const signal = new Signal();
+const counts = new Map<Color, number>();
+const seen = new Set<Color>();
+const byKey: Partial<Record<Color, number>> = {};
+const lamps: Lamp[] = [];
+for (let round = 0; round < 50; round++) {
+  for (let at = 0; at < first.length; at++) {
+    const color = (round & 1 ? second : first)[at] as Color;
+    signal.set(color);
+    counts.set(signal.color, (counts.get(pass(color)) ?? 0) + 1);
+    seen.add(color);
+    byKey[color] = (byKey[signal.color] ?? 0) + at;
+    if (round < 2) lamps.push(lamp(color, at));
+  }
+}
+console.log(signal.color.length, signal.changes, seen.size, [...seen].join(), [...counts].join(";"), JSON.stringify(byKey), Object.keys(byKey).join());
+for (let at = 0; at < first.length; at++) {
+  const a = lamps[at], b = lamps[at + first.length];
+  follow(a, b);
+  console.log(
+    letter(a.color), isRed(b.color), isNotGreen(a.color), same(a.color, b.color), same(b.next!, b.color), a.next === undefined, typeof a.color, a.color.length,
+    `<${b.color}>`, a.color + "|" + b.next, a.color.toUpperCase(), JSON.stringify(b), counts.get(b.color), seen.has(a.color), byKey[b.color],
+    either(at > 2, a.color), either(true, a.color) === "green", same(either(false, a.color), b.color), (a as any).color === second[at], a.color.charCodeAt(0),
+  );
+}
+const list = first as Color[];
+console.log(second.map(text => list.indexOf(text as Color)).join(), second.map(text => list.includes(text as Color)).join(), [...list].sort().join(), list.lastIndexOf(pass(second[1] as Color)));
+const kept = lamps.map(each => each.color);
+for (let round = 0; round < 20; round++) new Array(50000).fill(round).map(String);
+console.log(kept.join(), kept.filter(color => !isRed(color) && isNotGreen(color)).map(letter).join());
+type Pair = "red" | "amber";
+function rest(color: Pair): string { return color === "red" ? "r" : color + "!" + JSON.stringify(color) + color.length + `<${color}>` + color.charCodeAt(1); }
+console.log(first.map(text => rest(text as Pair)).join(" "), second.map(text => rest(text as Pair)).join(" "));
+type Shape = { kind: "circle"; size: number } | { kind: "square"; side: number };
+function area(shape: Shape): string { return shape.kind === "circle" ? "circle " + shape.size : shape.kind + " " + shape.side + " " + JSON.stringify(shape); }
+console.log(area({ kind: "circle", size: 2 }), area(JSON.parse('{"kind":"' + reversed("erauqs") + '","side":3}') as Shape), area(JSON.parse('{"kind":"' + reversed("elgnairt") + '","side":4}') as Shape));
+//// texts-made-at-run-time-meet-the-test-of-a-narrower-union.ts
+// A field of a union of texts is read and stored, under `as`, into a field of a narrower union. What arrives: the texts of both unions, made by a parser, by joining pieces and by cutting a longer text; a text of the wider union alone; a text of neither; 16-bit texts; the empty text
+type Color = "red" | "green" | "blue";
+type Warm = "red" | "green";
+class Light { color: Color; constructor(color: Color) { this.color = color; } }
+class Lamp { color: Warm = "red"; stores = 0; }
+const never = Date.now() < 0;
+const pieces: string[] = JSON.parse('["re","d","gre","en","bl","ue","vio","let"]');
+const long: string = never ? "" : pieces.join("-") + "-redgreenblue";
+const made: string[] = [
+  "red", "green", "blue", JSON.parse('"red"'), JSON.parse('"green"'), JSON.parse('"blue"'),
+  pieces[0] + pieces[1], pieces[2] + pieces[3], pieces[4] + pieces[5], pieces[6] + pieces[7],
+  long.slice(-12, -9), long.slice(-9, -4), long.slice(-4), long.slice(0, 2), "", "réd", "紅", ("red紅").slice(0, 3), ("紅green").slice(1),
+];
+function copy(to: Lamp, from: Light): void { to.color = from.color as Warm; to.stores++; }
+function isWarm(color: Warm): number { return color === "red" ? 1 : color === "green" ? 2 : 3; }
+function pass(from: Light): number { return isWarm(from.color as Warm); }
+function letterOf(color: Color): string { switch (color) { case "red": return "R"; case "green": return "G"; case "blue": return "B"; } return "?"; }
+const lamp = new Lamp();
+for (let round = 0; round < 200; round++) {
+  let line = "";
+  for (const text of made) {
+    const light = new Light(text as Color);
+    copy(lamp, light);
+    line += lamp.color + ":" + lamp.color.length + ":" + pass(light) + ":" + letterOf(light.color) + ":" + (lamp.color === text) + " ";
+  }
+  if (round % 99 === 0) console.log(round, lamp.stores, line);
+}

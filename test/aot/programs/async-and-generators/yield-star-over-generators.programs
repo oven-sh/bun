@@ -1,0 +1,494 @@
+//// yield-star-over-generators-and-iterators.ts
+// yield* over compiled generators, generators that were changed, and iterators of every other kind
+const lines: string[] = [];
+////= say
+class Mine extends Error {}
+////= attempt
+function drain(iterator: Iterator<unknown, unknown, unknown>, limit = 20) {
+  const seen: unknown[] = [];
+  for (let i = 0; i < limit; i++) {
+    const step = iterator.next(`sent ${i}`);
+    seen.push(step.done ? { returned: step.value } : step.value);
+    if (step.done) break;
+  }
+  return seen;
+}
+
+function* three(label: string): Generator<string, string, unknown> {
+  const first = yield `${label} 1`;
+  const second = yield `${label} 2 after ${first}`;
+  yield `${label} 3 after ${second}`;
+  return `${label} is over`;
+}
+function* delegating(inner: Iterable<unknown>): Generator<unknown, unknown, unknown> {
+  const result = yield* inner as Iterable<unknown>;
+  yield ["the delegate returned", result];
+  return "the outer one is over";
+}
+
+say("a compiled generator", drain(delegating(three("a"))));
+
+function* nested(depth: number): Generator<number, number, unknown> {
+  if (!depth) {
+    yield 0;
+    return 1;
+  }
+  const below = yield* nested(depth - 1);
+  yield depth;
+  return below + 1;
+}
+say("five levels", drain(nested(4)));
+
+function* walk(tree: any): Generator<number, void, unknown> {
+  if (!tree) return;
+  yield* walk(tree.left);
+  yield tree.value;
+  yield* walk(tree.right);
+}
+say("a tree", [...walk({ value: 4, left: { value: 2, left: { value: 1 }, right: { value: 3 } }, right: { value: 5 } })]);
+
+function* throwsAtSecond(): Generator<number, void, unknown> {
+  yield 1;
+  throw new Mine("from the inner body");
+}
+{
+  const inner = throwsAtSecond();
+  function* catching(): Generator<unknown, string, unknown> {
+    try {
+      yield* inner;
+    } catch (error) {
+      yield ["caught", (error as Error).message, "inner now", inner.next()];
+    }
+    return "went on";
+  }
+  say("the inner body throws, the outer one catches", drain(catching()));
+  const second = throwsAtSecond();
+  const outer = delegating(second);
+  say("first", outer.next());
+  attempt("the inner body throws, nobody catches", () => outer.next());
+  say("both are completed", outer.next(), second.next());
+}
+
+function* guarded(log: string[]): Generator<string, string, unknown> {
+  try {
+    yield "in try";
+    yield "still in try";
+    return "ended by itself";
+  } catch (error) {
+    log.push(`inner caught ${error}`);
+    yield "after catch";
+    return "ended after catch";
+  } finally {
+    log.push("inner finally");
+    yield "from finally";
+  }
+}
+{
+  const log: string[] = [];
+  const outer = delegating(guarded(log));
+  say("throw() is forwarded", outer.next(), outer.throw("thrown in"), outer.next(), outer.next(), outer.next(), outer.next(), log);
+}
+{
+  const log: string[] = [];
+  const outer = delegating(guarded(log));
+  say("return() is forwarded", outer.next(), outer.return("returned in"), outer.next(), outer.next(), log);
+}
+{
+  const outer = delegating(three("b"));
+  say("return() before the start", outer.return("early"), outer.next());
+  const other = delegating(three("c"));
+  attempt("throw() before the start", () => other.throw(new Mine("early")));
+  say("then", other.next());
+}
+
+{
+  const inner = three("own next");
+  (inner as any).next = function () {
+    return { value: "from its own next", done: false };
+  };
+  say("a generator with its own next", drain(delegating(inner), 3));
+}
+{
+  const inner = three("other prototype");
+  Object.setPrototypeOf(inner, {
+    next() {
+      return { value: "from the other prototype", done: false };
+    },
+    [Symbol.iterator]() {
+      return this;
+    },
+  });
+  say("a generator with another prototype", drain(delegating(inner), 3));
+}
+{
+  const inner = three("prototype put back");
+  const original = Object.getPrototypeOf(inner);
+  Object.setPrototypeOf(inner, {});
+  Object.setPrototypeOf(inner, original);
+  say("a generator whose prototype was put back", drain(delegating(inner)));
+}
+{
+  const inner = three("changed meanwhile");
+  const outer = delegating(inner);
+  const first = outer.next();
+  (inner as any).next = () => ({ value: "never seen: next was read at the start", done: false });
+  (inner as any).return = (value: unknown) => ({ value: `its own return got ${value}`, done: true });
+  say("next is read once, return at each use", first, outer.next("x"), outer.return("y"), outer.next());
+}
+{
+  const inner = three("own iterator method");
+  (inner as any)[Symbol.iterator] = function () {
+    return ["from", "an", "array"][Symbol.iterator]();
+  };
+  say("a generator with its own Symbol.iterator", drain(delegating(inner)));
+}
+{
+  const inner = three("frozen");
+  Object.freeze(inner);
+  say("a frozen generator", drain(delegating(inner)));
+  const indexed = three("indexed");
+  (indexed as any)[0] = "an element";
+  say("a generator with an element", drain(delegating(indexed)));
+  const unrelated = three("unrelated");
+  (unrelated as any).note = "a property that has nothing to do with iteration";
+  say("a generator with an unrelated property", drain(delegating(unrelated)));
+}
+
+{
+  let self: Generator<unknown, unknown, unknown>;
+  function* delegatesToItself(): Generator<unknown, void, unknown> {
+    yield* self;
+  }
+  self = delegatesToItself();
+  attempt("a generator that delegates to itself", () => self.next());
+  say("then", self.next());
+  let outer: Generator<unknown, unknown, unknown>;
+  function* resumesItsDelegator(): Generator<unknown, void, unknown> {
+    yield "before";
+    yield outer.next();
+  }
+  outer = delegating(resumesItsDelegator());
+  say("first", outer.next());
+  attempt("a delegate that resumes its delegator", () => outer.next());
+  say("then", outer.next());
+}
+{
+  const shared = three("shared");
+  const first = delegating(shared);
+  const second = delegating(shared);
+  say("two delegators, one delegate", first.next(), second.next(), first.next(), second.next(), first.next(), second.next(), first.next());
+  const completed = three("completed");
+  drain(completed);
+  say("a completed delegate", drain(delegating(completed)));
+}
+
+function argumentsOf(..._: unknown[]) {
+  return arguments;
+}
+say("an array", drain(delegating([1, 2, 3])));
+say("a string", drain(delegating("añ𝒳")));
+say("a Map", drain(delegating(new Map([["k", 1]]))));
+say("a Set", drain(delegating(new Set(["s"]))));
+say("arguments", drain(delegating(argumentsOf("p", "q") as unknown as Iterable<unknown>)));
+say("a typed array", drain(delegating(new Uint8Array([7, 8]))));
+say("entries of an array", drain(delegating(["e"].entries())));
+
+////= Effect
+class OneShot {
+  called = false;
+  constructor(readonly self: Effect) {}
+  next(sent?: number): IteratorResult<Effect, number> {
+    if (this.called) return { value: sent ?? -1, done: true };
+    this.called = true;
+    return { value: this.self, done: false };
+  }
+  [Symbol.iterator](): OneShot {
+    return this;
+  }
+}
+function* program(n: number): Generator<Effect, number, number> {
+  let sum = 0;
+  for (let i = 0; i < n; i++) sum += yield* new Effect(i);
+  return sum;
+}
+{
+  const iterator = program(2000);
+  let step = iterator.next(0);
+  let steps = 0;
+  while (!step.done) {
+    steps++;
+    step = iterator.next(step.value.value * 2);
+  }
+  say("one-shot iterators", steps, step.value);
+}
+
+{
+  const log: string[] = [];
+  const iterable = {
+    get [Symbol.iterator]() {
+      log.push("get Symbol.iterator");
+      return function (this: unknown) {
+        log.push(`call Symbol.iterator on ${this === iterable ? "the iterable" : "something else"}`);
+        let count = 0;
+        return {
+          get next() {
+            log.push("get next");
+            return function (this: unknown, sent: unknown) {
+              log.push(`call next with ${sent}`);
+              const now = count++;
+              return {
+                get done() {
+                  log.push("get done");
+                  return now === 2 ? "truthy" : 0;
+                },
+                get value() {
+                  log.push("get value");
+                  return now;
+                },
+              };
+            };
+          },
+          get return() {
+            log.push("get return");
+            return undefined;
+          },
+          get throw() {
+            log.push("get throw");
+            return undefined;
+          },
+        };
+      };
+    },
+  };
+  say("the order of what is observable", drain(delegating(iterable as unknown as Iterable<unknown>)), log);
+  log.length = 0;
+  const returned = delegating(iterable as unknown as Iterable<unknown>);
+  say("return() where the iterator has none", returned.next(), returned.return("r"), returned.next(), log);
+  log.length = 0;
+  const thrown = delegating(iterable as unknown as Iterable<unknown>);
+  thrown.next();
+  attempt("throw() where the iterator has none", () => thrown.throw("t"));
+  say("log", log);
+}
+
+for (const [title, value] of [
+  ["undefined", undefined],
+  ["null", null],
+  ["a plain object", {}],
+  ["Symbol.iterator is a number", { [Symbol.iterator]: 1 }],
+  ["Symbol.iterator returns a number", { [Symbol.iterator]: () => 1 }],
+  ["Symbol.iterator returns null", { [Symbol.iterator]: () => null }],
+  ["Symbol.iterator returns a function", { [Symbol.iterator]: () => () => 1 }],
+  ["Symbol.iterator throws", { [Symbol.iterator]: () => { throw new Mine("while opening"); } }],
+  ["next is missing", { [Symbol.iterator]: () => ({}) }],
+  ["next is true", { [Symbol.iterator]: () => ({ next: true }) }],
+  ["next returns a number", { [Symbol.iterator]: () => ({ next: () => 1 }) }],
+  ["next returns undefined", { [Symbol.iterator]: () => ({ next: () => undefined }) }],
+  ["next throws", { [Symbol.iterator]: () => ({ next: () => { throw new Mine("while stepping"); } }) }],
+] as [string, unknown][])
+  attempt(title, () => delegating(value as Iterable<unknown>).next());
+
+class Range {
+  constructor(readonly from: number, readonly to: number) {}
+  *[Symbol.iterator](): Generator<number, string, unknown> {
+    for (let i = this.from; i < this.to; i++) yield i;
+    return "range is over";
+  }
+}
+say("a class whose Symbol.iterator is a generator method", drain(delegating(new Range(3, 6))));
+
+function* forever(): Generator<never, never, unknown> {
+  yield* forever();
+  throw new Mine("not reached");
+}
+attempt("delegation without end", () => {
+  try {
+    forever().next();
+    return "returned";
+  } catch (error) {
+    return error instanceof RangeError ? "RangeError" : String(error);
+  }
+});
+
+{
+  let total = 0;
+  function* chunk(base: number): Generator<number, number, unknown> {
+    yield base;
+    yield base + 1;
+    yield base + 2;
+    return 3;
+  }
+  function* many(n: number): Generator<number, number, unknown> {
+    let made = 0;
+    for (let i = 0; i < n; i += 3) made += yield* chunk(i);
+    return made;
+  }
+  const iterator = many(30000);
+  for (let step = iterator.next(); ; step = iterator.next()) {
+    if (step.done) {
+      say("many short delegates", total, step.value);
+      break;
+    }
+    total += step.value;
+  }
+}
+
+console.log(lines.join("\n"));
+//// yielded-and-returned-thenables.ts
+// Objects that async generators yield and async functions return: plain records, class instances, arrays, functions, maps, objects
+// without a prototype; and the same kinds with a `then`: as an own method, an own value that is no function, a getter, on the class,
+// on the prototype of a plain object, added after objects of the same kind have gone through, taken away again.
+// Beside every run a ticker notes the turns of the job queue, so one job more or less shows.
+let log: string[] = [];
+////= note
+function show(value: unknown): string {
+    if (typeof value === "function") return "function " + value.name;
+    if (Array.isArray(value)) return "[" + value.map(show).join(",") + "]";
+    if (value instanceof Map) return "Map(" + value.size + ")";
+    if (typeof value === "object" && value !== null) return (Object.getPrototypeOf(value) === null ? "null-prototype" : value.constructor?.name) + JSON.stringify(value);
+    return typeof value + " " + String(value);
+}
+////= ticker-3
+
+interface Point { x: number; y: number; }
+interface Reply { text: string; then?: (resolve: (value: string) => void) => void; }
+class Plain { constructor(public n: number) {} }
+class WithThen {
+    constructor(public n: number) {}
+    then(resolve: (value: string) => void): void { note("WithThen.then " + this.n); resolve("from the class " + this.n); }
+}
+class Heir extends WithThen {}
+const prototypeWithThen = { then(resolve: (value: string) => void): void { note("inherited then"); resolve("from the prototype"); } };
+function named(): number { return 1; }
+
+type Maker = () => unknown;
+const makers: [string, Maker][] = [
+    ["a record", () => ({ x: 1, y: 2 } as Point)],
+    ["a reply without then", () => ({ text: "bare" } as Reply)],
+    ["a reply with then", () => ({ text: "own", then(resolve) { note("Reply.then"); resolve("from the reply"); } } as Reply)],
+    ["a reply with then undefined", () => ({ text: "undefined", then: undefined } as Reply)],
+    ["an instance", () => new Plain(3)],
+    ["an instance of a class with then", () => new WithThen(4)],
+    ["an heir of it", () => new Heir(5)],
+    ["an array", () => [1, 2, 3]],
+    ["an array with then", () => Object.assign([1], { then(resolve: (value: string) => void) { note("array.then"); resolve("from the array"); } })],
+    ["a function", () => named],
+    ["a map", () => new Map([[1, 2]])],
+    ["no prototype", () => Object.assign(Object.create(null), { k: 1 })],
+    ["no prototype, with then", () => Object.assign(Object.create(null), { then(resolve: (value: string) => void) { note("bare.then"); resolve("from the bare object"); } })],
+    ["then is a number", () => ({ then: 5 })],
+    ["then is a getter", () => Object.defineProperty({ g: 1 }, "then", { get() { note("then is read"); return undefined; }, enumerable: false })],
+    ["then is inherited", () => Object.create(prototypeWithThen)],
+    ["then throws", () => ({ then() { note("then throws"); throw new Error("thrown by then"); } })],
+    ["a proxy", () => new Proxy({ p: 1 }, { get(target, key, receiver) { if (key === "then") note("the proxy is asked for then"); return Reflect.get(target, key, receiver); } })],
+    ["a fulfilled promise", () => Promise.resolve("fulfilled")],
+    ["a record once more", () => ({ x: 3, y: 4 } as Point)],
+];
+
+async function* yieldsOnce(make: Maker): AsyncGenerator<unknown> {
+    note("yields");
+    yield make();
+    note("behind the yield");
+}
+async function* yieldsBehindAwait(make: Maker): AsyncGenerator<unknown> {
+    await outside();
+    note("yields");
+    yield make();
+    note("behind the yield");
+    yield make();
+}
+async function returnsAtOnce(make: Maker): Promise<unknown> {
+    return make();
+}
+async function returnsBehindSettled(make: Maker): Promise<unknown> {
+    await undefined;
+    note("returns");
+    return make();
+}
+async function returnsBehindAwait(make: Maker): Promise<unknown> {
+    await outside();
+    note("returns");
+    return make();
+}
+async function consume(source: AsyncGenerator<unknown>): Promise<void> {
+    try {
+        for await (const value of source) note("got " + show(value));
+    } catch (error) {
+        note("caught " + (error as Error).message);
+    }
+}
+async function take(promise: Promise<unknown>): Promise<void> {
+    try {
+        note("got " + show(await promise));
+    } catch (error) {
+        note("caught " + (error as Error).message);
+    }
+}
+async function resumedFirst(run: () => Promise<void>): Promise<void> {
+    await outside();
+    await run();
+}
+
+const ways: [string, (make: Maker) => Promise<void>][] = [
+    ["yielded", make => consume(yieldsOnce(make))],
+    ["yielded behind an await", make => consume(yieldsBehindAwait(make))],
+    ["returned at once", make => take(returnsAtOnce(make))],
+    ["returned behind a settled await", make => take(returnsBehindSettled(make))],
+    ["returned behind an await", make => take(returnsBehindAwait(make))],
+    ["returned, nobody waits yet", async make => { const promise = returnsBehindAwait(make); await outside(); await outside(); await outside(); await take(promise); }],
+    ["returned to then", make => new Promise(resolve => { returnsBehindAwait(make).then(value => { note("then got " + show(value)); resolve(); }, error => { note("then caught " + error.message); resolve(); }); })],
+    ["returned to two", async make => { const promise = returnsBehindAwait(make); await Promise.all([take(promise), take(promise)]); }],
+];
+
+const lines: string[] = [];
+async function scene(title: string, run: () => Promise<void>): Promise<void> {
+    log = [];
+    await run();
+    lines.push(title + ": " + log.join(" | "));
+}
+for (const [way, go] of ways) {
+    for (const [kind, make] of makers) {
+        await scene(way + ", " + kind + ", alone", () => go(make));
+        await scene(way + ", " + kind + ", resumed", () => resumedFirst(() => go(make)));
+        await scene(way + ", " + kind + ", beside jobs", async () => { await Promise.all([ticker("t", 9), go(make)]); });
+        await scene(way + ", " + kind + ", resumed beside jobs", async () => { await Promise.all([resumedFirst(() => go(make)), ticker("t", 12)]); });
+    }
+}
+
+// What has gone through many times without a `then` gets one: by its prototype, a plain object.
+interface Late { n: number; }
+const lateParent: { then?: (this: Late, resolve: (value: string) => void) => void } = {};
+function late(n: number): Late {
+    return Object.assign(Object.create(lateParent), { n });
+}
+async function* manyLate(n: number): AsyncGenerator<unknown> {
+    for (let i = 0; i < n; i++) yield late(i);
+}
+async function lateBehindAwait(i: number): Promise<unknown> {
+    await outside();
+    return late(i);
+}
+await scene("a prototype gets then late", async () => {
+    let sum = 0;
+    for await (const one of manyLate(50)) sum += (one as Late).n;
+    for (let i = 0; i < 50; i++) sum += ((await lateBehindAwait(i)) as Late).n;
+    note("sum " + sum);
+    lateParent.then = function (resolve) { note("late then " + this.n); resolve("late " + this.n); };
+    for await (const one of manyLate(2)) note("got " + show(one));
+    note("got " + show(await lateBehindAwait(7)));
+    delete lateParent.then;
+    for await (const one of manyLate(2)) note("got " + show(one));
+    note("got " + show(await lateBehindAwait(8)));
+});
+await scene("one object of a kind gets then", async () => {
+    const points: Point[] = [];
+    for (let i = 0; i < 20; i++) points.push({ x: i, y: -i });
+    (points[13] as any).then = (resolve: (value: string) => void) => { note("the thirteenth's then"); resolve("thirteen"); };
+    async function* all(): AsyncGenerator<unknown> { for (const point of points) yield point; }
+    async function one(i: number): Promise<unknown> { await outside(); return points[i]; }
+    for await (const point of all()) note(show(point));
+    for (let i = 11; i < 15; i++) note(show(await one(i)));
+    delete (points[13] as any).then;
+    note(show(await one(13)));
+});
+console.log(lines.join("\n"));

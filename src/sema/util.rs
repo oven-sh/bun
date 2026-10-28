@@ -722,7 +722,7 @@ impl<K, V, A: Allocator + Clone, const N: usize> ShardedMap<K, V, A, N> {
 }
 
 impl<K: std::hash::Hash + Eq, V, A: Allocator + Clone, const N: usize> ShardedMap<K, V, A, N> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test_support"))]
     pub fn entries(&self) -> usize {
         self.entries.iter().map(|list| list.len() as usize).sum()
     }

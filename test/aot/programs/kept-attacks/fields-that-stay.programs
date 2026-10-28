@@ -1,0 +1,680 @@
+////: attempt-2
+function attempt(label: string, f: () => unknown) {
+  try { console.log(label + ":", String(f())); } catch (e) { console.log(label + ":", (e as Error).constructor.name); }
+}
+////: makers-3
+const makers: [string, () => any][] = [
+  ["a class instance", () => new Pair()],
+  ["a literal", () => { const point: Point = { x: 1 }; return point; }],
+  ["what a constructor function makes", () => new (Made as any)()],
+];
+//// fields-that-stay/docs-stranger.ts
+// Fields that stay: docs stranger. It prints what plain Bun prints.
+interface Config {
+  host: string;
+  port: number;
+}
+class Server {
+  config: Config = { host: "localhost", port: 80 };
+}
+
+const server = new Server();
+server.config = JSON.parse('{"host":"example.com","port":"8080"}');
+console.log(server.config.host, server.config.port);
+try {
+  (server as any).config = "example.com:8080";
+} catch (error) {
+  console.log(String(error));
+}
+//// fields-that-stay/docs-works.ts
+// Fields that stay: docs works. It prints what plain Bun prints.
+class Account {
+  id: number = 1;
+  owner: string = "ada";
+  note?: string = "vip";
+}
+
+const account: any = new Account();
+console.log(delete account.note);
+account.id = null;
+account.tags = ["new"];
+Object.defineProperty(account, "owner", { value: "grace" });
+Object.freeze(account);
+console.log(JSON.stringify(account), Object.isFrozen(account));
+//// fields-that-stay/probe-p1.ts
+// Fields that stay, one probe of many. It prints what plain Bun prints.
+interface Reading { level: number }
+const make = (): any => { const reading: Reading = { level: 1 }; return reading; };
+function attempt(label: string, f: () => unknown) { try { console.log(label + ":", String(f())); } catch (e) { console.log(label + ":", (e as Error).constructor.name); } }
+attempt("delete", () => delete make().level);
+//// fields-that-stay/probe-p2.ts
+// Fields that stay, one probe of many. It prints what plain Bun prints.
+interface Reading { level: number }
+const make = (): any => { const reading: Reading = { level: 1 }; return reading; };
+function attempt(label: string, f: () => unknown) { try { console.log(label + ":", String(f())); } catch (e) { console.log(label + ":", (e as Error).constructor.name); } }
+attempt("delete", () => delete make().level);
+attempt("store", () => { make().level = "text"; return "done"; });
+//// fields-that-stay/probe-p3.ts
+// Fields that stay, one probe of many. It prints what plain Bun prints.
+interface Reading { level: number }
+const make = (): any => { const reading: Reading = { level: 1 }; return reading; };
+function attempt(label: string, f: () => unknown) { try { console.log(label + ":", String(f())); } catch (e) { console.log(label + ":", (e as Error).constructor.name); } }
+attempt("delete", () => delete make().level);
+attempt("getter", () => Object.defineProperty(make(), "level", { get() { return 7; } }).level);
+//// fields-that-stay/probe-p4.ts
+// Fields that stay, one probe of many. It prints what plain Bun prints.
+class Gauge { level: number = 1 }
+interface Reading { level: number }
+const make = (): any => { const reading: Reading = { level: 1 }; return reading; };
+function attempt(label: string, f: () => unknown) { try { console.log(label + ":", String(f())); } catch (e) { console.log(label + ":", (e as Error).constructor.name); } }
+attempt("delete", () => delete make().level);
+attempt("class delete", () => delete (new Gauge() as any).level);
+//// fields-that-stay/probe-p5.ts
+// Fields that stay, one probe of many. It prints what plain Bun prints.
+interface Reading { level: number }
+const make = (): any => { const reading: Reading = { level: 1 }; return reading; };
+function attempt(label: string, f: () => unknown) { try { console.log(label + ":", String(f())); } catch (e) { console.log(label + ":", (e as Error).constructor.name); } }
+const kept: any[] = [];
+attempt("delete of one that escaped", () => { const o = make(); kept.push(o); return delete kept[kept.length - 1].level; });
+attempt("delete under a computed key", () => { const o = make(); kept.push(o); return delete kept[kept.length - 1][["le", "vel"].join("")]; });
+attempt("Reflect", () => { const o = make(); kept.push(o); return Reflect.deleteProperty(kept[kept.length - 1], "level"); });
+attempt("delete of a fresh one", () => delete make().level);
+console.log(JSON.stringify(kept));
+//// fields-that-stay/probe-p6.ts
+// Fields that stay, one probe of many. It prints what plain Bun prints.
+interface Point { x: number; y: number }
+const make = (): any => { const point: Point = { x: 1, y: 2 }; return point; };
+function attempt(label: string, f: () => unknown) { try { console.log(label + ":", String(f())); } catch (e) { console.log(label + ":", (e as Error).constructor.name); } }
+attempt("delete of a fresh one", () => delete make().x);
+attempt("store into a fresh one", () => { make().x = "text"; return "done"; });
+//// fields-that-stay/probe-q1.ts
+// Fields that stay, one probe of many. It prints what plain Bun prints.
+interface Reading { level: number }
+const reading: Reading = { level: 1 };
+console.log(reading.level);
+//// fields-that-stay/probe-q2.ts
+// Fields that stay, one probe of many. It prints what plain Bun prints.
+interface Reading { level: number }
+const reading: Reading = { level: 1 };
+const untyped: any = reading;
+console.log(untyped.level);
+//// fields-that-stay/probe-q3.ts
+// Fields that stay, one probe of many. It prints what plain Bun prints.
+interface Reading { level: number }
+const make = (): any => { const reading: Reading = { level: 1 }; return reading; };
+console.log(make());
+//// fields-that-stay/probe-q4.ts
+// Fields that stay, one probe of many. It prints what plain Bun prints.
+interface Reading { level: number }
+const make = (): Reading => { const reading: Reading = { level: 1 }; return reading; };
+console.log(make().level);
+//// fields-that-stay/probe-q5.ts
+// Fields that stay, one probe of many. It prints what plain Bun prints.
+interface Reading { level: number; depth: number }
+const make = (): any => { const reading: Reading = { level: 1, depth: 2 }; return reading; };
+console.log(delete make().level);
+//// fields-that-stay/stable-fields-a-declared-field-name-on-the-prototype.ts
+// Putting a property with the name of a declared instance property into the prototype object of a class in a .ts file, through a value the compiler cannot follow, throws a TypeError: an instance without an own property of that name reads undefined. Plain Bun stores it.
+// Columns: fields wide kinds types
+////= attempt-2
+class Holder { limit?: number; name: string = "n"; describe() { return this.name; } }
+const prototype: any = Holder.prototype;
+attempt("a store", () => { prototype.limit = 5; return new Holder().limit; });
+attempt("Object.defineProperty with a getter", () => { Object.defineProperty(prototype, "name", { get() { return "inherited"; }, configurable: true }); return "defined"; });
+attempt("another name", () => { prototype.other = 1; return (new Holder() as any).other; });
+attempt("a method replaced", () => { prototype.describe = function () { return "patched"; }; return new Holder().describe(); });
+const holder = new Holder();
+delete holder.limit;
+console.log(holder.limit, "limit" in holder, holder.name);
+//// fields-that-stay/stable-fields-a-default-in-the-prototype-for-a-declared-name.ts
+// A declared name that seen code also stores into the prototype object: an instance without an own property of that name reads the default from the prototype, as in plain Bun.
+interface Shape { level?: number; name: string }
+function Maker(this: Shape, level?: number) {
+  this.name = "made";
+  if (level !== undefined) this.level = level;
+}
+Maker.prototype.level = 7;
+class Holder {
+  declare level?: number;
+  name: string = "held";
+  constructor(level?: number) { if (level !== undefined) this.level = level; }
+}
+(Holder.prototype as any).level = 8;
+const show = (label: string, o: Shape) => console.log(label + ":", o.level, "level" in o, Object.hasOwn(o, "level"), Object.keys(o).join(), JSON.stringify(o));
+function levelOf(o: Shape) { return o.level; }
+const makers: [string, (level?: number) => Shape][] = [
+  ["what a constructor function makes", level => new (Maker as any)(level)],
+  ["a class instance", level => new Holder(level)],
+];
+for (const [how, make] of makers) {
+  const without = make();
+  const withOwn = make(1);
+  show(how + ", without its own", without);
+  show(how + ", with its own", withOwn);
+  console.log("  read by typed code:", levelOf(without), levelOf(withOwn));
+  delete withOwn.level;
+  show("  deleted", withOwn);
+  without.level = 2;
+  show("  stored", without);
+  without.level = undefined;
+  show("  undefined stored", without);
+}
+//// fields-that-stay/stable-fields-a-literal-is-covered-by-the-type-it-is-written-under.ts
+// A literal is covered by the type it is written under: that of a variable, a parameter, a result, an element or a field. Without any such type it is covered by the type that TypeScript infers for it. Plain Bun deletes.
+// Columns: fields wide kinds types
+////= attempt-2
+interface Point { x: number; y: number }
+function pass(point: Point): any { return point; }
+function make(): Point { return { x: 1, y: 2 }; }
+const inferred = () => ({ x: 1, y: 2 });
+class Holder { point: Point = { x: 1, y: 2 } }
+const makers: [string, () => any][] = [
+  ["the type of a variable", () => { const p: Point = { x: 1, y: 2 }; return p; }],
+  ["the type of a parameter", () => pass({ x: 1, y: 2 })],
+  ["the type of a result", make],
+  ["the type of an element", () => { const list: Point[] = [{ x: 1, y: 2 }]; return list[0]; }],
+  ["the type of a field", () => new Holder().point],
+  ["a type literal", () => { const p: { x: number; y: number } = { x: 1, y: 2 }; return p; }],
+  ["no type at all", inferred],
+  ["no type at all, in a variable", () => { const p = { x: 1, y: 2 }; return p; }],
+];
+for (const [how, make] of makers) {
+  const o = make();
+  attempt(how, () => delete o.x);
+  console.log("  afterwards:", JSON.stringify(o));
+}
+//// fields-that-stay/stable-fields-a-literal-with-spreads.ts
+// A member behind a spread that has a property of the same name and of another kind: the object first gets the copy and then the member, in legal TypeScript. It prints what plain Bun prints, keys in the order of creation.
+interface Before { id: number; status: string; note?: string }
+interface After { id: number; status: { code: number }; note?: string }
+interface Extra { status: number; tag: string }
+function step(previous: Before): After { return { ...previous, status: { code: 1 } }; }
+function twice(previous: Before, extra: Extra) { return { ...previous, ...extra }; }
+function between(previous: Before, extra: Extra): After & { tag: string } { return { note: "first", ...previous, ...extra, status: { code: 2 } }; }
+function copy(after: After): After { return { ...after }; }
+const show = (label: string, o: object) => console.log(label + ":", JSON.stringify(o), Object.keys(o).join());
+for (let round = 0; round < 3; round++) {
+  const before: Before = round === 1 ? { status: "s", id: round, note: "n" } : { id: round, status: "s" };
+  const after = step(before);
+  show("a member behind a spread", after);
+  show("two spreads", twice(before, { status: 5, tag: "t" }));
+  show("a member, two spreads, a member", between(before, { tag: "t", status: 5 }));
+  show("a copy", copy(after));
+  after.status = { code: 3 };
+  console.log(after.status.code, typeof before.status, copy(after).status.code);
+}
+//// fields-that-stay/stable-fields-a-literal-written-under-a-type-that-declares-nothing.ts
+// A literal that is written under `any`, `unknown`, `object`, `{}`, a type parameter or an index signature: TypeScript checks nothing about its properties, so it behaves as in plain Bun, also beside a checked literal with the same names.
+////= attempt-2
+function take(value: unknown): any { return value; }
+function keep<T>(value: T): T { return value; }
+const checked = { a: 1, b: 2, c: 3 };
+const makers: [string, () => any][] = [
+  ["any", () => { const o: any = { a: 1, b: 2, c: 3 }; return o; }],
+  ["a result of type any", () => ({ a: 1, b: 2, c: 3 })],
+  ["unknown", () => take({ a: 1, b: 2, c: 3 })],
+  ["object", () => { const o: object = { a: 1, b: 2, c: 3 }; return o; }],
+  ["{}", () => { const o: {} = { a: 1, b: 2, c: 3 }; return o; }],
+  ["a type parameter", () => keep({ a: 1, b: 2, c: 3 })],
+  ["an index signature", () => { const o: Record<string, number> = { a: 1, b: 2, c: 3 }; return o; }],
+  ["inside a literal under any", () => { const o: any = { inner: { a: 1, b: 2, c: 3 } }; return o.inner; }],
+  ["inside a list under any", () => { const o: any = [{ a: 1, b: 2, c: 3 }]; return o[0]; }],
+  ["a spread of any", () => { const o: any = { a: 1, b: 2 }; return { ...o, c: 3 }; }],
+];
+for (const [how, make] of makers) {
+  attempt(how + ", delete", () => { const o = make(); return [delete o.b, JSON.stringify(o)].join(" "); });
+  attempt(how + ", delete in a loop over the keys", () => { const o = make(); let keys = ""; for (const k in o) { keys += k; delete o.b; } return keys; });
+  attempt(how + ", a getter", () => Object.defineProperty(make(), "a", { get() { return 7; }, enumerable: true }).a);
+  attempt(how + ", another prototype", () => Object.setPrototypeOf(make(), { up: 1 }).up);
+  attempt(how + ", a store of another kind", () => { const o = make(); o.c = "text"; return JSON.stringify(o); });
+}
+console.log(JSON.stringify(checked));
+//// fields-that-stay/stable-fields-a-stranger-object-in-a-declared-field.ts
+// An object that was not born under the declared type of a property, such as one from JSON.parse, can be stored there as in plain Bun: only its kind counts.
+// Columns: fields wide kinds: as plain Bun. Under types each store throws: a-stranger-object-in-a-declared-field.types.txt.
+////= attempt-2
+interface Config { host: string; port: number }
+class Server { config: Config = { host: "born", port: 1 }; }
+const strangers: [string, () => unknown][] = [
+  ["an object from JSON.parse with the names", () => JSON.parse('{"host":"parsed","port":2}')],
+  ["an object from JSON.parse with other names", () => JSON.parse('{"other":1}')],
+  ["an object from Object.create", () => Object.assign(Object.create(null), { host: "created" })],
+  ["an array", () => ["listed"]],
+  ["a Map", () => new Map([["host", "mapped"]])],
+];
+function hostOf(server: Server) { return server.config.host; }
+for (const [what, make] of strangers) {
+  const server = new Server();
+  attempt(what, () => { (server as any).config = make(); return Object.prototype.toString.call((server as any).config); });
+  attempt("  read by typed code", () => String(hostOf(server)));
+}
+//// fields-that-stay/stable-fields-a-subclass-of-a-covered-class.ts
+// An instance of a class in a .ts file that extends another class in a .ts file is covered with the properties of both. Plain Bun does every operation.
+// Columns: kinds types. Elsewhere: not compared (under fields and wide the deletes, redefinitions and prototypes throw as stored, and the stores of another kind are done).
+////= attempt-2
+class Animal { legs: number = 4; name?: string = "a"; describe() { return "animal"; } }
+class Bird extends Animal { wings: number = 2; describe() { return "bird"; } }
+class Owl extends Bird { constructor(public hoots: boolean) { super(); } }
+const make = (): any => new Owl(true);
+for (const name of ["legs", "wings", "hoots"]) {
+  attempt("delete of " + name, () => delete make()[name]);
+  attempt("a getter for " + name, () => Object.defineProperty(make(), name, { get() { return 7; } })[name]);
+  attempt("a string into " + name, () => { const o = make(); o[name] = "text"; return o[name]; });
+}
+attempt("delete of the optional name", () => delete make().name);
+attempt("the prototype of the base class", () => Object.setPrototypeOf(make(), Bird.prototype).describe());
+attempt("a method of its own on the instance", () => { const o = make(); o.describe = () => "own"; return o.describe(); });
+console.log(JSON.stringify(make()), make().describe(), make() instanceof Animal);
+//// fields-that-stay/stable-fields-a-typed-parse-is-a-birth.ts
+// `JSON.parse(text) as T` in a .ts file builds an object of type T: the rule holds for it as for a literal. Plain Bun does every operation.
+// Columns: kinds types. Elsewhere: not compared (under fields and wide the deletes, redefinitions and prototypes throw as stored, and the stores of another kind are done).
+////= attempt-2
+interface Config { host: string; port: number; note?: string }
+const text = '{"host":"h","port":1,"note":"n"}';
+const make = (): any => JSON.parse(text) as Config;
+attempt("delete of a required property", () => delete make().host);
+attempt("delete of an optional property", () => delete make().note);
+attempt("a getter", () => Object.defineProperty(make(), "port", { get() { return 7; } }).port);
+attempt("another prototype", () => { Object.setPrototypeOf(make(), {}); return "set"; });
+attempt("a store of another kind", () => { const o = make(); o.port = "text"; return o.port; });
+attempt("a store of the declared kind", () => { const o = make(); o.port = 2; return JSON.stringify(o); });
+attempt("a new property", () => { const o = make(); o.extra = true; return JSON.stringify(o); });
+const untyped = globalThis.JSON.parse(text);
+attempt("without a type, delete", () => delete untyped.host);
+attempt("without a type, a store", () => { untyped.port = "text"; return JSON.stringify(untyped); });
+//// fields-that-stay/stable-fields-adding-properties.ts
+// New properties can be added to an object born in a .ts file, redefined and deleted again, as in plain Bun: the rule speaks of declared properties only.
+interface Point { x: number }
+class Pair { x: number = 1 }
+function Made(this: Point) { this.x = 1; }
+////= makers-3
+const key = ["com", "puted"].join("");
+const symbol = Symbol("added");
+for (const [how, make] of makers) {
+  const o = make();
+  o.extra = "e";
+  o[key] = 2;
+  o[symbol] = 3;
+  o[0] = "zero";
+  Object.defineProperty(o, "hidden", { value: 4, enumerable: false, configurable: true });
+  Object.defineProperty(o, "computedOnRead", { get() { return this.x + 1; }, enumerable: true, configurable: true });
+  Object.assign(o, { assigned: 5 });
+  console.log(how + ":", JSON.stringify(o), Reflect.ownKeys(o).map(String).join(), o.hidden, o.computedOnRead);
+  o.extra = 6;
+  Object.defineProperty(o, "extra", { get() { return "getter"; }, configurable: true });
+  console.log("  redefined:", o.extra, JSON.stringify(Object.getOwnPropertyDescriptor(o, "extra")));
+  console.log("  deleted:", delete o.extra, delete o[key], delete o[symbol], delete o[0], delete o.hidden, Reflect.ownKeys(o).map(String).join());
+  o.x = 7;
+  console.log("  the declared property:", o.x, o.computedOnRead);
+}
+//// fields-that-stay/stable-fields-casts-and-outside-data-never-throw.ts
+// `as` on an object, `x!`, and data from outside that enters typed variables, parameters and results never throw, as in plain Bun.
+interface Config { host: string; port: number; nested?: { deep: boolean } }
+const outside: any = JSON.parse('{"host":"h","port":1,"unknown":[1,2]}');
+const other: any = JSON.parse('{"something":"else"}');
+function takes(config: Config): Config { return config; }
+function hostOf(config: Config) { return config.host; }
+const cast = outside as Config;
+const annotated: Config = outside;
+const returned = takes(other);
+console.log(cast === outside, annotated === outside, returned === other, hostOf(cast), String(hostOf(other)));
+console.log(cast.nested!, other.nested?.deep, Object.keys(takes(outside)).join());
+const holder: { config: Config | undefined } = { config: undefined };
+holder.config = outside;
+console.log(holder.config!.port, holder.config === outside);
+class Keeper { kept: Config; constructor(config: Config) { this.kept = config; } }
+console.log(new Keeper(outside).kept === outside, new Keeper(other).kept === other);
+delete outside.host;
+Object.setPrototypeOf(outside, null);
+outside.port = "text";
+console.log(JSON.stringify(outside), Object.getPrototypeOf(outside));
+//// fields-that-stay/stable-fields-define-property-that-leaves-a-plain-data-property.ts
+// Object.defineProperty on a declared property works as in plain Bun where the property stays a writable, enumerable, configurable data property.
+interface Point { x: number; y?: number }
+class Pair { x: number = 1; y?: number }
+const makers: [string, () => any][] = [
+  ["a class instance", () => new Pair()],
+  ["a literal", () => { const point: Point = { x: 1 }; return point; }],
+];
+const show = (o: object, name: string) => JSON.stringify(Object.getOwnPropertyDescriptor(o, name));
+for (const [how, make] of makers) {
+  const o = make();
+  Object.defineProperty(o, "x", { value: 5 });
+  console.log(how + ", a value alone:", show(o, "x"));
+  Object.defineProperty(o, "x", { value: 6, writable: true, enumerable: true, configurable: true });
+  console.log("  everything spelled out:", show(o, "x"));
+  Object.defineProperty(o, "x", { writable: true });
+  Object.defineProperty(o, "x", { enumerable: true, configurable: true });
+  Object.defineProperty(o, "x", {});
+  console.log("  what it has already:", show(o, "x"));
+  console.log("  Reflect:", Reflect.defineProperty(o, "x", { value: 7 }), o.x);
+  delete o.y;
+  Object.defineProperty(o, "y", { value: 2, writable: true, enumerable: true, configurable: true });
+  console.log("  an absent optional property:", show(o, "y"), Object.keys(o).join());
+  Object.defineProperties(o, { x: { value: 8 }, y: { value: 9 } });
+  console.log("  both:", JSON.stringify(o));
+}
+//// fields-that-stay/stable-fields-delete-optional-property.ts
+// An optional declared property is deleted, tested, read and stored again as in plain Bun, also where every construction fills it.
+interface Options { name: string; limit?: number; label?: string }
+class Holder { name: string = "n"; limit?: number = 1; label?: string = "l" }
+function Build(this: Options) { this.name = "n"; this.limit = 1; this.label = "l"; }
+const makers: [string, () => Options][] = [
+  ["a class instance", () => new Holder()],
+  ["a literal", () => ({ name: "n", limit: 1, label: "l" })],
+  ["what a constructor function makes", () => new (Build as any)()],
+];
+const key = ["la", "bel"].join("");
+for (const [how, make] of makers) {
+  const o = make();
+  console.log(how + ":", delete o.limit, "limit" in o, o.limit, Object.keys(o).join());
+  console.log("  again:", delete o.limit, Object.hasOwn(o, "limit"));
+  o.limit = 5;
+  console.log("  stored again:", o.limit, Object.keys(o).join(), JSON.stringify(o));
+  console.log("  Reflect:", Reflect.deleteProperty(o, "label"), delete (o as any)[key], o.label, Object.keys(o).join());
+  const untyped: any = o;
+  untyped.label = "late";
+  console.log("  through any:", delete untyped.limit, JSON.stringify(untyped), Object.entries(untyped).join("|"));
+}
+//// fields-that-stay/stable-fields-delete-required-property.ts
+// `delete` of a required declared property of an object born in a .ts file throws a TypeError, however it is spelled, and leaves the object as it was. Plain Bun deletes.
+// Columns: fields wide kinds types
+////= attempt-2
+interface Point { x: number; y: number }
+class Pair { x: number = 1; y: number = 2 }
+function Made(this: Point) { this.x = 1; this.y = 2; }
+const makeInferred = () => ({ x: 1, y: 2 });
+const makers: [string, () => any][] = [
+  ["a class instance", () => new Pair()],
+  ["an annotated literal", () => { const point: Point = { x: 1, y: 2 }; return point; }],
+  ["a literal without an annotation", makeInferred],
+  ["what a constructor function makes", () => new (Made as any)()],
+];
+const key = ["x"].join("");
+function deleteThroughView(o: { x?: number }) { return delete o.x; }
+for (const [how, make] of makers) {
+  const o = make();
+  attempt(how + ", through a type that makes it optional", () => deleteThroughView(o));
+  attempt(how + ", through any", () => delete o.x);
+  attempt(how + ", under a computed key", () => delete o[key]);
+  attempt(how + ", Reflect.deleteProperty", () => Reflect.deleteProperty(o, "x"));
+  console.log(how + ", afterwards:", JSON.stringify(o), "x" in o);
+}
+//// fields-that-stay/stable-fields-freeze-seal-prevent-extensions.ts
+// Object.freeze, Object.seal and Object.preventExtensions work on an object born in a .ts file as in plain Bun.
+////= attempt-2
+interface Point { x: number; y?: number }
+class Pair { x: number = 1; y?: number = 2 }
+const makers: [string, () => any][] = [
+  ["a class instance", () => new Pair()],
+  ["a literal", () => { const point: Point = { x: 1, y: 2 }; return point; }],
+];
+const levels: [string, (o: object) => unknown][] = [
+  ["frozen", o => Object.freeze(o)],
+  ["sealed", o => Object.seal(o)],
+  ["not extensible", o => Object.preventExtensions(o)],
+  ["not extensible by Reflect", o => Reflect.preventExtensions(o)],
+];
+for (const [how, make] of makers) {
+  for (const [level, apply] of levels) {
+    const o = make();
+    apply(o);
+    console.log(how + ", " + level + ":", Object.isFrozen(o), Object.isSealed(o), Object.isExtensible(o), JSON.stringify(Object.getOwnPropertyDescriptors(o)));
+    attempt("  a store", () => { o.x = 5; return o.x; });
+    attempt("  a new property", () => { o.extra = 1; return o.extra; });
+    attempt("  delete of the optional property", () => delete o.y);
+    attempt("  Reflect.set", () => Reflect.set(o, "x", 6));
+    attempt("  Reflect.deleteProperty of the optional property", () => Reflect.deleteProperty(o, "y"));
+    console.log("  afterwards:", JSON.stringify(o));
+  }
+}
+//// fields-that-stay/stable-fields-key-order-after-late-stores.ts
+// The own keys of an object born in a .ts file come in the order in which the properties were created, as in plain Bun, whatever order the type declares them in.
+interface Options { a?: number; b?: number; c?: number; d: number }
+class Holder { d: number = 4; a?: number; b?: number; c?: number }
+class Late { declare a?: number; declare b?: number; d: number = 4; }
+function Build(this: Options) { this.d = 4; }
+const show = (label: string, o: object) => {
+  const inLoop: string[] = [];
+  for (const name in o) inLoop.push(name);
+  console.log(label + ":", Object.keys(o).join(), "|", inLoop.join(), "|", JSON.stringify(o), "|", Object.entries({ ...o }).join(";"), "|", Reflect.ownKeys(o).join());
+};
+const makers: [string, () => Options][] = [
+  ["a literal", () => ({ d: 4 })],
+  ["a literal in another order", () => ({ c: 3, d: 4, a: 1 })],
+  ["a class instance", () => new Holder()],
+  ["an instance of a class that only declares them", () => new Late()],
+  ["what a constructor function makes", () => new (Build as any)()],
+];
+for (const [how, make] of makers) {
+  const o = make();
+  show(how, o);
+  o.c = 3; o.a = 1;
+  show("  c, then a", o);
+  o.b = 2;
+  show("  then b", o);
+  delete o.a;
+  show("  without a", o);
+  o.a = 10;
+  show("  a again", o);
+  (o as any).z = 26; delete o.c; o.c = 30;
+  show("  a new one, and c again", o);
+}
+//// fields-that-stay/stable-fields-null-and-undefined-are-always-admitted.ts
+// null and undefined can be stored into every declared property, whatever its type, as in plain Bun.
+interface Inner { id: number }
+interface Shape { count: number; name: string; done: boolean; inner: Inner; list: number[]; run: () => number }
+class Entry implements Shape { count: number = 1; name: string = "n"; done: boolean = false; inner: Inner = { id: 1 }; list: number[] = [1]; run: () => number = () => 1; }
+const makers: [string, () => any][] = [
+  ["a class instance", () => new Entry()],
+  ["a literal", () => { const shape: Shape = { count: 1, name: "n", done: false, inner: { id: 1 }, list: [1], run: () => 1 }; return shape; }],
+];
+for (const [how, make] of makers) {
+  for (const nothing of [null, undefined]) {
+    const o = make();
+    for (const name of Object.keys(o)) o[name] = nothing;
+    console.log(how + ":", Object.keys(o).map(name => String(o[name])).join(), JSON.stringify(o), Object.keys(o).join());
+    o.count = nothing; o.name = nothing; o.done = nothing; o.inner = nothing; o.list = nothing; o.run = nothing;
+    Reflect.set(o, "count", nothing);
+    Object.assign(o, { name: nothing });
+    Object.defineProperty(o, "done", { value: nothing });
+    console.log("  by name:", o.count, o.name, o.done, o.inner, o.list, o.run, "count" in o);
+    o.count = 2; o.name = "m"; o.done = true; o.inner = { id: 2 }; o.list = [2]; o.run = () => 2;
+    console.log("  filled again:", o.count, o.name, o.done, o.inner.id, o.list[0], o.run());
+  }
+}
+//// fields-that-stay/stable-fields-objects-of-bun-modules.ts
+// The objects that Bun's own modules make are Node's public surface and behave as in plain Bun: a program deletes, redefines, re-parents and stores into them.
+import { EventEmitter } from "node:events";
+import { Readable } from "node:stream";
+import { parse } from "node:path";
+////= attempt-2
+const makers: [string, () => any, string][] = [
+  ["an EventEmitter", () => new EventEmitter(), "_events"],
+  ["a Readable", () => new Readable({ read() {} }), "_readableState"],
+  ["what path.parse returns", () => parse("/a/b.txt"), "base"],
+];
+for (const [how, make, name] of makers) {
+  attempt(how + ", delete", () => { const o = make(); return [delete o[name], name in o].join(); });
+  attempt(how + ", a getter", () => Object.defineProperty(make(), name, { get() { return 7; }, configurable: true })[name]);
+  attempt(how + ", another prototype", () => Object.setPrototypeOf(make(), { marker: true }).marker);
+  attempt(how + ", a store of another kind", () => { const o = make(); o[name] = 5; return o[name]; });
+}
+//// fields-that-stay/stable-fields-own-accessor-for-a-declared-name.ts
+// A literal or a class that writes a declared property as a getter or a setter of its own works as in plain Bun.
+interface Factory { readonly parenthesizer: string; count: number; label: string }
+let calls = 0;
+const factory: Factory = {
+  get parenthesizer() { calls++; return "made " + calls; },
+  count: 1,
+  get label() { return "label " + this.count; },
+  set label(value: string) { this.count = value.length; },
+};
+console.log(factory.parenthesizer, factory.parenthesizer, factory.count, factory.label);
+factory.label = "four";
+console.log(factory.count, factory.label, Object.keys(factory).join(), JSON.stringify(factory));
+console.log(JSON.stringify(Object.getOwnPropertyDescriptor(factory, "count")), typeof Object.getOwnPropertyDescriptor(factory, "label")!.get);
+class Lazy implements Factory {
+  count: number = 1;
+  get parenthesizer() { return "class " + this.count; }
+  get label() { return "label " + this.count; }
+  set label(value: string) { this.count = value.length; }
+}
+const lazy: Factory = new Lazy();
+lazy.label = "seven..";
+console.log(lazy.parenthesizer, lazy.label, Object.keys(lazy).join(), JSON.stringify(lazy));
+function read(f: Factory) { return f.parenthesizer + "/" + f.count + "/" + f.label; }
+const plain: Factory = { parenthesizer: "plain", count: 2, label: "l" };
+for (const f of [factory, lazy, plain, factory, plain]) console.log(read(f));
+//// fields-that-stay/stable-fields-prototype-given-at-birth.ts
+// The prototype an object is born with is whatever the program says at its birth, as in plain Bun: `__proto__:` in a literal, a subclass, another new.target.
+const base = { greet() { return "base"; } };
+interface Greeter { name: string; greet(): string }
+const literal = { __proto__: base, name: "literal" } as unknown as Greeter;
+console.log(literal.greet(), Object.getPrototypeOf(literal) === base, Object.keys(literal).join());
+const bare = { __proto__: null, name: "bare" } as { name: string };
+console.log(Object.getPrototypeOf(bare), bare.name, "toString" in bare);
+class Animal { legs: number = 4; describe() { return "animal " + this.legs; } }
+class Bird extends Animal { wings: number = 2; describe() { return "bird " + this.legs + " " + this.wings; } }
+function Other() {}
+Other.prototype.describe = function () { return "other"; };
+const constructed: any = Reflect.construct(Animal, [], Other);
+console.log(new Bird().describe(), constructed.describe(), constructed.legs, constructed instanceof Animal, Object.getPrototypeOf(constructed) === Other.prototype);
+const replaced = Animal.prototype.describe;
+Animal.prototype.describe = function () { return "patched " + this.legs; };
+console.log(new Animal().describe());
+Animal.prototype.describe = replaced;
+console.log(new Animal().describe());
+//// fields-that-stay/stable-fields-redefine-declared-property.ts
+// Turning a declared property of an object born in a .ts file into an accessor, or making it read-only, hidden or locked, throws a TypeError and leaves the property as it was. Plain Bun redefines it.
+// Columns: fields wide kinds types
+////= attempt-2
+interface Point { x: number; y?: number }
+class Pair { x: number = 1; y?: number }
+function Made(this: Point) { this.x = 1; }
+////= makers-3
+const operations: [string, (o: any) => unknown][] = [
+  ["a getter", o => Object.defineProperty(o, "x", { get() { return 7; }, enumerable: true, configurable: true }).x],
+  ["a setter", o => { Object.defineProperty(o, "x", { set(_: number) {}, enumerable: true, configurable: true }); return "defined"; }],
+  ["read-only", o => { Object.defineProperty(o, "x", { writable: false }); return "defined"; }],
+  ["hidden", o => { Object.defineProperty(o, "x", { enumerable: false }); return "defined"; }],
+  ["locked", o => { Object.defineProperty(o, "x", { configurable: false }); return "defined"; }],
+  ["Reflect.defineProperty with a getter", o => Reflect.defineProperty(o, "x", { get() { return 7; } })],
+  ["__defineGetter__", o => { o.__defineGetter__("x", () => 7); return o.x; }],
+  ["__defineSetter__", o => { o.__defineSetter__("x", () => {}); return "defined"; }],
+  ["Object.defineProperties behind a new property", o => { Object.defineProperties(o, { fresh: { value: 1, enumerable: true }, x: { get() { return 7; } } }); return "defined"; }],
+];
+for (const [how, make] of makers) {
+  for (const [what, operation] of operations) {
+    const o = make();
+    attempt(how + ", " + what, () => operation(o));
+    console.log("  afterwards:", JSON.stringify(Object.getOwnPropertyDescriptor(o, "x")), o.x);
+  }
+}
+for (const [how, make] of makers.slice(0, 2)) {
+  const o = make();
+  delete o.y;
+  attempt(how + ", an absent optional property defined with a value alone", () => { Object.defineProperty(o, "y", { value: 2 }); return "defined"; });
+  console.log("  afterwards:", "y" in o);
+}
+//// fields-that-stay/stable-fields-set-prototype.ts
+// An object born in a .ts file keeps the prototype of its birth: giving it another one throws a TypeError, however it is spelled. Only the prototype of an object literal can be removed (null). Plain Bun changes the prototype.
+// Columns: fields wide kinds types
+////= attempt-2
+interface Point { x: number }
+class Pair { x: number = 1; twice() { return this.x * 2; } }
+function Made(this: Point) { this.x = 1; }
+////= makers-3
+const other = { twice() { return -1; } };
+const operations: [string, (o: any) => unknown][] = [
+  ["Object.setPrototypeOf", o => Object.setPrototypeOf(o, other).twice()],
+  ["Object.setPrototypeOf with null", o => { Object.setPrototypeOf(o, null); return "set"; }],
+  ["Reflect.setPrototypeOf", o => Reflect.setPrototypeOf(o, other)],
+  ["a store to __proto__", o => { o.__proto__ = other; return o.twice(); }],
+  ["the prototype it has", o => Object.setPrototypeOf(o, Object.getPrototypeOf(o)) === o && Reflect.setPrototypeOf(o, Object.getPrototypeOf(o))],
+  ["a number stored to __proto__", o => { o.__proto__ = 5; return "ignored"; }],
+];
+for (const [how, make] of makers) {
+  for (const [what, operation] of operations) {
+    const o = make();
+    const born = Object.getPrototypeOf(o);
+    attempt(how + ", " + what, () => operation(o));
+    console.log("  afterwards:", Object.getPrototypeOf(o) === born, o.x);
+  }
+}
+//// fields-that-stay/stable-fields-store-of-another-kind.ts
+// A store of a value of another kind than the declared type of the property throws a TypeError, whoever writes, and leaves the property as it was. Plain Bun stores it.
+// Columns: kinds types. Elsewhere: as plain Bun.
+////= attempt-2
+interface Inner { id: number }
+interface Shape { count: number; name: string; done: boolean; inner: Inner; run: () => number }
+class Entry implements Shape { count: number = 1; name: string = "n"; done: boolean = false; inner: Inner = { id: 1 }; run: () => number = () => 1; }
+const makers: [string, () => any][] = [
+  ["a class instance", () => new Entry()],
+  ["a literal", () => { const shape: Shape = { count: 1, name: "n", done: false, inner: { id: 1 }, run: () => 1 }; return shape; }],
+];
+const key = ["co", "unt"].join("");
+const writers: [string, (o: any) => unknown][] = [
+  ["through any", o => { o.count = "text"; return o.count; }],
+  ["under a computed key", o => { o[key] = "text"; return o.count; }],
+  ["Reflect.set", o => Reflect.set(o, "count", "text")],
+  ["Object.assign", o => Object.assign(o, { count: "text" }).count],
+  ["Object.defineProperty with a value", o => Object.defineProperty(o, "count", { value: "text" }).count],
+  ["a destructuring assignment", o => { ({ a: o.count } = { a: "text" }); return o.count; }],
+  ["a compound assignment", o => { o.count += "text"; return o.count; }],
+  ["the target of for-of", o => { for (o.count of ["text"]); return o.count; }],
+];
+const values: [string, string, unknown][] = [
+  ["a number into string", "name", 5],
+  ["a number into boolean", "done", 1],
+  ["a string into an object type", "inner", "text"],
+  ["a number into an object type", "inner", 5],
+  ["an object into number", "count", { id: 1 }],
+  ["a bigint into number", "count", 1n],
+  ["a symbol into string", "name", Symbol.iterator],
+  ["a number into a function type", "run", 5],
+  ["a boolean into number", "count", true],
+];
+const show = (o: any) => [o.count, o.name, o.done, o.inner.id, typeof o.run === "function" ? o.run() : "no function"].map(String).join();
+for (const [how, make] of makers) {
+  for (const [what, write] of writers) {
+    const o = make();
+    attempt(how + ", a string into number " + what, () => write(o));
+    console.log("  afterwards:", show(o));
+  }
+  for (const [what, name, value] of values) {
+    const o = make();
+    attempt(how + ", " + what, () => { o[name] = value; return typeof o[name]; });
+    console.log("  afterwards:", show(o));
+  }
+}
+//// fields-that-stay/stable-fields-the-error-names-the-property.ts
+// Each TypeError of the rule can be caught, is a TypeError of the realm, and names the property it is about. Plain Bun throws none of them.
+// Columns: kinds types. Elsewhere: not compared (under fields and wide the deletes, redefinitions and prototypes throw as stored, and the stores of another kind are done).
+class Gauge { level: number = 1 }
+interface Reading { level: number }
+const makers: [string, () => any][] = [
+  ["a class instance", () => new Gauge()],
+  ["a literal", () => { const reading: Reading = { level: 1 }; return reading; }],
+];
+const operations: [string, (o: any) => unknown][] = [
+  ["delete", o => delete o.level],
+  ["a getter", o => Object.defineProperty(o, "level", { get() { return 7; } })],
+  ["a store of another kind", o => { o.level = "text"; }],
+];
+for (const [how, make] of makers) {
+  for (const [what, operation] of operations) {
+    try {
+      operation(make());
+      console.log(how + ", " + what + ": done");
+    } catch (e: any) {
+      console.log(how + ", " + what + ":", e instanceof TypeError, Object.getPrototypeOf(e) === TypeError.prototype, e.message.includes("level"), typeof e.stack);
+    }
+  }
+  try {
+    Object.setPrototypeOf(make(), {});
+    console.log(how + ", another prototype: done");
+  } catch (e: any) {
+    console.log(how + ", another prototype:", e instanceof TypeError, /prototype/i.test(e.message));
+  }
+}

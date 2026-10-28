@@ -1,0 +1,1496 @@
+////: Counter
+class Counter {
+  i = 0;
+  constructor(public limit: number) {}
+  next(): «1» {
+    if (this.i < this.limit) return { value: «2», done: false };
+    return { value: 0, done: true };
+  }
+}
+////: bounds
+function bounds(list«1» {
+  let low = 1000;
+  for (let i = 0; i < list.length; i++) if (list[i] < low) low = list[i];
+  let high = -1000;
+  for (let i = 0; i < list.length; i++) if (list[i] > high) high = list[i];
+  return [low, high];
+}
+////: for-2
+for (let i = 1; i < 2000; i++) {
+  const [quotient, rest] = divide(i, 7);
+  const [half, quarter, eighth] = halves(i);
+  const [next, name] = named(i, "ab");
+  sum += quotient - rest + half - quarter + eighth + next - name.length;
+}
+////: for-3
+for (let turn = 0; turn < 3; turn++) {
+  for (const list of [whole, holey, withOther, withNaN, withMinusZero, empty]) {
+    say("pattern", byPattern(list), "assignment", byAssignment(list), "index", byIndex(list), "indexes", byTwoIndexes(list));
+    say("beyond", beyondTheEnd(list), "defaults", withDefaults(list), "last", lastOf(list));
+  }
+}
+////: keep
+function keep(parts: Split): void {
+  try {
+    for (let i = 0; i < 2; i++) if (kept.length < 60 + i) kept.push(parts);
+  } catch {
+    kept.length = 0;
+  }
+}
+////: lastOf
+function lastOf(list«1» {
+  let last = list[0];
+  let count = 0;
+  for (let i = 0; i < list.length; i++) {
+    last = list[i];
+    count++;
+  }
+  for (let i = 0; i < list.length; i++) if (list[i] === 77) count += 100;
+  return [last, count];
+}
+////: split
+function split(source: string): Split {
+  const at = source.lastIndexOf("@");
+  if (at < 0) {
+    return { name: source };
+  }
+  const place = source.slice(at + 1);
+  if (at === 0) {
+    return { name: "", place };
+  }
+  return { name: source.slice(0, at), place, size: at };
+}
+////: use
+function use(id: string, turn: number): number {
+  const parts = split(id);
+  if (parts.name === «1» || parts.name === "plain" || parts.name === «2») keep(parts);
+  return parts.name.length + (turn & 1);
+}
+//// pairs-of-numbers-that-are-only-read-and-pairs-that-somebody-looks-at.ts
+// Functions answer with a pair or a small tuple of numbers, and callers take it apart at once: by a pattern, by an assignment pattern, by an index.
+// Beside them stand the callers that can tell whether there was an array: an element that is no number, NaN, a hole, a getter under an index,
+// a class below Array, a pair that is kept on one way, a pair that is written to, an iterator of its own.
+const lines: string[] = [];
+function say(...values: unknown[]) {
+  lines.push(values.map(value => (Array.isArray(value) ? "[" + value.map(String).join(",") + "]" : Object.is(value, -0) ? "-0" : String(value))).join(" "));
+}
+
+////= bounds	: number[]): [number, number]
+////= lastOf	: number[]): [number, number]
+function divide(a: number, b: number): [number, number] {
+  return [Math.floor(a / b), a % b];
+}
+function halves(a: number): [number, number, number] {
+  return [a * 0.5, a * 0.25, a * 0.125];
+}
+function named(a: number, name: string): [number, string] {
+  return [a + 1, name];
+}
+
+function byPattern(list: number[]) {
+  const [low, high] = bounds(list);
+  return high - low;
+}
+function byAssignment(list: number[]) {
+  let low = 0;
+  let high = 0;
+  [low, high] = bounds(list);
+  return high - low;
+}
+function byIndex(list: number[]) {
+  return bounds(list)[1];
+}
+function byTwoIndexes(list: number[]) {
+  const both = bounds(list);
+  return both[1] - both[0];
+}
+function beyondTheEnd(list: number[]) {
+  const both: number[] = bounds(list);
+  const [a, b, c] = both;
+  return String(a) + b + c + both[2] + both.length;
+}
+function withDefaults(list: number[]) {
+  const [last = -5, count = -6] = lastOf(list);
+  return last + ":" + count;
+}
+
+const whole = [3, 1, 2];
+const holey: number[] = [3, 1, 2];
+delete (holey as any)[1];
+const withOther: number[] = [3, "x" as any, 2];
+const withNaN = [3, NaN, 2];
+const withMinusZero = [-0];
+const empty: number[] = [];
+////= for-3
+
+let sum = 0;
+////= for-2
+say("sum", sum, divide(1, 0), divide(0, 0), divide(-1, 2), halves(NaN), halves(-0));
+
+function local(i: number) {
+  const pair = [i * 0.5, i + 1];
+  return pair[0] - pair[1];
+}
+function localWithNaN(i: number) {
+  const pair = [i / i, i + 1];
+  return String(pair[0]) + pair[1] + pair.length + (pair[0] === pair[0]);
+}
+say("local", local(3), local(-0), localWithNaN(0), localWithNaN(2));
+
+const kept: number[][] = [];
+function keptOnOneWay(i: number) {
+  const pair = divide(i, 3);
+  const first = pair[0];
+  if (i % 5 === 0) {
+    kept.push(pair);
+    pair[1] = 0.5;
+  }
+  return first + pair[1];
+}
+function keptThenRead(i: number) {
+  const pair = [i * 0.5, i / (i - 2)];
+  if (i === 2 || i === 4) kept.push(pair);
+  return pair[0] + pair[1];
+}
+for (let i = 0; i < 12; i++) say("kept", keptOnOneWay(i), keptThenRead(i));
+say(kept.length, ...kept, kept[0] === kept[1], kept[0] === kept[0]);
+
+function written(i: number) {
+  const pair = divide(i, 3);
+  pair[0] = i === 4 ? (undefined as any) : i === 5 ? ("s" as any) : pair[1] * 1.5;
+  pair[1]++;
+  return String(pair[0]) + "," + pair[1];
+}
+function grown(i: number) {
+  const pair: number[] = divide(i, 3);
+  pair[3] = i;
+  pair.length = i % 2 ? 1 : 4;
+  return pair.length + ":" + String(pair[0]) + String(pair[2]) + String(pair[3]) + (2 in pair);
+}
+for (let i = 3; i < 8; i++) say("written", written(i), grown(i));
+
+function withGetter(i: number) {
+  const pair = divide(i, 3);
+  let reads = 0;
+  Object.defineProperty(pair, "0", { get() { reads++; return 40 + i; }, configurable: true });
+  const [a, b] = pair;
+  return a + b + pair[0] + ":" + reads;
+}
+function frozen(i: number) {
+  const pair = Object.freeze(divide(i, 3)) as [number, number];
+  let message = "stored";
+  try {
+    pair[0] = 9;
+  } catch (error) {
+    message = (error as Error).constructor.name;
+  }
+  return message + pair[0] + Object.isFrozen(pair);
+}
+say("getter", withGetter(4), withGetter(5), "frozen", frozen(7));
+
+class Pair extends Array<number> {
+  get spread() {
+    return this[1] - this[0];
+  }
+}
+function ofClass(a: number, b: number): Pair {
+  const pair = new Pair();
+  pair.push(a, b);
+  return pair;
+}
+function readsClass(i: number) {
+  const pair = ofClass(i, i * 2.5);
+  const [a, b] = pair;
+  return a + b + pair.spread + (pair instanceof Pair ? 0.25 : 0) + pair.length;
+}
+say("class", readsClass(2), readsClass(3), Array.isArray(ofClass(1, 2)), ofClass(1, 2).constructor === Pair);
+
+function ownIterator(i: number) {
+  const pair = divide(i, 3);
+  if (i > 6)
+    (pair as any)[Symbol.iterator] = function* () {
+      yield 70;
+      yield 80;
+    };
+  const [a, b] = pair;
+  return a + "," + b + "," + pair[0];
+}
+say("iterator", ownIterator(5), ownIterator(7));
+
+function* pairs(n: number): Generator<[number, number]> {
+  for (let i = 0; i < n; i++) yield [i, i * i];
+}
+function listOfPairs(n: number): [number, number][] {
+  const list: [number, number][] = [];
+  for (let i = 0; i < n; i++) list.push([i, i * 0.5]);
+  return list;
+}
+let total = 0;
+for (const [key, value] of pairs(50)) total += value - key;
+for (const [key, value] of listOfPairs(50)) total += value - key;
+for (const [key, value] of new Map([[1, 2.5], [2, NaN]])) total += key + (value === value ? value : 1000);
+for (const [key, value] of Object.entries({ a: 1, b: 2.5 })) total += key.length + value;
+say("loops", total);
+
+function same(i: number) {
+  const a = divide(i, 3);
+  const b = divide(i, 3);
+  const c = i % 2 ? a : b;
+  return String(a === b) + (c === a) + (c === b) + typeof a + Array.isArray(c) + JSON.stringify(c) + String(a) + Object.keys(b);
+}
+say("same", same(4), same(5));
+
+function oneOfTwo(i: number, list: number[]) {
+  const pair = i % 3 === 0 ? bounds(list) : i % 3 === 1 ? divide(i, 2) : lastOf(list);
+  return pair[0] + pair[1];
+}
+for (let i = 0; i < 6; i++) say("one of", oneOfTwo(i, whole), oneOfTwo(i, holey), oneOfTwo(i, withOther));
+
+console.log(lines.join("\n"));
+//// pairs-of-numbers-that-are-only-read-and-pairs-that-somebody-looks-at-untyped.js
+// Functions answer with a pair or a small tuple of numbers, and callers take it apart at once: by a pattern, by an assignment pattern, by an index.
+// Beside them stand the callers that can tell whether there was an array: an element that is no number, NaN, a hole, a getter under an index,
+// a class below Array, a pair that is kept on one way, a pair that is written to, an iterator of its own.
+const lines = [];
+function say(...values) {
+  lines.push(values.map(value => (Array.isArray(value) ? "[" + value.map(String).join(",") + "]" : Object.is(value, -0) ? "-0" : String(value))).join(" "));
+}
+
+////= bounds	)
+////= lastOf	)
+function divide(a, b) {
+  return [Math.floor(a / b), a % b];
+}
+function halves(a) {
+  return [a * 0.5, a * 0.25, a * 0.125];
+}
+function named(a, name) {
+  return [a + 1, name];
+}
+
+function byPattern(list) {
+  const [low, high] = bounds(list);
+  return high - low;
+}
+function byAssignment(list) {
+  let low = 0;
+  let high = 0;
+  [low, high] = bounds(list);
+  return high - low;
+}
+function byIndex(list) {
+  return bounds(list)[1];
+}
+function byTwoIndexes(list) {
+  const both = bounds(list);
+  return both[1] - both[0];
+}
+function beyondTheEnd(list) {
+  const both = bounds(list);
+  const [a, b, c] = both;
+  return String(a) + b + c + both[2] + both.length;
+}
+function withDefaults(list) {
+  const [last = -5, count = -6] = lastOf(list);
+  return last + ":" + count;
+}
+
+const whole = [3, 1, 2];
+const holey = [3, 1, 2];
+delete (holey)[1];
+const withOther = [3, "x", 2];
+const withNaN = [3, NaN, 2];
+const withMinusZero = [-0];
+const empty = [];
+////= for-3
+
+let sum = 0;
+////= for-2
+say("sum", sum, divide(1, 0), divide(0, 0), divide(-1, 2), halves(NaN), halves(-0));
+
+function local(i) {
+  const pair = [i * 0.5, i + 1];
+  return pair[0] - pair[1];
+}
+function localWithNaN(i) {
+  const pair = [i / i, i + 1];
+  return String(pair[0]) + pair[1] + pair.length + (pair[0] === pair[0]);
+}
+say("local", local(3), local(-0), localWithNaN(0), localWithNaN(2));
+
+const kept = [];
+function keptOnOneWay(i) {
+  const pair = divide(i, 3);
+  const first = pair[0];
+  if (i % 5 === 0) {
+    kept.push(pair);
+    pair[1] = 0.5;
+  }
+  return first + pair[1];
+}
+function keptThenRead(i) {
+  const pair = [i * 0.5, i / (i - 2)];
+  if (i === 2 || i === 4) kept.push(pair);
+  return pair[0] + pair[1];
+}
+for (let i = 0; i < 12; i++) say("kept", keptOnOneWay(i), keptThenRead(i));
+say(kept.length, ...kept, kept[0] === kept[1], kept[0] === kept[0]);
+
+function written(i) {
+  const pair = divide(i, 3);
+  pair[0] = i === 4 ? (undefined) : i === 5 ? ("s") : pair[1] * 1.5;
+  pair[1]++;
+  return String(pair[0]) + "," + pair[1];
+}
+function grown(i) {
+  const pair = divide(i, 3);
+  pair[3] = i;
+  pair.length = i % 2 ? 1 : 4;
+  return pair.length + ":" + String(pair[0]) + String(pair[2]) + String(pair[3]) + (2 in pair);
+}
+for (let i = 3; i < 8; i++) say("written", written(i), grown(i));
+
+function withGetter(i) {
+  const pair = divide(i, 3);
+  let reads = 0;
+  Object.defineProperty(pair, "0", { get() { reads++; return 40 + i; }, configurable: true });
+  const [a, b] = pair;
+  return a + b + pair[0] + ":" + reads;
+}
+function frozen(i) {
+  const pair = Object.freeze(divide(i, 3));
+  let message = "stored";
+  try {
+    pair[0] = 9;
+  } catch (error) {
+    message = (error).constructor.name;
+  }
+  return message + pair[0] + Object.isFrozen(pair);
+}
+say("getter", withGetter(4), withGetter(5), "frozen", frozen(7));
+
+class Pair extends Array {
+  get spread() {
+    return this[1] - this[0];
+  }
+}
+function ofClass(a, b) {
+  const pair = new Pair();
+  pair.push(a, b);
+  return pair;
+}
+function readsClass(i) {
+  const pair = ofClass(i, i * 2.5);
+  const [a, b] = pair;
+  return a + b + pair.spread + (pair instanceof Pair ? 0.25 : 0) + pair.length;
+}
+say("class", readsClass(2), readsClass(3), Array.isArray(ofClass(1, 2)), ofClass(1, 2).constructor === Pair);
+
+function ownIterator(i) {
+  const pair = divide(i, 3);
+  if (i > 6)
+    (pair)[Symbol.iterator] = function* () {
+      yield 70;
+      yield 80;
+    };
+  const [a, b] = pair;
+  return a + "," + b + "," + pair[0];
+}
+say("iterator", ownIterator(5), ownIterator(7));
+
+function* pairs(n) {
+  for (let i = 0; i < n; i++) yield [i, i * i];
+}
+function listOfPairs(n) {
+  const list = [];
+  for (let i = 0; i < n; i++) list.push([i, i * 0.5]);
+  return list;
+}
+let total = 0;
+for (const [key, value] of pairs(50)) total += value - key;
+for (const [key, value] of listOfPairs(50)) total += value - key;
+for (const [key, value] of new Map([[1, 2.5], [2, NaN]])) total += key + (value === value ? value : 1000);
+for (const [key, value] of Object.entries({ a: 1, b: 2.5 })) total += key.length + value;
+say("loops", total);
+
+function same(i) {
+  const a = divide(i, 3);
+  const b = divide(i, 3);
+  const c = i % 2 ? a : b;
+  return String(a === b) + (c === a) + (c === b) + typeof a + Array.isArray(c) + JSON.stringify(c) + String(a) + Object.keys(b);
+}
+say("same", same(4), same(5));
+
+function oneOfTwo(i, list) {
+  const pair = i % 3 === 0 ? bounds(list) : i % 3 === 1 ? divide(i, 2) : lastOf(list);
+  return pair[0] + pair[1];
+}
+for (let i = 0; i < 6; i++) say("one of", oneOfTwo(i, whole), oneOfTwo(i, holey), oneOfTwo(i, withOther));
+
+console.log(lines.join("\n"));
+//// results-handed-over-in-parts-or-whole-are-read-stored-kept-and-handed-on.ts
+// Functions too large to take in answer with a literal whose members come out of loops over a list. A list with a gap sends them down a way on which a member is undefined.
+// Their callers read, store, compare, keep and hand on what they get, with whole lists and lists with gaps in turn.
+const kept: unknown[] = [];
+function bounds(list: number[]) {
+  let low = 1000;
+  for (let i = 0; i < list.length; i++) if (list[i] < low) low = list[i];
+  let high = -1000;
+  for (let i = 0; i < list.length; i++) if (list[i] > high) high = list[i];
+  let last: number | undefined;
+  for (let i = 0; i < list.length; i++) last = list[i];
+  return { low, high, last };
+}
+function firstAndLast(list: number[]) {
+  let first = list[0], last = list[0], n = 0;
+  for (let i = 0; i < list.length; i++) { last = list[i]; n++; }
+  for (let i = list.length - 1; i >= 0; i--) first = list[i];
+  return { first, last, n };
+}
+const callers: Record<string, (list: number[], key: string) => unknown> = {
+  reads(list: number[]) { const b = bounds(list); return b.high - b.low; },
+  readsAll(list: number[]) { const b = bounds(list); return b.high + "/" + b.low + "/" + b.last; },
+  stores(list: number[]) { const b = bounds(list); b.low = b.high; b.high += 1; return b.low + b.high; },
+  storesOtherKind(list: number[]) { const b = bounds(list); (b as any).low = "text"; return b.low + b.high; },
+  adds(list: number[]) { const b = bounds(list); (b as any).extra = 5; return (b as any).extra + b.high; },
+  deletes(list: number[]) { const b = bounds(list); delete (b as any).low; return String(b.low) + Object.keys(b); },
+  keepsSometimes(list: number[]) { const b = bounds(list); if (b.last === undefined) kept.push(b); return b.high; },
+  keepsOften(list: number[]) { const b = bounds(list); if (b.high > 5) kept.push(b); return b.low; },
+  compares(list: number[]) { const b = bounds(list), c = bounds(list); return (b === c) + "" + (b === b) + (b.low === c.low); },
+  inLoop(list: number[]) { let s = 0; for (let k = 0; k < 3; k++) { const b = bounds(list); s += b.high - b.low + k; } return s; },
+  carried(list: number[]) { let b = bounds(list); for (let k = 0; k < 3; k++) { const c = bounds(list); if (c.high >= b.high) b = c; } return b.high + "" + b.last; },
+  captured(list: number[]) { const b = bounds(list); const f = () => b.high; return f() + b.low; },
+  destructured(list: number[]) { const { low, high, last = "none" } = bounds(list); return low + "," + high + "," + last; },
+  spreads(list: number[]) { const c = { ...bounds(list), more: 1 }; return JSON.stringify(c); },
+  text(list: number[]) { return JSON.stringify(bounds(list)); },
+  keys(list: number[]) { let s = ""; const b = bounds(list); for (const k in b) s += k + (b as any)[k]; return s; },
+  byKey(list: number[], key: string) { const b = bounds(list); return (b as any)[key]; },
+  caught(list: number[]) { try { const b = bounds(list); if (b.last === undefined) throw b; return b.high; } catch (e) { return "caught " + (e as any).low; } },
+  oneOfTwo(list: number[], key: string) { const b = key === "low" ? bounds(list) : firstAndLast(list); return b.last; },
+  nested(list: number[]) { const b = bounds(list), f = firstAndLast(list); return { b, f }.b.high + f.n; },
+  returned(list: number[]) { return bounds(list); },
+  typeOf(list: number[]) { const b = bounds(list); return typeof b + typeof b.last; },
+  has(list: number[]) { const b = bounds(list); return ("low" in b) + "" + b.hasOwnProperty("last"); },
+};
+function gap(): number[] { const a: number[] = [1]; a[2] = 3; return a; }
+function empty(): number[] { const a: number[] = []; a.length = 2; return a; }
+const lists: number[][] = [[3, 1, 2], [7, 8, 9, 6], gap(), empty(), [], [5], [2.5, 1], JSON.parse("[4,null]"), JSON.parse('["a","b"]'), gap()];
+const lines = [];
+for (const name in callers) {
+  const f = callers[name];
+  let s = "";
+  for (let round = 0; round < 400; round++) {
+    const list = round % 50 === 49 ? lists[2 + ((round / 50) | 0) % (lists.length - 2)] : lists[round & 1];
+    let r = f(list, round & 2 ? "low" : "high");
+    if (typeof r === "object") r = JSON.stringify(r);
+    if (round % 50 >= 48) s += r + ";";
+  }
+  lines.push(name + " " + s);
+}
+lines.push("kept " + kept.length + " " + JSON.stringify(kept.slice(0, 3)) + JSON.stringify(kept.slice(-3)) + new Set(kept).size);
+console.log(lines.join("\n"));
+//// results-read-in-loops-of-code-that-runs-once.ts
+// A module body and a function that is called once run once, and the loops in them do not: what a large function returns there is read, kept, compared and changed like any other object.
+type Point = { x: number; y: number };
+let noise = 0;
+function pad(k: number): void { for (let i = 0; i < 3; i++) noise = (noise * 31 + k + i) % 1000003; }
+function pads(): void { pad(1); pad(2); pad(3); pad(4); pad(5); pad(6); pad(7); pad(8); pad(9); pad(10); pad(11); pad(12); }
+
+function make(a: number, b: number): Point { pads(); pad(a); pad(b); return { x: a + b, y: a - b }; }
+// Too large to be inlined, and it returns what `make` returns.
+function forwards(a: number): Point { pads(); pad(a); pad(a + 1); pad(a + 2); return make(a, a + 1); }
+function forwardsOrNull(a: number): Point | null { pads(); pad(a); if (a % 3 === 0) return null; return make(a, 2); }
+
+let read = 0;
+for (let i = 0; i < 50; i++) { const p = forwards(i); read += p.x * 2 - p.y; }
+console.log("read at the top level", read);
+
+const kept: Point[] = [];
+let previous: Point | null = null;
+let same = 0;
+for (let i = 0; i < 20; i++) {
+  const p = forwards(i);
+  if (p === previous) same++;
+  previous = p;
+  if (i % 4 === 0) kept.push(p);
+}
+for (const p of kept) p.x++;
+console.log("kept at the top level", same, kept.length, kept.map(p => p.x + ":" + p.y).join(" "), new Set(kept).size);
+
+function main(n: number): string {
+  let sum = 0, nulls = 0;
+  for (let i = 0; i < n; i++) {
+    const p = forwardsOrNull(i);
+    if (p === null) { nulls++; continue; }
+    p.y += i;
+    sum += p.x + p.y;
+  }
+  const once = forwards(n);
+  let last = once;
+  for (let i = 0; i < n; i++) { const p = forwards(i); if (p.x > last.x) last = p; }
+  return [sum, nulls, once.x, once.y, last.x, last.y, last === once, Object.keys(last).join()].join(" ");
+}
+console.log("in a function that is called once", main(30));
+console.log(noise);
+//// returned-literals-different-key-order.ts
+// A function returns `{ a, b }` on one path and `{ b, a }` on the other: the key order of each result is preserved.
+declare const console: { log(...a: unknown[]): void };
+function f(c: boolean): { a: number; b: number } { if (c) return { a: 1, b: 2 }; return { b: 4, a: 3 }; }
+function use(c: boolean): number { const r = f(c); return r.a * 10 + r.b; }
+console.log(use(true), use(false), Object.keys(f(true)).join(), Object.keys(f(false)).join());
+//// returned-literals-same-key-order.ts
+// A function returns an object literal with the same keys in the same order on both paths.
+declare const console: { log(...a: unknown[]): void };
+function f(c: boolean): { a: number; b: number } { if (c) return { a: 1, b: 2 }; return { a: 3, b: 4 }; }
+function use(c: boolean): number { const r = f(c); return r.a * 10 + r.b; }
+console.log(use(true), use(false), Object.keys(f(false)).join());
+//// returned-object-from-many-returns.ts
+// A function returns a fresh one-field object from many `return` statements, also after `??`, `||` and `&&`; it is called directly and as a value, and the result is kept, tested and read.
+declare const console: { log(...v: unknown[]): void };
+type Result = { done: boolean };
+type Cmd = { id: number, mode: string, text: string };
+class Queue {
+    items: Cmd[] = [];
+    peek(f: (c: Cmd) => boolean): Cmd | undefined { for (const c of this.items) if (f(c)) return c; return undefined; }
+}
+type Params = { queue: Queue, run: (c: Cmd[]) => void, waits?: (c: Cmd) => boolean, stale?: number };
+let busy: number | undefined = undefined;
+let ran: string[] = [];
+function pending(): number | undefined { return busy; }
+function first(q: Queue): Cmd | undefined { return q.items.length ? q.items[0] : undefined; }
+function a(c: Cmd): boolean { return c.id > 1; }
+function b(id: number): boolean { return (id & 1) === 1; }
+function slash(c: Cmd): boolean { return c.text.charCodeAt(0) === 47; }
+function alone(q: Queue, c: Cmd, run: (c: Cmd[]) => void): void { q.items = q.items.filter(x => x !== c); run([c]); }
+function all(q: Queue, mode: string, run: (c: Cmd[]) => void): number { const same = q.items.filter(x => x.mode === mode); q.items = q.items.filter(x => x.mode !== mode); run(same); return same.length; }
+export function step({ queue, run, waits = () => true, stale }: Params): Result {
+    if (pending() !== undefined) {
+        const own = queue.peek(c => a(c) && b(c.id));
+        const head = own ?? first(queue);
+        if (!head || (own === undefined && waits(head))) { return { done: false } }
+        alone(queue, head, run);
+        return { done: true }
+    }
+    const next = first(queue);
+    if (!next) { return { done: false } }
+    if (slash(next) || next.mode === "x") { alone(queue, next, run); return { done: true } }
+    if (stale !== undefined && next.id < stale) { queue.items.shift(); return { done: queue.items.length > 0 } }
+    if (next.mode === "y" && !waits(next)) { return { done: all(queue, "y", run) > 1 } }
+    if (next.text.length > 6) { alone(queue, next, run); return { done: false } }
+    if (next.mode === "z") { return { done: true } }
+    all(queue, next.mode, run);
+    return { done: true }
+}
+const make = (seed: number): Queue => { const q = new Queue(); for (let i = 0; i < 6; i++) { const k = seed * 7 + i * 3; q.items.push({ id: k % 5, mode: "wxyz"[k & 3], text: (k % 3 ? "" : "/") + "t".repeat(k % 9) }); } return q; };
+const run = (c: Cmd[]): void => { ran.push(c.map(x => x.id + x.mode).join("")); };
+(globalThis as any).kept = [step];
+// A value from untyped code also gets the type Result, which opens the type at that position: any object can have it.
+const stranger: Result = (globalThis as any).given ?? { done: true };
+const strangers: Result[] = [stranger];
+const byValue: ((p: Params) => Result)[] = [step];
+let out = "";
+for (let seed = 0; seed < 24; seed++) {
+    const q = make(seed); busy = seed & 4 ? seed : undefined;
+    for (let i = 0; i < 8; i++) {
+        const p: Params = { queue: q, run, waits: seed & 1 ? c => c.id > 2 : undefined, stale: seed & 2 ? 2 : undefined };
+        if (step(p).done) out += "1"; else out += "0";               // read
+        const kept = step(p); out += kept.done ? "a" : "b"; (globalThis as any).last = kept;   // kept
+        out += byValue[0](p).done ? "A" : "B";                      // by value
+        const { done } = step(p); if (!done && !q.items.length) break;
+    }
+    out += ".";
+}
+console.log(out); console.log(ran.join()); console.log(strangers.map(r => r.done).join()); console.log(JSON.stringify((globalThis as any).last));
+//// returned-object-literals-destructured-by-caller.ts
+// Functions that return a fresh object literal, whose callers destructure it, read some of it, keep it, or never look at it.
+const say = (what: string, got: unknown) => console.log(what + ": " + (typeof got === "string" ? got : JSON.stringify(got) ?? String(got)));
+const keep: unknown[] = []; let spins = 0;
+const busy = (n: number) => { let s = 0; for (let i = 0; i < (n & 3) + 1; i++) { s += i * 3; if (s > 1e9) s = 0; spins++; } for (let j = 0; j < 2; j++) { s ^= j; if (s < -1e9) s = 1; } return s; };
+function divmod(a: number, b: number) { let q = 0, r = a; while (r >= b) { r -= b; q++; if (q > 1e9) break; } for (let i = 0; i < 2; i++) spins += i; return { q, r }; }
+function minmax(list: number[]) { let lo = Infinity, hi = -Infinity, n = 0; for (const x of list) { if (x < lo) lo = x; if (x > hi) hi = x; n++; } for (let i = 0; i < 2; i++) spins += i; return { lo, hi, n }; }
+function parse(text: string) {
+  if (!text) { busy(1); return { ok: false, value: 0, rest: "" }; }
+  let i = 0, value = 0; while (i < text.length && text.charCodeAt(i) >= 48 && text.charCodeAt(i) <= 57) { value = value * 10 + text.charCodeAt(i) - 48; i++; }
+  if (!i) { busy(2); return { ok: false, value: -1, rest: text }; }
+  busy(3); return { ok: true, value, rest: text.slice(i) };
+}
+function kinds(n: number) { busy(n); busy(n + 1); return { s: "s" + n, i: n | 0, d: n + 0.5, b: n > 1, o: { in: n }, a: [n], u: undefined, f: () => n * 2 }; }
+function one(n: number) { let s = 0; for (let i = 0; i <= n; i++) { s += i; if (s > 1e9) s = 0; } for (let i = 0; i < 2; i++) spins += i; return { only: s }; }
+function fib(n: number): { a: number; b: number } { busy(n); if (n === 0) return { a: 0, b: 1 }; const { a, b } = fib(n - 1); busy(n); return { a: b, b: a + b }; }
+function sometimesThrows(n: number) { busy(n); busy(n); if (n === 3) throw new RangeError("three"); return { n, twice: n * 2 }; }
+function intsOrDoubles(n: number) { busy(n); busy(n); return { v: n % 2 ? n : n + 0.25, w: n % 2 ? "odd" : n }; }
+say("destructured", (() => { const { q, r } = divmod(17, 5); const { lo, hi, n } = minmax([3, 1, 4, 1, 5]); return [q, r, lo, hi, n]; })());
+say("read by name", (() => { const d = divmod(29, 4); let s = 0; for (let i = 0; i < d.q; i++) s += d.r; return [d.q, d.r, s, d.q > 3 ? d.r : d.q]; })());
+say("some of them", (() => { const { r } = divmod(9, 2); const m = minmax([2]); divmod(1, 1); return [r, m.n]; })());
+say("several ways out", [parse(""), parse("x1"), parse("42rest")].length + " " + (() => { const a = parse(""), b = parse("x1"), c = parse("42rest"); return [a.ok, a.value, a.rest, b.ok, b.value, b.rest, c.ok, c.value, c.rest].join(); })());
+say("of every kind", (() => { const { s, i, d, b, o, a, u, f } = kinds(2); return [s, i, d, b, o, a, u === undefined, f(), typeof f]; })());
+say("just one", (() => { const { only } = one(4); return only + one(3).only; })());
+say("calls itself", (() => { const { a, b } = fib(20); return [a, b]; })());
+say("under other names, with something to fall back on", (() => { const { q: quotient, r: remainder = 7 } = divmod(8, 3); const { u = "fallback", s: text = "no" } = kinds(1); return [quotient, remainder, u, text]; })());
+say("taken apart further", (() => { const { o: { in: inner }, a: [first] } = kinds(5); return [inner, first]; })());
+say("throws", (() => { const out: unknown[] = []; for (let i = 1; i < 5; i++) { try { const { n, twice } = sometimesThrows(i); out.push(n + twice); } catch (e) { out.push((e as Error).message); } } return out; })());
+say("now one kind of thing, now another", (() => { const out: unknown[] = []; for (let i = 0; i < 4; i++) { const { v, w } = intsOrDoubles(i); out.push(v, w, typeof w); } return out; })());
+say("in the arguments of another", (() => Math.max(divmod(20, 3).q, divmod(20, 3).r) + divmod(divmod(100, 7).q, divmod(100, 7).r).q)());
+function wantedByOne(n: number) { busy(n); busy(n); return { a: n, b: n + 1 }; }
+say("wanted by one of those who call it", (() => { const { a } = wantedByOne(1); keep.push(wantedByOne(2)); return [a, keep]; })());
+function otherNames(n: number) { busy(n); busy(n); if (n) return { a: n, b: 1 }; return { a: n, c: 2 }; }
+say("other names", (() => { const x = otherNames(1) as { a: number; b?: number; c?: number }, y = otherNames(0) as { a: number; b?: number; c?: number }; return [x.a, x.b, x.c, y.a, y.b, y.c]; })());
+function otherOrder(n: number) { busy(n); busy(n); if (n) return { a: n, b: 1 }; return { b: 2, a: n }; }
+say("another order", (() => { const x = otherOrder(1), y = otherOrder(0); return [x.a, x.b, y.a, y.b, Object.keys(otherOrder(0)).join()]; })());
+function orNothing(n: number) { busy(n); busy(n); if (n) return { a: n }; return null; }
+say("or nothing", (() => { const x = orNothing(1), y = orNothing(0); return [x?.a, y?.a, y === null]; })());
+function orNothingSaid(n: number): { a: number } | undefined { busy(n); busy(n); if (n) return { a: n }; }
+say("or nothing said", [orNothingSaid(1)?.a, orNothingSaid(0)?.a]);
+function aVariable(n: number) { busy(n); busy(n); const o = { a: n, b: 2 }; o.b = 3; return o; }
+say("changed first", (() => { const { a, b } = aVariable(1); return [a, b]; })());
+function seenFirst(n: number) { busy(n); busy(n); const o = { a: n }; keep.push(o); return o; }
+say("seen first", (() => { const { a } = seenFirst(5); return [a, keep.length]; })());
+function handsOn(n: number) { busy(n); return divmod(n, 2); }
+say("what another returns", (() => { const { q, r } = handsOn(9); return [q, r]; })());
+async function later(n: number) { busy(n); busy(n); return { a: n, b: n + 1 }; }
+later(1).then(({ a, b }) => say("after an await", [a, b]));
+function* many(n: number) { busy(n); yield { a: n }; return { a: n + 1 }; }
+say("a generator", (() => { const g = many(1); return [g.next(), g.next()]; })());
+function asACallback(n: number) { busy(n); busy(n); return { a: n, b: n * n }; }
+say("handed to something that calls it", [1, 2].map(asACallback).map(({ a, b }) => a + b));
+function calledOtherwise(this: unknown, n: number) { busy(n); busy(n); return { a: n, t: typeof this }; }
+say("called some other way", (() => { const { a } = calledOtherwise(1); const x = calledOtherwise.call("s", 2), y = calledOtherwise.apply(null, [3]), z = calledOtherwise.bind(4)(5), w = calledOtherwise(...([6] as [number])); return [a, x, y, z, w]; })());
+function constructed(this: { own?: number }, n: number) { busy(n); busy(n); this.own = n; return { a: n }; }
+say("constructed with", (() => { const o = new (constructed as any)(1); return [o, o.own]; })());
+function missing(n: number) { busy(n); busy(n); return { a: n } as { a: number; z?: number }; }
+say("asked for what is not there", (() => { const { a, z = 9 } = missing(1); return [a, z, typeof missing(2).toString]; })());
+function nine(n: number) { busy(n); busy(n); return { a: n, b: n, c: n, d: n, e: n, f: n, g: n, h: n, i: n + 1 }; }
+say("too many", (() => { const { a, i } = nine(1); return [a, i]; })());
+function withMore(n: number) { busy(n); busy(n); return { a: n, ...(n ? { b: 1 } : {}) }; }
+say("with more spread in", (() => { const { a } = withMore(1); return a; })());
+function withGetter(n: number) { busy(n); busy(n); let c = 0; return { a: n, get b() { return ++c; } }; }
+say("with a getter", (() => { const o = withGetter(1); return [o.a, o.b, o.b]; })());
+function written(n: number) { busy(n); busy(n); return { a: n, b: 0 }; }
+say("written to by who called", (() => { const o = written(1); o.b = 5; return [o.a, o.b]; })());
+function compared(n: number) { busy(n); busy(n); return { a: n }; }
+say("compared", (() => { const x = compared(1), y = compared(1); return [(x as unknown) === y, x === x, x.a]; })());
+function inAClosure(n: number) { busy(n); busy(n); return { a: n }; }
+say("kept by a closure", (() => { const o = inAClosure(3); const f = () => o.a; return f(); })());
+function oneOfTwo(n: number) { busy(n); busy(n); return { a: n }; }
+say("one of two", ((c: boolean) => { const o = c ? oneOfTwo(1) : oneOfTwo(2); return o.a; })(true));
+class C { v = 2; pair(n: number) { busy(n); busy(n); return { a: n, v: this.v }; } }
+say("a method", (() => { const { a, v } = new C().pair(1); return [a, v]; })());
+{ let s = 0; for (let i = 1; i < 20000; i++) { const { q, r } = divmod(i & 63, 7); const { ok, value } = parse(String(i & 15)); s += q + r + (ok ? value : 0); } say("many times", s); }
+say("spins", spins > 0);
+export {};
+//// small-objects-that-cross-one-call.ts
+// Each row makes small objects that only cross one call. N rounds a row; the counts file says which places still allocate.
+const N = 100000;
+
+interface Point { x: number; y: number }
+interface Range { start: number; end: number; text: string }
+
+function minMax(a: number, b: number, c: number): { min: number; max: number } {
+  let min = a, max = a;
+  if (b < min) min = b;
+  if (b > max) max = b;
+  if (c < min) min = c;
+  if (c > max) max = c;
+  return { min, max };
+}
+function rowObjectResult(): number {
+  let r = 0;
+  for (let i = 0; i < N; i++) {
+    const { min, max } = minMax(i, i ^ 5, i >> 1);
+    r = (r + max - min) | 0;
+  }
+  return r;
+}
+
+function pair(a: number, b: number): [number, number] {
+  if (a > b) return [b, a];
+  return [a, b];
+}
+function rowTupleResult(): number {
+  let r = 0;
+  for (let i = 0; i < N; i++) {
+    const [x, y] = pair(i & 7, i & 3);
+    r = (r + x * 3 + y) | 0;
+  }
+  return r;
+}
+
+function maybeRange(text: string, from: number): Range | undefined {
+  const start = text.indexOf("a", from);
+  if (start < 0) return undefined;
+  let end = start;
+  while (end < text.length && text.charCodeAt(end) === 97) end++;
+  return { start, end, text };
+}
+function rowObjectOrUndefined(): number {
+  let r = 0;
+  const text = "xxaaaxxaxxxxaaaaax";
+  for (let i = 0; i < N; i++) {
+    const found = maybeRange(text, i % 20);
+    if (found) r = (r + found.end - found.start) | 0;
+  }
+  return r;
+}
+
+////= Counter	{ value: number; done: boolean }	this.i++
+function rowIteratorResultByHand(): number {
+  let r = 0;
+  const c = new Counter(N);
+  for (;;) {
+    const step = c.next();
+    if (step.done) break;
+    r = (r + step.value) | 0;
+  }
+  return r;
+}
+
+class Numbers implements Iterable<number> {
+  constructor(public limit: number) {}
+  [Symbol.iterator](): Iterator<number> {
+    let i = 0;
+    const limit = this.limit;
+    return {
+      next(): IteratorResult<number> {
+        if (i < limit) return { value: i++, done: false };
+        return { value: undefined, done: true };
+      },
+    };
+  }
+}
+function rowForOfOverOwnIterator(): number {
+  let r = 0;
+  for (const v of new Numbers(N)) r = (r + v) | 0;
+  return r;
+}
+
+function distance(p: Point, q: Point): number {
+  const dx = p.x - q.x, dy = p.y - q.y;
+  return dx * dx + dy * dy;
+}
+function rowObjectArguments(): number {
+  let r = 0;
+  for (let i = 0; i < N; i++) r = (r + distance({ x: i, y: 1 }, { x: 2, y: i & 15 })) | 0;
+  return r;
+}
+
+interface Options { width?: number; pad?: string; left?: boolean }
+function padTo(text: string, options: Options): number {
+  const width = options.width ?? 8;
+  const pad = options.pad ?? " ";
+  let n = text.length;
+  while (n < width) n += pad.length;
+  return options.left ? -n : n;
+}
+function rowOptionsArgument(): number {
+  let r = 0;
+  for (let i = 0; i < N; i++) r = (r + padTo("abc", { width: i & 15, left: (i & 1) === 0 })) | 0;
+  return r;
+}
+
+function withDefaults(options: Options): { width: number; pad: string; left: boolean } {
+  return { width: options.width ?? 8, pad: options.pad ?? " ", left: options.left ?? false };
+}
+function rowConfigReturnedByHelper(): number {
+  let r = 0;
+  for (let i = 0; i < N; i++) {
+    const o = withDefaults({ width: i & 7 });
+    r = (r + o.width + o.pad.length + (o.left ? 1 : 0)) | 0;
+  }
+  return r;
+}
+
+function add(p: Point, q: Point): Point { return { x: p.x + q.x, y: p.y + q.y }; }
+function scale(p: Point, k: number): Point { return { x: p.x * k, y: p.y * k }; }
+function rowPointsThroughHelpers(): number {
+  let r = 0;
+  for (let i = 0; i < N; i++) {
+    const p = scale(add({ x: i, y: 1 }, { x: 1, y: i }), 2);
+    r = (r + p.x - p.y) | 0;
+  }
+  return r;
+}
+
+function rowObjectEntries(): number {
+  let r = 0;
+  const o: Record<string, number> = { a: 1, b: 2, c: 3 };
+  for (let i = 0; i < N / 4; i++) {
+    for (const [k, v] of Object.entries(o)) r = (r + k.length + v) | 0;
+  }
+  return r;
+}
+
+function rowMapEntries(): number {
+  let r = 0;
+  const m = new Map<string, number>([["a", 1], ["bb", 2], ["ccc", 3]]);
+  for (let i = 0; i < N / 4; i++) {
+    for (const [k, v] of m) r = (r + k.length + v) | 0;
+  }
+  return r;
+}
+
+let hookState = 0;
+function useCounter(step: number): [number, (by: number) => void] {
+  const set = (by: number) => { hookState = (hookState + by * step) | 0; };
+  return [hookState, set];
+}
+function rowTupleOutOfHook(): number {
+  let r = 0;
+  for (let i = 0; i < N; i++) {
+    const [value, set] = useCounter(2);
+    set(i & 3);
+    r = (r + value) | 0;
+  }
+  return r;
+}
+
+function spanOf(depth: number, at: number): { pos: number; end: number } {
+  if (depth === 0) return { pos: at, end: at + 1 };
+  const left = spanOf(depth - 1, at);
+  const right = spanOf(depth - 1, left.end);
+  return { pos: left.pos, end: right.end };
+}
+function rowRecursiveResult(): number {
+  let r = 0;
+  for (let i = 0; i < N / 16; i++) {
+    const s = spanOf(4, i);
+    r = (r + s.end - s.pos) | 0;
+  }
+  return r;
+}
+
+function visit(p: Point, f: (p: Point) => number): number { return f(p) + 1; }
+function rowArgumentHandedOnToCallback(): number {
+  let r = 0;
+  const f = (p: Point) => p.x + p.y;
+  for (let i = 0; i < N; i++) r = (r + visit({ x: i, y: 2 }, f)) | 0;
+  return r;
+}
+
+const shapes: Array<{ area(k: number): { w: number; h: number } }> = [
+  { area(k) { return { w: k, h: 2 }; } },
+  { area(k) { return { w: 3, h: k }; } },
+];
+function rowResultOfCallByValue(): number {
+  let r = 0;
+  for (let i = 0; i < N; i++) {
+    const a = shapes[i & 1].area(i & 31);
+    r = (r + a.w * a.h) | 0;
+  }
+  return r;
+}
+
+const rows: Array<[string, () => number]> = [
+  ["object result", rowObjectResult],
+  ["tuple result", rowTupleResult],
+  ["object or undefined", rowObjectOrUndefined],
+  ["iterator result by hand", rowIteratorResultByHand],
+  ["for-of over own iterator", rowForOfOverOwnIterator],
+  ["object arguments", rowObjectArguments],
+  ["options argument", rowOptionsArgument],
+  ["config returned by helper", rowConfigReturnedByHelper],
+  ["points through helpers", rowPointsThroughHelpers],
+  ["Object.entries", rowObjectEntries],
+  ["Map entries", rowMapEntries],
+  ["tuple out of hook", rowTupleOutOfHook],
+  ["recursive result", rowRecursiveResult],
+  ["argument handed on to callback", rowArgumentHandedOnToCallback],
+  ["result of call by value", rowResultOfCallByValue],
+];
+for (const [name, row] of rows) console.log(name, row());
+//// stack-closure-moved-only-where-it-escapes.ts
+// A stack-allocated closure is moved to the heap only in the branch where it escapes.
+const saved: ((x: number) => void)[] = [];
+const keepers: number[][] = [];
+function keeping(list: number[]): number[] { keepers.push(list); return list; }
+function isKept(list: number[]): boolean { return keepers.indexOf(list) >= 0; }
+function hold(list: number[], callback: (x: number) => void): void { saved.push(callback); for (let i = 0; i < list.length; i++) callback(list[i]); }
+function sum(list: number[]): string {
+  let n = 0;
+  let text = "";
+  if (isKept(list)) hold(list, x => { n += x; text += x; }); else list.forEach(x => { n += x; text += x; });
+  n += 1000;
+  if (saved.length) saved[saved.length - 1](5);
+  return n + ":" + text;
+}
+function inLoop(even: number[], odd: number[], turns: number): string {
+  let n = 0;
+  let text = "t";
+  const before = saved.length;
+  for (let i = 0; i < turns; i++) {
+    const list = i & 1 ? odd : even;
+    if (isKept(list)) hold(list, x => { n += x; text += x; }); else list.forEach(x => { n += x; text += x; });
+    n += 100;
+  }
+  for (let i = before; i < saved.length; i++) saved[i](1);
+  return n + ":" + text + ":" + (saved.length - before);
+}
+function bornInLoop(even: number[], odd: number[], turns: number): string {
+  let out = "";
+  for (let i = 0; i < turns; i++) {
+    let n = i;
+    let text = "b" + i;
+    const list = i & 1 ? odd : even;
+    if (isKept(list)) hold(list, x => { n += x; text += x; }); else list.forEach(x => { n += x; text += x; });
+    out += n + text + ";";
+  }
+  return out;
+}
+const plain = [1, 2, 3];
+const keeper = keeping([4, 5]);
+let out = "";
+for (let i = 0; i < 300; i++) {
+  const a = sum(i % 7 === 3 ? keeper : plain);
+  const b = i % 5 === 2 ? inLoop(plain, keeper, 4) : inLoop(plain, plain, 2);
+  const c = i % 4 === 1 ? bornInLoop(keeper, plain, 3) : bornInLoop(plain, plain, 1);
+  if (i % 37 === 0 || i % 7 === 3 && i < 20) out += a + "|" + b + "|" + c + "\n";
+  if (saved.length > 50) saved.length = 0;
+}
+console.log(out);
+//// stack-closures-moved-on-exceptional-paths.ts
+// Stack-allocated closures are moved to the heap on paths with exceptions, loops and nested calls.
+const saved: ((x: number) => void)[] = [];
+const keepers: number[][] = [];
+const throwers: number[][] = [];
+function keeping(list: number[], fails: boolean): number[] { keepers.push(list); if (fails) throwers.push(list); return list; }
+function isKept(list: number[]): boolean { return keepers.indexOf(list) >= 0; }
+function hold(list: number[], callback: (x: number) => void): void {
+  saved.push(callback);
+  const fails = throwers.indexOf(list) >= 0;
+  for (let i = 0; i < list.length; i++) { callback(list[i]); if (fails && i === 0) throw new Error("stop"); }
+}
+function holdMap(list: number[], callback: (x: number) => number): number[] {
+  saved.push(callback as (x: number) => void);
+  const out: number[] = [];
+  for (let i = 0; i < list.length; i++) out.push(callback(list[i]));
+  return out;
+}
+function throwsInTheArm(list: number[]): string {
+  let n = 0;
+  let text = "x";
+  try { if (isKept(list)) hold(list, x => { n += x; text += x; }); else list.forEach(x => { n += x; text += x; }); } catch (e) { text += (e as Error).message; n += 7; }
+  n += 1000;
+  if (saved.length) saved[saved.length - 1](3);
+  return n + ":" + text;
+}
+function initializedLater(list: number[]): string {
+  let n = 0;
+  let ready = false;
+  if (isKept(list)) hold(list, x => { n += x + (ready ? late.length : 0); }); else list.forEach(x => { n += x + (ready ? late.length : 0); });
+  const late = "late" + n;
+  ready = true;
+  if (saved.length) saved[saved.length - 1](1);
+  return n + ":" + late;
+}
+function twoArms(first: number[], second: number[]): string {
+  let n = 0;
+  if (isKept(first)) hold(first, x => { n += x; }); else first.forEach(x => { n += x; });
+  const mapped = isKept(second) ? holdMap(second, x => { n += 1; return x + n; }) : second.map(x => { n += 1; return x + n; });
+  n += 10;
+  for (let i = Math.max(0, saved.length - 2); i < saved.length; i++) saved[i](100);
+  return n + ":" + mapped.join();
+}
+function neverAssigned(list: number[]): string {
+  let n = 0;
+  let nothing: number | undefined;
+  if (isKept(list)) hold(list, x => { n += x + (nothing === undefined ? 1 : nothing); }); else list.forEach(x => { n += x + (nothing === undefined ? 1 : nothing); });
+  if (saved.length) saved[saved.length - 1](2);
+  return n + ":" + nothing;
+}
+const plain = [1, 2, 3];
+const keeper = keeping([4, 5], false);
+const thrower = keeping([6, 7], true);
+let out = "";
+for (let i = 0; i < 240; i++) {
+  const a = throwsInTheArm(i % 6 === 1 ? thrower : i % 6 === 4 ? keeper : plain);
+  const b = initializedLater(i % 5 === 3 ? keeper : plain);
+  const c = twoArms(i % 4 === 2 ? keeper : plain, i % 3 === 1 ? keeper : plain);
+  const d = neverAssigned(i % 7 === 2 ? keeper : plain);
+  if (i < 13 || i % 60 === 0) out += a + "|" + b + "|" + c + "|" + d + "\n";
+  if (saved.length > 40) saved.length = 0;
+}
+console.log(out);
+//// stack-closures-moved-to-heap.ts
+// Stack-allocated closures that must be moved to the heap on the paths where they escape.
+const saved: ((x: number) => void)[] = [];
+const keepers: number[][] = [];
+function keeping(list: number[]): number[] { keepers.push(list); return list; }
+function isKept(list: number[]): boolean { return keepers.indexOf(list) >= 0; }
+function hold(list: number[], callback: (x: number) => void): void { saved.push(callback); for (let i = 0; i < list.length; i++) callback(list[i]); }
+function usedBehindTheMove(list: number[], flag: boolean): string {
+  let n = 0;
+  const a = (): number => ++n;
+  const b = (): number => n + 100;
+  const f = flag ? a : b;
+  if (isKept(list)) hold(list, x => { n += x; }); else list.forEach(x => { n += x; });
+  const first = f();
+  if (saved.length) saved[saved.length - 1](1000);
+  return first + ":" + f() + ":" + n;
+}
+function doneAheadOfTheMove(list: number[], flag: boolean): string {
+  let n = 0;
+  const a = (): number => ++n;
+  const b = (): number => n + 100;
+  const f = flag ? a : b;
+  const first = f() + f();
+  if (isKept(list)) hold(list, x => { n += x; }); else list.forEach(x => { n += x; });
+  if (saved.length) saved[saved.length - 1](1000);
+  return first + ":" + n;
+}
+function roundALoop(list: number[], flag: boolean): string {
+  let n = 0;
+  const a = (): number => ++n;
+  const b = (): number => n + 100;
+  const f = flag ? a : b;
+  let text = "";
+  for (let i = 0; i < 3; i++) {
+    text += f() + ",";
+    if (isKept(list)) hold(list, x => { n += x; }); else list.forEach(x => { n += x; });
+    if (saved.length) saved[saved.length - 1](1000);
+  }
+  return text + n;
+}
+const plain = [1, 2, 3];
+const keeper = keeping([4, 5]);
+let out = "";
+for (let i = 0; i < 120; i++) {
+  const list = i % 4 === 1 ? keeper : plain;
+  const a = usedBehindTheMove(list, i % 2 === 0), b = doneAheadOfTheMove(list, i % 3 === 0), c = roundALoop(list, i % 2 === 1);
+  if (i < 9 || i % 40 === 0) out += a + "|" + b + "|" + c + "\n";
+  if (saved.length > 30) saved.length = 0;
+}
+console.log(out);
+//// stack-closures-under-register-pressure.ts
+// Stack-allocated closures in functions with many live values.
+let noise = 0;
+function calls(f: (x: number) => number, x: number): number { if (noise > 1e9) return calls(f, x); return f(x) + f(x + 1); }
+function first(n: number): number {
+  let t = n;
+  const add = (x: number): number => { t += x; return t; };
+  return calls(add, 1) + calls(add, 2);
+}
+function pressure(n: number): number {
+  let t = n;
+  let u = n + 0.25;
+  const i0 = (n * 3 + 1) | 0, i1 = (n * 4 + 8) | 0, i2 = (n * 5 + 15) | 0, i3 = (n * 6 + 22) | 0, i4 = (n * 7 + 29) | 0, i5 = (n * 8 + 36) | 0, i6 = (n * 9 + 43) | 0, i7 = (n * 10 + 50) | 0, i8 = (n * 11 + 57) | 0, i9 = (n * 12 + 64) | 0, i10 = (n * 13 + 71) | 0, i11 = (n * 14 + 78) | 0, i12 = (n * 15 + 85) | 0, i13 = (n * 16 + 92) | 0, i14 = (n * 17 + 99) | 0, i15 = (n * 18 + 106) | 0, i16 = (n * 19 + 113) | 0, i17 = (n * 20 + 120) | 0, i18 = (n * 21 + 127) | 0, i19 = (n * 22 + 134) | 0;
+  const d0 = n * 0.1 + 0.5, d1 = n * 0.2 + 1.5, d2 = n * 0.3 + 2.5, d3 = n * 0.4 + 3.5, d4 = n * 0.5 + 4.5, d5 = n * 0.6 + 5.5, d6 = n * 0.7 + 6.5, d7 = n * 0.8 + 7.5, d8 = n * 0.9 + 8.5, d9 = n * 0.10 + 9.5;
+  const zero = (x: number): number => x + 1;
+  const one = (x: number): number => { t += x; return t; };
+  const two = (x: number): number => { t += x; u += 0.5; return t + i3; };
+  const three = (x: number): number => { t += x; return t + i4 + i5; };
+  const four = (x: number): number => { t += x; return t + i6 + i7 + i8; };
+  const five = (x: number): number => { t += x; return t + i9 + i10 + i11 + i12; };
+  const real = (x: number): number => { t += x; return t + d3 + d4; };
+  const r = calls(zero, 1) + calls(zero, 2) + calls(one, 1) + calls(one, 2) + calls(two, 1) + calls(two, 2) + calls(three, 1) + calls(three, 2) + calls(four, 1) + calls(four, 2) + calls(five, 1) + calls(five, 2) + calls(real, 1) + calls(real, 2);
+  return r + t + u + i0 + i1 + i2 + i3 + i4 + i5 + i6 + i7 + i8 + i9 + i10 + i11 + i12 + i13 + i14 + i15 + i16 + i17 + i18 + i19 + d0 + d1 + d2 + d3 + d4 + d5 + d6 + d7 + d8 + d9;
+}
+let out = first(3) + "\n";
+for (let i = 0; i < 60; i++) { const a = pressure(i); if (i % 12 === 0) out += a + "\n"; }
+console.log(out);
+//// stack-variables-across-young-collections.ts
+// Stack-allocated captured variables stay valid across calls during which young-generation garbage collections run.
+let noise = 0;
+let junk: string[] = [];
+function churn(k: number): void { for (let i = 0; i < 400; i++) { junk.push("j" + (k + i)); if (junk.length > 3000) junk = []; } }
+function apply2(f: (x: number) => number, x: number): number { if (noise > 1e9) return apply2(f, x); return f(x) + f(x + 1); }
+function behindACut(n: number, depth: number): number {
+  if (n < 0) return -1;
+  if (depth < 100) {
+  let t = n;
+  let text = "s" + n;
+  let list: number[] = [n];
+  let h = depth * 31 + 7;
+  h = ((h ^ (h >> 1)) + 13) % 100003; if (h % 89 === 0) noise++;
+  h = ((h ^ (h >> 2)) + 18) % 100003; if (h % 91 === 0) noise++;
+  h = ((h ^ (h >> 3)) + 23) % 100003; if (h % 93 === 0) noise++;
+  h = ((h ^ (h >> 4)) + 28) % 100003; if (h % 95 === 0) noise++;
+  h = ((h ^ (h >> 5)) + 33) % 100003; if (h % 97 === 0) noise++;
+  h = ((h ^ (h >> 1)) + 38) % 100003; if (h % 99 === 0) noise++;
+  h = ((h ^ (h >> 2)) + 43) % 100003; if (h % 101 === 0) noise++;
+  h = ((h ^ (h >> 3)) + 48) % 100003; if (h % 103 === 0) noise++;
+  h = ((h ^ (h >> 4)) + 53) % 100003; if (h % 105 === 0) noise++;
+  h = ((h ^ (h >> 5)) + 58) % 100003; if (h % 107 === 0) noise++;
+  h = ((h ^ (h >> 1)) + 63) % 100003; if (h % 109 === 0) noise++;
+  h = ((h ^ (h >> 2)) + 68) % 100003; if (h % 111 === 0) noise++;
+  h = ((h ^ (h >> 3)) + 73) % 100003; if (h % 113 === 0) noise++;
+  h = ((h ^ (h >> 4)) + 78) % 100003; if (h % 115 === 0) noise++;
+  const add = (x: number): number => { t += x; text = text + x; list = [x, t]; return t + text.length + list.length; };
+  let sum = 0;
+  for (let i = 0; i < 6; i++) { churn(n + i); sum += apply2(add, h % 5); churn(n - i); sum += text.length + list[1]; }
+  if (depth > 0) return sum + behindACut(n - 1, depth - 1);
+  return sum + apply2(add, 1) + t;
+  }
+  return 0;
+}
+let total = 0;
+for (let i = 0; i < 3000; i++) total = (total + behindACut(i % 50, 2) + behindACut(-i - 1, 1) + behindACut(i % 7, 0) + behindACut(3, 1)) % 1000003;
+console.log(total);
+//// switch-case-let-from-narrowed-value.ts
+// A `let` declared in a `switch` case and initialized from a narrowed enum, number or union value is then modified.
+declare const console: { log(...a: unknown[]): void };
+function t(f: () => unknown): unknown { try { return f(); } catch (e) { return (e as Error).name; } }
+enum E { A, B, C }
+function anEnum(k: E) { switch (k) { case E.A: let e = k; e++; return e; } return -1; }
+function aLoop(k: number) { switch (k) { case 2: let s = 0; for (let i = k; i < 5; i++) s += i; return s; } return -1; }
+function aPattern(o: { n: 1 }) { let { n } = o; n++; return n; }
+function anArrayPattern(o: [1]) { let [n] = o; n++; return n; }
+function aDefault(k: number) { switch (k) { case 3: return ((w = k) => ++w)(); } return -1; }
+function aVar(k: number) { switch (k) { case 4: var w = k; w--; return w; } return -1; }
+function fromAProperty(o: { readonly n: 7 }) { let w = o.n; w++; return w; }
+function compound(k: number) { switch (k) { case 1: let w: number = k; w += 1; w *= 3; return w; } return -1; }
+console.log(t(() => anEnum(E.A)), t(() => aLoop(2)), t(() => aPattern({ n: 1 })), t(() => anArrayPattern([1])), t(() => aDefault(3)), t(() => aVar(4)), t(() => fromAProperty({ n: 7 })), t(() => compound(1)));
+//// three-literals-built-on-a-rare-path-and-every-pass-is-verified.ts
+// Three literals; two of them hold a field that is a slice; the object is built on a rare path behind the join.
+type Split = { name: string; place?: string; size?: number };
+////= split
+const kept: Split[] = [];
+// Too large to be inlined.
+////= keep
+const ids = ["plain", "a@north", "", "@", "a@", "a@b@c", "longer-without-a-mark", "x@y", "@south", "plain"];
+
+function use(id: string, turn: number): number {
+  const parts = split(id);
+  if (parts.name.length === turn % 700) keep(parts);
+  return parts.name.length + (turn & 1);
+}
+let total = 0;
+for (let turn = 0; turn < 3000; turn++) for (const id of ids) total += use(id, turn);
+console.log(total, kept.length);
+for (const parts of kept.slice(0, 30)) console.log(JSON.stringify(parts), "place" in parts, "size" in parts);
+
+//// three-literals-two-with-the-slice-and-every-pass-is-verified.ts
+// Three literals; two of them hold a field that is a slice, the first does not; the object is built behind the join.
+type Split = { name: string; place?: string; size?: number };
+////= split
+const kept: Split[] = [];
+// Too large to be inlined.
+////= keep
+const ids = ["plain", "a@north", "", "@", "a@", "a@b@c", "longer-without-a-mark", "x@y", "@south", "plain"];
+
+////= use	""	"x"
+let total = 0;
+for (let turn = 0; turn < 3000; turn++) for (const id of ids) total += use(id, turn);
+console.log(total, kept.length);
+for (const parts of kept.slice(0, 30)) console.log(JSON.stringify(parts), "place" in parts, "size" in parts);
+
+//// two-literals-slice-used-twice-and-every-pass-is-verified.ts
+// Two literals; the second holds the same slice in two fields; the object is built behind the join.
+type Split = { name: string; place?: string; size?: number; again?: string };
+function split(source: string): Split {
+  const at = source.lastIndexOf("@");
+  if (at < 0) {
+    return { name: source };
+  }
+  const place = source.slice(at + 1);
+  return { name: source.slice(0, at), place, again: place };
+}
+const kept: Split[] = [];
+// Too large to be inlined.
+////= keep
+const ids = ["plain", "a@north", "", "@", "a@", "a@b@c", "longer-without-a-mark", "x@y", "@south", "plain"];
+
+////= use	""	"x"
+let total = 0;
+for (let turn = 0; turn < 3000; turn++) for (const id of ids) total += use(id, turn);
+console.log(total, kept.length);
+for (const parts of kept.slice(0, 30)) console.log(JSON.stringify(parts), "place" in parts, "size" in parts);
+
+//// two-slices-in-the-second-literal-and-every-pass-is-verified.ts
+// Two literals; the second holds two slices that the first lacks; the object is built behind the join.
+type Split = { name: string; place?: string; size?: number; rest?: string };
+////= split-2	"n" + at, place: source.slice(at + 1), rest: source.slice(0, at
+const kept: Split[] = [];
+// Too large to be inlined.
+////= keep
+const ids = ["plain", "a@north", "", "@", "a@", "a@b@c", "longer-without-a-mark", "x@y", "@south", "plain"];
+
+////= use	"n0"	"n1"
+let total = 0;
+for (let turn = 0; turn < 3000; turn++) for (const id of ids) total += use(id, turn);
+console.log(total, kept.length);
+for (const parts of kept.slice(0, 30)) console.log(JSON.stringify(parts), "place" in parts, "size" in parts);
+
+//// validate-frame-cells.ts
+// Closures and environments that stay in the frame pass validation: poisoned at every exit, never retained, never used after it.
+function sumWithClosure(n: number): number {
+  let total = 0;
+  function add(k: number): void {
+    if (k <= 0) return;
+    total += k;
+    add(k - 1);
+  }
+  add(n);
+  return total;
+}
+
+function perIteration(n: number): string {
+  let text = "";
+  for (let i = 0; i < n; i++) {
+    let tag = "t" + i;
+    const extend = function extend(k: number): void {
+      if (k <= 0) return;
+      tag += k;
+      extend(k - 1);
+    };
+    extend(2);
+    text += tag + ";";
+  }
+  return text;
+}
+
+function earlyReturn(n: number): number {
+  if (n < 0) return -1;
+  let count = 0;
+  function bump(k: number): void {
+    if (k > 0) {
+      count++;
+      bump(k - 1);
+    }
+  }
+  if (n === 0) return count;
+  bump(n);
+  if (count > 3) return count * 2;
+  bump(1);
+  return count;
+}
+
+function throwsToCaller(n: number): number {
+  let depth = 0;
+  function descend(k: number): void {
+    depth++;
+    if (k === 0) throw new Error("bottom " + depth);
+    descend(k - 1);
+  }
+  descend(n);
+  return depth;
+}
+
+function catchesFromCallee(n: number): string {
+  try {
+    return "returned " + throwsToCaller(n);
+  } catch (error) {
+    return (error as Error).message;
+  }
+}
+
+function catchesInFrame(n: number): string {
+  let trail = "";
+  function step(k: number): void {
+    trail += k;
+    if (k === 0) throw new Error("end");
+    step(k - 1);
+  }
+  try {
+    step(n);
+  } catch (error) {
+    trail += (error as Error).message;
+  }
+  return trail;
+}
+
+function tailPosition(n: number): number {
+  let seen = 0;
+  function visit(k: number): number {
+    seen += k;
+    return k > 0 ? visit(k - 1) : seen;
+  }
+  return visit(n);
+}
+
+function reentered(depth: number): number {
+  let own = depth;
+  function down(k: number): void {
+    if (k > 0) {
+      own += k;
+      down(k - 1);
+      return;
+    }
+    if (depth > 0) own += reentered(depth - 1);
+  }
+  down(2);
+  return own;
+}
+
+for (let round = 0; round < 3; round++) {
+  console.log(sumWithClosure(10 + round));
+  console.log(perIteration(round + 1));
+  console.log(earlyReturn(round - 1), earlyReturn(round + 3));
+  console.log(catchesFromCallee(round));
+  console.log(catchesInFrame(round + 1));
+  console.log(tailPosition(round + 4));
+  console.log(reentered(round + 1));
+}
+//// values-outside-their-fields-in-objects-that-are-never-built.ts
+// Small objects that cross one call or one merge and die. Their fields are declared as numbers, strings and booleans, and now and then they are given something else.
+// Whatever the compiler does with the objects, each line is what plain JavaScript prints.
+const lines: string[] = [];
+function show(...parts: unknown[]) {
+  lines.push(parts.map(part => (Object.is(part, -0) ? "-0" : typeof part === "string" ? JSON.stringify(part) : String(part))).join(" "));
+}
+
+const odd: any[] = [1.5, NaN, -0, 2 ** 31, -(2 ** 31) - 1, 2 ** 53, "text", "", undefined, null, true, false, 7n, Symbol.for("s"), { valueOf: () => 9 }, [3], () => 4, Infinity];
+function pick(i: number): any {
+  return i % 5 === 3 ? odd[(i >> 2) % odd.length] : i;
+}
+function text(value: unknown): string {
+  return typeof value === "symbol" ? value.toString() : typeof value === "bigint" ? value + "n" : typeof value === "function" ? "function" : Object.is(value, -0) ? "-0" : String(value);
+}
+
+interface Step { value: number; done: boolean }
+////= Counter	Step	pick(this.i++)
+function walkByHand() {
+  const c = new Counter(48);
+  let seen = "";
+  for (;;) {
+    const step = c.next();
+    if (step.done) break;
+    seen += text(step.value) + ",";
+  }
+  show("by hand", seen);
+}
+
+class Drifting {
+  i: number = 0;
+  next(): Step {
+    const value = this.i;
+    this.i = pick(value + 1) === value + 1 ? value + 1 : ((value + 1.5) as number);
+    return { value, done: value > 40 };
+  }
+}
+function counterLeavesItsType() {
+  const d = new Drifting();
+  let seen = "";
+  for (let step = d.next(); !step.done; step = d.next()) seen += step.value + ",";
+  show("drifting", seen, d.i);
+}
+
+interface Span { pos: number; end: number; label: string }
+function span(i: number): Span {
+  return { pos: pick(i), end: pick(i + 1), label: pick(i + 2) };
+}
+function readInEveryWay() {
+  let all = "";
+  for (let i = 0; i < 40; i++) {
+    const s = span(i);
+    const { pos, end } = s;
+    all += text(pos) + "|" + text(end) + "|" + text(s.label) + "|" + text(s["pos"]) + "|" + ("pos" in s) + "|" + Object.hasOwn(s, "label") + ";";
+  }
+  show("reads", all);
+}
+function keysKeepTheirOrder() {
+  let all = "";
+  for (let i = 0; i < 24; i++) {
+    const s = span(i);
+    let values = "";
+    for (const key in s) values += key + "=" + text(s[key as keyof Span]) + ",";
+    all += Object.keys(s).join("") + ":" + values + Object.values(s).map(text).join("/") + ";";
+  }
+  show("keys", all);
+}
+function storedAgain() {
+  let all = "";
+  for (let i = 0; i < 40; i++) {
+    const s = span(i);
+    s.pos = 1;
+    const first = s.pos;
+    s.pos = pick(i + 3);
+    const second = s.pos;
+    s.end = s.pos;
+    s.pos = 2;
+    all += text(first) + text(second) + text(s.end) + text(s.pos) + ";";
+  }
+  show("stored again", all);
+}
+
+const kept: Span[] = [];
+function builtOnTheRarePath() {
+  for (let i = 0; i < 60; i++) {
+    const s = span(i);
+    if (i % 17 === 3 || typeof s.end !== "number") kept.push(s);
+  }
+  show("kept", kept.length, kept.map(s => Object.keys(s).join("") + text(s.pos) + "/" + text(s.end) + "/" + text(s.label)).join(";"));
+  const first = kept[0];
+  first.pos = 5;
+  show("kept, stored", first.pos, kept[0] === first, kept[0] === kept[1]);
+}
+
+function oneOfTwo(i: number): Span | undefined {
+  if (i % 7 === 0) return undefined;
+  if (i % 2) return { pos: i, end: i + 1, label: "odd" };
+  return { pos: pick(i), end: pick(i), label: "even" };
+}
+function merged() {
+  let all = "";
+  for (let i = 0; i < 40; i++) {
+    const s = oneOfTwo(i);
+    all += s ? text(s.pos) + s.label + text(s.end) : "none";
+    const t = i % 3 ? s : span(i);
+    all += t ? text(t.pos) + text(t.label) : "-";
+    all += s === t ? "same;" : "other;";
+  }
+  show("merged", all);
+}
+
+function pair(i: number): [number, string] {
+  return [pick(i), pick(i + 1)];
+}
+function tuples() {
+  let all = "";
+  for (let i = 0; i < 40; i++) {
+    const [a, b] = pair(i);
+    const p = pair(i + 1);
+    all += text(a) + text(b) + p.length + text(p[0]) + text(p[1]) + ";";
+  }
+  show("tuples", all);
+}
+
+interface Options { width?: number; pad?: string; left?: boolean }
+function withDefaults(options: Options): Required<Options> {
+  return { width: options.width ?? 8, pad: options.pad ?? " ", left: options.left ?? false };
+}
+function configs() {
+  let all = "";
+  for (let i = 0; i < 40; i++) {
+    const o = withDefaults({ width: pick(i), left: pick(i + 1) });
+    all += text(o.width) + text(o.pad) + text(o.left) + ";";
+  }
+  show("configs", all);
+}
+
+function deep(depth: number, at: number): Span {
+  if (depth === 0) return { pos: pick(at), end: at + 1, label: "leaf" };
+  const left = deep(depth - 1, at);
+  const right = deep(depth - 1, left.end);
+  return { pos: left.pos, end: right.end, label: left.label + text(right.pos) };
+}
+function recursion() {
+  let all = "";
+  for (let i = 0; i < 12; i++) {
+    const s = deep(3, i);
+    all += text(s.pos) + ":" + s.end + ":" + s.label + ";";
+  }
+  show("recursion", all);
+}
+
+function arithmetic() {
+  let sum = 0;
+  let glued = "";
+  for (let i = 0; i < 60; i++) {
+    const s = span(i);
+    if (typeof s.pos === "number" && typeof s.end === "number") sum += s.end - s.pos;
+    else if (typeof s.pos !== "symbol" && typeof s.pos !== "bigint") glued += (s.pos as any) + 1;
+  }
+  show("arithmetic", sum, glued);
+}
+
+walkByHand();
+counterLeavesItsType();
+readInEveryWay();
+keysKeepTheirOrder();
+storedAgain();
+builtOnTheRarePath();
+merged();
+tuples();
+configs();
+recursion();
+arithmetic();
+console.log(lines.join("\n"));

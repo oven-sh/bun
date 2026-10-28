@@ -1,0 +1,30 @@
+let sum = 0;
+const toml = '[package]\nname = "x"\nversion = "1.0.0"\nkeys = [1, 2, 3]\n[deps]\na = { version = "1", features = ["b"] }\n'.repeat(1) ;
+for (let i = 0; i < 1875; i++) sum += Bun.TOML.parse(toml).package.keys.length;
+if (Bun.YAML) { const yaml = "a: 1\nlist:\n  - x\n  - y: 2\nmap:\n  k: v\n  n: [1, 2, 3]\n"; for (let i = 0; i < 1875; i++) sum += Bun.YAML.parse(yaml).list.length; }
+for (let i = 0; i < 12500; i++) sum += Bun.semver.satisfies("1." + (i % 9) + ".3", "^1.2.0") ? 1 : 0;
+const glob = new Bun.Glob("**/{a,b}*/*.{ts,js}");
+for (let i = 0; i < 25000; i++) sum += glob.match("src/a" + (i % 7) + "/file" + i + ".ts") ? 1 : 0;
+for (let i = 0; i < 25000; i++) sum += Bun.stringWidth("hello \x1b[31mworld\x1b[0m ✓ " + i);
+for (let i = 0; i < 12500; i++) sum += Bun.escapeHTML("<a href='x'>" + i + " & more</a>").length;
+const a = { x: [1, 2, { y: "z" }], m: new Map([[1, 2]]) }, b = { x: [1, 2, { y: "z" }], m: new Map([[1, 2]]) };
+for (let i = 0; i < 18750; i++) sum += Bun.deepEquals(a, b) ? 1 : 0;
+for (let i = 0; i < 7500; i++) sum += Bun.color("#" + (i % 4096).toString(16).padStart(3, "0"), "css").length;
+const html = "<html><body>" + "<div class='a'><a href='/x'>link</a><p>text</p></div>".repeat(50) + "</body></html>";
+for (let i = 0; i < 50; i++) { let n = 0; sum += new HTMLRewriter().on("a[href]", { element(e) { e.setAttribute("href", "/y"); n++; } }).on("p", { text(t) { n += t.text.length; } }).transform(html).length + n; }
+for (let i = 0; i < 12500; i++) sum += Bun.fileURLToPath(Bun.pathToFileURL("/tmp/a b/" + i)).length;
+for (let i = 0; i < 12500; i++) sum += Bun.nanoseconds() > 0 ? 1 : 0;
+for (let i = 0; i < 3750; i++) sum += Bun.which("sh") ? 1 : 0;
+for (let i = 0; i < 12500; i++) sum += Bun.indexOfLine(Buffer.from("a\nb\nc"), 1);
+for (let i = 0; i < 7500; i++) sum += Bun.concatArrayBuffers([new Uint8Array(8), new Uint8Array(8)]).byteLength;
+for (let i = 0; i < 375; i++) sum += Bun.resolveSync("node:fs", import.meta.dir).length;
+for (let i = 0; i < 12500; i++) sum += Bun.peek(Promise.resolve(1));
+for (let i = 0; i < 5000; i++) sum += new Bun.Cookie("a", "b" + i, { path: "/", httpOnly: true }).toString().length;
+for (let i = 0; i < 5000; i++) sum += Bun.randomUUIDv7().length;
+sum += [...new Bun.Glob("*.js").scanSync(import.meta.dir)].length > 0 ? 1 : 0;
+sum += Object.keys(process.env).length > 0 ? 1 : 0;
+for (let i = 0; i < 37500; i++) sum += process.env.HOME ? 1 : 0;
+for (let i = 0; i < 12500; i++) sum += process.hrtime.bigint() > 0n ? 1 : 0;
+for (let i = 0; i < 2500; i++) sum += process.memoryUsage().rss > 0 ? 1 : 0;
+for (let i = 0; i < 12500; i++) sum += process.cwd().length > 0 ? 1 : 0;
+console.log("bun-apis", sum);

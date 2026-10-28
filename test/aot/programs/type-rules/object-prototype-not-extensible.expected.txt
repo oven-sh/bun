@@ -1,0 +1,2 @@
+a property defined on Object.prototype: TypeError
+undefined

@@ -1,0 +1,1721 @@
+////: Body
+class Body {
+  [kMass]: number;
+  plain: number;
+  [kLabel]: string;
+  declare [kNote]?: string;
+  constructor(mass: number, label: string) {
+    this[kMass] = mass;
+    this.plain = 1;
+    this[kLabel] = label;
+  }
+  weight(): number {
+    return this[kMass] * 2;
+  }
+}
+////: Body-2
+interface Body {
+  [kMass]: number;
+  plain: number;
+  [kLabel]: string;
+  [kNote]?: string;
+  weight(): number;
+}
+////: Body-3
+function Body(this: Body, mass: number, label: string) {
+  this[kMass] = mass;
+  this.plain = 1;
+  this[kLabel] = label;
+}
+////: Body-4
+////= Body-2
+////= Body-3
+////= Body-prototype-weight
+////= make
+
+////= measure
+////= nameOf
+////= keysOf
+////: Body-5
+////= Body-2
+////= weight
+////= make-3
+
+////= measure
+////= nameOf
+////= keysOf
+////: Body-6
+////= Body
+////= make-2
+
+////= measure
+////= nameOf
+////= keysOf
+////: Body-prototype-weight
+Body.prototype.weight = function (this: Body): number {
+  return this[kMass] * 2;
+};
+////: Object-defineProperty
+Object.defineProperty(first, kMass, {
+  get() {
+    reads++;
+    return 50;
+  },
+  set(value) {
+    stored = value;
+  },
+  configurable: true,
+  enumerable: false,
+});
+////: Object-defineProperty-2
+Object.defineProperty(above, kNote, {
+  set(value) {
+    console.log("setter", value);
+  },
+  configurable: true,
+});
+////: console-log
+console.log(
+  spread[kMass],
+  spread[kLabel],
+  keysOf(spread),
+  assigned[kMass],
+  keysOf(assigned),
+  onto[kMass],
+  onto[kLabel],
+  keysOf(onto),
+);
+////: console-log-2
+console.log(
+  Reflect.get(world[1], kMass),
+  Reflect.has(world[1], kLabel),
+  Reflect.set(world[1], kMass, 21),
+  world[1].weight(),
+  Reflect.deleteProperty(world[1], kMass),
+  world[1].weight(),
+);
+////: console-log-3
+console.log(
+  all.length,
+  all.slice(0, 3).map(nameOf).join(),
+  nameOf(all[all.length - 100 - 2]),
+  nameOf(all[all.length - 100 - 1]),
+  nameOf(all[all.length - 1]),
+  first[added[99]],
+);
+////: console-log-4
+console.log(
+  described.value,
+  described.writable,
+  described.enumerable,
+  described.configurable,
+  Object.getOwnPropertyDescriptor(world[1], kNote),
+);
+////: console-log-5
+console.log(
+  kMass in world[1],
+  Object.hasOwn(world[1], kLabel),
+  kNote in world[1],
+  Object.hasOwn(world[1], kNote),
+  world[1].propertyIsEnumerable(kMass),
+);
+////: console-log-6
+console.log(
+  Reflect.set(first, kMass, 71),
+  world[0][kMass],
+  measure(world),
+  Object.getOwnPropertyDescriptor(first, kMass)!.writable,
+);
+////: console-log-7
+console.log(
+  isDeepStrictEqual(make(1, "a"), make(1, "a")),
+  isDeepStrictEqual(make(1, "a"), make(2, "a")),
+  Bun.deepEquals(make(1, "a"), make(1, "a")),
+  Bun.deepEquals(make(1, "a"), make(2, "a"), true),
+);
+////: console-log-8
+console.log(
+  Object.fromEntries(Reflect.ownKeys(world[1]).map(key => [key, typeof (world[1] as any)[key]]))[kLabel as any],
+  Object.entries(world[1]).join(),
+);
+////: for
+for (const value of ["text", undefined, null, { valueOf: () => 6 }, 2.5, -0, 2 ** 40, 7n, kLabel]) {
+  first[kMass] = value;
+  let answer: string;
+  try {
+    answer = measure(world);
+  } catch (error) {
+    answer = (error as Error).name;
+  }
+  console.log(typeof world[0][kMass], Object.is(world[0][kMass], value), answer);
+}
+////: for-2
+for (const body of world) {
+  for (const store of [() => (body[kMass] = 30), () => (body[kNote] = "late"), () => delete (body as any)[kLabel]]) {
+    try {
+      results.push(String(store()));
+    } catch (error) {
+      results.push((error as Error).name);
+    }
+  }
+}
+////: for-3
+for (let index = 0; index < 100; index++) {
+  first["name" + index] = index;
+  added.push(Symbol("added" + index));
+  first[added[index]] = index;
+}
+////: keysOf
+function keysOf(object: object): string {
+  const inLoop: string[] = [];
+  for (const key in object) inLoop.push(key);
+  return [
+    Reflect.ownKeys(object).map(nameOf).join(),
+    Object.getOwnPropertySymbols(object).map(nameOf).join(),
+    Object.keys(object).join(),
+    inLoop.join(),
+  ].join(" | ");
+}
+////: lines
+try {
+  world[0][kMass] = 70;
+  console.log("stored");
+} catch (error) {
+  console.log((error as Error).name);
+}
+////: make
+function make(mass: number, label: string): Body {
+  return new (Body as any)(mass, label);
+}
+////: make-2
+function make(mass: number, label: string): Body {
+  return new Body(mass, label);
+}
+////: make-3
+function make(mass: number, label: string): Body {
+  return { [kMass]: mass, plain: 1, [kLabel]: label, weight };
+}
+////: measure
+function measure(bodies: Body[]): string {
+  let total = 0;
+  let letters = 0;
+  let notes = 0;
+  try {
+    for (let round = 0; round < 200; round++) {
+      for (const body of bodies) {
+        total += body.weight() + body[kMass] + body.plain;
+        letters += body[kLabel].length;
+        if (body[kNote] !== undefined) notes++;
+      }
+    }
+  } catch (error) {
+    return (error as Error).name;
+  }
+  return (
+    (typeof total === "number" ? String(total) : typeof total + String(total).length) + "/" + letters + "/" + notes
+  );
+}
+////: nameOf
+function nameOf(key: string | symbol): string {
+  return typeof key === "symbol" ? "[" + String(key.description) + "]" : key;
+}
+////: storeAll
+function storeAll(bodies: Body[], mass: number): string {
+  let stores = 0;
+  try {
+    for (const body of bodies) {
+      body[kMass] = mass;
+      stores++;
+    }
+  } catch (error) {
+    return stores + (error as Error).name;
+  }
+  return String(stores);
+}
+////: target
+const target = new Proxy(world[2], {
+  ownKeys(object) {
+    return Reflect.ownKeys(object).reverse();
+  },
+  get(object, key, receiver) {
+    return typeof key === "symbol" && key !== kLabel ? 9 : Reflect.get(object, key, receiver);
+  },
+});
+////: weight
+function weight(this: Body): number {
+  return this[kMass] * 2;
+}
+//// a-class-a-field-becomes-an-accessor.ts
+// A class declares fields under symbols. Object.defineProperty turns the field into a getter and a setter. Every later read and store runs them.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-6
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+let reads = 0;
+let stored: unknown = "nothing";
+////= Object-defineProperty
+console.log(measure(world), reads, keysOf(first), JSON.stringify({ ...first }), ({ ...first } as any)[kMass]);
+world[0][kMass] = 7;
+console.log(stored, world[0][kMass], world[0].weight(), reads);
+Object.defineProperty(first, kMass, { value: 8, writable: true, enumerable: true });
+console.log(measure(world), reads, keysOf(first));
+//// a-class-a-field-becomes-read-only.ts
+// A class declares fields under symbols. A store to a field that Object.defineProperty has made read-only throws in a module and changes nothing.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-6
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+Object.defineProperty(first, kMass, { writable: false });
+////= lines
+////= console-log-6
+////= storeAll
+console.log(storeAll([world[1], world[0], world[2]], 5), measure(world));
+//// a-class-a-field-is-deleted.ts
+// A class declares fields under symbols. A deleted field is read as undefined, is no key any more, and comes back behind the other symbols when it is stored again.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-6
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+console.log(delete first[kMass], kMass in first, Object.hasOwn(first, kMass), first[kMass], keysOf(first));
+console.log(measure(world));
+world[0][kMass] = 10;
+console.log(measure(world), keysOf(first));
+console.log(delete first[kNote], delete first[kLabel], measure(world), keysOf(first));
+//// a-class-a-value-outside-the-type-is-stored.ts
+// A class declares fields under symbols. A string, undefined, an object and a symbol are stored into the number field through `any`. Each is what the next read answers.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-6
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+////= for
+first[kLabel] = 5;
+console.log(measure(world), keysOf(first));
+//// a-class-an-heir-is-made-of-it.ts
+// A class declares fields under symbols. An object made by Object.create finds the fields of the object above it. A store through the heir makes a property of its own and leaves the field alone.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-6
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+const heir: Body = Object.create(world[0]);
+console.log(heir[kMass], heir[kLabel], keysOf(heir), measure([heir]));
+heir[kMass] = 40;
+console.log(heir[kMass], world[0][kMass], keysOf(heir), measure([heir, world[0]]));
+world[0][kLabel] = "longer";
+console.log(heir[kLabel], delete (heir as any)[kMass], heir[kMass]);
+Object.setPrototypeOf(world[1], { [kNote]: "moved", weight: () => 1000 });
+console.log(world[1][kNote], world[1][kMass], measure(world));
+//// a-class-console-log-prints-it.ts
+// A class declares fields under symbols. console.log and Bun.inspect print the properties in the order in which they were added, symbols among names.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-6
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+console.log(world[1]);
+console.log(Bun.inspect(world[3]));
+world[0][kNote] = "seen";
+first.later = 2;
+console.log(world[0]);
+//// a-class-it-is-cloned.ts
+// A class declares fields under symbols. structuredClone copies no property under a symbol, and JSON does not write one.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-6
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+delete first.weight;
+const clone = structuredClone(world[0]);
+console.log(keysOf(clone), (clone as any)[kMass], clone.plain, Object.getPrototypeOf(clone) === Object.prototype);
+console.log(keysOf(JSON.parse(JSON.stringify(world[1]))), measure(world.slice(1)));
+//// a-class-it-is-frozen.ts
+// A class declares fields under symbols. A frozen object takes no store under a symbol, a sealed one takes stores to the fields it has, and one that cannot be extended takes no field that was still empty.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-6
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+Object.freeze(world[0]);
+Object.seal(world[1]);
+Object.preventExtensions(world[2]);
+const results: string[] = [];
+////= for-2
+console.log(results.join(), Object.isFrozen(world[0]), Object.isSealed(world[1]), Object.isExtensible(world[2]));
+console.log(measure(world), world.map(keysOf).join(" ; "));
+//// a-class-it-is-printed.ts
+// A class declares fields under symbols. util.inspect prints the fields under symbols behind the names, in brackets.
+import { inspect } from "node:util";
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-6
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+console.log(inspect(world[0]));
+console.log(inspect(world[2], { showHidden: true, depth: 0 }));
+world[0][kNote] = "seen";
+Object.defineProperty(world[0], kLabel, { enumerable: false });
+console.log(inspect(world[0]));
+//// a-class-it-is-spread-and-assigned.ts
+// A class declares fields under symbols. A spread and Object.assign copy the fields under symbols, and the copy is an object of its own.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-6
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+const spread = { ...world[0] };
+const assigned = Object.assign({}, world[1]);
+const onto: Body = Object.assign(make(9, "zzzz"), world[2]);
+////= console-log
+spread[kMass] = 100;
+onto[kMass] = 200;
+console.log(world[0][kMass], world[2][kMass], measure([onto]));
+const { [kMass]: taken, ...rest } = world[3];
+console.log(taken, keysOf(rest), (rest as any)[kMass]);
+//// a-class-many-properties-are-added.ts
+// A class declares fields under symbols. After two hundred more properties, some of them under symbols, the fields are still read and listed in their places.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-6
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+const added: symbol[] = [];
+////= for-3
+const all = Reflect.ownKeys(first);
+////= console-log-3
+console.log(measure(world));
+for (let index = 0; index < 100; index++) delete first["name" + index];
+console.log(measure(world), Object.keys(first).join(), Object.getOwnPropertySymbols(first).length);
+//// a-class-native-code-lists-its-keys.ts
+// A class declares fields under symbols. Built-ins that walk the own properties of an object see the fields under symbols, or skip them, as they do for any object.
+import { isDeepStrictEqual } from "node:util";
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-6
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+const descriptors = Object.getOwnPropertyDescriptors(world[0]);
+console.log(keysOf(descriptors), (descriptors as any)[kMass].value);
+console.log(keysOf(Object.defineProperties({}, descriptors)), keysOf(Object.create(null, descriptors)));
+////= console-log-7
+////= console-log-8
+////= target
+console.log(keysOf(target), measure([target]), keysOf({ ...target }));
+//// a-class-nothing-happens-to-it.ts
+// A class declares fields under symbols. Names come in front of symbols, and each kind in the order of the stores. Object.keys, for-in and JSON.stringify skip the symbols.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-6
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+console.log(JSON.stringify(world[1]), Object.entries(world[1]).length, Object.values(world[1]).length);
+////= console-log-5
+const described = Object.getOwnPropertyDescriptor(world[1], kMass)!;
+////= console-log-4
+//// a-class-the-key-is-not-known-where-it-is-used.ts
+// A class declares fields under symbols. A function gets the key as a value of type symbol, or as anything. It reads and stores the same fields as code that names the symbol.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-6
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+function readBy(object: any, key: any): unknown {
+  return object[key];
+}
+function storeBy(object: any, key: symbol | string, value: unknown): void {
+  object[key] = value;
+}
+const keys: (symbol | string)[] = [kMass, "plain", kLabel, kNote, Symbol("mass"), "mass", Symbol.iterator];
+const seen: unknown[] = [];
+for (let round = 0; round < 50; round++)
+  for (const key of keys) seen[keys.indexOf(key)] = readBy(world[round % 4], key);
+console.log(seen.map(String).join());
+for (const key of keys) storeBy(world[0], key, 12);
+console.log(world[0][kMass], world[0][kLabel], world[0][kNote], keysOf(world[0]), measure(world.slice(1)));
+////= console-log-2
+//// a-class-the-symbol-lies-above-an-empty-field.ts
+// A class declares fields under symbols. While the optional field is empty a read finds what lies under the symbol above the object. A store makes the field, a deletion uncovers what lies above again.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-6
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+const above = Object.getPrototypeOf(world[0]);
+console.log(world[0][kNote], measure(world));
+above[kNote] = "above";
+console.log(world[0][kNote], Object.hasOwn(world[0], kNote), kNote in world[0], measure(world), keysOf(world[0]));
+world[0][kNote] = "own";
+console.log(world[0][kNote], world[1][kNote], Object.hasOwn(world[0], kNote), keysOf(world[0]));
+delete world[0][kNote];
+console.log(world[0][kNote], keysOf(world[0]));
+////= Object-defineProperty-2
+world[1][kNote] = "caught";
+console.log(world[1][kNote], Object.hasOwn(world[1], kNote), measure(world));
+delete above[kNote];
+console.log(measure(world));
+//// a-constructor-that-only-run-time-text-constructs-with-stores-under-symbols.js
+// A constructor function keeps state in `this` under symbols that a table of symbols holds. Only code out of run-time text constructs with it, so no build sees where its objects are made.
+const symbols = { kState: Symbol("state"), kCount: Symbol("count"), kLate: Symbol("late"), kNever: Symbol("never") };
+const { kState, kCount, kLate, kNever } = symbols;
+const nothing = String(Date.now()).slice(99);
+const lines = [];
+const say = (...parts) => lines.push(parts.map(part => (typeof part === "symbol" ? part.toString() : typeof part === "object" && part ? JSON.stringify(part) : String(part))).join(" "));
+
+function Holder(name, skip) {
+  this.name = name;
+  if (!skip) this[kState] = "new";
+  this[kCount] = 0;
+}
+Holder.prototype.step = function () {
+  this[kCount]++;
+  return this;
+};
+Holder.prototype.describe = function () {
+  return `${this.name}:${String(this[kState])}:${this[kCount]}:${String(this[kLate])}:${String(this[kNever])}`;
+};
+Holder.prototype.finish = function (value) {
+  this[kLate] = value;
+  return this;
+};
+
+function makeBelow(Above) {
+  const extras = Above.extras ? Above.extras.slice() : [];
+  function Below(name, skip) {
+    this.name = name;
+    if (!skip) this[kState] = "below";
+    this[kCount] = 10;
+    for (let i = 0; i < extras.length; i++) this[extras[i].key] = extras[i].value;
+  }
+  Object.setPrototypeOf(Below.prototype, Above.prototype);
+  Object.setPrototypeOf(Below, Above);
+  Below.extras = extras;
+  return Below;
+}
+Holder.extras = [{ key: "user" + nothing, value: undefined }, { key: kLate, value: "decorated" }];
+
+const construct = new Function("C", "a", "b", "return new C(a, b)" + nothing);
+const reflect = new Function("C", "T", "a", "return Reflect.construct(C, [a], T)" + nothing);
+const Below = makeBelow(Holder);
+const Lower = makeBelow(Below);
+
+for (const C of [Holder, Below, Lower]) {
+  const whole = construct(C, "whole", false);
+  say(whole.describe(), Object.getOwnPropertySymbols(whole).map(String).join(), Object.keys(whole).join());
+  say(whole.step().step().finish(7).describe(), Object.getOwnPropertySymbols(whole).map(String).join());
+  const partial = construct(C, "partial", true);
+  say(partial.describe(), kState in partial, Object.hasOwn(partial, kState), Object.getOwnPropertySymbols(partial).length);
+}
+
+// What lies above the objects answers for a slot that is empty, and takes a store where it is a setter.
+const partial = construct(Below, "inherits", true);
+Holder.prototype[kState] = "from Holder.prototype";
+say(partial.describe(), construct(Below, "own", false).describe());
+Below.prototype[kState] = "from Below.prototype";
+say(partial.describe(), construct(Lower, "lower", true).describe());
+delete Below.prototype[kState];
+delete Holder.prototype[kState];
+say(partial.describe());
+
+let stored = [];
+Object.defineProperty(Holder.prototype, kCount, {
+  configurable: true,
+  get() {
+    return "getter";
+  },
+  set(value) {
+    stored.push(`${this.name}=${value}`);
+  },
+});
+const behindSetter = construct(Below, "behind-setter", false);
+say(behindSetter.describe(), Object.hasOwn(behindSetter, kCount), stored.join());
+behindSetter.step();
+say(behindSetter.describe(), stored.join());
+delete Holder.prototype[kCount];
+say(behindSetter.describe(), construct(Below, "after", false).step().describe());
+
+// The function is called on an object of another kind, and with another new.target.
+const plain = { name: "plain" };
+Holder.call(plain, "called", false);
+say(Holder.prototype.describe.call(plain), Object.getOwnPropertySymbols(plain).length);
+class Other {
+  describe() {
+    return "other:" + String(this[kState]) + ":" + this[kCount];
+  }
+}
+const other = reflect(Below, Other, "reflected");
+say(other.describe(), other instanceof Other, other instanceof Below, Object.getOwnPropertySymbols(other).map(String).join());
+
+// Fields leave, come back in another order, and are redefined.
+const changed = construct(Lower, "changed", false);
+delete changed[kState];
+say(changed.describe(), Object.getOwnPropertySymbols(changed).map(String).join());
+changed[kState] = "again";
+say(changed.describe(), Object.getOwnPropertySymbols(changed).map(String).join());
+Object.defineProperty(changed, kCount, { get: () => "own getter", configurable: true });
+const attempt = action => {
+  try {
+    return action().describe();
+  } catch (error) {
+    return error.constructor.name;
+  }
+};
+say(changed.describe(), attempt(() => changed.step()));
+Object.freeze(changed);
+say(attempt(() => ((changed[kState] = "frozen"), changed)), attempt(() => changed.finish(1)), changed.describe());
+
+// Every object of a long run answers alike.
+let sum = 0;
+for (let i = 0; i < 20000; i++) {
+  const object = construct(i & 1 ? Below : Lower, "n" + (i & 3), (i & 7) === 7);
+  object.step();
+  if ((i & 15) === 3) object.finish(i);
+  sum = (sum + object.describe().length + object[kCount]) | 0;
+}
+say(sum);
+console.log(lines.join("\n"));
+//// a-function-constructor-a-field-becomes-an-accessor.ts
+// An interface declares fields under symbols, and a function that is called with `new` stores them. Object.defineProperty turns the field into a getter and a setter. Every later read and store runs them.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-4
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+let reads = 0;
+let stored: unknown = "nothing";
+////= Object-defineProperty
+console.log(measure(world), reads, keysOf(first), JSON.stringify({ ...first }), ({ ...first } as any)[kMass]);
+world[0][kMass] = 7;
+console.log(stored, world[0][kMass], world[0].weight(), reads);
+Object.defineProperty(first, kMass, { value: 8, writable: true, enumerable: true });
+console.log(measure(world), reads, keysOf(first));
+//// a-function-constructor-a-field-becomes-read-only.ts
+// An interface declares fields under symbols, and a function that is called with `new` stores them. A store to a field that Object.defineProperty has made read-only throws in a module and changes nothing.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-4
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+Object.defineProperty(first, kMass, { writable: false });
+////= lines
+////= console-log-6
+////= storeAll
+console.log(storeAll([world[1], world[0], world[2]], 5), measure(world));
+//// a-function-constructor-a-field-is-deleted.ts
+// An interface declares fields under symbols, and a function that is called with `new` stores them. A deleted field is read as undefined, is no key any more, and comes back behind the other symbols when it is stored again.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-4
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+console.log(delete first[kMass], kMass in first, Object.hasOwn(first, kMass), first[kMass], keysOf(first));
+console.log(measure(world));
+world[0][kMass] = 10;
+console.log(measure(world), keysOf(first));
+console.log(delete first[kNote], delete first[kLabel], measure(world), keysOf(first));
+//// a-function-constructor-a-value-outside-the-type-is-stored.ts
+// An interface declares fields under symbols, and a function that is called with `new` stores them. A string, undefined, an object and a symbol are stored into the number field through `any`. Each is what the next read answers.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-4
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+////= for
+first[kLabel] = 5;
+console.log(measure(world), keysOf(first));
+//// a-function-constructor-an-heir-is-made-of-it.ts
+// An interface declares fields under symbols, and a function that is called with `new` stores them. An object made by Object.create finds the fields of the object above it. A store through the heir makes a property of its own and leaves the field alone.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-4
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+const heir: Body = Object.create(world[0]);
+console.log(heir[kMass], heir[kLabel], keysOf(heir), measure([heir]));
+heir[kMass] = 40;
+console.log(heir[kMass], world[0][kMass], keysOf(heir), measure([heir, world[0]]));
+world[0][kLabel] = "longer";
+console.log(heir[kLabel], delete (heir as any)[kMass], heir[kMass]);
+Object.setPrototypeOf(world[1], { [kNote]: "moved", weight: () => 1000 });
+console.log(world[1][kNote], world[1][kMass], measure(world));
+//// a-function-constructor-console-log-prints-it.ts
+// An interface declares fields under symbols, and a function that is called with `new` stores them. console.log and Bun.inspect print the properties in the order in which they were added, symbols among names.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-4
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+console.log(world[1]);
+console.log(Bun.inspect(world[3]));
+world[0][kNote] = "seen";
+first.later = 2;
+console.log(world[0]);
+//// a-function-constructor-it-is-cloned.ts
+// An interface declares fields under symbols, and a function that is called with `new` stores them. structuredClone copies no property under a symbol, and JSON does not write one.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-4
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+delete first.weight;
+const clone = structuredClone(world[0]);
+console.log(keysOf(clone), (clone as any)[kMass], clone.plain, Object.getPrototypeOf(clone) === Object.prototype);
+console.log(keysOf(JSON.parse(JSON.stringify(world[1]))), measure(world.slice(1)));
+//// a-function-constructor-it-is-frozen.ts
+// An interface declares fields under symbols, and a function that is called with `new` stores them. A frozen object takes no store under a symbol, a sealed one takes stores to the fields it has, and one that cannot be extended takes no field that was still empty.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-4
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+Object.freeze(world[0]);
+Object.seal(world[1]);
+Object.preventExtensions(world[2]);
+const results: string[] = [];
+////= for-2
+console.log(results.join(), Object.isFrozen(world[0]), Object.isSealed(world[1]), Object.isExtensible(world[2]));
+console.log(measure(world), world.map(keysOf).join(" ; "));
+//// a-function-constructor-it-is-printed.ts
+// An interface declares fields under symbols, and a function that is called with `new` stores them. util.inspect prints the fields under symbols behind the names, in brackets.
+import { inspect } from "node:util";
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-4
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+console.log(inspect(world[0]));
+console.log(inspect(world[2], { showHidden: true, depth: 0 }));
+world[0][kNote] = "seen";
+Object.defineProperty(world[0], kLabel, { enumerable: false });
+console.log(inspect(world[0]));
+//// a-function-constructor-it-is-spread-and-assigned.ts
+// An interface declares fields under symbols, and a function that is called with `new` stores them. A spread and Object.assign copy the fields under symbols, and the copy is an object of its own.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-4
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+const spread = { ...world[0] };
+const assigned = Object.assign({}, world[1]);
+const onto: Body = Object.assign(make(9, "zzzz"), world[2]);
+////= console-log
+spread[kMass] = 100;
+onto[kMass] = 200;
+console.log(world[0][kMass], world[2][kMass], measure([onto]));
+const { [kMass]: taken, ...rest } = world[3];
+console.log(taken, keysOf(rest), (rest as any)[kMass]);
+//// a-function-constructor-many-properties-are-added.ts
+// An interface declares fields under symbols, and a function that is called with `new` stores them. After two hundred more properties, some of them under symbols, the fields are still read and listed in their places.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-4
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+const added: symbol[] = [];
+////= for-3
+const all = Reflect.ownKeys(first);
+////= console-log-3
+console.log(measure(world));
+for (let index = 0; index < 100; index++) delete first["name" + index];
+console.log(measure(world), Object.keys(first).join(), Object.getOwnPropertySymbols(first).length);
+//// a-function-constructor-native-code-lists-its-keys.ts
+// An interface declares fields under symbols, and a function that is called with `new` stores them. Built-ins that walk the own properties of an object see the fields under symbols, or skip them, as they do for any object.
+import { isDeepStrictEqual } from "node:util";
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-4
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+const descriptors = Object.getOwnPropertyDescriptors(world[0]);
+console.log(keysOf(descriptors), (descriptors as any)[kMass].value);
+console.log(keysOf(Object.defineProperties({}, descriptors)), keysOf(Object.create(null, descriptors)));
+////= console-log-7
+////= console-log-8
+////= target
+console.log(keysOf(target), measure([target]), keysOf({ ...target }));
+//// a-function-constructor-nothing-happens-to-it.ts
+// An interface declares fields under symbols, and a function that is called with `new` stores them. Names come in front of symbols, and each kind in the order of the stores. Object.keys, for-in and JSON.stringify skip the symbols.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-4
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+console.log(JSON.stringify(world[1]), Object.entries(world[1]).length, Object.values(world[1]).length);
+////= console-log-5
+const described = Object.getOwnPropertyDescriptor(world[1], kMass)!;
+////= console-log-4
+//// a-function-constructor-the-key-is-not-known-where-it-is-used.ts
+// An interface declares fields under symbols, and a function that is called with `new` stores them. A function gets the key as a value of type symbol, or as anything. It reads and stores the same fields as code that names the symbol.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-4
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+function readBy(object: any, key: any): unknown {
+  return object[key];
+}
+function storeBy(object: any, key: symbol | string, value: unknown): void {
+  object[key] = value;
+}
+const keys: (symbol | string)[] = [kMass, "plain", kLabel, kNote, Symbol("mass"), "mass", Symbol.iterator];
+const seen: unknown[] = [];
+for (let round = 0; round < 50; round++)
+  for (const key of keys) seen[keys.indexOf(key)] = readBy(world[round % 4], key);
+console.log(seen.map(String).join());
+for (const key of keys) storeBy(world[0], key, 12);
+console.log(world[0][kMass], world[0][kLabel], world[0][kNote], keysOf(world[0]), measure(world.slice(1)));
+////= console-log-2
+//// a-function-constructor-the-symbol-lies-above-an-empty-field.ts
+// An interface declares fields under symbols, and a function that is called with `new` stores them. While the optional field is empty a read finds what lies under the symbol above the object. A store makes the field, a deletion uncovers what lies above again.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-4
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+const above = Object.getPrototypeOf(world[0]);
+console.log(world[0][kNote], measure(world));
+above[kNote] = "above";
+console.log(world[0][kNote], Object.hasOwn(world[0], kNote), kNote in world[0], measure(world), keysOf(world[0]));
+world[0][kNote] = "own";
+console.log(world[0][kNote], world[1][kNote], Object.hasOwn(world[0], kNote), keysOf(world[0]));
+delete world[0][kNote];
+console.log(world[0][kNote], keysOf(world[0]));
+////= Object-defineProperty-2
+world[1][kNote] = "caught";
+console.log(world[1][kNote], Object.hasOwn(world[1], kNote), measure(world));
+delete above[kNote];
+console.log(measure(world));
+//// a-registered-symbol.ts
+// Symbol.for answers the same symbol for the same text wherever it is called, so a field under it is found through every call.
+export {};
+
+const kShared = Symbol.for("shared.mass");
+const kLocal = Symbol("shared.mass");
+class Body {
+  [kShared]: number;
+  [kLocal]: number;
+  constructor(mass: number) {
+    this[kShared] = mass;
+    this[kLocal] = -mass;
+  }
+}
+function again(): symbol {
+  return Symbol.for("shared" + "." + ["mass"][0]);
+}
+const bodies = [new Body(1), new Body(2)];
+let total = 0;
+for (let round = 0; round < 300; round++)
+  for (const body of bodies)
+    total += body[kShared] * 10 + (body as any)[Symbol.for("shared.mass")] + (body as any)[again()];
+console.log(
+  total,
+  kShared === again(),
+  (kShared as symbol) === kLocal,
+  Symbol.keyFor(kShared),
+  Symbol.keyFor(kLocal),
+  bodies[0][kLocal],
+);
+(bodies[0] as any)[again()] = 50;
+console.log(bodies[0][kShared], Object.getOwnPropertySymbols(bodies[0]).length);
+//// a-static-field-under-a-symbol.ts
+// A static field under a symbol lies on the class itself, and a subclass finds it there until it stores its own.
+export {};
+
+const kCount = Symbol("count");
+class Counter {
+  static [kCount] = 0;
+  static bump(): number {
+    return ++this[kCount];
+  }
+}
+class Below extends Counter {}
+for (let round = 0; round < 300; round++) Counter.bump();
+console.log(Counter[kCount], Below[kCount], Object.hasOwn(Below, kCount), Object.getOwnPropertySymbols(Counter).length);
+Below.bump();
+console.log(Counter[kCount], Below[kCount], Object.hasOwn(Below, kCount));
+//// a-subclass-and-its-base-share-a-symbol.ts
+// The base class and a subclass store under the same symbol: one field. Another subclass has a getter under it, and a third a method.
+export {};
+
+const kValue = Symbol("value");
+class Base {
+  [kValue]: number | (() => number);
+  constructor(value: number) {
+    this[kValue] = value;
+  }
+}
+class Doubles extends Base {
+  constructor(value: number) {
+    super(value);
+    this[kValue] = value * 2;
+  }
+}
+class Plain {
+  get [kValue](): number {
+    return 7;
+  }
+}
+class Method {
+  [kValue](): number {
+    return 9;
+  }
+}
+function read(object: Base | Plain | Method): number {
+  const value = object[kValue];
+  return typeof value === "function" ? value.call(object) : value;
+}
+const all = [new Base(1), new Doubles(1), new Plain(), new Method()];
+let total = 0;
+for (let round = 0; round < 300; round++) for (const each of all) total += read(each);
+console.log(
+  total,
+  all.map(each => Object.getOwnPropertySymbols(each).length).join(),
+  all.map(each => kValue in each).join(),
+);
+Object.defineProperty(all[3], kValue, { value: 100, writable: true, configurable: true, enumerable: true });
+(all[0] as Base)[kValue] = () => 1000;
+console.log(all.map(read).join());
+//// a-symbol-made-in-a-function.ts
+// Each call of the function makes another symbol, so the one place in the text stands for many keys. What is stored under one is not found under another.
+export {};
+
+function makeKey(): symbol {
+  return Symbol("made");
+}
+const first = makeKey();
+const second = makeKey();
+const holder: Record<symbol, number> = {};
+holder[first] = 1;
+holder[second] = 2;
+function read(object: Record<symbol, number>, key: symbol): number {
+  return object[key];
+}
+let total = 0;
+for (let round = 0; round < 300; round++) total += read(holder, first) * 10 + read(holder, second);
+console.log(total, first === second, Object.getOwnPropertySymbols(holder).length, holder[makeKey()]);
+function tagged(value: number) {
+  const key = Symbol("inner");
+  const object = { [key]: value, key };
+  return object;
+}
+const one = tagged(1);
+const two = tagged(2);
+console.log(
+  (one as any)[one.key],
+  (two as any)[two.key],
+  (one as any)[two.key],
+  (two as any)[one.key],
+  one.key === two.key,
+);
+//// a-symbol-made-in-a-loop.ts
+// One call of Symbol in a loop at the top of the module makes a symbol in each round. An object holds a property under each of them.
+export {};
+
+const keys: symbol[] = [];
+const holder: Record<symbol, number> = {};
+for (let index = 0; index < 5; index++) {
+  const key = Symbol("round");
+  keys.push(key);
+  holder[key] = index;
+}
+let last: symbol = keys[0];
+for (const key of keys) last = key;
+console.log(
+  keys.map(key => holder[key]).join(),
+  Object.getOwnPropertySymbols(holder).length,
+  holder[last],
+  new Set(keys).size,
+);
+let again = Symbol("again");
+const early = again;
+const both = { [again]: "early" } as Record<symbol, string>;
+again = Symbol("again");
+both[again] = "late";
+console.log(both[early], both[again], early === again, Object.getOwnPropertySymbols(both).length);
+//// a-well-known-symbol-names-a-field.ts
+// Fields under Symbol.toStringTag, Symbol.iterator and Symbol.toPrimitive are read by built-ins, which must find what the constructor has stored.
+export {};
+
+class Tagged {
+  [Symbol.toStringTag]!: string;
+  [Symbol.iterator]!: () => Iterator<number>;
+  [Symbol.toPrimitive]!: (hint: string) => number | string;
+  constructor(tag: string, count: number) {
+    this[Symbol.toStringTag] = tag;
+    this[Symbol.iterator] = function* () {
+      for (let index = 0; index < count; index++) yield index;
+    };
+    this[Symbol.toPrimitive] = hint => (hint === "number" ? count : tag);
+  }
+}
+const tagged = new Tagged("Mine", 3);
+console.log(
+  Object.prototype.toString.call(tagged),
+  [...tagged].join(),
+  +tagged,
+  `${tagged}`,
+  Object.getOwnPropertySymbols(tagged).map(String).join(),
+);
+tagged[Symbol.toStringTag] = "Other";
+delete (tagged as any)[Symbol.iterator];
+let spread: string;
+try {
+  spread = [...tagged].join();
+} catch (error) {
+  spread = (error as Error).name;
+}
+console.log(String(Object.prototype.toString.call(tagged)), spread);
+//// an-object-literal-a-field-becomes-an-accessor.ts
+// An interface declares fields under symbols, and an object literal with computed keys fills them. Object.defineProperty turns the field into a getter and a setter. Every later read and store runs them.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-5
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+let reads = 0;
+let stored: unknown = "nothing";
+////= Object-defineProperty
+console.log(measure(world), reads, keysOf(first), JSON.stringify({ ...first }), ({ ...first } as any)[kMass]);
+world[0][kMass] = 7;
+console.log(stored, world[0][kMass], world[0].weight(), reads);
+Object.defineProperty(first, kMass, { value: 8, writable: true, enumerable: true });
+console.log(measure(world), reads, keysOf(first));
+//// an-object-literal-a-field-becomes-read-only.ts
+// An interface declares fields under symbols, and an object literal with computed keys fills them. A store to a field that Object.defineProperty has made read-only throws in a module and changes nothing.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-5
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+Object.defineProperty(first, kMass, { writable: false });
+////= lines
+////= console-log-6
+////= storeAll
+console.log(storeAll([world[1], world[0], world[2]], 5), measure(world));
+//// an-object-literal-a-field-is-deleted.ts
+// An interface declares fields under symbols, and an object literal with computed keys fills them. A deleted field is read as undefined, is no key any more, and comes back behind the other symbols when it is stored again.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-5
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+console.log(delete first[kMass], kMass in first, Object.hasOwn(first, kMass), first[kMass], keysOf(first));
+console.log(measure(world));
+world[0][kMass] = 10;
+console.log(measure(world), keysOf(first));
+console.log(delete first[kNote], delete first[kLabel], measure(world), keysOf(first));
+//// an-object-literal-a-value-outside-the-type-is-stored.ts
+// An interface declares fields under symbols, and an object literal with computed keys fills them. A string, undefined, an object and a symbol are stored into the number field through `any`. Each is what the next read answers.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-5
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+////= for
+first[kLabel] = 5;
+console.log(measure(world), keysOf(first));
+//// an-object-literal-an-heir-is-made-of-it.ts
+// An interface declares fields under symbols, and an object literal with computed keys fills them. An object made by Object.create finds the fields of the object above it. A store through the heir makes a property of its own and leaves the field alone.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-5
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+const heir: Body = Object.create(world[0]);
+console.log(heir[kMass], heir[kLabel], keysOf(heir), measure([heir]));
+heir[kMass] = 40;
+console.log(heir[kMass], world[0][kMass], keysOf(heir), measure([heir, world[0]]));
+world[0][kLabel] = "longer";
+console.log(heir[kLabel], delete (heir as any)[kMass], heir[kMass]);
+Object.setPrototypeOf(world[1], { [kNote]: "moved", weight: () => 1000 });
+console.log(world[1][kNote], world[1][kMass], measure(world));
+//// an-object-literal-console-log-prints-it.ts
+// An interface declares fields under symbols, and an object literal with computed keys fills them. console.log and Bun.inspect print the properties in the order in which they were added, symbols among names.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-5
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+console.log(world[1]);
+console.log(Bun.inspect(world[3]));
+world[0][kNote] = "seen";
+first.later = 2;
+console.log(world[0]);
+//// an-object-literal-it-is-cloned.ts
+// An interface declares fields under symbols, and an object literal with computed keys fills them. structuredClone copies no property under a symbol, and JSON does not write one.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-5
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+delete first.weight;
+const clone = structuredClone(world[0]);
+console.log(keysOf(clone), (clone as any)[kMass], clone.plain, Object.getPrototypeOf(clone) === Object.prototype);
+console.log(keysOf(JSON.parse(JSON.stringify(world[1]))), measure(world.slice(1)));
+//// an-object-literal-it-is-frozen.ts
+// An interface declares fields under symbols, and an object literal with computed keys fills them. A frozen object takes no store under a symbol, a sealed one takes stores to the fields it has, and one that cannot be extended takes no field that was still empty.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-5
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+Object.freeze(world[0]);
+Object.seal(world[1]);
+Object.preventExtensions(world[2]);
+const results: string[] = [];
+////= for-2
+console.log(results.join(), Object.isFrozen(world[0]), Object.isSealed(world[1]), Object.isExtensible(world[2]));
+console.log(measure(world), world.map(keysOf).join(" ; "));
+//// an-object-literal-it-is-printed.ts
+// An interface declares fields under symbols, and an object literal with computed keys fills them. util.inspect prints the fields under symbols behind the names, in brackets.
+import { inspect } from "node:util";
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-5
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+console.log(inspect(world[0]));
+console.log(inspect(world[2], { showHidden: true, depth: 0 }));
+world[0][kNote] = "seen";
+Object.defineProperty(world[0], kLabel, { enumerable: false });
+console.log(inspect(world[0]));
+//// an-object-literal-it-is-spread-and-assigned.ts
+// An interface declares fields under symbols, and an object literal with computed keys fills them. A spread and Object.assign copy the fields under symbols, and the copy is an object of its own.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-5
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+const spread = { ...world[0] };
+const assigned = Object.assign({}, world[1]);
+const onto: Body = Object.assign(make(9, "zzzz"), world[2]);
+////= console-log
+spread[kMass] = 100;
+onto[kMass] = 200;
+console.log(world[0][kMass], world[2][kMass], measure([onto]));
+const { [kMass]: taken, ...rest } = world[3];
+console.log(taken, keysOf(rest), (rest as any)[kMass]);
+//// an-object-literal-many-properties-are-added.ts
+// An interface declares fields under symbols, and an object literal with computed keys fills them. After two hundred more properties, some of them under symbols, the fields are still read and listed in their places.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-5
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+const added: symbol[] = [];
+////= for-3
+const all = Reflect.ownKeys(first);
+////= console-log-3
+console.log(measure(world));
+for (let index = 0; index < 100; index++) delete first["name" + index];
+console.log(measure(world), Object.keys(first).join(), Object.getOwnPropertySymbols(first).length);
+//// an-object-literal-native-code-lists-its-keys.ts
+// An interface declares fields under symbols, and an object literal with computed keys fills them. Built-ins that walk the own properties of an object see the fields under symbols, or skip them, as they do for any object.
+import { isDeepStrictEqual } from "node:util";
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-5
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+const descriptors = Object.getOwnPropertyDescriptors(world[0]);
+console.log(keysOf(descriptors), (descriptors as any)[kMass].value);
+console.log(keysOf(Object.defineProperties({}, descriptors)), keysOf(Object.create(null, descriptors)));
+////= console-log-7
+////= console-log-8
+////= target
+console.log(keysOf(target), measure([target]), keysOf({ ...target }));
+//// an-object-literal-nothing-happens-to-it.ts
+// An interface declares fields under symbols, and an object literal with computed keys fills them. Names come in front of symbols, and each kind in the order of the stores. Object.keys, for-in and JSON.stringify skip the symbols.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-5
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+console.log(JSON.stringify(world[1]), Object.entries(world[1]).length, Object.values(world[1]).length);
+////= console-log-5
+const described = Object.getOwnPropertyDescriptor(world[1], kMass)!;
+////= console-log-4
+//// an-object-literal-the-key-is-not-known-where-it-is-used.ts
+// An interface declares fields under symbols, and an object literal with computed keys fills them. A function gets the key as a value of type symbol, or as anything. It reads and stores the same fields as code that names the symbol.
+export {};
+
+const kMass = Symbol("mass");
+const kLabel = Symbol("label");
+const kNote = Symbol("note");
+
+////= Body-5
+
+const world: Body[] = [make(1, "a"), make(2, "bb"), make(3, "ccc"), make(4, "d")];
+console.log(measure(world), keysOf(world[0]));
+const first: any = world[0];
+function readBy(object: any, key: any): unknown {
+  return object[key];
+}
+function storeBy(object: any, key: symbol | string, value: unknown): void {
+  object[key] = value;
+}
+const keys: (symbol | string)[] = [kMass, "plain", kLabel, kNote, Symbol("mass"), "mass", Symbol.iterator];
+const seen: unknown[] = [];
+for (let round = 0; round < 50; round++)
+  for (const key of keys) seen[keys.indexOf(key)] = readBy(world[round % 4], key);
+console.log(seen.map(String).join());
+for (const key of keys) storeBy(world[0], key, 12);
+console.log(world[0][kMass], world[0][kLabel], world[0][kNote], keysOf(world[0]), measure(world.slice(1)));
+////= console-log-2
+//// an-object-without-a-prototype.ts
+// An object literal with `__proto__: null` and one made by Object.create(null) hold properties under the symbol.
+export {};
+
+const kMass = Symbol("mass");
+interface Bare {
+  [kMass]: number;
+}
+const literal: Bare = { __proto__: null, [kMass]: 1 } as Bare;
+const created: Bare = Object.create(null);
+created[kMass] = 2;
+function read(bare: Bare): number {
+  return bare[kMass];
+}
+let total = 0;
+for (let round = 0; round < 300; round++) total += read(literal) * 10 + read(created);
+console.log(
+  total,
+  Object.getPrototypeOf(literal),
+  Reflect.ownKeys(literal).length,
+  Reflect.ownKeys(created).length,
+  kMass in literal,
+);
+//// one-place-in-the-text-makes-several-symbols.js
+// One `Symbol()` in the text runs several times: in a function called twice, in a factory of objects, in a factory of classes, in a recursion, in a generator. Each symbol names a property of its own. Symbol.for gives one symbol however its text is put together.
+function mk() { return Symbol("k"); }
+const a = mk(), b = mk();
+const o = {}; o[a] = 1; o[b] = 2;
+console.log(o[a], o[b], a === b, Object.getOwnPropertySymbols(o).length);
+function box(v) { const s = Symbol("slot"); const r = { [s]: v, get() { return this[s]; }, key: s }; return r; }
+const x = box(1), y = box(2);
+console.log(x.get(), y.get(), x[y.key], y[x.key], x.get.call(y), y.get.call(x));
+x[y.key] = 9; console.log(x.get(), x[y.key], Object.getOwnPropertySymbols(x).length);
+class C { static make() { const t = Symbol("t"); return class { constructor() { this[t] = 1; } has(o) { return t in o; } }; } }
+const K1 = C.make(), K2 = C.make(); const k1 = new K1(), k2 = new K2();
+console.log(k1.has(k1), k1.has(k2), k2.has(k1), k2.has(k2));
+const once = Symbol("once"); const p = { [once]: 5 }; function rd(q) { return q[once]; }
+console.log(rd(p), rd({ [Symbol("once")]: 6 }), rd({}), rd({ [once]: 7 }));
+function rec(n, acc) { const s = Symbol("r"); acc[s] = n; return n ? rec(n - 1, acc) : acc; }
+console.log(Object.getOwnPropertySymbols(rec(3, {})).length);
+function* g() { const s = Symbol("g"); yield s; } const s1 = g().next().value, s2 = g().next().value; const h = { [s1]: 1 }; console.log(h[s1], h[s2]);
+const kA = Symbol.for("shared"), kB = Symbol.for("sha" + "red"), kC = Symbol.for(["shared"][0]); const z = { [kA]: 1 }; console.log(z[kB], z[kC], kA === kC, Symbol.keyFor(kB));
+let t = 0; for (let i = 0; i < 10000; i++) { const u = box(i); t += u.get() + (u[x.key] === undefined ? 1 : 0); } console.log(t);
+//// one-symbol-names-fields-of-unrelated-classes.ts
+// Three classes that have nothing else in common have a field under the same symbol, at different places among their fields. One function reads all of them.
+export {};
+
+const kSize = Symbol("size");
+class Front {
+  [kSize]: number;
+  a = 1;
+  b = 2;
+  constructor(size: number) {
+    this[kSize] = size;
+  }
+}
+class Back {
+  a = "a";
+  b = "b";
+  c = "c";
+  [kSize]: number;
+  constructor(size: number) {
+    this[kSize] = size;
+  }
+}
+class Text {
+  [kSize]: string;
+  constructor(size: string) {
+    this[kSize] = size;
+  }
+}
+function sizeOf(object: Front | Back | Text | { [kSize]: boolean }): number | string | boolean {
+  return object[kSize];
+}
+const all = [new Front(1), new Back(2), new Text("three"), { [kSize]: true }, new Front(5)];
+const seen: string[] = [];
+for (let round = 0; round < 300; round++)
+  for (let index = 0; index < all.length; index++) seen[index] = String(sizeOf(all[index]));
+console.log(seen.join());
+//// symbols-without-a-description.ts
+// Symbol() and Symbol(undefined) have no description, Symbol("") has an empty one. Each names a field of its own.
+export {};
+
+const kBare = Symbol();
+const kUndefined = Symbol(undefined);
+const kEmpty = Symbol("");
+class Three {
+  [kBare] = 1;
+  [kUndefined] = 2;
+  [kEmpty] = 3;
+  sum(): number {
+    return this[kBare] * 100 + this[kUndefined] * 10 + this[kEmpty];
+  }
+}
+let total = 0;
+const three = new Three();
+for (let round = 0; round < 300; round++) total += three.sum();
+console.log(
+  total,
+  Object.getOwnPropertySymbols(three)
+    .map(key => typeof key.description + String(key))
+    .join(),
+);
+//// the-symbol-comes-through-a-namespace/keys.ts
+export const kMass = Symbol("mass");
+export const kLabel = Symbol("label");
+//// the-symbol-comes-through-a-namespace/main.ts
+// The symbol is read from the namespace object of its module at each use, and once into a constant that is declared with its type.
+import * as keys from "./keys.ts";
+
+const kMass: typeof keys.kMass = keys.kMass;
+class Body {
+  [keys.kMass]: number;
+  [keys.kLabel]: string;
+  constructor(mass: number, label: string) {
+    this[keys.kMass] = mass;
+    this[keys.kLabel] = label;
+  }
+}
+const body = new Body(3, "ccc");
+let total = 0;
+for (let round = 0; round < 300; round++) total += body[kMass] + body[keys.kMass] * 10 + body[keys.kLabel].length * 100;
+const { kLabel } = keys;
+console.log(total, body[kLabel], kMass === keys.kMass, Reflect.ownKeys(body).map(String).join());
+//// the-symbol-is-a-value-too.ts
+// The symbol that names a field is also stored in fields, compared, put into collections and handed around. It stays the same symbol.
+export {};
+
+const kSelf = Symbol("self");
+class Holder {
+  [kSelf]: symbol;
+  constructor() {
+    this[kSelf] = kSelf;
+  }
+}
+const holder = new Holder();
+const byKey = new Map<symbol, string>([[kSelf, "found"]]);
+const wrapped = Object(kSelf);
+console.log(
+  (holder as any)[holder[kSelf]] === kSelf,
+  byKey.get(holder[kSelf]),
+  (holder as any)[wrapped] === kSelf,
+  typeof wrapped,
+  wrapped == kSelf,
+  kSelf.description,
+  kSelf.toString(),
+  [kSelf].includes(holder[kSelf]),
+);
+try {
+  console.log("" + (holder[kSelf] as any));
+} catch (error) {
+  console.log((error as Error).name);
+}
+//// the-symbol-is-exported-again/keys.ts
+export const kMass = Symbol("mass");
+//// the-symbol-is-exported-again/main.ts
+// The symbol reaches this module three ways: through `export { .. } from`, through `export *` and under another name. All three name one field.
+import { kMass } from "./named.ts";
+import { kMass as kStar } from "./star.ts";
+import { kWeight } from "./renamed.ts";
+
+class Body {
+  [kMass]: number;
+  constructor(mass: number) {
+    this[kMass] = mass;
+  }
+}
+const body = new Body(4);
+let total = 0;
+for (let round = 0; round < 300; round++) total += body[kMass] + body[kStar] * 10 + body[kWeight] * 100;
+body[kWeight] = 5;
+console.log(total, body[kMass], kMass === kStar, kStar === kWeight, Reflect.ownKeys(body).length);
+//// the-symbol-is-exported-again/named.ts
+export { kMass } from "./keys.ts";
+//// the-symbol-is-exported-again/renamed.ts
+export { kMass as kWeight } from "./keys.ts";
+//// the-symbol-is-exported-again/star.ts
+export * from "./keys.ts";
+//// the-symbol-is-imported/keys.ts
+export const kMass = Symbol("mass");
+export const kLabel = Symbol("label");
+export function describe(object: { [kMass]: number; [kLabel]: string }): string {
+  return object[kLabel] + object[kMass];
+}
+//// the-symbol-is-imported/main.ts
+// The symbols are made in another module and imported by name. A class here has fields under them, and the other module reads those fields.
+import { kLabel, kMass, describe } from "./keys.ts";
+
+class Body {
+  [kMass]: number;
+  [kLabel]: string;
+  constructor(mass: number, label: string) {
+    this[kMass] = mass;
+    this[kLabel] = label;
+  }
+}
+const bodies = [new Body(1, "a"), new Body(2, "bb")];
+let total = 0;
+for (let round = 0; round < 300; round++) for (const body of bodies) total += body[kMass] + body[kLabel].length;
+console.log(total, bodies.map(describe).join(), Object.getOwnPropertySymbols(bodies[0]).map(String).join());
+//// the-symbol-is-required/keys.cjs
+const kMass = Symbol("mass");
+module.exports = {
+  kMass,
+  kLabel: Symbol("label"),
+  read(object) {
+    return object[kMass] * 10;
+  },
+};
+//// the-symbol-is-required/main.ts
+// The symbols hang on the exports object of a CommonJS module and are taken out of it by destructuring.
+const { kMass, kLabel, read } = require("./keys.cjs");
+
+class Body {
+  [key: symbol]: unknown;
+  constructor(mass: number, label: string) {
+    this[kMass] = mass;
+    this[kLabel] = label;
+  }
+}
+const bodies = [new Body(1, "a"), new Body(2, "bb")];
+let total = 0;
+for (let round = 0; round < 300; round++) for (const body of bodies) total += (body[kMass] as number) + read(body);
+console.log(
+  total,
+  bodies[1][kLabel],
+  Reflect.ownKeys(bodies[0]).map(String).join(),
+  require("./keys.cjs").kMass === kMass,
+);
+//// the-symbol-is-used-before-it-is-made.ts
+// A function that names the symbol runs before the declaration has run: a ReferenceError, and nothing is stored.
+export {};
+
+class Body {
+  declare [kMass]: number;
+  fill(mass: number): this {
+    this[kMass] = mass;
+    return this;
+  }
+}
+const early = new Body();
+try {
+  early.fill(1);
+  console.log("stored");
+} catch (error) {
+  console.log((error as Error).name, Reflect.ownKeys(early).length);
+}
+const kMass = Symbol("mass");
+console.log(early.fill(2)[kMass], Reflect.ownKeys(early).length);
+//// the-variable-of-the-symbol-is-stored-again/keys.ts
+export let kMass = Symbol("mass");
+export function replace(): void {
+  kMass = Symbol("mass");
+}
+//// the-variable-of-the-symbol-is-stored-again/main.ts
+// The other module exports the symbol in a `let` and replaces it. What was stored under the first symbol is not found under the second.
+import { kMass, replace } from "./keys.ts";
+
+const holder: Record<symbol, number> = {};
+function store(value: number): void {
+  holder[kMass] = value;
+}
+function read(): number {
+  return holder[kMass];
+}
+store(1);
+const before = kMass;
+console.log(read());
+replace();
+console.log(read(), before === kMass);
+store(2);
+console.log(read(), holder[before], Object.getOwnPropertySymbols(holder).length);
+//// two-symbols-with-one-description.ts
+// Two calls of Symbol with the same text make two symbols, and a class has a field under each.
+export {};
+
+const kFirst = Symbol("same");
+const kSecond = Symbol("same");
+class Pair {
+  [kSecond]: number;
+  [kFirst]: number;
+  constructor(first: number, second: number) {
+    this[kFirst] = first;
+    this[kSecond] = second;
+  }
+  difference(): number {
+    return this[kFirst] - this[kSecond];
+  }
+}
+let total = 0;
+const pairs = [new Pair(10, 1), new Pair(20, 2)];
+for (let round = 0; round < 300; round++) for (const pair of pairs) total += pair.difference();
+const symbols = Object.getOwnPropertySymbols(pairs[0]);
+console.log(
+  total,
+  symbols.length,
+  symbols[0] === kSecond,
+  symbols[1] === kFirst,
+  (kFirst as symbol) === kSecond,
+  String(kFirst) === String(kSecond),
+);
+pairs[0][kFirst] = 0;
+console.log(pairs[0][kFirst], pairs[0][kSecond], pairs[0].difference(), (pairs[0] as any)[Symbol("same")]);

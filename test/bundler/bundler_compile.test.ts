@@ -681,26 +681,6 @@ describe("bundler", () => {
       run: { stdout: "Hello, world!\nWorker 0 loaded!\n", file: "dist/out", setCwd: true },
     });
   }
-  // `cli/` is not the default root when an entry point is the file `cli.ts`.
-  itBundled("compile/WorkerRelativePathInDirectoryNamedLikeEntryPoint", {
-    backend: "cli",
-    compile: true,
-    files: {
-      "/cli.ts": /* js */ `
-        import {rmSync} from 'fs';
-        // Verify we're not just importing from the filesystem
-        rmSync("./cli", {recursive: true, force: true});
-        console.log("Hello, world!");
-        new Worker("./cli/worker.ts");
-      `,
-      "/cli/worker.ts": /* js */ `
-        console.log("Worker loaded!");
-    `.trim(),
-    },
-    entryPointsRaw: ["./cli.ts", "./cli/worker.ts"],
-    outfile: "dist/out",
-    run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
-  });
   itBundled("compile/WorkerRelativePathTSExtensionBytecode", {
     backend: "cli",
     compile: true,

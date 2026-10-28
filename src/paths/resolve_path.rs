@@ -185,11 +185,21 @@ fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
     // /app/
     // It should return:
     // /app/public/
-    // Only when every longer string has a path separator there: /app/publicx/a.js keeps /app/.
-    let mut longer = input.iter().filter(|str| str.len() > index);
-    if let Some(first) = longer.next() {
-        if is_path_separator(first[index]) && longer.all(|str| is_path_separator(str[index])) {
-            return Some(&first[0..index + 1]);
+    // To detect /app/public is actually a folder, we do one more loop through the strings
+    // and say, "do one of you have a path separator after what we thought was the end?"
+    // Up to 8 strings, one yes is enough, as in every release. More than 8 all have to say
+    // yes: /app/publicx/a.js keeps /app/.
+    let is_folder = input.len() <= 8
+        || input
+            .iter()
+            .all(|str| str.len() <= index || is_path_separator(str[index]));
+    if is_folder {
+        for str in input {
+            if str.len() > index {
+                if is_path_separator(str[index]) {
+                    return Some(&str[0..index + 1]);
+                }
+            }
         }
     }
 
@@ -2800,23 +2810,57 @@ mod tests {
     }
 
     #[test]
-    fn common_path_is_an_ancestor_of_every_input() {
+    fn common_path_of_more_than_8_inputs_is_an_ancestor_of_every_input() {
+        let files = pages("./pub/", 8);
+        let files = files.iter().map(String::as_str);
         for sibling in ["./pubx/b.ts", "./pub.ts"] {
-            for count in [1, 8] {
-                let files = pages("./pub/", count);
-                let files = files.iter().map(String::as_str);
+            assert_eq!(
+                common_path(files.clone().chain([sibling])),
+                Some("./"),
+                "8 files, then {sibling}"
+            );
+            assert_eq!(
+                common_path([sibling].into_iter().chain(files.clone())),
+                Some("./"),
+                "{sibling}, then 8 files"
+            );
+        }
+        let files = pages("/app/pub/", 8);
+        let files = files.iter().map(String::as_str);
+        assert_eq!(
+            common_path(
+                ["/app/pub"]
+                    .into_iter()
+                    .chain(files)
+                    .chain(["/app/pubx/b.ts"])
+            ),
+            Some("/app/"),
+            "the directory, 8 files, then a sibling"
+        );
+    }
+
+    #[test]
+    fn common_path_of_up_to_8_inputs_is_the_folder_of_one_of_them() {
+        for count in [1, 7] {
+            let files = pages("./pub/", count);
+            let files = files.iter().map(String::as_str);
+            for sibling in ["./pubx/b.ts", "./pub.ts"] {
                 assert_eq!(
                     common_path(files.clone().chain([sibling])),
-                    Some("./"),
+                    Some("./pub/"),
                     "{count} files, then {sibling}"
                 );
                 assert_eq!(
-                    common_path([sibling].into_iter().chain(files)),
-                    Some("./"),
+                    common_path([sibling].into_iter().chain(files.clone())),
+                    Some("./pub/"),
                     "{sibling}, then {count} files"
                 );
             }
         }
+        assert_eq!(
+            common_path(["/app/pub", "/app/pub/page0.ts", "/app/pubx/b.ts"]),
+            Some("/app/pub/")
+        );
     }
 
     #[test]
@@ -2830,19 +2874,9 @@ mod tests {
                 "{count} files, then the directory"
             );
             assert_eq!(
-                common_path(["/app/pages"].into_iter().chain(files.clone())),
+                common_path(["/app/pages"].into_iter().chain(files)),
                 Some("/app/pages/"),
                 "the directory, then {count} files"
-            );
-            assert_eq!(
-                common_path(
-                    ["/app/pages"]
-                        .into_iter()
-                        .chain(files)
-                        .chain(["/app/pagesx/a.ts"])
-                ),
-                Some("/app/"),
-                "the directory, {count} files, then a sibling"
             );
         }
         // `Loose` takes `\` as a separator too. The answer ends as its first input does.

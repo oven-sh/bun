@@ -95,23 +95,35 @@ describe("bundler", () => {
       });
     }
   }
-  // The default root comes from the entry points as they are typed. `pub/` is not the root when
-  // an entry point is in `pubx/` or is the file `pub.js`. An entry point typed as `./pub` reads
-  // as the directory `pub/`, also when it is the file `pub.js`.
+  // The default root comes from the entry points as they are typed. An entry point typed as
+  // `./pub` reads as the directory `pub/`, also when it is the file `pub.js`. An entry point
+  // beside `pub/` (in `pubx/`, or the file `pub.js`) keeps more than 8 entry points at the
+  // working directory. Up to 8 still take `pub/` as the root, as in every release.
+  const fromPub = (names: string[]) => names.map(name => name.slice("pub/".length));
   const rootShapes: { id: string; file: string; typed: string; written: (inPub: string[]) => string[] }[] = [
-    { id: "SiblingDirectory", file: "pubx/b.js", typed: "./pubx/b.js", written: inPub => [...inPub, "pubx/b.js"] },
-    { id: "SiblingFile", file: "pub.js", typed: "./pub.js", written: inPub => [...inPub, "pub.js"] },
+    {
+      id: "SiblingDirectory",
+      file: "pubx/b.js",
+      typed: "./pubx/b.js",
+      written: inPub => (inPub.length < 8 ? [...fromPub(inPub), "_.._/pubx/b.js"] : [...inPub, "pubx/b.js"]),
+    },
+    {
+      id: "SiblingFile",
+      file: "pub.js",
+      typed: "./pub.js",
+      written: inPub => (inPub.length < 8 ? [...fromPub(inPub), "_.._/pub.js"] : [...inPub, "pub.js"]),
+    },
     {
       id: "DirectoryEntryPoint",
       file: "pub/index.js",
       typed: "./pub",
-      written: inPub => [...inPub, "pub/index.js"].map(name => name.slice("pub/".length)),
+      written: inPub => fromPub([...inPub, "pub/index.js"]),
     },
     {
       id: "FileEntryPointWithoutExtension",
       file: "pub.js",
       typed: "./pub",
-      written: inPub => [...inPub.map(name => name.slice("pub/".length)), "_.._/pub.js"],
+      written: inPub => [...fromPub(inPub), "_.._/pub.js"],
     },
   ];
   for (const { id, file, typed, written } of rootShapes) {

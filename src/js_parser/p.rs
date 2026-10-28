@@ -525,7 +525,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) delete_target: js_ast::ExprData,
     pub(crate) loop_body: js_ast::StmtData,
     pub(crate) module_scope: js_ast::StoreRef<js_ast::Scope>,
-    pub(crate) module_scope_directive_loc: bun_ast::Loc,
     pub(crate) is_control_flow_dead: bool,
     /// Visiting an export that `replace_exports` deletes. Its uses are not counted (the code is
     /// dead), but recorded in `used_by_deleted_exports`.
@@ -7452,7 +7451,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if let Some(mut cf) = constructor_function {
                         // `body.stmts` is an arena-owned `StoreSlice<Stmt>`.
                         let old_stmts: &[Stmt] = cf.func.body.stmts.slice();
-                        // statements coming from class body inserted after super call or beginning of constructor.
+                        // statements coming from class body inserted after super call or beginning of constructor,
+                        // where a directive prologue still comes first.
                         let mut super_index: Option<usize> = None;
                         for (index, item) in old_stmts.iter().enumerate() {
                             if !matches!(item.data, js_ast::StmtData::SExpr(se) if matches!(se.value.data, js_ast::ExprData::ECall(c) if matches!(c.target.data, js_ast::ExprData::ESuper(_))))
@@ -7463,7 +7463,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             break;
                         }
 
-                        let i = super_index.map(|j| j + 1).unwrap_or(0);
+                        let i = super_index
+                            .map(|j| j + 1)
+                            .unwrap_or_else(|| crate::visit::leading_directive_count(old_stmts));
                         let mut constructor_stmts = BumpVec::<Stmt>::with_capacity_in(
                             old_stmts.len() + instance_members.len(),
                             self.arena,
@@ -8658,15 +8660,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) {
         debug_assert!(self.options.features.react_fast_refresh);
 
-        // We need to prepend `_s();` as a statement.
+        // We need to prepend `_s();` as a statement, after the directive prologue.
+        let at = crate::visit::leading_directive_count(stmts.as_slice());
         if stmts.len() == stmts.capacity() {
             // If the ArrayList does not have enough capacity, it is
             // re-allocated entirely to fit. Only one slot of new capacity
             // is used since we know this statement list is not going to be
             // appended to afterwards; This function is a post-visit handler.
             let mut new_stmts = BumpVec::with_capacity_in(stmts.len() + 1, self.arena);
+            new_stmts.extend_from_slice(&stmts[..at]);
             new_stmts.push(Stmt::empty()); // placeholder, overwritten below
-            new_stmts.extend_from_slice(stmts.as_slice());
+            new_stmts.extend_from_slice(&stmts[at..]);
             *stmts = new_stmts;
         } else {
             // The array has enough capacity, so there is no possibility of
@@ -8674,7 +8678,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // by one, and increase the length using `addOneAssumeCapacity`
             stmts.push(Stmt::empty());
             let len = stmts.len();
-            stmts.copy_within(0..len - 1, 1);
+            stmts.copy_within(at..len - 1, at + 1);
         }
 
         let loc = bun_ast::Loc::EMPTY;
@@ -8692,7 +8696,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         );
-        stmts[0] = prepended_stmt;
+        stmts[at] = prepended_stmt;
     }
 
     pub(crate) fn get_react_refresh_hook_signal_decl(&mut self, signal_cb_ref: Ref) -> Stmt {
@@ -8800,6 +8804,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         exports_kind: js_ast::ExportsKind,
         wrap_mode: WrapMode,
         hashbang: &'a [u8],
+        // The module's directive prologue, which `_parse` took off the top-level statements.
+        mut directives: &'a [Stmt],
     ) -> Result<Box<js_ast::Ast<'a>>, crate::Error> {
         use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
         use crate::scan::scan_imports::ImportScanner;
@@ -9126,32 +9132,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
             }
 
-            let mut total_stmts_count: usize = 0;
+            // The prologue of the file is the prologue of the wrapper function.
+            let mut total_stmts_count: usize = directives.len();
             for part in parts.iter() {
                 total_stmts_count += part.stmts.len();
             }
-
-            let preserve_strict_mode = self.module_scope().strict_mode
-                == js_ast::StrictModeKind::ExplicitStrictMode
-                && !(parts.len() > 0
-                    && parts[0].stmts.len() > 0
-                    && matches!(parts[0].stmts[0].data, js_ast::StmtData::SDirective(_)));
-
-            total_stmts_count += usize::from(preserve_strict_mode);
 
             // Stmt is not Default; fill with `Stmt::empty()`.
             let stmts_to_copy = arena.alloc_slice_fill_with(total_stmts_count, |_| Stmt::empty());
             {
                 let mut remaining_stmts = &mut stmts_to_copy[..];
-                if preserve_strict_mode {
-                    remaining_stmts[0] = self.s(
-                        S::Directive {
-                            value: b"use strict".into(),
-                        },
-                        self.module_scope_directive_loc,
-                    );
-                    remaining_stmts = &mut remaining_stmts[1..];
-                }
+                remaining_stmts[..directives.len()].copy_from_slice(directives);
+                remaining_stmts = &mut remaining_stmts[directives.len()..];
+                directives = &[];
 
                 for part in parts.iter() {
                     let src = part.stmts.slice();
@@ -9197,7 +9190,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.options.repl_mode {
             // `apply_repl_transforms` is declared in ast::repl_transforms as an
             // `impl P` mixin.
-            self.apply_repl_transforms(parts, arena)?;
+            if self.apply_repl_transforms(parts, arena, directives)? {
+                directives = &[];
+            }
         }
 
         let mut top_level_symbols_to_parts = bun_ast::ast_result::TopLevelSymbolToParts::default();
@@ -9293,7 +9288,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let char_freq = self.compute_character_frequency().map(bun_alloc::ast_box);
         let scope_uses = self.take_scope_uses();
 
-        let module_scope_strict = self.module_scope().strict_mode;
         // Scope is not `Clone` (Vec/HashMap members), so move it out and leave
         // a default in `*self.module_scope`. `to_ast` is terminal — the parser
         // does not touch `module_scope` afterwards.
@@ -9360,11 +9354,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             top_level_symbols_to_parts,
             char_freq,
             scope_uses,
-            directive: if module_scope_strict == js_ast::StrictModeKind::ExplicitStrictMode {
-                Some(bun_ast::StoreStr::new(b"use strict"))
-            } else {
-                None
-            },
+            directives: bun_ast::StoreSlice::new(directives),
             nested_scope_slot_counts,
 
             require_ref,
@@ -9776,7 +9766,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             is_import_item: Default::default(),
             export_default_alias_of_import: Ref::NONE,
             scope_order_to_visit: &[],
-            module_scope_directive_loc: bun_ast::Loc::default(),
             is_control_flow_dead: false,
             in_deleted_export: false,
             used_by_deleted_exports: Default::default(),

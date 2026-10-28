@@ -2154,6 +2154,17 @@ pub(crate) mod __gated_printer {
         }
 
         pub(crate) fn print_block_body(&mut self, stmts: &[Stmt]) {
+            // A transform that adds a statement to a body puts it after the directive prologue.
+            debug_assert!(
+                !stmts
+                    .iter()
+                    .skip_while(|stmt| matches!(
+                        stmt.data,
+                        StmtData::SDirective(_) | StmtData::SComment(_)
+                    ))
+                    .any(|stmt| matches!(stmt.data, StmtData::SDirective(_))),
+                "a directive is printed after another statement"
+            );
             for stmt in stmts {
                 self.print_semicolon_if_needed();
                 self.print_stmt(*stmt).expect("unreachable");
@@ -4070,8 +4081,13 @@ pub(crate) mod __gated_printer {
                     let e = e.flattened(self.bump);
                     self.add_source_mapping(expr.loc);
 
-                    // If this was originally a template literal, print it as one as long as we're not minifying
-                    if e.prefer_template && !self.options.minify_syntax {
+                    // If this was originally a template literal, print it as one as long as we're not minifying.
+                    // One that is a whole statement stays a template literal: as a string it could be a directive.
+                    if e.prefer_template
+                        && (!self.options.minify_syntax
+                            || (level == Level::Lowest
+                                && flags.contains(ExprFlag::ExprResultIsUnused)))
+                    {
                         self.print(b"`");
                         self.print_string_characters_e_string(&e, b'`');
                         self.print(b"`");
@@ -7866,6 +7882,12 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         printer.module_info = printer.options.module_info.take();
     }
     printer.binary_expression_stack = Vec::new();
+
+    // The directive prologue comes ahead of every statement the printer adds.
+    for stmt in tree.directives.slice() {
+        printer.print_stmt(*stmt)?;
+        printer.print_semicolon_if_needed();
+    }
 
     if !printer.options.bundling
         && tree.uses_require_ref

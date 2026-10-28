@@ -924,6 +924,85 @@ describe("bundler", () => {
     },
   });
 
+  // A preserved legal comment ahead of an opt-out directive does not end the
+  // directive prologue, at the module level or inside a function body.
+  itBundled("react-compiler/OptOutDirectiveAfterLegalComment", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        /*! @license MIT */
+        "use no memo";
+        export function Hello({ name }) {
+          return <div>Hello {name}</div>;
+        }
+      `,
+      "/fn.jsx": /* jsx */ `
+        export function Hello({ name }) {
+          /*! @license MIT */
+          "use no memo";
+          return <div>Hello {name}</div>;
+        }
+      `,
+    },
+    entryPoints: ["/entry.jsx", "/fn.jsx"],
+    outdir: "/out",
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      for (const file of ["/out/entry.js", "/out/fn.js"]) {
+        const out = api.readFile(file);
+        expect(out).toContain("@license MIT");
+        expect(out).not.toContain("react/compiler-runtime");
+        expect(out).not.toMatch(/\b_c\(\d+\)/);
+      }
+    },
+  });
+
+  // A directive is not a statement in upstream's tree. An arrow whose body holds
+  // only a directive is still a default value that the compiler can reorder.
+  itBundled("react-compiler/DefaultValueArrowWithADirectiveMinifySyntax", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function WithDirective(props) {
+          const { cb = () => { "worklet"; } } = props;
+          return <div onClick={cb}>{props.a}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    minifySyntax: true,
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+      expect(out).toContain('"worklet"');
+    },
+  });
+
+  // The memo cache is declared after the directives of the component. A
+  // directive that follows another statement is no directive.
+  itBundled("react-compiler/DirectivesStayAheadOfTheMemoCache", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Component(props) {
+          "use memo";
+          "use strict";
+          const x = [props.a];
+          return <div>{x}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(
+        /function Component\(props\) \{\n  "use memo";\n  "use strict";\n  let \$ = _c\(\d+\);/,
+      );
+    },
+  });
+
   // What is caught is declared before the `try`, so it is a candidate for a dependency of a scope around the `try` or in it.
   // There its name is not bound. It is only left out because it is not reactive.
   itBundled("react-compiler/WhatIsCaughtIsNoDependencyOutsideTheHandler", {

@@ -1456,7 +1456,6 @@ pub mod parse_worker {
         fs_cache: &mut bun_resolver::cache::Fs,
         bump: &Bump,
         file_path: &mut Fs::Path,
-        _loader: Loader,
     ) -> core::result::Result<CacheEntry, AnyError> {
         match &task.contents_or_fd {
             ContentsOrFd::Fd { dir, file } => 'brk: {
@@ -1603,12 +1602,12 @@ pub mod parse_worker {
     // getCodeForParseTask
     // ───────────────────────────────────────────────────────────────────────────
 
-    pub(crate) fn get_code_for_parse_task<'b>(
+    pub(crate) fn get_code_for_parse_task(
         task: &mut ParseTask<'static>,
         log: &mut Log,
         fs_cache: &mut bun_resolver::cache::Fs,
         bump: &Bump,
-        file_path: &mut Fs::Path<'b>,
+        file_path: &mut Fs::Path,
         loader: &mut Loader,
         from_plugin: &mut bool,
     ) -> core::result::Result<CacheEntry, AnyError> {
@@ -1632,9 +1631,7 @@ pub mod parse_worker {
         };
 
         if !might_have_on_parse_plugins {
-            return get_code_for_parse_task_without_plugins(
-                task, log, fs_cache, bump, file_path, *loader,
-            );
+            return get_code_for_parse_task_without_plugins(task, log, fs_cache, bump, file_path);
         }
 
         let should_continue_running = core::cell::Cell::new(1i32);
@@ -1946,7 +1943,6 @@ pub mod parse_worker {
                 this.fs_cache,
                 this.bump,
                 this.file_path,
-                result.loader,
             ) {
                 Ok(e) => e,
                 Err(e) => {
@@ -2211,7 +2207,6 @@ pub mod parse_worker {
                 self.fs_cache,
                 self.bump,
                 self.file_path,
-                *self.loader,
             )
         }
     }

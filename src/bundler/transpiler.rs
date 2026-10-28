@@ -132,10 +132,9 @@ impl<'a> Transpiler<'a> {
     }
 
     /// Mutable reborrow of the `Fs::FileSystem` singleton. The returned
-    /// lifetime is **decoupled** from `&self` so callers can use it alongside
-    /// other borrows of the transpiler. Callers must not hold the result across
-    /// any other `fs()`/`fs_mut()` reborrow or across a resolver call that
-    /// itself dereferences the shared singleton mutably.
+    /// lifetime is **decoupled** from `&self`. Callers must not hold the
+    /// result across any other `fs()`/`fs_mut()` reborrow or across a resolver
+    /// call that itself dereferences the shared singleton mutably.
     #[inline]
     pub fn fs_mut<'r>(&self) -> &'r mut Fs::FileSystem {
         // SAFETY: `self.fs` is the non-null process-lifetime singleton (see

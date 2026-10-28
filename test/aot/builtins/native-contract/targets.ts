@@ -34,7 +34,7 @@ const neverCalledNatives: ReadonlyMap<RegExp, string> = new Map([
   [/^%ModuleRequire%/, "it loads whatever its operand names"],
   [/crash_handler_jsc|^%CrashHandlerJsc|restartProcess|jsFunctionReportUncaughtException|setSyntheticAllocationLimitForTesting/i, "it ends the process or makes it fail"],
   [/BunDebugger\.cpp|console\.takeHeapSnapshot|jsFunction_(start|stop|collect)\w*(Profiler|Coverage)/, "it opens the inspector, waits for it or profiles the process"],
-  [/spawnThreadsForTesting|createNodeWorker|jsFunctionPostMessage|^Bun\.WebView|^Bun\.Terminal$/, "it starts a thread, a process or a terminal"],
+  [/spawnThreadsForTesting|startContextLookupsForTesting|createNodeWorker|jsFunctionPostMessage|^Bun\.WebView|^Bun\.Terminal$/, "it starts a thread, a process or a terminal"],
   [/ffi\.bind\.ts:cc$|\.FfiBindTsCc$|^%FFI%|napi_body/i, "it compiles or loads machine code"],
   [/^Bun\.FFI\.(CString|closeCallback|toArrayBuffer|toBuffer)$/, "it takes a number for an address, and reads or frees what is there"],
   [/upgrade_?command|install_?binding|trim_testing|patch_testing\.?bind\.?ts:?apply|npmManifestTestHelpers|readTarball|loadNpmrc/i, "it works on files that its operands name outside the folder of the test"],

@@ -2065,28 +2065,30 @@ test.each(["--isolate", "--parallel=2"])(
   async flag => {
     // A swap leaves the identifier unregistered for longest when it sweeps a dead global. Not every swap does.
     const swaps = isDebug ? 8 : 64;
-    const files: Record<string, string> = {
-      "a-start.test.js": `
-        import { test } from "bun:test";
-        import { startContextLookups } from "bun:internal-for-testing";
-        test("start", () => startContextLookups());
-      `,
-      "z-stop.test.js": `
-        import { test } from "bun:test";
-        import { stopContextLookups } from "bun:internal-for-testing";
-        test("stop", () => console.log("CONTEXT_LOOKUPS=" + JSON.stringify(stopContextLookups() ?? null)));
-      `,
-    };
-    for (let i = 1; i < swaps; i++) {
-      files[`m-${i}.test.js`] = `import { test } from "bun:test"; test("swap", () => {});`;
-    }
-    using dir = tempDir("isolate-context-lookups", files);
+    // The runner chooses the order of the files. The first one that runs starts the lookups, and the
+    // last one stops them. Only those two load bun:internal-for-testing: a debug build takes most
+    // of a second for it.
+    const file = `
+      import { test } from "bun:test";
+      test("swap", async () => {
+        const ran = Bun.file(import.meta.dir + "/ran");
+        const filesBefore = Number(await ran.text());
+        await Bun.write(ran, String(filesBefore + 1));
+        if (filesBefore !== 0 && filesBefore !== ${swaps}) return;
+        const { startContextLookups, stopContextLookups } = await import("bun:internal-for-testing");
+        if (filesBefore === 0) startContextLookups();
+        else console.log("CONTEXT_LOOKUPS=" + JSON.stringify(stopContextLookups() ?? null));
+      });
+    `;
+    const names = Array.from({ length: swaps + 1 }, (_, i) => `swap-${i}.test.js`);
+    using dir = tempDir("isolate-context-lookups", {
+      ran: "0",
+      ...Object.fromEntries(names.map(name => [name, file])),
+    });
     const { stdout, stderr, exitCode } = await runTests(
       String(dir),
       [flag],
-      Object.keys(files)
-        .sort()
-        .map(name => "./" + name),
+      names.map(name => "./" + name),
       // One --parallel worker takes every file.
       { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
     );

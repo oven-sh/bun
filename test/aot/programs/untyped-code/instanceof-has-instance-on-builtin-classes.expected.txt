@@ -1,0 +1,22 @@
+before: none,Map,Set,Int8Array,none,none
+Object.defineProperty(Map, Symbol.hasInstance, value): throws TypeError
+Object.defineProperty(Map, Symbol.hasInstance, getter): throws TypeError
+Reflect.defineProperty(Map, Symbol.hasInstance, value): false
+Reflect.set(Map, Symbol.hasInstance, function): false
+Object.hasOwn(Map, Symbol.hasInstance): false
+Object.defineProperty(Set, Symbol.hasInstance, value): throws TypeError
+Object.defineProperty(Set, Symbol.hasInstance, getter): throws TypeError
+Reflect.defineProperty(Set, Symbol.hasInstance, value): false
+Reflect.set(Set, Symbol.hasInstance, function): false
+Object.hasOwn(Set, Symbol.hasInstance): false
+Object.defineProperty(Int8Array, Symbol.hasInstance, value): throws TypeError
+Object.defineProperty(Int8Array, Symbol.hasInstance, getter): throws TypeError
+Reflect.defineProperty(Int8Array, Symbol.hasInstance, value): false
+Reflect.set(Int8Array, Symbol.hasInstance, function): false
+Object.hasOwn(Int8Array, Symbol.hasInstance): false
+after: none,Map,Set,Int8Array,none,none
+calls: 0
+Object.defineProperty(OwnMap, Symbol.hasInstance, value): true
+({}) instanceof OwnMap: true
+kind(new OwnMap): Map
+calls: 1

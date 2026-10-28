@@ -1,0 +1,17 @@
+dir stored is refused
+dirname added to is refused
+under another name is refused
+handed to a function is refused
+dir stored, joined is refused
+dir stored, and a computed name is refused
+dir stored, __dirname in the specifier here
+dir deleted and defined is refused
+url stored, createRequire is refused
+__filename stored, createRequire is refused
+__filename stored by eval, createRequire is refused
+dir stored, the value of __dirname the folder
+path stored, the value of __filename the file
+only read: members here
+only read: a pattern here
+only read: createRequire here
+__filename untouched, createRequire here

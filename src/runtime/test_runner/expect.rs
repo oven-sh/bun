@@ -6,7 +6,7 @@ use bun_core::Output;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsError, JsResult,
+    JSGlobalObject, JSValue, JsError, JsResult,
     ConsoleObject, JSFunction, JSPropertyIterator, JSString,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
@@ -22,8 +22,9 @@ use super::jest::Jest;
 use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
 use crate::expect_throw as throw;
 use crate::generated_bindgen::expect::{
-    js_ExpectAny, js_ExpectArrayContaining, js_ExpectCloseTo, js_ExpectCustomAsymmetricMatcher,
-    js_ExpectObjectContaining, js_ExpectStringContaining, js_ExpectStringMatching,
+    Bun__Expect__applyCustomMatcher, js_ExpectAny, js_ExpectArrayContaining, js_ExpectCloseTo,
+    js_ExpectCustomAsymmetricMatcher, js_ExpectObjectContaining, js_ExpectStringContaining,
+    js_ExpectStringMatching,
 };
 
 use bun_jsc::js_error_to_write_error;
@@ -1303,19 +1304,6 @@ impl Expect {
                 // Even though they point to the same native functions for all matchers,
                 // multiple instances are created because each instance will hold the matcher_fn as a property
 
-                // `to_js_host_fn` returns an opaque closure, so emit an
-                // explicit C-ABI shim and pass its address.
-                bun_jsc::jsc_host_abi! {
-                    unsafe fn __apply_custom_matcher_shim(
-                        g: *mut bun_jsc::JSGlobalObject,
-                        f: *mut bun_jsc::CallFrame,
-                    ) -> JSValue {
-                        // SAFETY: JSC guarantees both pointers are live for the call.
-                        let (g, f) = unsafe { (&*g, &*f) };
-                        bun_jsc::to_js_host_fn_result(g, Expect::apply_custom_matcher(g, f))
-                    }
-                }
-                let host_fn_ptr: bun_jsc::JSHostFn = __apply_custom_matcher_shim;
                 // SAFETY: FFI call with valid global, &bun_core::String, host-fn ptr, and JSValue.
                 // C++ takes the function pointer **by value** (`NativeFunctionPtr`), not a
                 // pointer-to-function-pointer — `JSHostFn` already is the
@@ -1324,7 +1312,7 @@ impl Expect {
                     Bun__JSWrappingFunction__create(
                         global_this,
                         &matcher_name,
-                        host_fn_ptr,
+                        Bun__Expect__applyCustomMatcher,
                         matcher_fn,
                     )
                 };
@@ -1470,13 +1458,19 @@ impl Expect {
     }
 
     /// Function that is run for either `expect.myMatcher()` call or `expect().myMatcher` call,
-    /// and we can known which case it is based on if the `callFrame.this()` value is an instance of Expect
-    pub(crate) fn apply_custom_matcher(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    /// and we can known which case it is based on if the `this` value is an instance of Expect
+    pub(crate) fn apply_custom_matcher(
+        cx: &mut JsScope<'_>,
+        this_value: JsLocal<'_>,
+        callee: JsLocal<'_>,
+        args: &[JsLocal<'_>],
+    ) -> JsResult<JSValue> {
+        let global_this = cx.global();
         // SAFETY: bun_vm() returns the live VM pointer for this global.
         let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
 
         // retrieve the user-provided matcher function (matcher_fn)
-        let func: JSValue = call_frame.callee();
+        let func: JSValue = callee.to_js();
         let matcher_fn: JSValue = get_custom_matcher_fn(func, global_this).unwrap_or(JSValue::UNDEFINED);
         if !matcher_fn.js_type().is_function() {
             return Err(global_this.throw2(
@@ -1487,10 +1481,16 @@ impl Expect {
         matcher_fn.ensure_still_alive();
 
         // try to retrieve the Expect instance
-        let this_value: JSValue = call_frame.this();
+        let this_value: JSValue = this_value.to_js();
+        let args = JsLocal::to_js_slice(args);
         let Some(expect) = this_value.as_class_ref::<Expect>() else {
             // if no Expect instance, assume it is a static call (`expect.myMatcher()`), so create an ExpectCustomAsymmetricMatcher instance
-            return ExpectCustomAsymmetricMatcher::create(global_this, call_frame, matcher_fn);
+            return ExpectCustomAsymmetricMatcher::create(
+                global_this,
+                this_value,
+                args,
+                matcher_fn,
+            );
         };
 
         // if we got an Expect instance, then it's a non-static call (`expect().myMatcher`),
@@ -1524,7 +1524,6 @@ impl Expect {
         expect.increment_expect_call_counter();
 
         // prepare the args array
-        let args = call_frame.arguments();
         // MarkedArgumentBuffer::new is scoped (closure-borrow); collect into a Vec
         // since execute_custom_matcher takes &[JSValue].
         let mut matcher_args: Vec<JSValue> = Vec::with_capacity(args.len() + 1);
@@ -2218,9 +2217,14 @@ impl ExpectCustomAsymmetricMatcher {
     /// Implements the static call of the custom matcher (`expect.myCustomMatcher(<args>)`),
     /// which creates an asymmetric matcher instance (`ExpectCustomAsymmetricMatcher`).
     /// This will not run the matcher, but just capture the args etc.
-    pub(crate) fn create(global_this: &JSGlobalObject, call_frame: &CallFrame, matcher_fn: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn create(
+        global_this: &JSGlobalObject,
+        this_value: JSValue,
+        args: &[JSValue],
+        matcher_fn: JSValue,
+    ) -> JsResult<JSValue> {
         // try to retrieve the ExpectStatic instance (to get the flags)
-        let flags = if let Some(expect_static) = call_frame.this().as_class_ref::<ExpectStatic>() {
+        let flags = if let Some(expect_static) = this_value.as_class_ref::<ExpectStatic>() {
             expect_static.flags
         } else {
             // if it's not an ExpectStatic instance, assume it was called from the Expect constructor, so use the default flags
@@ -2235,7 +2239,6 @@ impl ExpectCustomAsymmetricMatcher {
         js_ExpectCustomAsymmetricMatcher::matcher_fn_set_cached(instance_jsvalue, global_this, matcher_fn);
 
         // capture the args as a JS array saved in the instance, so the matcher can be executed later on with them
-        let args = call_frame.arguments();
         let array = JSValue::create_array_from_slice(global_this, args)?;
         js_ExpectCustomAsymmetricMatcher::captured_args_set_cached(instance_jsvalue, global_this, array);
         array.ensure_still_alive();
@@ -2844,8 +2847,7 @@ unsafe extern "C" {
     fn Bun__JSWrappingFunction__create(
         global_this: *const JSGlobalObject,
         symbol_name: &bun_core::String,
-        // C++: `Bun::NativeFunctionPtr` — a bare `EncodedJSValue (*)(JSGlobalObject*, CallFrame*)`.
-        // Rust's `JSHostFn` is already the pointer type, so no extra `*const`.
+        // C++: `Bun::NativeFunctionPtr`. Rust's `JSHostFn` is already the pointer type, so no extra `*const`.
         function_pointer: bun_jsc::JSHostFn,
         wrapped_fn: JSValue,
     ) -> JSValue;

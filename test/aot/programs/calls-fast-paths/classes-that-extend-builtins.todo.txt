@@ -1,0 +1,1 @@
+It needs memoryUsageStatistics(), which only the jsc shell has.

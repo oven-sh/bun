@@ -1346,7 +1346,7 @@ impl<C: SourceContext> NewSource<C> {
         Ok(JSValue::UNDEFINED)
     }
 
-    // text/arrayBuffer/blob/bytes/json all share the same body modulo
+    // text/arrayBuffer/blob/bytes/json/jsonSource all share the same body modulo
     // `BufferActionTag`. Collapsed into one helper to avoid 5× drift.
     fn to_buffered_value_from_js(
         &self,
@@ -1374,5 +1374,9 @@ impl<C: SourceContext> NewSource<C> {
 
     pub fn json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         self.to_buffered_value_from_js(cx, streams::BufferActionTag::Json)
+    }
+
+    pub fn json_source(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.to_buffered_value_from_js(cx, streams::BufferActionTag::JsonSource)
     }
 }

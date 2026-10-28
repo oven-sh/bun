@@ -1,0 +1,4 @@
+{
+  "skipInShell": "needs Workers",
+  "alone": "which files the build compiles for a Worker depends on what else the executable holds"
+}

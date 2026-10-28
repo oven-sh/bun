@@ -1,0 +1,154 @@
+# A data property that the host makes at its first read, and that only a write replaces, is read from a word of the instance where the flow analysis proves that nothing writes it.
+# The result has the type that the table gives the property. Without the proof, and for a property that the program stores to, the read stays a read by name
+# RUN: pass ResolveBuiltins
+# RUN(FLOW): pipeline ResolveBuiltins
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    v2 = CallDirect function=f3
+    v3 = CallDirect function=f4
+    v4 = CallDirect function=f5
+    v5 = CallDirect function=f6
+    v6 = CallDirect function=f7
+    v7 = CallDirect function=f8
+    v8 = CallDirect function=f9
+    v9 = CallDirect function=f10
+    v10 = CallDirect function=f11
+    Return
+}
+
+function f1 name="number" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="pid"
+    Return v1
+}
+# Plain Bun lets a program store to the property, so no lock stands for the proof.
+# CHECK-LABEL: function f1 name="number"
+# CHECK: v1: anything = PropGet v0 key="pid"
+# FLOW-LABEL: function f1 name="number"
+# FLOW-NOT: PropGet
+# FLOW: : number = GetBuiltinValue builtin=ProcessPid
+
+function f2 name="string" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="version"
+    Return v1
+}
+# CHECK-LABEL: function f2 name="string"
+# CHECK: v1: anything = PropGet v0 key="version"
+# FLOW-LABEL: function f2 name="string"
+# FLOW-NOT: PropGet
+# FLOW: : string = GetBuiltinValue builtin=ProcessVersion
+
+function f3 name="stringOfAnotherHolder" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    v1 = PropGet v0 key="version"
+    Return v1
+}
+# CHECK-LABEL: function f3 name="stringOfAnotherHolder"
+# CHECK: v1: anything = PropGet v0 key="version"
+# FLOW-LABEL: function f3 name="stringOfAnotherHolder"
+# FLOW-NOT: PropGet
+# FLOW: : string = GetBuiltinValue builtin=BunVersion
+
+function f4 name="objectWhoseMembersAreReadByName" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="env"
+    v2 = PropGet v1 key="HOME"
+    Return v2
+}
+# CHECK-LABEL: function f4 name="objectWhoseMembersAreReadByName"
+# CHECK: v1: anything = PropGet v0 key="env"
+# FLOW-LABEL: function f4 name="objectWhoseMembersAreReadByName"
+# FLOW-NOT: key="env"
+# FLOW: [[environment]]: object = GetBuiltinValue builtin=ProcessEnv
+# FLOW: [[known]]: object = AssumeType [[environment]]
+# FLOW: [[read]]: anything = PropGet [[known]] key="HOME"
+# The table says what the object holds: a string under every name that native code has defined.
+# FLOW: : undefined|string = AssumeType [[read]]
+
+function f5 name="objectMadeByCodeThatMayThrow" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="stdout"
+    Return v1
+}
+# FLOW-LABEL: function f5 name="objectMadeByCodeThatMayThrow"
+# FLOW-NOT: PropGet
+# FLOW: = GetBuiltinValue builtin=ProcessStdout
+
+function f6 name="eachReadIsARead" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="revision"
+    v2 = PropGet v0 key="revision"
+    v3 = StrictEq v1, v2
+    Return v3
+}
+# FLOW-LABEL: function f6 name="eachReadIsARead"
+# FLOW-NOT: PropGet
+# FLOW-COUNT-2: : string = GetBuiltinValue builtin=ProcessRevision
+
+function f7 name="functionMadeAtFirstRead" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="nextTick"
+    Return v1
+}
+# An object has a cell.
+# FLOW-LABEL: function f7 name="functionMadeAtFirstRead"
+# FLOW-NOT: GetBuiltinValue
+
+function f8 name="storedByThisFunction" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = String string="other"
+    PropSet v0, v1 key="execPath" mode=Strict
+    v3 = PropGet v0 key="execPath"
+    Return v3
+}
+# FLOW-LABEL: function f8 name="storedByThisFunction"
+# FLOW-NOT: GetBuiltinValue
+# FLOW: = PropGet {{*}}key="execPath"
+# FLOW-NOT: GetBuiltinValue
+
+function f9 name="storedByAnotherFunction" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="execPath"
+    Return v1
+}
+# FLOW-LABEL: function f9 name="storedByAnotherFunction"
+# FLOW-NOT: GetBuiltinValue
+# FLOW: = PropGet {{*}}key="execPath"
+# FLOW-NOT: GetBuiltinValue
+
+function f10 name="changedByNativeCode" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="exitCode"
+    Return v1
+}
+# FLOW-LABEL: function f10 name="changedByNativeCode"
+# FLOW-NOT: GetBuiltinValue
+
+function f11 name="storeToAnAccessorOfTheHolder" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = String string="renamed"
+    PropSet v0, v1 key="title" mode=Strict
+    v3 = PropGet v0 key="title"
+    Return v3
+}
+# The store runs a setter and writes no property, so the other members of the holder keep their answers: f1, f2.
+# FLOW-LABEL: function f11 name="storeToAnAccessorOfTheHolder"
+# FLOW-NOT: GetBuiltinValue

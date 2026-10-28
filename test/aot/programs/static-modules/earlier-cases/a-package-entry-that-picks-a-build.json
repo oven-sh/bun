@@ -1,0 +1,1 @@
+{"build": ["--define", "process.env.NODE_ENV=\"production\""], "env": {"NODE_ENV": "production"}, "skipInShell": "it needs Bun's modules"}

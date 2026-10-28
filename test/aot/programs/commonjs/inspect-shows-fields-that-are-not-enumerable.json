@@ -1,0 +1,1 @@
+{ "skipInShell": "it needs Bun.inspect and Bun's CommonJS modules" }

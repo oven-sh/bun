@@ -32,11 +32,12 @@ function __fish__get_bun_bun_js_files
 	string split ' ' (bun getcompletes j)
 end
 
-set -l bun_install_boolean_flags yarn production optional development no-save dry-run force no-cache silent verbose global
-set -l bun_install_boolean_flags_descriptions "Write a yarn.lock file (yarn v1)" "Don't install devDependencies" "Add dependency to optionalDependencies" "Add dependency to devDependencies" "Don't update package.json or save a lockfile" "Don't install anything" "Always request the latest versions from the registry & reinstall all dependencies" "Ignore manifest cache entirely" "Don't output anything" "Excessively verbose logging" "Use global folder"
+set -l bun_install_boolean_flags yarn production no-save dry-run force no-cache silent verbose global
+set -l bun_install_boolean_flags_descriptions "Write a yarn.lock file (yarn v1)" "Don't install devDependencies" "Don't update package.json or save a lockfile" "Don't install anything" "Always request the latest versions from the registry & reinstall all dependencies" "Ignore manifest cache entirely" "Don't output anything" "Excessively verbose logging" "Use global folder"
 
-set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add update audit dedupe prune init pm x repl check lint fmt
-set -l bun_builtin_cmds_accepting_flags create help bun upgrade discord run init link unlink pm x update
+set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add update audit dedupe prune publish init pm x repl compile check lint fmt
+# The package manager commands and `bun x` reject a flag they do not have.
+set -l bun_builtin_cmds_accepting_flags create help bun upgrade discord run init
 
 function __bun_complete_bins_scripts --inherit-variable bun_builtin_cmds_without_run -d "Emit bun completions for bins and scripts"
     # Do nothing if we already have a builtin subcommand,
@@ -152,6 +153,12 @@ for i in (seq (count $bun_install_boolean_flags))
 end
 
 complete -c bun \
+	-n "__fish_seen_subcommand_from install add" -l 'optional' -d 'Add dependency to optionalDependencies'
+
+complete -c bun \
+	-n "__fish_seen_subcommand_from install add" -l 'development' -d 'Add dependency to devDependencies'
+
+complete -c bun \
 	-n "__fish_seen_subcommand_from install add remove update dedupe" -l 'cwd' -d 'Change working directory'
 
 complete -c bun \
@@ -176,7 +183,7 @@ complete -c bun \
 	-n "__fish_seen_subcommand_from pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) cache;" -a 'bin ls licenses cache hash hash-print hash-string' -f
 
 complete -c bun \
-	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from cache; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts);" -a 'rm' -f
+	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from cache; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts);" -a 'rm prune pack unpack' -f
 
 complete -c bun \
 	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'json' -d 'Output as JSON' -f
@@ -211,18 +218,51 @@ complete -c bun -n "__fish_use_subcommand" -a "pm" -d "Additional package manage
 complete -c bun -n "__fish_use_subcommand" -a "x" -d "Execute a package binary, installing if needed" -f
 complete -c bun -n "__fish_use_subcommand" -a "outdated" -d "Display the latest versions of outdated dependencies" -f
 complete -c bun -n "__fish_use_subcommand" -a "audit" -d "Check installed packages for vulnerabilities" -f
+complete -c bun -n "__fish_use_subcommand" -a "compile" -F -d "Compile TypeScript & JavaScript into a standalone executable"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "outfile" -r -F -d "Write the executable to this path"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "target" -r -d "The platform to build for, such as bun-linux-x64"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "define" -r -d "Substitute K:V while parsing"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "env" -r -d "Inline environment variables: inline, disable or a prefix*"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "asset" -r -F -d "Embed a file or directory into the executable"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "external" -r -d "Exclude a module from the executable"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "minify" -d "Enable all minification flags"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "sourcemap" -r -d "Build with sourcemaps"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "tsconfig-override" -r -F -d "Use this tsconfig.json"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "compile-exec-argv" -r -d "Prepend arguments to the executable's execArgv"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "disallow-code-generation-from-strings" -d "In the executable, eval() and new Function() throw"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "explain" -d "List the code that compiled to a slow path"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "aot-log-type-mismatches" -d "Log every value that does not match its declared type"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "aot-huge-heap" -d "Remove the 32 GB heap limit per thread"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "aot-allow-code-from-disk" -d "Let import() and require() load code from disk at run time"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "obfuscate" -d "Strip function names and source locations from the executable and write them to a source map"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "compile-inspector" -d "Let a debugger attach to the executable"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "compile-in-place" -d "Keep modules at their paths on disk. The executable only runs on the machine that built it"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "no-compile-function-source" -d "Don't embed function source code. fn.toString() returns [native code]"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "no-aot" -d "Bundle the JavaScript into the executable instead of compiling it to machine code"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "trim" -d "Remove the Bun and Node.js APIs your code never calls from the executable"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "trim-locales" -r -d "Keep only these locales, such as en,de-AT. Implies --trim"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "library" -d "Build a package to publish instead of an executable"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "outdir" -r -F -d "With --library: the folder the package is written to"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "no-script" -d "Run this command even if the project has a compile script"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "cwd" -r -F -d "Set the working directory"
+complete -c bun -n "__fish_seen_subcommand_from compile" -s "h" -l "help" -d "Print this help menu"
 complete -c bun -n "__fish_use_subcommand" -a "check" -d "Type check a TypeScript project" -f
 complete -c bun -n "__fish_seen_subcommand_from check" -s "p" -l "project" -r -F -d "Path to a tsconfig.json or its directory"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "pretty" -d "Show source code around each error"
+complete -c bun -n "__fish_seen_subcommand_from check" -s "b" -l "build" -d "Check the projects in references too, like tsc -b"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "no-pretty" -d "One line per error"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "all" -d "Show every error"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "threads" -r -d "Number of threads"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "timing" -d "Print load and check times"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "cwd" -r -d "Set the working directory"
+complete -c bun -n "__fish_seen_subcommand_from check" -l "no-script" -d "Run the type checker even if the project has a check script"
+complete -c bun -n "__fish_seen_subcommand_from check" -l "aot" -d "Also report the errors bun compile would report for these entry points"
+complete -c bun -n "__fish_seen_subcommand_from check" -l "explain" -r -d "With --aot: print a report. guards lists every type guard that can fail at run time"
+complete -c bun -n "__fish_seen_subcommand_from check" -l "define" -r -d "With --aot: substitute k with v while parsing, like bun compile --define"
 complete -c bun -n "__fish_use_subcommand" -a "lint" -d "Lint JavaScript and TypeScript" -f
 complete -c bun -n "__fish_seen_subcommand_from lint" -s "c" -l "config" -r -F -d "Use this config file instead of looking for one"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-config-lookup" -d "Do not look for a config file"
-complete -c bun -n "__fish_seen_subcommand_from lint" -l "rule" -r -d "Set a rule: --rule 'eqeqeq: [error, smart]'"
+complete -c bun -n "__fish_seen_subcommand_from lint" -l "rule" -r -d "Set a rule, or turn off a plugin: --rule 'eqeqeq: [error, smart]', --rule 'unicorn/*: off'"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "rules" -d "List the built-in rules"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "explain" -r -d "Print the documentation of a rule"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "init" -d "Add a [lint] section to bunfig.toml"
@@ -258,18 +298,19 @@ complete -c bun -n "__fish_seen_subcommand_from lint" -l "fix-suggestions" -d "A
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "fix-dangerously" -d "Apply every fix and suggestion, even those that can change behavior"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "type-aware" -d "Also run the rules that need types"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-type-aware" -d "Skip the rules that need types"
-complete -c bun -n "__fish_seen_subcommand_from lint" -l "tsconfig" -r -F -d "Use this tsconfig.json for the rules that need types"
+complete -c bun -n "__fish_seen_subcommand_from lint" -l "tsconfig" -r -F -d "Use this tsconfig.json instead of the nearest one"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "type-check" -d "With --type-aware, report type errors too"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "infer-globals" -d "Also treat what the project's types declare as globals"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-infer-globals" -d "Do not take globals from the project's types"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "threads" -r -d "Number of threads (default: one per CPU core)"
+complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-script" -d "Run the linter even if the project has a lint script"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "help-all" -d "The same as --help --all"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "flavor" -r -d "Use the eslint or the oxlint config in a project that has both"
 complete -c bun -n "__fish_seen_subcommand_from lint" -s "p" -l "project" -r -F -d "The same as --tsconfig"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "parser-options" -r -d "Set parser options: --parser-options projectService:true"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "parser" -r -d "Parse files with this package"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "plugin" -r -d "Load these plugins"
-complete -c bun -n "__fish_seen_subcommand_from lint" -l "native-plugin-rules" -r -d "Use the built-in rules for these plugins only: import,react-hooks (default: all)"
+complete -c bun -n "__fish_seen_subcommand_from lint" -l "native-plugin-rules" -r -d "Of the ESLint plugins a config loads, run only these natively: import,react-hooks (default: all)"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-native-plugin-rules" -d "Run plugin rules from the installed packages, in JavaScript"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "report-unused-disable-directives-severity" -r -d "Report unused eslint-disable comments as off, warn or error"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "report-unused-inline-configs" -r -d "Report config comments that change nothing"
@@ -341,7 +382,7 @@ complete -c bun -n "__fish_seen_subcommand_from fmt" -l "no-svelte" -d "Do not f
 complete -c bun -n "__fish_seen_subcommand_from fmt" -l "staged" -d "Only format files that are staged in git, and stage them again"
 complete -c bun -n "__fish_seen_subcommand_from fmt" -l "changed" -d "Only format files that differ from a branch or commit (default: the default branch)"
 complete -c bun -n "__fish_seen_subcommand_from fmt" -l "stdin-filepath" -r -F -d "Format standard input as this file and print the result"
-complete -c bun -n "__fish_seen_subcommand_from fmt" -l "ignore-path" -r -F -d "Read ignore patterns from these files (default: .gitignore and .prettierignore)"
+complete -c bun -n "__fish_seen_subcommand_from fmt" -l "ignore-path" -r -F -d "Read ignore patterns from these files (default: .gitignore, .prettierignore, .git/info/exclude)"
 complete -c bun -n "__fish_seen_subcommand_from fmt" -l "ignore-pattern" -r -d "Skip files that match this pattern"
 complete -c bun -n "__fish_seen_subcommand_from fmt" -l "with-node-modules" -d "Format files in node_modules too"
 complete -c bun -n "__fish_seen_subcommand_from fmt" -l "no-error-on-unmatched-pattern" -d "Do not fail when an argument matches no file"
@@ -358,6 +399,7 @@ complete -c bun -n "__fish_seen_subcommand_from fmt" -l "no-color" -d "Never use
 complete -c bun -n "__fish_seen_subcommand_from fmt" -l "timing" -d "Print how long each phase took"
 complete -c bun -n "__fish_seen_subcommand_from fmt" -l "threads" -r -d "Number of threads (default: one per CPU core)"
 complete -c bun -n "__fish_seen_subcommand_from fmt" -l "debug-check" -d "Do not write. Fail if formatting a file would change what it means"
+complete -c bun -n "__fish_seen_subcommand_from fmt" -l "no-script" -d "Run the formatter even if the project has a fmt script"
 complete -c bun -n "__fish_seen_subcommand_from fmt" -l "all" -d "With --help, print every flag"
 complete -c bun -n "__fish_seen_subcommand_from fmt" -l "help-all" -d "The same as --help --all"
 complete -c bun -n "__fish_seen_subcommand_from fmt" -s "w" -l "write" -d "Write the files. This is the default"
@@ -385,11 +427,13 @@ complete -c bun -n "__fish_seen_subcommand_from audit" -l "ignore" -r -d "Ignore
 complete -c bun -n "__fish_seen_subcommand_from audit" -l "prod" -d "Omit devDependencies" -f
 complete -c bun -n "__fish_seen_subcommand_from audit prune" -l "omit" -r -a "dev optional peer" -d "Omit the given dependency type" -f
 complete -c bun -n "__fish_seen_subcommand_from audit prune" -l "dry-run" -d "Print what would change without changing anything" -f
+complete -c bun -n "__fish_seen_subcommand_from prune" -l "check" -d "Exit with code 1 if node_modules has packages that can be removed, without deleting anything" -f
 complete -c bun -n "__fish_seen_subcommand_from audit; and __fish_seen_subcommand_from fix" -s "L" -l "latest" -d "Also apply fixes that fall outside the ranges declared in package.json or catalogs" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -s "p" -l "production" -d "Also remove packages that are only needed by devDependencies" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -s "P" -l "prod" -d "Also remove packages that are only needed by devDependencies" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -l "os" -r -d "Prune for a different operating system than the current one" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -l "cpu" -r -d "Prune for a different CPU architecture than the current one" -f
+complete -c bun -n "__fish_seen_subcommand_from prune" -l "libc" -r -a "glibc musl" -d "Prune for a different libc than the current one" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -l "linker" -r -a "isolated hoisted" -d "Linker to assume when node_modules mixes isolated and hoisted installs" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -s "F" -l "filter" -r -d "Prune only the matching workspaces" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -l "silent" -d "Don't log anything" -f
@@ -414,6 +458,29 @@ complete -c bun -n "__fish_seen_subcommand_from update" -l "no-cache" -d "Ignore
 complete -c bun -n "__fish_seen_subcommand_from update" -l "silent" -d "Don't log anything" -f
 complete -c bun -n "__fish_seen_subcommand_from update" -l "verbose" -d "Excessively verbose logging" -f
 complete -c bun -n "__fish_use_subcommand" -a "publish" -d "Publish your package from local to npm" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -s "r" -l "recursive" -d "Publish every workspace package whose version is not on the registry" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -s "F" -l "filter" -r -d "Publish each matching workspace package" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "access" -r -a "public restricted" -d "Set access level for scoped packages" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "tag" -r -d "Tag the release. Default is \"latest\"" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "otp" -r -d "Provide a one-time password for authentication" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "auth-type" -r -a "web legacy" -d "Specify the type of one-time password authentication" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "gzip-level" -r -d "Specify a custom compression level for gzip. Default is 9." -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "tolerate-republish" -d "Don't exit with code 1 when republishing over an existing version number" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "dry-run" -d "Perform a dry run without making changes" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "ignore-scripts" -d "Skip lifecycle scripts" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "registry" -r -d "Use a specific registry by default" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "silent" -d "Don't log anything" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "verbose" -d "Excessively verbose logging" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "cwd" -r -d "Set a specific cwd"
+complete -c bun -n "__fish_seen_subcommand_from x" -l "bun" -d "Force the command to run with Bun instead of Node.js" -f
+complete -c bun -n "__fish_seen_subcommand_from x" -s "p" -l "package" -r -d "Package to install when the binary name differs from the package name" -f
+complete -c bun -n "__fish_seen_subcommand_from x" -l "no-install" -d "Skip installation if the package is not already installed" -f
+complete -c bun -n "__fish_seen_subcommand_from x" -l "cwd" -r -d "Set the working directory"
+complete -c bun -n "__fish_seen_subcommand_from x" -l "env-file" -r -d "Load environment variables from the specified file(s)"
+complete -c bun -n "__fish_seen_subcommand_from x" -l "minimum-release-age" -r -d "Only install packages published at least N seconds ago" -f
+complete -c bun -n "__fish_seen_subcommand_from x" -l "trust" -d "Run the lifecycle scripts of the package and of ALL of its dependencies" -f
+complete -c bun -n "__fish_seen_subcommand_from x" -l "verbose" -d "Enable verbose output during installation" -f
+complete -c bun -n "__fish_seen_subcommand_from x" -l "silent" -d "Suppress output during installation" -f
 complete -c bun -n "__fish_use_subcommand" -a "repl" -d "Start a REPL session with Bun" -f
 complete -c bun -n "__fish_seen_subcommand_from repl" -s "e" -l "eval" -r -d "Evaluate argument as a script, then exit" -f
 complete -c bun -n "__fish_seen_subcommand_from repl" -s "p" -l "print" -r -d "Evaluate argument as a script, print the result, then exit" -f

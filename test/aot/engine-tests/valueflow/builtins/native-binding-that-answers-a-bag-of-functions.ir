@@ -1,0 +1,36 @@
+# const { setServerCustomOptions } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding"); setServerCustomOptions(server, inspected, 0, 0, 0, onClientError)
+# The binding answers an object of the table, so a member of it is a function with a row: it looks at the flag and keeps the callback, which native code calls for each client error.
+# LIBRARY: own
+# RUN: valueflow-solve calls
+# CHECK: f1 v6 -> NodeHTTPInternalBindingSetServerCustomOptions
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED: unreached f2
+# UNREACHED-NOT: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    Return
+}
+function f1 name="library" role=Library results=[{type=anything}] {
+  b0():
+    v0 = NativeBinding builtin=NativeCppNodeHTTPCppCreateNodeHTTPInternalBinding
+    v1 = PropGet v0 key="setServerCustomOptions"
+    v2 = Undefined
+    v3 = NewClosure function=f2
+    v4 = Integer integer=0
+    v5 = NewClosure function=f3
+    v6 = Call v1, -, v2, v3, v4, v4, v4, v5
+    Return
+}
+function f2 name="inspected" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="onClientError" results=[{type=anything}] {
+  b0():
+    Return
+}

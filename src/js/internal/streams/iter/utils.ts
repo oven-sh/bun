@@ -43,7 +43,7 @@ function clampHWM(value) {
  * @param {AbortSignal} signal
  * @param {Function} handler
  */
-function onSignalAbort(signal, handler) {
+function onSignalAbort(signal: AbortSignal, handler: () => void) {
   if (signal.aborted) {
     handler();
   } else {
@@ -95,7 +95,7 @@ function toUint8Array(chunk) {
  * @param {Array<Uint8Array|string>} chunks
  * @returns {boolean}
  */
-function allUint8Array(chunks) {
+function allUint8Array(chunks: Array<Uint8Array | string>): chunks is Uint8Array[] {
   // Ok, well, kind of. This is more a check for "no strings"...
   for (let i = 0; i < chunks.length; i++) {
     if (typeof chunks[i] === "string") return false;
@@ -150,7 +150,7 @@ function concatBytes(chunks) {
  * @param {Array<Uint8Array|string>} chunks
  * @returns {Uint8Array[]}
  */
-function convertChunks(chunks) {
+function convertChunks(chunks: Array<Uint8Array | string>): Uint8Array[] {
   if (allUint8Array(chunks)) {
     return chunks.slice();
   }
@@ -167,7 +167,7 @@ function convertChunks(chunks) {
  * @param {unknown} error
  * @returns {Error}
  */
-function wrapError(error) {
+function wrapError(error: unknown): Error {
   return isError(error) ? error : $ERR_OPERATION_FAILED(String(error));
 }
 
@@ -178,7 +178,7 @@ function wrapError(error) {
  * @param {symbol} symbol
  * @returns {boolean}
  */
-function hasProtocol(value, symbol) {
+function hasProtocol<S extends symbol>(value, symbol: S): value is { [K in S]: (...args: unknown[]) => unknown } {
   return value !== null && typeof value === "object" && symbol in value && typeof value[symbol] === "function";
 }
 
@@ -215,7 +215,7 @@ function isTransform(value) {
  * @param {Array} args
  * @returns {{ transforms: Array, options: object|undefined }}
  */
-function parsePullArgs(args) {
+function parsePullArgs(args: unknown[]) {
   if (args.length === 0) {
     return { __proto__: null, transforms: [], options: undefined };
   }

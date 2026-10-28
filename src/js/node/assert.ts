@@ -42,7 +42,7 @@ const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeSlice = String.prototype.slice;
-const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeSplit: (this: string, separator: string, limit?: number) => string[] = String.prototype.split;
 
 type nodeAssert = typeof import("node:assert");
 
@@ -54,7 +54,7 @@ function isDeepEqual(a, b) {
   return Bun.deepEquals(a, b, false);
 }
 
-var _inspect;
+var _inspect: $BunModules["internal/util/inspect"]["inspect"] | undefined;
 function lazyInspect() {
   if (_inspect === undefined) {
     _inspect = require("internal/util/inspect").inspect;
@@ -62,7 +62,7 @@ function lazyInspect() {
   return _inspect;
 }
 
-var AssertionError;
+var AssertionError: $BunModules["internal/assert/assertion_error"] | undefined;
 function loadAssertionError() {
   if (AssertionError === undefined) {
     AssertionError = require("internal/assert/assertion_error");
@@ -123,7 +123,34 @@ function Assert(options) {
 
 // Functions compiled as builtins have no automatic `.prototype`; assign one
 // explicitly (same pattern as EventEmitter in node/events.ts).
-Assert.prototype = {};
+type Assertion = (actual: unknown, expected: unknown, message?: string | Error) => void;
+type Matcher = (string: unknown, regexp: RegExp, message?: string | Error) => void;
+
+interface AssertPrototype {
+  fail: typeof fail;
+  ok(...args: [value?: unknown, message?: unknown]): void;
+  equal: Assertion;
+  notEqual: Assertion;
+  deepEqual: Assertion;
+  notDeepEqual: Assertion;
+  deepStrictEqual: Assertion;
+  notDeepStrictEqual: Assertion;
+  strictEqual: Assertion;
+  notStrictEqual: Assertion;
+  partialDeepStrictEqual: Assertion;
+  throws(fn: () => unknown, ...args: [error?: unknown, message?: string | Error]): void;
+  rejects(
+    block: (() => unknown) | Promise<unknown>,
+    ...args: [error?: unknown, message?: string | Error]
+  ): Promise<void>;
+  doesNotThrow(fn: () => unknown, ...args: [error?: unknown, message?: unknown]): void;
+  doesNotReject(fn: (() => unknown) | Promise<unknown>, ...args: [error?: unknown, message?: unknown]): Promise<void>;
+  ifError(err: unknown): void;
+  match: Matcher;
+  doesNotMatch: Matcher;
+}
+
+Assert.prototype = {} as AssertPrototype;
 ObjectDefineProperty(Assert.prototype, "constructor", {
   __proto__: null,
   value: Assert,
@@ -147,7 +174,7 @@ function innerFail(obj) {
   if (isError(objMessage)) throw objMessage;
 
   if (AssertionError === undefined) loadAssertionError();
-  throw new AssertionError(obj);
+  throw new AssertionError!(obj);
 }
 
 function fail(message?: string | Error): never;
@@ -194,7 +221,7 @@ function fail(actual?: unknown, expected?: unknown, message?: unknown, operator?
     diff: this?.[kOptions]?.diff,
   };
   if (AssertionError === undefined) loadAssertionError();
-  const err = new AssertionError(errArgs);
+  const err = new AssertionError!(errArgs);
   if (internalMessage) {
     err.generatedMessage = true;
   }
@@ -224,11 +251,11 @@ Object.defineProperty(assert, "AssertionError", {
  */
 
 function ok(value: unknown, message?: string | Error): asserts value;
-function ok(...args: unknown[]): void {
+function ok(...args: [value?: unknown, message?: unknown]): void {
   innerOk(ok, args.length, ...args);
 }
 
-Assert.prototype.ok = function ok(...args) {
+Assert.prototype.ok = function ok(...args: [value?: unknown, message?: unknown]) {
   innerOk(ok, args.length, ...args);
 };
 
@@ -476,7 +503,7 @@ function compareExceptionKey(actual, expected, key, message, keys, fn) {
       const b = new Comparison(expected, keys, actual);
 
       if (AssertionError === undefined) loadAssertionError();
-      const err = new AssertionError({
+      const err = new AssertionError!({
         actual: a,
         expected: b,
         operator: "deepStrictEqual",
@@ -517,7 +544,7 @@ function expectedException(actual, expected, message, fn) {
       // Handle primitives properly.
     } else if (typeof actual !== "object" || actual === null) {
       if (AssertionError === undefined) loadAssertionError();
-      const err = new AssertionError({
+      const err = new AssertionError!({
         actual,
         expected,
         message,
@@ -574,7 +601,7 @@ function expectedException(actual, expected, message, fn) {
     throwError = true;
   } else {
     // Check validation functions return value.
-    const res = expected.$apply({}, [actual]);
+    const res = (expected as (this: object, actual: unknown) => unknown).$apply({}, [actual]);
     if (res !== true) {
       if (!message) {
         generatedMessage = true;
@@ -592,7 +619,7 @@ function expectedException(actual, expected, message, fn) {
 
   if (throwError) {
     if (AssertionError === undefined) loadAssertionError();
-    const err = new AssertionError({
+    const err = new AssertionError!({
       actual,
       expected,
       message,
@@ -604,7 +631,7 @@ function expectedException(actual, expected, message, fn) {
   }
 }
 
-function getActual(fn) {
+function getActual(fn: () => unknown) {
   validateFunction(fn, "fn");
   try {
     fn();
@@ -624,8 +651,8 @@ function checkIsPromise(obj): obj is Promise<unknown> {
   );
 }
 
-async function waitForActual(promiseFn) {
-  let resultPromise;
+async function waitForActual(promiseFn: (() => unknown) | Promise<unknown>) {
+  let resultPromise: unknown;
   if (typeof promiseFn === "function") {
     // Return a rejected promise if `promiseFn` throws synchronously.
     resultPromise = promiseFn();
@@ -704,7 +731,7 @@ function hasMatchingError(actual, expected) {
   if (ObjectPrototypeIsPrototypeOf.$call(Error, expected)) {
     return false;
   }
-  return expected.$apply({}, [actual]) === true;
+  return (expected as (this: object, actual: unknown) => unknown).$apply({}, [actual]) === true;
 }
 
 function expectsNoError(stackStartFn, actual, error?, message?) {
@@ -816,7 +843,7 @@ Assert.prototype.ifError = function ifError(err: ErrorLike | null | undefined): 
     }
 
     if (AssertionError === undefined) loadAssertionError();
-    const newErr = new AssertionError({
+    const newErr = new AssertionError!({
       actual: err,
       expected: null,
       operator: "ifError",
@@ -839,7 +866,7 @@ Assert.prototype.ifError = function ifError(err: ErrorLike | null | undefined): 
           "\n",
         );
         // Filter all frames existing in err.stack.
-        let newFrames = StringPrototypeSplit.$call(newErr.stack, "\n");
+        let newFrames = StringPrototypeSplit.$call(newErr.stack!, "\n");
         for (const errFrame of originalFrames) {
           // Find the first occurrence of the frame.
           const pos = ArrayPrototypeIndexOf.$call(newFrames, errFrame);
@@ -882,7 +909,7 @@ function internalMatch(string, regexp, message, fn) {
             : "The input was expected to not match the regular expression ") +
           `${inspect(regexp)}. Input:\n\n${inspect(string)}\n`;
     if (AssertionError === undefined) loadAssertionError();
-    const err = new AssertionError({
+    const err = new AssertionError!({
       actual: string,
       expected: regexp,
       message,
@@ -938,7 +965,7 @@ Object.defineProperty(assert, "CallTracker", {
  * @param {...any} args
  * @returns {void}
  */
-function strict(...args) {
+function strict(...args: [value?: unknown, message?: unknown]) {
   innerOk(strict, args.length, ...args);
 }
 

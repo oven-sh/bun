@@ -1,0 +1,33 @@
+# main.mjs: import("./c.mjs"); import("./p.mjs")        c.mjs: import { v } from "./p.mjs"; export var seen = v        p.mjs: require("bun:jsc").drainMicrotasks(); export var v = 1
+# The call in p.mjs runs the jobs that wait, and one of them evaluates c.mjs while the body of p.mjs runs: `v` may still be undefined where c.mjs reads it
+# RUN: valueflow-apply
+# CHECK: variable g0 name="v" {{*}}declared={type=undefined|1} initialization=Undefined flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation
+# CHECK-NOT: variable g0 name="v" {{*}}initialization=StoredBeforeEveryRead
+# CHECK-LABEL: function f1 name="c"
+# CHECK: : undefined|1 = GetModuleVariable variable=g0
+
+variable g0 name="v" module=m3 declared={type=anything} initialization=Undefined
+variable g1 name="seen" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f0
+module m1 path="/app/c.mjs" displayPath="c.mjs" flags=[KeepsError] body=f1 requests=[{target=m3 completes=true}] exports=[{name="seen" variable=g1}]
+module m2 path="bun:jsc" displayPath="bun:jsc" kind=Runtime exportRule=RuntimeModule runtimeModule=BunJsc
+module m3 path="/app/p.mjs" displayPath="p.mjs" flags=[KeepsError] body=f2 exports=[{name="v" variable=g0}]
+entry module=m0
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    v1 = ImportModule module=m3 referrer=m0
+    Return
+}
+function f1 name="c" module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f2 name="p" module=m3 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = RequireModule module=m2 referrer=m3 specifier="bun:jsc"
+    v1 = PropGet v0 key="drainMicrotasks"
+    v2 = Call v1, v0
+    v3 = Integer integer=1
+    PutModuleVariable v3 variable=g0
+    Return
+}

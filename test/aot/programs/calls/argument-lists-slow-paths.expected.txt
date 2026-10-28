@@ -1,0 +1,40 @@
+call open
+call next 0
+call next 1
+call next 2
+spread into undefined: TypeError
+method open
+method next 0
+method next 1
+method next 2
+spread into method: returned t [1, 2] (2)
+apply array-like: t [1, undefined] (2)
+apply undefined list: t [] (0)
+apply null list: t [] (0)
+apply number list: TypeError
+apply string list: TypeError
+apply long list: RangeError
+apply counted length: t [only] (1) 1
+apply shrinking array: t [first, undefined, undefined] (3) 1
+apply on non-function: TypeError false
+construct open
+construct next 0
+construct next 1
+new arrow spread: TypeError
+number open
+number next 0
+new number spread: TypeError
+spread of number: TypeError
+point open
+point next 0
+point next 1
+point next 2
+new with spread: 7
+call long iterable: RangeError
+new long iterable: survived
+super long array: survived
+super short array: 3
+plain spread: t [1, 2, 3] (3)
+plain apply: t [1, 2, 3] (3)
+plain new: 11
+plain reflect construct: 15

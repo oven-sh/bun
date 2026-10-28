@@ -1,0 +1,39 @@
+changed through arguments -> ["object", 3]
+changed after the test -> "from arguments"
+changed in a loop -> [104, 104, "number", "number"]
+changed by a helper -> ["object", 1]
+the parameter changes arguments -> ["number", 1]
+not aliased when the argument is missing -> ["undefined", 0, "stored"]
+not aliased with a default -> ["string", 5]
+with ('hello') -> ["number", "function", "HELLO"]
+a store inside with ('hello') -> "the local"
+an undeclared variable holds 'hello' -> "string 5"
+declared in a block, given 'hello' -> "from the block"
+with (new String('hello')) -> ["number", "function", "HELLO"]
+a store inside with (new String('hello')) -> "the local"
+an undeclared variable holds new String('hello') -> "object 5"
+declared in a block, given new String('hello') -> "from the block"
+with (['h']) -> ["number", "undefined", "no method"]
+a store inside with (['h']) -> threw RangeError
+an undeclared variable holds ['h'] -> "object 1"
+declared in a block, given ['h'] -> "from the block"
+with ({ length: 'own', charAt: 5 }) -> ["string", "number", "no method"]
+a store inside with ({ length: 'own', charAt: 5 }) -> "the local"
+an undeclared variable holds { length: 'own', charAt: 5 } -> "object own"
+declared in a block, given { length: 'own', charAt: 5 } -> "undefined"
+with (5) -> ["undefined", "undefined", "no method"]
+a store inside with (5) -> "stored"
+an undeclared variable holds 5 -> "number undefined"
+declared in a block, given 5 -> "undefined"
+with (null) -> threw TypeError
+a store inside with (null) -> threw TypeError
+an undeclared variable holds null -> threw TypeError
+declared in a block, given null -> threw TypeError
+with (undefined) -> threw TypeError
+a store inside with (undefined) -> threw TypeError
+an undeclared variable holds undefined -> threw TypeError
+declared in a block, given undefined -> threw TypeError
+with (Symbol('s')) -> ["undefined", "undefined", "no method"]
+a store inside with (Symbol('s')) -> "stored"
+an undeclared variable holds Symbol('s') -> "symbol undefined"
+declared in a block, given Symbol('s') -> "undefined"

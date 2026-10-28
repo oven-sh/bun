@@ -1,0 +1,237 @@
+computed keys: "7" wec 13, "first" wec 10, "middle" wec 11, "__proto__" wec 14, "last" wec 15, Symbol(tag) wec 12
+a computed __proto__ does not set the prototype: true
+defined twice, "k": "a" wec 0, "k" wec 3, "b" wec 2, "c" wec 4
+defined twice, "a": "a" wec 3, "b" wec 2, "c" wec 4
+defined twice, "b": "a" wec 0, "b" wec 3, "c" wec 4
+defined twice, "c": "a" wec 0, "c" wec 4, "b" wec 2
+defined twice, Symbol(tag): "a" wec 0, "b" wec 2, "c" wec 4, Symbol(tag) wec 3
+defined twice, 3: "3" wec 3, "a" wec 0, "b" wec 2, "c" wec 4
+defined twice, "3": "3" wec 3, "a" wec 0, "b" wec 2, "c" wec 4
+defined twice, "__proto__": "a" wec 0, "__proto__" wec 3, "b" wec 2, "c" wec 4
+key kind 0: "0" wec here, "before" wec 0, "after" wec 1
+key kind 1: "0" wec here, "before" wec 0, "after" wec 1
+key kind 2: "1" wec here, "before" wec 0, "after" wec 1
+key kind 3: "before" wec 0, "1.5" wec here, "after" wec 1
+key kind 4: "before" wec 0, "-1" wec here, "after" wec 1
+key kind 5: "4294967294" wec here, "before" wec 0, "after" wec 1
+key kind 6: "before" wec 0, "4294967295" wec here, "after" wec 1
+key kind 7: "before" wec 0, "4294967296" wec here, "after" wec 1
+key kind 8: "before" wec 0, "1e+21" wec here, "after" wec 1
+key kind 9: "before" wec 0, "1e-7" wec here, "after" wec 1
+key kind 10: "before" wec 0, "NaN" wec here, "after" wec 1
+key kind 11: "before" wec 0, "Infinity" wec here, "after" wec 1
+key kind 12: "before" wec 0, "true" wec here, "after" wec 1
+key kind 13: "before" wec 0, "null" wec here, "after" wec 1
+key kind 14: "before" wec 0, "undefined" wec here, "after" wec 1
+key kind 15: "10" wec here, "before" wec 0, "after" wec 1
+key kind 16: "before" wec 0, "" wec here, "after" wec 1
+key kind 17: "before" wec 0, "a b" wec here, "after" wec 1
+key kind 18: "before" wec 0, "1,2" wec here, "after" wec 1
+key kind 19: "before" wec 0, "from toString" wec here, "after" wec 1
+key kind 20: "before" wec 0, "after" wec 1, Symbol(tag) wec here
+key kind 21: "before" wec 0, "after" wec 1, Symbol(Symbol.iterator) wec here
+key kind 22: "before" wec 0, "after" wec 1, Symbol(registered) wec here
+key kind 23: "before" wec 0, "after" wec 1, Symbol() wec here
+each key is converted before its value is evaluated: key x, value 1, key y, value 2, key x, value 3 | "x" wec 3, "y" wec 2
+a key that throws: RangeError: no key | value a
+constant strings as keys, 100 literals: 31200 | "0","first","alpha","__proto__","last",Symbol(tag) | "0","first","gamma","__proto__","last",Symbol(tag) | "1","first","beta","__proto__","last",Symbol(tag) | "1","first","delta","__proto__","last",Symbol(tag)
+strings built at run time as keys, 100 literals: 20400 | "0","built0","templated0","built0!" | "0","built1","templated0","built1!" | "0","built2","templated0","built2!" | "1","built0","templated1","built0!" | "1","built1","templated1","built1!" | "1","built2","templated1","built2!"
+fields "one" and "two": "before" wec before, "one" wec first, "two" wec second, "after" wec after | static: "one" wec static first, "two" wec static second
+fields "same" and "same": "before" wec before, "same" wec second, "after" wec after | static: "same" wec static second, "same" wec static second
+fields "before" and "after": "before" wec first, "after" wec after | static: "before" wec static first, "after" wec static second
+fields "after" and "before": "before" wec second, "after" wec after | static: "after" wec static first, "before" wec static second
+fields Symbol(tag) and Symbol(registered): "before" wec before, "after" wec after, Symbol(tag) wec first, Symbol(registered) wec second | static: Symbol(tag) wec static first, Symbol(registered) wec static second
+fields 1 and 0: "0" wec second, "1" wec first, "before" wec before, "after" wec after | static: 1 wec static first, 0 wec static second
+fields "__proto__" and "constructor": "before" wec before, "__proto__" wec first, "constructor" wec second, "after" wec after | static: "__proto__" wec static first, "constructor" wec static second
+fields "name" and "length": "before" wec before, "name" wec first, "length" wec second, "after" wec after | static: "name" wec static first, "length" wec static second
+an empty object, alpha by name: defined | "alpha" wec by name
+an empty object, "alpha": defined | "alpha" wec by key
+an empty object, "x": defined | "x" wec by key
+an empty object, Symbol(tag): defined | Symbol(tag) wec by key
+an empty object, 0: defined | "0" wec by key
+an empty object, 5: defined | "5" wec by key
+an empty object, "length": defined | "length" wec by key
+an empty object, "__proto__": defined | "__proto__" wec by key
+an object with the property, alpha by name: defined | "alpha" wec by name, "omega" wec old
+an object with the property, "alpha": defined | "alpha" wec by key, "omega" wec old
+an object with the property, "x": defined | "alpha" wec old, "omega" wec old, "x" wec by key
+an object with the property, Symbol(tag): defined | "alpha" wec old, "omega" wec old, Symbol(tag) wec by key
+an object with the property, 0: defined | "0" wec by key, "alpha" wec old, "omega" wec old
+an object with the property, 5: defined | "5" wec by key, "alpha" wec old, "omega" wec old
+an object with the property, "length": defined | "alpha" wec old, "omega" wec old, "length" wec by key
+an object with the property, "__proto__": defined | "alpha" wec old, "omega" wec old, "__proto__" wec by key
+a frozen object, alpha by name: TypeError: Attempting to change configurable attribute of unconfigurable property. | "alpha" -e- old
+a frozen object, "alpha": TypeError: Attempting to change configurable attribute of unconfigurable property. | "alpha" -e- old
+a frozen object, "x": TypeError: Attempting to define property on object that is not extensible. | "alpha" -e- old
+a frozen object, Symbol(tag): TypeError: Attempting to define property on object that is not extensible. | "alpha" -e- old
+a frozen object, 0: TypeError: Attempting to define property on object that is not extensible. | "alpha" -e- old
+a frozen object, 5: TypeError: Attempting to define property on object that is not extensible. | "alpha" -e- old
+a frozen object, "length": TypeError: Attempting to define property on object that is not extensible. | "alpha" -e- old
+a frozen object, "__proto__": TypeError: Attempting to define property on object that is not extensible. | "alpha" -e- old
+a sealed object, alpha by name: TypeError: Attempting to change configurable attribute of unconfigurable property. | "alpha" we- old
+a sealed object, "alpha": TypeError: Attempting to change configurable attribute of unconfigurable property. | "alpha" we- old
+a sealed object, "x": TypeError: Attempting to define property on object that is not extensible. | "alpha" we- old
+a sealed object, Symbol(tag): TypeError: Attempting to define property on object that is not extensible. | "alpha" we- old
+a sealed object, 0: TypeError: Attempting to define property on object that is not extensible. | "alpha" we- old
+a sealed object, 5: TypeError: Attempting to define property on object that is not extensible. | "alpha" we- old
+a sealed object, "length": TypeError: Attempting to define property on object that is not extensible. | "alpha" we- old
+a sealed object, "__proto__": TypeError: Attempting to define property on object that is not extensible. | "alpha" we- old
+a non-extensible object, alpha by name: defined | "alpha" wec by name
+a non-extensible object, "alpha": defined | "alpha" wec by key
+a non-extensible object, "x": TypeError: Attempting to define property on object that is not extensible. | "alpha" wec old
+a non-extensible object, Symbol(tag): TypeError: Attempting to define property on object that is not extensible. | "alpha" wec old
+a non-extensible object, 0: TypeError: Attempting to define property on object that is not extensible. | "alpha" wec old
+a non-extensible object, 5: TypeError: Attempting to define property on object that is not extensible. | "alpha" wec old
+a non-extensible object, "length": TypeError: Attempting to define property on object that is not extensible. | "alpha" wec old
+a non-extensible object, "__proto__": TypeError: Attempting to define property on object that is not extensible. | "alpha" wec old
+a read-only property, alpha by name: defined | "alpha" wec by name
+a read-only property, "alpha": defined | "alpha" wec by key
+a read-only property, "x": defined | "alpha" --c old, "x" wec by key
+a read-only property, Symbol(tag): defined | "alpha" --c old, Symbol(tag) wec by key
+a read-only property, 0: defined | "0" wec by key, "alpha" --c old
+a read-only property, 5: defined | "5" wec by key, "alpha" --c old
+a read-only property, "length": defined | "alpha" --c old, "length" wec by key
+a read-only property, "__proto__": defined | "alpha" --c old, "__proto__" wec by key
+a getter, alpha by name: defined | "alpha" wec by name
+a getter, "alpha": defined | "alpha" wec by key
+a getter, "x": defined | "alpha" -ec get, "x" wec by key
+a getter, Symbol(tag): defined | "alpha" -ec get, Symbol(tag) wec by key
+a getter, 0: defined | "0" wec by key, "alpha" -ec get
+a getter, 5: defined | "5" wec by key, "alpha" -ec get
+a getter, "length": defined | "alpha" -ec get, "length" wec by key
+a getter, "__proto__": defined | "alpha" -ec get, "__proto__" wec by key
+an object without a prototype, alpha by name: defined | "alpha" wec by name
+an object without a prototype, "alpha": defined | "alpha" wec by key
+an object without a prototype, "x": defined | "x" wec by key
+an object without a prototype, Symbol(tag): defined | Symbol(tag) wec by key
+an object without a prototype, 0: defined | "0" wec by key
+an object without a prototype, 5: defined | "5" wec by key
+an object without a prototype, "length": defined | "length" wec by key
+an object without a prototype, "__proto__": defined | "__proto__" wec by key
+a class instance, alpha by name: defined | "x" wec 1, "y" wec 2, "alpha" wec by name
+a class instance, "alpha": defined | "x" wec 1, "y" wec 2, "alpha" wec by key
+a class instance, "x": defined | "x" wec by key, "y" wec 2
+a class instance, Symbol(tag): defined | "x" wec 1, "y" wec 2, Symbol(tag) wec by key
+a class instance, 0: defined | "0" wec by key, "x" wec 1, "y" wec 2
+a class instance, 5: defined | "5" wec by key, "x" wec 1, "y" wec 2
+a class instance, "length": defined | "x" wec 1, "y" wec 2, "length" wec by key
+a class instance, "__proto__": defined | "x" wec 1, "y" wec 2, "__proto__" wec by key
+a frozen class instance, alpha by name: TypeError: Attempting to define property on object that is not extensible. | "x" -e- 1, "y" -e- 2
+a frozen class instance, "alpha": TypeError: Attempting to define property on object that is not extensible. | "x" -e- 1, "y" -e- 2
+a frozen class instance, "x": TypeError: Attempting to change configurable attribute of unconfigurable property. | "x" -e- 1, "y" -e- 2
+a frozen class instance, Symbol(tag): TypeError: Attempting to define property on object that is not extensible. | "x" -e- 1, "y" -e- 2
+a frozen class instance, 0: TypeError: Attempting to define property on object that is not extensible. | "x" -e- 1, "y" -e- 2
+a frozen class instance, 5: TypeError: Attempting to define property on object that is not extensible. | "x" -e- 1, "y" -e- 2
+a frozen class instance, "length": TypeError: Attempting to define property on object that is not extensible. | "x" -e- 1, "y" -e- 2
+a frozen class instance, "__proto__": TypeError: Attempting to define property on object that is not extensible. | "x" -e- 1, "y" -e- 2
+a non-extensible class instance, alpha by name: TypeError: Attempting to define property on object that is not extensible. | "x" wec 1, "y" wec 2
+a non-extensible class instance, "alpha": TypeError: Attempting to define property on object that is not extensible. | "x" wec 1, "y" wec 2
+a non-extensible class instance, "x": defined | "x" wec by key, "y" wec 2
+a non-extensible class instance, Symbol(tag): TypeError: Attempting to define property on object that is not extensible. | "x" wec 1, "y" wec 2
+a non-extensible class instance, 0: TypeError: Attempting to define property on object that is not extensible. | "x" wec 1, "y" wec 2
+a non-extensible class instance, 5: TypeError: Attempting to define property on object that is not extensible. | "x" wec 1, "y" wec 2
+a non-extensible class instance, "length": TypeError: Attempting to define property on object that is not extensible. | "x" wec 1, "y" wec 2
+a non-extensible class instance, "__proto__": TypeError: Attempting to define property on object that is not extensible. | "x" wec 1, "y" wec 2
+an array, alpha by name: defined | "0" wec old, "1" wec old, "length" w-- 2, "alpha" wec by name
+an array, "alpha": defined | "0" wec old, "1" wec old, "length" w-- 2, "alpha" wec by key
+an array, "x": defined | "0" wec old, "1" wec old, "length" w-- 2, "x" wec by key
+an array, Symbol(tag): defined | "0" wec old, "1" wec old, "length" w-- 2, Symbol(tag) wec by key
+an array, 0: defined | "0" wec by key, "1" wec old, "length" w-- 2
+an array, 5: defined | "0" wec old, "1" wec old, "5" wec by key, "length" w-- 6
+an array, "length": RangeError: Invalid array length | "0" wec old, "1" wec old, "length" w-- 2
+an array, "__proto__": defined | "0" wec old, "1" wec old, "length" w-- 2, "__proto__" wec by key
+a frozen array, alpha by name: TypeError: Attempting to define property on object that is not extensible. | "0" -e- old, "1" -e- old, "length" --- 2
+a frozen array, "alpha": TypeError: Attempting to define property on object that is not extensible. | "0" -e- old, "1" -e- old, "length" --- 2
+a frozen array, "x": TypeError: Attempting to define property on object that is not extensible. | "0" -e- old, "1" -e- old, "length" --- 2
+a frozen array, Symbol(tag): TypeError: Attempting to define property on object that is not extensible. | "0" -e- old, "1" -e- old, "length" --- 2
+a frozen array, 0: TypeError: Attempting to change configurable attribute of unconfigurable property. | "0" -e- old, "1" -e- old, "length" --- 2
+a frozen array, 5: TypeError: Attempting to define numeric property on array with non-writable length property. | "0" -e- old, "1" -e- old, "length" --- 2
+a frozen array, "length": RangeError: Invalid array length | "0" -e- old, "1" -e- old, "length" --- 2
+a frozen array, "__proto__": TypeError: Attempting to define property on object that is not extensible. | "0" -e- old, "1" -e- old, "length" --- 2
+a typed array, alpha by name: defined | "0" wec 0, "1" wec 0, "alpha" wec by name
+a typed array, "alpha": defined | "0" wec 0, "1" wec 0, "alpha" wec by key
+a typed array, "x": defined | "0" wec 0, "1" wec 0, "x" wec by key
+a typed array, Symbol(tag): defined | "0" wec 0, "1" wec 0, Symbol(tag) wec by key
+a typed array, 0: defined | "0" wec 0, "1" wec 0
+a typed array, 5: TypeError: Attempting to store out-of-bounds property on a typed array at index: 5 | "0" wec 0, "1" wec 0
+a typed array, "length": defined | "0" wec 0, "1" wec 0, "length" wec by key
+a typed array, "__proto__": defined | "0" wec 0, "1" wec 0, "__proto__" wec by key
+a function, "alpha": defined | "alpha" wec by key | alpha
+a function, Symbol(tag): defined | Symbol(tag) wec by key | 
+a function, "name": defined | "name" wec by key | name
+a function, "length": defined | "length" wec by key | length
+a function, "prototype": TypeError: Attempting to change configurable attribute of unconfigurable property. | "prototype" w-- [object Object] | 
+a function, "displayName": defined | "displayName" wec by key | displayName
+a function, "declared": defined | "declared" wec by key | declared
+a function, "message": defined | "message" wec by key | message
+a function, "stack": defined | "stack" wec by key | stack
+an arrow function, "alpha": defined | "alpha" wec by key | alpha
+an arrow function, Symbol(tag): defined | Symbol(tag) wec by key | 
+an arrow function, "name": defined | "name" wec by key | name
+an arrow function, "length": defined | "length" wec by key | length
+an arrow function, "prototype": defined | "prototype" wec by key | prototype
+an arrow function, "displayName": defined | "displayName" wec by key | displayName
+an arrow function, "declared": defined | "declared" wec by key | declared
+an arrow function, "message": defined | "message" wec by key | message
+an arrow function, "stack": defined | "stack" wec by key | stack
+a bound function, "alpha": defined | "alpha" wec by key | alpha
+a bound function, Symbol(tag): defined | Symbol(tag) wec by key | 
+a bound function, "name": defined | "name" wec by key | name
+a bound function, "length": defined | "length" wec by key | length
+a bound function, "prototype": defined | "prototype" wec by key | prototype
+a bound function, "displayName": defined | "displayName" wec by key | displayName
+a bound function, "declared": defined | "declared" wec by key | declared
+a bound function, "message": defined | "message" wec by key | message
+a bound function, "stack": defined | "stack" wec by key | stack
+a class, "alpha": defined | "alpha" wec by key | declared,alpha
+a class, Symbol(tag): defined | Symbol(tag) wec by key | declared
+a class, "name": defined | "name" wec by key | name,declared
+a class, "length": defined | "length" wec by key | length,declared
+a class, "prototype": TypeError: Attempting to change configurable attribute of unconfigurable property. | "prototype" --- [object Object] | declared
+a class, "displayName": defined | "displayName" wec by key | declared,displayName
+a class, "declared": defined | "declared" wec by key | declared
+a class, "message": defined | "message" wec by key | declared,message
+a class, "stack": defined | "stack" wec by key | declared,stack
+an error, "alpha": defined | "alpha" wec by key | alpha
+an error, Symbol(tag): defined | Symbol(tag) wec by key | 
+an error, "name": defined | "name" wec by key | name
+an error, "length": defined | "length" wec by key | length
+an error, "prototype": defined | "prototype" wec by key | prototype
+an error, "displayName": defined | "displayName" wec by key | displayName
+an error, "declared": defined | "declared" wec by key | declared
+an error, "message": defined | "message" wec by key | message
+an error, "stack": defined | "stack" wec by key | stack
+a Map, "alpha": defined | "alpha" wec by key | alpha
+a Map, Symbol(tag): defined | Symbol(tag) wec by key | 
+a Map, "name": defined | "name" wec by key | name
+a Map, "length": defined | "length" wec by key | length
+a Map, "prototype": defined | "prototype" wec by key | prototype
+a Map, "displayName": defined | "displayName" wec by key | displayName
+a Map, "declared": defined | "declared" wec by key | declared
+a Map, "message": defined | "message" wec by key | message
+a Map, "stack": defined | "stack" wec by key | stack
+a Proxy whose trap succeeds, alpha by name: defined | defineProperty "alpha" {"value":"by name","writable":true,"enumerable":true,"configurable":true}
+a Proxy whose trap succeeds, "alpha": defined | defineProperty "alpha" {"value":"by key","writable":true,"enumerable":true,"configurable":true}
+a Proxy whose trap succeeds, "x": defined | defineProperty "x" {"value":"by key","writable":true,"enumerable":true,"configurable":true}
+a Proxy whose trap succeeds, Symbol(tag): defined | defineProperty Symbol(tag) {"value":"by key","writable":true,"enumerable":true,"configurable":true}
+a Proxy whose trap succeeds, 0: defined | defineProperty "0" {"value":"by key","writable":true,"enumerable":true,"configurable":true}
+a Proxy whose trap succeeds, 5: defined | defineProperty "5" {"value":"by key","writable":true,"enumerable":true,"configurable":true}
+a Proxy whose trap succeeds, "length": defined | defineProperty "length" {"value":"by key","writable":true,"enumerable":true,"configurable":true}
+a Proxy whose trap succeeds, "__proto__": defined | defineProperty "__proto__" {"value":"by key","writable":true,"enumerable":true,"configurable":true}
+a Proxy whose trap succeeds, its target: "0" wec by key, "5" wec by key, "alpha" wec by key, "x" wec by key, "length" wec by key, "__proto__" wec by key, Symbol(tag) wec by key
+a Proxy whose trap returns false, alpha by name: TypeError: Proxy's 'defineProperty' trap returned falsy value for property 'alpha' | defineProperty "alpha" {"value":"by name","writable":true,"enumerable":true,"configurable":true}
+a Proxy whose trap returns false, "alpha": TypeError: Proxy's 'defineProperty' trap returned falsy value for property 'alpha' | defineProperty "alpha" {"value":"by key","writable":true,"enumerable":true,"configurable":true}
+a Proxy whose trap returns false, "x": TypeError: Proxy's 'defineProperty' trap returned falsy value for property 'x' | defineProperty "x" {"value":"by key","writable":true,"enumerable":true,"configurable":true}
+a Proxy whose trap returns false, Symbol(tag): TypeError: Proxy's 'defineProperty' trap returned falsy value for property 'tag' | defineProperty Symbol(tag) {"value":"by key","writable":true,"enumerable":true,"configurable":true}
+a Proxy whose trap returns false, 0: TypeError: Proxy's 'defineProperty' trap returned falsy value for property '0' | defineProperty "0" {"value":"by key","writable":true,"enumerable":true,"configurable":true}
+a Proxy whose trap returns false, 5: TypeError: Proxy's 'defineProperty' trap returned falsy value for property '5' | defineProperty "5" {"value":"by key","writable":true,"enumerable":true,"configurable":true}
+a Proxy whose trap returns false, "length": TypeError: Proxy's 'defineProperty' trap returned falsy value for property 'length' | defineProperty "length" {"value":"by key","writable":true,"enumerable":true,"configurable":true}
+a Proxy whose trap returns false, "__proto__": TypeError: Proxy's 'defineProperty' trap returned falsy value for property '__proto__' | defineProperty "__proto__" {"value":"by key","writable":true,"enumerable":true,"configurable":true}
+a Proxy whose trap returns false, its target: "alpha" wec old
+undeclared names on 100 class instances: 7350 | "x" wec i, "y" wec by key, "extra" wec by key, "more" wec by key, Symbol(tag) wec by key
+over an inherited setter: 100 definitions created an own property, 0 assignments did, the setter ran 100 times
+over an inherited read-only property, defined: "fixed" wec 1
+over an inherited read-only property, assigned: TypeError: Attempted to assign to readonly property.
+no inherited property, defined and assigned: "free" wec 1 | "free" wec 1
+fields over inherited setters: "watched" wec 1, Symbol(tag) wec 2 | 
+assignments to inherited setters:  | watched 1, tag 2

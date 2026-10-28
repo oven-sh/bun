@@ -24,7 +24,7 @@ import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
 import fg from "fast-glob";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isRoot, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -617,6 +617,28 @@ describe("literal fast path", async () => {
     const entries = await Array.fromAsync(glob.scan({ cwd: tempdir }));
     expect(entries.sort()).toEqual([`packages${path.sep}foo`].sort());
   });
+
+  // The fast path stats the literal in each matched directory. Mode 444 fails that stat.
+  // Root ignores the mode bits, and chmod on Windows cannot make a directory unsearchable.
+  test.skipIf(isWindows || isRoot)("a failed stat reports the path from cwd", () => {
+    using dir = tempDir("glob-scan-literal-fast-path-eacces", { "packages/a/package.json": "hi" });
+    const unsearchable = path.join(String(dir), "packages", "a");
+    fs.chmodSync(unsearchable, 0o444);
+    try {
+      expect(() => [...new Glob("packages/*/package.json").scanSync({ cwd: String(dir) })]).toThrow(
+        expect.objectContaining({ code: "EACCES", syscall: "fstatat", path: "packages/a/package.json" }),
+      );
+      expect(() => [...new Glob("packages/*/package.json").scanSync({ cwd: String(dir), absolute: true })]).toThrow(
+        expect.objectContaining({
+          code: "EACCES",
+          syscall: "fstatat",
+          path: path.join(unsearchable, "package.json"),
+        }),
+      );
+    } finally {
+      fs.chmodSync(unsearchable, 0o755);
+    }
+  });
 });
 
 describe("trailing directory separator", async () => {
@@ -938,6 +960,12 @@ test("scan handles a cwd with redundant trailing separators when following symli
   expect(exitCode).toBe(0);
 });
 
+// globalThis has its own private names, such as the module resolver's.
+test("scan and scanSync throw a TypeError when `this` is globalThis", () => {
+  expect(() => Bun.Glob.prototype.scanSync.call(globalThis, "fs")).toThrow(TypeError);
+  expect(() => Bun.Glob.prototype.scan.call(globalThis, "fs")).toThrow(TypeError);
+});
+
 // A pattern segment that spells out a leading `.` is an explicit request for
 // that dotfile/dot-directory, so the `dot: false` default must not hide it.
 // This matches bash, picomatch, minimatch and fast-glob.
@@ -1255,4 +1283,17 @@ describe.skipIf(!isWindows)("glob scan descends read-only directories", () => {
       expect(err?.code).toBe("EPERM");
     },
   );
+});
+
+test("scan and scanSync reject a cwd or a pattern with a null byte", () => {
+  using dir = tempDir("glob-scan-null-byte", { "safe/inside.ts": "x" });
+  const nullByteError = expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" });
+  const cwd = `${dir}/safe\0/../secret`;
+  expect(() => Array.from(new Glob("*.ts").scanSync({ cwd }))).toThrow(nullByteError);
+  expect(() => Array.from(new Glob("*.ts").scanSync(cwd))).toThrow(nullByteError);
+  expect(() => new Glob("*.ts").scan({ cwd })).toThrow(nullByteError);
+  const pattern = `${dir}/safe\0trailer/*.ts`;
+  expect(() => Array.from(new Glob(pattern).scanSync())).toThrow(nullByteError);
+  expect(() => new Glob(pattern).scan()).toThrow(nullByteError);
+  expect(new Glob("a\0b").match("a\0b")).toBe(true);
 });

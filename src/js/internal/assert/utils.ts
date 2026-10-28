@@ -2,14 +2,14 @@
 
 const { isError } = require("internal/shared");
 
-var AssertionError;
+var AssertionError: $BunModules["internal/assert/assertion_error"] | undefined;
 function loadAssertionError() {
   if (AssertionError === undefined) {
     AssertionError = require("internal/assert/assertion_error");
   }
 }
 
-export function innerOk(fn, argLen, value, message) {
+export function innerOk(fn: Function, argLen: number, value?: unknown, message?: unknown) {
   if (!value) {
     let generatedMessage = false;
 
@@ -24,7 +24,7 @@ export function innerOk(fn, argLen, value, message) {
     }
 
     if (AssertionError === undefined) loadAssertionError();
-    const err = new AssertionError({
+    const err = new AssertionError!({
       actual: value,
       expected: true,
       message,

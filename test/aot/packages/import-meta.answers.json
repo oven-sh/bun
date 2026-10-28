@@ -1,0 +1,6 @@
+{
+  "import-meta.meta_require.mjs": {
+    "output": "rel THROWS Error MODULE_NOT_FOUND\nnode \"function\"\n"
+  },
+  "import-meta.url_file.mjs": "compiled"
+}

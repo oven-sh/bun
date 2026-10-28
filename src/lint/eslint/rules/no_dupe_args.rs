@@ -8,7 +8,7 @@ const UNEXPECTED: Message = Message::new("unexpected", "Duplicate param '{{name}
 
 impl NoDupeArgs {
     fn check_params<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        // A `FunctionDeclaration` or a `FunctionExpression`.
+        // Only a `FunctionDeclaration` or a `FunctionExpression`.
         if !func.has_body()
             || !matches!(
                 func.kind(),
@@ -23,7 +23,7 @@ impl NoDupeArgs {
             1 if params.first().is_some_and(|only| only.pat().tag() == PatTag::Ident) => return,
             _ => {}
         }
-        // Each name that is declared several times, where it is first declared.
+        // Each name that's declared more than once, in order of first declaration.
         let mut names: SmallVec<[Name<'a>; 1]> = SmallVec::new();
         for param in params {
             param.pat().for_each_binding(&mut |binding| {

@@ -1,0 +1,48 @@
+error: TS1003: Identifier expected.
+error: TS2730: An arrow function cannot have a 'this' parameter.
+error: TS1049: A 'set' accessor must have exactly one parameter.
+error: TS2369: A parameter property is only allowed in a constructor implementation.
+error: TS1317: A parameter property cannot be declared using a rest parameter.
+error: TS1187: A parameter property may not be declared using a binding pattern.
+error: TS1090: 'static' modifier cannot appear on a parameter.
+error: TS2398: 'constructor' cannot be used as a parameter property name.
+error: TS1044: 'public' modifier cannot appear on a module or namespace element.
+error: TS1242: 'abstract' modifier can only appear on a class, method, or property declaration.
+error: TS1024: 'readonly' modifier can only appear on a property declaration or index signature.
+error: TS1206: Decorators are not valid here.
+error: TS1248: A class member cannot have the 'const' keyword.
+error: TS1274: 'in' modifier can only appear on a type parameter of a class, interface or type alias
+error: TS1235: A namespace declaration is only allowed at the top level of a namespace or module.
+error: TS1232: An import declaration can only be used at the top level of a namespace or module.
+error: TS1231: An export assignment must be at the top level of a file or module declaration.
+error: TS1316: Global module exports may only appear at top level.
+error: TS1035: Only ambient modules can use quoted names.
+error: TS2670: Augmentations for the global scope should have 'declare' modifier unless they appear in already ambient context.
+error: TS1147: Import declarations in a namespace cannot reference a module.
+error: TS1194: Export declarations are not permitted in a namespace.
+error: TS1319: A default export can only be used in an ECMAScript-style module.
+error: TS2452: An enum member cannot have a numeric name.
+error: TS1164: Computed property names are not allowed in enums.
+error: TS18024: An enum member cannot be named with a private identifier.
+error: TS2300: Duplicate identifier 'A'.
+error: TS2451: Cannot redeclare block-scoped variable 'E5'.
+error: TS2300: Duplicate identifier 'E6'.
+error: TS2451: Cannot redeclare block-scoped variable 'N7'.
+error: TS2451: Cannot redeclare block-scoped variable 'N8'.
+error: TS2300: Duplicate identifier 'N9'.
+error: TS2300: Duplicate identifier 'i2'.
+error: TS2451: Cannot redeclare block-scoped variable 'i3'.
+error: TS1214: Identifier expected. 'let' is a reserved word in strict mode. Modules are automatically in strict mode.
+error: TS2480: 'let' is not allowed to be used as a name in 'let' or 'const' declarations.
+error: TS2331: 'this' cannot be referenced in a module or namespace body.
+error: TS2332: 'this' cannot be referenced in current location.
+error: TS17013: Meta-property 'new.target' is only allowed in the body of a function declaration, function expression, or constructor.
+error: TS1215: Invalid use of 'eval'. Modules are automatically in strict mode.
+error: TS1215: Invalid use of 'arguments'. Modules are automatically in strict mode.
+error: TS1264: Declarations with definite assignment assertions must also have type annotations.
+error: TS1098: Type parameter list cannot be empty.
+error: TS1099: Type argument list cannot be empty.
+error: TS1009: Trailing comma not allowed.
+error: TS1005: ';' expected.
+error: TS2338: 'super' property access is permitted only in a constructor, member function, or member accessor of a derived class.
+error: TS1358: Tagged template expressions are not permitted in an optional chain.

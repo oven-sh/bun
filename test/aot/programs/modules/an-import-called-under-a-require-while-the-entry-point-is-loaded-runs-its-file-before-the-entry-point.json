@@ -1,0 +1,4 @@
+{
+  "skipInShell": "it needs Bun's CommonJS modules and require()",
+  "alone": "the order hangs on which file the executable was started as: where an import() loads main.mjs, it runs before on-demand.cjs, in `bun run` too. an-import-called-under-a-require-while-a-module-imported-on-demand-is-loaded-runs-its-file-behind-that-module prints that order"
+}

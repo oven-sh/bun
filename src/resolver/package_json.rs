@@ -1,6 +1,7 @@
 use bun_ast as js_ast;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::Output;
+use bun_core::StackCheck;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
 use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, SEP_STR};
@@ -19,9 +20,9 @@ use bun_parsers::json_parser;
 // auto-install path is dormant until `bun_install` writes `r.package_manager`;
 // all install-tier value types are the canonical `bun_install_types` shapes.
 
+use ::bun_install_types::resolver_hooks::Behavior as DependencyBehavior;
 pub use ::bun_install_types::resolver_hooks::{
-    Architecture, Dependency, DependencyGroup, DependencyVersion, DependencyVersionTag,
-    OperatingSystem,
+    Dependency, DependencyGroup, DependencyVersion, DependencyVersionTag,
 };
 pub use ::bun_install_types::resolver_hooks::{INVALID_PACKAGE_ID, PackageID};
 // Deliberately a bare alias rather than `bun_collections::StringMap` (which
@@ -50,8 +51,23 @@ type MainFieldMap = StringMap;
 pub struct DependencyMap {
     pub map: DependencyHashMap,
     // Borrows the package.json source contents; lifetime-erased to 'static,
-    // kept alive by `PackageJSON::source_contents`.
-    pub source_buf: &'static [u8],
+    // kept alive by `PackageJSON::source_contents`. Owned if a name or version has a JSON escape.
+    pub source_buf: std::borrow::Cow<'static, [u8]>,
+}
+
+/// Returns `text` as a slice of `buf`. With `copied`, `buf` holds each string in visiting order.
+fn slice_in_source_buf<'a>(
+    buf: &'a [u8],
+    copied: bool,
+    cursor: &mut usize,
+    text: &'a [u8],
+) -> &'a [u8] {
+    if !copied {
+        return text;
+    }
+    let start = *cursor;
+    *cursor += text.len();
+    &buf[start..*cursor]
 }
 
 // Inherent impls cannot carry associated type aliases (stable), so use a free alias.
@@ -60,13 +76,12 @@ type DependencyHashMap =
 
 pub struct PackageJSON {
     pub name: Box<[u8]>,
-    pub source: bun_ast::Source,
+    pub source: bun_ast::Source<'static>,
     /// Owns the file bytes that `source.contents` (and the
     /// `&'static [u8]` map values below) borrow. Replaces the prior
     /// `mem::forget` leak — forbidden per docs/PORTING.md §Forbidden patterns.
     /// The `PackageJSON` itself is the owner so the bytes free if it ever drops.
-    /// (`bun_ast::Source::contents` is `&'static [u8]`, so this separate owner
-    /// field is what keeps that borrow — and the map values above — alive.)
+    /// (This owner field keeps that erased borrow, and the map values above, alive.)
     pub(crate) source_contents: Box<[u8]>,
     pub(crate) json_tape: Option<Box<js_ast::E::JsonTape>>,
     pub(crate) main_fields: MainFieldMap,
@@ -77,11 +92,12 @@ pub struct PackageJSON {
     // Values borrow the source buffer (lifetime-erased; owned by `source_contents`).
     pub config: Option<Box<StringArrayHashMap<&'static [u8]>>>,
 
-    pub(crate) arch: Architecture,
-    pub(crate) os: OperatingSystem,
-
     pub(crate) package_manager_package_id: PackageID,
     pub dependencies: DependencyMap,
+    /// Used instead of `dependencies` for a package in node_modules, so that auto-install only
+    /// parses the row it looks up. Each range is where a group's rows are in `json_tape`.
+    pub(crate) installed_dependency_rows:
+        [core::ops::Range<u32>; INSTALLED_DEPENDENCY_GROUPS.len()],
 
     pub(crate) side_effects: SideEffects,
 
@@ -133,10 +149,9 @@ impl Default for PackageJSON {
             version: Box::default(),
             scripts: None,
             config: None,
-            arch: Architecture::all(),
-            os: OperatingSystem::all(),
             package_manager_package_id: INVALID_PACKAGE_ID,
             dependencies: DependencyMap::default(),
+            installed_dependency_rows: Default::default(),
             side_effects: SideEffects::default(),
             browser_map: BrowserMap::default(),
             exports: None,
@@ -160,34 +175,40 @@ pub enum IncludeDependencies {
 
 const NODE_MODULES_PATH: &str = const_format::concatcp!(SEP_STR, "node_modules", SEP_STR);
 
-impl ::bun_install_types::resolver_hooks::PackageJsonView for PackageJSON {
-    fn name(&self) -> &[u8] {
-        &self.name
-    }
-    fn version(&self) -> &[u8] {
-        &self.version
-    }
-    fn dependency_source_buf(&self) -> &[u8] {
-        self.dependencies.source_buf
-    }
-    fn arch(&self) -> Architecture {
-        self.arch
-    }
-    fn os(&self) -> OperatingSystem {
-        self.os
-    }
-    fn dependency_iter(&self) -> Box<dyn Iterator<Item = (&[u8], &Dependency)> + '_> {
-        let buf = self.dependencies.source_buf;
-        Box::new(
-            self.dependencies
-                .map
-                .iter()
-                .map(move |(k, v)| (k.slice(buf), v)),
-        )
-    }
-}
+/// If a name is in several groups, the last group wins, as it does in `bun install`.
+const INSTALLED_DEPENDENCY_GROUPS: [DependencyGroup; 2] =
+    [DependencyGroup::DEPENDENCIES, DependencyGroup::OPTIONAL];
 
 impl PackageJSON {
+    /// Returns true if auto-install can look up the version of an imported package in this
+    /// package.json.
+    pub(crate) fn lists_dependencies(&self) -> bool {
+        self.dependencies.map.count() > 0
+            || self.package_manager_package_id != INVALID_PACKAGE_ID
+            || self
+                .installed_dependency_rows
+                .iter()
+                .any(|rows| !rows.is_empty())
+    }
+
+    /// The versions that a package in node_modules declares for `name`, highest precedence first.
+    pub(crate) fn installed_dependency_versions<'a>(
+        &'a self,
+        name: &'a [u8],
+    ) -> impl Iterator<Item = (&'a [u8], DependencyBehavior)> {
+        let groups = INSTALLED_DEPENDENCY_GROUPS
+            .iter()
+            .zip(&self.installed_dependency_rows);
+        groups.rev().flat_map(move |(group, rows)| {
+            let tape = self.json_tape.as_deref().filter(|_| !rows.is_empty());
+            let rows = tape.map_or(&[][..], |tape| tape.properties(rows.clone()));
+            rows.iter()
+                .rev()
+                .filter(move |row| row.key.slice() == name)
+                .filter_map(move |row| Some((row.value.as_str()?, group.behavior)))
+        })
+    }
+
     /// Normalize path separators to forward slashes for glob matching
     /// This is needed because glob patterns use forward slashes but Windows uses backslashes
     fn normalize_path_for_glob(path: &[u8]) -> Result<Vec<u8>, bun_alloc::AllocError> {
@@ -275,11 +296,14 @@ impl SideEffects {
 
 /// Thin extension trait that delegates to `bun_paths::resolve_path`.
 trait FileSystemPackageJsonExt {
-    fn join(&self, parts: &[&[u8]]) -> &'static [u8];
+    /// Returns a slice of `spill` if the result is too long for the thread-local join buffer.
+    fn join<'a>(&self, spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> &'a [u8];
 }
 impl FileSystemPackageJsonExt for crate::fs::FileSystem {
-    fn join(&self, parts: &[&[u8]]) -> &'static [u8] {
-        resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Auto>(parts)
+    fn join<'a>(&self, spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> &'a [u8] {
+        resolve_path::resolve_path::join_spill::<resolve_path::resolve_path::platform::Auto>(
+            spill, parts,
+        )
     }
 }
 
@@ -361,6 +385,7 @@ impl PackageJSON {
         macro_map
     }
 
+    #[inline(never)]
     pub fn parse<const INCLUDE_DEPENDENCIES: IncludeDependencies>(
         r: &mut resolver::Resolver<'_>,
         input_path: &[u8],
@@ -368,6 +393,10 @@ impl PackageJSON {
         package_id: Option<PackageID>,
         include_scripts_: IncludeScripts,
     ) -> Option<PackageJSON> {
+        bun_removable_features::removable_definition!(
+            PackageFiles,
+            Self::parse::<INCLUDE_DEPENDENCIES>
+        );
         let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
 
         // SAFETY: PORT (Stacked Borrows) — `r.fs()`/`r.log()` return RAW `*mut`
@@ -382,7 +411,17 @@ impl PackageJSON {
 
         // TODO: remove this extra copy
         let parts: [&[u8]; 2] = [input_path, b"package.json"];
-        let package_json_path_ = r_fs.abs(&parts);
+        let Ok(package_json_path_) = r_fs.abs_checked(&parts) else {
+            r_log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "Cannot read file \"{}\": ENAMETOOLONG",
+                    bstr::BStr::new(input_path)
+                ),
+            );
+            return None;
+        };
         let package_json_path = r_fs
             .dirname_store
             .append_slice(package_json_path_)
@@ -442,7 +481,7 @@ impl PackageJSON {
         // `pretty`/`is_node_module`); `key_path` is only used for `text`, so init the
         // source directly from the interned path.
         //
-        // `bun_ast::Source::contents` is `&'static [u8]`, so `json_source`
+        // `PackageJSON.source` is a `Source<'static>`, so `json_source`
         // re-borrows `entry_contents` (lifetime-erased) instead of owning it.
         //
         // SAFETY: `entry_contents: Box<[u8]>` is the unique owner of these bytes.
@@ -492,10 +531,9 @@ impl PackageJSON {
             main_fields: MainFieldMap::default(),
             scripts: None,
             config: None,
-            arch: Architecture::all(),
-            os: OperatingSystem::all(),
             package_manager_package_id: INVALID_PACKAGE_ID,
             dependencies: DependencyMap::default(),
+            installed_dependency_rows: Default::default(),
             side_effects: SideEffects::Unspecified,
             exports: None,
             imports: None,
@@ -693,6 +731,8 @@ impl PackageJSON {
                     }
                 }
 
+                let mut spill: Vec<u8> = Vec::new();
+
                 // If the array is empty, treat it as false (no side effects)
                 if !has_globs && !has_exact {
                     package_json.side_effects = SideEffects::False;
@@ -712,7 +752,7 @@ impl PackageJSON {
                             let joined: [&[u8]; 2] =
                                 [json_source.path.name().dir_with_trailing_slash(), name];
 
-                            let pattern = r_fs.join(&joined);
+                            let pattern = r_fs.join(&mut spill, &joined);
 
                             if strings::contains_char(name, b'*')
                                 || strings::contains_char(name, b'?')
@@ -749,7 +789,7 @@ impl PackageJSON {
                             let joined: [&[u8]; 2] =
                                 [json_source.path.name().dir_with_trailing_slash(), name];
 
-                            let pattern = r_fs.join(&joined);
+                            let pattern = r_fs.join(&mut spill, &joined);
                             // Normalize pattern to use forward slashes for cross-platform compatibility
                             let normalized_pattern = Self::normalize_path_for_glob(pattern)
                                 .unwrap_or_else(|_| pattern.to_vec());
@@ -766,8 +806,8 @@ impl PackageJSON {
                             let joined: [&[u8]; 2] =
                                 [json_source.path.name().dir_with_trailing_slash(), name];
 
-                            let _ =
-                                map.insert(StringHashMapUnownedKey::init(r_fs.join(&joined)), ());
+                            let pattern = r_fs.join(&mut spill, &joined);
+                            let _ = map.insert(StringHashMapUnownedKey::init(pattern), ());
                         }
                     }
                     package_json.side_effects = SideEffects::Map(map);
@@ -803,9 +843,11 @@ impl PackageJSON {
                                 Some(&mut *r_log),
                             ) {
                                 if dependency_version.is_exact_npm() {
-                                    if let Some(resolved) =
-                                        pm.lockfile_resolve(&package_json.name, &dependency_version)
-                                    {
+                                    if let Some(resolved) = pm.lockfile_resolve(
+                                        &package_json.name,
+                                        &dependency_version,
+                                        &package_json.version,
+                                    ) {
                                         package_json.package_manager_package_id = resolved;
                                         if resolved > 0 {
                                             break 'update_dependencies;
@@ -816,44 +858,38 @@ impl PackageJSON {
                         }
                     }
                 }
-                if let Some(os_field) = json.get(b"cpu") {
-                    if let Some(array_const) = os_field.as_array() {
-                        let mut array = array_const;
-                        let mut arch = Architecture::none().negatable();
-                        while let Some(item) = array.next() {
-                            if let Some(str) = item.as_utf8_string_literal() {
-                                arch.apply(str);
+                // If a name is in several groups, the last group wins, as it does in `bun install`.
+                let dependency_groups: &[DependencyGroup] =
+                    if INCLUDE_DEPENDENCIES == IncludeDependencies::Main {
+                        &[
+                            DependencyGroup::DEPENDENCIES,
+                            DependencyGroup::DEV,
+                            DependencyGroup::OPTIONAL,
+                        ]
+                    } else if !strings::contains(package_json_path, NODE_MODULES_PATH.as_bytes()) {
+                        // One of the project's own package.json files. A package.json in the cache
+                        // has a `package_id`, which is handled above.
+                        &[
+                            DependencyGroup::PEER,
+                            DependencyGroup::DEPENDENCIES,
+                            DependencyGroup::DEV,
+                            DependencyGroup::OPTIONAL,
+                        ]
+                    } else {
+                        // This runs for every package loaded from node_modules, so it only records
+                        // where the rows are and parses nothing.
+                        for (group, rows) in INSTALLED_DEPENDENCY_GROUPS
+                            .iter()
+                            .zip(&mut package_json.installed_dependency_rows)
+                        {
+                            if let Some(group_json) = json.get(group.prop)
+                                && let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data
+                            {
+                                *rows = group_obj.get().rows();
                             }
                         }
-
-                        package_json.arch = arch.combine();
-                    }
-                }
-
-                if let Some(os_field) = json.get(b"os") {
-                    let tmp = os_field.as_array();
-                    if let Some(mut array) = tmp {
-                        let mut os = OperatingSystem::none().negatable();
-                        while let Some(item) = array.next() {
-                            if let Some(str) = item.as_utf8_string_literal() {
-                                os.apply(str);
-                            }
-                        }
-
-                        package_json.os = os.combine();
-                    }
-                }
-
-                let dev_deps = INCLUDE_DEPENDENCIES == IncludeDependencies::Main;
-                let dependency_groups: &[DependencyGroup] = if dev_deps {
-                    &[
-                        DependencyGroup::DEPENDENCIES,
-                        DependencyGroup::DEV,
-                        DependencyGroup::OPTIONAL,
-                    ]
-                } else {
-                    &[DependencyGroup::DEPENDENCIES, DependencyGroup::OPTIONAL]
-                };
+                        break 'update_dependencies;
+                    };
 
                 let mut total_dependency_count: usize = 0;
                 for group in dependency_groups {
@@ -866,7 +902,34 @@ impl PackageJSON {
                     package_json.dependencies.map = DependencyHashMap::default();
                     // source_buf borrows json_source.contents (lifetime-erased;
                     // owned by `package_json.source_contents` on the success path).
-                    package_json.dependencies.source_buf = contents_static;
+                    package_json.dependencies.source_buf = contents_static.into();
+                    // A JSON escape is decoded outside the file's text, where offsets can't point.
+                    let for_each_string = |visit: &mut dyn FnMut(&[u8])| {
+                        for group in dependency_groups {
+                            let Some(group_json) = json.get(group.prop) else {
+                                continue;
+                            };
+                            if let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data {
+                                for prop in group_obj.get().properties() {
+                                    visit(prop.key.slice());
+                                    if let Some(version) = prop.value.as_str() {
+                                        visit(version);
+                                    }
+                                }
+                            }
+                        }
+                    };
+                    let mut copied = false;
+                    for_each_string(&mut |text| {
+                        copied |= !bun_alloc::is_slice_in_buffer(text, contents_static);
+                    });
+                    if copied {
+                        let mut owned = Vec::new();
+                        for_each_string(&mut |text| owned.extend_from_slice(text));
+                        package_json.dependencies.source_buf = owned.into();
+                    }
+                    let source_buf: &[u8] = &package_json.dependencies.source_buf;
+                    let mut cursor = 0usize;
                     // ArrayHashMap has no `*_context` variant yet — the
                     // generic `put_assume_capacity` path is sufficient because keys are
                     // `SemverString` (offset+len into `source_buf`, hashed by content).
@@ -880,51 +943,47 @@ impl PackageJSON {
                         if let Some(group_json) = json.get(group.prop) {
                             if let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data {
                                 for prop in group_obj.get().properties() {
-                                    let name_str = prop.key.slice();
-                                    if !bun_alloc::is_slice_in_buffer(
-                                        name_str,
-                                        package_json.dependencies.source_buf,
-                                    ) {
-                                        continue;
-                                    }
+                                    let name_str = slice_in_source_buf(
+                                        source_buf,
+                                        copied,
+                                        &mut cursor,
+                                        prop.key.slice(),
+                                    );
                                     let name_hash =
                                         Semver::semver_string::Builder::string_hash(name_str);
-                                    let name = SemverString::init(
-                                        package_json.dependencies.source_buf,
-                                        name_str,
-                                    );
+                                    let name = SemverString::init(source_buf, name_str);
                                     let Some(version_str) = prop.value.as_str() else {
                                         continue;
                                     };
+                                    let version_str = slice_in_source_buf(
+                                        source_buf,
+                                        copied,
+                                        &mut cursor,
+                                        version_str,
+                                    );
                                     let sliced_str =
-                                        Semver::SlicedString::init(version_str, version_str);
+                                        Semver::SlicedString::init(source_buf, version_str);
 
-                                    // The parser body lives in install-tier so route through
-                                    // the AutoInstaller vtable when one is wired. When it
-                                    // isn't, still record the dependency name (with an
-                                    // uninitialized-tag version) — `bun run --filter` reads
-                                    // only the map keys to compute workspace ordering.
-                                    let dependency_version = match r.auto_installer() {
-                                        Some(pm) => pm.parse_dependency(
-                                            name,
-                                            Some(name_hash),
-                                            version_str,
-                                            &sliced_str,
-                                            Some(&mut *r_log),
+                                    if let Some(dependency_version) = r.parse_dependency(
+                                        name,
+                                        name_hash,
+                                        version_str,
+                                        &sliced_str,
+                                        Some(&mut *r_log),
+                                        !strings::contains(
+                                            package_json_path,
+                                            NODE_MODULES_PATH.as_bytes(),
                                         ),
-                                        None => Some(DependencyVersion::default()),
-                                    };
-                                    if let Some(dependency_version) = dependency_version {
+                                    ) {
                                         let dependency = Dependency {
                                             name,
                                             version: dependency_version,
                                             name_hash,
                                             behavior: group.behavior,
                                         };
-                                        let buf = package_json.dependencies.source_buf;
                                         let ctx = Semver::semver_string::ArrayHashContext {
-                                            arg_buf: buf,
-                                            existing_buf: buf,
+                                            arg_buf: source_buf,
+                                            existing_buf: source_buf,
                                         };
                                         package_json.dependencies.map.put_assume_capacity_context(
                                             dependency.name,
@@ -1011,12 +1070,63 @@ pub struct ExportsMap {
 }
 
 impl ExportsMap {
+    pub(crate) fn names_condition(&self, condition: &[u8]) -> bool {
+        self.root.names_condition(condition)
+    }
+
+    /// The keys that name one subpath each, without their dot: `/feature` for `"./feature"`. Neither `"."` nor a pattern.
+    pub fn written_subpaths(&self) -> Vec<&[u8]> {
+        let EntryData::Map(map) = &self.root.data else {
+            return Vec::new();
+        };
+        let keys = map.list.iter().map(|entry| &entry.key[..]);
+        keys.filter(|key| {
+            key.starts_with(b"./")
+                && key.len() > 2
+                && !bun_core::strings::contains_char(key, b'*')
+                && !key.ends_with(b"/")
+        })
+        .map(|key| &key[1..])
+        .collect()
+    }
+
+    /// The subpaths, without their dot, that a key with a `*` may give the file at `path_in_package` (`/lib/a.js`): for each text that the key can lead to, whatever its conditions, what the `*` has to stand for.
+    pub fn subpaths_by_pattern(&self, path_in_package: &[u8]) -> Vec<Vec<u8>> {
+        let EntryData::Map(map) = &self.root.data else {
+            return Vec::new();
+        };
+        let mut subpaths = Vec::new();
+        for entry in map.list.iter() {
+            let Some((key_start, key_end)) = split_at_star(&entry.key) else {
+                continue;
+            };
+            let Some(key_start) = key_start.strip_prefix(b".") else {
+                continue;
+            };
+            entry.value.for_each_text(&mut |target| {
+                let matched = split_at_star(target).and_then(|(start, end)| {
+                    path_in_package
+                        .strip_prefix(start.strip_prefix(b".")?)?
+                        .strip_suffix(end)
+                });
+                if let Some(matched) = matched.filter(|matched| !matched.is_empty()) {
+                    subpaths.push([key_start, matched, key_end].concat());
+                }
+            });
+        }
+        subpaths
+    }
+
     pub(crate) fn parse(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
         json: js_ast::Expr,
     ) -> Option<ExportsMap> {
-        let mut visitor = Visitor { source, log };
+        let mut visitor = Visitor {
+            source,
+            log,
+            stack_check: StackCheck::init(),
+        };
 
         let root = visitor.visit(json);
 
@@ -1029,8 +1139,9 @@ impl ExportsMap {
 }
 
 pub(crate) struct Visitor<'a> {
-    pub(crate) source: &'a bun_ast::Source,
+    pub(crate) source: &'a bun_ast::Source<'a>,
     pub(crate) log: &'a mut bun_ast::Log,
+    stack_check: StackCheck,
 }
 
 impl<'a> Visitor<'a> {
@@ -1057,6 +1168,10 @@ impl<'a> Visitor<'a> {
         value: &js_ast::E::JsonValue,
         vloc: json_parser::ValueLocation<'_>,
     ) -> Entry {
+        if !self.stack_check.is_safe_to_recurse() {
+            let loc = vloc.resolve(&self.source.contents);
+            return self.too_deep(bun_ast::Range { loc, len: 1 });
+        }
         match value {
             js_ast::E::JsonValue::Null => Entry {
                 data: EntryData::Null,
@@ -1199,11 +1314,34 @@ impl<'a> Visitor<'a> {
             data: EntryData::Invalid,
         }
     }
+
+    #[cold]
+    fn too_deep(&mut self, first_token: bun_ast::Range) -> Entry {
+        self.log.add_range_warning(
+            Some(self.source),
+            first_token,
+            b"This value is nested too deeply",
+        );
+        Entry {
+            data: EntryData::Invalid,
+        }
+    }
 }
 
 #[derive(Clone)]
 pub struct Entry {
     pub(crate) data: EntryData,
+}
+
+impl Entry {
+    fn names_condition(&self, condition: &[u8]) -> bool {
+        match &self.data {
+            EntryData::Invalid | EntryData::Null | EntryData::String(_) => false,
+            EntryData::Array(items) => items.iter().any(|item| item.names_condition(condition)),
+            EntryData::Map(map) => (map.list.iter())
+                .any(|entry| &*entry.key == condition || entry.value.names_condition(condition)),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1231,7 +1369,24 @@ pub struct MapEntry {
     pub(crate) value: Entry,
 }
 
+fn split_at_star(text: &[u8]) -> Option<(&[u8], &[u8])> {
+    let star = bun_core::strings::index_of_char_usize(text, b'*')?;
+    Some((&text[..star], &text[star + 1..]))
+}
+
 impl Entry {
+    fn for_each_text(&self, each: &mut dyn FnMut(&[u8])) {
+        match &self.data {
+            EntryData::Invalid | EntryData::Null => {}
+            EntryData::String(text) => each(text),
+            EntryData::Array(entries) => entries.iter().for_each(|entry| entry.for_each_text(each)),
+            EntryData::Map(map) => map
+                .list
+                .iter()
+                .for_each(|entry| entry.value.for_each_text(each)),
+        }
+    }
+
     pub(crate) fn keys_start_with_dot(&self) -> bool {
         matches!(&self.data, EntryData::Map(m) if !m.list.is_empty() && strings::starts_with_char(&m.list[0].key, b'.'))
     }
@@ -1257,6 +1412,8 @@ pub type ConditionsMap = StringArrayHashMap<()>;
 pub(crate) struct ESModule<'a> {
     pub(crate) debug_logs: Option<&'a mut resolver::DebugLogs>,
     pub(crate) conditions: &'a ConditionsMap,
+    /// `resolve_target` uses bigger stack frames than the JSON parser, so it can overflow on a target that parsed.
+    pub(crate) stack_check: StackCheck,
 }
 
 #[derive(Clone)]
@@ -1369,7 +1526,7 @@ impl<'a> Package<'a> {
 
         self
     }
-    pub(crate) fn parse_name(specifier: &[u8]) -> Option<&[u8]> {
+    pub fn parse_name(specifier: &[u8]) -> Option<&[u8]> {
         let mut slash = strings::index_of_char_neg(specifier, b'/');
         if !strings::starts_with_char(specifier, b'@') {
             slash = if slash == -1 {
@@ -1808,6 +1965,15 @@ impl<'a> ESModule<'a> {
         subpath: &[u8],
         internal: bool,
     ) -> Resolution {
+        if !self.stack_check.is_safe_to_recurse() {
+            if let Some(logs) = self.debug_logs.as_deref_mut() {
+                logs.add_note(b"The package target is nested too deeply".to_vec());
+            }
+            return Resolution {
+                status: Status::InvalidPackageConfiguration,
+                ..Default::default()
+            };
+        }
         match &target.data {
             EntryData::String(str) => {
                 let mb = module_bufs();

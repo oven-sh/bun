@@ -839,6 +839,9 @@ describe.concurrent("Bun REPL", () => {
         "cut.ze\tbra",
         // A chain that leads nowhere has nothing to complete: Tab indents, as before.
         "/o.nope.al\t/.source.length",
+        // So does a chain through a property with a setter and no getter: there is nothing to call.
+        "globalThis.w = { set x(value) {} }; 0",
+        "/w.x.al\t/.source.length",
         ".exit",
       ]);
       expect(outputs).toEqual([
@@ -851,6 +854,8 @@ describe.concurrent("Bun REPL", () => {
         "0",
         'zebra\n\n"ownName"',
         "11",
+        "0",
+        "8",
       ]);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);

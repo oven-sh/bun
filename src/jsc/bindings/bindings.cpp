@@ -7238,7 +7238,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getProperty(
         if (walk != REPLCompletionWalk::Found)
             return missing();
         if (slot.isAccessor() && !Zig::isBunDefinedGetter(slot.getterSetter()->getter()))
-            return refuse();
+            return slot.getterSetter()->isGetterNull() ? missing() : refuse();
         result = slot.getValue(globalObject, propertyName);
     }
     if (scope.exception() || !result) [[unlikely]]

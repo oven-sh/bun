@@ -114,3 +114,57 @@ for (const fd of held) fs.closeSync(fd);
     expect(exitCode).toBe(0);
   },
 );
+
+// A pidfd normally moves off a stdio number that the program closed. With no other number free it stays
+// there. It is still the child's pidfd and not the process's stdio, so it is closed when the child exits.
+test.skipIf(!isLinux).each([0, 1, 2])(
+  "a pidfd that has to stay on the closed fd %d is closed when the child has exited",
+  async slot => {
+    const fixture = `
+const fs = require("fs");
+const at = fd => {
+  try {
+    fs.fstatSync(fd);
+  } catch (e) {
+    return e.code === "EBADF" ? "closed" : e.code;
+  }
+  return fs.readlinkSync("/proc/self/fd/" + fd);
+};
+const nul = fs.openSync("/dev/null", "r+");
+const spawnTrue = () => Bun.spawn({ cmd: ["true"], stdio: [nul, nul, nul] });
+// Run the path once while fds are still free: a debug build reads the builtins it lazily requires from disk.
+await spawnTrue().exited;
+const held = [];
+for (;;) {
+  try {
+    held.push(fs.openSync("/dev/null", "r"));
+  } catch {
+    break;
+  }
+}
+fs.closeSync(${slot});
+const child = spawnTrue();
+const whileRunning = at(${slot});
+const exitCode = await child.exited;
+const afterExit = at(${slot});
+// LeakSanitizer reads /proc/self/task at exit, which needs a free fd.
+for (const fd of held) fs.closeSync(fd);
+fs.writeSync(${slot === 1 ? 2 : 1}, JSON.stringify({ whileRunning, exitCode, afterExit }));
+`;
+
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", 'ulimit -n 64 && exec "$@"', "sh", bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The fixture writes its result to stderr when it closed stdout.
+    expect({ result: slot === 1 ? stderr : stdout, exitCode }).toEqual({
+      result: JSON.stringify({ whileRunning: "anon_inode:[pidfd]", exitCode: 0, afterExit: "closed" }),
+      exitCode: 0,
+    });
+  },
+);

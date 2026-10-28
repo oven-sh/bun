@@ -15,6 +15,7 @@ import {
 } from "harness";
 import path, { join } from "path";
 import { SourceMapConsumer } from "source-map";
+import { unsupported } from "../aot/run-programs";
 import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {
@@ -326,9 +327,15 @@ describe("Bun.build", () => {
 
   // A pool thread holds a build's ASTs until it tears its worker down; macOS and Windows read files on a second pool.
   // The 250ms load outlasts an idle pool thread's first park (100ms, timed), so they are all parked for good at the end.
-  test.concurrent.each([{}, { BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" }])(
+  // With `aot` the compiler's own front end loads the files and runs the React Compiler on them. It takes no worker of the bundler,
+  // so none is alive during the load either.
+  test.concurrent.each([
+    { env: {}, options: {} },
+    { env: { BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" }, options: {} },
+    ...(unsupported ? [] : [{ env: {}, options: { compile: { aot: true, outfile: "./out" }, reactCompiler: true } }]),
+  ])(
     "every pool thread a build ran on tears its worker down once the build is done %j",
-    async env => {
+    async ({ env, options }) => {
       const files: Record<string, string> = { "entry.js": `export * from "slow";\n` };
       for (let i = 0; i < 32; i++) {
         files[`m${i}.js`] =
@@ -337,33 +344,37 @@ describe("Bun.build", () => {
       }
       files["worker-teardown-fixture.ts"] = /* ts */ `
         import { bundlerWorkerLiveCount } from "bun:internal-for-testing";
+        let hadWorkers = false;
         const slow = {
           name: "slow",
           setup(build) {
             build.onResolve({ filter: /^slow$/ }, () => ({ path: "slow", namespace: "slow" }));
             build.onLoad({ filter: /.*/, namespace: "slow" }, async () => {
               await Bun.sleep(250);
+              hadWorkers = bundlerWorkerLiveCount() > 0;
               return { contents: "export const slow = 1;", loader: "js" };
             });
           },
         };
-        if (!(await Bun.build({ entrypoints: ["./entry.js"], target: "bun", plugins: [slow] })).success) throw new Error("build failed");
+        const options = JSON.parse(process.argv[2]);
+        if (!(await Bun.build({ entrypoints: ["./entry.js"], target: "bun", plugins: [slow], ...options })).success) throw new Error("build failed");
         const deadline = Date.now() + 5000;
         while (bundlerWorkerLiveCount() > 0 && Date.now() < deadline) await Bun.sleep(5);
-        console.log(bundlerWorkerLiveCount());
+        console.log(hadWorkers, bundlerWorkerLiveCount());
       `;
       using dir = tempDir("bun-build-api-worker-teardown", files);
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "worker-teardown-fixture.ts"],
+        cmd: [bunExe(), "worker-teardown-fixture.ts", JSON.stringify(options)],
         env: { ...bunEnv, ...env },
         cwd: String(dir),
         stdout: "pipe",
         stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toBe("0\n");
+      expect(stdout).toBe("compile" in options ? "false 0\n" : "true 0\n");
       expect(exitCode).toBe(0);
     },
+    60_000,
   );
 
   test("ignores a corrupted or truncated .jsc sidecar", async () => {

@@ -1,0 +1,29 @@
+before
+  literals made before: 190 30 10
+  literals made now: 190 30 10
+  instances made before: 190 30 10 0---4---8---12---16---20---24---28---32---36---
+  instances made now: 190 30 10
+  objects of a function made before: 190 30 10
+  objects of a function made now: 190 30 10
+  stores: 40 40 40
+  behind the stores: 4040 0 40 | 4040 0 40 | 4040 0 40
+store: TypeError
+behind the store
+  literals made before: 190 30 10
+  literals made now: 190 30 10
+  instances made before: 190 30 10 0---4---8---12---16---20---24---28---32---36---
+  instances made now: 190 30 10
+  objects of a function made before: 190 30 10
+  objects of a function made now: 190 30 10
+  stores: 40 40 40
+  behind the stores: 4040 0 40 | 4040 0 40 | 4040 0 40
+delete: done
+behind the delete
+  literals made before: 190 30 10
+  literals made now: 190 30 10
+  instances made before: 190 30 10 0---4---8---12---16---20---24---28---32---36---
+  instances made now: 190 30 10
+  objects of a function made before: 190 30 10
+  objects of a function made now: 190 30 10
+  stores: 40 40 40
+  behind the stores: 4040 0 40 | 4040 0 40 | 4040 0 40

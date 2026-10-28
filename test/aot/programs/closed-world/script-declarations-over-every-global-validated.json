@@ -1,0 +1,1 @@
+{"build": ["--aot-validate"], "skipInShell": "it uses node:vm, which the jsc shell does not have"}

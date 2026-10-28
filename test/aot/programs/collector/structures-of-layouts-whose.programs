@@ -1,0 +1,511 @@
+//// structures-of-layouts-whose-objects-all-died.ts
+// Every object of a layout dies, a full collection runs, and the program makes objects of the layout again. A Structure that no object has ends at a full collection, so every round starts without one: at the allocation sites of compiled code, in the allocations of the run time (JSON.parse, spread, Object.assign), and under an object that only a frame holds while the collection runs.
+const shell = globalThis as any;
+const collectFull: () => void = shell.gc ?? (() => Bun.gc(true));
+const collectYoung: () => void = shell.edenGC ?? require("bun:jsc").edenGC;
+
+interface Point {
+  x: number;
+  y: number;
+}
+
+interface Named {
+  name: string;
+  tags: string[];
+  point?: Point;
+}
+
+class Shape {
+  sides: number;
+  constructor(sides: number) {
+    this.sides = sides;
+  }
+  area(): number {
+    return 0;
+  }
+  describe(): string {
+    return `${this.constructor.name} ${this.sides} ${this.area()}`;
+  }
+}
+
+class Square extends Shape {
+  edge: number;
+  constructor(edge: number) {
+    super(4);
+    this.edge = edge;
+  }
+  area(): number {
+    return this.edge * this.edge;
+  }
+}
+
+function Counter(this: any, value: number) {
+  this.value = value;
+}
+Counter.prototype.twice = function (this: any) {
+  return this.value * 2;
+};
+
+const otherPrototype = { kind: "other" };
+
+function readByName(object: any, key: string): unknown {
+  return object[key];
+}
+
+function describe(object: any): string {
+  const prototype = Object.getPrototypeOf(object);
+  const inherits = prototype === Object.prototype ? "Object" : prototype === otherPrototype ? "other" : prototype.constructor.name;
+  let listed = "";
+  for (const key in object) listed += key + " ";
+  return `${JSON.stringify(object)} [${Object.keys(object)}] (${listed.trim()}) ${inherits}`;
+}
+
+function createObjects(round: number): object[] {
+  const point: Point = { x: round, y: round + 1 };
+  const otherOrder: Point = { y: round, x: round + 1 };
+  const named: Named = { name: "n" + round, tags: ["a", "b"] };
+  const withPoint: Named = { name: "p" + round, tags: [], point };
+  const withExtraProperty: any = { x: 1, y: 2 } as Point;
+  withExtraProperty.z = round;
+  const withOtherPrototype: Point = Object.setPrototypeOf({ x: round, y: 0 }, otherPrototype);
+  const parsed = JSON.parse(`{"x":${round},"y":7}`) as Point;
+  const spread: Point = { ...point, y: 9 };
+  const assigned: Point = Object.assign({ x: 0, y: 0 }, point);
+  return [point, otherOrder, named, withPoint, withExtraProperty, withOtherPrototype, parsed, spread, assigned, new Shape(round), new Square(round + 2), new (Counter as any)(round)];
+}
+
+function useObjects(round: number): string[] {
+  const objects = createObjects(round);
+  const lines = objects.map(describe);
+  const square = objects[10] as Square;
+  lines.push(`${square.describe()} ${square instanceof Shape} ${(objects[9] as Shape).describe()} ${(objects[11] as any).twice()}`);
+  lines.push(`${readByName(objects[0], "x")} ${readByName(objects[4], "z")} ${readByName(objects[5], "kind")} ${readByName(objects[10], "edge")} ${readByName(objects[2], "point")}`);
+  return lines;
+}
+
+function readBoth(point: Point): number {
+  return point.x * 10 + point.y;
+}
+
+function holdInFrame(round: number): number {
+  const point: Point = { x: round, y: round + 1 };
+  const square = new Square(round);
+  const before = readBoth(point) + square.area();
+  collectFull();
+  collectFull();
+  return before + readBoth(point) + square.area() + (readByName(point, round % 2 ? "x" : "y") as number) + (readByName(square, "sides") as number);
+}
+
+function holdInFrameBelowOtherFrames(depth: number, round: number): number {
+  const point: Point = { x: depth, y: round };
+  const below = depth ? holdInFrameBelowOtherFrames(depth - 1, round) : holdInFrame(round);
+  return below + readBoth(point);
+}
+
+const output: string[] = [];
+for (let round = 0; round < 6; round++) {
+  output.push(...useObjects(round));
+  collectYoung();
+  output.push(...useObjects(round + 100));
+  collectFull();
+  collectFull();
+  output.push(String(holdInFrame(round)), String(holdInFrameBelowOtherFrames(5, round)));
+  collectFull();
+}
+console.log(output.join("\n"));
+//// text-made-at-run-time-adds-properties-behind-full-collections.js
+// Text made at run time adds properties, by name and by key, to objects that other such text made, while the whole heap is collected again and again.
+// The end of a collection forgets how a Structure that no other object shares was reached; the store that reaches it again asks what came before it.
+const text = (...parts) => new Function(...parts);
+const names = 14;
+const byName = [];
+for (let t = 0; t < names; t++) byName.push(text("o", "v", "o.w" + t + " = v; return o;"));
+const byKey = text("o", "k", "v", "o[k] = v; return o;");
+const keys = Array.from({ length: names }, (_, t) => "w" + t);
+
+let checksum = 0;
+for (let round = 0; round < 40; round++) {
+  for (let shape = 0; shape < 6; shape++) {
+    const parts = [];
+    for (let t = 0; t < names; t++) parts.push("r" + round + "s" + shape + "x" + t + ": base + " + t);
+    const make = text("base", "var o = { " + parts.join(", ") + " }; return o;");
+    const named = make(round), keyed = make(shape);
+    for (let t = 0; t < names; t++) {
+      const fresh = { id: round + t };
+      for (let k = 0; k < 3; k++) {
+        byName[t](named, fresh);
+        byKey(keyed, keys[t], fresh);
+      }
+    }
+    checksum += Object.keys(named).length * 3 + Object.keys(keyed).length + named.w13.id + keyed.w0.id;
+  }
+}
+console.log(checksum);
+//// walkers-stand-in-collections-that-are-replaced-many-times-between-collections.js
+// Iterators and loops stand in a Map or a Set while entries in front of them and behind them are deleted and added, the collection is cleared, and the collector runs in between.
+let seed = 20261023;
+function random(limit) {
+  seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
+  return (seed >>> 8) % limit;
+}
+
+const keyMakers = [n => n, n => "k" + n, n => n * 4194304 + 1, n => n + 0.5, n => (n & 1 ? n : "s" + n)];
+
+function step(walker) {
+  const result = walker.iterator.next();
+  if (!result.done) walker.seen.push(String(result.value));
+  return !result.done;
+}
+
+function runIterators(isMap, makeKey) {
+  const collection = isMap ? new Map() : new Set();
+  const add = n => (isMap ? collection.set(makeKey(n), n) : collection.add(makeKey(n)));
+  let next = 0;
+  const size = 1 + random(40);
+  while (next < size) add(next++);
+  const walkers = [];
+  for (let w = 0; w < 4; w++) {
+    const iterator = w === 0 ? collection.keys() : w === 1 ? collection.values() : w === 2 ? collection.entries() : collection[Symbol.iterator]();
+    const walker = { iterator, seen: [] };
+    for (let steps = random(size + 2); steps > 0 && step(walker); steps--);
+    walkers.push(walker);
+  }
+  for (let phases = 1 + random(6); phases > 0; phases--) {
+    for (let churn = random(120); churn > 0; churn--) {
+      if (random(3)) add(next++);
+      collection.delete(makeKey(random(next)));
+      if (!random(150)) collection.clear();
+    }
+    if (random(3)) Bun.gc(true);
+    for (const walker of walkers) if (random(2)) step(walker);
+  }
+  Bun.gc(true);
+  for (const walker of walkers) for (let most = 400; most > 0 && step(walker); most--);
+  return walkers.map(walker => walker.seen.join(",")).join(" | ") + " # " + collection.size;
+}
+
+function runLoop(isMap, makeKey) {
+  const collection = isMap ? new Map() : new Set();
+  const add = n => (isMap ? collection.set(makeKey(n), n) : collection.add(makeKey(n)));
+  let next = 0;
+  const size = 1 + random(30);
+  while (next < size) add(next++);
+  const seen = [];
+  let turns = 0;
+  for (const item of collection) {
+    seen.push(String(item));
+    if (++turns > 60) break;
+    for (let churn = random(40); churn > 0; churn--) {
+      if (turns < 30 && random(2)) add(next++);
+      collection.delete(makeKey(random(next)));
+    }
+    if (!random(4)) Bun.gc(true);
+  }
+  return seen.join(",") + " # " + collection.size;
+}
+
+function hash(text) {
+  let h = 0;
+  for (let i = 0; i < text.length; i++) h = (Math.imul(h, 31) + text.charCodeAt(i)) | 0;
+  return h;
+}
+
+for (let round = 0; round < 400; round++) {
+  const isMap = (round & 1) === 0;
+  const makeKey = keyMakers[round % keyMakers.length];
+  const text = round % 4 === 3 ? runLoop(isMap, makeKey) : runIterators(isMap, makeKey);
+  console.log(round, hash(text), round < 12 ? text : "");
+}
+//// weak-maps-that-grew-old-keep-what-is-added-between-young-collections.ts
+// A young collection need not look into a WeakMap or WeakSet that has grown old and was not written since the last collection. One that was written has to be looked into: a value that only the map holds lives as long as its key, whether the key is old or new, whether the value is reached through a chain of maps, and an entry whose key died goes
+const collectAll: () => void = () => Bun.gc(true);
+
+class Key {
+  constructor(public id: number) {}
+}
+class Value {
+  text: string;
+  next: Key | undefined;
+  constructor(id: number, next?: Key) {
+    this.text = "value " + id;
+    this.next = next;
+  }
+}
+
+let sink = 0;
+function churn(rounds: number): void {
+  for (let round = 0; round < rounds; round++) {
+    const scratch: { a: number; b: string; c: number[] }[] = [];
+    for (let i = 0; i < 4000; i++) scratch.push({ a: i, b: "s" + i, c: [i, i + 1, i + 2] });
+    sink += scratch[round % scratch.length].c[1];
+  }
+}
+
+const lines: string[] = [];
+const oldKeys: Key[] = [];
+for (let i = 0; i < 300; i++) oldKeys.push(new Key(i));
+
+const map = new WeakMap<Key, Value>();
+const second = new WeakMap<Key, Value>();
+const set = new WeakSet<Key>();
+for (let i = 0; i < 100; i++) {
+  map.set(oldKeys[i], new Value(i));
+  set.add(oldKeys[i]);
+}
+collectAll();
+collectAll();
+churn(30);
+
+function check(title: string, from: number, to: number): void {
+  let right = 0;
+  let inSet = 0;
+  for (let i = from; i < to; i++) {
+    if (map.get(oldKeys[i])?.text === "value " + i) right++;
+    if (set.has(oldKeys[i])) inSet++;
+  }
+  lines.push(title + ": " + right + " values, " + inSet + " in the set, of " + (to - from));
+}
+check("untouched since it grew old", 0, 100);
+
+for (let step = 0; step < 10; step++) {
+  for (let i = 100 + step * 10; i < 110 + step * 10; i++) {
+    map.set(oldKeys[i], new Value(i));
+    set.add(oldKeys[i]);
+  }
+  churn(6);
+}
+check("new values under old keys, added between young collections", 100, 200);
+check("the first hundred again", 0, 100);
+
+const newKeys: Key[] = [];
+for (let step = 0; step < 10; step++) {
+  for (let i = 0; i < 10; i++) {
+    const key = new Key(1000 + step * 10 + i);
+    newKeys.push(key);
+    map.set(key, new Value(key.id));
+  }
+  churn(6);
+}
+let rightUnderNewKeys = 0;
+for (const key of newKeys) if (map.get(key)?.text === "value " + key.id) rightUnderNewKeys++;
+lines.push("new values under new keys: " + rightUnderNewKeys + " of " + newKeys.length);
+
+for (let i = 200; i < 300; i++) {
+  const link = new Key(5000 + i);
+  map.set(oldKeys[i], new Value(i, link));
+  second.set(link, new Value(i + 10000));
+  if (i % 10 === 9) churn(4);
+}
+churn(20);
+let rightThroughBoth = 0;
+for (let i = 200; i < 300; i++) {
+  const link = map.get(oldKeys[i])?.next;
+  if (link && link.id === 5000 + i && second.get(link)?.text === "value " + (i + 10000)) rightThroughBoth++;
+}
+lines.push("a value of one map is the key of the other: " + rightThroughBoth + " of 100");
+
+for (let i = 0; i < 50; i++) {
+  map.delete(oldKeys[i]);
+  set.delete(oldKeys[i]);
+}
+churn(10);
+check("behind fifty deletions", 0, 100);
+for (let i = 0; i < 50; i++) map.set(oldKeys[i], new Value(i));
+churn(10);
+check("and fifty put back", 0, 100);
+
+let many = 0;
+for (let round = 0; round < 40; round++) {
+  for (let i = 0; i < 500; i++) map.set(new Key(-i), new Value(-i));
+  churn(1);
+  many += map.has(oldKeys[150]) ? 1 : 0;
+}
+collectAll();
+check("behind twenty thousand entries whose keys died", 0, 200);
+lines.push("seen each round: " + many);
+lines.push("sink is a number: " + (typeof sink === "number" && sink > 0));
+
+console.log(lines.join("\n"));
+//// weak-tables-grow-and-shrink-between-collections.js
+// WeakMaps and WeakSets grow past the buffer in the cell, lose most keys to collections, grow again, and are made anew between collections.
+const kept = [];
+const maps = [];
+let sum = 0;
+for (let round = 0; round < 60; round++) {
+  const map = new WeakMap();
+  const set = new WeakSet();
+  maps.push(map, set);
+  if (maps.length > 12) maps.splice(0, 2);
+  for (let i = 0; i < 3000; i++) {
+    const key = { i };
+    map.set(key, i);
+    set.add(key);
+    if (i % 500 === 0) kept.push(key);
+    for (const older of maps) if (older !== map && older !== set && i % 700 === 0) older instanceof WeakMap ? older.set(key, round) : older.add(key);
+  }
+  if (round % 3 === 0) Bun.gc(true);
+  for (const key of kept) for (const table of maps) if (table.has(key)) sum = (sum + key.i + 1) | 0;
+  if (kept.length > 200) kept.splice(0, 100);
+}
+console.log(sum, kept.length);
+//// what-is-remembered-about-a-shape-ends-with-the-shape.ts
+// What is remembered about the shape of a class's instances ends with the shape, and the prototype object of the class may change at any time after that.
+import { edenGC } from "bun:jsc";
+
+class Kept0 { a = 0; }
+class Kept1 { a = 1; b = "b"; }
+class Kept2 extends Kept0 { c = 2; }
+class Kept3 extends Kept1 { d = [3]; }
+class Kept4 { e = 4; f = 4.5; g = "g"; }
+class Kept5 extends Kept4 { h = null; }
+class Kept6 { i = { inner: 6 }; }
+class Kept7 extends Kept6 { j = 7; k = 8; }
+class Gone0 { a = 0; }
+class Gone1 { a = 1; b = "b"; }
+class Gone2 extends Gone0 { c = 2; }
+class Gone3 extends Gone1 { d = [3]; }
+class Gone4 { e = 4; f = 4.5; g = "g"; }
+class Gone5 extends Gone4 { h = () => "h"; }
+class Gone6 {
+  declare late: () => string;
+  early = () => "early";
+  constructor() {
+    this.late = () => "late";
+  }
+}
+
+function describe(value: object): string {
+  return JSON.stringify(value) + " " + String(value) + " " + Object.prototype.toString.call(value) + " " + (value as any) * 1;
+}
+
+function fill(depth: number): number {
+  const some = [depth, depth + 1, depth + 2, depth + 3, depth + 4, depth + 5];
+  return depth ? fill(depth - 1) + some.length : some.length;
+}
+
+let length = 0;
+const makers: (() => object)[] = [() => new Gone0(), () => new Gone1(), () => new Gone2(), () => new Gone3(), () => new Gone4(), () => new Gone5(), () => new Gone6()];
+const otherPrototypes = makers.map(make => Object.create(Object.getPrototypeOf(make())));
+function lookAtOne(index: number, round: number): void {
+  length += describe(makers[index]()).length;
+  const more: any = makers[index]();
+  more["more" + round] = round;
+  length += describe(more).length + Object.keys(more).length;
+  length += describe(Object.setPrototypeOf(makers[index](), otherPrototypes[index])).length;
+}
+
+const kept = [new Kept0(), new Kept1(), new Kept2(), new Kept3(), new Kept4(), new Kept5(), new Kept6(), new Kept7()];
+const gone = [Gone0, Gone1, Gone2, Gone3, Gone4, Gone5, Gone6];
+for (const each of kept) length += describe(each).length;
+Bun.gc(true);
+
+for (let round = 0; round < 4; round++) {
+  for (const [index, each] of gone.entries()) {
+    lookAtOne(index, round);
+    length += fill(40);
+    if (round % 2) edenGC();
+    else Bun.gc(true);
+    Object.defineProperty(each.prototype, "toJSON", { value() { return "round " + round; }, configurable: true, writable: true });
+    Object.defineProperty(each.prototype, Symbol.toStringTag, { value: each.name + round, configurable: true });
+    (each.prototype as any)["added" + round] = round;
+  }
+  console.log(length, makers.map(make => describe(make())).join(" | "));
+  for (const each of gone) {
+    delete (each.prototype as any).toJSON;
+    delete (each.prototype as any)[Symbol.toStringTag];
+  }
+  length += fill(40);
+  Bun.gc(true);
+}
+
+async function isItself(index: number): Promise<boolean> {
+  const made: any = makers[index]();
+  made.more = index;
+  return (await made) === made;
+}
+for (const [index, each] of gone.entries()) {
+  console.log(await isItself(index));
+  length += fill(40);
+  Bun.gc(true);
+  Bun.gc(true);
+  (each.prototype as any).then = function (resolve: (value: string) => void) { resolve("thenable " + each.name); };
+}
+console.log((await Promise.all(makers.map(make => make()))).join());
+console.log(kept.map(describe).join(" | "));
+//// what-was-thrown-is-stored-into-an-old-object.ts
+// An object that has grown old gets the error that an operation has just thrown. The error is as young as can be, and the store stands behind a handler: it needs its write barrier.
+import { edenGC } from "bun:jsc";
+
+////= Box
+
+class Holder {
+  first: object | null = null;
+  error: any = null;
+  tag: number;
+  constructor(tag: number) {
+    this.tag = tag;
+  }
+}
+
+function run(holders: Holder[], values: object[], wrong: object): number {
+  let caught = 0;
+  for (let index = 0; index < holders.length; index++) {
+    const holder = holders[index];
+    holder.first = values[index];
+    let thrown: any = null;
+    try {
+      caught += Box.read(wrong);
+    } catch (error) {
+      thrown = error;
+    }
+    holder.error = thrown;
+  }
+  return caught;
+}
+
+function fill(depth: number): number {
+  const some = [depth, depth + 1, depth + 2, depth + 3, depth + 4, depth + 5];
+  return depth ? fill(depth - 1) + some.length : some.length;
+}
+
+let total = 0;
+let lengths = 0;
+for (let round = 0; round < 60; round++) {
+  const holders: Holder[] = [];
+  const values: object[] = [];
+  for (let index = 0; index < 40; index++) {
+    holders.push(new Holder(index));
+    values.push({ index });
+  }
+  total += run(holders, values, {});
+  total += fill(30);
+  edenGC();
+  for (let more = 0; more < 100; more++) total += new TypeError("filler " + more).message.length;
+  for (const each of holders) lengths += (String(each.error.message).length > 0 ? 1 : 1000) + (each.error instanceof TypeError ? 1 : 1000000) + (each.first as any).index;
+}
+console.log(total, lengths);
+//// workers-make-their-first-request-while-the-collector-runs.js
+// Each Worker has a realm of its own, and a realm makes a class of the host at its first use. Forty Workers make their first Request, Response, Headers, Blob and URL
+// while collections come and go.
+import { Worker, isMainThread, parentPort } from "node:worker_threads";
+if (isMainThread) {
+  let sum = 0;
+  const turns = 40;
+  await new Promise(resolve => {
+    let ended = 0;
+    for (let i = 0; i < turns; i++) {
+      const worker = new Worker(import.meta.filename ?? import.meta.path);
+      worker.on("message", n => { sum += n; });
+      worker.on("exit", () => { if (++ended === turns) resolve(); });
+    }
+  });
+  console.log("workers:", turns, "sum:", sum);
+} else {
+  const garbage = [];
+  for (let i = 0; i < 2000; i++) garbage.push({ i });
+  const request = new Request("http://localhost/a", { method: "POST", body: "x" });
+  const response = new Response("y", { headers: new Headers({ a: "b" }) });
+  const blob = new Blob(["z"]);
+  const url = new URL(request.url);
+  parentPort.postMessage(request.method.length + response.status + blob.size + url.pathname.length + garbage.length);
+}

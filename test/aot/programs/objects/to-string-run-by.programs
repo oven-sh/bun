@@ -1,0 +1,3083 @@
+////: lines-108
+{
+  const print = printer(«1»);
+  const p = { toString() { return "label" } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  const t = { [o]: 4 }; print(t.label);
+}
+////: lines-119
+{
+  const print = printer(«1»);
+  const p = { toString() { return "label" } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+////: lines-120
+{
+  const print = printer(«1»);
+  const p = { toString() { return "label" } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(new Error(o).message);
+}
+////: lines-121
+{
+  const print = printer(«1»);
+  const p = { toString() { return "label" } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+////: lines-122
+{
+  const print = printer(«1»);
+  const p = { toString() { return "label" } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(o in { label: 1 });
+}
+////: lines-123
+{
+  const print = printer(«1»);
+  const p = { toString() { return "label" } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  const t = { label: 1 }; print(t[o]);
+}
+////: lines-124
+{
+  const print = printer(«1»);
+  const p = { toString() { return "label" } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  const t = {}; t[o] = 3; print(t.label);
+}
+////: lines-125
+{
+  const print = printer(«1»);
+  const p = { toString() { return "label" } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(o);
+}
+////: lines-126
+{
+  const print = printer(«1»);
+  const p = { toString() { return "42" } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(+o, o * 1);
+}
+////: lines-147
+{
+  const print = printer(«1»);
+  const p = { toString() { return "label" } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(Symbol(o).description);
+}
+////: lines-148
+{
+  const print = printer(«1»);
+  const p = { toString() { return "label" } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(`${o}`);
+}
+////: lines-208
+{
+  const print = printer(«1»);
+  const p = { toString() { return "label" } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  «2»);
+}
+//// to-string-run-by-conversions.js
+// toString is run by templates, String(), concatenation, property keys and built-ins, wherever the object got it from.
+const lines = [];
+////= printer
+
+{
+  const print = printer("tostring-template literal");
+  const o = { toString() { return "label" } };
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template literal-function");
+  const o = { toString: function () { return "label" } };
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template literal-with-field");
+  const o = { x: 1, toString() { return "label" } };
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template class-method");
+  class C { toString() { return "label" } }
+  const o = new C();
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template class-field");
+  class C { toString = function () { return "label" }; }
+  const o = new C();
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template subclass");
+  class B { toString() { return "label" } }
+  class C extends B {}
+  const o = new C();
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template class-static");
+  class C { static toString() { return "label" } }
+  const o = C;
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template prototype-create");
+  const p = { toString() { return "label" } };
+  const o = Object.create(p);
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template prototype-literal");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p };
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template prototype-literal-with-field");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p, x: 1 };
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template prototype-set");
+  const p = { toString() { return "label" } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(`${o}`);
+}
+////= lines-148	"tostring-template prototype-set-with-field"	Object
+////= lines-148	"tostring-template prototype-reflect-set"	Reflect
+{
+  const print = printer("tostring-template prototype-proto-store");
+  const p = { toString() { return "label" } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template prototype-two-levels");
+  const p = { toString() { return "label" } };
+  const o = Object.create(Object.create(p));
+  print(`${o}`);
+}
+////= lines-208	"tostring-template prototype-of-class-instance"	print(`${o}`
+{
+  const print = printer("tostring-template prototype-is-instance");
+  class C { toString = function () { return "label" }; }
+  const o = Object.create(new C());
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template stored-after");
+  const o = {};
+  o.toString = function () { return "label" };
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template stored-after-with-field");
+  const o = { x: 1 };
+  o.toString = function () { return "label" };
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template stored-after-on-prototype");
+  const p = {};
+  p.toString = function () { return "label" };
+  const o = Object.create(p);
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.toString = function () { return "label" };
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.toString = function () { return "label" };
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.toString = function () { return "label" };
+  const o = new C();
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template constructor-function");
+  function F() {}
+  F.prototype.toString = function () { return "label" };
+  const o = new F();
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { toString() { return "label" } };
+  const o = new F();
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template constructor-function-this");
+  function F() { this.toString = function () { return "label" }; }
+  const o = new F();
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template getter");
+  const o = { get toString() { return function () { return "label" }; } };
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template defined");
+  const o = {};
+  Object.defineProperty(o, "toString", { value: function () { return "label" } });
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template assigned");
+  const o = Object.assign({}, { toString() { return "label" } });
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template spread-copy");
+  const o = { ...{ toString() { return "label" } } };
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template made-in-function");
+  function make() { return { toString() { return "label" } }; }
+  const o = make();
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template made-in-function-twice");
+  function make() { return { toString() { return "label" } }; }
+  make();
+  const o = make();
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template literal-arrow");
+  const o = { toString: () => { return "label" } };
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template class-field-arrow");
+  class C { toString = () => { return "label" }; }
+  const o = new C();
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-template prototype-create-arrow");
+  const p = { toString: () => { return "label" } };
+  const o = Object.create(p);
+  print(`${o}`);
+}
+{
+  const print = printer("tostring-string literal");
+  const o = { toString() { return "label" } };
+  print(String(o));
+}
+{
+  const print = printer("tostring-string literal-function");
+  const o = { toString: function () { return "label" } };
+  print(String(o));
+}
+{
+  const print = printer("tostring-string literal-with-field");
+  const o = { x: 1, toString() { return "label" } };
+  print(String(o));
+}
+{
+  const print = printer("tostring-string class-method");
+  class C { toString() { return "label" } }
+  const o = new C();
+  print(String(o));
+}
+{
+  const print = printer("tostring-string class-field");
+  class C { toString = function () { return "label" }; }
+  const o = new C();
+  print(String(o));
+}
+////= lines-146	"tostring-string subclass"	toString	"label"	String
+{
+  const print = printer("tostring-string class-static");
+  class C { static toString() { return "label" } }
+  const o = C;
+  print(String(o));
+}
+{
+  const print = printer("tostring-string prototype-create");
+  const p = { toString() { return "label" } };
+  const o = Object.create(p);
+  print(String(o));
+}
+{
+  const print = printer("tostring-string prototype-literal");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p };
+  print(String(o));
+}
+{
+  const print = printer("tostring-string prototype-literal-with-field");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p, x: 1 };
+  print(String(o));
+}
+////= lines-141	"tostring-string prototype-set"	toString	"label"	String
+////= lines-18	"tostring-string prototype-set-with-field"	toString	"label"	Object	String
+////= lines-18	"tostring-string prototype-reflect-set"	toString	"label"	Reflect	String
+////= lines-140	"tostring-string prototype-proto-store"	toString	"label"	String
+{
+  const print = printer("tostring-string prototype-two-levels");
+  const p = { toString() { return "label" } };
+  const o = Object.create(Object.create(p));
+  print(String(o));
+}
+////= lines-34	"tostring-string prototype-of-class-instance"	toString	"label"	String
+{
+  const print = printer("tostring-string prototype-is-instance");
+  class C { toString = function () { return "label" }; }
+  const o = Object.create(new C());
+  print(String(o));
+}
+{
+  const print = printer("tostring-string stored-after");
+  const o = {};
+  o.toString = function () { return "label" };
+  print(String(o));
+}
+{
+  const print = printer("tostring-string stored-after-with-field");
+  const o = { x: 1 };
+  o.toString = function () { return "label" };
+  print(String(o));
+}
+////= lines-143	"tostring-string stored-after-on-prototype"	toString	"label"	String
+////= lines-144	"tostring-string stored-after-on-prototype-late"	toString	"label"	String
+////= lines-142	"tostring-string stored-after-on-instance"	toString	"label"	String
+////= lines-145	"tostring-string stored-on-class-prototype"	toString	"label"	String
+////= lines-137	"tostring-string constructor-function"	toString	"label"	String
+////= lines-138	"tostring-string constructor-function-prototype-object"	toString	"label"	String
+{
+  const print = printer("tostring-string constructor-function-this");
+  function F() { this.toString = function () { return "label" }; }
+  const o = new F();
+  print(String(o));
+}
+{
+  const print = printer("tostring-string getter");
+  const o = { get toString() { return function () { return "label" }; } };
+  print(String(o));
+}
+{
+  const print = printer("tostring-string defined");
+  const o = {};
+  Object.defineProperty(o, "toString", { value: function () { return "label" } });
+  print(String(o));
+}
+{
+  const print = printer("tostring-string assigned");
+  const o = Object.assign({}, { toString() { return "label" } });
+  print(String(o));
+}
+{
+  const print = printer("tostring-string spread-copy");
+  const o = { ...{ toString() { return "label" } } };
+  print(String(o));
+}
+{
+  const print = printer("tostring-string made-in-function");
+  function make() { return { toString() { return "label" } }; }
+  const o = make();
+  print(String(o));
+}
+////= lines-139	"tostring-string made-in-function-twice"	toString	"label"	String
+{
+  const print = printer("tostring-string literal-arrow");
+  const o = { toString: () => { return "label" } };
+  print(String(o));
+}
+{
+  const print = printer("tostring-string class-field-arrow");
+  class C { toString = () => { return "label" }; }
+  const o = new C();
+  print(String(o));
+}
+{
+  const print = printer("tostring-string prototype-create-arrow");
+  const p = { toString: () => { return "label" } };
+  const o = Object.create(p);
+  print(String(o));
+}
+{
+  const print = printer("tostring-concat literal");
+  const o = { toString() { return "label" } };
+  print("" + o);
+}
+{
+  const print = printer("tostring-concat literal-function");
+  const o = { toString: function () { return "label" } };
+  print("" + o);
+}
+{
+  const print = printer("tostring-concat literal-with-field");
+  const o = { x: 1, toString() { return "label" } };
+  print("" + o);
+}
+{
+  const print = printer("tostring-concat class-method");
+  class C { toString() { return "label" } }
+  const o = new C();
+  print("" + o);
+}
+{
+  const print = printer("tostring-concat class-field");
+  class C { toString = function () { return "label" }; }
+  const o = new C();
+  print("" + o);
+}
+////= lines-118	"tostring-concat subclass"	toString	"label"	""	o
+{
+  const print = printer("tostring-concat class-static");
+  class C { static toString() { return "label" } }
+  const o = C;
+  print("" + o);
+}
+{
+  const print = printer("tostring-concat prototype-create");
+  const p = { toString() { return "label" } };
+  const o = Object.create(p);
+  print("" + o);
+}
+{
+  const print = printer("tostring-concat prototype-literal");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p };
+  print("" + o);
+}
+{
+  const print = printer("tostring-concat prototype-literal-with-field");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p, x: 1 };
+  print("" + o);
+}
+////= lines-113	"tostring-concat prototype-set"	toString	"label"	""	o
+////= lines-16	"tostring-concat prototype-set-with-field"	toString	"label"	Object	""	o
+////= lines-16	"tostring-concat prototype-reflect-set"	toString	"label"	Reflect	""	o
+////= lines-112	"tostring-concat prototype-proto-store"	toString	"label"	""	o
+{
+  const print = printer("tostring-concat prototype-two-levels");
+  const p = { toString() { return "label" } };
+  const o = Object.create(Object.create(p));
+  print("" + o);
+}
+////= lines-32	"tostring-concat prototype-of-class-instance"	toString	"label"	""	o
+{
+  const print = printer("tostring-concat prototype-is-instance");
+  class C { toString = function () { return "label" }; }
+  const o = Object.create(new C());
+  print("" + o);
+}
+{
+  const print = printer("tostring-concat stored-after");
+  const o = {};
+  o.toString = function () { return "label" };
+  print("" + o);
+}
+{
+  const print = printer("tostring-concat stored-after-with-field");
+  const o = { x: 1 };
+  o.toString = function () { return "label" };
+  print("" + o);
+}
+////= lines-115	"tostring-concat stored-after-on-prototype"	toString	"label"	""	o
+////= lines-116	"tostring-concat stored-after-on-prototype-late"	toString	"label"	""	o
+////= lines-114	"tostring-concat stored-after-on-instance"	toString	"label"	""	o
+////= lines-117	"tostring-concat stored-on-class-prototype"	toString	"label"	""	o
+////= lines-109	"tostring-concat constructor-function"	toString	"label"	""	o
+////= lines-110	"tostring-concat constructor-function-prototype-object"	toString	"label"	""	o
+{
+  const print = printer("tostring-concat constructor-function-this");
+  function F() { this.toString = function () { return "label" }; }
+  const o = new F();
+  print("" + o);
+}
+{
+  const print = printer("tostring-concat getter");
+  const o = { get toString() { return function () { return "label" }; } };
+  print("" + o);
+}
+{
+  const print = printer("tostring-concat defined");
+  const o = {};
+  Object.defineProperty(o, "toString", { value: function () { return "label" } });
+  print("" + o);
+}
+{
+  const print = printer("tostring-concat assigned");
+  const o = Object.assign({}, { toString() { return "label" } });
+  print("" + o);
+}
+{
+  const print = printer("tostring-concat spread-copy");
+  const o = { ...{ toString() { return "label" } } };
+  print("" + o);
+}
+{
+  const print = printer("tostring-concat made-in-function");
+  function make() { return { toString() { return "label" } }; }
+  const o = make();
+  print("" + o);
+}
+////= lines-111	"tostring-concat made-in-function-twice"	toString	"label"	""	o
+{
+  const print = printer("tostring-concat literal-arrow");
+  const o = { toString: () => { return "label" } };
+  print("" + o);
+}
+{
+  const print = printer("tostring-concat class-field-arrow");
+  class C { toString = () => { return "label" }; }
+  const o = new C();
+  print("" + o);
+}
+{
+  const print = printer("tostring-concat prototype-create-arrow");
+  const p = { toString: () => { return "label" } };
+  const o = Object.create(p);
+  print("" + o);
+}
+{
+  const print = printer("tostring-key literal");
+  const o = { toString() { return "label" } };
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key literal-function");
+  const o = { toString: function () { return "label" } };
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key literal-with-field");
+  const o = { x: 1, toString() { return "label" } };
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key class-method");
+  class C { toString() { return "label" } }
+  const o = new C();
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key class-field");
+  class C { toString = function () { return "label" }; }
+  const o = new C();
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key subclass");
+  class B { toString() { return "label" } }
+  class C extends B {}
+  const o = new C();
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key class-static");
+  class C { static toString() { return "label" } }
+  const o = C;
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key prototype-create");
+  const p = { toString() { return "label" } };
+  const o = Object.create(p);
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key prototype-literal");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p };
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key prototype-literal-with-field");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p, x: 1 };
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key prototype-set");
+  const p = { toString() { return "label" } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  const t = { label: 1 }; print(t[o]);
+}
+////= lines-123	"tostring-key prototype-set-with-field"	Object
+////= lines-123	"tostring-key prototype-reflect-set"	Reflect
+{
+  const print = printer("tostring-key prototype-proto-store");
+  const p = { toString() { return "label" } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key prototype-two-levels");
+  const p = { toString() { return "label" } };
+  const o = Object.create(Object.create(p));
+  const t = { label: 1 }; print(t[o]);
+}
+////= lines-208	"tostring-key prototype-of-class-instance"	const t = { label: 1 }; print(t[o]
+{
+  const print = printer("tostring-key prototype-is-instance");
+  class C { toString = function () { return "label" }; }
+  const o = Object.create(new C());
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key stored-after");
+  const o = {};
+  o.toString = function () { return "label" };
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key stored-after-with-field");
+  const o = { x: 1 };
+  o.toString = function () { return "label" };
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key stored-after-on-prototype");
+  const p = {};
+  p.toString = function () { return "label" };
+  const o = Object.create(p);
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.toString = function () { return "label" };
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.toString = function () { return "label" };
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.toString = function () { return "label" };
+  const o = new C();
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key constructor-function");
+  function F() {}
+  F.prototype.toString = function () { return "label" };
+  const o = new F();
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { toString() { return "label" } };
+  const o = new F();
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key constructor-function-this");
+  function F() { this.toString = function () { return "label" }; }
+  const o = new F();
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key getter");
+  const o = { get toString() { return function () { return "label" }; } };
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key defined");
+  const o = {};
+  Object.defineProperty(o, "toString", { value: function () { return "label" } });
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key assigned");
+  const o = Object.assign({}, { toString() { return "label" } });
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key spread-copy");
+  const o = { ...{ toString() { return "label" } } };
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key made-in-function");
+  function make() { return { toString() { return "label" } }; }
+  const o = make();
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key made-in-function-twice");
+  function make() { return { toString() { return "label" } }; }
+  make();
+  const o = make();
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key literal-arrow");
+  const o = { toString: () => { return "label" } };
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key class-field-arrow");
+  class C { toString = () => { return "label" }; }
+  const o = new C();
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key prototype-create-arrow");
+  const p = { toString: () => { return "label" } };
+  const o = Object.create(p);
+  const t = { label: 1 }; print(t[o]);
+}
+{
+  const print = printer("tostring-key-store literal");
+  const o = { toString() { return "label" } };
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store literal-function");
+  const o = { toString: function () { return "label" } };
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store literal-with-field");
+  const o = { x: 1, toString() { return "label" } };
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store class-method");
+  class C { toString() { return "label" } }
+  const o = new C();
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store class-field");
+  class C { toString = function () { return "label" }; }
+  const o = new C();
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store subclass");
+  class B { toString() { return "label" } }
+  class C extends B {}
+  const o = new C();
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store class-static");
+  class C { static toString() { return "label" } }
+  const o = C;
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store prototype-create");
+  const p = { toString() { return "label" } };
+  const o = Object.create(p);
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store prototype-literal");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p };
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store prototype-literal-with-field");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p, x: 1 };
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store prototype-set");
+  const p = { toString() { return "label" } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  const t = {}; t[o] = 3; print(t.label);
+}
+////= lines-124	"tostring-key-store prototype-set-with-field"	Object
+////= lines-124	"tostring-key-store prototype-reflect-set"	Reflect
+{
+  const print = printer("tostring-key-store prototype-proto-store");
+  const p = { toString() { return "label" } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store prototype-two-levels");
+  const p = { toString() { return "label" } };
+  const o = Object.create(Object.create(p));
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store prototype-of-class-instance");
+  const p = { toString() { return "label" } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store prototype-is-instance");
+  class C { toString = function () { return "label" }; }
+  const o = Object.create(new C());
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store stored-after");
+  const o = {};
+  o.toString = function () { return "label" };
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store stored-after-with-field");
+  const o = { x: 1 };
+  o.toString = function () { return "label" };
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store stored-after-on-prototype");
+  const p = {};
+  p.toString = function () { return "label" };
+  const o = Object.create(p);
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.toString = function () { return "label" };
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.toString = function () { return "label" };
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.toString = function () { return "label" };
+  const o = new C();
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store constructor-function");
+  function F() {}
+  F.prototype.toString = function () { return "label" };
+  const o = new F();
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { toString() { return "label" } };
+  const o = new F();
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store constructor-function-this");
+  function F() { this.toString = function () { return "label" }; }
+  const o = new F();
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store getter");
+  const o = { get toString() { return function () { return "label" }; } };
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store defined");
+  const o = {};
+  Object.defineProperty(o, "toString", { value: function () { return "label" } });
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store assigned");
+  const o = Object.assign({}, { toString() { return "label" } });
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store spread-copy");
+  const o = { ...{ toString() { return "label" } } };
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store made-in-function");
+  function make() { return { toString() { return "label" } }; }
+  const o = make();
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store made-in-function-twice");
+  function make() { return { toString() { return "label" } }; }
+  make();
+  const o = make();
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store literal-arrow");
+  const o = { toString: () => { return "label" } };
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store class-field-arrow");
+  class C { toString = () => { return "label" }; }
+  const o = new C();
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-key-store prototype-create-arrow");
+  const p = { toString: () => { return "label" } };
+  const o = Object.create(p);
+  const t = {}; t[o] = 3; print(t.label);
+}
+{
+  const print = printer("tostring-in literal");
+  const o = { toString() { return "label" } };
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in literal-function");
+  const o = { toString: function () { return "label" } };
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in literal-with-field");
+  const o = { x: 1, toString() { return "label" } };
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in class-method");
+  class C { toString() { return "label" } }
+  const o = new C();
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in class-field");
+  class C { toString = function () { return "label" }; }
+  const o = new C();
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in subclass");
+  class B { toString() { return "label" } }
+  class C extends B {}
+  const o = new C();
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in class-static");
+  class C { static toString() { return "label" } }
+  const o = C;
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in prototype-create");
+  const p = { toString() { return "label" } };
+  const o = Object.create(p);
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in prototype-literal");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p };
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in prototype-literal-with-field");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p, x: 1 };
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in prototype-set");
+  const p = { toString() { return "label" } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(o in { label: 1 });
+}
+////= lines-122	"tostring-in prototype-set-with-field"	Object
+////= lines-122	"tostring-in prototype-reflect-set"	Reflect
+{
+  const print = printer("tostring-in prototype-proto-store");
+  const p = { toString() { return "label" } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in prototype-two-levels");
+  const p = { toString() { return "label" } };
+  const o = Object.create(Object.create(p));
+  print(o in { label: 1 });
+}
+////= lines-208	"tostring-in prototype-of-class-instance"	print(o in { label: 1 }
+{
+  const print = printer("tostring-in prototype-is-instance");
+  class C { toString = function () { return "label" }; }
+  const o = Object.create(new C());
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in stored-after");
+  const o = {};
+  o.toString = function () { return "label" };
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in stored-after-with-field");
+  const o = { x: 1 };
+  o.toString = function () { return "label" };
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in stored-after-on-prototype");
+  const p = {};
+  p.toString = function () { return "label" };
+  const o = Object.create(p);
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.toString = function () { return "label" };
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.toString = function () { return "label" };
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.toString = function () { return "label" };
+  const o = new C();
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in constructor-function");
+  function F() {}
+  F.prototype.toString = function () { return "label" };
+  const o = new F();
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { toString() { return "label" } };
+  const o = new F();
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in constructor-function-this");
+  function F() { this.toString = function () { return "label" }; }
+  const o = new F();
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in getter");
+  const o = { get toString() { return function () { return "label" }; } };
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in defined");
+  const o = {};
+  Object.defineProperty(o, "toString", { value: function () { return "label" } });
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in assigned");
+  const o = Object.assign({}, { toString() { return "label" } });
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in spread-copy");
+  const o = { ...{ toString() { return "label" } } };
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in made-in-function");
+  function make() { return { toString() { return "label" } }; }
+  const o = make();
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in made-in-function-twice");
+  function make() { return { toString() { return "label" } }; }
+  make();
+  const o = make();
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in literal-arrow");
+  const o = { toString: () => { return "label" } };
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in class-field-arrow");
+  class C { toString = () => { return "label" }; }
+  const o = new C();
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-in prototype-create-arrow");
+  const p = { toString: () => { return "label" } };
+  const o = Object.create(p);
+  print(o in { label: 1 });
+}
+{
+  const print = printer("tostring-native literal");
+  const o = { toString() { return "label" } };
+  print(o);
+}
+{
+  const print = printer("tostring-native literal-function");
+  const o = { toString: function () { return "label" } };
+  print(o);
+}
+{
+  const print = printer("tostring-native literal-with-field");
+  const o = { x: 1, toString() { return "label" } };
+  print(o);
+}
+{
+  const print = printer("tostring-native class-method");
+  class C { toString() { return "label" } }
+  const o = new C();
+  print(o);
+}
+{
+  const print = printer("tostring-native class-field");
+  class C { toString = function () { return "label" }; }
+  const o = new C();
+  print(o);
+}
+{
+  const print = printer("tostring-native subclass");
+  class B { toString() { return "label" } }
+  class C extends B {}
+  const o = new C();
+  print(o);
+}
+{
+  const print = printer("tostring-native class-static");
+  class C { static toString() { return "label" } }
+  const o = C;
+  print(o);
+}
+{
+  const print = printer("tostring-native prototype-create");
+  const p = { toString() { return "label" } };
+  const o = Object.create(p);
+  print(o);
+}
+{
+  const print = printer("tostring-native prototype-literal");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p };
+  print(o);
+}
+{
+  const print = printer("tostring-native prototype-literal-with-field");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p, x: 1 };
+  print(o);
+}
+{
+  const print = printer("tostring-native prototype-set");
+  const p = { toString() { return "label" } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(o);
+}
+////= lines-125	"tostring-native prototype-set-with-field"	Object
+////= lines-125	"tostring-native prototype-reflect-set"	Reflect
+{
+  const print = printer("tostring-native prototype-proto-store");
+  const p = { toString() { return "label" } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(o);
+}
+{
+  const print = printer("tostring-native prototype-two-levels");
+  const p = { toString() { return "label" } };
+  const o = Object.create(Object.create(p));
+  print(o);
+}
+////= lines-208	"tostring-native prototype-of-class-instance"	print(o
+{
+  const print = printer("tostring-native prototype-is-instance");
+  class C { toString = function () { return "label" }; }
+  const o = Object.create(new C());
+  print(o);
+}
+{
+  const print = printer("tostring-native stored-after");
+  const o = {};
+  o.toString = function () { return "label" };
+  print(o);
+}
+{
+  const print = printer("tostring-native stored-after-with-field");
+  const o = { x: 1 };
+  o.toString = function () { return "label" };
+  print(o);
+}
+{
+  const print = printer("tostring-native stored-after-on-prototype");
+  const p = {};
+  p.toString = function () { return "label" };
+  const o = Object.create(p);
+  print(o);
+}
+{
+  const print = printer("tostring-native stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.toString = function () { return "label" };
+  print(o);
+}
+{
+  const print = printer("tostring-native stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.toString = function () { return "label" };
+  print(o);
+}
+{
+  const print = printer("tostring-native stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.toString = function () { return "label" };
+  const o = new C();
+  print(o);
+}
+{
+  const print = printer("tostring-native constructor-function");
+  function F() {}
+  F.prototype.toString = function () { return "label" };
+  const o = new F();
+  print(o);
+}
+{
+  const print = printer("tostring-native constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { toString() { return "label" } };
+  const o = new F();
+  print(o);
+}
+{
+  const print = printer("tostring-native constructor-function-this");
+  function F() { this.toString = function () { return "label" }; }
+  const o = new F();
+  print(o);
+}
+{
+  const print = printer("tostring-native getter");
+  const o = { get toString() { return function () { return "label" }; } };
+  print(o);
+}
+{
+  const print = printer("tostring-native defined");
+  const o = {};
+  Object.defineProperty(o, "toString", { value: function () { return "label" } });
+  print(o);
+}
+{
+  const print = printer("tostring-native assigned");
+  const o = Object.assign({}, { toString() { return "label" } });
+  print(o);
+}
+{
+  const print = printer("tostring-native spread-copy");
+  const o = { ...{ toString() { return "label" } } };
+  print(o);
+}
+{
+  const print = printer("tostring-native made-in-function");
+  function make() { return { toString() { return "label" } }; }
+  const o = make();
+  print(o);
+}
+{
+  const print = printer("tostring-native made-in-function-twice");
+  function make() { return { toString() { return "label" } }; }
+  make();
+  const o = make();
+  print(o);
+}
+{
+  const print = printer("tostring-native literal-arrow");
+  const o = { toString: () => { return "label" } };
+  print(o);
+}
+{
+  const print = printer("tostring-native class-field-arrow");
+  class C { toString = () => { return "label" }; }
+  const o = new C();
+  print(o);
+}
+{
+  const print = printer("tostring-native prototype-create-arrow");
+  const p = { toString: () => { return "label" } };
+  const o = Object.create(p);
+  print(o);
+}
+{
+  const print = printer("tostring-parseint literal");
+  const o = { toString() { return "42" } };
+  print(parseInt(o), parseFloat(o));
+}
+{
+  const print = printer("tostring-parseint literal-function");
+  const o = { toString: function () { return "42" } };
+  print(parseInt(o), parseFloat(o));
+}
+{
+  const print = printer("tostring-parseint literal-with-field");
+  const o = { x: 1, toString() { return "42" } };
+  print(parseInt(o), parseFloat(o));
+}
+{
+  const print = printer("tostring-parseint class-method");
+  class C { toString() { return "42" } }
+  const o = new C();
+  print(parseInt(o), parseFloat(o));
+}
+{
+  const print = printer("tostring-parseint class-field");
+  class C { toString = function () { return "42" }; }
+  const o = new C();
+  print(parseInt(o), parseFloat(o));
+}
+////= lines-136	"tostring-parseint subclass"	toString	"42"	parseInt	parseFloat
+{
+  const print = printer("tostring-parseint class-static");
+  class C { static toString() { return "42" } }
+  const o = C;
+  print(parseInt(o), parseFloat(o));
+}
+{
+  const print = printer("tostring-parseint prototype-create");
+  const p = { toString() { return "42" } };
+  const o = Object.create(p);
+  print(parseInt(o), parseFloat(o));
+}
+{
+  const print = printer("tostring-parseint prototype-literal");
+  const p = { toString() { return "42" } };
+  const o = { __proto__: p };
+  print(parseInt(o), parseFloat(o));
+}
+{
+  const print = printer("tostring-parseint prototype-literal-with-field");
+  const p = { toString() { return "42" } };
+  const o = { __proto__: p, x: 1 };
+  print(parseInt(o), parseFloat(o));
+}
+////= lines-131	"tostring-parseint prototype-set"	toString	"42"	parseInt	parseFloat
+////= lines-17	"tostring-parseint prototype-set-with-field"	toString	"42"	Object	parseInt	parseFloat
+////= lines-17	"tostring-parseint prototype-reflect-set"	toString	"42"	Reflect	parseInt	parseFloat
+////= lines-130	"tostring-parseint prototype-proto-store"	toString	"42"	parseInt	parseFloat
+{
+  const print = printer("tostring-parseint prototype-two-levels");
+  const p = { toString() { return "42" } };
+  const o = Object.create(Object.create(p));
+  print(parseInt(o), parseFloat(o));
+}
+////= lines-33	"tostring-parseint prototype-of-class-instance"	toString	"42"	parseInt	parseFloat
+{
+  const print = printer("tostring-parseint prototype-is-instance");
+  class C { toString = function () { return "42" }; }
+  const o = Object.create(new C());
+  print(parseInt(o), parseFloat(o));
+}
+{
+  const print = printer("tostring-parseint stored-after");
+  const o = {};
+  o.toString = function () { return "42" };
+  print(parseInt(o), parseFloat(o));
+}
+{
+  const print = printer("tostring-parseint stored-after-with-field");
+  const o = { x: 1 };
+  o.toString = function () { return "42" };
+  print(parseInt(o), parseFloat(o));
+}
+////= lines-133	"tostring-parseint stored-after-on-prototype"	toString	"42"	parseInt	parseFloat
+////= lines-134	"tostring-parseint stored-after-on-prototype-late"	toString	"42"	parseInt	parseFloat
+////= lines-132	"tostring-parseint stored-after-on-instance"	toString	"42"	parseInt	parseFloat
+////= lines-135	"tostring-parseint stored-on-class-prototype"	toString	"42"	parseInt	parseFloat
+////= lines-127	"tostring-parseint constructor-function"	toString	"42"	parseInt	parseFloat
+////= lines-128	"tostring-parseint constructor-function-prototype-object"	toString	"42"	parseInt	parseFloat
+{
+  const print = printer("tostring-parseint constructor-function-this");
+  function F() { this.toString = function () { return "42" }; }
+  const o = new F();
+  print(parseInt(o), parseFloat(o));
+}
+{
+  const print = printer("tostring-parseint getter");
+  const o = { get toString() { return function () { return "42" }; } };
+  print(parseInt(o), parseFloat(o));
+}
+{
+  const print = printer("tostring-parseint defined");
+  const o = {};
+  Object.defineProperty(o, "toString", { value: function () { return "42" } });
+  print(parseInt(o), parseFloat(o));
+}
+{
+  const print = printer("tostring-parseint assigned");
+  const o = Object.assign({}, { toString() { return "42" } });
+  print(parseInt(o), parseFloat(o));
+}
+{
+  const print = printer("tostring-parseint spread-copy");
+  const o = { ...{ toString() { return "42" } } };
+  print(parseInt(o), parseFloat(o));
+}
+{
+  const print = printer("tostring-parseint made-in-function");
+  function make() { return { toString() { return "42" } }; }
+  const o = make();
+  print(parseInt(o), parseFloat(o));
+}
+////= lines-129	"tostring-parseint made-in-function-twice"	toString	"42"	parseInt	parseFloat
+{
+  const print = printer("tostring-parseint literal-arrow");
+  const o = { toString: () => { return "42" } };
+  print(parseInt(o), parseFloat(o));
+}
+{
+  const print = printer("tostring-parseint class-field-arrow");
+  class C { toString = () => { return "42" }; }
+  const o = new C();
+  print(parseInt(o), parseFloat(o));
+}
+{
+  const print = printer("tostring-parseint prototype-create-arrow");
+  const p = { toString: () => { return "42" } };
+  const o = Object.create(p);
+  print(parseInt(o), parseFloat(o));
+}
+{
+  const print = printer("tostring-error literal");
+  const o = { toString() { return "label" } };
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error literal-function");
+  const o = { toString: function () { return "label" } };
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error literal-with-field");
+  const o = { x: 1, toString() { return "label" } };
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error class-method");
+  class C { toString() { return "label" } }
+  const o = new C();
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error class-field");
+  class C { toString = function () { return "label" }; }
+  const o = new C();
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error subclass");
+  class B { toString() { return "label" } }
+  class C extends B {}
+  const o = new C();
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error class-static");
+  class C { static toString() { return "label" } }
+  const o = C;
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error prototype-create");
+  const p = { toString() { return "label" } };
+  const o = Object.create(p);
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error prototype-literal");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p };
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error prototype-literal-with-field");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p, x: 1 };
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error prototype-set");
+  const p = { toString() { return "label" } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(new Error(o).message);
+}
+////= lines-120	"tostring-error prototype-set-with-field"	Object
+////= lines-120	"tostring-error prototype-reflect-set"	Reflect
+{
+  const print = printer("tostring-error prototype-proto-store");
+  const p = { toString() { return "label" } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error prototype-two-levels");
+  const p = { toString() { return "label" } };
+  const o = Object.create(Object.create(p));
+  print(new Error(o).message);
+}
+////= lines-208	"tostring-error prototype-of-class-instance"	print(new Error(o).message
+{
+  const print = printer("tostring-error prototype-is-instance");
+  class C { toString = function () { return "label" }; }
+  const o = Object.create(new C());
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error stored-after");
+  const o = {};
+  o.toString = function () { return "label" };
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error stored-after-with-field");
+  const o = { x: 1 };
+  o.toString = function () { return "label" };
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error stored-after-on-prototype");
+  const p = {};
+  p.toString = function () { return "label" };
+  const o = Object.create(p);
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.toString = function () { return "label" };
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.toString = function () { return "label" };
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.toString = function () { return "label" };
+  const o = new C();
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error constructor-function");
+  function F() {}
+  F.prototype.toString = function () { return "label" };
+  const o = new F();
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { toString() { return "label" } };
+  const o = new F();
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error constructor-function-this");
+  function F() { this.toString = function () { return "label" }; }
+  const o = new F();
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error getter");
+  const o = { get toString() { return function () { return "label" }; } };
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error defined");
+  const o = {};
+  Object.defineProperty(o, "toString", { value: function () { return "label" } });
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error assigned");
+  const o = Object.assign({}, { toString() { return "label" } });
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error spread-copy");
+  const o = { ...{ toString() { return "label" } } };
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error made-in-function");
+  function make() { return { toString() { return "label" } }; }
+  const o = make();
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error made-in-function-twice");
+  function make() { return { toString() { return "label" } }; }
+  make();
+  const o = make();
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error literal-arrow");
+  const o = { toString: () => { return "label" } };
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error class-field-arrow");
+  class C { toString = () => { return "label" }; }
+  const o = new C();
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-error prototype-create-arrow");
+  const p = { toString: () => { return "label" } };
+  const o = Object.create(p);
+  print(new Error(o).message);
+}
+{
+  const print = printer("tostring-indexof literal");
+  const o = { toString() { return "label" } };
+  print("a label".indexOf(o));
+}
+{
+  const print = printer("tostring-indexof literal-function");
+  const o = { toString: function () { return "label" } };
+  print("a label".indexOf(o));
+}
+{
+  const print = printer("tostring-indexof literal-with-field");
+  const o = { x: 1, toString() { return "label" } };
+  print("a label".indexOf(o));
+}
+{
+  const print = printer("tostring-indexof class-method");
+  class C { toString() { return "label" } }
+  const o = new C();
+  print("a label".indexOf(o));
+}
+{
+  const print = printer("tostring-indexof class-field");
+  class C { toString = function () { return "label" }; }
+  const o = new C();
+  print("a label".indexOf(o));
+}
+////= lines-100	"tostring-indexof subclass"	toString	"label"	"a label".indexOf
+{
+  const print = printer("tostring-indexof class-static");
+  class C { static toString() { return "label" } }
+  const o = C;
+  print("a label".indexOf(o));
+}
+{
+  const print = printer("tostring-indexof prototype-create");
+  const p = { toString() { return "label" } };
+  const o = Object.create(p);
+  print("a label".indexOf(o));
+}
+{
+  const print = printer("tostring-indexof prototype-literal");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p };
+  print("a label".indexOf(o));
+}
+{
+  const print = printer("tostring-indexof prototype-literal-with-field");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p, x: 1 };
+  print("a label".indexOf(o));
+}
+////= lines-95	"tostring-indexof prototype-set"	toString	"label"	"a label".indexOf
+////= lines-15	"tostring-indexof prototype-set-with-field"	toString	"label"	Object	"a label".indexOf
+////= lines-15	"tostring-indexof prototype-reflect-set"	toString	"label"	Reflect	"a label".indexOf
+////= lines-94	"tostring-indexof prototype-proto-store"	toString	"label"	"a label".indexOf
+{
+  const print = printer("tostring-indexof prototype-two-levels");
+  const p = { toString() { return "label" } };
+  const o = Object.create(Object.create(p));
+  print("a label".indexOf(o));
+}
+////= lines-31	"tostring-indexof prototype-of-class-instance"	toString	"label"	"a label".indexOf
+{
+  const print = printer("tostring-indexof prototype-is-instance");
+  class C { toString = function () { return "label" }; }
+  const o = Object.create(new C());
+  print("a label".indexOf(o));
+}
+{
+  const print = printer("tostring-indexof stored-after");
+  const o = {};
+  o.toString = function () { return "label" };
+  print("a label".indexOf(o));
+}
+{
+  const print = printer("tostring-indexof stored-after-with-field");
+  const o = { x: 1 };
+  o.toString = function () { return "label" };
+  print("a label".indexOf(o));
+}
+////= lines-97	"tostring-indexof stored-after-on-prototype"	toString	"label"	"a label".indexOf
+////= lines-98	"tostring-indexof stored-after-on-prototype-late"	toString	"label"	"a label".indexOf
+////= lines-96	"tostring-indexof stored-after-on-instance"	toString	"label"	"a label".indexOf
+////= lines-99	"tostring-indexof stored-on-class-prototype"	toString	"label"	"a label".indexOf
+////= lines-91	"tostring-indexof constructor-function"	toString	"label"	"a label".indexOf
+////= lines-92	"tostring-indexof constructor-function-prototype-object"	toString	"label"	"a label".indexOf
+{
+  const print = printer("tostring-indexof constructor-function-this");
+  function F() { this.toString = function () { return "label" }; }
+  const o = new F();
+  print("a label".indexOf(o));
+}
+{
+  const print = printer("tostring-indexof getter");
+  const o = { get toString() { return function () { return "label" }; } };
+  print("a label".indexOf(o));
+}
+{
+  const print = printer("tostring-indexof defined");
+  const o = {};
+  Object.defineProperty(o, "toString", { value: function () { return "label" } });
+  print("a label".indexOf(o));
+}
+{
+  const print = printer("tostring-indexof assigned");
+  const o = Object.assign({}, { toString() { return "label" } });
+  print("a label".indexOf(o));
+}
+{
+  const print = printer("tostring-indexof spread-copy");
+  const o = { ...{ toString() { return "label" } } };
+  print("a label".indexOf(o));
+}
+{
+  const print = printer("tostring-indexof made-in-function");
+  function make() { return { toString() { return "label" } }; }
+  const o = make();
+  print("a label".indexOf(o));
+}
+////= lines-93	"tostring-indexof made-in-function-twice"	toString	"label"	"a label".indexOf
+{
+  const print = printer("tostring-indexof literal-arrow");
+  const o = { toString: () => { return "label" } };
+  print("a label".indexOf(o));
+}
+{
+  const print = printer("tostring-indexof class-field-arrow");
+  class C { toString = () => { return "label" }; }
+  const o = new C();
+  print("a label".indexOf(o));
+}
+{
+  const print = printer("tostring-indexof prototype-create-arrow");
+  const p = { toString: () => { return "label" } };
+  const o = Object.create(p);
+  print("a label".indexOf(o));
+}
+{
+  const print = printer("tostring-number literal");
+  const o = { toString() { return "42" } };
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number literal-function");
+  const o = { toString: function () { return "42" } };
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number literal-with-field");
+  const o = { x: 1, toString() { return "42" } };
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number class-method");
+  class C { toString() { return "42" } }
+  const o = new C();
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number class-field");
+  class C { toString = function () { return "42" }; }
+  const o = new C();
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number subclass");
+  class B { toString() { return "42" } }
+  class C extends B {}
+  const o = new C();
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number class-static");
+  class C { static toString() { return "42" } }
+  const o = C;
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number prototype-create");
+  const p = { toString() { return "42" } };
+  const o = Object.create(p);
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number prototype-literal");
+  const p = { toString() { return "42" } };
+  const o = { __proto__: p };
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number prototype-literal-with-field");
+  const p = { toString() { return "42" } };
+  const o = { __proto__: p, x: 1 };
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number prototype-set");
+  const p = { toString() { return "42" } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(+o, o * 1);
+}
+////= lines-126	"tostring-number prototype-set-with-field"	Object
+////= lines-126	"tostring-number prototype-reflect-set"	Reflect
+{
+  const print = printer("tostring-number prototype-proto-store");
+  const p = { toString() { return "42" } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number prototype-two-levels");
+  const p = { toString() { return "42" } };
+  const o = Object.create(Object.create(p));
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number prototype-of-class-instance");
+  const p = { toString() { return "42" } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number prototype-is-instance");
+  class C { toString = function () { return "42" }; }
+  const o = Object.create(new C());
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number stored-after");
+  const o = {};
+  o.toString = function () { return "42" };
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number stored-after-with-field");
+  const o = { x: 1 };
+  o.toString = function () { return "42" };
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number stored-after-on-prototype");
+  const p = {};
+  p.toString = function () { return "42" };
+  const o = Object.create(p);
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.toString = function () { return "42" };
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.toString = function () { return "42" };
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.toString = function () { return "42" };
+  const o = new C();
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number constructor-function");
+  function F() {}
+  F.prototype.toString = function () { return "42" };
+  const o = new F();
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { toString() { return "42" } };
+  const o = new F();
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number constructor-function-this");
+  function F() { this.toString = function () { return "42" }; }
+  const o = new F();
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number getter");
+  const o = { get toString() { return function () { return "42" }; } };
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number defined");
+  const o = {};
+  Object.defineProperty(o, "toString", { value: function () { return "42" } });
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number assigned");
+  const o = Object.assign({}, { toString() { return "42" } });
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number spread-copy");
+  const o = { ...{ toString() { return "42" } } };
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number made-in-function");
+  function make() { return { toString() { return "42" } }; }
+  const o = make();
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number made-in-function-twice");
+  function make() { return { toString() { return "42" } }; }
+  make();
+  const o = make();
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number literal-arrow");
+  const o = { toString: () => { return "42" } };
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number class-field-arrow");
+  class C { toString = () => { return "42" }; }
+  const o = new C();
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-number prototype-create-arrow");
+  const p = { toString: () => { return "42" } };
+  const o = Object.create(p);
+  print(+o, o * 1);
+}
+{
+  const print = printer("tostring-symbol literal");
+  const o = { toString() { return "label" } };
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol literal-function");
+  const o = { toString: function () { return "label" } };
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol literal-with-field");
+  const o = { x: 1, toString() { return "label" } };
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol class-method");
+  class C { toString() { return "label" } }
+  const o = new C();
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol class-field");
+  class C { toString = function () { return "label" }; }
+  const o = new C();
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol subclass");
+  class B { toString() { return "label" } }
+  class C extends B {}
+  const o = new C();
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol class-static");
+  class C { static toString() { return "label" } }
+  const o = C;
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol prototype-create");
+  const p = { toString() { return "label" } };
+  const o = Object.create(p);
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol prototype-literal");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p };
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol prototype-literal-with-field");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p, x: 1 };
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol prototype-set");
+  const p = { toString() { return "label" } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(Symbol(o).description);
+}
+////= lines-147	"tostring-symbol prototype-set-with-field"	Object
+////= lines-147	"tostring-symbol prototype-reflect-set"	Reflect
+{
+  const print = printer("tostring-symbol prototype-proto-store");
+  const p = { toString() { return "label" } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol prototype-two-levels");
+  const p = { toString() { return "label" } };
+  const o = Object.create(Object.create(p));
+  print(Symbol(o).description);
+}
+////= lines-208	"tostring-symbol prototype-of-class-instance"	print(Symbol(o).description
+{
+  const print = printer("tostring-symbol prototype-is-instance");
+  class C { toString = function () { return "label" }; }
+  const o = Object.create(new C());
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol stored-after");
+  const o = {};
+  o.toString = function () { return "label" };
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol stored-after-with-field");
+  const o = { x: 1 };
+  o.toString = function () { return "label" };
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol stored-after-on-prototype");
+  const p = {};
+  p.toString = function () { return "label" };
+  const o = Object.create(p);
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.toString = function () { return "label" };
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.toString = function () { return "label" };
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.toString = function () { return "label" };
+  const o = new C();
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol constructor-function");
+  function F() {}
+  F.prototype.toString = function () { return "label" };
+  const o = new F();
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { toString() { return "label" } };
+  const o = new F();
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol constructor-function-this");
+  function F() { this.toString = function () { return "label" }; }
+  const o = new F();
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol getter");
+  const o = { get toString() { return function () { return "label" }; } };
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol defined");
+  const o = {};
+  Object.defineProperty(o, "toString", { value: function () { return "label" } });
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol assigned");
+  const o = Object.assign({}, { toString() { return "label" } });
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol spread-copy");
+  const o = { ...{ toString() { return "label" } } };
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol made-in-function");
+  function make() { return { toString() { return "label" } }; }
+  const o = make();
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol made-in-function-twice");
+  function make() { return { toString() { return "label" } }; }
+  make();
+  const o = make();
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol literal-arrow");
+  const o = { toString: () => { return "label" } };
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol class-field-arrow");
+  class C { toString = () => { return "label" }; }
+  const o = new C();
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-symbol prototype-create-arrow");
+  const p = { toString: () => { return "label" } };
+  const o = Object.create(p);
+  print(Symbol(o).description);
+}
+{
+  const print = printer("tostring-computed-literal literal");
+  const o = { toString() { return "label" } };
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal literal-function");
+  const o = { toString: function () { return "label" } };
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal literal-with-field");
+  const o = { x: 1, toString() { return "label" } };
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal class-method");
+  class C { toString() { return "label" } }
+  const o = new C();
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal class-field");
+  class C { toString = function () { return "label" }; }
+  const o = new C();
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal subclass");
+  class B { toString() { return "label" } }
+  class C extends B {}
+  const o = new C();
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal class-static");
+  class C { static toString() { return "label" } }
+  const o = C;
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal prototype-create");
+  const p = { toString() { return "label" } };
+  const o = Object.create(p);
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal prototype-literal");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p };
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal prototype-literal-with-field");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p, x: 1 };
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal prototype-set");
+  const p = { toString() { return "label" } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  const t = { [o]: 4 }; print(t.label);
+}
+////= lines-108	"tostring-computed-literal prototype-set-with-field"	Object
+////= lines-108	"tostring-computed-literal prototype-reflect-set"	Reflect
+{
+  const print = printer("tostring-computed-literal prototype-proto-store");
+  const p = { toString() { return "label" } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal prototype-two-levels");
+  const p = { toString() { return "label" } };
+  const o = Object.create(Object.create(p));
+  const t = { [o]: 4 }; print(t.label);
+}
+////= lines-208	"tostring-computed-literal prototype-of-class-instance"	const t = { [o]: 4 }; print(t.label
+{
+  const print = printer("tostring-computed-literal prototype-is-instance");
+  class C { toString = function () { return "label" }; }
+  const o = Object.create(new C());
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal stored-after");
+  const o = {};
+  o.toString = function () { return "label" };
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal stored-after-with-field");
+  const o = { x: 1 };
+  o.toString = function () { return "label" };
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal stored-after-on-prototype");
+  const p = {};
+  p.toString = function () { return "label" };
+  const o = Object.create(p);
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.toString = function () { return "label" };
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.toString = function () { return "label" };
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.toString = function () { return "label" };
+  const o = new C();
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal constructor-function");
+  function F() {}
+  F.prototype.toString = function () { return "label" };
+  const o = new F();
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { toString() { return "label" } };
+  const o = new F();
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal constructor-function-this");
+  function F() { this.toString = function () { return "label" }; }
+  const o = new F();
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal getter");
+  const o = { get toString() { return function () { return "label" }; } };
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal defined");
+  const o = {};
+  Object.defineProperty(o, "toString", { value: function () { return "label" } });
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal assigned");
+  const o = Object.assign({}, { toString() { return "label" } });
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal spread-copy");
+  const o = { ...{ toString() { return "label" } } };
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal made-in-function");
+  function make() { return { toString() { return "label" } }; }
+  const o = make();
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal made-in-function-twice");
+  function make() { return { toString() { return "label" } }; }
+  make();
+  const o = make();
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal literal-arrow");
+  const o = { toString: () => { return "label" } };
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal class-field-arrow");
+  class C { toString = () => { return "label" }; }
+  const o = new C();
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-computed-literal prototype-create-arrow");
+  const p = { toString: () => { return "label" } };
+  const o = Object.create(p);
+  const t = { [o]: 4 }; print(t.label);
+}
+{
+  const print = printer("tostring-has-own literal");
+  const o = { toString() { return "label" } };
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own literal-function");
+  const o = { toString: function () { return "label" } };
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own literal-with-field");
+  const o = { x: 1, toString() { return "label" } };
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own class-method");
+  class C { toString() { return "label" } }
+  const o = new C();
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own class-field");
+  class C { toString = function () { return "label" }; }
+  const o = new C();
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own subclass");
+  class B { toString() { return "label" } }
+  class C extends B {}
+  const o = new C();
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own class-static");
+  class C { static toString() { return "label" } }
+  const o = C;
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own prototype-create");
+  const p = { toString() { return "label" } };
+  const o = Object.create(p);
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own prototype-literal");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p };
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own prototype-literal-with-field");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p, x: 1 };
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own prototype-set");
+  const p = { toString() { return "label" } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+////= lines-121	"tostring-has-own prototype-set-with-field"	Object
+////= lines-121	"tostring-has-own prototype-reflect-set"	Reflect
+{
+  const print = printer("tostring-has-own prototype-proto-store");
+  const p = { toString() { return "label" } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own prototype-two-levels");
+  const p = { toString() { return "label" } };
+  const o = Object.create(Object.create(p));
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+////= lines-208	"tostring-has-own prototype-of-class-instance"	print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o)
+{
+  const print = printer("tostring-has-own prototype-is-instance");
+  class C { toString = function () { return "label" }; }
+  const o = Object.create(new C());
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own stored-after");
+  const o = {};
+  o.toString = function () { return "label" };
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own stored-after-with-field");
+  const o = { x: 1 };
+  o.toString = function () { return "label" };
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own stored-after-on-prototype");
+  const p = {};
+  p.toString = function () { return "label" };
+  const o = Object.create(p);
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.toString = function () { return "label" };
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.toString = function () { return "label" };
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.toString = function () { return "label" };
+  const o = new C();
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own constructor-function");
+  function F() {}
+  F.prototype.toString = function () { return "label" };
+  const o = new F();
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { toString() { return "label" } };
+  const o = new F();
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own constructor-function-this");
+  function F() { this.toString = function () { return "label" }; }
+  const o = new F();
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own getter");
+  const o = { get toString() { return function () { return "label" }; } };
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own defined");
+  const o = {};
+  Object.defineProperty(o, "toString", { value: function () { return "label" } });
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own assigned");
+  const o = Object.assign({}, { toString() { return "label" } });
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own spread-copy");
+  const o = { ...{ toString() { return "label" } } };
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own made-in-function");
+  function make() { return { toString() { return "label" } }; }
+  const o = make();
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own made-in-function-twice");
+  function make() { return { toString() { return "label" } }; }
+  make();
+  const o = make();
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own literal-arrow");
+  const o = { toString: () => { return "label" } };
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own class-field-arrow");
+  class C { toString = () => { return "label" }; }
+  const o = new C();
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-has-own prototype-create-arrow");
+  const p = { toString: () => { return "label" } };
+  const o = Object.create(p);
+  print(Object.hasOwn({ label: 1 }, o), ({ label: 1 }).hasOwnProperty(o));
+}
+{
+  const print = printer("tostring-delete literal");
+  const o = { toString() { return "label" } };
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete literal-function");
+  const o = { toString: function () { return "label" } };
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete literal-with-field");
+  const o = { x: 1, toString() { return "label" } };
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete class-method");
+  class C { toString() { return "label" } }
+  const o = new C();
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete class-field");
+  class C { toString = function () { return "label" }; }
+  const o = new C();
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete subclass");
+  class B { toString() { return "label" } }
+  class C extends B {}
+  const o = new C();
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete class-static");
+  class C { static toString() { return "label" } }
+  const o = C;
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete prototype-create");
+  const p = { toString() { return "label" } };
+  const o = Object.create(p);
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete prototype-literal");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p };
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete prototype-literal-with-field");
+  const p = { toString() { return "label" } };
+  const o = { __proto__: p, x: 1 };
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete prototype-set");
+  const p = { toString() { return "label" } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+////= lines-119	"tostring-delete prototype-set-with-field"	Object
+////= lines-119	"tostring-delete prototype-reflect-set"	Reflect
+{
+  const print = printer("tostring-delete prototype-proto-store");
+  const p = { toString() { return "label" } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete prototype-two-levels");
+  const p = { toString() { return "label" } };
+  const o = Object.create(Object.create(p));
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+////= lines-208	"tostring-delete prototype-of-class-instance"	const t = { label: 1 }; delete t[o]; print(t.label
+{
+  const print = printer("tostring-delete prototype-is-instance");
+  class C { toString = function () { return "label" }; }
+  const o = Object.create(new C());
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete stored-after");
+  const o = {};
+  o.toString = function () { return "label" };
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete stored-after-with-field");
+  const o = { x: 1 };
+  o.toString = function () { return "label" };
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete stored-after-on-prototype");
+  const p = {};
+  p.toString = function () { return "label" };
+  const o = Object.create(p);
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.toString = function () { return "label" };
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.toString = function () { return "label" };
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.toString = function () { return "label" };
+  const o = new C();
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete constructor-function");
+  function F() {}
+  F.prototype.toString = function () { return "label" };
+  const o = new F();
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { toString() { return "label" } };
+  const o = new F();
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete constructor-function-this");
+  function F() { this.toString = function () { return "label" }; }
+  const o = new F();
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete getter");
+  const o = { get toString() { return function () { return "label" }; } };
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete defined");
+  const o = {};
+  Object.defineProperty(o, "toString", { value: function () { return "label" } });
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete assigned");
+  const o = Object.assign({}, { toString() { return "label" } });
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete spread-copy");
+  const o = { ...{ toString() { return "label" } } };
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete made-in-function");
+  function make() { return { toString() { return "label" } }; }
+  const o = make();
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete made-in-function-twice");
+  function make() { return { toString() { return "label" } }; }
+  make();
+  const o = make();
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete literal-arrow");
+  const o = { toString: () => { return "label" } };
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete class-field-arrow");
+  class C { toString = () => { return "label" }; }
+  const o = new C();
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+{
+  const print = printer("tostring-delete prototype-create-arrow");
+  const p = { toString: () => { return "label" } };
+  const o = Object.create(p);
+  const t = { label: 1 }; delete t[o]; print(t.label);
+}
+
+console.log(lines.join("\n"));
+//// to-string-tag-of-class-instances.ts
+// Object.prototype.toString on instances of the program's classes: the answer is remembered by structure, and forgotten when a prototype on the way gets, changes or loses Symbol.toStringTag.
+const tagOf = (value: unknown): string => Object.prototype.toString.call(value);
+
+class Animal {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  speak(): string {
+    return this.name;
+  }
+}
+class Dog extends Animal {
+  tricks: number = 0;
+}
+class Tagged {
+  value = 1;
+  get [Symbol.toStringTag](): string {
+    return "Tagged" + this.value;
+  }
+}
+class Later {
+  size = 2;
+}
+////= lines-162	LaterChild	Later	more	3
+type Row = { id: number };
+
+function tags(values: unknown[]): string {
+  let all = "";
+  for (let round = 0; round < 3; round++) {
+    all = "";
+    for (const value of values) all += tagOf(value) + " ";
+  }
+  return all;
+}
+
+const later = new Later();
+const laterChild = new LaterChild();
+const row: Row = { id: 1 };
+const values: unknown[] = [new Animal("a"), new Dog("d"), new Tagged(), later, laterChild, row, [1], new Map(), () => 1, Animal, null, undefined, 1, "s", Object.create(later), Object.create(null)];
+console.log(tags(values));
+
+(Later.prototype as any)[Symbol.toStringTag] = "Late";
+console.log(tags(values));
+(LaterChild.prototype as any)[Symbol.toStringTag] = "Child";
+console.log(tags(values));
+(Later.prototype as any)[Symbol.toStringTag] = 5;
+console.log(tags(values));
+delete (LaterChild.prototype as any)[Symbol.toStringTag];
+console.log(tags(values));
+delete (Later.prototype as any)[Symbol.toStringTag];
+console.log(tags(values));
+(later as any)[Symbol.toStringTag] = "Own";
+console.log(tags(values));
+Object.defineProperty(Dog.prototype, Symbol.toStringTag, { get() { return "Dog of " + (this as Dog).name; }, configurable: true });
+console.log(tags(values), new Dog("e").speak(), new Animal("f").speak());
+
+let count = 0;
+for (let i = 0; i < 20000; i++) if (tagOf(i % 2 ? new Animal("x") : new Later()) === "[object Object]") count++;
+console.log(count);
+//// top-level-literals-in-try/main.ts
+// Object literals with members in top-level code inside `try` blocks keep all their members.
+// @ts-ignore
+import "./text.js";
+//// top-level-literals-in-try/text.js
+var log = [];
+function show(o) { return Object.keys(o).join() + " " + JSON.stringify(o); }
+function id(x) { return x; }
+var b = { name: "b", hidden: false, count: 1 };
+Object.defineProperty(b, "hidden", { enumerable: false }); log.push("1 no try, descriptor: " + show(b));
+var c = { name: "c", hidden: false, count: 1 };
+try { Object.defineProperty(c, "hidden", { enumerable: false }); log.push("2 try, descriptor: " + show(c)); } catch (e) { log.push("2 threw"); }
+var d = {};
+try { Object.defineProperty(d, "name", { value: "d", enumerable: true }); log.push("3 try, a new name: " + show(d) + " " + d.name); } catch (e) { log.push("3 threw"); }
+try { var e1 = { name: "e", k: 1 }; log.push("4 try, a literal kept: " + show(e1)); } catch (e) { log.push("4 threw"); }
+try { var f1 = id({ name: "f", k: 1 }); log.push("5 try, a literal handed on: " + show(f1)); } catch (e) { log.push("5 threw"); }
+try { var g1 = { name: id("g"), k: id(1) }; log.push("6 try, members that are calls: " + show(g1)); } catch (e) { log.push("6 threw"); }
+var stored = 0, h = { count: 1 };
+try { Object.defineProperty(h, "count", { get: () => stored, set: (v) => { stored = v * 10; }, enumerable: true, configurable: true }); } catch (e) { log.push("7 threw"); }
+h.count = 4; log.push("7 try, getter and setter: " + h.count + " " + stored + " " + typeof Object.getOwnPropertyDescriptor(h, "count").get);
+var list = [];
+try { list.push({ name: "zeta", v: 1 }); list.push({ name: "alpha", v: 2 }); list.push({ name: id("mid"), v: 3 }); } catch (e) { log.push("8 threw"); }
+log.push("8 try, records pushed: " + (function () { try { return list.toSorted((x, y) => x.name.localeCompare(y.name)).map((r) => r.name).join(); } catch (e) { return e.constructor.name + ": " + e.message; } })());
+console.log(log.join("\n"));
+//// ts-namespace-as-value.ts
+// A TypeScript `namespace` that is used as a value is a real object: `this` in its functions, uses before its statement has run, nested and merged namespaces.
+declare const console: any;
+function line(name: string, f: () => unknown) { try { console.log(name, JSON.stringify(f())); } catch (e: any) { console.log(name, "THREW", e.constructor.name); } }
+line("before the statement: a function", () => { Late.f(); return "ran"; });
+line("before the statement: a variable", () => Late.v);
+line("before the statement: nested", () => Late.Inner.g());
+namespace Late { export function f() { return 1; } export const v = 2; export namespace Inner { export function g() { return 3; } } }
+line("after the statement", () => [Late.f(), Late.v, Late.Inner.g()]);
+namespace N { export function g(this: unknown) { return typeof this; } export function self(this: unknown) { return this === N; } export const arrow = () => 5; export let count = 0; export function bump() { return ++count; } }
+line("this", () => N.g());
+line("this is the namespace", () => N.self());
+line("detached", () => { const g = N.g; return g(); });
+line("by key", () => (N as any)["g"]());
+line("an arrow", () => N.arrow());
+line("an exported let", () => { N.bump(); N.count += 10; return [N.count, N.bump()]; });
+namespace Outer { export namespace Inner { export function who(this: unknown) { return this === Inner; } export function outer(this: unknown) { return this === Outer; } } }
+line("nested: this", () => [Outer.Inner.who(), Outer.Inner.outer()]);
+namespace Merged { export function a(this: unknown) { return this === Merged; } }
+namespace Merged { export function b(this: unknown) { return this === Merged; } export const both = () => [a.call(Merged), b.call(Merged)]; }
+line("merged", () => [Merged.a(), Merged.b(), Merged.both()]);
+function Fn() { return "called"; }
+namespace Fn { export function member(this: unknown) { return this === Fn; } }
+line("with a function", () => [Fn(), Fn.member()]);
+class Cl { static s(this: unknown) { return this === Cl; } }
+namespace Cl { export function member(this: unknown) { return this === Cl; } }
+line("with a class", () => [Cl.s(), Cl.member()]);
+namespace Unused { export function never() { return 1; } }
+line("keys", () => [Object.keys(Late), Object.keys(N), Object.keys(Outer), Object.keys(Merged), Object.keys(Fn), Object.keys(Cl)]);
+line("stored to from outside", () => { (N as any).g = function () { return "replaced"; }; return N.g(); });
+//// typed-object-as-prototype.ts
+// A typed object serves as the prototype of another object.
+const base = { greeting: "hello", count: 1 }
+const derived = Object.create(base)
+derived.own = true
+console.log(derived.greeting, derived.count, derived.own, Object.getPrototypeOf(derived) === base, "greeting" in derived, Object.keys(derived).join())
+base.count = 2
+console.log(derived.count)
+derived.count = 5
+console.log(derived.count, base.count)
+class Point { constructor(public x: number, public y: number) {} sum() { return this.x + this.y } }
+const p = new Point(1, 2)
+const q = Object.create(p)
+console.log(q.x, q.y, q instanceof Point, p.sum())
+const many: unknown[] = []
+for (let i = 0; i < 20000; i++) many.push(Object.create({ i }))
+console.log((many[19999] as any).i)
+// The prototype of a compiled object is not changed where JavaScript refuses it too. Where JavaScript changes it: type-rules/typed-object-prototype-changes.
+const parent = { inherited: "yes", hello() { return "hi " + (this as any).a } }
+try { Object.setPrototypeOf(parent, Object.create(parent)); console.log("no cycle found") } catch (e) { console.log((e as Error).name) }
+const sealed = Object.preventExtensions({ b: 2 })
+try { Object.setPrototypeOf(sealed, parent); console.log("changed") } catch (e) { console.log((e as Error).name) }
+// A method of Object.prototype is shadowed on a compiled object, by a name that is not known at compile time.
+const shadowing: Record<string, unknown> = { kept: 1 }
+for (const key of ["toString", "valueOf", "hasOwnProperty"]) shadowing[key] = () => "mine " + key
+console.log(String((shadowing.toString as () => string)()), Object.keys(shadowing).join(), `${shadowing}`)
+const withSetter = Object.create({ set seen(v: number) { (this as any).stored = v * 2 } }) as any
+const child: any = { own: 1 }
+Object.setPrototypeOf(child, withSetter)
+child.seen = 21
+console.log(child.stored, Object.keys(child).join())
+//// typed-objects-used-by-untyped-code.ts
+// User-defined typed objects are read and written by code that does not know their type.
+class P {
+  flag = true
+  small = 7
+  big = 5000000000
+  real = 1.5
+  name = "p"
+  next: P | null = null
+  maybe: number | undefined = undefined
+  opt?: number
+  any: unknown = 3
+}
+function hide(x: unknown): any { return x }
+const p = new P()
+const x = hide(p)
+console.log(x.flag, x.small, x.big, x.real, x.name, x.next, x.maybe, x.opt, x.any, x.none)
+x.flag = false
+x.small = 8
+x.real = 2.25
+x.name = "q"
+x.next = p
+x.maybe = 4
+x.any = "s"
+console.log(p.flag, p.small, p.real, p.name, p.next === p, p.maybe, p.any)
+let total = 0
+const many: any[] = [hide(new P()), hide({ small: 1, real: 0.5 }), hide(new P())]
+for (let round = 0; round < 1000; round++) {
+  for (let i = 0; i < many.length; i++) total += many[i].small + many[i].real
+}
+console.log(total, Object.keys(x).join(","), JSON.stringify(hide({ a: 1, b: [true, null], c: "d" })))
+//// undefined-stored-into-fields-that-lie-outside-the-cell.ts
+// An object with many fields that are seldom filled keeps some of them outside its cell, and room for those is made when a value needs it.
+// `undefined` needs none: it is stored where the room is there already, in a new object, in one that has some of the room, and in one that has all of it.
+function given<T>(text: string): T { return JSON.parse(text) as T; }
+class Wide {
+  id: number; name: string;
+  a?: string; b?: number; c?: object; d?: string[]; e?: boolean; f?: Wide; g?: string; h?: number; i?: object; j?: string; k?: number; l?: boolean; m?: string; n?: number; o?: object; p?: string; q?: number; r?: Wide; s?: string; t?: number;
+  constructor(id: number, name: string) {
+    this.id = id; this.name = name;
+    this.a = undefined; this.b = undefined; this.c = undefined; this.d = undefined; this.e = undefined; this.f = undefined; this.g = undefined; this.h = undefined; this.i = undefined; this.j = undefined;
+    this.k = undefined; this.l = undefined; this.m = undefined; this.n = undefined; this.o = undefined; this.p = undefined; this.q = undefined; this.r = undefined; this.s = undefined; this.t = undefined;
+  }
+}
+const letters = "abcdefghijklmnopqrst".split("") as (keyof Wide)[];
+function show(wide: Wide): string { return wide.id + wide.name + ":" + letters.map(letter => { const value = wide[letter]; return value === undefined ? "-" : typeof value === "object" ? "o" : String(value); }).join("") + ":" + Object.keys(wide).length; }
+function clearAll(wide: Wide) {
+  wide.a = undefined; wide.b = undefined; wide.c = undefined; wide.d = undefined; wide.e = undefined; wide.f = undefined; wide.g = undefined; wide.h = undefined; wide.i = undefined; wide.j = undefined;
+  wide.k = undefined; wide.l = undefined; wide.m = undefined; wide.n = undefined; wide.o = undefined; wide.p = undefined; wide.q = undefined; wide.r = undefined; wide.s = undefined; wide.t = undefined;
+}
+function clearLast(wide: Wide) { wide.t = undefined; }
+function clearSome(wide: Wide) { wide.c = undefined; wide.j = undefined; wide.q = undefined; wide.s = undefined; }
+function fillSome(wide: Wide, seed: number) { wide.b = seed; wide.j = "j" + seed; wide.q = seed + 0.5; wide.s = "s"; }
+function fillAll(wide: Wide, seed: number) {
+  wide.a = "a"; wide.b = seed; wide.c = {}; wide.d = ["d"]; wide.e = true; wide.f = wide; wide.g = "g"; wide.h = seed + 1; wide.i = {}; wide.j = "j";
+  wide.k = seed + 2; wide.l = false; wide.m = "m"; wide.n = seed + 3; wide.o = {}; wide.p = "p"; wide.q = seed + 4; wide.r = wide; wide.s = "s"; wide.t = seed + 5;
+}
+const seed = given<number>("3");
+
+const fresh = new Wide(1, "fresh"); console.log(show(fresh));
+clearAll(fresh); clearLast(fresh); clearSome(fresh); console.log(show(fresh));
+
+const partly = new Wide(2, "partly"); fillSome(partly, seed); console.log(show(partly));
+clearSome(partly); console.log(show(partly)); fillSome(partly, seed + 1); clearLast(partly); console.log(show(partly)); clearAll(partly); console.log(show(partly));
+
+const full = new Wide(3, "full"); fillAll(full, seed); console.log(show(full));
+clearLast(full); console.log(show(full)); clearSome(full); console.log(show(full)); clearAll(full); console.log(show(full)); fillAll(full, seed); console.log(show(full));
+
+// One field at a time: filled, cleared, filled again.
+for (const letter of letters) {
+  const one = new Wide(4, letter) as unknown as Record<string, unknown>;
+  one[letter] = letter; const filled = show(one as unknown as Wide);
+  clearAll(one as unknown as Wide); const cleared = show(one as unknown as Wide);
+  one[letter] = 7; console.log(filled, cleared, show(one as unknown as Wide), letter in one, Object.hasOwn(one, letter));
+}
+
+// Literals that name only some of the fields, and get the others as undefined later.
+interface Options { id: number; a?: string; b?: number; c?: object; d?: string; e?: number; f?: string; g?: number; h?: string; i?: number; j?: string; k?: number; l?: string; m?: number; n?: string; o?: number; p?: string }
+function blank(options: Options) { options.k = undefined; options.l = undefined; options.m = undefined; options.n = undefined; options.o = undefined; options.p = undefined; }
+function list(options: Options): string { return Object.entries(options).map(([key, value]) => key + "=" + value).join(); }
+const small: Options = { id: 1 }; blank(small); console.log(list(small));
+const medium: Options = { id: 2, a: "a", l: "l", p: "p" }; blank(medium); console.log(list(medium));
+const large: Options = { id: 3, a: "a", b: 1, c: {}, d: "d", e: 2, f: "f", g: 3, h: "h", i: 4, j: "j", k: 5, l: "l", m: 6, n: "n", o: 7, p: "p" }; blank(large); console.log(list(large));
+
+// Many, with collections in between.
+const kept: Wide[] = [];
+for (let i = 0; i < 6000; i++) { const wide = new Wide(i, "w"); if (i % 3 === 0) fillSome(wide, i); if (i % 5 === 0) fillAll(wide, i); if (i % 7 === 0) clearSome(wide); if (i % 11 === 0) clearAll(wide); if (i % 13 === 0) kept.push(wide); if (i % 2000 === 0) Bun.gc(true); }
+let sum = 0; for (const wide of kept) sum += show(wide).length + (wide.q ?? 0) + (wide.t ?? 0);
+console.log(kept.length, sum, show(kept[5]), show(kept[15]), show(kept[kept.length - 1]));

@@ -1,0 +1,1 @@
+It needs aotOperationCount(), which only the jsc shell has.

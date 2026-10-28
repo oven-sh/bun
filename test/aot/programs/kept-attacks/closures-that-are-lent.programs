@@ -1,0 +1,365 @@
+//// closures-that-are-lent/a-callee-keeps-the-callback-on-some-paths.ts
+// A callee keeps the callback it is given on some of its paths only, as a hook does that compares dependencies. Where it does not keep it nothing needs to be made for the callback. Where it does, there is
+// ONE function object for the program to see, however often and by whomever it is kept, compared, looked into or called afterwards, and it holds what the callback captured in that round.
+type Callback = (n: number) => number;
+const kept: Callback[] = [];
+let slot: Callback | undefined;
+const lines: string[] = [];
+function say(name: string, ...values: unknown[]) { lines.push(name + " " + values.join(" ")); }
+
+function keepIf(cb: Callback, keep: boolean): Callback | undefined { if (keep) { kept.push(cb); return cb; } return undefined; }
+function keepTwice(cb: Callback, keep: boolean): number { if (!keep) return 0; slot = cb; kept.push(cb); return slot === kept[kept.length - 1] ? 1 : 2; }
+function keepThenCall(cb: Callback, keep: boolean): number { if (keep) slot = cb; return cb(1); }
+function callThenKeep(cb: Callback, keep: boolean): number { const r = cb(1); if (keep) slot = cb; return r; }
+type Memo = { cb: Callback | undefined; dep: number };
+function memo(state: Memo, cb: Callback, dep: number): Callback { if (state.cb !== undefined && state.dep === dep) return state.cb; state.cb = cb; state.dep = dep; return cb; }
+function handOn(cb: Callback, keep: boolean): Callback | undefined { return keepIf(cb, keep); }
+function handOnTwice(cb: Callback, a: boolean, b: boolean): string { const x = keepIf(cb, a); const y = keepIf(cb, b); return (x === undefined ? "-" : "x") + (y === undefined ? "-" : "y") + (x === y ? "=" : "!"); }
+function handOnThenKeep(cb: Callback, a: boolean, b: boolean): boolean { const x = keepIf(cb, a); if (b) slot = cb; return !a || !b || x === slot; }
+function keepThenCompare(cb: Callback, keep: boolean): boolean { if (keep) slot = cb; return slot === cb; }
+function compare(cb: Callback, other: Callback | undefined): boolean { return cb === other; }
+function keepInLoop(cb: Callback, n: number): number { const from = kept.length; for (let i = 0; i < n; i++) kept.push(cb); return new Set(kept.slice(from)).size; }
+function looksInto(cb: Callback, look: boolean): number { return look ? cb.length * 100 + cb.name.length : 0; }
+function givesProperty(cb: Callback, give: boolean): number { if (give) (cb as any).mark = 7; return give ? (cb as any).mark : 0; }
+function throwsIt(cb: Callback, t: boolean): number { if (t) throw cb; return 0; }
+function capturesIt(cb: Callback, c: boolean): (() => number) | undefined { return c ? () => cb(2) : undefined; }
+function asKey(cb: Callback, k: boolean, map: Map<Callback, number>): number { if (k) { map.set(cb, (map.get(cb) ?? 0) + 1); map.set(cb, (map.get(cb) ?? 0) + 1); } return map.size; }
+function deep(cb: Callback, depth: number, keep: boolean): Callback | undefined { if (depth === 0) return keepIf(cb, keep); return deep(cb, depth - 1, keep); }
+async function later(cb: Callback, keep: boolean): Promise<number> { await null; if (keep) kept.push(cb); return cb(3); }
+function* steps(cb: Callback, keep: boolean): Generator<number | Callback> { yield cb(1); if (keep) yield cb; }
+function testsIt(cb: Callback | number, keep: boolean): number { if (typeof cb !== "function") return -1; if (keep) slot = cb; const value: unknown = cb; return value ? 1 : 0; }
+function intoLiteral(cb: Callback, keep: boolean): { run: Callback } | undefined { return keep ? { run: cb } : undefined; }
+function boxed(cb: Callback): { run: Callback; note: undefined } { return { run: cb, note: undefined }; }
+function lazily(cb: () => number) { return { get value(): number { const value = cb(); Object.defineProperty(this, "value", { value }); return value; } }; }
+function oneOfTwo(a: Callback, b: Callback, which: number): Callback | undefined { const c = which & 1 ? a : b; return which & 2 ? c : undefined; }
+function asReceiver(cb: Callback, keep: boolean): unknown { return keep ? Object.prototype.valueOf.call(cb) : undefined; }
+
+const rounds = 3000;
+let sum = 0;
+{
+  let same = 0, made = 0;
+  for (let i = 0; i < rounds; i++) { const r = keepIf(n => n + i, i % 7 === 0); if (r) { made++; if (r === kept[kept.length - 1]) same++; sum += r(1); } }
+  say("keepIf", made, same, kept.length, kept.reduce((a, f) => a + f(0), 0), new Set(kept).size);
+}
+{ let r = 0; for (let i = 0; i < rounds; i++) r += keepTwice(n => n + i, i % 5 === 0); say("keepTwice", r, slot!(0)); }
+{ let r = 0; for (let i = 0; i < rounds; i++) r += keepThenCall(n => n + i, i % 3 === 0) + callThenKeep(n => n - i, i % 4 === 0); say("calls", r, slot!(0)); }
+{
+  const state: Memo = { cb: undefined, dep: -1 };
+  let changes = 0; let last: Callback | undefined;
+  for (let i = 0; i < rounds; i++) { const cb = memo(state, n => n * 1000 + i, i >> 4); if (cb !== last) changes++; last = cb; sum += cb(1); }
+  say("memo", changes, last!(0), state.cb === last);
+}
+{ let n = 0; for (let i = 0; i < rounds; i++) if (handOn(x => x + i, i % 11 === 0) === kept[kept.length - 1]) n++; say("handOn", n); }
+{ const seen = new Map<string, number>(); for (let i = 0; i < rounds; i++) { const s = handOnTwice(x => x + i, i % 2 === 0, i % 3 === 0); seen.set(s, (seen.get(s) ?? 0) + 1); } say("handOnTwice", [...seen].sort().join(";")); }
+{ let ok = 0; for (let i = 0; i < rounds; i++) if (handOnThenKeep(x => x + i, i % 2 === 0, i % 3 === 0)) ok++; say("handOnThenKeep", ok); }
+{ let t = 0; for (let i = 0; i < rounds; i++) if (keepThenCompare(x => x + i, i % 6 === 0)) t++; say("keepThenCompare", t); }
+{ let t = 0; for (let i = 0; i < rounds; i++) if (compare(x => x + i, slot)) t++; say("compare", t); }
+{ let t = 0; for (let i = 0; i < 300; i++) t += keepInLoop(x => x + i, i % 4); say("keepInLoop", t); }
+{ let t = 0; for (let i = 0; i < rounds; i++) t += looksInto(function named(x) { return x + i; }, i % 9 === 0) + givesProperty(x => x + i, i % 8 === 0); say("looked into", t); }
+{ let t = 0; for (let i = 0; i < rounds; i++) { try { t += throwsIt(x => x + i, i % 13 === 0); } catch (e) { t += (e as Callback)(1); } } say("thrown", t); }
+{ let t = 0; for (let i = 0; i < rounds; i++) { const f = capturesIt(x => x + i, i % 10 === 0); if (f) t += f(); } say("captured", t); }
+{ const map = new Map<Callback, number>(); let t = 0; for (let i = 0; i < rounds; i++) t += asKey(x => x + i, i % 100 === 0, map); say("keys", t, map.size, [...map.values()].every(v => v === 2)); }
+{ let t = 0; for (let i = 0; i < rounds; i++) { const r = deep(x => x + i, i % 5, i % 17 === 0); if (r) t += r(0); } say("deep", t); }
+{ let t = 0; for (let i = 0; i < rounds; i++) t += testsIt(i % 2 ? x => x + i : i, i % 6 === 1); say("tested", t, slot!(0)); }
+{ let t = 0; for (let i = 0; i < rounds; i++) { const o = intoLiteral(x => x + i, i % 12 === 0); if (o) t += o.run(1); } say("literal", t); }
+{ let t = 0; const boxes: { run: Callback }[] = []; for (let i = 0; i < rounds; i++) { const b = boxed(x => x + i); boxes[i & 15] = b; t += b.run(1) + boxes[(i >> 1) & 15 & (i > 40 ? 15 : 0)].run(0); } say("a fresh result", t); }
+{ let t = 0; const all: { value: number }[] = []; for (let i = 0; i < rounds; i++) all.push(lazily(() => i * 2)); for (const one of all) t += one.value + one.value; say("lazily", t); }
+{ let t = 0; for (let i = 0; i < rounds; i++) { const c = oneOfTwo(x => x + i, x => x - i, i & 3); if (c) t += c(0); } say("one of two", t); }
+{ let t = 0; for (let i = 0; i < rounds; i++) { const r = asReceiver(x => x + i, i % 50 === 0); if (typeof r === "function") t += (r as Callback)(0); } say("receiver", t); }
+{ let t = 0; for (let i = 0; i < 300; i++) for (const s of steps(x => x + i, i % 3 === 0)) t += typeof s === "number" ? s : s(0); say("generator", t); }
+const waits: Promise<number>[] = [];
+for (let i = 0; i < 300; i++) waits.push(later(x => x + i, i % 3 === 0));
+say("async", (await Promise.all(waits)).reduce((a, b) => a + b, 0), kept.length, new Set(kept).size);
+console.log(lines.join("\n"));
+console.log(sum);
+//// closures-that-are-lent/builtins.ts
+// Closures that are lent, one probe of many. It prints what plain Bun prints.
+function viaMap(xs: number[], k: number): number[] { return xs.map(v => v * k); }
+function viaForEach(xs: number[], k: number): number { let s = 0; xs.forEach(v => { s += v * k; }); return s; }
+function viaFilter(xs: number[], k: number): number[] { return xs.filter(v => v > k); }
+function viaReduce(xs: number[], k: number): number { return xs.reduce((a, v) => a + v * k, 0); }
+function viaSort(xs: number[], k: number): number[] { return xs.slice().sort((a, b) => (a - b) * k); }
+function viaSome(xs: number[], k: number): boolean { return xs.some(v => v === k); }
+function viaEvery(xs: number[], k: number): boolean { return xs.every(v => v !== k); }
+function viaFind(xs: number[], k: number): number | undefined { return xs.find(v => v === k); }
+function viaFindIndex(xs: number[], k: number): number { return xs.findIndex(v => v === k); }
+function viaMapForEach(m: Map<number, number>, k: number): number { let s = 0; m.forEach((v, key) => { s += v * k + key; }); return s; }
+function viaSetForEach(m: Set<number>, k: number): number { let s = 0; m.forEach(v => { s += v * k; }); return s; }
+function viaReplace(t: string, k: number): string { return t.replace(/a/g, m => m + k); }
+function viaPromise(k: number): Promise<number> { return new Promise<number>(resolve => resolve(k)); }
+function viaFlatMap(xs: number[], k: number): number[] { return xs.flatMap(v => [v, k]); }
+function viaArrayFrom(xs: number[], k: number): number[] { return Array.from(xs, v => v + k); }
+
+const xs = [1, 2, 3, 4, 5, 6, 7, 8];
+const m = new Map<number, number>([[1, 2], [3, 4]]);
+const st = new Set<number>([1, 2, 3]);
+let total = 0;
+for (let i = 0; i < 1000; i++) {
+  total += viaMap(xs, i).length + viaForEach(xs, i) + viaFilter(xs, i & 7).length + viaReduce(xs, i) + viaSort(xs, 1 + (i & 1))[0];
+  total += (viaSome(xs, i & 15) ? 1 : 0) + (viaEvery(xs, i & 15) ? 1 : 0) + (viaFind(xs, i & 15) ?? 0) + viaFindIndex(xs, i & 15);
+  total += viaMapForEach(m, i) + viaSetForEach(st, i) + viaReplace("banana", i).length + viaFlatMap(xs, i).length + viaArrayFrom(xs, i).length;
+  viaPromise(i);
+}
+console.log(total);
+//// closures-that-are-lent/cached-getter.js
+// Closures that are lent: cached getter. It prints what plain Bun prints.
+function cached(getter) {
+  const set = false;
+  return {
+    get value() {
+      if (!set) {
+        const value = getter();
+        Object.defineProperty(this, "value", { value });
+        return value;
+      }
+      throw new Error("cached value already set");
+    },
+  };
+}
+function normalize(def) { return Object.keys(def.shape).length; }
+function init(inst, def) {
+  const normalized = cached(() => normalize(def));
+  inst.run = () => normalized.value;
+}
+let sum = 0;
+for (let i = 0; i < 300; i++) { const inst = {}; init(inst, { shape: { a: 1, b: i } }); sum += inst.run() + inst.run(); }
+console.log(sum);
+//// closures-that-are-lent/captureless.js
+// Closures that are lent, one probe of many. It prints what plain Bun prints.
+const data = JSON.parse(process.argv[2] ?? '{"a":[1,2,3,4,5,6,7,8],"b":{"c":[3,1,2]}}');
+const env = JSON.parse(process.argv[3] ?? '{"x":0,"3":1}');
+function tailSome(o) { return o.a.some(v => env[v]); }
+function plainSome(o) { if (o.a.some(v => env[v])) return 1; return 0; }
+function findIt(o) { const d = o.a?.find(v => v === 3 || v === 4); if (d === undefined) return -1; return d; }
+let total = 0;
+for (let i = 0; i < 2000; i++) total += (tailSome(data) ? 1 : 0) + plainSome(data) + findIt(data);
+console.log(total);
+//// closures-that-are-lent/closures-without-captures-are-told-apart.ts
+// Every evaluation of a function expression makes a new function object, also where it captures nothing. A compiler that runs with one object for all of them has to know that nobody can tell.
+// Each maker below makes closures of ONE function that captures nothing, and each block tells two of them apart in another way. What is only called comes last.
+import { EventEmitter } from "node:events";
+type F = () => number;
+const lines: string[] = [];
+function say(name: string, ...values: unknown[]) { lines.push(name + " " + values.join(" ")); }
+
+{ const make = (): F => () => 1; const a = make(), b = make(); say("===", a === b, a === a, a !== b, a() + b()); }
+{ const make = (): F => () => 2; const a: unknown = make(), b: unknown = make(); say("==", a == b, a == a, a != b); }
+{ const make = (): F => () => 3; const a = make(), b = make(); say("Object.is", Object.is(a, b), Object.is(b, b)); }
+{ const make = (): F => () => 4; const a = make(), b = make(); say("includes", [a].includes(b), [a, b].includes(b), [a].indexOf(b), [a, b].indexOf(b), [a, b, a].lastIndexOf(a)); }
+{ const make = (): F => () => 5; say("Set", new Set([make(), make(), make()]).size); }
+{ const make = (): F => () => 6; const s = new Set<F>(); for (let i = 0; i < 4; i++) s.add(make()); say("Set.add", s.size, s.has(make())); }
+{ const make = (): F => () => 7; const m = new Map<F, number>(); const a = make(); m.set(a, 1); m.set(make(), 2); say("Map", m.size, m.get(a), m.get(make()), m.has(make()), m.delete(make()), m.size); }
+{ const make = (): F => () => 8; const w = new WeakMap<F, number>(); const a = make(), b = make(); w.set(a, 1); say("WeakMap", w.has(a), w.has(b), w.get(b)); const ws = new WeakSet<F>([a]); say("WeakSet", ws.has(a), ws.has(b)); }
+{ const make = (): F => () => 9; const a = make() as F & { mark?: number }, b = make() as F & { mark?: number }; a.mark = 1; say("property", a.mark, b.mark, "mark" in b, Object.keys(a).length + Object.keys(b).length); }
+{ const make = () => ({ run: () => 10 }); say("members", make().run === make().run, make().run() + make().run()); }
+{ class Holder { run = () => 11; } say("class fields", new Holder().run === new Holder().run); }
+{ const make = (): F => () => 12; const a = make(), b = make(); let hit = "none"; switch (a) { case b: hit = "b"; break; case a: hit = "a"; break; } say("switch", hit); }
+{ const make = (): F => () => 13; const list = [make(), make(), make()]; const first = list[0]; say("filter", list.filter(f => f !== first).length, list.filter((f, i, all) => all.indexOf(f) === i).length, list.findIndex(f => f === list[2])); }
+{ const make = (): F => () => 14; const through = <T,>(x: T): T => x; const pair = (): [F, F] => [make(), make()]; const [a, b] = pair(); const spread = [...[a], ...[b]]; say("handed on", through(a) === through(b), through(a) === a, spread[0] === spread[1], { ...{ f: a } }.f === b); }
+{ const make = (): F => () => 15; const equal = (x: readonly unknown[], y: readonly unknown[]) => x.every((v, i) => Object.is(v, y[i])); const a = make(); say("dependencies", equal([a, 1], [make(), 1]), equal([a, 1], [a, 1])); }
+{
+  const make = (): F => () => 16; const e = new EventEmitter(); let calls = 0; const listener = () => () => { calls++; };
+  const a = listener(), b = listener(); e.on("x", a); e.on("x", b); e.off("x", listener()); e.emit("x"); const both = calls; e.off("x", a); e.emit("x"); say("listeners", both, calls, e.listenerCount("x"), make()());
+}
+{ const make = (): F => function () { return 17; }; say("function expressions", make() === make(), make().prototype === make().prototype); }
+{ const make = (): F => () => 18; const a = make(); const r = new WeakRef(a); say("WeakRef", r.deref() === a, r.deref() === make()); }
+{ const make = (): F => () => 19; const o: Record<string, F> = {}; o.a = make(); o.b = make(); say("by name", o.a === o.b, Object.values(o).length, new Set(Object.values(o)).size); }
+{ const make = (): F => () => 20; const a = make(), b = make(); say("bind", a.bind(null) === a.bind(null), a.bind(null)() + b.call(null) + b.apply(null)); }
+{ const make = (): F => () => 21; const sorted = [make(), make()]; const before = sorted[0]; sorted.reverse(); say("reverse", sorted[1] === before, sorted[0] === before); }
+{ const make = async () => 22; const gen = function* () { yield 23; }; say("async and generators", make === make, (() => async () => 1)() === (() => async () => 1)(), gen().next().value, await make()); }
+{
+  const make = (): F => () => 24; let sum = 0; const kept: F[] = [];
+  for (let i = 0; i < 3000; i++) { const f = make(); kept[i & 7] = f; sum += f() + kept[(i + 1) & 7 & (i > 8 ? 7 : 0)](); }
+  const table = { first: () => 1, second: () => 2, third: () => 3 };
+  const use = (t: typeof table) => t.first() + t.second() + t.third();
+  for (let i = 0; i < 3000; i++) sum += use({ first: () => 1, second: () => 2, third: () => 3 });
+  say("only called", sum, use(table));
+}
+console.log(lines.join("\n"));
+//// closures-that-are-lent/constructors-and-methods-keep-the-callback-on-some-paths.ts
+// As a-callee-keeps-the-callback-on-some-paths.ts, for the other ways into a function and the other ways a parameter goes on inside it: constructors, methods, setters, static members, defaults,
+// a parameter that is assigned again, call | apply | bind | spread, try | catch | finally, a function of its own that captures it, two parameters that may be one value.
+type Callback = (n: number) => number;
+const kept: Callback[] = [];
+const lines: string[] = [];
+function say(name: string, ...values: unknown[]) { lines.push(name + " " + values.join(" ")); }
+function keepIf(cb: Callback, keep: boolean): Callback | undefined { if (keep) { kept.push(cb); return cb; } return undefined; }
+
+class Listener { cb: Callback | undefined = undefined; constructor(cb: Callback, keep: boolean) { if (keep) this.cb = cb; } }
+class Child extends Listener { again: Callback | undefined; constructor(cb: Callback, keep: boolean, more: boolean) { super(cb, keep); this.again = more ? cb : undefined; } }
+class Registry {
+  list: Callback[] = [];
+  static last: Callback | undefined;
+  #hidden: Callback | undefined;
+  add(cb: Callback, keep: boolean): this { if (keep) this.list.push(cb); return this; }
+  static note(cb: Callback, keep: boolean): number { if (keep) Registry.last = cb; return cb(1); }
+  set handler(cb: Callback) { if (cb(0) % 3 === 0) this.#hidden = cb; }
+  get handler(): Callback { return this.#hidden!; }
+}
+function assignedAgain(cb: Callback, wrap: boolean, keep: boolean): number { if (wrap) { const inner = cb; cb = n => inner(n) + 1; } if (keep) kept.push(cb); return cb(1); }
+function defaulted(keep: boolean, cb: Callback = n => n * 2): number { if (keep) kept.push(cb); return cb(1); }
+function byCall(cb: Callback, keep: boolean) { return keepIf.call(undefined, cb, keep); }
+function byApply(cb: Callback, keep: boolean) { return keepIf.apply(undefined, [cb, keep]); }
+function byBind(cb: Callback, keep: boolean) { return keepIf.bind(undefined, cb)(keep); }
+function bySpread(cb: Callback, keep: boolean) { const list: [Callback, boolean] = [cb, keep]; return keepIf(...list); }
+function tries(cb: Callback, how: number): number {
+  try { if (how === 1) throw cb; if (how === 2) return cb(1); return 0; } catch (e) { kept.push(e as Callback); return -1; } finally { if (how === 3) kept.push(cb); }
+}
+function ownFunction(cb: Callback, keep: boolean): Callback | undefined { function inner() { return keep ? cb : undefined; } return inner(); }
+function sameTwice(a: Callback, b: Callback, keep: boolean): boolean { if (keep) { kept.push(a); kept.push(b); return kept[kept.length - 1] === kept[kept.length - 2]; } return a === b; }
+function conditional(cb: Callback, other: Callback | undefined, keep: boolean): Callback | undefined { const c = other ?? cb; return keep ? c : undefined; }
+function inLoopWithBreak(cb: Callback, n: number): number { let r = 0; for (let i = 0; i < 5; i++) { if (i === n) { kept.push(cb); break; } r += cb(i); } return r; }
+function symbolKey(cb: Callback, keep: boolean): unknown { const o: Record<symbol, unknown> = {}; if (keep) o[Symbol.iterator] = cb; return o[Symbol.iterator]; }
+
+const rounds = 2000;
+{ let n = 0, t = 0; for (let i = 0; i < rounds; i++) { const l = new Listener(x => x + i, i % 7 === 0); if (l.cb) { n++; t += l.cb(0); } } say("constructor", n, t); }
+{ let t = 0, same = 0; for (let i = 0; i < rounds; i++) { const c = new Child(x => x + i, i % 2 === 0, i % 3 === 0); if (c.cb && c.again && c.cb === c.again) same++; t += (c.cb?.(0) ?? 0) + (c.again?.(0) ?? 0); } say("derived", same, t); }
+{ const r = new Registry(); for (let i = 0; i < rounds; i++) r.add(x => x + i, i % 9 === 0).add(x => x - i, i % 10 === 0); say("method", r.list.length, r.list.reduce((a, f) => a + f(0), 0), new Set(r.list).size); }
+{ let t = 0; for (let i = 0; i < rounds; i++) t += Registry.note(x => x + i, i % 11 === 0); say("static", t, Registry.last!(0)); }
+{ const r = new Registry(); let t = 0; for (let i = 0; i < rounds; i++) { r.handler = x => x + i; t += r.handler(0); } say("setter", t); }
+{ let t = 0; for (let i = 0; i < rounds; i++) t += assignedAgain(x => x + i, i % 2 === 0, i % 5 === 0); say("assigned again", t, kept.length); }
+{ let t = 0; for (let i = 0; i < rounds; i++) t += i % 2 ? defaulted(i % 6 === 1) : defaulted(i % 6 === 0, x => x + i); say("default", t, kept.length); }
+{ let n = 0; for (let i = 0; i < rounds; i++) for (const f of [byCall, byApply, byBind, bySpread]) { const r = f(x => x + i, i % 13 === 0); if (r && r === kept[kept.length - 1] && r(0) === i) n++; } say("call apply bind spread", n); }
+{ let t = 0; for (let i = 0; i < rounds; i++) t += tries(x => x + i, i % 5); say("try", t, kept.length, kept[kept.length - 1](0)); }
+{ let t = 0; for (let i = 0; i < rounds; i++) { const r = ownFunction(x => x + i, i % 8 === 0); if (r) t += r(0); } say("own function", t); }
+{ let t = 0; for (let i = 0; i < rounds; i++) { const f: Callback = x => x + i; if (sameTwice(f, f, i % 4 === 0)) t++; if (sameTwice(x => x, x => x, i % 4 === 1)) t += 1000; } say("same twice", t); }
+{ let t = 0; let last: Callback | undefined; for (let i = 0; i < rounds; i++) { const r = conditional(x => x + i, i % 3 === 0 ? last : undefined, i % 2 === 0); if (r) { t += r(0); last = r; } } say("conditional", t); }
+{ let t = 0; for (let i = 0; i < rounds; i++) t += inLoopWithBreak(x => x + i, i % 8); say("break", t, kept.length); }
+{ let t = 0; for (let i = 0; i < rounds; i++) { const r = symbolKey(x => x + i, i % 20 === 0); if (typeof r === "function") t += (r as Callback)(0); } say("symbol", t); }
+say("all", kept.length, new Set(kept).size, kept.reduce((a, f) => a + f(0), 0));
+console.log(lines.join("\n"));
+//// closures-that-are-lent/in-behind-reflect-set.ts
+// Closures that are lent: in behind reflect set. It prints what plain Bun prints.
+interface Part { count: number; action: () => number; }
+function fresh(): Part { return { count: 1, action: () => 3 }; }
+function has(p: Part): boolean { return "action" in p; }
+function own(p: Part): boolean { return Object.hasOwn(p, "action"); }
+function call(p: Part): number { return p.action(); }
+function keys(p: Part): string { return Object.keys(p).join(); }
+let sum = 0;
+for (let i = 0; i < 2000; i++) { const p = fresh(); sum += call(p) + (has(p) ? 1 : 0) + (own(p) ? 1 : 0); }
+const p = fresh();
+Reflect.set(p, "action", 5);
+console.log(sum, has(p), own(p), keys(p), typeof p.action, JSON.stringify(p), { ...p }.action, Object.entries(p).length);
+const q = fresh();
+Object.defineProperty(q, "action", { value: "text", enumerable: true, writable: true, configurable: true });
+console.log(has(q), own(q), keys(q), typeof q.action, JSON.stringify(q));
+const r = fresh();
+delete (r as Partial<Part>).action;
+console.log(has(r), own(r), keys(r), typeof r.action, JSON.stringify(r));
+//// closures-that-are-lent/left-fast-path.ts
+// Closures that are lent: left fast path. It prints what plain Bun prints.
+const pick = new Function("list", "i", process.argv.length < 99 ? "return list[i]" : "") as <T>(list: T[], i: number) => T;
+class Host { constructor(public name: string) {} }
+class Store { n = 0; constructor(public host: Host) {} }
+class Stores {
+  map = new Map<Host, Store>();
+  of(host: Host): Store { let s = this.map.get(host); if (!s) this.map.set(host, (s = new Store(host))); s.n++; return s; }
+}
+const stores: Stores = pick([new Stores()], 0);
+type Session = { host: Host };
+const sessions: Session[] = [{ host: new Host("a") }, { host: { name: "b" } }, { host: JSON.parse('{"name":"c","more":1}') }];
+function root(i: number): Session { return pick(sessions, i % 3); }
+function get(i: number): Store { return stores.of(root(i).host); }
+let sum = 0;
+for (let i = 0; i < 9000; i++) sum += get(i).n;
+console.log(sum, stores.map.size);
+//// closures-that-are-lent/method-arms.ts
+// Closures that are lent: method arms. It prints what plain Bun prints.
+const pick = new Function("list", "i", process.argv.length < 99 ? "return list[i]" : "") as <T>(list: T[], i: number) => T;
+class Celsius { constructor(public degrees: number) {} of(n: number): number { return this.degrees + n; } }
+class Kelvin { constructor(public degrees: number) {} of(n: number): number { return this.degrees + n + 273; } }
+const scales: (Celsius | Kelvin)[] = [new Celsius(1), new Kelvin(2), new Celsius(3)];
+function callIt(i: number, n: number): number { const s = pick(scales, i % 3); return s.of(n); }
+function callOne(i: number, n: number): number { const s = pick(scales, 0) as Celsius; return s.of(n) + 1; }
+let sum = 0;
+for (let i = 0; i < 6000; i++) sum += callIt(i, i) + callOne(i, 2);
+console.log(sum);
+//// closures-that-are-lent/net-arms.ts
+// Closures that are lent: net arms. It prints what plain Bun prints.
+import net from "node:net";
+const server = net.createServer(socket => { socket.on("data", d => socket.write(d)); socket.on("end", () => {}); });
+server.listen(0, () => {
+  const port = (server.address() as any).port;
+  let left = 200;
+  const go = () => {
+    const c = net.connect(port, "127.0.0.1", () => c.write("x"));
+    c.on("data", () => c.end());
+    c.on("close", () => { if (--left) go(); else { server.close(); console.log("done"); } });
+  };
+  go();
+});
+//// closures-that-are-lent/only-called-everywhere.ts
+// Closures that are lent: only called everywhere. It prints what plain Bun prints.
+type F = () => number;
+const make = (): F => () => 24; let sum = 0; const kept: F[] = [];
+for (let i = 0; i < 3000; i++) { const f = make(); kept[i & 7] = f; sum += f() + kept[(i + 1) & 7 & (i > 8 ? 7 : 0)](); }
+const table = { first: () => 1, second: () => 2, third: () => 3 };
+const use = (t: typeof table) => t.first() + t.second() + t.third();
+for (let i = 0; i < 3000; i++) sum += use({ first: () => 1, second: () => 2, third: () => 3 });
+console.log(sum, use(table));
+//// closures-that-are-lent/typed-find.ts
+// Closures that are lent: typed find. It prints what plain Bun prints.
+type D = { kind: number };
+type S = { declarations?: D[]; signatures: readonly D[] };
+const made: S[] = [];
+for (let i = 0; i < 8; i++) made.push({ declarations: [{ kind: i }, { kind: 3 }, { kind: 4 }], signatures: [{ kind: i }, { kind: 9 }] });
+function findIt(r: S): number { const d = r.declarations?.find(d => d.kind === 3 || d.kind === 4); if (d === undefined) return -1; return d.kind; }
+function someIt(r: S): number { if (r.signatures.some(d => d.kind === 3 && d.kind > 1)) return 1; return 0; }
+function filterIt(r: S): number { return r.signatures.filter(d => d.kind > 2).length; }
+function mapIt(r: S): number { return r.signatures.map(d => d.kind + 2).length; }
+let total = 0;
+for (let i = 0; i < 4000; i++) total += findIt(made[i & 7]) + someIt(made[i & 7]) + filterIt(made[i & 7]) + mapIt(made[i & 7]);
+console.log(total);
+//// closures-that-are-lent/unknown-builtins.js
+// Receivers that flow cannot see: arrays that came back out of JSON text chosen at run time.
+const data = JSON.parse(process.argv[2] ?? '{"a":[1,2,3,4,5,6,7,8],"b":{"c":[3,1,2]}}');
+function viaSome(o, k) { return o.a.some(v => v === k); }
+function viaMap(o, k) { return o.a.map(v => v * k); }
+function viaForEach(o, k) { let s = 0; o.a.forEach(v => { s += v * k; }); return s; }
+function viaFilter(o, k) { return o.a.filter(v => v > k); }
+function viaReduce(o, k) { return o.a.reduce((a, v) => a + v * k, 0); }
+function viaFind(o, k) { return o.a.find(v => v === k); }
+function viaEvery(o, k) { return o.a.every(v => v !== k); }
+function viaSort(o, k) { return o.b.c.slice().sort((a, b) => (a - b) * k); }
+function viaFlatMap(o, k) { return o.a.flatMap(v => [v, k]); }
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += (viaSome(data, i & 15) ? 1 : 0) + viaMap(data, i).length + viaForEach(data, i) + viaFilter(data, i & 7).length + viaReduce(data, i) + (viaFind(data, i & 15) ?? 0) + (viaEvery(data, i & 15) ? 1 : 0) + viaSort(data, 1 + (i & 1))[0] + viaFlatMap(data, i).length;
+}
+console.log(total);
+//// closures-that-are-lent/unknown-builtins-2.js
+// Closures that are lent: unknown builtins. It prints what plain Bun prints.
+const data = JSON.parse(process.argv[2] ?? '{"a":[1,2,3,4,5,6,7,8],"b":{"c":[3,1,2]}}');
+function viaSome(o, k) { const r = o.a.some(v => v === k); return r ? 1 : 0; }
+function viaMap(o, k) { const r = o.a.map(v => v * k); return r.length; }
+function viaForEach(o, k) { let s = 0; o.a.forEach(v => { s += v * k; }); return s; }
+function viaFilter(o, k) { const r = o.a.filter(v => v > k); return r.length; }
+function viaReduce(o, k) { const r = o.a.reduce((a, v) => a + v * k, 0); return r + 1; }
+function viaFind(o, k) { const r = o.a.find(v => v === k); return r ?? 0; }
+function viaEvery(o, k) { const r = o.a.every(v => v !== k); return r ? 1 : 0; }
+function viaSort(o, k) { const r = o.b.c.slice().sort((a, b) => (a - b) * k); return r[0]; }
+function viaFlatMap(o, k) { const r = o.a.flatMap(v => [v, k]); return r.length; }
+function viaFindIndex(o, k) { const r = o.a.findIndex(v => v === k); return r + 1; }
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += viaSome(data, i & 15) + viaMap(data, i) + viaForEach(data, i) + viaFilter(data, i & 7) + viaReduce(data, i) + viaFind(data, i & 15) + viaEvery(data, i & 15) + viaSort(data, 1 + (i & 1)) + viaFlatMap(data, i) + viaFindIndex(data, i & 15);
+}
+console.log(total);
+//// closures-that-are-lent/unknown-callees.ts
+// Closures that are lent: unknown callees. It prints what plain Bun prints.
+interface Walker { each(f: (v: number) => void): void }
+class A implements Walker { constructor(public n: number) {} each(f: (v: number) => void) { for (let i = 0; i < this.n; i++) f(i); } }
+class B implements Walker { constructor(public n: number) {} each(f: (v: number) => void) { for (let i = this.n; i > 0; i--) f(i); } }
+class Keeper implements Walker { kept: ((v: number) => void)[] = []; each(f: (v: number) => void) { this.kept.push(f); f(1); } }
+function sum(w: Walker, k: number): number { let s = 0; w.each(v => { s += v * k; }); return s; }
+function withLock<T>(f: () => T): T { return f(); }
+function locked(k: number): number { return withLock(() => k + 1); }
+const table: Record<string, (f: () => number) => number> = { a: f => f(), b: f => f() + 1 };
+function byKey(name: string, k: number): number { return table[name](() => k * 2); }
+const anyCallee: any = JSON.parse('{"x":1}').x === 1 ? (f: () => number) => f() : null;
+function byAny(k: number): number { return anyCallee(() => k * 3); }
+const ws: Walker[] = [new A(3), new B(4), new Keeper()];
+let total = 0;
+for (let i = 0; i < 3000; i++) { total += sum(ws[i % 3], i) + locked(i) + byKey(i & 1 ? "a" : "b", i) + byAny(i); }
+console.log(total, (ws[2] as Keeper).kept.length);

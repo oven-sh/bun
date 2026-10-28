@@ -1,0 +1,5 @@
+{
+  "build": ["--aot-validate"],
+  "env": { "BUN_JSC_useSharedArrayBuffer": "0" },
+  "skipInShell": "it uses node:vm, which the jsc shell does not have"
+}

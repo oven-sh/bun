@@ -1,0 +1,1285 @@
+////: lines
+class «1» extends «2» {
+  get length() {
+    return «3»;
+  }
+}
+////: make
+function make(kind, length) {
+  var items = [];
+  for (var i = 0; i < length; i++) {
+    var n = (i * 7919 + 13) % 1000;
+    if (kind === "integers") items.push(n);
+    else if (kind === "fractions") items.push(n + 0.25);
+    else if (kind === "words") items.push("w" + (n % 10));
+    else if (kind === "mixed") items.push(i === length >> 1 ? "x" : n);
+    else if (kind === "rarelyText") items.push(i % 1000 === 999 ? String(n) : n);
+    else if (kind === "permutation") items.push((i * 7 + 3) % length);
+  }
+  var parsed = JSON.parse(JSON.stringify({ items: items }));
+  var copy = [];
+  for (var j = 0; j < length; j++) copy.push(parsed.items[j]);
+  return copy;
+}
+////: sumTo
+function sumTo(bytes«1» {
+  let s = "";
+  for (let i = 0; i < count; i++) {
+    each(i);
+    s += bytes[i] + ",";
+  }
+  return s + bytes.length;
+}
+////: sumWhile
+function sumWhile(bytes«1» {
+  let s = "";
+  for (let i = 0; i < bytes.length; i++) {
+    s += bytes[i] + ",";
+    each(i);
+  }
+  return s + bytes.length;
+}
+//// a-counter-below-a-number-of-every-kind.js
+// A counter that starts at an integer and steps by one, below a bound of type number: every kind of number is the bound once, and the loop uses its counter as an index, for its bits, in a sum and as a value.
+const letters = "abcdefghijklmnopqrstuvwxyz";
+const table = [];
+for (let i = 0;i < 40; i++)
+  table.push(i * 7);
+function bits(n) {
+  let sum = 0;
+  for (let i = 0;i < n; i++) {
+    sum = sum + (i & 5) | 0;
+    if (i > 50)
+      break;
+  }
+  return sum;
+}
+function elements(n) {
+  let sum = 0, missing = 0;
+  for (let i = 0;i < n; i++) {
+    const value = table[i];
+    if (value === void 0)
+      missing++;
+    else
+      sum += value;
+    if (missing > 3)
+      break;
+  }
+  return sum + "/" + missing;
+}
+function characters(n) {
+  let out = "";
+  for (let i = 0;i <= n; i++) {
+    out += letters[i % 26];
+    if (out.length > 30)
+      break;
+  }
+  return out;
+}
+function down(n) {
+  let sum = 0;
+  for (let i = 10;i > n; i--) {
+    sum = sum ^ i << 1 | 0;
+    if (i < -40)
+      break;
+  }
+  return sum;
+}
+function last(n) {
+  let i = 0;
+  for (;i < n; i += 3)
+    if ((i & 1023) === 1023 || i > 100)
+      break;
+  return i;
+}
+function nearTheEndOfInt32(n) {
+  let seen = "";
+  for (let i = 2147483640;i < n; i++) {
+    seen += (i | 0) + "," + i % 7 + ";";
+    if (seen.length > 400)
+      break;
+  }
+  return seen;
+}
+function changed(n) {
+  let sum = 0;
+  for (let i = 0;i < n; i++) {
+    sum = sum + (i & 3) | 0;
+    if (i === 4)
+      n = n / 2 + 0.25;
+  }
+  return sum;
+}
+const bounds = [0, -0, 1, 7, 7.5, 6.999999, -1, -7.5, 39, 40, 41, 0.1, NaN, 1 / 0, -1 / 0, 2147483646, 2147483647, 2147483648, 2147483650.5, 4294967296, 9007199254740992, 1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000, Number.MIN_VALUE, Number(process.env.NO_SUCH_VARIABLE ?? "12")];
+for (const work of [bits, elements, characters, down, last, nearTheEndOfInt32, changed]) {
+  const answers = [];
+  for (const bound of bounds)
+    answers.push(work === changed && !(bound < 100) ? "-" : work(bound));
+  console.log(work.name, answers.join(" "));
+}
+//// a-counter-is-divided-by-elements-of-every-kind.ts
+// `i % divisors[i & 3]` in a loop: once the counter is known to be an integer the divisor is tested for one too, and the remainder is taken of integers.
+// Divisors that are no integers, zero, negative, NaN and the infinities take the other road and give what the language says.
+const wholes = [3, 5, 7, 11];
+const mixed: number[] = [3, 2.5, -7, 0, -0, NaN, Infinity, -Infinity, 1e10, 0.1, 2147483647, -2147483648];
+
+function remaindersOfWholes(n: number): number {
+  let sum = 0;
+  for (let i = 0; i < n; i++) sum = (sum + (i % wholes[i & 3]!)) | 0;
+  return sum;
+}
+
+function remaindersOfAnything(n: number): string {
+  let sum = 0;
+  let notNumbers = 0;
+  let negativeZeros = 0;
+  for (let i = 0; i < n; i++) {
+    const r = i % mixed[i % mixed.length]!;
+    if (r !== r) notNumbers++;
+    else if (r === 0 && 1 / r < 0) negativeZeros++;
+    else sum += r;
+  }
+  return `${sum} ${notNumbers} ${negativeZeros}`;
+}
+
+function countingDown(n: number): string {
+  let sum = 0;
+  let negativeZeros = 0;
+  for (let i = 0; i > -n; i--) {
+    const r = i % wholes[-i & 3]!;
+    if (r === 0 && 1 / r < 0) negativeZeros++;
+    sum += r;
+  }
+  return `${sum} ${negativeZeros}`;
+}
+
+console.log(remaindersOfWholes(1000), remaindersOfWholes(0), remaindersOfWholes(1));
+console.log(remaindersOfAnything(1000));
+console.log(countingDown(1000));
+wholes[2] = 2.5;
+console.log(remaindersOfWholes(1000));
+wholes[1] = 0;
+console.log(remaindersOfWholes(1000));
+//// a-counter-passes-int32-in-a-loop-whose-slow-copy-comes-back.js
+// A loop whose test of an element fails now and then, so that its slow copy runs a turn and comes back, and whose counter passes 2 ** 31 on the way.
+function count(from, to, list) {
+  let sum = 0;
+  let last = 0;
+  for (let i = from; i < to; i++) {
+    const value = list[i & 7];
+    sum = (sum + (typeof value === "number" ? value : value.length) + (i & 3)) | 0;
+    last = i;
+  }
+  return sum + ":" + last;
+}
+const list = [1, 2, "three", 4, 5.5, 6, [7], 8];
+console.log(count(0, 1000, list));
+console.log(count(2147483000, 2147484500, list));
+console.log(count(-2147483700, -2147483000, list));
+console.log(count(0, 10.5, list), count(0, NaN, list), count(3, -Infinity, list), count(4294967290, 4294967300, list));
+function down(from, to, list) {
+  let sum = 0;
+  for (let i = from; i > to; i--) sum = (sum + (typeof list[i & 7] === "number" ? 1 : 2) + (i & 1)) | 0;
+  return sum;
+}
+console.log(down(1000, 0, list), down(-2147483000, -2147484500, list), down(2147484500, 2147483000, list), down(5, 0.5, list));
+//// a-loop-goes-on-until-another-thread-has-grown-its-view.js
+// A loop over the elements of a view that tracks the length of a shared buffer ends only when it sees the length that another thread has given the buffer.
+const given = JSON.parse('{"chunks":[]}');
+function hide(value) {
+  given.chunks[0] = value;
+  return given.chunks[0];
+}
+function untilLongerThan(view, length) {
+  let s = 0;
+  for (let i = 0; view.length <= length; i++) s = (s + view[i & 1]) | 0;
+  return s * 0 + view.length;
+}
+if (Bun.isMainThread) {
+  for (const Kind of [Uint8Array, Int32Array, Float64Array]) {
+    const shared = new SharedArrayBuffer(2 * Kind.BYTES_PER_ELEMENT, { maxByteLength: 16 * Kind.BYTES_PER_ELEMENT });
+    const worker = new Worker(new URL(import.meta.url));
+    worker.postMessage([shared, 5 * Kind.BYTES_PER_ELEMENT]);
+    console.log(Kind.name, untilLongerThan(hide(new Kind(shared)), 2));
+    worker.terminate();
+  }
+} else addEventListener("message", event => event.data[0].grow(event.data[1]));
+//// a-loop-tests-the-counter-plus-its-step.js
+// `i + step <= limit; i += step`: the test looks at another sum than the step. Limits and starts of every kind, steps up and down, views that end in the middle of a step.
+const bytes = new Uint8Array(37);
+for (let i = 0; i < bytes.length; i++) bytes[i] = i * 7 + 1;
+const buffer = Buffer.from(bytes);
+const words = new Uint32Array([4294967295, 2147483647, 2147483648, 10, 0]);
+const limits = [0, 1, 2, 3, 36, 37, 38, 36.5, -1, -0, NaN, Infinity, -Infinity, 2147483647, 2147483648, 4294967296, "12", null, undefined, { valueOf() { return 9; } }];
+const lines = [];
+
+function pairs(view) {
+  let s = 0;
+  for (let i = 0; i + 2 <= view.length; i += 2) s = (s + view[i] * 256 + view[i + 1]) | 0;
+  return s;
+}
+function shorts(b) {
+  let s = 0;
+  for (let i = 0; i + 2 <= b.length; i += 2) s = (s + b.readUInt16BE(i)) | 0;
+  return s;
+}
+function quads(view, from) {
+  let s = 0, i = from;
+  for (; i + 4 <= view.length; i += 4) s = (s + view[i + 3]) | 0;
+  return s + ":" + i;
+}
+function belowAnything(limit, from, most) {
+  let n = 0, i = from;
+  for (; i + 3 <= limit && n < most; i += 3) n++;
+  return n + ":" + i;
+}
+function strictlyBelow(limit, from, most) {
+  let n = 0, i = from;
+  for (; i + 5 < limit && n < most; i += 5) n++;
+  return n + ":" + i;
+}
+function downTo(limit, from, most) {
+  let n = 0, i = from;
+  for (; i - 2 >= limit && n < most; i -= 2) n++;
+  return n + ":" + i;
+}
+function pastInt32(a, b, from) {
+  const limit = words[a] + words[b];
+  let s = 0, i = from;
+  for (; i + 2 <= limit; i += 2) s = (s + (i & 15)) | 0;
+  return s + ":" + i;
+}
+function stepIsNotTheSum(view) {
+  let s = 0;
+  for (let i = 0; i + 2 <= view.length; i += 3) s = (s + view[i + 1]) | 0;
+  for (let i = 0; i + 3 <= view.length; i += 2) s = (s + view[i + 2]) | 0;
+  return s;
+}
+function shrinks(length) {
+  const list = [];
+  for (let k = 0; k < length; k++) list.push(k);
+  let s = 0;
+  for (let i = 0; i + 2 <= list.length; i += 2) {
+    s += list[i] + list[i + 1];
+    if ((i & 7) === 4) list.length -= 3;
+  }
+  return s;
+}
+
+for (let round = 0; round < 3; round++) {
+  lines.push(pairs(bytes), pairs(buffer), pairs([1, 2, 3, 4, 5]), pairs("abc"), shorts(buffer), shorts(buffer.subarray(1)), shorts(buffer.subarray(0, 1)));
+  for (const from of [0, 1, 33, 34, 40, -4, 0.5]) lines.push(quads(bytes, from));
+  for (const limit of limits) {
+    lines.push(belowAnything(limit, 0, 20), belowAnything(limit, 2147483640, 20), belowAnything(limit, -7, 20), belowAnything(limit, 0.25, 20));
+    lines.push(strictlyBelow(limit, 0, 20), strictlyBelow(limit, 4294967290, 20));
+    lines.push(downTo(limit, 40, 30), downTo(limit, -2147483640, 30), downTo(limit, 2147483650, 30));
+  }
+  lines.push(pastInt32(1, 3, 2147483600), pastInt32(0, 3, 4294967200), pastInt32(0, 0, 8589934500), pastInt32(4, 4, 0), pastInt32(3, 4, 1));
+  lines.push(stepIsNotTheSum(bytes), shrinks(40), shrinks(7), shrinks(0));
+}
+console.log(lines.join("\n"));
+//// a-reader-made-of-a-mixin-walks-tokens-with-its-names-on-the-global-object.cjs
+// A reader made of a chain of classes and a mixin walks a list of tokens. The names that its loop reads and writes lie on the global object, where a table has put them,
+// and the method with the loop is called by a name out of that table.
+var lists = Below =>
+  class WithLists extends Below {
+    readList({}) {
+      const wasInList = this.state.inList;
+      if (mayBeExact && this.isAt(6)) {
+        this.mustPass(6);
+      } else {
+        this.mustPass(5);
+      }
+      while (!this.isAt(closer)) {
+        if (mayBeMarked && this.isWord(118)) {
+          const ahead = this.peek();
+          if (ahead.kind !== 14 && ahead.kind !== 17) {
+            this.advance();
+            markedAt = this.state.startsAt;
+            mayBeFixed = false;
+          }
+        }
+        if (this.pass(0)) {
+          if (markedAt != null) {
+            this.refuse(markedAt);
+          }
+          if (this.pass(0)) {
+            if (sign) {
+              this.refuse(sign.place.start);
+            }
+            list.slots.push(this.readSlot(item, isFixed));
+          } else {
+            list.indexers.push(this.readIndexer(item, isFixed, sign));
+          }
+        } else if (this.isAt(10) || this.isAt(47)) {
+        } else {
+          if (this.isWord(99) || this.isWord(104)) {
+            const ahead = this.peek();
+            if (isNameOfEntry(ahead.kind)) {
+              how = this.state.value;
+              this.advance();
+            }
+          }
+          const found = this.readEntry(
+            item,
+            isFixed,
+            markedAt,
+            sign,
+            how,
+            mayBeSpread,
+            mayBeOpen != null ? mayBeOpen : !isExact,
+          );
+          if (found === null) {
+            openAt = this.state.lastStartedAt;
+          } else {
+            list.entries.push(found);
+          }
+        }
+        this.endEntry();
+        if (openAt && !this.isAt(8) && !this.isAt(9)) {
+        }
+      }
+      this.state.inList = wasInList;
+    }
+    endEntry() {
+      this.advance();
+    }
+    goBack(first, startsAt, third) {
+      if (failed || invalid.length > 0) {
+        if (failed && valid.length === 1) {
+          this.state = state;
+        }
+      }
+    }
+  };
+class Lowest {}
+class WithNotes extends Lowest {}
+class Tokens extends WithNotes {
+  constructor(tokens) {
+    super();
+    this.tokens = tokens;
+    this.state = { kind: 0, value: 0, startsAt: 0, lastStartedAt: 0, inList: false };
+  }
+  pass(kind) {
+    if (this.isAt(kind)) {
+      this.advance();
+      return true;
+    }
+    return false;
+  }
+  isAt(kind) {
+    return this.state.kind === kind;
+  }
+}
+class WithHelpers extends Tokens {
+  mustPass(kind) {
+    if (!this.pass(kind)) this.refuse(kind);
+  }
+  isWord(kind) {
+    return this.state.kind === kind;
+  }
+  advance() {
+    this.state.startsAt = this.state.value;
+    this.state.kind = this.tokens[this.state.value++];
+  }
+  peek() {
+    return { kind: this.tokens[this.state.value] };
+  }
+  refuse(place) {
+    throw new SyntaxError("refuse " + place);
+  }
+}
+class WithNodes extends WithHelpers {}
+class WithTargets extends WithNodes {}
+const mixins = {
+  lists,
+};
+class WithExpressions extends WithTargets {}
+class WithStatements extends WithExpressions {}
+class Reader extends WithStatements {
+  read() {
+    this.advance();
+    return { whole: { items: [this[entry]({})] } };
+  }
+}
+function read(given, options) {
+  if (((_options = options) == null ? void 0 : _options.form) === "either") {
+  } else {
+    return readerFor(options, given).read();
+  }
+}
+function readerFor(options, given) {
+  let made = Reader;
+  if (options != null && options.parts) {
+    made = classWith(options.parts);
+  }
+  return new made(given);
+}
+function classWith(names) {
+  let made = Reader;
+  for (const part of names) {
+    made = mixins[part](made);
+  }
+  return made;
+}
+Object.assign(
+  globalThis,
+  JSON.parse(
+    '{"entry":"readList","mayBeExact":true,"mayBeMarked":true,"mayBeFixed":true,"closer":8,"markedAt":null,"openAt":null,"sign":null}',
+  ),
+);
+console.log(read([5, 118, 10, 10, 8], { parts: ["lists"] }).whole.items.length, markedAt, mayBeFixed);
+for (const tokens of [[5, 10, 8], [6, 8], [5, 118, 14, 10, 8], [5, 0, 8], [5, 7, 8], [4]]) {
+  markedAt = null;
+  try {
+    console.log(read(tokens, { parts: ["lists"] }).whole.items.length, markedAt, mayBeFixed);
+  } catch (error) {
+    console.log(error.name, error.message);
+  }
+}
+//// call-in-the-loop.js
+// The elements come out of JSON.parse, so that nothing about them is known before the program runs. The list itself is an array of the program.
+////= make
+
+function weigh(value) {
+  return value > 500 ? value - 500 : value;
+}
+function kernel(values) {
+  var total = 0;
+  for (var i = 0; i < values.length; i++) total += weigh(values[i]);
+  return total;
+}
+
+var input = make("integers", 1000);
+var checksum = 0;
+for (var round = 0; round < 30000; round++) checksum = (checksum + kernel(input)) % 1000000007;
+console.log(checksum);
+//// concatenation.js
+// The elements come out of JSON.parse, so that nothing about them is known before the program runs. The list itself is an array of the program.
+////= make
+
+function kernel(values) {
+  var out = "";
+  for (var i = 0; i < values.length; i++) out += values[i];
+  return out.length;
+}
+
+var input = make("words", 1000);
+var checksum = 0;
+for (var round = 0; round < 6000; round++) checksum = (checksum + kernel(input)) % 1000000007;
+console.log(checksum);
+//// counted-loops-with-early-exits.js
+// Counted loops with a second exit: a return, a break, a throw, a missing element. They run past 65,536 and 131,072 iterations, and the second exit is taken just before, at and just after
+// each of those counts, on the first iteration, on the last one and never. The bound is a parameter, a constant length, a growing length, a shrinking length, and the largest 32-bit integer.
+const lines = [];
+function indexOf(list, wanted) { for (let i = 0; i < list.length; i++) { if (list[i] === wanted) return i; } return -1; }
+function sumUntilNegative(list) { let sum = 0; for (let i = 0; i < list.length; ++i) { const v = list[i]; if (v < 0) break; sum = (sum + v) | 0; } return sum; }
+function sumOfPresent(list) { let sum = 0; for (let i = 0; i < list.length; i++) { const v = list[i]; if (v === undefined) continue; sum += v; } return sum; }
+function countDown(from, stop) { let turns = 0; for (let i = from; i >= 0; i--) { if (i === stop) return turns; turns++; } return -turns; }
+function byThrees(limit, stop) { let last = -1; for (let i = 0; i <= limit; i += 3) { if (i === stop) return "stopped " + last; last = i; } return "ended " + last; }
+function fill(list, limit) { for (let i = 0; i < list.length; i++) { if (list.length < limit) list.push(i & 7); if (list[i] === 9) break; } return list.length; }
+function drain(list) { let sum = 0; for (let i = 0; i < list.length; i++) { sum += list[i]; if ((i & 1023) === 1023) list.length -= 100; } return sum + " " + list.length; }
+function throwAt(limit, at) { let i = 0; try { for (; i < limit; i++) { if (i === at) throw new Error("at " + i); } } catch (error) { return error.message + ", " + i; } return "none, " + i; }
+function dot(a, b) { let sum = 0; for (let i = 0; i < a.length; i++) { const x = b[i]; if (x === undefined) return "short " + sum; sum = (sum + a[i] * x) | 0; } return "whole " + sum; }
+function upToLargest(from, stop) { let turns = 0; for (let i = from; i <= 2147483647; i++) { if (i === stop) return -turns; turns++; } return turns; }
+function downToSmallest(from, stop) { let turns = 0; for (let i = from; i >= -2147483648; i--) { if (i === stop) return -turns; turns++; } return turns; }
+function make(length) { const list = []; for (let i = 0; i < length; i++) list.push(i & 7); return list; }
+
+const counts = [0, 1, 2, 65535, 65536, 65537, 131071, 131072, 131073, 200000];
+for (const length of [0, 1, 65536, 65537, 131073, 200000]) {
+  for (const at of counts) {
+    const list = make(length);
+    if (at < length) list[at] = -5;
+    lines.push(`${length} ${at}: ${indexOf(list, -5)} ${sumUntilNegative(list)} ${countDown(length, at)} ${byThrees(length, at)} ${throwAt(length, at)}`);
+    if (at < length) delete list[at];
+    lines.push(`  ${sumOfPresent(list)} ${dot(make(length), list)} ${dot(list, make(at))}`);
+  }
+}
+for (const limit of [0, 1, 65537, 140000]) lines.push(`fill ${limit}: ${fill([1], limit)} ${fill([9], limit)} ${fill([], limit)}`);
+for (const length of [0, 1023, 1024, 70000, 140000]) lines.push(`drain ${length}: ${drain(make(length))}`);
+for (const stop of [0, 2147483647, 2147483646, 2147483647 - 65536]) lines.push(`largest ${stop}: ${upToLargest(2147483647 - 70000, stop)} ${downToSmallest(70000 - 2147483648, -stop - 1)}`);
+console.log(lines.join("\n"));
+//// counters-that-pass-int32-beside-slow-paths-that-count-on.js
+// Loops whose counter is compared with a bound, and whose unlikely paths count on by themselves, with bounds and starts on both sides of 2 ** 31 and 2 ** 53.
+function plain(from, to) {
+  let sum = 0;
+  for (let i = from; i < to; i++)
+    sum = sum + (i & 7) | 0;
+  return sum;
+}
+function list() {
+  return [].slice.call(arguments);
+}
+function throughArguments(from, to) {
+  let sum = 0, last = 0;
+  for (let i = from; i < to; i++) {
+    const r = list(i & 7, 2, 3);
+    sum = sum + r.length + r[0] | 0;
+    last = i;
+  }
+  return sum + ":" + last;
+}
+function skips(from, to, odd) {
+  let turns = 0, last = 0;
+  for (let i = from; i < to; i++) {
+    if (odd[i & 3] === "skip")
+      i++;
+    turns++;
+    last = i;
+  }
+  return turns + ":" + last;
+}
+function doubles(to) {
+  let turns = 0, x = 1;
+  for (; x < to; x *= 2)
+    turns++;
+  return turns + ":" + x;
+}
+function mirrors(to) {
+  let turns = 0, x = 0;
+  for (; x < to && turns < 9; x = 2 - x)
+    turns++;
+  return turns + ":" + x;
+}
+function down(from, to) {
+  let sum = 0, last = 0;
+  for (let i = from; i > to; i--) {
+    sum = sum + (i & 3) | 0;
+    last = i;
+  }
+  return sum + ":" + last;
+}
+const odd = ["go", "go", "skip", "go"];
+const edges = [0, 2 ** 31 - 12, 2 ** 31 - 1, 2 ** 31, 2 ** 32 - 6, 2 ** 53 - 40];
+for (let round = 0; round < 3; round++) {
+  for (const edge of edges) {
+    for (const length of [0, 1, 9, 20.5]) {
+      console.log(edge, length, plain(edge, edge + length), throughArguments(edge, edge + length), skips(edge, edge + length, odd), down(-edge, -edge - length), down(edge + length, edge));
+    }
+  }
+  console.log(plain(0, 200000), throughArguments(0, 200000), skips(0, 200000, odd), down(200000, 0));
+  for (const to of [0, 1, 100, 2 ** 31 - 1, 2 ** 31, 2 ** 40, 2 ** 60, Infinity === round ? 0 : 2 ** 62, NaN, -5, 0.5])
+    console.log(to, doubles(to), mirrors(to));
+}
+console.log(plain(0.5, 4), plain(-3, 3), plain(NaN, 3), plain(0, NaN), plain("2", "6"), skips(-2147483650, -2147483640, odd));
+//// field-accumulator.js
+// The elements come out of JSON.parse, so that nothing about them is known before the program runs. The list itself is an array of the program.
+////= make
+
+function kernel(values) {
+  var state = { total: 0, count: 0 };
+  for (var i = 0; i < values.length; i++) {
+    state.total += values[i];
+    state.count++;
+  }
+  return state.total + state.count;
+}
+
+var input = make("integers", 1000);
+var checksum = 0;
+for (var round = 0; round < 30000; round++) checksum = (checksum + kernel(input)) % 1000000007;
+console.log(checksum);
+//// for-of-with-objects-altered-in-the-loop.js
+// A loop over an iterable reads an object that does not change from turn to turn, until something in the loop alters the object, the array or the iteration itself.
+const unknown = new Function("value", "return value" + process.argv[0].slice(process.argv[0].length));
+const lines = [];
+
+function weighted(list, scale) {
+  let sum = 0;
+  for (const item of list) sum += item * scale.k;
+  return sum;
+}
+
+function weightedWithHook(list, scale, hook) {
+  let sum = 0;
+  for (const item of list) {
+    sum += item * scale.k;
+    if (item === 3) hook(list, scale);
+    sum += scale.k;
+  }
+  return sum;
+}
+
+function nested(rows, scale) {
+  let sum = 0;
+  for (const row of rows) {
+    sum += scale.k;
+    for (const cell of row.cells) sum += cell * scale.k + row.bias;
+  }
+  return sum;
+}
+
+function overValues(map, scale) {
+  let sum = 0;
+  for (const value of map.values()) sum += value * scale.k;
+  return sum;
+}
+
+function pairs(list, scale) {
+  let sum = 0;
+  for (const [left, right] of list) sum += (left + right) * scale.k;
+  return sum;
+}
+
+function spreadInLoop(lists, scale) {
+  const all = [];
+  for (const list of lists) {
+    all.push(...list);
+    all.push(scale.k);
+  }
+  return all.join();
+}
+
+const numbers = () => unknown([1, 2, 3, 4, 5]);
+const scaleOf = k => unknown({ k });
+
+for (let warm = 0; warm < 50; warm++) {
+  weighted(numbers(), scaleOf(2));
+  weightedWithHook(numbers(), scaleOf(2), () => {});
+  nested(unknown([{ cells: [1, 2], bias: 1 }, { cells: [3], bias: 2 }]), scaleOf(2));
+  overValues(unknown(new Map([["a", 1], ["b", 2]])), scaleOf(2));
+  pairs(unknown([[1, 2], [3, 4]]), scaleOf(2));
+  spreadInLoop(unknown([[1], [2, 3]]), scaleOf(2));
+}
+
+lines.push("as made: " + weighted(numbers(), scaleOf(2)));
+lines.push("another layout: " + weighted(numbers(), unknown({ j: 1, k: 3 })));
+lines.push("an inherited name: " + weighted(numbers(), unknown(Object.create({ k: 4 }))));
+lines.push("a getter: " + weighted(numbers(), unknown({ get k() { return 5; } })));
+lines.push("no such name: " + weighted(numbers(), unknown({})));
+lines.push("a string: " + weighted(numbers(), unknown({ k: "6" })));
+lines.push("a proxy: " + weighted(numbers(), unknown(new Proxy({}, { get: () => 7 }))));
+for (const nothing of [undefined, null]) {
+  let answer;
+  try { answer = weighted(numbers(), unknown(nothing)); } catch (error) { answer = error.constructor.name; }
+  lines.push("scale " + nothing + ": " + answer);
+  lines.push("scale " + nothing + ", nothing to walk: " + weighted(unknown([]), unknown(nothing)));
+}
+
+const hooks = {
+  "stores another number": (list, scale) => { scale.k = 10; },
+  "stores a string": (list, scale) => { scale.k = "x"; },
+  "deletes the name": (list, scale) => { delete scale.k; },
+  "plants a getter": (list, scale) => { let reads = 0; Object.defineProperty(scale, "k", { get: () => ++reads, configurable: true }); },
+  "adds a name": (list, scale) => { scale.other = 1; },
+  "freezes": (list, scale) => { Object.freeze(scale); },
+  "gives another prototype": (list, scale) => { delete scale.k; Object.setPrototypeOf(scale, { k: 100 }); },
+  "appends": (list, scale) => { if (list.length < 8) list.push(3); },
+  "shortens": (list, scale) => { list.length = 3; },
+  "makes a hole": (list, scale) => { delete list[3]; },
+  "stores a fraction": (list, scale) => { list[4] = 0.5; },
+  "stores an object": (list, scale) => { list[4] = { valueOf: () => 9 }; },
+  "stores far outside": (list, scale) => { list[40] = 1; list.length = 6; },
+  "plants an index getter": (list, scale) => { Object.defineProperty(list, 4, { get: () => 11 }); },
+  "replaces the iterator method": (list, scale) => { list[Symbol.iterator] = function* () { yield 1000; }; },
+  "gives the array another prototype": (list, scale) => { Object.setPrototypeOf(list, { __proto__: Array.prototype, 3: 77 }); delete list[3]; },
+  "throws": () => { throw new RangeError("stop"); },
+};
+for (const [name, hook] of Object.entries(hooks)) {
+  const list = numbers(), scale = scaleOf(2);
+  let answer;
+  try { answer = weightedWithHook(list, scale, unknown(hook)); } catch (error) { answer = error.constructor.name + " " + error.message; }
+  lines.push(name + ": " + answer + " | " + JSON.stringify(list) + " | " + JSON.stringify(scale));
+}
+
+function* generated() { yield 1; yield 2; yield 3; yield 4; }
+const closed = [];
+const byHand = {
+  [Symbol.iterator]() {
+    let turn = 0;
+    return { next: () => ({ done: ++turn > 4, value: turn }), return() { closed.push(turn); return {}; } };
+  },
+};
+lines.push("a generator: " + weighted(unknown(generated()), scaleOf(2)));
+lines.push("an iterator by hand: " + weighted(unknown(byHand), scaleOf(2)));
+try { weightedWithHook(unknown(byHand), scaleOf(2), hooks.throws); } catch (error) { lines.push("closed at " + closed.join() + " by " + error.message); }
+lines.push("a string: " + weighted(unknown("123"), scaleOf(2)));
+lines.push("a typed array: " + weighted(unknown(new Float64Array([0.5, 1.5])), scaleOf(2)));
+lines.push("a set: " + weighted(unknown(new Set([1, 1, 2])), scaleOf(2)));
+class Sublist extends Array { *[Symbol.iterator]() { yield 50; } }
+lines.push("a subclass with its own iterator: " + weighted(unknown(Sublist.from([1, 2])), scaleOf(2)));
+for (const notIterable of [undefined, null, 1, {}]) {
+  let answer;
+  try { answer = weighted(unknown(notIterable), scaleOf(2)); } catch (error) { answer = error.constructor.name; }
+  lines.push("walking " + String(notIterable) + ": " + answer);
+}
+
+const rows = unknown([{ cells: [1, 2], bias: 1 }, { cells: new Set([3]), bias: 2 }, { cells: "45", bias: 3 }, { bias: 4, cells: [6] }]);
+lines.push("nested: " + nested(rows, scaleOf(2)));
+lines.push("nested, a getter that alters the scale: " + (() => {
+  const scale = scaleOf(2);
+  return nested(unknown([{ cells: [1], bias: 0 }, { get cells() { scale.k = 3; return [1]; }, bias: 0 }, { cells: [1], bias: 0 }]), scale);
+})());
+
+const map = unknown(new Map([["a", 1], ["b", 2]]));
+lines.push("values of a map: " + overValues(map, scaleOf(2)));
+lines.push("values of an array: " + overValues(unknown([1, 2, 3]), scaleOf(2)));
+lines.push("values of an object with the method: " + overValues(unknown({ values: () => [4] }), scaleOf(2)));
+map.values = () => [5];
+lines.push("values of a map with its own method: " + overValues(map, scaleOf(2)));
+
+lines.push("pairs: " + pairs(unknown([[1, 2], [3, 4]]), scaleOf(2)));
+lines.push("pairs of strings and sets: " + pairs(unknown(["12", new Set([1, 2]), [1]]), scaleOf(2)));
+lines.push("spread: " + spreadInLoop(unknown([[1], "23", new Set([4])]), scaleOf(2)));
+
+console.log(lines.join("\n"));
+//// horner.js
+// The elements come out of JSON.parse, so that nothing about them is known before the program runs. The list itself is an array of the program.
+////= make
+
+function kernel(coefficients) {
+  var x = 0.5;
+  var value = 0;
+  for (var i = 0; i < coefficients.length; i++) value = value * x + coefficients[i];
+  return value;
+}
+
+var input = make("integers", 1000);
+var checksum = 0;
+for (var round = 0; round < 30000; round++) checksum = (checksum + kernel(input)) % 1000000007;
+console.log(checksum);
+//// loops-over-the-elements-of-a-declared-union.ts
+// Loops over a parameter declared as a union of arrays, views and strings, given each part, subclasses, views that are shrunk, grown or detached in the loop, and values outside the declared type.
+const holder: { list: unknown[] } = JSON.parse('{"list":[]}');
+function hide<T>(value: T): T {
+  holder.list.push(value);
+  return holder.list.pop() as T;
+}
+const lines: string[] = [];
+function say(name: string, run: () => unknown): void {
+  let text: string;
+  try {
+    text = String(run());
+  } catch (error) {
+    text = (error as Error).constructor.name;
+  }
+  lines.push(name + " = " + text);
+}
+type Numbers = number[] | Uint8Array;
+type Three = Uint8Array | Float64Array | number[];
+type Text = string | Buffer;
+
+function sum(bytes: Numbers): number {
+  let s = 0;
+  for (let i = 0; i < bytes.length; i++) s = (s + bytes[i]!) | 0;
+  return s;
+}
+function sumOfThree(bytes: Three): number {
+  let s = 0;
+  for (let i = 0; i < bytes.length; i++) s += bytes[i]!;
+  return s;
+}
+function sumOrNothing(bytes: Numbers | null | undefined): number {
+  let s = 0;
+  for (let i = 0; i < bytes!.length; i++) s = (s + bytes![i]!) | 0;
+  return s;
+}
+function spell(text: Text): string {
+  let s = "";
+  for (let i = 0; i < text.length; i++) s += text[i] + ",";
+  return s;
+}
+function around(bytes: Three, from: number, to: number): string {
+  let s = "";
+  for (let i = from; i < to; i++) s += bytes[i] + ",";
+  return s;
+}
+function fill(bytes: Three, value: number): string {
+  for (let i = 0; i < bytes.length; i++) bytes[i] = value;
+  return around(bytes, 0, bytes.length);
+}
+function fillPast(bytes: Numbers, from: number, to: number, value: number): string {
+  for (let i = from; i < to; i++) bytes[i] = value;
+  return around(bytes, 0, bytes.length) + Object.keys(bytes).length;
+}
+////= sumWhile	: Three, each: (i: number) => void): string
+////= sumTo	: Numbers, count: number, each: (i: number) => void): string
+function both(a: Numbers, b: Three): number {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) for (let j = 0; j < b.length; j++) s += a[i]! * b[j]!;
+  return s;
+}
+
+class OwnLength extends Uint8Array {
+  override get length(): number {
+    return 2;
+  }
+}
+class LongLength extends Float64Array {
+  override get length(): number {
+    return 6;
+  }
+}
+class List extends Array<number> {
+  override get length(): number {
+    return 1;
+  }
+  override set length(_: number) {}
+}
+function resizable(count: number, most: number): ArrayBuffer {
+  const buffer = new ArrayBuffer(count * 8, { maxByteLength: most * 8 });
+  new Uint8Array(buffer).fill(3);
+  return buffer;
+}
+function given(): [string, any][] {
+  return [
+    ["array", [1, 2, 3, 250]],
+    ["doubles", [1.5, -0, NaN]],
+    ["holes", [1, , 3]],
+    ["empty", []],
+    ["bytes", new Uint8Array([1, 2, 3, 250])],
+    ["buffer", Buffer.from([1, 2, 3, 250])],
+    ["part of a buffer", Buffer.from([9, 1, 2, 9]).subarray(1, 3)],
+    ["floats", new Float64Array([1.5, 2.5, NaN])],
+    ["own length", new OwnLength([1, 2, 3])],
+    ["long length", new LongLength([1, 2, 3])],
+    ["list", List.from([1, 2, 3])],
+    ["length on the instance", Object.defineProperty(new Uint8Array([1, 2, 3]), "length", { value: 1 })],
+    ["prototype of arrays", Object.setPrototypeOf(new Uint8Array([1, 2, 3]), Array.prototype)],
+    ["array below bytes", Object.setPrototypeOf([1, , 3], new Uint8Array([7, 8, 9]))],
+    ["detached", (v => (v.buffer.transfer(), v))(new Uint8Array([1, 2, 3]))],
+    ["words", new Int32Array([1, 2, 3])],
+    ["clamped", new Uint8ClampedArray([1, 2, 3])],
+    ["text", "123"],
+    ["object", { length: 2, 0: 4, 1: 5 }],
+    ["proxy", new Proxy(new Uint8Array([7, 8]), {})],
+    ["null", null],
+    ["undefined", undefined],
+    ["number", 7],
+  ];
+}
+for (let round = 0; round < 3; round++) {
+  for (const [name, value] of given()) {
+    say("sum " + name, () => sum(hide(value)));
+    say("sum of three " + name, () => sumOfThree(hide(value)));
+    say("sum or nothing " + name, () => sumOrNothing(hide(value)));
+    say("spell " + name, () => spell(hide(value)));
+    say("around " + name, () => around(hide(value), -2, 5));
+    say("both " + name, () => both(hide(value), hide(new Float64Array([1, 2]))) + both(hide([1, 2]), hide(value)));
+  }
+  for (const [name, value] of given()) say("fill " + name, () => fill(hide(value), 300.5));
+  for (const [name, value] of given()) say("fill past " + name, () => fillPast(hide(value), -1, 5, -1));
+  for (const Kind of [Uint8Array, Float64Array]) {
+    const size = Kind.BYTES_PER_ELEMENT;
+    for (const [how, view] of [
+      ["tracking", (b: ArrayBuffer) => new Kind(b)],
+      ["tracking at an offset", (b: ArrayBuffer) => new Kind(b, 16)],
+      ["fixed", (b: ArrayBuffer) => new Kind(b, 8, 3)],
+    ] as const) {
+      const name = Kind.name + " " + how;
+      say("shrunk " + name, () => { const b = resizable(8, 16); return sumWhile(hide(view(b)), i => { if (i === 1) b.resize(3 * size); }); });
+      say("emptied " + name, () => { const b = resizable(8, 16); return sumWhile(hide(view(b)), i => { if (i === 1) b.resize(0); }); });
+      say("grown " + name, () => { const b = resizable(4, 16); return sumWhile(hide(view(b)), i => { if (i === 1) b.resize(48); }); });
+      say("transferred " + name, () => { const b = resizable(8, 16); return sumWhile(hide(view(b)), i => { if (i === 1) b.transfer(); }); });
+      say("counted " + name, () => { const b = resizable(8, 16); return sumTo(hide(view(b)) as any, 6, i => { if (i === 2) b.resize(size); }); });
+    }
+  }
+}
+console.log(lines.join("\n"));
+//// loops-over-the-elements-of-whatever-is-given.js
+// Loops that read and store elements under a number, given arrays, views of every kind, subclasses, strings and other objects, while the view is shrunk, grown, detached or given other members.
+const holder = JSON.parse('{"list":[]}');
+function hide(value) {
+  holder.list.push(value);
+  return holder.list.pop();
+}
+const lines = [];
+function say(name, run) {
+  let text;
+  try {
+    text = String(run());
+  } catch (error) {
+    text = error.constructor.name;
+  }
+  lines.push(name + " = " + text);
+}
+
+function sum(bytes) {
+  let s = 0;
+  for (let i = 0; i < bytes.length; i++) s = (s + bytes[i]) | 0;
+  return s;
+}
+function join(bytes, from, to, step) {
+  let s = "";
+  for (let i = from; i < to; i += step) s += bytes[i] + ",";
+  return s;
+}
+function joinUnder(bytes, keys) {
+  let s = "";
+  for (let k = 0; k < keys.length; k++) s += bytes[keys[k]] + ",";
+  return s;
+}
+function fill(bytes, value) {
+  for (let i = 0; i < bytes.length; i++) bytes[i] = value;
+  return join(bytes, 0, bytes.length, 1);
+}
+function fillPast(bytes, from, to, value) {
+  for (let i = from; i < to; i++) bytes[i] = value;
+  return join(bytes, 0, bytes.length, 1) + Object.keys(bytes).length;
+}
+////= sumWhile	, each)
+////= sumTo	, count, each)
+function storeWhat(bytes, values) {
+  for (let i = 0; i < values.length; i++) bytes[i] = values[i];
+  return join(bytes, 0, bytes.length, 1);
+}
+function find(bytes, wanted) {
+  for (let i = 0; i < bytes.length; i++) if (bytes[i] === wanted) return i;
+  return -1;
+}
+function nested(rows, bytes) {
+  let s = 0;
+  for (let r = 0; r < rows; r++) for (let i = 0; i < bytes.length; i++) s = (s + bytes[i] * (r + 1)) | 0;
+  return s;
+}
+function guarded(bytes) {
+  let s = 0;
+  try {
+    for (let i = 0; i < bytes.length; i++) {
+      try {
+        s += bytes[i];
+      } finally {
+        s += 1;
+      }
+    }
+  } catch (error) {
+    return "caught " + error.constructor.name + " at " + s;
+  }
+  return s;
+}
+function* each(bytes) {
+  for (let i = 0; i < bytes.length; i++) yield bytes[i];
+}
+function changing(first, second) {
+  let bytes = first;
+  let s = "";
+  for (let i = 0; i < bytes.length; i++) {
+    s += bytes[i] + ",";
+    if (i === 1) bytes = second;
+  }
+  return s;
+}
+
+const kinds = [Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array];
+if (typeof Float16Array === "function") kinds.push(Float16Array);
+function receivers() {
+  const list = [
+    ["array", [1, 2, 3, 250]],
+    ["array of doubles", [1.5, 2.5, -0, NaN]],
+    ["array with a hole", [1, , 3]],
+    ["array of anything", [1, "2", null, { valueOf: () => 4 }]],
+    ["empty array", []],
+    ["buffer", Buffer.from([1, 2, 3, 250])],
+    ["slice of a buffer", Buffer.from([9, 1, 2, 3, 250, 9]).subarray(1, 5)],
+    ["empty buffer", Buffer.alloc(0)],
+    ["string", "1230"],
+    ["string object", new String("12")],
+    ["object with a length", { length: 3, 0: 5, 2: 7 }],
+    ["arguments", (function () { return arguments; })(4, 5, 6)],
+    ["proxy of a view", new Proxy(new Uint8Array([7, 8]), {})],
+    ["function", function (a, b) {}],
+    ["number", 5],
+    ["null", null],
+    ["undefined", undefined],
+    ["big views", new BigInt64Array([1n, 2n])],
+    ["data view", new DataView(new ArrayBuffer(4))],
+    ["array buffer", new ArrayBuffer(4)],
+  ];
+  for (const Kind of kinds) list.push([Kind.name, new Kind([1, 2, 3, 250])], [Kind.name + " at an offset", new Kind(new Kind([9, 1, 2, 3]).buffer, Kind.BYTES_PER_ELEMENT, 2)]);
+  return list;
+}
+
+for (let round = 0; round < 3; round++) {
+  for (const [name, value] of receivers()) {
+    say("sum " + name, () => sum(hide(value)));
+    say("find " + name, () => find(hide(value), 3));
+    say("nested " + name, () => nested(3, hide(value)));
+    say("guarded " + name, () => guarded(hide(value)));
+    say("each " + name, () => [...each(hide(value))].join());
+    say("join around " + name, () => join(hide(value), -2, 6, 1));
+    say("join by halves " + name, () => join(hide(value), -1, 3, 0.5));
+    say("join far " + name, () => join(hide(value), 4294967294, 4294967298, 1));
+    say("join under " + name, () => joinUnder(hide(value), hide([0, -0, 1.5, NaN, Infinity, -1, 4294967296, 2147483648, "1", "01", "-0", "length", 1e21, null, undefined, true])));
+  }
+  for (const [name, value] of receivers()) {
+    say("fill " + name, () => fill(hide(value), 300.7));
+  }
+  for (const [name, value] of receivers()) {
+    say("fill past " + name, () => fillPast(hide(value), -1, 6, -1));
+  }
+  for (const [name, value] of receivers()) {
+    say("store " + name, () => storeWhat(hide(value), hide([1.9, -1.9, NaN, "7", null, undefined, true, { valueOf: () => 258 }, 4294967297, -0])));
+  }
+  for (const [name, value] of receivers()) say("changing " + name, () => changing(hide(new Uint8Array([1, 2, 3, 4])), hide(value)) + changing(hide(value), hide(new Uint8Array([1, 2, 3, 4]))));
+}
+
+function resizable(Kind, count, most) {
+  const buffer = new ArrayBuffer(count * Kind.BYTES_PER_ELEMENT, { maxByteLength: most * Kind.BYTES_PER_ELEMENT });
+  const tracking = new Kind(buffer);
+  for (let i = 0; i < count; i++) tracking[i] = i + 1;
+  return buffer;
+}
+for (let round = 0; round < 3; round++) {
+  for (const Kind of [Uint8Array, Int32Array, Float64Array]) {
+    const size = Kind.BYTES_PER_ELEMENT;
+    const views = [
+      ["tracking", buffer => new Kind(buffer)],
+      ["tracking at an offset", buffer => new Kind(buffer, 2 * size)],
+      ["fixed", buffer => new Kind(buffer, 0, 6)],
+      ["fixed at an offset", buffer => new Kind(buffer, 2 * size, 4)],
+    ];
+    for (const [how, view] of views) {
+      const name = Kind.name + " " + how;
+      say("shrunk " + name, () => { const b = resizable(Kind, 8, 16); return sumWhile(hide(view(b)), i => { if (i === 2) b.resize(4 * size); }); });
+      say("shrunk to nothing " + name, () => { const b = resizable(Kind, 8, 16); return sumWhile(hide(view(b)), i => { if (i === 2) b.resize(0); }); });
+      say("shrunk and grown " + name, () => { const b = resizable(Kind, 8, 16); return sumWhile(hide(view(b)), i => { if (i === 1) b.resize(size); if (i === 3) b.resize(12 * size); }); });
+      say("grown " + name, () => { const b = resizable(Kind, 8, 16); return sumWhile(hide(view(b)), i => { if (i === 2) b.resize(12 * size); }); });
+      say("transferred " + name, () => { const b = resizable(Kind, 8, 16); return sumWhile(hide(view(b)), i => { if (i === 2) b.transfer(); }); });
+      say("counted while shrunk " + name, () => { const b = resizable(Kind, 8, 16); return sumTo(hide(view(b)), 8, i => { if (i === 3) b.resize(2 * size); }); });
+      say("counted while detached " + name, () => { const b = resizable(Kind, 8, 16); return sumTo(hide(view(b)), 8, i => { if (i === 3) structuredClone(b, { transfer: [b] }); }); });
+      say("stored while shrunk " + name, () => { const b = resizable(Kind, 8, 16); return storeWhat(hide(view(b)), hide([1, 2, { valueOf() { b.resize(2 * size); return 3; } }, 4, 5, 6])); });
+      say("stored while detached " + name, () => { const b = resizable(Kind, 8, 16); return storeWhat(hide(view(b)), hide([1, 2, { valueOf() { b.transfer(); return 3; } }, 4, 5, 6])); });
+    }
+    say("detached " + Kind.name, () => { const v = new Kind([1, 2, 3, 4, 5]); return sumWhile(hide(v), i => { if (i === 1) v.buffer.transfer(); }); });
+    say("detached before " + Kind.name, () => { const v = new Kind([1, 2, 3, 4, 5]); v.buffer.transfer(); return sum(hide(v)) + join(hide(v), 0, 3, 1) + fillPast(hide(v), 0, 3, 1); });
+    say("shared and grown " + Kind.name, () => {
+      const b = new SharedArrayBuffer(4 * size, { maxByteLength: 16 * size });
+      const v = new Kind(b);
+      return sumWhile(hide(v), i => { v[i] = i + 1; if (i === 2) b.grow(7 * size); });
+    });
+  }
+  say("buffer detached", () => { const v = Buffer.from(new ArrayBuffer(6)); v.fill(3); return sumWhile(hide(v), i => { if (i === 1) v.buffer.transfer(); }); });
+  say("buffer over a resizable", () => { const b = resizable(Uint8Array, 8, 16); return sumWhile(hide(Buffer.from(b)), i => { if (i === 2) b.resize(3); }); });
+}
+
+////= lines	OwnLength	Uint8Array	2
+////= lines	LongLength	Uint8Array	6
+class CountingLength extends Uint8Array {
+  reads = 0;
+  get length() {
+    return ++this.reads > 3 ? 0 : 4;
+  }
+}
+class OtherSpecies extends Uint8Array {
+  static get [Symbol.species]() {
+    return Array;
+  }
+}
+////= lines	BelowBuffer	Buffer	1
+for (let round = 0; round < 3; round++) {
+  say("own length", () => sum(hide(new OwnLength([1, 2, 3, 4]))) + join(hide(new OwnLength([1, 2, 3, 4])), 0, 5, 1));
+  say("long length", () => sum(hide(new LongLength([1, 2, 3, 4]))) + fill(hide(new LongLength([1, 2, 3, 4])), 9));
+  say("counting length", () => sum(hide(new CountingLength([1, 2, 3, 4]))));
+  say("other species", () => sum(hide(new OtherSpecies([1, 2, 3, 4]))) + sum(hide(new OtherSpecies([1, 2, 3, 4]).subarray ? new OtherSpecies([1, 2, 3, 4]) : [])));
+  say("length on the instance", () => { const v = new Uint8Array([1, 2, 3, 4]); Object.defineProperty(v, "length", { value: 2 }); return sum(hide(v)) + find(hide(v), 3); });
+  say("getter on the instance", () => { const v = Buffer.from([1, 2, 3, 4]); let n = 0; Object.defineProperty(v, "length", { get: () => (n++ < 2 ? 4 : 0) }); return sum(hide(v)); });
+  say("length defined in the loop", () => { const v = new Uint8Array([1, 2, 3, 4]); return sumWhile(hide(v), i => { if (i === 0) Object.defineProperty(v, "length", { value: 2, configurable: true }); }); });
+  say("prototype of arrays", () => { const v = new Uint8Array([1, 2, 3, 4]); Object.setPrototypeOf(v, Array.prototype); return sum(hide(v)) + join(hide(v), 0, 5, 1); });
+  say("no prototype", () => { const v = new Uint8Array([1, 2, 3, 4]); Object.setPrototypeOf(v, null); return sum(hide(v)) + join(hide(v), 0, 5, 1); });
+  say("prototype with elements", () => { const v = new Uint8Array([1, 2]); Object.setPrototypeOf(v, { length: 4, 2: "two", 3: "three", "-1": "minus", 1.5: "half" }); return join(hide(v), -1, 4, 0.5); });
+  say("prototype swapped in the loop", () => { const v = new Uint8Array([1, 2, 3, 4]); return sumWhile(hide(v), i => { if (i === 1) Object.setPrototypeOf(v, { length: 3 }); }); });
+  say("array below a view", () => { const a = [1, , 3]; Object.setPrototypeOf(a, new Uint8Array([7, 8, 9])); return sum(hide(a)) + join(hide(a), 0, 4, 1); });
+  say("object below a view", () => { const o = Object.create(new Uint8Array([7, 8, 9])); return guarded(hide(o)) + join(hide(o), 0, 4, 1) + fillPast(hide(o), 0, 4, 1); });
+  say("below buffer", () => { const v = Buffer.from([1, 2, 3]); Object.setPrototypeOf(v, BelowBuffer.prototype); return sum(hide(v)); });
+  say("sealed", () => fillPast(hide(Object.seal(new Uint8Array([1, 2]))), 0, 4, 5));
+  say("not extensible", () => fillPast(hide(Object.preventExtensions(new Uint8Array([1, 2]))), -1, 4, 5));
+  say("extra names", () => { const v = new Uint8Array([1, 2]); v.extra = 1; v["1.5"] = 2; v["-0"] = 3; v["01"] = 4; return joinUnder(hide(v), hide(["extra", "1.5", 1.5, "-0", -0, "01", 1])) + Object.keys(v); });
+}
+console.log(lines.join("\n"));
+//// loops-that-expect-an-array-are-handed-other-iterables.js
+// A loop that is predicted to walk an array is handed a string, a set, a map, a generator, built-in iterators and iterators of the program's own: what is opened, stepped and closed, how often and in which order, and which error wins, is what plain Bun does.
+function sum(values, weigh) {
+  let total = 0;
+  for (const value of values) total += weigh(value);
+  return total;
+}
+function first(values) {
+  for (const value of values) {
+    if (value) return value;
+  }
+  return null;
+}
+function pairs(values) {
+  const found = [];
+  outer: for (const a of values) {
+    for (const b of values) {
+      if (a === b) continue outer;
+      found.push(`${String(a)}${String(b)}`);
+      if (found.length > 5) break outer;
+    }
+  }
+  return found.join(" ");
+}
+function* count() {
+  try {
+    yield 1;
+    yield 2;
+    yield 3;
+  } finally {
+    console.log("the generator is closed");
+  }
+}
+class Countdown {
+  constructor(from) {
+    this.left = from;
+    this.closed = 0;
+    this.steps = 0;
+  }
+  [Symbol.iterator]() {
+    return this;
+  }
+  next() {
+    this.steps++;
+    return this.left > 0 ? { done: false, value: this.left-- } : { done: true, value: "never read" };
+  }
+  return() {
+    this.closed++;
+    return {};
+  }
+}
+const weigh = value => (typeof value === "number" ? value * 2 : typeof value === "string" ? value.length : 1);
+const make = [() => [1, 2, 3], () => "a\u{1F600}b", () => new Set([4, 5]), () => new Map([[1, 2]]), () => count(), () => new Countdown(3), () => new Map([["k", 1]]).keys(), () => [7, 8].entries(), () => ""];
+for (const one of make) console.log(sum(one(), weigh), String(first(one())), pairs(one()));
+
+const left = new Countdown(3);
+console.log(first(left), left.closed, left.steps);
+const thrown = new Countdown(3);
+try {
+  sum(thrown, () => {
+    throw new Error("out of the body");
+  });
+} catch (error) {
+  console.log(error.message, thrown.closed, thrown.steps);
+}
+const throwsWhenClosed = { [Symbol.iterator]() { return this; }, next() { return { done: false, value: 1 }; }, return() { throw new Error("out of return"); } };
+try {
+  first(throwsWhenClosed);
+} catch (error) {
+  console.log(error.message);
+}
+try {
+  sum(throwsWhenClosed, () => {
+    throw new Error("the body's own");
+  });
+} catch (error) {
+  console.log(error.message);
+}
+const throwsAtStep = { closed: 0, [Symbol.iterator]() { return this; }, next() { throw new Error("out of next"); }, return() { this.closed++; return {}; } };
+try {
+  sum(throwsAtStep, weigh);
+} catch (error) {
+  console.log(error.message, throwsAtStep.closed);
+}
+for (const wrong of [undefined, null, 5, {}, { [Symbol.iterator]: 1 }, { [Symbol.iterator]() { return 1; } }, { [Symbol.iterator]() { return { next() { return 1; } }; } }, { [Symbol.iterator]() { return {}; } }]) {
+  try {
+    console.log(sum(wrong, weigh));
+  } catch (error) {
+    console.log(error.constructor.name);
+  }
+}
+const returnsNoObject = { [Symbol.iterator]() { return this; }, next() { return { done: false, value: 1 }; }, return() { return 1; } };
+try {
+  console.log(first(returnsNoObject));
+} catch (error) {
+  console.log(error.constructor.name);
+}
+const nextIsReadOnce = { reads: 0, [Symbol.iterator]() { return this; }, get next() { this.reads++; let left = 2; return () => ({ done: left-- <= 0, value: left }); } };
+console.log(sum(nextIsReadOnce, weigh), nextIsReadOnce.reads);
+//// maximum.js
+// The elements come out of JSON.parse, so that nothing about them is known before the program runs. The list itself is an array of the program.
+////= make
+
+function kernel(values) {
+  var best = -Infinity;
+  for (var i = 0; i < values.length; i++) {
+    if (values[i] > best) best = values[i];
+  }
+  return best;
+}
+
+var input = make("integers", 1000);
+var checksum = 0;
+for (var round = 0; round < 30000; round++) checksum = (checksum + kernel(input)) % 1000000007;
+console.log(checksum);
+//// pointer-chase.js
+// The elements come out of JSON.parse, so that nothing about them is known before the program runs. The list itself is an array of the program.
+////= make
+
+function kernel(next) {
+  var at = 0;
+  for (var step = 0; step < next.length; step++) at = next[at];
+  return at;
+}
+
+var input = make("permutation", 1000);
+var checksum = 0;
+for (var round = 0; round < 30000; round++) checksum = (checksum + kernel(input)) % 1000000007;
+console.log(checksum);
+//// product-and-remainder.js
+// The elements come out of JSON.parse, so that nothing about them is known before the program runs. The list itself is an array of the program.
+////= make
+
+function kernel(values) {
+  var hash = 7;
+  for (var i = 0; i < values.length; i++) hash = (hash * 31 + values[i]) % 65521;
+  return hash;
+}
+
+var input = make("integers", 1000);
+var checksum = 0;
+for (var round = 0; round < 30000; round++) checksum = (checksum + kernel(input)) % 1000000007;
+console.log(checksum);
+//// short-loops.js
+// The elements come out of JSON.parse, so that nothing about them is known before the program runs. The list itself is an array of the program.
+////= make
+
+function kernel(values) {
+  var total = 0;
+  for (var i = 0; i < values.length; i++) total += values[i];
+  return total;
+}
+
+var rows = [];
+for (var r = 0; r < 300; r++) rows.push(make("integers", 1 + (r % 4)));
+var checksum = 0;
+for (var round = 0; round < 40000; round++) {
+  for (var r = 0; r < rows.length; r++) checksum = (checksum + kernel(rows[r])) % 1000000007;
+}
+console.log(checksum);
+//// two-carried-numbers.js
+// The elements come out of JSON.parse, so that nothing about them is known before the program runs. The list itself is an array of the program.
+////= make
+
+function kernel(values) {
+  var a = 0;
+  var b = 1;
+  for (var i = 0; i < values.length; i++) {
+    var c = (a + b + values[i]) % 1000003;
+    a = b;
+    b = c;
+  }
+  return a + b;
+}
+
+var input = make("integers", 1000);
+var checksum = 0;
+for (var round = 0; round < 30000; round++) checksum = (checksum + kernel(input)) % 1000000007;
+console.log(checksum);
+//// while-with-carried-index.js
+// The elements come out of JSON.parse, so that nothing about them is known before the program runs. The list itself is an array of the program.
+////= make
+
+function kernel(values) {
+  var i = 0;
+  var count = 0;
+  while (i < values.length) {
+    count++;
+    i += (values[i] & 3) + 1;
+  }
+  return count;
+}
+
+var input = make("integers", 1000);
+var checksum = 0;
+for (var round = 0; round < 30000; round++) checksum = (checksum + kernel(input)) % 1000000007;
+console.log(checksum);

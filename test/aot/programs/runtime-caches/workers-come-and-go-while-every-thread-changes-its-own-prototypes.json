@@ -1,0 +1,5 @@
+{
+  "skipInShell": "it uses what Bun provides and the jsc shell does not",
+  "runWithASAN": "native code and compiled code take turns on the same storage",
+  "skipInVariants": "seventy-two Workers a run"
+}

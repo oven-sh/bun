@@ -1,0 +1,17 @@
+Array.prototype, a function of this file, store: TypeError
+Array.prototype, a function of this file, delete: TypeError
+Array.prototype, a method, store: TypeError
+Array.prototype, a method, delete: TypeError
+Array.prototype, a static block: TypeError
+Array.prototype, the extends clause: TypeError
+Array.prototype, a computed key: TypeError
+Array.prototype, a function inside a method: TypeError
+a frozen object, a function of this file, store: no error
+a frozen object, a function of this file, delete: false
+a frozen object, a method, store: TypeError
+a frozen object, a method, delete: TypeError
+a frozen object, a static block: TypeError
+a frozen object, the extends clause: TypeError
+a frozen object, a computed key: TypeError
+a frozen object, a function inside a method: TypeError
+function 1

@@ -1,0 +1,4 @@
+sumOfTen 385
+triple 15 15 WebAssembly.RuntimeError: Out of bounds call_indirect
+divide 3 -3 WebAssembly.RuntimeError: Division by zero
+callFail 36 RangeError: thrown by JavaScript: 3

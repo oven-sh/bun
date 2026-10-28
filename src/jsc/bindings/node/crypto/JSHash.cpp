@@ -39,6 +39,7 @@ JSHash::~JSHash()
     if (m_zigHasher) {
         ExternZigHash::destroy(m_zigHasher);
     }
+    OPENSSL_cleanse(m_shortDigest.data(), m_shortDigest.size());
 }
 
 void JSHash::finishCreation(JSC::VM& vm)
@@ -205,6 +206,13 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         auto inputView = inputString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
+        if (encoding == WebCore::BufferEncodingType::utf8 && inputView->is8Bit() && WTF::charactersAreAllASCII(inputView->span8())) {
+            if (!hash->update(byteCast<uint8_t>(inputView->span8()))) {
+                return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
+            }
+            return JSValue::encode(hashWrapper);
+        }
+
         JSValue converted = JSValue::decode(WebCore::constructFromEncoding(globalObject, inputView, encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -283,6 +291,15 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
             hash->m_digest = ByteSource::allocated(data.release());
             ExternZigHash::destroy(hash->m_zigHasher);
             hash->m_zigHasher = nullptr;
+        } else if (len <= hash->m_shortDigest.size()) {
+            ncrypto::Buffer<void> into { .data = hash->m_shortDigest.data(), .len = len };
+            if (!hash->m_ctx.digestFinalInto(&into)) {
+                throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
+                return {};
+            }
+
+            hash->m_digest = ByteSource::foreign(hash->m_shortDigest.data(), len);
+            hash->m_ctx.reset();
         } else {
             auto data = hash->m_ctx.digestFinal(len);
             if (!data) {

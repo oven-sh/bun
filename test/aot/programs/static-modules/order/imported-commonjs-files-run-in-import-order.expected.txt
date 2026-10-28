@@ -1,0 +1,6 @@
+k1
+k2 0
+k3
+deep
+e
+main

@@ -1,0 +1,159 @@
+# A call of a built-in that has a form for the members of a literal, with an object literal that nobody else sees, becomes a call of that form with the members as arguments. Native code reads no member by name, and no object is made.
+# FORM: Prepared
+# RUN: pass SimplifyBuiltinCalls
+# RUN(DEAD): pass SimplifyBuiltinCalls EliminateDeadCode
+# STATISTIC: LiteralArgumentsTakenApart = 7
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="headers" declared={type=anything}}, {key="status" declared={type=anything}}, {key="statusText" declared={type=anything}}]
+layout L1 fields=[{key="status" declared={type=anything}}, {key="method" declared={type=anything}}]
+layout L2 kind=Instance name="Init" fields=[{key="status" declared={type=anything}}] flow={baseState=None}
+layout L3
+
+function f0 name="statusAndHeaders" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: number, v2: anything):
+    v3 = NewObject -, v1, v2 layout=L0 fields=[1, 0]
+    v4 = CallBuiltin -, v0, v3 overload=Response/4
+    Return v4
+}
+# CHECK-LABEL: function f0 name="statusAndHeaders"
+# CHECK: [[absent0]]: undefined = Undefined
+# CHECK-NEXT: v4: Response = CallBuiltin -, v0, v1, [[absent0]], v2 overload=CompilerHelpersNewResponseFromParts/0
+# CHECK-NEXT: Return v4
+# DEAD-LABEL: function f0 name="statusAndHeaders"
+# DEAD-NOT: NewObject
+
+function f1 name="everyMemberBehindFinishObject" parameters=[{type=string}, {type=number}, {type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: number, v2: string, v3: anything):
+    v4 = NewObject -, v3, v1, v2 layout=L0 fields=[0, 1, 2]
+    v5 = FinishObject v4
+    v6 = CallBuiltin -, v0, v5 overload=Response/4
+    Return v6
+}
+# CHECK-LABEL: function f1 name="everyMemberBehindFinishObject"
+# CHECK-NOT: Undefined
+# CHECK: v6: Response = CallBuiltin -, v0, v1, v2, v3 overload=CompilerHelpersNewResponseFromParts/0
+# DEAD-LABEL: function f1 name="everyMemberBehindFinishObject"
+# DEAD-NOT: NewObject
+# DEAD-NOT: FinishObject
+
+function f2 name="noMember" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = NewObject layout=L3
+    v2 = CallBuiltin -, v0, v1 overload=Response/4
+    Return v2
+}
+# CHECK-LABEL: function f2 name="noMember"
+# CHECK: v2: Response = CallBuiltin -, v0, [[status2]], [[statusText2]], [[headers2]] overload=CompilerHelpersNewResponseFromParts/0
+# DEAD-LABEL: function f2 name="noMember"
+# DEAD-NOT: NewObject
+# DEAD-LABEL: function f3 name="anyBody"
+
+function f3 name="anyBody" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = NewObject -, v1 layout=L0 fields=[1]
+    v3 = CallBuiltin -, v0, v2 overload=Response/7
+    Return v3
+}
+# CHECK-LABEL: function f3 name="anyBody"
+# CHECK: v3: Response = CallBuiltin -, v0, v1, {{*}} overload=CompilerHelpersNewResponseFromParts/3
+
+function f4 name="somebodyElseHasTheLiteral" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: number):
+    v2 = NewObject -, v1 layout=L0 fields=[1]
+    v3 = CallBuiltin -, v0, v2 overload=Response/4
+    Return v2
+}
+# CHECK-LABEL: function f4 name="somebodyElseHasTheLiteral"
+# CHECK: = CallBuiltin -, v0, v2 overload=Response/4
+
+function f5 name="aStoreBehindTheAllocation" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: number, v2: anything):
+    v3 = NewObject -, v1 layout=L0 fields=[1]
+    PropDefine v3, v2 key="headers"
+    v5 = FinishObject v3
+    v6 = CallBuiltin -, v0, v5 overload=Response/4
+    Return v6
+}
+# CHECK-LABEL: function f5 name="aStoreBehindTheAllocation"
+# CHECK: = CallBuiltin -, v0, v5 overload=Response/4
+
+function f6 name="aMemberTheFormDoesNotTake" parameters=[{type=string}, {type=number}, {type=string}] results=[{type=anything}] {
+  b0(v0: string, v1: number, v2: string):
+    v3 = NewObject -, v1, v2 layout=L1 fields=[0, 1]
+    v4 = CallBuiltin -, v0, v3 overload=Response/4
+    Return v4
+}
+# CHECK-LABEL: function f6 name="aMemberTheFormDoesNotTake"
+# CHECK: = CallBuiltin -, v0, v3 overload=Response/4
+
+function f7 name="anInstanceOfAClass" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: number):
+    v2 = NewObject -, v1 layout=L2 fields=[0]
+    v3 = CallBuiltin -, v0, v2 overload=Response/4
+    Return v3
+}
+# CHECK-LABEL: function f7 name="anInstanceOfAClass"
+# CHECK: = CallBuiltin -, v0, v2 overload=Response/4
+
+function f8 name="anotherPrototype" parameters=[{type=string}, {type=number}, {type=object}] results=[{type=anything}] {
+  b0(v0: string, v1: number, v2: object):
+    v3 = NewObject v2, v1 layout=L0 fields=[1]
+    v4 = CallBuiltin -, v0, v3 overload=Response/4
+    Return v4
+}
+# CHECK-LABEL: function f8 name="anotherPrototype"
+# CHECK: = CallBuiltin -, v0, v3 overload=Response/4
+
+function f9 name="noLiteral" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: anything):
+    v2 = CallBuiltin -, v0, v1 overload=Response/4
+    Return v2
+}
+# CHECK-LABEL: function f9 name="noLiteral"
+# CHECK: = CallBuiltin -, v0, v1 overload=Response/4
+
+function f10 name="operandsNobodyHasProven" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = NewObject -, v1, v2 layout=L0 fields=[1, 0]
+    v4 = FinishObject v3
+    v5 = CallBuiltin -, v0, v4 overload=Response/1 builtinCallForm=AnyReceiver
+    Return v5
+}
+# CHECK-LABEL: function f10 name="operandsNobodyHasProven"
+# CHECK: v5: Response = CallBuiltin -, v0, v1, {{*}}, v2 overload=CompilerHelpersNewResponseFromParts/3
+# CHECK-NEXT: Return v5
+
+function f11 name="calledWithoutNew" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: number):
+    v2 = NewObject -, v1 layout=L0 fields=[1]
+    v3 = CallBuiltin -, v0, v2 overload=Response/0 builtinCallForm=AnyReceiver
+    Unreachable
+}
+# CHECK-LABEL: function f11 name="calledWithoutNew"
+# CHECK: = CallBuiltin -, v0, v2 overload=Response/0 builtinCallForm=AnyReceiver
+
+function f12 name="twoCallsShareTheLiteral" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: string, v1: number, v2: boolean):
+    v3 = NewObject -, v1 layout=L0 fields=[1]
+    v4 = FinishObject v3
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v5 = CallBuiltin -, v0, v4 overload=Response/4
+    Return v5
+  b2():
+    v6 = CallBuiltin -, v0, v4 overload=Response/4
+    Return v6
+}
+# CHECK-LABEL: function f12 name="twoCallsShareTheLiteral"
+# CHECK: v5: Response = CallBuiltin -, v0, v1, {{*}} overload=CompilerHelpersNewResponseFromParts/0
+# CHECK: v6: Response = CallBuiltin -, v0, v1, {{*}} overload=CompilerHelpersNewResponseFromParts/0
+
+function f13 name="theLiteralIsAlsoTheBody" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L0 fields=[1]
+    v2 = CallBuiltin -, v1, v1 overload=Response/7
+    Return v2
+}
+# CHECK-LABEL: function f13 name="theLiteralIsAlsoTheBody"
+# CHECK: = CallBuiltin -, v1, v1 overload=Response/7

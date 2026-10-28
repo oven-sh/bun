@@ -1,0 +1,6 @@
+a recursion without an end: true Maximum call stack size exceeded.
+it went deep: true
+two functions that call each other: true Maximum call stack size exceeded.
+again, behind the first: true Maximum call stack size exceeded.
+and what ends, ends: 6765
+the poll at an entry was entered: false

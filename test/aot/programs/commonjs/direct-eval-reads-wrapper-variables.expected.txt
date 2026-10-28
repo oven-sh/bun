@@ -1,0 +1,6 @@
+function a/b
+object function object string string
+true true
+object function object string string
+true true
+object true true

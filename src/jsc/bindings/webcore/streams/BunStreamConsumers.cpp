@@ -1315,6 +1315,20 @@ JSValue readableStreamToJSON(JSGlobalObject* globalObject, WebCore::JSReadableSt
     return derived;
 }
 
+// What readableStreamToJSON parses: a native handle says it of what it has buffered, and of any other stream it is the text.
+JSValue readableStreamToJSONSource(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto* error = unusableStreamError(globalObject, stream))
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
+    JSValue fastPath = tryUseReadableStreamBufferedFastPath(globalObject, stream, Identifier::fromString(vm, "jsonSource"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (fastPath)
+        return fastPath;
+    RELEASE_AND_RETURN(scope, readableStreamToText(globalObject, stream));
+}
+
 JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream)
 {
     auto& vm = getVM(globalObject);

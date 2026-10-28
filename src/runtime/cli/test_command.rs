@@ -1,6 +1,7 @@
 use bun_io::Write as _;
 
 use crate::cli::Command;
+use crate::cli::run_compiled;
 use crate::cli::test::changed_files_filter as ChangedFilesFilter;
 use crate::cli::test::parallel_runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
@@ -297,7 +298,7 @@ impl TestFailure {
     /// Fold in a `ZigException` that `print_error_instance_body` has already
     /// populated. A test can throw more than once (body, then `afterEach`);
     /// the first name/message win and every stack is appended.
-    pub(crate) fn record(slot: &mut Option<TestFailure>, exception: &jsc::ZigException) {
+    pub(crate) fn record(slot: &mut Option<TestFailure>, exception: &jsc::ZigException<'_>) {
         let failure = slot.get_or_insert_default();
         let name = exception.name.to_utf8();
         let raw_message = exception.message.to_utf8();
@@ -373,7 +374,7 @@ impl TestFailure {
     }
 
     /// VirtualMachine::on_print_error_zig_exception thunk.
-    pub(crate) fn record_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException) {
+    pub(crate) fn record_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException<'_>) {
         // SAFETY: `ctx` was set to `&mut CommandLineReporter.test_failure` by
         // `on_uncaught_exception` for the duration of a single
         // `run_error_handler` call; single-threaded, no other borrow live.
@@ -1771,7 +1772,7 @@ impl TestCommand {
             core::sync::atomic::Ordering::Relaxed,
         );
 
-        if !ctx.test_options.test_worker {
+        if !ctx.test_options.test_worker && !run_compiled::is_second_process() {
             // print the version so you know its doing stuff if it takes a sec
             let w = Output::writer();
             let colors = Output::enable_ansi_colors_stdout();
@@ -1806,10 +1807,14 @@ impl TestCommand {
         // `exec()` never returns before process exit, so the heap allocation
         // outlives all observers.
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
+        crate::cli::startup_options::refuse_code_the_compiler_did_not_see();
         jsc::initialize(jsc::InitializeOptions {
             short_lived_globals: ctx.test_options.isolate,
+            runs_compiled_code: run_compiled::runs_compiled_code(),
+            locks_builtins: run_compiled::is_checked(),
             ..Default::default()
         });
+        run_compiled::list_refused_changes();
         bun_http::http_thread::init(&Default::default());
 
         let enable_random = ctx.test_options.randomize;
@@ -1960,6 +1965,7 @@ impl TestCommand {
                 env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
                 smol: ctx.runtime_options.smol,
                 is_main_thread: true,
+                graph: run_compiled::graph(),
                 ..Default::default()
             })?
         };
@@ -2249,7 +2255,7 @@ impl TestCommand {
                         if result.changed_count == 1 { "" } else { "s" }
                     );
                     pass_with_no_tests_from_filter = true;
-                } else {
+                } else if !run_compiled::is_second_process() {
                     pretty_error!(
                         "<r><d>--changed:<r> {} changed file{}, running {}/{} test file{}\n",
                         result.changed_count,
@@ -2293,14 +2299,16 @@ impl TestCommand {
                     }
                 }
 
-                pretty_error!(
-                    "<r><d>--shard={}/{}:<r> running {}/{} test file{}\n",
-                    shard.index,
-                    shard.count,
-                    write,
-                    test_files.len(),
-                    if test_files.len() == 1 { "" } else { "s" }
-                );
+                if !run_compiled::is_second_process() {
+                    pretty_error!(
+                        "<r><d>--shard={}/{}:<r> running {}/{} test file{}\n",
+                        shard.index,
+                        shard.count,
+                        write,
+                        test_files.len(),
+                        if test_files.len() == 1 { "" } else { "s" }
+                    );
+                }
                 Output::flush();
 
                 if write == 0 {
@@ -2354,9 +2362,21 @@ impl TestCommand {
                             None,
                         );
                     }
+                    run_compiled::watch_files_of_check(vm);
                 }
                 _ => {}
             }
+        }
+
+        if run_compiled::is_requested(ctx) && !test_files.is_empty() {
+            let mut entry_points: Vec<Box<[u8]>> =
+                test_files.iter().map(|path| Box::from(&**path)).collect();
+            entry_points.extend(ctx.preloads.iter().cloned());
+            let independent_count = match ctx.test_options.parallel {
+                0 => test_files.len(),
+                _ => 0,
+            };
+            run_compiled::start(ctx, entry_points, independent_count);
         }
 
         // After the file watcher is enabled: see `watching`.
@@ -2703,6 +2723,17 @@ impl TestCommand {
         }
 
         pretty_error!("\n");
+        let refused = run_compiled::refused_changes();
+        if !refused.is_empty() {
+            pretty_error!(
+                "<yellow>{} write{} to read-only built-ins<r> failed during this run, caught or not. Code that continued after one may have left its work half done:\n",
+                refused.len(),
+                if refused.len() == 1 { "" } else { "s" }
+            );
+            for refusal in &refused {
+                pretty_error!("  {}\n", bstr::BStr::new(refusal));
+            }
+        }
         Output::flush();
 
         reporter.write_junit_report_if_needed();
@@ -2898,7 +2929,8 @@ impl TestCommand {
         // lock on `reporter` for the entire function body.
         scopeguard::defer! { unsafe { (*reporter_ptr).jest.only = prev_only; } }
 
-        let resolution = vm.transpiler.resolve_entry_point(file_name)?;
+        let dot_slash = core::cell::OnceCell::new();
+        let resolution = vm.transpiler.resolve_entry_point(file_name, &dot_slash)?;
         vm.clear_entry_point()?;
 
         // `append_slice` interns into the process-static `FilenameStore` and
@@ -2907,6 +2939,10 @@ impl TestCommand {
             .filename_store
             .append_slice(resolution.path_pair.primary.text)
             .expect("oom");
+        run_compiled::will_run_test_file(resolve_path::relative(
+            FileSystem::instance().top_level_dir(),
+            file_path,
+        ));
         let file_id = jest::Jest::runner()
             .unwrap()
             .get_or_put_file(file_path)
@@ -2982,21 +3018,31 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            let promise = vm.load_entry_point_for_test_runner(file_path)?;
+            let promise = match run_compiled::is_refused(file_path) {
+                true => None,
+                false => Some(vm.load_entry_point_for_test_runner(file_path)?),
+            };
             // Only count the file once, not once per repeat
             if repeat_index == 0 {
                 reporter.summary().files += 1;
             }
 
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-            match jsc::JSInternalPromise::opaque_mut(promise).status() {
-                jsc::js_promise::Status::Rejected => {
-                    // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
-                    // `unhandled_rejection(&mut self, ...)` can reborrow.
-                    let global = vm.global();
-                    let p = jsc::JSInternalPromise::opaque_mut(promise);
-                    let (result, promise_js) = (p.result(global.vm()), p.to_js());
-                    vm.unhandled_rejection(global, result, promise_js);
+            match promise.map(|promise| jsc::JSInternalPromise::opaque_mut(promise).status()) {
+                None | Some(jsc::js_promise::Status::Rejected) => {
+                    if let Some(promise) = promise {
+                        // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so `unhandled_rejection(&mut self, ...)` can reborrow.
+                        let global = vm.global();
+                        let p = jsc::JSInternalPromise::opaque_mut(promise);
+                        let (result, promise_js) = (p.result(global.vm()), p.to_js());
+                        vm.unhandled_rejection(global, result, promise_js);
+                    } else {
+                        reporter.jest.current_file.print_if_needed();
+                        pretty_error!(
+                            "<r><red>error<r>: bun test --aot does not run this file: it has a type error, or it imports a file that has one (see above)\n"
+                        );
+                        Output::flush();
+                    }
                     reporter.summary().fail += 1;
 
                     if reporter.jest.bail == reporter.summary().fail {

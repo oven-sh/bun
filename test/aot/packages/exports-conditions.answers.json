@@ -1,0 +1,32 @@
+{
+  "main-and-module.x.default.mjs": "compiled",
+  "main-and-module.x.default.ts": "compiled",
+  "main-and-module.x.dynamic-import.mjs": "compiled",
+  "main-and-module.x.dynamic-import.ts": "compiled",
+  "main-and-module.x.later.mjs": "compiled",
+  "main-and-module.x.names.mjs": "compiled",
+  "main-and-module.x.names.ts": "compiled",
+  "main-and-module.x.namespace.mjs": "compiled",
+  "main-and-module.x.namespace.ts": "compiled",
+  "require-only.x.default.mjs": {
+    "errors": "error: TS100153: The path \"c_require_only\" is not exported by its package\n"
+  },
+  "require-only.x.default.ts": {
+    "errors": "error: TS100153: The path \"c_require_only\" is not exported by its package\n"
+  },
+  "require-only.x.later.mjs": {
+    "errors": "error: TS100153: The path \"c_require_only\" is not exported by its package\n"
+  },
+  "require-only.x.names.mjs": {
+    "errors": "error: TS100153: The path \"c_require_only\" is not exported by its package\n"
+  },
+  "require-only.x.names.ts": {
+    "errors": "error: TS100153: The path \"c_require_only\" is not exported by its package\n"
+  },
+  "require-only.x.namespace.mjs": {
+    "errors": "error: TS100153: The path \"c_require_only\" is not exported by its package\n"
+  },
+  "require-only.x.namespace.ts": {
+    "errors": "error: TS100153: The path \"c_require_only\" is not exported by its package\n"
+  }
+}

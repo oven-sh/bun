@@ -1,0 +1,30 @@
+# class Body { constructor() { this.hits = 0 } }; body = new Body; new Proxy(body, {}).hits = "text"; return body.hits
+# The proxy is the unknown object and its target has escaped, so the store through the proxy may be what the read of the target finds.
+# RUN: valueflow-apply
+# CHECK: function f0 name="main" {{*}}results=[{type=int|"text"}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Body" constructor=f1 fields=[{key="hits" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Handler"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2
+    v4 = NewObject layout=L1
+    v5 = Builtin builtin=Proxy
+    v6 = Construct v5, -, v3, v4
+    v7 = String string="text"
+    PropSet v6, v7 key="hits"
+    v9 = PropGet v3 key="hits"
+    Return v9
+}
+function f1 name="Body" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = Integer integer=0
+    v3 = NewObject v1, v2 layout=L0 fields=[0]
+    Return v3
+}

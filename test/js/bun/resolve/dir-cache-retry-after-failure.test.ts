@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -57,6 +57,48 @@ const files = {
         console.log("Q" + i, "OK", require("~/mod-" + i + ".cjs").v);
       } catch (e) {
         console.log("Q" + i, "ERR", e.message.split("\\n")[0]);
+      }
+    }
+  `,
+  // The two threads of the race group share these. Each lookup starts from a new require().
+  "race-shared.cjs": `
+    const path = require("node:path");
+    const { createRequire } = require("node:module");
+    exports.specifier = { tsconfig: "late-alias", imports: "#late", unparsed: "pkg", parentlink: "#late" };
+    exports.importer = (kind, round) => path.resolve("race", kind + round, kind === "parentlink" ? "src" : "");
+    exports.resolves = (dir, specifier) => {
+      try {
+        createRequire(path.join(dir, "x.cjs")).resolve(specifier);
+        return 1;
+      } catch {
+        return 0;
+      }
+    };
+    // Cells that both threads read: the turn the worker is ready for, the turn to run, the worker's answer.
+    exports.READY = 0;
+    exports.GO = 1;
+    exports.ANSWER = 2;
+    exports.store = (cell, index, value) => {
+      Atomics.store(cell, index, value);
+      Atomics.notify(cell, index);
+    };
+    // Blocks while the cell holds the value, until the other thread stores the next one.
+    exports.waitWhile = (cell, index, value) => {
+      while (Atomics.load(cell, index) === value) {
+        if (Atomics.wait(cell, index, value, 60_000) === "timed-out") throw new Error("the other thread did not answer");
+      }
+    };
+  `,
+  "race-worker.cjs": `
+    const { workerData } = require("node:worker_threads");
+    const { specifier, importer, resolves, READY, GO, ANSWER, store, waitWhile } = require("./race-shared.cjs");
+    const { cell, rounds, kinds } = workerData;
+    let turn = 0;
+    for (const kind of kinds) {
+      for (let lookup = 0; lookup < rounds[kind] * 2; lookup++) {
+        store(cell, READY, ++turn);
+        waitWhile(cell, GO, turn - 1);
+        store(cell, ANSWER, resolves(importer(kind, lookup >> 1), specifier[kind]) + 1);
       }
     }
   `,
@@ -442,6 +484,185 @@ const files = {
         // One that did not change keeps failing.
         res("Y15", () => c1.resolve("c1-other"));
         res("Y16", () => c3.resolve("c3-other"));
+        // A miss that reads no config file still reads again the ones of the directory
+        // it names: here the alias has another target since its last lookup.
+        const retarget = (label, name, missing) => {
+          write(path.join(name, "a.cjs"), "");
+          write(path.join(name, "b.cjs"), "");
+          write(path.join(name, "tsconfig.json"), aliased("target", "./a.cjs"));
+          const from = requireFrom(name);
+          res(label + "1", () => from.resolve("target"));
+          write(path.join(name, "tsconfig.json"), aliased("target", "./b.cjs"));
+          res(label + "2", () => from.resolve(missing));
+          res(label + "3", () => from.resolve("target"));
+        };
+        retarget("YR", "c7", "./nope.cjs");
+        retarget("YA", "c8", path.resolve("c8", "nope.cjs"));
+      },
+
+      async links() {
+        // A directory that is read again gets a new entry in the cache. The directories
+        // below it keep their link to its old entry, and a lookup from one of them walks
+        // up through the old ones.
+        const staleLinks = (label, top, depth) => {
+          const level = k => path.join(top, ...Array.from({ length: k }, (_, i) => "l" + (i + 1)));
+          const manifest = extra => JSON.stringify({ name: top, imports: { "#other": "./impl.cjs", ...extra } });
+          write(path.join(top, "package.json"), manifest({}));
+          write(path.join(top, "impl.cjs"), "");
+          fs.mkdirSync(level(depth), { recursive: true });
+          const deepest = requireFrom(level(depth));
+          res(label + "1", () => deepest.resolve("#alias"));
+          // Deepest first, each directory between the importer's and the top one is read
+          // again: a file appears in it after a miss.
+          for (let k = depth - 1; k >= 1; k--) {
+            const parent = requireFrom(level(k - 1));
+            const file = "./l" + k + "/new.cjs";
+            try {
+              parent.resolve(file);
+            } catch {}
+            write(path.join(level(k), "new.cjs"), "");
+            parent.resolve(file);
+          }
+          write(path.join(top, "package.json"), manifest({ "#alias": "./impl.cjs" }));
+          res(label + "2", () => requireFrom(top).resolve("#alias"));
+          res(label + "3", () => deepest.resolve("#alias"));
+        };
+        staleLinks("LA", "two", 2);
+        staleLinks("LB", "three", 3);
+
+        // require.resolve() with "paths": the lookup starts below the importer's directory
+        // and reads the importer's config files through the link to it.
+        const tsconfig = names =>
+          JSON.stringify({ compilerOptions: { paths: Object.fromEntries(names.map(name => [name, ["./real.cjs"]])) } });
+        const below = name => {
+          write(path.join(name, "real.cjs"), "");
+          fs.mkdirSync(path.join(name, "sub"));
+          return { paths: [path.resolve(name, "sub")] };
+        };
+        const r1 = below("r1");
+        write(path.join("r1", "tsconfig.json"), tsconfig(["other"]));
+        res("LP1", () => requireFrom("r1").resolve("late-alias", r1));
+        write(path.join("r1", "tsconfig.json"), tsconfig(["other", "late-alias"]));
+        res("LP2", () => requireFrom("r1").resolve("late-alias", r1));
+        const r2 = below("r2");
+        write(path.join("r2", "package.json"), JSON.stringify({ name: "r2", imports: { "#other": "./real.cjs" } }));
+        res("LP3", () => requireFrom("r2").resolve("#late", r2));
+        write(
+          path.join("r2", "package.json"),
+          JSON.stringify({ name: "r2", imports: { "#other": "./real.cjs", "#late": "./real.cjs" } }),
+        );
+        res("LP4", () => requireFrom("r2").resolve("#late", r2));
+        // The same when the importer's directory was read again in between: the
+        // directory below it links to an old entry, and the new entry is stale too.
+        const r3 = below("r3");
+        write(path.join("r3", "tsconfig.json"), tsconfig(["other"]));
+        res("LT1", () => requireFrom("r3").resolve("late1", r3));
+        write(path.join("r3", "tsconfig.json"), tsconfig(["other", "late0"]));
+        res("LT2", () => requireFrom("r3").resolve("late0"));
+        write(path.join("r3", "tsconfig.json"), tsconfig(["other", "late0", "late1"]));
+        res("LT3", () => requireFrom("r3").resolve("late1", r3));
+
+        // A tsconfig.json created next to the importer, whose directory links to an
+        // old entry of the directory above it.
+        write(path.join("q", "src", "real.cjs"), "");
+        const src = requireFrom(path.join("q", "src"));
+        res("LC1", () => src.resolve("made-alias"));
+        try {
+          requireFrom("q").resolve("./new.cjs");
+        } catch {}
+        write(path.join("q", "new.cjs"), "");
+        requireFrom("q").resolve("./new.cjs");
+        write(path.join("q", "src", "tsconfig.json"), tsconfig(["made-alias"]));
+        res("LC2", () => src.resolve("made-alias"));
+
+        // Two stale things in a row: the alias is new in the tsconfig.json, and its
+        // target is new in a directory that was listed before.
+        write(path.join("w", "lib", "old.cjs"), "");
+        const aliases = extra =>
+          JSON.stringify({ compilerOptions: { paths: { other: ["./lib/old.cjs"], ...extra } } });
+        write(path.join("w", "tsconfig.json"), aliases({}));
+        const w = requireFrom("w");
+        res("LS1", () => w.resolve("late-alias"));
+        res("LS2", () => w.resolve("other"));
+        write(path.join("w", "lib", "new.cjs"), "");
+        write(path.join("w", "tsconfig.json"), aliases({ "late-alias": ["./lib/new.cjs"] }));
+        res("LS3", () => w.resolve("late-alias"));
+      },
+
+      async race() {
+        // Both threads miss, a config file changes, and both look up again at the same
+        // instant. The thread that checks second read the same old cache entry as the
+        // first, which has replaced it by then. It must not keep its miss.
+        const { specifier, importer, resolves, READY, GO, ANSWER, store, waitWhile } = require("./race-shared.cjs");
+        const json = (file, value) => write(file, JSON.stringify(value));
+        const named = (names, value) => Object.fromEntries(names.map(name => [name, value]));
+        // Each writes the files of one round and returns the change.
+        const setup = {
+          // An alias added to the tsconfig.json next to the importer.
+          tsconfig(top) {
+            write(path.join(top, "real.cjs"), "");
+            const paths = names =>
+              json(path.join(top, "tsconfig.json"), { compilerOptions: { paths: named(names, ["./real.cjs"]) } });
+            paths(["other"]);
+            return () => paths(["other", "late-alias"]);
+          },
+          // An "imports" entry added to the package.json next to the importer.
+          imports(top) {
+            write(path.join(top, "real.cjs"), "");
+            const imports = names =>
+              json(path.join(top, "package.json"), { name: "p", imports: named(names, "./real.cjs") });
+            imports(["#other"]);
+            return () => imports(["#other", "#late"]);
+          },
+          // The package.json of a package that was read while half written.
+          unparsed(top) {
+            const pkg = path.join(top, "node_modules", "pkg");
+            write(path.join(pkg, "real.cjs"), "");
+            write(path.join(pkg, "package.json"), '{ "name": "pkg", "main": ');
+            return () => write(path.join(pkg, "package.json"), '{ "name": "pkg", "main": "./real.cjs" }');
+          },
+          // An "imports" entry added above the importer. One lookup from there reads that
+          // directory again, and the importer's directory keeps its link to the old entry.
+          parentlink(top, dir) {
+            write(path.join(dir, "real.cjs"), "");
+            const imports = names =>
+              json(path.join(top, "package.json"), { name: "p", imports: named(names, "./src/real.cjs") });
+            imports(["#other"]);
+            return () => {
+              imports(["#other", "#late"]);
+              if (!resolves(top, "#late")) throw new Error("the lookup from above the importer did not recover");
+            };
+          },
+        };
+        // The test gives the number of rounds: more for the first kind, which loses most.
+        const [most, less] = process.env.RACE_ROUNDS.split(",").map(Number);
+        const rounds = { tsconfig: most, imports: less, unparsed: less, parentlink: less };
+        const kinds = Object.keys(setup);
+        const cell = new Int32Array(new SharedArrayBuffer(12));
+        const worker = new Worker(path.resolve("race-worker.cjs"), { workerData: { cell, rounds, kinds } });
+        let turn = 0;
+        // How many of the two threads find the module, when both look it up at the same instant.
+        const both = (dir, name) => {
+          waitWhile(cell, READY, turn++);
+          Atomics.store(cell, ANSWER, 0);
+          store(cell, GO, turn);
+          const mine = resolves(dir, name);
+          waitWhile(cell, ANSWER, 0);
+          return mine + Atomics.load(cell, ANSWER) - 1;
+        };
+        for (const kind of kinds) {
+          let early = 0;
+          let lost = 0;
+          for (let round = 0; round < rounds[kind]; round++) {
+            const dir = importer(kind, round);
+            const change = setup[kind](path.resolve("race", kind + round), dir);
+            early += both(dir, specifier[kind]);
+            change();
+            lost += 2 - both(dir, specifier[kind]);
+          }
+          console.log(kind + ": found before the change " + early + ", lost after it " + lost);
+        }
+        await worker.terminate();
       },
 
       async steady() {
@@ -758,7 +979,42 @@ describe.concurrent("a failed resolution checks again what it read from the cach
       Y11 ERR MODULE_NOT_FOUND
       Y12 OK c6/src/lib/utils.cjs
       Y15 ERR MODULE_NOT_FOUND
-      Y16 ERR MODULE_NOT_FOUND"
+      Y16 ERR MODULE_NOT_FOUND
+      YR1 OK c7/a.cjs
+      YR2 ERR MODULE_NOT_FOUND
+      YR3 OK c7/b.cjs
+      YA1 OK c8/a.cjs
+      YA2 ERR MODULE_NOT_FOUND
+      YA3 OK c8/b.cjs"
+      ,
+      }
+    `);
+  });
+
+  test("a lookup through links to directories that were read again", async () => {
+    expect(await runGroup("links")).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
+      "LA1 ERR MODULE_NOT_FOUND
+      LA2 OK two/impl.cjs
+      LA3 OK two/impl.cjs
+      LB1 ERR MODULE_NOT_FOUND
+      LB2 OK three/impl.cjs
+      LB3 OK three/impl.cjs
+      LP1 ERR MODULE_NOT_FOUND
+      LP2 OK r1/real.cjs
+      LP3 ERR MODULE_NOT_FOUND
+      LP4 OK r2/real.cjs
+      LT1 ERR MODULE_NOT_FOUND
+      LT2 OK r3/real.cjs
+      LT3 OK r3/real.cjs
+      LC1 ERR MODULE_NOT_FOUND
+      LC2 OK q/src/real.cjs
+      LS1 ERR MODULE_NOT_FOUND
+      LS2 OK w/lib/old.cjs
+      LS3 OK w/lib/new.cjs"
       ,
       }
     `);
@@ -891,6 +1147,24 @@ test("a file added to a resolved package, from this thread and a Worker", async 
     D2 OK 2
     D3 OK 3
     steps that failed, of 25 in each thread: 0 0"
+    ,
+    }
+  `);
+});
+
+// Runs alone too: each round needs both threads at the same instant. A debug build has
+// no time for more rounds than these.
+test("two threads that miss find the module when a config file changes", async () => {
+  const rounds = isDebug ? "20,5" : "200,50";
+  expect(await runGroup("race", () => ({ RACE_ROUNDS: rounds }))).toMatchInlineSnapshot(`
+    {
+      "exitCode": 0,
+      "stderr": "",
+      "stdout": 
+    "tsconfig: found before the change 0, lost after it 0
+    imports: found before the change 0, lost after it 0
+    unparsed: found before the change 0, lost after it 0
+    parentlink: found before the change 0, lost after it 0"
     ,
     }
   `);

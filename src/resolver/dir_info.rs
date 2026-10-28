@@ -69,6 +69,12 @@ impl DirInfoRef {
     pub(crate) fn from_slot(slot: &mut DirInfo) -> Self {
         DirInfoRef(bun_ptr::BackRef::new_mut(slot))
     }
+
+    /// The address of the slot. A directory that is read again after a drop gets another slot.
+    #[inline]
+    pub(crate) fn as_ptr(self) -> *const DirInfo {
+        self.0.as_ptr()
+    }
 }
 
 impl core::ops::Deref for DirInfoRef {

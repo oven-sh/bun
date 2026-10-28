@@ -587,13 +587,14 @@ enum AfterMiss {
 #[derive(Default)]
 struct TouchedDirs {
     records: Vec<TouchedDir>,
-    /// Path bytes the records index into.
+    /// Path bytes the disk facts index into.
     bytes: Vec<u8>,
 }
 
+/// A cached fact that `Resolver::bust_touched_dirs` compares with the disk.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum TouchedKind {
-    /// The directory did not exist (a NOT_FOUND sentinel or a failed open).
+enum DiskFact {
+    /// The directory did not exist (a NOT_FOUND sentinel or a failed open), or it was not cached.
     MissingDir,
     /// The cached listing of the directory has no entry `name`, or a link whose target did not exist.
     MissingEntry,
@@ -601,49 +602,68 @@ enum TouchedKind {
     FileEntry,
     /// The cached listing has `name` as a directory.
     DirEntry,
+}
+
+/// What the replay read a `DirInfo` for. One bit each: a slot has one record.
+#[derive(Clone, Copy)]
+#[repr(u8)]
+enum SlotUse {
+    /// Read from the cache by its path.
+    Read = 1 << 0,
     /// A `node_modules` search level whose cached listing has no `node_modules`.
-    NoNodeModules,
+    NoNodeModules = 1 << 1,
     /// A searched level. Dropped with a level above it that changed, so that its parent link is rebuilt.
-    SearchLevel,
+    SearchLevel = 1 << 2,
     /// The listing has a `package.json` that gave nothing when it was read. Dropped once it can be read.
-    UnparsedPackageJson,
-}
-
-/// How much of a cached directory `Resolver::bust_touched_dirs` drops.
-#[derive(Clone, Copy)]
-enum Evict {
-    DirInfoOnly,
-    Listing,
-    WithParents,
+    UnparsedPackageJson = 1 << 3,
 }
 
 #[derive(Clone, Copy)]
-struct TouchedDir {
-    kind: TouchedKind,
-    dir: (u32, u32),
-    name: (u32, u32),
+enum TouchedDir {
+    Disk {
+        fact: DiskFact,
+        dir: (u32, u32),
+        name: (u32, u32),
+    },
+    /// The miss came from this slot, whatever the cache maps its path to later.
+    Slot { uses: u8, slot: DirInfoRef },
 }
 
-impl TouchedDir {
-    fn dir<'b>(&self, bytes: &'b [u8]) -> &'b [u8] {
-        &bytes[self.dir.0 as usize..(self.dir.0 + self.dir.1) as usize]
-    }
-    fn name<'b>(&self, bytes: &'b [u8]) -> &'b [u8] {
-        &bytes[self.name.0 as usize..(self.name.0 + self.name.1) as usize]
-    }
-}
+const _: () = assert!(core::mem::size_of::<TouchedDir>() <= 24);
 
 impl TouchedDirs {
-    fn push(&mut self, kind: TouchedKind, dir: &[u8], name: &[u8]) {
+    fn push_disk(&mut self, fact: DiskFact, dir: &[u8], name: &[u8]) {
         let dir_start = self.bytes.len();
         self.bytes.extend_from_slice(dir);
         let name_start = self.bytes.len();
         self.bytes.extend_from_slice(name);
-        self.records.push(TouchedDir {
-            kind,
+        self.records.push(TouchedDir::Disk {
+            fact,
             dir: (dir_start as u32, dir.len() as u32),
             name: (name_start as u32, name.len() as u32),
         });
+    }
+
+    fn push_slot(&mut self, slot_use: SlotUse, slot: DirInfoRef) {
+        for record in &mut self.records {
+            if let TouchedDir::Slot {
+                uses,
+                slot: recorded,
+            } = record
+                && recorded.as_ptr() == slot.as_ptr()
+            {
+                *uses |= slot_use as u8;
+                return;
+            }
+        }
+        self.records.push(TouchedDir::Slot {
+            uses: slot_use as u8,
+            slot,
+        });
+    }
+
+    fn bytes(&self, (start, len): (u32, u32)) -> &[u8] {
+        &self.bytes[start as usize..(start + len) as usize]
     }
 }
 
@@ -690,7 +710,7 @@ fn replaying() -> bool {
 #[inline]
 pub(crate) fn record_missing_entry(dir: &[u8], name: &[u8]) {
     if replay_armed() {
-        record_touched(TouchedKind::MissingEntry, dir, name);
+        record_disk_fact(DiskFact::MissingEntry, dir, name);
     }
 }
 
@@ -699,34 +719,42 @@ pub(crate) fn record_missing_entry(dir: &[u8], name: &[u8]) {
 #[inline(never)]
 pub(crate) fn record_entry_kind(dir: &[u8], name: &[u8], kind: Fs::file_system::EntryKind) {
     use Fs::file_system::EntryKind;
-    record_touched(
+    record_disk_fact(
         match kind {
-            EntryKind::File => TouchedKind::FileEntry,
-            EntryKind::Dir => TouchedKind::DirEntry,
+            EntryKind::File => DiskFact::FileEntry,
+            EntryKind::Dir => DiskFact::DirEntry,
             // A link with no target is no entry to a lookup, until the target exists.
-            EntryKind::Dangling => TouchedKind::MissingEntry,
+            EntryKind::Dangling => DiskFact::MissingEntry,
         },
         dir,
         name,
     );
 }
 
+/// Gives this thread's replay list to `record`. Does nothing when the replay is on another thread.
+#[inline]
+fn with_replay_list(record: impl FnOnce(&mut TouchedDirs)) {
+    let list = REPLAY.get();
+    if !list.is_null() {
+        // SAFETY: `ReplayGuard::arm` pointed it at a list on the stack of
+        // `Resolver::recheck_after_miss` on this thread and clears it before that frame returns.
+        // Nothing else reads or writes the list during the replay.
+        record(unsafe { &mut *list });
+    }
+}
+
 #[cold]
 #[inline(never)]
-fn record_touched(kind: TouchedKind, dir: &[u8], name: &[u8]) {
-    let list = REPLAY.get();
-    if list.is_null() {
-        // The replay is on another thread.
-        return;
-    }
-    // SAFETY: `ReplayGuard::arm` pointed it at a list on the stack of
-    // `Resolver::recheck_after_miss` on this thread and clears it before that frame returns.
-    // Nothing else reads or writes the list during the replay.
-    unsafe { &mut *list }.push(
-        kind,
-        strings::without_trailing_slash_windows_path(dir),
-        name,
-    );
+fn record_disk_fact(fact: DiskFact, dir: &[u8], name: &[u8]) {
+    let dir = strings::without_trailing_slash_windows_path(dir);
+    with_replay_list(|list| list.push_disk(fact, dir, name));
+}
+
+/// The replay read `slot`: `Resolver::bust_touched_dirs` judges this slot, not the one cached later.
+#[cold]
+#[inline(never)]
+fn record_slot(slot_use: SlotUse, slot: DirInfoRef) {
+    with_replay_list(|list| list.push_slot(slot_use, slot));
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -2010,10 +2038,18 @@ impl<'a> Resolver<'a> {
             self.debug_logs = debug_logs;
             found
         };
-        let stale = self.bust_touched_dirs(&touched, reread);
-        let stale_config = self.bust_stale_config_dir(source_dir, import_path, reread);
+        let mut floor_buf = bun_paths::path_buffer_pool::get();
+        // The floor: the directory that the old retry dropped. The join gives the separators of a cache key.
+        let floor_dir = ResolvePath::join_abs_string_buf_checked(
+            source_dir,
+            &mut floor_buf[..],
+            &[import_path, b".."],
+            bun_paths::Platform::AUTO,
+        )
+        .map(strings::without_trailing_slash_windows_path);
+        let stale = self.bust_touched_dirs(&touched, floor_dir, reread);
         // A replay that finds an answer read what the run before it put in the caches.
-        stale || stale_config || found
+        stale || found
     }
 
     pub(crate) fn resolve_without_symlinks<'r>(
@@ -2764,23 +2800,23 @@ impl<'a> Resolver<'a> {
     #[inline]
     fn record_missing_dir(&self, dir: &[u8]) {
         if replay_armed() {
-            record_touched(TouchedKind::MissingDir, dir, b"");
+            record_disk_fact(DiskFact::MissingDir, dir, b"");
         }
     }
 
-    /// `dir` was a `node_modules` search level that the cache says has none.
+    /// `dir_info` was a `node_modules` search level that the cache says has none.
     #[inline]
-    fn record_no_node_modules(&self, dir: &[u8]) {
+    fn record_no_node_modules(&self, dir_info: DirInfoRef) {
         if replay_armed() {
-            record_touched(TouchedKind::NoNodeModules, dir, b"");
+            record_slot(SlotUse::NoNodeModules, dir_info);
         }
     }
 
-    /// `dir` was a `node_modules` search level that was searched or skipped.
+    /// `dir_info` was a `node_modules` search level that was searched or skipped.
     #[inline]
-    fn record_search_level(&self, dir: &[u8]) {
+    fn record_search_level(&self, dir_info: DirInfoRef) {
         if replay_armed() {
-            record_touched(TouchedKind::SearchLevel, dir, b"");
+            record_slot(SlotUse::SearchLevel, dir_info);
         }
     }
 
@@ -2792,117 +2828,178 @@ impl<'a> Resolver<'a> {
             .get_entry(self.generation, b"package.json")
             .is_some()
         {
-            record_touched(TouchedKind::UnparsedPackageJson, dir_info.abs_path, b"");
+            record_slot(SlotUse::UnparsedPackageJson, dir_info);
         }
     }
 
-    /// Checks each record on disk and drops the cached directories that differ. Returns whether one was dropped.
-    fn bust_touched_dirs(&mut self, touched: &TouchedDirs, reread: &mut Vec<u64>) -> bool {
-        let mut seen: Vec<u64> = Vec::with_capacity(touched.records.len());
+    /// Judges each record and drops the cached directories that are stale. Returns whether to look up again.
+    fn bust_touched_dirs(
+        &mut self,
+        touched: &TouchedDirs,
+        floor_dir: Option<&[u8]>,
+        reread: &mut Vec<u64>,
+    ) -> bool {
+        use Fs::file_system::EntryKind;
+        /// A directory whose `DirInfo` the replay read, with the slot that the cache maps it to now.
+        struct ReadDir {
+            dir: &'static [u8],
+            key: u64,
+            uses: u8,
+            mapped: Option<DirInfoRef>,
+        }
+        const LEVEL: u8 = SlotUse::NoNodeModules as u8 | SlotUse::SearchLevel as u8;
+        let mut stale = false;
+        let mut read_dirs: Vec<ReadDir> = Vec::new();
+        for record in &touched.records {
+            let TouchedDir::Slot { uses, slot } = *record else {
+                continue;
+            };
+            let dir = strings::without_trailing_slash_windows_path(slot.abs_path);
+            let key = bun_wyhash::hash(dir);
+            let index = match read_dirs.iter().position(|read| read.key == key) {
+                Some(index) => index,
+                None => {
+                    let mapped = self.cached_dir_info(dir);
+                    read_dirs.push(ReadDir {
+                        dir,
+                        key,
+                        uses: 0,
+                        mapped,
+                    });
+                    read_dirs.len() - 1
+                }
+            };
+            let read = &mut read_dirs[index];
+            read.uses |= uses;
+            // The miss came from a slot that a watcher or another thread replaced since.
+            stale |= read
+                .mapped
+                .is_none_or(|mapped| mapped.as_ptr() != slot.as_ptr());
+        }
+
         // Decide first: what is dropped must not depend on the order of the records.
-        let mut stale_dirs: Vec<&[u8]> = Vec::new();
+        let mut seen: Vec<u64> = Vec::with_capacity(touched.records.len());
         // Directories that exist now: dropped with the ancestors that do not list them.
         let mut new_dirs: Vec<&[u8]> = Vec::new();
+        let mut stale_listings: Vec<&[u8]> = Vec::new();
+        // Directories whose config files differ from the slot that was compared.
+        let mut stale_configs: Vec<(&ReadDir, DirInfoRef)> = Vec::new();
         // Every walked level inside one of these gets a new `DirInfo`, to link it to the new parent.
         let mut changed_levels: Vec<&[u8]> = Vec::new();
+        let mut floor_was_read = false;
         {
-            use Fs::file_system::EntryKind;
             let mut buf = bun_paths::path_buffer_pool::get();
             for record in &touched.records {
-                let dir = record.dir(&touched.bytes);
-                let name = record.name(&touched.bytes);
-                let key =
-                    bun_wyhash::hash_with_seed(record.kind as u64 ^ bun_wyhash::hash(name), dir);
+                let TouchedDir::Disk { fact, dir, name } = *record else {
+                    continue;
+                };
+                let dir = touched.bytes(dir);
+                let name = touched.bytes(name);
+                let key = bun_wyhash::hash_with_seed(fact as u64 ^ bun_wyhash::hash(name), dir);
                 if seen.contains(&key) {
                     continue;
                 }
                 seen.push(key);
-                match record.kind {
-                    TouchedKind::MissingDir => {
-                        if Self::can_open_directory(dir) {
-                            new_dirs.push(dir);
-                        }
+                if fact == DiskFact::MissingDir {
+                    if Self::can_open_directory(dir) {
+                        new_dirs.push(dir);
                     }
-                    TouchedKind::MissingEntry | TouchedKind::FileEntry | TouchedKind::DirEntry => {
-                        let cached = match record.kind {
-                            TouchedKind::FileEntry => Some(EntryKind::File),
-                            TouchedKind::DirEntry => Some(EntryKind::Dir),
-                            _ => None,
-                        };
-                        // An entry that is gone, or that `stat()` cannot read, leaves the miss a miss.
-                        let now = self.entry_kind_now(&mut buf, &[dir, name]);
-                        if now.is_some() && now != cached {
-                            stale_dirs.push(dir);
-                        }
+                    continue;
+                }
+                let cached = match fact {
+                    DiskFact::FileEntry => Some(EntryKind::File),
+                    DiskFact::DirEntry => Some(EntryKind::Dir),
+                    _ => None,
+                };
+                // An entry that is gone, or that `stat()` cannot read, leaves the miss a miss.
+                let now = self.entry_kind_now(&mut buf, &[dir, name]);
+                if now.is_some() && now != cached {
+                    stale_listings.push(dir);
+                }
+            }
+            for read in &read_dirs {
+                let is_floor = floor_dir == Some(read.dir);
+                floor_was_read |= is_floor;
+                if let Some(mapped) = read.mapped
+                    && !reread.contains(&read.key)
+                {
+                    let changed = if is_floor {
+                        self.config_files_changed_on_disk(&mut buf, mapped)
+                    } else {
+                        read.uses & SlotUse::UnparsedPackageJson as u8 != 0
+                            && self.package_json_changed_on_disk(&mut buf, mapped)
+                    };
+                    if changed {
+                        stale_configs.push((read, mapped));
                     }
-                    TouchedKind::NoNodeModules => {
-                        let now = self.entry_kind_now(&mut buf, &[dir, b"node_modules"]);
-                        if now == Some(EntryKind::Dir) {
-                            stale_dirs.push(dir);
-                            changed_levels.push(dir);
-                        } else if self.parent_link_is_stale(dir) {
-                            changed_levels.push(dir);
-                        }
-                    }
-                    TouchedKind::SearchLevel => {
-                        if self.parent_link_is_stale(dir) {
-                            changed_levels.push(dir);
-                        }
-                    }
-                    TouchedKind::UnparsedPackageJson => {
-                        // Not cached now: another thread dropped it since the replay.
-                        if self.cached_dir_info(dir).is_none_or(|dir_info| {
-                            self.package_json_changed_on_disk(&mut buf, dir_info)
-                        }) {
-                            stale_dirs.push(dir);
-                        }
-                    }
+                }
+                if read.uses & LEVEL == 0 {
+                    continue;
+                }
+                if read.uses & SlotUse::NoNodeModules as u8 != 0
+                    && self.entry_kind_now(&mut buf, &[read.dir, b"node_modules"])
+                        == Some(EntryKind::Dir)
+                {
+                    stale_listings.push(read.dir);
+                    changed_levels.push(read.dir);
+                } else if self.parent_link_is_stale(read.mapped) {
+                    changed_levels.push(read.dir);
                 }
             }
         }
         // `load_node_modules` reaches a level through the parent link of the level below it.
-        let mut relink_dirs: Vec<&[u8]> = Vec::new();
+        let mut relinks: Vec<&ReadDir> = Vec::new();
         for &changed_dir in &changed_levels {
-            for record in &touched.records {
-                let dir = record.dir(&touched.bytes);
-                if matches!(
-                    record.kind,
-                    TouchedKind::NoNodeModules | TouchedKind::SearchLevel
-                ) && Self::is_dir_or_inside(dir, changed_dir)
-                {
-                    relink_dirs.push(dir);
+            for read in &read_dirs {
+                if read.uses & LEVEL != 0 && Self::is_dir_or_inside(read.dir, changed_dir) {
+                    relinks.push(read);
                 }
             }
         }
-        let mut stale = false;
-        let new = new_dirs.into_iter().map(|dir| (dir, Evict::WithParents));
-        let listed = stale_dirs.into_iter().map(|dir| (dir, Evict::Listing));
-        let relinked = relink_dirs.into_iter().map(|dir| (dir, Evict::DirInfoOnly));
-        for (dir, evict) in new.chain(listed).chain(relinked) {
+
+        for dir in new_dirs {
+            let key = bun_wyhash::hash(dir);
+            stale = true;
+            // In `reread`: this lookup read it again, and another thread dropped it since.
+            if !reread.contains(&key) {
+                reread.push(key);
+                self.bust_dir_and_stale_parents(dir);
+            }
+        }
+        for dir in stale_listings {
+            let key = bun_wyhash::hash(dir);
             // This lookup dropped `dir` and read it again: what it has now is as new as the disk.
-            let listing_key = bun_wyhash::hash(dir);
-            let key = match evict {
-                Evict::DirInfoOnly => !listing_key,
-                Evict::Listing | Evict::WithParents => listing_key,
-            };
-            if reread.contains(&key) || reread.contains(&listing_key) {
+            if reread.contains(&key) {
                 continue;
             }
             reread.push(key);
             // Also when another thread dropped it first: the fact did not match the disk.
             stale = true;
-            match evict {
-                Evict::WithParents => {
-                    self.bust_dir_and_stale_parents(dir);
-                }
-                Evict::Listing => {
-                    self.bust_dir_cache(dir);
-                }
-                // The listing is still right. Only the link to the parent is not.
-                Evict::DirInfoOnly => {
-                    self.dir_cache_mut().remove(dir);
-                }
+            self.bust_dir_cache(dir);
+        }
+        for (read, compared) in stale_configs {
+            if reread.contains(&read.key) {
+                continue;
             }
+            stale = true;
+            if self.bust_dir_cache_if_mapped(read.dir, compared) {
+                reread.push(read.key);
+            }
+        }
+        for read in relinks {
+            if reread.contains(&!read.key) || reread.contains(&read.key) {
+                continue;
+            }
+            stale = true;
+            // The listing is still right. Only the link to the parent is not.
+            if let Some(mapped) = read.mapped
+                && self.dir_cache_mut().remove_if(read.dir, mapped.as_ptr())
+            {
+                reread.push(!read.key);
+            }
+        }
+        if !floor_was_read && let Some(dir) = floor_dir {
+            stale |= self.bust_stale_config_dir(dir, reread);
         }
         bun_core::scoped_log!(
             ResolverDev,
@@ -2911,6 +3008,19 @@ impl<'a> Resolver<'a> {
             stale
         );
         stale
+    }
+
+    /// Drops `dir` while the cache still maps it to `slot`. Another thread's newer slot stays.
+    fn bust_dir_cache_if_mapped(&mut self, dir: &[u8], slot: DirInfoRef) -> bool {
+        if !self
+            .cached_dir_info(dir)
+            .is_some_and(|mapped| mapped.as_ptr() == slot.as_ptr())
+        {
+            return false;
+        }
+        // The listing goes first: a thread that reads `dir` again in between fills a new listing too.
+        self.fs_mut().fs.bust_entries_cache(dir);
+        self.dir_cache_mut().remove_if(dir, slot.as_ptr())
     }
 
     /// The builder caches "no such directory" from an open that fails. Only an open that succeeds contradicts it.
@@ -3016,24 +3126,20 @@ impl<'a> Resolver<'a> {
             .is_some_and(|path| Self::read_config_file(path).is_some())
     }
 
-    /// Drops the parent of what the specifier names if its config files changed. The old retry dropped it on every miss.
-    fn bust_stale_config_dir(
-        &mut self,
-        source_dir: &[u8],
-        import_path: &[u8],
-        reread: &mut Vec<u64>,
+    /// Whether the `package.json`, or the `tsconfig.json` or `jsconfig.json`, of `dir_info` is another one on disk now.
+    fn config_files_changed_on_disk(
+        &self,
+        buf: &mut bun_paths::PathBuffer,
+        dir_info: DirInfoRef,
     ) -> bool {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        // The join gives an absolute specifier the separators of a cache key too.
-        let Some(dir) = ResolvePath::join_abs_string_buf_checked(
-            source_dir,
-            &mut buf[..],
-            &[import_path, b".."],
-            bun_paths::Platform::AUTO,
-        )
-        .map(strings::without_trailing_slash_windows_path) else {
-            return false;
-        };
+        let tsconfig_applies =
+            self.opts.load_tsconfig_json && self.opts.tsconfig_override.is_none();
+        self.package_json_changed_on_disk(buf, dir_info)
+            || (tsconfig_applies && self.tsconfig_changed_on_disk(buf, dir_info))
+    }
+
+    /// For a floor directory that the replay did not read: the refresh that the old retry gave it on every miss.
+    fn bust_stale_config_dir(&mut self, dir: &[u8], reread: &mut Vec<u64>) -> bool {
         let key = bun_wyhash::hash(dir);
         if reread.contains(&key) {
             return false;
@@ -3041,41 +3147,35 @@ impl<'a> Resolver<'a> {
         let Some(dir_info) = self.cached_dir_info(dir) else {
             return false;
         };
-        let mut file_buf = bun_paths::path_buffer_pool::get();
-        let tsconfig_applies =
-            self.opts.load_tsconfig_json && self.opts.tsconfig_override.is_none();
-        if !self.package_json_changed_on_disk(&mut file_buf, dir_info)
-            && !(tsconfig_applies && self.tsconfig_changed_on_disk(&mut file_buf, dir_info))
-        {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if !self.config_files_changed_on_disk(&mut buf, dir_info) {
             return false;
         }
-        reread.push(key);
-        self.bust_dir_cache(dir);
+        if self.bust_dir_cache_if_mapped(dir, dir_info) {
+            reread.push(key);
+        }
         true
     }
 
-    /// The cached `DirInfo` of `dir`, read under the resolver mutex: `dir_info_uncached` fills a slot under it.
+    /// The slot that the cache maps `dir` to now. For a directory that the replay read, only the recorded slot says "not stale".
     fn cached_dir_info(&mut self, dir: &[u8]) -> Option<DirInfoRef> {
         let mutex = self.mutex;
         let _lock = mutex.lock_guard();
         self.dir_cache_mut().get(dir).map(DirInfoRef::from_slot)
     }
 
-    /// Whether `dir` points at a parent slot that `bust_dir_cache` (a watcher) replaced: a walk up reads the old one.
-    fn parent_link_is_stale(&mut self, dir: &[u8]) -> bool {
-        let mutex = self.mutex;
-        let _lock = mutex.lock_guard();
-        let Some(dir_info) = self.dir_cache_mut().get(dir) else {
-            // The replay read `dir` from the cache: another thread dropped it since.
+    /// Whether `mapped` is gone, or points at a parent slot that was replaced: a walk up reads the old one.
+    fn parent_link_is_stale(&mut self, mapped: Option<DirInfoRef>) -> bool {
+        let Some(dir_info) = mapped else {
             return true;
         };
         let Some(parent) = dir_info.get_parent() else {
             return false;
         };
         let parent_dir = strings::without_trailing_slash_windows_path(parent.abs_path);
-        !self.dir_cache_mut().get(parent_dir).is_some_and(|current| {
-            core::ptr::eq::<DirInfo::DirInfo>(&raw const *current, &raw const *parent)
-        })
+        !self
+            .cached_dir_info(parent_dir)
+            .is_some_and(|current| current.as_ptr() == parent.as_ptr())
     }
 
     /// Both are cache keys: absolute, no trailing separator unless a root.
@@ -3186,14 +3286,14 @@ impl<'a> Resolver<'a> {
             if d.package_json.is_some() {
                 break;
             }
-            self.record_search_level(d.abs_path);
+            self.record_search_level(d);
             dir_info_package_json = d.get_parent();
         }
 
         // Check for subpath imports: https://nodejs.org/api/packages.html#subpath-imports
         if let Some(_dir_info_package_json) = dir_info_package_json {
             let package_json = _dir_info_package_json.package_json().unwrap();
-            self.record_search_level(_dir_info_package_json.abs_path);
+            self.record_search_level(_dir_info_package_json);
 
             if import_path.starts_with(b"#") && !forbid_imports && package_json.imports.is_some() {
                 let r = self.load_package_imports(
@@ -3240,13 +3340,13 @@ impl<'a> Resolver<'a> {
                 'node_modules: {
                     if !(dir_info.has_node_modules() || is_self_reference) {
                         if dir_info.is_node_modules() {
-                            self.record_search_level(dir_info.abs_path);
+                            self.record_search_level(dir_info);
                         } else {
-                            self.record_no_node_modules(dir_info.abs_path);
+                            self.record_no_node_modules(dir_info);
                         }
                         break 'node_modules;
                     }
-                    self.record_search_level(dir_info.abs_path);
+                    self.record_search_level(dir_info);
                     any_node_modules_folder = true;
                     let abs_path: &[u8] = if is_self_reference {
                         dir_info.abs_path
@@ -3432,7 +3532,7 @@ impl<'a> Resolver<'a> {
                                         return MatchStatus::Success;
                                     }
 
-                                    self.record_search_level(abs_package_path);
+                                    self.record_search_level(pkg_dir_info);
                                     self.extension_order = prev_extension_order;
                                     if let Some(d) = self.debug_logs.as_mut() {
                                         d.decrease_indent();
@@ -4881,8 +4981,9 @@ impl<'a> Resolver<'a> {
                 .dir_cache_mut()
                 .get(path_without_trailing_slash)
                 .map(DirInfoRef::from_slot);
-            if cached.is_none() {
-                record_touched(TouchedKind::MissingDir, path_without_trailing_slash, b"");
+            match cached {
+                Some(slot) => record_slot(SlotUse::Read, slot),
+                None => record_disk_fact(DiskFact::MissingDir, path_without_trailing_slash, b""),
             }
             return Ok(cached);
         }

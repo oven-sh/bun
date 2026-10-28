@@ -3232,7 +3232,6 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         entry_point: BuiltinEntryPoint,
     ) -> *mut JSInternalPromise;
-    fn Bun__lookForServerAfterEvaluation(global: &JSGlobalObject, promise: *mut JSInternalPromise);
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `callback`
     // (never dereferenced as Rust data).
     safe fn JSC__VM__holdAPILock(
@@ -3771,12 +3770,9 @@ impl VirtualMachine {
             // The path is the key of the module in the image: there is nothing to resolve.
             let main = (self.main()).expect("a compiled entry point has a path");
             let main_str = bun_core::StringView::from_bytes(main);
-            let promise = jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &main_str)
+            jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &main_str)
                 .map(NonNull::as_ptr)
-                .ok_or(crate::CrateError::JSError)?;
-            // SAFETY: `promise` is a live JSC heap cell.
-            unsafe { Bun__lookForServerAfterEvaluation(self.global(), promise) };
-            promise
+                .ok_or(crate::CrateError::JSError)?
         } else if !self.transpiler.options.disable_transpilation {
             let name = bun_core::StringView::borrow_utf8(MAIN_FILE_NAME);
             jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)

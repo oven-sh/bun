@@ -4123,6 +4123,8 @@
     "closure-symbol-keptFromAMaker",
     "closure-thenable-keptFromAMaker",
     "closure-yes-keptFromAMaker",
+    "closureOverItsHolder-fraction-capturedThenChanged-joined",
+    "closureOverItsHolder-integer-capturedThenChanged-joined",
     "decoded-fromBuffer-walkOfMember",
     "decoded-fromBufferWide-walkOfMember",
     "decoded-parsed-walkOfMember",
@@ -4321,7 +4323,9 @@
     "valuesOfMember-set-map-fillByForOf",
     "valuesOfMember-set-map-spread",
     "valuesOfMember-set-params-fillByForOf",
-    "held-records-map"
+    "held-records-map",
+    "held-map-given",
+    "held-params-given"
   ],
   "stores behind every way to wait": [
     "generator-byHand-lateOverOne",

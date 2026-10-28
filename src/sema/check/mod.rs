@@ -1399,6 +1399,14 @@ mod marks {
         }
 
         #[inline]
+        pub(super) fn both() -> Self {
+            Self {
+                tainted: true,
+                drops_reported: true,
+            }
+        }
+
+        #[inline]
         pub(super) fn tainted(self) -> bool {
             self.tainted
         }
@@ -3827,7 +3835,7 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         for frame in &mut self.frames[from..] {
-            frame.marks = Marks::new(true, true);
+            frame.marks = Marks::both();
         }
         // A frame that the `enter` in progress goes on to push has `work` for its serial number.
         self.fully_marked.record(from, self.work.saturating_sub(1));

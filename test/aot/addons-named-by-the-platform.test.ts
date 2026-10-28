@@ -16,7 +16,7 @@ import {
   targetOfRuntime,
   targets,
 } from "./addons-named-by-the-platform/loaders";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { built, slot, spawned, unsupported } from "./harness/commands";
 
 const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 const here = join(import.meta.dir, "addons-named-by-the-platform");

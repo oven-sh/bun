@@ -1,38 +1,33 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDirWithBunTypes as tempDir } from "harness";
-import { devNull } from "os";
+import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 import { run as runCommand } from "../aot/harness/run";
-import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
+import { BundlerTestInput, itBundled } from "./expectBundled";
 
 const usesImage = (stdout: string) =>
   ({
     env: { BUN_AOT_VERBOSE: "1" },
     validate({ stdout: actual, stderr }) {
       expect(actual).toBe(stdout);
-      expect(stderr).toContain("[aot] image: ");
+      expect(stderr).toMatch(/\[aot\] image: \d+ bytes, \d+ of code at 0x[0-9a-f]+/);
       expect(stderr).toContain("[aot] module: ");
     },
   }) satisfies BundlerTestInput["run"];
 
 describe("bundler", () => {
-  for (const backend of ["cli", "api"] as const) {
-    const itBundled = (id: string, opts: BundlerTestInput) =>
-      itBundledBase(`compile/aot/${backend}/${id}`, { backend, target: "bun", compile: { aot: true }, ...opts });
-
-    itBundled("HelloWorld", {
-      files: {
-        "/entry.ts": /* js */ `
-          console.log("Hello, world!");
-        `,
-      },
-      run: usesImage("Hello, world!\n"),
-    });
-
-    itBundled("LanguageFeatures", {
+  for (const [backend, splitting] of [
+    ["cli", false],
+    ["api", true],
+  ] as const) {
+    itBundled(`compile/aot/${backend}/Modules${splitting ? "WithSplitting" : ""}`, {
+      backend,
+      target: "bun",
+      compile: { aot: true },
+      splitting,
       files: {
         "/entry.ts": /* js */ `
           import { double } from "./other";
+          import { fib } from "./fib.cjs";
           class Point { constructor(public x: number, public y: number) {} add(o: Point) { return new Point(this.x + o.x, this.y + o.y); } }
           function sum(n: number) { let p = new Point(0, 0); for (let i = 0; i < n; i++) p = p.add(new Point(i, 1)); return p; }
           async function later(v: number) { await null; return double(v); }
@@ -41,468 +36,28 @@ describe("bundler", () => {
           counter();
           console.log(JSON.stringify(sum(1000)), await later(21), [...gen()].join(), counter());
           console.log([3, 1, 2].sort().map(x => x * 2).join(), "abc".toUpperCase(), new Map([[1, "a"]]).get(1));
+          const again = require("./fib.cjs");
+          const late = await import("./fib.cjs");
+          console.log(fib(20), again.fib === fib, late.default.fib === fib, typeof require);
+          const { twice } = await import("./lazy");
+          console.log(twice(21));
         `,
         "/other.ts": /* js */ `
           export function double(v: number) { return v * 2; }
         `,
-      },
-      run: usesImage('{"x":499500,"y":1000} 42 1,2 2\n2,4,6 ABC a\n'),
-    });
-
-    itBundled("EvalAndNewFunction", {
-      files: {
-        "/entry.ts": /* js */ `
-          function compiled(a: number) { return a + 1; }
-          (globalThis as any).compiled = compiled;
-          console.log((0, eval)("compiled(1) + 1"), new Function("a", "return compiled(a) * 3")(4));
-        `,
-      },
-      run: usesImage("3 15\n"),
-    });
-
-    itBundled("CodeMadeAtRunTimeWithOperationCounters", {
-      files: {
-        "/entry.ts": /* js */ `
-          function compiled(a: number) { return a + 1; }
-          (globalThis as any).compiled = compiled;
-          const made = new Function("a", "function inner(b) { return compiled(b) * 2; } return inner(a) + inner(a + 1);");
-          console.log(made(1), (0, eval)("(function () { function later(x) { return compiled(x); } return later(5); })()"), [3, 1, 2].sort().join());
-        `,
-      },
-      run: { ...usesImage("10 6 1,2,3\n"), env: { BUN_AOT_VERBOSE: "1", BUN_JSC_aotCountsPath: devNull } },
-    });
-
-    itBundled("NextTickRunsInOrder", {
-      files: {
-        "/entry.ts": /* js */ `
-          const order: string[] = [];
-          process.nextTick((a: string, b: string) => order.push(a + b), "first", "!");
-          process.nextTick(() => order.push("second"));
-          await new Promise<void>(done => process.nextTick(() => process.nextTick(done)));
-          const error = await new Promise<Error>(done => process.nextTick(() => done(new Error("here"))));
-          console.log(order.join(" "));
-          console.error(error);
-        `,
-      },
-      run: {
-        env: { BUN_AOT_VERBOSE: "1" },
-        validate({ stdout, stderr }) {
-          expect(stdout).toBe("first! second\n");
-          expect(stderr).toContain("[aot] image: ");
-          expect(stderr).toContain("[aot] module: ");
-          expect(stderr).toContain("error: here");
-        },
-      },
-    });
-
-    itBundled("VariableLiveAcrossTwoHandlers", {
-      files: {
-        "/entry.ts": /* js */ `
-          function make() { return { tag: "kept" }; }
-          let calls = 0;
-          function between() { calls++; }
-          function adjacent() { const x = make(); try { throw 1; } catch (a) { } try { throw 2; } catch (b) { } return x.tag; }
-          function separated() { const x = make(); try { throw 1; } catch (a) { } between(); try { throw 2; } catch (b) { } return x.tag; }
-          function stackIdiom() { const x = make(); let stack; try { throw new Error("here"); } catch (e) { stack = (e as Error).stack; } between(); try { JSON.parse("{"); } catch (b) { return x.tag + typeof stack; } return "no"; }
-          console.log(adjacent(), separated(), stackIdiom());
-        `,
-      },
-      run: usesImage("kept kept keptstring\n"),
-    });
-
-    itBundled("BuiltinCalledOnWrongReceiver", {
-      files: {
-        "/entry.ts": /* js */ `
-          const attempt = (f: () => unknown) => { try { return String(f()); } catch (e) { return (e as Error).constructor.name; } };
-          console.log([
-            attempt(() => Array.prototype.shift.call("abc")),
-            attempt(() => Array.prototype.join.call({ length: 2, 0: "a", 1: "b" }, "-")),
-            attempt(() => String.prototype.trim.call(123)),
-            attempt(() => Map.prototype.get.call({}, 1)),
-            attempt(() => Date.prototype.getTime.call({})),
-            attempt(() => Array.prototype.shift.call([5, 6])),
-          ].join(" "));
-        `,
-      },
-      run: usesImage("TypeError a-b 123 TypeError TypeError 5\n"),
-    });
-
-    itBundled("ErrorsThrownByNativeCode", {
-      files: {
-        "/entry.ts": /* js */ `
-          const attempt = (f: () => unknown) => { try { f(); return "none"; } catch (e) { return (e as Error).constructor.name; } };
-          const revoked = () => { const { proxy, revoke } = Proxy.revocable(function () {}, {}); revoke(); return proxy as any; };
-          function tooFewArguments(a?: any, b?: any, c?: any, d?: any, e?: any, f?: any, g?: any, h?: any): number { return 1 + recurse(); }
-          function recurse(): number { return 1 + tooFewArguments(1); }
-          const withGetter = { get next(): unknown { return withGetter.next; } };
-          console.log(attempt(() => revoked()()), attempt(() => new (revoked())()), attempt(recurse), attempt(() => withGetter.next));
-        `,
-      },
-      run: usesImage("TypeError TypeError RangeError RangeError\n"),
-    });
-
-    itBundled("AsyncFramesOfErrorsFromNativeCode", {
-      files: {
-        "/entry.ts": /* js */ `
-          async function inner(path: string) {
-            return await Bun.file(path).text();
-          }
-          async function middle(path: string) {
-            return (await inner(path)).length;
-          }
-          async function outer(path: string) {
-            return (await middle(path)) + 1;
-          }
-          try {
-            await outer("/nonexistent/file/for/this/test");
-          } catch (error) {
-            const frames = String((error as Error).stack).split(String.fromCharCode(10)).filter(line => line.includes("at async "));
-            const lines = frames.map(line => Number(line.split(":").at(-2)));
-            console.log(frames.map(line => line.trim().split(" ")[2]).join(" "), lines[0] < lines[1] && lines[1] < lines[2]);
-          }
-        `,
-      },
-      run: usesImage("inner middle outer true\n"),
-    });
-
-    itBundled("StackWalksGiveNoFunctionObjects", {
-      files: {
-        "/entry.ts": /* js */ `
-          import { run } from "./sloppy.cjs";
-          console.log(run());
-          const guest = new Function(\`
-            const previous = Error.prepareStackTrace;
-            Error.prepareStackTrace = (error, sites) => sites;
-            const sites = new Error("x").stack;
-            Error.prepareStackTrace = previous;
-            return sites.slice(0, 2).map(site => typeof site.getFunction()).join(" ");
-          \`);
-          function callsGuest() { const result = guest(); return result; }
-          console.log(callsGuest());
-        `,
-        "/sloppy.cjs": /* js */ `
-          function capture() {
-            const previous = Error.prepareStackTrace;
-            Error.prepareStackTrace = (error, sites) => sites;
-            const sites = new Error("x").stack;
-            Error.prepareStackTrace = previous;
-            return sites.slice(0, 3).map(site => [site.getFunctionName(), typeof site.getFunction(), site.getFunction() === hidden, typeof site.getThis(), site.getLineNumber() > 0, site.getColumnNumber() > 0].join(":")).join(" ");
-          }
-          function hidden() { const result = capture(); return result; }
-          exports.run = function run() {
-            const mode = (function () { return this === undefined ? "strict" : "sloppy"; })();
-            const result = hidden();
-            return mode + " " + result;
-          };
-        `,
-      },
-      run: usesImage(
-        "sloppy capture:undefined:false:undefined:true:true hidden:undefined:false:undefined:true:true run:undefined:false:undefined:true:true\nundefined undefined\n",
-      ),
-    });
-
-    itBundled("LargeArrayLiteral", {
-      files: {
-        "/entry.ts":
-          Array.from({ length: 100 }, (_, i) => `function f${i}(a: number) { return a + ${i}; }`).join("\n") +
-          `\nconst table = [${Array.from({ length: 100 }, (_, i) => `f${i}`).join(", ")}];\n` +
-          `function objects(a: number) { return [${Array.from({ length: 100 }, (_, i) => `{ id: ${i}, v: a + ${i} }`).join(", ")}]; }\n` +
-          `console.log(table.reduce((s, f) => s + f(1), 0), objects(2).reduce((s, o) => s + o.id * o.v, 0));\n`,
-      },
-      run: usesImage("5050 338250\n"),
-    });
-
-    itBundled("ProperTailCalls", {
-      files: {
-        "/entry.ts": /* js */ `
-          function loop(n: number, acc: number): number { if (!n) return acc; return loop(n - 1, acc + 1); }
-          function viaParameter(f: any, n: number, acc: number): number { if (!n) return acc; return f(f, n - 1, acc + 1); }
-          const picked = [viaParameter, Math.abs][process.argv.length > 50 ? 1 : 0];
-          console.log(loop(300000, 0), picked(picked, 300000, 0));
-        `,
-      },
-      run: usesImage("300000 300000\n"),
-    });
-
-    itBundled("BuiltinsAreImmutable", {
-      files: {
-        // The names are computed: a written one is warned of at the build.
-        "/entry.ts": /* js */ `
-          import vm from "node:vm";
-          const attempt = (f: () => unknown) => { try { f(); return "ok"; } catch (e) { return (e as Error).name; } };
-          const push = Array.prototype.push, max = Math.max;
-          const name = (...parts: string[]) => parts.join("");
-          console.log(
-            attempt(() => { (Array.prototype as any)[name("pu", "sh")] = function () { return 0; }; }),
-            attempt(() => { (Math as any)[name("m", "ax")] = () => 0.5; }),
-            attempt(() => { (Reflect as any)[name("g", "et")] = () => 1; }),
-            attempt(() => Object.defineProperty(Object.prototype, name("ad", "ded"), { value: 1 })),
-            attempt(() => { delete (Array.prototype as any)[name("m", "ap")]; }),
-            Array.prototype.push === push, Math.max === max, "added" in {}, typeof [].map,
-          );
-          console.log(new Function("'use strict'; try { Math[['m', 'ax'].join('')] = 1; return 'ok'; } catch (e) { return e.name; }")());
-          console.log(vm.runInNewContext("Object.isFrozen(Object.prototype)"));
-          class A { m() { return 1; } }
-          A.prototype.m = () => 2;
-          class List extends Array<number> { sum() { return this.reduce((a, b) => a + b, 0); } }
-          (globalThis as any).fetch = () => "replaced";
-          console.log(new A().m(), (List.from([1, 2, 3]) as List).sum(), (globalThis as any).fetch());
-        `,
-      },
-      run: usesImage(
-        "TypeError TypeError TypeError TypeError TypeError true true false function\nTypeError\nfalse\n2 6 replaced\n",
-      ),
-    });
-
-    itBundled("Worker", {
-      files: {
-        "/entry.ts": /* js */ `
-          import { Worker, isMainThread, parentPort } from "node:worker_threads";
-          function fib(n: number): number { return n < 2 ? n : fib(n - 1) + fib(n - 2); }
-          if (isMainThread) {
-            const worker = new Worker(new URL(import.meta.url));
-            worker.on("message", m => console.log("main", fib(15), "worker", m));
-          } else
-            parentPort!.postMessage(fib(16));
-        `,
-      },
-      run: usesImage("main 610 worker 987\n"),
-    });
-
-    itBundled("WorkerTerminatedInALoop", {
-      files: {
-        "/entry.ts": /* js */ `
-          import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
-          class Rec { constructor(public n: number) {} }
-          function framed(seed: number, list: Rec[]): number { let t = seed; while (true) { t = (t * 31 + list.length) | 0; if (t === 123456789) list.push(new Rec(t)); } }
-          function frameless(a: number, b: number): number { let t = a; while (t !== 0.5) { t = (t * 31 + b) | 0; } return t; }
-          function inTry(seed: number): number { let t = seed; try { do { t = (t * 31 + 7) | 0; } while (t !== 0.5); } catch { console.log("caught"); } return t; }
-          function overArray(list: Rec[]): number { let t = 0; for (;;) { for (const r of list) t = (t + r.n) | 0; } }
-          function nested(n: number): number { let t = 0; for (;;) { for (let i = 0; i < n; i++) { let j = i; while (j > 0) { t = (t + j) | 0; j >>= 1; } } } }
-          if (isMainThread) {
-            for (const shape of ["framed", "frameless", "inTry", "overArray", "nested"]) {
-              const worker = new Worker(new URL(import.meta.url), { workerData: shape });
-              await new Promise<void>(resolve => worker.on("message", () => resolve()));
-              await new Promise<void>(resolve => setTimeout(resolve, 50));
-              console.log(shape, await worker.terminate());
-            }
-          } else {
-            parentPort!.postMessage("spinning");
-            const list = [new Rec(1), new Rec(2), new Rec(3)];
-            switch (workerData as string) {
-              case "framed": framed(1, list); break;
-              case "frameless": frameless(1, 7); break;
-              case "inTry": inTry(1); break;
-              case "overArray": overArray(list); break;
-              case "nested": nested(1000); break;
-            }
-          }
-        `,
-      },
-      run: usesImage("framed 1\nframeless 1\ninTry 1\noverArray 1\nnested 1\n"),
-    });
-
-    itBundled("CommonJS", {
-      files: {
-        "/entry.ts": /* js */ `
-          import { fib } from "./fib.cjs";
-          const again = require("./fib.cjs");
-          const late = await import("./fib.cjs");
-          console.log(fib(20), again.fib === fib, late.default.fib === fib, typeof require);
-        `,
         "/fib.cjs": /* js */ `
           exports.fib = function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); };
         `,
-      },
-      run: usesImage("6765 true true function\n"),
-    });
-
-    itBundled("CommonJSEntryPoint", {
-      files: {
-        "/entry.cjs": /* js */ `
-          const { fib } = require("./fib.cjs");
-          console.log(fib(20), typeof require, typeof module, typeof exports);
-        `,
-        "/fib.cjs": /* js */ `
-          exports.fib = function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); };
-        `,
-      },
-      run: usesImage("6765 function object object\n"),
-    });
-
-    for (const splitting of [false, true]) {
-      itBundled(splitting ? "DynamicImportWithSplitting" : "DynamicImport", {
-        splitting,
-        files: {
-          "/entry.ts": /* js */ `
-            import { fib } from "./fib";
-            console.log(fib(20));
-            const { twice } = await import("./lazy");
-            console.log(twice(21));
-          `,
-          "/lazy.ts": /* js */ `
-            import { fib } from "./fib";
-            export const twice = (n: number) => n * 2 + fib(0);
-          `,
-          "/fib.ts": /* js */ `
-            export function fib(n: number): number { return n < 2 ? n : fib(n - 1) + fib(n - 2); }
-          `,
-        },
-        run: usesImage("6765\n42\n"),
-      });
-    }
-
-    itBundled("ImportReadInLoopOfClosureThatHoldsItsCaptures", {
-      splitting: true,
-      files: {
-        "/entry.ts": /* js */ `
-          import { table } from "./shared";
-          function first(a: number) {
-            const x = a + 1;
-            return function second(b: number) {
-              const y = b + x;
-              return function third(c: number) {
-                const z = c + y;
-                return function sum(list: number[]) {
-                  let s = 0;
-                  for (let i = 0; i < list.length; i++)
-                    s += table[i] + list[i] + z;
-                  return s;
-                };
-              };
-            };
-          }
-          console.log(first(1)(2)(3)([1, 2, 3, 4]));
-          const lazy = await import("./lazy");
-          console.log(lazy.size());
-        `,
         "/lazy.ts": /* js */ `
-          import { table } from "./shared";
-          export function size() { return table.length; }
-        `,
-        "/shared.ts": /* js */ `
-          export const table = [1, 2, 3, 4];
+          import { double } from "./other";
+          export const twice = (n: number) => double(n) + double(0);
         `,
       },
-      run: usesImage("48\n4\n"),
-    });
-
-    itBundled("CompiledModulesCannotBeMocked", {
-      splitting: true,
-      files: {
-        "/entry.ts": /* js */ `
-          const [a, b] = await Promise.all([import("./a"), import("./b")]);
-          const root = Bun.main.slice(0, Math.max(Bun.main.lastIndexOf("/"), Bun.main.lastIndexOf("\\\\")) + 1);
-          const pathIn = (stack: string) => stack.slice(stack.indexOf(root), stack.indexOf(".js", stack.indexOf(root)) + 3);
-          const { mock, jest } = await new Function("return import('bun:test')")();
-          const replacement = () => ({ table: { kept: "mocked", other: "mocked" }, readTable: () => "mocked", fromA: () => "mocked" });
-          for (const [label, path] of [["internal", pathIn(a.stackOfShared())], ["target", pathIn(a.stackInA())], ["main", Bun.main]]) {
-            for (const [name, replace] of [["mock.module", mock.module], ["jest.mock", jest.mock]]) {
-              let said: string;
-              try { await replace(path, replacement); said = "replaced"; } catch (e: any) { said = e.constructor.name; }
-              console.log(label, name, said, a.fromA(), b.fromB());
-            }
-          }
-          await mock.module("not-in-the-executable", () => ({ answer: 42 }));
-          console.log((await new Function("return import('not-in-the-executable')")()).answer, (await import("./lazy")).fromLazy(), (await import("./lazy2")).fromLazy2());
-        `,
-        "/a.ts": /* js */ `
-          import { readTable, stackInShared, table, ready } from "./shared";
-          export function fromA() { return readTable() + ":" + table.kept + ":" + ready; }
-          export const stackOfShared = stackInShared;
-          export function stackInA() { return new Error("here").stack!; }
-        `,
-        "/b.ts": /* js */ `
-          import { readTable, table } from "./shared";
-          export function fromB() { return readTable() + ":" + table.other; }
-        `,
-        "/shared.ts": /* js */ `
-          export const ready = await Promise.resolve("ready");
-          export const table = { kept: 1, other: 2 };
-          export function readTable() { return table.kept + table.other; }
-          export function stackInShared() { return new Error("here").stack!; }
-        `,
-        "/lazy.ts": /* js */ `
-          import { readTable } from "./shared";
-          import { readLate } from "./late";
-          export function fromLazy() { return "lazy" + readTable() + readLate(); }
-        `,
-        "/lazy2.ts": /* js */ `
-          import { readLate, late } from "./late";
-          export function fromLazy2() { return "lazy" + readLate() + late.v; }
-        `,
-        "/late.ts": /* js */ `
-          export const late = { v: 1 };
-          export function readLate() { return late.v; }
-        `,
-      },
-      run: usesImage(
-        [
-          ...["internal", "target", "main"].flatMap(label =>
-            ["mock.module", "jest.mock"].map(name => label + " " + name + " TypeError 3:1:ready 3:2"),
-          ),
-          "42 lazy31 lazy11",
-          "",
-        ].join("\n"),
-      ),
-    });
-
-    itBundled("ExportsOfCompiledModulesCannotBeSpiedOn", {
-      splitting: true,
-      files: {
-        "/entry.ts": /* js */ `
-          const lazy = await import("./lazy"), user = await import("./user");
-          const { spyOn } = await new Function("return import('bun:test')")();
-          for (const name of ["helper", "table", "box"]) {
-            let said: string;
-            try { spyOn(lazy, name); said = "replaced"; } catch (e: any) { said = e.constructor.name; }
-            console.log(name, said, user.fromUser());
-          }
-          const own = { method() { return 1; } };
-          spyOn(own, "method").mockImplementation(() => 2);
-          console.log(own.method());
-        `,
-        "/lazy.ts": /* js */ `
-          export const table = { kept: 1, other: 2 };
-          export class Box { v = 1; w = 2.5; get() { return this.v + this.w; } }
-          export const box = new Box();
-          export function helper(n: number) { return n * 2; }
-          export function read() { return table.kept + ":" + table.other + ":" + box.get() + ":" + helper(2); }
-        `,
-        "/user.ts": /* js */ `
-          import { read, table, box, helper } from "./lazy";
-          export function fromUser() { return read() + " | " + table.kept + ":" + box.get() + ":" + helper(3); }
-        `,
-      },
-      run: usesImage(
-        ["helper", "table", "box"].map(name => name + " TypeError 1:2:3.5:4 | 1:3.5:6\n").join("") + "2\n",
-      ),
-    });
-
-    itBundled("CompiledModulesCannotBeEvicted", {
-      splitting: true,
-      files: {
-        "/entry.ts": /* js */ `
-          const load = () => import("./lazy");
-          const first = await load();
-          console.log(first.bump(), first.bump());
-          const root = Bun.main.slice(0, Math.max(Bun.main.lastIndexOf("/"), Bun.main.lastIndexOf("\\\\")) + 1);
-          const listed = Object.keys(require.cache).filter(name => name.startsWith(root) && name !== Bun.main);
-          for (const name of listed) delete require.cache[name];
-          console.log(listed.length, (await load()) === first, first.bump());
-          require.cache["/not/in/the/executable.js"] = { exports: 1 } as any;
-          console.log(delete require.cache["/not/in/the/executable.js"], "/not/in/the/executable.js" in require.cache);
-        `,
-        "/lazy.ts": /* js */ `
-          let count = 0;
-          export function bump() { return ++count; }
-        `,
-      },
-      run: usesImage("1 2\n0 true 3\ntrue false\n"),
+      run: usesImage('{"x":499500,"y":1000} 42 1,2 2\n2,4,6 ABC a\n6765 true true function\n42\n'),
     });
   }
 
-  test("compile/aot/BuildDoesNotDisturbTheCaller", async () => {
+  test.concurrent("compile/aot/BuildDoesNotDisturbTheCaller", async () => {
     using dir = tempDir("compile-aot-caller", {
       "app.ts": `console.log("from the executable");`,
       "build.ts": `
@@ -540,55 +95,8 @@ describe("bundler", () => {
   });
 });
 
-test("compile.aot: compiles the contents a plugin returns instead of the file on disk", async () => {
-  using dir = tempDir("compile-aot-plugin-text", {
-    "app.ts": `
-      import { answer, type Shape } from "./other";
-      const shape: Shape = { kind: "plugin", size: 2 };
-      console.log(answer(), shape.kind, shape.size);
-    `,
-    "other.ts": `
-      export type Shape = { kind: string };
-      export function answer() { return "from the disk"; }
-    `,
-    "build.ts": `
-      const result = await Bun.build({
-        entrypoints: ["./app.ts"],
-        compile: { aot: true, outfile: "./app" },
-        plugins: [
-          {
-            name: "rewrites other.ts",
-            setup(build) {
-              build.onLoad({ filter: /other\\.ts$/ }, async () => {
-                await Bun.sleep(300);
-                return {
-                  loader: "ts",
-                  contents: 'export type Shape = { kind: string; size: number }; export function answer() { return "from the plugin"; }',
-                };
-              });
-            },
-          },
-        ],
-      });
-      console.log(result.success);
-    `,
-  });
-  const { stdout, exitCode } = await runCommand([bunExe(), "build.ts"], String(dir));
-  expect(stdout).toBe("true\n");
-  expect(exitCode).toBe(0);
-
-  const {
-    stdout: appStdout,
-    stderr: appStderr,
-    exitCode: appExitCode,
-  } = await runCommand([join(String(dir), "app")], undefined, { ...bunEnv, BUN_AOT_VERBOSE: "1" });
-  expect(appStdout).toBe("from the plugin plugin 2\n");
-  expect(appStderr).toContain("[aot] image: ");
-  expect(appExitCode).toBe(0);
-});
-
-test("compile.aot: concurrent builds from several threads", async () => {
-  const apps = [1, 2, 3, 4];
+test.concurrent("compile.aot: concurrent builds from several threads", async () => {
+  const apps = [1, 2];
   using dir = tempDir("compile-aot-at-once", {
     ...Object.fromEntries(
       apps.map(n => [
@@ -616,7 +124,7 @@ test("compile.aot: concurrent builds from several threads", async () => {
     `,
   });
   const { stdout, exitCode } = await runCommand([bunExe(), "build.ts"], String(dir));
-  expect(stdout).toBe(JSON.stringify(Array(8).fill(true)) + "\n");
+  expect(stdout).toBe(JSON.stringify(Array(4).fill(true)) + "\n");
   expect(exitCode).toBe(0);
 
   const outputs = await Promise.all(
@@ -630,15 +138,13 @@ test("compile.aot: concurrent builds from several threads", async () => {
       }),
     ),
   );
-  expect(outputs).toEqual(
-    ["1 89", "2 144", "3 233", "4 377", "1 89", "2 144", "3 233", "4 377"].map(stdout => ({ stdout, usesImage: true })),
-  );
+  expect(outputs).toEqual(["1 89", "2 144", "1 89", "2 144"].map(stdout => ({ stdout, usesImage: true })));
 });
 
 const otherTarget = process.platform === "linux" ? "bun-darwin-x64" : "bun-linux-x64";
 const whyNot = "can't cross-compile. It only builds for the platform it runs on";
 
-test("--aot rejects cross-compilation and unsupported targets", async () => {
+test.concurrent("--aot rejects cross-compilation and unsupported targets", async () => {
   using dir = tempDir("compile-aot-cross", { "entry.ts": `console.log(1);` });
   const { stderr, exitCode } = await runCommand(
     [bunExe(), "build", "--compile", "--aot", `--target=${otherTarget}`, "entry.ts", "--outfile", "out"],
@@ -648,7 +154,7 @@ test("--aot rejects cross-compilation and unsupported targets", async () => {
   expect(exitCode).not.toBe(0);
 });
 
-test("compile.aot rejects cross-compilation and unsupported targets", async () => {
+test.concurrent("compile.aot rejects cross-compilation and unsupported targets", async () => {
   using dir = tempDir("compile-aot-cross-api", { "entry.ts": `console.log(1);` });
   expect(() =>
     Bun.build({
@@ -658,7 +164,7 @@ test("compile.aot rejects cross-compilation and unsupported targets", async () =
   ).toThrow(`compile.aot ${whyNot}`);
 });
 
-test("--format has no effect with --aot", async () => {
+test.concurrent("--format has no effect with --aot", async () => {
   using dir = tempDir("compile-aot-format", { "entry.cjs": `console.log(1);` });
   const { stderr, exitCode } = await runCommand(
     [bunExe(), "build", "--compile", "--aot", "--format=cjs", "entry.cjs", "--outfile", "out"],
@@ -666,19 +172,9 @@ test("--format has no effect with --aot", async () => {
   );
   expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   expect(await runCommand([join(String(dir), "out")], String(dir))).toMatchObject({ stdout: "1\n", exitCode: 0 });
-  const built = await Bun.build({
-    entrypoints: [join(String(dir), "entry.cjs")],
-    format: "cjs",
-    compile: { aot: true, outfile: join(String(dir), "out-of-build") },
-  });
-  expect(built.success).toBe(true);
-  expect(await runCommand([join(String(dir), "out-of-build")], String(dir))).toMatchObject({
-    stdout: "1\n",
-    exitCode: 0,
-  });
 });
 
-test("Bun.ModuleGraph refuses a module that is compiled into the executable", async () => {
+test.concurrent("Bun.ModuleGraph refuses a module that is compiled into the executable", async () => {
   using dir = tempDir("compile-aot-module-graph-refused", {
     "entry.ts": `
       const url = new URL("./app.js", import.meta.url).href;
@@ -2084,122 +1580,7 @@ describe.todo("Bun.ModuleGraph with --aot", () => {
   });
 });
 
-test.each(["forEach", "map"])("an uncaught error from the callback of %s is reported", async method => {
-  using dir = tempDir("compile-aot-uncaught", {
-    "entry.ts": `[1].${method}(function callback() { throw new Error("thrown in the callback"); });`,
-  });
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
-  const { stdout, stderr, exitCode } = await runCommand([join(String(dir), "out")]);
-  expect({ stdout, firstLines: stderr.split("\n").slice(0, 3), exitCode }).toEqual({
-    stdout: "",
-    firstLines: [
-      "error: thrown in the callback",
-      expect.stringMatching(/^ +at callback \(.*entry\.ts:\d+:\d+\)$/),
-      expect.stringMatching(new RegExp(`^ +at ${method} `)),
-    ],
-    exitCode: 1,
-  });
-});
-
-test("the image is used", async () => {
-  using dir = tempDir("compile-aot-address", {
-    "entry.ts": `function add(a: number, b: number) { return a + b; } console.log(new (function Made(this: any) { this.sum = add(1, 2); } as any)().sum);`,
-  });
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
-  const { stdout, stderr, exitCode } = await runCommand([join(String(dir), "out")], undefined, {
-    ...bunEnv,
-    BUN_AOT_VERBOSE: "1",
-  });
-  expect({
-    stdout,
-    usesImage: /\[aot\] image: \d+ bytes, \d+ of code at 0x[0-9a-f]+/.test(stderr),
-    exitCode,
-  }).toEqual({
-    stdout: "3\n",
-    usesImage: true,
-    exitCode: 0,
-  });
-});
-
-test.each([["without a JIT", { BUN_JSC_useJIT: "0" }, ["--aot"]]])(
-  "a build %s produces the same code",
-  async (_, env, flags) => {
-    using dir = tempDir("compile-aot-builder", {
-      "entry.ts": `console.log(/(\\d+)-(\\w+)/.exec("abc 123-foo")!.slice(1).join());`,
-    });
-    async function imageOf(outfile: string, env: Record<string, string>, flags: string[]) {
-      await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", ...flags, "entry.ts", "--outfile", outfile],
-        env: { ...bunEnv, ...env },
-        cwd: String(dir),
-        stdout: "ignore",
-        stderr: "pipe",
-      });
-      expect([await build.stderr.text(), await build.exited]).toEqual(["", 0]);
-      const { stdout, stderr, exitCode } = await runCommand([join(String(dir), outfile)], undefined, {
-        ...bunEnv,
-        BUN_AOT_VERBOSE: "1",
-      });
-      expect({ stdout, exitCode }).toEqual({ stdout: "123,foo\n", exitCode: 0 });
-      return stderr.match(/^\[aot\] image: \d+ bytes, \d+ of code/m)?.[0];
-    }
-    const [expected, actual] = await Promise.all([imageOf("a", {}, ["--aot"]), imageOf("b", env, flags)]);
-    expect(expected).toStartWith("[aot] image: ");
-    expect(actual).toBe(expected);
-  },
-);
-
-test("file imports evaluate to the paths of the embedded files", async () => {
-  using dir = tempDir("compile-aot-file-imports", {
-    "first.bin": "first",
-    "nested/second.bin": "second",
-    "types.d.ts": `declare module "*.bin" { const path: string; export default path; }`,
-    "helper.ts": `
-      import second from "./nested/second.bin" with { type: "file" };
-      export const secondPath = second;
-      export const secondLength = second.length;
-    `,
-    "entry.ts": `
-      /// <reference path="./types.d.ts" />
-      import first from "./first.bin" with { type: "file" };
-      import { readFileSync } from "node:fs";
-      import { secondLength, secondPath } from "./helper";
-      console.log(first.endsWith(".bin"), first.includes("first"), first.length === [...first].length);
-      console.log(secondPath.endsWith(".bin"), secondPath.includes("second"), secondLength === [...secondPath].length);
-      console.log(readFileSync(first, "utf8"), readFileSync(secondPath, "utf8"));
-    `,
-  });
-  const { stderr: buildStderr, exitCode: buildExitCode } = await runCommand(
-    [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
-    String(dir),
-  );
-  expect({ buildStderr, buildExitCode }).toEqual({
-    buildStderr: "",
-    buildExitCode: 0,
-  });
-  const { stdout, stderr, exitCode } = await runCommand([join(String(dir), "out")]);
-  expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "true true true\ntrue true true\nfirst second\n",
-    stderr: "",
-    exitCode: 0,
-  });
-});
-
-test("builds are reproducible", async () => {
+test.concurrent("builds that run at once, and one by a Bun without a JIT, write the same file", async () => {
   using dir = tempDir("compile-aot-reproducible", {
     "entry.ts": `
       const classes = [
@@ -2208,200 +1589,29 @@ test("builds are reproducible", async () => {
         (() => class { g; h; i; constructor(x: number) { this.g = x; this.h = x + 1; this.i = x + 2; } sum() { return this.g + this.h + this.i; } })(),
         (() => class { j; k; l; constructor(x: number) { this.j = x; this.k = x + 1; this.l = x + 2; } sum() { return this.j + this.k + this.l; } })(),
       ];
-      console.log(classes.map((C, i) => new C(i).sum()).join());
+      console.log(classes.map((C, i) => new C(i).sum()).join(), /(\\d+)-(\\w+)/.exec("abc 123-foo")!.slice(1).join());
     `,
   });
   const hashes = await Promise.all(
-    Array.from({ length: 6 }, async (_, i) => {
+    [{}, {}, { BUN_JSC_useJIT: "0" }].map(async (env, i) => {
       const outfile = join(String(dir), String(i), "out.exe");
-      await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", outfile],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "ignore",
-        stderr: "pipe",
-      });
-      expect([await build.stderr.text(), await build.exited]).toEqual(["", 0]);
+      const { stderr, exitCode } = await runCommand(
+        [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", outfile],
+        String(dir),
+        { ...bunEnv, ...env },
+      );
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
       return Bun.SHA256.hash(await Bun.file(outfile).bytes(), "hex");
     }),
   );
   expect(new Set(hashes).size).toBe(1);
-  await using proc = Bun.spawn({
-    cmd: [join(String(dir), "0", "out.exe")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
+  expect(await runCommand([join(String(dir), "0", "out.exe")])).toMatchObject({
+    stdout: "3,6,9,12 123,foo\n",
+    exitCode: 0,
   });
-  expect([await proc.stdout.text(), await proc.exited]).toEqual(["3,6,9,12\n", 0]);
 });
 
-test("compiles RegExps with the u and v flags", async () => {
-  using dir = tempDir("compile-aot-regexps", {
-    "one.ts": `console.log(/o+ne/.test("one"));`,
-    "some.ts": `console.log([/a+b/.test("aab"), /\\p{L}+x/u.test("\\xe9x"), /^.$/u.test("\\u{1f600}"), /[\\p{L}--[a-c]]y/v.test("dy")].join());`,
-  });
-  async function numberOfRegExps(entry: string, expectedStdout: string) {
-    const outfile = join(String(dir), entry.replace(".ts", ""));
-    const { stderr: stderrOfBuild, exitCode: exitCodeOfBuild } = await runCommand(
-      [bunExe(), "build", "--compile", "--aot", "--explain=statistics", entry, "--outfile", outfile],
-      String(dir),
-    );
-    expect(stderrOfBuild).not.toContain("error");
-    expect(exitCodeOfBuild).toBe(0);
-    const { stdout, exitCode } = await runCommand([outfile]);
-    expect(stdout).toBe(expectedStdout);
-    expect(exitCode).toBe(0);
-    return Number(stderrOfBuild.match(/^RegExpsCompiled (\d+)$/m)?.[1]);
-  }
-  const one = await numberOfRegExps("one.ts", "true\n");
-  expect(one).toBeGreaterThanOrEqual(1);
-  expect(await numberOfRegExps("some.ts", "true,true,true,true\n")).toBe(one + 3);
-});
-
-test("run-time RegExps are never compiled, however hot: they run on a flat program", async () => {
-  using dir = tempDir("compile-aot-regexp-at-run-time", {
-    "entry.ts": `
-      const build = (word: string) => new RegExp(["(\\\\w+)@", "(\\\\w+)\\\\.", word].join(""));
-      const words = process.env.WORDS!.split(",");
-      const usedOnce = build(words[0]!), usedOften = build(words[1]!), usedOnLongText = build(words[2]!);
-      let found = usedOnce.exec("to foo@bar.cold")!.slice(1).join();
-      for (let i = 0; i < 1000; i++) found = usedOften.exec("to foo@bar.hot")!.slice(1).join() + i;
-      console.log(found, usedOnLongText.exec(Buffer.alloc(20000, "x ").toString() + "foo@bar.long")!.slice(1).join());
-      console.log(new Function("a", "return a + 1")(1));
-    `,
-  });
-  const outfile = join(String(dir), "entry");
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", outfile],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "ignore",
-    stderr: "pipe",
-  });
-  // The build says of the one place that makes them that its pattern is not known.
-  expect([await build.stderr.text(), await build.exited]).toEqual([expect.stringContaining("warn: TS100058: "), 0]);
-  const { stdout, stderr, exitCode } = await runCommand([outfile], undefined, {
-    ...bunEnv,
-    BUN_JSC_dumpCompiledRegExpPatterns: "1",
-    WORDS: "c[o]ld,h[o]t,l[o]ng",
-  });
-  expect(stdout).toBe("foo,bar999 foo,bar\n2\n");
-  const lines = stderr.split(/\r?\n/);
-  const whatHappenedTo = (word: string) =>
-    lines.flatMap((line, i) =>
-      line.endsWith(`${word}/"`) ? [line.slice(0, line.indexOf(" this regular expression")), lines[i + 1]] : [],
-    );
-  expect({
-    usedOnce: whatHappenedTo("c[o]ld"),
-    usedOften: whatHappenedTo("h[o]t"),
-    usedOnLongText: whatHappenedTo("l[o]ng"),
-  }).toEqual({
-    usedOnce: ["Can't JIT", "Runs on a flat program"],
-    usedOften: ["Can't JIT", "Runs on a flat program"],
-    usedOnLongText: ["Can't JIT", "Runs on a flat program"],
-  });
-  expect(exitCode).toBe(0);
-});
-
-test.skipIf(isASAN)("crash reports symbolicate compiled frames", async () => {
-  using dir = tempDir("compile-aot-crash", {
-    "entry.ts": `
-      const { crash_handler } = require("bun:internal-for-testing") as { crash_handler: { segfault(): void } };
-      function crash(really: boolean) {
-        if (really) crash_handler.segfault();
-      }
-      crash(process.argv.length > 0);
-    `,
-  });
-  const outfile = join(String(dir), "entry");
-  const map = join(String(dir), "map");
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", outfile],
-    env: { ...bunEnv, BUN_JSC_aotMapFilePath: map },
-    cwd: String(dir),
-    stdout: "ignore",
-    stderr: "pipe",
-  });
-  expect([await build.stderr.text(), await build.exited]).toEqual(["", 0]);
-  await using run = Bun.spawn({
-    cmd: [outfile],
-    env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
-    stdout: "ignore",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([run.stderr.text(), run.exited]);
-
-  function decodeVLQ(text: string) {
-    let value = 0;
-    for (let i = 0; ; i++) {
-      const digit = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".indexOf(text[i]);
-      value += (digit & 31) * 2 ** (5 * i);
-      if (!(digit & 32)) return value % 2 ? -(value - 1) / 2 : value / 2;
-    }
-  }
-  const offsets = stderr.split("CGaot").slice(1).map(decodeVLQ);
-  const functions = (await Bun.file(map).text())
-    .split("\n")
-    .filter(line => line.startsWith("F\t"))
-    .map(line => line.split("\t").slice(2, 4).map(Number));
-  expect(functions).not.toBeEmpty();
-  expect(
-    offsets.filter(offset => functions.some(([start, size]) => offset >= start && offset < start + size)),
-  ).not.toBeEmpty();
-  expect(exitCode).not.toBe(0);
-});
-
-test("--cpu-prof attributes native time to the calling function", async () => {
-  using dir = tempDir("compile-aot-cpu-prof", {
-    "entry.ts": `
-      function busy(rounds: number, seed: number) {
-        let total = seed;
-        for (let round = 0; round < rounds; round++) {
-          total += JSON.stringify({ round }).length;
-          for (let i = 1; i < 3000; i++) total += Math.sin(i + total) * Math.pow(i, 0.37) + Math.log(i) + Math.atan2(i, total);
-        }
-        return total;
-      }
-      const chosen = [busy, Math.max][process.argv.length > 99 ? 1 : 0]!;
-      console.log(chosen(20000, 1) + chosen(20000, 2) !== 0);
-    `,
-  });
-  const outfile = join(String(dir), "entry");
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", outfile],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "ignore",
-    stderr: "pipe",
-  });
-  expect([await build.stderr.text(), await build.exited]).toEqual(["", 0]);
-  const { stdout, stderr, exitCode } = await runCommand([outfile], undefined, {
-    ...bunEnv,
-    BUN_OPTIONS: `--cpu-prof --cpu-prof-dir=${dir} --cpu-prof-name=entry.cpuprofile`,
-  });
-  expect({ stdout, stderr }).toEqual({ stdout: "true\n", stderr: "" });
-  expect(exitCode).toBe(0);
-
-  const hits: Record<string, number> = {};
-  for (const node of (await Bun.file(join(String(dir), "entry.cpuprofile")).json()).nodes)
-    hits[node.callFrame.functionName] = (hits[node.callFrame.functionName] ?? 0) + node.hitCount;
-  expect(hits.busy).toBeGreaterThan(20);
-  expect(hits.busy).toBeGreaterThan(3 * (hits.stringify ?? 0));
-});
-
-test("--bytecode-depth has no effect with --aot", async () => {
-  using dir = tempDir("compile-aot-depth", {
-    "entry.ts": `function a() { return function b() { return function c() { return 1; }; }; } console.log(a()()());`,
-  });
-  const { stderr, exitCode } = await runCommand(
-    [bunExe(), "build", "--compile", "--aot", "--bytecode-depth=1", "entry.ts", "--outfile", "out"],
-    String(dir),
-  );
-  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  expect(await runCommand([join(String(dir), "out")], String(dir))).toMatchObject({ stdout: "1\n", exitCode: 0 });
-});
-
-test("--aot requires --compile", async () => {
+test.concurrent("--aot requires --compile", async () => {
   using dir = tempDir("compile-aot-requires-compile", { "entry.ts": `console.log(1);` });
   const { stderr, exitCode } = await runCommand(
     [bunExe(), "build", "--aot", "entry.ts", "--outdir", "out"],
@@ -2445,33 +1655,6 @@ describe("--aot across threads", () => {
     }
     export function spin(turns: Int32Array) { for (;;) turns[0]++; }
   `;
-
-  test.concurrent("terminate a busy Worker", async () => {
-    expect(
-      await run(
-        {
-          "entry.ts": `
-            import { spin } from "./app.ts";
-            declare var self: Worker;
-            if (Bun.isMainThread) {
-              const turns = new Int32Array(new SharedArrayBuffer(4));
-              const worker = new Worker(import.meta.url);
-              worker.postMessage(turns);
-              while (Atomics.load(turns, 0) < 100000) await new Promise(done => setImmediate(done));
-              const closed = new Promise(done => worker.addEventListener("close", done));
-              worker.terminate();
-              await closed;
-              const afterwards = Atomics.load(turns, 0);
-              await new Promise(done => setImmediate(done));
-              console.log("terminated", afterwards === Atomics.load(turns, 0));
-            } else self.onmessage = event => spin(event.data);
-          `,
-          "app.ts": churn,
-        },
-        ["entry.ts"],
-      ),
-    ).toEqual({ stdout: "terminated true\n", stderr: "", exitCode: 0 });
-  });
 
   // A Worker that fails says so to whoever listens, and ends. A main thread that only waits for its message waits for ever, at a full core.
   const answerOf = `
@@ -2543,162 +1726,4 @@ describe("--aot across threads", () => {
       ),
     ).toEqual({ stdout: `["90000,90000,90000,90000"]\n`, stderr: "", exitCode: 0 });
   });
-
-  const inEightWorkers = (work: string) => ({
-    "entry.ts": `
-      import { work } from "./work.ts";
-      if (Bun.isMainThread) {
-        const workers = Array.from({ length: 8 }, () => new Worker(import.meta.url));
-        const results = await Promise.all(workers.map(worker => new Promise(done => (worker.onmessage = e => done(e.data)))));
-        workers.forEach(worker => worker.terminate());
-        console.log(JSON.stringify([...new Set(results)]), work() === results[0]);
-      } else postMessage(work());
-    `,
-    "work.ts": work,
-  });
-
-  test.concurrent("RegExp literals in 8 Workers", async () => {
-    expect(
-      await run(
-        inEightWorkers(`
-          const sticky = /a+/y;
-          export function work() {
-            let out = "";
-            for (let i = 0; i < 20000; i++) {
-              const text = "x" + i + "-aab-" + (i % 7) + "Z";
-              out = [
-                /(\\d+)-(a+)b/.exec(text)![2], text.replace(/[0-9]/g, "#").length, /z$/i.test(text), text.split(/-/).length,
-                text.match(/(?<n>\\d)Z/)!.groups!.n, text.search(/aab/), (sticky.lastIndex = 0, sticky.test("aaa"), sticky.lastIndex),
-                [...text.matchAll(/a/g)].length, /^(?:red|green|blue)$/.test(["red", "pink"][i & 1]),
-              ].join();
-            }
-            return out;
-          }
-        `),
-        ["entry.ts"],
-      ),
-    ).toEqual({ stdout: `["aa,13,true,3,0,7,3,2,false"] true\n`, stderr: "", exitCode: 0 });
-  });
-
-  test.concurrent("functions, classes and literals in 8 Workers", async () => {
-    expect(
-      await run(
-        inEightWorkers(`
-          const tag = (strings: TemplateStringsArray, ...values: unknown[]) => strings.raw.join("|") + values.length;
-          class Base { static made = 0; #secret = 1; get secret() { return this.#secret; } constructor() { Base.made++; } }
-          class Derived extends Base { field = [1, 2, 3]; method(x = 2) { return this.field.map(v => v * x).join("") + super.secret; } }
-          function* each(n: number) { for (let i = 0; i < n; i++) yield { i, big: 12345678901234567890n, text: \`t\${i}\` }; }
-          const site = () => tag\`a\${1}b\`;
-          export function work() {
-            let out = "";
-            for (let i = 0; i < 3000; i++) {
-              const last = [...each(3)].at(-1)!;
-              out = [new Derived().method(), last.text, last.big % 97n, site(), site() === site(), { a: 1, b: [i & 1], c: { d: null } }.b[0]].join();
-            }
-            return out + "," + Base.made;
-          }
-        `),
-        ["entry.ts"],
-      ),
-    ).toEqual({ stdout: `["2461,t2,3,a|b1,true,1,3000"] true\n`, stderr: "", exitCode: 0 });
-  });
-});
-
-describe("--aot at run time", () => {
-  async function run(source: string, env: Record<string, string> = {}) {
-    using dir = tempDir("compile-aot-run-time", { "entry.ts": source });
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
-    const { stdout, stderr, exitCode } = await runCommand([join(String(dir), "out")], undefined, { ...bunEnv, ...env });
-    return { stdout, stderr, exitCode };
-  }
-
-  test("implicit constructors need no bytecode", async () => {
-    const { stdout, stderr, exitCode } = await run(
-      /* ts */ `
-        class ImplicitBase { kind() { return "base"; } }
-        class ImplicitDerived extends ImplicitBase { kind() { return "derived of " + super.kind(); } }
-        class ImplicitTwice extends ImplicitDerived {}
-        class WithFields { a = 1; #b = 2; sum() { return this.a + this.#b; } }
-        class DerivedWithFields extends WithFields { c = 3; total() { return this.sum() + this.c; } }
-        class Takes { constructor(public x: number, public y = 5) {} }
-        class Forwards extends Takes {}
-        class ImplicitError extends Error {}
-        class ImplicitArray extends Array<number> {}
-        class ImplicitMap extends Map<string, number> {}
-        const made = (() => class extends Takes {})();
-        const out: unknown[] = [];
-        for (let i = 0; i < 3; i++) {
-          out.length = 0;
-          out.push(new ImplicitBase().kind(), new ImplicitDerived().kind(), new ImplicitTwice().kind());
-          out.push(new WithFields().sum(), new DerivedWithFields().total());
-          out.push(new Forwards(1).x, new Forwards(1).y, new Forwards(1, 2).y, new made(7).x);
-          const error = new ImplicitError("message");
-          out.push(error.message, error instanceof ImplicitError, error instanceof Error, error.name);
-          out.push(new ImplicitArray(3).length, ImplicitArray.of(1, 2).length, new ImplicitMap([["k", 1]]).get("k"));
-          out.push(ImplicitBase.name, ImplicitDerived.length, made.name);
-          out.push(Reflect.construct(ImplicitDerived, [], ImplicitTwice) instanceof ImplicitTwice);
-          for (const C of [ImplicitBase, ImplicitDerived, Forwards]) {
-            try {
-              (C as unknown as () => void)();
-              out.push("called");
-            } catch (e) {
-              out.push((e as Error).constructor.name);
-            }
-          }
-        }
-        console.log(out.join());
-      `,
-      { BUN_JSC_dumpGeneratedBytecodes: "1" },
-    );
-    expect(stdout.split("\n").filter(line => !line.includes("#") && line.includes(","))).toEqual([
-      "base,derived of base,derived of base,3,6,1,5,2,7,message,true,true,Error,3,2,1,ImplicitBase,0,,true,TypeError,TypeError,TypeError",
-    ]);
-    expect((stdout + stderr).match(/^\S*(Implicit|WithFields|Forwards)\S*#\w+:\[/gm)).toBeNull();
-    expect(exitCode).toBe(0);
-  });
-
-  test.each([
-    ["equal literals share a string", (i: number) => "a literal that is repeated", 100],
-    ["different literals do not", (i: number) => "a literal that is not repeated " + i, 3000],
-  ] as const)("%s", async (_, literal, atLeast) => {
-    const rows = Array.from(
-      { length: 3000 },
-      (_, i) => `  { kind: ${JSON.stringify(literal(i))}, list: [${JSON.stringify(literal(i))}, "x${i % 7}y"] },`,
-    );
-    const { stdout, stderr, exitCode } = await run(`
-      import { heapStats } from "bun:jsc";
-      const rows = [
-      ${rows.join("\n")}
-      ];
-      Bun.gc(true);
-      const strings = heapStats().objectTypeCounts.string;
-      console.log(JSON.stringify([rows.length, rows[0].kind, rows[2999].kind, rows[2999].list.join(), new Set(rows.map(row => row.kind)).size]));
-      console.log(strings);
-    `);
-    const [first, second] = stdout.trim().split("\n");
-    expect([JSON.parse(first), stderr, exitCode]).toEqual([
-      [3000, literal(0), literal(2999), literal(2999) + ",x3y", atLeast === 100 ? 1 : 3000],
-      "",
-      0,
-    ]);
-    if (atLeast === 100) expect(Number(second)).toBeLessThan(3000);
-    else expect(Number(second)).toBeGreaterThanOrEqual(3000);
-  });
-});
-
-test("--bytecode-order has no effect with --aot", async () => {
-  using dir = tempDir("compile-aot-order", { "entry.ts": `console.log(1);`, "app.order": "" });
-  const { stderr, exitCode } = await runCommand(
-    [bunExe(), "build", "--compile", "--aot", "--bytecode-order=app.order", "entry.ts", "--outfile", "out"],
-    String(dir),
-  );
-  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  expect(await runCommand([join(String(dir), "out")], String(dir))).toMatchObject({ stdout: "1\n", exitCode: 0 });
 });

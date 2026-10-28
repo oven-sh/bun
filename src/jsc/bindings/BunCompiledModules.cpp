@@ -4,6 +4,7 @@
 
 #include "BunAOTCompile.h"
 #include "BunClientData.h"
+#include "BunCompiledEntryPoint.h"
 #include "CodeGenerationFromStrings.h"
 #include "ErrorCode.h"
 #include "ImportMetaObject.h"
@@ -624,6 +625,8 @@ const AOT::ModuleHost compiledModuleHost = {
     &findModuleWithAttributes,
     &resolveFunctionOf,
     &replacesNativeModule,
+    &isImportOfMainModule,
+    &runMainModule,
 };
 
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable what)

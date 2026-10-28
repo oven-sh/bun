@@ -6,7 +6,7 @@
 //   AOT_GENERATED=all bun test test/aot/generated-births-and-uses        every pair: 56,000 programs, and 54,000 more as TypeScript
 //   AOT_GENERATED=template- bun test test/aot/generated-births-and-uses  the pairs whose name contains the text
 import { join } from "path";
-import { inShareOfList } from "../../run-programs";
+import { inShareOfList } from "../../harness/shares";
 import { generated } from "../run-generated";
 import known from "./known-to-differ.json";
 import onceWrong from "./once-wrong.json";

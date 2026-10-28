@@ -32,7 +32,8 @@ import {
   typedAgainstUntyped,
 } from "./one-line-changes-little/known-today";
 import { libraryLines, programLines, type Line } from "./one-line-changes-little/lines";
-import { built, slot, spawned, wanted } from "./run-programs";
+import { built, slot, spawned } from "./harness/commands";
+import { wanted } from "./harness/shares";
 import { describe, test } from "./supported";
 
 const mostFunctionsAdded = 120;

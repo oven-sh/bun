@@ -209,7 +209,11 @@ fn find_call_site(
     }
     let callee = hir.skip_type_assertions(callee);
     if let Some(found) = follow_to_require_call(text, callee, args, left) {
-        return Some(create_site(ImportSiteKind::Require(call), found.args));
+        return Some(CallSite {
+            kind: ImportSiteKind::Require(call),
+            args: found.args,
+            module_require_object: find_module_printed_as_require(hir, bound, callee),
+        });
     }
     if holds_import_meta_require(hir, bound, callee) {
         return Some(create_site(ImportSiteKind::ImportMetaRequire(call), args));
@@ -223,15 +227,9 @@ fn find_call_site(
         if is_import_meta {
             return Some(create_site(ImportSiteKind::ImportMetaRequire(call), args));
         }
+        // `module?.require(..)` reads `module`.
         let is_module = is_free_common_js(hir, bound, object, CommonJsVariable::Module);
-        let is_rewritten = !hir
-            .expr_flags(callee)
-            .contains(ExprFlags::OPTIONAL_CHAIN_LINK);
-        return is_module.then_some(CallSite {
-            kind: ImportSiteKind::Require(call),
-            args,
-            module_require_object: is_rewritten.then_some(object),
-        });
+        return is_module.then(|| create_site(ImportSiteKind::Require(call), args));
     }
     if name == known::resolve {
         if is_import_meta {
@@ -294,6 +292,35 @@ pub(crate) fn is_free_common_js(
     matches!(expr_kind(hir, e), Some(ExprKind::Ident(_)))
         && bound.binding(e) == Binding::CommonJs(variable)
         && !is_in_with_scope(bound, e)
+}
+
+/// The `module` of `module.require(..)`. Bun's transpiler prints `require(..)` there: the callee is the `require` of the file, and nothing reads `module`.
+pub fn find_module_printed_as_require(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    access: ExprId,
+) -> Option<ExprId> {
+    let (object, MemberKey::Name(known::require)) = hir.member_key(access)? else {
+        return None;
+    };
+    let module = hir.skip_type_assertions(object);
+    let is_link = hir
+        .expr_flags(access)
+        .contains(ExprFlags::OPTIONAL_CHAIN_LINK);
+    if is_link || !is_free_common_js(hir, bound, module, CommonJsVariable::Module) {
+        return None;
+    }
+    let mut callee = access;
+    loop {
+        let Parent::Expr(parent) = bound.parent_of_expr(callee) else {
+            return None;
+        };
+        match expr_kind(hir, parent)? {
+            ExprKind::Call(call) => return (hir[call].callee == callee).then_some(module),
+            _ if hir.type_assertion_operand(parent).is_some() => callee = parent,
+            _ => return None,
+        }
+    }
 }
 
 // The path of the file whose `require` a call goes through, if the file imports that `require`.

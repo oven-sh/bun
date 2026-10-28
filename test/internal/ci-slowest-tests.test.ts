@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { aotTests } from "../../scripts/buildkite.ts";
 import { isPhaseGroupHeader } from "../../scripts/ci-log-phase.mjs";
 import { parseLog } from "../../scripts/ci-slowest-tests";
-import { isAotTest, parseLog as parseDurations } from "../../scripts/update-test-durations.mjs";
+import { parseLog as parseDurations } from "../../scripts/update-test-durations.mjs";
 
 // Buildkite prefixes each line with an APC timestamp: ESC `_bk;t=<ms>` BEL.
 const bk = (ts: number, body: string) => `\x1b_bk;t=${ts}\x07${body}`;
@@ -155,6 +154,7 @@ describe("phase-header boundary", () => {
     [true, `--- napi prebuild: 3 addon(s), 23.9s`],
     [true, `--- [52-257/829] 206 files in parallel (3\u00d7)`],
     [true, `--- Running 444 parallel-safe tests (3-wide)`],
+    [true, `--- Running 217 programs compiled ahead of time (3-wide)`],
     [true, `--- End`],
     [true, `--- Summary`],
     [true, `--- Received SIGTERM, exiting...`],
@@ -167,12 +167,6 @@ describe("phase-header boundary", () => {
   ])("%p %s", (expected, body) => {
     expect(isPhaseGroupHeader(body)).toBe(expected);
   });
-});
-
-test("scripts/update-test-durations.mjs keeps the durations of everything that the test-aot steps run", () => {
-  expect(aotTests.filter(group => !isAotTest(`${group}x.test.ts`))).toEqual([]);
-  expect(isAotTest("internal/trim/features.test.ts")).toBe(true);
-  expect(isAotTest("bundler/bundler_compile.test.ts")).toBe(false);
 });
 
 test("what .buildkite/update-test-durations.yml runs with node imports no TypeScript", () => {
@@ -214,5 +208,27 @@ describe("scripts/update-test-durations.mjs parseLog", () => {
       ["test/js/node/test/parallel/p1.js", 3],
       ["test/js/node/test/parallel/p2.js", 500],
     ]);
+  });
+
+  test("does not charge the programs compiled ahead of time to the preceding test, and times none of them", () => {
+    // Many programs share a build, so a program's line has a share of that
+    // build's time. They stay out of the table and are dealt out evenly.
+    const log = [
+      bk(0, `--- ${gray("[1/4]")} test/last-serial.test.ts`),
+      bk(700, `--- Running 2 programs compiled ahead of time (3-wide)`),
+      bk(90000, `${gray("[2/4]")} test/aot/parallel/a.ts ${gray("(compile 1400 ms, run 14 ms)")}`),
+      bk(90001, `${gray("[3/4]")} test/aot/parallel/b/main.ts ${gray("(compile 1400 ms, run 9 ms)")}`),
+      bk(90100, `--- ${gray("[4/4]")} vendor/x/package.json`),
+      bk(90300, `--- End`),
+    ].join("\r\r\n");
+
+    expect(parseDurations(log)).toEqual([
+      ["test/last-serial.test.ts", 700],
+      ["vendor/x/package.json", 200],
+    ]);
+    expect(Object.fromEntries(parseLog(log))).toEqual({
+      "test/last-serial.test.ts": 700,
+      "vendor/x/package.json": 200,
+    });
   });
 });

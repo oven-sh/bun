@@ -2,7 +2,7 @@ use core::mem::size_of;
 use core::ops::Range;
 
 use crate::builtins::u32_at;
-use crate::cut_model::{CutCapacity, CutModel, NoCutReason};
+use crate::cut_model::{CutCapacity, CutModel, NoCutReason, SlotCosts};
 use crate::image::{
     AddressRange, Architecture, ExecutableFormat, ImageError, MappedSpan, merge_ranges,
     subtract_cuts,
@@ -13,6 +13,8 @@ use crate::pe::{
 use crate::{Error, read_struct, write_struct};
 
 const MAX_SECTIONS: usize = 96;
+// The hole, and the piece behind it.
+const SLOTS_FOR_A_CUT: usize = 2;
 const MIN_CUT_ALIGNMENT: u64 = 4096;
 const CERTIFICATE_TABLE_ALIGNMENT: u64 = 8;
 const REMOVED_SECTION_NAME: [u8; 8] = *b".trimmed";
@@ -76,23 +78,32 @@ pub(crate) fn cut_model(pe: &[u8]) -> CutModel {
     let (Ok(()), Some(first)) = (check(pe, &headers), headers.sections.first()) else {
         return CutModel::without_cuts(format, alignment, NoCutReason::HeadersUnreadable);
     };
-    let Ok(cuttable_spans) = find_cuttable_spans(pe, &headers) else {
+    let Ok(spans) = find_cuttable_spans(pe, &headers) else {
         return CutModel::without_cuts(format, alignment, NoCutReason::HeadersUnreadable);
     };
+    let (cuttable_spans, saved_at_ends): (Vec<AddressRange>, Vec<[usize; 2]>) =
+        spans.into_iter().unzip();
     let table_offset = headers.layout.section_headers_offset;
     let header_room = (first.virtual_address as usize).saturating_sub(table_offset);
     let slots = header_room / size_of::<SectionHeader>();
     let occupied_slots = headers.sections.len() + 1;
-    let free_slots = MAX_SECTIONS.min(slots).saturating_sub(occupied_slots) / 2;
-    match CutCapacity::from_free_slots(free_slots) {
-        CutCapacity::NoCuts(reason) => CutModel::without_cuts(format, alignment, reason),
-        capacity @ CutCapacity::Cuts(_) => CutModel {
-            format,
-            alignment,
-            capacity,
-            cuttable_spans,
-            spans_cut_only_at_end: Vec::new(),
-        },
+    let free_slots = MAX_SECTIONS.min(slots).saturating_sub(occupied_slots);
+    // A cut that touches a hole takes no slot.
+    let has_holes = headers.sections.iter().any(is_hole);
+    if free_slots < SLOTS_FOR_A_CUT && !has_holes {
+        return CutModel::without_cuts(format, alignment, NoCutReason::HeaderRoomExhausted);
+    }
+    CutModel {
+        format,
+        alignment,
+        capacity: CutCapacity::Cuts(free_slots / SLOTS_FOR_A_CUT),
+        cuttable_spans,
+        spans_cut_only_at_end: Vec::new(),
+        slot_costs: Some(SlotCosts {
+            free_slots,
+            slots_for_a_cut: SLOTS_FOR_A_CUT,
+            saved_at_ends,
+        }),
     }
 }
 
@@ -305,15 +316,59 @@ fn find_required_ranges(pe: &[u8], headers: &Headers) -> Result<Vec<AddressRange
     Ok(required)
 }
 
-fn find_cuttable_spans(pe: &[u8], headers: &Headers) -> Result<Vec<AddressRange>, Error> {
+fn is_hole(section: &SectionHeader) -> bool {
+    section.name == REMOVED_SECTION_NAME && section.size_of_raw_data == 0
+}
+
+/// Each span with the slots that a cut saves which begins where the span begins, and one which ends where it ends: at an end of
+/// its section no piece is left on that side, and a hole that lies there takes the cut in.
+fn find_cuttable_spans(
+    pe: &[u8],
+    headers: &Headers,
+) -> Result<Vec<(AddressRange, [usize; 2])>, Error> {
     let required = merge_ranges(find_required_ranges(pe, headers)?);
-    Ok(headers
-        .sections
-        .iter()
-        .filter(|section| section.size_of_raw_data > 0)
-        .filter(|section| section.characteristics & IMAGE_SCN_MEM_WRITE == 0)
-        .flat_map(|section| subtract_cuts(mapped_addresses(section), &required))
-        .collect())
+    let sections = &headers.sections;
+    let alignment = headers.optional.section_alignment;
+    let mut spans = Vec::new();
+    for (index, section) in sections.iter().enumerate() {
+        if section.size_of_raw_data == 0 || section.characteristics & IMAGE_SCN_MEM_WRITE != 0 {
+            continue;
+        }
+        let mapped = mapped_addresses(section);
+        let pages = u64::from(align_up_u32(effective_virtual_size(section), alignment)?);
+        let is_hole_at = |index: Option<usize>| {
+            index
+                .and_then(|index| sections.get(index))
+                .is_some_and(is_hole)
+        };
+        let saved_at_start = 1 + usize::from(is_hole_at(index.checked_sub(1)));
+        let saved_at_end = 1 + usize::from(is_hole_at(Some(index + 1)));
+        for span in subtract_cuts(mapped, &required) {
+            let begins_section = span.start == mapped.start;
+            let ends_section = span.end == mapped.start + pages;
+            spans.push((
+                span,
+                [
+                    usize::from(begins_section) * saved_at_start,
+                    usize::from(ends_section) * saved_at_end,
+                ],
+            ));
+        }
+    }
+    Ok(spans)
+}
+
+fn join_holes_that_touch(sections: &mut Vec<NewSection>) {
+    sections.dedup_by(|next, previous| {
+        let touch = is_hole(&previous.header)
+            && is_hole(&next.header)
+            && previous.header.virtual_address + previous.header.virtual_size
+                == next.header.virtual_address;
+        if touch {
+            previous.header.virtual_size += next.header.virtual_size;
+        }
+        touch
+    });
 }
 
 fn check_cuts(pe: &[u8], headers: &Headers, cuts: &[AddressRange]) -> Result<(), Error> {
@@ -350,6 +405,7 @@ fn create_new_sections(headers: &Headers, cuts: &[AddressRange]) -> Result<Vec<N
         new_sections[first_new_section..]
             .sort_unstable_by_key(|new_section| new_section.header.virtual_address);
     }
+    join_holes_that_touch(&mut new_sections);
     if new_sections.len() > MAX_SECTIONS - 1 {
         return Err(ImageError::TooManyCuts.into());
     }

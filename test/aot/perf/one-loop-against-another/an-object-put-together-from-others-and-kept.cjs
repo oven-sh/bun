@@ -1,7 +1,11 @@
-// An object that is put together from other objects, by spreads and as the rest of a pattern, and then kept, beside a literal with the same fields that is kept.
+// An object that is put together from other objects, by spreads and as the rest of a pattern, and then kept, beside a literal with the same fields that is kept. What the literal is
+// filled with is stored once more where it comes from: what the build knows of an object it reads from no object.
 const kept = [];
 const defaults = { host: "localhost", port: 80, secure: false };
 const given = { port: 8080, path: "/" };
+defaults.host = "localhost";
+given.port = 8080;
+given.path = "/";
 const record = { id: 7, name: "seven", secret: "x", age: 30 };
 const records = [
   { id: 6, name: "six", secret: "w", age: 20 },

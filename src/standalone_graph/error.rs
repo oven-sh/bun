@@ -20,6 +20,8 @@ pub enum Error {
     ImageMisaligned,
     #[error("Corrupted module graph: invalid compiled program record")]
     CorruptedCompiledProgram,
+    #[error("BUN_AOT_START_AT names no entry point that begins a program of its own")]
+    NoProgramToStartAt,
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
@@ -56,6 +58,9 @@ impl Error {
             }
             Self::ImageMisaligned => "ImageMisaligned",
             Self::CorruptedCompiledProgram => "CorruptedCompiledProgram",
+            Self::NoProgramToStartAt => {
+                "BUN_AOT_START_AT names no entry point that begins a program of its own"
+            }
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Http(e) => e.name(),

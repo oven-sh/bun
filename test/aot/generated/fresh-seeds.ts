@@ -8,7 +8,7 @@
 //
 // test/aot/fuzz/farm.py does the same without end, against several builds of Bun.
 import { test } from "bun:test";
-import { freshSeed } from "../fresh-seed";
+import { freshSeed } from "../harness/shares";
 import { generators, headingOf, program, python } from "./python-generators";
 import { generated } from "./run-generated";
 

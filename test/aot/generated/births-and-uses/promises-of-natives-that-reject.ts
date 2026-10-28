@@ -45,7 +45,8 @@ function describe(e/*: unknown*/)/*: string*/ {
     fileJson: 'Bun.file(bad ? "/dev/null" : "/proc/sys/kernel/pid_max").json()',
     fileBytes: 'Bun.file(bad ? "/no/such/file" : "/dev/null").arrayBuffer()',
     fileExistsThenText: 'Bun.file("/no/such/file").exists().then(is => (bad ? Bun.file("/no/such/file").text() : String(is)))',
-    write: 'Bun.write(bad ? "/no/such/folder/file" : "/dev/null", "x", { createPath: false })',
+    // No system makes a folder below a file. Below "/no" Windows lets a program make one.
+    write: 'Bun.write(bad ? process.execPath + "/folder/file" : "/dev/null", "x", { createPath: false })',
     readFile: 'readFile(bad ? "/no/such/file" : "/dev/null")',
     stat: 'stat(bad ? "/no/such/file" : "/dev/null")',
     open: 'open(bad ? "/no/such/file" : "/dev/null").then(handle => handle.close())',
@@ -87,7 +88,7 @@ function describe(e/*: unknown*/)/*: string*/ {
     secretsGet: 'Bun.secrets.get({ service: "a-test-of-bun-build-compile", name: "n" + (bad ? 1 : 0) })',
     udpSocket: 'Bun.udpSocket(bad ? { port: -1 } : {}).then(socket => (socket.close(), 1))',
     fileUnlink: 'Bun.file("/no/such/file" + n).unlink()',
-    fileWrite: 'Bun.file(bad ? "/no/such/folder/file" : "/dev/null").write("x")',
+    fileWrite: 'Bun.file(bad ? process.execPath + "/folder/file" : "/dev/null").write("x")',
     fileStat: 'Bun.file(bad ? "/no/such/file" : "/dev/null").stat()',
     blobText: 'new Blob([bad ? "{" : "{}"]).text().then(text => JSON.parse(text))',
     blobOfResponse: 'new Response(bad ? "{" : "{}").blob().then(blob => blob.json())',

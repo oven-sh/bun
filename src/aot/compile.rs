@@ -18,7 +18,7 @@ mod module_reach_tests;
 mod paths;
 mod program_reach;
 pub(crate) mod removable;
-mod runtime_reach;
+pub(crate) mod runtime_reach;
 #[cfg(test)]
 mod runtime_reach_tests;
 mod summary;
@@ -40,15 +40,20 @@ use self::import_graph::ImportGraph;
 use self::load_stage::AssetReads;
 use self::module_list::ListedModules;
 use self::program_reach::LeftOutCode;
-use self::runtime_reach::loads_modules_by_computed_names;
-use crate::builtins::{BuiltinId, BuiltinNames, Platforms, RuntimeModule, table};
+use self::runtime_reach::{HeldLibraryCode, KnownRegions, loads_modules_by_computed_names};
+use crate::builtins::table::RuntimeFunctionRole;
+use crate::builtins::{
+    BuiltinId, BuiltinNames, Platforms, RuntimeFunction, RuntimeModule, RuntimeUses, table,
+};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{
     Diagnostic, Diagnostics, InternalError, LoadMessages, ProgramView, ShownPosition,
     log_diagnostic_at,
 };
 use crate::emit::{ProgramBytes, emit_from, emit_with_external_bodies};
-use crate::engine::{self, EngineOptions, EngineRequest, EngineResult, feature_of, position_of};
+use crate::engine::{
+    self, EngineOptions, EngineRequest, EngineResult, builtin_of, feature_of, position_of,
+};
 use crate::ir::Program;
 use crate::ir::generated::{FeatureUseKind, UnseenCodeCause};
 use crate::known_helpers::KnownHelpers;
@@ -60,12 +65,12 @@ use crate::load::worker_files::WorkerFile;
 use crate::load::{PerProject, ProjectId, Sources, host_platform};
 use crate::module_list::{ImportTarget, ModuleInput, ModuleList};
 use crate::modules::{ApplicationGraph, DeferredData, ModuleGraph};
-use crate::options::{EntryText, Options, PathOptions};
+use crate::options::{EntryText, LibraryCode, LoadOptions, Options, PathOptions};
 use crate::report::{ModuleLocator, SourceTexts};
 use crate::statistics::{LimitId, LimitValues, Stage, StageClock, StatisticId, Statistics};
 use bun_ast::{Kind, Loader, Log, Msg};
 use bun_core::ZBox;
-use bun_options_types::aot_options::Preload;
+use bun_options_types::aot_options::{Preload, TargetPlatform};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::BuiltinTypeSymbols;
 use bun_sema::program::{FileId, Files};
@@ -115,6 +120,8 @@ pub struct Compilation {
     /// `summary.entry_points` lists all of them then, and `engine` is the program of the first.
     pub further_programs: Vec<EngineResult>,
     pub(crate) started_workers: StartedWorkers,
+    /// What of Bun's own code the programs use, by the word of the engine, and were handed over without.
+    library_code_lacked: RuntimeUses,
 }
 
 /// What the files that were loaded say about the code that their Workers start from. The later one holds of two loads together.
@@ -209,6 +216,7 @@ pub(crate) struct Build<'a> {
     leftovers: Vec<Leftovers>,
     // In ascending order.
     unreached_runtime_files: Vec<FileId>,
+    held_library_code: HeldLibraryCode,
     // Each with `QueryStatistics::closed_cycles`, which is not 0.
     circular_runtime_files: Vec<(FileId, u32)>,
     import_graph: Option<ImportGraph>,
@@ -276,8 +284,12 @@ pub(crate) struct LoadedBuild<'b, 's> {
     pub can_load_code_at_run_time: bool,
     /// It can for no other reason than that a loader is given a name that the build does not know.
     pub loads_code_by_unknown_names_alone: bool,
+    /// `RuntimeRoots::keeps_code_without_names`
+    pub keeps_library_code_without_names: bool,
     /// Waits until the plugins have answered for every asset. False: one of them is no asset, and the caller gives up.
     pub finish_asset_reads: &'b dyn Fn() -> bool,
+    /// What the load of Bun's own code has read off its files.
+    pub known_library_regions: &'b dyn Fn() -> Option<KnownRegions>,
 }
 
 pub(crate) struct BoundApplication<'b> {
@@ -312,6 +324,7 @@ struct FrontEndOutput {
     folders: Vec<FolderPaths>,
     modules: Option<ListedModules>,
     writes_preload: bool,
+    held_library_code: HeldLibraryCode,
 }
 
 impl FrontEndOutput {
@@ -343,7 +356,28 @@ impl<'b, 's> LoadedBuild<'b, 's> {
     }
 }
 
+/// The front end of `compile`: it starts over where `compile` does for a reason that the front end knows.
 pub fn link_program(
+    options: &Options<'_>,
+    provider: &dyn SourceProvider,
+    log: &mut Log,
+) -> Result<LinkedProgram, BuildFailed> {
+    let said_before = (log.msgs.len(), log.warnings, log.errors);
+    let linked = link_program_with_options(options, provider, log);
+    match &linked {
+        Err(failure) if starts_over_without_brought_types(&options.load, failure) => {}
+        Ok(_) | Err(_) => return linked,
+    }
+    log.msgs.truncate(said_before.0);
+    (log.warnings, log.errors) = (said_before.1, said_before.2);
+    provider.clear_embedded_files();
+    let all: Vec<usize> = (0..options.entry_points.len()).collect();
+    let mut options = options_with_entry_points(options, &all);
+    options.load.takes_runtime_as_any = true;
+    link_program_with_options(&options, provider, log)
+}
+
+fn link_program_with_options(
     options: &Options<'_>,
     provider: &dyn SourceProvider,
     log: &mut Log,
@@ -355,9 +389,18 @@ pub fn link_program(
         output.program.functions = body_remap.into_program_functions(&build.parallel_runner());
         output
     });
-    let (output, statistics) = build.finish(result, log)?;
+    let brought_bun_types = build.brings_bun_types;
+    let (output, statistics) = build.finish(result, log).map_err(|mut failure| {
+        failure.brought_bun_types = brought_bun_types;
+        failure
+    })?;
     let (program, summary) = output.into_parts(statistics);
     Ok(LinkedProgram { program, summary })
+}
+
+/// The declarations that a build brings along hold no program to what its project has not installed.
+fn starts_over_without_brought_types(load: &LoadOptions, failure: &BuildFailed) -> bool {
+    failure.brought_bun_types && !failure.is_internal_error && !load.takes_runtime_as_any
 }
 
 pub fn emit_program(
@@ -565,6 +608,117 @@ fn names(program: &EngineResult, feature: Feature) -> bool {
     })
 }
 
+// The engine follows values, so it sees what no name in a source tells.
+fn find_library_code_lacked(
+    engine: &EngineResult,
+    held: &HeldLibraryCode,
+    platform: Platforms,
+) -> RuntimeUses {
+    let used = engine.builtins_used().iter();
+    let used = used.filter_map(|record| builtin_of(record.builtin));
+    let mut needed = RuntimeUses::of_entries_used(used, platform);
+    // It has followed nothing, and keeps all that it was handed.
+    let has_followed_nothing = engine.unseen_code().iter().any(|record| {
+        matches!(
+            record.cause,
+            UnseenCodeCause::FlowResultDisabled | UnseenCodeCause::LimitReached
+        )
+    });
+    if has_followed_nothing {
+        needed.add(&RuntimeUses::of_unseen_code(platform));
+    }
+    // Where the host hands anything to anything, every function of the host counts as called. Such a program holds those that it names.
+    let holds_named_functions_of_host_alone = table::STARTUP_MODULES
+        .iter()
+        .all(|module| held.holds_module(*module) || needed.modules.contains(module));
+    let entered = engine.library_functions_lacked().iter();
+    let entered = entered.map(|record| RuntimeFunction(record.function));
+    let functions = entered.filter(|&function| {
+        table::runtime_function(function).is_some_and(|data| {
+            data.platforms.contains(platform)
+                && !(holds_named_functions_of_host_alone
+                    && data.role == RuntimeFunctionRole::HostBuiltin)
+        })
+    });
+    needed.add(&RuntimeUses {
+        functions: functions.collect(),
+        ..RuntimeUses::default()
+    });
+    held.find_lacked(&needed)
+}
+
+pub(crate) fn library_code_of(numbers: &LibraryCode) -> RuntimeUses {
+    let modules_of = |numbers: &[u32]| {
+        let modules = numbers.iter().copied();
+        modules
+            .filter_map(RuntimeModule::from_registry_id)
+            .collect()
+    };
+    let exports_read = numbers.exports_read.iter();
+    RuntimeUses {
+        modules: modules_of(&numbers.modules),
+        modules_read_whole: modules_of(&numbers.modules_read_whole),
+        exports_read: exports_read
+            .filter_map(|&(module, name)| Some((RuntimeModule::from_registry_id(module)?, name)))
+            .collect(),
+        functions: numbers
+            .functions
+            .iter()
+            .copied()
+            .map(RuntimeFunction)
+            .collect(),
+    }
+}
+
+fn numbers_of(code: &RuntimeUses) -> LibraryCode {
+    let numbers_of =
+        |modules: &[RuntimeModule]| modules.iter().map(|it| it.registry_id()).collect();
+    let exports_read = code.exports_read.iter();
+    LibraryCode {
+        modules: numbers_of(&code.modules),
+        modules_read_whole: numbers_of(&code.modules_read_whole),
+        exports_read: exports_read
+            .map(|&(module, name)| (module.registry_id(), name))
+            .collect(),
+        functions: code.functions.iter().map(|function| function.0).collect(),
+    }
+}
+
+fn find_load_options_to_compile_again_with(
+    options: &Options<'_>,
+    compiled: &Result<Compilation, BuildFailed>,
+) -> Option<LoadOptions> {
+    let mut load = options.load.clone();
+    let chooses_library_code_by_names = !load.keeps_library_code_without_names
+        && !load.omits_builtin_modules
+        && !options.aot.checks_only;
+    match compiled {
+        Err(failure) if starts_over_without_brought_types(&load, failure) => {
+            load.takes_runtime_as_any = true;
+        }
+        // Which of Bun's own code a program needs is a guess where a member is read by its name. The engine knows.
+        Ok(compiled)
+            if chooses_library_code_by_names && !compiled.library_code_lacked.is_empty() =>
+        {
+            let asked_before = library_code_of(&load.library_code_lacked);
+            let mut asked = asked_before.clone();
+            asked.add(&compiled.library_code_lacked);
+            // There is no such code to be had.
+            if asked == asked_before {
+                return None;
+            }
+            // What came along needs more, again and again.
+            load.keeps_library_code_without_names = !asked_before.is_empty();
+            load.library_code_lacked = numbers_of(&asked);
+        }
+        Err(failure) if failure.is_internal_error && chooses_library_code_by_names => {
+            load.keeps_library_code_without_names = true;
+        }
+        _ => return None,
+    }
+    Some(load)
+}
+
 pub fn compile(
     options: &Options<'_>,
     provider: &dyn SourceProvider,
@@ -572,18 +726,20 @@ pub fn compile(
 ) -> Result<Compilation, BuildFailed> {
     let said_before = (log.msgs.len(), log.warnings, log.errors);
     let runs_before = ENGINE_RUNS.get();
-    let mut compiled = match compile_with_options(options, provider, log) {
-        // The declarations that a build brings along hold no program to what its project has not installed.
-        Err(failure) if failure.brought_bun_types && !failure.is_internal_error => {
-            log.msgs.truncate(said_before.0);
-            (log.warnings, log.errors) = (said_before.1, said_before.2);
-            provider.clear_embedded_files();
-            let all: Vec<usize> = (0..options.entry_points.len()).collect();
-            let mut options = options_with_entry_points(options, &all);
-            options.load.takes_runtime_as_any = true;
-            compile_with_options(&options, provider, log)
-        }
-        compiled => compiled,
+    let mut changed: Option<Options<'_>> = None;
+    let mut compiled = loop {
+        let options = changed.as_ref().unwrap_or(options);
+        let compiled = compile_with_options(options, provider, log);
+        let Some(load) = find_load_options_to_compile_again_with(options, &compiled) else {
+            break compiled;
+        };
+        log.msgs.truncate(said_before.0);
+        (log.warnings, log.errors) = (said_before.1, said_before.2);
+        provider.clear_embedded_files();
+        let all: Vec<usize> = (0..options.entry_points.len()).collect();
+        let mut options = options_with_entry_points(options, &all);
+        options.load = load;
+        changed = Some(options);
     };
     if let Ok(compiled) = &mut compiled {
         let runs = ENGINE_RUNS.get() - runs_before;
@@ -954,6 +1110,7 @@ fn add_program(first: &mut Compilation, program: Compilation) {
         add_modules(listed, further);
     }
     first.started_workers.add(program.started_workers);
+    first.library_code_lacked.add(&program.library_code_lacked);
 }
 
 fn compile_written_entry_points(
@@ -1021,7 +1178,10 @@ fn compile_program_at_each_entry_point(
         for (place, program) in compiled.programs {
             match place {
                 ProgramPlace::Only => return Some(Ok(program)),
-                ProgramPlace::OneOfSeveral(_) if loads_modules_by_name(&program.engine) => {
+                ProgramPlace::OneOfSeveral(_)
+                    if !options.aot.separates_programs
+                        && loads_modules_by_name(&program.engine) =>
+                {
                     return None;
                 }
                 ProgramPlace::OneOfSeveral(index) => programs[index] = Some(program),
@@ -1043,7 +1203,10 @@ fn compile_program_at_each_entry_point(
         .iter()
         .any(|program| names(&program.engine, Feature::NodeWorker));
     let lacks_module = |program: &Compilation| !names(&program.engine, Feature::WorkerConstructor);
-    if starts_node_workers && programs[1..].iter().any(lacks_module) {
+    if !options.aot.separates_programs
+        && starts_node_workers
+        && programs[1..].iter().any(lacks_module)
+    {
         return None;
     }
     let mut programs = programs.into_iter();
@@ -1197,6 +1360,7 @@ fn compile_programs<'a>(
         }
     }
     let mut compiled = Vec::with_capacity(outputs.len());
+    let mut library_code_lacked = RuntimeUses::default();
     for (place, output) in outputs {
         build.place = place;
         let emitted = build
@@ -1210,6 +1374,8 @@ fn compile_programs<'a>(
             engine_options.check_only();
         }
         let engine = build.run_engine(bytes, &engine_options, &output);
+        let held = &output.held_library_code;
+        library_code_lacked.add(&find_library_code_lacked(&engine, held, build.platform));
         if let Some(modules) = &mut output.modules {
             modules.count_code(engine.functions(), &output.names);
         }
@@ -1274,6 +1440,7 @@ fn compile_programs<'a>(
         }
     }
     let mut started_workers = Some(started_workers);
+    let mut library_code_lacked = Some(library_code_lacked);
     build.clock.add_to(&mut build.statistics);
     build.diagnostics.write_to(log);
     let statistics = build.statistics;
@@ -1287,6 +1454,7 @@ fn compile_programs<'a>(
                 further_programs: Vec::new(),
                 // Of all that was loaded.
                 started_workers: started_workers.take().unwrap_or_default(),
+                library_code_lacked: library_code_lacked.take().unwrap_or_default(),
             };
             (place, compilation)
         })
@@ -1400,7 +1568,12 @@ impl<'a> Build<'a> {
             provider,
             caches,
             threads: options.thread_count(),
-            platform: host_platform(),
+            platform: match options.aot.platform {
+                None => host_platform(),
+                Some(TargetPlatform::Darwin) => Platforms::DARWIN,
+                Some(TargetPlatform::Linux) => Platforms::LINUX,
+                Some(TargetPlatform::Windows) => Platforms::WINDOWS,
+            },
             limits,
             diagnostics: Diagnostics::new(),
             clock: StageClock::new(),
@@ -1408,6 +1581,7 @@ impl<'a> Build<'a> {
             retired_sessions: Vec::new(),
             leftovers: Vec::new(),
             unreached_runtime_files: Vec::new(),
+            held_library_code: HeldLibraryCode::default(),
             circular_runtime_files: Vec::new(),
             import_graph: None,
             checked_elsewhere: Vec::new(),
@@ -1463,6 +1637,7 @@ impl<'a> Build<'a> {
                 (build.programs).is_some_and(|programs| programs.held_elsewhere.is_some());
             if build.place != ProgramPlace::Only
                 && !begins_at_worker_file
+                && !build.options.aot.separates_programs
                 && loads_modules_by_computed_names(application, &bound.projects.application.graph)
             {
                 build.is_one_program = true;

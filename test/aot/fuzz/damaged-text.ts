@@ -62,7 +62,7 @@ const tsconfig = JSON.stringify({ compilerOptions: { target: "esnext", module: "
 
 if (import.meta.main) {
   const option = (name: string, otherwise: string) => (process.argv.includes("--" + name) ? process.argv[process.argv.indexOf("--" + name) + 1] : otherwise);
-  const out = option("out", "/tmp/damaged-text"), bun = option("bun", process.execPath), root = option("programs-root", join(import.meta.dir, "..", "programs")), only = option("only", ""); // prettier-ignore
+  const out = option("out", "/tmp/damaged-text"), bun = option("bun", process.execPath), root = option("programs-root", join(import.meta.dir, "..", "parallel")), only = option("only", ""); // prettier-ignore
   const jobs = Number(option("jobs", "8")), files = Number(option("files", "24")), end = Date.now() + Number(option("seconds", "60")) * 1000; // prettier-ignore
   let seed = Number(option("seed", String(Date.now())));
   const programs = (readdirSync(root, { recursive: true }) as string[]).filter(name => /\.(ts|tsx|js|mts|cts)$/.test(name) && !name.endsWith(".d.ts")).sort().map(name => join(root, name)); // prettier-ignore

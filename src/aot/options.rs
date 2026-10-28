@@ -32,6 +32,16 @@ pub struct RemovableOptions {
     pub jsx_has_side_effects: bool,
 }
 
+/// Modules and functions of Bun's own code, by their numbers.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct LibraryCode {
+    pub modules: Vec<u32>,
+    /// Those of `modules` off which any export may be read.
+    pub modules_read_whole: Vec<u32>,
+    pub exports_read: Vec<(u32, &'static str)>,
+    pub functions: Vec<u32>,
+}
+
 #[derive(Clone, Debug)]
 pub struct LoadOptions {
     pub project_root: Vec<u8>,
@@ -48,6 +58,10 @@ pub struct LoadOptions {
     pub runs_tests: bool,
     /// What the run time provides is of type `any` where `@types/bun` is not installed.
     pub takes_runtime_as_any: bool,
+    /// What of Bun's own code an earlier compile of the same program lacked, by the word of the engine.
+    pub library_code_lacked: LibraryCode,
+    /// The program holds all of Bun's own code that can be got at without a name that the build sees.
+    pub keeps_library_code_without_names: bool,
 }
 
 /// Code that the program holds as a text and starts a Worker with.
@@ -111,6 +125,8 @@ impl LoadOptions {
             omits_builtin_modules: false,
             runs_tests: false,
             takes_runtime_as_any: false,
+            library_code_lacked: LibraryCode::default(),
+            keeps_library_code_without_names: false,
         }
     }
 }

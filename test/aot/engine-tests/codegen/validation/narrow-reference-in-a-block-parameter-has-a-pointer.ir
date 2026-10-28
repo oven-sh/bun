@@ -1,0 +1,316 @@
+# interface Bag { table: ReadonlyMap<string, number>; size: number; label: string }   interface Request { options: Options; port: number; host: string }   bags.push(makeBag(table, i, ..)); requests.push(makeRequest(i & 1 ? {} : { retries: i }, i, ..))
+# A typed object keeps most references in 32 bits. Where compiled code holds such a reference over a place where the collector can run, the pointer to the cell stands beside it
+# FORM: AsRead
+# OPTIONS: references=narrow check=validate-reference-guards
+# RUN: compile
+# STATISTIC: NarrowReferenceGuards >= 1
+# CHECK: image not empty
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Bag" module=m0 fields=[{key="label" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="size" declared={type=number} flags=[IsRequired]}, {key="table" declared={type=undefined|null|Map<undefined|null|string, number> flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[2, 1, 0]
+layout L1 name="Request" module=m0 fields=[{key="host" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="options" declared={type=undefined|null|number|string|symbol|bigint|L2 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="port" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 2, 0]
+layout L2 name="Options" module=m0 fields=[{key="retries" declared={type=undefined|number}}, {key="verbose" declared={type=undefined|boolean} flags=[IsNeverWritten]}]
+data d0 root=Array{contents=anything elements=[Array{contents=undefined|null|number|string elements=[String{value="a"}, Number{value=1}]}]} module=m0
+data d1 root=Array{contents=undefined|null|L0} module=m0
+data d2 root=Array{contents=undefined|null|L1} module=m0
+data d3 root=Object{layout=L2} module=m0
+
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = Builtin builtin=JSON
+    v9 = PropGet v8 key="parse"
+    v10 = Convert v9 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="input" [isFreeName]
+    v13 = TypeTest v12 testedType=undefined|null
+    Branch v13 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v14):
+    Jump -> next b3()
+  b3():
+    v15 = String string="null"
+    Jump -> next b5(v15)
+  b4(v16):
+    Jump -> next b5(v16)
+  b5(v17):
+    v18 = Call v10, v8, v17 calleeKey="parse" calleeName="JSON.parse"
+    v19 = NewArray v5, v7 contents=undefined|null|f7
+    v20 = Convert v19 declared={type=undefined|null|Array<undefined|null|f7> flags=[OmitsNull, OmitsUndefined]}
+    v21 = IteratorOpen v20
+    Jump -> next b6()
+  b6():
+    LoopHint
+    v23 = IteratorResume v21
+    v24 = ResultAt v23
+    v25 = ResultAt v23 index=1
+    Branch v24 -> taken b7(), notTaken b41()
+  b7():
+    v26 = Builtin builtin=Map
+    v27 = Data data=d0
+    v28 = Construct v26, -, v27 calleeName="Map"
+    v29 = Convert v28 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v30 = Data data=d1
+    v31 = Convert v30 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}
+    v32 = Data data=d2
+    v33 = Convert v32 declared={type=undefined|null|Array<undefined|null|L1> flags=[OmitsNull, OmitsUndefined]}
+    v34 = Integer
+    v35 = Convert v34 declared={type=number}
+    Jump -> next b8(v35)
+  b8(v36: number):
+    LoopHint
+    v38 = Convert v36 declared={type=i32 flags=[IsExpected]}
+    v39 = Integer integer=300
+    v40 = Less v38, v39
+    Branch v40 -> taken b9(| 0), notTaken b27(| 0)
+  b9(v41):
+    Jump -> next b10()
+  b10():
+    v42 = PropGet v31 key="push"
+    v43 = Convert v41 declared={type=i32 flags=[IsExpected]}
+    v44 = Integer integer=1
+    v45 = BitAnd v43, v44
+    v46 = ToBoolean v45
+    Branch v46 -> taken b11(| 0), notTaken b13(| 0)
+  b11(v47):
+    Jump -> next b12()
+  b12():
+    v48 = String string="ab"
+    Jump -> next b15(v48)
+  b13(v49):
+    Jump -> next b14()
+  b14():
+    v50 = String string="abc"
+    Jump -> next b15(v50)
+  b15(v51):
+    v52 = Call v1, -, v29, v43, v51 calleeName="makeBag"
+    v53 = Convert v52 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v54 = Call v42, v31, v53 calleeKey="push" calleeName="bags.push"
+    v55 = Convert v54 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v56 = PropGet v33 key="push"
+    v57 = Integer integer=1
+    v58 = BitAnd v43, v57
+    v59 = ToBoolean v58
+    Branch v59 -> taken b16(| 0), notTaken b18(| 0)
+  b16(v60):
+    Jump -> next b17()
+  b17():
+    v61 = Data data=d3
+    Jump -> next b20(v61)
+  b18(v62):
+    Jump -> next b19()
+  b19():
+    v63 = Convert v43 declared={type=undefined|number}
+    v64 = NewObject -, v63 layout=L2 fields=[0]
+    v65 = FinishObject v64
+    Jump -> next b20(v65)
+  b20(v66):
+    v67 = Integer integer=1
+    v68 = BitAnd v43, v67
+    v69 = ToBoolean v68
+    Branch v69 -> taken b21(| 0), notTaken b23(| 0)
+  b21(v70):
+    Jump -> next b22()
+  b22():
+    v71 = String string="ab"
+    Jump -> next b25(v71)
+  b23(v72):
+    Jump -> next b24()
+  b24():
+    v73 = String string="abc"
+    Jump -> next b25(v73)
+  b25(v74):
+    v75 = Call v3, -, v66, v43, v74 calleeName="makeRequest"
+    v76 = Convert v75 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    v77 = Call v56, v33, v76 calleeKey="push" calleeName="requests.push"
+    v78 = Convert v77 declared={type=number} illTypedCause=DeclarationWithoutBody
+    Jump -> next b26()
+  b26():
+    v79 = Increment v43
+    v80 = Convert v79 declared={type=number}
+    Jump -> next b8(v80)
+  b27(v81):
+    Jump -> next b28()
+  b28():
+    v82 = Integer
+    v83 = Convert v82 declared={type=number}
+    v84 = Integer
+    v85 = Convert v84 declared={type=number}
+    Jump -> next b29(v83, v85)
+  b29(v86: number, v87: number):
+    LoopHint
+    v89 = Integer integer=20
+    v90 = Less v87, v89
+    Branch v90 -> taken b30(| 0), notTaken b39(| 0)
+  b30(v91):
+    Jump -> next b31()
+  b31():
+    v92 = Integer
+    v93 = Convert v92 declared={type=number}
+    Jump -> next b32(v86, v93)
+  b32(v94: number, v95: number):
+    LoopHint
+    v97 = Convert v95 declared={type=i32 flags=[IsExpected]}
+    v98 = Integer integer=300
+    v99 = Less v97, v98
+    Branch v99 -> taken b33(| 0), notTaken b36(| 0)
+  b33(v100):
+    Jump -> next b34()
+  b34():
+    v101 = Convert v100 declared={type=i32 flags=[IsExpected]}
+    v102 = ElemGet v31, v101
+    v103 = Convert v102 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v104 = Call v5, -, v103 calleeName="readBag"
+    v105 = Convert v104 declared={type=number}
+    v106 = ElemGet v33, v101
+    v107 = Convert v106 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v108 = Call v7, -, v107 calleeName="readRequest"
+    v109 = Convert v108 declared={type=number}
+    v110 = Add v105, v109
+    v111 = Add v94, v110
+    v112 = Convert v111 declared={type=number}
+    Jump -> next b35()
+  b35():
+    v113 = Increment v101
+    v114 = Convert v113 declared={type=number}
+    Jump -> next b32(v112, v114)
+  b36(v115):
+    Jump -> next b37()
+  b37():
+    Jump -> next b38()
+  b38():
+    v116 = Increment v91
+    v117 = Convert v116 declared={type=number}
+    Jump -> next b29(v94, v117)
+  b39(v118):
+    Jump -> next b40()
+  b40():
+    v119 = Builtin builtin=GlobalThis
+    v120 = PropGet v119 key="print" [isFreeName]
+    v121 = Builtin builtin=Object
+    v122 = Builtin builtin=ObjectKeys
+    v123 = Integer integer=3
+    v124 = ElemGet v31, v123
+    v125 = Convert v124 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v126 = Call v122, v121, v125 calleeName="Object.keys"
+    v127 = Convert v126 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v128 = PropGet v127 key="join"
+    v129 = Call v128, v127 calleeKey="join" calleeName="join"
+    v130 = Convert v129 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v131 = Builtin builtin=JSON
+    v132 = PropGet v131 key="stringify"
+    v133 = Convert v132 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v134 = Integer integer=4
+    v135 = ElemGet v33, v134
+    v136 = Convert v135 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v137 = Call v133, v131, v136 calleeKey="stringify" calleeName="JSON.stringify"
+    v138 = Convert v137 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v139 = Integer integer=5
+    v140 = ElemGet v31, v139
+    v141 = Convert v140 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v142 = PropGet v141 key="table"
+    v143 = PropGet v142 key="get"
+    v144 = String string="a"
+    v145 = Call v143, v142, v144 calleeKey="get" calleeName="bags[5].table.get"
+    v146 = Convert v145 declared={type=undefined|number} illTypedCause=FromLooseType
+    v147 = Call v120, -, v86, v130, v138, v146 calleeName="print"
+    v148 = Undefined
+    Return v148
+  b41():
+    Jump -> next b42()
+  b42() handler=b47():
+    v149 = Convert v25 declared={type=undefined|null|f7 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    Jump -> next b43()
+  b43() handler=b45():
+    v150 = Builtin builtin=GlobalThis
+    v151 = PropGet v150 key="print" [isFreeName]
+    v152 = Call v149, -, v18 calleeName="read"
+    v153 = Convert v152 declared={type=number}
+    v154 = Call v151, -, v153 calleeName="print"
+    Jump -> next b44()
+  b44() handler=b47():
+    Jump -> next b46()
+  b45() role=CatchHandler handler=b47():
+    v155 = CatchValue
+    v156 = Builtin builtin=GlobalThis
+    v157 = PropGet v156 key="print" [isFreeName]
+    v158 = String string="threw"
+    v159 = Call v157, -, v158 calleeName="print"
+    Jump -> next b46()
+  b46() handler=b47():
+    Jump -> next b6()
+  b47() role=IterationCleanup subject=v21:
+    v160 = CatchException
+    IteratorClose v21 completion=Throw
+    Rethrow v160
+}
+
+function f1 name="makeBag" module=m0 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] {
+  b0(v0: undefined|null|Map<undefined|null|string, number>, v1: number, v2: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    v3 = Convert v0 declared={type=undefined|null|Map<undefined|null|string, number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v4 = NewObject layout=L0
+    PropDefine v4, v3 key="table"
+    v6 = Convert v1 declared={type=number}
+    PropDefine v4, v6 key="size"
+    v8 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    PropDefine v4, v8 key="label"
+    v10 = FinishObject v4
+    v11 = Convert v10 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    Return v11
+}
+
+function f2 name="makeRequest" module=m0 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L2 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=number}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L2, v1: number, v2: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    v3 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|L2 flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v4 = NewObject layout=L1
+    PropDefine v4, v3 key="options"
+    v6 = Convert v1 declared={type=number}
+    PropDefine v4, v6 key="port"
+    v8 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    PropDefine v4, v8 key="host"
+    v10 = FinishObject v4
+    v11 = Convert v10 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    Return v11
+}
+
+function f3 name="readBag" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] functionTypes=[f5] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="size"
+    v2 = PropGet v0 key="label"
+    v3 = PropGet v2 key="length"
+    v4 = Convert v3 declared={type=number} illTypedCause=Assertion
+    v5 = Add v1, v4
+    v6 = Convert v5 declared={type=number}
+    Return v6
+}
+
+function f4 name="readRequest" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] functionTypes=[f6] {
+  b0(v0: undefined|null|L1):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="port"
+    v2 = PropGet v0 key="host"
+    v3 = PropGet v2 key="length"
+    v4 = Convert v3 declared={type=number} illTypedCause=Assertion
+    v5 = Add v1, v4
+    v6 = Convert v5 declared={type=number}
+    Return v6
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f7]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f7]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

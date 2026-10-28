@@ -327,9 +327,9 @@ function defineWrongEntryTests(): void {
 }
 
 function defineDescriptionTests(): void {
-  const programs = join(import.meta.dir, "../programs/builtin-modules");
+  const programs = join(import.meta.dir, "../parallel/builtin-modules");
   describe("the processes that make the calls describe a rejected value without running code of the program:", () => {
-    for (const program of ["rejected-argument-description", "rejected-argument-whose-fields-nobody-reads"]) {
+    for (const program of ["rejected-argument-description", "rejected-argument-fields-nobody-reads"]) {
       test(program, async () => {
         await using run = Bun.spawn({
           cmd: [

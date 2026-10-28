@@ -30,7 +30,7 @@ closure_call_fewer_arguments	{"alone":[7.25,3.5],"opened":[2,1]}
 closure_call_field	{"alone":[19,4],"opened":[12,1]}
 closure_call_many	{"alone":[5.625,1.5],"opened":[2,1]}
 closure_call_own_property	{"alone":[1,1],"opened":[2,1]}
-closure_call_six_arguments	{"alone":[6.875,2.25],"opened":[7,1]}
+closure_call_six_arguments	{"alone":[9,3],"opened":[7,1]}
 closure_call_two	{"alone":[1.75,0.5],"opened":[2,1]}
 concat2	{"alone":[3,1],"opened":[9,2]}
 concat2_read	{"alone":[3,1],"opened":[9,2]}
@@ -41,7 +41,7 @@ direct_call_string	{"alone":[-24.75,-0.5],"opened":[-28.75,-0.5]}
 field_add_assign	{"alone":[4,0],"opened":[4,0]}
 field_increment	{"alone":[4,0],"opened":[4,0]}
 field_read	{"alone":[1,0],"opened":[3,0]}
-field_read_any	{"alone":[1,0],"opened":[11,0]}
+field_read_any	{"alone":[1,0],"opened":[10,1]}
 field_read_any_twin	{"alone":[3,0],"opened":[8,0]}
 field_read_builtin_parent	{"alone":[4,1],"opened":[5,2]}
 field_read_int	{"alone":[2,0],"opened":[2,0]}

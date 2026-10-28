@@ -1,7 +1,7 @@
 """What makes the farm's programs. A producer turns a seed into a program, and the same seed always gives the same program.
 
     generated:<name>[:<language>]   test/aot/generated/python/<name>.py <seed>
-    mutated:ts | mutated:js         a program of test/aot/programs, changed a little (the mutations of mutated-programs-same-output.test.ts)
+    mutated:ts | mutated:js         a program of test/aot/parallel, changed a little (the mutations of mutated-programs-same-output.test.ts)
     untyped:<name>                  the programs of a TypeScript generator after plain Bun has taken the types out
     border:ts                       the same programs with a statement inserted that does to an object in scope what untyped code may do to it
 """
@@ -229,7 +229,7 @@ class Mutator:
         self.extension, self.farm, self.border = extension, farm, border
         self.name = ("border:" if border else "mutated:") + extension
         self.weight = 12.0 if not border else 8.0
-        self.root = os.path.join(tests, "programs")
+        self.root = os.path.join(tests, "parallel")
         self.programs = []
         for folder, _, names in sorted(os.walk(self.root)):
             if any(n.startswith("main.") for n in names):
@@ -260,11 +260,11 @@ class Mutator:
 
 
 class Corpus:
-    """The programs of test/aot/programs as they are, built where they lie."""
+    """The programs of test/aot/parallel as they are, built where they lie."""
 
     def __init__(self, tests):
         self.name, self.weight = "corpus:programs", 12.0
-        self.root = os.path.join(tests, "programs")
+        self.root = os.path.join(tests, "parallel")
         self.programs = []
 
         def find(folder):

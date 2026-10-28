@@ -1,7 +1,7 @@
 // One program for each column kind that the row decoder of sql<Row[]> knows. Each declares the column as many field types, required and optional,
 // and prints every row: it reads as in plain Bun whether it was decoded into a typed object, converted in place or left a plain object.
 // One program for each of three widths of a table: the row decoder keeps the values of up to 64 columns on the stack and those of a wider row in a rooted buffer.
-// The stand-in Postgres is the one of ../programs/data-from-outside/sql-typed-rows.ts.
+// The stand-in Postgres is the one of ../parallel/external-data/sql-typed-rows.ts.
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -58,7 +58,7 @@ const fieldTypes = [
 export const columnKinds = Object.keys(values);
 
 function firstLines() {
-  const source = readFileSync(join(import.meta.dir, "..", "programs", "data-from-outside", "sql-typed-rows.ts"), "utf8");
+  const source = readFileSync(join(import.meta.dir, "..", "parallel", "external-data", "sql-typed-rows.ts"), "utf8");
   return [
     source.slice(source.indexOf('import { SQL } from "bun";'), source.indexOf("interface Comment {")),
     `function show(what: string, rows: unknown[]): void {

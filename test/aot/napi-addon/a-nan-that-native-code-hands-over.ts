@@ -1,6 +1,7 @@
 // A NaN that native code hands over has no payload. Each way by which a number comes out of native code or out of bytes gets twelve patterns of bits,
 // and what it gives goes into fields that keep a number beside undefined, null and nothing.
-// bun:ffi makes machine code for what it opens, which an executable may be refused. A way that is refused prints one line, and $REFUSED holds the lines of another run, whose ways are left out here too.
+// cc() of bun:ffi makes machine code, which an executable may be refused, and some builds have no cc(). That way alone may print one line for its numbers, and only for the error that says so:
+// whatever else a way throws ends the program. $REFUSED holds such a line of another run, whose way is left out here too.
 import { cc, dlopen, JSCallback, ptr, read } from "bun:ffi";
 import { deserialize, serialize } from "bun:jsc";
 import { join } from "path";
@@ -136,13 +137,24 @@ function hold(v: number, turn: number) {
 }
 const bitsOf = (v: number) => new BigUint64Array(new Float64Array([v]).buffer)[0]!.toString(16);
 const refusedElsewhere = (process.env.REFUSED ?? "").split("\n");
-for (const [name, take] of Object.entries(outOfNativeCode)) {
-  const refused = "REFUSED " + name;
+const saysThatThereIsNoCompiler = (error: unknown) =>
+  error instanceof Error &&
+  ((error as Error & { code?: string }).code === "ERR_FFI_CC_DISABLED" ||
+    error.message.includes("cc() is not available in this build"));
+function isRefused(name: string, take: (bits: bigint) => number) {
+  if (name !== "bun:ffi cc()") return false;
+  if (refusedElsewhere.includes("REFUSED " + name)) return true;
   try {
-    if (refusedElsewhere.includes(refused)) throw new Error(refused);
     take(patterns[0]!);
-  } catch {
-    console.log(refused);
+    return false;
+  } catch (error) {
+    if (!saysThatThereIsNoCompiler(error)) throw error;
+    return true;
+  }
+}
+for (const [name, take] of Object.entries(outOfNativeCode)) {
+  if (isRefused(name, take)) {
+    console.log("REFUSED " + name);
     continue;
   }
   patterns.forEach((bits, turn) => {

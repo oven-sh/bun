@@ -1044,7 +1044,7 @@ fn needs_wrapped_body(text: &Text<'_, '_>) -> bool {
 /// What the text of a file says of the exports of the file and of the modules that are written in it.
 pub(super) fn scan_own_text(input: &ScanInput<'_, '_, '_>) -> Vec<OwnText> {
     let text = input.text;
-    let may_replace_require = text.places.may_replace(CommonJsVariable::Require);
+    let may_replace_require = text.places.may_replace_require();
     let create_scan = |module: ModuleRef, body: CodeUnit| Scan {
         input,
         text,

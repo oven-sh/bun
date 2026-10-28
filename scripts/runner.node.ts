@@ -34,7 +34,6 @@ import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
-import { drawsShares, units as partsOfOneTestFile, unitsThatOnlyDraw } from "../test/aot/parts.mts";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
 import {
   getAbi,
@@ -52,7 +51,6 @@ import {
   tmpdir,
   which,
 } from "./agent.ts";
-import { mustRunSomething, parseSample, pickDrawnTests, pickTestsWithSomethingFor } from "./aot-tests.ts";
 import {
   escapeCodeBlock,
   escapeHtml,
@@ -264,6 +262,7 @@ const jobBudgetMs = () => {
   if (!Number.isFinite(minutes) || minutes <= 0) return Infinity;
   return minutes * 60_000 - (Date.now() - runnerStartedAt);
 };
+const aotDriver = "test/aot/run-parallel.ts";
 const spawnTimeout = 5_000;
 const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
@@ -344,36 +343,6 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["smoke"]: {
       type: "string",
-      default: undefined,
-    },
-    /** Of the tests that are left after --include and --exclude, one in this many: others for each commit, or for each --aot-sample. */
-    ["one-in"]: {
-      type: "string",
-      default: undefined,
-    },
-    /**
-     * `fixed`: the tests take only what is the same on every commit (AOT_TAKES in test/aot/run-programs.ts), and those that
-     * have nothing of the kind are left out. `drawn`: only the tests that take a share by the commit, and only that share.
-     */
-    ["aot-takes"]: {
-      type: "string",
-      default: undefined,
-    },
-    /** What the draws go by in place of the commit, as `<revision>` or `<revision>+<number of the share>`: --one-in here, and the shares of programs in test/aot (AOT_SHARE). */
-    ["aot-sample"]: {
-      type: "string",
-      default: undefined,
-    },
-    /** These are run whatever --one-in draws. */
-    ["always-draw"]: {
-      type: "string",
-      multiple: true,
-      default: undefined,
-    },
-    /** One of these fails if it runs no test: each was skipped, or there was none. */
-    ["must-run"]: {
-      type: "string",
-      multiple: true,
       default: undefined,
     },
     ["vendor"]: {
@@ -840,8 +809,6 @@ async function runTests(): Promise<TestResult[]> {
   const flakyResultsTitles: string[] = [];
   const failedResults: TestResult[] = [];
   const failedResultsTitles: string[] = [];
-  const maxAttempts = 1 + (parseInt(options.retries) || 0);
-
   const parallelism = options.parallel ? availableParallelism() : 1;
   console.log("parallelism", parallelism);
   const limit = createLimit(parallelism);
@@ -882,6 +849,7 @@ async function runTests(): Promise<TestResult[]> {
     title: string,
     fn: (index: number) => Promise<TestResult>,
     concurrent = parallelism > 1,
+    maxAttempts = 1 + (parseInt(options.retries) || 0),
   ): Promise<TestResult | undefined> => {
     const index = ++i;
 
@@ -1344,6 +1312,129 @@ async function runTests(): Promise<TestResult[]> {
       }
     };
 
+    type AotOutput = { exitCode: number | null; signal: string | null; stdout: string; stderr: string };
+    type AotDriverLine =
+      | { file: string; state: "compiling" }
+      | { file: string; state: "pass"; compileMs: number; runMs: number; plainMs: number }
+      | { file: string; state: "fail"; stage: string; message: string; expected?: AotOutput; actual?: AotOutput }
+      | { file: string; state: "skip"; message: string };
+    type AotVerdict = Exclude<AotDriverLine, { state: "compiling" }>;
+
+    /** One process compiles `files`, runs each program and plain Bun on the same file, and prints a line of JSON for each. */
+    const runAotDriver = async (files: string[]) => {
+      const verdicts = new Map<string, AotVerdict>();
+      const started = new Set<string>();
+      const byPath = new Map(files.map(testPath => [join(testsPath, testPath), testPath]));
+      const folder = mkdtempSync(join(tmpdir(), "aot-programs-"));
+      const list = join(folder, "files.txt");
+      writeFileSync(list, [...byPath.keys()].join("\n") + "\n");
+      let unfinishedLine = "";
+      const { error, exitCode, crashes } = await spawnBun(execPath, {
+        args: [aotDriver, `--jobs=${parallelSafeWidth}`, `--files-from=${list}`],
+        cwd,
+        timeout: Math.max(60_000, Math.min(60 * 60_000, jobBudgetMs() - 5 * 60_000)),
+        idleTimeout: 4 * 60_000,
+        stdout: chunk => {
+          const lines = (unfinishedLine + chunk).split("\n");
+          unfinishedLine = lines.pop()!; // split() returns at least one element
+          for (const text of lines) {
+            if (!text.trim()) continue;
+            const line = JSON.parse(text) as AotDriverLine;
+            const testPath = byPath.get(line.file);
+            if (testPath === undefined) throw new Error(`${aotDriver} reported a file it was not given: ${line.file}`);
+            if (line.state === "compiling") started.add(testPath);
+            else verdicts.set(testPath, line);
+          }
+        },
+        stderr: pipeTestStdout(process.stderr),
+      });
+      rmSync(folder, { recursive: true, force: true });
+      return {
+        verdicts,
+        unfinished: [...started].filter(testPath => !verdicts.has(testPath)),
+        died: exitCode !== 0 && exitCode !== 1 ? `${error ?? `exit code ${exitCode}`}${crashes ?? ""}` : undefined,
+      };
+    };
+
+    const describeAotOutput = (title: string, output: AotOutput | undefined) =>
+      output === undefined
+        ? []
+        : [
+            `${title}: ${output.signal ?? `exit code ${output.exitCode}`}`,
+            output.stdout.trimEnd(),
+            output.stderr.trimEnd(),
+          ].filter(Boolean);
+
+    const reportAotProgram = (testPath: string, verdict: AotVerdict) => {
+      const title = join("test", testPath).replaceAll("\\", "/");
+      const result: TestResult = {
+        testPath: title,
+        ok: true,
+        status: "pass",
+        tests: [],
+        errors: [],
+        stdout: "",
+        stdoutPreview: "",
+      };
+      if (verdict.state === "skip") {
+        console.log(`${getAnsi("gray")}[${++i}/${total}] ${title} - skipped: ${verdict.message}${getAnsi("reset")}`);
+        okResults.push({ ...result, status: "skip" });
+        return;
+      }
+      if (verdict.state === "pass") {
+        const timing = `(compile ${verdict.compileMs} ms, run ${verdict.runMs} ms)`;
+        console.log(
+          `${getAnsi("gray")}[${++i}/${total}]${getAnsi("reset")} ${title} ${getAnsi("gray")}${timing}${getAnsi("reset")}`,
+        );
+        okResults.push({ ...result, duration: verdict.compileMs + verdict.runMs + verdict.plainMs });
+        return;
+      }
+      const stdout = [
+        `bun ${aotDriver} ${title}`,
+        "",
+        ...describeAotOutput(`expected, from bun ${title}`, verdict.expected),
+        ...describeAotOutput("actual, compiled ahead of time", verdict.actual),
+      ].join("\n");
+      const failure = {
+        ...result,
+        ok: false,
+        status: "fail",
+        error: `${verdict.stage}: ${verdict.message}`,
+        stdout,
+        stdoutPreview: stdout + "\n",
+      };
+      return runTest(title, async () => failure, false, 1);
+    };
+
+    const runAotPrograms = async (files: string[]) => {
+      startGroup(`Running ${files.length} programs compiled ahead of time (${parallelSafeWidth}-wide)`);
+      const failsDriver = (file: string, message: string): AotVerdict => ({
+        file,
+        state: "fail",
+        stage: "driver",
+        message,
+      });
+      for (let left = files; left.length;) {
+        const { verdicts, unfinished, died } = await runAotDriver(left);
+        for (const [testPath, verdict] of verdicts) await reportAotProgram(testPath, verdict);
+        left = left.filter(testPath => !verdicts.has(testPath));
+        if (died === undefined || unfinished.length === 0) {
+          const why = died ?? `${aotDriver} ended without a result for it`;
+          for (const testPath of left) await reportAotProgram(testPath, failsDriver(testPath, why));
+          return;
+        }
+        // The driver died with these in its hands. Alone, each shows whether it is the one.
+        for (const testPath of unfinished) {
+          const alone = await runAotDriver([testPath]);
+          await reportAotProgram(
+            testPath,
+            alone.verdicts.get(testPath) ?? failsDriver(testPath, alone.died ?? "no result"),
+          );
+        }
+        left = left.filter(testPath => !unfinished.includes(testPath));
+      }
+    };
+
     const modifiedTests = new Set(
       allFiles.filter(filename => filename.startsWith("test/")).map(filename => filename.slice("test/".length)),
     );
@@ -1355,10 +1446,10 @@ async function runTests(): Promise<TestResult[]> {
       !/stress/i.test(t) &&
       isParallelAllowlisted(t) &&
       !needsDockerService(t) &&
-      !isPartOfOneTestFile(t) &&
       (!validationApplies || (shouldValidateExceptions(t) && shouldValidateLeakSan(t)));
 
-    const serialTests = tests.filter(t => !isParallelSafeTest(t));
+    const aotPrograms = tests.filter(t => isAotProgram(t));
+    const serialTests = tests.filter(t => !isParallelSafeTest(t) && !isAotProgram(t));
     const parallelSafeTests = tests.filter(t => isParallelSafeTest(t));
     const modifiedSerialTests = serialTests.filter(t => isModified(t));
     const bucketCandidates = serialTests.filter(t => !isModified(t) && isBucketCandidate(t));
@@ -1375,6 +1466,7 @@ async function runTests(): Promise<TestResult[]> {
       startGroup(`Running ${parallelSafeTests.length} parallel-safe tests (${parallelSafeWidth}-wide)`);
     }
     await Promise.all(parallelSafeTests.map(t => parallelSafeLimit(() => runOneTest(t, parallelSafeWidth > 1))));
+    if (aotPrograms.length) await runAotPrograms(aotPrograms);
   }
 
   if (vendorTests?.length) {
@@ -2224,13 +2316,10 @@ async function spawnBunTest(
     testArgs.push(`--reporter-outfile=${junitFilePath}`);
   }
 
-  testArgs.push(isPartOfOneTestFile(testPath) ? join(opts.cwd, "test", "aot", "parts.test.ts") : absPath);
+  testArgs.push(absPath);
 
   const env: SpawnEnv = {
     GITHUB_ACTIONS: "true", // always true so annotations are parsed
-    ...(isPartOfOneTestFile(testPath) && { TEST_PART: testPath }),
-    ...(options["aot-takes"] && { AOT_TAKES: options["aot-takes"] }),
-    ...(options["aot-sample"] && { AOT_SHARE: options["aot-sample"] }),
     ...opts.env,
   };
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
@@ -2251,7 +2340,7 @@ async function spawnBunTest(
     env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
   }
 
-  let { ok, error, stdout, crashes, exitCode, signalCode, duration } = await spawnBun(execPath, {
+  const { ok, error, stdout, crashes, exitCode, signalCode, duration } = await spawnBun(execPath, {
     args: isReallyTest ? testArgs : [...args, absPath],
     cwd: opts.cwd,
     // release-asan with debug-assertions on runs every spawned subprocess
@@ -2266,10 +2355,6 @@ async function spawnBunTest(
   });
   let { tests, errors, stdout: stdoutPreview } = parseTestStdout(stdout, testPath);
   if (crashes) stdoutPreview += crashes;
-  if (ok && mustRunATest(testPath) && !/^ *[1-9]\d* (?:pass|fail|todo)$/m.test(stripAnsi(stdout))) {
-    ok = false;
-    error = "no test ran: scripts/aot-tests.ts lists the tests that run nothing in this step";
-  }
 
   // If we generated a JUnit file and we're on BuildKite, upload it immediately
   if (junitFilePath && isReallyTest && isBuildkite && cliOptions["junit-upload"]) {
@@ -2296,7 +2381,7 @@ async function spawnBunTest(
 
 function getTestTimeout(testPath: string): number {
   if (
-    /integration|3rd_party|docker|bun-install-registry|bun-security-scanner-matrix|v8|bundler_compile|tonic|test[\\/]napi|\baot\b/i.test(
+    /integration|3rd_party|docker|bun-install-registry|bun-security-scanner-matrix|v8|bundler_compile|tonic|test[\\/]napi/i.test(
       testPath,
     )
   ) {
@@ -2529,28 +2614,16 @@ function isClusterTest(path: string): boolean {
 }
 
 function isTest(path: string): boolean {
-  return isNodeTest(path) || isClusterTest(path) ? true : isTestStrict(path);
+  return isNodeTest(path) || isClusterTest(path) || isAotProgram(path) ? true : isTestStrict(path);
+}
+
+/** A program under test/aot/parallel/. Compiled ahead of time it must exit and print as `bun <file>` does. */
+function isAotProgram(path: string): boolean {
+  return path.replaceAll(sep, "/").includes("aot/parallel/") && isJavaScript(path) && !/\.d\.[cm]?ts$/.test(path);
 }
 
 function isTestStrict(path: string): boolean {
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
-}
-
-/** Of paths under test/. */
-const kindOfAotTest = {
-  draws: (path: string) => drawsShares(path.replaceAll("\\", "/"), path => readFileSync(join(testsPath, path), "utf8")),
-  onlyDraws: (path: string) => unitsThatOnlyDraw.has(path.replaceAll("\\", "/")),
-};
-
-function mustRunATest(testPath: string): boolean {
-  const mustRun = options["must-run"];
-  const path = testPath.replaceAll("\\", "/").replace(/^test\//, "");
-  return !!mustRun && mustRunSomething({ mustRun, takes: options["aot-takes"] }, path, kindOfAotTest);
-}
-
-/** It has the name of a test file and is none: test/aot/parts.mts. */
-function isPartOfOneTestFile(path: string): boolean {
-  return partsOfOneTestFile.includes(path.replaceAll("\\", "/").replace(/^test\//, ""));
 }
 
 function isHidden(path: string): boolean {
@@ -2560,7 +2633,13 @@ function isHidden(path: string): boolean {
 function getTests(cwd: string): string[] {
   function* getFiles(cwd: string, path: string): Generator<string> {
     const dirname = join(cwd, path);
-    for (const entry of readdirSync(dirname, { encoding: "utf-8", withFileTypes: true })) {
+    const entries = readdirSync(dirname, { encoding: "utf-8", withFileTypes: true });
+    // A program of several files is a folder with a main file.
+    const main = entries.find(
+      entry => entry.isFile() && /^main\.[^.]+$/.test(entry.name) && isAotProgram(join(path, entry.name)),
+    );
+    if (main) return void (yield join(path, main.name));
+    for (const entry of entries) {
       const { name } = entry;
       const filename = join(path, name);
       if (isHidden(filename)) {
@@ -2575,7 +2654,7 @@ function getTests(cwd: string): string[] {
       }
     }
   }
-  return [...getFiles(cwd, ""), ...partsOfOneTestFile.map(path => join(path))].sort();
+  return [...getFiles(cwd, "")].sort();
 }
 
 /** An entry of test/vendor.json. */
@@ -2800,33 +2879,6 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
     }
   }
 
-  const aotTakes = options["aot-takes"];
-  if (aotTakes) {
-    const taken = pickTestsWithSomethingFor(aotTakes, availableTests, kindOfAotTest);
-    !isQuiet && console.log("Tests that have something", aotTakes, taken.length, "/", availableTests.length);
-    availableTests.splice(0, availableTests.length, ...taken);
-  }
-
-  const aotSample = options["aot-sample"];
-  if (aotSample && !isQuiet) {
-    console.log(
-      `Sample: ${aotSample}. AOT_SAMPLE=${parseSample(aotSample).sample} writes the steps of this commit again, AOT_SHARE=${aotSample} takes the programs of this step`,
-    );
-  }
-
-  const oneIn = parseInt(options["one-in"] ?? "1");
-  if (oneIn > 1) {
-    // Every shard draws the same files, because it draws by the path and the sample.
-    const commit = aotSample ?? process.env.BUILDKITE_COMMIT ?? "";
-    const drawnTests = pickDrawnTests(
-      { oneIn, sample: commit, alwaysDraw: options["always-draw"] ?? [] },
-      availableTests,
-    );
-    !isQuiet &&
-      console.log("Drawing tests: one in", oneIn, "for", commit, drawnTests.length, "/", availableTests.length);
-    availableTests.splice(0, availableTests.length, ...drawnTests);
-  }
-
   const shardId = parseInt(options.shard);
   const maxShards = parseInt(options["max-shards"]);
   if (filters?.length) {
@@ -2848,13 +2900,10 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
     // Every shard computes the same deterministic assignment from the same
     // sorted input and picks its own bin, so the result is identical across
     // machines without any coordination. Tests absent from the table (new
-    // files, or the file failing to load) fall back to the median of the tests
-    // being dealt out so they spread across shards instead of all landing on shard 0.
+    // files, or the file failing to load) fall back to the table's median so
+    // they spread across shards instead of all landing on shard 0.
     const durations = loadExpectedDurations(cwd);
-    const known = availableTests
-      .map(testPath => durations[testPath.replaceAll("\\", "/")])
-      .filter(cost => cost !== undefined)
-      .sort((a, b) => a - b);
+    const known = Object.values(durations).sort((a, b) => a - b);
     const unknownCost = known.length ? known[Math.floor(known.length / 2)]! : 100;
     const costOf = (testPath: string) => durations[testPath.replaceAll("\\", "/")] ?? unknownCost;
 
@@ -3045,7 +3094,7 @@ function addPath(...paths: (string | undefined)[]): string {
 }
 
 function getTestLabel(): string | undefined {
-  return getBuildLabel()?.replace(/ - test-(?:bun|aot|hardened)$/, "");
+  return getBuildLabel()?.replace(" - test-bun", "");
 }
 
 /**

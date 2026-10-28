@@ -1,1 +1,0 @@
-Object.assign(globalThis, { noInline: () => {} });

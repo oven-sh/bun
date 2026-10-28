@@ -4,8 +4,8 @@
 // the scripts need.
 import { expect, test } from "bun:test";
 import { join } from "path";
+import { unsupported } from "./harness/commands";
 import { run } from "./harness/run";
-import { unsupported } from "./run-programs";
 import { python, scriptEnvironment, scriptSkipReason } from "./shell/tools";
 
 const programs = [

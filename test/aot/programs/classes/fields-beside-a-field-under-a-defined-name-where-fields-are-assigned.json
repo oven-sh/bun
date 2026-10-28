@@ -1,1 +1,0 @@
-{ "build": ["--define", "TEXT=\"text\"", "--define", "COUNT=7"], "reference": "compiled" }

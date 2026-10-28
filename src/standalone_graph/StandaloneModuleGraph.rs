@@ -125,6 +125,40 @@ pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("
 #[cfg(not(windows))]
 pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("/$bunfs/", "root/");
 
+/// `BUN_AOT_START_AT`. Answers the file of the entry point that the process starts with, or `None` where nothing asks for another than the first.
+#[cfg(not(bun_locked_environment))]
+fn start_at_named_entry_point(
+    program: &mut CompiledProgram,
+    first_file: u32,
+) -> Option<Result<u32, crate::Error>> {
+    if !bun_core::env::IS_CANARY {
+        return None;
+    }
+    let name = bun_core::env_var::BUN_AOT_START_AT.get()?;
+    let is_named = |entry_point: &CompiledEntryPoint| {
+        let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
+        entry_point.module_path.strip_prefix(root) == Some(name)
+    };
+    let has_image_for_each = program.images().nth(1).is_some();
+    let position = program.entry_points.iter().position(is_named);
+    Some(match position {
+        Some(position) if has_image_for_each => {
+            program.start_at(position);
+            Ok(program.entry_points[position].file_index)
+        }
+        Some(position) if program.entry_points[position].file_index == first_file => Ok(first_file),
+        Some(_) | None => Err(crate::Error::NoProgramToStartAt),
+    })
+}
+
+#[cfg(bun_locked_environment)]
+fn start_at_named_entry_point(
+    _program: &mut CompiledProgram,
+    _first_file: u32,
+) -> Option<Result<u32, crate::Error>> {
+    None
+}
+
 // A process-lifetime `OnceLock` (PORTING.md §Concurrency: never `static mut`).
 // `get()` returns a raw `*mut`; the only post-init mutation is
 // `File::sourcemap` (`LazySourceMap::load`, serialized by `INIT_LOCK`).
@@ -1322,7 +1356,7 @@ impl StandaloneModuleGraph {
                 linked_bytecode_payload = ptr;
             }
         }
-        let compiled_program = if offsets.flags.contains(Flags::HAS_COMPILED_PROGRAM) {
+        let mut compiled_program = if offsets.flags.contains(Flags::HAS_COMPILED_PROGRAM) {
             let payload = Payload {
                 base: raw_const,
                 length: raw_len,
@@ -1462,8 +1496,11 @@ impl StandaloneModuleGraph {
         }
 
         let module_count = modules.count();
+        let started = (compiled_program.as_mut())
+            .and_then(|program| start_at_named_entry_point(program, offsets.entry_point_id));
+        let entry_point_id = started.transpose()?.unwrap_or(offsets.entry_point_id);
         // `entry_point()` indexes `files`, which has one entry per name, not one per record.
-        if offsets.entry_point_id as usize >= module_count {
+        if entry_point_id as usize >= module_count {
             return Err(crate::Error::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount);
         }
         modules.lock_pointers(); // make the pointers stable forever
@@ -1495,7 +1532,7 @@ impl StandaloneModuleGraph {
             bytes: core::ptr::slice_from_raw_parts(raw_const, offsets.byte_count),
             files: modules,
             dirs,
-            entry_point_id: offsets.entry_point_id,
+            entry_point_id,
             // SAFETY: read-only argv string subrange, disjoint from writable regions.
             compile_exec_argv: unsafe {
                 slice_to_z(raw_const, raw_len, offsets.compile_exec_argv_ptr)

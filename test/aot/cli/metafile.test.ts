@@ -4,7 +4,7 @@ import { expect } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned } from "../run-programs";
+import { built, slot, spawned } from "../harness/commands";
 import { describe, test } from "../supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
@@ -34,7 +34,7 @@ interface Metafile {
 }
 
 const program = {
-  "main.ts": `import { readFileSync } from "node:fs";
+  "main.ts": `import { escape } from "node:querystring";
 import { sep } from "path";
 import settings from "./settings.json";
 import { twice } from "./lib/twice";
@@ -47,7 +47,7 @@ const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
 const answer = await new Promise(resolve => (worker.onmessage = event => resolve(event.data)));
 worker.terminate();
 console.log(
-  twice(settings.count), old.name, late.late(), answer, note.trim(), viaBarrel(), typeof readFileSync, sep.length,
+  twice(settings.count), old.name, late.late(), answer, note.trim(), viaBarrel(), typeof escape, sep.length,
   require.resolve("./lib/old.cjs").endsWith("old.cjs"),
 );
 `,
@@ -120,7 +120,7 @@ describe.concurrent("--metafile with --aot", () => {
         }
         expect(aot.inputs["note.txt"].bytes).toBe(program["note.txt"].length);
         expect(aot.inputs["main.ts"].imports.map(line)).toEqual([
-          "import-statement fs external node:fs",
+          "import-statement querystring external node:querystring",
           "import-statement path external",
           "import-statement settings.json  ./settings.json json",
           "import-statement lib/twice.ts  ./lib/twice",
@@ -165,22 +165,13 @@ describe.concurrent("--metafile with --aot", () => {
     "the executable is the one that the build without --metafile writes",
     () =>
       slot(async () => {
-        using dir = tempDir("aot-metafile-same-executable", program);
+        using dir = tempDir("aot-metafile-same-executable", {
+          "main.ts": `import { twice } from "./twice";\nconsole.log(twice(21));\n`,
+          "twice.ts": program["lib/twice.ts"],
+        });
         const folder = String(dir);
         const hash = async (outdir: string, ...flags: string[]) => {
-          built(
-            await bun(
-              folder,
-              "build",
-              "--compile",
-              "--aot",
-              ...flags,
-              "main.ts",
-              "worker.ts",
-              "--outfile",
-              outdir + "/app",
-            ),
-          );
+          built(await bun(folder, "build", "--compile", "--aot", ...flags, "main.ts", "--outfile", outdir + "/app"));
           return new Bun.CryptoHasher("sha256")
             .update(readFileSync(executable(join(folder, outdir), "app")))
             .digest("hex");
@@ -242,7 +233,8 @@ console.log(typeof marked, typeof test, typeof missing, chosen.name, import.meta
       slot(async () => {
         using dir = tempDir("aot-metafile-api", {
           ...program,
-          "build.ts": `const entrypoints = ["./main.ts", "./worker.ts"];
+          "main.ts": program["main.ts"].replace(/^.*\bworker\b.*\n/gm, "").replace(" answer,", ""),
+          "build.ts": `const entrypoints = ["./main.ts"];
 const inResult = await Bun.build({ entrypoints, metafile: true, compile: { outfile: "./first/app", aot: true } });
 const inFiles = await Bun.build({
   entrypoints,
@@ -250,14 +242,12 @@ const inFiles = await Bun.build({
   metafile: { json: "meta/build.json", markdown: "meta/build.md" },
   compile: { outfile: "app", aot: true },
 });
-const without = await Bun.build({ entrypoints, compile: { outfile: "./third/app", aot: true } });
 process.stdout.write(
   JSON.stringify({
-    success: [inResult.success, inFiles.success, without.success],
-    outputs: [inResult.outputs.length, inFiles.outputs.length, without.outputs.length],
+    success: [inResult.success, inFiles.success],
+    outputs: [inResult.outputs.length, inFiles.outputs.length],
     inResult: inResult.metafile,
     inFiles: inFiles.metafile,
-    without: without.metafile === undefined,
   }),
 );
 `,
@@ -267,12 +257,11 @@ process.stdout.write(
         expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
         const result = JSON.parse(build.stdout);
         expect({ ...result, inResult: undefined, inFiles: undefined }).toEqual({
-          success: [true, true, true],
-          outputs: [1, 1, 1],
-          without: true,
+          success: [true, true],
+          outputs: [1, 1],
         });
         const metafile: Metafile = result.inResult;
-        expect(walk(metafile, ["main.ts", "worker.ts"])).toEqual(Object.keys(metafile.inputs).sort());
+        expect(walk(metafile, ["main.ts"])).toEqual(Object.keys(metafile.inputs).sort());
         expect(Object.keys(metafile.inputs)).toContain(behindTheBarrel);
         expect(Object.values(metafile.outputs).map(output => output.entryPoint)).toEqual(["main.ts"]);
 

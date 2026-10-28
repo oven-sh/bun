@@ -643,6 +643,34 @@ pub(super) fn erase_waiting_sites(
     code.index_targets_by_specifier();
 }
 
+/// `CodeHost::follows_imports_on_request`: what nothing asked for is as if it were not written.
+pub(super) fn erase_imports_not_followed(
+    code: &mut LoadedCode<'_, '_>,
+    loaded_targets: &mut Vec<u32>,
+) {
+    debug_assert_eq!(code.targets.len(), loaded_targets.len());
+    let mut next_target = 0;
+    for resolution in &mut code.resolutions {
+        let targets = next_target..next_target + files_of(*resolution).count();
+        next_target = targets.end;
+        // Another import of the file may have led to some of the files that a computed name stands for.
+        if loaded_targets[targets.clone()].contains(&NOT_LOADED) {
+            *resolution = SiteResolution::Constant(CodeResolution::Erased);
+            loaded_targets[targets].fill(NOT_LOADED);
+        }
+    }
+    code.implied.retain(|&implied| {
+        let has_file = matches!(implied, CodeResolution::File(_));
+        next_target += usize::from(has_file);
+        !has_file || loaded_targets[next_target - 1] != NOT_LOADED
+    });
+    debug_assert_eq!(next_target, loaded_targets.len());
+    let mut is_kept = loaded_targets.iter().map(|&target| target != NOT_LOADED);
+    code.targets.retain(|_| is_kept.next().unwrap_or(true));
+    loaded_targets.retain(|&target| target != NOT_LOADED);
+    code.index_targets_by_specifier();
+}
+
 mod object_reads;
 #[cfg(test)]
 mod tests;

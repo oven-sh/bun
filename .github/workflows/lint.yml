@@ -44,6 +44,10 @@ jobs:
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/engine.tar.gz" "$release/bun-webkit-aot-sources.tar.gz" ||
             curl -fsSL --retry 3 -o "$RUNNER_TEMP/engine.tar.gz" "$release/bun-webkit-linux-amd64-lto.tar.gz"
           tar -xzf "$RUNNER_TEMP/engine.tar.gz" -C vendor/WebKit --strip-components=1 --exclude=bun-webkit/Source/JavaScriptCore/aot/tests bun-webkit/Source/JavaScriptCore/aot
+      - name: Check that the engine's generator writes what the build declares
+        env:
+          AOT_SCHEMA: ${{ github.workspace }}/vendor/WebKit/Source/JavaScriptCore/aot/ir/AOTSchema.def
+        run: bun test ./test/internal/aot-schema-generator.test.ts
       - name: Typecheck the built-in modules
         # The code generators write the types src/js/builtins.d.ts references (build/types) and the enums the dev
         # server's sources import (src/runtime/bake/generated.ts). A module with a second text in src/js/ahead-of-time is

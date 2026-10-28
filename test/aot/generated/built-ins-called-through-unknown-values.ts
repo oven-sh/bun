@@ -1587,7 +1587,6 @@ const call = (callee: string, receiver: string, operands: string[]) => `${callee
 const held = (from: number, count: number) => Array.from({ length: count }, (_, index) => `held[${from + index}]`);
 const opensTheRealm = `const never = Date.now() < 0;
 log.push(String(Function("return " + (never ? "x" : "1"))()));
-await new ShadowRealm().importValue("node:path", "sep").then(() => log.push("settled"), () => log.push("settled"));
 `;
 
 type Way = { before?: (one: Case) => string; call: (one: Case) => string; construct: (one: Case) => string; behind?: string; fits?: (one: Case) => boolean };

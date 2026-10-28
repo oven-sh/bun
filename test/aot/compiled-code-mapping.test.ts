@@ -1,6 +1,6 @@
-import { expect } from "bun:test";
+import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isGlibc, isLinux, readElf64ProgramHeaders, tempDir } from "harness";
-import { chmodSync, readFileSync } from "node:fs";
+import { chmodSync, copyFileSync, readFileSync } from "node:fs";
 import { release } from "node:os";
 import { join } from "node:path";
 import { findImage, imageHeader } from "./cli/compiled-image";
@@ -18,7 +18,7 @@ const server = createServer((request, response) => response.end(String(new Point
 await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
 console.log(await (await fetch("http://127.0.0.1:" + (server.address() as AddressInfo).port)).text());
 server.close();
-console.log(readFileSync("/proc/self/maps", "utf8"));
+console.log(readFileSync("/proc/self/" + (process.argv[2] ?? "maps"), "utf8"));
 `;
 
 const seccompLauncher = `import { dlopen, FFIType, ptr } from "bun:ffi";
@@ -89,6 +89,28 @@ async function build(directory: string) {
   return executable;
 }
 
+const folders: Disposable[] = [];
+afterAll(() => folders.forEach(folder => folder[Symbol.dispose]()));
+
+/** Builds for the first test that asks, and answers the same to the others. */
+function builtOnce<Built>(files: Record<string, string>, build: (directory: string) => Promise<Built>) {
+  let built: Promise<Built> | undefined;
+  return () => {
+    if (built) return built;
+    const folder = tempDir("aot-code-mapping", files);
+    folders.push(folder);
+    return (built = build(String(folder)));
+  };
+}
+
+const buildServer = builtOnce({ "program.ts": program, "launcher.ts": seccompLauncher }, async directory => {
+  const executable = await build(directory);
+  const file = readFileSync(executable);
+  const image = findImage(file);
+  const codeOffset = image + Number(file.readBigUInt64LE(image + imageHeader.codeOffset));
+  return { executable, file, image, codeOffset, launcher: join(directory, "launcher.ts") };
+});
+
 function mappingsOf(output: string) {
   return output
     .split("\n")
@@ -105,10 +127,7 @@ function mappingsOf(output: string) {
 test.skipIf(!isLinux)(
   "executable pages are file-backed and never writable",
   async () => {
-    using dir = tempDir("aot-code-mapping", { "program.ts": program });
-    const executable = await build(String(dir));
-    const file = readFileSync(executable);
-    const codeOffset = findImage(file) + Number(file.readBigUInt64LE(findImage(file) + imageHeader.codeOffset));
+    const { executable, codeOffset } = await buildServer();
 
     const { stdout, exitCode } = await run([executable]);
     expect({ firstLine: stdout.split("\n")[0], exitCode }).toEqual({ firstLine: "5", exitCode: 0 });
@@ -127,10 +146,7 @@ test.skipIf(!isLinux)(
 test.skipIf(!isLinux)(
   "the address of compiled code is independent of the executable and of libc",
   async () => {
-    using dir = tempDir("aot-code-mapping-address", { "program.ts": program });
-    const executable = await build(String(dir));
-    const file = readFileSync(executable);
-    const codeOffset = findImage(file) + Number(file.readBigUInt64LE(findImage(file) + imageHeader.codeOffset));
+    const { executable, codeOffset } = await buildServer();
 
     const distances = await Promise.all(
       Array.from({ length: 4 }, async () => {
@@ -155,11 +171,7 @@ test.skipIf(!isLinux)(
 test.skipIf(!isLinux)(
   "compiled code has its own read-execute segment and the rest of the payload is read-only",
   async () => {
-    using dir = tempDir("aot-code-mapping-segment", { "program.ts": program });
-    const executable = await build(String(dir));
-    const file = readFileSync(executable);
-    const image = findImage(file);
-    const code = image + Number(file.readBigUInt64LE(image + imageHeader.codeOffset));
+    const { executable, file, image, codeOffset: code } = await buildServer();
     const end = code + Number(file.readBigUInt64LE(image + imageHeader.executableSize));
     expect(end).toBeLessThan(image + Number(file.readBigUInt64LE(image + imageHeader.size)));
 
@@ -224,11 +236,12 @@ async function buildWithMap(directory: string) {
   return { executable, map };
 }
 
+const buildTables = builtOnce({ "program.ts": programWithTables }, buildWithMap);
+
 test.skipIf(!isLinux || process.arch !== "x64")(
   "what lies between two functions is breakpoints",
   async () => {
-    using dir = tempDir("aot-code-mapping-padding", { "program.ts": programWithTables });
-    const { executable, map } = await buildWithMap(String(dir));
+    const { executable, map } = await buildTables();
     const file = readFileSync(executable);
     const image = findImage(file);
     const codeOffset = image + Number(file.readBigUInt64LE(image + imageHeader.codeOffset));
@@ -320,8 +333,7 @@ console.log(names.length, names.at(-1));
 test.skipIf(!isLinux)(
   "the constants and jump tables of compiled code lie behind it, in pages that cannot be executed",
   async () => {
-    using dir = tempDir("aot-code-mapping-data", { "program.ts": programWithTables });
-    const { executable, map } = await buildWithMap(String(dir));
+    const { executable, map } = await buildTables();
     const file = readFileSync(executable);
     const image = findImage(file);
     const codeOffset = image + Number(file.readBigUInt64LE(image + imageHeader.codeOffset));
@@ -424,13 +436,12 @@ test.skipIf(!isLinux)("Bun has room for the program headers of an executable", a
 test.skipIf(!isLinux)(
   "zero-initialized data of the runtime takes no bytes of the file",
   async () => {
-    using dir = tempDir("aot-code-mapping-zeros", { "program.ts": program });
     const sizesOf = (path: string) =>
       readElf64ProgramHeaders(path)
         .filter(header => header.type === loadable && header.memsz > header.filesz)
         .map(header => ({ filesz: header.filesz, memsz: header.memsz }));
     expect(sizesOf(bunExe())).not.toEqual([]);
-    expect(sizesOf(await build(String(dir)))).toEqual(sizesOf(bunExe()));
+    expect(sizesOf((await buildServer()).executable)).toEqual(sizesOf(bunExe()));
   },
   120_000,
 );
@@ -471,11 +482,8 @@ function expectCodeAtAnotherAddressEachTime(places: Awaited<ReturnType<typeof pl
 test.skipIf(!isLinux || !isGlibc)(
   "runs from the segment the loader mapped when mmap with PROT_EXEC is refused",
   async () => {
-    using dir = tempDir("aot-code-mapping-refused", { "program.ts": program, "launcher.ts": seccompLauncher });
-    const executable = await build(String(dir));
-    const file = readFileSync(executable);
-    const codeOffset = findImage(file) + Number(file.readBigUInt64LE(findImage(file) + imageHeader.codeOffset));
-    const cmd = [bunExe(), join(String(dir), "launcher.ts"), executable];
+    const { executable, file, codeOffset, launcher } = await buildServer();
+    const cmd = [bunExe(), launcher, executable];
     if (!canMoveFileMappings && isLinkedAtFixedAddress(file)) return await expectRefusalToRunAtFixedAddress(cmd);
     const places = await placesOfCode(executable, codeOffset, cmd);
     if (canMoveFileMappings) expectCodeAtAnotherAddressEachTime(places);
@@ -486,10 +494,9 @@ test.skipIf(!isLinux || !isGlibc)(
 test.skipIf(!isLinux || !isGlibc)(
   "refuses to start where its compiled code could only run at a fixed address",
   async () => {
-    using dir = tempDir("aot-code-mapping-fixed", { "program.ts": program, "launcher.ts": seccompLauncher });
-    const executable = await build(String(dir));
-    const cmd = [bunExe(), join(String(dir), "launcher.ts"), executable, "refuse-mremap"];
-    if (isLinkedAtFixedAddress(readFileSync(executable))) return await expectRefusalToRunAtFixedAddress(cmd);
+    const { executable, file, launcher } = await buildServer();
+    const cmd = [bunExe(), launcher, executable, "refuse-mremap"];
+    if (isLinkedAtFixedAddress(file)) return await expectRefusalToRunAtFixedAddress(cmd);
     const { stdout, exitCode } = await run(cmd);
     expect({ firstLine: stdout.split("\n")[0], exitCode }).toEqual({ firstLine: "5", exitCode: 0 });
   },
@@ -499,10 +506,9 @@ test.skipIf(!isLinux || !isGlibc)(
 test.skipIf(!isLinux || refusesExecuteOnlyStart)(
   "an executable that may be run but not read has its compiled code at another address each time",
   async () => {
-    using dir = tempDir("aot-code-mapping-unreadable", { "program.ts": program });
-    const executable = await build(String(dir));
-    const file = readFileSync(executable);
-    const codeOffset = findImage(file) + Number(file.readBigUInt64LE(findImage(file) + imageHeader.codeOffset));
+    const { executable: readable, file, codeOffset } = await buildServer();
+    const executable = readable + "-unreadable";
+    copyFileSync(readable, executable);
     chmodSync(executable, 0o111);
     if (!canMoveFileMappings && isLinkedAtFixedAddress(file))
       return await expectRefusalToRunAtFixedAddress([executable]);
@@ -515,10 +521,7 @@ test.skipIf(!isLinux || refusesExecuteOnlyStart)(
 test.skipIf(!isLinux)(
   "an executable that the dynamic loader is started with runs its own code, not bytes of the loader's file",
   async () => {
-    using dir = tempDir("aot-code-mapping-by-the-loader", { "program.ts": program });
-    const executable = await build(String(dir));
-    const file = readFileSync(executable);
-    const codeOffset = findImage(file) + Number(file.readBigUInt64LE(findImage(file) + imageHeader.codeOffset));
+    const { executable, file, codeOffset } = await buildServer();
     const interpreter = readElf64ProgramHeaders(executable).find(header => header.type === 3)!;
     const end = Number(interpreter.offset + interpreter.filesz) - 1;
     const cmd = [file.toString("latin1", Number(interpreter.offset), end), executable];
@@ -543,10 +546,7 @@ test.skipIf(!isLinux)(
 test.skipIf(!isLinux || !Bun.which("setarch"))(
   "with ASLR disabled, compiled code runs from the segment the loader mapped",
   async () => {
-    using dir = tempDir("aot-code-mapping-no-aslr", { "program.ts": program });
-    const executable = await build(String(dir));
-    const file = readFileSync(executable);
-    const codeOffset = findImage(file) + Number(file.readBigUInt64LE(findImage(file) + imageHeader.codeOffset));
+    const { executable, codeOffset } = await buildServer();
     const starts = await Promise.all(
       Array.from({ length: 2 }, async () => {
         const mappings = mappingsOf(
@@ -572,15 +572,10 @@ test.skipIf(!isLinux || !Bun.which("setarch"))(
 test.skipIf(!isLinux)(
   "the process writes to no page of the image",
   async () => {
-    using dir = tempDir("aot-code-mapping-clean", {
-      "program.ts": program.replace("/proc/self/maps", "/proc/self/smaps"),
-    });
-    const executable = await build(String(dir));
-    const file = readFileSync(executable);
-    const image = findImage(file);
+    const { executable, file, image } = await buildServer();
     const end = image + Number(file.readBigUInt64LE(image + imageHeader.size));
 
-    const { stdout, exitCode } = await run([executable]);
+    const { stdout, exitCode } = await run([executable, "smaps"]);
     expect(exitCode).toBe(0);
     const mappings = stdout.split(/\n(?=[0-9a-f]+-[0-9a-f]+ )/).map(text => {
       const [addresses, , offset, , , path = ""] = text.split("\n")[0].split(/\s+/);
@@ -608,11 +603,10 @@ const llvmStrip = Bun.which("llvm-strip");
 test.skipIf(!isLinux || !llvmStrip)(
   "llvm-strip leaves one copy of the payload",
   async () => {
-    using dir = tempDir("aot-code-mapping-strip", { "program.ts": program });
-    const executable = await build(String(dir));
+    const { executable, file: before } = await buildServer();
     const stripped = executable + "-stripped";
     expect((await run([llvmStrip!, "-o", stripped, executable])).exitCode).toBe(0);
-    const [before, after] = [readFileSync(executable), readFileSync(stripped)];
+    const after = readFileSync(stripped);
     const header = before.subarray(findImage(before), findImage(before) + imageHeader.prefixSize);
     expect(after.indexOf(header)).toBeGreaterThan(0);
     expect(after.indexOf(header)).toBe(after.lastIndexOf(header));

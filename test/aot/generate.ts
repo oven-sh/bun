@@ -23,6 +23,7 @@ import {
   writeFileSync,
 } from "fs";
 import { availableParallelism, tmpdir } from "os";
+import { findBuiltinTable } from "./harness/builtin-table";
 import "./harness/without-installing-packages";
 import { basename, dirname, join, resolve, sep } from "path";
 import type { Row } from "./built-ins-alone/table";
@@ -295,12 +296,7 @@ for (const { name: topic } of topics()) {
  * The table of built-ins that `bun` was built with, as the build wrote it: $AOT_BUILTIN_TABLE, or aot_builtin_table.json beside that Bun (CI packs it there),
  * or in the folder `codegen` beside it, where it lies in a build folder.
  */
-export function findBuiltinTable(bun: string): string | undefined {
-  const name = "aot_builtin_table.json";
-  return (
-    process.env.AOT_BUILTIN_TABLE ?? [join(dirname(bun), name), join(dirname(bun), "codegen", name)].find(existsSync)
-  );
-}
+export { findBuiltinTable };
 
 export function writeProgram(folder: string, program: WrittenProgram) {
   for (const [name, text] of Object.entries(program.files)) {

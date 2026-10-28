@@ -4,11 +4,11 @@ import { existsSync, readFileSync } from "fs";
 import { bunExe, tempDir } from "harness";
 import { availableParallelism } from "os";
 import { join } from "path";
-import { freshSeed } from "./fresh-seed";
+import { freshSeed } from "./harness/shares";
 import { ProductBed } from "./fuzz/beds";
 import { fuzz } from "./fuzz/fuzzer";
 import { allSources } from "./fuzz/sources";
-import { unsupported } from "./run-programs";
+import { unsupported } from "./harness/commands";
 
 const inOneFile = Number(process.env.AOT_FUZZ_PROGRAMS) || 45;
 const seeds = process.env.AOT_FUZZ_SEED
@@ -35,7 +35,7 @@ export function printTheSame(share: number, form: string) {
       async () => {
         using folder = tempDir("aot-fuzzer-fixed-seeds", {});
         const out = join(String(folder), "out");
-        const programsRoot = join(import.meta.dir, "programs");
+        const programsRoot = join(import.meta.dir, "parallel");
         // A source with fixed seeds of its own, in generated-<its name>.test.ts, is left to that test: a new one does not move what is drawn here. The programs as they are have tests of their own.
         const sources = Object.keys(await allSources(programsRoot, new Set()))
           .filter(

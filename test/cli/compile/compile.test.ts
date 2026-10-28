@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, rmSync, statSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { basename, join } from "path";
+import { unsupported } from "../../aot/harness/commands";
 import { run as runCommand } from "../../aot/harness/run";
-import { unsupported } from "../../aot/run-programs";
 
 async function run(cwd: string, cmd: string[]) {
   const { stdout, stderr, exitCode } = await runCommand(cmd, cwd, { ...bunEnv, NO_COLOR: "1" });

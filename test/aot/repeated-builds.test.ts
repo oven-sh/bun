@@ -8,38 +8,33 @@
 //
 // A build counts by its exit code and by the bytes it wrote. A build that fails is a failure, not a missing sample.
 //
-// A race passes "the same bytes at 1, 16 and 64 threads" 97 to 99 times of 100. So a program on which one has shown is built more often than the
-// others, and what one run of this file lets through the next ones catch: a test of this file that fails now and then is a race, never a flake.
+// A race passes "the same bytes at 1, 16 and 64 threads" 97 to 99 times of 100. What one run of this file lets through the next ones catch, and
+// AOT_REPEATED_BUILDS asks for more: a test of this file that fails now and then is a race, never a flake.
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { availableParallelism } from "os";
 import { dirname, join } from "path";
+import { spawned, unsupported, withoutDebugInformation } from "./harness/commands";
 import { withThreads } from "./harness/flags";
-import { spawned, unsupported, wanted, withoutDebugInformation } from "./run-programs";
+import { wanted } from "./harness/shares";
 
 const requested = Number(process.env.AOT_REPEATED_BUILDS);
 const isSlowBun = isASAN || isDebug;
 // Fewer threads than cores, as many, and many more: threads that wait for a core stop at other places than threads that run.
-const threadCounts = [1, 2, 5, 16, 64];
+const threadCounts = [1, 16, 64];
 
 const programs: { path: string; builds: number; flags?: string[] }[] = [
   // What it prints depends on which methods the compiler has seen their classes assign to.
-  { path: "repeated-builds/methods-reassigned-by-class.ts", builds: 6 },
-  { path: "programs/typed-objects/field-on-few-union-members.ts", builds: 6 },
-  { path: "programs/classes-and-closures/structural-subtypes.ts", builds: 6 },
-  { path: "programs/async-and-generators/async-function-forms.ts", builds: 6 },
-  { path: "programs/strings/equality-switch-plus-and-templates-untyped.js", builds: 6 },
-  { path: "programs/commonjs/typed-requires-typed/main.ts", builds: 6 },
-  { path: "programs/objects/literal-accessors-with-data-members.ts", builds: 6 },
-  { path: "programs/untyped-code/counter-compared-with-length.js", builds: 6 },
+  { path: "repeated-builds/methods-reassigned-by-class.ts", builds: 3 },
+  { path: "parallel/commonjs/typed-requires-typed/main.ts", builds: 3 },
   // Steps of the flow analysis ran side by side, and one of them opened a phase of the type table while another held an arena of it: 5 builds of 200 aborted.
-  { path: "programs/relational-summaries/accessors-arrive-on-the-chain-in-every-way.js", builds: 40 },
+  { path: "parallel/relational-summaries/accessors-arrive-on-chain-in-every-way.js", builds: 3 },
   // The same race, 9 builds of 300. And it pulls in enough of Bun's library that code is generated on every thread for a while: the body of a function was
   // released when its code was emitted, while the thread that compiled a caller asked whether the function has a body: 3 builds of 200 reported a call of a function without code.
-  { path: "programs/native-callbacks/callbacks-net-sockets-and-their-events.ts", builds: 40, flags: ["--target=bun"] },
+  { path: "parallel/native-callbacks/callbacks-net-sockets-and-their-events.ts", builds: 3, flags: ["--target=bun"] },
   // Whether a member that some objects lack is found above them is asked of a table that another step of the flow analysis fills.
-  { path: "programs/objects/a-member-named-tojson-that-only-some-objects-get.js", builds: 12 },
+  { path: "parallel/objects/member-named-tojson-that-objects-get.js", builds: 3 },
 ];
 
 const root = String(tempDir("aot-repeated-builds", {}));

@@ -129,7 +129,7 @@ function standIn(judged: (programs: Program[]) => void, seconds = 0): Bed {
 const settings = (folder: string) => ({
   out: join(folder, "out"),
   work: join(folder, "work"),
-  programsRoot: join(import.meta.dir, "programs"),
+  programsRoot: join(import.meta.dir, "parallel"),
   known: [],
   minFreeBytes: 0,
   reduceSeconds: 0,
@@ -413,7 +413,7 @@ test("files are cut first, then lines", async () => {
 test(
   "a finding in several files is tried in one file first",
   async () => {
-    const sources = await allSources(join(import.meta.dir, "programs"), new Set(), true);
+    const sources = await allSources(join(import.meta.dir, "parallel"), new Set(), true);
     const source = "numbers-across-their-borders-in-several-files";
     // A bed that takes one file a program is given no other.
     expect(

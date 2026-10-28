@@ -168,7 +168,6 @@
 #include "libusockets.h"
 #include "ModuleLoader.h"
 #include "BunCompiledModules.h"
-#include "BunCompiledEntryPoint.h"
 #include "DLHandleMap.h"
 #include "napi_external.h"
 #include "napi_handle_scope.h"
@@ -4706,13 +4705,8 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
     Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
     RETURN_IF_EXCEPTION(scope, {});
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    noteModuleEvaluation(globalObject, moduleLoader);
-    JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
-    RETURN_IF_EXCEPTION(scope, {});
-    Bun::lookForServerInEntryPoint(globalObject, moduleLoader, moduleRecordValue);
-    RETURN_IF_EXCEPTION(scope, {});
-    return result;
+    noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
+    RELEASE_AND_RETURN(scope, moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode));
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);

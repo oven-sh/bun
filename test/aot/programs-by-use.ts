@@ -5,7 +5,7 @@ import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
-import { slot } from "./run-programs";
+import { slot } from "./harness/commands";
 import { test } from "./supported";
 import { run as runCommand } from "./harness/run";
 

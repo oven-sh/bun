@@ -11,8 +11,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { cpSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { spawned, unsupported } from "../harness/commands";
 import { buildUnderEachSchedule } from "../harness/flow-schedules";
-import { spawned, unsupported } from "../run-programs";
 import { routes } from "./answers";
 import { filterRequested, installPackages, removeFolders, requestedServers, startServer } from "./run-servers";
 

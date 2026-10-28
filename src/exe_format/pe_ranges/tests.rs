@@ -1,4 +1,5 @@
 use super::*;
+use crate::cut_model::RemovableBytes;
 use crate::elf_program_headers::tests::toy_byte;
 
 const PE_HEADER_OFFSET: usize = size_of::<pe::DOSHeader>();
@@ -251,7 +252,9 @@ fn assert_section_table(original: &[u8], trimmed: &[u8], cuts: &[AddressRange]) 
     assert_eq!(last.virtual_address + last_size, size_of_image);
     assert_eq!({ new.optional.address_of_entry_point }, ENTRY_POINT);
 
-    let mut remaining_cuts = cuts.iter();
+    // Cuts that touch are one hole.
+    let holes = merge_ranges(cuts.to_vec());
+    let mut remaining_cuts = holes.iter();
     let mut raw_data_end = new.optional.size_of_headers;
     for section in &new.sections {
         let pointer = section.pointer_to_raw_data;
@@ -453,12 +456,18 @@ fn cut_of_all_raw_data_leaves_zero_filled_piece() {
 }
 
 #[test]
-fn twenty_cuts_grow_section_table() {
-    let text = (1..8).map(|page| page_cut(TEXT_ADDRESS + page * PAGE));
-    let rdata = (1..8).map(|page| page_cut(RDATA_ADDRESS + page * PAGE));
-    let builtins = (0..6).map(|page| page_cut(BUILTINS_ADDRESS + page * PAGE));
+fn twelve_cuts_grow_section_table() {
+    let text = (1..8)
+        .step_by(2)
+        .map(|page| page_cut(TEXT_ADDRESS + page * PAGE));
+    let rdata = (1..8)
+        .step_by(2)
+        .map(|page| page_cut(RDATA_ADDRESS + page * PAGE));
+    let builtins = (0..8)
+        .step_by(2)
+        .map(|page| page_cut(BUILTINS_ADDRESS + page * PAGE));
     let cuts: Vec<AddressRange> = text.chain(rdata).chain(builtins).collect();
-    assert_eq!(cuts.len(), 20);
+    assert_eq!(cuts.len(), 12);
     let trimmed = remove_and_verify(&toy(), &cuts);
     assert_eq!({ headers(&trimmed).optional.size_of_headers }, 0x600);
 }
@@ -609,6 +618,54 @@ fn payload_moves_data_where_the_file_has_no_room_for_its_header() {
     assert_eq!(
         file.add_bun_section(b"payload", false).err(),
         Some(pe::Error::InsufficientHeaderSpace)
+    );
+}
+
+#[test]
+fn file_that_was_cut_is_cut_again_beside_its_holes() {
+    let original = toy();
+    let once = remove_and_verify(&original, &[cut(0x3000, 0x5000), cut(0xb000, 0xc000)]);
+    assert_eq!(headers(&once).sections.len(), 7 + 4);
+
+    let model = cut_model(&once);
+    // In front of a hole, behind one, a whole piece between a hole and the next section, and a cut that stands alone.
+    assert_eq!(model.slots_for(cut(0x2000, 0x3000)), 0);
+    assert_eq!(model.slots_for(cut(0x5000, 0x6000)), 0);
+    assert_eq!(model.slots_for(cut(0x5000, RDATA_ADDRESS)), -1);
+    assert_eq!(model.slots_for(cut(0x6000, 0x7000)), 2);
+    assert_eq!(model.slots_for(cut(0x7000, RDATA_ADDRESS)), 1);
+
+    let again = [
+        cut(0x2000, 0x3000),
+        cut(0x5000, RDATA_ADDRESS),
+        cut(0xc000, 0xd000),
+    ];
+    let mut twice = once.clone();
+    remove_ranges(&mut twice, &again).unwrap();
+    let all = [cut(0x2000, RDATA_ADDRESS), cut(0xb000, 0xd000)];
+    assert_retained_bytes(&original, &twice, &all);
+    assert_section_table(&original, &twice, &all);
+    assert_relocations(&original, &twice, &all);
+    assert_eq!(headers(&twice).sections.len(), 7 + 3);
+
+    // A table without a free slot still takes what costs none.
+    let mut full = toy_with_sections(91, PAGE);
+    remove_ranges(&mut full, &[page_cut(5 * PAGE)]).unwrap();
+    let model = cut_model(&full);
+    assert_eq!(model.capacity, CutCapacity::Cuts(0));
+    let beside_the_hole = RemovableBytes {
+        range: page_cut(6 * PAGE),
+        is_code: false,
+        can_be_cut: true,
+        can_be_filled: true,
+    };
+    let alone = RemovableBytes {
+        range: page_cut(11 * PAGE),
+        ..beside_the_hole
+    };
+    assert_eq!(
+        model.choose(&[beside_the_hole, alone]).cuts,
+        [page_cut(6 * PAGE)]
     );
 }
 

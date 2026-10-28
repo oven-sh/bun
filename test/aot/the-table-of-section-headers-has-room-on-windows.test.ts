@@ -4,7 +4,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { closeSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
-import { built, spawned } from "./run-programs";
+import { built, spawned } from "./harness/commands";
 import { test } from "./supported";
 
 const headerSize = 40;

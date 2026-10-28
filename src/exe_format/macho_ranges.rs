@@ -101,6 +101,7 @@ pub(crate) fn cut_model(macho: &[u8]) -> CutModel {
             capacity,
             cuttable_spans: find_cuttable_spans(&parsed),
             spans_cut_only_at_end: find_read_only_segments(&parsed),
+            slot_costs: None,
         },
         Ok(CutCapacity::NoCuts(reason)) => without_cuts(reason),
         Err(_) => without_cuts(NoCutReason::HeadersUnreadable),

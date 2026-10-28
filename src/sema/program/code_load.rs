@@ -244,6 +244,8 @@ pub(super) struct CodeFiles<'s, 'r> {
     pub(super) entry_of_file: Vec<Option<u32>>,
     pub(super) is_in_types_program: Vec<bool>,
     pub(super) typed_files_with_other_code: FxHashSet<Vec<u8>>,
+    /// `CodeHost::follows_imports_on_request`
+    pub(super) reads_code_on_request: bool,
 }
 
 pub(super) type ModuleSlots<'s> = Vec<Option<ArenaBox<'s, Module<'s>>>>;

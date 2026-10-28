@@ -7,7 +7,7 @@ import { afterAll, expect } from "bun:test";
 import { existsSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { spawned, withoutCoreDump, withoutCrashReport, withoutDebugInformation } from "./run-programs";
+import { spawned, withoutCoreDump, withoutCrashReport, withoutDebugInformation } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const program = `

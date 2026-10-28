@@ -40,7 +40,7 @@ test.if(isWindows)("process.env can be listed after an attempt to keep it from b
   expect(Reflect.preventExtensions(process.env)).toBe(false);
   expect(Object.isExtensible(process.env)).toBe(true);
 
-  expect(Object.keys(process.env)).toInclude(Object.keys({ ...process.env })[0]);
+  expect(Object.keys(process.env)).toContain(Object.keys({ ...process.env })[0]);
   process.env.storedBehindTheAttempt = "stored";
   expect(process.env.STOREDBEHINDTHEATTEMPT).toBe("stored");
   expect(Object.keys(process.env).pop()).toBe("storedBehindTheAttempt");

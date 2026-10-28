@@ -1,0 +1,6 @@
+import { test } from "bun:test";
+import { unsupported } from "../../harness/compiler";
+import { testServers } from "../../servers/one-server";
+
+if (unsupported) test.skip(unsupported, () => {});
+else await testServers("budgets", "koa");

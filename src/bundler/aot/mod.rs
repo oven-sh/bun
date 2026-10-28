@@ -12,6 +12,8 @@ mod output;
 mod page_bundles;
 mod paths;
 mod services;
+#[cfg(feature = "test_support")]
+pub mod testing;
 
 use crate::bundle_v2::{BundleV2, FileMap, JSBundlerPlugin, dispatch};
 use crate::{EventLoop, OutputFile, Transpiler};

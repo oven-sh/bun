@@ -1,4 +1,0 @@
-data: import() of a relative path: refused ERR_MODULE_NOT_FOUND
-data: import() of a path above: refused ERR_MODULE_NOT_FOUND
-data: import() of a package: refused ERR_MODULE_NOT_FOUND
-data: awaited import() of a relative path: refused ERR_MODULE_NOT_FOUND

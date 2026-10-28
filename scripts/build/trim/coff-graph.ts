@@ -7,6 +7,7 @@ import {
   IMAGE_COMDAT_SELECT_ASSOCIATIVE,
   IMAGE_SCN_LNK_COMDAT,
   IMAGE_SYM_CLASS_EXTERNAL,
+  builtinModulesSection,
   notLoadedFlags,
   ordinarySectionName,
   scalarDeleting,
@@ -484,7 +485,10 @@ function connectSections(
       const parent =
         section.selection === IMAGE_COMDAT_SELECT_ASSOCIATIVE ? placed.get(object)?.get(section.parent) : undefined;
       const isInImage = node !== undefined || parent !== undefined;
-      const isRoot = !(section.flags & IMAGE_SCN_LNK_COMDAT) || (isInImage && !ordinarySectionName.test(section.name));
+      // The linker keeps the built-in modules whoever reads them. They are needed by what refers to them.
+      const isRoot =
+        section.name !== builtinModulesSection &&
+        (!(section.flags & IMAGE_SCN_LNK_COMDAT) || (isInImage && !ordinarySectionName.test(section.name)));
       if (isRoot) roots.add(node ?? ensureUnplacedNode(object, name, index + 1));
       if (node !== undefined) addReferences(object, name, index + 1, node, true);
       if (parent !== undefined) successors[parent]!.add(node ?? ensureUnplacedNode(object, name, index + 1));

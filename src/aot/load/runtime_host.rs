@@ -4,10 +4,11 @@ mod tests;
 use std::borrow::Cow;
 
 use bstr::BStr;
+use bun_builtin_sources::Manifest;
 use bun_sema::atom::Interner;
 use bun_sema::resolve::{
     CodeHost, CodeImportKind, CodeParseRequest, CodeRequest, ExternalKind, FinishedFile, Host,
-    HostPayload, HostResolution, ModuleDetection, ParsedCode, ScriptKind,
+    HostPayload, HostResolution, ModuleDetection, ParsedCode, ParsedFile, ScriptKind,
 };
 use bun_sema::session::Arena;
 use bun_sema_driver::host::{Disk, to_native};
@@ -15,6 +16,7 @@ use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 use bun_threading::Guarded;
 
 use crate::builtins::{BuiltinNames, Platforms};
+use crate::compile::runtime_reach::{LoadInput, ReachWhileLoading};
 use crate::diagnostics::LoadMessages;
 use crate::load::builtin_uses::{self, BuiltinUseInput};
 use crate::load::disk_delegation::{
@@ -32,6 +34,9 @@ pub(crate) struct RuntimeHost<'a> {
     pub platform: Platforms,
     pub messages: &'a LoadMessages,
     pub unreadable: Guarded<Vec<Vec<u8>>>,
+    pub manifest: &'static Manifest,
+    /// `None`: every import of a file that is read is followed.
+    pub reach: Option<ReachWhileLoading<'a>>,
 }
 
 impl RuntimeHost<'_> {
@@ -148,6 +153,10 @@ impl CodeHost for RuntimeHost<'_> {
         }
     }
 
+    fn is_seen_only_by_name(&self, path: &[u8]) -> bool {
+        self.runtime_modules.is_seen_only_by_name(path)
+    }
+
     fn parse_code<'s>(
         &self,
         arena: &'s Arena,
@@ -183,5 +192,23 @@ impl CodeHost for RuntimeHost<'_> {
         };
         let source = parsed_source_mut(payload);
         builtin_uses::finish_runtime_file(&input, self.runtime_modules, request, source)
+    }
+
+    fn follows_imports_on_request(&self) -> bool {
+        self.reach.is_some()
+    }
+
+    fn choose_imports_to_follow(&self, files: &[ParsedFile<'_, '_>]) -> Vec<(u32, Vec<u8>)> {
+        let Some(reach) = &self.reach else {
+            return Vec::new();
+        };
+        let input = LoadInput {
+            runtime_modules: self.runtime_modules,
+            manifest: self.manifest,
+            names: self.builtin_names,
+            platform: self.platform,
+        };
+        let in_parallel = |count: usize, work: &(dyn Fn(usize) + Sync)| self.parallel(count, work);
+        reach.choose_imports(&input, files, &in_parallel)
     }
 }

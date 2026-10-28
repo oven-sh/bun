@@ -15,6 +15,7 @@ console.log(IS_MAIN, describe());`;
 
 buildBothWays("compile/aot/a file under another tsconfig imports from a file that a plugin answers for", {
   "no plugin: a constant of the entry point": {
+    alone: true,
     files: { "main.ts": entryPoint, "loose/tsconfig.json": loose, "loose/reader.ts": readerOf("../main") },
     prints: "true main true\n",
   },
@@ -32,6 +33,7 @@ export const describe = (): string => (IS_MAIN ? "main" : "not main") + " " + tw
     prints: "not main 8\n",
   },
   "such a file passes on a constant of the entry point": {
+    alone: true,
     files: {
       "main.ts": entryPoint,
       "between.tsx": `export { IS_MAIN } from "./main";`,
@@ -42,6 +44,7 @@ export const describe = (): string => (IS_MAIN ? "main" : "not main") + " " + tw
     prints: "true main true\n",
   },
   "the entry point is such a file": {
+    alone: true,
     files: { "main.tsx": entryPoint, "loose/tsconfig.json": loose, "loose/reader.ts": readerOf("../main") },
     options: `entrypoints: ["./main.tsx"]`,
     plugins: [erasesTypes],

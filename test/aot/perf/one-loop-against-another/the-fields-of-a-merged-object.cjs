@@ -1,15 +1,17 @@
 // `sum = (sum + merged.a * merged.b - merged.c) | 0` and `sum += merged.a + merged.b + merged.c` over an object put together from defaults and options,
-// by a spread and by Object.assign onto an empty literal, beside the same loops over a literal with the same fields.
-const defaults = { a: 1, b: 2 };
+// by a spread and by Object.assign onto an empty literal, beside the same loops over a literal with the same fields. The build does not know the three numbers: what it knows it
+// reads from no object.
+const [one, two, three] = process.argv.length > 99 ? [7, 8, 9] : [1, 2, 3];
+const defaults = { a: one, b: two };
 function spread(options) {
   return { ...defaults, ...options };
 }
 function assign(options) {
   return Object.assign({}, defaults, options);
 }
-const written = { a: 1, b: 2, c: 3 };
-const spreadOut = spread({ c: 3 });
-const assigned = assign({ c: 3 });
+const written = { a: one, b: two, c: three };
+const spreadOut = spread({ c: three });
+const assigned = assign({ c: three });
 
 function productsOfWritten(rounds) {
   let sum = 0;

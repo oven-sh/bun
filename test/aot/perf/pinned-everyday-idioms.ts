@@ -11,7 +11,7 @@ import { afterAll, expect } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunExe, isASAN, isDebug, isLinux, isMusl, tempDir } from "harness";
 import { join } from "path";
-import { slot } from "../run-programs";
+import { slot } from "../harness/commands";
 import { describe, test } from "../supported";
 import { idiomsAgainstTheJit, isWhole } from "./measure-idioms";
 

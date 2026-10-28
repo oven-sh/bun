@@ -5,26 +5,10 @@
  * @link https://buildkite.com/docs/pipelines/defining-steps
  */
 
-import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Arch, Abi as HostAbi, Os } from "../scripts/agent.ts";
 import { output, run } from "../scripts/agent.ts";
-import {
-  type AotTakes,
-  type AotTests,
-  getAotAlwaysDrawn,
-  getAotAlwaysInDrawnStep,
-  getAotExcludes,
-  getAotFileDraw,
-  getAotSample,
-  getAotShare,
-  getAotStepArguments,
-  getAotTestsOfLane,
-  getHardenedStepArguments,
-  isFileDrawn,
-  spellSample,
-} from "../scripts/aot-tests.ts";
 import {
   type BakedImage,
   type GeneratedImage,
@@ -37,7 +21,6 @@ import {
   locations,
 } from "../scripts/build/ci-images/spec.ts";
 import {
-  aotTests,
   getBuildMetadata,
   getCommit,
   getCommitMessage,
@@ -240,6 +223,8 @@ type Platform = Target & {
   distro?: Distro;
   release: string;
   tier?: Tier;
+  /** What a test platform runs in place of every test, in one shard. */
+  tests?: string[];
 };
 
 type AzureVmTier = "build" | "test";
@@ -284,6 +269,9 @@ const buildPlatforms: Platform[] = [
   // asan x64 cross-builds from the arm64 host too, with the amd64 compiler-rt
   // that the `crossCompilerRt` tool of scripts/build/ci-images/spec.ts installs there.
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13" },
+  // In no release either. The build checks the layout of the file that it links and of the one that it strips
+  // (scripts/build/verify-binary.ts).
+  { os: "linux", arch: "x64", profile: "hardened", distro: "debian", release: "13" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "debian", release: "13" },
   { os: "linux", arch: "x64", abi: "musl", distro: "debian", release: "13" },
   // Android: cross-compiled from the debian-13 aarch64 host via NDK sysroot.
@@ -305,11 +293,6 @@ const buildPlatforms: Platform[] = [
   { os: "windows", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
 ];
 
-// A Bun built with --hardened=on is in no release, so nothing else would notice where its layout is lost. The build checks
-// the file that it links and the one that it strips (scripts/build/verify-binary.ts), and test/aot/hardened-*.test.ts check
-// what that Bun builds.
-const hardenedPlatform: Platform = { os: "linux", arch: "x64", profile: "hardened", distro: "debian", release: "13" };
-
 const testPlatforms: Platform[] = [
   // Darwin arm64 is targeted by `release-tier` (see getTestAgent): one job on
   // `latest` (current macOS, 26 today) and one on `previous` (anything older
@@ -330,6 +313,24 @@ const testPlatforms: Platform[] = [
   { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13", tier: "latest" },
+  // A Bun built with --hardened=on never reads the environment variables that tests steer Bun with, so it runs the tests
+  // that are written for it. On any other build they skip themselves.
+  {
+    os: "linux",
+    arch: "x64",
+    profile: "hardened",
+    distro: "debian",
+    release: "13",
+    tier: "latest",
+    tests: [
+      "aot/hardened",
+      "aot/a-hardened-build",
+      "aot/an-executable-that-cannot-read-its-own-file",
+      "aot/compiled-code-mapping",
+      "aot/executable-memory-filter",
+      "aot/texts-that-tell-builds-apart",
+    ],
+  },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
@@ -337,6 +338,9 @@ const testPlatforms: Platform[] = [
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
   { os: "windows", arch: "aarch64", release: "11", tier: "latest" },
 ];
+
+/** Pull requests build and test the other profiles. main does not: nothing ships them. */
+const isInRelease = ({ profile }: Target) => profile !== "asan" && profile !== "hardened";
 
 function getPlatformKey(platform: Platform): string {
   const { distro, release } = platform;
@@ -686,10 +690,10 @@ function getTargetTriplet(platform: Target): string {
  * aarch64 builds verify no LSE/SVE instructions snuck in.
  */
 function needsBaselineVerification(platform: Platform): boolean {
-  const { os, arch, abi, profile } = platform;
+  const { os, arch, abi } = platform;
   // asan never ships. x64-android is emulator-only; aarch64-android keeps its
   // static LSE/SVE scan via --skip-emulation in getVerifyBaselineStep().
-  if (profile === "asan" || profile === "hardened") return false;
+  if (!isInRelease(platform)) return false;
   if (os === "linux") return (arch === "x64" && abi !== "android") || arch === "aarch64";
   if (os === "windows") return arch === "x64";
   return false;
@@ -892,167 +896,53 @@ function getTraceOrderStep(target: Target, tracePlatform: Platform, options: Pip
   };
 }
 
+/** Where `cargo test` runs. An entry of `testPlatforms`, so the step runs on an image that exists. */
+const cargoTestPlatform: Platform = { os: "linux", arch: "x64", distro: "debian", release: "13" };
+
+/**
+ * The unit tests of the Rust crates that link without JavaScriptCore and Bun's C++ (scripts/rust-test.ts). Some hand what the
+ * front end writes to the engine, which is `testaot` of the build.
+ */
+function getCargoTestStep(buildId: string | undefined): CommandStep {
+  const buildStep = `${getTargetKey(cargoTestPlatform)}-build-bun`;
+  const profileDir = `${getTargetTriplet(cargoTestPlatform)}-profile`;
+  return {
+    key: `${getPlatformKey(cargoTestPlatform)}-cargo-test`,
+    label: `${getPlatformLabel(cargoTestPlatform)} - cargo-test`,
+    depends_on: buildId ? [] : [buildStep],
+    agents: getEc2Agent(cargoTestPlatform, { instanceType: "c7i.4xlarge" }),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    timeout_in_minutes: 30,
+    command: [
+      `buildkite-agent artifact download '${profileDir}.zip' . --step ${buildStep}${buildId ? ` --build ${buildId}` : ""}`,
+      `unzip -o '${profileDir}.zip' '${profileDir}/testaot'`,
+      `chmod +x ${profileDir}/testaot`,
+      // ($$ is a literal $ after pipeline-upload interpolation.)
+      `TESTAOT="$$PWD/${profileDir}/testaot" bun run rust:test`,
+    ],
+  };
+}
+
 interface TestOptions {
   buildId?: string | undefined;
   testFiles?: string[] | undefined;
-  aot?: AotTests | undefined;
-  /** Which of the two steps of `aot` this is. */
-  aotTakes?: AotTakes | undefined;
-  /** The Bun of `hardenedPlatform`. */
-  hardened?: boolean | undefined;
-}
-
-// Which tests of the ahead-of-time compiler a step runs: scripts/aot-tests.ts.
-const aotSources = [
-  "src/aot/",
-  "src/sema/",
-  "src/builtin_sources/",
-  "src/bundler/aot/",
-  "src/trim/",
-  "src/exe_format/",
-  "src/codegen/builtins/",
-  "src/codegen/declared-type-checks.ts",
-  "src/codegen/generate-removable-features.ts",
-  "src/codegen/removable-entry-points.ts",
-  "src/options_types/aot_options.rs",
-  "src/options_types/trim.rs",
-  "src/resolver/compiled_program.rs",
-  "src/standalone_graph/compiled_program.rs",
-  "src/standalone_graph/executable_",
-  "src/crash_handler/compiled_frames.rs",
-  "src/sql_jsc/shared/RowDecoder.rs",
-  "src/runtime/api/compile_ahead_of_time.rs",
-  "src/runtime/cli/check_command/compile_check.rs",
-  "src/runtime/cli/compile_",
-  "src/runtime/cli/run_compiled.rs",
-  "src/runtime/cli/startup_options",
-  "src/runtime/removed_feature.rs",
-  "src/jsc/compiled_program.rs",
-  "src/jsc/bindings/BunAOT",
-  "src/jsc/bindings/BunCompiled",
-  "src/jsc/bindings/BunCompilers.cpp",
-  "src/jsc/bindings/RemovableFeatures.h",
-  "src/jsc/bindings/RemovedFeature.cpp",
-  ...aotTests.map(group => `test/${group}`),
-  "scripts/build/aot",
-  "scripts/build/trim/",
-  "scripts/build/deps/webkit.ts",
-];
-// A git pathspec that names no directory or file matches nothing, so a file name prefix becomes a glob.
-const aotPathspecs = aotSources.map(source => (source.endsWith("/") || source.includes(".") ? source : `${source}*`));
-
-// The checkout of the step that runs this file is sparse and has no blobs: what it needs of test/ and src/ it asks git for.
-function git(...args: string[]): string | undefined {
-  const { status, stdout } = spawnSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 60_000 });
-  return status === 0 ? stdout : undefined;
-}
-
-let aotChanges: boolean | undefined;
-// A diff that fails says nothing about the files, so it counts as a change.
-function hasAotChanges({ changedFiles }: PipelineOptions): boolean {
-  return (aotChanges ??= changedFiles?.length
-    ? changedFiles.some(file => aotSources.some(source => file.startsWith(source)))
-    : git("diff", "--name-only", "--merge-base", "origin/main", "HEAD", "--", ...aotPathspecs)?.trim() !== "");
-}
-
-// What an executable compiles and what the table of built-ins is written from, outside the compiler's own folders: the modules in
-// JavaScript, the schemas of native functions, and the generators of both.
-const librarySources = ["src/js/", "src/codegen/"];
-const libraryPathspecs = [...librarySources, "*.bind.ts"];
-const isLibrarySource = (file: string) =>
-  file.endsWith(".bind.ts") || librarySources.some(source => file.startsWith(source));
-
-let libraryChanges: boolean | undefined;
-function hasLibraryChangesWithoutAotChanges(options: PipelineOptions): boolean {
-  if (hasAotChanges(options)) return false;
-  return (libraryChanges ??= options.changedFiles?.length
-    ? options.changedFiles.some(isLibrarySource)
-    : git("diff", "--name-only", "--merge-base", "origin/main", "HEAD", "--", ...libraryPathspecs)?.trim() !== "");
-}
-
-const buildScripts = ["scripts/build", "scripts/build.ts"];
-let hardenedLane: boolean | undefined;
-// What decides the layout of a hardened Bun and of what it builds: the build scripts, the trimmable link, the writers of
-// executables and the compiler.
-function hasHardenedLane(options: PipelineOptions): boolean {
-  return (hardenedLane ??=
-    isMainBranch() ||
-    hasAotChanges(options) ||
-    (options.changedFiles?.length
-      ? options.changedFiles.some(file => buildScripts.some(source => file.startsWith(source)))
-      : git("diff", "--name-only", "--merge-base", "origin/main", "HEAD", "--", ...buildScripts)?.trim() !== ""));
-}
-function getAotTests(platform: Platform, options: PipelineOptions): AotTests | undefined {
-  return options.testFiles?.length ? undefined : getAotTestsOfLane(platform, hasAotChanges(options));
-}
-
-let expectedDurations: Record<string, Record<string, unknown>> | undefined;
-function getExpectedDurations(): Record<string, Record<string, unknown>> {
-  try {
-    return (expectedDurations ??= JSON.parse(git("show", "HEAD:test/expected-durations.json") ?? "{}") ?? {});
-  } catch {
-    return (expectedDurations = {});
-  }
-}
-
-// By their names, for the number of shards alone: scripts/runner.node.ts reads the tests and knows.
-let programFolders: string[] | undefined;
-function isDrawnByName(path: string): boolean {
-  programFolders ??= git("ls-tree", "-d", "--name-only", "HEAD:test/aot/programs")?.split("\n").filter(Boolean) ?? [];
-  return (
-    /^aot\/(variant-|packages-|generated-|jit-mode-eager-tier-up|each-case-alone|every-program|programs-marked-as-failing|collector-stress\/|heat\/|bad-time\/|joined-programs|trimmed-matches-untrimmed)/.test(
-      path,
-    ) || programFolders.some(folder => path.startsWith(`aot/${folder}.`) || path.startsWith(`aot/${folder}-`))
-  );
-}
-
-function getAotParallelism(platform: Platform, options: PipelineOptions, aot: AotTests, takes: AotTakes): number {
-  const { os, arch, abi, profile } = platform;
-  const windows = arch === "x64" ? "windows" : "windows-aarch64";
-  const lane = profile === "asan" ? "asan" : abi === "musl" ? "musl" : os === "windows" ? windows : "default";
-  const excludes = getAotExcludes(platform, aot);
-  const alwaysDrawn = getAotAlwaysDrawn(platform, hasLibraryChangesWithoutAotChanges(options));
-  const draw = getAotFileDraw(platform, aot);
-  const sample = spellSample(getAotSample(), getAotShare(platform));
-  const alwaysInDrawnStep = getAotAlwaysInDrawnStep(platform, aot);
-  let milliseconds = 0;
-  for (const [path, durations] of Object.entries(getExpectedDurations())) {
-    if (!aotTests.some(group => path.startsWith(group)) || excludes.some(group => path.includes(group))) continue;
-    // Where files are drawn, what is always drawn is the fixed step and the draw is the other. Where every file is run, the tests that take shares are the drawn step.
-    const isFixed = draw > 1 ? alwaysDrawn.some(group => path.includes(group)) : !isDrawnByName(path);
-    // These have as much for one step as for the other.
-    const isInBoth = draw === 1 && path.startsWith("aot/generated-births-and-uses");
-    if (isFixed !== (takes === "fixed") && !isInBoth) continue;
-    if (!isFixed && !alwaysInDrawnStep.some(group => path.includes(group)) && !isFileDrawn(sample, path, draw))
-      continue;
-    milliseconds += Number(durations?.[lane] ?? durations?.["default"]) || 0;
-  }
-  const shards = Math.ceil(milliseconds / (12 * 60_000)) || (aot === "all" ? 10 : 2);
-  return Math.min(shards, os === "darwin" ? 16 : arch === "x64" ? 27 : 24);
 }
 
 function getTestBunStep(platform: Platform, options: PipelineOptions, testOptions: TestOptions = {}): CommandStep {
   const { os, profile } = platform;
-  const { buildId, testFiles, aot, aotTakes = "fixed", hardened } = testOptions;
+  const { buildId, testFiles } = testOptions;
 
-  const buildKey = `${getTargetKey(hardened ? hardenedPlatform : platform)}-build-bun`;
-  const args = [`--step=${buildKey}`];
+  const args = [`--step=${getTargetKey(platform)}-build-bun`];
   if (buildId) {
     args.push(`--build-id=${buildId}`);
   }
 
-  if (hardened) {
-    args.push(...getHardenedStepArguments(aotTakes), "--vendor=false");
-  } else if (aot) {
-    args.push(
-      "--retries=1",
-      "--vendor=false",
-      ...getAotStepArguments(platform, aot, aotTakes, hasLibraryChangesWithoutAotChanges(options)),
-    );
-  } else if (testFiles?.length) {
+  if (testFiles?.length) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
+  } else if (platform.tests) {
+    args.push(...platform.tests.map(test => `--include=${test}`), "--vendor=false");
   } else {
-    args.push(...aotTests.map(group => `--exclude=${group}`));
     // platform-independent tsc check; runs in .github/workflows/bun-types.yml instead
     args.push("--exclude=integration/bun-types");
     // source-tree lints and build-script unit tests that never touch the built
@@ -1062,13 +952,12 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
 
   const depends: string[] = [];
   if (!buildId) {
-    depends.push(buildKey);
+    depends.push(`${getTargetKey(platform)}-build-bun`);
   }
 
-  const kind = `${hardened ? "hardened" : aot ? "aot" : "bun"}${aotTakes === "drawn" ? "-drawn" : ""}`;
   return {
-    key: `${getPlatformKey(platform)}-test-${kind}`,
-    label: `${getPlatformLabel(platform)} - test-${kind}`,
+    key: `${getPlatformKey(platform)}-test-bun`,
+    label: `${getPlatformLabel(platform)} - test-bun`,
     depends_on: depends,
     agents: getTestAgent(platform),
 
@@ -1083,24 +972,11 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     // connected at upload but drops off during the build wait, so the
     // step sits `scheduled` with nobody to take it. That holds only this
     // PR's own build, and a cancel clears it.
-    parallelism: aot
-      ? getAotParallelism(platform, options, aot, aotTakes)
-      : platform.tier === "beta" || hardened
-        ? 1
-        : os === "darwin"
-          ? 2
-          : os === "windows"
-            ? 8
-            : 20,
-    // The compiler's tests do not hold up work that touches neither the compiler nor what it compiles.
-    ...(platform.tier === "beta" ||
-    aotTakes === "drawn" ||
-    (aot && !(hasAotChanges(options) || hasLibraryChangesWithoutAotChanges(options)))
-      ? { soft_fail: true }
-      : {}),
+    parallelism: platform.tier === "beta" || platform.tests ? 1 : os === "darwin" ? 4 : os === "windows" ? 8 : 20,
+    ...(platform.tier === "beta" ? { soft_fail: true } : {}),
     // The beta lane runs the whole suite as one shard on one box (~35 min).
     timeout_in_minutes:
-      platform.tier === "beta" ? 60 : aot || profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
+      platform.tier === "beta" ? 60 : profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       // Platform smoke check: runner.node.ts asserts the agent matches what
@@ -1640,7 +1516,7 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
 
   let filteredBuildPlatforms = buildPlatforms;
   if (isMainBranch()) {
-    filteredBuildPlatforms = buildPlatforms.filter(({ profile }) => profile !== "asan");
+    filteredBuildPlatforms = buildPlatforms.filter(isInRelease);
   }
 
   const canary = await getCanaryRevision();
@@ -1895,7 +1771,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     }
   }
 
-  const includeASAN = !isMainBranch();
+  const includeEveryProfile = !isMainBranch();
 
   // verify-baseline / trace-order: checks that run on a built binary on a
   // test-fleet host. They are drawn in that host's test group (or a
@@ -1935,10 +1811,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   };
 
   if (!buildId) {
-    let relevantBuildPlatforms = includeASAN
-      ? buildPlatforms
-      : buildPlatforms.filter(({ profile }) => profile !== "asan");
-    if (hasHardenedLane(options)) relevantBuildPlatforms = [...relevantBuildPlatforms, hardenedPlatform];
+    const relevantBuildPlatforms = includeEveryProfile ? buildPlatforms : buildPlatforms.filter(isInRelease);
 
     steps.push(
       ...relevantBuildPlatforms.flatMap(target => {
@@ -1996,8 +1869,8 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   }
 
   // Tests run on main too so the canary release step below can gate on them.
-  // ASAN is PR-only (see includeASAN above), so the asan test lane is dropped
-  // on main along with its build.
+  // The asan and hardened profiles are PR-only (see includeEveryProfile above),
+  // so their test lanes are dropped on main along with their builds.
   // Untiered: any arm64 mac agent, whatever macOS it runs, can take it.
   const prDarwinTestPlatforms: Platform[] = [
     { os: "darwin", arch: "aarch64", release: "any" },
@@ -2015,9 +1888,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     !darwinTestsEnabled && !isMergeQueue() && (await darwinBetaQueueIdle())
       ? [{ os: "darwin", arch: "aarch64", release: "27", tier: "beta" }]
       : [];
-  const relevantTestPlatforms = (
-    includeASAN ? testPlatforms : testPlatforms.filter(({ profile }) => profile !== "asan")
-  )
+  const relevantTestPlatforms = (includeEveryProfile ? testPlatforms : testPlatforms.filter(isInRelease))
     .filter(({ os }) => os !== "darwin" || darwinTestsEnabled)
     .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms)
     .concat(darwinTestsEnabled ? [] : betaDarwinTestPlatforms);
@@ -2029,20 +1900,6 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
         ...relevantTestPlatforms.map(target => {
           const step = getTestBunStep(target, options, { testFiles, buildId });
           testStepKeys.push(step.key);
-          const aot = getAotTests(target, options);
-          const aotStep = aot && getTestBunStep(target, options, { buildId, aot });
-          if (aotStep) testStepKeys.push(aotStep.key);
-          // Nothing waits for it.
-          const drawnAotStep = aot && getTestBunStep(target, options, { buildId, aot, aotTakes: "drawn" });
-          // Its build is made in this run alone, and no release waits for it.
-          const runsHardened =
-            !buildId &&
-            !testFiles?.length &&
-            getPlatformKey(target) === getPlatformKey({ ...hardenedPlatform, profile: undefined });
-          const hardenedStep =
-            runsHardened && hasHardenedLane(options) && getTestBunStep(target, options, { hardened: true });
-          const drawnHardenedStep =
-            hardenedStep && getTestBunStep(target, options, { hardened: true, aotTakes: "drawn" });
           // Test shards run on their native platform image; when this build
           // bakes it, they wait for it.
           const dependsOn = getImageDependsOn(target, baking);
@@ -2050,14 +1907,22 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
             {
               key: getPlatformKey(target),
               group: getPlatformLabel(target),
-              steps: [step, aotStep, drawnAotStep, hardenedStep, drawnHardenedStep].filter(
-                (step): step is CommandStep => !!step,
-              ),
+              steps: [step],
             },
             ...dependsOn,
           );
         }),
       );
+      if (!testFiles?.length) {
+        const step = getCargoTestStep(buildId);
+        testStepKeys.push(step.key);
+        steps.push(
+          getStepWithDependsOn(
+            { key: getPlatformKey(cargoTestPlatform), group: getPlatformLabel(cargoTestPlatform), steps: [step] },
+            ...getImageDependsOn(cargoTestPlatform, baking),
+          ),
+        );
+      }
     }
   }
 

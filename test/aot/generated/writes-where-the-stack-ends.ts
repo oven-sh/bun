@@ -160,6 +160,8 @@ export type Case = {
 export const nameOf = ({ place, guard, call, way }: Case) => [call.name, guard.name, place.name, way.name].join(" | ");
 
 export function programOf({ place, guard, call, way }: Case) {
+  // How many frames the call needs follows from the size of a frame: the walk comes to the depth where the call has room.
+  const goesOn = call.text.startsWith("kept =") && !call.hangsOnTheFirstCall ? " || (kept === undefined && turn <= 5000)" : "";
   return `const isOn = process.argv.length > 0;
 const list = [3, 1, 2];
 let kept;
@@ -184,7 +186,7 @@ return depth > 0 ? descend(depth - 1, run) + 1 : run();
 }
 let limit = 0;
 let goal = 1e9;
-for (turn = 0; turn <= 200; turn++) {
+for (turn = 0; turn <= 200${goesOn}; turn++) {
 reached = 0;
 try {
 descend(goal, ${way.last});

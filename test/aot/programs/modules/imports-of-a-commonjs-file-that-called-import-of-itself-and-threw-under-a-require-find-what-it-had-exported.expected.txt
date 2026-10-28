@@ -1,4 +1,0 @@
-file runs
-module: require threw thrown by the file
-file: imported default,value
-module: imported default,value

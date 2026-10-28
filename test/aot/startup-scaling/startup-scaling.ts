@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
-import { withoutDebugInformation } from "../run-programs";
+import { withoutDebugInformation } from "../harness/commands";
 import { describe, test } from "../supported";
 import { buildProgram } from "./build-program";
 import { generateProgram, kinds, scenarios, useEverything, type Kind } from "./generate-program";

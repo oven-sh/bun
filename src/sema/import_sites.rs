@@ -11,7 +11,9 @@ mod statements;
 #[cfg(all(test, not(miri)))]
 mod tests;
 
-pub use call_sites::{RequireCall, RequireCallForm, find_require_call};
+pub use call_sites::{
+    RequireCall, RequireCallForm, find_module_printed_as_require, find_require_call,
+};
 pub(crate) use call_sites::{
     call_site_arguments, call_site_kind, is_free_common_js, is_in_with_scope,
 };

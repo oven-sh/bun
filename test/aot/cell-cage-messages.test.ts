@@ -1,7 +1,7 @@
 import { afterAll, expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { withoutCoreDump } from "./run-programs";
+import { withoutCoreDump } from "./harness/commands";
 import { beforeAll, describe, test } from "./supported";
 
 setDefaultTimeout(120_000);
@@ -108,10 +108,11 @@ server.listen(0, async () => {
     expect(result.stderr).not.toContain("cannot be used");
   });
 
-  test("blocks outside cage", async () => {
-    expect(await run([narrow], cwd, cageSize("1"))).toEqual(
+  // The first 16 MB of the cage are left unused: one that is no larger has room for no object.
+  test.each(["1", "16"])("blocks outside a cage of %s MB", async size => {
+    expect(await run([narrow], cwd, cageSize(size))).toEqual(
       exitsWith(
-        "error: the objects created before this executable's code was loaded don't fit in BUN_JSC_markedBlockCageSizeInMB=1. Raise it, or build with --aot-huge-heap.\n",
+        `error: the objects created before this executable's code was loaded don't fit in BUN_JSC_markedBlockCageSizeInMB=${size}. Raise it, or build with --aot-huge-heap.\n`,
       ),
     );
   });

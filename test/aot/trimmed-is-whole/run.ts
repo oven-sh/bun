@@ -3,7 +3,8 @@ import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harne
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { canTrim, featureOf, model } from "../../bundler/compile-trim-features";
-import { inShare, slot, unsupported } from "../run-programs";
+import { inShare } from "../harness/shares";
+import { slot, unsupported } from "../harness/commands";
 import { readRemovedFeatures } from "../trimmed-against-whole/removed-features";
 
 interface Program {

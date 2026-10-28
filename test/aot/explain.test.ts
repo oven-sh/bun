@@ -23,7 +23,7 @@ import {
   type AccessColumn,
   type AccessCounts,
 } from "./harness/build-report";
-import { slot, spawned } from "./run-programs";
+import { slot, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 type Files = Record<string, string>;

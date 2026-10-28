@@ -167,6 +167,7 @@ dependencies = [
  "bun_ast",
  "bun_base64",
  "bun_builtin_sources",
+ "bun_bundler",
  "bun_collections",
  "bun_core",
  "bun_glob",

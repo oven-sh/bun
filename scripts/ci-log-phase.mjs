@@ -12,6 +12,9 @@
 //     single `bun test --parallel` run a summary `[N/M] <path> (X.XXs)` per file
 //   - parallel-safe phase: `--- Running N parallel-safe tests`, then a bare
 //     `[N/M] <path>` per concurrent dispatch (no recoverable wall clock)
+//   - compiled-programs phase: `--- Running N programs compiled ahead of time`,
+//     then `[N/M] <path> (compile X ms, run Y ms)` per program once its build
+//     and both its runs are through (not a path, so no span opens)
 //   - other startGroup phases: `--- napi prebuild: ...`, `--- End`
 // A parser that only recognises the first shape folds the entire following
 // phase into whichever serial test happened to precede it.
@@ -29,4 +32,6 @@
  * @returns {boolean}
  */
 export const isPhaseGroupHeader = body =>
-  /^--- (?:\[\d+-\d+\/\d+\]|napi prebuild:|Running \d+ parallel-safe|End\b|Summary\b|Received \w+, exiting)/.test(body);
+  /^--- (?:\[\d+-\d+\/\d+\]|napi prebuild:|Running \d+ (?:parallel-safe|programs compiled)|End\b|Summary\b|Received \w+, exiting)/.test(
+    body,
+  );

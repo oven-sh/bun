@@ -13,7 +13,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { compileCommand } from "../harness/flags";
-import { built, slot, spawned } from "../run-programs";
+import { built, slot, spawned } from "../harness/commands";
 import { describe, test } from "../supported";
 import type { TableDump } from "./differential/table-description";
 import { CaseMaker, modulesOf, programOf } from "./unused-calls/cases";

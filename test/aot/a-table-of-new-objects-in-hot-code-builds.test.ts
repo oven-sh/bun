@@ -6,8 +6,8 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { totalmem } from "os";
 import { join } from "path";
+import { withoutDebugInformation } from "./harness/commands";
 import { compileCommand, withThreads } from "./harness/flags";
-import { withoutDebugInformation } from "./run-programs";
 import { test } from "./supported";
 
 const entries = 2130;

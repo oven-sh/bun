@@ -50,6 +50,8 @@ pub struct CompiledProgram {
     package_names: Box<[CompiledPackageName]>,
     /// By entry point: the image of the program that begins there, a part of `image`. Empty: `image` is one image, of one program with all entry points.
     images: Box<[&'static [u8]]>,
+    /// An index into `entry_points`, where the process does not start with the first program.
+    start: Option<usize>,
     module_lookup: OnceLock<ModuleLookup>,
     /// What every path that the executable answers for outside of its own root begins with; found by the graph at the first question.
     pub common_start_of_source_paths: OnceLock<Option<Box<[u8]>>>,
@@ -282,6 +284,7 @@ impl CompiledProgram {
             source_path_order,
             package_names: Box::new([]),
             images: Box::new([]),
+            start: None,
             module_lookup: OnceLock::new(),
             common_start_of_source_paths: OnceLock::new(),
         }
@@ -307,6 +310,12 @@ impl CompiledProgram {
         self
     }
 
+    /// The process starts with the program that begins at this entry point.
+    pub fn start_at(&mut self, entry_point: usize) {
+        debug_assert!(entry_point < self.images.len());
+        self.start = Some(entry_point);
+    }
+
     /// One for each program.
     pub fn images(&self) -> impl Iterator<Item = &'static [u8]> {
         let only = self.images.is_empty().then_some(self.image);
@@ -315,6 +324,9 @@ impl CompiledProgram {
 
     /// Of the program that the process starts with.
     pub fn first_image(&self) -> &'static [u8] {
+        if let Some(start) = self.start {
+            return self.images[start];
+        }
         let mut images = self.images.iter();
         let first = images.find(|image| core::ptr::eq(image.as_ptr(), self.image.as_ptr()));
         first.copied().unwrap_or(self.image)

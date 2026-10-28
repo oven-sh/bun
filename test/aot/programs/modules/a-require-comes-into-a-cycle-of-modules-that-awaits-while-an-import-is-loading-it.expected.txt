@@ -1,5 +1,0 @@
-slow-a begins
-TypeError require() async module slow-b.mjs" is unsupported. use "await import()" instead.
-slow-a ends
-slow-b runs
-43

@@ -1,1 +1,0 @@
-{ "env": { "BUN_JSC_slowPathAllocsBetweenGCs": "1" }, "skipInShell": "it needs require()" }

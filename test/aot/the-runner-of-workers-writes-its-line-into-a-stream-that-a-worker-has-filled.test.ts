@@ -1,4 +1,4 @@
-// programs/run-each-in-a-worker.ts writes a line behind what each Worker has printed. Its streams are sockets, which no longer block once a Worker has printed, and whoever reads them may
+// fixtures/run-each-in-a-worker.ts writes a line behind what each Worker has printed. Its streams are sockets, which no longer block once a Worker has printed, and whoever reads them may
 // be behind. Here a Worker fills its stream to the last byte while nobody reads.
 import { expect } from "bun:test";
 import { copyFileSync, writeFileSync } from "fs";
@@ -30,7 +30,7 @@ for (let size = 1 << 16; size > 0; size >>= 1) {
 test("the line stands behind the output of a Worker that has left no room for it", async () => {
   using dir = tempDir("aot-runner-full-stream", { "fills.ts": fills });
   const folder = String(dir);
-  copyFileSync(join(import.meta.dir, "programs", runner), join(folder, runner));
+  copyFileSync(join(import.meta.dir, "fixtures", runner), join(folder, runner));
   const executable = join(folder, isWindows ? "runner.exe" : "runner");
   await using build = Bun.spawn({
     cmd: [bunExe(), "build", "--compile", "--aot", "./" + runner, "./fills.ts", "--outfile", executable],

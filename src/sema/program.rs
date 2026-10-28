@@ -275,6 +275,8 @@ pub struct Module<'s> {
     pub is_in_types_program: bool,
     /// True: `CodeHost::loader_of_code_in_place_of_typed_file` answers for it, so what it declares is what is expected of another file's code.
     pub runs_other_code: bool,
+    /// True: it holds code that nothing in the program asks for, and is read for its types. No object of a class that it declares is ever made.
+    pub holds_code_that_never_runs: bool,
 }
 
 /// The files of a directory come before the files of the directories in it.
@@ -5439,12 +5441,17 @@ impl<'s> Files<'s> {
 
         let early_prefetch: OnceLock<Prefetch> = OnceLock::new();
         let mut find_root_files = Some(|| {
+            let waits_for_its_name =
+                |path: &[u8]| compile.is_some_and(|it| it.host.is_seen_only_by_name(path));
             let (roots, listed_roots): (&[Vec<u8>], Option<&'s [Vec<u8>]>) = match root_file_names {
                 RootFileNames::Listed(roots) => (roots, None),
                 RootFileNames::Unlisted(list) => {
                     let prefetch = early_prefetch.get_or_init(Prefetch::expecting_seeds);
-                    let mut load_early =
-                        |path: &[u8]| prefetch.add_seed(resolver.keep(path), false);
+                    let mut load_early = |path: &[u8]| {
+                        if !waits_for_its_name(path) {
+                            prefetch.add_seed(resolver.keep(path), false);
+                        }
+                    };
                     let roots: &'s [Vec<u8>] = session.keep(list(&mut load_early));
                     (roots, Some(roots))
                 }
@@ -5475,15 +5482,21 @@ impl<'s> Files<'s> {
             let mut root_of_start: Vec<u32> = Vec::new();
             // Missing root files have a task too.
             let mut missing_roots: Vec<&[u8]> = Vec::new();
+            // They have their numbers, so the files of the project are numbered alike whichever of them are read.
+            let mut waiting_roots: FxHashSet<FileId> = FxHashSet::default();
             for (index, root) in roots.iter().enumerate() {
                 match root_file_name(host, options, root) {
                     // Nothing is read.
                     Ok(None) => {}
                     Ok(Some(found)) => {
-                        root_of_start.push(index as u32);
                         let file = add(&found, false, &mut modules, &mut depths, &mut all_found);
                         // The root files are the first of `rootTasks`, and the first task for a file name is the one that is loaded (`loadedTask`): it has no `libFile`.
                         all_found.files[file.idx()].is_lib = false;
+                        if waits_for_its_name(&found) {
+                            waiting_roots.insert(file);
+                            continue;
+                        }
+                        root_of_start.push(index as u32);
                         starts.push(file);
                     }
                     Err(code) => {
@@ -5555,9 +5568,10 @@ impl<'s> Files<'s> {
                     }
                 }
             }
-            let seeds: Vec<(&'s [u8], bool)> = (all_found.files.iter())
-                .filter(|found| found.is_read)
-                .map(|found| (found.path.pretty, found.is_lib))
+            let seeds: Vec<(&'s [u8], bool)> = (0u32..)
+                .zip(&all_found.files)
+                .filter(|(file, found)| found.is_read && !waiting_roots.contains(&FileId(*file)))
+                .map(|(_, found)| (found.path.pretty, found.is_lib))
                 .collect();
             RootFiles {
                 roots,
@@ -7678,6 +7692,7 @@ impl<'s> Files<'s> {
             code_edges: &[],
             is_in_types_program: true,
             runs_other_code: false,
+            holds_code_that_never_runs: false,
         };
         Loaded {
             module: ArenaBox::new_in(module, arena),

@@ -38,7 +38,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import toolchain
 
-PROGRAMS = os.path.realpath(os.environ.get("PROGRAMS", HERE + "/../programs"))
+PROGRAMS = os.path.realpath(os.environ.get("PROGRAMS", HERE + "/../parallel"))
 WRITTEN = os.path.realpath(os.environ["WRITTEN"]) if os.environ.get("WRITTEN") else None
 WORK = os.path.abspath(os.environ.get("WORK", os.path.join(tempfile.gettempdir(), "aot-quick")))
 EXTENSIONS = ("ts", "tsx", "js", "mts", "cts", "mjs", "cjs")

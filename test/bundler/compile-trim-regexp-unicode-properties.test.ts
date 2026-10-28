@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { unsupported } from "../aot/harness/commands";
 import { run } from "../aot/harness/run";
-import { unsupported } from "../aot/run-programs";
 import { canTrim, featureNamed, textOf, withoutFeatures } from "./compile-trim-features";
 
 const files = {

@@ -47,9 +47,9 @@ import { availableParallelism } from "os";
 import { join } from "path";
 import { measureCommandWithMemory, type Cost } from "../analysis-scaling/measure-check";
 import { readBuildReport } from "../harness/build-report";
+import { slot, spawned, withoutDebugInformation } from "../harness/commands";
 import { withReport, withThreads } from "../harness/flags";
 import { measureUntilWithinBounds } from "../harness/measure-again";
-import { slot, spawned, withoutDebugInformation } from "../run-programs";
 import { describe, test } from "../supported";
 import { packagesWithOwnCompilerOptions, shapes, type Shape } from "./shapes";
 

@@ -26,12 +26,7 @@ test("a program that imports eleven modules of node answers the same, with about
   const directory = String(dir);
   // As JavaScript: it has no type of its own, and the types of node are not beside it here.
   cpSync(
-    join(
-      import.meta.dir,
-      "programs",
-      "builtin-modules",
-      "eleven-node-modules-are-imported-and-every-pass-is-verified.ts",
-    ),
+    join(import.meta.dir, "parallel", "builtin-modules", "eleven-node-modules-imported-verified.ts"),
     join(directory, "modules.js"),
   );
   expect((await answersTheSameUnderEachSchedule("modules", directory, "modules.js")).exitCode).toBe(0);

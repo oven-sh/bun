@@ -1,14 +1,12 @@
 use bun_ast::Target;
 use bun_resolve_builtins::{Alias, Cfg};
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, CommonJsVariable, Decl};
+use bun_sema::bind::{CommonJsVariable, Decl};
 use bun_sema::fold::{Constant, FoldedValue};
-use bun_sema::hir::{
-    self, Branches, CallId, Chain, ExprFlags, ExprId, ExprKind, IdList, ImportEqualsId, MemberKey,
-};
+use bun_sema::hir::{self, Branches, CallId, Chain, ExprId, ExprKind, IdList, ImportEqualsId};
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, OwnRequire, RequireCallForm, ResolvedForm,
-    find_own_require, find_require_call, holds_import_meta_require,
+    find_module_printed_as_require, find_own_require, find_require_call, holds_import_meta_require,
     is_create_require_behind_get_builtin_module, is_made_require, is_require_made_for_own_file,
     may_require_get_members, may_still_be_undefined,
 };
@@ -111,9 +109,10 @@ impl FileLowering<'_, '_, '_, '_> {
         let Some(Resolved::Builtin(callee_path)) = self.builtins.of_expr(callee) else {
             return CalleeKnowledge::Unresolved;
         };
+        let is_require = find_module_printed_as_require(self.hir, self.bound, callee).is_some();
         let root = match self.hir.member_key(callee) {
-            Some((object, _)) => self.skip_type_syntax(object),
-            None => callee,
+            Some((object, _)) if !is_require => self.skip_type_syntax(object),
+            _ => callee,
         };
         let Some(Resolved::Builtin(root_path)) = self.builtins.of_expr(root) else {
             return CalleeKnowledge::Unresolved;
@@ -324,8 +323,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let require_call = matches!(site.kind, ImportSiteKind::Require(_))
             .then(|| find_require_call(hir, bound, decisions, callee, arguments))
             .flatten();
-        let is_module_require =
-            matches!(site.kind, ImportSiteKind::Require(_)) && require_call.is_none();
+        let written = self.file.skip_type_syntax(callee);
+        let is_module_require = find_module_printed_as_require(hir, bound, written).is_some();
         let given = require_call.map_or(arguments, |found| found.args);
         let modules = self.file.inputs.modules;
         let answer = modules.site_answer(self.file.file, site.kind);
@@ -1128,20 +1127,9 @@ impl FileLowering<'_, '_, '_, '_> {
             return hir[call].pos;
         };
         let callee = self.skip_type_syntax(hir[id].callee);
-        let object = match hir.member_key(callee) {
-            Some((object, MemberKey::Name(name))) if name == known::require => {
-                self.skip_type_syntax(object)
-            }
-            _ => return self.call_position(hir[id]),
-        };
-        let is_printed_as_require = !self.is_shown_without_source_map()
-            && !hir
-                .expr_flags(callee)
-                .contains(ExprFlags::OPTIONAL_CHAIN_LINK)
-            && self.bound.binding(object) == Binding::CommonJs(CommonJsVariable::Module);
-        match is_printed_as_require {
-            true => hir[object].pos,
-            false => self.call_position(hir[id]),
+        match find_module_printed_as_require(hir, self.bound, callee) {
+            Some(module) if !self.is_shown_without_source_map() => hir[module].pos,
+            _ => self.call_position(hir[id]),
         }
     }
 }

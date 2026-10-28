@@ -460,6 +460,8 @@ pub(super) struct TestProject {
     paths: PathOptions,
     react_compiler: ReactCompilerMode,
     runs_tests: bool,
+    /// Most tests look at Bun's own code behind a program of one line.
+    pub(super) keeps_library_code_without_names: bool,
 }
 
 impl TestProject {
@@ -514,6 +516,7 @@ impl TestProject {
             },
             react_compiler: ReactCompilerMode::Disabled,
             runs_tests: false,
+            keeps_library_code_without_names: true,
         }
     }
 
@@ -547,6 +550,7 @@ impl TestProject {
                 react_compiler: self.react_compiler,
                 runs_tests: self.runs_tests,
                 in_memory_files: self.in_memory_files.clone(),
+                keeps_library_code_without_names: self.keeps_library_code_without_names,
                 ..LoadOptions::new(self.directory.clone())
             },
             paths: self.paths.clone(),

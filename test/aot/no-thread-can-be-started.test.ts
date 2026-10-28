@@ -3,8 +3,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import { join } from "node:path";
+import { withoutCoreDump } from "./harness/commands";
 import { run as runCommand } from "./harness/run";
-import { withoutCoreDump } from "./run-programs";
 import { describe, test, unsupported } from "./supported";
 
 const program = `type Cell = { id: number; next: Cell | null };

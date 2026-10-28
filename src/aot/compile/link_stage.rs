@@ -178,6 +178,7 @@ impl Build<'_> {
         self.leftovers.push(leftovers);
         Ok(FrontEndOutput {
             writes_preload,
+            held_library_code: core::mem::take(&mut self.held_library_code),
             program,
             body_remap,
             names,

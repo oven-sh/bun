@@ -7,8 +7,9 @@ import { afterAll, expect } from "bun:test";
 import { cpSync, mkdirSync, rmSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { dirname, join } from "path";
+import { withoutDebugInformation } from "./harness/commands";
 import { buildFlags, compileCommand, withLimit } from "./harness/flags";
-import { wanted, withoutDebugInformation } from "./run-programs";
+import { wanted } from "./harness/shares";
 import { beforeAll, describe, test } from "./supported";
 
 const ways: [string, string[]][] = [

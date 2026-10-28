@@ -96,7 +96,17 @@ test("the inspector's snapshot stays until the inspector lets go of it", async (
     const message = JSON.parse(String(event.data));
     answers.get(message.id)?.(message);
   });
-  await once(socket, "open");
+  const opened = Promise.withResolvers<void>();
+  socket.addEventListener("open", () => opened.resolve(), { once: true });
+  socket.addEventListener("error", () => opened.reject(new Error(`the socket to ${url} failed before it opened`)), {
+    once: true,
+  });
+  socket.addEventListener(
+    "close",
+    event => opened.reject(new Error(`the socket to ${url} closed before it opened, with code ${event.code}`)),
+    { once: true },
+  );
+  await opened.promise;
   let lastId = 0;
   function send(method: string, params = {}) {
     const id = ++lastId;

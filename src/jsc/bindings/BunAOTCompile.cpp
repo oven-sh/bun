@@ -181,6 +181,8 @@ extern "C" BunAOTBytes Bun__AOT__resultSection(const BunAOTResult* result, Wire:
     case Wire::ResultSection::ArrivalLayouts:
     case Wire::ResultSection::ArrivalLayoutFields:
         return noBytes;
+    case Wire::ResultSection::LibraryFunctionsLacked:
+        return output ? bytesOf(output->flowReport.libraryFunctionsLacked) : noBytes;
     }
     return noBytes;
 }

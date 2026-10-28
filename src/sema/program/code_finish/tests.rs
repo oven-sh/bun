@@ -63,6 +63,7 @@ fn code_files_without_entries<'s, 'r>(
         entry_of_file: Vec::new(),
         is_in_types_program: is_in_types_program.to_vec(),
         typed_files_with_other_code: FxHashSet::default(),
+        reads_code_on_request: false,
     }
 }
 

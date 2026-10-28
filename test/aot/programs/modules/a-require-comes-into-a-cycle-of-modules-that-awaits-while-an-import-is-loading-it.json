@@ -1,5 +1,0 @@
-{
-  "env": { "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER": "1" },
-  "skipInShell": "it needs the module loader of Bun",
-  "alone": "what it prints hangs on the turn in which the loader comes to the cycle, counted from the start of the entry point"
-}

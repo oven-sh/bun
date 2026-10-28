@@ -64,7 +64,7 @@ const words = (text: string | undefined) => (text ?? "").split(/\s+/).filter(Boo
 const pairs = (text: string | undefined) => Object.fromEntries(words(text).map(word => [word.slice(0, word.indexOf("=")), word.slice(word.indexOf("=") + 1)]));
 
 const work = join(option("work") ?? (existsSync("/dev/shm") ? "/dev/shm" : (process.env.TMPDIR ?? "/tmp")), `aot-fuzz-${process.pid}`);
-const programsRoot = option("programs-root") ?? join(import.meta.dir, "..", "programs");
+const programsRoot = option("programs-root") ?? join(import.meta.dir, "..", "parallel");
 const replay = option("replay");
 
 changeEnvironment(pairs(option("environment")), has("as-a-user"));

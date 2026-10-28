@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
-import { unsupported } from "./run-programs";
+import { unsupported } from "./harness/commands";
 
 const program = `
   import { jscDescribe } from "bun:jsc";

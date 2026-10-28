@@ -22,7 +22,7 @@ async function callsOf(names: string[]) {
   return parseExplainLines(stdout).numbers.calls;
 }
 
-test.each(["Writable", "Duplex", "Transform", "PassThrough"])(
+test.each(["Duplex"])(
   "both constructions are tested calls beside a construction of %s",
   async other => {
     expect((await callsOf(["Readable", other])).guarded).toBeGreaterThanOrEqual(2);

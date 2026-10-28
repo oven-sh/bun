@@ -73,9 +73,12 @@ async function expectSameAsPlain(folder: string, entry: string) {
   expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual(expected);
 }
 
+// Every way meets a shared library. What else a file may hold meets the two ways that say the most of the error.
+const waysThatDescribe = ["require in a try", "import() with a handler"];
+
 describe.each(["library.so", "library"])("%s holds", name => {
   describe.each(Object.keys(contents))("%s:", held => {
-    test.concurrent.each(Object.keys(ways))(
+    test.concurrent.each(held === "a shared library" ? Object.keys(ways) : waysThatDescribe)(
       "%s",
       async way => {
         const tree = ways[way](name);
@@ -89,7 +92,7 @@ describe.each(["library.so", "library"])("%s holds", name => {
 });
 
 describe.each(["library.so", "library"])("%s is a folder:", name => {
-  test.concurrent.each(Object.keys(ways))(
+  test.concurrent.each(waysThatDescribe)(
     "%s",
     async way => {
       const tree = ways[way](name);

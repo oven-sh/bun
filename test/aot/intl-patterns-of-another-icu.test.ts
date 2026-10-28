@@ -8,12 +8,12 @@ import { join } from "node:path";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-const programs = join(import.meta.dir, "programs", "calls-fast-paths");
+const programs = join(import.meta.dir, "parallel", "calls-fast-paths");
 const names = [
   "intl-constant-formatters",
   "intl-constant-formatters-in-every-flow",
   "intl-constant-formatters-known-traps",
-  "intl-constant-formatters-when-the-time-zone-changes",
+  "intl-constant-formatters-time-zone",
   "to-locale-string-with-constant-arguments",
 ];
 const ways = { "as built": "0", "planned again": "1", "no plan": "2" };

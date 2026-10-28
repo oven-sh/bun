@@ -1,5 +1,7 @@
-use super::runtime_reach::{ReachInput, find_reached_runtime_code};
-use super::{BoundApplication, BoundBuild, BoundProject, Build, LoadedBuild, LoadedProject};
+use super::runtime_reach::{Application, LoadedLibrary, ReachInput, find_reached_runtime_code};
+use super::{
+    BoundApplication, BoundBuild, BoundProject, Build, LoadedBuild, LoadedProject, library_code_of,
+};
 use crate::builtins::BuiltinNames;
 use crate::diagnostics::{DiagnosticBuffer, Diagnostics, InternalError, LoadMessages, ProgramView};
 use crate::ir::generated::FunctionRole;
@@ -304,12 +306,18 @@ impl Build<'_> {
             }
         });
         self.count_aot_sources(loaded, &decided.application.roles);
-        let reach_input = ReachInput {
-            application: loaded.project(ProjectId::Application).loaded.files(),
-            application_graph: &bound.projects.application.graph,
-            runtime: loaded.project(ProjectId::Runtime).loaded.files(),
+        let library = LoadedLibrary {
+            files: loaded.project(ProjectId::Runtime).loaded.files(),
             sources: &loaded.project(ProjectId::Runtime).sources,
             graph: &bound.projects.runtime.graph,
+        };
+        let lacked_before = library_code_of(&self.options.load.library_code_lacked);
+        let reach_input = ReachInput {
+            application: Application::Bound {
+                files: loaded.project(ProjectId::Application).loaded.files(),
+                graph: &bound.projects.application.graph,
+            },
+            library: &library,
             names: loaded.builtin_names,
             platform: self.platform,
             can_load_code_at_run_time: loaded.can_load_code_at_run_time
@@ -319,8 +327,11 @@ impl Build<'_> {
                         .application
                         .left_out
                         .holds_every_load_by_unknown_name),
+            further: &lacked_before,
+            keeps_code_without_names: loaded.keeps_library_code_without_names,
         };
-        let reached = find_reached_runtime_code(&reach_input, &self.parallel_runner());
+        let known = (loaded.known_library_regions)();
+        let reached = find_reached_runtime_code(&reach_input, known, &self.parallel_runner());
         let files_to_lower = &mut decided.runtime.files_to_lower;
         let unreached = files_to_lower
             .iter()
@@ -329,6 +340,7 @@ impl Build<'_> {
         self.unreached_runtime_files = unreached.collect();
         self.unreached_runtime_files.sort_unstable();
         files_to_lower.retain(|&file| reached.is_file_reached(file));
+        self.held_library_code = reached.held;
 
         self.clock.start(Stage::Lower);
         let left_out = PerProject {
@@ -580,7 +592,9 @@ impl Build<'_> {
             builtin_names: loaded.builtin_names,
             can_load_code_at_run_time: loaded.can_load_code_at_run_time,
             loads_code_by_unknown_names_alone: loaded.loads_code_by_unknown_names_alone,
+            keeps_library_code_without_names: true,
             finish_asset_reads: &|| true,
+            known_library_regions: &|| None,
         };
         let Ok(bound) = self.bind_modules(&world_build) else {
             return;

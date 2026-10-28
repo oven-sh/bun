@@ -29,7 +29,7 @@ rules of named time zones are read when the program runs.
   locales, where all but three known formatters must have a pattern.
 - `sweep.ts` runs all of it. Each executable runs three times: as built, with every pattern planned again
   (`BUN_JSC_formatPatternsOfAnotherICUForTesting=1`), and with every plan refused (`=2`).
-- `../programs/calls-fast-paths/intl-constant-formatters*.ts` and `to-locale-string-with-constant-arguments.ts` hold the known traps
+- `../parallel/calls-fast-paths/intl-constant-formatters*.ts` and `to-locale-string-with-constant-arguments.ts` hold the known traps
   and the ways a formatter can flow through a program.
 - With `BUN_JSC_validateAOTRuntime=1` any executable formats every text from a pattern with ICU as well and crashes on a
   difference.

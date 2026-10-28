@@ -4,8 +4,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { withoutCoreDump, withoutCrashReport } from "./harness/commands";
 import { run } from "./harness/run";
-import { withoutCoreDump, withoutCrashReport } from "./run-programs";
 import { test } from "./supported";
 
 const program = `import { edenGC, fullGC } from "bun:jsc";

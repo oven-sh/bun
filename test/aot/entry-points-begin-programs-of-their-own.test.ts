@@ -6,8 +6,8 @@ import { afterAll, expect } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { dirname, join } from "path";
+import { built, spawned, withoutDebugInformation } from "./harness/commands";
 import { compileCommand, withProgramOutput } from "./harness/flags";
-import { built, spawned, withoutDebugInformation } from "./run-programs";
 import { describe, test } from "./supported";
 
 const shared = `export class Point {

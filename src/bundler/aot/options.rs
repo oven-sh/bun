@@ -4,7 +4,7 @@ use bun_aot::diagnostic_codes::Code;
 use bun_aot::diagnostics::log_diagnostic;
 use bun_aot::engine::{ExecutableIdentity, TargetImageForm};
 use bun_aot::options::{Externals, LoadOptions, Options, PathOptions, RemovableOptions};
-use bun_ast::{Loc, Log};
+use bun_ast::{Loader, Loc, Log};
 use bun_core::strings;
 use bun_glob::{BunGlobWalker, detect_glob_syntax, walk};
 use bun_options_types::aot_options::AotOptions;
@@ -49,6 +49,7 @@ pub(crate) fn options_from_bundler<'r>(
         log,
     );
     let entry_points = entry_points.map(|list| follow_links(input, list));
+    let entry_points = entry_points.and_then(|list| start_with_first_script(input, list, log));
     let paths = (entry_points.as_ref()).and_then(|list| path_options(input, list, log));
     let (true, Some(entry_points), Some(paths)) = (is_supported, entry_points, paths) else {
         return None;
@@ -263,6 +264,8 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         omits_builtin_modules: input.aot.omits_builtin_modules,
         runs_tests: input.aot.runs_tests,
         takes_runtime_as_any: false,
+        library_code_lacked: Default::default(),
+        keeps_library_code_without_names: false,
     }
 }
 
@@ -448,6 +451,24 @@ fn follow_links(input: &OptionsInput<'_, '_, '_>, entry_points: Vec<Vec<u8>>) ->
     followed
 }
 
+/// As with `bun build --compile`, an executable starts with the first entry point that is neither a stylesheet nor a page.
+fn start_with_first_script(
+    input: &OptionsInput<'_, '_, '_>,
+    mut entry_points: Vec<Vec<u8>>,
+    log: &mut Log,
+) -> Option<Vec<Vec<u8>>> {
+    let is_script = |entry: &Vec<u8>| {
+        let loader = input.bundle_options.loader(bun_paths::extension(entry));
+        !matches!(loader, Loader::Css | Loader::Html)
+    };
+    let Some(first) = entry_points.iter().position(is_script) else {
+        log.add_error_fmt(None, Loc::EMPTY, format_args!("No output files to bundle"));
+        return None;
+    };
+    entry_points[..=first].rotate_right(1);
+    Some(entry_points)
+}
+
 fn real_file_path(path: &[u8]) -> Option<Vec<u8>> {
     let mut name = bun_paths::path_buffer_pool::get();
     if path.len() >= name.len() {
@@ -515,6 +536,12 @@ pub(crate) fn embedded_entry_point_names(
             Some(name) if index == 0 => Some(name.to_vec()),
             _ => {
                 let relative = relative_path(working_directory, root_directory, entry)?;
+                let extension: &[u8] = match options.loader(bun_paths::extension(entry)) {
+                    Loader::Css => b"css",
+                    Loader::Html => b"html",
+                    _ => b"js",
+                };
+                template.placeholder.ext = extension.into();
                 Some(entry_name(Some(&mut template), relative))
             }
         });

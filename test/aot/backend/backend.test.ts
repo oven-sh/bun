@@ -4,10 +4,9 @@
 // an answer of two kilobytes). It is built with `bun build --compile --aot`, started, and asked. ./answers.ts has what is right.
 //
 //   AOT_BACKEND=1 bun test test/aot/backend
-//   AOT_BACKEND_MODULES=<a node_modules folder> ..     the packages are already installed there, and nothing is downloaded
+//   AOT_BACKEND_MODULES=<a node_modules folder> ..     the packages are taken from there
 //   AOT_BACKEND_DATABASE_URL=postgres://.. ..          a database that ./schema.sql may fill. Its tables of the same names are dropped.
 //
-// Without AOT_BACKEND everything is skipped: the packages named in ./app/package.json are downloaded from npm.
 // It needs Postgres. Without AOT_BACKEND_DATABASE_URL it uses the container that test/js/sql uses, and where there is no Docker
 // either, everything is skipped.
 //
@@ -18,7 +17,7 @@ import { cpSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isDockerEnabled, isWindows, tempDir } from "harness";
 import { join } from "path";
 import * as dockerCompose from "../../docker/index.ts";
-import { built, spawned, unsupported } from "../run-programs";
+import { built, spawned, unsupported } from "../harness/commands";
 import { badOrders, carrierRates, fortunesPage, json, orders, plaintext, product, sessionToken } from "./answers";
 
 const wanted = !!process.env.AOT_BACKEND;
@@ -49,10 +48,7 @@ function expectWorld(world: World) {
   }
 }
 
-if (!wanted)
-  console.error(
-    "SKIPPED: test/aot/backend/backend.test.ts: it installs packages from npm and wants PostgreSQL. AOT_BACKEND=1 runs it",
-  );
+if (!wanted) console.error("SKIPPED: test/aot/backend/backend.test.ts: it wants PostgreSQL. AOT_BACKEND=1 runs it");
 else if (!hasPostgres)
   console.error(
     "SKIPPED: test/aot/backend/backend.test.ts: there is no PostgreSQL: neither AOT_BACKEND_DATABASE_URL nor docker",
@@ -117,15 +113,12 @@ describe.skipIf(!wanted || !hasPostgres || !!unsupported)("compile/aot/backend",
     env = { ...bunEnv, DATABASE_URL: url, CARRIER_URL: `http://127.0.0.1:${carrier.port}` };
 
     cpSync(join(import.meta.dir, "app"), folder, { recursive: true });
-    if (process.env.AOT_BACKEND_MODULES) {
-      symlinkSync(process.env.AOT_BACKEND_MODULES, join(folder, "node_modules"));
-    } else {
-      const install = await spawned([bunExe(), "install", "--ignore-scripts"], folder, bunEnv);
-      expect({ stderr: install.stderr, exitCode: install.exitCode }).toEqual({
-        stderr: expect.any(String),
-        exitCode: 0,
-      });
-    }
+    // zod and the types of Bun, at the versions of ./app/package.json, are among the packages of ../servers/app, a workspace of test/package.json.
+    symlinkSync(
+      process.env.AOT_BACKEND_MODULES ?? join(import.meta.dir, "..", "servers", "app", "node_modules"),
+      join(folder, "node_modules"),
+      "junction",
+    );
     built(
       await spawned(
         [bunExe(), "build", "--compile", "--aot", "--target=bun", "./server.ts", "--outfile", executable],

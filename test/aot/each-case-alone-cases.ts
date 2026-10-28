@@ -6,7 +6,8 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { extname, join } from "path";
-import { built, inShare, slot, spawned, told, unsupported, withoutCoreDump } from "./run-programs";
+import { built, slot, spawned, told, unsupported, withoutCoreDump } from "./harness/commands";
+import { inShare } from "./harness/shares";
 
 const folder = join(import.meta.dir, "each-case-alone");
 const nameOfCase = (line: string) => /^(?:await )?t\("([^"]+)"/.exec(line)?.[1];

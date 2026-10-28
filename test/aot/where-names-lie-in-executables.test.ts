@@ -2,8 +2,8 @@ import { afterAll, expect } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { built, spawned } from "./harness/commands";
 import { compileCommand } from "./harness/flags";
-import { built, spawned } from "./run-programs";
 import { beforeAll, describe, test } from "./supported";
 
 const python = Bun.which("python3");

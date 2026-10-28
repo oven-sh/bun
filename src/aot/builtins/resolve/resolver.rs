@@ -3,13 +3,15 @@ use super::{
     BuiltinPath, CommonJsBuiltins, EvaluatedText, ModuleObjectMention, ResolveInput, Resolved,
     ResolvedBuiltins, SourceDialect,
 };
-use crate::builtins::runtime_uses::{RuntimeUses, reaches_unknown_module_loader};
+use crate::builtins::runtime_uses::{Mentions, RuntimeUses, reaches_unknown_module_loader};
 use crate::builtins::table::{
     BuiltinId, BuiltinName, Intrinsic, Mutability, RuntimeFunction, RuntimeModule,
 };
-use bun_sema::bind::{Binding, Decl, Parent, SymbolId};
+use bun_sema::atom::known;
+use bun_sema::bind::{Binding, CommonJsVariable, Decl, Parent, SymbolId};
 use bun_sema::fold::Decision;
-use bun_sema::hir::{BinOp, ExprId, ExprKind, Flags, MemberKey};
+use bun_sema::hir::{self, BinOp, ExprId, ExprKind, Flags, MemberKey, PatKind, StmtKind, VarKind};
+use bun_sema::import_sites::find_module_printed_as_require;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use core::cell::OnceCell;
 use core::ops::Range;
@@ -99,6 +101,93 @@ pub struct FileFacts {
     aliases_by_initializer: Vec<(u32, u32)>,
     symbols_exported_by_name: FxHashSet<SymbolId>,
     symbols_exported_where_declared: FxHashSet<SymbolId>,
+    syntax_with_helpers: SyntaxWithHelpers,
+}
+
+/// Where the syntax is written for which lowering or the engine calls code of Bun's own. The positions ascend.
+#[derive(Default)]
+struct SyntaxWithHelpers {
+    decorators: Vec<u32>,
+    disposed_resources: Vec<u32>,
+    generators: Vec<u32>,
+    /// Async functions, `await` and `import()`.
+    promises: Vec<u32>,
+    /// `for (.. of ..)`, `[...list]`, `[a, b] = list`, `yield* list`
+    iterations: Vec<u32>,
+}
+
+impl SyntaxWithHelpers {
+    fn of(hir: &hir::File<'_>) -> SyntaxWithHelpers {
+        let declarations = hir.var_decls.iter();
+        let functions = hir.fns.iter();
+        let async_functions = hir.fns.iter().filter(|it| it.flags.contains(Flags::ASYNC));
+        let awaited = hir.exprs.iter();
+        let awaited = awaited
+            .filter(|it| matches!(it.kind, ExprKind::Await(_) | ExprKind::ImportCall { .. }));
+        let awaiting_loops = hir.stmts.iter();
+        let awaiting_loops =
+            awaiting_loops.filter(|it| matches!(it.kind, StmtKind::ForOf { is_await: true, .. }));
+        let expressions = hir.exprs.iter().filter(|expression| {
+            matches!(
+                expression.kind,
+                ExprKind::Spread(_) | ExprKind::Yield { star: true, .. }
+            )
+        });
+        let statements = hir.stmts.iter();
+        let statements = statements.filter(|it| matches!(it.kind, StmtKind::ForOf { .. }));
+        let patterns = hir.pats.iter();
+        let patterns = patterns.filter(|it| matches!(it.kind, PatKind::Array(_)));
+        let mut syntax = SyntaxWithHelpers {
+            decorators: (hir.decorators.iter().map(|&(_, written)| hir[written].pos)).collect(),
+            disposed_resources: declarations
+                .filter(|it| matches!(it.kind, VarKind::Using | VarKind::AwaitUsing))
+                .map(|it| hir[it.pat].pos)
+                .collect(),
+            generators: functions
+                .filter(|it| it.flags.contains(Flags::GENERATOR))
+                .map(|it| it.start)
+                .collect(),
+            promises: async_functions
+                .map(|it| it.start)
+                .chain(awaited.map(|it| it.pos))
+                .chain(awaiting_loops.map(|it| it.start))
+                .collect(),
+            iterations: expressions
+                .map(|it| it.pos)
+                .chain(statements.map(|it| it.start))
+                .chain(patterns.map(|it| it.pos))
+                .collect(),
+        };
+        let SyntaxWithHelpers {
+            decorators,
+            disposed_resources,
+            generators,
+            promises,
+            iterations,
+        } = &mut syntax;
+        for positions in [
+            decorators,
+            disposed_resources,
+            generators,
+            promises,
+            iterations,
+        ] {
+            positions.sort_unstable();
+        }
+        syntax
+    }
+}
+
+fn is_any_within(positions: &[u32], ranges: Option<&[Range<u32>]>) -> bool {
+    let Some(ranges) = ranges else {
+        return !positions.is_empty();
+    };
+    ranges.iter().any(|range| {
+        let first = positions.partition_point(|&position| position < range.start);
+        positions
+            .get(first)
+            .is_some_and(|&position| position < range.end)
+    })
 }
 
 fn entries_within(entries: &[(u32, u32)], keys: Range<u32>) -> &[(u32, u32)] {
@@ -121,6 +210,7 @@ impl FileFacts {
             aliases_by_initializer: Vec::new(),
             symbols_exported_by_name: core::mem::take(&mut resolver.exported_symbols),
             symbols_exported_where_declared: FxHashSet::default(),
+            syntax_with_helpers: SyntaxWithHelpers::of(hir),
         };
         for (name, symbol) in declared_names(input) {
             let flags = input.bound.modifier_flags(hir, Decl::Var(name));
@@ -168,6 +258,12 @@ pub(super) struct ResolverOutput {
     pub(super) loaded: Vec<BuiltinId>,
     pub(super) exposed: Vec<BuiltinId>,
     pub(super) linked_functions: Vec<RuntimeFunction>,
+    pub(super) members_read: Vec<BuiltinName>,
+    pub(super) has_decorator: bool,
+    pub(super) disposes_resource: bool,
+    pub(super) iterates: bool,
+    pub(super) has_generator: bool,
+    pub(super) makes_promise: bool,
     pub(super) evaluated_texts: Vec<EvaluatedText>,
     pub(super) module_object_mentions: Vec<ModuleObjectMention>,
     pub(super) stores_with_module_exports: Vec<ExprId>,
@@ -241,6 +337,8 @@ pub(super) fn run(
         resolver.forget_computed_states();
         resolver.resolve_exprs();
     }
+    resolver.collect_members_read_by_name();
+    resolver.collect_syntax_with_helpers();
     resolver.collect_evaluated_texts();
     resolver.classify_mentions();
     resolver.classify_stores_to_exports();
@@ -525,7 +623,12 @@ impl<'a, 's> Resolver<'a, 's> {
                 Binding::CommonJs(variable) => self.compute_commonjs_state(expr, variable, name),
                 Binding::Arguments(_) => ExprState::Unresolved,
             },
-            ExprKind::Dot { .. } | ExprKind::Index { .. } => self.compute_member_state(expr),
+            ExprKind::Dot { .. } | ExprKind::Index { .. } => {
+                match find_module_printed_as_require(self.input.hir, self.input.bound, expr) {
+                    Some(module) => self.compute_commonjs_state(module, CommonJsVariable::Require, known::require),
+                    None => self.compute_member_state(expr),
+                }
+            }
             ExprKind::Call(_) => self.compute_call_state(expr),
             ExprKind::ImportMeta => self.compute_import_meta_state(),
             ExprKind::Binary { op: BinOp::Comma, right, .. } => {
@@ -537,6 +640,36 @@ impl<'a, 's> Resolver<'a, 's> {
             },
             _ => ExprState::Unresolved,
         }
+    }
+
+    fn collect_members_read_by_name(&mut self) {
+        for index in 0..self.computed.len() {
+            let expr = self.computed[index];
+            if self.is_resolved(expr) {
+                continue;
+            }
+            let key = self.input.hir.member_key(expr);
+            if let Some(key) = key.and_then(|(_, key)| self.find_key_name(key)) {
+                self.output.members_read.push(key.name);
+            }
+        }
+    }
+
+    fn collect_syntax_with_helpers(&mut self) {
+        let of_file;
+        let syntax = match self.facts {
+            Some(facts) => &facts.syntax_with_helpers,
+            None => {
+                of_file = SyntaxWithHelpers::of(self.input.hir);
+                &of_file
+            }
+        };
+        let output = &mut self.output;
+        output.has_decorator = is_any_within(&syntax.decorators, self.within);
+        output.disposes_resource = is_any_within(&syntax.disposed_resources, self.within);
+        output.has_generator = is_any_within(&syntax.generators, self.within);
+        output.makes_promise = is_any_within(&syntax.promises, self.within);
+        output.iterates = is_any_within(&syntax.iterations, self.within);
     }
 
     fn finish(self) -> ResolvedBuiltins {
@@ -552,10 +685,20 @@ impl<'a, 's> Resolver<'a, 's> {
         let mentioned = sorted_unique(output.mentioned);
         let exposed = sorted_unique(output.exposed);
         let uses = RuntimeUses::of_mentions(
-            &mentioned,
-            &called_with_other_texts,
-            &exposed,
-            &output.linked_functions,
+            &Mentions {
+                mentioned: &mentioned,
+                called_with_other_texts: &called_with_other_texts,
+                called: &output.called,
+                exposed: &exposed,
+                linked_functions: &output.linked_functions,
+                members_read: &sorted_unique(output.members_read),
+                has_decorator: output.has_decorator,
+                disposes_resource: output.disposes_resource,
+                iterates: output.iterates,
+                has_generator: output.has_generator,
+                makes_promise: output.makes_promise,
+                is_of_program: input.dialect == SourceDialect::Program,
+            },
             input.platform,
         );
         let loads_unknown_modules = match input.dialect {

@@ -1,7 +1,5 @@
 import { expect } from "bun:test";
-import { isASAN, isDebug } from "harness";
 import { builtinEntries } from "../bundler/compile-trim-features";
-import { inShare, takesWhatIsFixed } from "./run-programs";
 import { retainsFeature } from "./runtime-use-expectations";
 import { of } from "./runtime-use-harness";
 import { test } from "./supported";
@@ -54,78 +52,57 @@ function packWithoutSharedFeatures(all: Callable[], most: number): Callable[][] 
   return packs.map(({ members }) => members);
 }
 
-async function mapInParallel<Item, Result>(
-  items: Item[],
-  width: number,
-  run: (item: Item) => Promise<Result>,
-): Promise<Result[]> {
-  const results: Result[] = [];
-  let next = 0;
-  const work = async () => {
-    while (next < items.length) {
-      const index = next++;
-      results[index] = await run(items[index]);
-    }
-  };
-  await Promise.all(Array.from({ length: width }, work));
-  return results;
-}
+const reportOn = async (calls: [member: Callable, way: Way][]) =>
+  (await of(calls.map(([{ holder, name }, [, call]]) => `try { ${call(holder, name)} } catch {}`).join("\n"))).lines;
 
-const reportOn = async (members: Callable[], [, call]: Way) =>
-  (await of(members.map(({ holder, name }) => `try { ${call(holder, name)} } catch {}`).join("\n"))).lines;
-
+// Each function of the program is handed on in a way of its own.
 // Not every feature has a line in the report, so a function of the table is asked for those that a call on its holder keeps.
-function expectWaysToKeepFeatures(title: string, members: Callable[], ways: Way[], needsAllFeatures = false) {
-  test(
+function expectWaysToKeepFeatures(title: string, calls: [member: Callable, way: Way][], needsAllFeatures = false) {
+  test.concurrent(
     title,
     async () => {
-      const [onHolder, ...reports] = await mapInParallel([calledOnItsHolder, ...ways], 4, way =>
-        reportOn(members, way),
-      );
-      const needed = members.flatMap(({ features }) =>
+      const [onHolder, handedOn] = await Promise.all([
+        reportOn(calls.map(([member]) => [member, calledOnItsHolder])),
+        reportOn(calls),
+      ]);
+      const needed = calls.flatMap(([{ path, features }, [way]]) =>
         features
           .filter(
             ({ feature, isConditional }) => !isConditional && (needsAllFeatures || retainsFeature(onHolder, feature)),
           )
-          .map(({ feature }) => feature),
+          .map(({ feature }) => ({ feature, lost: `${feature}: ${path} after ${way}` })),
       );
-      expect(needed.length).toBeGreaterThan(0);
-      expect(
-        ways.flatMap(([way], index) =>
-          needed.filter(feature => !retainsFeature(reports[index], feature)).map(feature => `${feature} after ${way}`),
-        ),
-      ).toEqual([]);
+      expect(needed.length).toBeGreaterThanOrEqual(calls.length / 2);
+      expect(needed.filter(({ feature }) => !retainsFeature(handedOn, feature)).map(({ lost }) => lost)).toEqual([]);
     },
     240_000,
   );
 }
 
-if (takesWhatIsFixed) {
-  for (const member of membersWithoutEntry)
-    expectWaysToKeepFeatures(
-      `${member.path}, called in every way`,
-      [member],
-      [calledOnItsHolder, ...waysToHandOn],
-      true,
-    );
-
-  const firstOfEachFeature = [
-    ...new Map(callables.toReversed().map(callable => [callable.features[0].feature, callable])).values(),
-  ].toReversed();
-  for (const [index, members] of packWithoutSharedFeatures(firstOfEachFeature, 12).entries()) {
-    const ways = [0, 1].map(step => waysToHandOn[(index * 2 + step) % waysToHandOn.length]);
-    expectWaysToKeepFeatures(
-      `${members[0].path} to ${members.at(-1)!.path}, after ${ways.map(([way]) => way).join(" and ")}`,
-      members,
-      ways,
-    );
-  }
-}
-
-for (const callable of callables) {
-  const ways = waysToHandOn.filter(([way]) =>
-    inShare(`${callable.path} after ${way}`, isDebug || isASAN ? 4_000 : 400, true),
+const wayNamed = (name: string) => waysToHandOn.find(([way]) => way === name)!;
+const [parse, remove, table] = membersWithoutEntry;
+for (const [first, second] of [
+  ["a comma expression", "destructuring"],
+  ["destructuring", "bind"],
+  ["bind", "Reflect.get"],
+  ["Reflect.get", "a parameter"],
+  ["a parameter", "a comma expression"],
+])
+  expectWaysToKeepFeatures(
+    `${parse.path} after ${first}, ${table.path} after ${second}`,
+    [
+      [parse, wayNamed(first)],
+      [table, wayNamed(second)],
+    ],
+    true,
   );
-  if (ways.length)
-    expectWaysToKeepFeatures(`${callable.path}, after ${ways.map(([way]) => way).join(" and ")}`, [callable], ways);
-}
+expectWaysToKeepFeatures(`${remove.path} after a constant`, [[remove, wayNamed("a constant")]], true);
+
+const firstOfEachFeature = [
+  ...new Map(callables.toReversed().map(callable => [callable.features[0].feature, callable])).values(),
+].toReversed();
+for (const members of packWithoutSharedFeatures(firstOfEachFeature, waysToHandOn.length).slice(0, 2))
+  expectWaysToKeepFeatures(
+    `${members[0].path} to ${members.at(-1)!.path}, each in another way`,
+    members.map((member, index) => [member, waysToHandOn[index]]),
+  );

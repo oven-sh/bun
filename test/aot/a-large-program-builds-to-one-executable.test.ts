@@ -8,9 +8,10 @@ import { expect, setDefaultTimeout } from "bun:test";
 import { mkdirSync, rmSync } from "fs";
 import { bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { withoutDebugInformation } from "./harness/commands";
 import { compileCommand, withThreads } from "./harness/flags";
 import { run } from "./harness/run";
-import { wanted, withoutDebugInformation } from "./run-programs";
+import { wanted } from "./harness/shares";
 import { describe, test } from "./supported";
 
 setDefaultTimeout(1_200_000);
@@ -18,7 +19,7 @@ setDefaultTimeout(1_200_000);
 const modules = 100;
 const functionsInModule = 30;
 // Most builds have more threads than CI gives cores: a thread that waits for a core stops at other places than one that runs.
-const threadCounts = [16, 1, 16, 2, 16, 5];
+const threadCounts = [16, 1, 5];
 
 const helpers = `
 export interface Item { id: number; name: string; weight: number; next?: Item; tags: string[] }

@@ -1,15 +1,17 @@
-// Helpers shared by ./servers.test.ts and ./features.test.ts.
+// Helpers of the tests of this folder that build a server in a copy of ./app.
 import { expect } from "bun:test";
 import { rmSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "path";
-import { spawned } from "../run-programs";
+import { spawned } from "../harness/commands";
 
 export const requestedServers = process.env.AOT_SERVERS;
 
 /** Filters names by AOT_SERVERS. Returns all of them when it is unset, so that each shows up as skipped. */
 export function filterRequested(names: string[]) {
-  return names.filter(name => !requestedServers || requestedServers === "1" || requestedServers.split(",").includes(name.split(".")[0]));
+  return names.filter(
+    name => !requestedServers || requestedServers === "1" || requestedServers.split(",").includes(name.split(".")[0]),
+  );
 }
 
 /** AOT_SERVERS_FLAGS="--aot-heat=everything-is-hot": more flags for every build with --aot. What a server answers does not depend on them. */
@@ -19,7 +21,10 @@ export const moreEnvironment = Object.fromEntries((process.env.AOT_SERVERS_ENVIR
 
 /** Runs `bun install` in the folder, or links AOT_SERVERS_MODULES as its node_modules. */
 export async function installPackages(folder: string) {
-  if (process.env.AOT_SERVERS_MODULES) return symlinkSync(process.env.AOT_SERVERS_MODULES, join(folder, "node_modules"));
+  // A copy of ./app brings along the links to the packages that `bun install` in test/ has laid there.
+  rmSync(join(folder, "node_modules"), { recursive: true, force: true });
+  if (process.env.AOT_SERVERS_MODULES)
+    return symlinkSync(process.env.AOT_SERVERS_MODULES, join(folder, "node_modules"));
   const install = await spawned([bunExe(), "install", "--ignore-scripts"], folder, bunEnv);
   expect({ stderr: install.stderr, exitCode: install.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
 }
@@ -46,7 +51,14 @@ export async function removeFolders(...folders: string[]) {
 /** Starts a server on a free port and waits for it to print `listening <port>`. */
 export async function startServer(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
   // stderr is piped because Express logs every error it responds to with 400.
-  const proc = Bun.spawn({ cmd, cwd, env: { ...env, PORT: "0", NODE_ENV: "production" }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const proc = Bun.spawn({
+    cmd,
+    cwd,
+    env: { ...env, PORT: "0", NODE_ENV: "production" },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   exits.push(proc.exited);
   const errors = proc.stderr.text();
   let output = "";

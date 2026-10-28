@@ -95,6 +95,8 @@ fn with_host<R>(then: impl FnOnce(&Fixture<'_, '_>) -> R) -> R {
         platform: host_platform(),
         messages: &messages,
         unreadable: Guarded::default(),
+        manifest: Archive::embedded().manifest(),
+        reach: None,
     };
     then(&Fixture {
         host: &host,

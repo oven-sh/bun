@@ -33,6 +33,7 @@ pub struct Manifest {
     modules: Vec<Module>,
     function_files: Vec<Box<[u8]>>,
     module_declarations: Vec<Box<[u8]>>,
+    files_declaring_for_every_file: Vec<Box<[u8]>>,
     builtin_functions: Vec<(Box<[u8]>, u32)>,
     function_file_indexes: Vec<(u32, u32)>,
     bundled_names: Vec<(Box<[u8]>, Vec<BundledName>)>,
@@ -75,6 +76,9 @@ impl Manifest {
                 }),
                 b"functions" => manifest.function_files.push(field()?.into()),
                 b"declarations" => manifest.module_declarations.push(field()?.into()),
+                b"declares-for-every-file" => {
+                    (manifest.files_declaring_for_every_file).push(field()?.into());
+                }
                 b"name" => {
                     let file = field()?;
                     let name = BundledName {
@@ -104,6 +108,7 @@ impl Manifest {
             }
         }
         manifest.builtin_functions.sort_unstable();
+        manifest.files_declaring_for_every_file.sort_unstable();
         for (_, names) in &mut manifest.bundled_names {
             names.sort_unstable_by_key(|name| name.position);
         }
@@ -193,6 +198,12 @@ impl Manifest {
     /// Each says what `require` answers for the module beside it.
     pub fn module_declarations(&self) -> &[Box<[u8]>] {
         &self.module_declarations
+    }
+
+    /// Whether the file declares a global or a module by its name, which files see that do not name the file.
+    pub fn declares_for_every_file(&self, file: &[u8]) -> bool {
+        let files = &self.files_declaring_for_every_file;
+        files.binary_search_by(|it| (**it).cmp(file)).is_ok()
     }
 
     /// Only `$linkTimeConstant` calls from other function files reach these.

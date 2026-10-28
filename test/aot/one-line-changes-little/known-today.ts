@@ -33,7 +33,6 @@ export const knownInLibrary: Readonly<Record<string, string>> = {
   "get-builtin-module-unknown": "506 functions, 796,228 bytes",
   "bun-plugin": "592 functions, 950,272 bytes",
   "sqlite": "558 functions, 722,508 bytes",
-  "shadow-realm": "530 functions, 835,584 bytes",
   "events-on": "737 functions, 833,196 bytes",
   "events-emit": "731 functions, 837,292 bytes",
   "events-import": "737 functions, 825,044 bytes",

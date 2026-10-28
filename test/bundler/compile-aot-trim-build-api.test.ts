@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "node:path";
-import { spawned, unsupported } from "../aot/run-programs";
+import { spawned, unsupported } from "../aot/harness/commands";
 import { canTrim, tempDirForAotBuilds } from "./compile-trim-features";
 
 const buildsWhileMappingFiles = `

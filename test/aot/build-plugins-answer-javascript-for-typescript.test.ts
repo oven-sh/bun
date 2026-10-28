@@ -157,6 +157,7 @@ export function Row(item: Item): string { return "[" + item.label + "]"; }`,
     prints: "[a]|[b]\n",
   },
   "the entry point is such a file": {
+    alone: true,
     files: {
       "main.tsx": `import { twice, type Count } from "./twice";
 const count: Count = 4;

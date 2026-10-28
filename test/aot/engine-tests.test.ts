@@ -1,8 +1,5 @@
-// Runs the engine's own tests in Bun's CI: the IR text tests and the native tests that were packed with the WebKit this
-// Bun was linked against. `testaot all` runs them in one go, which takes longer than the runner gives a file: the long
-// commands are test files of their own (./engine-test-commands.ts), and this file has the short ones.
-// engine-tests/ has the IR text tests that name entries of Bun's table of built-ins.
-// With a sanitizer they take several times as long: ./engine-tests-in-parts.ts runs them there.
+// `testaot`, the program that runs the engine's own tests, and `jsc` answer a wrong command line, a missing file and a damaged program as they should.
+// The tests themselves: ./engine/.
 //
 // Needs `testaot`, the `aot-tests` folder for two of the tests, and `jsc` for two: the engine's own tests want it in the
 // folder of `testaot`. shell/tools.ts says where each is looked for. A test whose tool is missing is skipped, and stderr
@@ -20,7 +17,7 @@ import {
   whyShellSkipped,
   whySkipped,
 } from "./engine-test-commands";
-import { freshSeed } from "./fresh-seed";
+import { freshSeed } from "./harness/shares";
 import { engineTests, jsc, scriptSkipReason } from "./shell/tools";
 
 const program = join(engineTests ?? "", "driver", "check-next.ir");

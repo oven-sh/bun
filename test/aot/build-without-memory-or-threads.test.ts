@@ -68,7 +68,6 @@ describe.skipIf(!isGlibc || isASAN || !cc)("a build that the system refuses memo
     "program.ts": `const words: string[] = ["it", "runs"];\nconsole.log(words.join(" "));\n`,
   });
   const cwd = String(folder);
-  const numbers = Array.from({ length: 30 }, (_, index) => index + 1);
 
   async function run(cmd: string[], env: Record<string, string | undefined>) {
     await using proc = Bun.spawn({
@@ -90,9 +89,9 @@ describe.skipIf(!isGlibc || isASAN || !cc)("a build that the system refuses memo
   }
 
   // What each build said, or what its executable prints.
-  async function buildWithEachCallRefused(name: string) {
+  async function buildWithEachCallRefused(name: string, calls: number) {
     const ends: string[] = [];
-    const next = numbers.values();
+    const next = Array.from({ length: calls }, (_, index) => index + 1).values();
     const buildInTurn = async () => {
       for (const number of next) {
         const executable = join(cwd, `${name}-${number}`);
@@ -138,14 +137,14 @@ describe.skipIf(!isGlibc || isASAN || !cc)("a build that the system refuses memo
   }, 120_000);
 
   test("a refused mapping ends the build with an error", async () => {
-    expect(await buildWithEachCallRefused("mmap")).toEqual([outOfMemory, "it runs\n"]);
+    expect(await buildWithEachCallRefused("mmap", 12)).toEqual([outOfMemory, "it runs\n"]);
   }, 300_000);
 
   test("a mapping that stays does not end the build", async () => {
-    expect(await buildWithEachCallRefused("munmap")).toEqual(["it runs\n"]);
+    expect(await buildWithEachCallRefused("munmap", 6)).toEqual(["it runs\n"]);
   }, 300_000);
 
   test("a refused thread ends the build with an error where nothing else does its work", async () => {
-    expect(await buildWithEachCallRefused("pthread_create")).toEqual([noCompilerThread, noPoolThread, "it runs\n"]);
+    expect(await buildWithEachCallRefused("pthread_create", 12)).toEqual([noCompilerThread, noPoolThread, "it runs\n"]);
   }, 300_000);
 });

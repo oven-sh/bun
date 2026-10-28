@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { slot, unsupported } from "./run-programs";
+import { slot, unsupported } from "./harness/commands";
 
 const app = `{
   root: process.cwd(),

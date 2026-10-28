@@ -26,22 +26,8 @@ import { Random } from "../fuzz/random";
 import { places, withTheWholeFileInside } from "../fuzz/the-whole-file-inside-something";
 import { opensTheWorld, withTheWorldOpen } from "../fuzz/the-world-is-open";
 import { withTurnsNobodyKnows } from "../fuzz/turns-nobody-knows";
-import {
-  built,
-  inShare,
-  inShareOfList,
-  inShareOfTheRest,
-  isToldWhatToTake,
-  wanted as programsWanted,
-  slot,
-  spawned,
-  takeFromShare,
-  takesWhatIsFixed,
-  unsupported,
-  withEverySlot,
-  withoutCoreDump,
-  withoutCrashReport,
-} from "../run-programs";
+import { built, slot, spawned, unsupported, withEverySlot, withoutCoreDump, withoutCrashReport } from "../harness/commands";
+import { inShare, inShareOfList, inShareOfTheRest, isToldWhatToTake, wanted as programsWanted, takeFromShare, takesWhatIsFixed } from "../harness/shares";
 import onceWrong from "./once-wrong.json";
 
 export type Generated = {
@@ -138,7 +124,7 @@ function stderrOfFailure(run: { stderr: string; signal: unknown; exitCode: numbe
 }
 
 // A build writes an executable the size of Bun however small the program is, and a system may look at a new executable before it starts it for the first time. So the programs that are
-// only compiled share executables. Each is an entry point behind ../programs/run-each-in-a-worker.ts: an entry point begins a program of its own, so the compiler makes of it what it makes
+// only compiled share executables. Each is an entry point behind ../fixtures/run-each-in-a-worker.ts: an entry point begins a program of its own, so the compiler makes of it what it makes
 // of it alone, unless one of them opens the world (../fuzz/the-world-is-open.ts): then all are one program. So the programs that open it share executables among themselves. A program
 // runs in a Worker, a global of its own, in a process of its own, and so it does in plain Bun. What is not built together with the others is built alone, and so is
 // what once went wrong, wherever a run takes all of that. A debug or ASAN build of Bun takes too few programs to share anything.
@@ -406,7 +392,7 @@ export function generated(title: string, given: Generated[]) {
       return shared;
     }
     mkdirSync(folder, { recursive: true });
-    copyFileSync(join(import.meta.dir, "..", "programs", runner), join(folder, runner));
+    copyFileSync(join(import.meta.dir, "..", "fixtures", runner), join(folder, runner));
     const written = members.map(({ program, index }) => ({
       program,
       index,

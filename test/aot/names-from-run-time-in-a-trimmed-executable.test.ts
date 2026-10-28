@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { built, slot, spawned, unsupported } from "./harness/commands";
 
 const evaluates = `import { readFileSync } from "node:fs";
 console.log(new Function(readFileSync(process.argv[2], "utf8"))());

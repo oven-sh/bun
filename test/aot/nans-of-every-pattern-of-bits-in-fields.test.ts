@@ -4,7 +4,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { built, slot, spawned, unsupported } from "./harness/commands";
 
 const patterns = [
   "0x7ffa000000000000n",

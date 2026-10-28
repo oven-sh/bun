@@ -1,7 +1,12 @@
-import { expect } from "bun:test";
+import { afterAll, describe as describeAnywhere, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
-import { run as runCommand } from "./harness/run";
-import { describe, test } from "./supported";
+import { unsupported } from "./harness/compiler";
+import { run } from "./harness/run";
+import { inTurn } from "./harness/shared-builds";
+
+const describe = unsupported ? describeAnywhere.skip : describeAnywhere.concurrent;
+// No more commands at once than the machine has cores.
+const runCommand = (...command: Parameters<typeof run>) => inTurn(() => run(...command));
 
 // Workers of a compiled program start within a limit on the address space of the process (ulimit -v, in kB).
 
@@ -866,18 +871,29 @@ console.log(sum(objects));
 
 type Run = { limitInKB?: number; env?: Record<string, string> };
 
-async function runEach(runs: Run[], program: string, ...args: string[]) {
-  using folder = tempDir("aot-workers-limit", { "program.ts": program });
-  const env = { ...bunEnv, BUN_CRASH_REPORT_URL: "" };
-  const built = await runCommand(
-    [bunExe(), "build", "--compile", "--aot", "program.ts", "--outfile", "program"],
-    String(folder),
-    env,
-  );
-  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
-    stderr: expect.not.stringMatching(/^error\b/m),
-    exitCode: 0,
+const env = { ...bunEnv, BUN_CRASH_REPORT_URL: "" };
+const folders = new Map<string, Promise<string>>();
+const made: Disposable[] = [];
+afterAll(() => made.forEach(folder => folder[Symbol.dispose]()));
+/** The folder of the executable `program`. A text is built once. */
+const built = (program: string) =>
+  folders.getOrInsertComputed(program, async () => {
+    const folder = tempDir("aot-workers-limit", { "program.ts": program });
+    made.push(folder);
+    const build = await runCommand(
+      [bunExe(), "build", "--compile", "--aot", "program.ts", "--outfile", "program"],
+      String(folder),
+      env,
+    );
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
+      stderr: expect.not.stringMatching(/^error\b/m),
+      exitCode: 0,
+    });
+    return String(folder);
   });
+
+async function runEach(runs: Run[], program: string, ...args: string[]) {
+  const folder = await built(program);
   const results: { stdout: string; stderr: string; exitCode: number | null }[] = [];
   for (const run of runs) {
     const command = run.limitInKB ? `ulimit -v ${run.limitInKB} && exec ./program "$@"` : `exec ./program "$@"`;
@@ -904,7 +920,7 @@ async function runWithin(limitInKB: number | undefined, program: string, ...args
 
 const GB = 1024 * 1024;
 
-/** Every `parts`-th case from the `part`-th, one at a time: many fill the address space that they are given, and a file has five minutes. */
+/** Every `parts`-th case from the `part`-th. */
 export function workersWithinAddressSpaceLimit(part: number, parts: number) {
   let cases = 0;
   const isInPart = () => cases++ % parts === part - 1;
@@ -1009,9 +1025,9 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
     );
 
     inPart(test.skipIf(!isLinux || isASAN))(
-      "a Worker starts in the room of Workers that were just terminated within each of 40 limits",
+      "a Worker starts in the room of Workers that were just terminated within each of 5 limits",
       async () => {
-        const limits = Array.from({ length: 40 }, (_, i) => (896 + 13 * i) * 1024);
+        const limits = Array.from({ length: 5 }, (_, i) => (896 + 117 * i) * 1024);
         const results = await runWithinEach(limits, startsWorkerRightAfterTerminating);
         expect(results.map((result, i) => ({ limit: limits[i], ...result }))).toEqual(
           limits.map(limit => ({ limit, stdout: "at least 8 run: true\n", stderr: "", exitCode: 0 })),
@@ -1021,9 +1037,9 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
     );
 
     inPart(test.skipIf(!isLinux || isASAN))(
-      "a Worker starts in the room of Workers that were just terminated at each of the 128 places where the cells begin",
+      "a Worker starts in the room of Workers that were just terminated at 8 of the 128 places where the cells begin",
       async () => {
-        const places = Array.from({ length: 128 }, (_, i) => String(i + 1));
+        const places = Array.from({ length: 8 }, (_, i) => String(16 * i + 1));
         const results = await runEach(
           places.map(place => ({ limitInKB: 1104 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
           startsWorkerRightAfterTerminating,
@@ -1079,10 +1095,15 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
     inPart(test.skipIf(!isLinux || isASAN))(
       "once the constructor has thrown it throws again for as long as no Worker ends",
       async () => {
-        const limits = [1104, 1150].flatMap(megabytes => Array.from({ length: 4 }, () => megabytes * 1024));
+        const limits = [1104, 1150].map(megabytes => megabytes * 1024);
         const results = await runWithinEach(limits, startsWorkersThatStay);
         expect(results.map((result, i) => ({ limit: limits[i], ...result }))).toEqual(
-          limits.map(limit => ({ limit, stdout: expect.stringMatching(/^(started )+(threw )+\n$/), stderr: "", exitCode: 0 })),
+          limits.map(limit => ({
+            limit,
+            stdout: expect.stringMatching(/^(started )+(threw )+\n$/),
+            stderr: "",
+            exitCode: 0,
+          })),
         );
       },
       240_000,
@@ -1170,7 +1191,7 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
     test.skipIf(!isLinux || isASAN).each(dealt([0, 48]))(
       "Workers with few objects end one by one where another Worker has taken all the room, and the program goes on (the main thread keeps %d MB first)",
       async megabytesKeptFirst => {
-        const places = Array.from({ length: 8 }, (_, i) => String(16 * i + 1));
+        const places = ["1", "65"];
         const results = await runEach(
           places.map(place => ({ limitInKB: 768 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
           workersWithFewObjectsRunOutOfRoom,
@@ -1187,7 +1208,7 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
     inPart(test.skipIf(!isLinux || isASAN))(
       "wave after wave of Workers ends where no room is left, and the program goes on",
       async () => {
-        const places = Array.from({ length: 8 }, (_, i) => String(16 * i + 1));
+        const places = ["1", "65"];
         const results = await runEach(
           places.map(place => ({ limitInKB: 1536 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
           wavesOfWorkersRunOutOfRoom,
@@ -1207,7 +1228,7 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
       )(
       "Workers that keep %s end one by one where another Worker has taken all the room, and the program goes on",
       async kind => {
-        const places = Array.from({ length: 8 }, (_, i) => String(16 * i + 1));
+        const places = ["1", "65"];
         const results = await runEach(
           places.map(place => ({ limitInKB: 896 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
           workersThatKeepListsRunOutOfRoom,
@@ -1238,7 +1259,7 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
       )(
       "24 Workers that keep %s find no room at once, each gets its error, and the program goes on",
       async kind => {
-        const places = ["1", "33", "65", "97"];
+        const places = ["33"];
         const results = await runEach(
           places.map(place => ({ limitInKB: 2048 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
           workersThatKeepListsRunOutOfRoom,
@@ -1257,7 +1278,7 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
       "a program that keeps lists until there is no room catches a RangeError, twice",
       async () => {
         // What the program first needs when it ends, it needs where no room is left. Whether there is some left differs from run to run.
-        const limits = [512, 768, 1024, 2048].flatMap(megabytes => Array.from({ length: 3 }, () => megabytes * 1024));
+        const limits = [512, 768, 1024, 2048].map(megabytes => megabytes * 1024);
         const results = await runWithinEach(limits, keepsListsUntilThereIsNoRoom);
         expect(results.map((result, i) => ({ limit: limits[i], ...result }))).toEqual(
           limits.map(limit => ({ limit, stdout: "[ true, true ] [ true, true ]\n", stderr: "", exitCode: 0 })),

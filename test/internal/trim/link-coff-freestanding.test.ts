@@ -3,6 +3,7 @@ import { tempDir } from "harness";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { sectionInFile } from "../../../scripts/build/trim/coff-graph.ts";
+import { builtinModulesHeaderBytes } from "../../../scripts/build/trim/link.ts";
 import { peImage } from "../../../scripts/build/trim/linked-image.ts";
 import {
   freestandingSkipReasons,
@@ -75,6 +76,30 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     expect(soundness.cutSectionCount).toBeGreaterThan(0);
     expect(soundness.filledBytes).toBeGreaterThan(0);
     expect([...new Set(recordRelocationTypes(join(folder, "main.obj")))]).toEqual([pointerRelocationType[machine]]);
+  });
+
+  testLink("lists the section of the built-in modules with the features that read it", async () => {
+    using dir = tempDir("trim-coff-freestanding", {
+      ...sources,
+      "entry.c": entryCalling("read_builtins"),
+      "builtins.c": `__attribute__((section(".bunblt"))) const char builtins_text[20000] = {1};
+        __attribute__((noinline)) int read_builtins(int x) { return builtins_text[x & 8191]; }`,
+    });
+    const { addressOf, featuresAt, summary } = await linked(
+      String(dir),
+      optionsWith({ objects: ["feature_code", "entry", "builtins", "table", "embedder", "main"] }),
+    );
+    const builtins = addressOf("builtins_text");
+    // Whoever builds an executable reads the header.
+    expect([0, builtinModulesHeaderBytes - 1].map(offset => featuresAt(builtins + offset))).toEqual([
+      undefined,
+      undefined,
+    ]);
+    expect([builtinModulesHeaderBytes, 19_999].map(offset => featuresAt(builtins + offset))).toEqual([
+      [Extra],
+      [Extra],
+    ]);
+    expect(summary.removedBytes).toBeGreaterThan(20_000 - builtinModulesHeaderBytes);
   });
 
   testLink("reads the members of an archive where the objects that went into it lie beside it", async () => {

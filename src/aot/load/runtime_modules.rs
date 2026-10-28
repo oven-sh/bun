@@ -35,6 +35,7 @@ pub(crate) enum RuntimeResolution {
 struct RuntimeFile {
     kind: RuntimeFileKind,
     comes_with_module: bool,
+    is_seen_only_by_name: bool,
     archive_name: Box<[u8]>,
     contents: Option<&'static [u8]>,
 }
@@ -48,6 +49,8 @@ pub(crate) struct RuntimeModules {
     answers_modules_of_own_tests: bool,
     aliases: Cfg,
     files: FxHashMap<Vec<u8>, RuntimeFile>,
+    /// In ascending order. The position of a path is the number of its file.
+    paths: Vec<Vec<u8>>,
     directories: FxHashMap<Vec<u8>, DirectoryEntries>,
     public_specifiers: Vec<(HostModuleId, &'static [u8])>,
 }
@@ -59,8 +62,11 @@ const DECLARATION_FILES: [&[u8]; 2] = [b"builtins.d.ts", b"private.d.ts"];
 impl RuntimeModules {
     pub(crate) fn new(archive: &'static Archive, omits_builtin_modules: bool) -> RuntimeModules {
         let files = collect_files(archive);
+        let mut paths: Vec<Vec<u8>> = files.keys().cloned().collect();
+        paths.shared_sort_unstable();
         RuntimeModules {
             archive,
+            paths,
             omits_builtin_modules,
             answers_modules_of_own_tests: runs_own_tests(),
             aliases: Cfg::default(),
@@ -87,6 +93,7 @@ impl RuntimeModules {
             if let Some(file) = self.files.get_mut(path) {
                 let text: &'static [u8] = text.clone().leak();
                 file.contents = Some(text);
+                file.is_seen_only_by_name = false;
             }
         }
         self
@@ -94,6 +101,24 @@ impl RuntimeModules {
 
     pub(crate) fn file_kind(&self, path: &[u8]) -> Option<RuntimeFileKind> {
         self.files.get(path).map(|file| file.kind)
+    }
+
+    pub(crate) fn file_count(&self) -> usize {
+        self.paths.len()
+    }
+
+    pub(crate) fn number_of(&self, path: &[u8]) -> Option<u32> {
+        let found = self.paths.binary_search_by(|it| (**it).cmp(path));
+        found.ok().map(|number| number as u32)
+    }
+
+    pub(crate) fn path_of(&self, number: u32) -> &[u8] {
+        &self.paths[number as usize]
+    }
+
+    /// Whether only the files that name the file at `path` see what it declares.
+    pub(crate) fn is_seen_only_by_name(&self, path: &[u8]) -> bool {
+        (self.files.get(path)).is_some_and(|file| file.is_seen_only_by_name)
     }
 
     pub(crate) fn is_directory(&self, path: &[u8]) -> bool {
@@ -302,10 +327,17 @@ fn collect_public_specifiers(manifest: &Manifest) -> Vec<(HostModuleId, &'static
 fn collect_files(archive: &'static Archive) -> FxHashMap<Vec<u8>, RuntimeFile> {
     let manifest = archive.manifest();
     let mut files = FxHashMap::default();
-    let mut add = |archive_name: &[u8], kind, contents| {
+    let mut add = |archive_name: &[u8], kind, contents: Option<&'static [u8]>| {
+        let is_code = match kind {
+            RuntimeFileKind::Module(_) | RuntimeFileKind::Functions => true,
+            RuntimeFileKind::Declarations | RuntimeFileKind::Configuration => false,
+        };
         let file = RuntimeFile {
             kind,
             comes_with_module: false,
+            is_seen_only_by_name: is_code
+                && contents.is_none()
+                && !manifest.declares_for_every_file(archive_name),
             archive_name: archive_name.into(),
             contents,
         };
@@ -337,6 +369,7 @@ fn collect_files(archive: &'static Archive) -> FxHashMap<Vec<u8>, RuntimeFile> {
         let file = RuntimeFile {
             kind: RuntimeFileKind::Declarations,
             comes_with_module: true,
+            is_seen_only_by_name: false,
             archive_name: name.clone(),
             contents: None,
         };
@@ -436,6 +469,41 @@ mod tests {
             source_count += 1;
         }
         assert!(source_count > 0);
+    }
+
+    #[test]
+    fn a_file_that_waits_for_its_name_declares_nothing_for_other_files() {
+        use bun_sema::hir::ModuleName;
+        use bun_sema_parser::{CompileParseOptions, parse_for_compile};
+        let runtime = runtime_modules();
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let waiting = runtime.files.iter().filter(|it| it.1.is_seen_only_by_name);
+        let mut count = 0;
+        for (path, _) in waiting {
+            let options = CompileParseOptions {
+                path,
+                script_kind: None,
+                experimental_decorators: false,
+                every_file_is_a_module: true,
+                reads_jsdoc: false,
+                keeps_function_directives: false,
+            };
+            let text = runtime.read(path).unwrap();
+            let hir = parse_for_compile(session.arena(), &options, &text, &atoms);
+            let mut names = hir.modules.iter().map(|module| module.name);
+            let name = BStr::new(path);
+            assert!(names.all(|it| matches!(it, ModuleName::Ident(_))), "{name}");
+            count += 1;
+        }
+        assert!(count > 100);
+        let read_at_once = [RuntimeModule::NodeNet, RuntimeModule::NodeEvents];
+        for module in read_at_once {
+            assert!(!runtime.is_seen_only_by_name(runtime.module_path(module).unwrap()));
+        }
+        for path in runtime.declaration_paths() {
+            assert!(!runtime.is_seen_only_by_name(&path));
+        }
     }
 
     #[test]

@@ -34,10 +34,10 @@ pub use self::used_features::used_features;
 use crate::emit::{ExternalBodies, ExternalFunctionBodies, ProgramBytes};
 pub use crate::ir::generated::{
     AccessCountRecord, AccessRecord, AllocationRemarkRecord, BuiltinUseRecord, DeclineRecord,
-    FeatureUseRecord, FunctionReportRecord, InternalErrorRecord, LocaleUseRecord,
-    ObfuscatedSiteRecord, OperationCountRecord, PassTimeRecord, RemainingCheckRecord,
-    SourceLocation, TextRange, TypeTestRecord, UnseenCodeRecord, UserDiagnosticRecord,
-    WorkerEntryRecord,
+    FeatureUseRecord, FunctionReportRecord, InternalErrorRecord, LackedFunctionRecord,
+    LocaleUseRecord, ObfuscatedSiteRecord, OperationCountRecord, PassTimeRecord,
+    RemainingCheckRecord, SourceLocation, TextRange, TypeTestRecord, UnseenCodeRecord,
+    UserDiagnosticRecord, WorkerEntryRecord,
 };
 use crate::ir::generated::{
     AdmittedCode, CompileAction, CompileOptions, ExcludedCode, ImageForm, LimitId, MismatchPolicy,
@@ -453,6 +453,7 @@ result_records! {
     internal_errors: InternalErrorRecord = InternalErrors,
     unseen_code: UnseenCodeRecord = UnseenCode,
     builtins_used: BuiltinUseRecord = BuiltinsUsed,
+    library_functions_lacked: LackedFunctionRecord = LibraryFunctionsLacked,
     features_used: FeatureUseRecord = FeaturesUsed,
     locales_used: LocaleUseRecord = LocalesUsed,
     worker_entries: WorkerEntryRecord = WorkerEntries,

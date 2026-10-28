@@ -461,7 +461,7 @@ impl<'a> ImageEditor<'a> {
         if !cuts.iter().all(is_aligned) {
             return Err(ImageError::CutNotAligned);
         }
-        if cuts.len() > model.max_cuts() {
+        if cuts.iter().map(|cut| model.slots_for(*cut)).sum::<isize>() > model.free_slots() {
             return Err(ImageError::TooManyCuts);
         }
         let is_file_backed = |cut: &AddressRange| find_span(&self.spans, *cut).is_some();
@@ -932,7 +932,7 @@ mod tests {
     fn remove_ranges_rejects_too_many_cuts() {
         for toy in toy_files() {
             let model = cut_model_of(&toy);
-            let cuts: Vec<AddressRange> = (0..=model.max_cuts() as u64)
+            let cuts: Vec<AddressRange> = (0..=model.free_slots() as u64)
                 .map(|index| 2 * index * model.alignment)
                 .map(|start| range(start, start + model.alignment))
                 .collect();

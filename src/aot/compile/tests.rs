@@ -358,9 +358,63 @@ fn is_runtime_module_read(source: &str, path: &[u8]) -> Option<bool> {
 fn module_of_bun_is_read_for_the_code_that_asks_for_it() {
     let path = b"/$bun/js/node/querystring.ts";
     let prints = "console.log('a line');";
-    assert_eq!(is_runtime_module_read(prints, path), Some(false));
+    assert_eq!(is_runtime_module_read(prints, path), None);
     let parses = "import { parse } from 'node:querystring'; console.log(parse('a=b'));";
     assert_eq!(is_runtime_module_read(parses, path), Some(true));
+}
+
+fn compiles_runtime_module(source: &str, path: &[u8]) -> bool {
+    let files = [("main.ts", source)];
+    with_loaded_build(&files, &default_settings(), |_, loaded| {
+        let files = loaded.project(ProjectId::Runtime).loaded.files();
+        let file = files.by_path.get(path);
+        file.is_some_and(|file| files.is_compiled(file))
+    })
+}
+
+fn count_library_functions(text: &str) -> usize {
+    let mut project = TestProject::new(&[("a.ts", text)], &default_settings());
+    project.keeps_library_code_without_names = false;
+    let mut log = Log::init();
+    let result = link_program(&project.options(BUNDLED_LIBS), &WithoutServices, &mut log);
+    expect_success(result, &log).program.runtime_functions.len()
+}
+
+#[test]
+fn program_holds_the_code_of_bun_behind_what_it_names() {
+    assert_eq!(count_library_functions("console.log('a line');"), 0);
+    let sorting = count_library_functions("console.log([3, 1, 2].sort().join());");
+    let printing_with_a_method = count_library_functions(
+        "console.log({ [Symbol.for('nodejs.util.inspect.custom')]() { return 'a line'; } });",
+    );
+    assert!(0 < sorting && sorting < 20, "{sorting}");
+    assert!(printing_with_a_method > 100, "{printing_with_a_method}");
+}
+
+// The function of Bun's that makes `process.stdout` asks for node:fs. It stands in one file with functions that every program runs.
+#[test]
+fn module_of_bun_is_loaded_for_the_function_that_asks_for_it() {
+    let path = b"/$bun/js/node/fs.ts";
+    assert!(!compiles_runtime_module("console.log('a line');", path));
+    assert!(compiles_runtime_module(
+        "process.stdout.write('a line');",
+        path
+    ));
+}
+
+#[test]
+fn each_public_module_of_bun_is_loaded_for_a_program_that_imports_it_alone() {
+    let has_source = |module: &RuntimeModule| {
+        let flags = table::module_data(*module).flags;
+        flags.contains(table::ModuleFlags::IS_PUBLIC | table::ModuleFlags::HAS_SOURCE)
+    };
+    let modules: Vec<RuntimeModule> = RuntimeModule::ALL.into_iter().filter(has_source).collect();
+    assert!(modules.len() > 40);
+    for module in modules {
+        let specifier = BStr::new(table::specifier_of(module));
+        let text = format!("import * as it from \"{specifier}\"; console.log(typeof it);");
+        with_loaded_build(&[("main.ts", &text)], &default_settings(), |_, _| {});
+    }
 }
 
 // Where several files of Bun's declare one interface, the order of the files is the order of its members and overloads.

@@ -5,8 +5,8 @@ import { afterAll, expect } from "bun:test";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { built, spawned } from "./harness/commands";
 import { buildFlags, compileCommand } from "./harness/flags";
-import { built, spawned } from "./run-programs";
 import { beforeAll, describe, eachRow, gap, test } from "./supported";
 
 // No name is part of another one: the executable stores a text that is part of another text only once.

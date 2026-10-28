@@ -1,7 +1,7 @@
-import { expect } from "bun:test";
+import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned, told } from "../run-programs";
+import { built, slot, spawned, told } from "../harness/commands";
 import { test } from "../supported";
 
 async function buildExecutable(folder: string) {
@@ -119,6 +119,28 @@ test("an object of the table passes the instance test of no class that the table
   expect(JSON.parse((await runFile(script)).stdout)).toContain(
     "Reflect: passes the instance test of Map, and the table says it is no instance",
   );
+});
+
+// The flow analysis takes it that what console.log prints finds a method of the host under Symbol.for("nodejs.util.inspect.custom") only where the table lists one.
+test("an object of the table that says how it is printed lists the method", async () => {
+  const list: string[] = JSON.parse((await runFile(mismatches)).stdout);
+  expect(list.filter(line => line.includes("[nodejs.util.inspect.custom]"))).toEqual([]);
+  const script = [
+    'import { aotBuiltinMismatches } from "bun:internal-for-testing";',
+    'Object.getPrototypeOf(setTimeout(Boolean, 0))[Symbol.for("nodejs.util.inspect.custom")] = () => "";',
+    "console.log(JSON.stringify(aotBuiltinMismatches()));",
+  ].join("\n");
+  expect(JSON.parse((await runFile(script)).stdout)).toContain(
+    "%Timeout%.prototype[nodejs.util.inspect.custom]: is not in the table",
+  );
+  // The walk finds no object of a module that nobody has loaded.
+  const objectsOfModules = [
+    'import { SourceMap } from "node:module";',
+    'import { StringDecoder } from "node:string_decoder";',
+    'console.log([SourceMap, StringDecoder].filter(made => Object.hasOwn(made.prototype, Symbol.for("nodejs.util.inspect.custom"))).length);',
+  ].join("\n");
+  expect((await runFile(objectsOfModules)).stdout).toBe("0\n");
+  expect(Object.hasOwn(Object.getPrototypeOf(describe), Symbol.for("nodejs.util.inspect.custom"))).toBe(false);
 });
 
 test("a mismatch is reported", async () => {

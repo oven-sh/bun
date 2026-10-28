@@ -13,14 +13,16 @@ use std::fmt::Display;
 use std::io::Write;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
+use std::process::{Command as Process, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, MutexGuard, Once, OnceLock, PoisonError};
 use support::TestFailure;
 use support::check_lines::match_check_lines;
 use support::commands::{
-    CommandOutcome, CommandResult, find_command, parse_option_words, run_command,
+    Command, CommandOutcome, CommandResult, Project, find_command, parse_option_words, run_commands,
 };
 use support::test_file::{
-    DiagnosticName, RunDirective, TestFile, holds, is_test_file_name, parse_test_file,
+    DiagnosticName, Place, RunDirective, TestFile, holds, is_test_file_name, parse_test_file,
 };
 
 const AREAS: [&str; 2] = ["commands", "lower"];
@@ -30,6 +32,12 @@ const MAX_UNEXPECTED_DIAGNOSTICS_SHOWN: usize = 5;
 const FILTER_VARIABLE: &str = "AOT_IR_FILTER";
 const JOB_COUNT_VARIABLE: &str = "AOT_IR_JOBS";
 const OUTPUT_FOLDER_VARIABLE: &str = "AOT_IR_OUTPUT";
+/// Set to write the check lines below `GENERATED` anew.
+const UPDATE_VARIABLE: &str = "AOT_IR_UPDATE";
+/// `<index>/<count>`: which of the files a copy of this program runs. The program sets it for the copies that it starts.
+const SHARE_VARIABLE: &str = "AOT_IR_SHARE";
+const PROJECT_FILE: &str = "tsconfig.json";
+const STDERR_LINES_SHOWN: usize = 12;
 /// Set where a run that the engine did not verify is a failure, as in CI.
 const ENGINE_IS_REQUIRED_VARIABLE: &str = "AOT_IR_REQUIRES_ENGINE";
 
@@ -70,7 +78,9 @@ fn test_root() -> PathBuf {
         .ancestors()
         .nth(2)
         .expect("src/aot is two folders below the repository root");
-    repository_root.join(PathBuf::from_iter(TEST_ROOT))
+    let root = repository_root.join(PathBuf::from_iter(TEST_ROOT));
+    // The resolver names a file by its real path, and a file of a package is known by the folders above it.
+    std::fs::canonicalize(&root).unwrap_or(root)
 }
 
 fn display_folder_of(area: &str) -> String {
@@ -120,17 +130,34 @@ fn run_area(area: &str) {
     }
     name_running_files_on_panic();
 
-    let outcomes: Vec<OnceLock<TestOutcome>> = tests.iter().map(|_| OnceLock::new()).collect();
-    let threads = match std::env::var(JOB_COUNT_VARIABLE) {
+    let jobs = match std::env::var(JOB_COUNT_VARIABLE) {
         Ok(count) => parse_job_count(&count).get(),
         Err(_) => std::thread::available_parallelism().map_or(1, usize::from),
     };
-    for_each_parallel(threads.min(tests.len()), tests.len(), |index| {
+    match std::env::var(SHARE_VARIABLE) {
+        Ok(share) => {
+            let (index, count) = parse_share(&share);
+            let mut position = 0;
+            tests.retain(|_| {
+                position += 1;
+                (position - 1) % count == index
+            });
+        }
+        Err(_) if tests.len() > 1 => {
+            return run_area_in_copies(area, jobs.min(tests.len()), &tests);
+        }
+        Err(_) => {}
+    }
+
+    let outcomes: Vec<OnceLock<TestOutcome>> = tests.iter().map(|_| OnceLock::new()).collect();
+    for_each_parallel(1, tests.len(), |index| {
         let outcome = run_guarded_test_file(&tests[index]);
         let is_first_run = outcomes[index].set(outcome).is_ok();
         assert!(is_first_run, "{} ran twice", tests[index].display_path);
     });
 
+    // Without capture the harness leaves the name of the test in front of the first line.
+    println!();
     let mut failed_file_count = 0;
     let mut skipped: Vec<&TestFailure> = Vec::new();
     for (test, outcome) in tests.iter().zip(&outcomes) {
@@ -158,6 +185,83 @@ fn run_area(area: &str) {
         skipped.is_empty() || std::env::var_os(ENGINE_IS_REQUIRED_VARIABLE).is_none(),
         "the engine verified none of {} runs, and {ENGINE_IS_REQUIRED_VARIABLE} is set",
         skipped.len()
+    );
+}
+
+fn parse_share(share: &str) -> (usize, usize) {
+    let parts = share.split_once('/');
+    let numbers = parts.and_then(|(index, count)| Some((index.parse().ok()?, count.parse().ok()?)));
+    match numbers {
+        Some((index, count)) if index < count => (index, count),
+        _ => panic!("{SHARE_VARIABLE} is {share}, which is not <index>/<count>"),
+    }
+}
+
+// A file has a process of its own, as a build has: the resolver takes its working directory once for a process, and two builds in one
+// process wait for each other, since the front end has one pool for all of them.
+fn run_area_in_copies(area: &str, jobs: usize, tests: &[FoundTest]) {
+    let file_count = tests.len();
+    let program = std::env::current_exe().expect("a test program knows its path");
+    let start = |index: usize| {
+        Process::new(&program)
+            .args([area, "--exact", "--nocapture", "--test-threads=1"])
+            .env(SHARE_VARIABLE, format!("{index}/{file_count}"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|error| panic!("cannot start {}: {error}", program.display()))
+    };
+    let outputs: Vec<OnceLock<std::process::Output>> =
+        (0..file_count).map(|_| OnceLock::new()).collect();
+    for_each_parallel(jobs, file_count, |index| {
+        let output = start(index).wait_with_output();
+        let _ = outputs[index].set(output.expect("a started copy ends"));
+    });
+    let mut failed_files: Vec<String> = Vec::new();
+    let mut skipped_runs = 0;
+    let mut first_summary = None;
+    for (test, output) in tests.iter().zip(&outputs) {
+        let output = output.get().expect("every copy has run");
+        let (stdout, stderr) = (
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        let mut has_said_why = false;
+        for line in stdout.lines() {
+            if let Some(failure) = line.strip_prefix("FAIL ") {
+                println!("{line}");
+                failed_files.extend(failure.split(':').next().map(str::to_owned));
+                has_said_why = true;
+            } else if line.starts_with("SKIP ") {
+                skipped_runs += 1;
+            }
+        }
+        let mut summaries = stderr.lines().filter(|line| line.starts_with("SKIP "));
+        first_summary = first_summary.or_else(|| summaries.next().map(str::to_owned));
+        if !output.status.success() && !has_said_why {
+            let lines: Vec<&str> = stderr.lines().collect();
+            let shown = &lines[lines.len().saturating_sub(STDERR_LINES_SHOWN)..];
+            let path = &test.display_path;
+            println!(
+                "FAIL {path}:1: the test program ended with {}:",
+                output.status
+            );
+            println!("{}", shown.join("\n"));
+            failed_files.push(path.clone());
+        }
+    }
+    if let Some(summary) = first_summary {
+        let why = summary.rsplit(": ").next().unwrap_or_default();
+        let folder = display_folder_of(area);
+        eprintln!("SKIP {folder}: the engine verified none of {skipped_runs} runs: {why}");
+    }
+    failed_files.sort_unstable();
+    failed_files.dedup();
+    assert!(
+        failed_files.is_empty(),
+        "{} of {file_count} files failed",
+        failed_files.len()
     );
 }
 
@@ -237,32 +341,192 @@ fn create_failure(run: &RunDirective, line: u32, why: impl Display) -> TestFailu
     TestFailure::new(line, format!("{}: {why}", run.command))
 }
 
+struct TemporaryFolder(PathBuf);
+
+impl Drop for TemporaryFolder {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn link_to(target: &Path, link: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    return std::os::unix::fs::symlink(target, link);
+    #[cfg(windows)]
+    return match target.is_dir() {
+        true => std::os::windows::fs::symlink_dir(target, link),
+        false => std::os::windows::fs::symlink_file(target, link),
+    };
+}
+
+/// The sections as files of a folder of their own. A tree without a project at its root gets the one that every other test sees.
+fn write_sections(file: &TestFile) -> std::io::Result<TemporaryFolder> {
+    static NEXT_FOLDER_NUMBER: AtomicU32 = AtomicU32::new(0);
+    let number = NEXT_FOLDER_NUMBER.fetch_add(1, Ordering::Relaxed);
+    let name = format!("bun-aot-ir-{}-{number}", std::process::id());
+    let path = std::env::temp_dir().join(name);
+    std::fs::create_dir_all(&path)?;
+    // A place is printed from the root, and the front end names a file by its real path.
+    let folder = TemporaryFolder(std::fs::canonicalize(&path).unwrap_or(path));
+    let create_parent = |path: &Path| std::fs::create_dir_all(path.parent().unwrap_or(path));
+    for section in &file.sections {
+        let path = folder.0.join(&section.path);
+        create_parent(&path)?;
+        std::fs::write(path, &section.text)?;
+    }
+    if file
+        .sections
+        .iter()
+        .all(|section| section.path != PROJECT_FILE)
+    {
+        std::fs::copy(test_root().join(PROJECT_FILE), folder.0.join(PROJECT_FILE))?;
+    }
+    for link in &file.links {
+        let path = folder.0.join(&link.path);
+        create_parent(&path)?;
+        link_to(&folder.0.join(&link.target), &path)?;
+    }
+    Ok(folder)
+}
+
+fn project_of_sections(file: &TestFile, root: &Path) -> Project {
+    let first = file.sections.first().map(|section| &section.path);
+    let entry_points = match file.entry_points.is_empty() {
+        true => first.into_iter().collect::<Vec<_>>(),
+        false => file.entry_points.iter().collect(),
+    };
+    Project {
+        root: root.to_owned(),
+        working_directory: match &file.working_directory {
+            Some(folder) => root.join(folder),
+            None => root.to_owned(),
+        },
+        entry_points: entry_points
+            .into_iter()
+            .map(|path| root.join(path))
+            .collect(),
+    }
+}
+
+/// `None` for a run whose line is wrong, which `failures` says.
+fn run_all(
+    file: &TestFile,
+    project: &Project,
+    failures: &mut Vec<TestFailure>,
+) -> Vec<Option<CommandOutcome>> {
+    let commands: Vec<Option<Command>> = (file.runs.iter())
+        .map(|run| {
+            let command = find_command(&run.command);
+            if command.is_none() {
+                let message = format!("unknown command {}", run.command);
+                failures.push(TestFailure::new(run.line, message));
+            } else if !run.arguments.is_empty() {
+                let message = format!("{} takes no argument", run.command);
+                failures.push(TestFailure::new(run.line, message));
+                return None;
+            }
+            command
+        })
+        .collect();
+    let words_of = |index: usize| -> Vec<&str> {
+        let words = file.option_words_for(&file.runs[index].prefix);
+        words.into_iter().map(|word| word.word.as_str()).collect()
+    };
+    let mut outcomes: Vec<Option<CommandOutcome>> = file.runs.iter().map(|_| None).collect();
+    let mut is_done = vec![false; file.runs.len()];
+    for first in 0..file.runs.len() {
+        if is_done[first] || commands[first].is_none() {
+            continue;
+        }
+        // Runs with the same options print one build.
+        let together: Vec<usize> = (first..file.runs.len())
+            .filter(|&index| commands[index].is_some() && words_of(index) == words_of(first))
+            .collect();
+        for &index in &together {
+            is_done[index] = true;
+        }
+        let aot = match parse_option_words(file.option_words_for(&file.runs[first].prefix)) {
+            Ok(aot) => aot,
+            Err(failure) => {
+                failures.push(failure);
+                continue;
+            }
+        };
+        let printers: Vec<Command> = together
+            .iter()
+            .filter_map(|&index| commands[index])
+            .collect();
+        for (index, outcome) in together
+            .into_iter()
+            .zip(run_commands(&printers, project, &aot))
+        {
+            outcomes[index] = Some(outcome);
+        }
+    }
+    outcomes
+}
+
+fn check_same_runs(
+    file: &TestFile,
+    outcomes: &[Option<CommandOutcome>],
+    failures: &mut Vec<TestFailure>,
+) {
+    let result_of = |prefix: &String| {
+        let index = file.runs.iter().position(|run| run.prefix == *prefix)?;
+        outcomes[index].as_ref()?.as_ref().ok()
+    };
+    for same in &file.same_runs {
+        let [first, second] = &same.prefixes;
+        let (Some(a), Some(b)) = (result_of(first), result_of(second)) else {
+            continue;
+        };
+        let mut lines = a.output.lines().zip(b.output.lines()).zip(1..);
+        let difference = lines.find(|((a, b), _)| a != b);
+        let why = match difference {
+            Some(((a, b), number)) => format!("line {number}: {first} prints {a}, {second} {b}"),
+            None if a.output != b.output => "one prints more lines".to_owned(),
+            None if a.diagnostics != b.diagnostics || a.places != b.places => {
+                "their diagnostics differ".to_owned()
+            }
+            None => continue,
+        };
+        let message = format!("{first} and {second} differ: {why}");
+        failures.push(TestFailure::new(same.line, message));
+    }
+}
+
 fn run_test_text(path: &Path, text: &str) -> TestOutcome {
-    let file = parse_test_file(text);
+    let mut file = parse_test_file(text);
     let mut outcome = TestOutcome::default();
     if !file.errors.is_empty() {
         outcome.failures = file.errors;
         return outcome;
     }
-    let aot = match parse_option_words(&file.option_words) {
-        Ok(aot) => aot,
-        Err(failure) => {
-            outcome.failures.push(failure);
-            return outcome;
-        }
+    let tree = match file.sections.is_empty() {
+        true => None,
+        false => match write_sections(&file) {
+            Ok(tree) => Some(tree),
+            Err(error) => return fail_whole_file(format!("cannot write its sections: {error}")),
+        },
     };
-    for run in &file.runs {
-        let Some(command) = find_command(&run.command) else {
-            let message = format!("unknown command {}", run.command);
-            outcome.failures.push(TestFailure::new(run.line, message));
+    let project = match &tree {
+        Some(tree) => project_of_sections(&file, &tree.0),
+        None => Project::of_file(path),
+    };
+    let outcomes = run_all(&file, &project, &mut outcome.failures);
+    if std::env::var_os(UPDATE_VARIABLE).is_some()
+        && let Some(updated) = write_generated_lines(text, &file, &outcomes)
+    {
+        if let Err(error) = std::fs::write(path, &updated) {
+            return fail_whole_file(format!("cannot be written: {error}"));
+        }
+        file = parse_test_file(&updated);
+    }
+    check_same_runs(&file, &outcomes, &mut outcome.failures);
+    for (run, command_outcome) in file.runs.iter().zip(outcomes) {
+        let Some(command_outcome) = command_outcome else {
             continue;
         };
-        if !run.arguments.is_empty() {
-            let message = format!("{} takes no argument", run.command);
-            outcome.failures.push(TestFailure::new(run.line, message));
-            continue;
-        }
-        let command_outcome = run_command(command, path, &aot);
         if let Some(folder) = std::env::var_os(OUTPUT_FOLDER_VARIABLE) {
             write_command_outcome(Path::new(&folder), path, run, &command_outcome);
         }
@@ -270,6 +534,149 @@ fn run_test_text(path: &Path, text: &str) -> TestOutcome {
     }
     outcome.failures.sort_by_key(|failure| failure.line);
     outcome
+}
+
+fn is_token_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'$')
+}
+
+/// An id that is counted over the whole program, the library in front: it moves when anything in front of it does.
+fn is_program_wide_id(token: &str) -> bool {
+    let mut bytes = token.bytes();
+    matches!(bytes.next(), Some(b'f' | b'g' | b'm' | b'L' | b'w' | b'd'))
+        && token.len() > 1
+        && bytes.all(|byte| byte.is_ascii_digit())
+}
+
+/// A pattern that one printed line matches. Positions in the source are left out, and an id of the program is a variable.
+fn pattern_of(line: &str, ids: &mut Vec<String>) -> String {
+    let (bytes, mut pattern) = (line.trim().as_bytes(), String::new());
+    let (mut at, mut is_quoted) = (0, false);
+    while at < bytes.len() {
+        let byte = bytes[at];
+        let rest = &bytes[at..];
+        let digits = |from: usize| {
+            rest[from..]
+                .iter()
+                .take_while(|byte| byte.is_ascii_digit())
+                .count()
+        };
+        if is_quoted {
+            is_quoted = byte != b'"';
+            if byte == b'\\' && rest.len() > 1 {
+                pattern.push('\\');
+                at += 1;
+            }
+        } else if byte == b'"' {
+            is_quoted = true;
+        } else if rest.starts_with(b" @") && digits(2) > 0 {
+            at += 2 + digits(2);
+            continue;
+        } else if rest.starts_with(b"text={start=") {
+            pattern.push_str("text={{*}}");
+            at += bun_core::strings::index_of_char_usize(rest, b'}')
+                .map_or(rest.len(), |end| end + 1);
+            continue;
+        } else if rest.starts_with(b"position=") && digits(9) > 0 {
+            pattern.push_str("position={{*}}");
+            at += 9 + digits(9);
+            continue;
+        } else if is_token_byte(byte) && (at == 0 || !is_token_byte(bytes[at - 1])) {
+            let length = rest.iter().take_while(|&&byte| is_token_byte(byte)).count();
+            let token = &line.trim()[at..at + length];
+            if is_program_wide_id(token) {
+                let known = ids.iter().position(|id| id == token);
+                let number = known.unwrap_or_else(|| {
+                    ids.push(token.to_owned());
+                    ids.len() - 1
+                });
+                pattern.push_str(&format!("[[{}_{number}]]", &token[..1]));
+            } else {
+                pattern.push_str(token);
+            }
+            at += length;
+            continue;
+        }
+        // The two marks of a pattern, where the text has them.
+        match rest.starts_with(b"{{") || rest.starts_with(b"[[") {
+            true => pattern.push_str("{{*}}"),
+            false => pattern.push_str(
+                &line.trim()[at..]
+                    .chars()
+                    .next()
+                    .map_or(String::new(), String::from),
+            ),
+        }
+        at += line.trim()[at..].chars().next().map_or(1, char::len_utf8);
+    }
+    pattern
+}
+
+fn name_of_function(header: &str) -> Option<&str> {
+    let (_, rest) = header.split_once(" name=\"")?;
+    rest.split_once('"').map(|(name, _)| name)
+}
+
+fn generate_check_lines(prefix: &str, output: &str, functions: &[String], text: &mut String) {
+    let mut ids = Vec::new();
+    let mut is_wanted = false;
+    for line in output.lines() {
+        if line.starts_with("function ") {
+            let name = name_of_function(line);
+            let is_listed = |word: &str| functions.iter().any(|listed| listed == word);
+            is_wanted = is_listed("*") || name.is_some_and(is_listed);
+            if !is_wanted {
+                continue;
+            }
+            let (label, rest) = match name {
+                Some(name) => {
+                    let mark = format!("name=\"{name}\"");
+                    let end = line.find(&mark).map_or(line.len(), |at| at + mark.len());
+                    (format!("function {{{{*}}}}{mark}"), &line[end..])
+                }
+                None => ("function ".to_owned(), &line["function ".len()..]),
+            };
+            match name {
+                Some(_) => text.push_str(&format!("// {prefix}-LABEL: {label}\n")),
+                None => text.push_str(&format!("// {prefix}: {label}{{{{*}}}}\n")),
+            }
+            let rest = match name {
+                Some(_) => rest,
+                None => rest.split_once(' ').map_or("", |(_, rest)| rest),
+            };
+            if !rest.trim().is_empty() {
+                text.push_str(&format!("// {prefix}: {}\n", pattern_of(rest, &mut ids)));
+            }
+            is_wanted = line.ends_with('{');
+        } else if is_wanted && !line.trim().is_empty() {
+            text.push_str(&format!(
+                "// {prefix}-NEXT: {}\n",
+                pattern_of(line, &mut ids)
+            ));
+            is_wanted = line != "}";
+        }
+    }
+}
+
+/// The text of the file with the lines below `GENERATED` written from what the runs print. `None`: the file has no such line.
+fn write_generated_lines(
+    text: &str,
+    file: &TestFile,
+    outcomes: &[Option<CommandOutcome>],
+) -> Option<String> {
+    let generated = file.generated.as_ref()?;
+    let kept = text.split_inclusive('\n').take(generated.line as usize);
+    let mut updated: String = kept.collect();
+    if !updated.ends_with('\n') {
+        updated.push('\n');
+    }
+    for (run, outcome) in file.runs.iter().zip(outcomes) {
+        if let Some(Ok(result)) = outcome {
+            let output = hide_function_texts(&result.output);
+            generate_check_lines(&run.prefix, &output, &generated.functions, &mut updated);
+        }
+    }
+    Some(updated)
 }
 
 fn describe_command_outcome(outcome: &CommandOutcome) -> String {
@@ -344,11 +751,25 @@ fn check_expectations(
     let listed = &file.diagnostics;
     let reported = &result.diagnostics;
     let engine_was_skipped = result.engine_was_skipped.is_some();
+    let place_of = |index: usize| result.places.get(index).and_then(Option::as_ref);
     for expected in listed {
         if engine_was_skipped && is_reported_by_engine(expected.name) {
             continue;
         }
         let name = diagnostic_text(expected.name);
+        if let Some(place) = &expected.place {
+            let mut at_place = (reported.iter().zip(0..)).filter(|((name, _), index)| {
+                *name == expected.name && place_of(*index) == Some(place)
+            });
+            if at_place.next().is_none() {
+                let Place { file, line } = place;
+                report(
+                    expected.line,
+                    format!("{name} was not reported at {file}:{line}"),
+                );
+            }
+            continue;
+        }
         let count = reported
             .iter()
             .filter(|(name, _)| *name == expected.name)
@@ -363,12 +784,25 @@ fn check_expectations(
         }
     }
 
-    let mut unexpected = reported
-        .iter()
-        .filter(|(name, _)| listed.iter().all(|expected| expected.name != *name));
-    for (name, message) in unexpected.by_ref().take(MAX_UNEXPECTED_DIAGNOSTICS_SHOWN) {
+    // A name that is listed with places is expected at those alone.
+    let is_expected = |name: DiagnosticName, index: usize| {
+        let mut of_name = listed.iter().filter(|expected| expected.name == name);
+        of_name
+            .any(|expected| expected.place.is_none() || expected.place.as_ref() == place_of(index))
+    };
+    let mut unexpected =
+        (reported.iter().zip(0..)).filter(|((name, _), index)| !is_expected(*name, *index));
+    for ((name, message), index) in unexpected.by_ref().take(MAX_UNEXPECTED_DIAGNOSTICS_SHOWN) {
         let name = diagnostic_text(*name);
-        report(run.line, format!("unexpected {name}: {message}"));
+        match place_of(index) {
+            Some(Place { file, line }) => {
+                report(
+                    run.line,
+                    format!("unexpected {name} at {file}:{line}: {message}"),
+                );
+            }
+            None => report(run.line, format!("unexpected {name}: {message}")),
+        }
     }
     let hidden_count = unexpected.count();
     if hidden_count > 0 {
@@ -733,5 +1167,33 @@ mod tests {
             lower: TESTAOT is not set\n";
         assert_eq!(summary.as_deref(), Some(expected));
         assert_eq!(describe_skipped_runs("test/aot/ir/lower", &[]), None);
+    }
+
+    #[test]
+    fn a_generated_pattern_leaves_positions_out_and_binds_ids_of_the_program() {
+        let mut ids = Vec::new();
+        let pattern = pattern_of(
+            "    v4 = Call v1, f12 site=w3 key=\"f12 @9\" @298",
+            &mut ids,
+        );
+        assert_eq!(pattern, "v4 = Call v1, [[f_0]] site=[[w_1]] key=\"f12 @9\"");
+        let pattern = pattern_of(
+            "x=f12 position=17 text={start=1 end=2} casts=[[{{a}}]] L2.b",
+            &mut ids,
+        );
+        assert_eq!(
+            pattern,
+            "x=[[f_0]] position={{*}} text={{*}} casts={{*}}[{{*}}{a}}]] L2.b"
+        );
+        assert!(support::check_lines::parse_check_pattern(&pattern).is_ok());
+    }
+
+    #[test]
+    fn generated_lines_hold_each_named_function_whole() {
+        let output = "function f7 name=\"a\" module=m1 {\n  b0():\n    Return v0 @3\n}\nfunction f8 name=\"b\" {\n  b0():\n}\nfunction f9 name=\"c\" module=m1\nentry module=m1\n";
+        let mut text = String::new();
+        generate_check_lines("P", output, &["a".to_owned(), "c".to_owned()], &mut text);
+        let expected = "// P-LABEL: function {{*}}name=\"a\"\n// P: module=[[m_0]] {\n// P-NEXT: b0():\n// P-NEXT: Return v0\n// P-NEXT: }\n// P-LABEL: function {{*}}name=\"c\"\n// P: module=[[m_0]]\n";
+        assert_eq!(text, expected);
     }
 }

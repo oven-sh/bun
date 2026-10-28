@@ -3,8 +3,8 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { cpSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { built, slot, spawned, withoutCoreDump, withoutCrashReport, withoutDebugInformation } from "./harness/commands";
 import { compileCommand, runtimeEnvironment } from "./harness/flags";
-import { built, slot, spawned, withoutCoreDump, withoutCrashReport, withoutDebugInformation } from "./run-programs";
 import { describe, test } from "./supported";
 
 const timeout = 600_000;
@@ -12,7 +12,7 @@ const timeout = 600_000;
 // The executable stops where code is interpreted.
 const compiledOnly = { ...bunEnv, [runtimeEnvironment.forbidsInterpreter]: "1" };
 
-const programs = join(import.meta.dir, "programs", "workers");
+const programs = join(import.meta.dir, "parallel", "workers");
 
 const listen = `
   worker.onmessage = event => (console.log("message", event.data), worker.terminate());
@@ -32,11 +32,11 @@ const programsCompiled = (report: string): number => JSON.parse(readFileSync(rep
 
 describe.concurrent("compile/aot/workers from texts that the build knows", () => {
   test.each([
-    ["data-urls-that-the-build-knows-start-workers", "main.ts", 1],
+    ["data-urls-that-build-knows-start-workers", "main.ts", 1],
     ["files-named-by-paths-start-workers", "main.ts", 1],
     ["texts-that-the-build-knows-start-workers.ts", "texts-that-the-build-knows-start-workers.ts", 1],
     // Each of its eleven texts begins a program of its own.
-    ["what-a-worker-sees-that-started-from-a-data-url.ts", "what-a-worker-sees-that-started-from-a-data-url.ts", 12],
+    ["worker-sees-started-from-data-url.ts", "worker-sees-started-from-data-url.ts", 12],
   ])(
     "%s runs without the interpreter",
     (program, entry, programsOfExecutable) =>

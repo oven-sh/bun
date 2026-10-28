@@ -576,22 +576,29 @@ function linesDerivedFromDetails(text: string) {
   return lines.filter((_, index) => isDerived[index]);
 }
 
-/** Whether the two runs end alike and every difference in what they printed, up to where they print under different labels, comes from a statement that `linesDerivedFromDetails` lists. */
+/**
+ * Whether the two runs end alike and print the same under every label that a statement outside `linesDerivedFromDetails` prints: as many such records, in the same order, with the same words.
+ * What comes from the details can be longer in one run than in the other, so the records aren't held against each other by their place.
+ */
 function differOnlyInDetails(text: string, a: Ended, b: Ended) {
   if (a.end !== b.end || !namesOfDetails.some(name => text.includes(name))) return false;
-  const [left, right] = [recordsOf(a.stdout), recordsOf(b.stdout)];
+  const lines = text.split("\n");
   const derived = linesDerivedFromDetails(text);
-  for (
-    let index = 0;
-    index < Math.min(left.length, right.length) && left[index].label === right[index].label;
-    index++
-  ) {
-    if (left[index].printed === right[index].printed) continue;
-    const { label } = left[index];
-    const prints = (line: string) => (label === "noted" ? line.includes("note(") : line.includes(`"${label}`));
-    if (text.split("\n").some(prints) && !derived.some(prints)) return false;
-  }
-  return true;
+  const compared = new Map<string, boolean>();
+  const isCompared = (label: string) => {
+    if (!compared.has(label)) {
+      const prints = (line: string) => (label === "noted" ? line.includes("note(") : line.includes(`"${label}`));
+      compared.set(label, lines.some(prints) && !derived.some(prints));
+    }
+    return compared.get(label)!;
+  };
+  const [left, right] = [a, b].map(({ stdout }) =>
+    recordsOf(stdout)
+      .filter(({ label }) => isCompared(label))
+      .map(({ printed }) => printed)
+      .join("\n"),
+  );
+  return left === right;
 }
 
 /** `Reflect.setPrototypeOf()` of a built-in object returns false in an executable, and `Object.setPrototypeOf()` throws. */
@@ -606,15 +613,18 @@ const setsThePrototypeOfABuiltIn = /\bsetPrototypeOf\([A-Z]/;
  * where Bun is started can be drawn (--options-of-the-project). Such a program is held against the executable built without --aot as well.
  */
 const hasATsconfigInAFolderOfItsOwn = /^\/\/ @filename: \.\/[^\n]+\/tsconfig\.json$/m;
-/** Such a program can hold more than the file in that folder, and in the rest the executable built without --aot can be the one that parts from `bun run`. So it is held against both, line by line. */
-const printsOnlyLinesOfEither = (ours: Ended, one: Ended, other: Ended) => {
-  const [lines, ofOne, ofOther] = [ours, one, other].map(({ stdout }) => removeDetailsOfErrors(stdout).split("\n"));
+/**
+ * Such a program can hold more than the file in that folder, and in the rest the executable built without --aot can be the one that parts from `bun run`, also by a line more or less. So the program is held against
+ * both: it ends as both do, prints as many lines as `bun run`, and each of its lines is the line of `bun run` at that place or one of the lines of the other executable.
+ */
+const printsOnlyLinesOfEither = (ours: Ended, plain: Ended, other: Ended) => {
+  const [lines, ofPlain, ofOther] = [ours, plain, other].map(({ stdout }) => removeDetailsOfErrors(stdout).split("\n"));
+  const amongOther = new Set(ofOther);
   return (
-    ours.end === one.end &&
+    ours.end === plain.end &&
     ours.end === other.end &&
-    lines.length === ofOne.length &&
-    lines.length === ofOther.length &&
-    lines.every((line, at) => line === ofOne[at] || line === ofOther[at])
+    lines.length === ofPlain.length &&
+    lines.every((line, at) => line === ofPlain[at] || amongOther.has(line))
   );
 };
 
@@ -649,6 +659,8 @@ const removeDetailsOfErrors = (output: string) =>
       line
         .replace(/^\s+(?=\w*Error\b)/, "")
         .replace(/Error: .*/, "Error")
+        // A message that the program prints by itself: an executable quotes less of the source in it ("Error messages" in docs/compiler/compatibility.mdx). The words in front are compared.
+        .replace(/ \(evaluating '.*'\)/, "")
         .replace(/\[(\w*Function): [^\]]*\]/g, "[$1]")
         .replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z/g, "<a time>")
         .replace(/\b\d{1,2} [A-Z][a-z]{2} \d\d:\d\d:\d\d\b/g, "<a time>")
@@ -1065,7 +1077,7 @@ async function drawPrograms(extension: string) {
   const share = Number(options.families);
   if (share > 0 && !families) {
     const { allSources } = await import("../sources.ts");
-    families = Object.entries(await allSources(join(import.meta.dir, "..", "..", "programs"), new Set())) as [
+    families = Object.entries(await allSources(join(import.meta.dir, "..", "..", "parallel"), new Set())) as [
       string,
       Family,
     ][];

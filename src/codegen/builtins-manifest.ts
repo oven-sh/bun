@@ -155,6 +155,14 @@ for (const listing of listOfModules.listings.keys()) {
   lines.push(`declarations\t${listing}`);
 }
 
+// What `declare global` and `declare module "name"` add is seen by files that do not name the file, so every build reads it.
+for (const [file, text] of [
+  ...[...sourceFiles, ...functionFiles].map((file): [string, string] => [file, fs.readFileSync(locate(file), "utf8")]),
+  ...engineTexts,
+]) {
+  if (/^\s*declare\s+(global\b|module\s*["'])/m.test(text)) lines.push(`declares-for-every-file\t${file}`);
+}
+
 // The positions of each module stand behind its id and their length.
 const bundledPositions: Uint8Array[] = [];
 for (const line of fs.readFileSync(bundledNamesOfModules, "utf8").split("\n")) {

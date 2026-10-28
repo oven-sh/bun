@@ -1,9 +1,10 @@
 use super::import_graph::ImportGraph;
+use super::runtime_reach::ReachWhileLoading;
 use super::{
-    Build, LoadedBuild, LoadedProject, Options, ProgramsOfOneLoad, mentions_worker_constructor,
-    preload_of,
+    Build, LoadedBuild, LoadedProject, Options, ProgramsOfOneLoad, library_code_of,
+    mentions_worker_constructor, preload_of,
 };
-use crate::builtins::BuiltinNames;
+use crate::builtins::{BuiltinNames, RuntimeUses};
 use crate::diagnostics::{Diagnostics, InternalError, LoadMessages, ProgramView};
 use crate::link::run_beside;
 use crate::load::fold_inputs::{
@@ -13,7 +14,9 @@ use crate::load::host::{LoadHost, LoadHostInput, create_disk};
 use crate::load::named_loads::resolve_loads_through_imported_loaders;
 use crate::load::runtime_host::RuntimeHost;
 use crate::load::runtime_modules::RuntimeModules;
-use crate::load::runtime_roots::{RuntimeRoots, collect_runtime_roots};
+use crate::load::runtime_roots::{
+    FurtherLibraryCode, RuntimeRoots, collect_runtime_roots, join_asks, join_root_paths,
+};
 use crate::load::sources::{
     FreezeInput, FrozenSources, check_unique_paths_across_projects, freeze_sources, parsed_source,
 };
@@ -120,14 +123,17 @@ struct RuntimeLoadInputs<'c, 's> {
     loads_code_by_unknown_names_alone: bool,
 }
 
-// Programs that ask the same of Bun's own code share one load of it.
+// Programs that ask the same of Bun's own code share one load of it. So do programs that ask for functions of the language alone, which
+// stand in files that declare nothing for other files: each holds what it reaches of them.
 fn asks_the_same(a: &RuntimeRoots, b: &RuntimeRoots) -> bool {
-    a.paths == b.paths
+    let ask_for_the_language_alone = !a.keeps_code_without_names && !b.keeps_code_without_names;
+    (a.paths == b.paths || ask_for_the_language_alone)
         && a.host_loaded_modules == b.host_loaded_modules
         && a.modules_named_at_run_time == b.modules_named_at_run_time
         && a.imports_cluster == b.imports_cluster
         && a.imports_uncompiled_code == b.imports_uncompiled_code
         && a.loads_by_unknown_path == b.loads_by_unknown_path
+        && a.keeps_code_without_names == b.keeps_code_without_names
 }
 
 fn create_runtime_modules(archive: &'static Archive, options: &Options<'_>) -> RuntimeModules {
@@ -437,12 +443,13 @@ impl<'a> Build<'a> {
             }
             Some(of_one_load)
                 if files.entry_points().len() != positions.len()
-                    || are_one_program(
-                        files,
-                        of_one_load.indexes[positions[0]] == 0,
-                        self.started_workers.constructs_node_workers,
-                        &self.limits,
-                    ) =>
+                    || (!self.options.aot.separates_programs
+                        && are_one_program(
+                            files,
+                            of_one_load.indexes[positions[0]] == 0,
+                            self.started_workers.constructs_node_workers,
+                            &self.limits,
+                        )) =>
             {
                 let holds_all = of_one_load.are_all_of_the_build
                     && of_one_load.indexes.len() == positions.len();
@@ -468,13 +475,21 @@ impl<'a> Build<'a> {
         let is_read_again = self.programs.is_some();
         application.set_is_read_again(is_read_again);
         let first_files: Vec<Option<FileId>> = programs.iter().map(|program| program.1).collect();
+        let lacked_before = library_code_of(&options.load.library_code_lacked);
+        let further = FurtherLibraryCode {
+            lacked_before: &lacked_before,
+            // What is loaded ahead of a program serves whatever that program asks for.
+            serves_unseen_code: options.load.keeps_library_code_without_names
+                || options.can_load_code_at_run_time()
+                || preload_of(options).is_some(),
+        };
         let mut roots: Vec<RuntimeRoots> = first_files
             .iter()
             .map(|&first| {
                 if first.is_some() {
                     view(first);
                 }
-                collect_runtime_roots(files, shared.runtime_modules, self.platform)
+                collect_runtime_roots(files, shared.runtime_modules, self.platform, further)
             })
             .collect();
         let mut groups: Vec<Vec<usize>> = Vec::new();
@@ -488,13 +503,18 @@ impl<'a> Build<'a> {
         let mut runtime_to_keep = None;
         for (group_index, group) in groups.iter().enumerate() {
             let started = Instant::now();
+            let asks = join_asks(group.iter().map(|&index| &roots[index].asks));
+            let of_group = group.iter().map(|&index| &roots[index]);
+            let root_paths = join_root_paths(shared.runtime_modules, of_group);
             let roots = &roots[group[0]];
             let session = match group_index {
                 0 => shared.sessions.runtime,
                 _ => &shared.further_runtime_sessions[group_index - 1],
             };
-            let inputs = self.create_runtime_load_inputs(shared, session, roots);
-            let runtime_request = self.create_runtime_request(shared, &inputs, roots);
+            // What is loaded ahead of a program serves whatever that program asks for.
+            let asks = preload_of(options).is_none().then_some(&asks);
+            let inputs = self.create_runtime_load_inputs(shared, session, roots, asks);
+            let runtime_request = self.create_runtime_request(shared, &inputs, &root_paths);
             let RuntimeLoadInputs {
                 host: ref runtime_host,
                 can_load_code_at_run_time,
@@ -566,7 +586,14 @@ impl<'a> Build<'a> {
                     builtin_names: shared.builtin_names,
                     can_load_code_at_run_time,
                     loads_code_by_unknown_names_alone,
+                    keeps_library_code_without_names: roots.keeps_code_without_names,
                     finish_asset_reads: project.finish_asset_reads,
+                    known_library_regions: &|| {
+                        let reach = runtime_host.reach.as_ref()?;
+                        let is_last = group.last() == Some(&index);
+                        let files = runtime.files();
+                        Some(reach.known_regions(shared.runtime_modules, files, is_last))
+                    },
                 };
                 result = Some(then(self, loaded)?);
             }
@@ -585,6 +612,7 @@ impl<'a> Build<'a> {
         shared: &SharedLoadInputs<'c, 's>,
         session: &'s Session,
         roots: &RuntimeRoots,
+        asks: Option<&'c RuntimeUses>,
     ) -> RuntimeLoadInputs<'c, 's> {
         let options = self.options;
         // A name that the build does not know may be the path of a file on disk. Code that the build does not see may name the module too.
@@ -617,6 +645,9 @@ impl<'a> Build<'a> {
                 platform: self.platform,
                 messages: shared.messages,
                 unreadable: Default::default(),
+                manifest: shared.manifest,
+                // Code that the build does not see may use all that a file holds, so all that a file asks for is read.
+                reach: (asks.filter(|_| !can_load_code_at_run_time)).map(ReachWhileLoading::new),
             },
             can_load_code_at_run_time,
             loads_code_by_unknown_names_alone,
@@ -627,13 +658,13 @@ impl<'a> Build<'a> {
         &self,
         shared: &SharedLoadInputs<'_, 's>,
         inputs: &'r RuntimeLoadInputs<'_, 's>,
-        roots: &'r RuntimeRoots,
+        root_paths: &'r [Vec<u8>],
     ) -> CompileRequest<'r, 's>
     where
         'a: 'r,
     {
         CompileRequest {
-            entry_points: EntryPoints::Resolved(&roots.paths),
+            entry_points: EntryPoints::Resolved(root_paths),
             code: &inputs.code,
             fold: &inputs.fold,
             atoms: shared.atoms,

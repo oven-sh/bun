@@ -17,8 +17,9 @@
 // None of the three is larger as written. And all three executables print what `bun run` prints for the files as written.
 //
 // The IR of a program is the same for every target. The first two numbers are read behind the back end, from the map of the image, so they are the target's: an operation counts
-// if an instruction is its own. x64 stores a constant with one instruction, which is the store's, and arm64 loads it into a register first, which is the constant's. What is
-// allowed in bytes stands by target in `bytesOnThisTarget`, and nothing else here knows the target.
+// if an instruction is its own. x64 stores a constant with one instruction, which is the store's, and arm64 loads it into a register first, which is the constant's, unless a number
+// of the image with the same value is in a register already. So a constant that is one machine word is no operation here: its bytes count. What is allowed in bytes stands by target
+// in `bytesOnThisTarget`, and nothing else here knows the target.
 //
 // In every form a file of one line imports the entry point and starts the program. A program of several files has a function that runs them in their order, and a program of one file
 // has none: so every form has that function, and it is not what is compared. Nor is the call of each further file that has something to run.
@@ -49,7 +50,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { buildEnvironment, compileCommand, runtimeEnvironment } from "./harness/flags";
-import { slot, spawned, withoutDebugInformation } from "./run-programs";
+import { slot, spawned, withoutDebugInformation } from "./harness/commands";
 import { describe, test } from "./supported";
 
 export type Case = {
@@ -97,6 +98,7 @@ const mostCodeBytesForOtherNumbers = bytesOnThisTarget.otherNumbers * (isASAN ? 
 const callOfAFile = { operations: 1, codeBytes: bytesOnThisTarget.callOfAFile * (isASAN ? 4 : 1) };
 // A debug or ASAN build of Bun is many times slower.
 const oneExecutableIn = (isASAN || isDebug) && !process.env.AOT_MINIFYING_FIRST ? 8 : 1;
+const constantsOfOneWord = new Set(["Undefined", "Null", "Absent", "Boolean", "Integer", "Double"]);
 const mark = "=== the program above has ended with";
 const isCode = (path: string) => /\.([cm]?[jt]s|[jt]sx)$/.test(path) && !/\.d\.[cm]?ts$/.test(path);
 const asJavaScript = (path: string) => path.replace(/\.([cm]?)tsx?$/, ".$1js").replace(/\.jsx$/, ".js");
@@ -184,10 +186,10 @@ function readMap(path: string): Omit<Measured, "runtimeOperations"> {
       for (let at = 1; at + 4 < fields.length + 1; at += 5) {
         if (fields[at] === "-" || fields[at] === undefined) continue;
         const key = fields.slice(at, at + 3).join(" ");
-        if (seen.has(key)) continue;
+        const name = fields[at].replace(/[./].*$/, "");
+        if (seen.has(key) || constantsOfOneWord.has(name.replace(/[+*]+$/, ""))) continue;
         seen.add(key);
         operations++;
-        const name = fields[at].replace(/[./].*$/, "");
         byOperation[name] = (byOperation[name] ?? 0) + 1;
       }
       if (seen.size) offsetsOfCodeWithOperations.add(offset);

@@ -55,6 +55,8 @@ bun_aot = { workspace = true, features = ["ir_text", "test_support"] }
 # The native symbols that Bun's C and C++ side provides to `bun_core`.
 bun_sema_standalone = { path = "../sema/standalone", features = ["test_support"] }
 bun_trim = { workspace = true, features = ["test_support"] }
+# tests/ir_tests.rs builds with the options and the services of `bun build`.
+bun_bundler = { workspace = true, features = ["test_support"] }
 
 [lints]
 workspace = true

@@ -6,8 +6,8 @@ import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harne
 import { join } from "path";
 import type { Readable } from "stream";
 import { text } from "stream/consumers";
+import { unsupported } from "../../aot/harness/commands";
 import { run as runCommand } from "../../aot/harness/run";
-import { unsupported } from "../../aot/run-programs";
 
 const supported = !unsupported;
 

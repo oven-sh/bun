@@ -4,7 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-import { slot, unsupported } from "./run-programs";
+import { slot, unsupported } from "./harness/commands";
 
 const framework = `{
   fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: entry }],

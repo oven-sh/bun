@@ -2,18 +2,18 @@
 //
 // `--aot-sabotage=<name>` (hidden) breaks one thing in a build on purpose: an emitter leaves out a barrier, a pass leaves out one of the
 // conditions under which it may change the code. An ordinary build holds
-// none of it. `bun compile --aot-list=registry` lists the names. For each name the table below has the programs that must notice, and this test passes only if
-// AT LEAST ONE RUN OF THEM DIFFERS FROM PLAIN BUN OR DIES. A sabotage that nothing sees fails here, and so does a name that the table lacks: each says which program is still to be written.
+// none of it. `bun compile --aot-list=registry` lists the names. Most are shown by a pair of engine tests, ./engine-tests/pipeline/sabotages/<name>.ir beside <name>-left-alone.ir.
+// For each other name the table below has the programs that must notice, tried in turn, and this test passes only if
+// A RUN OF ONE OF THEM DIFFERS FROM PLAIN BUN OR DIES. A sabotage that nothing sees fails here, and so does a name that the table lacks: each says which program is still to be written.
 // A run that notices has its control: the same program in the same environment without the sabotage, as plain Bun.
 //
 //   bun test test/aot/sabotages                          all
 //   AOT_SABOTAGE=<text> bun test test/aot/sabotages      the names that contain the text
 import { afterAll, expect } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join, resolve } from "path";
 import { tsconfig } from "./generated/births-and-uses/run";
-import { registry } from "./harness/registry";
 import {
   built,
   slot,
@@ -23,7 +23,8 @@ import {
   withoutCoreDump,
   withoutCrashReport,
   withoutDebugInformation,
-} from "./run-programs";
+} from "./harness/commands";
+import { registry } from "./harness/registry";
 import { describe, test } from "./supported";
 
 type Environment = Record<string, string>;
@@ -41,16 +42,9 @@ const underCollections: Environment[] = [
 
 type Row = { folder: string; flags: string[]; programs: string[]; isGenerated?: boolean };
 
-// ./what-the-back-end-is-told-is-checked-at-run-time.test.ts holds each of these to the line that names what was told.
-const toldTheBackEnd = (check: string, ...programs: string[]): Row => ({
-  folder: "claims-to-the-back-end",
-  flags: [check],
-  programs,
-});
-
 // What a pass takes for granted shows in what a program answers, whenever the collector runs.
 const asTheyAre: Environment[] = [{}];
-const conditionOfAPass = (...programs: string[]): Row => ({ folder: "conditions-of-passes", flags: [], programs });
+const conditionOfAPass = (...programs: string[]): Row => ({ folder: "pass-conditions", flags: [], programs });
 /** Programs out of ./generated/births-and-uses/<family>.ts by name: `typed/<name>` is the one in TypeScript. */
 const ofFamily = (family: string, ...programs: string[]): Row => ({
   folder: family,
@@ -59,17 +53,12 @@ const ofFamily = (family: string, ...programs: string[]): Row => ({
   isGenerated: true,
 });
 
-/** The programs under ./programs that must notice each sabotage. */
+/** The programs under ./parallel that must notice each sabotage. */
 const noticedBy: Record<string, Row | Row[]> = {
-  NoCallCollects: {
-    folder: "collector",
-    flags: ["--aot-validate"],
-    programs: ["young-cells-stored-into-old-arrays-survive.ts", "references-in-optional-fields-survive-collections.ts"],
-  },
   StoresNeedNoBarrier: {
-    folder: "collector",
+    folder: "gc",
     flags: [],
-    programs: ["young-cells-stored-into-old-arrays-survive.ts", "references-in-optional-fields-survive-collections.ts"],
+    programs: ["young-cells-stored-old-arrays-survive.ts", "references-optional-fields-survive.ts"],
   },
   // The call clamps the bounds again, so the answers stay right: only the check of a validating build sees it.
   PartsOfViewsEndOneLater: {
@@ -77,55 +66,11 @@ const noticedBy: Record<string, Row | Row[]> = {
     flags: ["--aot-validate"],
     programs: ["text-is-encoded-into-the-rest-of-a-view.ts"],
   },
-  NoCallWrites: toldTheBackEnd(
-    "--aot-check=MovedLoads",
-    "a-field-is-read-on-both-sides-of-a-call-that-stores-into-it.ts",
-  ),
-  MergedLoadsOutlastWritesOnUnlikelyPaths: toldTheBackEnd(
-    "--aot-check=MovedLoads",
-    "an-element-is-tested-stored-on-a-way-seldom-taken-and-read-again.js",
-  ),
-  SlotsOfSitesStayAsTheyAre: [
-    toldTheBackEnd(
-      "--aot-check=MovedLoads",
-      "one-place-in-a-loop-reads-a-method-of-objects-of-two-classes-one-after-the-other.js",
-    ),
-    {
-      folder: "claims-to-the-back-end",
-      flags: [],
-      programs: ["one-place-in-a-loop-reads-a-method-of-objects-of-two-classes-one-after-the-other.js"],
-    },
-    // The read comes into the loop with the body of the function.
-    {
-      folder: "claims-to-the-back-end",
-      flags: [],
-      programs: ["a-function-that-a-loop-calls-reads-a-method-of-objects-of-two-classes-one-after-the-other.js"],
-    },
-    // The cell that the closure table has for a function goes by the rule of the slots.
-    {
-      folder: "claims-to-the-back-end",
-      flags: ["--aot-limit=MaxWarmCodeValues:1"],
-      programs: [
-        "a-function-that-a-loop-calls-hands-back-a-declared-function-that-nobody-has-asked-for-yet-1.ts",
-        "a-function-that-a-loop-calls-hands-back-a-declared-function-that-nobody-has-asked-for-yet-2.ts",
-      ],
-    },
-  ],
-  FieldsNeverChange: toldTheBackEnd(
-    "--aot-check=ClaimsToBackEnd",
-    "a-field-is-read-and-stored-on-every-turn-of-a-loop.ts",
-  ),
-  ClosureInFrameKeepsNoCaptures: {
-    ...toldTheBackEnd("--aot-check=ClaimsToBackEnd", "a-closure-that-is-only-lent-reads-what-it-captured.ts"),
-    flags: ["--aot-check=ClaimsToBackEnd", "--aot-disable-in=4000000000:1"],
-  },
-  RangesEndOneEarly: toldTheBackEnd("--aot-check=ClaimsToBackEnd", "flags-and-small-counters-come-out-of-fields.ts"),
   WritesMayRunTwice: ofFamily(
     "work-done-ahead-of-a-test-that-fails",
     "typed/countsUp-looksAtAnotherObjectFirst-withAnAccessorForTheSecondField-inAClosure",
     "typed/saysSomething-isAMethod-withoutAField-inAClosure",
   ),
-  SharedPatternsReachCalls: conditionOfAPass("a-pattern-literal-in-the-handler-of-a-loop-is-handed-to-a-function.ts"),
   SharedPatternsAreSticky: ofFamily(
     "pattern-literals-met-again",
     "typed/sticky-replace-nothingMoreIsAsked-constructor",
@@ -146,93 +91,30 @@ const noticedBy: Record<string, Row | Row[]> = {
     "typed/throwsBeforeItYields-anotherIsMadeAndStepped-underAHandler-cleanup",
     "untyped/throwsBeforeItYields-anotherIsMadeAndStepped-underAHandler-cleanup",
   ),
-  GeneratorsAreReadBeforeTheirFirstStep: ofFamily(
-    "generators-between-their-making-and-their-first-step",
-    "typed/isAMethod-anErrorIsThrownIntoIt-nextTwice-heldByAClosure",
-    "untyped/handsOnToAnother-nothing-endedFirst-loopThatStartsAnew",
-  ),
   StepsInCyclesAreFirstSteps: [
-    conditionOfAPass("a-generator-is-stepped-in-a-loop-and-kept.ts", "a-generator-is-stepped-in-a-loop-and-kept.js"),
+    conditionOfAPass("generator-is-stepped-in-loop-and-kept.ts"),
     ofFamily(
       "generators-between-their-making-and-their-first-step",
       "typed/handsOnToAnother-aLoop-nextInALoopAndKept-inAClosure",
       "untyped/handsOnToAnother-anotherIsMadeAndStepped-nextInALoopAndKept-copiedIntoALoop",
     ),
   ],
-  GeneratorHeadsHaveEffects: [
-    conditionOfAPass(
-      "a-generator-takes-its-argument-apart-when-it-is-made.js",
-      "defaults-of-a-generators-parameters-are-evaluated-when-it-is-made.js",
-    ),
-    ofFamily(
-      "generators-between-their-making-and-their-first-step",
-      "typed/hasADefaultThatSays-anotherIsMadeAndStepped-nextTwice-inAClosure",
-      "typed/takesAnObjectApart-aThrow-nextWithAValue-often",
-    ),
-  ],
-  RemovedLoopsMayNotEnd: conditionOfAPass("a-loop-that-never-ends-still-runs.mjs"),
   RemovedLoopsHaveEffects: ofFamily(
     "loops-that-leave-nothing-behind",
     "untyped/heldByAClosure-aVariableOfTheModule-asksAProxy-inAClosure",
     "untyped/heldByAClosure-theLengthOfAList-joinsTexts-inAClosure",
     "typed/up-aCall-readsAGetter-loop",
   ),
-  PromotedEnvironmentsAreMadeOften: ofFamily(
-    "variables-that-closures-hold",
-    "typed/heldByAGenerator-onOneWay-isKept-moduleLoop",
-    "untyped/heldByAGenerator-onOneWay-isKept-moduleLoop",
-  ),
-  FlooredQuotientsHaveAnyDivisor: ofFamily("whole-numbers-divided", "typed/aroundZero-minusOne-floor-once"),
-  RoundedQuotientsHaveAnySign: ofFamily(
-    "whole-numbers-divided",
-    "typed/aroundZero-minusOne-round-moduleLoop",
-    "typed/aLength-minusOne-trunc-loopWithContinue",
-  ),
-  SkippedBlocksHaveEffects: ofFamily(
-    "ways-that-part-and-meet",
-    "untyped/undefinedOrNumber-asksAnObject-counts-testedBehindAWrite-inAClosure",
-  ),
-  RemovedFieldsHaveUnknownReaders: ofFamily(
-    "fields-that-nothing-reads-by-name",
-    "typed/filledLater-noMore-ownNames-handler",
-    "typed/child-inALoop-asAPrototype-handlerInALoop",
-  ),
   ProofsOutlastWritesToEverything: {
-    ...conditionOfAPass("closures-see-the-variables-of-the-turn-they-were-made-in.ts"),
+    ...conditionOfAPass("closures-see-variables-of-turn-made.ts"),
     flags: ["--aot-heat=everything-is-hot"],
   },
-  ErasedValuesHaveEffects: conditionOfAPass("lists-of-constants-answer-what-they-hold-now.ts"),
-  ProofsOutlastWritesToTheirSubject: ofFamily(
-    "fields-that-nothing-reads-by-name",
-    "typed/holdsAClosure-noMore-spread-loop",
-    "typed/child-again-spread-often",
-  ),
-  WalkedLiteralsAreAsTheyWereMade: ofFamily(
-    "the-keys-of-an-object-are-walked",
-    "typed/literal-keys-addsAKey-method",
-    "typed/literal-keysByIndex-deletesALaterKey-loop",
-  ),
-  WalkedKeysStandInTheFirstOrder: ofFamily(
-    "the-keys-of-an-object-are-walked",
-    "typed/oneOfTwoShapes-keysByIndex-deletesThisKey-once",
-    "untyped/instance-names-hidesALaterKey-inAClosure",
-  ),
-  WrittenRecordsHaveTheirKeysInOneOrder: ofFamily(
-    "records-written-as-text",
-    "typed/large-plainly-aFieldWasDeleted-once",
-    "typed/emptyList-andReadBack-aFieldWasAdded-loop",
-  ),
-  WrittenRecordsStayAsTheyWere: conditionOfAPass(
-    "a-member-changes-the-record-that-holds-it-while-the-record-is-written.ts",
-  ),
+  ErasedValuesHaveEffects: conditionOfAPass("lists-of-constants-answer-what-hold-now.ts"),
   TaggedMakersAreOnlyConstructed: ofFamily(
     "one-class-makes-the-members-of-a-union",
     "typed/plainFunction-constEnumMembers-calledForOneOfItsOwn-writesItAsText-once",
   ),
-  TaggedMakersAnswerWithTheirOwnObject: conditionOfAPass(
-    "a-function-that-makes-the-members-of-a-union-is-also-called-and-answers-with-another-object.ts",
-  ),
-  FusedConversionsRunCode: conditionOfAPass("an-object-is-made-a-text-before-what-it-says-changes.js"),
+  TaggedMakersAnswerWithTheirOwnObject: conditionOfAPass("function-makes-members-union-called.ts"),
   UnfinishedObjectsPassForFinished: ofFamily(
     "objects-filled-field-by-field",
     "untyped/fieldsAreOnlyDeclared-aLaterFieldIsStoredAndDeleted-addsThemUp-once",
@@ -248,139 +130,40 @@ const noticedBy: Record<string, Row | Row[]> = {
     "typed/functionAbove-object-reads-aWriterOnOneTurn-testedBehind-inAClosure",
     "untyped/functionAbove-object-reads-aWriterOnOneTurn-testedBehind-inAClosure",
   ),
-  CarriedVariablesAreWrittenByOthers: ofFamily(
-    "variables-of-enclosing-code-in-loops",
-    "typed/moduleLet-whole-storesThenReads-aWriterUnderTextMadeAtRunTime-overAList-handlerInALoop",
-    "untyped/moduleLet-whole-storesThenReads-aWriterUnderTextMadeAtRunTime-overAList-whileLoop",
-    "typed/functionAbove-list-storesThenReads-aWriterUnderANative-testedBehind-once",
-  ),
   DelayedStoresAreLeftOut: ofFamily(
     "variables-of-enclosing-code-in-loops",
     "typed/sameFunction-object-storesOnBothSides-aWriterOnOneTurn-testedBehind-inAClosure",
     "untyped/sameFunction-object-storesOnBothSides-aWriterOnOneTurn-testedBehind-inAClosure",
-  ),
-  DelayedStoresPassWhatMayThrow: ofFamily(
-    "variables-of-enclosing-code-in-loops",
-    "typed/parameterAbove-text-storesOnBothSides-aBuiltInThatThrowsOutOfTheFunction-testedBehind-handler",
-    "untyped/parameterAbove-text-storesOnBothSides-aBuiltInThatThrowsOutOfTheFunction-testedBehind-awaitUnderAHandler",
   ),
   TailCallsSwapTheirLastArguments: ofFamily(
     "functions-whose-last-act-is-to-call-themselves",
     "typed/declared-behindATest-turnsTwoAround-aClosureThatCounts-loop",
     "typed/declared-inAChoice-turnsTwoAround-aClosureThatCounts-cleanup",
   ),
-  RememberedReadsOutlastStoresThroughOtherNames: ofFamily(
-    "one-thing-under-two-names",
-    "typed/fieldOfALiteral-counts-chosenByATest-storeStoreRead-loop",
-    "typed/hiddenField-bumps-twoParameters-readStoreRead-loopsWithLabels",
-  ),
-  RememberedReadsOutlastWrites: ofFamily(
-    "one-thing-under-two-names",
-    "typed/fieldOfAnInstance-stores-outOfAField-readInALoop-inAClosure",
-    "typed/hiddenField-sets-thisAndAParameter-storeOnSomeTurns-whileLoop",
-  ),
   FusedGeneratorsAreSeenByOthers: ofFamily(
     "generators-walked-where-they-are-made",
     "typed/twoLoops-byHandAndEnds-runsOut-moduleLoop",
     "typed/returnsAValue-byHand-runsOut-handlerInALoop",
   ),
-  ParsedMembersComeOnce: ofFamily(
-    "texts-read-as-records",
-    "typed/anything-fits-theMemberTwice-parsedByAHelper-copiesIt-loop",
-    "typed/record-fits-theFirstTwice-parsedAsPartOfAList-listsTheKeys-loop",
-  ),
-  GrowingTextsAreHeldInOneState: ofFamily(
-    "texts-put-together-piece-by-piece",
-    "typed/element-fraction-growsWhileWhatItWasIsStillHeld-aFunction-constructor",
-    "untyped/element-character-growsWhileWhatItWasIsStillHeld-aKey-loopWithBreak",
-  ),
-  // The build stops: ./an-operation-without-a-value-stops-the-build.test.ts holds it to the line that names the read.
-  StoredValuesAreNeverRead: conditionOfAPass("a-read-finds-what-was-stored.ts"),
-  FramesAlwaysFit: conditionOfAPass(
-    "a-mark-is-taken-away-ahead-of-a-call-at-every-depth-close-to-the-end-of-the-stack.mjs",
-  ),
-  CallsThatThrowHaveNoSite: {
-    folder: "errors",
-    flags: ["--aot-validate"],
-    programs: ["what-the-run-time-throws-for-an-operator-or-a-literal-is-caught-around-it.mjs"],
-  },
-  // The build stops: ./a-flow-analysis-that-is-given-more-finds-no-less.test.ts holds it to the line that names the place.
-  WhatIsGivenTakesThePlaceOfWhatComes: {
-    ...conditionOfAPass("a-read-finds-what-was-stored.ts"),
-    flags: ["--aot-flow=widened", "--aot-layout-seed=0"],
-  },
-  StridedIndexesStayInRange: {
+  FramesAlwaysFit: conditionOfAPass("mark-taken-away-ahead-call-every-depth.mjs"),
+  SignsOfComparedLanesDoNotMatter: {
     folder: "arrays",
     flags: [],
-    programs: ["strided-indexes-into-typed-arrays-and-lists.ts"],
+    programs: ["least-and-greatest-element-are-found.ts"],
   },
   SumsOfNumbersAreWhole: { folder: "arrays", flags: [], programs: ["elements-are-added-up.ts"] },
   LanesHoldWhateverIsComputed: { folder: "arrays", flags: [], programs: ["elements-are-kept-between-two-limits.ts"] },
-  VectorTurnsMeetNoOtherAccess: [
-    { folder: "arrays", flags: [], programs: ["elements-copied-one-by-one-between-views-of-one-buffer.ts"] },
-    toldTheBackEnd(
-      "--aot-check=MovedLoads",
-      "elements-are-copied-one-by-one-between-views-that-lie-over-each-other.ts",
-    ),
-  ],
-  CallbacksOfOneChainShareNoMemory: conditionOfAPass(
-    "two-callbacks-of-one-chain-store-to-one-variable.ts",
-    "two-callbacks-of-one-chain-store-to-one-variable.js",
-  ),
-  WalkedArraysStayAsTheyWereOpened: conditionOfAPass(
-    "a-default-in-a-pattern-lengthens-the-list-behind-the-end-of-its-walk.ts",
-    "a-default-in-a-pattern-lengthens-the-list-behind-the-end-of-its-walk.js",
-  ),
-  HeadsThatAreCopiedLeaveNoTrace: {
-    folder: "escape-analysis",
-    flags: [],
-    programs: [
-      "a-closure-made-in-a-try-holds-a-parameter-the-try-stores-under-a-condition.cjs",
-      "closures-captured-by-frame-closures.ts",
-    ],
-  },
-  WhatRunsAgainLeavesNoTrace: conditionOfAPass(
-    "a-count-goes-up-between-reads-of-a-list-that-is-too-short-or-has-a-gap.ts",
-    "a-count-goes-up-between-reads-of-a-list-that-is-too-short-or-has-a-gap.js",
-  ),
-  // The build stops: a test of the list is relied on behind the getter.
-  GettersInSlotsHaveNoEffects: conditionOfAPass(
-    "a-getter-of-a-literal-stores-a-text-into-a-list-of-numbers-between-two-reads.ts",
-    "a-getter-of-a-literal-stores-a-text-into-a-list-of-numbers-between-two-reads.js",
-  ),
-  // The build stops: what was proven of a list is relied on behind its conversion.
-  ConversionsOfStorageEndNoProofs: {
-    folder: "arrays",
-    flags: [],
-    programs: ["the-pairs-of-a-map-of-numbers-are-taken-apart-kept-and-changed.ts", "sort-sees-removed-elements.ts"],
-  },
-  WrittenOutTurnsAlwaysFit: [
-    {
-      folder: "claims-to-the-back-end",
-      flags: [],
-      programs: ["the-elements-of-views-of-every-length-are-added-up.ts", "views-of-every-length-are-filled.ts"],
-    },
-    toldTheBackEnd("--aot-check=DecidedComparisons", "the-elements-of-views-of-every-length-are-added-up.ts"),
-  ],
-  LoadsFoldedIntoTheirUsersOutlastWrites: conditionOfAPass(
-    "an-element-of-a-view-is-read-stored-to-and-then-used.ts",
-    "an-element-of-a-view-is-read-stored-to-and-then-used.js",
-  ),
-  ReadsOfCalleesSinkPastWrites: {
-    folder: "calls-fast-paths",
-    flags: [],
-    programs: ["static-method-read-and-called.ts", "push-read-ahead-of-its-argument.js"],
-  },
-  RemovedTestsOutlastWrites: [
-    conditionOfAPass("a-member-changes-the-record-that-holds-it-while-the-record-is-written.ts"),
-    { folder: "classes", flags: [], programs: ["bare-private-field-is-undefined-below-a-replaced-parent.js"] },
-  ],
+  CallbacksOfOneChainShareNoMemory: conditionOfAPass("two-callbacks-of-chain-store-to-variable.js"),
+  WhatRunsAgainLeavesNoTrace: conditionOfAPass("count-goes-up-reads-list-short-gap.js"),
+  // The answer shows it, and a validating build names the type that was taken for proven.
+  ChangedClosuresFailEveryTest: ["", "--aot-validate"].map(flag => ({
+    folder: "calls",
+    flags: flag ? [flag] : [],
+    programs: ["captured-variable-holds-closure-number.mjs"],
+  })),
 };
 /** What one kind of processor alone can show: for the others the phase that is broken finds nothing to do. */
-const shownOnOneArchitectureAlone: Record<string, NodeJS.Architecture> = {
-  // An instruction that computes takes an operand out of memory.
-  LoadsFoldedIntoTheirUsersOutlastWrites: "x64",
-};
+const shownOnOneArchitectureAlone: Record<string, NodeJS.Architecture> = {};
 /** What no program can show, and the test of the engine that shows it (./engine-tests.test.ts runs those). */
 const noticedByTheEngineTestsAlone: Record<string, string> = {
   // Between the read of a word and two tests of its bits nothing that a program is compiled to writes that word.
@@ -391,7 +174,21 @@ const noticedByTheEngineTestsAlone: Record<string, string> = {
   BoundsReadTwiceOutlastWrites: "bound-read-twice-is-held-against-what-stands-for-it",
   // Two neighboring words are read into two registers at once (arm64). In what a program is compiled to, a test or a mark for the collector stands between two reads with a store between them.
   PairedLoadsOutlastWrites: "loads-are-not-paired-across-store-that-may-lie-over-them",
+  StoredValuesAreNeverRead: "an-operation-whose-operands-hold-values-and-that-holds-none-stops-the-build",
+  WhatIsGivenTakesThePlaceOfWhatComes: "what-a-node-loses-where-it-is-given-more-is-reported",
+  FieldsNeverChange: "a-field-said-never-to-change-is-reported",
+  RangesEndOneEarly: "a-flag-past-the-range-that-was-told-is-reported",
+  CallsThatThrowHaveNoSite: "a-call-said-to-throw-nothing-throws",
+  NoCallCollects: "a-call-said-to-collect-nothing-collects",
+  ConversionsOfStorageEndNoProofs: "plan-array-capacities-a-conversion-that-ends-a-proof-is-refused",
+  StridedIndexesStayInRange: "a-strided-index-said-to-stay-in-range-is-reported",
+  VectorTurnsMeetNoOtherAccess: "a-load-moved-across-the-store-of-another-view-is-reported",
 };
+/** The names that a test under ./engine-tests/pipeline/sabotages is built with. */
+const pairs = join(import.meta.dir, "engine-tests", "pipeline", "sabotages");
+const shownByAPairOfEngineTests = new Set(
+  readdirSync(pairs).flatMap(file => / sabotage=(\w+)$/m.exec(readFileSync(join(pairs, file), "utf8"))?.[1] ?? []),
+);
 /** What stops the build itself, which then says where it stood: ./a-build-that-stops-says-where.test.ts holds each to its line. */
 const stopTheBuild = [
   "FunctionPassFailsAssertion",
@@ -414,14 +211,9 @@ const wanted = process.env.AOT_SABOTAGE ?? "";
 
 describe.skipIf(!listed)("compile/aot/sabotages", () => {
   const folder = String(tempDir("aot-sabotages", {}));
-  const noticedByOneProgramAlone: string[] = [];
-  afterAll(() => {
-    rmSync(folder, { recursive: true, force: true });
-    if (noticedByOneProgramAlone.length)
-      console.error(`SABOTAGES THAT ONE PROGRAM ALONE NOTICES: ${noticedByOneProgramAlone.sort().join(" ")}`);
-  });
+  afterAll(() => rmSync(folder, { recursive: true, force: true }));
   const carrier = listed ? withoutDebugInformation() : [];
-  const root = join(import.meta.dir, "programs");
+  const root = join(import.meta.dir, "parallel");
   let executables = 0;
 
   /** The first of the environments in which the program, built with the flags, does something else than plain Bun does. */
@@ -475,12 +267,21 @@ describe.skipIf(!listed)("compile/aot/sabotages", () => {
 
   test("every sabotage has programs that must notice it", () => {
     expect(
-      listed!.filter(name => !noticedBy[name] && !noticedByTheEngineTestsAlone[name] && !stopTheBuild.includes(name)),
+      listed!.filter(
+        name =>
+          !noticedBy[name] &&
+          !noticedByTheEngineTestsAlone[name] &&
+          !stopTheBuild.includes(name) &&
+          !shownByAPairOfEngineTests.has(name),
+      ),
     ).toEqual([]);
     expect(
-      [...Object.keys(noticedBy), ...Object.keys(noticedByTheEngineTestsAlone), ...stopTheBuild].filter(
-        name => !listed!.includes(name),
-      ),
+      [
+        ...Object.keys(noticedBy),
+        ...Object.keys(noticedByTheEngineTestsAlone),
+        ...stopTheBuild,
+        ...shownByAPairOfEngineTests,
+      ].filter(name => !listed!.includes(name)),
     ).toEqual([]);
   });
 
@@ -516,32 +317,26 @@ describe.skipIf(!listed)("compile/aot/sabotages", () => {
   )(
     "%s",
     async name => {
-      const seen = (
-        await Promise.all(
-          [noticedBy[name]].flat().flatMap(({ folder: topic, flags: flagsOfRow, programs, isGenerated }) =>
-            programs.map(program =>
-              slot(async () => {
-                const { path, flags } = isGenerated
-                  ? written(topic, program)
-                  : { path: `${topic}/${program}`, flags: flagsOfRow };
-                const noticed = await departure(
-                  path,
-                  [...flags, `--aot-sabotage=${name}`],
-                  isGenerated ? asTheyAre : underCollections,
-                );
-                if (!noticed) {
-                  console.error(`SABOTAGE ${name}: NOT NOTICED BY ${topic}/${program}`);
-                  return [];
-                }
-                expect({ path, control: await departure(path, flags, [noticed.environment]) }).toEqual({ path });
-                return [`${path} ${JSON.stringify(noticed.environment)}: ${noticed.how}`];
-              }),
-            ),
-          ),
-        )
-      ).flat();
+      const seen: string[] = [];
+      for (const { folder: topic, flags: flagsOfRow, programs, isGenerated } of [noticedBy[name]].flat()) {
+        for (const program of programs) {
+          if (seen.length) break;
+          await slot(async () => {
+            const { path, flags } = isGenerated
+              ? written(topic, program)
+              : { path: `${topic}/${program}`, flags: flagsOfRow };
+            const noticed = await departure(
+              path,
+              [...flags, `--aot-sabotage=${name}`],
+              isGenerated ? asTheyAre : underCollections,
+            );
+            if (!noticed) return void console.error(`SABOTAGE ${name}: NOT NOTICED BY ${topic}/${program}`);
+            expect({ path, control: await departure(path, flags, [noticed.environment]) }).toEqual({ path });
+            seen.push(`${path} ${JSON.stringify(noticed.environment)}: ${noticed.how}`);
+          });
+        }
+      }
       console.error(`SABOTAGE ${name}: ${seen.join(" | ") || "nobody noticed"}`);
-      if (seen.length === 1) noticedByOneProgramAlone.push(name);
       expect({ name, isNoticed: seen.length > 0 }).toEqual({ name, isNoticed: true });
     },
     1_800_000,

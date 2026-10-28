@@ -1,9 +1,11 @@
-import { expect } from "bun:test";
-import { bunEnv, bunExe, isArm64, isASAN, isLinux, tempDir } from "harness";
+import { describe as describeAnywhere, expect, test } from "bun:test";
+import { bunEnv, bunExe, isArm64, isASAN, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { unsupported } from "./harness/compiler";
 import { run as runCommand } from "./harness/run";
-import { withoutCoreDump } from "./run-programs";
-import { describe, test } from "./supported";
+import { inTurn } from "./harness/shared-builds";
+
+const describe = unsupported ? describeAnywhere.skip : describeAnywhere.concurrent;
 
 // An ahead-of-time compiled program keeps most references between objects in 32 bits, so its objects live in one reserved range of
 // address space. Each Worker has a range of its own. These tests shrink the ranges to see what happens at their end.
@@ -154,8 +156,23 @@ parentPort!.postMessage("done");
 `,
 };
 
+// Where the kernel hands a core to a program it starts that program whatever the limit is, but for a limit of one byte.
+const withoutCoreDump = (cmd: string[]) =>
+  isWindows
+    ? cmd
+    : [
+        "/bin/sh",
+        "-c",
+        `command -v prlimit > /dev/null 2>&1 && exec prlimit --core=1:1 "$@"; ulimit -c 0 && exec "$@"`,
+        "--",
+        ...cmd,
+      ];
+
+// No more commands at once than the machine has cores: many fill the address space that they are given.
 async function run(cmd: string[], cwd: string, env: Record<string, string> = {}) {
-  const { stdout, stderr, exitCode } = await runCommand(cmd, cwd, { ...bunEnv, BUN_CRASH_REPORT_URL: "", ...env });
+  const { stdout, stderr, exitCode } = await inTurn(() =>
+    runCommand(cmd, cwd, { ...bunEnv, BUN_CRASH_REPORT_URL: "", ...env }),
+  );
   // The message of the error goes on with the limit and the option that lifts it. The first test reads all of it; the programs that print a message are compared without.
   return { stdout: stdout.replaceAll(": " + limitOf64MB, ""), stderr, exitCode };
 }
@@ -175,7 +192,7 @@ async function build(cwd: string, ...moreEntryPoints: string[]) {
 // TODO: with AddressSanitizer these run out of room where a release build does not.
 const runsOutOfRoomEarly = isASAN;
 
-/** Every `parts`-th case from the `part`-th, one at a time: many fill the address space that they are given, and a file has five minutes. */
+/** Every `parts`-th case from the `part`-th. */
 export function addressSpaceForObjects(part: number, parts: number) {
   let cases = 0;
   const isInPart = () => cases++ % parts === part - 1;

@@ -5,8 +5,8 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { slot, unsupported } from "./harness/commands";
 import { run } from "./harness/run";
-import { slot, unsupported } from "./run-programs";
 
 const read = (path: string) => readFileSync(join(import.meta.dir, path), "utf8");
 const section = read("libraries-known-not-to-work.md");

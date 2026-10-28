@@ -7,7 +7,8 @@ import { test } from "./supported";
 // oven-sh/bun#47177: an executable from `bun build --compile --aot` did not start on AWS Lambda (128 MB, a seccomp filter).
 // Both tests need Linux: the first reads how the loader reserves the lowest pages, the second reads the flags of the process's mappings.
 
-// Null checks and loop polls, so that the image has fault sites and the loader reserves the lowest pages.
+// With the library code behind Array.from, the image has fault sites (null checks folded into loads), so the loader reserves the
+// lowest pages. build() checks that it does.
 const program = `function sum(items: { n: number }[]) {
   let total = 0;
   for (let i = 0; i < items.length; i++) total += items[i].n;
@@ -21,9 +22,12 @@ console.log("sum", acc);
 
 // Runs the executable named by argv[2] as AWS Lambda runs it: mincore(2) fails with EPERM. CAP_SYS_RAWIO leaves the bounding set
 // first, so that a test run by root cannot map a page below vm.mmap_min_addr either, and the loader has to know whether one is mapped.
+// With "page-zero-mapped" as argv[3] the filter stays off and the kernel is asked to map page 0 at exec (MMAP_PAGE_ZERO), which it
+// does for a process with CAP_SYS_RAWIO: then the loader must refuse.
 const launcher = `import { dlopen, FFIType, ptr } from "bun:ffi";
 const libc = dlopen("libc.so.6", {
   prctl: { args: [FFIType.i32, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i32 },
+  personality: { args: [FFIType.u64], returns: FFIType.i32 },
   execv: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
 });
 const load = 0x20, jumpIfEqual = 0x15, answer = 0x06;
@@ -47,9 +51,14 @@ const filterProgram = new BigUint64Array([BigInt(instructions.length), BigInt(pt
 const path = Buffer.from(process.argv[2] + "\\0");
 const argv = new BigUint64Array([BigInt(ptr(path)), 0n]);
 const dropFromBoundingSet = 24, capabilityRawIO = 17, setNoNewPrivileges = 38, setSeccomp = 22, filterMode = 2;
-libc.symbols.prctl(dropFromBoundingSet, capabilityRawIO, 0, 0, 0);
-if (libc.symbols.prctl(setNoNewPrivileges, 1, 0, 0, 0)) throw new Error("PR_SET_NO_NEW_PRIVS was refused");
-if (libc.symbols.prctl(setSeccomp, filterMode, ptr(filterProgram), 0, 0)) throw new Error("the filter was refused");
+const mapPageZero = 0x0100000;
+if (process.argv[3] === "page-zero-mapped") {
+  if (libc.symbols.personality(mapPageZero) === -1) throw new Error("personality(MMAP_PAGE_ZERO) was refused");
+} else {
+  libc.symbols.prctl(dropFromBoundingSet, capabilityRawIO, 0, 0, 0);
+  if (libc.symbols.prctl(setNoNewPrivileges, 1, 0, 0, 0)) throw new Error("PR_SET_NO_NEW_PRIVS was refused");
+  if (libc.symbols.prctl(setSeccomp, filterMode, ptr(filterProgram), 0, 0)) throw new Error("the filter was refused");
+}
 libc.symbols.execv(ptr(path), ptr(argv));
 throw new Error("execv failed");
 `;
@@ -79,21 +88,46 @@ async function run(cmd: string[], cwd: string) {
 
 async function build(dir: string, source: string) {
   const executable = join(dir, "program");
-  const built = await run([bunExe(), "build", "--compile", "--aot", source, "--outfile", executable], dir);
-  expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({
+  const report = join(dir, "report.json");
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "--aot-report=" + report, source, "--outfile", executable],
+    dir,
+  );
+  expect({
+    stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
+    exitCode: built.exitCode,
+  }).toEqual({
     stderr: [],
     exitCode: 0,
   });
+  const { statistics } = (await Bun.file(report).json()) as { statistics: Record<string, number> };
+  expect(statistics.FaultSiteBytesEmitted).toBeGreaterThan(0);
   return executable;
 }
 
-function lowestAddressTheSystemMaps(): number {
+function readSystemSetting(path: string, fallback: number): number {
   try {
-    return Number(readFileSync("/proc/sys/vm/mmap_min_addr", "utf8"));
+    return Number(readFileSync(path, "utf8"));
   } catch {
-    return 0;
+    return fallback;
   }
 }
+
+// The loader reserves the lowest pages only where the system lets a process map them.
+const lowestAddressTheSystemMaps = () => readSystemSetting("/proc/sys/vm/mmap_min_addr", 0);
+// Under vm.overcommit_memory=2 the kernel ignores MAP_NORESERVE, and "nr" never shows.
+const theSystemNeverOvercommits = () => readSystemSetting("/proc/sys/vm/overcommit_memory", 0) === 2;
+// Only a process with CAP_SYS_RAWIO may map a page below vm.mmap_min_addr, page 0 among them.
+function mayMapPageZero(): boolean {
+  try {
+    const effective = /CapEff:\s*([0-9a-f]+)/.exec(readFileSync("/proc/self/status", "utf8"))?.[1] ?? "0";
+    return Boolean(BigInt("0x" + effective) & (1n << 17n));
+  } catch {
+    return false;
+  }
+}
+
+const refusal = "it needs the lowest pages of the address space to be unmapped, and this system maps them";
 
 // Where the lowest 16 KB may be mapped the loader reserves them, one page at a time. A page below vm.mmap_min_addr is refused to it,
 // and it has to know that the page is unmapped. It used to ask mincore, and read a refusal as "mapped".
@@ -112,10 +146,27 @@ test.skipIf(!isLinux || !isGlibc || lowestAddressTheSystemMaps() >= 16384)(
   120_000,
 );
 
+// A page below vm.mmap_min_addr that is mapped all the same (the kernel maps page 0 at exec under MMAP_PAGE_ZERO, for a process
+// that may map it) is still seen, and the loader refuses: the code relies on a load from a null pointer faulting.
+test.skipIf(!isLinux || !isGlibc || lowestAddressTheSystemMaps() >= 16384 || !mayMapPageZero())(
+  "compiled code refuses to start where page zero is mapped",
+  async () => {
+    using dir = tempDir("aot-start-page-zero-mapped", { "program.ts": program, "launcher.ts": launcher });
+    const executable = await build(String(dir), "program.ts");
+    const ran = await run([bunExe(), join(String(dir), "launcher.ts"), executable, "page-zero-mapped"], String(dir));
+    expect({ stdout: ran.stdout, refused: ran.stderr.includes(refusal), exitCode: ran.exitCode }).toEqual({
+      stdout: "",
+      refused: true,
+      exitCode: 1,
+    });
+  },
+  120_000,
+);
+
 // The tables of the property caches are reserved at their greatest size (256 MB for the table of structure rows) and touched as
 // they fill. The system must not count a whole table as committed memory: a machine with less memory than that refuses the
 // mapping, and the program aborts at start. MAP_NORESERVE shows as "nr" among the VmFlags of /proc/self/smaps.
-test.skipIf(!isLinux)(
+test.skipIf(!isLinux || theSystemNeverOvercommits())(
   "no table of compiled code is counted as committed memory before it is written",
   async () => {
     using dir = tempDir("aot-tables-not-counted", { "program.ts": program + mappings });

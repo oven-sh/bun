@@ -1,10 +1,41 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::node::node_fs_binding" });
 
 /** Arguments are parsed in `node_fs.rs`, which throws Node's errors. */
-const operation = (length: number) =>
-  ({ args: { args: b.any.variadic }, returns: b.any, capability: "js", throws: true, length }) as const;
+const operation = (length: number, ...returns: readonly string[]) =>
+  ({
+    args: { args: b.any.variadic },
+    returns: b.any.returning(...returns),
+    capability: "js",
+    throws: true,
+    length,
+  }) as const;
+
+/** What `x` and `xSync` do with an argument (`args::*::from_js` in node_fs.rs): they keep none and return none. */
+const uses = {
+  this: table.inspected,
+  args: [
+    ...table.hostOptionBag([
+      "bigint",
+      "encoding",
+      "flag",
+      "flush",
+      "force",
+      "maxRetries",
+      "mode",
+      "recursive",
+      "retryDelay",
+      "signal",
+      "throwIfNoEntry",
+      "withFileTypes",
+    ]),
+    table.readsContents(),
+    table.writesContents(),
+    table.printedByFormatter("constructor"),
+  ],
+};
 
 /** `[length of x, length of xSync]`. `xCb` is `x` with a leading callback. */
 const operations: Record<string, readonly [number, number]> = {
@@ -51,24 +82,47 @@ const operations: Record<string, readonly [number, number]> = {
   writev: [4, 3],
 };
 
-const getter = { getter: b.any, capability: "js" } as const;
+/** What `xSync` returns, where that is not `undefined`. */
+const syncResults: Record<string, readonly string[]> = {
+  access: ["null"],
+  exists: ["boolean"],
+  fstat: ["object"],
+  lstat: ["object", "undefined"],
+  mkdir: ["string", "undefined"],
+  mkdtemp: ["string", "object"],
+  open: ["number"],
+  read: ["number"],
+  readdir: ["Array"],
+  readFile: ["string", "object"],
+  readlink: ["string", "object"],
+  readv: ["number"],
+  realpath: ["string", "object"],
+  realpathNative: ["string", "object"],
+  stat: ["object", "undefined"],
+  statfs: ["object"],
+  write: ["number"],
+  writev: ["number"],
+};
+
+const getter = { getter: b.any.returning("object"), capability: "js" } as const;
 
 /** The default export of `src/js/internal/fs/binding.ts`. */
 export const NodeJSFS = b.class({
   rustPath: "crate::node::node_fs_binding::Binding",
+  types: [table.exactType("$Node.NodeJSFS"), table.exactType("$Bindgen.NodeJSFS")],
   proto: Object.fromEntries(
     [
       ...Object.entries(operations).flatMap(([name, [length, syncLength]]) => [
-        [name, operation(length)] as const,
-        [`${name}Cb`, operation(length + 1)] as const,
-        [`${name}Sync`, operation(syncLength)] as const,
+        [name, { ...operation(length, "Promise"), uses }] as const,
+        [`${name}Cb`, operation(length + 1, "undefined")] as const,
+        [`${name}Sync`, { ...operation(syncLength, ...(syncResults[name] ?? ["undefined"])), uses }] as const,
       ]),
-      ["cp", operation(2)] as const,
-      ["cpSync", operation(2)] as const,
-      ["watch", operation(3)] as const,
-      ["watchFile", operation(3)] as const,
+      ["cp", { ...operation(2, "Promise"), uses }] as const,
+      ["cpSync", { ...operation(2, "undefined"), uses }] as const,
+      ["watch", operation(3, "FSWatcher", "undefined")] as const,
+      ["watchFile", operation(3, "StatWatcher", "undefined")] as const,
       ["Dirent", getter] as const,
-      ["Stats", getter] as const,
+      ["Stats", { getter: b.any.returning(table.builtin("%Stats%").spec), capability: "js" }] as const,
     ].sort(([x], [y]) => x.localeCompare(y)),
   ),
 });

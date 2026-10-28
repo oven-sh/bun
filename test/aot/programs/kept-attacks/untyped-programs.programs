@@ -1,0 +1,238 @@
+//// untyped-programs/a-create-server.ts
+// Untyped programs: a create server. It prints what plain Bun prints.
+import http from "node:http";
+const server = http.createServer((request, response) => { response.end("x"); });
+console.log(typeof server);
+//// untyped-programs/a-events.ts
+// Untyped programs: a events. It prints what plain Bun prints.
+import { EventEmitter } from "node:events";
+const e = new EventEmitter();
+e.on("x", (v: number) => console.log(v));
+e.emit("x", 1);
+//// untyped-programs/a-import-buffer.ts
+// Untyped programs: a import buffer. It prints what plain Bun prints.
+import { Buffer } from "node:buffer";
+console.log(Buffer.from("a").length);
+//// untyped-programs/a-inspect.ts
+// Untyped programs: a inspect. It prints what plain Bun prints.
+import util from "node:util";
+console.log(util.inspect({ a: 1 }));
+//// untyped-programs/a-read-file.ts
+// Untyped programs: a read file. It prints what plain Bun prints.
+import fs from "node:fs";
+// A small file that every machine of the kind has.
+const file = { linux: "/etc/hostname", win32: "C:\\Windows\\System32\\drivers\\etc\\hosts" }[process.platform as string] ?? "/etc/hosts";
+console.log(fs.readFileSync(file, "utf8").length);
+//// untyped-programs/a-timeout.ts
+// Untyped programs: a timeout. It prints what plain Bun prints.
+setTimeout(() => console.log(1), 1);
+//// untyped-programs/b-argv.ts
+// Untyped programs: b argv. It prints what plain Bun prints.
+console.log(process.argv.length);
+//// untyped-programs/b-async-function.ts
+// Untyped programs: b async function. It prints what plain Bun prints.
+async function f() {
+  return 1;
+}
+f().then(v => console.log(v));
+//// untyped-programs/b-catch.ts
+// Untyped programs: b catch. It prints what plain Bun prints.
+try {
+  (null as any).x;
+} catch (e) {
+  console.log(1);
+}
+//// untyped-programs/b-class.ts
+// Untyped programs: b class. It prints what plain Bun prints.
+class A {
+  m() {
+    return 1;
+  }
+}
+console.log(new A().m());
+//// untyped-programs/b-events-typeof.ts
+// Untyped programs: b events typeof. It prints what plain Bun prints.
+import { EventEmitter } from "node:events";
+console.log(typeof EventEmitter);
+//// untyped-programs/b-for-of.ts
+// Untyped programs: b for of. It prints what plain Bun prints.
+for (const x of [1, 2]) console.log(x);
+//// untyped-programs/b-map-get.ts
+// Untyped programs: b map get. It prints what plain Bun prints.
+console.log(new Map([[1, 2]]).get(1));
+//// untyped-programs/b-microtask.ts
+// Untyped programs: b microtask. It prints what plain Bun prints.
+queueMicrotask(() => console.log(1));
+//// untyped-programs/b-path-basename.ts
+// Untyped programs: b path basename. It prints what plain Bun prints.
+import path from "node:path";
+console.log(path.basename("a/b"));
+//// untyped-programs/b-path-sep.ts
+// Untyped programs: b path sep. It prints what plain Bun prints.
+import path from "node:path";
+console.log(path.sep);
+//// untyped-programs/b-path-typeof.ts
+// Untyped programs: b path typeof. It prints what plain Bun prints.
+import path from "node:path";
+console.log(typeof path);
+//// untyped-programs/b-then.ts
+// Untyped programs: b then. It prints what plain Bun prints.
+Promise.resolve(1).then(v => console.log(v));
+//// untyped-programs/c-tail-call-in-a-cycle.ts
+// Untyped programs: c tail call in a cycle. It prints what plain Bun prints.
+type Formatter = (depth: number) => string[];
+function formatValue(depth: number): string[] {
+  if (depth <= 0) return ["leaf"];
+  const formatter = choose(depth);
+  const output = formatter(depth - 1);
+  output.push("d" + depth);
+  return output;
+}
+function choose(depth: number): Formatter {
+  const keys = ["k" + depth];
+  if (depth & 1) return next => formatKeyed(keys, next);
+  return formatPlain;
+}
+function formatKeyed(keys: string[], depth: number): string[] {
+  const output = formatValue(depth);
+  output.push(keys[0]);
+  return output;
+}
+function formatPlain(depth: number): string[] {
+  return formatValue(depth);
+}
+console.log(formatValue(6).join(" "));
+//// untyped-programs/d-events-once.ts
+// Untyped programs: d events once. It prints what plain Bun prints.
+import { once } from "node:events";
+console.log(typeof once);
+//// untyped-programs/e-eval-as-callback.ts
+// Untyped programs: e eval as callback. It prints what plain Bun prints.
+type Callback = (text: string) => unknown;
+function run(callback: Callback, text: string): unknown {
+  return callback(text);
+}
+const chosen: Callback = process.argv.length > 99 ? text => text.length : eval;
+console.log(run(chosen, process.argv.length > 99 ? "0" : "1 + 2"));
+//// untyped-programs/e-eval-as-listener.ts
+// Untyped programs: e eval as listener. It prints what plain Bun prints.
+import { EventEmitter } from "node:events";
+const emitter = new EventEmitter();
+emitter.on("text", eval);
+emitter.emit("text", process.argv.length > 99 ? "0" : "globalThis.ranTheString = true");
+console.log((globalThis as any).ranTheString);
+//// untyped-programs/e-eval-next-tick.ts
+// Untyped programs: e eval next tick. It prints what plain Bun prints.
+process.nextTick(eval, process.argv.length > 99 ? "0" : "globalThis.ranTheString = true");
+setTimeout(() => console.log((globalThis as any).ranTheString), 1);
+//// untyped-programs/e-eval-through-any.ts
+// Untyped programs: e eval through any. It prints what plain Bun prints.
+type Callback = (text: string) => unknown;
+function run(callback: Callback, text: string): unknown {
+  return callback(text);
+}
+const loose: any = process.argv.length > 99 ? (text: string) => text.length : eval;
+console.log(run(loose, process.argv.length > 99 ? "0" : "1 + 2"));
+//// untyped-programs/e-math-max-as-callback.ts
+// Untyped programs: e math max as callback. It prints what plain Bun prints.
+type Pick = (a: number, b: number) => number;
+function apply(pick: Pick): number {
+  return pick(1, 2);
+}
+const chosen: Pick = process.argv.length > 99 ? (a, b) => a - b : Math.max;
+console.log(apply(chosen));
+//// untyped-programs/e-pipe.ts
+// Untyped programs: e pipe. It prints what plain Bun prints.
+import { Readable, Writable } from "node:stream";
+let bytes = 0;
+const sink = new Writable({
+  write(chunk, _encoding, done) {
+    bytes += chunk.length;
+    done();
+  },
+});
+sink.on("finish", () => console.log(bytes));
+Readable.from([Buffer.from("ab"), Buffer.from("cde")]).pipe(sink);
+//// untyped-programs/g-inspect-handed-back.ts
+// Untyped programs: g inspect handed back. It prints what plain Bun prints.
+const custom = Symbol.for("nodejs.util.inspect.custom");
+type Inspect = (value: unknown, ...rest: any[]) => string;
+class Wrapper {
+  [custom](depth: number, options: object, inspect: Inspect): string {
+    const tries: [string, () => string][] = [
+      ["map", () => inspect(new Map<unknown, unknown>([[1, { a: 1 }]]))],
+      ["set", () => inspect(new Set([1]))],
+      ["object", () => inspect({ a: 1 })],
+      ["array", () => inspect([1, "two", 3n])],
+      ["symbol", () => inspect(Symbol("s"))],
+      ["nothing", () => (inspect as any)()],
+    ];
+    return tries.map(([name, run]) => { try { return name + "=" + run(); } catch (e) { return name + " THREW " + (e as Error).message; } }).join("; ");
+  }
+}
+console.log(new Wrapper());
+//// untyped-programs/g-inspect-map.ts
+// Untyped programs: g inspect map. It prints what plain Bun prints.
+import { inspect } from "node:util";
+console.log(inspect(new Map([[1, 2]])), inspect(new Set([1])));
+//// untyped-programs/g-lookup-by-parameter.ts
+// Untyped programs: g lookup by parameter. It prints what plain Bun prints.
+function getGetter(cls: any, name: string | symbol) { return Function.prototype.call.bind(cls.prototype.__lookupGetter__(name)); }
+const size = getGetter(Map, "size"), length = getGetter(Uint8Array, "length");
+console.log(size(new Map([[1, 2]])), length(new Uint8Array(3)));
+//// untyped-programs/g-lookup-getter.ts
+// Untyped programs: g lookup getter. It prints what plain Bun prints.
+const getter = (Map.prototype as any).__lookupGetter__("size");
+console.log(typeof getter, typeof Object.getOwnPropertyDescriptor(Set.prototype, "size")?.get);
+//// untyped-programs/g-lookup-getter-used.ts
+// Untyped programs: g lookup getter used. It prints what plain Bun prints.
+const getter = (Map.prototype as any).__lookupGetter__("size");
+console.log(typeof getter, new Map([[1, 2]]).size);
+//// untyped-programs/g-species-claim.ts
+// Untyped programs: g species claim. It prints what plain Bun prints.
+let changes = 0;
+function change() { changes++; }
+class Other extends Array { static get [Symbol.species]() { change(); return Array; } }
+const other: any = new Other(); other.push(1); other.map((x: any) => x);
+console.log(changes);
+//// untyped-programs/g-species-getter.ts
+// Untyped programs: g species getter. It prints what plain Bun prints.
+let changes = 0;
+function change() { changes++; }
+class Other extends Array { static get [Symbol.species]() { change(); return Array; } }
+const other: any = new Other(); other.push(1);
+console.log(other.map((x: any) => x).length, changes);
+//// untyped-programs/g-species-getter-from.ts
+// Untyped programs: g species getter from. It prints what plain Bun prints.
+const log: string[] = [];
+class Mine extends Array { static get [Symbol.species](): any { log.push("species getter"); throw 5; } }
+try {
+  const made = Mine.from([1]);
+  log.push("made " + (made instanceof Mine));
+  made.map(one => one);
+} catch (caught) {
+  log.push("caught " + typeof caught + " " + String(caught));
+}
+console.log(log.join("; "));
+//// untyped-programs/h-process-on-exit.ts
+// Untyped programs: h process on exit. It prints what plain Bun prints.
+process.on("exit", code => console.log(code + 1));
+//// untyped-programs/s-diag2.ts
+// Untyped programs: s diag2. It prints what plain Bun prints.
+import dc from "node:diagnostics_channel";
+const channel = dc.channel("x");
+channel.subscribe((message: unknown) => { console.log("got"); });
+channel.publish(1);
+//// untyped-programs/s-map-callback.ts
+// Untyped programs: s map callback. It prints what plain Bun prints.
+console.log([1, 2, 3].map(x => x + 1).length);
+//// untyped-programs/s-next-tick.ts
+// Untyped programs: s next tick. It prints what plain Bun prints.
+process.nextTick(() => console.log(1));
+//// untyped-programs/s-path.ts
+// Untyped programs: s path. It prints what plain Bun prints.
+import path from "node:path";
+console.log(path.join("a", "b"));
+//// untyped-programs/s-stringify.ts
+// Untyped programs: s stringify. It prints what plain Bun prints.
+console.log(JSON.stringify({ a: 1 }));

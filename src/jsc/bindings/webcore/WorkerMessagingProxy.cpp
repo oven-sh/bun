@@ -40,6 +40,7 @@
 #include "Worker.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/OwedOutOfMemoryError.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -71,7 +72,7 @@ void* WebWorker__create(
     size_t execArgvLen,
     BunString* preloadModulesPtr,
     size_t preloadModulesLen);
-// Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Any thread.
+// Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Parent thread.
 void WebWorker__requestTermination(void*);
 // Toggle the keep-alive this worker holds on the parent event loop. Parent thread.
 void WebWorker__setRef(void*, bool);
@@ -516,6 +517,45 @@ void WorkerMessagingProxy::postErrorToWorkerObject(Zig::GlobalObject& workerGlob
             postMessageErrorToWorkerObject(String { message });
         return;
     }
+}
+
+void WorkerMessagingProxy::postOutOfMemoryErrorToWorkerObject()
+{
+    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+        RefPtr workerObject = protectedThis->m_workerObject;
+        if (!workerObject)
+            return;
+        String limit = JSC::describeLimitOfMarkedBlockCage();
+        ErrorEvent::Init init;
+        switch (protectedThis->m_options.kind) {
+        case WorkerOptions::Kind::Web:
+            init.message = makeString("RangeError: Out of memory: "_s, limit);
+            break;
+        case WorkerOptions::Kind::Node:
+            init.error = JSC::createOutOfMemoryError(context.globalObject(), limit);
+            break;
+        }
+        workerObject->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    });
+}
+
+void WorkerMessagingProxy::postFailedToStartErrorToWorkerObject()
+{
+    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+        RefPtr workerObject = protectedThis->m_workerObject;
+        if (!workerObject)
+            return;
+        ErrorEvent::Init init;
+        switch (protectedThis->m_options.kind) {
+        case WorkerOptions::Kind::Web:
+            init.message = "TypeError: Failed to spawn worker thread"_s;
+            break;
+        case WorkerOptions::Kind::Node:
+            init.error = JSC::createTypeError(context.globalObject(), "Failed to spawn worker thread"_s);
+            break;
+        }
+        workerObject->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    });
 }
 
 void WorkerMessagingProxy::workerGlobalScopeDestroyed(int32_t exitCode, bool stoppedByParent)

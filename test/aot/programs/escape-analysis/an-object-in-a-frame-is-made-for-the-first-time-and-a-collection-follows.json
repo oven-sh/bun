@@ -1,0 +1,1 @@
+{ "env": { "BUN_JSC_validateAOTRuntime": "1", "BUN_JSC_scribbleFreeCells": "1" }, "skipInVariant": { "validate-collecting": "it allocates so much that it runs for minutes where every allocation collects, and a run is killed after 90 seconds" } }

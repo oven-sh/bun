@@ -1,0 +1,21 @@
+# JSON.stringify(Bun.sha("a"))
+# The table does not describe what the call answers: it may be a Buffer that no statement has made. JSON.stringify calls `toJSON` on it, and Buffer.prototype.toJSON is written in JavaScript:
+# the image holds its code only where something uses it. Date.prototype.toJSON is native code and is there anyway: it counts as used by nobody.
+# LIBRARY: own
+# RUN: valueflow-why used-builtin=BufferPrototypeToJSON used-builtin=DatePrototypeToJSON
+# CHECK: used-builtin=BufferPrototypeToJSON
+# CHECK-NOT: not held
+# CHECK: used-builtin=DatePrototypeToJSON
+# CHECK-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=BunSha
+    v1 = String string="a"
+    v2 = Call v0, -, v1
+    v3 = Builtin builtin=JSONStringify
+    v4 = Call v3, -, v2
+    Return
+}

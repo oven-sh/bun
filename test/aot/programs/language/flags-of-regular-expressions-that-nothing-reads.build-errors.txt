@@ -1,0 +1,3 @@
+error: TS1500: Duplicate regular expression flag.
+error: TS1499: Unknown regular expression flag.
+error: TS1502: The Unicode (u) flag and the Unicode Sets (v) flag cannot be set simultaneously.

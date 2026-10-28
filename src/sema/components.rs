@@ -92,7 +92,7 @@ impl<'s> Components<'s> {
 
 /// Tarjan's algorithm, without recursion. Returns each node's component number, and each component's nodes in ascending
 /// order. A component has a higher number than every component it has an edge to.
-fn strongly_connected_components(edges: &[Vec<u32>]) -> (Vec<u32>, Vec<Vec<usize>>) {
+pub fn strongly_connected_components(edges: &[Vec<u32>]) -> (Vec<u32>, Vec<Vec<usize>>) {
     const NOT_VISITED: u32 = u32::MAX;
     #[derive(Clone)]
     struct Node {

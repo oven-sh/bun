@@ -1,0 +1,1 @@
+{ "build": ["--define", "FEATURE=true", "--define", "LEVEL=3", "--define", "NAME=\"x\""], "reference": "compiled" }

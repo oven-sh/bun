@@ -1,0 +1,168 @@
+////: Point
+class Point {
+  constructor(
+    public x: number,
+    public y: number,
+  ) {}
+  sum(): number {
+    return this.x + this.y;
+  }
+}
+////: Row
+interface Row {
+  name: string;
+  n: number;
+}
+////: attempt
+function attempt(name: string, run: () => number) {
+  entered = 0
+  let outcome: string
+  try { outcome = "returned " + run() } catch (error) { outcome = error instanceof RangeError ? "RangeError" : "another error: " + error }
+  console.log(name + ": " + outcome + ", went deep: " + (entered > 1000))
+}
+////: attempt-3
+function attempt(name, f) {
+  try {
+    console.log(name, JSON.stringify(f()));
+  } catch (error) {
+    console.log(name, error.constructor.name, "|", framesOf(error));
+  }
+}
+////: attempt-4
+function attempt(what: string, run: () => unknown): void {
+  try {
+    console.log(what, run());
+  } catch (error) {
+    console.log(what, "threw", error instanceof TypeError);
+  }
+}
+////: errorName
+function errorName(run) {
+  try {
+    return "returned " + String(run());
+  } catch (error) {
+    return error.constructor.name;
+  }
+}
+////: lines
+try {
+  down(0);
+} catch (error) {
+  console.log(error instanceof RangeError);
+}
+////: lines-16
+interface «1» {
+  «2»: number;
+  «3»: «4»;
+}
+////: lines-17
+function «1»(«2») {
+  return «3».apply(«4», «5»);
+}
+////: lines-22
+function «1»(item: Item | undefined, test: (item: Item) => «2»): number {
+    if (item === undefined) return 0;
+    return (test(item) ? 1 : 0) + «1»(item.next, test);
+}
+////: lines-23
+function «1»(«2»: «3»): «4» {
+  return «5»(«6»);
+}
+////: lines-24
+function «1»() {
+  return «2»;
+}
+////: lines-25
+function «1»() {
+  return «2».apply(«3», arguments);
+}
+////: lines-27
+function «1»(«2»: «3»): string {
+  return «2».name + ":" + «4»;
+}
+////: lines-28
+function «1»(level) {
+  try {
+    return «1»(level + 1) + 1;
+  } catch (error) {
+    if (probes++ < 2000)
+      try {
+        «2»;
+      } catch {}
+    throw error;
+  }
+}
+////: lines-31
+try {
+  «1»);
+} catch (error) {
+  console.log(error.message);
+}
+////: row
+function row(label, f) {
+  let said;
+  try {
+    said = f();
+  } catch (e) {
+    said = "threw " + e.name;
+  }
+  console.log(label + ": " + String(said));
+}
+////: rows
+const rows: [string, () => unknown][] = [
+  ["by value, to whoever takes anything", () => num(bad, 5)],
+  ["by value, into a typed variable", () => { const r: number = num(bad, 5); return r; }],
+  ["by value, used as a number", () => num(bad, 5) + 1],
+  ["by value, what the type says", () => num(good, 5) + 1],
+  ["one of two", () => either(good, bad, -1)],
+  ["one of two, used", () => either(good, bad, -1) + 1],
+  ["one of two, the other", () => either(good, bad, 1) + 1],
+  ["its own result or a call's", () => orElse(bad, 5)],
+  ["its own result or a call's, used", () => orElse(bad, 5) + 1],
+  ["its own result", () => orElse(bad, 500) + 1],
+  ["through two functions", () => twice(bad, 5)],
+  ["through two functions, used", () => twice(bad, 5) + 1],
+  ["as, to whoever takes anything", () => viaAs(list)],
+  ["as, into a typed variable", () => { const r: number = viaAs(list); return r; }],
+  ["as, a text", () => viaAs(text)],
+  ["as, a text, used", () => viaAs(text) + 1],
+  ["as on a known function", () => viaDirect(1)],
+  ["as on a known function, used", () => viaDirect(1) + 1],
+  ["as on a known function, what the type says", () => viaDirect(-1) + 1],
+  ["a method", () => new Box(bad).run(5)],
+  ["a method, used", () => new Box(bad).run(5) + 1],
+  ["a static method", () => Box.of(bad, 5)],
+  ["a static method, used", () => Box.of(bad, 5) + 1],
+  ["an object type", () => row(text)],
+  ["an object type, read", () => row(text).id],
+  ["a comparator", () => [1, 2].sort(() => list() as number).join()],
+  ["a mapper", () => [1, 2].map(() => text() as number).map(x => typeof x).join()],
+  ["a mapper by value", () => [1, 2].map(x => num(bad, x)).map(x => typeof x).join()],
+  ["taken as a value", () => (g.keep[0] as any)(bad, 5)],
+  ["taken as a value, as", () => (g.keep[3] as any)(list)],
+];
+////: rows-2
+const rows: Row[] = [
+  { name: "Ada", n: 1 },
+  { name: "Bo", n: 2 },
+];
+////: say
+function say(...parts: unknown[]) {
+  lines.push(parts.map(part => (typeof part === "object" && part !== null ? JSON.stringify(part) : String(part))).join(" "));
+}
+////: show
+function show(value: any): string {
+  if (typeof value === "string") {
+    if (value.length <= 80) return JSON.stringify(value);
+    return value.length + ":" + JSON.stringify(value.slice(0, 20)) + ".." + JSON.stringify(value.slice(-20));
+  }
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "function") return "function " + value.name;
+  if (typeof value !== "object" || value === null) return Object.is(value, -0) ? "-0" : String(value);
+  if (Array.isArray(value) || ArrayBuffer.isView(value)) return "[" + Array.from(value as any, show).join(",") + "]";
+  if (value instanceof Set) return "Set[" + Array.from(value, show).join(",") + "]";
+  if (value instanceof Map) {
+    return "Map[" + Array.from(value, ([key, item]) => show(key) + "=>" + show(item)).join(",") + "]";
+  }
+  return "{" + Object.keys(value).map(key => key + ":" + show(value[key])).join(",") + "}";
+}

@@ -1,0 +1,71 @@
+//// damage-behind-a-call-more-about-ir/a-callee-that-never-returns.ts
+// `fail` never returns, so the call of it has the type never and nothing may stand behind it in its block: neither the test of the form of a landing nor its branch.
+// Where PlaceLandings gives such a call the flag and the test, or the type of a flagged call becomes never later, the pass runner cuts what stands behind a never value, and the flag is left on a call in front of Unreachable
+// (InvalidLanding rule 1 in the verifier, "a landing nobody branched on" in code generation) unless whoever cuts takes the flag away.
+////= Point
+
+let failures = 0;
+function fail(message: string, culprit: unknown): never {
+  failures++;
+  throw new Error(message + ": " + String(culprit));
+}
+
+function pick(list: (Point | undefined)[], index: number): Point {
+  const found = list[index];
+  if (found === undefined) fail("nothing at", index);
+  return found;
+}
+
+function holder(list: (Point | undefined)[], index: number, p: Point): string {
+  const before = p.x + p.y;
+  let picked: string;
+  try {
+    picked = String(pick(list, index).x);
+  } catch (error) {
+    picked = (error as Error).message;
+  }
+  return before + " " + picked + " " + (p.x + p.y);
+}
+
+const list = [new Point(1, 2), undefined, new Point(3, 4)];
+for (let round = 0; round < 300; round++) {
+  const line = holder(list, round % 3, new Point(round, 1));
+  if (round < 3 || round === 299) console.log(round + ": " + line);
+}
+console.log(failures);
+//// damage-behind-a-call-more-about-ir/the-result-of-a-call-reaches-a-handler-in-another-representation.ts
+// `best` is the unboxed result of a call with a landing on one way into the catch block and a boxed value on another, so the parameter of the handler block is boxed.
+// ChooseRepresentations converts an argument of a handler right behind its definition (ConversionInserter::convertHandlerArgument, UseLists::pointAfter):
+// between the call and the test of its form. The verifier then stops the build (InvalidLanding rule 1); without it code generation would (a landing nobody branched on).
+////= Point
+
+function measure(p: Point, depth: number): number {
+  return depth > 0 ? measure(p, depth - 1) + p.x : p.y;
+}
+
+function risky(flag: number): void {
+  if (flag === 1) throw new Error("first");
+  if (flag === 2) delete (victim as any).x;
+}
+
+let victim = new Point(0, 0);
+
+function holder(p: Point, first: number, second: number, other: { weight: unknown }): string {
+  let best: unknown = measure(p, 3);
+  try {
+    risky(first);
+    best = other.weight;
+    risky(second);
+    best = "done";
+  } catch (error) {
+    return "caught " + best + " " + p.x + " " + p.y;
+  }
+  return best + " " + p.x + " " + p.y;
+}
+
+for (let round = 0; round < 300; round++) {
+  victim = new Point(round, 1);
+  const kind = round % 100;
+  const line = holder(victim, kind === 97 ? 1 : kind === 99 ? 2 : 0, kind === 98 ? 1 : 0, { weight: kind === 98 ? "heavy" : round + 0.5 });
+  if (kind >= 97 || round === 0) console.log(round + ": " + line);
+}

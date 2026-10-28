@@ -1,0 +1,1 @@
+{ "skipInShell": "needs the makers of strings that Bun has", "runWithASAN": "strings that the engine did not make itself" }

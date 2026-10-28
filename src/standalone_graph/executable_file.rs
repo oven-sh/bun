@@ -345,9 +345,8 @@ pub(crate) fn write_elf(
 ) -> Result<ElfWritten, ElfWriteError> {
     use ElfWriteError::{Elf, Template};
     let file = bun_sys::File::borrow(&file);
-    if image.is_some() {
-        let _ = reserve_payload_segments(&mut template);
-    }
+    // A segment of its own for the payload, so that the writable segment and its `.bss` stay as they are.
+    let _ = reserve_payload_segments(&mut template);
     let mut elf = ElfFile::over(template).map_err(Template)?;
     elf.normalize_interpreter();
     // An image that is written for its address shares its pages with the file: nothing is written to them at start.

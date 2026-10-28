@@ -341,11 +341,11 @@ pub mod dir_entry {
 
 /// Per-entry hook invoked by `readdir`, which lends it the filesystem it is running on.
 pub trait DirEntryIterator {
-    fn next<R: EntryKindResolver>(&self, fs: &R, entry: &mut Entry, fd: Fd);
+    fn next<R: EntryKindResolver>(&self, fs: &R, entry: &Entry, fd: Fd);
 }
 
 impl DirEntryIterator for () {
-    fn next<R: EntryKindResolver>(&self, _fs: &R, _entry: &mut Entry, _fd: Fd) {}
+    fn next<R: EntryKindResolver>(&self, _fs: &R, _entry: &Entry, _fd: Fd) {}
 }
 
 pub struct DirEntry {
@@ -378,7 +378,7 @@ impl DirEntry {
         prev_map: Option<&mut dir_entry::EntryMap>,
         entry: &bun_sys::dir_iterator::IteratorResult,
         filename_store: &mut FilenameStoreAppender,
-    ) -> crate::CrateResult<Option<&mut Entry>> {
+    ) -> crate::CrateResult<Option<&Entry>> {
         use bun_sys::FileKind as DK;
         // `entry.name.slice()` is OS-native (`&[u16]` on Windows); the
         // entry-store / hashmap key in `data` is UTF-8, so use the eagerly-
@@ -536,8 +536,9 @@ impl DirEntry {
         // `name_hash` is its hash too — insert without re-hashing.
         self.data.put_static_key_hashed(name_hash, key, stored)?;
 
-        // SAFETY: just produced from EntryStore append or prev_map lookup
-        Ok(Some(unsafe { &mut *stored }))
+        // SAFETY: just produced from EntryStore append or prev_map lookup. Shared, because
+        // `key` can point into the entry.
+        Ok(Some(unsafe { &*stored }))
     }
 
     /// Debug-only contract check: every `.data` probe must run under

@@ -8,8 +8,8 @@
  * https://github.com/nodejs/node/blob/v26.12.1/lib/zlib.js#L277-L284
  */
 import assert from "node:assert";
-import { once } from "node:events";
 import type { Transform, TransformOptions } from "node:stream";
+import { finished } from "node:stream/promises";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -34,9 +34,9 @@ const codecs: [name: string, create: Create, createInverse: Create, compress: Ca
 async function output(stream: Transform, write: (stream: Transform) => void) {
   const chunks: Buffer[] = [];
   stream.on("data", chunk => chunks.push(chunk));
-  const ended = once(stream, "end");
   write(stream);
-  await ended;
+  // Rejects for an error, and for a stream that closes before it ends.
+  await finished(stream);
   return Buffer.concat(chunks);
 }
 
@@ -80,14 +80,16 @@ if (typeof Bun !== "undefined") {
     (node ? test : test.skip)("all tests pass in Node.js", async () => {
       // A direct run, not `node --test`: the runner mode forks a second node
       // process per file. node:test still exits non-zero on any failure.
+      // --no-warnings: Node.js warns on stderr that the package of this file has no "type".
       await using proc = Bun.spawn({
-        cmd: [node!, "--v8-pool-size=1", fileURLToPath(import.meta.url)],
+        cmd: [node!, "--no-warnings", "--v8-pool-size=1", fileURLToPath(import.meta.url)],
         env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      assert.deepStrictEqual({ exitCode, output: exitCode === 0 ? "" : stdout + stderr }, { exitCode: 0, output: "" });
+      // stdout is the report of node:test. It has the duration of each test, so a failure shows it as its message.
+      assert.deepStrictEqual({ stderr, exitCode }, { stderr: "", exitCode: 0 }, stdout);
     });
   });
 }

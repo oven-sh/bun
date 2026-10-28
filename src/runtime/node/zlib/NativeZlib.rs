@@ -348,18 +348,7 @@ impl Context {
         Error {
             msg: message,
             err: self.err as c_int,
-            code: match self.err {
-                c::ReturnCode::Ok => c"Z_OK",
-                c::ReturnCode::StreamEnd => c"Z_STREAM_END",
-                c::ReturnCode::NeedDict => c"Z_NEED_DICT",
-                c::ReturnCode::ErrNo => c"Z_ERRNO",
-                c::ReturnCode::StreamError => c"Z_STREAM_ERROR",
-                c::ReturnCode::DataError => c"Z_DATA_ERROR",
-                c::ReturnCode::MemError => c"Z_MEM_ERROR",
-                c::ReturnCode::BufError => c"Z_BUF_ERROR",
-                c::ReturnCode::VersionError => c"Z_VERSION_ERROR",
-            }
-            .as_ptr(),
+            code: self.err.name().as_ptr(),
         }
     }
 

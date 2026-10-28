@@ -16,11 +16,11 @@
 //! again once the consumer has room; in between, the coder keeps the chunk's
 //! unconsumed input ([`Pending`]).
 
-use core::ffi::c_int;
+use core::ffi::{c_int, c_uint};
 use core::ptr::{self, NonNull};
 
 use bun_core::EncodedSlice;
-use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::{EncodedSliceJsc as _, StringJsc as _};
 use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, PinnedArrayBuffer, Strong};
 
 use bun_brotli::c as brotli;
@@ -75,12 +75,43 @@ fn spare(out: &mut Vec<u8>, cap: usize) -> Result<&mut [core::mem::MaybeUninit<u
 }
 
 /// `CodecError` for a `ZSTD_isError` return value.
-fn zstd_error(rc: usize, message: &'static str) -> CodecError {
-    if zstd::ZSTD_getErrorCode(rc) == zstd::ZSTD_error_memory_allocation {
+#[cold]
+#[inline(never)]
+fn zstd_error(rc: usize) -> CodecError {
+    let code = zstd::ZSTD_getErrorCode(rc);
+    if code == zstd::ZSTD_error_memory_allocation {
         CodecError::OutOfMemory
     } else {
-        CodecError::Message(message)
+        CodecError::Codec(Failure::Zstd(code))
     }
+}
+
+/// `CodecError` for a zlib call on `s` that returned the failure `rc`.
+#[cold]
+#[inline(never)]
+fn zlib_error(rc: zlib::ReturnCode, s: &zlib::ZStream) -> CodecError {
+    if rc == zlib::ReturnCode::MemError {
+        CodecError::OutOfMemory
+    } else {
+        CodecError::Codec(Failure::Zlib {
+            rc,
+            msg: s.error_message(),
+        })
+    }
+}
+
+/// The inflate stream `s` ended and more input follows it. Only gzip goes on,
+/// with its next member (RFC 1952 §2.2).
+fn next_member(s: &mut zlib::ZStream, gzip: bool) -> Result<(), CodecError> {
+    if !gzip {
+        return Err(CodecError::TrailingJunk);
+    }
+    // SAFETY: `s` is an initialized inflate stream.
+    let rc = unsafe { zlib::inflateReset(s.as_ptr()) };
+    if rc != zlib::ReturnCode::Ok {
+        return Err(zlib_error(rc, s));
+    }
+    Ok(())
 }
 
 /// The rest of a chunk (or flush) whose last step stopped at the output cap.
@@ -177,24 +208,49 @@ impl Drop for CompressionStreamCoder {
     }
 }
 
+/// What a codec said when it gave up on its input. [`Failure::to_js`] reports it
+/// the way `node:zlib` reports the same failure.
+#[derive(Clone, Copy)]
+enum Failure {
+    /// The input ended before the compressed stream did.
+    Truncated,
+    Zlib {
+        rc: zlib::ReturnCode,
+        /// `z_stream.msg`.
+        msg: Option<&'static [u8]>,
+    },
+    Brotli(brotli::BrotliDecoderErrorCode2),
+    BrotliEncode,
+    /// A `ZSTD_ErrorCode`.
+    Zstd(c_uint),
+}
+
 #[derive(Clone, Copy)]
 enum CodecError {
     TrailingJunk,
     /// The output buffer or the codec's own state could not be allocated.
     OutOfMemory,
-    Message(&'static str),
-    /// Brotli decoder error; `BrotliDecoderErrorString` (static C string).
-    /// Surfaced as TypeError with `.code = "ERR_" + <this>` for node:zlib compat.
-    Brotli(&'static str),
+    Codec(Failure),
 }
 
+// Every step returns one of these by value, and a thread-pool step carries it to the JS thread.
+const _: () = {
+    assert!(size_of::<CodecError>() == 24);
+    assert!(size_of::<Option<CodecError>>() == 24);
+    assert!(size_of::<Result<bool, CodecError>>() == 24);
+    assert!(size_of::<Result<Progress, CodecError>>() == 24);
+    const fn assert_send<T: Send>() {}
+    assert_send::<CodecError>();
+};
+
 impl CompressionStreamCoder {
+    /// `None` if the codec's state cannot be set up: the constructor throws the same `TypeError` for every reason.
     fn new(
         format: Format,
         decompress: bool,
         high_water_mark: usize,
         level: Option<i32>,
-    ) -> Result<Box<Self>, CodecError> {
+    ) -> Option<Box<Self>> {
         let backend = match (format, decompress) {
             (Format::Deflate | Format::DeflateRaw | Format::Gzip, false) => {
                 let mut s = zlib::ZStream::new();
@@ -207,7 +263,7 @@ impl CompressionStreamCoder {
                     0, // Z_DEFAULT_STRATEGY
                 );
                 if rc != zlib::ReturnCode::Ok {
-                    return Err(CodecError::Message("failed to initialize deflate"));
+                    return None;
                 }
                 Backend::Deflate(s)
             }
@@ -215,7 +271,7 @@ impl CompressionStreamCoder {
                 let mut s = zlib::ZStream::new();
                 let rc = s.inflate_init(format.window_bits());
                 if rc != zlib::ReturnCode::Ok {
-                    return Err(CodecError::Message("failed to initialize inflate"));
+                    return None;
                 }
                 Backend::Inflate {
                     state: s,
@@ -226,15 +282,12 @@ impl CompressionStreamCoder {
                 if bun_removable_features::is_removed(
                     bun_removable_features::Feature::BrotliEncoder,
                 ) {
-                    return Err(CodecError::Message(
-                        "Brotli compression isn't in this executable",
-                    ));
+                    return None;
                 }
                 // SAFETY: FFI — the default-allocator instance (all nulls).
                 let p = NonNull::new(unsafe {
                     brotli::BrotliEncoderCreateInstance(None, None, ptr::null_mut())
-                })
-                .ok_or(CodecError::Message("failed to initialize brotli encoder"))?;
+                })?;
                 if let Some(quality) = level {
                     // SAFETY: `p` was just created and is exclusively owned here.
                     let ok = brotli::BrotliEncoderSetParameter(
@@ -245,7 +298,7 @@ impl CompressionStreamCoder {
                     if !ok {
                         // SAFETY: `p` was created above and not stored anywhere.
                         unsafe { brotli::BrotliEncoderDestroyInstance(p.as_ptr()) };
-                        return Err(CodecError::Message("failed to set brotli quality"));
+                        return None;
                     }
                 }
                 Backend::BrotliEncode(p)
@@ -254,20 +307,16 @@ impl CompressionStreamCoder {
                 if bun_removable_features::is_removed(
                     bun_removable_features::Feature::BrotliDecoder,
                 ) {
-                    return Err(CodecError::Message(
-                        "Brotli decompression isn't in this executable",
-                    ));
+                    return None;
                 }
                 // SAFETY: FFI — the default-allocator instance (all nulls).
                 let p = NonNull::new(unsafe {
                     brotli::BrotliDecoderCreateInstance(None, None, ptr::null_mut())
-                })
-                .ok_or(CodecError::Message("failed to initialize brotli decoder"))?;
+                })?;
                 Backend::BrotliDecode(p)
             }
             (Format::Zstd, false) => {
-                let p = NonNull::new(zstd::ZSTD_createCCtx())
-                    .ok_or(CodecError::Message("failed to initialize zstd encoder"))?;
+                let p = NonNull::new(zstd::ZSTD_createCCtx())?;
                 if let Some(lvl) = level {
                     // SAFETY: `p` was just created and is exclusively owned here.
                     let rc = unsafe {
@@ -276,18 +325,17 @@ impl CompressionStreamCoder {
                     if zstd::ZSTD_isError(rc) != 0 {
                         // SAFETY: `p` was created above and not stored anywhere.
                         unsafe { zstd::ZSTD_freeCCtx(p.as_ptr()) };
-                        return Err(CodecError::Message("failed to set zstd level"));
+                        return None;
                     }
                 }
                 Backend::ZstdEncode(p)
             }
             (Format::Zstd, true) => {
-                let p = NonNull::new(zstd::ZSTD_createDCtx())
-                    .ok_or(CodecError::Message("failed to initialize zstd decoder"))?;
+                let p = NonNull::new(zstd::ZSTD_createDCtx())?;
                 Backend::ZstdDecode(p)
             }
         };
-        Ok(Box::new(Self {
+        Some(Box::new(Self {
             backend,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             ended: false,
@@ -407,8 +455,7 @@ impl CompressionStreamCoder {
                     match rc {
                         zlib::ReturnCode::Ok | zlib::ReturnCode::BufError => {}
                         zlib::ReturnCode::StreamEnd => return Ok(Progress::Done),
-                        zlib::ReturnCode::MemError => return Err(CodecError::OutOfMemory),
-                        _ => return Err(CodecError::Message("deflate failed")),
+                        _ => return Err(zlib_error(rc, s)),
                     }
                     if s.avail_out() != 0 && remaining.is_empty() {
                         return Ok(Progress::Done);
@@ -422,13 +469,7 @@ impl CompressionStreamCoder {
                     // a member boundary". For gzip, a following chunk starts the
                     // next member; for deflate/deflate-raw it is trailing junk.
                     if self.ended && !input.is_empty() {
-                        if !gzip {
-                            return Err(CodecError::TrailingJunk);
-                        }
-                        // SAFETY: `s` is an initialized inflate stream.
-                        if unsafe { zlib::inflateReset(s.as_ptr()) } != zlib::ReturnCode::Ok {
-                            return Err(CodecError::Message("inflate failed"));
-                        }
+                        next_member(s, gzip)?;
                         self.ended = false;
                     }
                     if input.is_empty() && (self.ended || !finish) {
@@ -465,7 +506,7 @@ impl CompressionStreamCoder {
                         zlib::ReturnCode::Ok => {}
                         zlib::ReturnCode::BufError => {
                             if finish && !tail {
-                                return Err(CodecError::Message("unexpected end of file"));
+                                return Err(CodecError::Codec(Failure::Truncated));
                             }
                         }
                         zlib::ReturnCode::StreamEnd => {
@@ -473,25 +514,15 @@ impl CompressionStreamCoder {
                             if remaining.is_empty() {
                                 return Ok(Progress::Done);
                             }
-                            if !gzip {
-                                return Err(CodecError::TrailingJunk);
-                            }
-                            // SAFETY: `s` is an initialized inflate stream.
-                            if unsafe { zlib::inflateReset(s.as_ptr()) } != zlib::ReturnCode::Ok {
-                                return Err(CodecError::Message("inflate failed"));
-                            }
+                            next_member(s, gzip)?;
                             self.ended = false;
                             continue;
                         }
-                        zlib::ReturnCode::NeedDict => {
-                            return Err(CodecError::Message("Missing dictionary"));
-                        }
-                        zlib::ReturnCode::MemError => return Err(CodecError::OutOfMemory),
-                        _ => return Err(CodecError::Message("inflate failed")),
+                        _ => return Err(zlib_error(rc, s)),
                     }
                     if s.avail_out() != 0 && remaining.is_empty() {
                         if finish && !self.ended {
-                            return Err(CodecError::Message("unexpected end of file"));
+                            return Err(CodecError::Codec(Failure::Truncated));
                         }
                         return Ok(Progress::Done);
                     }
@@ -532,7 +563,7 @@ impl CompressionStreamCoder {
                     // SAFETY: the encoder wrote exactly `written` bytes.
                     unsafe { out.set_len(out.len() + written) };
                     if ok == 0 {
-                        return Err(CodecError::Message("brotli encode failed"));
+                        return Err(CodecError::Codec(Failure::BrotliEncode));
                     }
                     if avail_in == 0 && avail_out != 0 {
                         return Ok(Progress::Done);
@@ -588,7 +619,7 @@ impl CompressionStreamCoder {
                                 continue;
                             }
                             if finish {
-                                return Err(CodecError::Message("unexpected end of file"));
+                                return Err(CodecError::Codec(Failure::Truncated));
                             }
                             return Ok(Progress::Done);
                         }
@@ -599,13 +630,7 @@ impl CompressionStreamCoder {
                             if ec.is_alloc_failure() {
                                 return Err(CodecError::OutOfMemory);
                             }
-                            // SAFETY: the error string is a static C string owned by the brotli library.
-                            let code = unsafe {
-                                core::ffi::CStr::from_ptr(brotli::BrotliDecoderErrorString(ec))
-                            };
-                            return Err(CodecError::Brotli(
-                                code.to_str().unwrap_or("brotli decode failed"),
-                            ));
+                            return Err(CodecError::Codec(Failure::Brotli(ec)));
                         }
                     }
                 }
@@ -644,7 +669,7 @@ impl CompressionStreamCoder {
                     // bytes.
                     unsafe { out.set_len(out.len() + output_buf.pos) };
                     if zstd::ZSTD_isError(remaining) != 0 {
-                        return Err(zstd_error(remaining, "zstd encode failed"));
+                        return Err(zstd_error(remaining));
                     }
                     if input_buf.pos == input_buf.size && (!finish || remaining == 0) {
                         return Ok(Progress::Done);
@@ -710,7 +735,7 @@ impl CompressionStreamCoder {
                     // bytes.
                     unsafe { out.set_len(out.len() + output_buf.pos) };
                     if zstd::ZSTD_isError(remaining) != 0 {
-                        return Err(zstd_error(remaining, "zstd decode failed"));
+                        return Err(zstd_error(remaining));
                     }
                     if remaining == 0 {
                         self.ended = true;
@@ -718,7 +743,7 @@ impl CompressionStreamCoder {
                     }
                     if input_buf.pos == input_buf.size && output_buf.pos < output_buf.size {
                         if finish {
-                            return Err(CodecError::Message("unexpected end of file"));
+                            return Err(CodecError::Codec(Failure::Truncated));
                         }
                         return Ok(Progress::Done);
                     }
@@ -796,8 +821,8 @@ pub(crate) extern "C" fn CompressionStreamCoder__create(
     };
     let level = (has_level && !decompress).then_some(level);
     match CompressionStreamCoder::new(format, decompress, high_water_mark.max(1), level) {
-        Ok(b) => Box::into_raw(b),
-        Err(_) => ptr::null_mut(),
+        Some(b) => Box::into_raw(b),
+        None => ptr::null_mut(),
     }
 }
 
@@ -874,17 +899,52 @@ fn codec_error_to_js(global: &JSGlobalObject, e: &CodecError) -> JSValue {
             )
             .to_js(),
         CodecError::OutOfMemory => global.create_out_of_memory_error(),
-        CodecError::Message(msg) => global.create_type_error_instance(format_args!("{msg}")),
-        CodecError::Brotli(detail) => {
-            let code = format!("ERR_{detail}");
-            let err = global.create_type_error_instance(format_args!("brotli decode failed"));
-            let code_js = EncodedSlice::latin1(code.as_bytes()).to_js(global);
-            err.put(global, b"code", code_js);
-            let cause = global.create_error_instance(format_args!("{detail}"));
-            cause.put(global, b"code", code_js);
-            err.put(global, b"cause", cause);
-            err
-        }
+        CodecError::Codec(failure) => failure.to_js(global),
+    }
+}
+
+impl Failure {
+    /// The spec's `TypeError`, as Node.js builds it for these streams: no
+    /// message, the `code` of the `node:zlib` error for the same failure, and
+    /// that error (`message`, `errno`, `code`) as `cause`.
+    /// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/webstreams/adapters.js#L128-L150
+    fn to_js(self, global: &JSGlobalObject) -> JSValue {
+        let brotli_code;
+        let (message, errno, code): (&'static [u8], c_int, &[u8]) = match self {
+            Self::Truncated => (
+                b"unexpected end of file",
+                zlib::ReturnCode::BufError as c_int,
+                zlib::ReturnCode::BufError.name().to_bytes(),
+            ),
+            Self::Zlib { rc, msg } => (
+                msg.unwrap_or(match rc {
+                    zlib::ReturnCode::NeedDict => b"Missing dictionary",
+                    _ => b"Zlib error",
+                }),
+                rc as c_int,
+                rc.name().to_bytes(),
+            ),
+            Self::Brotli(ec) => {
+                // SAFETY: the error string is a static C string owned by the brotli library.
+                let name = unsafe { bun_core::ffi::cstr(brotli::BrotliDecoderErrorString(ec)) };
+                brotli_code = [b"ERR_", name.to_bytes()].concat();
+                (b"Decompression failed", ec as c_int, &brotli_code)
+            }
+            Self::BrotliEncode => (b"Compression failed", -1, b"ERR_BROTLI_COMPRESSION_FAILED"),
+            Self::Zstd(error_code) => (
+                bun_zstd::error_code_message(error_code).to_bytes(),
+                error_code as c_int,
+                bun_zstd::error_code_name(error_code).to_bytes(),
+            ),
+        };
+        let code = EncodedSlice::latin1(code).to_js(global);
+        let cause = bun_core::String::static_(message).to_error_instance(global);
+        cause.put(global, b"errno", JSValue::js_number_from_int32(errno));
+        cause.put(global, b"code", code);
+        let err = bun_core::String::EMPTY.to_type_error_instance(global);
+        err.put_non_enumerable(global, b"cause", cause);
+        err.put(global, b"code", code);
+        err
     }
 }
 

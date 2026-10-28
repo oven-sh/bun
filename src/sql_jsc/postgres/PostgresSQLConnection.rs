@@ -2787,10 +2787,8 @@ impl PostgresSQLConnection {
             }
             MessageType::CopyBothResponse => {
                 reader.skip_message()?;
-                self.fail(
-                    b"Streaming replication is not supported",
-                    AnyPostgresError::CopyNotSupported,
-                );
+                let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
+                self.on_copy_both_response(&request)?;
             }
         }
         Ok(())

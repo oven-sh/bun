@@ -266,9 +266,8 @@ class PostgresAdapter extends BaseSQLAdapter<$Bindgen.PostgresSQLConnection, $Bi
   }
 
   copyStream(query: Query<any, any>, writable: boolean) {
-    return writable
-      ? new WritableStream(new CopySink(query))
-      : new ReadableStream(new CopySource(query), new ByteLengthQueuingStrategy({ highWaterMark: 64 * 1024 }));
+    const streams: CopyStreams = query[_copy] ?? new CopyStreams(query);
+    return writable ? streams.writable() : streams.readable();
   }
 
   #listener: ListenConnection | null = null;
@@ -681,7 +680,9 @@ class ListenConnection {
 }
 
 // COPY. The native query calls `copy(chunk)` when the server enters copy mode, then with each chunk (TO STDOUT) or
-// each time the socket has drained (FROM STDIN). The stream ends as the query does.
+// each time the socket has drained (FROM STDIN). The stream ends as the query does. START_REPLICATION on a
+// replication connection opens both directions at once: the readable carries the server's CopyData, the writable
+// the client's, and `copy(null)` says that the server has sent its CopyDone.
 
 type CopyHandle = $Bindgen.PostgresSQLQuery;
 
@@ -693,11 +694,14 @@ function notACopyError(method: string, direction: string) {
   });
 }
 
-class CopySource {
+/** What `query[_copy]` holds: the streams of the query and the native callback that feeds them. */
+class CopyStreams {
   query: Query<any, any>;
   handle: CopyHandle | null = null;
-  started = false;
-  controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+  source: CopySource | null = null;
+  sink: CopySink | null = null;
+  /** The server has entered copy mode. */
+  opened = false;
 
   constructor(query: Query<any, any>) {
     this.query = query;
@@ -706,43 +710,105 @@ class CopySource {
 
   attach(handle: CopyHandle) {
     this.handle = handle;
-    handle.setCopy(onCopyOut.bind(this), false);
+    this.#setCopy();
+  }
+
+  #setCopy() {
+    const { source, sink } = this;
+    this.handle?.setCopy(onCopy.bind(this), source === null ? 1 : sink === null ? 0 : 2);
+  }
+
+  readable() {
+    if (this.source !== null) {
+      throw $ERR_INVALID_STATE("readable() was already called on this query");
+    }
+    const source = (this.source = new CopySource(this));
+    this.#setCopy();
+    return new ReadableStream(source, new ByteLengthQueuingStrategy({ highWaterMark: 64 * 1024 }));
+  }
+
+  writable() {
+    if (this.sink !== null) {
+      throw $ERR_INVALID_STATE("writable() was already called on this query");
+    }
+    const sink = (this.sink = new CopySink(this));
+    this.#setCopy();
+    return new WritableStream(sink);
+  }
+
+  /** The query is cancelled, or what it was made on ends. */
+  abandon(why: string) {
+    this.source?.abandon(why);
+    this.sink?.abandon(why);
+  }
+}
+
+/** @returns false when the socket is to be paused until pull() */
+function onCopy(this: CopyStreams, chunk: Uint8Array | null | undefined) {
+  if (chunk === undefined) {
+    this.opened = true;
+    this.sink?.drained();
+    return true;
+  }
+  const source = this.source;
+  if (source === null) {
+    return true;
+  }
+  if (chunk === null) {
+    source.end();
+    return true;
+  }
+  return source.push(chunk);
+}
+
+class CopySource {
+  streams: CopyStreams;
+  controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+
+  constructor(streams: CopyStreams) {
+    this.streams = streams;
   }
 
   start(controller: ReadableStreamDefaultController<Uint8Array>) {
     this.controller = controller;
-    const query = this.query;
+    const query = this.streams.query;
     query.$then(onCopyOutEnd.bind(this), onCopyOutError.bind(this));
     query.execute();
   }
 
   pull() {
-    this.handle?.copyResume();
+    this.streams.handle?.copyResume();
   }
 
   cancel() {
     this.controller = null;
-    this.query.cancel();
+    this.streams.query.cancel();
   }
 
-  /** The query is cancelled, or what it was made on ends. */
   abandon(why: string) {
-    this.query.reject(new PostgresError("COPY to stdout failed: " + why, { code: "ERR_POSTGRES_QUERY_CANCELLED" }));
-    this.query.cancel();
+    const query = this.streams.query;
+    query.reject(new PostgresError("COPY to stdout failed: " + why, { code: "ERR_POSTGRES_QUERY_CANCELLED" }));
+    query.cancel();
   }
-}
 
-/** @returns false when the socket is to be paused until pull() */
-function onCopyOut(this: CopySource, chunk: Uint8Array | undefined) {
-  if (chunk === undefined) {
-    return (this.started = true);
+  /** @returns false when the stream has enough for now */
+  push(chunk: Uint8Array) {
+    const controller = this.controller;
+    if (controller === null) {
+      return true;
+    }
+    controller.enqueue(chunk);
+    return controller.desiredSize! > 0;
   }
-  const controller = this.controller;
-  if (controller === null) {
-    return true;
+
+  /** The server has sent its CopyDone; the query ends with the writable. */
+  end() {
+    const controller = this.controller;
+    if (controller !== null) {
+      this.controller = null;
+      controller.close();
+    }
   }
-  controller.enqueue(chunk);
-  return controller.desiredSize! > 0;
 }
 
 function onCopyOutEnd(this: CopySource) {
@@ -750,7 +816,8 @@ function onCopyOutEnd(this: CopySource) {
   if (controller === null) {
     return;
   }
-  if (this.started) {
+  this.controller = null;
+  if (this.streams.opened) {
     controller.close();
   } else {
     controller.error(notACopyError("readable()", "TO STDOUT"));
@@ -766,34 +833,30 @@ function onCopyOutError(this: CopySource, err: unknown) {
 }
 
 class CopySink {
-  query: Query<any, any>;
-  handle: CopyHandle | null = null;
+  streams: CopyStreams;
   controller: WritableStreamDefaultController | null = null;
   /** of start() until the server asks for the data, then of a write() that the socket has no room for */
   waiting: Promise<void> | null = null;
   /** what CopyFail says, once the stream has failed */
   failure: string | null = null;
 
-  constructor(query: Query<any, any>) {
-    this.query = query;
-    query[_copy] = this;
+  constructor(streams: CopyStreams) {
+    this.streams = streams;
   }
 
-  attach(handle: CopyHandle) {
-    this.handle = handle;
-    handle.setCopy(onCopyIn.bind(this), true);
-  }
-
-  /** The query is cancelled, or what it was made on ends. CopyFail goes out now, or when the server asks for the data. */
+  /** CopyFail goes out now, or when the server asks for the data. */
   abandon(why: string) {
     this.failure ??= why;
-    this.handle?.copyFail(why);
+    this.streams.handle?.copyFail(why);
   }
 
   start(controller: WritableStreamDefaultController) {
     this.controller = controller;
-    const query = this.query;
+    const query = this.streams.query;
     query.$then(onCopyInEnd.bind(this), onCopyInError.bind(this));
+    if (this.streams.opened) {
+      return;
+    }
     const waiting = (this.waiting = $newPromise<void>());
     query.execute();
     return waiting;
@@ -801,7 +864,7 @@ class CopySink {
 
   write(chunk: string | ArrayBufferView | ArrayBufferLike) {
     try {
-      if (this.handle!.copyWrite(chunk)) {
+      if (this.streams.handle!.copyWrite(chunk)) {
         return;
       }
     } catch (err) {
@@ -814,8 +877,8 @@ class CopySink {
 
   /** Settles with the query: the rows are in when the server has said so. */
   close() {
-    this.handle!.copyDone();
-    return this.query;
+    this.streams.handle!.copyDone();
+    return this.streams.query;
   }
 
   abort(reason: unknown) {
@@ -824,19 +887,20 @@ class CopySink {
       if (reason !== undefined) message = String(reason);
     } catch {}
     this.abandon(message);
-    return this.query.$then(noop, noop);
+    return this.streams.query.$then(noop, noop);
   }
-}
 
-function onCopyIn(this: CopySink) {
-  const failure = this.failure;
-  if (failure !== null) {
-    return this.handle!.copyFail(failure);
-  }
-  const waiting = this.waiting;
-  if (waiting !== null) {
-    this.waiting = null;
-    $resolvePromise(waiting, undefined);
+  /** The server asks for the data, or the socket has room again. */
+  drained() {
+    const failure = this.failure;
+    if (failure !== null) {
+      return this.streams.handle!.copyFail(failure);
+    }
+    const waiting = this.waiting;
+    if (waiting !== null) {
+      this.waiting = null;
+      $resolvePromise(waiting, undefined);
+    }
   }
 }
 

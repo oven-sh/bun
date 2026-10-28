@@ -35,7 +35,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   public [_flags]: SQLQueryFlags;
   public [_waiter]: ((err: Error | null, connection: any) => void) | null;
   public [_settled]: Promise<void> | null;
-  /// What is behind the stream of a query with SQLQueryFlags.copy. No other query has the property.
+  /// What is behind the streams of a query with SQLQueryFlags.copy. No other query has the property.
   declare public [_copy]: { attach(handle: Handle): void; abandon(why: string): void };
 
   public readonly [_adapter]: DatabaseAdapter<any, any, Handle>;
@@ -269,7 +269,8 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     if (adapter.copyStream === undefined) {
       throw new Error("readable() and writable() are not supported by this adapter (PostgreSQL only)");
     }
-    if (this[_queryStatus] & SQLQueryStatus.executed) {
+    // The first stream starts the query. The other direction can still be added behind it.
+    if (this[_queryStatus] & SQLQueryStatus.executed && !(this[_flags] & SQLQueryFlags.copy)) {
       throw $ERR_INVALID_STATE("readable() and writable() must be called before the query starts");
     }
     this[_flags] |= SQLQueryFlags.simple | SQLQueryFlags.copy;

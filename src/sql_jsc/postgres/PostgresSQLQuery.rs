@@ -84,16 +84,48 @@ pub struct Flags {
     pub(crate) result_mode: PostgresSQLQueryResultMode,
 }
 
-/// The stream that `readable()` or `writable()` made for the request. See CopyStream.rs.
+/// The streams that `readable()` and `writable()` made for the request. See CopyStream.rs.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CopyStream {
     None,
     Readable,
-    /// Between CopyOutResponse and CopyDone.
+    /// Between CopyOutResponse and CopyDone. Also a CopyBoth session whose writable has ended.
     ReadableOpen,
     Writable,
     /// Between CopyInResponse and the CopyDone or CopyFail that the stream ends with.
     WritableOpen,
+    Both,
+    /// Between CopyBothResponse and the first CopyDone of either side.
+    BothOpen,
+    /// The server sent its CopyDone. What is left is the CopyDone that the writable ends with.
+    BothSending,
+}
+
+impl CopyStream {
+    /// The server sends CopyData.
+    pub(crate) fn reads(self) -> bool {
+        matches!(self, Self::ReadableOpen | Self::BothOpen)
+    }
+
+    /// The client sends CopyData.
+    pub(crate) fn writes(self) -> bool {
+        matches!(
+            self,
+            Self::WritableOpen | Self::BothOpen | Self::BothSending
+        )
+    }
+
+    /// What `setCopy` asks for. Once the server has answered, the streams it asks for are set.
+    pub(crate) fn waiting(self, mode: u8) -> Self {
+        if self.reads() || self.writes() {
+            return self;
+        }
+        match mode {
+            0 => Self::Readable,
+            1 => Self::Writable,
+            _ => Self::Both,
+        }
+    }
 }
 
 /// Of a request that is written.

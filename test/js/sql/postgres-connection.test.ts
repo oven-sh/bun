@@ -28,6 +28,7 @@ import {
   pgCloseComplete,
   pgCommandComplete,
   pgCopyBothResponse,
+  pgCopyDone,
   pgDataRow,
   pgDecodeBind,
   pgErrorResponse,
@@ -166,14 +167,22 @@ describe.skipIf(!isLinux).concurrent("TCP keepalive", () => {
   });
 });
 
-test("CopyBothResponse fails the connection", async () => {
-  const { port, server } = await pgMockServer(type => (type === "Q" ? pgCopyBothResponse([]) : undefined));
+// A CopyBothResponse to a query without readable() is answered with a CopyDone, which ends the command.
+test("CopyBothResponse without a stream rejects the query and keeps the connection", async () => {
+  const wire: string[] = [];
+  const { port, server } = await pgMockServer((type, body) => {
+    wire.push(type);
+    if (type === "Q" && body.toString().startsWith("START")) return pgCopyBothResponse([]);
+    if (type === "Q") return [pgCommandComplete("SELECT 0"), pgReadyForQuery()];
+    if (type === "c") return [pgCopyDone(), pgCommandComplete("COPY 0"), pgReadyForQuery()];
+  });
   try {
-    const closed = Promise.withResolvers<any>();
-    await using sql = new SQL(`postgres://u@127.0.0.1:${port}/db`, { max: 1, onclose: closed.resolve });
-    const expected = { code: "ERR_POSTGRES_COPY_NOT_SUPPORTED", message: "Streaming replication is not supported" };
+    let closed = false;
+    await using sql = new SQL(`postgres://u@127.0.0.1:${port}/db`, { max: 1, onclose: () => (closed = true) });
+    const expected = { code: "ERR_POSTGRES_COPY_NOT_SUPPORTED", message: "START_REPLICATION needs query.readable()" };
     expect(await settled(sql`START_REPLICATION 0/0`.simple())).toMatchObject(expected);
-    expect(settledError(await closed.promise)).toMatchObject(expected);
+    expect(await settled(sql`select 1`.simple())).toEqual([]);
+    expect([closed, wire]).toEqual([false, ["Q", "c", "Q"]]);
   } finally {
     server.close();
   }

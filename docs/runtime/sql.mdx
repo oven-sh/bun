@@ -1590,6 +1590,32 @@ const { count } = await query; // 2
 - `query.cancel()`, `reader.cancel()` and leaving a `for await` loop end the `COPY`.
 - For Node.js streams, wrap them with `Readable.fromWeb()` and `Writable.fromWeb()`.
 
+### Streaming replication
+
+On a replication connection, `START_REPLICATION` streams the write-ahead log through the same two streams. `readable()` carries the server's `CopyData` payloads, one per chunk: `w` XLogData and `k` keepalive messages, as PostgreSQL sends them. `writable()` takes the client's `CopyData` payloads, the `r` standby status updates that PostgreSQL needs within `wal_sender_timeout`. Bun decodes neither: the output plugin's format belongs to the application.
+
+```ts
+const sql = new SQL("postgres://repl:secret@localhost:5432/app", {
+  max: 1,
+  connection: { replication: "database" },
+});
+
+await sql.unsafe("CREATE_REPLICATION_SLOT my_slot TEMPORARY LOGICAL pgoutput").simple();
+const query = sql.unsafe("START_REPLICATION SLOT my_slot LOGICAL 0/0 (proto_version '4', publication_names 'my_pub')");
+const writer = query.writable().getWriter();
+for await (const message of query.readable()) {
+  if (message[0] === 0x77 /* 'w' */) {
+    handle(message.subarray(25)); // the output plugin's bytes
+  }
+  await writer.write(standbyStatusUpdate(confirmedLsn));
+}
+```
+
+- A replication connection takes simple queries only, so use `sql.unsafe(...).simple()` for `IDENTIFY_SYSTEM` and the slot commands.
+- `writer.close()` ends the replication: the server ends the stream, the query resolves, and the connection runs the next query. `reader.cancel()` and `query.cancel()` end it too.
+- The server can end its side first, at the end of a timeline for example. The readable then ends while the writable stays open. Close it to let the query resolve.
+- Without a `writable()`, the server ends the session after `wal_sender_timeout`.
+
 ---
 
 ## Prepared Statements
@@ -2043,7 +2069,6 @@ To handle both, `Array.from(row.ids)` makes a plain `Array` of either kind, and 
 We haven't implemented some of the more uncommon features like:
 
 - GSSAPI authentication
-- Streaming replication
 - Point & PostGIS types
 
 ---

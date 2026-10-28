@@ -92,10 +92,15 @@ test.concurrent("the .js handler assigned to TypeScript extensions still strips 
       module.exports = { value };
     `,
     "plain.foo": `module.exports = { foo: true };`,
+    "ts-handler.tsx": `${jsx}
+      const value: number = (<div>6</div>).children[0] as any;
+      module.exports = { value: Number(value) };
+    `,
     "run.cjs": `
       const Module = require("module");
       const path = require("path");
       const origJS = Module._extensions[".js"];
+      const origTS = Module._extensions[".ts"];
       // Compound keys win the longest-extension match; the loader is still the one for ".ts".
       for (const ext of [".ts", ".tsx", ".jsx", ".spec.ts", ".foo"]) {
         Module._extensions[ext] = origJS;
@@ -104,10 +109,15 @@ test.concurrent("the .js handler assigned to TypeScript extensions still strips 
       Module._extensions[".cts"] = (m, f) => origJS(m, f);
       const files = ["./spec.ts", "./spec.cts", "./comp.tsx", "./comp.jsx", "./a.spec.ts", "./plain.foo"];
       const required = files.map(f => require(f));
-      // Calling the handler directly.
+      // Calling the handlers directly. The TS handler takes JSX from the file name too.
       const direct = new Module("direct");
       origJS(direct, path.join(__dirname, "spec.ts"));
-      console.log(JSON.stringify({ required, direct: direct.exports }));
+      const directTS = new Module("directTS");
+      origTS(directTS, path.join(__dirname, "ts-handler.tsx"));
+      Module._extensions[".tsx"] = origTS;
+      delete require.cache[require.resolve("./comp.tsx")];
+      const tsxWithTS = require("./comp.tsx");
+      console.log(JSON.stringify({ required, direct: direct.exports, directTS: directTS.exports, tsxWithTS }));
     `,
   });
 
@@ -123,6 +133,8 @@ test.concurrent("the .js handler assigned to TypeScript extensions still strips 
   expect(JSON.parse(stdout)).toEqual({
     required: [{ value: 1 }, { value: 2 }, { value: 3 }, { value: 4 }, { value: 5 }, { foo: true }],
     direct: { value: 1 },
+    directTS: { value: 6 },
+    tsxWithTS: { value: 3 },
   });
   expect(exitCode).toBe(0);
 });
@@ -164,6 +176,31 @@ test.concurrent("the .js handler keeps the default loader for .js files", async 
     wrapped: ["hello", "threw AggregateError"],
     restored: ["hello", "threw AggregateError"],
   });
+  expect(exitCode).toBe(0);
+});
+// `require()` only consults the extension table for a file that has a default
+// loader once an entry can shadow that loader. A compound key can.
+test.concurrent("a compound key alone shadows the default loader of the files it matches", async () => {
+  using dir = tempDir("extensions-compound-key", {
+    "a.spec.ts": `module.exports = "default";`,
+    "b.ts": `module.exports = "default";`,
+    "run.cjs": `
+      const Module = require("module");
+      Module._extensions[".spec.ts"] = (m, f) => { m.exports = "custom:" + require("path").basename(f); };
+      console.log(JSON.stringify([require("./a.spec.ts"), require("./b.ts")]));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.cjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(["custom:a.spec.ts", "default"]);
   expect(exitCode).toBe(0);
 });
 test("test that assigning properties weirdly wont do anything bad", () => {

@@ -20,6 +20,8 @@ impl ApiLoader {
     const NONE: Self = Self(api::Loader::_none as u8);
     /// What C++ passes for the built-in `Module._extensions[".js"]` handler.
     const JS: Self = Self(api::Loader::js as u8);
+    /// What C++ passes for the built-in `Module._extensions[".ts"]` handler.
+    const TS: Self = Self(api::Loader::ts as u8);
 
     /// Reconstruct the closed schema enum. Only valid when `self != NONE` is
     /// already established and the C++ caller honoured the `BunLoaderType`
@@ -128,36 +130,46 @@ impl Default for CustomLoader {
     }
 }
 
-/// The loader the built-in `Module._extensions[".js"]` handler uses for a file
-/// with the extension `ext` (with its leading `.`).
+/// The file extension (with its leading `.`) of a file that the
+/// `require.extensions` key `key` matches. `key` starts with `.`, so the last
+/// `.` always exists. For a key such as `.spec.ts` that is `.ts`.
+fn file_ext_of_key(key: &[u8]) -> &[u8] {
+    let last_dot = strings::last_index_of_char(key, b'.').unwrap_or(0);
+    &key[last_dot..]
+}
+
+/// The loader a built-in `Module._extensions` handler uses for a file with the
+/// extension `ext` (with its leading `.`).
 ///
 /// Node's `.js` handler does not force a format. It picks a JavaScript flavor
 /// from the file name it is given (`.ts`, `.cts` and `.mts` strip types), and
 /// compiles any other file as JavaScript. Bun does the same with its loader
 /// map, so `.js` files get the JSX-enabled loader that a plain `require()`
-/// gives them.
-pub(crate) fn js_handler_loader(vm: &VirtualMachine, ext: &[u8]) -> Loader {
-    match vm.transpiler.options.loader(ext) {
-        loader if loader.is_javascript_like() => loader,
-        _ => Loader::Js,
+/// gives them. Bun's own `.ts` handler always strips types and takes JSX from
+/// the file name the same way. The `.json` and `.node` handlers mean one
+/// loader.
+pub(crate) fn builtin_handler_loader(
+    vm: &VirtualMachine,
+    ext: &[u8],
+    handler: ApiLoader,
+) -> Loader {
+    let by_name = vm.transpiler.options.loader(ext);
+    match handler {
+        ApiLoader::JS if by_name.is_javascript_like() => by_name,
+        ApiLoader::JS => Loader::Js,
+        ApiLoader::TS if matches!(by_name, Loader::Jsx | Loader::Tsx) => Loader::Tsx,
+        ApiLoader::TS => Loader::Ts,
+        _ => Loader::from_api(handler.to_schema()),
     }
 }
 
-/// The loader a built-in `Module._extensions` handler stands for once it is
-/// stored under the extension key `ext`.
-///
-/// Node's `.json` and `.node` handlers, and Bun's own `.ts` handler, each mean
-/// one fixed loader, so `.js = .ts` parses `.js` files as TypeScript. The
-/// `.js` handler picks the loader from the file name, so `.ts = .js` still
-/// strips types.
-fn builtin_handler_loader(vm: &VirtualMachine, ext: &[u8], handler: ApiLoader) -> Loader {
-    if handler == ApiLoader::JS {
-        // `ext` starts with `.`, so the last `.` always exists. For a key such
-        // as `.test.ts` the file's own extension is `.ts`.
-        let last_dot = strings::last_index_of_char(ext, b'.').unwrap_or(0);
-        return js_handler_loader(vm, &ext[last_dot..]);
-    }
-    Loader::from_api(handler.to_schema())
+/// Whether an entry under `key` can change how a file that already has a
+/// default loader is loaded. `require()` consults the extension table for such
+/// files only while `has_mutated_built_in_extensions` is non-zero. A compound
+/// key such as `.spec.ts` matches `a.spec.ts` ahead of the default `.ts`
+/// loader, so it counts too.
+fn shadows_default_loader(key: &[u8]) -> bool {
+    DEFAULT_LOADERS.get(file_ext_of_key(key)).is_some()
 }
 
 fn on_require_extension_modify(
@@ -168,8 +180,9 @@ fn on_require_extension_modify(
 ) -> Result<(), bun_alloc::AllocError> {
     // global; we are on the JS thread so a `&mut` view is sound for this scope.
     let vm = global.bun_vm().as_mut();
-    let is_built_in = DEFAULT_LOADERS.get(str).is_some();
-    let builtin = (loader != ApiLoader::NONE).then(|| builtin_handler_loader(vm, str, loader));
+    let is_built_in = shadows_default_loader(str);
+    let builtin = (loader != ApiLoader::NONE)
+        .then(|| builtin_handler_loader(vm, file_ext_of_key(str), loader));
 
     let gop = vm.commonjs_custom_extensions.get_or_put(str)?;
     if !gop.found_existing {
@@ -211,7 +224,7 @@ fn on_require_extension_modify_non_function(
 ) -> Result<(), bun_alloc::AllocError> {
     // SAFETY: see `on_require_extension_modify`.
     let vm = global.bun_vm().as_mut();
-    let is_built_in = DEFAULT_LOADERS.get(str).is_some();
+    let is_built_in = shadows_default_loader(str);
 
     if let Some(prev) = vm.commonjs_custom_extensions.fetch_swap_remove(str) {
         // `prev.key: Box<[u8]>` — freed on drop.
@@ -274,14 +287,15 @@ extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
     }
 }
 
-/// C++ entry point for a direct call of the built-in `.js` handler: the loader
-/// for `filename`, as a `BunLoaderType`.
+/// C++ entry point for a direct call of a built-in handler: the loader it
+/// uses for `filename`, as a `BunLoaderType`.
 #[unsafe(no_mangle)]
-extern "C" fn NodeModuleModule__jsHandlerLoader(
+extern "C" fn NodeModuleModule__builtinHandlerLoader(
     global: &JSGlobalObject,
+    handler: ApiLoader,
     filename: &BunString,
 ) -> ApiLoader {
     let filename = filename.to_utf8();
     let ext = bun_paths::fs::PathName::find_extname(filename.slice());
-    ApiLoader(js_handler_loader(global.bun_vm(), ext).to_api() as u8)
+    ApiLoader(builtin_handler_loader(global.bun_vm(), ext, handler).to_api() as u8)
 }

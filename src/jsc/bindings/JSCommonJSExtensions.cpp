@@ -11,13 +11,14 @@ using namespace JSC;
 const JSC::ClassInfo JSCommonJSExtensions::s_info = { "CommonJSExtensions"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSExtensions) };
 
 JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, BunLoaderType loaderType);
-extern "C" BunLoaderType NodeModuleModule__jsHandlerLoader(JSC::JSGlobalObject*, const BunString* filename);
+extern "C" BunLoaderType NodeModuleModule__builtinHandlerLoader(JSC::JSGlobalObject*, BunLoaderType handler, const BunString* filename);
 
 // These functions are separate so that assigning one to the other can be
-// detected and use the corresponding loader. The JS handler is the exception:
-// like Node's `Module._extensions['.js']`, it picks the loader from the file
-// name it is given, so it strips types from a `.ts` path. The JSON handler, and
-// Bun's own TS handler, each force one loader.
+// detected and use the corresponding loader. Like Node's
+// `Module._extensions['.js']`, the JS handler picks the loader from the file
+// name it is given, so it strips types from a `.ts` path. The TS handler always
+// strips types and takes JSX from the file name. See
+// `builtin_handler_loader` in NodeModuleModule.rs.
 JSC_DEFINE_HOST_FUNCTION(jsLoaderJS, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return builtinLoader(globalObject, callFrame, BunLoaderTypeJS);
@@ -243,8 +244,7 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     WTF::String specifierWtfString = specifier.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     BunString specifierBunString = Bun::toString(specifierWtfString);
-    if (loaderType == BunLoaderTypeJS)
-        loaderType = NodeModuleModule__jsHandlerLoader(globalObject, &specifierBunString);
+    loaderType = NodeModuleModule__builtinHandlerLoader(globalObject, loaderType, &specifierBunString);
     if (loaderType != BunLoaderTypeJSON) {
         bool isTypeScriptLoader = loaderType == BunLoaderTypeTS || loaderType == BunLoaderTypeTSX;
         bool hasRun = evaluateCompiledFileForDefaultLoader(global, mod, specifierWtfString, isTypeScriptLoader);

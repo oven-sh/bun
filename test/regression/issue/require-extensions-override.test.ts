@@ -278,9 +278,9 @@ test("Module._extensions override should handle cross-assignment correctly", asy
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(exitCode).toBe(0);
   expect(stdout).toContain("SUCCESS: .js with TS loader accepts TypeScript");
   expect(stdout).toContain("SUCCESS: .ts with JS handler still strips types: typescript");
+  expect(exitCode).toBe(0);
 });
 
 test("Module._extensions override chain should preserve correct loader", async () => {

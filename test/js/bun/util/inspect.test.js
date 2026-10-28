@@ -9,6 +9,7 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
+import * as pathNamespace from "path";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -1576,6 +1577,7 @@ it("does not call a $$typeof getter while checking for a React element", () => {
   expect(Bun.inspect(new Map([[1, throwing]]))).toBe("Map(1) {\n  1: {\n    $$typeof: [Getter],\n  },\n}");
   expect(Bun.inspect(new Set([throwing]))).toBe("Set(1) {\n  {\n    $$typeof: [Getter],\n  },\n}");
   expect(Bun.inspect({ nested: throwing })).toBe("{\n  nested: {\n    $$typeof: [Getter],\n  },\n}");
+  expect(Bun.inspect({ nested: throwing }, { depth: 0 })).toBe("{\n  nested: [Object ...],\n}");
 
   const hidden = {};
   Object.defineProperty(hidden, "$$typeof", {
@@ -1588,9 +1590,16 @@ it("does not call a $$typeof getter while checking for a React element", () => {
   expect(Bun.inspect(hidden)).toBe("{\n  $$typeof: [Getter],\n}");
   expect(called).toBe(0);
 
-  // A plain data property still marks a React element.
+  // A data property still marks a React element, and an element of React prints as before.
   const element = { $$typeof: Symbol.for("react.element"), type: "div", key: null, ref: null, props: { id: "x" } };
   expect(Bun.inspect(element)).toBe('<div id="x" />');
+  expect(
+    Bun.inspect(
+      <div id="x" key="k">
+        hi
+      </div>,
+    ),
+  ).toBe('<div key="k" id="x">hi</div>');
 });
 
 it("prints a React element without calling getters on its type, key, props or children", () => {
@@ -1605,42 +1614,84 @@ it("prints a React element without calling getters on its type, key, props or ch
   };
   const withGetter = (target, name) => Object.defineProperty(target, name, getter);
 
+  // An accessor field reads as absent. So does an inherited one.
   expect(Bun.inspect(withGetter({ $$typeof, props: {} }, "type"))).toBe("<unknown />");
   expect(Bun.inspect(withGetter({ $$typeof, type: "div", props: {} }, "key"))).toBe("<div />");
   expect(Bun.inspect(withGetter({ $$typeof, type: "div" }, "props"))).toBe("<div />");
-  expect(Bun.inspect({ $$typeof, type: "div", props: withGetter({}, "children") })).toBe("<div />");
-  // An accessor prop prints like every other accessor.
+  expect(Bun.inspect(Object.assign(Object.create({ type: "span", props: { id: "x" } }), { $$typeof }))).toBe(
+    "<unknown />",
+  );
+  // An accessor prop prints like every other accessor. An accessor `children` is such a prop.
   expect(Bun.inspect({ $$typeof, type: "div", props: withGetter({ id: "x" }, "hidden") })).toBe(
     '<div id="x" hidden=[Getter] />',
   );
-  // A Proxy props object, nested or not, is read through its innermost target.
+  expect(Bun.inspect({ $$typeof, type: "div", props: withGetter({ id: "x" }, "children") })).toBe(
+    '<div id="x" children=[Getter] />',
+  );
+  expect(Bun.inspect({ $$typeof, type: "div", props: { id: "x", children: undefined } }).replace(/ +/g, " ")).toBe(
+    '<div id="x" />',
+  );
+
+  // A Proxy, nested or not, is read through its innermost target. A revoked one has nothing to read.
   const trap = () => {
     called++;
     throw new Error("Test failed!");
   };
-  const proxyProps = new Proxy({ id: "x" }, { get: trap, ownKeys: trap, getOwnPropertyDescriptor: trap });
+  const traps = { get: trap, has: trap, ownKeys: trap, getOwnPropertyDescriptor: trap };
+  const proxyProps = new Proxy({ id: "x" }, traps);
   expect(Bun.inspect({ $$typeof, type: "div", props: proxyProps })).toBe('<div id="x" />');
   expect(Bun.inspect({ $$typeof, type: "div", props: new Proxy(proxyProps, {}) })).toBe('<div id="x" />');
+  const revokedProps = Proxy.revocable({ id: "x" }, {});
+  revokedProps.revoke();
+  expect(Bun.inspect({ $$typeof, type: "div", props: revokedProps.proxy })).toBe("<div />");
+  expect(Bun.inspect({ $$typeof, type: "div", props: new Proxy(revokedProps.proxy, {}) })).toBe("<div />");
+  function Component() {}
+  expect(Bun.inspect({ $$typeof, type: new Proxy(Component, traps), props: {} })).toBe("<Component />");
+  const revokedType = Proxy.revocable(Component, {});
+  revokedType.revoke();
+  expect(Bun.inspect({ $$typeof, type: revokedType.proxy, props: {} })).toBe("<NoName />");
   expect(called).toBe(0);
-  // A revoked Proxy has no props. Its old target is not read.
-  const { proxy: revokedProps, revoke } = Proxy.revocable({ id: "x" }, {});
-  revoke();
-  expect(Bun.inspect({ $$typeof, type: "div", props: revokedProps })).toBe("<div />");
-  expect(Bun.inspect({ $$typeof, type: "div", props: new Proxy(revokedProps, {}) })).toBe("<div />");
 
   // Data props, including a numeric key, still print.
   expect(Bun.inspect({ $$typeof, type: "div", key: "k", props: { 0: "a", b: 1, children: "hi" } })).toBe(
     '<div key="k" 0="a" b=1>hi</div>',
   );
+  // The export of a module namespace is no data property, so it does not print as a prop.
+  expect(Bun.inspect({ $$typeof, type: "div", props: pathNamespace })).toBe("<div />");
 });
 
-// The global of a node:vm context throws a stack overflow from every property lookup, a
-// non-observable one too. The read of `props.children` left that error pending, which aborts a
-// build with assertions.
-it.skipIf(!isASAN)("reports a stack overflow from the props of a React element", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
+describe.concurrent("a $$typeof getter at the other console entry points", () => {
+  async function run(...args) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("bun -p prints the object", async () => {
+    expect(await run("-p", `({ get $$typeof() { throw new Error("boom"); } })`)).toEqual({
+      stdout: "{\n  $$typeof: [Getter],\n}\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("the error printer finishes its report", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      "-e",
+      `const error = new Error("x");
+       error.element = { get $$typeof() { throw new Error("boom"); } };
+       error.after = 1;
+       throw error;`,
+    );
+    expect(stderr).toContain("element: {\n  $$typeof: [Getter],\n},\n");
+    expect(stderr).toContain("after: 1,\n");
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+  });
+
+  // The global of a node:vm context throws a stack overflow from every property lookup, a
+  // non-observable one too. The formatter must report that error.
+  it.skipIf(!isASAN)("reports a stack overflow from the props of a React element", async () => {
+    const result = await run(
       "-e",
       `const vm = require("node:vm");
        const props = vm.runInContext("globalThis", vm.createContext({}));
@@ -1661,15 +1712,7 @@ it.skipIf(!isASAN)("reports a stack overflow from the props of a React element",
          }
        })();
        console.log(out);`,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "threw: Maximum call stack size exceeded.\n",
-    stderr: "",
-    exitCode: 0,
+    );
+    expect(result).toEqual({ stdout: "threw: Maximum call stack size exceeded.\n", stderr: "", exitCode: 0 });
   });
 });

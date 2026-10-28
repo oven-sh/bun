@@ -1473,6 +1473,8 @@ pub use formatter::{Formatter, Tag, TagOptions, TagPayload, TagResult, visited};
 pub mod formatter {
     use super::*;
 
+    mod reader;
+
     /// RAII: write `prev` back through `place` on drop. Holds a raw `*mut` so the body of the
     /// scope can freely take `&mut self` without aliasing the borrow.
     ///
@@ -2184,11 +2186,9 @@ pub mod formatter {
                 });
             }
 
-            // Is this a react element? Own data property only: a user getter never runs here.
+            // Is this a react element?
             if js_type.is_object() && js_type != jsc::JSType::ProxyObject {
-                if let Some(typeof_symbol) =
-                    value.get_own_non_observable(global_this, "$$typeof")?
-                {
+                if let Some(typeof_symbol) = reader::react_typeof(global_this, value)? {
                     // React 18 and below
                     if typeof_symbol.is_same_value(
                         JSValue::symbol_for(global_this, b"react.element"),
@@ -5010,7 +5010,7 @@ pub mod formatter {
             let tag_name_slice: bun_core::Utf8Bytes;
             let mut is_tag_kind_primitive = false;
 
-            if let Some(type_value) = value.get_own_non_observable(self.global_this, "type")? {
+            if let Some(type_value) = reader::field(self.global_this, value, reader::Field::Type)? {
                 let _tag = Tag::get_advanced(type_value, self.global_this, tag_opts)?;
 
                 if _tag.cell == jsc::JSType::Symbol {
@@ -5020,7 +5020,13 @@ pub mod formatter {
                     tag_name_slice = tag_name_view.to_utf8();
                     is_tag_kind_primitive = true;
                 } else if _tag.cell.is_object() || type_value.is_callable() {
-                    let name = type_value.get_name_property(self.global_this)?;
+                    // A Proxy is named through its innermost target, so no trap runs. A revoked one has no name.
+                    let named = reader::through_proxies(type_value);
+                    let name = if named.is_cell() && named.js_type() == jsc::JSType::ProxyObject {
+                        bun_core::String::EMPTY
+                    } else {
+                        named.get_name_property(self.global_this)?
+                    };
                     tag_name_slice = if name.is_empty() {
                         bun_core::Utf8Bytes::Borrowed(b"NoName")
                     } else {
@@ -5047,7 +5053,7 @@ pub mod formatter {
                 writer.write_all(pf!("<r>").as_bytes());
             }
 
-            if let Some(key_value) = value.get_own_non_observable(self.global_this, "key")? {
+            if let Some(key_value) = reader::field(self.global_this, value, reader::Field::Key)? {
                 if !key_value.is_undefined_or_null() {
                     if needs_space {
                         writer.write_all(b" key=");
@@ -5078,13 +5084,13 @@ pub mod formatter {
                 }
             }
 
-            if let Some(props) = value.get_own_non_observable(self.global_this, "props")? {
+            if let Some(props) = reader::field(self.global_this, value, reader::Field::Props)? {
                 let prev_quote_strings = self.quote_strings;
                 let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
                 self.quote_strings = true;
 
                 // A Proxy is read through its innermost target, so no trap runs. A revoked one has no props.
-                let props = props.through_proxies();
+                let props = reader::through_proxies(props);
                 let revoked = props.is_cell() && props.js_type() == jsc::JSType::ProxyObject;
                 let Some(props_obj) = props.get_object().filter(|_| !revoked) else {
                     writer.write_all(b" />");
@@ -5093,20 +5099,11 @@ pub mod formatter {
                     }
                     return Ok(());
                 };
-                let props_iter = jsc::JSPropertyIterator::init(
-                    self.global_this,
-                    props_obj,
-                    jsc::JSPropertyIteratorOptions {
-                        skip_empty_name: true,
-                        include_value: true,
-                        own_properties_only: true,
-                        observable: false,
-                        only_non_index_properties: false,
-                        include_symbols: false,
-                    },
-                )?;
+                let props_iter =
+                    jsc::JSPropertyIterator::init(self.global_this, props_obj, reader::PROPS)?;
 
-                let children_prop = props.get_own_non_observable(self.global_this, "children")?;
+                let children_prop =
+                    reader::field(self.global_this, props, reader::Field::Children)?;
                 if props_iter.len > 0 {
                     {
                         self.indent += 1;
@@ -5115,7 +5112,8 @@ pub mod formatter {
                             props_iter.len - usize::from(children_prop.is_some());
 
                         while let Some((prop, property_value)) = props_iter.next()? {
-                            if prop.eq_ascii(b"children") {
+                            // An accessor `children` is no element body. It prints as a prop.
+                            if prop.eq_ascii(b"children") && !reader::is_accessor(property_value) {
                                 continue;
                             }
 

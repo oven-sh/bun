@@ -2306,22 +2306,6 @@ impl JSValue {
             _ => Ok(None),
         }
     }
-    /// Own data property lookup that runs no user code: an accessor, a Proxy, a module namespace or `undefined` is `None`.
-    pub fn get_own_non_observable(
-        self,
-        global: &JSGlobalObject,
-        property_name: impl AsRef<[u8]>,
-    ) -> JsResult<Option<JSValue>> {
-        let name = bun_core::StringView::borrow_utf8(property_name.as_ref());
-        crate::top_scope!(scope, global);
-        let v = JSC__JSValue__getOwnNonObservable(self, global, &name);
-        scope.return_if_exception()?;
-        if v.is_empty() || v.is_undefined() {
-            Ok(None)
-        } else {
-            Ok(Some(v))
-        }
-    }
     /// `JSValue.getOwnObject` — own-property lookup; throws "{prop} must be an
     /// object" when the own-truthy value is not an object.
     pub fn get_own_object(
@@ -2550,19 +2534,6 @@ impl JSValue {
         Bun__JSValue__getProxyTarget(self)
     }
 
-    /// The innermost target of a chain of Proxies, or the first revoked Proxy in it. No trap runs.
-    pub fn through_proxies(self) -> JSValue {
-        let mut value = self;
-        while value.is_cell() && value.js_type() == JSType::ProxyObject {
-            let handler = value.get_proxy_internal_field(ProxyField::Handler);
-            if handler.is_empty() || handler.is_undefined_or_null() {
-                break;
-            }
-            value = value.get_proxy_internal_field(ProxyField::Target);
-        }
-        value
-    }
-
     // ── ArrayBufferView accessors. ─────────────────────
     /// Backing `ArrayBuffer` wrapper for a typed array or `DataView`.
     /// Returns `ZERO` if `self` is not an `ArrayBufferView`.
@@ -2683,11 +2654,6 @@ unsafe extern "C" {
     ) -> bun_core::StringView<'a>;
     safe fn JSC__JSValue__symbolFor(global: &JSGlobalObject, key: &bun_core::String) -> JSValue;
     safe fn JSC__JSValue__getOwn(
-        this: JSValue,
-        global: &JSGlobalObject,
-        name: &bun_core::String,
-    ) -> JSValue;
-    safe fn JSC__JSValue__getOwnNonObservable(
         this: JSValue,
         global: &JSGlobalObject,
         name: &bun_core::String,

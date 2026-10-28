@@ -1319,15 +1319,16 @@ impl Cancel {
 impl Drop for Cancel {
     /// JS thread, after the job left the VM's list: `request` does not run again.
     fn drop(&mut self) {
+        // `Fd::close` skips 0, 1 and 2. A wake fd has such a number if stdio was closed and no higher number was free.
         let fd = *self.wake.get_mut();
         if fd >= 0 {
-            Fd::from_native(fd).close();
+            let _ = Fd::from_native(fd).close_allowing_standard_io(None);
         }
         #[cfg(target_os = "macos")]
         {
             let fd = *self.wake_writer.get_mut();
             if fd >= 0 {
-                Fd::from_native(fd).close();
+                let _ = Fd::from_native(fd).close_allowing_standard_io(None);
             }
         }
     }

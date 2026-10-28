@@ -484,7 +484,6 @@ describe.skipIf(isWindows)("terminate() cancels a Bun.write(file, file) that wai
       const { parentPort, workerData: d } = require("node:worker_threads");
       const fds = () => require("node:fs").readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
       (async () => {
-        await Bun.sleep(1);
         const before = fds();
         let settled = false;
         const settle = how => () => ((settled = true), parentPort.postMessage(how));

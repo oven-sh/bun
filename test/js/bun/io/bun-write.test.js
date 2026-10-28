@@ -1800,7 +1800,6 @@ describe.concurrent("Bun.write(file, file) between ends that are not regular fil
       // The child of a test that timed out must not stay behind: nothing else ends it.
       setTimeout(() => process.exit(1), 30_000).unref();
       const fds = () => require("node:fs").readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
-      await Bun.sleep(1);
       const before = fds();
       let settled = false;
       const copy = (${copy}).then(n => "resolved " + n, e => "rejected " + e.code).finally(() => (settled = true));
@@ -1879,6 +1878,38 @@ describe.concurrent("Bun.write(file, file) between ends that are not regular fil
         same: true,
       });
       expect(exitCode).toBe(0);
+    });
+
+    // The child's end of this FIFO has no O_NONBLOCK. The copy still has to see the end of it.
+    it("a FIFO source given as an fd: the copy ends when the writer closes", async () => {
+      using dir = tempDir("bun-write-fifo-fd-source", {});
+      const fifo = join(String(dir), "fifo");
+      mkfifo(fifo);
+      using stdout = heldFifo(dir, "stdout");
+      // The only writer. With it open, the open(2) for the child's end returns at once.
+      let writer = fs.openSync(fifo, "r+");
+      const stdin = fs.openSync(fifo, "r");
+      try {
+        // The copy opens no file. It has the fd that wakes its wait.
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", untilWaiting(`Bun.write(Bun.stdout, Bun.stdin)`, 1)],
+          env: bunEnv,
+          stdin,
+          stdout: stdout.fd,
+          stderr: "pipe",
+        });
+        const rest = await waiting(proc);
+        const sent = Buffer.alloc(100_000, "a");
+        const [copied] = await Promise.all([stdout.take(sent.length), fs.promises.writeFile(writer, sent)]);
+        fs.closeSync(writer);
+        writer = -1;
+        const [stderr, exitCode] = await Promise.all([rest(), proc.exited]);
+        expect({ stderr, same: copied.equals(sent) }).toEqual({ stderr: "waiting\nresolved 100000\n", same: true });
+        expect(exitCode).toBe(0);
+      } finally {
+        if (writer !== -1) fs.closeSync(writer);
+        fs.closeSync(stdin);
+      }
     });
 
     // Linux copies these two with splice(), which sleeps in a socket that has nothing to read.

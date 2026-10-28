@@ -338,6 +338,11 @@ unsafe extern "C" {
 // before the watcher thread starts.
 static CLEAR_SCREEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// The most watched files that the event of one deleted folder reloads on kqueue.
+/// `Watcher::remove_at_index` writes to a list of a fixed length.
+#[cfg(not(windows))]
+const MAX_GONE_FILES_PER_EVENT: usize = 128;
+
 pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
     /// BACKREF to the owning context (Bundler / VM transpiler store) that
     /// created this reloader. Set once at init and never reassigned; the
@@ -416,6 +421,9 @@ impl MainFile {
     /// Whether the watched folder at `folder_index` holds the entry point, under any of its spellings.
     #[cfg(not(windows))]
     fn is_in_folder(&self, watchlist: &bun_watcher::WatchList, folder_index: usize) -> bool {
+        if watchlist.items_hash()[folder_index] == self.dir_hash {
+            return true;
+        }
         let (folder, other_folders) = bun_watcher::folder_hashes(watchlist, folder_index);
         folder == self.dir_hash || other_folders.contains(&self.dir_hash)
     }
@@ -758,71 +766,106 @@ where
         current_task: &mut Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>,
         ctx: *mut Watcher,
     ) -> usize {
-        // inotify names the entries that changed. kqueue names none: a watched file that is gone changed.
-        let can_name_a_file = if IS_KQUEUE {
-            event.op.contains(WatchOp::DELETE)
-        } else {
-            !changed_names.is_empty()
-        };
-        if !can_name_a_file {
-            return 0;
-        }
-
         let slice = watchlist.slice();
         let file_paths = slice.items_file_path();
-        let kinds = slice.items_kind();
         let hashes = slice.items_hash();
-        let parents = slice.items_parent_hash();
         let file_descriptors = slice.items_fd();
-
-        let (folder, other_folders) = bun_watcher::folder_hashes(watchlist, event.index as usize);
         let mut reloaded: usize = 0;
-        for (entry_id, parent) in parents.iter().enumerate() {
-            if *parent != folder && (other_folders.is_empty() || !other_folders.contains(parent)) {
+
+        if IS_KQUEUE {
+            // kqueue names no entry. When the folder is deleted, its watched files that are gone changed.
+            if !event.op.contains(WatchOp::DELETE) {
+                return 0;
+            }
+            let kinds = slice.items_kind();
+            let parents = slice.items_parent_hash();
+            let (folder, other_folders) =
+                bun_watcher::folder_hashes(watchlist, event.index as usize);
+            for (file, parent) in parents.iter().enumerate() {
+                if *parent != folder && !other_folders.contains(parent) {
+                    continue;
+                }
+                if kinds[file] != bun_watcher::Kind::File
+                    || !file_descriptors[file].is_valid()
+                    || bun_sys::exists(&file_paths[file])
+                {
+                    continue;
+                }
+                self.stop_watching(&file_paths[file], file, ctx);
+                self.reload_watched_file(&file_paths[file], hashes[file], current_task);
+                reloaded += 1;
+                if reloaded == MAX_GONE_FILES_PER_EVENT {
+                    break;
+                }
+            }
+            return reloaded;
+        }
+
+        let mut previous_name: &[u8] = b"";
+        for changed_name in changed_names.iter().flatten() {
+            let changed_name = changed_name.as_bytes();
+            // One save names the file more than once.
+            if changed_name == previous_name {
                 continue;
             }
-            if kinds[entry_id] != bun_watcher::Kind::File
-                || (bun_watcher::REQUIRES_FILE_DESCRIPTORS
-                    && !file_descriptors[entry_id].is_valid())
-            {
-                continue;
+            previous_name = changed_name;
+            for file in watchlist.files_named(event.index, changed_name) {
+                let file = file as usize;
+                // A file with no stored descriptor reports a replaced inode through its own watch.
+                if !file_descriptors[file].is_valid() {
+                    continue;
+                }
+                let is_present = bun_sys::exists(&file_paths[file]);
+                // `--watch` must not start the program again while its entry point is gone.
+                if !is_present && self.main.hash != 0 && self.main.hash == hashes[file] {
+                    continue;
+                }
+                // The reload watches the file again when it imports it. A file that is gone
+                // keeps its watch, so the event that brings it back finds it.
+                if is_present {
+                    self.stop_watching(&file_paths[file], file, ctx);
+                }
+                self.reload_watched_file(&file_paths[file], hashes[file], current_task);
+                reloaded += 1;
             }
-            let watched_path: &[u8] = &file_paths[entry_id];
-            let changed = if IS_KQUEUE {
-                !bun_sys::exists(watched_path)
-            } else {
-                bun_watcher::names_file(changed_names, watched_path)
-            };
-            if !changed {
-                continue;
-            }
-            reloaded += 1;
-            record_changed_path(watched_path);
-            current_task.append(hashes[entry_id]);
-            if self.verbose {
-                Self::debug(format_args!(
-                    "Removing file: {}",
-                    bstr::BStr::new(watched_path)
-                ));
-                Self::debug(format_args!(
-                    "File change: {}",
-                    bstr::BStr::new(bun_paths::resolve_path::relative(
-                        FileSystem::get().top_level_dir(),
-                        watched_path,
-                    ))
-                ));
-            }
-            // SAFETY: see the File-arm call in `on_file_update`.
-            unsafe {
-                (*ctx).remove_at_index::<false>(
-                    bun_watcher::Kind::File,
-                    entry_id as bun_watcher::WatchItemIndex,
-                    0,
-                    &[],
-                )
-            };
         }
         reloaded
+    }
+
+    #[cfg(not(windows))]
+    fn reload_watched_file(
+        &self,
+        path: &[u8],
+        hash: bun_watcher::HashType,
+        current_task: &mut Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>,
+    ) {
+        record_changed_path(path);
+        current_task.append(hash);
+        if self.verbose {
+            Self::debug(format_args!(
+                "File change: {}",
+                bstr::BStr::new(bun_paths::resolve_path::relative(
+                    FileSystem::get().top_level_dir(),
+                    path,
+                ))
+            ));
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn stop_watching(&self, path: &[u8], file: usize, ctx: *mut Watcher) {
+        if self.verbose {
+            Self::debug(format_args!("Removing file: {}", bstr::BStr::new(path)));
+        }
+        // SAFETY: see the File-arm call in `on_file_update`.
+        unsafe {
+            (*ctx).remove_at_index::<false>(
+                bun_watcher::Kind::File,
+                file as bun_watcher::WatchItemIndex,
+                0,
+                &[],
+            )
+        };
     }
 
     pub(crate) fn on_error(_: &mut Self, err: &bun_sys::Error) {

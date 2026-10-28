@@ -807,35 +807,27 @@ impl<'a> Near<'a> {
     /// `ZSTD_count`, up to the end. `match_pos` is less than `pos`.
     #[inline(always)]
     pub(crate) fn count(self, pos: u32, match_pos: u32) -> u32 {
-        let mut len = 0;
-        // Where 16 bytes differ takes no branch, and few matches are longer.
-        while let (Some(bytes), Some(match_bytes)) =
-            (self.chunk16(pos + len), self.chunk16(match_pos + len))
-        {
-            let diff = u128::from_le_bytes(*bytes) ^ u128::from_le_bytes(*match_bytes);
-            if diff != 0 {
-                return len + (diff.trailing_zeros() >> 3);
-            }
-            len += 16;
-        }
-        while let Some(byte) = self.read8(pos + len)
-            && self.read8(match_pos + len) == Some(byte)
-        {
-            len += 1;
-        }
-        len
+        self.count_in(pos, self, match_pos)
     }
 
     /// How long what is at `pos` is the same as what is at `other_pos` in `other`, up to the end of either.
     #[inline(always)]
     pub(crate) fn count_in(self, pos: u32, other: Near<'_>, other_pos: u32) -> u32 {
         let mut len = 0;
+        // Where 16 bytes differ takes no branch, and few matches are longer: what a loop has to prepare is left for those.
+        if let (Some(bytes), Some(other_bytes)) = (self.chunk16(pos), other.chunk16(other_pos)) {
+            let differ = differences(bytes, other_bytes);
+            if differ != 0 {
+                return differ.trailing_zeros();
+            }
+            len = 16;
+        }
         while let (Some(bytes), Some(other_bytes)) =
             (self.chunk16(pos + len), other.chunk16(other_pos + len))
         {
-            let diff = u128::from_le_bytes(*bytes) ^ u128::from_le_bytes(*other_bytes);
-            if diff != 0 {
-                return len + (diff.trailing_zeros() >> 3);
+            let differ = differences(bytes, other_bytes);
+            if differ != 0 {
+                return len + differ.trailing_zeros();
             }
             len += 16;
         }

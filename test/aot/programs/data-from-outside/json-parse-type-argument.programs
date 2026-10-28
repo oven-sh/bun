@@ -1,0 +1,2680 @@
+////: Message-2
+interface Message {
+  id: number; at: number; size: number; weight: number; body: string
+  origin?: Origin; retries?: number; delay?: number; sentAt?: number; score?: number; tags?: string[]
+}
+////: attempt-3
+function attempt(label: string, run: () => string): void {
+  try { console.log(label + " " + run()); } catch (error) { console.log(label + " threw " + (error as Error).constructor.name); }
+}
+////: handle-2
+function handle(m: Message) {
+  return m.id + m.at + m.size + m.weight + m.body + (m.retries ?? 0) + (m.delay ?? "-") + (m.score ?? "") + (m.origin ? m.origin.source + m.origin.hops : "") + (m.tags ? m.tags.length : "")
+}
+////: lines-6
+interface «1» {
+  name: string;
+  inner?: «1»;
+}
+////: say-2
+function say(label: string, parse: (text: string) => unknown, text: string): void {
+  let said = "";
+  try {
+    said = JSON.stringify(parse(text)) === JSON.stringify(globalThis.JSON.parse(text)) ? "what JSON.parse gives" : "DIFFERENT";
+  } catch (error: any) {
+    said = error.name;
+  }
+  console.log(label + ": " + said);
+}
+////: texts
+const texts: string[] = [
+  '{"id":2,"name":"b","at":{"x":3,"y":4},"next":null}',
+  '{"next":null,"at":{"y":4,"x":3},"name":"b","id":2}',
+  '{"id":"two","at":null}',
+  '{"name":5,"id":1,"extra":true,"at":{"y":1}}',
+  '{"next":{"id":9},"id":1.5,"name":"n","at":{"x":"x","y":[]}}',
+  '{"id":2,"name":"b","at":{"x":3,"y":4},"next":null,"more":1,"evenMore":{"deep":[1,2]}}',
+  '{}', '[]', '[1,2]', '7', '"text"', 'true', 'null',
+];
+//// json-parse-type-argument-result-is-what-json-parse-gives.ts
+// `JSON.parse(text) as T` returns, in every way a program can observe, what JSON.parse(text) returns.
+interface Address { street: string; city: string; zip?: string }
+interface User {
+  id: number;
+  name: string;
+  nickname?: string;
+  tags: string[];
+  address: Address;
+  boss?: User | null;
+  options?: Record<string, any>;
+  anything?: unknown;
+  thing?: object;
+}
+type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number };
+interface Drawing { shapes: Shape[]; size: [number, number]; names: Record<string, number> }
+
+function show(value: any, depth = 0): string {
+  if (Array.isArray(value)) return "[" + value.map(item => show(item, depth + 1)).join(",") + "]";
+  if (typeof value !== "object" || value === null) return Object.is(value, -0) ? "-0" : typeof value + ":" + String(value);
+  const parts: string[] = [];
+  for (const key in value) parts.push(key);
+  const own = Object.getOwnPropertyNames(value);
+  const described = own.map(key => {
+    const found = Object.getOwnPropertyDescriptor(value, key)!;
+    return JSON.stringify(key) + (found.writable && found.enumerable && found.configurable ? "" : "!") + "=" + show(found.value, depth + 1);
+  });
+  return "{" + described.join(",") + "|" + parts.join() + "|" + Object.keys(value).join() + "|" + (Object.getPrototypeOf(value) === Object.prototype) + "}";
+}
+
+const address = '{"street":"s","city":"c"}';
+const users = [
+  `{"id":1,"name":"a","tags":[],"address":${address}}`,
+  `{"id":1,"name":"a","nickname":"n","tags":["x","y"],"address":${address}}`,
+  `{"id":1,"name":"a","tags":[],"address":{"street":"s","city":"c","zip":"z"},"boss":null}`,
+  `{"address":${address},"tags":[],"name":"a","id":1}`,
+  `{"name":"a","extra":1,"id":2,"tags":[],"address":${address},"more":{"x":[1,{"y":2}]}}`,
+  `{"zeta":0,"tags":[],"name":"b","id":2,"address":{"city":"c","q":[],"street":"s"},"boss":{"tags":[],"q":1,"id":3,"name":"c","address":${address}}}`,
+  `{"id":1,"id":2,"name":"a","name":"b","tags":[],"address":${address}}`,
+  `{"id":"no","id":2,"name":"a","tags":[],"address":${address}}`,
+  `{"id":1,"name":"a","tags":[],"address":${address},"__proto__":{"x":1}}`,
+  `{"__proto__":null,"id":1,"name":"a","tags":[],"address":${address}}`,
+  `{"id":1,"name":"a","tags":[],"address":${address},"1":"one","0":"zero","-1":"minus"}`,
+  `{"id":-0,"name":"","tags":[""],"address":${address}}`,
+  `{"id":1e21,"name":"a","tags":[],"address":${address}}`,
+  `{"id":0.1,"name":"\\u0061\\n\\ud83d\\ude00","tags":["\\""],"address":${address}}`,
+  `{"id":1,"name":"a","tags":[],"address":${address},"options":{"b":1,"a":{"c":[]},"__proto__":5,"2":2,"1":1}}`,
+  `{"id":1,"name":"a","tags":[],"address":${address},"anything":{"z":1,"a":[{"b":null}]},"thing":[1,2]}`,
+  `{"id":1,"name":"a","tags":[],"address":${address},"constructor":1,"toString":2,"valueOf":null,"hasOwnProperty":false}`,
+  ` {\n  "id" : 1 ,\t"name":"a",\r\n"tags" : [ ] , "address" : { "street" : "s" , "city" : "c" } } `,
+  `{"\\u0069d":1,"name":"a","tags":[],"address":${address}}`,
+  `{"id":1,"name":"ā","tags":["Ā"],"address":${address},"ключ":"значение"}`,
+  `{"id":1,"name":"a","tags":[],"address":${address},"":"empty"}`,
+  `{"id":1,"name":"a","nickname":"n","nickname":"m","tags":[],"address":${address}}`,
+];
+for (const text of users) {
+  const typed = JSON.parse(text) as User;
+  console.log(show(typed) === show(globalThis.JSON.parse(text)), JSON.stringify(typed) === JSON.stringify(globalThis.JSON.parse(text)), show(typed));
+  console.log(typed.id, typed.name, typed.nickname, typed.tags.length, typed.address.city, typed.address.zip, typed.boss?.name);
+}
+const drawings = [
+  '{"shapes":[],"size":[1,2],"names":{}}',
+  '{"shapes":[{"kind":"circle","radius":1},{"kind":"square","side":2}],"size":[1,2],"names":{"b":1,"a":2}}',
+  '{"shapes":[{"radius":1,"kind":"circle"},{"side":2,"color":"red","kind":"square"}],"size":[1.5,-0],"names":{"__proto__":1,"1":1}}',
+  '{"names":{"a":1,"a":2},"size":[0,0],"shapes":[{"kind":"circle","radius":1,"side":"also"}]}',
+];
+for (const text of drawings) {
+  const typed = JSON.parse(text) as Drawing;
+  console.log(show(typed) === show(globalThis.JSON.parse(text)), show(typed));
+  let sum = 0;
+  for (const shape of typed.shapes) sum += shape.kind === "circle" ? shape.radius : shape.side;
+  console.log(sum, typed.size[0] + typed.size[1]);
+}
+for (const text of ["1", "-0", "1.5e3", '"text"', "true", "null", "[1,2]", '["a"]', "[]", ' [ 1 , 2 ] ']) {
+  const results: string[] = [];
+  try { results.push(show(JSON.parse(text) as number)); } catch { results.push("-"); }
+  try { results.push(show(JSON.parse(text) as string)); } catch { results.push("-"); }
+  try { results.push(show(JSON.parse(text) as boolean | null)); } catch { results.push("-"); }
+  try { results.push(show(JSON.parse(text) as number[])); } catch { results.push("-"); }
+  console.log(text, show(globalThis.JSON.parse(text)), results.filter(result => result !== "-").every(result => result === show(globalThis.JSON.parse(text))));
+}
+const kept = (JSON.parse(users[4]) as User) as User & { extra: number; more: { x: unknown[] } };
+kept.id += 1;
+kept.extra += 1;
+(kept as any).later = true;
+delete (kept as any).more;
+console.log(show(kept), JSON.stringify(kept));
+console.log(JSON.stringify(JSON.parse(users[5]) as User, null, 1));
+console.log(JSON.stringify({ ...(JSON.parse(users[4]) as User) }), JSON.stringify(Object.entries(JSON.parse(users[3]) as User)));
+//// json-parse-type-argument-tags-that-are-no-texts.ts
+// Unions told apart by numbers, booleans, null and a mix of them: the tag in every spelling, in every place, twice, missing, of another kind: `JSON.parse(text) as T` gives what JSON.parse gives.
+const plainParse: (text: string) => any = globalThis.JSON.parse;
+
+////= show
+
+////= outcome
+
+let shown = 0;
+////= differs
+
+type ByNumber = { kind: 0; a: number } | { kind: 1; b: string } | { kind: 2; c: boolean } | { kind: 10; d: null } | { kind: -1; e: number[] } | { kind: 1.5; f: { g: number } } | { kind: 100; h?: number } | { kind: 1e21; i: number };
+type ByFlag = { on: true; a: number } | { on: false; b: string };
+type ByNull = { v: null; a: number } | { v: 1; b: string } | { v: "one"; c: boolean } | { v: true; d: number };
+type Nested = { kind: 1; below: Nested | null } | { kind: 2; below: Nested | null; more: ByFlag };
+type WithRest = { kind: 1; a: number } | { kind: 2; b: number } | { other: string };
+type Tuples = [1, string] | [2, number] | [true, null];
+
+const tags = ["0", "-0", "0.0", "0e5", "1", "1.0", "1e0", "10e-1", "0.1e1", "1.00", "01", "+1", "2", "2.0", "20e-1", "10", "1e1", "100e-1", "-1", "-1.0", "-10e-1", "1.5", "15e-1", "1.50", "100", "1e2", "1E+2", "1e21", "1000000000000000000000", "1e+21", "10e20", "3", "1.0000000000000001", "0.9999999999999999999", "1e400", "-1e400", "1e-400", "true", "false", "null", '"1"', '"one"', '"\\u006fne"', '"true"', "[1]", "{}", '{"kind":1}', "tru", "nul", "", "1 ", " 1", "1,", "1}"];
+const rests = ['"a":1', '"b":"s"', '"c":true', '"d":null', '"e":[1]', '"f":{"g":1}', '"h":1', '"i":1', '"b":1', '"a":"s"', '"u":{"kind":2}', '"below":null', '"more":{"on":true,"a":1}', '"other":"o"'];
+const roads: [string, string, (text: string) => unknown][] = [
+  ["numbers", "kind", text => JSON.parse(text) as ByNumber],
+  ["numbers in a list", "kind", text => JSON.parse("[" + text + "," + text + "]") as ByNumber[]],
+  ["flags", "on", text => JSON.parse(text) as ByFlag],
+  ["null, a number, a text, true", "v", text => JSON.parse(text) as ByNull],
+  ["nested", "kind", text => JSON.parse(text) as Nested],
+  ["with an arm without a tag", "kind", text => JSON.parse(text) as WithRest],
+];
+for (const [label, name, parse] of roads) {
+  const plainRoad = label === "numbers in a list";
+  let different = 0;
+  let texts = 0;
+  const ask = (text: string) => {
+    texts++;
+    if (!plainRoad) {
+      different += differs(parse, text);
+      return;
+    }
+    const typed = outcome(parse, text);
+    const plain = outcome(plainParse, "[" + text + "," + text + "]");
+    if (typed !== plain) different++;
+  };
+  for (const tag of tags) {
+    for (const rest of rests) {
+      const member = '"' + name + '":' + tag;
+      ask("{" + member + "," + rest + "}");
+      ask("{" + rest + "," + member + "}");
+      ask('{"z":[{"' + name + '":9}],' + rest + "," + member + ',"y":1}');
+      ask("{ " + member.replace(":", " : ") + " , " + rest + " }");
+      ask("{" + member + "," + rest + ',"' + name + '":1}');
+      ask('{"' + name + '":2,' + rest + "," + member + "}");
+      ask('{"\\u00' + name.charCodeAt(0).toString(16) + name.slice(1) + '":' + tag + "," + rest + "}");
+    }
+    ask('{"' + name + '":' + tag + "}");
+    ask('{"' + name + '":' + tag);
+  }
+  console.log(label + ": " + texts + " texts: " + different + " differ");
+}
+{
+  let different = 0;
+  let texts = 0;
+  for (const tag of tags) for (const second of ['"s"', "1", "null", "true", "[]"]) for (const text of ["[" + tag + "," + second + "]", "[ " + tag + " , " + second + " ]", "[" + tag + "]", "[" + tag + "," + second + ",1]"]) {
+    texts++;
+    different += differs(text => JSON.parse(text) as Tuples, text);
+  }
+  console.log("tuples: " + texts + " texts: " + different + " differ");
+}
+//// json-parse-type-argument-texts-broken-far-below-take-linear-time.ts
+// `JSON.parse(text) as T` of texts that are no JSON at their deepest place, or that nest past the end of the stack: the error is JSON.parse's, and no level of the text is read again for each level around it, so each answer comes within a second.
+type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+type Chain = { extra: unknown; next: Chain | null };
+type Link = { name: string; next?: Link };
+type Rows = { rows: Rows[] };
+
+const nest = (open: string, middle: string, close: string, levels: number) => open.repeat(levels) + middle + close.repeat(levels);
+const kinds: [string, (text: string) => unknown, (levels: number) => string][] = [
+  ["arrays that are never closed", text => JSON.parse(text) as Json, levels => "[".repeat(levels)],
+  ["objects that are never closed", text => JSON.parse(text) as Json, levels => '{"k":'.repeat(levels)],
+  ["a word cut short under unknown", text => JSON.parse(text) as Chain, levels => nest('{"extra":1,"next":', '{"extra":tru,"next":null}', "}", levels)],
+  ["a string without its end under unknown", text => JSON.parse(text) as Chain, levels => nest('{"extra":1,"next":', '{"extra":"s,"next":null}', "}", levels)],
+  ["an array cut short under unknown", text => JSON.parse(text) as Chain, levels => nest('{"extra":1,"next":', '{"extra":[1,],"next":null}', "}", levels)],
+  ["a number without digits under an undeclared key", text => JSON.parse(text) as Link, levels => nest('{"name":"n","next":', '{"name":"n","other":-}', "}", levels)],
+  ["an object cut short under an undeclared key", text => JSON.parse(text) as Link, levels => nest('{"name":"n","next":', '{"name":"n","other":{"a":}}', "}", levels)],
+  ["records in arrays, a key without quotes", text => JSON.parse(text) as Rows, levels => nest('{"rows":[', "{rows:[]}", "]}", levels)],
+];
+
+for (const [label, parse, text] of kinds) {
+  for (const levels of [10, 1_000, 30_000, 300_000]) {
+    const given = text(levels);
+    const start = Date.now();
+    let said: string;
+    try {
+      said = "A VALUE: " + typeof parse(given);
+    } catch (error: any) {
+      said = error.name;
+    }
+    console.log(label + ", " + levels + " levels: " + said + (Date.now() - start > 1000 ? " TOO SLOWLY" : ""));
+  }
+}
+//// json-parse-type-argument-texts-from-every-source.ts
+// The text comes from buffers, decoders, files, responses, streams and other makers of strings, whole and in slices: `JSON.parse(text) as T` gives what JSON.parse gives.
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+type Row = { id: number; name: string; tags: string[] };
+const ascii = '[{"id":1,"name":"one","tags":["a","b"]},{"name":"two","u":{"v":[1,2]},"id":2,"tags":[]}]';
+const latin = ascii.replace("one", "éÿ");
+const wide = ascii.replace("one", "日本😀");
+const folder = mkdtempSync(join(tmpdir(), "json-sources-"));
+let different = 0;
+let texts = 0;
+
+function check(text: string): void {
+  for (const given of [text, " " + text, text + "\n", (text + text).slice(0, text.length), ("[" + text + "]").slice(1, -1), text.slice(0, -1), text.slice(1)]) {
+    texts++;
+    let typed = "";
+    let plain = "";
+    try {
+      typed = JSON.stringify(JSON.parse(given) as Row[]);
+    } catch (error: any) {
+      typed = error.name + ": " + error.message;
+    }
+    try {
+      plain = JSON.stringify((globalThis.JSON.parse as (text: string) => unknown)(given));
+    } catch (error: any) {
+      plain = error.name + ": " + error.message;
+    }
+    if (typed !== plain) different++;
+  }
+}
+
+for (const [label, text] of [["ASCII", ascii], ["Latin-1", latin], ["16-bit", wide]]) {
+  const bytes = Buffer.from(text, "utf8");
+  const path = join(folder, label + ".json");
+  writeFileSync(path, bytes);
+  const sources: string[] = [
+    text,
+    bytes.toString(),
+    bytes.toString("utf8", 0, bytes.length),
+    Buffer.from(text, "utf16le").toString("utf16le"),
+    Buffer.from(text, "latin1").toString("latin1"),
+    Buffer.from(bytes.toString("base64"), "base64").toString(),
+    new TextDecoder().decode(bytes),
+    new TextDecoder("utf-16le").decode(Buffer.from(text, "utf16le")),
+    readFileSync(path, "utf8"),
+    await Bun.file(path).text(),
+    await new Response(bytes).text(),
+    await new Response(text).text(),
+    await new Blob([bytes]).text(),
+    await Bun.readableStreamToText(new Blob([bytes]).stream()),
+    JSON.stringify(globalThis.JSON.parse(text)),
+    globalThis.JSON.parse(JSON.stringify(text)),
+    text.normalize(),
+    text.toWellFormed(),
+    text.split("").join(""),
+    [...text].join(""),
+    text.replace("id", "id"),
+    text.padEnd(text.length + 3).trimEnd(),
+    String(new String(text)),
+    `${text}`,
+    Object.keys({ [text]: 1 })[0],
+    Symbol(text).description!,
+    new URLSearchParams({ t: text }).get("t")!,
+    decodeURIComponent(encodeURIComponent(text)),
+    structuredClone(text),
+    new Error(text).message,
+    Bun.inspect(text).length > 0 ? text.concat("") : "",
+  ];
+  for (const source of sources) check(source);
+  console.log(label + ": " + sources.length + " sources, " + texts + " texts: " + different + " differ");
+}
+rmSync(folder, { recursive: true, force: true });
+//// json-parse-type-argument-thousands-of-kinds-below-a-holder.ts
+// A holder with undeclared keys of its own holds up to 66,000 items that each have an undeclared key of their own name: more kinds of object than the parser and the writer remember, met while the holder is being parsed and written.
+interface Item { id: number }
+interface Holder { first: number; items: Item[]; last: string }
+let serial = 0;
+const host: any = globalThis;
+const which = (host.arguments ?? [])[0] ?? "orders";
+for (const count of [10, 255, 256, 257, 4095, 4096, 4097, 16383, 16384, 16385, 20000, 33000]) {
+  const items: string[] = [];
+  for (let at = 0; at < count; at++) {
+    const unique = ++serial;
+    items.push(which === "orders" ? (at % 2 ? '{"k' + unique + '":1,"id":' + at + "}" : '{"id":' + at + ',"k' + unique + '":1,"m":2}') : '{"id":' + at + ',"aa' + (unique % 97) + '":1,"aa' + (unique % 89) + 'x":2,"aa' + unique + '":3}');
+  }
+  const text = '{"a":"before","first":1,"b":[1,2],"items":[' + items.join(",") + '],"c":"behind","last":"l","d":{"e":null},"f":"' + "x".repeat(40) + '"}';
+  const written = JSON.stringify(host.JSON.parse(text));
+  for (let round = 0; round < 3; round++) console.log(count + " kinds more (" + serial + " in all), round " + round + ": " + (JSON.stringify(JSON.parse(text) as Holder) === written ? "same" : "DIFFERENT"));
+}
+//// json-parse-type-argument-three-types-of-one-shape-with-an-optional-member.ts
+// Three types of one shape, each with a required member and an optional member of its own type, are what the result of JSON.parse is cast to. The texts have the optional member or not, the keys in the
+// declared order or another one, and keys that no type declares in front, between and behind. The order of the keys of what comes back is that of the text. The output is that of plain Bun.
+////= lines-6	First
+////= lines-6	Second
+////= lines-6	Third
+
+const texts = [
+  '{"name":"a"}',
+  '{"name":"b","inner":{"name":"c"}}',
+  '{"inner":{"name":"d"},"name":"e"}',
+  '{"extra":1,"name":"f","more":[2]}',
+  '{"inner":{"name":"g","z":0},"between":null,"name":"h"}',
+  '{"name":"i","inner":{"inner":{"name":"j"},"name":"k"},"last":{"name":"l"}}',
+];
+for (let round = 0; round < 2; round++) {
+  for (const text of texts) {
+    const first = JSON.parse(text) as First;
+    const second = JSON.parse(text) as Second;
+    const third = JSON.parse(text) as Third;
+    console.log(JSON.stringify(first), Object.keys(second).join(), third.name + (third.inner ? third.inner.name : "-"));
+  }
+}
+//// json-parse-type-argument-undeclared-keys-in-every-place.ts
+// Undeclared keys stand before, between and behind the declared ones, once and many times over. The result is what JSON.parse(text) gives.
+interface Point { x: number; y: number; label?: string }
+interface Segment { id: number; from: Point; to: Point; note?: string; tags: string[] }
+interface Named { id: number; name: string }
+interface Numbered { id: number }
+interface Bag { id: number; [key: string]: number | string }
+interface Wide { a: number; b: string; c: boolean; d: number | null; e?: number; f?: string; g: number[]; h: Numbered }
+
+function show(value: any): string {
+  if (Array.isArray(value)) return "[" + value.map(show).join(",") + "]";
+  if (typeof value !== "object" || value === null) return Object.is(value, -0) ? "-0" : typeof value + ":" + String(value);
+  const inLoop: string[] = [];
+  for (const key in value) inLoop.push(key);
+  const described = Object.getOwnPropertyNames(value).map(key => {
+    const found = Object.getOwnPropertyDescriptor(value, key)!;
+    return JSON.stringify(key) + (found.writable && found.enumerable && found.configurable ? "" : "!") + "=" + show(found.value);
+  });
+  return "{" + described.join(",") + "|" + inLoop.join() + "|" + Object.keys(value).join() + "|" + JSON.stringify(Object.entries(value).map(entry => entry[0])) + "|" + (Object.getPrototypeOf(value) === Object.prototype) + "|" + JSON.stringify(value) + "|" + JSON.stringify({ ...value }) + "}";
+}
+
+////= attempt-2
+
+function check(label: string, texts: string[], parse: (text: string) => unknown, then?: (value: any) => void): void {
+  let different = 0;
+  for (let round = 0; round < 3; round++) {
+    for (const text of texts) {
+      const typed = attempt(parse, text, then);
+      const plain = attempt(globalThis.JSON.parse, text, then);
+      if (typed !== plain && different++ < 3) console.log(label + " DIFFERS on " + text + "\n  " + typed + "\n  " + plain);
+    }
+  }
+  console.log(label + ": " + texts.length + " texts, " + different + " differ");
+}
+
+function orders<T>(items: T[]): T[][] {
+  if (items.length < 2) return [items];
+  return items.flatMap((item, at) => orders([...items.slice(0, at), ...items.slice(at + 1)]).map(rest => [item, ...rest]));
+}
+
+const asObject = (members: string[]) => "{" + members.join(",") + "}";
+const point = (text: string) => JSON.parse(text) as Point;
+const segment = (text: string) => JSON.parse(text) as Segment;
+
+check("every order of two members and three others", orders(['"x":1', '"y":2', '"p":3', '"q":"four"', '"r":null']).map(asObject), point);
+check("every order with the optional member", orders(['"x":1', '"y":2', '"label":"l"', '"p":[1,{"a":2}]', '"q":{"b":{"c":[]}}']).map(asObject), point);
+check("every order of the members alone", orders(['"x":1', '"y":2', '"label":"l"']).map(asObject), point);
+
+const values = ["0", "-0", "1.5", "-1e3", "1e400", "123456789012345678901234567890", '""', '"a\\nb"', '"\\u00e9"', '"é"', '"日本"', "true", "false", "null", "[]", "{}", "[[],{}]", '{"x":1,"y":2}', '{"__proto__":1}', '"' + "long ".repeat(60) + '"'];
+check("values of every kind", values.flatMap(value => [`{"x":1,"y":2,"o":${value}}`, `{"o":${value},"x":1,"y":2}`, `{"x":1,"o":${value},"y":2,"p":${value}}`]), point);
+
+const many: string[] = [];
+for (let count = 1; count <= 140; count += count < 20 ? 1 : 13) {
+  const others = Array.from({ length: count }, (_, at) => `"k${at}":${at}`);
+  many.push(asObject(['"x":1', '"y":2', ...others]), asObject([...others, '"x":1', '"y":2']), asObject(['"x":1', ...others.slice(0, count >> 1), '"y":2', ...others.slice(count >> 1)]));
+}
+check("from one to many", many, point);
+
+const names = ["toString", "constructor", "hasOwnProperty", "valueOf", "__proto__", "__defineGetter__", "toJSON", "then", "length", "prototype", "", " ", "0", "1", "42", "-1", "01", "1.5", "4294967294", "4294967295", "9007199254740993", "é", "日本", "😀", "a b", "a-b", "x ", "X", "label ", "n".repeat(27), "n".repeat(28), "n".repeat(29), "n".repeat(30), "n".repeat(48), "n".repeat(49), "n".repeat(300)];
+check("names of every kind", names.flatMap(name => [`{"x":1,"y":2,${JSON.stringify(name)}:7}`, `{${JSON.stringify(name)}:7,"x":1,"y":2}`, `{"x":1,${JSON.stringify(name)}:{"a":1},"y":2,"z":3}`]), point);
+check("names written with escapes", ['{"x":1,"y":2,"\\u0061":3}', '{"\\u0078":1,"y":2}', '{"x":1,"y":2,"a\\nb":3}', '{"x":1,"y":2,"a\\"b":3}', '{"x":1,"\\u0079":5,"y":2}', '{"x":1,"y":2,"lab\\u0065l":"l"}', '{"x":1,"y":2,"\\ud83d\\ude00":1}'], point);
+
+check("twice", ['{"x":1,"y":2,"o":1,"o":2}', '{"o":1,"x":1,"o":2,"y":2}', '{"x":1,"x":3,"y":2,"o":1}', '{"x":1,"o":1,"y":2,"x":3}', '{"o":1,"p":2,"o":3,"x":1,"y":2,"p":4}', '{"x":1,"y":2,"label":"a","o":1,"label":"b"}', '{"x":"no","o":1,"x":1,"y":2}', '{"x":1,"y":2,"o":{"a":1,"a":2}}'], point);
+
+const spaced = ['{"x":1,"y":2,"o":3}', '{"o":[1,2],"x":1,"p":{"a":1},"y":2}', '{"x":1,"label":"l","o":1,"p":2,"y":2,"q":3}'];
+check("with whitespace", spaced.flatMap(text => [JSON.stringify(globalThis.JSON.parse(text), null, 2), JSON.stringify(globalThis.JSON.parse(text), null, "\t"), text.replaceAll(":", " : ").replaceAll(",", " ,\r\n "), " " + text + "\n"]), point);
+check("in 16-bit text", spaced.map(text => text.replace("}", ',"wide":"日本","Ω":1}')), point);
+check("what is no JSON", ['{"x":1,"y":2,"o":}', '{"x":1,"y":2,"o"}', '{"x":1,"y":2,"o":1,}', '{"x":1,"y":2,o:1}', '{"x":1,"y":2,"o":1', '{"x":1,"y":2,"o":[1,}', '{"x":1,"y":2,"o":01}', '{"x":1,"y":2,"o":"a\nb"}', '{"x":1,"y":2,"o":tru}', '{"x":1,"y":2,"o":1 "p":2}', '{"x":1,"y":2,"o":1}}', '{"x":1,"y":2,"o' ], point);
+
+const inner = ['{"x":1,"y":2}', '{"x":1,"y":2,"o":1}', '{"o":1,"y":2,"x":1}', '{"y":2,"p":[],"x":1,"label":"l","q":{}}'];
+check("at every level", inner.flatMap(from => inner.flatMap(to => [`{"id":1,"from":${from},"to":${to},"tags":[]}`, `{"a":1,"id":1,"b":2,"to":${to},"c":${from},"from":${from},"tags":["t"],"d":4}`, `{"tags":[],"to":${to},"note":"n","from":${from},"id":1,"z":{"from":${from}}}`])), segment);
+
+const turns: string[] = [];
+for (let i = 0; i < 12; i++) turns.push(`{"id":${i},"name":"n${i}"}`, `{"name":"n","id":${i},"more":1}`, `{"id":${i},"more":1,"name":"n"}`);
+let turn = 0;
+check("a name that one type declares and another does not", turns, text => (turn++ & 1 ? (JSON.parse(text) as Named) : JSON.parse(text) as Numbered));
+
+check("an index signature", ['{"id":1}', '{"id":1,"a":2,"b":"c"}', '{"a":2,"id":1,"b":"c"}', '{"a":2,"a":3,"id":1}', '{"0":1,"id":1,"a":2}', '{"id":1,"__proto__":3}'], text => JSON.parse(text) as Bag);
+
+const wide = ['"a":1', '"b":"two"', '"c":true', '"d":null', '"g":[1,2]', '"h":{"id":1,"o":1}'];
+const wider: string[] = [];
+for (let at = 0; at <= wide.length; at++) {
+  for (const more of [['"o":1'], ['"e":5'], ['"f":"f"', '"o":1'], ['"o":1', '"p":2', '"e":5'], ['"f":"f"', '"e":5']]) wider.push(asObject([...wide.slice(0, at), ...more, ...wide.slice(at)]), asObject([...wide.slice(at), ...more, ...wide.slice(0, at)]));
+}
+check("eight members of several kinds", wider, text => JSON.parse(text) as Wide);
+
+const changes: [string, (value: any) => void][] = [
+  ["a new key", value => { value.added = 1; }],
+  ["an undeclared key goes", value => { delete value.o; }],
+  ["an undeclared key goes and comes back", value => { delete value.o; value.o = 9; }],
+  ["the optional member goes", value => { delete value.label; }],
+  ["the optional member comes", value => { value.label = "late"; }],
+  ["a member goes and comes back", value => { delete value.x; value.x = 9; }],
+  ["an undeclared key is written", value => { value.o = "new"; value.p = "newer"; }],
+  ["frozen", value => { Object.freeze(value); }],
+  ["an index key comes", value => { value[3] = 1; value[1] = 2; }],
+  ["an accessor comes", value => { Object.defineProperty(value, "o", { get: () => 5, enumerable: true, configurable: true }); }],
+];
+for (const [label, change] of changes) check("afterwards: " + label, ['{"x":1,"y":2}', '{"x":1,"y":2,"o":3}', '{"o":3,"x":1,"p":4,"y":2}', '{"x":1,"o":3,"label":"l","y":2,"p":4,"q":5}'], point, change);
+
+const sets: string[] = [];
+let seed = 1;
+for (let i = 0; i < 600; i++) {
+  const members = ['"x":1'];
+  for (let k = 0; k < 14; k++) {
+    seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+    if (seed & 0x10000) members.push(`"name${k}":${k % 3 ? k : '"v' + k + '"'}`);
+    if (k === 6) members.push('"y":2');
+  }
+  sets.push(asObject(members));
+}
+check("many sets of undeclared keys in turn", sets, point);
+
+const between: string[] = [];
+for (const count of [1, 2, 3, 63, 64, 65, 126, 127, 128, 129, 130, 131, 132, 133, 200, 513, 1200, 5000]) {
+  const others = Array.from({ length: count }, (_, at) => `"k${at}":${at}`);
+  between.push(asObject(['"x":1', ...others, '"y":2', '"m0":0']), asObject([...others, '"x":1', '"m0":0', '"y":2', '"m1":1']), asObject(['"a":0', '"x":1', ...others, '"label":"l"', '"m0":0', '"y":2']));
+}
+check("a few and very many between the members", between, point);
+
+const kept: Point[] = [];
+const texts: string[] = [];
+for (let i = 0; i < 3000; i++) {
+  const text = `{"x":${i},"k${i % 7}":"${"v".repeat(i % 50)}","y":${-i},"list":[${i},{"deep":"${i}"}]${i % 3 ? "" : ',"label":"l' + i + '"'},"last":${i % 2 ? "null" : '{"a":' + i + "}"}}`;
+  texts.push(text);
+  kept.push(JSON.parse(text) as Point);
+}
+let changed = 0;
+for (let i = 0; i < kept.length; i++) changed += Number(show(kept[i]) !== show(globalThis.JSON.parse(texts[i])));
+console.log("kept for a while: " + kept.length + " objects, " + changed + " differ");
+//// json-parse-type-argument-unions-that-contain-themselves.ts
+// A union that contains itself: the arms are told apart by a constant member of any kind, wherever it stands, and no nested value is parsed twice: a text of sixty levels would otherwise take longer than the sun has left.
+type ByNumber = { below: ByNumber | null; k: 1 } | { below: ByNumber | null; k: 2 };
+type ByBoolean = { below: ByBoolean | null; k: true } | { below: ByBoolean | null; k: false };
+type ByNull = { below: ByNull | null; k: null } | { below: ByNull | null; k: 1 };
+type ByText = { below: ByText | null; k: "one" } | { below: ByText | null; k: "two" };
+type Mixed = { below: Mixed | null; k: "one" } | { below: Mixed | null; k: 2 } | { below: Mixed | null; k: false } | { below: Mixed | null; k: null };
+type InList = { k: 1; list: InList[] } | { k: 2; list: InList[] };
+type TextOrNull = { below: TextOrNull | null; k: "one" } | { below: TextOrNull | null; k: null };
+type Wide = { left: Wide | null; right: Wide | null; k: "one" } | { left: Wide | null; right: Wide | null; k: null };
+function nested(levels: number, tail: string): string {
+  return '{"below":'.repeat(levels) + "null" + tail.repeat(levels);
+}
+////= say-2
+for (const levels of [1, 2, 3, 20, 40, 60, 63, 64, 65, 66, 200]) {
+  say("number tags " + levels, text => JSON.parse(text) as ByNumber, nested(levels, ',"k":2}'));
+  say("number tags, the first arm " + levels, text => JSON.parse(text) as ByNumber, nested(levels, ',"k":1}'));
+  say("number tags, in turn " + levels, text => JSON.parse(text) as ByNumber, nested(2 * levels, ',"k":1}').replaceAll(',"k":1},"k":1}', ',"k":2},"k":1}'));
+  say("number tags, written otherwise " + levels, text => JSON.parse(text) as ByNumber, nested(levels, ' , "k" : 2.0e0 }'));
+  say("number tags, in front " + levels, text => JSON.parse(text) as ByNumber, '{"k":2,"below":'.repeat(levels) + "null" + "}".repeat(levels));
+  say("number tags, no arm has it " + levels, text => JSON.parse(text) as ByNumber, nested(levels, ',"k":3}'));
+  say("number tags, the innermost is wrong " + levels, text => JSON.parse(text) as ByNumber, nested(levels, ',"k":2}').replace('null,"k":2', 'null,"k":"2"'));
+  say("true | false " + levels, text => JSON.parse(text) as ByBoolean, nested(levels, ',"k":false}'));
+  say("true | false, neither " + levels, text => JSON.parse(text) as ByBoolean, nested(levels, ',"k":0}'));
+  say("null | 1 " + levels, text => JSON.parse(text) as ByNull, nested(levels, ',"k":null}'));
+  say("text tags " + levels, text => JSON.parse(text) as ByText, nested(levels, ',"k":"two"}'));
+  say("text tags, no arm has it " + levels, text => JSON.parse(text) as ByText, nested(levels, ',"k":"three"}'));
+  say("within lists " + levels, text => JSON.parse(text) as InList, '{"list":[{"list":[],"k":1},'.repeat(levels) + '{"k":2,"list":[]}' + '],"k":2}'.repeat(levels));
+  say("tags of four kinds " + levels, text => JSON.parse(text) as Mixed, nested(levels, ',"k":null}'));
+  say("tags of four kinds, in turn " + levels, text => JSON.parse(text) as Mixed, nested(4 * levels, ',"k":2}').replaceAll(',"k":2},"k":2},"k":2},"k":2}', ',"k":"one"},"k":2},"k":false},"k":null}'));
+  say("tags of four kinds, no arm has it " + levels, text => JSON.parse(text) as Mixed, nested(levels, ',"k":true}'));
+  for (const tail of [',"k":null}', ',"k":"one"}', ',"k":2}', ',"k":false}']) {
+    say("tags of four kinds, read by the engine and converted " + tail + " " + levels, text => JSON.parse(text) as Mixed, nested(levels, tail).replace("below", "\\u0062elow"));
+  }
+  say("a text or null, read by the engine and converted " + levels, text => JSON.parse(text) as TextOrNull, nested(levels, ',"k":null}').replace("below", "\\u0062elow"));
+}
+function tree(levels: number): string {
+  return levels ? '{"left":' + tree(levels - 1) + ',"right":' + tree(levels - 1) + ',"k":' + (levels & 1 ? "null" : '"one"') + "}" : "null";
+}
+for (const levels of [1, 2, 6, 10]) {
+  say("a tree of two branches " + levels, text => JSON.parse(text) as Wide, tree(levels));
+}
+
+type Flat = { value: number; unit: string } | { error: string; code: number } | { value: string };
+type Below = { a: { x: number }; n: number } | { a: { y: number }; n: number } | { a: { x: number }; n: string };
+type Lists = number[] | string[] | [boolean, number[]] | { list: number[] } | { list: string[] };
+type Tagged = { kind: 1; parts: number[] } | { kind: 2; parts: string[] } | { kind: number; parts?: unknown };
+for (const text of ['{"value":1,"unit":"m"}', '{"error":"none","code":4}', '{"value":"v"}', '{"value":"v","o":{"deep":[1,{"er":2}]}}', '{"o":[[]],"code":4,"error":"e"}', '{"value":1}', '{"value":null}', "{}", "[]", "null"]) say("arms that hold no objects " + text, given => JSON.parse(given) as Flat, text);
+for (const text of ['{"a":{"x":1},"n":1}', '{"a":{"y":1},"n":1}', '{"a":{"x":1},"n":"s"}', '{"n":"s","a":{"x":1}}', '{"a":{"y":1},"n":"s"}', '{"a":{"x":1,"y":1},"n":1}', '{"a":{},"n":1}', '{"a":{"x":1}}']) say("arms that differ below " + text, given => JSON.parse(given) as Below, text);
+for (const text of ["[]", "[1,2]", '["a"]', '[1,"a"]', "[true,[1]]", '[true,["a"]]', '{"list":[]}', '{"list":[1]}', '{"list":["a"]}', '{"list":[1,"a"]}', '{"list":[[]]}']) say("lists " + text, given => JSON.parse(given) as Lists, text);
+for (const text of ['{"kind":1,"parts":[1]}', '{"kind":2,"parts":["a"]}', '{"kind":1,"parts":["a"]}', '{"parts":["a"],"kind":1}', '{"kind":3,"parts":{"any":[1]}}', '{"kind":3}', '{"kind":"1","parts":[1]}', '{"parts":[1]}']) say("the arm that the tag names does not fit " + text, given => JSON.parse(given) as Tagged, text);
+//// json-parse-type-argument-what-an-outer-object-stands-on-is-replaced.ts
+// Something is emptied, grown or replaced while an outer object of the same parse still stands on it.
+interface Node { id: number; below: Node | null; name: string }
+interface Item { id: number }
+interface Holder { first: number; items: Item[]; last: string }
+let different = 0;
+let compared = 0;
+function check<T>(parse: (text: string) => T, text: string): void {
+  compared++;
+  const [typed, plain] = [parse(text), globalThis.JSON.parse(text)];
+  if (JSON.stringify(Object.keys(typed as object)) !== JSON.stringify(Object.keys(plain)) || JSON.stringify(typed) !== JSON.stringify(plain)) different++;
+}
+const others = (prefix: string, count: number, value: (at: number) => string) => Array.from({ length: count }, (_, at) => `"${prefix}${at}":${value(at)}`);
+const fresh = (at: number) => `"${"v".repeat(40)}${at}"`;
+let serial = 0;
+for (const inner of [1, 2, 3, 5, 31, 32, 33, 63, 64, 65, 70, 127, 128, 129, 200]) {
+  for (let round = 0; round < 3; round++) {
+    const deepest = `{${[...others("i" + serial++ + "_", inner, fresh), '"id":3', '"below":null', '"name":"c"'].join(",")}}`;
+    const middle = `{${[...others("m", 3, fresh), '"id":2', ...others("n", 2, fresh), `"below":${deepest}`, ...others("o", inner % 7, fresh), '"name":"b"'].join(",")}}`;
+    check(text => JSON.parse(text) as Node, `{${[...others("a", 3, fresh), '"id":1', `"below":${middle}`, ...others("b", 3, fresh), '"name":"a"', ...others("c", 2, fresh)].join(",")}}`);
+  }
+}
+for (const count of [10, 300, 5000, 16383, 16384, 16385, 17000, 34000]) {
+  const items = Array.from({ length: count }, (_, at) => (at % 2 ? `{"k${++serial}":1,"id":${at}}` : `{"id":${at},"k${++serial}":1,"m":2}`));
+  const text = `{"a":"before","first":1,"b":[1,2],"items":[${items.join(",")}],"c":"behind","last":"l","d":{"e":null}}`;
+  for (let round = 0; round < 2; round++) {
+    compared++;
+    const holder = JSON.parse(text) as Holder;
+    if (Object.keys(holder).join() !== "a,first,b,items,c,last,d" || holder.items.length !== count || Object.keys(holder.items[count - 1]).join() !== Object.keys(globalThis.JSON.parse(items[count - 1])).join()) different++;
+  }
+}
+console.log(compared + " compared, " + different + " differ");
+//// json-parse-type-argument-what-is-learned-while-an-outer-object-is-open.ts
+// While an outer object is still being parsed, with undeclared keys of its own in front of and behind the member, the objects inside it change what the parser has learned: the first object of the same type that spills, and more orders of keys than are remembered. Nothing is written: the keys and values are walked.
+interface Self { name: string; inner?: Self; list?: Self[] }
+interface Item { id: number }
+interface Holder { first: number; items: Item[]; last: string }
+interface Other1 { name: string; inner?: Other1 }
+interface Other2 { name: string; inner?: Other2 }
+interface Other3 { name: string; inner?: Other3 }
+
+const plainParse: (text: string) => any = globalThis.JSON.parse;
+function walk(value: any): string {
+  if (Array.isArray(value)) {
+    let said = "[";
+    for (const item of value) said += walk(item) + ",";
+    return said + "]";
+  }
+  if (typeof value !== "object" || value === null) return String(value);
+  let said = "{";
+  for (const key of Object.keys(value)) said += key + ":" + walk(value[key]) + ",";
+  return said + "}";
+}
+let serial = 0;
+const extras = (prefix: string, count: number): string[] => Array.from({ length: count }, (_, at) => '"' + prefix + at + '":"value number ' + ++serial + ' is longer than any short string that is cached"');
+function selfText(levels: number, inside: number, around: number): string {
+  if (levels === 0) return "{" + ['"name":"leaf"', ...extras("i", inside)].join(",") + "}";
+  return "{" + [...extras("a", around), '"name":"n' + levels + '"', '"inner":' + selfText(levels - 1, inside, around), ...extras("b", around)].join(",") + "}";
+}
+function check(label: string, parse: (text: string) => unknown, texts: string[]): void {
+  let different = 0;
+  for (const text of texts) for (let round = 0; round < 3; round++) if (walk(parse(text)) !== walk(plainParse(text))) different++;
+  console.log(label + ": " + texts.length + " texts: " + different + " differ");
+}
+check("the first object that spills lies inside", text => JSON.parse(text) as Self, [selfText(1, 70, 3)]);
+check("then others", text => JSON.parse(text) as Self, [1, 2, 3, 5].flatMap(levels => [0, 1, 2, 3, 4, 63, 64, 65, 70, 127, 128, 129, 200].flatMap(inside => [0, 1, 3, 40].map(around => selfText(levels, inside, around)))));
+check("deeper first", text => JSON.parse(text) as Other1, [selfText(6, 65, 2), selfText(6, 3, 2), selfText(2, 130, 70)]);
+check("many around, few inside", text => JSON.parse(text) as Other2, [selfText(3, 1, 70), selfText(3, 70, 1), selfText(3, 64, 64)]);
+check("growing", text => JSON.parse(text) as Other3, Array.from({ length: 140 }, (_, count) => selfText(2, count, count >> 1)));
+check("lists of itself", text => JSON.parse(text) as Self, [3, 70, 130].map(inside => "{" + [...extras("a", 3), '"name":"n"', '"list":[' + [selfText(0, inside, 0), selfText(1, inside, 2), selfText(0, 1, 0)].join(",") + "]", ...extras("b", 3)].join(",") + "}"));
+
+for (const count of [10, 4096, 16383, 16384, 16385, 20000, 40000]) {
+  const items: string[] = [];
+  for (let at = 0; at < count; at++) items.push(at % 2 ? '{"k' + ++serial + '":1,"id":' + at + "}" : '{"id":' + at + ',"k' + ++serial + '":1,"m":2}');
+  check(count + " orders inside an open holder", text => JSON.parse(text) as Holder, ['{"a":"before","first":1,"b":[1,2],"items":[' + items.join(",") + '],"c":"behind","last":"l","d":{"e":null}}']);
+}
+//// json-parse-type-argument-what-is-no-text.ts
+// What is handed to `JSON.parse(text) as T` is no string: JSON.parse converts it to one first.
+type Point = { x: number; y: number };
+const plainParse: (text: any) => any = globalThis.JSON.parse;
+////= say-3	+ ": " + error.message
+let calls = 0;
+const given: [string, () => any][] = [
+  ["bytes of 1", () => new Uint8Array([49])],
+  ["bytes of a record", () => new Uint8Array([...'{"x":1,"y":2}'].map(c => c.charCodeAt(0)))],
+  ["bytes of [1]", () => new Uint8Array([91, 49, 93])],
+  ["no bytes", () => new Uint8Array(0)],
+  ["Uint8ClampedArray", () => new Uint8ClampedArray([49])],
+  ["Int8Array", () => new Int8Array([49])],
+  ["ArrayBuffer", () => new Uint8Array([49]).buffer],
+  ["a number", () => 7],
+  ["null", () => null],
+  ["undefined", () => undefined],
+  ["true", () => true],
+  ["an array", () => [1]],
+  ["an array of two", () => [1, 2]],
+  ["an object", () => ({})],
+  ["an object with toString", () => ({ toString: () => (calls++, '{"x":1,"y":2}') })],
+  ["an object with valueOf", () => ({ valueOf: () => "1", toString: () => "2" })],
+  ["a String object", () => new String('{"x":1,"y":2}')],
+  ["a symbol", () => Symbol("s")],
+  ["a bigint", () => 12n],
+  ["a throwing toString", () => ({ toString() { throw new RangeError("mine"); } })],
+];
+for (const [label, make] of given) {
+  const answers = [say(() => JSON.parse(make()) as number), say(() => JSON.parse(make()) as Point), say(() => JSON.parse(make()) as number[]), say(() => JSON.parse(make()) as { v: unknown })];
+  const plain = say(() => plainParse(make()));
+  console.log(label + ": plain " + plain + " | " + answers.map(answer => (answer === plain ? "same" : "DIFFERENT: " + answer)).join(" | "));
+}
+console.log("toString was called " + calls + " times");
+//// json-parse-untagged-recursive-union.ts
+// Arms without a tag that share a recursive member and differ after it: no nested value is parsed once per arm, so sixty levels end.
+type List = { next: List | null; a: number } | { next: List | null; b: number };
+type Pair = { a: Pair | null; b: 1 } | { a: Pair | null; c: 2 };
+function nested(head: string, levels: number, tail: string): string {
+  return head.repeat(levels) + "null" + tail.repeat(levels);
+}
+////= say-2
+for (const levels of [1, 2, 20, 40, 60]) {
+  say("the first arm " + levels, text => JSON.parse(text) as List, nested('{"next":', levels, ',"a":1}'));
+  say("the second arm " + levels, text => JSON.parse(text) as List, nested('{"next":', levels, ',"b":1}'));
+  say("a literal member in each arm " + levels, text => JSON.parse(text) as Pair, nested('{"a":', levels, ',"c":2}'));
+}
+for (const levels of [1, 2]) say("neither arm " + levels, text => JSON.parse(text) as List, nested('{"next":', levels, ',"c":1}'));
+//// json-stringify-across-every-end-of-a-buffer.ts
+// JSON.stringify of compiled objects writes keys, numbers and short strings into room that it has asked for once.
+// Here every such write is moved across every place where a buffer ends or grows: the 8,192 characters on the stack, and 1,024 doubled.
+// What is written is compared with the text for ordinary objects with the same members, made by run-time text.
+const toPlain = new Function("value", `
+    function copy(v) {
+        if (Array.isArray(v)) return v.map(copy);
+        if (v && typeof v === "object") { const r = {}; for (const k of Object.keys(v)) r[k] = copy(v[k]); return r; }
+        return v;
+    }
+    return copy(value);`) as <V>(value: V) => V;
+
+class Text { constructor(public s: string) {} }
+class Keys { a = 1; abcdefghijklm = 2; abcdefghijklmn = 3; abcdefghijklmno = 4; abcdefghijklmnop = 5; abcdefghijklmnopqrstuvwxyz01234 = 6; abcdefghijklmnopqrstuvwxyz012345 = 7; abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz01234567 = 8; "quo\"te" = 9; "é" = 10; }
+class Numbers { least = -2147483648; most = 2147483647; long = -1.7976931348623157e308; small = 5e-324; third = -0.3333333333333333; nan = NaN; infinite = -Infinity; zero = -0; yes = true; no = false; none = null; missing = undefined; }
+class Mixed {
+    id = 7; flag = true; none = null; ratio = 1.5;
+    constructor(public name: string, public inner: Text, public list: Text[], public tags: string[]) {}
+}
+class Deep { constructor(public next: Deep | null, public label: string) {} }
+
+function deep(levels: number, label: string): Deep { let d: Deep = new Deep(null, label); for (let i = 0; i < levels; i++) d = new Deep(d, label); return d; }
+const tails = ["", "\"", "\\", "\n", "\u001f", "é", "中", "\ud800"];
+const lengths = [0, 1, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 100, 300, 1100];
+const texts: string[] = [];
+for (const length of lengths) for (const tail of tails) { texts.push("s".repeat(length) + tail); if (tail) texts.push(tail + "s".repeat(length)); }
+
+let calls = 0, wrong = 0, hash = 0;
+function check(value: unknown, space: string | number | undefined): void {
+    const got = JSON.stringify(value, null, space);
+    const want = JSON.stringify(toPlain(value), null, space);
+    calls++;
+    hash = (hash * 31 + got.length) | 0;
+    if (got !== want && wrong++ < 5) console.log("DIFFERS", got.length, want.length, String(space), got.slice(0, 60));
+}
+
+const big = "t".repeat(9000);
+const spaces = [undefined, 1, 10, "\t"];
+let turn = 0;
+for (const end of [1024, 2048, 4096, 8192, 16384, 32768]) {
+    for (let room = 330; room >= -12; room -= room > 140 ? 7 : 1) {
+        const filler = "x".repeat(end - room);
+        const text = texts[turn++ % texts.length];
+        const space = spaces[turn % spaces.length];
+        for (const last of ["", big]) {
+            check([filler, new Keys(), last], space);
+            check([filler, new Numbers(), last], space);
+            check([filler, new Text(text), last], space);
+            check([filler, new Mixed(text, new Text(text), [new Text(text), new Text("")], [text, "t"]), last], space);
+            check([new Text(filler), new Text(text), new Text(text), new Text(last)], space);
+            check([new Mixed(filler, new Text(""), [], []), new Mixed(text, new Text(text), [new Text(text)], [text]), new Mixed(last, new Text(text), [], [])], space);
+            check({ filler, keys: new Keys(), numbers: new Numbers(), last }, space);
+            check(new Mixed(filler, new Text(text), [new Text(text), new Text(text), new Text(text)], [last]), space);
+        }
+    }
+}
+for (const text of texts) for (const space of spaces) {
+    check(new Text(text), space); check([new Text(text), new Text(text)], space); check(new Mixed(text, new Text(text), [new Text(text)], [text]), space);
+}
+for (const levels of [1, 2, 10, 60, 200, 700]) for (const space of [undefined, 1, 10, "0123456789"]) for (const label of ["", "l", "\n", "中", "l".repeat(40)]) check(deep(levels, label), space);
+console.log(calls, wrong, hash);
+//// json-stringify-date-output.ts
+// JSON.stringify writes a Date as Date.prototype.toJSON says: whatever a program has done to the date or to its class is seen.
+interface Comment {
+  id: number;
+  at: Date;
+  body: string;
+  replies: Comment[];
+}
+interface Issue {
+  id: number;
+  title: string;
+  created: Date;
+  closed: Date | null;
+  comments: Comment[];
+}
+const comment = (id: number, depth: number): Comment => ({
+  id,
+  at: new Date(1_700_000_000_000 + id * 86_400_123),
+  body: "text " + id,
+  replies: depth ? [comment(id * 2 + 1, depth - 1), comment(id * 2 + 2, depth - 1)] : [],
+});
+const issue: Issue = { id: 1, title: "an issue", created: new Date(0), closed: null, comments: [comment(1, 2)] };
+const say = (name: string, run: () => unknown) => {
+  let said: string;
+  try {
+    said = String(run());
+  } catch (error) {
+    said = "throws " + (error as Error).name + ": " + (error as Error).message;
+  }
+  console.log(name + ": " + said);
+};
+const times = [
+  0,
+  1,
+  -1,
+  999,
+  -999,
+  1000,
+  86_399_999,
+  -86_400_001,
+  951_782_400_000,
+  1_709_164_800_000,
+  253_402_300_799_999,
+  253_402_300_800_000,
+  -62_167_219_200_000,
+  -62_167_219_200_001,
+  8.64e15,
+  -8.64e15,
+  8.64e15 + 1,
+  NaN,
+  Infinity,
+  1.5,
+  -0,
+];
+say("typed", () => JSON.stringify(issue));
+say("typed, indented", () => JSON.stringify(issue, null, 2));
+say("times", () => JSON.stringify(times.map(time => new Date(time))));
+say("times in objects", () => JSON.stringify(times.map(time => ({ at: new Date(time), time }))));
+say("alone", () => JSON.stringify(new Date(1234567890123)));
+say("alone, invalid", () => JSON.stringify(new Date(NaN)));
+say("a wide string beside it", () => JSON.stringify({ text: "中文 😀", at: new Date(5) }));
+say("set later", () => {
+  const date = new Date(0);
+  date.setUTCFullYear(2030, 1, 28);
+  date.setUTCHours(23, 59, 59, 7);
+  const first = JSON.stringify([date]);
+  date.setTime(NaN);
+  return first + JSON.stringify([date]);
+});
+say("many", () => JSON.stringify(Array.from({ length: 3000 }, (_, at) => new Date(at * 1e9))).length);
+
+const log: string[] = [];
+const own = (name: string | symbol, value: unknown) => {
+  const date = new Date(7);
+  Object.defineProperty(date, name, { value, configurable: true, writable: true, enumerable: false });
+  return date;
+};
+say("own toJSON", () =>
+  JSON.stringify({
+    at: own("toJSON", function (this: Date, key: string) {
+      return "own " + key + " " + this.getTime();
+    }),
+  }),
+);
+say("own toJSON that is no function", () => JSON.stringify({ at: own("toJSON", 1) }));
+say("own toISOString", () => JSON.stringify({ at: own("toISOString", () => "own text") }));
+say("own toISOString that is no function", () => JSON.stringify({ at: own("toISOString", 1) }));
+say("own valueOf", () => JSON.stringify({ at: own("valueOf", () => NaN) }));
+say("own Symbol.toPrimitive", () => JSON.stringify({ at: own(Symbol.toPrimitive, () => Infinity) }));
+say("another own property", () => JSON.stringify({ at: own("extra", 1) }));
+say("an enumerable own property", () => {
+  const date = new Date(8) as Date & { extra?: number };
+  date.extra = 1;
+  return JSON.stringify([date]);
+});
+say("frozen", () => JSON.stringify([Object.freeze(new Date(9))]));
+say("no prototype", () => JSON.stringify([Object.setPrototypeOf(new Date(10), null)]));
+say("another prototype", () =>
+  JSON.stringify([
+    Object.setPrototypeOf(new Date(11), {
+      toJSON() {
+        return "of another prototype";
+      },
+    }),
+  ]),
+);
+class Plain extends Date {}
+class Speaking extends Date {
+  toJSON(): string {
+    return "speaking " + this.getTime();
+  }
+}
+class Texted extends Date {
+  toISOString(): string {
+    return "texted " + this.getTime();
+  }
+}
+say("subclasses", () => JSON.stringify([new Plain(12), new Speaking(13), new Texted(14)]));
+say(
+  "a replacer sees the text",
+  () =>
+    JSON.stringify({ at: new Date(15) }, (key, value) => (log.push(key + " " + typeof value), value)) +
+    " " +
+    log.splice(0).join(),
+);
+
+say("at the end", () => JSON.stringify(issue).length + " " + JSON.stringify([new Date(22)]));
+//// json-stringify-with-a-replacer-that-changes-the-object.ts
+// JSON.stringify with a replacer walks the fields of a compiled object as they were listed when the walk began, and reads each when its turn comes:
+// what the replacer or a toJSON does to the object in between is seen as the language says.
+const launder = new Function("value", process.argv[2] ?? "return value") as <V>(value: V) => V;
+const seen: unknown[] = [];
+function note(value: unknown): void { seen.push(value === undefined ? "undefined" : value); }
+class Record4 { a = 1; b = "two"; c: unknown = true; d: unknown = null; }
+type Loose = Record<string, unknown>;
+
+note(JSON.stringify(new Record4(), (key, value) => value));
+note(JSON.stringify(launder(new Record4()), (key, value) => typeof value === "number" ? value + 1 : value));
+note(JSON.stringify(new Record4(), (key, value) => key === "b" ? undefined : value));
+note(JSON.stringify(new Record4(), (key, value) => key === "c" && value === true ? { nested: Object.assign(new Record4(), { c: false }) } : value, 1));
+note(JSON.stringify(new Record4(), function (this: Loose, key, value) { if (key === "a") this.c = "changed"; return value; }));
+note(JSON.stringify(new Record4(), function (this: Loose, key, value) { if (key === "a") delete this.c; return value; }));
+note(JSON.stringify(new Record4(), function (this: Loose, key, value) { if (key === "a") this.e = "added"; return value; }));
+note(JSON.stringify(new Record4(), function (this: Loose, key, value) { if (key === "a") { delete this.b; this.b = "again"; } return value; }));
+note(JSON.stringify(new Record4(), function (this: Loose, key, value) { if (key === "a") Object.defineProperty(this, "d", { get() { return "got"; }, enumerable: true, configurable: true }); return value; }));
+note(JSON.stringify(new Record4(), function (this: Loose, key, value) { if (key === "a") Object.defineProperty(this, "d", { value: "hidden", enumerable: false }); return value; }));
+note(JSON.stringify(new Record4(), function (this: Loose, key, value) { if (key === "a") this.b = 5; return value; }));
+note(JSON.stringify(new Record4(), function (this: Loose, key, value) { if (key === "b") Object.freeze(this); return value; }));
+note(JSON.stringify(new Record4(), function (this: Loose, key, value) { if (key === "a") Object.setPrototypeOf(this, { c: "inherited" }); if (key === "b") delete this.c; return value; }));
+class WithToJSON { a = 1; inner = new Record4(); toJSON(key: string): unknown { return { key, a: this.a, inner: this.inner }; } }
+note(JSON.stringify({ first: new WithToJSON(), list: [new WithToJSON()] }, (key, value) => value));
+class Changes { a = 1; b: { toJSON(): unknown }; c = 3; constructor() { this.b = { toJSON: () => { (this as unknown as Loose).c = "by toJSON"; return "b"; } }; } }
+note(JSON.stringify(new Changes())); note(JSON.stringify(new Changes(), (key, value) => value)); note(JSON.stringify(new Changes(), null, "\t"));
+class Odd { "quo\"te" = 1; "new\nline" = 2; "é" = 3; "中" = 4; [Symbol.iterator] = 5; 7 = "index"; plain = 6; }
+note(JSON.stringify(new Odd(), (key, value) => value)); note(JSON.stringify(launder(new Odd()), (key, value) => value, 2));
+const keys: string[] = [];
+JSON.stringify(launder({ x: new Record4(), y: [new Record4()] }), function (key, value) { keys.push(key); return value; });
+note(keys.join());
+note(JSON.stringify(new Record4(), ["d", "a", "missing"])); note(JSON.stringify([new Record4(), new Record4()], ["b"]));
+let total = 0;
+for (let i = 0; i < 300; i++) total += JSON.stringify(launder([new Record4(), new Record4(), { a: i }]), (key, value) => value).length;
+note(total);
+console.log(seen.join("\n"));
+//// literal-cast-into-node-types.ts
+// An object literal that is cast into a family of node types does not change what is known about the required fields of that family.
+enum K { A = 1, B = 2 }
+interface N { kind: K; pos: number; end: number; parent: N }
+interface A extends N { kind: K.A; left: N }
+interface B extends N { kind: K.B; text: string }
+function NCtor(this: N, kind: K, pos: number, end: number) { this.pos = pos; this.end = end; this.kind = kind; this.parent = undefined! }
+const allocator = { get: () => NCtor as any as new (kind: K, pos: number, end: number) => N }
+let Ctor: new (kind: K, pos: number, end: number) => N
+const base = <T extends N>(kind: T["kind"]) => new (Ctor || (Ctor = allocator.get()))(kind, -1, -1) as T
+const makeA = (left: N) => { const a = base<A>(K.A); a.left = left; left.parent = a; return a }
+const makeB = (text: string) => { const b = base<B>(K.B); b.text = text; return b }
+const show = (n: N): string => (n.kind === K.A ? "(" + show((n as A).left) + ")" : (n as B).text) + ":" + (n.end - n.pos)
+const fake = { text: "fake" } as B
+console.log(show(makeA(makeA(makeB("real")))), fake.text, JSON.stringify(Object.keys(fake)), "kind" in fake, JSON.stringify(Object.keys(makeB("x"))))
+
+interface P { o: number[]; u: number; v: number; w: number }
+interface Q extends P { x?: number }
+function PCtor(this: P, o: number[], u: number) { this.o = o; this.u = u; this.v = 2; this.w = 3 }
+const PC = PCtor as any as new (o: number[], u: number) => P
+const half = { o: [1], u: 7 } as Q
+const whole = new PC([1], 1) as Q
+console.log(half.u, JSON.stringify(Object.keys(half)), "v" in half, whole.u + whole.v + whole.w, JSON.stringify(Object.keys(whole)))
+//// literal-fields-the-program-never-compares-convert.ts
+// Objects built member by member in untyped code are read through a record type with a field whose type is a union of string literals that the program never compares with anything. A text passes however it was made, of the union or outside it: a literal type promises the kind, string. A number throws where typed code reads the field, and the object stays as it was.
+type State = "open" | "closed" | "";
+type Author = { login: string };
+type Hit = { id: number; state: State; author: Author; note?: "a" | "b" };
+
+const makeAuthor = (login: string): Author => ({ login });
+const makeHit = (id: number, author: Author): Hit => ({ id, state: "open", author });
+const read = (hit: Hit) => hit.id + ":" + hit.state + ":" + hit.state.length + ":" + hit.author.login + ":" + hit.note;
+////= attempt
+function grow(id: number, state: unknown, author: Author, note: unknown): any {
+  const hit: any = { id };
+  hit.state = state;
+  hit.author = author;
+  if (note !== 0) hit.note = note;
+  return hit;
+}
+
+const author = makeAuthor("u");
+console.log(read(makeHit(1, author)));
+const texts = ["open", "closed", ""];
+let lengths = 0;
+const kept: any[] = [];
+for (let i = 0; i < 3000; i++) {
+  const made = "cl" + "osed".slice(0, 4);
+  const hit = grow(i, i % 5 === 4 ? made : texts[i % 3], author, i % 2 ? "a" : 0);
+  kept.push(hit);
+  lengths += read(hit).length;
+}
+console.log(lengths);
+for (const i of [0, 1, 2, 4, 2999]) console.log(JSON.stringify(kept[i]), Object.keys(kept[i]).join(), read(kept[i]));
+for (const [name, state, note] of [
+  ["a text outside the union", "other", 0],
+  ["a longer text", "opened for good", 0],
+  ["a text that begins alike", "open ", 0],
+  ["a number", 5, 0],
+  ["null", null, 0],
+  ["undefined", undefined, 0],
+  ["a note outside the union", "open", "c"],
+  ["a note that is undefined", "open", undefined],
+  ["not Latin-1", "opėn", 0],
+] as [string, unknown, unknown][]) {
+  const hit = grow(7, state, author, note);
+  console.log(name + ":", attempt(() => read(hit)), JSON.stringify(hit));
+}
+console.log(attempt(() => { kept[0].state = "closed"; return read(kept[0]); }), attempt(() => { kept[0].state = "other"; return read(kept[0]); }));
+//// literals-in-both-then-callbacks.ts
+// The two callbacks of one .then() each make a literal; the promises go through Promise.all; the elements are stored into a loop variable whose type is the union of the two records.
+import { stat } from 'node:fs/promises'
+
+async function existing(candidates: string[]): Promise<string[]> {
+  const probes = await Promise.all(
+    candidates.map(dir =>
+      stat(dir).then(
+        () => ({ dir, exists: true as const }),
+        (error: unknown) => ({ dir, exists: false as const, error }),
+      ),
+    ),
+  )
+  const dirs: string[] = []
+  for (const probe of probes) {
+    const { dir } = probe
+    if (probe.exists) {
+      dirs.push(dir)
+      continue
+    }
+    const e = probe.error
+    dirs.push('no ' + dir + ' ' + (e instanceof Error))
+  }
+  return dirs
+}
+
+console.log((await existing(['/', '/no-such-folder-here', '/tmp'])).join(' | '))
+//// members-computed-from-dts-types/host.d.ts
+// What a package's declaration file says of the host's settings, for main.ts.
+export type Port = number;
+export type Stringify<T> = { [K in keyof T]: string };
+//// members-computed-from-dts-types/main.ts
+// A member whose type a spread or a mapped type computes from a type in a declaration file is not tested: the declaration file may be wrong.
+import type { Port, Stringify } from "./host";
+const input: any = { a: 5, port: "eighty" };
+const row = (name: string, f: () => unknown) => { let r: unknown; try { r = f(); } catch (e) { r = "THROWS " + (e as Error).message.split(" (bun")[0]; } console.log(name + ": " + JSON.stringify(r)); };
+const kind = (v: unknown) => typeof v + " " + JSON.stringify(v);
+interface Config { a: number }
+interface Settings { port: Port }
+interface Ports { [name: string]: Port }
+row("a spread of a mapped type from the declaration file", () => { const stringified: Stringify<Config> = input; const copy = { ...stringified }; return kind(copy.a); });
+row("a spread of an interface", () => { const settings: Settings = input; const copy = { ...settings }; return kind(copy.port); });
+row("a library mapped type", () => { const settings: Partial<Settings> = input; return kind(settings.port); });
+row("a library mapped type over an index signature", () => { const ports: Readonly<Ports> = input; return kind(ports.port); });
+row("a mapped type in the program", () => { const ports: { [K in keyof Settings]: Port } = input; return kind(ports.port); });
+row("a member typed by the program alone", () => { const config: Partial<Config> = { a: 1 }; const copy = { ...config }; return kind(copy.a); });
+//// method-type-arg-checked-by-untyped-package/main.ts
+// A generic async method keeps its resolver in a map; another method settles it later with what an untyped package's parse() returns. The caller, a method of the same class, awaits it with an explicit type argument that is a record type. Nothing in the program creates an object of that type; its only namesake is the literal handed to the untyped package. The answer matches the type and must be accepted, as in plain Bun.
+import { any, object, type Schema } from './schema.js'
+type Message = { id?: number; method?: string; result?: unknown }
+type Pending<T> = { resolve: (result: T) => void; reject: (error: unknown) => void; schema?: Schema }
+
+class Wire {
+  private readonly pending = new Map<string, Pending<unknown>>()
+  private next = 0
+
+  arrive(line: string): void {
+    const message = JSON.parse(line)
+    const waiting = this.pending.get(message.request_id)
+    if (!waiting) return
+    this.pending.delete(message.request_id)
+    if (message.subtype === 'error') return waiting.reject(new Error(message.error))
+    const result = message.response ?? {}
+    try {
+      waiting.resolve(waiting.schema ? waiting.schema.parse(result) : {})
+    } catch (error) {
+      waiting.reject(error)
+    }
+  }
+
+  private async send<Response>(request: { kind: string; body: unknown }, schema: Schema, { id = 'r' + this.next++ }: { id?: string } = {}): Promise<Response> {
+    if (request.kind === '') throw new Error('no kind')
+    Promise.resolve().then(() => this.arrive('{"request_id": "' + id + '", "subtype": "success", "response": {"reply": {"id": 7, "result": ' + JSON.stringify(request.body) + '}}}'))
+    try {
+      return await new Promise<Response>((resolve, reject) => {
+        this.pending.set(id, { resolve: result => resolve(result as Response), reject, schema })
+      })
+    } finally {
+      this.pending.delete(id)
+    }
+  }
+
+  async ask(name: string, message: Message): Promise<Message> {
+    const response = await this.send<{ reply: Message }>({ kind: 'ask', body: { name, message } }, object({ reply: any() as Schema<Message> }))
+    return response.reply
+  }
+}
+console.log(JSON.stringify(await new Wire().ask('n', { id: 1, method: 'm' })))
+//// method-type-arg-checked-by-untyped-package/schema.d.ts
+export type Schema<T = unknown> = { parse(given: unknown): T }
+export function object(shape: Record<string, Schema>): Schema
+export function any(): Schema<any>
+//// method-type-arg-checked-by-untyped-package/schema.js
+export function object(shape) {
+  return {
+    parse(given) {
+      const out = {}
+      for (const key of Object.keys(shape)) if (key in given) out[key] = given[key]
+      return out
+    },
+  }
+}
+export function any() {
+  return { parse: given => given }
+}
+//// method-type-arg-from-async-generator.ts
+// A method of a class passes a record type as an explicit type argument to a generic function to an async generator. Nothing in the program creates an object of that type, and the only cast is `as R` inside the generic function. Data from JSON.parse that matches the type must be accepted, as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+type Waiting = { resolve: (result: unknown) => void; reject: (error: unknown) => void }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; a = 5; b = 6; c = 7; d = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.a + unrelated.b + unrelated.c + unrelated.d < 0) console.log('never')
+const waiting = new Map<number, Waiting>()
+const seen: unknown[] = []
+let next = 0
+////= arrive-2
+async function* each<R>(texts: string[]): AsyncGenerator<R> { for (const text of texts) yield JSON.parse(text) as R }
+class Caller { async ask() { const out: Part[] = []; for await (const one of each<{ k: Part }>(['{"k": {"id": 1}}'])) out.push(one.k); return out } }
+console.log(JSON.stringify(await new Caller().ask()))
+//// method-type-arg-frozen.ts
+// A method of a class passes a record type as an explicit type argument to a generic function and the data is frozen. Nothing in the program creates an object of that type, and the only cast is `as R` inside the generic function. Data from JSON.parse that matches the type must be accepted, as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+type Waiting = { resolve: (result: unknown) => void; reject: (error: unknown) => void }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; a = 5; b = 6; c = 7; d = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.a + unrelated.b + unrelated.c + unrelated.d < 0) console.log('never')
+const waiting = new Map<number, Waiting>()
+const seen: unknown[] = []
+let next = 0
+////= arrive-2
+function frozen<R>(text: string): Promise<R> { return Promise.resolve(Object.freeze(JSON.parse(text)) as R) }
+class Caller { async ask() { const answer = await frozen<{ k: Part }>('{"k": {"id": 1}}'); return [answer.k, Object.isFrozen(answer)] } }
+console.log(JSON.stringify(await new Caller().ask()))
+//// method-type-arg-generic-class-argument.ts
+// A method of a class passes a record type as an explicit type argument to a generic function as the type argument of a generic class that stores the data in a field. Nothing in the program creates an object of that type, and the only cast is `as R` inside the generic function. Data from JSON.parse that matches the type must be accepted, as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+type Waiting = { resolve: (result: unknown) => void; reject: (error: unknown) => void }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; a = 5; b = 6; c = 7; d = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.a + unrelated.b + unrelated.c + unrelated.d < 0) console.log('never')
+const waiting = new Map<number, Waiting>()
+const seen: unknown[] = []
+let next = 0
+////= arrive-2
+class Box<R> { value: R | undefined; fill(text: string): void { this.value = JSON.parse(text) as R } }
+class Caller { async ask() { const box = new Box<{ k: Part }>(); box.fill('{"k": {"id": 1}}'); return box.value!.k } }
+console.log(JSON.stringify(await new Caller().ask()))
+//// method-type-arg-through-async-wrapper.ts
+// A method of a class passes a record type as an explicit type argument to a generic function through a second generic function that is async. Nothing in the program creates an object of that type, and the only cast is `as R` inside the generic function. Data from JSON.parse that matches the type must be accepted, as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+type Waiting = { resolve: (result: unknown) => void; reject: (error: unknown) => void }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; a = 5; b = 6; c = 7; d = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.a + unrelated.b + unrelated.c + unrelated.d < 0) console.log('never')
+const waiting = new Map<number, Waiting>()
+const seen: unknown[] = []
+let next = 0
+////= arrive-2
+async function send<R>(text: string): Promise<R> { return await later<R>(text) }
+class Caller { async ask() { const answer = await send<{ k: Part }>('{"k": {"id": 1}}'); return answer.k } }
+console.log(JSON.stringify(await new Caller().ask()))
+//// method-type-arg-via-interface.ts
+// A method of a class passes a record type as an explicit type argument to a generic function through a method that is only known by its interface. Nothing in the program creates an object of that type, and the only cast is `as R` inside the generic function. Data from JSON.parse that matches the type must be accepted, as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+type Waiting = { resolve: (result: unknown) => void; reject: (error: unknown) => void }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; a = 5; b = 6; c = 7; d = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.a + unrelated.b + unrelated.c + unrelated.d < 0) console.log('never')
+const waiting = new Map<number, Waiting>()
+const seen: unknown[] = []
+let next = 0
+////= arrive-2
+interface Sender { send<R>(text: string): Promise<R> }
+const sender: Sender = { send<R>(text: string): Promise<R> { return later<R>(text) } }
+class Caller { async ask() { const answer = await sender.send<{ k: Part }>('{"k": {"id": 1}}'); return answer.k } }
+console.log(JSON.stringify(await new Caller().ask()))
+//// method-type-arg-with-accessor.ts
+// A method of a class passes a record type as an explicit type argument to a generic function and the member is an accessor. Nothing in the program creates an object of that type, and the only cast is `as R` inside the generic function. Data from JSON.parse that matches the type must be accepted, as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+type Waiting = { resolve: (result: unknown) => void; reject: (error: unknown) => void }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; a = 5; b = 6; c = 7; d = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.a + unrelated.b + unrelated.c + unrelated.d < 0) console.log('never')
+const waiting = new Map<number, Waiting>()
+const seen: unknown[] = []
+let next = 0
+////= arrive-2
+function computed<R>(): Promise<R> { const made: any = {}; Object.defineProperty(made, "k", { get() { return { id: 1 } }, enumerable: true }); return Promise.resolve(made as R) }
+class Caller { async ask() { const answer = await computed<{ k: Part }>(); return answer.k } }
+console.log(JSON.stringify(await new Caller().ask()))
+//// method-type-arg-without-prototype.ts
+// A method of a class passes a record type as an explicit type argument to a generic function and the object has no prototype. Nothing in the program creates an object of that type, and the only cast is `as R` inside the generic function. Data from JSON.parse that matches the type must be accepted, as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+type Waiting = { resolve: (result: unknown) => void; reject: (error: unknown) => void }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; a = 5; b = 6; c = 7; d = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.a + unrelated.b + unrelated.c + unrelated.d < 0) console.log('never')
+const waiting = new Map<number, Waiting>()
+const seen: unknown[] = []
+let next = 0
+////= arrive-2
+function bare<R>(): Promise<R> { const made: any = Object.create(null); made.k = { id: 1 }; return Promise.resolve(made as R) }
+class Caller { async ask() { const answer = await bare<{ k: Part }>(); return [answer.k, Object.getPrototypeOf(answer)] } }
+console.log(JSON.stringify(await new Caller().ask()))
+//// mutually-recursive-records-accept-untyped.ts
+// Record types that hold each other through arrays, dictionaries, maps and unions. Untyped values enter at each of them in turn, in several functions, so what stays untyped within a type is asked from many starting points that lead to the same records. Objects the program makes itself go the same ways. The output must match plain Bun.
+interface Branch { name: string; twigs: Twig[]; parent?: Branch }
+interface Twig { length: number; leaves: Leaf[]; branch?: Branch }
+interface Leaf { color: string; twig?: Twig; veins: { [name: string]: Vein } }
+interface Vein { width: number; next: Vein | null; leaf?: Leaf }
+type Either = { kind: "branches"; held: Branch[] } | { kind: "twigs"; held: Twig[]; more: number };
+interface Wide { a: number; b: number; c: number; d: number; e: number; f: number; g: number; inner: Wide[] }
+
+////= lines-5	parse	any
+
+function widthOf(vein: Vein | null): number {
+  let sum = 0;
+  for (let at = vein; at; at = at.next) sum += at.width;
+  return sum;
+}
+
+function describeLeaf(leaf: Leaf): string {
+  const names = Object.keys(leaf.veins).sort();
+  return `${typeof leaf.color}:${leaf.color}[${names.map(name => `${name}=${widthOf(leaf.veins[name])}`).join(",")}]`;
+}
+
+function describeTwig(twig: Twig): string {
+  return `${twig.length}(${twig.leaves.map(describeLeaf).join(" ")})`;
+}
+
+function describeBranch(branch: Branch): string {
+  return `${branch.name}<${branch.twigs.map(describeTwig).join("|")}>${branch.parent ? "^" + branch.parent.name : ""}`;
+}
+
+function describeEither(either: Either): string {
+  return either.kind === "branches" ? either.held.map(describeBranch).join(";") : `${either.more}:${either.held.map(describeTwig).join(";")}`;
+}
+
+function sumOfWide(wide: Wide): number {
+  return wide.a + wide.b + wide.c + wide.d + wide.e + wide.f + wide.g + wide.inner.reduce((sum, inner) => sum + sumOfWide(inner), 0);
+}
+
+const leafText = '{"color":"green","veins":{"x":{"width":1,"next":{"width":2,"next":null}},"y":{"width":5,"next":null}}}';
+const twigText = `{"length":2,"leaves":[${leafText},{"color":"brown","veins":{}}]}`;
+const branchText = `{"name":"low","twigs":[${twigText}],"parent":{"name":"trunk","twigs":[]}}`;
+
+function enterAtBranch(): void {
+  const branch: Branch = parse(branchText);
+  console.log(describeBranch(branch));
+}
+
+function enterAtTwig(): void {
+  const twig: Twig = parse(twigText);
+  console.log(describeTwig(twig));
+  const twigs: Twig[] = parse(`[${twigText},${twigText}]`);
+  console.log(twigs.map(describeTwig).join(" & "));
+}
+
+function enterAtLeaf(): void {
+  const leaves = new Map<string, Leaf>();
+  leaves.set("parsed", parse(leafText));
+  leaves.set("made", { color: "red", veins: { z: { width: 3, next: null } } });
+  for (const [name, leaf] of leaves) console.log(name, describeLeaf(leaf));
+}
+
+function enterAtVein(): void {
+  const veins: { [name: string]: Vein } = parse('{"p":{"width":4,"next":{"width":4,"next":{"width":4,"next":null}}}}');
+  console.log(widthOf(veins.p));
+  const own: Vein = { width: 1, next: null };
+  own.next = parse('{"width":10,"next":null}');
+  console.log(widthOf(own));
+}
+
+function enterAtEither(): void {
+  const first: Either = parse(`{"kind":"branches","held":[${branchText}]}`);
+  const second: Either = parse(`{"kind":"twigs","held":[${twigText}],"more":9}`);
+  const third: Either = { kind: "twigs", held: [{ length: 1, leaves: [] }], more: 1 };
+  for (const either of [first, second, third]) console.log(describeEither(either));
+}
+
+function enterAtWide(): void {
+  const wide: Wide = parse('{"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"inner":[{"a":1,"b":1,"c":1,"d":1,"e":1,"f":1,"g":1,"inner":[]}]}');
+  console.log(sumOfWide(wide));
+  const list: Wide[] = [wide, { a: 0, b: 0, c: 0, d: 0, e: 0, f: 0, g: 1, inner: [] }];
+  console.log(list.map(sumOfWide).join(","));
+}
+
+function madeHere(): void {
+  const trunk: Branch = { name: "trunk", twigs: [] };
+  const leaf: Leaf = { color: "gold", veins: {} };
+  const twig: Twig = { length: 3, leaves: [leaf], branch: trunk };
+  leaf.twig = twig;
+  leaf.veins.only = { width: 8, next: null, leaf };
+  trunk.twigs.push(twig);
+  const high: Branch = { name: "high", twigs: [twig], parent: trunk };
+  console.log(describeBranch(trunk), describeBranch(high), leaf.veins.only.leaf === leaf, twig.branch === trunk);
+}
+
+enterAtBranch();
+enterAtTwig();
+enterAtLeaf();
+enterAtVein();
+enterAtEither();
+enterAtWide();
+madeHere();
+enterAtVein();
+enterAtBranch();
+//// name-narrowed-to-tainted-type.ts
+// A value that was checked against its type where it was created keeps that type although a type guard later narrows a variable for it to another type.
+type Child = { d: PropertyDescriptor | null }
+type Alike = { get: () => string }
+function guard(d: PropertyDescriptor): d is PropertyDescriptor & { get(): string } { return typeof d.get === "function" }
+function tell(child: Child): string {
+  const once = () => {
+    const s = child.d!
+    if (guard(s)) { return "get " + s.get() } else { return "none " + s.value }
+  }
+  return once()
+}
+const alike = JSON.parse('{}') as Alike
+const given = JSON.parse('{"d":{"value":"v"}}') as Child
+console.log(typeof alike.get, tell(given), tell({ d: { get: () => "g" } }))
+//// names-next-to-index-signature.ts
+// The program adds named, required members to NodeJS.ProcessEnv, as everybody does. No real environment holds them all. A type with an index signature is a dictionary: a name declared beside the signature is what a read may expect, never a demand.
+declare global { namespace NodeJS { interface ProcessEnv { APP_MODE: string; REQUEST_LIMIT_MS: string; MY_FLAG?: "0" | "1" } } }
+const row = (name: string, f: () => unknown) => { let r: unknown; try { r = f(); } catch (e) { r = "THROWS " + (e as Error).message.split(" (bun")[0].split("\n").join(" ~ "); } console.log(name + ": " + (typeof r === "string" ? r : JSON.stringify(r))); };
+const only = (env: Record<string, string | undefined>) => Object.keys(env).filter(name => /^(X|Y|APP_MODE|REQUEST_LIMIT_MS|MY_FLAG)$/.test(name)).sort().map(name => name + "=" + env[name]).join();
+for (const name of ["APP_MODE", "REQUEST_LIMIT_MS", "MY_FLAG", "X", "Y"]) delete (process.env as Record<string, string | undefined>)[name];
+function withX(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv { return { ...base, X: "1" }; }
+function fromProcess(): NodeJS.ProcessEnv { return { ...process.env, X: "1" }; }
+function fromBun(): NodeJS.ProcessEnv { return { ...Bun.env, X: "1" }; }
+function fresh(): NodeJS.ProcessEnv { const made: Record<string, string> = { X: "1" }; return made as NodeJS.ProcessEnv; }
+function copied(): NodeJS.ProcessEnv { const copy = { ...process.env }; copy.Y = "2"; return copy; }
+function assigned(): NodeJS.ProcessEnv { return Object.assign({}, process.env, { X: "1" }); }
+function takes(env: NodeJS.ProcessEnv) { return only(env); }
+row("a declared result, a spread of a parameter", () => only(withX(process.env)));
+row("a declared result, a spread of process.env", () => only(fromProcess()));
+row("a declared result, a spread of Bun.env", () => only(fromBun()));
+row("as NodeJS.ProcessEnv", () => only(fresh()));
+row("a copy, stored to, returned", () => only(copied()));
+row("Object.assign", () => only(assigned()));
+row("a spread of a spread", () => only(withX(withX(fromProcess()))));
+row("into a variable", () => { const env: NodeJS.ProcessEnv = { ...process.env, X: "1" }; return only(env); });
+row("an argument", () => takes({ ...process.env, X: "1" }));
+row("process.env itself an argument", () => takes(process.env));
+row("a required name that is not there is read", () => [typeof process.env.APP_MODE, typeof withX(process.env).APP_MODE, typeof fromProcess().REQUEST_LIMIT_MS]);
+row("and used", () => { const env = fromProcess(); return [(env.APP_MODE ?? "none"), env.APP_MODE === "production", String(env.REQUEST_LIMIT_MS), Number(env.REQUEST_LIMIT_MS || 5)]; });
+row("stored, read, deleted", () => { const env = fromProcess(); env.APP_MODE = "test"; const was = env.APP_MODE; delete (env as Record<string, string | undefined>).APP_MODE; return [was, typeof env.APP_MODE, "APP_MODE" in env]; });
+row("handed to spawnSync({ env })", () => Bun.spawnSync({ cmd: ["/bin/sh", "-c", "echo $X $APP_MODE"], env: withX(process.env) }).stdout.toString().trim());
+row("handed to spawnSync({ env }) as a literal", () => Bun.spawnSync({ cmd: ["/bin/sh", "-c", "echo $X $APP_MODE"], env: { ...process.env, X: "1" } }).stdout.toString().trim());
+row("import.meta.env", () => { const env: NodeJS.ProcessEnv = { ...import.meta.env, X: "1" }; return only(env); });
+row("a literal with every declared name", () => { const full: NodeJS.ProcessEnv = { APP_MODE: "test", REQUEST_LIMIT_MS: "1" }; full.X = "1"; return [only(full), only(withX(full)), takes(full)]; });
+interface Table { [name: string]: number; total: number }
+function table(more: Record<string, number>): Table { return { ...more } as Table; }
+function tableOf(data: unknown): Table { return data as Table; }
+row("a dictionary of the program's with a declared name: a cast", () => [JSON.stringify(table({ a: 1 })), Object.keys(table({ a: 1 })), table({ total: 3 }).total]);
+row("a dictionary of the program's: data from outside", () => { const t = tableOf(JSON.parse('{"a":1}')); return [JSON.stringify(t), "total" in t, t.a]; });
+row("a dictionary of the program's: a literal with the name", () => { const t: Table = { total: 1, b: 2 }; t.c = 3; return [JSON.stringify(t), t.total + t.b + t.c]; });
+//// namespace-member-read-as-record.ts
+// `Math` and `JSON` are native objects. They are read from `globalThis` through a type literal that lists one method of each.
+const host = globalThis as {
+  readonly Math: { readonly max: (a: number, b: number) => number }
+  readonly JSON: { readonly stringify: (value: unknown) => string }
+}
+function box<Max>(max: Max): { readonly max: Max } {
+  return { max }
+}
+function text<Stringify>(stringify: Stringify): { readonly stringify: Stringify } {
+  return { stringify }
+}
+console.log(host.Math.max(1, 2), host.JSON.stringify([1]), box(3).max, text('t').stringify)
+//// native-objects-inside-untyped-containers.ts
+// A native object that has the members a type requires is accepted as that type, including when it arrives inside a container from untyped code.
+// Each function writes `{ length: number }` again, so each one is checked on its own. One object literal of the program fits them all.
+const own = { length: 7 };
+console.log("own", own.length);
+
+function untyped(value: unknown): any {
+  (globalThis as any).stash = value;
+  return (globalThis as any).stash;
+}
+
+function ofArray(list: { length: number }[]) {
+  let total = 0;
+  for (const item of list) total += item.length;
+  return total;
+}
+function ofIterable(list: Iterable<{ length: number }>) {
+  let total = 0;
+  for (const item of list) total += item.length;
+  return total;
+}
+function spread(list: Iterable<{ length: number }>) {
+  return [...list].map(item => item.length).join();
+}
+function ofIterator(steps: Iterator<{ length: number }>) {
+  return steps.next().value.length;
+}
+function ofSet(set: Set<{ length: number }>) {
+  let total = 0;
+  for (const item of set) total += item.length;
+  return total;
+}
+function ofMap(map: Map<string, { length: number }>) {
+  return map.get("key")!.length;
+}
+function ofRecord(record: Record<string, { length: number }>) {
+  return record.key.length;
+}
+function ofFunction(make: () => { length: number }) {
+  return make().length;
+}
+async function ofPromise(promise: Promise<{ length: number }>) {
+  return (await promise).length;
+}
+////= lines-3	ofAsyncIterable	list	item
+async function* later(value: unknown) {
+  yield value;
+}
+
+const values: [string, unknown][] = [
+  ["a typed array", new Uint8Array(3)],
+  ["a Buffer", Buffer.from("four")],
+  ["an array", [1, 2]],
+  ["a string", "text!"],
+  ["a function", function (a: number, b: number, c: number) {}],
+  ["an object of the program", own],
+  ["an object of untyped code", JSON.parse('{ "length": 9 }')],
+];
+for (const [what, value] of values) {
+  console.log(
+    what + ":",
+    ofArray(untyped([value])),
+    ofIterable(untyped([value])),
+    ofIterable(untyped(new Set([value]))),
+    spread(untyped([value, value])),
+    ofIterator(untyped([value].values())),
+    ofSet(untyped(new Set([value]))),
+    ofMap(untyped(new Map([["key", value]]))),
+    ofRecord(untyped({ key: value })),
+    ofFunction(untyped(() => value)),
+    await ofPromise(untyped(Promise.resolve(value))),
+    await ofAsyncIterable(untyped(later(value))),
+  );
+}
+
+// The function itself is passed to untyped code, which calls it with its own values.
+console.log("by map", (await Promise.all(untyped([later(new Uint8Array(5)), later("ab")]).map(ofAsyncIterable))).join());
+console.log("a stream", await ofAsyncIterable(untyped(new Response("hello").body)));
+
+// A stream typed by the host's own declarations.
+////= lines-3	ofStream	list	item
+console.log("a stream, as the host declares it", await ofStream(new Response("hello!").body!));
+//// nested-plain-objects-convert-children-first.ts
+// Plain objects that hold plain objects, and arrays of plain objects, are read through record types: each stays the same object, a cycle and a shared child come out right, a member of the wrong kind throws where typed code reads it, and untyped code may store anything into any of them afterwards.
+type Customer = { id: number; name: string };
+type Item = { sku: string; quantity: number };
+type Order = { customer: Customer; items: Item[]; coupon?: string };
+type Node_ = { n: number; next: Node_ | null };
+
+function makeOrder(i: number): Order {
+  return { customer: { id: i, name: "made" }, items: [{ sku: "m", quantity: i }], coupon: "C" };
+}
+function makeNode(n: number): Node_ {
+  return { n, next: null };
+}
+function weigh(order: Order): number {
+  let sum = order.customer.id + order.customer.name.length;
+  for (const item of order.items) sum += item.sku.length + item.quantity;
+  return sum + (order.coupon === undefined ? 0 : order.coupon.length);
+}
+function walk(node: Node_, steps: number): number {
+  let sum = 0;
+  let at: Node_ | null = node;
+  for (let i = 0; i < steps && at !== null; i++) {
+    sum += at.n;
+    at = at.next;
+  }
+  return sum;
+}
+function grow(i: number): any {
+  return JSON.parse('{"customer":{"id":' + i + ',"name":"name ' + i + '"},"items":[{"sku":"a' + i + '","quantity":' + i + '},{"sku":"b","quantity":2}]}');
+}
+////= attempt
+
+console.log(weigh(makeOrder(1)), walk(makeNode(2), 1));
+let sum = 0;
+const kept: any[] = [];
+for (let i = 0; i < 2000; i++) {
+  const plain = grow(i);
+  const customer = plain.customer;
+  const item = plain.items[0];
+  kept.push(plain);
+  sum += weigh(plain as Order);
+  if (plain.customer !== customer || plain.items[0] !== item) console.log("not the same object", i);
+}
+console.log(sum);
+console.log(JSON.stringify(kept[7]), Object.keys(kept[7].customer).join());
+
+const shared: any = { id: 9 };
+shared.name = "shared";
+const left: any = { customer: shared };
+left.items = [];
+const right: any = { customer: shared };
+right.items = [];
+console.log(weigh(left as Order), weigh(right as Order), left.customer === right.customer);
+
+const a: any = { n: 1 };
+const b: any = { n: 2 };
+a.next = b;
+b.next = a;
+console.log(walk(a as Node_, 5), a.next.next === a);
+
+const badParent: any = { customer: null };
+const goodChild: any = { id: 3 };
+goodChild.name = "child";
+badParent.customer = goodChild;
+badParent.items = 7;
+console.log(attempt(() => weigh(badParent as Order)), goodChild.id, goodChild.name, JSON.stringify(badParent));
+console.log(attempt(() => { goodChild.id = "now text"; return goodChild.id; }));
+
+const badChild: any = { customer: null };
+const wrong: any = { id: "text" };
+wrong.name = "wrong";
+badChild.customer = wrong;
+badChild.items = [];
+console.log(attempt(() => weigh(badChild as Order)), JSON.stringify(badChild));
+
+const mixed = grow(5);
+mixed.items.push({ sku: 1, quantity: "x" });
+console.log(attempt(() => weigh(mixed as Order)), JSON.stringify(mixed.items));
+
+type Strict = { customer: Customer; items: number[] };
+function makeStrict(i: number): Strict {
+  return { customer: { id: i, name: "made" }, items: [i] };
+}
+function weighStrict(strict: Strict): number {
+  return strict.items.length;
+}
+console.log(weighStrict(makeStrict(1)));
+for (let i = 0; i < 100; i++) {
+  const fits: any = { customer: null };
+  const child: any = { id: i };
+  child.name = "fits";
+  fits.customer = child;
+  fits.items = [i];
+  weighStrict(fits as Strict);
+}
+const refused: any = { customer: null };
+const untouched: any = { id: 1 };
+untouched.name = "untouched";
+refused.customer = untouched;
+refused.items = 7;
+console.log(attempt(() => weighStrict(refused as Strict)));
+console.log(attempt(() => { untouched.id = "still plain"; return untouched.id; }));
+//// non-null-on-mistyped-package-value/main.ts
+// The package's declaration file is wrong about what these members hold. Reading them through `!` does not turn the declared types into checks.
+import { find, holder } from "./package.js";
+
+const found = find("a");
+console.log("a method", String(find("a")!.pair()));
+console.log("a method of a variable", String(found!.pair()));
+console.log("a property", String(find("a")!.size));
+console.log("a property of a property", String(holder.inner!.size), String(holder.inner!.pair()));
+console.log("kept", typeof found!.count(), String(found!.count()));
+const right = find("right")!.pair();
+console.log("where the declaration is right", right.length, right[0] instanceof Uint8Array);
+try {
+  find("nothing")!.pair();
+} catch (error) {
+  console.log("nothing there", error instanceof TypeError);
+}
+//// non-null-on-mistyped-package-value/package.d.ts
+export interface Holder {
+  size: number;
+  pair(): [Uint8Array, Uint8Array];
+  count(): number;
+}
+export function find(name: string): Holder | null;
+export const holder: { inner: Holder | null };
+//// non-null-on-mistyped-package-value/package.js
+function make(name) {
+  return {
+    size: name === "right" ? 2 : "size of " + name,
+    pair() {
+      return name === "right" ? [new Uint8Array(1), new Uint8Array(2)] : "pair of " + name;
+    },
+    count() {
+      return "count of " + name;
+    },
+  };
+}
+export function find(name) {
+  return name === "nothing" ? null : make(name);
+}
+export const holder = { inner: make("inner") };
+//// objects-born-by-a-spread-hold-every-kind-of-property.ts
+// A literal that spreads a typed record and defines more properties, one of them read through another property, in a callback whose result has no declared type, enters its record type as it is: whatever kinds those properties have, the object holds what the literal held. `as` converts nothing: a primitive of the wrong kind throws there, and undefined and null stay what they are.
+type State = "open" | "closed";
+interface Author { login: string }
+interface Row { id: number; title: string; state: State; login: string }
+interface ScoredRow extends Row { body: unknown; score: unknown }
+interface OwnedRow extends Row { level: unknown; owner: unknown }
+interface Mention { id: number; title: string; state: State; author: Author }
+interface Scored extends Mention { body: string; score: number; flag: boolean }
+interface Owned extends Mention { level: State; owner: Author; ratio: number }
+interface TextRow extends Row { body: string }
+interface Hit extends Mention { body: string; words: number }
+
+function mentionOf(row: Row): Mention {
+  return { id: row.id, title: row.title, state: row.state, author: { login: row.login } };
+}
+async function scored(all: ScoredRow[]): Promise<Scored[]> {
+  const rows = await Promise.resolve(all);
+  return rows.map(row => ({ ...mentionOf(row), body: row.body as string, score: row.score as number, flag: row.title.length > 2 }));
+}
+async function owned(all: OwnedRow[]): Promise<Owned[]> {
+  const rows = await Promise.resolve(all);
+  return rows.map(row => ({ ...mentionOf(row), level: row.level as State, owner: row.owner as Author, ratio: row.title.length / 2 }));
+}
+async function hits(all: TextRow[]): Promise<Hit[]> {
+  const rows = await Promise.resolve(all);
+  return rows.map(row => ({ ...mentionOf(row), body: row.body, words: row.body.length }));
+}
+const weighHit = (hit: Hit) => hit.id + hit.title + hit.state + hit.author.login + hit.body + hit.words;
+const weighScored = (hit: Scored) => hit.id + hit.title + hit.state + hit.author.login + hit.body + hit.score + hit.flag;
+const weighOwned = (hit: Owned) => hit.id + hit.title + hit.state + hit.author.login + hit.level + hit.owner.login + hit.ratio;
+const owner: Author = { login: "o" };
+const row = (i: number): Row => ({ id: i, title: "t" + i, state: i & 1 ? "open" : "closed", login: "u" });
+const scoredRow = (i: number, body: unknown, score: unknown): ScoredRow => ({ ...row(i), body, score });
+const ownedRow = (i: number, level: unknown, held: unknown): OwnedRow => ({ ...row(i), level, owner: held });
+async function attemptScored(body: unknown, score: unknown): Promise<string> {
+  try {
+    const [hit] = await scored([scoredRow(4, body, score)]);
+    return weighScored(hit) + " " + JSON.stringify(hit) + " " + Object.keys(hit).join();
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+}
+async function attemptOwned(level: unknown, held: unknown): Promise<string> {
+  try {
+    const [hit] = await owned([ownedRow(5, level, held)]);
+    return weighOwned(hit) + " " + JSON.stringify(hit) + " " + Object.keys(hit).join();
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+}
+
+const allScored: ScoredRow[] = [];
+const allOwned: OwnedRow[] = [];
+const allText: TextRow[] = [];
+for (let i = 0; i < 100; i++) {
+  allScored.push(scoredRow(i, "b" + i, i));
+  allOwned.push(ownedRow(i, i & 2 ? "open" : "closed", owner));
+  allText.push({ ...row(i), body: "a body " + i });
+}
+await scored(allScored);
+await owned(allOwned);
+await hits(allText);
+let length = 0;
+for (let round = 0; round < 5; round++) {
+  for (const hit of await scored(allScored)) length += weighScored(hit).length;
+  for (const hit of await owned(allOwned)) length += weighOwned(hit).length;
+  for (const hit of await hits(allText)) length += weighHit(hit).length;
+}
+console.log(length);
+const [first] = await hits([allText[7]]);
+console.log(weighHit(first), JSON.stringify(first), Object.keys(first).join());
+console.log(await attemptScored("b", 3));
+console.log(await attemptOwned("open", owner));
+const [kept] = await owned([ownedRow(3, "open", owner)]);
+console.log(kept.owner === owner, (() => { kept.ratio = 2; return JSON.stringify(kept) + Object.keys(kept).join(); })());
+console.log("a body that is a number:", await attemptScored(5, 3));
+console.log("a score that is a text:", await attemptScored("b", "x"));
+console.log("a score that is a fraction:", await attemptScored("b", 1.25));
+console.log("a score that is large:", await attemptScored("b", 2 ** 40));
+console.log("a score that is undefined:", await attemptScored("b", undefined));
+console.log("a level outside the union:", await attemptOwned("other", owner));
+console.log("a level that is null:", await attemptOwned(null, owner));
+console.log("an owner that is plain:", await attemptOwned("open", JSON.parse('{"login":"p"}')));
+console.log("an owner that is a text:", await attemptOwned("open", "nobody"));
+console.log("an owner that is undefined:", await attemptOwned("open", undefined));
+//// objects-in-many-orders-of-names-come-and-go-between-collections.js
+// Objects whose names come in very many orders are made, held over a collection, dropped and collected: now many of them, now few, now none.
+const letters = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
+function order(number) {
+  const left = [...letters];
+  const out = [];
+  for (let size = left.length; size > 0; size--) {
+    out.push(left.splice(number % size, 1)[0]);
+    number = Math.floor(number / size);
+  }
+  return out;
+}
+const textOf = names => "{" + names.map((name, at) => '"' + name + '":' + at).join(",") + "}";
+
+let from = 0;
+function round(count, make) {
+  let kept = [];
+  for (let at = 0; at < count; at++) kept.push(make(order(from++)));
+  Bun.gc(true);
+  let wrong = 0;
+  kept.forEach((value, at) => {
+    if (Object.keys(value).join("") !== order(from - count + at).join("")) wrong++;
+  });
+  kept = [];
+  Bun.gc(true);
+  Bun.gc(true);
+  return wrong;
+}
+const parsed = names => JSON.parse(textOf(names));
+const written = names => {
+  const made = {};
+  for (const name of names) made[name] = 1;
+  return made;
+};
+class Point {
+  x = 0;
+}
+const onAnInstance = names => {
+  const made = new Point();
+  delete made.x;
+  for (const name of names) made[name] = 1;
+  return made;
+};
+for (const make of [parsed, written, onAnInstance]) {
+  const line = [];
+  for (const count of [100, 20000, 10, 5000, 40000, 1, 300, 20000, 0, 2500, 128, 256, 512, 1024, 2048, 4096, 8192, 4096, 2048, 1024, 512, 256, 128, 0]) line.push(count + ":" + round(count, make));
+  console.log(make.name, line.join(" "));
+}
+//// objects-with-their-own-prototype-that-stop-fitting.ts
+// An object with a prototype of its own passes for an interface. A member of the wrong kind throws where typed code reads it. What the
+// prototype holds, or has lost, matters only to code that reads those members.
+interface Tagged {
+  readonly kind: string
+  size: number
+  describe(): string
+}
+const Proto = {
+  kind: 'tagged',
+  describe(this: Tagged) {
+    return this.kind + ':' + this.size
+  },
+}
+const make = (size: unknown): Tagged => {
+  const self = Object.create(Proto)
+  self.size = size
+  return self
+}
+const dual: {
+  <DataLast extends (...args: Array<any>) => any, DataFirst extends (...args: Array<any>) => any>(arity: number, body: DataFirst): DataLast & DataFirst
+} = function (arity: number, body: Function) {
+  return function (this: unknown) {
+    if (arguments.length >= arity) return body.apply(this, arguments)
+    const args = arguments
+    return (self: any) => body(self, ...args)
+  }
+} as any
+const later = <A>(evaluate: () => A): { run: () => A } => ({ run: evaluate })
+const grow: {
+  (by: number): (self: Tagged) => { run: () => number }
+  (self: Tagged, by: number): { run: () => number }
+} = dual(2, (self: Tagged, by: number) => later(() => self.size + by))
+const attempt = (value: Tagged): string => {
+  try {
+    return String(grow(value, 1).run())
+  } catch (error) {
+    return error instanceof TypeError ? 'TypeError' : 'other ' + error
+  }
+}
+console.log(attempt(make(1)), attempt(make(2)), attempt(make('three')), attempt(make(4)))
+const untypedProto: any = Proto
+untypedProto.kind = 5
+console.log(attempt(make(6)))
+untypedProto.kind = 'again'
+console.log(attempt(make(7)))
+delete untypedProto.describe
+console.log(attempt(make(8)))
+//// one-member-of-union.ts
+// An object with the same property names and kinds as one member of a union arrives from JSON under another type.
+declare const console: { log(...values: unknown[]): void };
+type Done = { lines: string[] };
+type Verdict =
+  | { over: Done; halted?: string; text?: string; extra?: readonly string[]; goes?: undefined; cut?: true }
+  | { over?: undefined; goes: { text: string; title: string | undefined; extra?: readonly string[] }; cut?: true };
+type Run = { blocked?: string; cut?: true };
+const goes = (text: string, title: string | undefined, extra?: readonly string[]): Verdict => ({ goes: { text, title, ...(extra !== undefined && extra.length > 0 && { extra }) } });
+const never = (): Done => ({ lines: ["never"] });
+const settled = (run: Run | undefined, text: string, title: string | undefined, extra?: readonly string[]): Verdict => !run ? { over: never() } : run.blocked ? { over: { lines: [run.blocked] }, halted: run.blocked } : { ...goes(text, title, extra), cut: run.cut };
+function read(verdict: Verdict): string { if (verdict.over !== undefined) return "over " + verdict.over.lines.join() + " " + verdict.halted; const text = verdict.goes.text; return text + " " + verdict.goes.title + " " + (verdict.goes.extra ?? []).length + " " + verdict.cut; }
+async function chain(run: Run | undefined, text: string): Promise<Verdict> { const verdict = settled(run, text, "title", ["x", "y"]); return verdict; }
+async function use(run: Run | undefined, text: string): Promise<string> { let verdict: Verdict; if (text.length > 5) verdict = { goes: { text, title: undefined } }; else verdict = await chain(run, text); return read(verdict); }
+const all = async () => console.log(await use({}, "e"), "|", await use({ cut: true }, "f"), "|", await use(undefined, "g"), "|", await use({ blocked: "b" }, "h"), "|", await use({}, "longer text"));
+// v4: a record with the same names and kinds comes from JSON under another type.
+type Alike = { over?: undefined; goes: { text: string; title: string | undefined }; cut?: true }; const alike = JSON.parse(`{"goes":{"text":"p","title":"q"}}`) as Alike; console.log(alike.goes.text); await all();
+//// package-instances-as-small-records/main.ts
+// A package written in JavaScript hands out instances of its own class, and its declaration file describes them by interfaces. The program holds them to smaller record types that it writes itself. The instances have every member, so they satisfy those types, the nested one too.
+import type { ArrowFunctionExpression } from "./parser.js";
+import * as parser from "./parser.js";
+import * as walk from "./walker.js";
+type Small = { async: boolean; expression: boolean; body: { start: number; end: number } };
+type Span = { start: number; end: number };
+function show(node: Small): string { return node.async + " " + node.expression + " " + node.body.start + " " + node.body.end; }
+function span(node: Span): string { return node.start + ".." + node.end; }
+class Keeper { kept: Small | undefined = undefined; keep(node: Small): void { this.kept = node; } }
+function first(): ArrowFunctionExpression { return parser.parse("() => {}").body[0] as ArrowFunctionExpression; }
+function narrow(): Small { return first(); }
+function attempt(name: string, f: () => string): void { try { console.log(name, f()); } catch (e) { console.log(name, (e as Error).name + ": " + (e as Error).message.split("\n").slice(0, 2).join(" | ").replace(/ \(bun compile[^)]*\)/, "").slice(0, 170)); } }
+attempt("a method of a visitor literal:", () => { let out = ""; walk.simple(parser.parse("() => {}"), { ArrowFunctionExpression(node: Small) { out += show(node); } }); return out; });
+attempt("an arrow in a visitor literal:", () => { let out = ""; walk.simple(parser.parse("() => {}"), { ArrowFunctionExpression: (node: Small) => { out += show(node); } }); return out; });
+attempt("a function by its name in a visitor literal:", () => { let out = ""; function visit(node: Small): void { out += show(node); } walk.simple(parser.parse("() => {}"), { ArrowFunctionExpression: visit }); return out; });
+attempt("a visitor held in a variable:", () => { let out = ""; const visitors = { ArrowFunctionExpression(node: Small) { out += show(node); } }; walk.simple(parser.parse("() => {}"), visitors); return out; });
+attempt("a visitor handed to a class of the package:", () => { let out = ""; new walk.Walker({ ArrowFunctionExpression(node: Small) { out += show(node); } }).run(parser.parse("() => {}")); return out; });
+attempt("a callback with a smaller record:", () => { let out = ""; walk.each(parser.parse("() => {}"), (node: Span) => { out += span(node) + " "; }); return out; });
+attempt("an argument:", () => show(first()));
+attempt("a variable:", () => { const held: Small = first(); return show(held); });
+attempt("a result:", () => show(narrow()));
+attempt("a field:", () => { const keeper = new Keeper(); keeper.keep(first()); return show(keeper.kept!); });
+attempt("an element:", () => { const list: Small[] = [first()]; return show(list[0]); });
+attempt("a member of a literal:", () => { const holder: { node: Small } = { node: first() }; return show(holder.node); });
+attempt("the inner one alone:", () => span(first().body));
+attempt("identity:", () => { const given = first(); const held: Small = given; return String((held as unknown) === (given as unknown)); });
+attempt("a literal of the type:", () => show({ async: true, expression: false, body: { start: 1, end: 2 } }));
+walk.later(first()).then((node: Small) => console.log("a promise's callback:", show(node)), (e: Error) => console.log("a promise's callback:", e.name, e.message.split("\n")[0].slice(0, 120)));
+//// package-instances-as-small-records/parser.d.ts
+export interface Node { type: string; start: number; end: number }
+export interface BlockStatement extends Node { type: "BlockStatement" }
+export interface ArrowFunctionExpression extends Node { type: "ArrowFunctionExpression"; async: boolean; expression: boolean; body: BlockStatement }
+export interface Program extends Node { type: "Program"; body: Node[] }
+export function parse(text: string): Program;
+//// package-instances-as-small-records/parser.js
+export class Node { constructor(type, start, end) { this.type = type; this.start = start; this.end = end; } }
+export function parse(text) {
+  const body = new Node("BlockStatement", 6, text.length);
+  const arrow = new Node("ArrowFunctionExpression", 0, text.length); arrow.async = false; arrow.expression = false; arrow.body = body;
+  const program = new Node("Program", 0, text.length); program.body = [arrow];
+  return program;
+}
+//// package-instances-as-small-records/walker.d.ts
+import type * as parser from "./parser.js";
+export type SimpleVisitors = { ArrowFunctionExpression?: (node: parser.ArrowFunctionExpression) => void; BlockStatement?: (node: parser.BlockStatement) => void; Program?: (node: parser.Program) => void };
+export function simple(node: parser.Node, visitors: SimpleVisitors): void;
+export function each(node: parser.Node, visit: (node: parser.Node) => void): void;
+export function later<T extends parser.Node>(node: T): Promise<T>;
+export class Walker { constructor(visitors: SimpleVisitors); run(node: parser.Node): void }
+//// package-instances-as-small-records/walker.js
+export function simple(node, visitors) {
+  const visit = visitors[node.type]; if (visit) visit(node);
+  if (Array.isArray(node.body)) for (const child of node.body) simple(child, visitors); else if (node.body) simple(node.body, visitors);
+}
+export function each(node, visit) { visit(node); if (Array.isArray(node.body)) for (const child of node.body) each(child, visit); else if (node.body) each(node.body, visit); }
+export function later(node) { return Promise.resolve(node); }
+export class Walker { constructor(visitors) { this.visitors = visitors; } run(node) { simple(node, this.visitors); } }
+//// parameters-typed-by-dts/host.d.ts
+// What a package's declaration file says of the host's handlers, for main.ts.
+export interface Handler<Data = unknown> { open?(socket: Socket<Data>): void; data?(socket: Socket<Data>, buffer: Uint8Array): void; close?(socket: Socket<Data>, code: number): string }
+export interface Socket<Data> { data: Data; write(text: string): number }
+export type Listener = (event: { kind: string; count: number }) => void;
+//// parameters-typed-by-dts/main.ts
+// A parameter without its own annotation, contextually typed from a declaration file: it receives whatever the embedder passes, whatever the declaration says. Also where the literal is first stored in a variable of the embedder's type.
+import type { Handler, Listener } from "./host";
+const said: string[] = [];
+const kindOf = (v: unknown) => (v === null ? "null" : v instanceof ArrayBuffer ? "ArrayBuffer" : v instanceof Uint8Array ? "Uint8Array" : typeof v);
+const kept = { open(socket) { said.push("open " + kindOf(socket)); }, data(socket, buffer) { said.push("data " + kindOf(buffer)); }, close(socket, code) { said.push("close " + kindOf(code)); return "closed"; } } as Handler<any>;
+const annotated: Handler = { data(socket, buffer) { said.push("data under an annotation " + kindOf(buffer)); } };
+const satisfied = { data(socket, buffer) { said.push("data under satisfies " + kindOf(buffer)); } } satisfies Handler;
+const listener: Listener = event => { said.push("listener " + kindOf(event) + " " + kindOf((event as any)?.count)); };
+const written = { data(socket: unknown, buffer: Uint8Array) { said.push("data with a written parameter " + kindOf(buffer)); } };
+const host: any = { run(handler: any, ...given: unknown[]) { for (const name of ["open", "data", "close"]) handler[name]?.({ data: 1 }, ...given); } };
+for (const given of [new Uint8Array(1), new ArrayBuffer(1), "text", 5, null, undefined]) {
+  for (const handler of [kept, annotated, satisfied]) { try { host.run(handler, given); } catch (e) { said.push("THROWS " + (e as Error).message.split(" (bun")[0]); } }
+  try { (listener as any)(given); } catch (e) { said.push("THROWS " + (e as Error).message.split(" (bun")[0]); }
+}
+host.run(written, new Uint8Array(2));
+console.log(said.join("\n"));
+//// parsed-array-reads.ts
+// Every common way to read the elements of a parsed JSON array through an array type.
+interface Num { n: number; m?: number }
+function attempt(label: string, f: () => unknown) { try { console.log(label + ":", String(f())) } catch (e) { console.log(label + ":", (e as Error).constructor.name) } }
+const text = '[{"n":1},{"n":1.5},{"n":2,"m":3}]'
+const fresh = (): Num[] => JSON.parse(text) as Num[]
+const touch = (x: Num) => { x.n *= 2; x.m ??= 7; return x.n }
+attempt("index", () => { const a = fresh(); let t = 0; for (let i = 0; i < a.length; i++) t += touch(a[i]); return t })
+attempt("for of", () => { const a = fresh(); let t = 0; for (const x of a) t += touch(x); return t })
+attempt("for of, parameter", () => { const f = (a: Num[]) => { let t = 0; for (const x of a) t += x.n; return t }; return f(fresh()) })
+attempt("forEach", () => { const a = fresh(); let t = 0; a.forEach(x => { t += touch(x) }); return t })
+attempt("map", () => fresh().map(x => touch(x)).join())
+attempt("map, by name", () => fresh().map(touch).join())
+attempt("reduce", () => fresh().reduce((t, x) => t + x.n, 0))
+attempt("filter, then index", () => fresh().filter(x => x.n > 1)[0].n)
+attempt("find", () => fresh().find(x => x.n > 1)!.n)
+attempt("destructuring", () => { const [x, y] = fresh(); return x.n + y.n })
+attempt("spread, then index", () => [...fresh()][1].n)
+attempt("at", () => fresh().at(-1)!.n)
+attempt("pop", () => fresh().pop()!.n)
+attempt("entries", () => { let t = 0; for (const [i, x] of fresh().entries()) t += i + x.n; return t })
+attempt("annotated, for of", () => { const a: Num[] = JSON.parse(text); let t = 0; for (const x of a) t += x.n; return t })
+export {};
+//// parsed-data-through-cast-chain.ts
+// What is parsed is looked at as one type after another through a chain of casts. Each cast lets the object pass as it is, so every view reads and stores the same object.
+interface Link0 { id: number; label: string; next?: Link0 }
+interface Link1 { id: number; label: string; next?: Link1; seen?: boolean }
+interface Link2 { id: number; label: string; next?: Link2; depth?: number }
+interface Link3 { id: number; label: string; next?: Link3; tags?: string[] }
+interface Link4 { id: number; label: string; next?: Link4; owner?: Owner }
+interface Owner { name: string; links: Link5[] }
+interface Link5 { id: number; label: string; next?: Link5 }
+type Either = Link5 | { kind: "none"; why: string };
+const text = '{"id":1,"label":"a","next":{"id":2,"label":"b","next":{"id":3,"label":"c"}}}';
+const first = JSON.parse(text) as Link0;
+const second = first as unknown as Link1;
+second.seen = true;
+const third: Link2 = second as unknown as Link2;
+third.depth = 3;
+const fourth = third as unknown as Link3;
+fourth.tags = ["x", "y"];
+const fifth = fourth as unknown as Link4;
+const made: Link5 = { id: 9, label: "made" };
+fifth.owner = { name: "o", links: [made, fifth.next as unknown as Link5] };
+function count(link: { next?: any } | undefined): number { let n = 0; for (let at = link; at; at = at.next) n++; return n; }
+function labels(link: Link5 | undefined): string { let out = ""; for (let at = link; at; at = at.next) out += at.label; return out; }
+function describe(it: Either): string { return "kind" in it ? it.why : it.label + it.id; }
+const all: Either[] = [made, fifth.owner.links[1], { kind: "none", why: "nothing" }];
+console.log(count(first), count(third), labels(fifth as unknown as Link5), all.map(describe).join(","));
+console.log(JSON.stringify(first), Object.keys(second).join(), fourth.tags.length, third.depth, fifth.owner.links.length);
+//// parsed-in-container-dictionary.ts
+// Parsed data that travels as `any` and first meets its type inside a container, or below a value that has met its type.
+// The type has more than six members; the type of one of its members has two.
+interface Origin { source: string; hops: number }
+////= Message-2
+interface Batch { name: string; items: Message[] }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withOrigin = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","origin":{"source":"wire","hops":2},"tags":["x","y"]}'
+const bag: unknown[] = []
+function travel(x: unknown): any { bag.push(x); return bag.pop() }
+function own(n: number): Message { return { id: n, at: 1.5, size: 2.5, weight: 3.5, body: "own", retries: n, delay: 0.5, sentAt: 4.5, score: 0.25, tags: ["o"], origin: { source: "own", hops: 1 } } }
+////= handle-2
+const made = own(9)
+////= row-2
+row("made by the program", () => handle(made))
+row("a dictionary", () => { const byId: Record<string, Message> = travel(JSON.parse('{"k":' + line + "}")); byId.own = own(1); return handle(byId.k!) + handle(byId.own!) })
+//// parsed-in-container-map.ts
+// Parsed data that travels as `any` and first meets its type inside a container, or below a value that has met its type.
+// The type has more than six members; the type of one of its members has two.
+interface Origin { source: string; hops: number }
+////= Message-2
+interface Batch { name: string; items: Message[] }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withOrigin = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","origin":{"source":"wire","hops":2},"tags":["x","y"]}'
+const bag: unknown[] = []
+function travel(x: unknown): any { bag.push(x); return bag.pop() }
+function own(n: number): Message { return { id: n, at: 1.5, size: 2.5, weight: 3.5, body: "own", retries: n, delay: 0.5, sentAt: 4.5, score: 0.25, tags: ["o"], origin: { source: "own", hops: 1 } } }
+////= handle-2
+const made = own(9)
+////= row-2
+row("made by the program", () => handle(made))
+row("a Map", () => { const byId = new Map<string, Message>(); byId.set("own", own(1)); byId.set("k", travel(JSON.parse(line))); return handle(byId.get("k")!) + handle(byId.get("own")!) })
+//// parsed-in-container-small-member-accepted.ts
+// Parsed data that travels as `any` and first meets its type inside a container, or below a value that has met its type.
+// The type has more than six members; the type of one of its members has two.
+interface Origin { source: string; hops: number }
+////= Message-2
+interface Batch { name: string; items: Message[] }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withOrigin = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","origin":{"source":"wire","hops":2},"tags":["x","y"]}'
+const bag: unknown[] = []
+function travel(x: unknown): any { bag.push(x); return bag.pop() }
+function own(n: number): Message { return { id: n, at: 1.5, size: 2.5, weight: 3.5, body: "own", retries: n, delay: 0.5, sentAt: 4.5, score: 0.25, tags: ["o"], origin: { source: "own", hops: 1 } } }
+////= handle-2
+const made = own(9)
+////= row-2
+row("made by the program", () => handle(made))
+row("a small member of what was let in", () => { const m: Message = travel(JSON.parse(withOrigin)); return m.origin!.hops + m.origin!.source })
+//// parsed-in-container-small-member-kept.ts
+// Parsed data that travels as `any` and first meets its type inside a container, or below a value that has met its type.
+// The type has more than six members; the type of one of its members has two.
+interface Origin { source: string; hops: number }
+////= Message-2
+interface Batch { name: string; items: Message[] }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withOrigin = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","origin":{"source":"wire","hops":2},"tags":["x","y"]}'
+const bag: unknown[] = []
+function travel(x: unknown): any { bag.push(x); return bag.pop() }
+function own(n: number): Message { return { id: n, at: 1.5, size: 2.5, weight: 3.5, body: "own", retries: n, delay: 0.5, sentAt: 4.5, score: 0.25, tags: ["o"], origin: { source: "own", hops: 1 } } }
+////= handle-2
+const made = own(9)
+////= row-2
+row("made by the program", () => handle(made))
+row("a small member, kept", () => { const m: Message = travel(JSON.parse(withOrigin)); const origin: Origin | undefined = m.origin; return origin ? origin.source + origin.hops : "none" })
+//// parsed-json-spread-onto-narrower-copy.ts
+// `{ ...source, ...more }` under a written type, where `more` is parsed JSON and the object that is copied was created as a narrower type than the one the copy is written as: the copy takes whatever its own written type takes.
+const row = (name: string, f: () => unknown) => { let r: unknown; try { r = JSON.stringify(f()); } catch (e) { r = "THROWS " + (e as Error).message.split(" (bun")[0]; } console.log(name + ": " + r); };
+
+type Failures = { last: number | null; count: number; name: string };
+type Fresh = { last: null; count: number; name: string };
+type FreshAndMore = { last: null; count: number; name: string; extra: boolean };
+type Counts = { last: number; count: number };
+
+const fresh: Fresh = { last: null, count: 0, name: "fresh" };
+const freshAndMore: FreshAndMore = { last: null, count: 0, name: "more", extra: true };
+const wide: Failures = { last: null, count: 0, name: "wide" };
+const constant = { last: null, count: 0, name: "constant" } as const;
+
+function merge(failures: Failures, counts: Counts): Failures {
+  if (failures.last === null) return { ...failures, ...counts };
+  return failures;
+}
+function mergeInsideTry(failures: Failures, counts: Counts): Failures {
+  try {
+    return { ...failures, ...counts };
+  } catch {
+    return failures;
+  }
+}
+function mergeAndName(failures: Failures, counts: Counts): Failures {
+  return { ...failures, ...counts, name: "named" };
+}
+const parsed = (text: string) => JSON.parse(text) as Counts;
+
+const sources: [string, Failures][] = [["a narrower written type", fresh], ["a narrower type with one member more", freshAndMore], ["the written type itself", wide], ["an `as const` literal", constant]];
+for (const [name, source] of sources) {
+  row(name + ": a second spread of parsed JSON", () => merge(source, parsed('{"last":9,"count":2}')));
+  row(name + ": inside try", () => mergeInsideTry(source, parsed('{"last":10,"count":3}')));
+  row(name + ": with a member behind it", () => mergeAndName(source, parsed('{"last":11,"count":4}')));
+  row(name + ": the keys of the copy", () => Object.keys(merge(source, parsed('{"count":5,"last":12}'))));
+  row(name + ": the copy is read", () => { const copy = merge(source, parsed('{"last":13,"count":6}')); return copy.last! + copy.count; });
+  row(name + ": the source is left as it was", () => source);
+}
+let sum = 0;
+for (let i = 0; i < 5000; i++) {
+  const source = i % 3 === 0 ? fresh : i % 3 === 1 ? wide : freshAndMore;
+  sum += merge(source, parsed('{"last":' + i + ',"count":1}')).last!;
+}
+row("many times, the types taking turns", () => sum);
+//// parsed-json-through-explicit-any.ts
+// Parsed JSON passes through the program's own `any` or `unknown` (a result, a parameter, a property, a `yield`) before it reaches a declared type. Any object passes, a member that is missing reads undefined, and a member of another kind throws a TypeError where typed code reads it.
+function row(name: string, run: () => unknown): void { try { console.log(name, "|", run()) } catch (e) { console.log(name, "| THROWN", (e as Error).constructor.name) } }
+function pass(x: any): any { return x }
+interface Settings { name: string; nested: { on: boolean } }
+function show(x: Settings): string { return x.name + (x.nested ? x.nested.on : "-") }
+row("what a function of the program yields as any", () => show(pass(JSON.parse('{"name":"n","nested":{"on":true}}')) as Settings))
+interface Wanted { title: string; deep: { on: boolean } }
+function showWanted(x: Wanted): string { return x.title + (x.deep ? x.deep.on : "-") }
+function toWanted(x: unknown): Wanted { return x as Wanted }
+row("a parameter of type unknown", () => showWanted(toWanted(JSON.parse('{"title":"u","deep":{"on":false}}'))))
+row("less than the type says", () => JSON.stringify(toWanted({})) + toWanted({}).title + showWanted(toWanted({ title: 1 })))
+interface Pair { a: number; b: { c: number } }
+function sum(x: Pair): number { return x.a + x.b.c }
+row("what a built-in yields as any", () => sum(Reflect.get({ v: JSON.parse('{"a":3,"b":{"c":4}}') }, "v") as Pair))
+interface Held { p: number; q: { r: number } }
+function sumHeld(x: Held): number { return x.p + x.q.r }
+const held: { any: any } = { any: JSON.parse('{"p":5,"q":{"r":6}}') }
+row("a property of type any in an annotated variable", () => { const r: Held = held.any; return sumHeld(r) + " " + (r === held.any) })
+function* steps(flag: boolean): Generator<{ op: string }, string, { e: string } | string> { const r = flag ? { e: "LIT" } : yield { op: "stat" }; if (typeof r === "object" && r.e !== undefined && (r.e === "ENOENT" || r.e === "B")) return keep(r) ? r.e : "no"; return "ok" }
+function keep(x: { e: string }): boolean { return x.e.length > 0 }
+function run(g: Generator<any, any, any>) { let s = g.next(); while (!s.done) s = g.next(JSON.parse('{"e":"ENOENT"}')); return s.value }
+row("the value of a yield", () => run(steps(false)) + " " + run(steps(true)))
+//// parsed-misfits-cast-through-another-type.ts
+// The texts of parsed-misfits-reach-typed-functions-in-seven-ways, cast to an unrelated type first and to the type they are read as afterwards. Each cast lets any object pass as it is and throws for a number, a string or a boolean. A missing field reads undefined, and a field of another kind throws at its first typed read.
+interface Point { x: number; y: number }
+interface Row { id: number; name: string; at: Point; next: Row | null }
+interface Other { id: number }
+function show(row: Row): string {
+  return String(row.id) + "|" + String(row.name) + "|" + String(row.at && row.at.x) + "|" + String(row.next && row.next.id) + "|" + Object.keys(row).join(",");
+}
+function grow(row: Row): string { row.id = 7; row.name = row.name + "!"; return show(row); }
+////= attempt-3
+const made: Row = { id: 1, name: "a", at: { x: 1, y: 2 }, next: null };
+////= texts
+attempt("made", () => show(made));
+for (const text of texts) {
+  attempt("through", () => { const other = JSON.parse(text) as Other; return show(other as unknown as Row); });
+  attempt("through any", () => { const other = JSON.parse(text) as Other; const row: Row = other as any; return show(row); });
+  attempt("through, stored", () => { const other = JSON.parse(text) as Other; return grow(other as unknown as Row); });
+  attempt("through, listed", () => { const other = JSON.parse(text) as Other; const rows: Row[] = [made, other as unknown as Row]; return rows.map(show).join(" & "); });
+  attempt("through, linked", () => { const other = JSON.parse(text) as Other; const head: Row = { id: 0, name: "h", at: { x: 0, y: 0 }, next: other as unknown as Row }; return show(head); });
+}
+attempt("back", () => { const other = made as unknown as Other; return String(other.id) + "|" + Object.keys(other).join(","); });
+attempt("made again", () => grow(made));
+//// parsed-misfits-reach-typed-functions-in-seven-ways.ts
+// Parsed JSON that does not fit its type reaches typed functions in seven ways. Any object, an array too, passes the cast, the annotation and the parameter as it is, and so does null; a number, a string or a boolean throws there. A missing field reads undefined, and a field of another kind throws at its first typed read.
+interface Point { x: number; y: number }
+interface Row { id: number; name: string; at: Point; next: Row | null }
+interface Other { id: number }
+function show(row: Row): string {
+  return String(row.id) + "|" + String(row.name) + "|" + String(row.at && row.at.x) + "|" + String(row.next && row.next.id) + "|" + Object.keys(row).join(",");
+}
+function grow(row: Row): string { row.id = 7; row.name = row.name + "!"; return show(row); }
+////= attempt-3
+const made: Row = { id: 1, name: "a", at: { x: 1, y: 2 }, next: null };
+////= texts
+attempt("made", () => show(made));
+for (const text of texts) {
+  attempt("as", () => show(JSON.parse(text) as Row));
+  attempt("declared", () => { const row: Row = JSON.parse(text); return show(row); });
+  attempt("through", () => { const other = JSON.parse(text) as Other; return show(other as unknown as Row); });
+  attempt("stored", () => grow(JSON.parse(text) as Row));
+  attempt("held", () => { const holder: { row: Row } = { row: JSON.parse(text) as Row }; return show(holder.row); });
+  attempt("listed", () => { const rows: Row[] = [made, JSON.parse(text) as Row]; return rows.map(show).join(" & "); });
+  attempt("linked", () => { const head: Row = { id: 0, name: "h", at: { x: 0, y: 0 }, next: JSON.parse(text) as Row }; return show(head); });
+}
+attempt("made again", () => grow(made));
+//// parsed-objects-of-every-size.ts
+// JSON.parse of objects with 0 to 200 properties, on both sides of every limit of inline and out-of-line property storage: keys, values, and a property added and deleted afterwards do not depend on which parser created the object.
+const sizes = [0, 1, 6, 7, 8, 48, 49, 61, 62, 63, 64, 65, 200];
+const callsPerText = 24;
+const untyped: any = { parse: JSON.parse };
+const indexLikeNames = ["2", "4294967294", "0", "4294967295", "-1", "01"];
+
+function valueText(index: number): string {
+  switch (index % 8) {
+    case 0:
+      return String(index * 100000007);
+    case 1:
+      return "-" + index + ".5";
+    case 2:
+      return '"s' + index + '"';
+    case 3:
+      return index % 16 === 3 ? "true" : "false";
+    case 4:
+      return "null";
+    case 5:
+      return "[" + index + ',"e",[]]';
+    case 6:
+      return '{"n":' + index + ',"m":{}}';
+    default:
+      return index % 16 === 7 ? "-0" : index + "e20";
+  }
+}
+
+function plainMember(index: number): string {
+  return '"k' + index + '":' + valueText(index);
+}
+
+function memberWithDuplicate(index: number): string {
+  if (index % 3) return plainMember(index);
+  const earlierName = (index % 6 ? '"\\u006b' : '"k') + (index >> 1) + '"';
+  return plainMember(index) + "," + earlierName + ':"repeated after k' + index + '"';
+}
+
+function indexLikeMember(size: number, index: number): string {
+  if (index % 4 !== 1) return plainMember(index);
+  return '"' + (indexLikeNames[index >> 2] ?? String(1000 + size - index)) + '":' + valueText(index);
+}
+
+function spacedMember(index: number): string {
+  return '\n\t"k' + index + '" :\r ' + valueText(index) + " ";
+}
+
+function wideMember(index: number): string {
+  return index % 3 === 1 ? '"k' + index + '中":"é中' + index + '"' : plainMember(index);
+}
+
+function objectText(size: number, memberText: (index: number) => string = plainMember): string {
+  const members: string[] = [];
+  for (let index = 0; index < size; index++) members.push(memberText(index));
+  return "{" + members.join(",") + "}";
+}
+
+function pairText(object: string): string {
+  return "[" + object + "," + object + "]";
+}
+
+function toWideString(text: string): string {
+  return ("中" + text).slice(1);
+}
+
+function identityReviver(key: string, value: any): any {
+  return value;
+}
+
+function sourceTextReviver(key: string, value: any, context?: any): any {
+  if (key === "k2") return undefined;
+  if (typeof value === "number") return context?.source ?? "no source text for " + value;
+  return value;
+}
+
+function describe(value: any): string {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value !== "object" || value === null) return Object.is(value, -0) ? "-0" : String(value);
+  if (Array.isArray(value)) return "[" + value.map(element => describe(element)).join(",") + "]";
+  return (
+    "{" +
+    Object.keys(value)
+      .map(key => key + "=" + describe(value[key]))
+      .join(",") +
+    "}"
+  );
+}
+
+function mutationReport(value: any): string {
+  const keys = Object.keys(value);
+  const enumerated: string[] = [];
+  for (const name in value) enumerated.push(name);
+  const hasOnlyPlainDataProperties = Object.values(Object.getOwnPropertyDescriptors(value)).every(
+    descriptor => descriptor.writable && descriptor.enumerable && descriptor.configurable,
+  );
+  const removed = keys.length ? keys[keys.length >> 1] : "added";
+  const lines = [
+    keys.length + " keys",
+    Reflect.ownKeys(value).length + " own keys",
+    "for-in agrees: " + (enumerated.join() === keys.join()),
+    "only plain data properties: " + hasOnlyPlainDataProperties,
+    "extensible: " + Object.isExtensible(value),
+    "ordinary prototype: " + (Object.getPrototypeOf(value) === Object.prototype),
+    "parsed: " + describe(value),
+  ];
+  value.added = "new";
+  lines.push("added: " + describe(value));
+  const wasDeleted = delete value[removed];
+  lines.push("deleted " + removed + " (" + wasDeleted + "): " + describe(value));
+  value[removed] = "again";
+  lines.push("stored " + removed + " again: " + describe(value));
+  return lines.join("\n  ");
+}
+
+function checkParsedObjects(label: string, text: string, parse: (text: string) => any[], expected = ""): string {
+  let agreeing = 0;
+  for (let call = 0; call < callsPerText; call++) {
+    for (const value of parse(text)) {
+      const actual = mutationReport(value);
+      if (!expected) {
+        expected = actual;
+        console.log(label + ": " + actual);
+      } else if (actual === expected) agreeing++;
+      else console.log(label + ", call " + call + " differs: " + actual);
+    }
+  }
+  console.log(label + ": " + agreeing + " objects agree");
+  return expected;
+}
+
+function errorMessage(parse: () => unknown): string {
+  try {
+    parse();
+    return "no error";
+  } catch (error: any) {
+    return error.name + ": " + error.message;
+  }
+}
+
+function malformedObjectTexts(size: number): [string, string][] {
+  const open = objectText(size).slice(0, -1);
+  const beforeLastMember = size ? open + "," : open;
+  return [
+    ["no closing brace", open],
+    ["comma before the closing brace", open + ",}"],
+    ["second closing brace", open + "}}"],
+    ["no colon", beforeLastMember + '"last" 1}'],
+    ["no value", beforeLastMember + '"last":}'],
+    ["misspelled null", beforeLastMember + '"last":nul}'],
+    ["unquoted name", beforeLastMember + "last:1}"],
+    ["single-quoted name", beforeLastMember + "'last':1}"],
+    ["unterminated string", beforeLastMember + '"last":"open}'],
+    ["line break in a string", beforeLastMember + '"last":"a\nb"}'],
+    ["unknown escape", beforeLastMember + '"last":"\\x41"}'],
+    ["leading zero", beforeLastMember + '"last":01}'],
+  ];
+}
+
+for (const size of sizes) {
+  const label = size + " properties, ";
+  const middle = size >> 1;
+  const object = objectText(size);
+  const pair = pairText(object);
+  const spaced = objectText(size, spacedMember);
+  const duplicates = pairText(objectText(size, memberWithDuplicate));
+
+  const expected = checkParsedObjects(label + "twice in one text", pair, text => JSON.parse(text));
+  checkParsedObjects(label + "alone", object, text => [JSON.parse(text)], expected);
+  checkParsedObjects(label + "JSON.parse called as a value", pair, text => untyped.parse(text), expected);
+  checkParsedObjects(label + "whitespace", "[ " + spaced + " ,\n" + spaced + "\t]", text => JSON.parse(text), expected);
+  checkParsedObjects(label + "16-bit source", toWideString(pair), text => JSON.parse(text), expected);
+  checkParsedObjects(label + "identity reviver", pair, text => JSON.parse(text, identityReviver), expected);
+  checkParsedObjects(
+    label + "nested in arrays and objects",
+    '{"list":[[' + object + "],[[0," + object + ']]],"last":' + object + "}",
+    text => {
+      const parsed = JSON.parse(text);
+      return [parsed.list[0][0], parsed.list[1][0][1], parsed.last];
+    },
+    expected,
+  );
+
+  checkParsedObjects(label + "duplicate names", duplicates, text => JSON.parse(text));
+  checkParsedObjects(
+    label + "index-like names",
+    pairText(objectText(size, index => indexLikeMember(size, index))),
+    text => JSON.parse(text),
+  );
+  checkParsedObjects(
+    label + "__proto__",
+    pairText(objectText(size, index => (index === middle ? '"__proto__":{"polluted":true}' : plainMember(index)))),
+    text => JSON.parse(text),
+  );
+  checkParsedObjects(label + "16-bit names and values", pairText(objectText(size, wideMember)), text =>
+    JSON.parse(text),
+  );
+  checkParsedObjects(label + "source text reviver", pair, text => JSON.parse(text, sourceTextReviver));
+  checkParsedObjects(label + "duplicate names, source text reviver", duplicates, text =>
+    JSON.parse(text, sourceTextReviver),
+  );
+}
+
+for (const size of sizes) {
+  const object = objectText(size);
+  for (const [label, malformed] of malformedObjectTexts(size)) {
+    const text = "[" + object + "," + malformed + "]";
+    const messages = [
+      errorMessage(() => JSON.parse(text)),
+      errorMessage(() => JSON.parse(malformed)),
+      errorMessage(() => untyped.parse(text)),
+      errorMessage(() => JSON.parse(text, identityReviver)),
+      errorMessage(() => JSON.parse(toWideString(text))),
+    ];
+    console.log(size + " properties, " + label + ": " + messages.join(" | "));
+  }
+  console.log(size + " properties, well formed again: " + describe(JSON.parse(pairText(object))[1]));
+}
+
+console.log("Object.prototype has polluted: " + ("polluted" in untyped));
+
+export {};
+//// parsed-part-downcast-to-a-subtype-of-primitives.ts
+// A part of parsed JSON is cast from its base type to a subtype whose other fields are primitives. Any object passes the cast, a number throws there. A missing field reads undefined, and a field of another kind throws at its first typed read.
+interface Base { kind: number }
+interface Leaf extends Base { text: string; size: number }
+interface Info { version: string; root: Base }
+function showLeaf(leaf: Leaf): string { return String(leaf.kind) + "|" + String(leaf.text) + "|" + String(leaf.size); }
+function makeLeaf(text: string, size: number): Leaf { return { kind: 1, text, size }; }
+function readInfo(text: string): Info { return JSON.parse(text) as Info; }
+let sum = "";
+for (let i = 0; i < 3; i++) sum += showLeaf(makeLeaf("t" + i, i)) + " ";
+console.log(sum);
+const texts: string[] = ['{"version":"1","root":{"kind":1,"text":"a","size":3}}', '{"version":"1","root":{"kind":1}}', '{"version":"1","root":{"kind":1,"text":5,"size":"big"}}', '{"version":"1","root":{"size":3,"more":true,"text":"a","kind":1}}', '{"version":"1","root":7}', '{"version":"1","root":[]}'];
+for (const text of texts) {
+  try { console.log("leaf " + showLeaf(readInfo(text).root as Leaf)); } catch (error) { console.log("leaf threw " + (error as Error).constructor.name); }
+}
+//// parsed-part-downcast-to-subtypes.ts
+// A part of parsed JSON is cast from its base type to one of two subtypes, read, stored to, and put into a literal and an array of the program. Any object passes a cast, a parameter and a field of an object type; a number throws there. A missing field reads undefined, and a field of another kind throws at its first typed read.
+interface Base { kind: number }
+interface Leaf extends Base { text: string; size: number }
+interface Pair extends Base { left: Base; right: Base }
+interface Info { version: string; root: Base }
+function showLeaf(leaf: Leaf): string { return String(leaf.kind) + "|" + String(leaf.text) + "|" + String(leaf.size) + "|" + Object.keys(leaf).join(","); }
+function showPair(pair: Pair): string { return String(pair.kind) + "|" + String(pair.left && pair.left.kind) + "|" + String(pair.right && pair.right.kind); }
+function show(base: Base): string { return base.kind === 1 ? showLeaf(base as Leaf) : base.kind === 2 ? showPair(base as Pair) : "other " + String(base.kind); }
+function grow(leaf: Leaf): string { leaf.size = 9; leaf.text = leaf.text + "!"; return showLeaf(leaf); }
+////= attempt-3
+const leaf: Leaf = { kind: 1, text: "t", size: 1 };
+const pair: Pair = { kind: 2, left: leaf, right: { kind: 1, text: "u", size: 2 } as Leaf };
+const texts: string[] = [
+  '{"version":"1","root":{"kind":1,"text":"a","size":3}}',
+  '{"version":"1","root":{"size":3,"text":"a","kind":1}}',
+  '{"version":"1","root":{"kind":1}}',
+  '{"version":"1","root":{"kind":1,"text":5,"size":"big"}}',
+  '{"version":"1","root":{"kind":1,"text":"a","size":3,"more":true}}',
+  '{"version":"1","root":{"kind":2,"left":{"kind":1,"text":"l","size":1},"right":{"kind":3}}}',
+  '{"version":"1","root":{"kind":2}}',
+  '{"version":"1","root":{"kind":2,"left":7,"right":null}}',
+  '{"version":"1","root":{"kind":3}}',
+  '{"version":"1","root":[]}', '{"version":"1","root":7}', '{"version":"1"}', '{"version":"1","root":null}',
+];
+attempt("made", () => show(leaf) + " & " + show(pair));
+for (const text of texts) {
+  attempt("shown", () => show((JSON.parse(text) as Info).root));
+  attempt("leaf", () => showLeaf((JSON.parse(text) as Info).root as Leaf));
+  attempt("grown", () => grow((JSON.parse(text) as Info).root as Leaf));
+  attempt("paired", () => { const both: Pair = { kind: 2, left: leaf, right: (JSON.parse(text) as Info).root }; return show(both) + " & " + show(both.right); });
+  attempt("listed", () => { const leaves: Leaf[] = [leaf, (JSON.parse(text) as Info).root as Leaf]; return leaves.map(showLeaf).join(" & "); });
+}
+attempt("made again", () => grow(leaf) + " & " + show(pair));
+//// parsed-part-downcast-to-subtypes-that-hold-objects.ts
+// A part of parsed JSON is cast from its base type to subtypes whose fields hold objects, arrays and functions. Any object passes where an object type is written. A field written as an array throws at its typed read when it holds no array, a field written as an object type when it holds a number, a number field when it holds a string. A store through the typed reference replaces what did not fit.
+interface Base { kind: number }
+interface Point { x: number; y: number }
+interface Shape extends Base { at: Point; tags: string[]; next: Shape | null }
+interface Named extends Base { at: Point; name: string }
+interface Watcher extends Base { observe: (value: number) => number }
+interface Info { version: string; root: Base; all: Base[] }
+function showPoint(point: Point): string { return point ? String(point.x) + "," + String(point.y) : String(point); }
+function showShape(shape: Shape): string { return String(shape.kind) + "|" + showPoint(shape.at) + "|" + String(shape.tags && shape.tags.length) + "|" + String(shape.next && shape.next.kind) + "|" + Object.keys(shape).join(","); }
+function showNamed(named: Named): string { return String(named.kind) + "|" + showPoint(named.at) + "|" + String(named.name); }
+function watch(watcher: Watcher | null): string { return watcher === null ? "none" : typeof watcher.observe === "function" ? String(watcher.observe(2)) : "no observe " + String(watcher.kind); }
+function move(shape: Shape): string { shape.at = { x: 9, y: 9 }; shape.tags = ["moved"]; return showShape(shape); }
+function makeShape(kind: number): Shape { return { kind, at: { x: kind, y: kind + 1 }, tags: ["a", "b"], next: null }; }
+function makeNamed(kind: number): Named { return { kind, at: { x: 0, y: 0 }, name: "n" + kind }; }
+function readInfo(text: string): Info { return JSON.parse(text) as Info; }
+////= attempt-3
+const roots: string[] = [
+  '{"kind":1,"at":{"x":1,"y":2},"tags":["t"],"next":null}',
+  '{"next":null,"tags":["t"],"at":{"y":2,"x":1},"kind":1}',
+  '{"kind":1,"at":{"x":1,"y":2},"tags":["t"],"next":{"kind":2,"at":{"x":3,"y":4},"tags":[],"next":null}}',
+  '{"kind":1,"at":{"x":1,"y":2},"tags":["t"],"next":{"kind":2}}',
+  '{"kind":1}',
+  '{"kind":1,"at":null,"tags":null,"next":null}',
+  '{"kind":1,"at":{"x":"one"},"tags":"none","next":7}',
+  '{"kind":1,"at":{"x":1,"y":2,"z":3},"tags":[1,2,3],"next":null,"name":"both","more":{"deep":true}}',
+  '{"kind":1,"at":[1,2],"tags":{"length":5},"next":[]}',
+  '{}', '[]',
+];
+attempt("made", () => showShape(makeShape(1)) + " & " + showNamed(makeNamed(2)));
+for (const root of roots) {
+  const text = '{"version":"1","root":' + root + ',"all":[' + root + ',' + root + ']}';
+  attempt("shape", () => showShape(readInfo(text).root as Shape));
+  attempt("both", () => { const held = readInfo(text).root; return showShape(held as Shape) + " & " + showNamed(held as Named) + " & " + showShape(held as Shape); });
+  attempt("moved", () => { const held = readInfo(text).root; return move(held as Shape) + " & " + showNamed(held as Named); });
+  attempt("field", () => { const holder: { shape: Shape; named: Named } = { shape: readInfo(text).root as Shape, named: makeNamed(3) }; holder.named = holder.shape as Base as Named; return showShape(holder.shape) + " & " + showNamed(holder.named); });
+  attempt("all", () => readInfo(text).all.map((base) => showShape(base as Shape)).join(" & "));
+  attempt("mixed", () => { const shapes: Shape[] = [makeShape(4), readInfo(text).root as Shape]; shapes[0].next = shapes[1]; return shapes.map(showShape).join(" & "); });
+  attempt("watched", () => watch(readInfo(text).root as Watcher));
+}
+const withAccessor: Base = Object.defineProperty({ kind: 1, tags: ["t"], next: null } as object, "at", { get() { return { x: 5, y: 6 }; }, enumerable: true, configurable: true }) as Base;
+attempt("accessor", () => { const info = readInfo('{"version":"1","root":{"kind":0},"all":[]}'); info.root = withAccessor; return showShape(info.root as Shape) + " & " + showNamed(info.root as Named); });
+attempt("made again", () => move(makeShape(5)) + " & " + watch(null) + " & " + watch({ kind: 1, observe: (value) => value * 2 }));
+//// parsed-text-into-every-typed-position.ts
+// JSON.parse(text) and `await response.json()` that go straight into a typed position: an annotated variable, an assertion, an argument, a return, a field, and an awaited body. Each position has a record type of its own, so a parser for each type shows that the compiler found the type at each position and builds the object as that type. Text that fits is read through its type, also after untyped code has changed the object. Text that does not fit and text that is no JSON give what plain Bun gives.
+// STATISTIC: TypedResultsSelected >= 6
+// STATISTIC: ParsersCreated >= 6
+type InVariable = { variableId: number; variableName: string };
+type Asserted = { assertedId: number; assertedName: string };
+type Argument = { argumentId: number; argumentName: string };
+type Returned = { returnedId: number; returnedName: string };
+type InField = { fieldId: number; fieldName: string };
+type InBody = { bodyId: number; bodyName: string };
+type Change = (value: any, prefix: string) => void;
+
+////= describe
+
+function intoVariable(text: string, change: Change): string {
+  const value: InVariable = JSON.parse(text);
+  change(value, "variable");
+  return value.variableId + " " + value.variableName + " " + describe(value);
+}
+
+function asserted(text: string, change: Change): string {
+  const value = JSON.parse(text) as Asserted;
+  change(value, "asserted");
+  return value.assertedId + " " + value.assertedName + " " + describe(value);
+}
+
+function takeArgument(value: Argument, change: Change): string {
+  change(value, "argument");
+  return value.argumentId + " " + value.argumentName + " " + describe(value);
+}
+function intoArgument(text: string, change: Change): string {
+  return takeArgument(JSON.parse(text), change);
+}
+
+////= lines-5	returned	Returned
+function fromReturn(text: string, change: Change): string {
+  const value = returned(text);
+  change(value, "returned");
+  return value.returnedId + " " + value.returnedName + " " + describe(value);
+}
+
+class Holder {
+  field: InField = { fieldId: 0, fieldName: "none" };
+}
+function intoField(text: string, change: Change): string {
+  const holder = new Holder();
+  holder.field = JSON.parse(text);
+  change(holder.field, "field");
+  return holder.field.fieldId + " " + holder.field.fieldName + " " + describe(holder.field);
+}
+
+async function awaitedBody(response: Response, change: Change): Promise<string> {
+  const value: InBody = await response.json();
+  change(value, "body");
+  return value.bodyId + " " + value.bodyName + " " + describe(value);
+}
+
+function textsFor(prefix: string): string[] {
+  const id = JSON.stringify(prefix + "Id");
+  const name = JSON.stringify(prefix + "Name");
+  return [
+    `{${id}:1,${name}:"one"}`,
+    `{${name}:"two",${id}:2}`,
+    ` {\n\t${id} : 3 ,\r\n\t${name} : "three"\n} `,
+    `{${id}:-0,${name}:""}`,
+    `{${id}:1.5e3,${name}:"\\u00e9\\n\\"quoted\\""}`,
+    `{${id}:4,${name}:"four","extra":[true,null,{"deep":1}]}`,
+    `{"first":0,${id}:5,${name}:"five"}`,
+    `{${id}:6}`,
+    `{${name}:"seven"}`,
+    `{${id}:"eight",${name}:8}`,
+    `{${id}:null,${name}:null}`,
+    `{${id}:{"nested":9},${name}:["nine"]}`,
+    `{${id}:10,${name}:"ten",${id}:11}`,
+    `{"__proto__":{"inherited":1},${id}:12,${name}:"twelve"}`,
+    `{}`,
+    `[]`,
+    `[{${id}:13,${name}:"thirteen"}]`,
+    `null`,
+    `true`,
+    `14`,
+    `"text"`,
+    ``,
+    ` `,
+    `{`,
+    `{${id}:1,}`,
+    `{${id}:1}}`,
+    `{${id}:01}`,
+    `{${id}:1 ${name}:"one"}`,
+    `{'single':1}`,
+    `undefined`,
+  ];
+}
+
+const nothing: Change = () => {};
+const changes: [string, Change][] = [
+  ["a value of another kind", (value, prefix) => void (value[prefix + "Id"] = "text")],
+  ["a member deleted", (value, prefix) => void delete value[prefix + "Name"]],
+  ["a member deleted and added again", (value, prefix) => void (delete value[prefix + "Id"], (value[prefix + "Id"] = 20))],
+  ["a member added", value => void (value.added = true)],
+  ["an accessor", (value, prefix) => void Object.defineProperty(value, prefix + "Id", { get: () => 100, enumerable: true, configurable: true })],
+  ["hidden", (value, prefix) => void Object.defineProperty(value, prefix + "Name", { enumerable: false })],
+  ["frozen", value => void Object.freeze(value)],
+  ["another prototype", (value, prefix) => void (delete value[prefix + "Name"], Object.setPrototypeOf(value, { [prefix + "Name"]: "inherited" }))],
+];
+
+const positions: [string, (text: string, change: Change) => string | Promise<string>][] = [
+  ["variable", intoVariable],
+  ["asserted", asserted],
+  ["argument", intoArgument],
+  ["returned", fromReturn],
+  ["field", intoField],
+  ["body", (text, change) => awaitedBody(new Response(text), change)],
+];
+
+for (const [prefix, read] of positions) {
+  const texts = textsFor(prefix);
+  for (const text of texts) {
+    let said: string;
+    try {
+      said = await read(text, nothing);
+    } catch (error) {
+      said = "threw " + (error instanceof SyntaxError ? error.name + ": " + error.message : (error as Error).name);
+    }
+    console.log(prefix + " " + JSON.stringify(text) + " -> " + said);
+  }
+  for (const [name, change] of changes) console.log(prefix + ", " + name + " -> " + (await read(texts[0]!, change)));
+}
+
+let sum = 0;
+let names = 0;
+for (let at = 0; at < 300; at++) {
+  const value = returned(at % 7 === 3 ? "[" + at + "]" : at % 7 === 5 ? '{"returnedName":"n' + at + '","returnedId":"' + at + '"}' : '{"returnedId":' + at + ',"returnedName":"n' + at + '"}');
+  sum += typeof value.returnedId === "number" ? value.returnedId : 1000;
+  names += typeof value.returnedName === "string" ? value.returnedName.length : 0;
+}
+console.log(sum, names);
+//// parsed-via-untyped-annotated-constant.ts
+// Parsed data that travels as `any` or `unknown` before a typed function first holds it, some of its optional members absent: queues,
+// caches, event buses. The type has more than six members.
+interface Meta { source: string; hops: number; a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number }
+////= Message
+type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h?: Message }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withMeta = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","meta":{"source":"wire","hops":2},"tags":["x","y"]}'
+////= handle
+const made: Message = { id: 9, at: 1.5, size: 2.5, weight: 3.5, body: "z", retries: 3.5, delay: 0.5, sentAt: 4.5, score: 0.25, tags: [], meta: { source: "own", hops: 0.5, a: 1.5, b: 2.5, c: 3.5, d: 4.5, e: 5.5, f: 6.5, g: 7.5 } }
+////= row
+row("made by the program", () => handle(made))
+row("an annotated constant", () => { const held: unknown = JSON.parse(withMeta); const m: Message = held as any; return handle(m) })
+//// parsed-via-untyped-array-via-callback.ts
+// Parsed data that travels as `any` or `unknown` before a typed function first holds it, some of its optional members absent: queues,
+// caches, event buses. The type has more than six members.
+interface Meta { source: string; hops: number; a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number }
+////= Message
+type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h?: Message }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withMeta = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","meta":{"source":"wire","hops":2},"tags":["x","y"]}'
+////= handle
+const made: Message = { id: 9, at: 1.5, size: 2.5, weight: 3.5, body: "z", retries: 3.5, delay: 0.5, sentAt: 4.5, score: 0.25, tags: [], meta: { source: "own", hops: 0.5, a: 1.5, b: 2.5, c: 3.5, d: 4.5, e: 5.5, f: 6.5, g: 7.5 } }
+////= row
+row("made by the program", () => handle(made))
+row("an array, by a callback", () => [JSON.parse(line), JSON.parse(withMeta)].map((m: any) => handle(m)).join())
+//// parsed-via-untyped-element.ts
+// Parsed data that travels as `any` or `unknown` before a typed function first holds it, some of its optional members absent: queues,
+// caches, event buses. The type has more than six members.
+interface Meta { source: string; hops: number; a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number }
+////= Message
+type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h?: Message }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withMeta = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","meta":{"source":"wire","hops":2},"tags":["x","y"]}'
+////= handle
+const made: Message = { id: 9, at: 1.5, size: 2.5, weight: 3.5, body: "z", retries: 3.5, delay: 0.5, sentAt: 4.5, score: 0.25, tags: [], meta: { source: "own", hops: 0.5, a: 1.5, b: 2.5, c: 3.5, d: 4.5, e: 5.5, f: 6.5, g: 7.5 } }
+////= row
+row("made by the program", () => handle(made))
+row("an element", () => { const list: Message[] = []; const held: any = JSON.parse(withMeta); list.push(held); list[1] = held; return handle(list[0]!) + handle(list[1]!) })
+//// parsed-via-untyped-event-bus.ts
+// Parsed data that travels as `any` or `unknown` before a typed function first holds it, some of its optional members absent: queues,
+// caches, event buses. The type has more than six members.
+interface Meta { source: string; hops: number; a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number }
+////= Message
+type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h?: Message }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withMeta = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","meta":{"source":"wire","hops":2},"tags":["x","y"]}'
+////= handle
+const made: Message = { id: 9, at: 1.5, size: 2.5, weight: 3.5, body: "z", retries: 3.5, delay: 0.5, sentAt: 4.5, score: 0.25, tags: [], meta: { source: "own", hops: 0.5, a: 1.5, b: 2.5, c: 3.5, d: 4.5, e: 5.5, f: 6.5, g: 7.5 } }
+////= row
+row("made by the program", () => handle(made))
+row("an event bus", () => {
+  const listeners: Record<string, ((payload: any) => void)[]> = {}
+  const on = (name: string, f: (payload: any) => void) => { (listeners[name] ||= []).push(f) }
+  const emit = (name: string, payload: unknown) => { for (const f of listeners[name] || []) f(payload) }
+  let seen = ""
+  on("message", (m: Message) => { seen += handle(m) })
+  emit("message", JSON.parse(line)); emit("message", JSON.parse(withMeta))
+  return seen
+})
+//// parsed-via-untyped-field.ts
+// Parsed data that travels as `any` or `unknown` before a typed function first holds it, some of its optional members absent: queues,
+// caches, event buses. The type has more than six members.
+interface Meta { source: string; hops: number; a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number }
+////= Message
+type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h?: Message }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withMeta = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","meta":{"source":"wire","hops":2},"tags":["x","y"]}'
+////= handle
+const made: Message = { id: 9, at: 1.5, size: 2.5, weight: 3.5, body: "z", retries: 3.5, delay: 0.5, sentAt: 4.5, score: 0.25, tags: [], meta: { source: "own", hops: 0.5, a: 1.5, b: 2.5, c: 3.5, d: 4.5, e: 5.5, f: 6.5, g: 7.5 } }
+////= row
+row("made by the program", () => handle(made))
+row("a field", () => { const box: { current: Message } = { current: made }; const held: any = JSON.parse(line); box.current = held; return handle(box.current) })
+//// parsed-via-untyped-keys-and-json.ts
+// Parsed data that travels as `any` or `unknown` before a typed function first holds it, some of its optional members absent: queues,
+// caches, event buses. The type has more than six members.
+interface Meta { source: string; hops: number; a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number }
+////= Message
+type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h?: Message }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withMeta = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","meta":{"source":"wire","hops":2},"tags":["x","y"]}'
+////= handle
+const made: Message = { id: 9, at: 1.5, size: 2.5, weight: 3.5, body: "z", retries: 3.5, delay: 0.5, sentAt: 4.5, score: 0.25, tags: [], meta: { source: "own", hops: 0.5, a: 1.5, b: 2.5, c: 3.5, d: 4.5, e: 5.5, f: 6.5, g: 7.5 } }
+////= row
+row("made by the program", () => handle(made))
+row("keys and JSON", () => { const held: any = JSON.parse(line); const m: Message = held; return Object.keys(m).join() + JSON.stringify(m) + ("retries" in m) })
+//// parsed-via-untyped-literal.ts
+// Parsed data that travels as `any` or `unknown` before a typed function first holds it, some of its optional members absent: queues,
+// caches, event buses. The type has more than six members.
+interface Meta { source: string; hops: number; a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number }
+////= Message
+type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h?: Message }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withMeta = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","meta":{"source":"wire","hops":2},"tags":["x","y"]}'
+////= handle
+const made: Message = { id: 9, at: 1.5, size: 2.5, weight: 3.5, body: "z", retries: 3.5, delay: 0.5, sentAt: 4.5, score: 0.25, tags: [], meta: { source: "own", hops: 0.5, a: 1.5, b: 2.5, c: 3.5, d: 4.5, e: 5.5, f: 6.5, g: 7.5 } }
+////= row
+row("made by the program", () => handle(made))
+row("a literal of untyped code", () => { const make = (n: any): any => ({ id: n, at: 0.5, size: 1.5, weight: 2.5, body: "b" }); return handle(make(5)) })
+//// parsed-via-untyped-map.ts
+// Parsed data that travels as `any` or `unknown` before a typed function first holds it, some of its optional members absent: queues,
+// caches, event buses. The type has more than six members.
+interface Meta { source: string; hops: number; a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number }
+////= Message
+type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h?: Message }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withMeta = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","meta":{"source":"wire","hops":2},"tags":["x","y"]}'
+////= handle
+const made: Message = { id: 9, at: 1.5, size: 2.5, weight: 3.5, body: "z", retries: 3.5, delay: 0.5, sentAt: 4.5, score: 0.25, tags: [], meta: { source: "own", hops: 0.5, a: 1.5, b: 2.5, c: 3.5, d: 4.5, e: 5.5, f: 6.5, g: 7.5 } }
+////= row
+row("made by the program", () => handle(made))
+row("a Map", () => { const cache = new Map<string, unknown>(); cache.set("k", JSON.parse(line)); return handle(cache.get("k") as Message) })
+//// parsed-via-untyped-member-depth-1.ts
+// Parsed data that travels as `any` or `unknown` before a typed function first holds it, some of its optional members absent: queues,
+// caches, event buses. The type has more than six members.
+interface Meta { source: string; hops: number; a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number }
+////= Message
+type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h?: Message }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withMeta = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","meta":{"source":"wire","hops":2},"tags":["x","y"]}'
+////= handle
+const made: Message = { id: 9, at: 1.5, size: 2.5, weight: 3.5, body: "z", retries: 3.5, delay: 0.5, sentAt: 4.5, score: 0.25, tags: [], meta: { source: "own", hops: 0.5, a: 1.5, b: 2.5, c: 3.5, d: 4.5, e: 5.5, f: 6.5, g: 7.5 } }
+////= row
+row("made by the program", () => handle(made))
+row("a member one level down", () => { const held: any = JSON.parse(withMeta); const meta: Meta = held.meta; return meta.source + meta.hops + (meta.f ?? "-") })
+//// parsed-via-untyped-member-depth-2.ts
+// Parsed data that travels as `any` or `unknown` before a typed function first holds it, some of its optional members absent: queues,
+// caches, event buses. The type has more than six members.
+interface Meta { source: string; hops: number; a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number }
+////= Message
+type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h?: Message }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withMeta = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","meta":{"source":"wire","hops":2},"tags":["x","y"]}'
+////= handle
+const made: Message = { id: 9, at: 1.5, size: 2.5, weight: 3.5, body: "z", retries: 3.5, delay: 0.5, sentAt: 4.5, score: 0.25, tags: [], meta: { source: "own", hops: 0.5, a: 1.5, b: 2.5, c: 3.5, d: 4.5, e: 5.5, f: 6.5, g: 7.5 } }
+////= row
+row("made by the program", () => handle(made))
+row("a member two levels down", () => { const held: any = JSON.parse('{"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":' + withMeta + "}"); const wide: Wide = held; return wide.a + wide.g + (wide.h ? handle(wide.h) : "") })
+//// parsed-via-untyped-mismatch-throws.ts
+// Parsed data that travels as `any` or `unknown` before a typed function first holds it, some of its optional members absent: queues,
+// caches, event buses. The type has more than six members.
+interface Meta { source: string; hops: number; a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number }
+////= Message
+type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h?: Message }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withMeta = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","meta":{"source":"wire","hops":2},"tags":["x","y"]}'
+////= handle
+const made: Message = { id: 9, at: 1.5, size: 2.5, weight: 3.5, body: "z", retries: 3.5, delay: 0.5, sentAt: 4.5, score: 0.25, tags: [], meta: { source: "own", hops: 0.5, a: 1.5, b: 2.5, c: 3.5, d: 4.5, e: 5.5, f: 6.5, g: 7.5 } }
+////= row
+row("made by the program", () => handle(made))
+row("what does not match is refused", () => { const held: any = JSON.parse('{"id":"one","at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'); return handle(held) })
+//// parsed-via-untyped-missing-member.ts
+// Parsed data that travels as `any` or `unknown` before a typed function first holds it, some of its optional members absent: queues,
+// caches, event buses. The type has more than six members.
+interface Meta { source: string; hops: number; a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number }
+////= Message
+type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h?: Message }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withMeta = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","meta":{"source":"wire","hops":2},"tags":["x","y"]}'
+////= handle
+const made: Message = { id: 9, at: 1.5, size: 2.5, weight: 3.5, body: "z", retries: 3.5, delay: 0.5, sentAt: 4.5, score: 0.25, tags: [], meta: { source: "own", hops: 0.5, a: 1.5, b: 2.5, c: 3.5, d: 4.5, e: 5.5, f: 6.5, g: 7.5 } }
+////= row
+row("made by the program", () => handle(made))
+row("what lacks a required member", () => { const held: any = JSON.parse('{"id":1,"at":0.5,"size":2.5,"weight":3.5}'); return handle(held) })
+//// parsed-via-untyped-promise.ts
+// Parsed data that travels as `any` or `unknown` before a typed function first holds it, some of its optional members absent: queues,
+// caches, event buses. The type has more than six members.
+interface Meta { source: string; hops: number; a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number }
+////= Message
+type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h?: Message }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withMeta = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","meta":{"source":"wire","hops":2},"tags":["x","y"]}'
+////= handle
+const made: Message = { id: 9, at: 1.5, size: 2.5, weight: 3.5, body: "z", retries: 3.5, delay: 0.5, sentAt: 4.5, score: 0.25, tags: [], meta: { source: "own", hops: 0.5, a: 1.5, b: 2.5, c: 3.5, d: 4.5, e: 5.5, f: 6.5, g: 7.5 } }
+////= row
+row("made by the program", () => handle(made))
+row("a promise", async () => { const m: any = await Promise.resolve(JSON.parse(line)); return handle(m) })
+//// parsed-via-untyped-queue.ts
+// Parsed data that travels as `any` or `unknown` before a typed function first holds it, some of its optional members absent: queues,
+// caches, event buses. The type has more than six members.
+interface Meta { source: string; hops: number; a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number }
+////= Message
+type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h?: Message }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withMeta = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","meta":{"source":"wire","hops":2},"tags":["x","y"]}'
+////= handle
+const made: Message = { id: 9, at: 1.5, size: 2.5, weight: 3.5, body: "z", retries: 3.5, delay: 0.5, sentAt: 4.5, score: 0.25, tags: [], meta: { source: "own", hops: 0.5, a: 1.5, b: 2.5, c: 3.5, d: 4.5, e: 5.5, f: 6.5, g: 7.5 } }
+////= row
+row("made by the program", () => handle(made))
+row("a queue", () => { const queue: unknown[] = []; const m = JSON.parse(line); queue.push(m); return handle(queue.shift() as any) })

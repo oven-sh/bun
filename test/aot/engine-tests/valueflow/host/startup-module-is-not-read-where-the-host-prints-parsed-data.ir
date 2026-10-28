@@ -1,0 +1,32 @@
+# console.log(JSON.parse(text))
+# What JSON.parse makes holds primitives, ordinary objects and arrays, under whatever key. The formatter looks for a method under Symbol.for("nodejs.util.inspect.custom") and finds such an object at most:
+# none of them is a function, so it calls nothing, hands nobody the printer of node:util, and native code reads no start-up module.
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+# CHECK-NEXT: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal/util/inspect" displayPath="internal/util/inspect" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUtilInspect body=f1
+entry module=m0
+layout L0 name="Exports" fields=[{key="inspect" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="{\"a\":[1]}"
+    v1 = Builtin builtin=JSON
+    v2 = Builtin builtin=JSONParse
+    v3 = Call v2, v1, v0
+    v4 = Builtin builtin=Console
+    v5 = Builtin builtin=ConsoleLog
+    v6 = Call v5, v4, v3
+    Return
+}
+function f1 name="inspectModule" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f2 name="inspect" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

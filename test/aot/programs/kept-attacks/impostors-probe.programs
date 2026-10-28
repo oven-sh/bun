@@ -1,0 +1,16 @@
+//// impostors-probe/arrays-and-strings.js
+// Impostors probe: arrays and strings. It prints what plain Bun prints.
+const list = [];
+for (let i = 0; i < 100; i++) list.push(i * 2);
+console.log(list.filter(n => n % 3 === 0).map(n => n + 1).reduce((a, b) => a + b, 0), list.slice(-2).join(), [3, 1, 2].sort().join());
+console.log("abc".charCodeAt(1), "a,b".split(",").length, `x${1 + 1}y`.toUpperCase(), "abc".replace("b", m => m + m));
+//// impostors-probe/generators.js
+// Impostors probe, one probe of many. It prints what plain Bun prints.
+function* count(n) { for (let i = 0; i < n; i++) { const sent = yield i; if (sent) console.log("sent", sent); } return "end"; }
+const it = count(3); console.log(it.next().value, it.next("x").value, [...count(2)].join());
+const { a, ...rest } = { a: 1, b: 2, c: 3 }; console.log(a, JSON.stringify(rest), JSON.stringify(JSON.parse('{"k":[1,{"z":null}]}')));
+//// impostors-probe/global-by-name.js
+// Impostors probe: global by name. It prints what plain Bun prints.
+const name = ["sha", "red"].join("");
+globalThis[name] = 5;
+console.log(globalThis[name] + 1, typeof globalThis.shared, Reflect.get(globalThis, name));

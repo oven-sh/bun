@@ -26,6 +26,8 @@ import { writeIfChanged } from "./fs.ts";
  * they are the fields of `Rule`, and of a build statement where a value per edge makes sense.
  */
 const ruleVars = {
+  // aot.ts
+  aot_check: ["cwd", "args", "desc"],
   // bun.ts
   binary_verify: ["spec"],
   copy_exe: [],
@@ -35,6 +37,7 @@ const ruleVars = {
   shim_verify: ["spec"],
   smoke_test: [],
   strip: ["stripflags"],
+  stripped_verify: ["spec"],
   // codegen.ts
   bun_install: ["dir", "stamp"],
   codegen: ["cwd", "args", "desc"],
@@ -46,31 +49,34 @@ const ruleVars = {
   cc: ["cflags"],
   cxx: ["cxxflags"],
   cxx_pch: ["cxxflags", "pch_file", "pch_header"],
+  cxx_pch_chained: ["cxxflags", "pch_file", "pch_header", "pch_bases"],
   link: ["ldflags", "lazy"],
+  link_trimmable: ["ldflags", "lazy"],
   mkdir_stamp: ["dir"],
   nasm: ["nasmflags"],
   pch: ["cxxflags", "pch_header"],
+  pch_chained: ["cxxflags", "pch_header"],
+  pch_checksum: [],
   pch_msvc: ["cxxflags", "pch_header", "pch_stub_obj"],
   // configure.ts
   regen: [],
   // rust/emit.ts
   rust_build_script: ["manifest", "crate"],
+  rust_generated_inputs: [],
   rust_plan: ["planinput", "plan"],
   rust_rustc: ["manifest", "crate", "what"],
   // shims.ts
   host_tool_cc: [],
-  shim_crt_decompress: [],
   // source.ts
-  dep_build: ["name", "builddir", "buildtype", "targets"],
   dep_cargo: ["name", "manifestdir", "env", "args"],
   dep_cargo_cross: ["name", "manifestdir", "env", "args", "rust_target"],
+  dep_check_defined: ["name", "symbols"],
   dep_check_undefined: ["name", "nm", "symbols"],
   dep_codegen: ["name", "cwd", "tool", "args"],
-  dep_configure: ["name", "srcdir", "builddir", "args"],
   dep_fetch: ["name", "repo", "commit", "dest", "cache", "patches"],
   dep_fetch_prebuilt: ["name", "url", "dest", "identity", "rm_paths"],
+  dep_gen: ["name", "desc", "opts", "cmd"],
   dep_host_cc: ["flags"],
-  dep_prebuild: ["name", "cwd", "cmd"],
   dep_subst: ["pairs"],
 } as const satisfies Record<string, readonly string[]>;
 

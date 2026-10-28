@@ -1,0 +1,3 @@
+{
+  "skipInShell": "its output has objects as Bun's console.log formats them"
+}

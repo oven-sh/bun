@@ -4,7 +4,7 @@
 #include "headers.h"
 #include "ZigGlobalObject.h"
 #include "InternalModuleRegistry.h"
-#include <JavaScriptCore/CustomGetterSetter.h>
+#include <JavaScriptCore/GetterSetter.h>
 
 namespace Bun {
 
@@ -235,39 +235,47 @@ JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
     return Bun__Timer__clearTimeout(globalObject, JSC::JSValue::encode(timer_or_num));
 }
 
-static JSC::EncodedJSValue timersPromisesExport(JSGlobalObject* lexicalGlobalObject, ASCIILiteral name)
+static JSC::EncodedJSValue timersPromisesExport(JSGlobalObject* lexicalGlobalObject, ASCIILiteral name, JSValue (*requireTimersPromises)(Zig::GlobalObject*))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    JSValue timersPromises = globalObject->internalModuleRegistry()->requireId(lexicalGlobalObject, vm, InternalModuleRegistry::Field::NodeTimersPromises);
+    JSValue timersPromises = requireTimersPromises(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(timersPromises.get(lexicalGlobalObject, Identifier::fromString(vm, name))));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(setTimeoutPromisifyCustomGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue, PropertyName))
+JSC_DEFINE_HOST_FUNCTION(setTimeoutPromisifyCustomGetter, (JSGlobalObject * globalObject, CallFrame*))
 {
-    return timersPromisesExport(globalObject, "setTimeout"_s);
+    return timersPromisesExport(globalObject, "setTimeout"_s, [](Zig::GlobalObject* realm) {
+        return BUN_REQUIRE_INTERNAL_MODULE(realm, NodeTimersPromises, "setTimeout.@@@nodejs.util.promisify.custom", "setTimeout"_s);
+    });
 }
 
-JSC_DEFINE_CUSTOM_GETTER(setIntervalPromisifyCustomGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue, PropertyName))
+JSC_DEFINE_HOST_FUNCTION(setIntervalPromisifyCustomGetter, (JSGlobalObject * globalObject, CallFrame*))
 {
-    return timersPromisesExport(globalObject, "setInterval"_s);
+    return timersPromisesExport(globalObject, "setInterval"_s, [](Zig::GlobalObject* realm) {
+        return BUN_REQUIRE_INTERNAL_MODULE(realm, NodeTimersPromises, "setInterval.@@@nodejs.util.promisify.custom", "setInterval"_s);
+    });
 }
 
-JSC_DEFINE_CUSTOM_GETTER(setImmediatePromisifyCustomGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue, PropertyName))
+JSC_DEFINE_HOST_FUNCTION(setImmediatePromisifyCustomGetter, (JSGlobalObject * globalObject, CallFrame*))
 {
-    return timersPromisesExport(globalObject, "setImmediate"_s);
+    return timersPromisesExport(globalObject, "setImmediate"_s, [](Zig::GlobalObject* realm) {
+        return BUN_REQUIRE_INTERNAL_MODULE(realm, NodeTimersPromises, "setImmediate.@@@nodejs.util.promisify.custom", "setImmediate"_s);
+    });
 }
 
-static JSValue createTimerFunction(VM& vm, JSObject* globalObject, ASCIILiteral name, NativeFunction function, JSC::CustomGetterSetter::CustomGetter promisifyCustomGetter)
+static JSValue createTimerFunction(VM& vm, JSObject* owner, ASCIILiteral name, NativeFunction function, NativeFunction promisifyCustomGetter)
 {
-    auto* timerFunction = JSFunction::create(vm, globalObject->globalObject(), 1, name, function, ImplementationVisibility::Public);
-    // Same shape as Node's lib/timers.js: an enumerable, non-configurable accessor.
-    timerFunction->putDirectCustomAccessor(vm,
+    auto* globalObject = owner->globalObject();
+    auto* timerFunction = JSFunction::create(vm, globalObject, 1, name, function, ImplementationVisibility::Public);
+    // Node's lib/timers.js shape: an enumerable, non-configurable, getter-only accessor. A CustomAccessor getter is cached per Structure, so each timer needs its own GetterSetter.
+    auto* getter = JSFunction::create(vm, globalObject, 0, "get"_s, promisifyCustomGetter, ImplementationVisibility::Public);
+    timerFunction->putDirectAccessor(globalObject,
         Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.promisify.custom"_s)),
-        CustomGetterSetter::create(vm, promisifyCustomGetter, nullptr),
-        PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete | 0);
+        GetterSetter::create(vm, globalObject, getter, jsUndefined()),
+        PropertyAttribute::Accessor | PropertyAttribute::DontDelete | 0);
     return timerFunction;
 }
 

@@ -1,0 +1,4 @@
+a constant name: undefined
+a computed name: true
+another computed name: function
+what lies there: false true

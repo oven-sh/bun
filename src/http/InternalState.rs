@@ -2,6 +2,7 @@ use crate::Error;
 use bun_core::MutableString;
 use bun_core::Output;
 
+use crate::decompressor::has_zlib_header;
 use crate::{CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata};
 
 bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
@@ -307,6 +308,13 @@ impl<'a> InternalState<'a> {
                 {
                     break 'libdeflate;
                 }
+                let format = match self.encoding {
+                    Encoding::Gzip => bun_libdeflate::Encoding::Gzip,
+                    // zlib-ng alone judges a zlib-wrapped body: libdeflate accepts more streams.
+                    Encoding::Deflate if has_zlib_header(buffer) => break 'libdeflate,
+                    Encoding::Deflate => bun_libdeflate::Encoding::Deflate,
+                    _ => unreachable!(),
+                };
                 self.flags.is_libdeflate_fast_path_disabled = true;
 
                 log!("Decompressing {} bytes with libdeflate\n", buffer.len());
@@ -358,15 +366,7 @@ impl<'a> InternalState<'a> {
                     .decompressor
                     .as_deref_mut()
                     .expect("set in HttpThread::deflater()");
-                let result = decompressor.decompress(
-                    buffer,
-                    &mut deflater.shared_buffer,
-                    match self.encoding {
-                        Encoding::Gzip => bun_libdeflate::Encoding::Gzip,
-                        Encoding::Deflate => bun_libdeflate::Encoding::Deflate,
-                        _ => unreachable!(),
-                    },
-                );
+                let result = decompressor.decompress(buffer, &mut deflater.shared_buffer, format);
 
                 // libdeflate decodes a single member; unconsumed input means
                 // a multi-member gzip stream. Let the zlib path handle it.
@@ -386,7 +386,6 @@ impl<'a> InternalState<'a> {
                     still_needs_to_decompress = false;
                 }
             }
-            let _ = is_final_chunk;
         }
 
         // Slow path, or brotli: use the .decompressor

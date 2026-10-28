@@ -275,15 +275,15 @@ static void updateError(Error& err, OSStatus status)
     }
 }
 
-static ScopedCFRef createQuery(const CString& service, const CString& name)
+static ScopedCFRef createQuery(const UTF8CString& service, const UTF8CString& name)
 {
     auto* framework = securityFramework();
     if (!framework) return ScopedCFRef(nullptr);
 
     ScopedCFRef cfServiceName(framework->CFStringCreateWithCString(
-        framework->kCFAllocatorDefault, service.data(), kCFStringEncodingUTF8));
+        framework->kCFAllocatorDefault, service.legacyCStringPointer(), kCFStringEncodingUTF8));
     ScopedCFRef cfUser(framework->CFStringCreateWithCString(
-        framework->kCFAllocatorDefault, name.data(), kCFStringEncodingUTF8));
+        framework->kCFAllocatorDefault, name.legacyCStringPointer(), kCFStringEncodingUTF8));
 
     if (!cfServiceName || !cfUser) return ScopedCFRef(nullptr);
 
@@ -301,7 +301,7 @@ static ScopedCFRef createQuery(const CString& service, const CString& name)
     return ScopedCFRef(query);
 }
 
-Error setPassword(const CString& service, const CString& name, CString&& password, bool allowUnrestrictedAccess, Persist)
+Error setPassword(const UTF8CString& service, const UTF8CString& name, UTF8CString&& password, bool allowUnrestrictedAccess, Persist)
 {
     Error err;
 
@@ -392,7 +392,7 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
     return err;
 }
 
-std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CString& name, Error& err)
+std::optional<WTF::Vector<uint8_t>> getPassword(const UTF8CString& service, const UTF8CString& name, Error& err)
 {
     err = Error {};
 
@@ -429,7 +429,7 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CS
     return std::nullopt;
 }
 
-bool deletePassword(const CString& service, const CString& name, Error& err)
+bool deletePassword(const UTF8CString& service, const UTF8CString& name, Error& err)
 {
     err = Error {};
 

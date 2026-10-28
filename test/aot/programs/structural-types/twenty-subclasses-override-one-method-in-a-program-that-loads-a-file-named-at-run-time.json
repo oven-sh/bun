@@ -1,0 +1,1 @@
+{ "build": ["--aot-allow-code-from-disk"] }

@@ -1,0 +1,57 @@
+"" 0
+0 n=0 0/false 0,0,0 0
+0 n=0 0/false 0,0,0 0
+7 n=7 7/true 7,-7,14 7
+-1 n=-1 -1/false -1,1,-2 -1
+2147483647 n=2147483647 2147483647/true 2147483647,-2147483647,4294967294 2147483647
+-2147483648 n=-2147483648 -2147483648/false -2147483648,2147483648,-4294967296 -2147483648
+2147483648 n=2147483648 2147483648/true 2147483648,-2147483648,4294967296 2147483648
+4294967301 n=4294967301 4294967301/true 4294967301,-4294967301,8589934602 4294967301
+1e+21 n=1e+21 1e+21/true 1e+21,-1e+21,2e+21 1e+21
+1e-7 n=1e-7 1e-7/true 1e-7,-1e-7,2e-7 1e-7
+0.5 n=0.5 0.5/true 0.5,-0.5,1 0.5
+-0.5 n=-0.5 -0.5/false -0.5,0.5,-1 -0.5
+NaN n=NaN NaN/false NaN,NaN,NaN NaN
+Infinity n=Infinity Infinity/true Infinity,-Infinity,Infinity Infinity
+-Infinity n=-Infinity -Infinity/false -Infinity,Infinity,-Infinity -Infinity
+"" true ""
+"a" true "a"
+"é" true "é"
+"日本語" true "日本語"
+"plain text" true "plain text"
+undefined null true 12345678901234567890 1,2,3 [object Object]
+xundefinednull0 undefinednull-1180591620717411303424
+s|5|true| |0|false| undefined|null|undefined| null|undefined|null| é|1e+21|true|
+[1,two,3,null [undefined,true,0,1e+21 [NaN,,false,0.1 [,,,[object Object]
+objects in a template "<a>:1.5:<c>:d" toString a, toString c
+objects among untyped parts "[<a>,<b>,3,<d>" toString a, toString b, toString d
+nine parts "s10undefinednullfalse9<o><x>" toString o, toString x
+nine parts, numbers "-21474836481e+21undefinednulltrue-1<o>NaN" toString o
+plus prefers valueOf "=42" valueOf n
+a template prefers toString "=<n>" toString n
+plus without valueOf "=<n>" toString n
+a symbol in a template TypeError: Cannot convert a symbol to a string toString before
+a symbol in a chain TypeError: Cannot convert a symbol to a string toString before
+a symbol alone TypeError: Cannot convert a symbol to a string 
+a symbol last TypeError: Cannot convert a symbol to a string toString a, toString b, toString c
+k:0:true=1 0=1 k.0.null=0
+key:0:true=1429 key:1:false=1429 key:2:true=1429 key:3:false=1429 key:4:true=1429 key:5:false=1429 key:6:true=1429 key:0:false=1429 key:1:true=1428 key:2:false=1428 key:3:true=1428 key:4:false=1428 key:5:true=1428 key:6:false=1428 0=5000 1=5000 2=5000 3=5000 key.0.null=13336665 key.1.undefined=26669332 key.2.undefined=26665334 key.3.null=13340667 key.4.undefined=26677333 key.0.undefined=26653335 key.1.null=13324668 key.3.undefined=26661333 key.4.null=13328667 key.2.null=13332666
+:0:true=15 :1:false=15 :2:true=15 :3:false=15 :4:true=15 :5:false=15 :6:true=15 :0:false=15 :1:true=15 :2:false=15 :3:true=15 :4:false=15 :5:true=15 :6:false=15 0=53 1=53 2=52 3=52 .0.null=1365 .1.undefined=2898 .2.undefined=2856 .3.null=1407 .4.undefined=2982 .0.undefined=2940 .1.null=1449 .3.undefined=3024 .4.null=1491 .2.null=1533
+1301883379 52304
+345040640 -1490663264 1746473728 1129991
+ab xyzxyzxyz 0
+"" true
+"a" true
+"é" true
+"plain text" true
+"日本語" true
+"left right" true
+"ft rig" true
+under the limit length 1610612736 
+an empty part at any length length 1073741824 
+two strings over the limit RangeError: Out of memory 
+three strings over the limit RangeError: Out of memory 
+four strings over the limit RangeError: Out of memory 
+a number between RangeError: Out of memory 
+an object between RangeError: Out of memory toString middle
+after the failures "s22.5undefinednulltrue2<o>x" toString o

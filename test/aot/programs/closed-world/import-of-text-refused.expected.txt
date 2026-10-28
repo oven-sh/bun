@@ -1,0 +1,2 @@
+import of a data: URL: refused: Cannot load '..': it isn't in this executable, which only runs code that was compiled into it. Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk.
+import of a blob: URL: refused: Cannot load '..': it isn't in this executable, which only runs code that was compiled into it. Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk.

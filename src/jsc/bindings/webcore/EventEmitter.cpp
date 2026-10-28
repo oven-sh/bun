@@ -14,7 +14,8 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/text/SymbolRegistry.h>
+#include "InternalModuleRegistry.h"
+#include "ZigGlobalObject.h"
 
 namespace WebCore {
 
@@ -205,16 +206,30 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
     return invokeEventListeners(*data, eventType, *listenersVector, arguments);
 }
 
+// The `errorMonitor` that node:events exports (src/js/node/events.ts). A program that did not load that module has
+// no way to name the symbol, so it has no monitor.
+static JSC::Symbol* errorMonitorOfNodeEvents(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
+    JSValue events = globalObject->internalModuleRegistry()->internalField(Bun::InternalModuleRegistry::Field::NodeEvents).get();
+    if (!events || !events.isObject())
+        return nullptr;
+    JSValue errorMonitor = asObject(events)->getDirect(vm, Identifier::fromString(vm, "errorMonitor"_s));
+    return errorMonitor ? dynamicDowncast<JSC::Symbol>(errorMonitor) : nullptr;
+}
+
 // Like emitError in src/js/node/events.ts: the events.errorMonitor listeners run first, whether or not 'error' has a handler.
 bool EventEmitter::fireErrorEventListeners(EventEmitterData& data, const MarkedArgumentBuffer& arguments)
 {
     Ref<EventEmitter> protectedThis(*this);
     VM& vm = scriptExecutionContext()->vm();
 
-    // events.ts creates the symbol with Symbol.for.
-    auto errorMonitor = Identifier::fromUid(vm.symbolRegistry().symbolForKey("events.errorMonitor"_s));
-    if (auto* monitors = data.eventListenerMap.find(errorMonitor)) [[unlikely]]
-        invokeEventListeners(data, errorMonitor, *monitors, arguments);
+    if (auto* symbol = errorMonitorOfNodeEvents(scriptExecutionContext()->jsGlobalObject())) {
+        auto errorMonitor = Identifier::fromUid(symbol->privateName());
+        if (auto* monitors = data.eventListenerMap.find(errorMonitor)) [[unlikely]]
+            invokeEventListeners(data, errorMonitor, *monitors, arguments);
+    }
 
     auto& errorIdentifier = vm.propertyNames->error;
     auto* listenersVector = data.eventListenerMap.find(errorIdentifier);

@@ -63,12 +63,12 @@ const kBody = Symbol("kBody");
 const kFetched = Symbol("kFetched");
 const HeadersPrototype = Headers.prototype;
 
-function closeEmptyBody(controller) {
+function closeEmptyBody(controller: ReadableStreamDefaultController) {
   controller.close();
 }
 
 // An old-style Stream (minipass, form-data's CombinedStream) is not a Readable, which Readable.toWeb() needs.
-function readableFromOldStyleStream(source: import("node:stream").Stream) {
+function readableFromOldStyleStream(source: $Node.Stream) {
   const { PassThrough } = require("node:stream");
   const passthrough = new PassThrough();
   // pipe() does not forward "error", so a source that fails would leave the body open forever.
@@ -144,6 +144,18 @@ class Response extends WebResponse {
 var ResponsePrototype = Response.prototype;
 
 const kUrl = Symbol("kUrl");
+const ObjectHasOwn = Object.hasOwn;
+
+// https.Agent applies `agent.options` to every tls.connect() it makes.
+function tlsFromAgent(agent, url) {
+  if ($isCallable(agent)) {
+    const href = $isObject(url) ? (url.href ?? url.url) : url;
+    if (typeof href !== "string" || !URL.canParse(href)) return undefined;
+    agent = agent.$call(undefined, new URL(href));
+  }
+  if (!$isObject(agent) || !ObjectHasOwn(agent, "options") || !$isObject(agent.options)) return undefined;
+  return require("internal/tls").nodeClientTlsToNative({ __proto__: null, ...agent.options });
+}
 
 class Request extends WebRequest {
   [kUrl]?: string;
@@ -190,6 +202,10 @@ async function fetch(
       const readable = initBody instanceof Readable ? initBody : readableFromOldStyleStream(initBody);
       init = { ...init, body: Readable.toWeb(readable) };
     }
+  }
+  if (init && ObjectHasOwn(init, "agent") && (init as any).agent && (init as any).tls === undefined) {
+    const tls = tlsFromAgent((init as any).agent, url);
+    if (tls !== undefined) init = { ...init, tls } as any;
   }
   const response = await nativeFetch.$call(undefined, url, init);
   Object.setPrototypeOf(response, ResponsePrototype);

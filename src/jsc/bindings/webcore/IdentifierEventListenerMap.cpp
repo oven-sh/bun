@@ -12,6 +12,11 @@ namespace WebCore {
 
 IdentifierEventListenerMap::IdentifierEventListenerMap() = default;
 
+bool IdentifierEventListenerMap::containsActive(const JSC::Identifier& eventType) const
+{
+    return false;
+}
+
 void IdentifierEventListenerMap::clear()
 {
     Locker locker { m_lock };

@@ -1,0 +1,528 @@
+////: kinds-of-members
+console.log("«1»", «2».map(value => (value === undefined ? "undefined" : typeof value === "function" ? "function " + typeof value.name : typeof value)).join());
+////: answer-or-error-of-a-copy
+try {
+  console.log("«1»", «2»);
+} catch (error) {
+  console.log("«1» threw", error.name);
+}
+////: kinds-of-members-found-by-for-in
+{
+  const walked = «2»;
+  const found = [];
+  for (const key in walked) found.push(walked[key]);
+////= kinds-of-members	«1»	found
+}
+////: members-by-a-spread
+////= kinds-of-members	a spread	Object.values({ ...«1» })
+////: members-by-a-spread-between-other-members
+////= kinds-of-members	a spread between other members	Object.values({ first: 1, ...«1», last: () => 2 })
+////: members-by-a-spread-of-a-spread
+////= kinds-of-members	a spread of a spread	Object.values({ ...{ ...«1» } })
+////: members-by-a-rest-pattern
+////= kinds-of-members	a rest pattern	(({ ...rest }) => Object.values(rest))(«1»)
+////: members-by-assign-onto-a-literal
+////= kinds-of-members	assign onto a literal	Object.values(Object.assign({}, «1»))
+////: members-by-assign-onto-an-instance
+////= kinds-of-members	assign onto an instance	Object.values(Object.assign(new (class Holder {})(), «1»))
+////: members-by-assign-onto-an-object-without-a-prototype
+////= kinds-of-members	assign onto an object without a prototype	Object.values(Object.assign(Object.create(null), «1»))
+////: members-by-entries-of-a-spread
+////= kinds-of-members	entries of a spread	Object.entries({ ...«1» }).map(([, value]) => value)
+////: members-by-keys-of-a-spread
+////= kinds-of-members	keys of a spread	(copy => Object.keys(copy).map(key => copy[key]))({ ...«1» })
+////: members-by-own-keys-of-a-spread
+////= kinds-of-members	own keys of a spread	(copy => Reflect.ownKeys(copy).map(key => copy[key]))({ ...«1» })
+////: members-by-values
+////= kinds-of-members	values	Object.values(«1»)
+////: members-by-entries
+////= kinds-of-members	entries	Object.entries(«1»).map(([, value]) => value)
+////: members-by-keys
+////= kinds-of-members	keys	Object.keys(«1»).map(key => «1»[key])
+////: members-by-own-keys
+////= kinds-of-members	own keys	Reflect.ownKeys(«1»).filter(key => key !== "caller" && key !== "arguments").map(key => «1»[key])
+////: members-by-from-entries
+////= kinds-of-members	from entries	Object.values(Object.fromEntries(Object.entries(«1»)))
+////: members-by-descriptors
+////= kinds-of-members	descriptors	Object.values(Object.getOwnPropertyDescriptors(«1»)).filter(descriptor => descriptor.enumerable).map(descriptor => descriptor.value)
+////: members-by-define-from-descriptors
+////= kinds-of-members	define from descriptors	Object.values(Object.defineProperties({}, Object.getOwnPropertyDescriptors(«1»)))
+////: members-by-descriptors-of-a-spread
+////= kinds-of-members	descriptors of a spread	Object.values(Object.getOwnPropertyDescriptors({ ...«1» })).map(descriptor => descriptor.value)
+////: members-by-a-spread-that-holds-the-members-themselves
+////= answer-or-error-of-a-copy	a spread that holds the members themselves	Object.entries({ ...«1» }).map(([key, value]) => key + " " + (value === «1»[key])).join()
+////: members-by-an-instance-that-holds-the-members-themselves
+////= answer-or-error-of-a-copy	an instance that holds the members themselves	Object.entries(Object.assign(new (class Holder {})(), «1»)).map(([key, value]) => key + " " + (value === «1»[key])).join()
+////: members-by-for-in
+////= kinds-of-members-found-by-for-in	for in	«1»
+////: members-by-for-in-over-a-spread
+////= kinds-of-members-found-by-for-in	for in over a spread	{ ...«1» }
+////: members-by-assign-onto-a-frozen-object
+////= answer-or-error-of-a-copy	assign onto a frozen object	Object.values(Object.assign(Object.freeze({}), «1»)).length
+////: members-by-a-clone-of-a-spread
+////= answer-or-error-of-a-copy	a clone of a spread	Object.keys(structuredClone({ ...«1» })).length
+////: members-by-a-spread-as-json
+////= answer-or-error-of-a-copy	a spread as JSON	JSON.stringify({ ...«1» })
+////: members-by-a-replacer-over-a-spread
+////= answer-or-error-of-a-copy	a replacer over a spread	JSON.stringify({ ...«1» }, (key, value) => (typeof value === "function" ? key : value === undefined ? "undefined" : value)).length
+////: members-by-every-copy-and-walk
+////= members-by-a-spread	«1»
+////= members-by-a-spread-between-other-members	«1»
+////= members-by-a-spread-of-a-spread	«1»
+////= members-by-a-rest-pattern	«1»
+////= members-by-assign-onto-a-literal	«1»
+////= members-by-assign-onto-an-instance	«1»
+////= members-by-assign-onto-an-object-without-a-prototype	«1»
+////= members-by-entries-of-a-spread	«1»
+////= members-by-keys-of-a-spread	«1»
+////= members-by-own-keys-of-a-spread	«1»
+////= members-by-values	«1»
+////= members-by-entries	«1»
+////= members-by-keys	«1»
+////= members-by-own-keys	«1»
+////= members-by-from-entries	«1»
+////= members-by-descriptors	«1»
+////= members-by-define-from-descriptors	«1»
+////= members-by-descriptors-of-a-spread	«1»
+////= members-by-a-spread-that-holds-the-members-themselves	«1»
+////= members-by-an-instance-that-holds-the-members-themselves	«1»
+////= members-by-for-in	«1»
+////= members-by-for-in-over-a-spread	«1»
+////= members-by-assign-onto-a-frozen-object	«1»
+////= members-by-a-clone-of-a-spread	«1»
+////= members-by-a-spread-as-json	«1»
+////= members-by-a-replacer-over-a-spread	«1»
+//// members-of-bun-hash-by-a-spread.js
+////= members-by-a-spread	Bun.hash
+//// members-of-bun-hash-by-a-spread-between-other-members.js
+////= members-by-a-spread-between-other-members	Bun.hash
+//// members-of-bun-hash-by-a-spread-of-a-spread.js
+////= members-by-a-spread-of-a-spread	Bun.hash
+//// members-of-bun-hash-by-a-rest-pattern.js
+////= members-by-a-rest-pattern	Bun.hash
+//// members-of-bun-hash-by-assign-onto-a-literal.js
+////= members-by-assign-onto-a-literal	Bun.hash
+//// members-of-bun-hash-by-assign-onto-an-instance.js
+////= members-by-assign-onto-an-instance	Bun.hash
+//// members-of-bun-hash-by-assign-onto-an-object-without-a-prototype.js
+////= members-by-assign-onto-an-object-without-a-prototype	Bun.hash
+//// members-of-bun-hash-by-entries-of-a-spread.js
+////= members-by-entries-of-a-spread	Bun.hash
+//// members-of-bun-hash-by-keys-of-a-spread.js
+////= members-by-keys-of-a-spread	Bun.hash
+//// members-of-bun-hash-by-own-keys-of-a-spread.js
+////= members-by-own-keys-of-a-spread	Bun.hash
+//// members-of-bun-hash-by-values.js
+////= members-by-values	Bun.hash
+//// members-of-bun-hash-by-entries.js
+////= members-by-entries	Bun.hash
+//// members-of-bun-hash-by-keys.js
+////= members-by-keys	Bun.hash
+//// members-of-bun-hash-by-own-keys.js
+////= members-by-own-keys	Bun.hash
+//// members-of-bun-hash-by-from-entries.js
+////= members-by-from-entries	Bun.hash
+//// members-of-bun-hash-by-descriptors.js
+////= members-by-descriptors	Bun.hash
+//// members-of-bun-hash-by-define-from-descriptors.js
+////= members-by-define-from-descriptors	Bun.hash
+//// members-of-bun-hash-by-descriptors-of-a-spread.js
+////= members-by-descriptors-of-a-spread	Bun.hash
+//// members-of-bun-hash-by-a-spread-that-holds-the-members-themselves.js
+////= members-by-a-spread-that-holds-the-members-themselves	Bun.hash
+//// members-of-bun-hash-by-an-instance-that-holds-the-members-themselves.js
+////= members-by-an-instance-that-holds-the-members-themselves	Bun.hash
+//// members-of-bun-hash-by-for-in.js
+////= members-by-for-in	Bun.hash
+//// members-of-bun-hash-by-for-in-over-a-spread.js
+////= members-by-for-in-over-a-spread	Bun.hash
+//// members-of-bun-hash-by-assign-onto-a-frozen-object.js
+////= members-by-assign-onto-a-frozen-object	Bun.hash
+//// members-of-bun-hash-by-a-clone-of-a-spread.js
+////= members-by-a-clone-of-a-spread	Bun.hash
+//// members-of-bun-hash-by-a-spread-as-json.js
+////= members-by-a-spread-as-json	Bun.hash
+//// members-of-bun-hash-by-a-replacer-over-a-spread.js
+////= members-by-a-replacer-over-a-spread	Bun.hash
+//// members-of-bun-plugin-by-a-spread.js
+////= members-by-a-spread	Bun.plugin
+//// members-of-bun-plugin-by-a-spread-between-other-members.js
+////= members-by-a-spread-between-other-members	Bun.plugin
+//// members-of-bun-plugin-by-a-spread-of-a-spread.js
+////= members-by-a-spread-of-a-spread	Bun.plugin
+//// members-of-bun-plugin-by-a-rest-pattern.js
+////= members-by-a-rest-pattern	Bun.plugin
+//// members-of-bun-plugin-by-assign-onto-a-literal.js
+////= members-by-assign-onto-a-literal	Bun.plugin
+//// members-of-bun-plugin-by-assign-onto-an-instance.js
+////= members-by-assign-onto-an-instance	Bun.plugin
+//// members-of-bun-plugin-by-assign-onto-an-object-without-a-prototype.js
+////= members-by-assign-onto-an-object-without-a-prototype	Bun.plugin
+//// members-of-bun-plugin-by-entries-of-a-spread.js
+////= members-by-entries-of-a-spread	Bun.plugin
+//// members-of-bun-plugin-by-keys-of-a-spread.js
+////= members-by-keys-of-a-spread	Bun.plugin
+//// members-of-bun-plugin-by-own-keys-of-a-spread.js
+////= members-by-own-keys-of-a-spread	Bun.plugin
+//// members-of-bun-plugin-by-values.js
+////= members-by-values	Bun.plugin
+//// members-of-bun-plugin-by-entries.js
+////= members-by-entries	Bun.plugin
+//// members-of-bun-plugin-by-keys.js
+////= members-by-keys	Bun.plugin
+//// members-of-bun-plugin-by-own-keys.js
+////= members-by-own-keys	Bun.plugin
+//// members-of-bun-plugin-by-from-entries.js
+////= members-by-from-entries	Bun.plugin
+//// members-of-bun-plugin-by-descriptors.js
+////= members-by-descriptors	Bun.plugin
+//// members-of-bun-plugin-by-define-from-descriptors.js
+////= members-by-define-from-descriptors	Bun.plugin
+//// members-of-bun-plugin-by-descriptors-of-a-spread.js
+////= members-by-descriptors-of-a-spread	Bun.plugin
+//// members-of-bun-plugin-by-a-spread-that-holds-the-members-themselves.js
+////= members-by-a-spread-that-holds-the-members-themselves	Bun.plugin
+//// members-of-bun-plugin-by-an-instance-that-holds-the-members-themselves.js
+////= members-by-an-instance-that-holds-the-members-themselves	Bun.plugin
+//// members-of-bun-plugin-by-for-in.js
+////= members-by-for-in	Bun.plugin
+//// members-of-bun-plugin-by-for-in-over-a-spread.js
+////= members-by-for-in-over-a-spread	Bun.plugin
+//// members-of-bun-plugin-by-assign-onto-a-frozen-object.js
+////= members-by-assign-onto-a-frozen-object	Bun.plugin
+//// members-of-bun-plugin-by-a-clone-of-a-spread.js
+////= members-by-a-clone-of-a-spread	Bun.plugin
+//// members-of-bun-plugin-by-a-spread-as-json.js
+////= members-by-a-spread-as-json	Bun.plugin
+//// members-of-bun-plugin-by-a-replacer-over-a-spread.js
+////= members-by-a-replacer-over-a-spread	Bun.plugin
+//// members-of-abort-signal-by-a-spread.js
+////= members-by-a-spread	AbortSignal
+//// members-of-abort-signal-by-a-spread-between-other-members.js
+////= members-by-a-spread-between-other-members	AbortSignal
+//// members-of-abort-signal-by-a-spread-of-a-spread.js
+////= members-by-a-spread-of-a-spread	AbortSignal
+//// members-of-abort-signal-by-a-rest-pattern.js
+////= members-by-a-rest-pattern	AbortSignal
+//// members-of-abort-signal-by-assign-onto-a-literal.js
+////= members-by-assign-onto-a-literal	AbortSignal
+//// members-of-abort-signal-by-assign-onto-an-instance.js
+////= members-by-assign-onto-an-instance	AbortSignal
+//// members-of-abort-signal-by-assign-onto-an-object-without-a-prototype.js
+////= members-by-assign-onto-an-object-without-a-prototype	AbortSignal
+//// members-of-abort-signal-by-entries-of-a-spread.js
+////= members-by-entries-of-a-spread	AbortSignal
+//// members-of-abort-signal-by-keys-of-a-spread.js
+////= members-by-keys-of-a-spread	AbortSignal
+//// members-of-abort-signal-by-own-keys-of-a-spread.js
+////= members-by-own-keys-of-a-spread	AbortSignal
+//// members-of-abort-signal-by-values.js
+////= members-by-values	AbortSignal
+//// members-of-abort-signal-by-entries.js
+////= members-by-entries	AbortSignal
+//// members-of-abort-signal-by-keys.js
+////= members-by-keys	AbortSignal
+//// members-of-abort-signal-by-own-keys.js
+////= members-by-own-keys	AbortSignal
+//// members-of-abort-signal-by-from-entries.js
+////= members-by-from-entries	AbortSignal
+//// members-of-abort-signal-by-descriptors.js
+////= members-by-descriptors	AbortSignal
+//// members-of-abort-signal-by-define-from-descriptors.js
+////= members-by-define-from-descriptors	AbortSignal
+//// members-of-abort-signal-by-descriptors-of-a-spread.js
+////= members-by-descriptors-of-a-spread	AbortSignal
+//// members-of-abort-signal-by-a-spread-that-holds-the-members-themselves.js
+////= members-by-a-spread-that-holds-the-members-themselves	AbortSignal
+//// members-of-abort-signal-by-an-instance-that-holds-the-members-themselves.js
+////= members-by-an-instance-that-holds-the-members-themselves	AbortSignal
+//// members-of-abort-signal-by-for-in.js
+////= members-by-for-in	AbortSignal
+//// members-of-abort-signal-by-for-in-over-a-spread.js
+////= members-by-for-in-over-a-spread	AbortSignal
+//// members-of-abort-signal-by-assign-onto-a-frozen-object.js
+////= members-by-assign-onto-a-frozen-object	AbortSignal
+//// members-of-abort-signal-by-a-clone-of-a-spread.js
+////= members-by-a-clone-of-a-spread	AbortSignal
+//// members-of-abort-signal-by-a-spread-as-json.js
+////= members-by-a-spread-as-json	AbortSignal
+//// members-of-abort-signal-by-a-replacer-over-a-spread.js
+////= members-by-a-replacer-over-a-spread	AbortSignal
+//// members-of-buffer-by-a-spread.js
+////= members-by-a-spread	Buffer
+//// members-of-buffer-by-a-spread-between-other-members.js
+////= members-by-a-spread-between-other-members	Buffer
+//// members-of-buffer-by-a-spread-of-a-spread.js
+////= members-by-a-spread-of-a-spread	Buffer
+//// members-of-buffer-by-a-rest-pattern.js
+////= members-by-a-rest-pattern	Buffer
+//// members-of-buffer-by-assign-onto-a-literal.js
+////= members-by-assign-onto-a-literal	Buffer
+//// members-of-buffer-by-assign-onto-an-instance.js
+////= members-by-assign-onto-an-instance	Buffer
+//// members-of-buffer-by-assign-onto-an-object-without-a-prototype.js
+////= members-by-assign-onto-an-object-without-a-prototype	Buffer
+//// members-of-buffer-by-entries-of-a-spread.js
+////= members-by-entries-of-a-spread	Buffer
+//// members-of-buffer-by-keys-of-a-spread.js
+////= members-by-keys-of-a-spread	Buffer
+//// members-of-buffer-by-own-keys-of-a-spread.js
+////= members-by-own-keys-of-a-spread	Buffer
+//// members-of-buffer-by-values.js
+////= members-by-values	Buffer
+//// members-of-buffer-by-entries.js
+////= members-by-entries	Buffer
+//// members-of-buffer-by-keys.js
+////= members-by-keys	Buffer
+//// members-of-buffer-by-own-keys.js
+////= members-by-own-keys	Buffer
+//// members-of-buffer-by-from-entries.js
+////= members-by-from-entries	Buffer
+//// members-of-buffer-by-descriptors.js
+////= members-by-descriptors	Buffer
+//// members-of-buffer-by-define-from-descriptors.js
+////= members-by-define-from-descriptors	Buffer
+//// members-of-buffer-by-descriptors-of-a-spread.js
+////= members-by-descriptors-of-a-spread	Buffer
+//// members-of-buffer-by-a-spread-that-holds-the-members-themselves.js
+////= members-by-a-spread-that-holds-the-members-themselves	Buffer
+//// members-of-buffer-by-an-instance-that-holds-the-members-themselves.js
+////= members-by-an-instance-that-holds-the-members-themselves	Buffer
+//// members-of-buffer-by-for-in.js
+////= members-by-for-in	Buffer
+//// members-of-buffer-by-for-in-over-a-spread.js
+////= members-by-for-in-over-a-spread	Buffer
+//// members-of-buffer-by-assign-onto-a-frozen-object.js
+////= members-by-assign-onto-a-frozen-object	Buffer
+//// members-of-buffer-by-a-clone-of-a-spread.js
+////= members-by-a-clone-of-a-spread	Buffer
+//// members-of-buffer-by-a-spread-as-json.js
+////= members-by-a-spread-as-json	Buffer
+//// members-of-buffer-by-a-replacer-over-a-spread.js
+////= members-by-a-replacer-over-a-spread	Buffer
+//// members-of-form-data-by-a-spread.js
+////= members-by-a-spread	FormData
+//// members-of-form-data-by-a-spread-between-other-members.js
+////= members-by-a-spread-between-other-members	FormData
+//// members-of-form-data-by-a-spread-of-a-spread.js
+////= members-by-a-spread-of-a-spread	FormData
+//// members-of-form-data-by-a-rest-pattern.js
+////= members-by-a-rest-pattern	FormData
+//// members-of-form-data-by-assign-onto-a-literal.js
+////= members-by-assign-onto-a-literal	FormData
+//// members-of-form-data-by-assign-onto-an-instance.js
+////= members-by-assign-onto-an-instance	FormData
+//// members-of-form-data-by-assign-onto-an-object-without-a-prototype.js
+////= members-by-assign-onto-an-object-without-a-prototype	FormData
+//// members-of-form-data-by-entries-of-a-spread.js
+////= members-by-entries-of-a-spread	FormData
+//// members-of-form-data-by-keys-of-a-spread.js
+////= members-by-keys-of-a-spread	FormData
+//// members-of-form-data-by-own-keys-of-a-spread.js
+////= members-by-own-keys-of-a-spread	FormData
+//// members-of-form-data-by-values.js
+////= members-by-values	FormData
+//// members-of-form-data-by-entries.js
+////= members-by-entries	FormData
+//// members-of-form-data-by-keys.js
+////= members-by-keys	FormData
+//// members-of-form-data-by-own-keys.js
+////= members-by-own-keys	FormData
+//// members-of-form-data-by-from-entries.js
+////= members-by-from-entries	FormData
+//// members-of-form-data-by-descriptors.js
+////= members-by-descriptors	FormData
+//// members-of-form-data-by-define-from-descriptors.js
+////= members-by-define-from-descriptors	FormData
+//// members-of-form-data-by-descriptors-of-a-spread.js
+////= members-by-descriptors-of-a-spread	FormData
+//// members-of-form-data-by-a-spread-that-holds-the-members-themselves.js
+////= members-by-a-spread-that-holds-the-members-themselves	FormData
+//// members-of-form-data-by-an-instance-that-holds-the-members-themselves.js
+////= members-by-an-instance-that-holds-the-members-themselves	FormData
+//// members-of-form-data-by-for-in.js
+////= members-by-for-in	FormData
+//// members-of-form-data-by-for-in-over-a-spread.js
+////= members-by-for-in-over-a-spread	FormData
+//// members-of-form-data-by-assign-onto-a-frozen-object.js
+////= members-by-assign-onto-a-frozen-object	FormData
+//// members-of-form-data-by-a-clone-of-a-spread.js
+////= members-by-a-clone-of-a-spread	FormData
+//// members-of-form-data-by-a-spread-as-json.js
+////= members-by-a-spread-as-json	FormData
+//// members-of-form-data-by-a-replacer-over-a-spread.js
+////= members-by-a-replacer-over-a-spread	FormData
+//// members-of-readable-stream-by-a-spread.js
+////= members-by-a-spread	ReadableStream
+//// members-of-readable-stream-by-a-spread-between-other-members.js
+////= members-by-a-spread-between-other-members	ReadableStream
+//// members-of-readable-stream-by-a-spread-of-a-spread.js
+////= members-by-a-spread-of-a-spread	ReadableStream
+//// members-of-readable-stream-by-a-rest-pattern.js
+////= members-by-a-rest-pattern	ReadableStream
+//// members-of-readable-stream-by-assign-onto-a-literal.js
+////= members-by-assign-onto-a-literal	ReadableStream
+//// members-of-readable-stream-by-assign-onto-an-instance.js
+////= members-by-assign-onto-an-instance	ReadableStream
+//// members-of-readable-stream-by-assign-onto-an-object-without-a-prototype.js
+////= members-by-assign-onto-an-object-without-a-prototype	ReadableStream
+//// members-of-readable-stream-by-entries-of-a-spread.js
+////= members-by-entries-of-a-spread	ReadableStream
+//// members-of-readable-stream-by-keys-of-a-spread.js
+////= members-by-keys-of-a-spread	ReadableStream
+//// members-of-readable-stream-by-own-keys-of-a-spread.js
+////= members-by-own-keys-of-a-spread	ReadableStream
+//// members-of-readable-stream-by-values.js
+////= members-by-values	ReadableStream
+//// members-of-readable-stream-by-entries.js
+////= members-by-entries	ReadableStream
+//// members-of-readable-stream-by-keys.js
+////= members-by-keys	ReadableStream
+//// members-of-readable-stream-by-own-keys.js
+////= members-by-own-keys	ReadableStream
+//// members-of-readable-stream-by-from-entries.js
+////= members-by-from-entries	ReadableStream
+//// members-of-readable-stream-by-descriptors.js
+////= members-by-descriptors	ReadableStream
+//// members-of-readable-stream-by-define-from-descriptors.js
+////= members-by-define-from-descriptors	ReadableStream
+//// members-of-readable-stream-by-descriptors-of-a-spread.js
+////= members-by-descriptors-of-a-spread	ReadableStream
+//// members-of-readable-stream-by-a-spread-that-holds-the-members-themselves.js
+////= members-by-a-spread-that-holds-the-members-themselves	ReadableStream
+//// members-of-readable-stream-by-an-instance-that-holds-the-members-themselves.js
+////= members-by-an-instance-that-holds-the-members-themselves	ReadableStream
+//// members-of-readable-stream-by-for-in.js
+////= members-by-for-in	ReadableStream
+//// members-of-readable-stream-by-for-in-over-a-spread.js
+////= members-by-for-in-over-a-spread	ReadableStream
+//// members-of-readable-stream-by-assign-onto-a-frozen-object.js
+////= members-by-assign-onto-a-frozen-object	ReadableStream
+//// members-of-readable-stream-by-a-clone-of-a-spread.js
+////= members-by-a-clone-of-a-spread	ReadableStream
+//// members-of-readable-stream-by-a-spread-as-json.js
+////= members-by-a-spread-as-json	ReadableStream
+//// members-of-readable-stream-by-a-replacer-over-a-spread.js
+////= members-by-a-replacer-over-a-spread	ReadableStream
+//// members-of-url-by-a-spread.js
+////= members-by-a-spread	URL
+//// members-of-url-by-a-spread-between-other-members.js
+////= members-by-a-spread-between-other-members	URL
+//// members-of-url-by-a-spread-of-a-spread.js
+////= members-by-a-spread-of-a-spread	URL
+//// members-of-url-by-a-rest-pattern.js
+////= members-by-a-rest-pattern	URL
+//// members-of-url-by-assign-onto-a-literal.js
+////= members-by-assign-onto-a-literal	URL
+//// members-of-url-by-assign-onto-an-instance.js
+////= members-by-assign-onto-an-instance	URL
+//// members-of-url-by-assign-onto-an-object-without-a-prototype.js
+////= members-by-assign-onto-an-object-without-a-prototype	URL
+//// members-of-url-by-entries-of-a-spread.js
+////= members-by-entries-of-a-spread	URL
+//// members-of-url-by-keys-of-a-spread.js
+////= members-by-keys-of-a-spread	URL
+//// members-of-url-by-own-keys-of-a-spread.js
+////= members-by-own-keys-of-a-spread	URL
+//// members-of-url-by-values.js
+////= members-by-values	URL
+//// members-of-url-by-entries.js
+////= members-by-entries	URL
+//// members-of-url-by-keys.js
+////= members-by-keys	URL
+//// members-of-url-by-own-keys.js
+////= members-by-own-keys	URL
+//// members-of-url-by-from-entries.js
+////= members-by-from-entries	URL
+//// members-of-url-by-descriptors.js
+////= members-by-descriptors	URL
+//// members-of-url-by-define-from-descriptors.js
+////= members-by-define-from-descriptors	URL
+//// members-of-url-by-descriptors-of-a-spread.js
+////= members-by-descriptors-of-a-spread	URL
+//// members-of-url-by-a-spread-that-holds-the-members-themselves.js
+////= members-by-a-spread-that-holds-the-members-themselves	URL
+//// members-of-url-by-an-instance-that-holds-the-members-themselves.js
+////= members-by-an-instance-that-holds-the-members-themselves	URL
+//// members-of-url-by-for-in.js
+////= members-by-for-in	URL
+//// members-of-url-by-for-in-over-a-spread.js
+////= members-by-for-in-over-a-spread	URL
+//// members-of-url-by-assign-onto-a-frozen-object.js
+////= members-by-assign-onto-a-frozen-object	URL
+//// members-of-url-by-a-clone-of-a-spread.js
+////= members-by-a-clone-of-a-spread	URL
+//// members-of-url-by-a-spread-as-json.js
+////= members-by-a-spread-as-json	URL
+//// members-of-url-by-a-replacer-over-a-spread.js
+////= members-by-a-replacer-over-a-spread	URL
+//// members-of-performance-by-a-spread.js
+////= members-by-a-spread	performance
+//// members-of-performance-by-a-spread-between-other-members.js
+////= members-by-a-spread-between-other-members	performance
+//// members-of-performance-by-a-spread-of-a-spread.js
+////= members-by-a-spread-of-a-spread	performance
+//// members-of-performance-by-a-rest-pattern.js
+////= members-by-a-rest-pattern	performance
+//// members-of-performance-by-assign-onto-a-literal.js
+////= members-by-assign-onto-a-literal	performance
+//// members-of-performance-by-assign-onto-an-instance.js
+////= members-by-assign-onto-an-instance	performance
+//// members-of-performance-by-assign-onto-an-object-without-a-prototype.js
+////= members-by-assign-onto-an-object-without-a-prototype	performance
+//// members-of-performance-by-entries-of-a-spread.js
+////= members-by-entries-of-a-spread	performance
+//// members-of-performance-by-keys-of-a-spread.js
+////= members-by-keys-of-a-spread	performance
+//// members-of-performance-by-own-keys-of-a-spread.js
+////= members-by-own-keys-of-a-spread	performance
+//// members-of-performance-by-values.js
+////= members-by-values	performance
+//// members-of-performance-by-entries.js
+////= members-by-entries	performance
+//// members-of-performance-by-keys.js
+////= members-by-keys	performance
+//// members-of-performance-by-own-keys.js
+////= members-by-own-keys	performance
+//// members-of-performance-by-from-entries.js
+////= members-by-from-entries	performance
+//// members-of-performance-by-descriptors.js
+////= members-by-descriptors	performance
+//// members-of-performance-by-define-from-descriptors.js
+////= members-by-define-from-descriptors	performance
+//// members-of-performance-by-descriptors-of-a-spread.js
+////= members-by-descriptors-of-a-spread	performance
+//// members-of-performance-by-a-spread-that-holds-the-members-themselves.js
+////= members-by-a-spread-that-holds-the-members-themselves	performance
+//// members-of-performance-by-an-instance-that-holds-the-members-themselves.js
+////= members-by-an-instance-that-holds-the-members-themselves	performance
+//// members-of-performance-by-for-in.js
+////= members-by-for-in	performance
+//// members-of-performance-by-for-in-over-a-spread.js
+////= members-by-for-in-over-a-spread	performance
+//// members-of-performance-by-assign-onto-a-frozen-object.js
+////= members-by-assign-onto-a-frozen-object	performance
+//// members-of-performance-by-a-clone-of-a-spread.js
+////= members-by-a-clone-of-a-spread	performance
+//// members-of-performance-by-a-spread-as-json.js
+////= members-by-a-spread-as-json	performance
+//// members-of-performance-by-a-replacer-over-a-spread.js
+////= members-by-a-replacer-over-a-spread	performance
+//// members-of-blob-by-every-copy-and-walk.js
+////= members-by-every-copy-and-walk	Blob
+//// members-of-event-target-by-every-copy-and-walk.js
+////= members-by-every-copy-and-walk	EventTarget
+//// members-of-file-by-every-copy-and-walk.js
+////= members-by-every-copy-and-walk	File
+//// members-of-headers-by-every-copy-and-walk.js
+////= members-by-every-copy-and-walk	Headers
+//// members-of-request-by-every-copy-and-walk.js
+////= members-by-every-copy-and-walk	Request
+//// members-of-response-by-every-copy-and-walk.js
+////= members-by-every-copy-and-walk	Response
+//// members-of-transform-stream-by-every-copy-and-walk.js
+////= members-by-every-copy-and-walk	TransformStream
+//// members-of-urlsearch-params-by-every-copy-and-walk.js
+////= members-by-every-copy-and-walk	URLSearchParams
+//// members-of-writable-stream-by-every-copy-and-walk.js
+////= members-by-every-copy-and-walk	WritableStream

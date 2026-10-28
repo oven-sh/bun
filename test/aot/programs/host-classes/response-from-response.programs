@@ -1,0 +1,3525 @@
+////: Narrow
+class Narrow extends URLSearchParams {
+  get size() {
+    return -1;
+  }
+  toString() {
+    return "narrow " + super.toString();
+  }
+}
+////: Subclass
+class Subclass extends URL {
+  override get pathname() {
+    return "subclass of " + super.pathname;
+  }
+}
+////: assignedTwice
+function assignedTwice(text: string) {
+  let query = new URLSearchParams(text);
+  const first = query.size;
+  query = new URLSearchParams("z=1&y=2&x=3");
+  return [first, query.size];
+}
+////: collected
+function collected(text: string) {
+  const query = new URLSearchParams(text);
+  const result: Record<string, unknown> = Object.create(null);
+  for (const [key, value] of query) result[key] = result[key] === undefined ? value : [result[key], value];
+  return Object.entries(result).map(([key, value]) => [key.length, key.slice(0, 5), value]);
+}
+////: entriesOf
+function entriesOf(text: any) {
+  const query = new URLSearchParams(text);
+  const found: Record<string, unknown> = Object.create(null);
+  for (const [key, value] of query.entries()) found[key] = key in found ? [found[key], value] : value;
+  return Object.entries(found);
+}
+////: for
+for (let turn = 0; turn < 260; turn++) {
+  let text = choose(usualHeads, oddHeads);
+  if (random() < 0.95) text += "/";
+  for (let n = Math.floor(random() * 5); n > 0; n--) text += choose(usualPieces, oddPieces);
+  if (random() < 0.7) {
+    text += "?";
+    for (let n = Math.floor(random() * 7); n > 0; n--) text += choose(usualQuery, oddQuery);
+  }
+  if (random() < 0.15) text += "#" + choose(usualPieces, oddPieces);
+  texts.push(text);
+}
+////: for-2
+for (const [text, base] of pairs) {
+  const shown = JSON.stringify(text) + " on " + JSON.stringify(base);
+  say(shown + " pathname", () => pathnameOf(text, base));
+  say(shown + " search", () => searchOf(text, base));
+  for (const name of ["a", "page", "", "a b", "é", "A"]) say(shown + " get " + JSON.stringify(name), () => [parameterOf(text, base, name), hasParameter(text, base, name)]);
+  say(shown + " three", () => threeParameters(text, base));
+  say(shown + " parts", () => partsOf(text, base));
+  say(shown + " two names", () => partsThroughTwoNames(text, base));
+  say(shown + " later", () => partsReadInClosure(text, base));
+}
+////: for-3
+for (const text of texts) {
+  const shown = JSON.stringify(text);
+  say(shown + " pathname", () => pathnameOf(text));
+  say(shown + " search", () => searchOf(text));
+  for (const name of ["a", "page", "", "a b", "é", "A"]) say(shown + " get " + JSON.stringify(name), () => [parameterOf(text, name), hasParameter(text, name)]);
+  say(shown + " three", () => threeParameters(text));
+  say(shown + " parts", () => partsOf(text));
+  say(shown + " two names", () => partsThroughTwoNames(text));
+  say(shown + " later", () => partsReadInClosure(text));
+}
+////: for-4
+for (let turn = 0; turn < 260; turn++) {
+  let text = choose(usualStarts, oddStarts);
+  for (let n = Math.floor(random() * 5); n > 0; n--) text += choose(usualPieces, oddPieces);
+  if (random() < 0.7) {
+    text += "?";
+    for (let n = Math.floor(random() * 7); n > 0; n--) text += choose(usualQuery, oddQuery);
+  }
+  if (random() < 0.15) text += "#" + choose(usualPieces, oddPieces);
+  pairs.push([text, choose(usualBases, oddBases)]);
+}
+////: inAnAsyncFunction
+async function inAnAsyncFunction(text: string) {
+  const url = new URL(text, "http://localhost:3000");
+  const before = url.pathname;
+  await null;
+  return [before, url.pathname, url.search, url.searchParams.get("a")];
+}
+////: insideTry
+function insideTry(value: number, id: string) {
+  try {
+    return Response.json(positive(value), { status: 200 + positive(value).value, headers: headersFor(id) });
+  } catch (error) {
+    try {
+      return new Response((error as Error).message, { status: positive(value + 500).value, statusText: "Failed", headers: headersFor(id) });
+    } catch {
+      return null;
+    }
+  }
+}
+////: isChangedWhileWalked
+function isChangedWhileWalked(text: string) {
+  const query = new URLSearchParams(text);
+  const found: string[] = [];
+  for (const [key] of query) {
+    found.push(key);
+    if (found.length < 5) query.append(key + "x", "1");
+  }
+  return found;
+}
+////: keysAndValues
+function keysAndValues(text: any) {
+  const query = new URLSearchParams(text);
+  const found: string[] = [];
+  for (const key of query.keys()) found.push(key);
+  for (const value of query.values()) found.push(value);
+  return found;
+}
+////: lines
+await say("a conversion that throws stops the rest", () => {
+  const seen: string[] = [];
+  try {
+    new Response("x", {
+      headers: {
+        a: {
+          toString() {
+            seen.push("a");
+            throw new RangeError("no a");
+          },
+        } as any,
+        b: {
+          toString() {
+            seen.push("b");
+            return "2";
+          },
+        } as any,
+      },
+      status: {
+        valueOf() {
+          seen.push("status");
+          return 200;
+        },
+      } as any,
+    });
+  } catch (error) {
+    seen.push((error as Error).message);
+  }
+  return seen;
+});
+////: lines-10
+await say("a Headers object is copied", () => {
+  const headers = new Headers({ a: "1" });
+  const response = headersObject("c", headers);
+  headers.set("a", "changed");
+  return response;
+});
+////: lines-11
+await say("bodies of every kind", async () => {
+  const bodies: unknown[] = [undefined, null, "", "text", 5, new Blob(["blob"], { type: "x/blob" }), new Uint8Array([104, 105]), new URLSearchParams("a=1"), new ArrayBuffer(2), { toString: () => "object" }];
+  const out: string[] = [];
+  for (const body of bodies) out.push(await describe(new Response(body as BodyInit, { status: 200, headers: { "x-a": "1" } })));
+  return out;
+});
+////: lines-12
+await say("operands are evaluated in source order", () => {
+  const seen: string[] = [];
+  const note = <T,>(name: string, value: T) => (seen.push(name), value);
+  new Response(note("body", "x"), { headers: { a: note("a", "1"), b: note("b", "2") }, status: note("status", 200), statusText: note("statusText", "OK") });
+  return seen;
+});
+////: lines-2
+await say("the value is serialized before the headers are converted", () => {
+  const seen: string[] = [];
+  const response = Response.json(
+    {
+      toJSON() {
+        seen.push("toJSON");
+        return 1;
+      },
+    },
+    {
+      status: {
+        valueOf() {
+          seen.push("status");
+          return 201;
+        },
+      } as any,
+      headers: {
+        a: {
+          toString() {
+            seen.push("a");
+            return "1";
+          },
+        } as any,
+      },
+    },
+  );
+  return [seen, response.status];
+});
+////: lines-22
+function «1»(text: «2», base: «2») {
+  return new URL(text, base).«3»;
+}
+////: lines-23
+function «1»(text: «2») {
+  return new «3»(text).«4»;
+}
+////: lines-24
+function «1»(text: any, name: any) {
+  return new URLSearchParams(text).«2»(name);
+}
+////: lines-25
+function «1»(text: string, base: string, name: string) {
+  return new URL(text, base).searchParams.«2»(name);
+}
+////: lines-26
+function «1»(text: string, name: string) {
+  return new URL(text).searchParams.«2»(name);
+}
+////: lines-3
+await say("toJSON that throws stops the rest", () => {
+  const seen: string[] = [];
+  try {
+    Response.json(
+      {
+        toJSON() {
+          throw new RangeError("no json");
+        },
+      },
+      {
+        headers: {
+          a: {
+            toString() {
+              seen.push("a");
+              return "1";
+            },
+          } as any,
+        },
+      },
+    );
+  } catch (error) {
+    seen.push((error as Error).message);
+  }
+  return seen;
+});
+////: lines-4
+await say("values are converted in order, then the status, then the body", () => {
+  const seen: string[] = [];
+  const noting = (name: string, value: unknown) => ({
+    toString() {
+      seen.push(name);
+      return String(value);
+    },
+    valueOf() {
+      seen.push(name + " valueOf");
+      return value;
+    },
+  });
+  const response = new Response(noting("body", "text") as any, {
+    statusText: noting("statusText", "Fine") as any,
+    status: noting("status", 201) as any,
+    headers: { a: noting("a", 1) as any, b: noting("b", 2) as any },
+  });
+  return [seen, response.status, response.statusText, [...response.headers]];
+});
+////: lines-5
+{
+  class URLSearchParams {
+    size = "local";
+    constructor(public text: string) {}
+    toString() {
+      return "local " + this.text;
+    }
+    get(name: string) {
+      return "local " + name;
+    }
+    *[Symbol.iterator]() {
+      yield ["local", this.text];
+    }
+  }
+  say("a local class of that name", () => { const query = new URLSearchParams("a=1"); const found: unknown[] = []; for (const pair of query) found.push(pair); return [query.size, query.toString(), query.get("a"), found]; });
+}
+////: lines-6
+await say("a getter among the headers", () => {
+  const seen: string[] = [];
+  const response = new Response("x", {
+    headers: {
+      a: "1",
+      get b() {
+        seen.push("b");
+        return "2";
+      },
+    },
+  });
+  return [[...response.headers], seen];
+});
+////: lines-7
+await say("json of what cannot be serialized", async () => {
+  const out: string[] = [];
+  for (const value of [undefined, Symbol.iterator, () => 1, 5n]) {
+    try {
+      out.push(await describe(Response.json(value, { status: 201, headers: { a: "1" } })));
+    } catch (error) {
+      out.push((error as Error).constructor.name + ": " + (error as Error).message);
+    }
+  }
+  return out;
+});
+////: lines-9
+await say("inside try and catch", () => {
+  try {
+    return new Response("x", { status: 99, headers: { a: "1" } });
+  } catch (error) {
+    return "caught " + (error as Error).constructor.name;
+  }
+});
+////: memberIsStored
+function memberIsStored(text: string) {
+  const query = new URLSearchParams(text) as any;
+  query.size = 99;
+  query.toString = () => "mine";
+  return [query.size, query.toString()];
+}
+////: pairs
+const pairs: [string, string][] = [
+  ["/users/42/posts/hello-world?page=2&limit=10&sort=top", "http://127.0.0.1"],
+  ["/text", "http://127.0.0.1"],
+  ["/", "http://127.0.0.1"],
+  ["/?", "http://a"],
+  ["/#", "http://a"],
+  ["/?#", "http://a"],
+  ["/a?b#c?d", "http://a"],
+  ["/a#b?c=d", "http://a"],
+];
+////: pairsAreFresh
+function pairsAreFresh(text: any) {
+  const query = new URLSearchParams(text);
+  const kept: string[][] = [];
+  for (const pair of query.entries()) {
+    pair.push("more");
+    kept.push(pair);
+  }
+  for (const pair of query.entries()) kept.push(pair);
+  return kept;
+}
+////: readInClosure
+function readInClosure(text: any) {
+  const query = new URLSearchParams(text);
+  const ask = () => query.size + query.toString();
+  return ask() + ask();
+}
+////: say-10
+say("a base that throws", () =>
+  pathnameOfAnything(plain, {
+    toString() {
+      throw new RangeError("no base");
+    },
+  }),
+);
+////: say-11
+say("a name that throws", () =>
+  new URL(plain).searchParams.get({
+    toString() {
+      throw new RangeError("no name");
+    },
+  } as any),
+);
+////: say-12
+say("search parameters that are changed", () => {
+  const url = new URL(plain);
+  const query = url.searchParams;
+  query.set("a", "changed");
+  query.append("c", "3");
+  return [query.get("a"), url.search, query.get("c")];
+});
+////: say-13
+say("the error for an invalid base", () => {
+  try {
+    return new URL(plain, "nothing").pathname;
+  } catch (error) {
+    return [(error as { code?: string }).code, (error as { input?: string }).input, (error as { base?: string }).base, error instanceof TypeError, Object.keys(error as object)];
+  }
+});
+////: say-14
+say("the error for an invalid input", () => {
+  try {
+    return new URL("http://", root).pathname;
+  } catch (error) {
+    return [(error as { code?: string }).code, (error as { input?: string }).input, (error as { base?: string }).base, error instanceof TypeError, Object.keys(error as object)];
+  }
+});
+////: say-15
+say("the error for an invalid input", () => {
+  try {
+    return new URL("nothing").pathname;
+  } catch (error) {
+    return [(error as { code?: string }).code, (error as { input?: string }).input, error instanceof TypeError, Object.keys(error as object)];
+  }
+});
+////: say-16
+say("a URL whose properties are assigned", () => {
+  const url = new URL(plain);
+  url.pathname = "/other";
+  url.search = "?c=3";
+  return [url.pathname, url.search, url.searchParams.get("c"), url.href];
+});
+////: say-17
+say("a URL whose properties are assigned", () => {
+  const url = new URL(plain, root);
+  url.pathname = "/other";
+  url.search = "?c=3";
+  return [url.pathname, url.search, url.searchParams.get("c"), url.href];
+});
+////: say-18
+say("a let", () => {
+  let url = new URL(plain);
+  const first = url.pathname;
+  url = new URL("http://example.com/second");
+  return [first, url.pathname];
+});
+////: say-19
+say("search parameters that are changed", () => {
+  const url = new URL(plain, root);
+  const query = url.searchParams;
+  query.set("a", "changed");
+  return [query.get("a"), url.search];
+});
+////: say-20
+async function say«1») {
+  let text: string;
+  try {
+    text = JSON.stringify(await work()) ?? "undefined";
+  } catch (error) {
+    text = "throws " + (error as Error).constructor.name + ": " + (error as Error).message;
+  }
+  lines.push(label + ": " + text);
+}
+////: say-4
+say("read before it is initialized", () => {
+  const ask = () => url.pathname;
+  const early = (() => {
+    try {
+      return ask();
+    } catch (error) {
+      return (error as Error).constructor.name;
+    }
+  })();
+  const url = new URL(plain);
+  return [early, ask()];
+});
+////: say-5
+say("a local class named URL", () => {
+  class URL {
+    pathname: string;
+    searchParams = { get: (name: string) => "local " + name };
+    constructor(text: string) {
+      this.pathname = "local " + text.length;
+    }
+  }
+  return [new URL(plain).pathname, new URL(plain).searchParams.get("a")];
+});
+////: say-6
+say("a local class named URL", () => {
+  class URL {
+    pathname: string;
+    constructor(text: string, base: string) {
+      this.pathname = "local " + text.length + " " + base.length;
+    }
+  }
+  return new URL(plain, root).pathname;
+});
+////: say-7
+say("an invalid base throws before the name is evaluated", () => {
+  const seen: string[] = [];
+  try {
+    new URL(plain, "nothing").searchParams.get((seen.push("name"), "a"));
+  } catch {
+    seen.push("thrown");
+  }
+  return seen;
+});
+////: say-8
+say("an invalid input throws before the name is evaluated", () => {
+  const seen: string[] = [];
+  try {
+    new URL("nothing").searchParams.get((seen.push("name"), "a"));
+  } catch {
+    seen.push("thrown");
+  }
+  return seen;
+});
+////: say-9
+say("a URL that is returned", () => {
+  const make = () => {
+    const url = new URL(plain);
+    void url.pathname;
+    return url;
+  };
+  return [make().href, make() instanceof URL];
+});
+////: walked
+function walked(text: any) {
+  const query = new URLSearchParams(text);
+  const found: string[] = [];
+  for (const [key, value] of query) found.push(key + "=" + value);
+  return found;
+}
+////: walkedAsynchronously
+async function walkedAsynchronously(text: string) {
+  const query = new URLSearchParams(text);
+  const found: unknown[] = [];
+  for await (const pair of query) found.push(pair);
+  return found;
+}
+////: walkedTwiceAndAsked
+function walkedTwiceAndAsked(text: any) {
+  const query = new URLSearchParams(text);
+  let count = 0;
+  for (const pair of query) count += pair.length;
+  for (const [key] of query.entries()) if (query.get(key) === null) count = -1;
+  return [count, query.size, query.toString()];
+}
+////: withConstantBase
+function withConstantBase(text: string | undefined) {
+  const url = new URL(text ?? "/", "http://127.0.0.1");
+  const parts = url.pathname.split("/");
+  const query = url.searchParams;
+  return [url.pathname === "/text", parts.length, parts[1], query.get("page"), query.get("limit"), query.get("sort")];
+}
+//// response-from-response.ts
+// `new Response(other.body, other)` makes a Response from another one and shares its body with it. Whatever is done afterwards to either of the two gives what plain Bun gives.
+const lines: string[] = [];
+////= say-20	(label: string, work: () => unknown
+async function outcome<T>(work: () => T | Promise<T>): Promise<T | string> {
+  try {
+    return await work();
+  } catch (error) {
+    return "throws " + (error as Error).constructor.name + ": " + (error as Error).message;
+  }
+}
+const shown = (response: Response) => [response.status, response.statusText, response.ok, response.type, response.url, response.redirected, [...response.headers]];
+
+function from(other: Response) {
+  return new Response(other.body, other);
+}
+const streamOf = (text: string) => new Response(text).body;
+function fromAnother(one: Response, another: Response) {
+  return new Response(one.body, another);
+}
+const create = (body: ReadableStream | null, init: ResponseInit) => new Response(body, init);
+function throughHelper(other: Response) {
+  return create(other.body, other);
+}
+function readAhead(first: Response) {
+  const body = first.body;
+  return [body, new Response(body, first)] as const;
+}
+const calls: string[] = [];
+function noted(response: Response) {
+  calls.push("noted");
+  return response;
+}
+function bodyOfACall(first: Response) {
+  return new Response(first.body, noted(first));
+}
+class Context {
+  #res: Response;
+  constructor(res: Response) {
+    this.#res = res;
+  }
+  header(name: string, value: string) {
+    this.#res = new Response(this.#res.body, this.#res);
+    this.#res.headers.set(name, value);
+  }
+  get res() {
+    return this.#res;
+  }
+}
+const usedAsValues = [from, fromAnother, throughHelper, readAhead, bodyOfACall, Context.prototype.header];
+function made() {
+  return new Response("hello", { status: 201, statusText: "Made", headers: { a: "1" } });
+}
+
+await say("each function is also used as a value", () => usedAsValues.map(each => each.name).join());
+await say("status, status text and headers are taken over", () => shown(from(made())));
+await say("the same Response twice, by two names", async () => {
+  const first = made();
+  const second = fromAnother(first, first);
+  return [shown(second), first.body === second.body, await second.text(), first.bodyUsed];
+});
+await say("through a helper", async () => {
+  const first = made();
+  const second = throughHelper(first);
+  return [shown(second), first.body === second.body, await second.text(), first.bodyUsed];
+});
+await say("the second operand is a call", async () => {
+  const first = made();
+  const second = bodyOfACall(first);
+  return [calls, shown(second), first.body === second.body, await second.text()];
+});
+await say("a private field is read twice, as a framework does", async () => {
+  const first = new Response('{"id":1}', { status: 200, headers: { "Content-Type": "application/json" } });
+  const context = new Context(first);
+  for (const name of ["x-request-id", "x-timing", "x-served-by"]) context.header(name, name.length + "");
+  return [shown(context.res), first.body === context.res.body, await context.res.text(), first.bodyUsed, [...first.headers]];
+});
+await say("its body was asked for before", async () => {
+  const first = made();
+  const body = first.body;
+  const second = from(first);
+  return [body === second.body, body === first.body, await second.text()];
+});
+await say("the text is taken over", () => from(made()).text());
+await say("the two share one body object", () => {
+  const first = made();
+  const second = from(first);
+  return [first.body === second.body, first.body === first.body, second.body === second.body, first.body instanceof ReadableStream];
+});
+await say("nothing is used before a read", () => {
+  const first = made();
+  const second = from(first);
+  return [first.bodyUsed, second.bodyUsed];
+});
+await say("reading the second uses the first", async () => {
+  const first = made();
+  const second = from(first);
+  const text = await second.text();
+  return [text, first.bodyUsed, second.bodyUsed, await outcome(() => first.text()), await outcome(() => second.text())];
+});
+await say("reading the first uses the second", async () => {
+  const first = made();
+  const second = from(first);
+  const text = await outcome(() => first.text());
+  return [text, first.bodyUsed, second.bodyUsed, await outcome(() => second.text())];
+});
+await say("the first's body is asked for only after the second was read", async () => {
+  const first = made();
+  const second = from(first);
+  const text = await second.text();
+  const body = first.body;
+  return [text, body instanceof ReadableStream, body?.locked, first.bodyUsed, body === second.body];
+});
+await say("the first is read through its stream", async () => {
+  const first = made();
+  const second = from(first);
+  const chunks: string[] = [];
+  for await (const chunk of first.body!) chunks.push(new TextDecoder().decode(chunk));
+  return [chunks, first.bodyUsed, second.bodyUsed, await outcome(() => second.text())];
+});
+await say("a reader on the first's body locks the second's", async () => {
+  const first = made();
+  const second = from(first);
+  const reader = first.body!.getReader();
+  const locked = [first.body!.locked, second.body!.locked, first.bodyUsed, second.bodyUsed];
+  const read = await outcome(() => second.text());
+  reader.releaseLock();
+  return [locked, read];
+});
+for (const method of ["text", "json", "arrayBuffer", "bytes", "blob", "formData"] as const) {
+  await say("the first's " + method + "() after the second was made", async () => {
+    const first = new Response('{"a":1}', { headers: { "Content-Type": "application/json" } });
+    const second = from(first);
+    const value = await outcome<unknown>(() => first[method]());
+    const size = value instanceof ArrayBuffer ? value.byteLength : value instanceof Uint8Array ? value.length : value instanceof Blob ? [value.size, value.type] : value;
+    return [size, first.bodyUsed, second.bodyUsed];
+  });
+}
+await say("the headers are a copy", () => {
+  const first = made();
+  const second = from(first);
+  second.headers.set("b", "2");
+  first.headers.set("c", "3");
+  return [[...first.headers], [...second.headers], first.headers === second.headers];
+});
+await say("the headers were read before the second was made", () => {
+  const first = made();
+  const before = first.headers;
+  before.set("early", "yes");
+  const second = from(first);
+  return [[...second.headers], first.headers === before];
+});
+
+const bodies: Record<string, () => BodyInit | null | undefined> = {
+  "a string": () => "text",
+  "an empty string": () => "",
+  "a string that is not Latin-1": () => "snow ☃ and 🤭",
+  null: () => null,
+  undefined: () => undefined,
+  bytes: () => new Uint8Array([104, 105]),
+  "an ArrayBuffer": () => new Uint8Array([104, 105]).buffer,
+  "a Blob": () => new Blob(["blob"], { type: "text/x-blob" }),
+  URLSearchParams: () => new URLSearchParams("a=1&b=2"),
+  "a stream": () =>
+    new ReadableStream({
+      start(controller: ReadableStreamDefaultController<Uint8Array>) {
+        controller.enqueue(new TextEncoder().encode("streamed"));
+        controller.close();
+      },
+    }),
+};
+for (const [kind, body] of Object.entries(bodies)) {
+  await say("the body is " + kind, async () => {
+    const first = new Response(body(), { status: 202 });
+    const isNull = first.body === null;
+    const second = from(first);
+    return [isNull, second.body === null, first.body === second.body, shown(second), await second.text(), first.bodyUsed, second.bodyUsed];
+  });
+}
+await say("made by Response.json", async () => {
+  const second = from(Response.json({ id: 7 }, { status: 203 }));
+  return [shown(second), await second.json()];
+});
+await say("form data keeps its boundary", async () => {
+  const form = new FormData();
+  form.set("field", "value");
+  const first = new Response(form);
+  const second = from(first);
+  return [first.headers.get("content-type") === second.headers.get("content-type"), [...(await second.formData())]];
+});
+
+await say("the first was read already", async () => {
+  const first = made();
+  await first.text();
+  return outcome(() => shown(from(first)));
+});
+await say("the first's body is locked", () => {
+  const first = made();
+  first.body!.getReader();
+  return outcome(() => shown(from(first)));
+});
+for (const status of [200, 204, 205, 304, 599]) {
+  await say("status " + status + " without a body", () => shown(from(new Response(null, { status }))));
+}
+await say("Response.error()", () => outcome(() => shown(from(Response.error()))));
+await say("Response.redirect()", () => outcome(() => shown(from(Response.redirect("http://example.com/", 302)))));
+
+await say("three in a row with a header each, as a framework does", async () => {
+  let response = new Response('{"id":1}', { status: 200, headers: { "Content-Type": "application/json" } });
+  const all = [response];
+  for (const name of ["x-request-id", "x-timing", "x-served-by"]) {
+    response = from(response);
+    response.headers.set(name, name.length + "");
+    all.push(response);
+  }
+  const text = await response.text();
+  return [shown(response), text, all.map(each => each.bodyUsed), all.map(each => [...each.headers].length), all.every(each => each.body === response.body)];
+});
+await say("three in a row, the first one is read", async () => {
+  const first = made();
+  const third = from(from(first));
+  return [await outcome(() => first.text()), third.bodyUsed, await outcome(() => third.text())];
+});
+await say("two are made from one", async () => {
+  const first = made();
+  const second = from(first);
+  const third = await outcome(() => from(first));
+  return [third instanceof Response, third instanceof Response && third.body === second.body, await outcome(() => second.text()), third instanceof Response ? await outcome(() => third.text()) : third];
+});
+
+await say("clone() of the first afterwards", async () => {
+  const first = made();
+  const second = from(first);
+  const copy = await outcome(() => first.clone());
+  return [copy instanceof Response ? await outcome(() => copy.text()) : copy, await outcome(() => second.text()), await outcome(() => first.text())];
+});
+await say("clone() of the second", async () => {
+  const first = made();
+  const second = from(first);
+  const copy = second.clone();
+  return [await copy.text(), await second.text(), first.bodyUsed];
+});
+
+await say("the body of one and the rest of another", async () => {
+  const one = new Response("one", { status: 201, headers: { from: "one" } });
+  const another = new Response("another", { status: 202, headers: { from: "another" } });
+  const mixed = fromAnother(one, another);
+  return [shown(mixed), await mixed.text(), one.bodyUsed, another.bodyUsed, await another.text()];
+});
+await say("the body is read ahead into a variable", async () => {
+  const first = made();
+  const [body, second] = readAhead(first);
+  return [body === second.body, await second.text()];
+});
+
+const order: string[] = [];
+class Logged extends Response {
+  get body() {
+    order.push("body");
+    return super.body;
+  }
+  get status() {
+    order.push("status");
+    return 299;
+  }
+  get statusText() {
+    order.push("statusText");
+    return "Logged";
+  }
+  get headers() {
+    order.push("headers");
+    return new Headers({ logged: "yes" });
+  }
+}
+await say("an instance of a subclass: its getters are called, in order", async () => {
+  const second = from(new Logged("sub", { status: 201 }));
+  return [order, shown(second), await second.text(), Object.getPrototypeOf(second) === Response.prototype];
+});
+await say("an own property on the first", () => {
+  const first = made();
+  Object.defineProperty(first, "status", { value: 298 });
+  Object.defineProperty(first, "statusText", { value: "Own" });
+  return shown(from(first));
+});
+await say("an own body on the first", async () => {
+  const first = made();
+  Object.defineProperty(first, "body", { value: streamOf("own body") });
+  const second = from(first);
+  return [await second.text(), first.bodyUsed, await first.text()];
+});
+await say("the first has another prototype", async () => {
+  const first = made();
+  Object.setPrototypeOf(first, { body: streamOf("from the other prototype"), status: 297 });
+  const second = from(first);
+  return [shown(second), await second.text()];
+});
+await say("not a Response at all", async () => {
+  const second = from({ body: streamOf("plain"), status: 296, statusText: "Plain", headers: { plain: "yes" } } as unknown as Response);
+  return [shown(second), await second.text()];
+});
+await say("a Request in place of the first", async () => {
+  const request = new Request("http://example.com/", { method: "POST", body: "posted", headers: { r: "1" } });
+  const second = from(request as unknown as Response);
+  return [shown(second), await second.text(), request.bodyUsed];
+});
+
+await say("the second is dropped and the first is read", async () => {
+  const first = made();
+  (() => {
+    from(first);
+  })();
+  Bun.gc(true);
+  return [first.bodyUsed, await outcome(() => first.text())];
+});
+await say("the first is dropped and the second is read", async () => {
+  const second = (() => from(made()))();
+  Bun.gc(true);
+  return second.text();
+});
+await say("many, with collections between", async () => {
+  let length = 0;
+  for (let i = 0; i < 300; i++) {
+    let response = new Response("body " + i, { status: 200 + (i % 100), headers: { n: i + "" } });
+    for (let k = 0; k < 3; k++) response = from(response);
+    if (i % 50 === 0) Bun.gc(true);
+    length += (await response.text()).length + response.status + Number(response.headers.get("n"));
+  }
+  return length;
+});
+
+await say("the global is replaced", async () => {
+  const original = globalThis.Response;
+  const seen: unknown[] = [];
+  try {
+    globalThis.Response = class extends original {
+      constructor(body?: BodyInit | null, init?: ResponseInit) {
+        seen.push([body instanceof ReadableStream, init instanceof original]);
+        super(body, init);
+      }
+    };
+    const second = from(new original("kept", { status: 201 }));
+    return [seen, second.status, await second.text(), second instanceof original, Object.getPrototypeOf(second) === original.prototype];
+  } finally {
+    globalThis.Response = original;
+  }
+});
+await say("the global is restored", async () => from(made()).text());
+
+await say("served", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      let response = new Response("served body", { status: 201, headers: { "Content-Type": "text/x-served" } });
+      for (const name of ["x-one", "x-two", "x-three"]) {
+        response = from(response);
+        response.headers.set(name, "set");
+      }
+      return response;
+    },
+  });
+  const answer = await fetch(server.url);
+  const names = ["content-type", "content-length", "transfer-encoding", "x-one", "x-two", "x-three"];
+  return [answer.status, names.map(name => answer.headers.get(name)), await answer.text()];
+});
+await say("what is printed of the two", async () => {
+  const first = made();
+  const second = from(first);
+  const before = [Bun.inspect(first), Bun.inspect(second)];
+  await second.text();
+  return [before, Bun.inspect(first), Bun.inspect(second)];
+});
+await say("the second's body is asked for first", () => {
+  const first = made();
+  const second = from(first);
+  const body = second.body;
+  return [body === first.body, body === second.body, body instanceof ReadableStream, body!.locked, first.bodyUsed, second.bodyUsed];
+});
+await say("a third is made after a body was asked for", async () => {
+  const first = made();
+  const second = from(first);
+  const body = first.body;
+  const third = from(second);
+  return [body === third.body, body === second.body, await third.text(), first.bodyUsed, second.bodyUsed];
+});
+await say("a third is made after the second was read", async () => {
+  const first = made();
+  const second = from(first);
+  await second.text();
+  return [await outcome(() => shown(from(first))), await outcome(() => shown(from(second)))];
+});
+await say("the body goes on into another Response", async () => {
+  const first = made();
+  const second = from(first);
+  const third = new Response(second.body);
+  return [shown(third), await third.text(), first.bodyUsed, second.bodyUsed];
+});
+await say("the body goes on into a Request", async () => {
+  const first = made();
+  const second = from(first);
+  const request = new Request("http://example.com/", { method: "POST", body: second.body });
+  return [await request.text(), first.bodyUsed, second.bodyUsed];
+});
+await say("the body is read as a stream by Bun", async () => {
+  const first = made();
+  const second = from(first);
+  return [await Bun.readableStreamToText(second.body!), first.bodyUsed, second.bodyUsed];
+});
+await say("the bytes of the second are its own", async () => {
+  const bytes = new Uint8Array([1, 2, 3]);
+  const first = new Response(bytes);
+  const second = from(first);
+  bytes[0] = 9;
+  return [...(await second.bytes())];
+});
+
+const left = async (all: Response[]) => [
+  all.map(each => each.bodyUsed),
+  all.map(each => each.body instanceof ReadableStream && each.body.locked),
+  all.map(each => each.body === all[0].body),
+  await Promise.all(all.map(each => outcome(() => each.text()))),
+  all.map(each => Bun.inspect(each).split("\n")[0]),
+];
+const answered = async (answer: Response) => [
+  answer.status,
+  ["content-type", "content-length", "transfer-encoding"].map(name => answer.headers.get(name)),
+  await answer.text(),
+];
+const servedBodies: Record<string, () => BodyInit | null> = {
+  "a string": () => "a served string",
+  "a string that is not Latin-1": () => "snow ☃ served",
+  bytes: () => new Uint8Array([115, 101, 114, 118, 101, 100]),
+  "a Blob": () => new Blob(["a served blob"], { type: "text/x-blob" }),
+  "an empty string": () => "",
+  null: () => null,
+};
+for (const [kind, body] of Object.entries(servedBodies)) {
+  for (const which of ["last", "first"] as const) {
+    await say("served without a content type: " + kind + ", the " + which + " of three", async () => {
+      const all: Response[] = [];
+      using server = Bun.serve({
+        port: 0,
+        fetch() {
+          all.push(new Response(body()));
+          all.push(from(all[0]));
+          all.push(from(all[1]));
+          return which === "last" ? all[2] : all[0];
+        },
+      });
+      return [await answered(await fetch(server.url)), await left(all)];
+    });
+  }
+}
+await say("served by a handler that waits", async () => {
+  const all: Response[] = [];
+  using server = Bun.serve({
+    port: 0,
+    async fetch() {
+      all.push(made());
+      await Promise.resolve();
+      all.push(from(all[0]));
+      await new Promise(resolve => setTimeout(resolve, 1));
+      return all[1];
+    },
+  });
+  return [await answered(await fetch(server.url)), await left(all)];
+});
+await say("served to HEAD", async () => {
+  const all: Response[] = [];
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      all.push(made());
+      all.push(from(all[0]));
+      return all[1];
+    },
+  });
+  return [await answered(await fetch(server.url, { method: "HEAD" })), await left(all)];
+});
+await say("served after a look at bodyUsed", async () => {
+  const all: Response[] = [];
+  const used: boolean[] = [];
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      all.push(made());
+      all.push(from(all[0]));
+      used.push(all[0].bodyUsed, all[1].bodyUsed);
+      return all[1];
+    },
+  });
+  return [await answered(await fetch(server.url)), used, await left(all)];
+});
+await say("another is made from what is left after serving", async () => {
+  const all: Response[] = [];
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      all.push(made());
+      all.push(from(all[0]));
+      return all[1];
+    },
+  });
+  const answer = await answered(await fetch(server.url));
+  return [answer, await outcome(() => shown(from(all[0]))), await outcome(() => shown(from(all[1])))];
+});
+await say("served many times, with collections between", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      let response = new Response("number " + new URL(request.url).pathname, { headers: { "Content-Type": "text/x-many" } });
+      for (let k = 0; k < 3; k++) response = from(response);
+      return response;
+    },
+  });
+  let length = 0;
+  for (let i = 0; i < 200; i++) {
+    length += (await (await fetch(server.url + "" + i)).text()).length;
+    if (i % 40 === 0) Bun.gc(true);
+  }
+  return length;
+});
+const meddlers: Record<string, (first: Response) => void> = {
+  "does nothing": () => {},
+  "asks for the body": first => void first.body,
+  "asks whether the body is used": first => void first.bodyUsed,
+  "clones the first": first => void first.clone(),
+  "reads the first": first => void first.text(),
+  "locks the body": first => void first.body!.getReader(),
+  "makes another from the first": first => void from(first),
+  "gives the first a body of its own": first => void Object.defineProperty(first, "body", { value: streamOf("own"), configurable: true }),
+  "gives the first another prototype": first => void Object.setPrototypeOf(first, { body: streamOf("other"), status: 295 }),
+  "sets a header on the first": first => void first.headers.set("late", "yes"),
+};
+for (const [what, meddle] of Object.entries(meddlers)) {
+  await say("an accessor in place of the global " + what + " between the read and the construction", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, "Response")!;
+    const original = globalThis.Response;
+    const first = made();
+    let reads = 0;
+    Object.defineProperty(globalThis, "Response", {
+      configurable: true,
+      get() {
+        if (!reads++) meddle(first);
+        return original;
+      },
+    });
+    try {
+      const second = await outcome(() => throughHelper(first));
+      return [reads, second instanceof original ? [second.status, [...second.headers], await outcome(() => second.text())] : second, await outcome(() => first.bodyUsed)];
+    } finally {
+      Object.defineProperty(globalThis, "Response", descriptor);
+    }
+  });
+}
+await say("after the accessors, through the helper again", async () => {
+  const first = made();
+  const second = throughHelper(first);
+  return [shown(second), first.body === second.body, await second.text(), first.bodyUsed];
+});
+console.log(lines.join("\n"));
+//// response-from-response-untyped.js
+// Untyped code, as a framework writes it: the construction stands in a helper, the Response in a private field that is read twice.
+const createResponse = (body, init) => new Response(body, init);
+const log = [];
+class Context {
+  #res;
+  finalized = false;
+  header(name, value) {
+    if (this.finalized) this.#res = createResponse(this.#res.body, this.#res);
+    this.#res.headers.set(name, value);
+  }
+  replace(next) {
+    if (this.#res && next) {
+      next = createResponse(next.body, next);
+      for (const [name, value] of this.#res.headers.entries()) {
+        if (name !== "content-type") next.headers.set(name, value);
+      }
+    }
+    this.#res = next;
+    this.finalized = true;
+  }
+  get res() {
+    return this.#res;
+  }
+}
+class Watched {
+  #held;
+  #reads = 0;
+  meddle = () => {};
+  constructor(held) {
+    this.#held = held;
+  }
+  get #res() {
+    log.push("read " + ++this.#reads);
+    if (this.#reads === 2) this.meddle(this.#held);
+    return this.#held;
+  }
+  throughAccessor() {
+    return createResponse(this.#res.body, this.#res);
+  }
+}
+const usedAsValues = [Context.prototype.header, Context.prototype.replace, Watched.prototype.throughAccessor];
+const outcome = async work => {
+  try {
+    return await work();
+  } catch (error) {
+    return "throws " + error.constructor.name + ": " + error.message;
+  }
+};
+const shown = response => [response.status, response.statusText, [...response.headers]];
+const made = () => new Response('{"id":1}', { status: 201, statusText: "Made", headers: { "Content-Type": "application/json" } });
+const lines = [usedAsValues.map(each => each.name).join()];
+{
+  const first = made();
+  const context = new Context();
+  context.replace(first);
+  for (const name of ["x-request-id", "x-content-type-options", "cache-control"]) context.header(name, name.length + "");
+  lines.push(JSON.stringify([shown(context.res), context.res === first, first.body === context.res.body, await context.res.text(), first.bodyUsed, [...first.headers]]));
+}
+{
+  const context = new Context();
+  context.replace(new Response("first", { headers: { a: "1", "Content-Type": "text/x-first" } }));
+  context.replace(new Response("second", { status: 202, headers: { b: "2", "Content-Type": "text/x-second" } }));
+  lines.push(JSON.stringify([shown(context.res), await context.res.text()]));
+}
+for (const [what, meddle] of Object.entries({
+  nothing: () => {},
+  "a clone": held => void held.clone(),
+  "a read": held => void held.text(),
+  "a reader": held => void held.body.getReader(),
+})) {
+  const watched = new Watched(made());
+  watched.meddle = meddle;
+  log.length = 0;
+  const second = await outcome(() => watched.throughAccessor());
+  lines.push(JSON.stringify([what, log, second instanceof Response ? [shown(second), await outcome(() => second.text())] : second]));
+}
+{
+  const context = new Context();
+  const kind = async work => (await outcome(work)).split(":")[0];
+  lines.push(JSON.stringify(await kind(() => Context.prototype.header.call({ finalized: true }, "a", "b"))));
+  lines.push(JSON.stringify(await kind(() => context.header("a", "b"))));
+}
+{
+  using server = Bun.serve({
+    port: 0,
+    async fetch() {
+      const context = new Context();
+      context.replace(made());
+      await Promise.resolve();
+      for (const name of ["x-one", "x-two", "x-three"]) context.header(name, "set");
+      return context.res;
+    },
+  });
+  const answer = await fetch(server.url);
+  lines.push(JSON.stringify([answer.status, ["content-type", "content-length", "transfer-encoding", "x-one", "x-two", "x-three"].map(name => answer.headers.get(name)), await answer.text()]));
+}
+console.log(lines.join("\n"));
+//// response-from-response-with-code-between.js
+// Between the read of `body` and the construction stands code that the compiler cannot look through: a call of a function that is not inlined, an await, a yield.
+const log = [];
+function initFor(response, depth) {
+  if (depth > 0) return initFor(response, depth - 1);
+  log.push("initFor");
+  return { status: response.status + 1, headers: { "x-made": "by a call" } };
+}
+function same(response, depth) {
+  if (depth > 0) return same(response, depth - 1);
+  log.push("same");
+  return response;
+}
+export function withCall(first) {
+  return new Response(first.body, initFor(first, 3));
+}
+export function withCallOfTheSame(first) {
+  return new Response(first.body, same(first, 3));
+}
+export async function withAwait(first) {
+  return new Response(first.body, await Promise.resolve(first));
+}
+export function* withYield(first) {
+  return new Response(first.body, yield first.status);
+}
+export function withNothing(first) {
+  return new Response(first.body, first);
+}
+const make = () => new Response("text", { status: 201, headers: { "x-first": "1" } });
+async function show(label, response) {
+  console.log(label, response.status, response.headers.get("x-first"), response.headers.get("x-made"), JSON.stringify(await response.text()));
+}
+await show("a call", withCall(make()));
+await show("a call that gives the same Response", withCallOfTheSame(make()));
+await show("an await", await withAwait(make()));
+const first = make();
+const generator = withYield(first);
+console.log("yielded", generator.next().value);
+await show("a yield", generator.next(first).value);
+await show("nothing", withNothing(make()));
+console.log(log.join());
+//// response-init-header-names.ts
+// The names of a headers literal in an init literal are looked up when the program is built: a common name is passed as its number, any other token as a string; a literal with a name that is no token stays an object.
+export function commonNames(type: string, cache: string): Response {
+  return new Response("x", { headers: { "content-type": type, "cache-control": cache } });
+}
+export function commonNamesInCapitals(type: string): Response {
+  return new Response("x", { headers: { "CONTENT-Type": type } });
+}
+export function uncommonNames(first: string, second: string): Response {
+  return new Response("x", { status: 201, headers: { "x-request-id": first, "X-Content-Type-Options": second } });
+}
+export function jsonWithBoth(id: string, cache: string): Response {
+  return Response.json({ id }, { headers: { "X-Request-Id": id, "Cache-Control": cache } });
+}
+export function nameWithSpace(value: string): Response {
+  return new Response("x", { status: 202, headers: { accept: "*/*", "bad name": value } });
+}
+export function nameThatIsNotASCII(value: string): Response {
+  return new Response("x", { headers: { café: value } });
+}
+export function sameNameInTwoCases(first: string, second: string): Response {
+  return new Response("x", { headers: { Accept: first, accept: second, "X-Mine": first, "x-mine": second, Cookie: first, cookie: second, "Set-Cookie": first, "set-cookie": second } });
+}
+export function anyValues(first: unknown, second: unknown, third: unknown): Response {
+  return new Response("x", { headers: { "content-language": first, "x-second": second, etag: third } as Record<string, string> });
+}
+export function jsonWithContentType(type: string): Response {
+  return Response.json([1], { headers: { "Content-Type": type } });
+}
+export function blobWithContentType(type: string): Response {
+  return new Response(new Blob(["x"], { type: "from/blob" }), { headers: { "content-TYPE": type } });
+}
+export function blobWithoutContentType(mine: string): Response {
+  return new Response(new Blob(["x"], { type: "from/blob" }), { headers: { "x-mine": mine } });
+}
+export function twelveHeaders(value: string): Response {
+  return new Response("x", {
+    headers: { accept: value, "x-1": value, age: value, "x-2": value, date: value, "x-3": value, etag: value, "x-4": value, host: value, "x-5": value, via: value, "x-6": value },
+  });
+}
+
+function show(make: () => Response): string {
+  try {
+    const response = make();
+    return JSON.stringify([response.status, [...response.headers], response.headers.getSetCookie()]);
+  } catch (error) {
+    return `${(error as Error).name}: ${(error as Error).message}`;
+  }
+}
+
+console.log(show(() => commonNames("a/b", "no-store")));
+console.log(show(() => commonNamesInCapitals("a/b")));
+console.log(show(() => uncommonNames("one", "nosniff")));
+console.log(show(() => jsonWithBoth("seven", "no-store")));
+console.log(show(() => nameWithSpace("v")));
+console.log(show(() => nameThatIsNotASCII("v")));
+console.log(show(() => sameNameInTwoCases("a=1", "b=2")));
+console.log(show(() => jsonWithContentType("mine/json")));
+console.log(show(() => blobWithContentType("mine/blob")));
+console.log(show(() => blobWithoutContentType("mine")));
+console.log(show(() => twelveHeaders("v")));
+
+for (const value of ["", " ", "  padded\t", "\tx y ", "two\nlines", "a\0b", "carriage\rreturn", "café", "€", "x".repeat(300)]) {
+  console.log(JSON.stringify(value.slice(0, 20)), show(() => commonNames(value, "ok")), show(() => commonNames("ok", value)), show(() => uncommonNames(value, "ok")), show(() => uncommonNames("ok", value)), show(() => jsonWithBoth(value, "ok")));
+}
+
+const log: string[] = [];
+const says = (name: string, text: string) => ({
+  toString() {
+    log.push(name);
+    return text;
+  },
+});
+const throws = (name: string) => ({
+  toString() {
+    log.push(name);
+    throw new RangeError(`from ${name}`);
+  },
+});
+const rows: [unknown, unknown, unknown][] = [
+  [1, 2.5, -0],
+  [true, null, undefined],
+  [says("first", "en"), says("second", "two"), says("third", "three")],
+  [says("first", "bad\nvalue"), says("second", "two"), says("third", "three")],
+  [says("first", "en"), throws("second"), says("third", "three")],
+  [says("first", "en"), says("second", "two"), Symbol("third")],
+  [[1, 2], { a: 1 }, 10n],
+  ["left" + "-".repeat(3) + String(log.length), `rope-${log.length}-${"y".repeat(20)}`, "z"],
+];
+for (const [first, second, third] of rows) {
+  log.length = 0;
+  console.log(show(() => anyValues(first, second, third)), log.join(" "));
+}
+
+const kept = commonNames("kept/one", "no-store");
+kept.headers.set("content-type", "changed");
+kept.headers.append("x-later", "added");
+kept.headers.delete("cache-control");
+console.log(JSON.stringify([...kept.headers]), JSON.stringify([...commonNames("kept/two", "no-cache").headers]));
+const copy = new Response(kept.body, kept);
+console.log(JSON.stringify([...copy.headers]), JSON.stringify([...uncommonNames("a", "b").clone().headers]));
+
+const server = Bun.serve({
+  port: 0,
+  routes: {
+    "/routed/:id": (request) => new Response(request.params.id, { status: 203, headers: { "content-type": "text/routed", "x-request-id": request.headers.get("x-request-id") ?? "none", "Set-Cookie": "a=1", "set-cookie": "b=2" } }),
+    "/json/:id": (request) => Response.json({ id: request.params.id }, { headers: { "x-request-id": request.params.id, "cache-control": "no-store", "x-content-type-options": "nosniff" } }),
+  },
+  fetch: (request) => new Response("plain", { headers: { "Content-Length": "5", "x-path": new URL(request.url).pathname, vary: "accept" } }),
+});
+for (const path of ["/routed/7", "/json/8", "/plain"]) {
+  for (let turn = 0; turn < 2; turn++) {
+    const response = await fetch(new URL(path, server.url), { headers: { "x-request-id": `turn-${turn}` } });
+    const headers = [...response.headers].filter(([name]) => name !== "date");
+    console.log(path, response.status, JSON.stringify(headers), await response.text());
+  }
+}
+await server.stop(true);
+//// response-init-literals-taken-apart.ts
+// `new Response(body, { status, statusText, headers })` with a literal that the call alone has is compiled to a call that takes the literal's members. Every shape of init gives the Response, or the error, of plain Bun.
+// response-literal-init.ts is the same program with the global and Response.json replaced at the end, so that no call of it is known.
+// STATISTIC: LiteralArgumentsTakenApart >= 40
+const lines: string[] = [];
+////= say-3
+async function describe(response: Response) {
+  return JSON.stringify([response.status, response.statusText, response.ok, [...response.headers], await response.text(), Object.getPrototypeOf(response) === Response.prototype]);
+}
+
+function oneHeader(body: string, kind: string) {
+  return new Response(body, { status: 201, headers: { "Content-Type": kind } });
+}
+function statusOnly(body: string, status: number) {
+  return new Response(body, { status });
+}
+function stringAlone(body: string) {
+  return new Response(body);
+}
+function anythingAlone(body: unknown) {
+  return new Response(body as BodyInit);
+}
+function headersObject(body: string, headers: Headers) {
+  return new Response(body, { status: 202, headers });
+}
+function wrap(body: string, init: ResponseInit) {
+  return new Response(body, init);
+}
+function throughHelper(body: string) {
+  return wrap(body, { status: 203, statusText: "Helped", headers: { "x-helper": "yes" } });
+}
+function headersFor(id: string): Record<string, string> {
+  return { "x-content-type-options": "nosniff", "cache-control": "no-store", "x-request-id": id };
+}
+function positive(value: number) {
+  if (value < 0) throw new RangeError("negative");
+  return { value };
+}
+////= insideTry
+const kept: ResponseInit[] = [];
+function initEscapes(body: string) {
+  const init = { status: 204 + 1, headers: { "x-kept": "yes" } };
+  kept.push(init);
+  return new Response(body, init);
+}
+function initFromParameter(body: string, init: ResponseInit) {
+  kept.push(init);
+  return new Response(body, init);
+}
+function unknownKey(body: string) {
+  return new Response(body, { status: 206, method: "POST" } as ResponseInit);
+}
+function spreadInit(body: string, more: ResponseInit) {
+  return new Response(body, { status: 207, ...more });
+}
+
+type View = { id: number; title: string; tags: string[] };
+function jsonWithHeaders(view: View, id: string) {
+  return Response.json(view, { headers: { "X-Request-Id": id, "Cache-Control": "no-store" } });
+}
+function jsonWithStatus(view: View, status: number) {
+  return Response.json(view, { status, statusText: "Made" });
+}
+function jsonWithNumber(view: View) {
+  return Response.json(view, 202 as unknown as ResponseInit);
+}
+function jsonAlone(view: View) {
+  return Response.json(view);
+}
+
+const usedAsValues = [oneHeader, statusOnly, stringAlone, anythingAlone, headersObject, throughHelper, insideTry, initEscapes, initFromParameter, unknownKey, spreadInit, jsonWithHeaders, jsonWithStatus, jsonWithNumber, jsonAlone];
+await say("each function is also used as a value", () => usedAsValues.map(each => each.name).join());
+await say("one header", () => oneHeader("a", "text/plain"));
+await say("status only", () => statusOnly("b", 404));
+await say("a string alone", () => stringAlone("alone"));
+await say("an empty string alone", () => stringAlone(""));
+await say("anything alone", async () => [await describe(anythingAlone("text")), await describe(anythingAlone(undefined)), await describe(anythingAlone(new Blob(["b"], { type: "x/y" }))), await describe(anythingAlone(7))]);
+await say("a Headers object", () => headersObject("c", new Headers({ a: "1", b: "2" })));
+////= lines-10
+await say("through a helper", () => throughHelper("d"));
+await say("init escapes", () => initEscapes("e"));
+await say("init from a parameter", () => initFromParameter("f", { status: 299 }));
+await say("an unknown key", () => unknownKey("g"));
+await say("a spread", () => spreadInit("h", { statusText: "Spread" }));
+
+await say("an empty init", () => new Response("x", {}));
+await say("empty headers", () => new Response("x", { headers: {} }));
+await say("undefined for every key", () => new Response("x", { status: undefined, statusText: undefined, headers: undefined }));
+await say("null headers", () => new Response("x", { headers: null as unknown as undefined }));
+await say("null status", () => new Response("x", { status: null as unknown as number }));
+await say("null and empty status text", async () => [await describe(new Response("x", { statusText: null as unknown as string })), await describe(new Response("x", { statusText: "" }))]);
+await say("a number for the status text", () => new Response("x", { statusText: 5 as any }));
+for (const status of [101, 199, 200, 599, 600, 0, -1, 200.9, NaN, Infinity, "201", "x", true, 2 ** 40]) await say("status " + String(status), () => new Response(null, { status: status as any }));
+await say("many headers", () => new Response("x", { headers: { "Content-Type": "text/html", "X-A": "1", "x-b": "2", "Cache-Control": "no-store", "Set-Cookie": "a=1", ETag: '"e"' } }));
+await say("the same name in two cases", () => new Response("x", { headers: { "x-a": "1", "X-A": "2", "content-type": "a/b", "Content-Type": "c/d" } }));
+await say("values with spaces around them", () => new Response("x", { headers: { "x-a": "  1  ", "x-b": "\t2\t" } }));
+await say("an invalid name", () => new Response("x", { headers: { "x a": "1" } }));
+await say("an empty name", () => new Response("x", { headers: { "": "1" } }));
+await say("an invalid value", () => new Response("x", { headers: { "x-a": "1\n2" } }));
+await say("a value outside Latin-1", () => new Response("x", { headers: { "x-a": "\u{1F600}" } }));
+await say("the first invalid header is reported", () => new Response("x", { headers: { "x-a": "1\n", "x b": "2" } }));
+await say("names like numbers come first", () => new Response("x", { headers: { b: "1", "2": "two", a: "3", "1": "one" } }));
+await say("a computed name", () => {
+  const name = ["x", "computed"].join("-");
+  return new Response("x", { headers: { [name]: "1", "x-after": "2" } });
+});
+await say("a name __proto__", () => new Response("x", { headers: { ["__proto__"]: "1" } }));
+await say("headers with another prototype", () => new Response("x", { headers: { __proto__: { inherited: "no" }, own: "yes" } as unknown as Record<string, string> }));
+await say("headers as pairs", () => new Response("x", { headers: [["a", "1"], ["b", "2"]] }));
+////= lines-6
+
+////= lines-4
+////= lines-12
+////= lines
+await say("a symbol for a value", () => new Response("x", { headers: { a: Symbol.iterator as any } }));
+await say("numbers, booleans, null and undefined for values", () => new Response("x", { headers: { a: 1, b: true, c: null, d: undefined, e: 1.5, f: -0 } as unknown as Record<string, string> }));
+
+////= lines-11
+await say("a blob's type does not replace a given content type", () => new Response(new Blob(["b"], { type: "x/blob" }), { headers: { "content-type": "x/given" } }));
+await say("a stream for the body", () => new Response(new Response("streamed").body, { status: 201, headers: { "x-a": "1" } }));
+await say("a used body", () => {
+  const first = new Response("used");
+  void first.text();
+  return new Response(first.body, { status: 200 });
+});
+
+await say("inside try: the first path", () => insideTry(1, "t1"));
+await say("inside try: the handler's path", () => insideTry(-1, "t2"));
+await say("inside try: an operand of the handler's literal throws", () => insideTry(-600, "t3"));
+await say("inside try: the status is refused", () => insideTry(500, "t4"));
+////= lines-9
+await say("in a loop", () => {
+  let sum = 0;
+  for (let i = 0; i < 300; i++) sum += oneHeader("x", "text/" + i).status + statusOnly("y", 200 + (i % 100)).status;
+  return sum;
+});
+
+const view: View = { id: 7, title: "a \"title\"", tags: ["x", "y"] };
+await say("json with headers", () => jsonWithHeaders(view, "r1"));
+await say("json with a status", () => jsonWithStatus(view, 201));
+await say("json with a number for the init", () => jsonWithNumber(view));
+await say("json alone", () => jsonAlone(view));
+await say("json with a content type of its own", () => Response.json(view, { headers: { "content-type": "application/problem+json" } }));
+await say("json with an empty init", () => Response.json(view, {}));
+await say("json with a Headers object", () => Response.json(view, { headers: new Headers({ a: "1" }) }));
+await say("json with an invalid status", () => Response.json(view, { status: 99 }));
+await say("json with an invalid header", () => Response.json(view, { headers: { "x a": "1" } }));
+////= lines-7
+await say("json of primitives, null, arrays and untyped objects", async () => {
+  const out: string[] = [];
+  for (const value of [null, 1, "text", true, [1, "a", null], JSON.parse('{"b":1,"a":[2]}'), new Date(0), new Map()]) out.push(await describe(Response.json(value, { status: 201, headers: { a: "1" } })));
+  return out;
+});
+////= lines-2
+////= lines-3
+class Subclass extends Response {
+  constructor(body: string) {
+    super(body, { status: 210, headers: { "x-subclass": "yes" } });
+  }
+}
+await say("super() in a subclass", async () => [await describe(new Subclass("s")), new Subclass("s") instanceof Subclass]);
+await say("Reflect.construct with another new.target", () => Reflect.construct(Response, ["r", { status: 211 }], Subclass) instanceof Subclass);
+
+console.log(lines.join("\n"));
+//// response-json-text-form/main.ts
+// Response.json(value, init): the compiled text form must match the plain call, including the order of user code and the error messages.
+// The compiler leaves a call that runs once as it is, so each case also runs from a loop.
+// STATISTIC: SerializersCreated >= 1
+interface Row {
+  a: number;
+  b: string;
+  c: (boolean | null)[];
+}
+
+async function describe(response: Response): Promise<string> {
+  return `${response.status} ${response.headers.get("content-type")} ${response.headers.get("x-a")} ${await response.text()}`;
+}
+
+function attempt(name: string, run: () => Response): void {
+  try {
+    run();
+    console.log(name, "did not throw");
+  } catch (error) {
+    console.log(name, (error as Error).name, (error as Error).message);
+  }
+}
+
+class Point {
+  x = 1;
+  y = 2;
+  toJSON() {
+    return { sum: this.x + this.y };
+  }
+}
+
+function fromUnknown(value: unknown): Response {
+  return Response.json(value);
+}
+
+function fromRows(rows: Row[]): Response[] {
+  const responses: Response[] = [];
+  for (const row of rows) {
+    responses.push(Response.json(row));
+    responses.push(Response.json(row, { status: 201, headers: { "x-a": "b" } }));
+    responses.push(Response.json(row, 404));
+    responses.push(Response.json(row, { headers: { "content-type": "application/custom" } }));
+  }
+  return responses;
+}
+
+function fromPoints(points: Point[]): Response[] {
+  const responses: Response[] = [];
+  for (const point of points) responses.push(Response.json(point));
+  return responses;
+}
+
+function fromUnknownValues(values: unknown[]): (Response | string)[] {
+  const results: (Response | string)[] = [];
+  for (const value of values) {
+    try {
+      results.push(Response.json(value));
+    } catch (error) {
+      results.push(`${(error as Error).name} ${(error as Error).message}`);
+    }
+  }
+  return results;
+}
+
+function withMutatingInit(rows: Row[]): Response[] {
+  const responses: Response[] = [];
+  for (const row of rows) {
+    const init = {
+      get status(): number {
+        row.a = -1;
+        return 202;
+      },
+    };
+    responses.push(Response.json(row, init));
+  }
+  return responses;
+}
+
+console.log(await Response.json({ a: 1, b: "x", c: [true, null] }).text());
+console.log(await describe(Response.json({ a: 1, b: "x", c: [true, null] }, { status: 201, headers: { "x-a": "b" } })));
+console.log(await describe(Response.json({ a: 1, b: "x", c: [true, null] }, 404)));
+console.log(await describe(Response.json({ a: 1 }, { headers: { "content-type": "application/custom" } })));
+console.log(await describe(Response.json(new Point())));
+console.log(await describe(fromUnknown({ nested: [1, "two", { three: 3 }] })));
+console.log(await describe(fromUnknown("text")));
+console.log(await describe(fromUnknown(new Point())));
+
+const rows: Row[] = [
+  { a: 1, b: "x", c: [true, null] },
+  { a: -0.5, b: 'café "quoted" \\', c: [] },
+  { a: 1e21, b: "漢字\n", c: [false] },
+];
+for (const response of fromRows(rows)) console.log(await describe(response));
+for (const response of fromPoints([new Point(), new Point()])) console.log(await describe(response));
+for (const result of fromUnknownValues([{ nested: [1, "two", { three: 3 }] }, "text", new Point(), null, undefined, () => 1, 10n, Symbol("s")])) {
+  console.log(typeof result === "string" ? result : await describe(result));
+}
+for (const response of withMutatingInit(rows)) console.log(await describe(response));
+console.log(rows.map(row => row.a).join());
+
+attempt("undefined", () => Response.json(undefined));
+attempt("function", () => Response.json(() => 1));
+attempt("bigint", () => Response.json(10n));
+attempt("unknown bigint", () => fromUnknown(10n));
+
+const log: string[] = [];
+const throwing = {
+  get value(): number {
+    log.push("value getter");
+    throw new Error("value getter failed");
+  },
+};
+const init = {
+  get status(): number {
+    log.push("status getter");
+    return 202;
+  },
+};
+attempt("throwing getter", () => Response.json(throwing, init));
+console.log(log.join());
+
+log.length = 0;
+const ordered = {
+  get value(): number {
+    log.push("value getter");
+    return 1;
+  },
+};
+console.log(await describe(Response.json(ordered, init)));
+console.log(log.join());
+
+console.log(Object.keys(Response).join());
+console.log("constructJSONFromText" in Response);
+//// response-json-text-form/tsconfig.json
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["esnext"]
+  }
+}
+//// response-literal-init.ts
+// `new Response(body, { status, statusText, headers })` and `Response.json(value, { .. })` with a literal init are compiled to one native call that takes the literal's values. Every shape of init gives the Response, or the error, of plain Bun.
+const lines: string[] = [];
+////= say-3
+async function describe(response: Response) {
+  return JSON.stringify([response.status, response.statusText, response.ok, [...response.headers], await response.text(), Object.getPrototypeOf(response) === Response.prototype]);
+}
+
+function oneHeader(body: string, kind: string) {
+  return new Response(body, { status: 201, headers: { "Content-Type": kind } });
+}
+function statusOnly(body: string, status: number) {
+  return new Response(body, { status });
+}
+function stringAlone(body: string) {
+  return new Response(body);
+}
+function anythingAlone(body: unknown) {
+  return new Response(body as BodyInit);
+}
+function headersObject(body: string, headers: Headers) {
+  return new Response(body, { status: 202, headers });
+}
+function wrap(body: string, init: ResponseInit) {
+  return new Response(body, init);
+}
+function throughHelper(body: string) {
+  return wrap(body, { status: 203, statusText: "Helped", headers: { "x-helper": "yes" } });
+}
+function headersFor(id: string): Record<string, string> {
+  return { "x-content-type-options": "nosniff", "cache-control": "no-store", "x-request-id": id };
+}
+function positive(value: number) {
+  if (value < 0) throw new RangeError("negative");
+  return { value };
+}
+////= insideTry
+const kept: ResponseInit[] = [];
+function initEscapes(body: string) {
+  const init = { status: 204 + 1, headers: { "x-kept": "yes" } };
+  kept.push(init);
+  return new Response(body, init);
+}
+function initFromParameter(body: string, init: ResponseInit) {
+  kept.push(init);
+  return new Response(body, init);
+}
+function unknownKey(body: string) {
+  return new Response(body, { status: 206, method: "POST" } as ResponseInit);
+}
+function spreadInit(body: string, more: ResponseInit) {
+  return new Response(body, { status: 207, ...more });
+}
+
+type View = { id: number; title: string; tags: string[] };
+function jsonWithHeaders(view: View, id: string) {
+  return Response.json(view, { headers: { "X-Request-Id": id, "Cache-Control": "no-store" } });
+}
+function jsonWithStatus(view: View, status: number) {
+  return Response.json(view, { status, statusText: "Made" });
+}
+function jsonWithNumber(view: View) {
+  return Response.json(view, 202 as unknown as ResponseInit);
+}
+function jsonAlone(view: View) {
+  return Response.json(view);
+}
+
+const usedAsValues = [oneHeader, statusOnly, stringAlone, anythingAlone, headersObject, throughHelper, insideTry, initEscapes, initFromParameter, unknownKey, spreadInit, jsonWithHeaders, jsonWithStatus, jsonWithNumber, jsonAlone];
+await say("each function is also used as a value", () => usedAsValues.map(each => each.name).join());
+await say("one header", () => oneHeader("a", "text/plain"));
+await say("status only", () => statusOnly("b", 404));
+await say("a string alone", () => stringAlone("alone"));
+await say("an empty string alone", () => stringAlone(""));
+await say("anything alone", async () => [await describe(anythingAlone("text")), await describe(anythingAlone(undefined)), await describe(anythingAlone(new Blob(["b"], { type: "x/y" }))), await describe(anythingAlone(7))]);
+await say("a Headers object", () => headersObject("c", new Headers({ a: "1", b: "2" })));
+////= lines-10
+await say("through a helper", () => throughHelper("d"));
+await say("init escapes", () => initEscapes("e"));
+await say("init from a parameter", () => initFromParameter("f", { status: 299 }));
+await say("an unknown key", () => unknownKey("g"));
+await say("a spread", () => spreadInit("h", { statusText: "Spread" }));
+
+await say("an empty init", () => new Response("x", {}));
+await say("empty headers", () => new Response("x", { headers: {} }));
+await say("undefined for every key", () => new Response("x", { status: undefined, statusText: undefined, headers: undefined }));
+await say("null headers", () => new Response("x", { headers: null as unknown as undefined }));
+await say("null status", () => new Response("x", { status: null as unknown as number }));
+await say("null and empty status text", async () => [await describe(new Response("x", { statusText: null as unknown as string })), await describe(new Response("x", { statusText: "" }))]);
+await say("a number for the status text", () => new Response("x", { statusText: 5 as any }));
+for (const status of [101, 199, 200, 599, 600, 0, -1, 200.9, NaN, Infinity, "201", "x", true, 2 ** 40]) await say("status " + String(status), () => new Response(null, { status: status as any }));
+await say("many headers", () => new Response("x", { headers: { "Content-Type": "text/html", "X-A": "1", "x-b": "2", "Cache-Control": "no-store", "Set-Cookie": "a=1", ETag: '"e"' } }));
+await say("the same name in two cases", () => new Response("x", { headers: { "x-a": "1", "X-A": "2", "content-type": "a/b", "Content-Type": "c/d" } }));
+await say("values with spaces around them", () => new Response("x", { headers: { "x-a": "  1  ", "x-b": "\t2\t" } }));
+await say("an invalid name", () => new Response("x", { headers: { "x a": "1" } }));
+await say("an empty name", () => new Response("x", { headers: { "": "1" } }));
+await say("an invalid value", () => new Response("x", { headers: { "x-a": "1\n2" } }));
+await say("a value outside Latin-1", () => new Response("x", { headers: { "x-a": "\u{1F600}" } }));
+await say("the first invalid header is reported", () => new Response("x", { headers: { "x-a": "1\n", "x b": "2" } }));
+await say("names like numbers come first", () => new Response("x", { headers: { b: "1", "2": "two", a: "3", "1": "one" } }));
+await say("a computed name", () => {
+  const name = ["x", "computed"].join("-");
+  return new Response("x", { headers: { [name]: "1", "x-after": "2" } });
+});
+await say("a name __proto__", () => new Response("x", { headers: { ["__proto__"]: "1" } }));
+await say("headers with another prototype", () => new Response("x", { headers: { __proto__: { inherited: "no" }, own: "yes" } as unknown as Record<string, string> }));
+await say("headers as pairs", () => new Response("x", { headers: [["a", "1"], ["b", "2"]] }));
+////= lines-6
+
+////= lines-4
+////= lines-12
+////= lines
+await say("a symbol for a value", () => new Response("x", { headers: { a: Symbol.iterator as any } }));
+await say("numbers, booleans, null and undefined for values", () => new Response("x", { headers: { a: 1, b: true, c: null, d: undefined, e: 1.5, f: -0 } as unknown as Record<string, string> }));
+
+////= lines-11
+await say("a blob's type does not replace a given content type", () => new Response(new Blob(["b"], { type: "x/blob" }), { headers: { "content-type": "x/given" } }));
+await say("a stream for the body", () => new Response(new Response("streamed").body, { status: 201, headers: { "x-a": "1" } }));
+await say("a used body", () => {
+  const first = new Response("used");
+  void first.text();
+  return new Response(first.body, { status: 200 });
+});
+
+await say("inside try: the first path", () => insideTry(1, "t1"));
+await say("inside try: the handler's path", () => insideTry(-1, "t2"));
+await say("inside try: an operand of the handler's literal throws", () => insideTry(-600, "t3"));
+await say("inside try: the status is refused", () => insideTry(500, "t4"));
+////= lines-9
+await say("in a loop", () => {
+  let sum = 0;
+  for (let i = 0; i < 300; i++) sum += oneHeader("x", "text/" + i).status + statusOnly("y", 200 + (i % 100)).status;
+  return sum;
+});
+
+const view: View = { id: 7, title: "a \"title\"", tags: ["x", "y"] };
+await say("json with headers", () => jsonWithHeaders(view, "r1"));
+await say("json with a status", () => jsonWithStatus(view, 201));
+await say("json with a number for the init", () => jsonWithNumber(view));
+await say("json alone", () => jsonAlone(view));
+await say("json with a content type of its own", () => Response.json(view, { headers: { "content-type": "application/problem+json" } }));
+await say("json with an empty init", () => Response.json(view, {}));
+await say("json with a Headers object", () => Response.json(view, { headers: new Headers({ a: "1" }) }));
+await say("json with an invalid status", () => Response.json(view, { status: 99 }));
+await say("json with an invalid header", () => Response.json(view, { headers: { "x a": "1" } }));
+////= lines-7
+await say("json of primitives, null, arrays and untyped objects", async () => {
+  const out: string[] = [];
+  for (const value of [null, 1, "text", true, [1, "a", null], JSON.parse('{"b":1,"a":[2]}'), new Date(0), new Map()]) out.push(await describe(Response.json(value, { status: 201, headers: { a: "1" } })));
+  return out;
+});
+////= lines-2
+////= lines-3
+await say("Response.json is replaced", () => {
+  const json = Response.json;
+  Response.json = ((value: unknown, init: unknown) => new Response("replaced " + JSON.stringify([value, init]))) as typeof Response.json;
+  try {
+    return jsonWithHeaders(view, "r2");
+  } finally {
+    Response.json = json;
+  }
+});
+await say("Response.json is restored", () => jsonWithHeaders(view, "r3"));
+
+class Subclass extends Response {
+  constructor(body: string) {
+    super(body, { status: 210, headers: { "x-subclass": "yes" } });
+  }
+}
+await say("super() in a subclass", async () => [await describe(new Subclass("s")), new Subclass("s") instanceof Subclass]);
+await say("Reflect.construct with another new.target", () => Reflect.construct(Response, ["r", { status: 211 }], Subclass) instanceof Subclass);
+
+const original = globalThis.Response;
+await say("the global is a subclass", () => {
+  (globalThis as unknown as { Response: unknown }).Response = class extends original {
+    override get status() {
+      return super.status + 1000;
+    }
+  };
+  try {
+    return [oneHeader("a", "text/plain").status, statusOnly("b", 404).status, throughHelper("d").status];
+  } finally {
+    globalThis.Response = original;
+  }
+});
+await say("the global sees the init object", () => {
+  let seen: unknown;
+  (globalThis as unknown as { Response: unknown }).Response = class {
+    constructor(body: unknown, init: unknown) {
+      seen = [body, init, Object.keys(init as object), Object.getPrototypeOf(init) === Object.prototype];
+    }
+  };
+  try {
+    oneHeader("a", "text/plain");
+    return seen;
+  } finally {
+    globalThis.Response = original;
+  }
+});
+await say("the global is restored", () => oneHeader("a", "text/plain"));
+console.log(lines.join("\n"));
+//// response-literal-init-through-typed-helper.ts
+// The init literal is handed to a parameter typed ResponseInit, as a framework written in TypeScript does: it is taken apart all the same.
+const create = (body?: BodyInit | null, init?: ResponseInit): Response => new Response(body, init);
+function statusAndHeaders(body: string | null, status: number | undefined, headers: Headers) {
+  return create(body, { status, headers });
+}
+function statusOnly(body: string, status: number) {
+  return create(body, { status });
+}
+function literalHeaders(body: string, kind: string) {
+  return create(body, { status: 202, statusText: "Taken", headers: { "Content-Type": kind, "X-One": "1" } });
+}
+const seen: ResponseInit[] = [];
+function kept(body: string, status: number) {
+  const init: ResponseInit = { status };
+  seen.push(init);
+  return create(body, init);
+}
+const usedAsValues = [statusAndHeaders, statusOnly, literalHeaders, kept];
+const shown = (response: Response) => [response.status, response.statusText, response.ok, [...response.headers]];
+const outcome = <T>(work: () => T): T | string => {
+  try {
+    return work();
+  } catch (error) {
+    return "throws " + (error as Error).constructor.name + ": " + (error as Error).message;
+  }
+};
+const lines: string[] = [usedAsValues.map(each => each.name).join()];
+const say = (label: string, value: unknown) => lines.push(label + ": " + JSON.stringify(value));
+const given = new Headers({ a: "1", "Content-Type": "text/x-given" });
+const first = statusAndHeaders("body", 201, given);
+say("a status and a Headers object", [shown(first), await first.text(), first.headers === given]);
+first.headers.set("b", "2");
+say("the headers are a copy", [[...given], [...first.headers]]);
+say("the status is undefined", shown(statusAndHeaders("body", undefined, new Headers())));
+say("no body", shown(statusAndHeaders(null, 204, new Headers({ c: "3" }))));
+say("only a status", [shown(statusOnly("text", 203)), await statusOnly("text", 203).text()]);
+for (const status of [199, 200, 599, 600, 1000, -1, 200.5, NaN]) say("status " + status, outcome(() => shown(statusOnly("text", status))));
+say("a null-body status with a body", outcome(() => shown(statusOnly("text", 204))));
+say("headers written out", shown(literalHeaders("text", "text/x-kind")));
+say("a header value that is not allowed", outcome(() => shown(literalHeaders("text", "bad\nvalue"))));
+say("the literal is kept", [shown(kept("text", 205 + 1)), seen]);
+{
+  const original = globalThis.Response;
+  const calls: unknown[] = [];
+  try {
+    globalThis.Response = class extends original {
+      constructor(body?: BodyInit | null, init?: ResponseInit) {
+        calls.push([body, init && Object.keys(init), init?.status]);
+        super(body, init);
+      }
+    };
+    const replaced = statusAndHeaders("kept", 207, new Headers({ d: "4" }));
+    say("the global is replaced", [calls, shown(replaced), replaced instanceof original, Object.getPrototypeOf(replaced) === original.prototype]);
+  } finally {
+    globalThis.Response = original;
+  }
+}
+say("the global is restored", shown(statusOnly("text", 208)));
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  sum += statusAndHeaders("body " + i, 200 + (i % 100), given).status + statusOnly("x", 200 + (i % 50)).status;
+  if (i % 500 === 0) Bun.gc(true);
+}
+say("many", sum);
+console.log(lines.join("\n"));
+//// routed-request-as-response-init.ts
+// A server whose static route makes a Response before the first routed request: the request of a route is not a Response, though both are handed to `new Response(x.body, x)`.
+const echo = (request: Request) => new Response(request.body, request);
+const copy = () => {
+  const first = new Response("copied", { status: 201, headers: { "x-a": "1" } });
+  return new Response(first.body, first);
+};
+const server = Bun.serve({
+  port: 0,
+  routes: {
+    "/health": new Response("ok"),
+    "/echo": { POST: echo },
+    "/copy": copy,
+  },
+  fetch: (request) => (new URL(request.url).pathname === "/plain" ? echo(request) : new Response("no route", { status: 404 })),
+});
+
+async function show(label: string, response: Response) {
+  console.log(label, response.status, response.headers.get("x-a"), response.headers.get("x-b"), JSON.stringify(await response.text()));
+}
+const send = (path: string, body: string) => fetch(new URL(path, server.url), { method: "POST", body, headers: { "x-b": "2" } });
+
+await show("static", await fetch(new URL("/health", server.url)));
+await show("copy before a routed request is echoed", await fetch(new URL("/copy", server.url)));
+await show("a routed request", await send("/echo", "sent"));
+await show("a request without a route", await send("/plain", "sent plainly"));
+await show("copy after", await fetch(new URL("/copy", server.url)));
+for (let i = 0; i < 50; i++) {
+  const [routed, plain, copied] = await Promise.all([send("/echo", "a" + i), send("/plain", "b" + i), fetch(new URL("/copy", server.url))]);
+  const texts = [await routed.text(), await plain.text(), await copied.text()].join();
+  if (texts !== `a${i},b${i},copied` || routed.headers.get("x-b") !== "2" || copied.status !== 201) console.log("differs at", i, texts);
+}
+await show("no route", await fetch(new URL("/none", server.url)));
+await server.stop(true);
+console.log("done");
+//// routed-requests-have-a-locked-prototype.ts
+// Bun.serve hands a `routes` handler a BunRequest, the host's own class below Request. --aot locks its prototype with Request.prototype: every way to change it is refused. An instance, a class of the program that extends Request and a plain Request behave as in plain Bun.
+const lines: string[] = [];
+////= say-2
+
+const describe = (request: Request) => [request.method, new URL(request.url).pathname, request.headers.get("x-a"), typeof request.clone, "params" in request, typeof (request as any).params].join(" ");
+const cloneOf = (request: Request) => request.clone();
+
+class Own extends Request {
+  get method() {
+    return "OWN";
+  }
+  clone() {
+    return new Own(this.url + "cloned");
+  }
+  get params() {
+    return "mine";
+  }
+}
+
+let routed: Request | undefined;
+const server = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  routes: {
+    "/users/:id": request => {
+      routed = request;
+      const prototype = Object.getPrototypeOf(request);
+      const paramsBefore = Object.getOwnPropertyDescriptor(prototype, "params")!;
+      const cloneBefore = prototype.clone;
+      say("the prototype of a routed request is Request.prototype", () => prototype === Request.prototype);
+      say("the prototype above it is Request.prototype", () => Object.getPrototypeOf(prototype) === Request.prototype);
+      say("own keys", () => Reflect.ownKeys(prototype).map(String).sort().join());
+      say("prototype.clone = f", () => ((prototype.clone = function replaced() {}), prototype.clone === cloneBefore ? "unchanged" : "replaced"));
+      try {
+        prototype.clone = cloneBefore;
+      } catch {}
+      say("prototype.clone = the same function", () => ((prototype.clone = cloneBefore), "allowed"));
+      say('Object.defineProperty(prototype, "params", getter)', () => {
+        Object.defineProperty(prototype, "params", { get: () => "replaced", configurable: true });
+        Object.defineProperty(prototype, "params", paramsBefore);
+        return "replaced and restored";
+      });
+      say("prototype.params = 1", () => ((prototype.params = 1), "stored"));
+      say("prototype.added = 1", () => ((prototype.added = 1), delete prototype.added, "added and deleted"));
+      say("prototype.method = 1", () => ((prototype.method = 1), delete prototype.method, "added and deleted"));
+      say("delete prototype.cookies", () => delete prototype.cookies);
+      say("Object.setPrototypeOf(prototype, another object)", () => (Object.setPrototypeOf(prototype, {}), Object.setPrototypeOf(prototype, Request.prototype), "changed and restored"));
+      say("Object.isExtensible(prototype)", () => Object.isExtensible(prototype));
+      say("routed", () => describe(request));
+      say("routed params", () => request.params.id);
+      say("clone of routed", () => describe(cloneOf(request)) + " " + (cloneOf(request) as any).params.id);
+      return new Response(request.method + " " + request.params.id + " " + request.headers.get("x-a"));
+    },
+  },
+  fetch(request) {
+    say("plain", () => describe(request));
+    say("clone of plain", () => describe(cloneOf(request)));
+    return new Response(request.method);
+  },
+});
+const headers = { "x-a": "b" };
+lines.push("answer: " + (await (await fetch(`http://127.0.0.1:${server.port}/users/7`, { headers })).text()));
+lines.push("answer: " + (await (await fetch(`http://127.0.0.1:${server.port}/other`, { headers })).text()));
+say("own", () => describe(new Own("http://a/b", { headers })));
+say("clone of own", () => describe(cloneOf(new Own("http://a/b", { headers }))));
+say("Own.prototype.clone = f", () => ((Own.prototype.clone = function replaced() { return new Own("http://a/replaced"); }), new URL(cloneOf(new Own("http://a/b")).url).pathname));
+say("an own property on a routed request", () => (Object.defineProperty(routed!, "method", { value: "CHANGED" }), describe(routed!)));
+say("another prototype for a routed request", () => (Object.setPrototypeOf(routed!, null), typeof (routed as any).url + " " + typeof (routed as any).params));
+await server.stop(true);
+console.log(lines.join("\n"));
+//// search-params-asked-for-their-size-by-a-closure-that-is-called-twice.ts
+// `new URLSearchParams(text)` is only asked for its size and its text, by a closure that is called twice.
+// STATISTIC: URLsLeftUnbuilt >= 1
+////= readInClosure
+for (const text of ["", "a=1", "a=1&b=2", "?a=1&a=2&a=3", "a=%20&b", undefined]) console.log(readInClosure(text));
+//// search-params-only-filled-and-turned-to-text.ts
+// `const params = new URLSearchParams()` that is only filled by set | append and turned to text by toString() is compiled without the object. For every name and value that is a string the text is plain Bun's; so it is where the object is used in another way, and where `URLSearchParams` is another class. A primitive of another kind does not get past `as string`: the cast throws a TypeError before the host converts anything. An object passes the cast, and the host converts it as in plain Bun.
+function address(state: string, label: string | null, page: number): string {
+  const params = new URLSearchParams();
+  if (state !== "open") params.set("state", state);
+  if (label !== null) params.set("label", label);
+  if (page !== 1) params.set("page", String(page));
+  const query = params.toString();
+  return `/issues${query && `?${query}`}`;
+}
+function appended(names: unknown[], values: unknown[]): string {
+  const params = new URLSearchParams();
+  params.append(names[0] as string, values[0] as string);
+  params.append(names[1] as string, values[1] as string);
+  params.set(names[2] as string, values[2] as string);
+  params.append(names[3] as string, values[3] as string);
+  return params.toString() + "|" + params.toString();
+}
+function inALoop(pairs: [string, string][], replaces: boolean): string {
+  const params = new URLSearchParams();
+  for (const [name, value] of pairs) {
+    if (replaces) params.set(name, value);
+    else params.append(name, value);
+  }
+  return params.toString();
+}
+function asked(name: string): string {
+  const params = new URLSearchParams();
+  params.set(name, "1");
+  return params.toString() + params.size + params.has(name);
+}
+function handedOn(name: string): string {
+  const params = new URLSearchParams();
+  params.set(name, "1");
+  return String(new URLSearchParams(params));
+}
+function interpolated(name: string): string {
+  const params = new URLSearchParams();
+  params.set(name, "1");
+  return `?${params}`;
+}
+function captured(name: string): string {
+  const params = new URLSearchParams();
+  const fill = () => params.set(name, "1");
+  fill();
+  return params.toString();
+}
+function say(label: string, work: () => unknown) {
+  try {
+    console.log(label, JSON.stringify(work()));
+  } catch (error) {
+    console.log(label, "throws", (error as Error).constructor.name);
+  }
+}
+const texts = ["", "a", "closed", "two words", "a&b=c", "100%", "café", "東京", "😀", "lone \ud83d", "\ude00 lone", "*-._~", "+", "\u0000\n\r\t", "A-Z_0.9*", "'()!", " "];
+for (const text of texts) {
+  say("address", () => address(text, text, text.length));
+  say("address, nothing set", () => address("open", null, 1));
+  say("names", () => appended([text, "b", text, text], ["1", text, "3", "4"]));
+  say("asked", () => asked(text));
+  say("handed on", () => handedOn(text));
+  say("interpolated", () => interpolated(text));
+  say("captured", () => captured(text));
+}
+say("set replaces the first and drops the rest", () => appended(["a", "a", "a", "b"], ["1", "2", "3", "4"]));
+say("set appends", () => appended(["a", "b", "c", "a"], ["1", "2", "3", "4"]));
+say("two lone halves are one name", () => appended(["\ud83d", "\ud83e", "\ude00", "x"], ["1", "2", "3", "4"]));
+say("values that are not texts", () => appended(["a", "b", "c", "d"], [1.5, null, undefined, true]));
+say("objects", () => appended(["a", "b", "c", "d"], [{ toString: () => "<o>" }, [1, 2], 12n, { valueOf: () => "v", toString: () => "t" }]));
+const order: string[] = [];
+const noted = (text: string) => ({ toString: () => (order.push(text), text) });
+say("a symbol", () => appended(["a", "b", "c", "d"], ["1", Symbol("s"), "3", "4"]));
+say("a symbol as a name", () => appended([Symbol("n"), "b", "c", "d"], [noted("never"), "2", "3", "4"]) + order.join());
+say("an object that gives a symbol", () => appended(["a", "b", "c", "d"], [{ toString: () => Symbol("t") }, "2", "3", "4"]));
+say("the order of conversions", () => appended([noted("n0"), noted("n1"), "c", "d"], [noted("v0"), noted("v1"), "3", "4"]) + order.join());
+say("a conversion that throws", () => appended(["a", "b", "c", "d"], ["1", { toString: () => { throw new RangeError("no text"); } }, "3", "4"]));
+say("a loop that appends", () => inALoop([["a", "1"], ["b", "2"], ["a", "3"], ["c d", "4 5"]], false));
+say("a loop that sets", () => inALoop([["a", "1"], ["b", "2"], ["a", "3"], ["a", "4"], ["b", "é"]], true));
+say("nothing", () => inALoop([], true));
+let length = 0;
+for (let round = 0; round < 20000; round++) {
+  length += address(round % 2 ? "open" : "closed", round % 3 ? null : "bug " + round, round % 5).length;
+  if (round % 5000 === 0) Bun.gc(true);
+}
+console.log(length);
+const Original = globalThis.URLSearchParams;
+class Other {
+  said: string[] = [];
+  set(name: string, value: string) {
+    this.said.push(`set ${name} ${value}`);
+  }
+  append(name: string, value: string) {
+    this.said.push(`append ${name} ${value}`);
+  }
+  toString() {
+    return this.said.join(";");
+  }
+}
+(globalThis as any).URLSearchParams = Other;
+say("another class", () => address("closed", "x", 2));
+say("another class, appended", () => appended(["a", "b", "c", "d"], ["1", "2", "3", "4"]));
+(globalThis as any).URLSearchParams = Original;
+say("the class again", () => address("closed", "x", 2));
+//// search-params-without-the-object.ts
+// `new URLSearchParams(x)` that is only asked for its size, its text or a parameter, or walked by for..of, is compiled without allocating it. For any input the results and errors are those of plain Bun, also where the object escapes and where `URLSearchParams` is another class.
+const lines: string[] = [];
+////= say
+
+function sizeAndText(text: any) {
+  const query = new URLSearchParams(text);
+  return [query.size, query.size > 0 ? "?" : "", query.toString()];
+}
+function textOf(text: any) {
+  return new URLSearchParams(text).toString();
+}
+////= lines-23	sizeOf	any	URLSearchParams	size
+////= lines-24	parameterOf	get
+////= lines-24	hasParameter	has
+function threeParameters(text: any) {
+  const query = new URLSearchParams(text);
+  return [query.get("page"), query.get("limit"), query.get("sort"), query.has("a"), query.get(""), query.has("")];
+}
+////= entriesOf
+////= walked
+function walkedAtOnce(text: any) {
+  const found: unknown[] = [];
+  for (const pair of new URLSearchParams(text)) found.push(pair);
+  return found;
+}
+////= keysAndValues
+////= walkedTwiceAndAsked
+function leftEarly(text: any) {
+  const query = new URLSearchParams(text);
+  for (const [key, value] of query) if (value !== "") return [key, value];
+  return query.size;
+}
+////= pairsAreFresh
+////= readInClosure
+
+let seed = 11;
+const random = () => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff), seed / 0x7fffffff);
+const pick = <T,>(list: readonly T[]): T => list[Math.floor(random() * list.length)];
+const usual = ["a", "b", "page", "limit", "sort", "=", "=", "=", "&", "&", "1", "20", "top", "A", "Z", "0", "9", "*", "-", ".", "_", "a=1", "page=2&limit=10&sort=old"];
+const odd = ["?", "+", "%", "%20", "%41", "%61", "%zz", "%C3%A9", "%c3%a9", "%ff", "&&", "==", " ", "~", "!", "'", "(", ")", ",", "/", ":", ";", "@", "$", "[", "]", "#", "é", "\u{1F600}", "\ud800", "\t", "\n", "\0", "\\", "\"", "<", "|"];
+const texts: string[] = ["", "?", "??", "a", "a=", "=", "=1", "a=1", "?a=1", "??a=1", "a=1&", "&a=1", "a=1&&b=2", "a=1&b=2", "a=1&a=2&a=3", "a=b=c", "a&b", "page=2&limit=10&sort=top", "?page=2&limit=10&sort=top", "a=1&b", "a=+", "a=%20", "A-Z_a.z*0=9", "a=1#b", "__proto__=1&constructor=2&toString=3", "0=zero&1=one"];
+for (let turn = 0; turn < 300; turn++) {
+  let text = random() < 0.2 ? "?" : "";
+  for (let n = Math.floor(random() * 9); n > 0; n--) text += random() < 0.9 ? pick(usual) : pick(odd);
+  texts.push(text);
+}
+texts.push("k=" + "v".repeat(70000), Array.from({ length: 300 }, (_, i) => "k" + i + "=" + i).join("&"));
+const brief = (value: unknown) => (JSON.stringify(value) ?? "undefined").length > 400 ? (JSON.stringify(value) as string).length : value;
+
+const shapes = { sizeAndText, textOf, sizeOf, threeParameters, entriesOf, walked, walkedAtOnce, keysAndValues, walkedTwiceAndAsked, leftEarly, pairsAreFresh, readInClosure };
+for (const text of texts) for (const [name, shape] of Object.entries(shapes)) say(name + " " + JSON.stringify(text.slice(0, 60)), () => brief(shape(text)));
+for (const text of texts.slice(0, 60)) for (const name of ["a", "", "page", "A-Z_a.z*0", "+", "%61", "é", "__proto__", "0"]) say("parameter " + JSON.stringify(name) + " of " + JSON.stringify(text), () => [parameterOf(text, name), hasParameter(text, name)]);
+
+const whole = "?prefix=0&page=2&limit=10";
+say("a part of a string", () => [sizeAndText(whole.slice(1)), entriesOf(whole.slice(10)), threeParameters(whole.substring(1, 15)), walked(whole.slice(0, 9))]);
+say("strings joined", () => { const left = "page=" + texts.length; return [sizeAndText(left + "&limit=" + seed), walked(left + "&a=b")]; });
+say("sixteen bits a character", () => [sizeAndText("a=1&b=一".slice(0, 3)), walked("一a=1".slice(1))]);
+
+////= collected
+for (let round = 0; round < 4; round++) {
+  say("collected by name, round " + round, () => [collected("page=2&limit=10&sort=name"), collected("limit=1&page=" + round), collected("a=1&a=2&b=3&__proto__=4"), collected("x".repeat(63) + "=1&" + "x".repeat(64) + "=2&" + "x".repeat(65) + "=3&y=4&=5")]);
+  if (round === 1) Bun.gc(true);
+}
+
+const order: string[] = [];
+const spoken = (name: string, value: unknown) => ({ toString() { order.push(name); return value; } });
+say("inputs that are no strings", () => [undefined, null, 5, true, {}, { a: 1, b: "two" }, [["a", "1"], ["b", "2"]], new Map([["m", "1"]]), new URLSearchParams("u=1"), new String("s=1"), spoken("input", "o=1")].map(input => [sizeAndText(input), walked(input), threeParameters(input)]));
+say("inputs that are refused", () => sizeAndText([["a"]]));
+say("a symbol", () => sizeOf(Symbol("s")));
+say("names that are no strings", () => [parameterOf("1=one&null=n&undefined=u", 1), parameterOf("1=one&null=n&undefined=u", null), parameterOf("1=one&null=n&undefined=u", undefined), hasParameter("true=1", true), parameterOf("named=yes", spoken("name", "named")), order]);
+say("a name that throws", () => parameterOf("a=1", { toString() { throw new RangeError("no name"); } }));
+say("a name that is a symbol", () => parameterOf("a=1", Symbol("s")));
+
+function escapes(text: string) {
+  const query = new URLSearchParams(text);
+  const kept = [query];
+  return [query.size, kept[0] === query, kept[0] instanceof URLSearchParams, String(query)];
+}
+function isChanged(text: string) {
+  const query = new URLSearchParams(text);
+  query.append("more", "1");
+  return [query.size, query.toString()];
+}
+////= isChangedWhileWalked
+function entriesKept(text: string) {
+  const query = new URLSearchParams(text);
+  const entries = query.entries();
+  return [typeof entries.next, entries.next(), [...entries]];
+}
+function otherUses(text: string) {
+  const query = new URLSearchParams(text);
+  return [query.getAll("a"), [...query], Array.from(query.keys()), `${query}`, query + "", query.has("a", "1"), Object.fromEntries(query), JSON.stringify(query)];
+}
+////= assignedTwice
+////= memberIsStored
+function methodIsHeld(text: string) {
+  const query = new URLSearchParams(text);
+  const held = query.get;
+  return held.call(query, "a");
+}
+////= walkedAsynchronously
+for (const text of ["a=1&b=2", "", "a=%20", "a"]) {
+  for (const [name, shape] of Object.entries({ escapes, isChanged, isChangedWhileWalked, entriesKept, otherUses, assignedTwice, memberIsStored, methodIsHeld })) say(name + " " + JSON.stringify(text), () => shape(text));
+}
+lines.push("for await: " + JSON.stringify(await walkedAsynchronously("a=1&b=2")));
+
+////= Narrow
+say("a subclass", () => { const query = new Narrow("a=1"); return [query.size, query.toString(), query.get("a")]; });
+////= lines-5
+const original = globalThis.URLSearchParams;
+(globalThis as any).URLSearchParams = class {
+  size = "replaced";
+  constructor(public text: string) {}
+  toString() {
+    return "replaced " + this.text;
+  }
+  get() {
+    return "replaced";
+  }
+  has() {
+    return "replaced";
+  }
+  entries() {
+    return [["replaced", this.text]];
+  }
+  keys() {
+    return ["replaced"];
+  }
+  values() {
+    return [this.text];
+  }
+  [Symbol.iterator]() {
+    return this.entries()[Symbol.iterator]();
+  }
+};
+for (const [name, shape] of Object.entries(shapes)) say("the global is replaced: " + name, () => shape("a=1&b=2"));
+globalThis.URLSearchParams = original;
+for (const [name, shape] of Object.entries(shapes)) say("and restored: " + name, () => shape("a=1&b=2"));
+
+console.log(lines.join("\n"));
+//// search-params-without-the-object-and-the-global-stays.ts
+// `new URLSearchParams(x)` that is only asked for its size, its text or a parameter, or walked by for..of, is compiled without allocating it. For any input the results and errors are those of plain Bun, also where the object escapes and where `URLSearchParams` is another class. Here nothing ever replaces the global, so the compiler knows the constructor.
+// STATISTIC: URLsLeftUnbuilt >= 8
+const lines: string[] = [];
+////= say
+
+function sizeAndText(text: any) {
+  const query = new URLSearchParams(text);
+  return [query.size, query.size > 0 ? "?" : "", query.toString()];
+}
+function textOf(text: any) {
+  return new URLSearchParams(text).toString();
+}
+////= lines-23	sizeOf	any	URLSearchParams	size
+////= lines-24	parameterOf	get
+////= lines-24	hasParameter	has
+function threeParameters(text: any) {
+  const query = new URLSearchParams(text);
+  return [query.get("page"), query.get("limit"), query.get("sort"), query.has("a"), query.get(""), query.has("")];
+}
+////= entriesOf
+////= walked
+function walkedAtOnce(text: any) {
+  const found: unknown[] = [];
+  for (const pair of new URLSearchParams(text)) found.push(pair);
+  return found;
+}
+////= keysAndValues
+////= walkedTwiceAndAsked
+function leftEarly(text: any) {
+  const query = new URLSearchParams(text);
+  for (const [key, value] of query) if (value !== "") return [key, value];
+  return query.size;
+}
+////= pairsAreFresh
+////= readInClosure
+
+let seed = 11;
+const random = () => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff), seed / 0x7fffffff);
+const pick = <T,>(list: readonly T[]): T => list[Math.floor(random() * list.length)];
+const usual = ["a", "b", "page", "limit", "sort", "=", "=", "=", "&", "&", "1", "20", "top", "A", "Z", "0", "9", "*", "-", ".", "_", "a=1", "page=2&limit=10&sort=old"];
+const odd = ["?", "+", "%", "%20", "%41", "%61", "%zz", "%C3%A9", "%c3%a9", "%ff", "&&", "==", " ", "~", "!", "'", "(", ")", ",", "/", ":", ";", "@", "$", "[", "]", "#", "é", "\u{1F600}", "\ud800", "\t", "\n", "\0", "\\", "\"", "<", "|"];
+const texts: string[] = ["", "?", "??", "a", "a=", "=", "=1", "a=1", "?a=1", "??a=1", "a=1&", "&a=1", "a=1&&b=2", "a=1&b=2", "a=1&a=2&a=3", "a=b=c", "a&b", "page=2&limit=10&sort=top", "?page=2&limit=10&sort=top", "a=1&b", "a=+", "a=%20", "A-Z_a.z*0=9", "a=1#b", "__proto__=1&constructor=2&toString=3", "0=zero&1=one"];
+for (let turn = 0; turn < 300; turn++) {
+  let text = random() < 0.2 ? "?" : "";
+  for (let n = Math.floor(random() * 9); n > 0; n--) text += random() < 0.9 ? pick(usual) : pick(odd);
+  texts.push(text);
+}
+texts.push("k=" + "v".repeat(70000), Array.from({ length: 300 }, (_, i) => "k" + i + "=" + i).join("&"));
+const brief = (value: unknown) => (JSON.stringify(value) ?? "undefined").length > 400 ? (JSON.stringify(value) as string).length : value;
+
+const shapes = { sizeAndText, textOf, sizeOf, threeParameters, entriesOf, walked, walkedAtOnce, keysAndValues, walkedTwiceAndAsked, leftEarly, pairsAreFresh, readInClosure };
+for (const text of texts) for (const [name, shape] of Object.entries(shapes)) say(name + " " + JSON.stringify(text.slice(0, 60)), () => brief(shape(text)));
+for (const text of texts.slice(0, 60)) for (const name of ["a", "", "page", "A-Z_a.z*0", "+", "%61", "é", "__proto__", "0"]) say("parameter " + JSON.stringify(name) + " of " + JSON.stringify(text), () => [parameterOf(text, name), hasParameter(text, name)]);
+
+const whole = "?prefix=0&page=2&limit=10";
+say("a part of a string", () => [sizeAndText(whole.slice(1)), entriesOf(whole.slice(10)), threeParameters(whole.substring(1, 15)), walked(whole.slice(0, 9))]);
+say("strings joined", () => { const left = "page=" + texts.length; return [sizeAndText(left + "&limit=" + seed), walked(left + "&a=b")]; });
+say("sixteen bits a character", () => [sizeAndText("a=1&b=一".slice(0, 3)), walked("一a=1".slice(1))]);
+
+////= collected
+for (let round = 0; round < 4; round++) {
+  say("collected by name, round " + round, () => [collected("page=2&limit=10&sort=name"), collected("limit=1&page=" + round), collected("a=1&a=2&b=3&__proto__=4"), collected("x".repeat(63) + "=1&" + "x".repeat(64) + "=2&" + "x".repeat(65) + "=3&y=4&=5")]);
+  if (round === 1) Bun.gc(true);
+}
+
+const order: string[] = [];
+const spoken = (name: string, value: unknown) => ({ toString() { order.push(name); return value; } });
+say("inputs that are no strings", () => [undefined, null, 5, true, {}, { a: 1, b: "two" }, [["a", "1"], ["b", "2"]], new Map([["m", "1"]]), new URLSearchParams("u=1"), new String("s=1"), spoken("input", "o=1")].map(input => [sizeAndText(input), walked(input), threeParameters(input)]));
+say("inputs that are refused", () => sizeAndText([["a"]]));
+say("a symbol", () => sizeOf(Symbol("s")));
+say("names that are no strings", () => [parameterOf("1=one&null=n&undefined=u", 1), parameterOf("1=one&null=n&undefined=u", null), parameterOf("1=one&null=n&undefined=u", undefined), hasParameter("true=1", true), parameterOf("named=yes", spoken("name", "named")), order]);
+say("a name that throws", () => parameterOf("a=1", { toString() { throw new RangeError("no name"); } }));
+say("a name that is a symbol", () => parameterOf("a=1", Symbol("s")));
+
+function escapes(text: string) {
+  const query = new URLSearchParams(text);
+  const kept = [query];
+  return [query.size, kept[0] === query, kept[0] instanceof URLSearchParams, String(query)];
+}
+function isChanged(text: string) {
+  const query = new URLSearchParams(text);
+  query.append("more", "1");
+  return [query.size, query.toString()];
+}
+////= isChangedWhileWalked
+function entriesKept(text: string) {
+  const query = new URLSearchParams(text);
+  const entries = query.entries();
+  return [typeof entries.next, entries.next(), [...entries]];
+}
+function otherUses(text: string) {
+  const query = new URLSearchParams(text);
+  return [query.getAll("a"), [...query], Array.from(query.keys()), `${query}`, query + "", query.has("a", "1"), Object.fromEntries(query), JSON.stringify(query)];
+}
+////= assignedTwice
+////= memberIsStored
+function methodIsHeld(text: string) {
+  const query = new URLSearchParams(text);
+  const held = query.get;
+  return held.call(query, "a");
+}
+////= walkedAsynchronously
+for (const text of ["a=1&b=2", "", "a=%20", "a"]) {
+  for (const [name, shape] of Object.entries({ escapes, isChanged, isChangedWhileWalked, entriesKept, otherUses, assignedTwice, memberIsStored, methodIsHeld })) say(name + " " + JSON.stringify(text), () => shape(text));
+}
+lines.push("for await: " + JSON.stringify(await walkedAsynchronously("a=1&b=2")));
+
+////= Narrow
+say("a subclass", () => { const query = new Narrow("a=1"); return [query.size, query.toString(), query.get("a")]; });
+////= lines-5
+console.log(lines.join("\n"));
+//// spies-on-locked-builtins-are-refused.ts
+// In a compiled executable `spyOn` refuses a fixed member of a built-in. Compiled code calls such a member without looking it up, so a spy on it would never be called. Math.floor is fixed like the members of the prototypes.
+import { spyOn } from "bun:test";
+
+const joined = (list: number[]) => list.join("-");
+const page = (text: string) => new URL(text).searchParams.get("page");
+const header = (headers: Headers) => headers.get("a");
+const floored = (value: number) => Math.floor(value);
+const own = { method: (): string => "real" };
+const input = "http://127.0.0.1:3000/users/7?page=2";
+
+function attempt(label: string, lay: () => { mock: { calls: unknown[] }; mockRestore(): void }, call: () => unknown) {
+  const before = call();
+  try {
+    const spy = lay();
+    console.log(label + ": " + before + ", spied: " + call() + ", calls " + spy.mock.calls.length);
+    spy.mockRestore();
+  } catch (error) {
+    console.log(label + ": " + before + ", throws " + (error as Error).name);
+  }
+  console.log(label + " afterwards: " + call());
+}
+
+attempt("Array.prototype.join", () => spyOn(Array.prototype, "join").mockReturnValue("spied"), () => joined([1, 2]));
+attempt("Math.floor", () => spyOn(Math, "floor").mockReturnValue(-7), () => floored(1.5));
+attempt("URLSearchParams.prototype.get", () => spyOn(URLSearchParams.prototype, "get").mockReturnValue("spied"), () => page(input));
+attempt("Headers.prototype.get", () => spyOn(Headers.prototype, "get").mockReturnValue("spied"), () => header(new Headers({ a: "1" })));
+attempt("Response.prototype.clone", () => spyOn(Response.prototype, "clone").mockReturnValue(new Response("spied")), () => typeof new Response("x").clone());
+
+const names = process.argv.length > 99 ? ["x"] : ["join"];
+attempt("a name that is not known at build time", () => spyOn(Array.prototype as unknown as Record<string, () => string>, names[0]).mockReturnValue("spied"), () => joined([3, 4]));
+
+attempt("an object of the program", () => spyOn(own, "method").mockReturnValue("spied"), () => own.method());
+//// stores-that-a-native-setter-turns-into-own-properties.cjs
+// `self`, `process.ppid`, `process.title` and `require.cache` have native setters. The first, the second and the last put an ordinary property in the place of the accessor.
+console.log(typeof self, self === globalThis);
+self = 5;
+console.log(self, globalThis.self, Object.getOwnPropertyDescriptor(globalThis, "self").value);
+console.log(process.ppid > 0);
+process.ppid = 7;
+console.log(process.ppid, Object.getOwnPropertyDescriptor(process, "ppid").value);
+process.title = "named";
+console.log(process.title);
+console.log(typeof require.cache, typeof require.extensions);
+require.cache = { a: 1 };
+console.log(require.cache.a);
+//// subclasses-of-locked-classes.ts
+// The lock on the prototypes of Request, Response, Blob, Headers, URL and URLSearchParams does not reach subclasses or instances: overriding, own properties, another prototype for an instance and guarded polyfills behave as in plain Bun.
+const lines: string[] = [];
+////= say
+////= say-20	Later(label: string, work: () => Promise<unknown>
+
+const urlOf = (request: Request) => request.url;
+const methodOf = (request: Request) => request.method;
+const headerOf = (request: Request, name: string) => request.headers.get(name);
+const textOf = (body: Request | Response | Blob) => body.text();
+const statusOf = (response: Response) => response.status;
+const okOf = (response: Response) => response.ok;
+const sizeOf = (blob: Blob) => blob.size;
+const sliceOf = (blob: Blob) => blob.slice(1, 3);
+const getFrom = (headers: Headers, name: string) => headers.get(name);
+const hasIn = (headers: Headers, name: string) => headers.has(name);
+const pathnameOf = (url: URL) => url.pathname;
+const hrefOf = (url: URL) => url.href;
+const jsonOf = (url: URL) => url.toJSON();
+const queryOf = (url: URL, name: string) => url.searchParams.get(name);
+const paramOf = (params: URLSearchParams, name: string) => params.get(name);
+const countOf = (params: URLSearchParams) => params.size;
+const untypedRead = (holder: any, name: string) => holder[name];
+const untypedCall = (holder: any, name: string, ...rest: unknown[]) => holder[name](...rest);
+
+const internal = Symbol("internal request state");
+class FrameworkURL {
+  constructor(
+    readonly inner: URL,
+    readonly basePath: string,
+  ) {}
+  toString() {
+    return this.inner.origin + this.basePath + this.inner.pathname + this.inner.search;
+  }
+}
+class FrameworkRequest extends Request {
+  [internal]: { cookies: Map<string, string>; nextUrl: FrameworkURL; url: string };
+  constructor(input: string | Request, init: RequestInit & { basePath?: string } = {}) {
+    const url = typeof input === "string" ? input : input.url;
+    super(input, init);
+    const nextUrl = new FrameworkURL(new URL(url), init.basePath ?? "");
+    this[internal] = { cookies: new Map((this.headers.get("cookie") ?? "").split("; ").filter(Boolean).map(pair => pair.split("=") as [string, string])), nextUrl, url: nextUrl.toString() };
+  }
+  get cookies() {
+    return this[internal].cookies;
+  }
+  get nextUrl() {
+    return this[internal].nextUrl;
+  }
+  override get url() {
+    return this[internal].url;
+  }
+  override clone(): FrameworkRequest {
+    return new FrameworkRequest(super.clone(), { basePath: this[internal].nextUrl.basePath });
+  }
+}
+const framework = () => new FrameworkRequest("http://example.com/a?b=c", { method: "POST", body: "payload", headers: { cookie: "x=1; y=2" }, basePath: "/base" });
+say("a framework's request: url through the base type", () => urlOf(framework()));
+say("a framework's request: url untyped", () => untypedRead(framework(), "url"));
+say("a framework's request: the base getter on it", () => Object.getOwnPropertyDescriptor(Request.prototype, "url")!.get!.call(framework()));
+say("a framework's request: method and header through the base type", () => [methodOf(framework()), headerOf(framework(), "cookie")]);
+say("a framework's request: its own getters", () => [[...framework().cookies], framework().nextUrl.toString()]);
+say("a framework's request: instanceof", () => [framework() instanceof Request, framework() instanceof FrameworkRequest, Object.getPrototypeOf(FrameworkRequest.prototype) === Request.prototype]);
+say("a framework's request: clone", () => [framework().clone() instanceof FrameworkRequest, urlOf(framework().clone())]);
+say("a framework's request: handed to new Request", () => urlOf(new Request(framework())));
+say("a framework's request: read many times beside plain requests", () => {
+  const requests: Request[] = [framework(), new Request("http://plain.example/"), framework(), new Request("http://plain.example/2")];
+  const seen = new Set<string>();
+  for (let i = 0; i < 400; i++) seen.add(urlOf(requests[i & 3]));
+  return [...seen];
+});
+
+class CountingRequest extends Request {
+  reads = 0;
+  readonly tag: string = "counting";
+  override get method() {
+    this.reads++;
+    return "OVERRIDDEN " + super.method;
+  }
+  override text() {
+    return super.text().then(text => "overridden " + text);
+  }
+}
+class CountingResponse extends Response {
+  reads = 0;
+  readonly tag: string = "counting";
+  override get status() {
+    this.reads++;
+    return super.status + 1000;
+  }
+  override text() {
+    return super.text().then(text => "overridden " + text);
+  }
+}
+class CountingBlob extends Blob {
+  reads = 0;
+  readonly tag: string = "counting";
+  override get size() {
+    this.reads++;
+    return super.size + 1000;
+  }
+  override slice(start?: number, end?: number, type?: string) {
+    return new Blob(["overridden ", super.slice(start, end, type)]);
+  }
+}
+class CountingHeaders extends Headers {
+  reads = 0;
+  readonly tag: string = "counting";
+  override get(name: string) {
+    this.reads++;
+    return "overridden " + super.get(name);
+  }
+  get first() {
+    return [...this.keys()][0];
+  }
+}
+class CountingURL extends URL {
+  reads = 0;
+  readonly tag: string = "counting";
+  override get pathname() {
+    this.reads++;
+    return "/overridden" + super.pathname;
+  }
+  override set pathname(value: string) {
+    super.pathname = value;
+  }
+  override toJSON() {
+    return "overridden " + super.toJSON();
+  }
+}
+class CountingParams extends URLSearchParams {
+  reads = 0;
+  readonly tag: string = "counting";
+  override get size() {
+    this.reads++;
+    return super.size + 1000;
+  }
+  override get(name: string) {
+    return "overridden " + super.get(name);
+  }
+}
+
+say("a subclass of Request", () => {
+  const request = new CountingRequest("http://example.com/", { method: "PUT" });
+  return [methodOf(request), untypedRead(request, "method"), request.reads, request.tag, urlOf(request), request instanceof Request];
+});
+await sayLater("a subclass of Request: an overridden method", () => textOf(new CountingRequest("http://example.com/", { method: "POST", body: "body" })));
+say("a subclass of Response", () => {
+  const response = new CountingResponse("body", { status: 201 });
+  return [statusOf(response), untypedRead(response, "status"), response.reads, response.tag, okOf(response), response instanceof Response];
+});
+await sayLater("a subclass of Response: an overridden method", () => textOf(new CountingResponse("body")));
+say("a subclass of Blob", () => {
+  const blob = new CountingBlob(["abcdef"]);
+  return [sizeOf(blob), untypedRead(blob, "size"), blob.reads, blob.tag, blob instanceof Blob];
+});
+await sayLater("a subclass of Blob: an overridden method", () => sliceOf(new CountingBlob(["abcdef"])).text());
+say("a subclass of Headers", () => {
+  const headers = new CountingHeaders({ a: "1", b: "2" });
+  return [getFrom(headers, "a"), untypedCall(headers, "get", "b"), headers.reads, headers.tag, headers.first, hasIn(headers, "b"), headers instanceof Headers];
+});
+say("a subclass of URL", () => {
+  const url = new CountingURL("http://example.com/a/b?c=d");
+  url.pathname = "/e";
+  return [pathnameOf(url), untypedRead(url, "pathname"), url.reads, url.tag, jsonOf(url), hrefOf(url), queryOf(url, "c"), JSON.stringify({ url }), url instanceof URL];
+});
+say("a subclass of URLSearchParams", () => {
+  const params = new CountingParams("a=1&b=2");
+  return [countOf(params), untypedRead(params, "size"), params.reads, params.tag, paramOf(params, "a"), untypedCall(params, "get", "b"), String(params), params instanceof URLSearchParams];
+});
+say("the prototype of a subclass can be changed", () => {
+  class Patched extends Response {}
+  (Patched.prototype as any).extra = () => "added";
+  Object.defineProperty(Patched.prototype, "status", { get: () => 299, configurable: true });
+  (Patched.prototype as any).json = () => "replaced";
+  const response = new Patched("x");
+  return [(response as any).extra(), statusOf(response), untypedCall(response, "json"), delete (Patched.prototype as any).json, typeof response.json];
+});
+say("a subclass can get another parent", () => {
+  class Base extends Headers {}
+  class Other extends Headers {
+    override get(name: string) {
+      return "other " + super.get(name);
+    }
+  }
+  Object.setPrototypeOf(Base.prototype, Other.prototype);
+  return getFrom(new Base({ a: "1" }), "a");
+});
+say("a class made with Object.create and Reflect.construct", () => {
+  function Legacy(this: unknown, url: string) {
+    return Reflect.construct(URL, [url], Legacy);
+  }
+  Legacy.prototype = Object.create(URL.prototype, { pathname: { get: () => "/legacy" }, constructor: { value: Legacy } });
+  const url = new (Legacy as unknown as new (url: string) => URL)("http://example.com/a");
+  return [pathnameOf(url), hrefOf(url), url instanceof URL];
+});
+
+say("own properties on a Request", () => {
+  const request = new Request("http://example.com/");
+  Object.defineProperty(request, "url", { value: "own url" });
+  Object.defineProperty(request, "headers", { get: () => new Headers({ own: "yes" }) });
+  (request as any).text = () => "own text";
+  (request as any).extra = 1;
+  return [urlOf(request), headerOf(request, "own"), untypedCall(request, "text"), (request as any).extra, Object.keys(request)];
+});
+say("own properties on a Response", () => {
+  const response = new Response("x");
+  Object.defineProperty(response, "url", { value: "http://own.example/" });
+  Object.defineProperty(response, "type", { value: "cors" });
+  Object.defineProperty(response, "status", { value: 599 });
+  (response as any).json = () => "own json";
+  return [response.url, response.type, statusOf(response), untypedCall(response, "json")];
+});
+say("own properties on a Blob, Headers, URL and URLSearchParams", () => {
+  const blob = new Blob(["abc"]);
+  const headers = new Headers({ a: "1" });
+  const url = new URL("http://example.com/a");
+  const params = new URLSearchParams("a=1");
+  Object.defineProperty(blob, "size", { value: -1 });
+  (headers as any).get = () => "own get";
+  Object.defineProperty(url, "pathname", { value: "/own" });
+  (url as any).toJSON = () => "own json";
+  (params as any).get = () => "own get";
+  Object.defineProperty(params, "size", { value: -1 });
+  return [sizeOf(blob), getFrom(headers, "a"), pathnameOf(url), jsonOf(url), JSON.stringify(url), paramOf(params, "a"), countOf(params)];
+});
+say("an own property is deleted again", () => {
+  const url = new URL("http://example.com/a");
+  Object.defineProperty(url, "pathname", { value: "/own", configurable: true });
+  const shadowed = pathnameOf(url);
+  delete (url as any).pathname;
+  return [shadowed, pathnameOf(url)];
+});
+
+say("Object.setPrototypeOf(instance, another object)", () => {
+  const request = Object.setPrototypeOf(new Request("http://example.com/"), { url: "another prototype", method: "OTHER" }) as Request;
+  const response = Object.setPrototypeOf(new Response("x", { status: 201 }), { status: -1 }) as Response;
+  const blob = Object.setPrototypeOf(new Blob(["abc"]), { size: -1 }) as Blob;
+  const headers = Object.setPrototypeOf(new Headers({ a: "1" }), { get: () => "another get" }) as Headers;
+  const url = Object.setPrototypeOf(new URL("http://example.com/a"), { pathname: "/another" }) as URL;
+  const params = Object.setPrototypeOf(new URLSearchParams("a=1"), { get: () => "another get", size: -1 }) as URLSearchParams;
+  return [urlOf(request), methodOf(request), statusOf(response), sizeOf(blob), getFrom(headers, "a"), pathnameOf(url), paramOf(params, "a"), countOf(params)];
+});
+say("Object.setPrototypeOf(instance, an object in between)", () => {
+  const between = Object.create(URL.prototype, { pathname: { get: () => "/between" } });
+  const url = Object.setPrototypeOf(new URL("http://example.com/a?b=c"), between) as URL;
+  return [pathnameOf(url), hrefOf(url), queryOf(url, "b"), url instanceof URL];
+});
+say("Object.setPrototypeOf(instance, null) and back", () => {
+  const headers = new Headers({ a: "1" });
+  Object.setPrototypeOf(headers, null);
+  const without = typeof (headers as any).get;
+  Object.setPrototypeOf(headers, Headers.prototype);
+  return [without, getFrom(headers, "a")];
+});
+say("instance.__proto__ = another object", () => {
+  const params = new URLSearchParams("a=1");
+  (params as any).__proto__ = { get: () => "another get" };
+  return paramOf(params, "a");
+});
+
+say("guarded polyfills assign nothing", () => {
+  (Headers.prototype as any).getSetCookie ??= function () {
+    return ["polyfill"];
+  };
+  (URLSearchParams.prototype as any).has ||= () => "polyfill";
+  if (!("formData" in Response.prototype)) (Response.prototype as any).formData = () => "polyfill";
+  if (typeof Blob.prototype.arrayBuffer !== "function") (Blob.prototype as any).arrayBuffer = () => "polyfill";
+  if (!Request.prototype.hasOwnProperty("signal")) Object.defineProperty(Request.prototype, "signal", { get: () => "polyfill" });
+  if (!Object.getOwnPropertyDescriptor(URL.prototype, "searchParams")) Object.defineProperty(URL.prototype, "searchParams", { get: () => "polyfill" });
+  (URL as any).canParse ??= () => "polyfill";
+  const headers = new Headers();
+  headers.append("set-cookie", "a=1");
+  return [headers.getSetCookie(), new URLSearchParams("a=1").has("a"), typeof new Response("").formData, URL.canParse("http://example.com/")];
+});
+say("a polyfill inside try and catch falls back", () => {
+  let fellBack = false;
+  try {
+    if (!(Headers.prototype as any).missingFeature) throw new TypeError("not supported");
+  } catch {
+    fellBack = true;
+  }
+  return fellBack;
+});
+
+say("methods borrowed from the prototypes", () => [
+  Headers.prototype.get.call(new Headers({ a: "1" }), "a"),
+  URLSearchParams.prototype.get.call(new URLSearchParams("a=1"), "a"),
+  URL.prototype.toJSON.call(new URL("http://example.com/")),
+  Reflect.get(URL.prototype, "pathname", new URL("http://example.com/a")),
+  Reflect.ownKeys(Headers.prototype).filter(key => typeof key === "symbol").map(String),
+]);
+say("what the descriptors of instances and subclasses say", () => {
+  class Sub extends Blob {}
+  return [Object.isExtensible(new Blob([])), Object.isExtensible(Sub.prototype), Object.isExtensible(Sub), Object.isFrozen(new URL("http://example.com/"))];
+});
+
+console.log(lines.join("\n"));
+//// texts-are-encoded-by-every-kind-of-encoder-into-every-kind-of-destination.js
+// encoder.encode(text) and encoder.encodeInto(text, bytes): every kind of encoder, text and destination, called on a known encoder, on one nobody followed, and borrowed.
+const util = require("node:util");
+const show = value => value instanceof Error ? "throws " + value.name : ArrayBuffer.isView(value) ? value.constructor.name + "[" + Array.from(value).join() + "]" : value && typeof value === "object" ? JSON.stringify(value) + Object.keys(value) + (Object.getPrototypeOf(value) === Object.prototype) : String(value);
+const attempt = f => { try { return show(f()); } catch (error) { return show(error); } };
+class Below extends TextEncoder {}
+class Changed extends TextEncoder { encode(text) { return "mine " + text; } encodeInto(text, bytes) { return { read: -1, written: -1 }; } }
+function detached() { const view = new Uint8Array(8); structuredClone(view.buffer, { transfer: [view.buffer] }); return view; }
+const part = JSON.parse('["Product ","17","é","日本","\\ud83d\\ude00","\\ud800",""]');
+const texts = [() => "row", () => "", () => part[0] + part[1], () => part[0] + part[1] + part[0] + part[1], () => (part[0] + part[1]).slice(2, 7), () => part[2], () => "a" + part[2] + "b", () => part[3], () => "ab" + part[3], () => part[4], () => "abc" + part[4], () => part[5], () => "x" + part[5] + "y", () => "\x7f\x80", () => "\0a", () => "a".repeat(300), () => 5, () => -0, () => 1.5, () => true, () => null, () => undefined, () => 10n, () => ({ toString() { return "made"; } }), () => ({ toString() { throw new RangeError("no"); } }), () => Symbol.iterator, () => ["a", "b"], () => new String("wrapped")];
+const destinations = [() => new Uint8Array(16), () => new Uint8Array(0), () => new Uint8Array(1), () => new Uint8Array(3), () => new Uint8Array(4), () => new Uint8Array(16).subarray(12), () => new Uint8Array(new ArrayBuffer(16), 14), () => Buffer.alloc(5), () => new (class extends Uint8Array {})(5), () => new Uint8ClampedArray(5), () => new Int8Array(5), () => new Uint16Array(5), () => new DataView(new ArrayBuffer(5)), () => new ArrayBuffer(5), detached, () => new Uint8Array(new ArrayBuffer(4, { maxByteLength: 8 })), () => new Uint8Array(new SharedArrayBuffer(4)), () => [0, 0], () => "text", () => 5, () => null, () => undefined];
+const encoders = [() => new TextEncoder(), () => new util.TextEncoder(), () => new Below(), () => new Changed(), () => Object.create(TextEncoder.prototype), () => ({ encode: TextEncoder.prototype.encode, encodeInto: TextEncoder.prototype.encodeInto }), () => new TextDecoder(), () => ({ encode(text) { return "other " + text; }, encodeInto() { return "other"; } }), () => null];
+const known = new TextEncoder();
+const holder = JSON.parse('{"a":1}'); holder.encoder = new util.TextEncoder();
+function knownEncode(text) { const bytes = known.encode(text); return bytes; }
+function knownInto(text, bytes) { const counts = known.encodeInto(text, bytes); return show(counts) + show(bytes); }
+function heldEncode(text) { const bytes = holder.encoder.encode(text); return bytes; }
+function heldInto(text, bytes) { const counts = holder.encoder.encodeInto(text, bytes); return show(counts) + show(bytes); }
+function anyEncode(encoder, text) { const bytes = encoder.encode(text); return bytes; }
+function anyInto(encoder, text, bytes) { const counts = encoder.encodeInto(text, bytes); return show(counts) + show(bytes); }
+function borrowedEncode(encoder, text) { return TextEncoder.prototype.encode.call(encoder, text); }
+function borrowedInto(encoder, text, bytes) { return show(TextEncoder.prototype.encodeInto.call(encoder, text, bytes)) + show(bytes); }
+function counted(text, bytes) { const { read, written } = known.encodeInto(text, bytes); return read * 100 + written; }
+let lines = [];
+for (let round = 0; round < 3; round++) {
+  lines = [];
+  texts.forEach((text, t) => {
+    lines.push("encode " + t + ": " + attempt(() => knownEncode(text())) + " " + attempt(() => heldEncode(text())) + " " + encoders.map(encoder => attempt(() => anyEncode(encoder(), text())) + "|" + attempt(() => borrowedEncode(encoder(), text()))).join(" "));
+    destinations.forEach((destination, d) => lines.push("into " + t + " " + d + ": " + attempt(() => knownInto(text(), destination())) + " " + attempt(() => heldInto(text(), destination())) + " " + attempt(() => counted(text(), destination()))));
+    lines.push("into by " + t + ": " + encoders.map(encoder => attempt(() => anyInto(encoder(), text(), new Uint8Array(6))) + "|" + attempt(() => borrowedInto(encoder(), text(), new Uint8Array(6)))).join(" "));
+  });
+}
+console.log(lines.join("\n"));
+console.log(attempt(() => known.encode()), attempt(() => known.encodeInto()), attempt(() => known.encodeInto("a")), attempt(() => known.encode("a", "b")), attempt(() => show(known.encodeInto("ab", new Uint8Array(4), 2))));
+const counts = known.encodeInto("ab", new Uint8Array(4)); counts.read = 9; counts.more = 1; delete counts.written; console.log(show(counts), Object.isExtensible(counts), JSON.stringify(Object.getOwnPropertyDescriptors(known.encodeInto("a", new Uint8Array(1)))));
+const bytes = known.encode("ab"); bytes[0] = 1; console.log(show(bytes), bytes.byteOffset, bytes.buffer.byteLength, Object.getPrototypeOf(bytes) === Uint8Array.prototype, show(known.encode("ab")));
+//// the-class-of-what-a-hasher-hands-out-is-reached-through-constructor.mjs
+// What `digest()` and `hash()` answer is made by native code: a Buffer or a Uint8Array, a string for an encoding, or the buffer that they were given.
+// Its class is reached through `constructor`, and a static member that is named there is in the executable.
+const digest = new Bun.CryptoHasher("sha1").update("a").digest();
+console.log(digest.constructor === Buffer, digest.constructor.from("b").length, Object.getPrototypeOf(digest).constructor.from("bc").length);
+console.log(digest.constructor.alloc(2).length, digest.constructor.concat([digest]).length, digest.constructor.isBuffer(digest));
+
+function lengthOfOneMore(value) {
+  return value.constructor.from("b").length;
+}
+console.log(lengthOfOneMore(JSON.parse("[1]")), lengthOfOneMore(new Bun.CryptoHasher("sha1").update("a").digest()), lengthOfOneMore(Bun.SHA1.hash("a")));
+
+const nameOf = value => (typeof value === "string" ? "string" : value.constructor.name);
+const bytes = new Uint8Array(64);
+console.log(nameOf(new Bun.CryptoHasher("sha1").update("a").digest("hex")), new Bun.CryptoHasher("sha1").update("a").digest(bytes) === bytes, nameOf(new Bun.CryptoHasher("sha1").update("a").digest(null)));
+for (const into of [new ArrayBuffer(64), new DataView(new ArrayBuffer(64)), new Float64Array(8)]) {
+  const answered = new Bun.CryptoHasher("sha1").update("a").digest(into);
+  console.log(nameOf(into), answered === into);
+}
+console.log(nameOf(new Bun.SHA1().update("a").digest()), nameOf(new Bun.SHA1().update("a").digest("hex")), new Bun.SHA1().update("a").digest(bytes) === bytes);
+console.log(nameOf(Bun.SHA1.hash("a")), nameOf(Bun.SHA1.hash("a", "hex")), Bun.SHA1.hash("a", bytes) === bytes, nameOf(Bun.sha("a")), nameOf(Bun.sha("a", "base64")));
+console.log(nameOf(Bun.CryptoHasher.hash("sha1", "a")), nameOf(Bun.CryptoHasher.hash("sha1", "a", "hex")), Bun.CryptoHasher.hash("sha1", "a", bytes) === bytes);
+//// the-environment-shared-with-a-worker-is-seen-under-every-name.ts
+// A worker with `env: SHARE_ENV` shares one environment with the thread that makes it: the host puts another object under process.env and Bun.env of that thread,
+// and a store of either thread is seen by the other, whichever of the three names reads it.
+import { SHARE_ENV, Worker, isMainThread, parentPort } from "node:worker_threads";
+function read(): string { return String(process.env.SHARED) + "/" + String(Bun.env.SHARED) + "/" + String(import.meta.env.SHARED); }
+if (isMainThread) {
+  const before = [process.env, Bun.env];
+  process.env.SHARED = "main";
+  console.log(read());
+  for (let round = 0; round < 2; round++) {
+    const worker = new Worker(new URL(import.meta.url), { env: SHARE_ENV });
+    console.log(process.env === before[0], Bun.env === before[1], process.env === Bun.env, read());
+    worker.postMessage("go");
+    const said = await new Promise(resolve => worker.once("message", resolve));
+    await new Promise(resolve => worker.once("exit", resolve));
+    console.log(said, read());
+    process.env.SHARED = "main again";
+  }
+  const own = new Worker(new URL(import.meta.url), { env: { SHARED: "its own" } });
+  own.postMessage("go");
+  console.log(await new Promise(resolve => own.once("message", resolve)), read());
+} else {
+  parentPort!.once("message", () => {
+    const found = read();
+    process.env.SHARED = "worker";
+    parentPort!.postMessage(found + " > " + read());
+  });
+}
+//// the-first-buffer-is-made-inside-the-loop-that-tests-it-validated.ts
+// The realm makes the Structure of Buffer when Buffer is first used. Here that is inside the loop whose calls rely on a Buffer as created.
+let sink: unknown;
+const works: Record<string, (n: number) => unknown> = {
+  "Buffers": n => { let s = 0; for (let i = 0; i < n; i++) { const b = Buffer.from("text " + i); s += b.toString("hex").length + b.toString("base64").length + Buffer.concat([b, b]).length + b.readUInt8(0) + b.indexOf("x") + Buffer.byteLength("é" + i) + +b.subarray(1).equals(b.subarray(1)); } return s; },
+};
+for (const name in works) for (let round = 0; round < 3; round++) sink = works[name](2000);
+console.log(sink);
+//// the-host-marks-process-as-exiting.js
+// The host stores `process._exiting = true` itself when the program ends. No statement of the program stores to it.
+console.log(process._exiting);
+process.on("beforeExit", () => console.log("beforeExit", process._exiting, process.exitCode));
+process.on("exit", code => console.log("exit", process._exiting, Object.getOwnPropertyDescriptor(process, "_exiting").value, code, process.exitCode));
+//// the-native-object-behind-a-server-response-is-locked.js
+// The native object behind a ServerResponse has no public name: a program reaches it only through a symbol of the library. Under --aot its prototype is locked like a built-in's: whoever replaces, adds, deletes or re-parents there is refused loudly, and the server goes on answering. The object itself stays free: an own property hides the prototype's member, for the library too.
+"use strict";
+const http = require("node:http");
+const lines = [];
+const attempt = (label, action) => { try { lines.push(label + ": " + String(action())); } catch (error) { lines.push(label + ": throws " + error.name); } };
+let round = 0;
+const server = http.createServer((req, res) => {
+  const key = Object.getOwnPropertySymbols(res).find(symbol => symbol.description === "handle");
+  const handle = res[key], prototype = Object.getPrototypeOf(handle);
+  if (round++ === 0) {
+    lines.push("members: " + ["end", "finished", "flags", "onabort", "ondata", "write", "writeHead"].filter(name => Object.hasOwn(prototype, name)).join());
+    const flags = Object.getOwnPropertyDescriptor(prototype, "flags"), end = prototype.end;
+    attempt("define a getter", () => Object.defineProperty(prototype, "flags", { get() { return 0; } }) === prototype);
+    attempt("define the same getter", () => Object.defineProperty(prototype, "flags", flags) === prototype);
+    attempt("Reflect.defineProperty", () => Reflect.defineProperty(prototype, "finished", { get() { return true; } }));
+    attempt("store a method", () => { prototype.end = function () { return -1; }; return prototype.end === end; });
+    attempt("store the same method", () => { prototype.end = end; return prototype.end === end; });
+    attempt("Reflect.set", () => Reflect.set(prototype, "write", () => 0));
+    attempt("delete a member", () => delete prototype.cork);
+    attempt("Reflect.deleteProperty", () => Reflect.deleteProperty(prototype, "writeHead"));
+    attempt("add a name", () => { prototype.added = 1; return "added" in prototype; });
+    attempt("another parent", () => Object.setPrototypeOf(prototype, null) === prototype);
+    attempt("the same parent", () => Object.setPrototypeOf(prototype, Object.getPrototypeOf(prototype)) === prototype);
+    attempt("Reflect.setPrototypeOf", () => Reflect.setPrototypeOf(prototype, {}));
+    attempt("Object.assign", () => Object.assign(prototype, { abort() {} }) === prototype);
+    attempt("as it was", () => Object.getOwnPropertyDescriptor(prototype, "flags").get === flags.get && prototype.end === end && "cork" in prototype && "writeHead" in prototype);
+  } else if (round === 2) {
+    let reads = 0; const finished = Object.getOwnPropertyDescriptor(prototype, "finished").get;
+    Object.defineProperty(handle, "finished", { get() { reads++; return finished.call(this); }, configurable: true });
+    handle.note = "own";
+    res.on("finish", () => lines.push("an own getter on the object is read by the library: " + (reads > 0) + " " + handle.note));
+  } else if (round === 3) {
+    const between = Object.create(prototype, { bufferedAmount: { get() { return 0; } } });
+    attempt("the object gets another parent", () => Object.setPrototypeOf(handle, between) === handle && handle.bufferedAmount === 0 && typeof handle.flags === "number");
+  }
+  res.setHeader("x-round", String(round)); res.end("answer " + round);
+});
+server.listen(0, "127.0.0.1", async () => {
+  for (let i = 0; i < 6; i++) await new Promise(resolve => http.get({ port: server.address().port, host: "127.0.0.1", agent: false }, res => { let text = ""; res.setEncoding("utf8"); res.on("data", chunk => (text += chunk)); res.on("end", () => { lines.push(res.statusCode + " " + res.headers["x-round"] + " " + text); resolve(); }); }));
+  server.close(() => console.log(lines.join("\n")));
+});
+//// the-own-names-of-abort-controller.js
+// The own names of the constructor AbortController are those of any class: length, name, prototype.
+console.log(Object.getOwnPropertyNames(AbortController).sort().join());
+//// the-prototype-of-array-buffer-sink-is-asked-for.mjs
+// The read answers what it answers in plain Bun.
+console.log(typeof Bun.ArrayBufferSink.prototype);
+//// the-string-that-a-host-constructor-answers-is-used-as-a-string.js
+const { CString, ptr } = require("bun:ffi");
+const bytes = Buffer.from("Hi\0");
+const text = new CString(ptr(bytes));
+const map = new Map([["Hi", 1]]);
+const record = { Hi: 2 };
+console.log(map.get(text), record[text], text + "!", `${text}`, text.length, text.toUpperCase(), JSON.stringify({ text }), new Set([text, "Hi"]).size);
+console.log(Object(text) === text, text instanceof CString, text instanceof String);
+switch (text) {
+  case "Hi":
+    console.log("the case of the string");
+    break;
+  default:
+    console.log("the default");
+}
+//// typed-code-and-a-lookup-by-name-agree-on-a-buffer-whatever-is-tried-on-its-prototypes.ts
+// Code that declares a Buffer or a Uint8Array finds `length` and the methods without a lookup. Whatever a program tries on the three prototypes, and whether or not the
+// attempt is refused, that code answers what a lookup by name answers.
+const seen = new Function("value", "return value" + String(process.argv.length).slice(9)) as <V>(value: V) => V;
+function read(b: Buffer): unknown { return b.readUInt8(0); }
+function word(b: Buffer): unknown { return b.readUInt32LE(0); }
+function length(b: Buffer): unknown { return b.length; }
+function lengthOfView(b: Uint8Array): unknown { return b.length; }
+function bytesOfView(b: Uint8Array): unknown { return b.byteLength; }
+function sum(b: Buffer): unknown { let s = 0; for (let i = 0; i < b.length; i++) s += b[i]!; return s; }
+function readByName(b: any): unknown { return b.readUInt8(0); }
+function wordByName(b: any): unknown { return b.readUInt32LE(0); }
+function lengthByName(b: any): unknown { return b.length; }
+function bytesByName(b: any): unknown { return b.byteLength; }
+function sumByName(b: any): unknown { let s = 0; for (let i = 0; i < b.length; i++) s += b[i]; return s; }
+const makeBuffer = seen(() => Buffer.from([5, 6, 7, 8]));
+const makeView = seen(() => new Uint8Array([5, 6, 7, 8]));
+function answer(run: (b: any) => unknown, make: () => unknown): string {
+  try { return String(run(make())); } catch (error) { return (error as Error).name; }
+}
+const pairs: [string, (b: any) => unknown, (b: any) => unknown, () => unknown][] = [
+  ["readUInt8", read, readByName, makeBuffer], ["readUInt32LE", word, wordByName, makeBuffer], ["length", length, lengthByName, makeBuffer], ["sum", sum, sumByName, makeBuffer],
+  ["length of a Buffer as a view", lengthOfView, lengthByName, makeBuffer], ["length of a view", lengthOfView, lengthByName, makeView],
+  ["byteLength of a Buffer as a view", bytesOfView, bytesByName, makeBuffer], ["byteLength of a view", bytesOfView, bytesByName, makeView],
+];
+function attempt(what: string, change: () => void): void {
+  try { change(); } catch {}
+  const apart = pairs.filter(([, typed, byName, make]) => answer(typed, make) !== answer(byName, make)).map(([name]) => name);
+  console.log(what, "|", apart.length ? "APART: " + apart.join(", ") : "agree");
+}
+const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+attempt("nothing", () => {});
+attempt("store Buffer.prototype.readUInt8", () => { (Buffer.prototype as any).readUInt8 = function () { return -1; }; });
+attempt("define Buffer.prototype.readUInt32LE", () => { Object.defineProperty(Buffer.prototype, "readUInt32LE", { value() { return -2; }, configurable: true }); });
+attempt("define Buffer.prototype.length", () => { Object.defineProperty(Buffer.prototype, "length", { get() { return 2; }, configurable: true }); });
+attempt("store Buffer.prototype.length", () => { (Buffer.prototype as any).length = 3; });
+attempt("define Uint8Array.prototype.length", () => { Object.defineProperty(Uint8Array.prototype, "length", { get() { return 1; }, configurable: true }); });
+attempt("define Uint8Array.prototype.byteLength", () => { Object.defineProperty(Uint8Array.prototype, "byteLength", { get() { return 94; }, configurable: true }); });
+attempt("define %TypedArray%.prototype.length", () => { Object.defineProperty(typedArrayPrototype, "length", { get() { return 3; }, configurable: true }); });
+attempt("Reflect.set on Buffer.prototype", () => { Reflect.set(Buffer.prototype, "readUInt8", () => -3); });
+attempt("Reflect.defineProperty on Buffer.prototype", () => { Reflect.defineProperty(Buffer.prototype, "length", { value: 1, configurable: true }); });
+attempt("Object.assign on Buffer.prototype", () => { Object.assign(Buffer.prototype, { readUInt8() { return -4; } }); });
+attempt("Buffer.prototype below another", () => { Object.setPrototypeOf(Buffer.prototype, Object.create(Uint8Array.prototype, { length: { get() { return 2; } } })); });
+attempt("Uint8Array.prototype below another", () => { Object.setPrototypeOf(Uint8Array.prototype, Object.create(typedArrayPrototype, { length: { get() { return 1; } } })); });
+attempt("__proto__ of Buffer.prototype", () => { (Buffer.prototype as any).__proto__ = { get length() { return 0; } }; });
+attempt("delete Buffer.prototype.readUInt8", () => { delete (Buffer.prototype as any).readUInt8; });
+attempt("delete Buffer.prototype.length", () => { delete (Buffer.prototype as any).length; });
+attempt("delete Uint8Array.prototype.length", () => { delete (Uint8Array.prototype as any).length; });
+attempt("delete %TypedArray%.prototype.length", () => { delete typedArrayPrototype.length; });
+attempt("delete %TypedArray%.prototype.byteLength", () => { delete typedArrayPrototype.byteLength; });
+//// url-parts-with-a-base.ts
+// `new URL(x, base)` that is only read for pathname, search or a search parameter is compiled without allocating the URL, as `new URL(x)` is. For any input and any base the results and errors are those of plain Bun.
+const lines: string[] = [];
+////= say
+
+////= lines-22	pathnameOf	string	pathname
+////= lines-22	searchOf	string	search
+////= lines-25	parameterOf	get
+////= lines-25	hasParameter	has
+function threeParameters(text: string, base: string) {
+  const query = new URL(text, base).searchParams;
+  return [query.get("page"), query.get("limit"), query.get("sort"), query.has("a")];
+}
+function partsOf(text: string, base: string) {
+  const url = new URL(text, base);
+  return [url.pathname, url.search, url.searchParams.get("a"), url.searchParams.has("b")];
+}
+function partsThroughTwoNames(text: string, base: string) {
+  const url = new URL(text, base);
+  const query = url.searchParams;
+  return [url.pathname, query.get("a"), query.get("")];
+}
+function partsReadInClosure(text: string, base: string) {
+  const url = new URL(text, base);
+  const ask = () => url.pathname + url.search;
+  return ask() + ask();
+}
+////= lines-22	pathnameOfAnything	any	pathname
+function partsOfAnything(text: any, base: any) {
+  const url = new URL(text, base);
+  const query = url.searchParams;
+  return [url.pathname, url.search, query.get("a"), query.has("b")];
+}
+////= withConstantBase
+////= inAnAsyncFunction
+
+let seed = 11;
+const random = () => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff), seed / 0x7fffffff);
+const pick = <T,>(list: readonly T[]): T => list[Math.floor(random() * list.length)];
+const choose = <T,>(usual: readonly T[], odd: readonly T[]): T => (random() < 0.93 ? pick(usual) : pick(odd));
+const usualBases = ["http://127.0.0.1", "http://localhost", "http://localhost:3000", "https://example.com", "https://example.com/", "http://example.com/a/b", "http://example.com/a/b?c=d", "http://a-b.c:80#e", "https://x:443?y", "http://a"];
+const oddBases = ["", "/", "nothing", "HTTP://example.com", "http:/example.com", "http:example.com", "http://", "https://", "ftp://example.com", "file:///a/b", "file:///C:/a", "data:text/plain,a", "mailto:a@b.c", "about:blank", "http://user:word@example.com", "http://example.com@other.com", "http://EXAMPLE.com", "http://1.2.3", "http://256.1.1.1", "http://0x7f.1", "http://[::1]", "http://[::1]:80/a", "http://example.com:", "http://example.com:99999", "http://example.com:8a", "http://exa mple.com", "http://example.com\\a", " http://example.com", "http://example.com ", "http://exam\tple.com", "http://é.com", "http://xn--a.com", "http://a..b", "http://-a.b", "http://a-.b", "http://example.com/a b", "http://example.com/é", "http://example.com/\ud800", "null", "undefined", "blob:http://example.com/a"];
+const usualStarts = ["/", "/", "/", "/", "/users", "/a/b"];
+const oddStarts = ["", "a", "a/b", "./a", "../a", ".", "..", "//", "//other.com", "//other.com/a?b=c", "/\\other.com", "\\", "\\\\other.com/a", "?", "?a=1", "#", "#a", "http://other.com/a?a=9", "https://other.com", "http:/a", "http:a", "https:a", "ftp://other.com/a", "mailto:a", " /a", "\t/a", "/\ta", "\n/a", "é", "/é"];
+const usualPieces = ["/", "/", "/", "a", "b", "users", "42", "%41", "%zz", "+", ";", ":", "@", "~", "!", "$", "&", "(", ")", "*", ",", "=", "-", "_", "a.b"];
+const oddPieces = [".", "..", "/.", "/..", "/./", "/../", "%2e", "/%2e", "/%2E%2e", "/.%2e", " ", "\t", "\n", "\\", "'", "[", "]", "^", "`", "{", "|", "}", "\"", "<", ">", "é", "\u{1F600}", "\ud800"];
+const usualQuery = ["a", "b", "page", "limit", "sort", "=", "=", "&", "&", "1", "20", "new", "?", "/", ":", "@", "a=1", "a=", "=1", "&&", "a=1&a=2", "page=2&limit=10&sort=old"];
+const oddQuery = ["%20", "+", "%", "%zz", "%41", "%61", "%C3%A9", "%ff", "'", "\"", "<", ">", " ", "é", "[", "]", "{", "}", "|", "^", "`", "\\", "\t"];
+////= pairs
+for (const base of [...usualBases, ...oddBases]) pairs.push(["/a/b?a=1&b=2", base], ["http://other.com/c?a=3", base], ["c?a=4", base]);
+for (const start of [...usualStarts, ...oddStarts]) pairs.push([start, "http://example.com/x/y?z=1"], [start + "?a=1", "http://127.0.0.1"]);
+////= for-4
+////= for-2
+for (const text of [undefined, "/text", "/json", "/users/42/posts/hello-world?page=2&limit=10&sort=top", "/async/42", "//text", "/a/../text", "text", "/text?page=%31", "/text?page=1+2", "*"]) say("a constant base, " + JSON.stringify(text), () => withConstantBase(text));
+const joined = ["/us", "ers/7?a", "=1&b=2"];
+say("an input that was joined", () => partsOf(joined[0] + joined[1] + joined[2], "http://" + ["exam", "ple.com"].join("")));
+say("an input that is a part of another", () => partsOf("GET /users/7?a=1&b=2 HTTP/1.1".slice(4, 22), "see http://example.com here".slice(4, 22)));
+
+const plain = "/a/b?a=1&b=2";
+const root = "http://example.com";
+const order: string[] = [];
+say("an input that is not a string", () => new URL({ toString: () => (order.push("text"), plain) } as any, root).pathname);
+say("a base that is not a string", () => new URL(plain, { toString: () => (order.push("base"), root) } as any).pathname);
+say("neither is a string", () => new URL({ toString: () => (order.push("text"), plain) } as any, { toString: () => (order.push("base"), root) } as any).search);
+say("a name that is not a string", () => new URL(plain, root).searchParams.get({ toString: () => (order.push("name"), "b") } as any));
+say("the order of conversions", () => order);
+say("a base that is a URL", () => partsOfAnything(plain, new URL("http://example.com/x")));
+say("a base that is undefined", () => [pathnameOfAnything("http://example.com/a", undefined), partsOfAnything("http://example.com/a?a=1", undefined), (() => { try { return pathnameOfAnything(plain, undefined); } catch (error) { return (error as Error).constructor.name; } })()]);
+say("a base that is null, a number, a boolean", () => [null, 5, true].map(base => { try { return pathnameOfAnything(plain, base); } catch (error) { return (error as Error).constructor.name; } }));
+say("an input that is null, a number, a boolean, undefined", () => [null, 5, true, undefined].map(text => partsOfAnything(text, root)));
+say("a base that is a symbol", () => pathnameOfAnything(plain, Symbol.iterator));
+////= say-10
+say("operands are evaluated in their order", () => {
+  const seen: string[] = [];
+  new URL((seen.push("text"), plain), (seen.push("base"), root)).searchParams.get((seen.push("name"), "a"));
+  return seen;
+});
+////= say-7
+say("an invalid base throws though the input stands alone", () => pathnameOf("http://example.com/a", "nothing"));
+////= say-13
+////= say-14
+say("three arguments", () => new (URL as unknown as new (...all: string[]) => URL)(plain, root, "http://other.com").pathname);
+say("a spread", () => {
+  const both: [string, string] = [plain, root];
+  return new URL(...both).pathname;
+});
+
+const kept: unknown[] = [];
+say("a URL that escapes into an array", () => {
+  const url = new URL(plain, root);
+  kept.push(url);
+  return [url.pathname, url instanceof URL, kept[0] === url, url.href];
+});
+////= say-17
+////= say-19
+say("other members", () => {
+  const url = new URL(plain, "http://example.com:8080/x");
+  return [url.pathname, url.href, url.origin, url.host, url.hash, String(url), JSON.stringify(url)];
+});
+
+////= Subclass
+say("a subclass", () => new Subclass(plain, root).pathname);
+////= say-6
+const original = globalThis.URL;
+say("the global is another class", () => {
+  (globalThis as unknown as { URL: unknown }).URL = class {
+    pathname: string;
+    search = 5;
+    searchParams = { get: (name: string) => "other " + name, has: () => "other" };
+    constructor(text: string, base: string) {
+      this.pathname = "other class of " + text + " on " + base;
+    }
+  };
+  try {
+    return [pathnameOf(plain, root), searchOf(plain, root), parameterOf(plain, root, "a"), hasParameter(plain, root, "a")];
+  } finally {
+    globalThis.URL = original;
+  }
+});
+say("the global is restored", () => [pathnameOf(plain, root), parameterOf(plain, root, "b")]);
+for (const text of ["/a?a=1", "/a/./b?a=%31", "nothing at all", "//other.com/c"]) lines.push("in an async function, " + JSON.stringify(text) + ": " + JSON.stringify(await inAnAsyncFunction(text)));
+console.log(lines.join("\n"));
+//// url-parts-with-a-base-and-the-global-stays.ts
+// `new URL(x, base)` that is only read for pathname, search or a search parameter is compiled without allocating the URL, as `new URL(x)` is. For any input and any base the results and errors are those of plain Bun. Here nothing ever replaces the global, so the compiler knows the constructor.
+// STATISTIC: URLsLeftUnbuilt >= 8
+const lines: string[] = [];
+////= say
+
+////= lines-22	pathnameOf	string	pathname
+////= lines-22	searchOf	string	search
+////= lines-25	parameterOf	get
+////= lines-25	hasParameter	has
+function threeParameters(text: string, base: string) {
+  const query = new URL(text, base).searchParams;
+  return [query.get("page"), query.get("limit"), query.get("sort"), query.has("a")];
+}
+function partsOf(text: string, base: string) {
+  const url = new URL(text, base);
+  return [url.pathname, url.search, url.searchParams.get("a"), url.searchParams.has("b")];
+}
+function partsThroughTwoNames(text: string, base: string) {
+  const url = new URL(text, base);
+  const query = url.searchParams;
+  return [url.pathname, query.get("a"), query.get("")];
+}
+function partsReadInClosure(text: string, base: string) {
+  const url = new URL(text, base);
+  const ask = () => url.pathname + url.search;
+  return ask() + ask();
+}
+////= lines-22	pathnameOfAnything	any	pathname
+function partsOfAnything(text: any, base: any) {
+  const url = new URL(text, base);
+  const query = url.searchParams;
+  return [url.pathname, url.search, query.get("a"), query.has("b")];
+}
+////= withConstantBase
+////= inAnAsyncFunction
+
+let seed = 11;
+const random = () => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff), seed / 0x7fffffff);
+const pick = <T,>(list: readonly T[]): T => list[Math.floor(random() * list.length)];
+const choose = <T,>(usual: readonly T[], odd: readonly T[]): T => (random() < 0.93 ? pick(usual) : pick(odd));
+const usualBases = ["http://127.0.0.1", "http://localhost", "http://localhost:3000", "https://example.com", "https://example.com/", "http://example.com/a/b", "http://example.com/a/b?c=d", "http://a-b.c:80#e", "https://x:443?y", "http://a"];
+const oddBases = ["", "/", "nothing", "HTTP://example.com", "http:/example.com", "http:example.com", "http://", "https://", "ftp://example.com", "file:///a/b", "file:///C:/a", "data:text/plain,a", "mailto:a@b.c", "about:blank", "http://user:word@example.com", "http://example.com@other.com", "http://EXAMPLE.com", "http://1.2.3", "http://256.1.1.1", "http://0x7f.1", "http://[::1]", "http://[::1]:80/a", "http://example.com:", "http://example.com:99999", "http://example.com:8a", "http://exa mple.com", "http://example.com\\a", " http://example.com", "http://example.com ", "http://exam\tple.com", "http://é.com", "http://xn--a.com", "http://a..b", "http://-a.b", "http://a-.b", "http://example.com/a b", "http://example.com/é", "http://example.com/\ud800", "null", "undefined", "blob:http://example.com/a"];
+const usualStarts = ["/", "/", "/", "/", "/users", "/a/b"];
+const oddStarts = ["", "a", "a/b", "./a", "../a", ".", "..", "//", "//other.com", "//other.com/a?b=c", "/\\other.com", "\\", "\\\\other.com/a", "?", "?a=1", "#", "#a", "http://other.com/a?a=9", "https://other.com", "http:/a", "http:a", "https:a", "ftp://other.com/a", "mailto:a", " /a", "\t/a", "/\ta", "\n/a", "é", "/é"];
+const usualPieces = ["/", "/", "/", "a", "b", "users", "42", "%41", "%zz", "+", ";", ":", "@", "~", "!", "$", "&", "(", ")", "*", ",", "=", "-", "_", "a.b"];
+const oddPieces = [".", "..", "/.", "/..", "/./", "/../", "%2e", "/%2e", "/%2E%2e", "/.%2e", " ", "\t", "\n", "\\", "'", "[", "]", "^", "`", "{", "|", "}", "\"", "<", ">", "é", "\u{1F600}", "\ud800"];
+const usualQuery = ["a", "b", "page", "limit", "sort", "=", "=", "&", "&", "1", "20", "new", "?", "/", ":", "@", "a=1", "a=", "=1", "&&", "a=1&a=2", "page=2&limit=10&sort=old"];
+const oddQuery = ["%20", "+", "%", "%zz", "%41", "%61", "%C3%A9", "%ff", "'", "\"", "<", ">", " ", "é", "[", "]", "{", "}", "|", "^", "`", "\\", "\t"];
+////= pairs
+for (const base of [...usualBases, ...oddBases]) pairs.push(["/a/b?a=1&b=2", base], ["http://other.com/c?a=3", base], ["c?a=4", base]);
+for (const start of [...usualStarts, ...oddStarts]) pairs.push([start, "http://example.com/x/y?z=1"], [start + "?a=1", "http://127.0.0.1"]);
+////= for-4
+////= for-2
+for (const text of [undefined, "/text", "/json", "/users/42/posts/hello-world?page=2&limit=10&sort=top", "/async/42", "//text", "/a/../text", "text", "/text?page=%31", "/text?page=1+2", "*"]) say("a constant base, " + JSON.stringify(text), () => withConstantBase(text));
+const joined = ["/us", "ers/7?a", "=1&b=2"];
+say("an input that was joined", () => partsOf(joined[0] + joined[1] + joined[2], "http://" + ["exam", "ple.com"].join("")));
+say("an input that is a part of another", () => partsOf("GET /users/7?a=1&b=2 HTTP/1.1".slice(4, 22), "see http://example.com here".slice(4, 22)));
+
+const plain = "/a/b?a=1&b=2";
+const root = "http://example.com";
+const order: string[] = [];
+say("an input that is not a string", () => new URL({ toString: () => (order.push("text"), plain) } as any, root).pathname);
+say("a base that is not a string", () => new URL(plain, { toString: () => (order.push("base"), root) } as any).pathname);
+say("neither is a string", () => new URL({ toString: () => (order.push("text"), plain) } as any, { toString: () => (order.push("base"), root) } as any).search);
+say("a name that is not a string", () => new URL(plain, root).searchParams.get({ toString: () => (order.push("name"), "b") } as any));
+say("the order of conversions", () => order);
+say("a base that is a URL", () => partsOfAnything(plain, new URL("http://example.com/x")));
+say("a base that is undefined", () => [pathnameOfAnything("http://example.com/a", undefined), partsOfAnything("http://example.com/a?a=1", undefined), (() => { try { return pathnameOfAnything(plain, undefined); } catch (error) { return (error as Error).constructor.name; } })()]);
+say("a base that is null, a number, a boolean", () => [null, 5, true].map(base => { try { return pathnameOfAnything(plain, base); } catch (error) { return (error as Error).constructor.name; } }));
+say("an input that is null, a number, a boolean, undefined", () => [null, 5, true, undefined].map(text => partsOfAnything(text, root)));
+say("a base that is a symbol", () => pathnameOfAnything(plain, Symbol.iterator));
+////= say-10
+say("operands are evaluated in their order", () => {
+  const seen: string[] = [];
+  new URL((seen.push("text"), plain), (seen.push("base"), root)).searchParams.get((seen.push("name"), "a"));
+  return seen;
+});
+////= say-7
+say("an invalid base throws though the input stands alone", () => pathnameOf("http://example.com/a", "nothing"));
+////= say-13
+////= say-14
+say("three arguments", () => new (URL as unknown as new (...all: string[]) => URL)(plain, root, "http://other.com").pathname);
+say("a spread", () => {
+  const both: [string, string] = [plain, root];
+  return new URL(...both).pathname;
+});
+
+const kept: unknown[] = [];
+say("a URL that escapes into an array", () => {
+  const url = new URL(plain, root);
+  kept.push(url);
+  return [url.pathname, url instanceof URL, kept[0] === url, url.href];
+});
+////= say-17
+////= say-19
+say("other members", () => {
+  const url = new URL(plain, "http://example.com:8080/x");
+  return [url.pathname, url.href, url.origin, url.host, url.hash, String(url), JSON.stringify(url)];
+});
+
+////= Subclass
+say("a subclass", () => new Subclass(plain, root).pathname);
+////= say-6
+console.log(lines.join("\n"));
+//// url-parts-without-url-object.ts
+// `new URL(x)` that is only read for pathname, search or a search parameter is compiled without allocating the URL. For any input the results and errors are those of plain Bun, also where the object escapes and where `URL` is another class.
+const lines: string[] = [];
+////= say
+
+////= lines-23	pathnameOf	string	URL	pathname
+////= lines-23	searchOf	string	URL	search
+////= lines-26	parameterOf	get
+////= lines-26	hasParameter	has
+function threeParameters(text: string) {
+  const query = new URL(text).searchParams;
+  return [query.get("page"), query.get("limit"), query.get("sort"), query.has("a")];
+}
+function partsOf(text: string) {
+  const url = new URL(text);
+  return [url.pathname, url.search, url.searchParams.get("a"), url.searchParams.has("b")];
+}
+function partsThroughTwoNames(text: string) {
+  const url = new URL(text);
+  const query = url.searchParams;
+  return [url.pathname, query.get("a"), query.get("")];
+}
+function partsReadInClosure(text: string) {
+  const url = new URL(text);
+  const ask = () => url.pathname + url.search;
+  return ask() + ask();
+}
+
+let seed = 7;
+const random = () => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff), seed / 0x7fffffff);
+const pick = <T,>(list: readonly T[]): T => list[Math.floor(random() * list.length)];
+const choose = <T,>(usual: readonly T[], odd: readonly T[]): T => (random() < 0.93 ? pick(usual) : pick(odd));
+const usualHeads = ["http://example.com", "https://example.com", "http://localhost:3000", "http://127.0.0.1:8080", "https://api.example.co.uk", "http://a-b.c:80", "https://x:443"];
+const oddHeads = ["HTTP://example.com", "http:/example.com", "http:example.com", "ftp://example.com", "file:///a", "http://user:word@example.com", "http://EXAMPLE.com", "http://1.2.3", "http://256.1.1.1", "http://01.2.3.4", "http://0x7f.1", "http://a..b", "http://.a", "http://a.", "http://-a.b", "http://xn--a.b", "http://xn--nxasmq6b", "http://[::1]", "http://a_b.c", "http://é.com", "http://", "http://1", "http://a.1", "http://a:65536", "http://a:", "http://a:08", "http://a:8a", " http://a", "http://a b", "about:blank", "", "/only/a/path", "http://a%2eb"];
+const usualPieces = ["/", "/", "/", "a", "b", "users", "42", "%41", "%zz", "+", ";", ":", "@", "~", "!", "$", "&", "(", ")", "*", ",", "=", "-", "_", "a.b"];
+const oddPieces = [".", "..", "/.", "/..", "/./", "/../", "%2e", "/%2e", "/%2E%2e", "/.%2e", " ", "\t", "\n", "\\", "'", "[", "]", "^", "`", "{", "|", "}", "\"", "<", ">", "é", "\u{1F600}", "\ud800"];
+const usualQuery = ["a", "b", "page", "limit", "sort", "=", "=", "&", "&", "1", "20", "new", "?", "/", ":", "@", "a=1", "a=", "=1", "&&", "a=1&a=2", "page=2&limit=10&sort=old"];
+const oddQuery = ["%20", "+", "%", "%zz", "%41", "%61", "%C3%A9", "%ff", "'", "\"", "<", ">", " ", "é", "[", "]", "{", "}", "|", "^", "`", "\\", "\t"];
+const texts: string[] = ["http://example.com/users/7/posts/9?page=2&limit=10&sort=old", "http://example.com", "http://example.com?a=1", "http://example.com#a", "http://example.com/?", "http://example.com/?#", "http://example.com/a?a=1#b?a=2"];
+////= for
+////= for-3
+
+const plain = "http://example.com/a/b?a=1&b=2";
+const order: string[] = [];
+say("an input that is not a string", () => new URL({ toString: () => (order.push("text"), plain) } as any).pathname);
+say("a name that is not a string", () => new URL(plain).searchParams.get({ toString: () => (order.push("name"), "b") } as any));
+say("a name that is a number, null, undefined", () => [5, null, undefined].map(name => new URL("http://a/?5=five&null=none&undefined=nothing").searchParams.get(name as any)));
+////= say-11
+say("a symbol for a name", () => new URL(plain).searchParams.get(Symbol.iterator as any));
+say("the order of conversions", () => order);
+say("the input is evaluated before the name", () => {
+  const seen: string[] = [];
+  new URL((seen.push("text"), plain)).searchParams.get((seen.push("name"), "a"));
+  return seen;
+});
+////= say-8
+////= say-15
+
+const kept: unknown[] = [];
+say("a URL that escapes into an array", () => {
+  const url = new URL(plain);
+  kept.push(url);
+  return [url.pathname, url instanceof URL, kept[0] === url];
+});
+////= say-9
+////= say-16
+////= say-12
+say("searchParams is the same object each time", () => {
+  const url = new URL(plain);
+  return url.searchParams === url.searchParams;
+});
+say("other members", () => {
+  const url = new URL(plain);
+  return [url.pathname, url.href, url.origin, url.host, url.hash, String(url), JSON.stringify(url)];
+});
+say("a missing member", () => {
+  const url = new URL(plain);
+  return [url.pathname, (url as unknown as { nothing: unknown }).nothing];
+});
+say("get without a name, and with two", () => {
+  const query = new URL(plain).searchParams;
+  return [(query.get as (...names: string[]) => unknown)("a", "b"), (query.has as (...names: string[]) => unknown)("a", "2")];
+});
+say("get without arguments", () => (new URL(plain).searchParams.get as () => unknown)());
+say("the method is read and called later", () => {
+  const query = new URL(plain).searchParams;
+  const get = query.get;
+  return get.call(query, "a");
+});
+say("a base", () => new URL("/c?d=4", plain).searchParams.get("d"));
+////= say-18
+////= say-4
+say("optional chains", () => {
+  const url = new URL(plain);
+  return [url?.pathname, url.searchParams?.get("a"), url.searchParams.get?.("b")];
+});
+
+////= Subclass
+say("a subclass", () => new Subclass(plain).pathname);
+////= say-5
+const original = globalThis.URL;
+say("the global is another class", () => {
+  (globalThis as unknown as { URL: unknown }).URL = class {
+    pathname = "other class";
+    search = 5;
+    searchParams = "a text";
+  };
+  try {
+    return [pathnameOf(plain), searchOf(plain), new URL(plain).searchParams];
+  } finally {
+    globalThis.URL = original;
+  }
+});
+say("the global is another class whose searchParams is a string", () => {
+  (globalThis as unknown as { URL: unknown }).URL = class {
+    searchParams = "a text";
+  };
+  try {
+    return parameterOf(plain, "a");
+  } catch (error) {
+    return "throws " + (error as Error).constructor.name;
+  } finally {
+    globalThis.URL = original;
+  }
+});
+say("the global is restored", () => [pathnameOf(plain), parameterOf(plain, "b")]);
+say("the constructor gets an own property", () => {
+  (URL as unknown as { extra: number }).extra = 1;
+  return [pathnameOf(plain), parameterOf(plain, "b")];
+});
+console.log(lines.join("\n"));
+//// url-parts-without-url-object-and-the-global-stays.ts
+// `new URL(x)` that is only read for pathname, search or a search parameter is compiled without allocating the URL. For any input the results and errors are those of plain Bun, also where the object escapes and where `URL` is another class. Here nothing ever replaces the global, so the compiler knows the constructor.
+// STATISTIC: URLsLeftUnbuilt >= 8
+const lines: string[] = [];
+////= say
+
+////= lines-23	pathnameOf	string	URL	pathname
+////= lines-23	searchOf	string	URL	search
+////= lines-26	parameterOf	get
+////= lines-26	hasParameter	has
+function threeParameters(text: string) {
+  const query = new URL(text).searchParams;
+  return [query.get("page"), query.get("limit"), query.get("sort"), query.has("a")];
+}
+function partsOf(text: string) {
+  const url = new URL(text);
+  return [url.pathname, url.search, url.searchParams.get("a"), url.searchParams.has("b")];
+}
+function partsThroughTwoNames(text: string) {
+  const url = new URL(text);
+  const query = url.searchParams;
+  return [url.pathname, query.get("a"), query.get("")];
+}
+function partsReadInClosure(text: string) {
+  const url = new URL(text);
+  const ask = () => url.pathname + url.search;
+  return ask() + ask();
+}
+
+let seed = 7;
+const random = () => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff), seed / 0x7fffffff);
+const pick = <T,>(list: readonly T[]): T => list[Math.floor(random() * list.length)];
+const choose = <T,>(usual: readonly T[], odd: readonly T[]): T => (random() < 0.93 ? pick(usual) : pick(odd));
+const usualHeads = ["http://example.com", "https://example.com", "http://localhost:3000", "http://127.0.0.1:8080", "https://api.example.co.uk", "http://a-b.c:80", "https://x:443"];
+const oddHeads = ["HTTP://example.com", "http:/example.com", "http:example.com", "ftp://example.com", "file:///a", "http://user:word@example.com", "http://EXAMPLE.com", "http://1.2.3", "http://256.1.1.1", "http://01.2.3.4", "http://0x7f.1", "http://a..b", "http://.a", "http://a.", "http://-a.b", "http://xn--a.b", "http://xn--nxasmq6b", "http://[::1]", "http://a_b.c", "http://é.com", "http://", "http://1", "http://a.1", "http://a:65536", "http://a:", "http://a:08", "http://a:8a", " http://a", "http://a b", "about:blank", "", "/only/a/path", "http://a%2eb"];
+const usualPieces = ["/", "/", "/", "a", "b", "users", "42", "%41", "%zz", "+", ";", ":", "@", "~", "!", "$", "&", "(", ")", "*", ",", "=", "-", "_", "a.b"];
+const oddPieces = [".", "..", "/.", "/..", "/./", "/../", "%2e", "/%2e", "/%2E%2e", "/.%2e", " ", "\t", "\n", "\\", "'", "[", "]", "^", "`", "{", "|", "}", "\"", "<", ">", "é", "\u{1F600}", "\ud800"];
+const usualQuery = ["a", "b", "page", "limit", "sort", "=", "=", "&", "&", "1", "20", "new", "?", "/", ":", "@", "a=1", "a=", "=1", "&&", "a=1&a=2", "page=2&limit=10&sort=old"];
+const oddQuery = ["%20", "+", "%", "%zz", "%41", "%61", "%C3%A9", "%ff", "'", "\"", "<", ">", " ", "é", "[", "]", "{", "}", "|", "^", "`", "\\", "\t"];
+const texts: string[] = ["http://example.com/users/7/posts/9?page=2&limit=10&sort=old", "http://example.com", "http://example.com?a=1", "http://example.com#a", "http://example.com/?", "http://example.com/?#", "http://example.com/a?a=1#b?a=2"];
+////= for
+////= for-3
+
+const plain = "http://example.com/a/b?a=1&b=2";
+const order: string[] = [];
+say("an input that is not a string", () => new URL({ toString: () => (order.push("text"), plain) } as any).pathname);
+say("a name that is not a string", () => new URL(plain).searchParams.get({ toString: () => (order.push("name"), "b") } as any));
+say("a name that is a number, null, undefined", () => [5, null, undefined].map(name => new URL("http://a/?5=five&null=none&undefined=nothing").searchParams.get(name as any)));
+////= say-11
+say("a symbol for a name", () => new URL(plain).searchParams.get(Symbol.iterator as any));
+say("the order of conversions", () => order);
+say("the input is evaluated before the name", () => {
+  const seen: string[] = [];
+  new URL((seen.push("text"), plain)).searchParams.get((seen.push("name"), "a"));
+  return seen;
+});
+////= say-8
+////= say-15
+
+const kept: unknown[] = [];
+say("a URL that escapes into an array", () => {
+  const url = new URL(plain);
+  kept.push(url);
+  return [url.pathname, url instanceof URL, kept[0] === url];
+});
+////= say-9
+////= say-16
+////= say-12
+say("searchParams is the same object each time", () => {
+  const url = new URL(plain);
+  return url.searchParams === url.searchParams;
+});
+say("other members", () => {
+  const url = new URL(plain);
+  return [url.pathname, url.href, url.origin, url.host, url.hash, String(url), JSON.stringify(url)];
+});
+say("a missing member", () => {
+  const url = new URL(plain);
+  return [url.pathname, (url as unknown as { nothing: unknown }).nothing];
+});
+say("get without a name, and with two", () => {
+  const query = new URL(plain).searchParams;
+  return [(query.get as (...names: string[]) => unknown)("a", "b"), (query.has as (...names: string[]) => unknown)("a", "2")];
+});
+say("get without arguments", () => (new URL(plain).searchParams.get as () => unknown)());
+say("the method is read and called later", () => {
+  const query = new URL(plain).searchParams;
+  const get = query.get;
+  return get.call(query, "a");
+});
+say("a base", () => new URL("/c?d=4", plain).searchParams.get("d"));
+////= say-18
+////= say-4
+say("optional chains", () => {
+  const url = new URL(plain);
+  return [url?.pathname, url.searchParams?.get("a"), url.searchParams.get?.("b")];
+});
+
+////= Subclass
+say("a subclass", () => new Subclass(plain).pathname);
+////= say-5
+console.log(lines.join("\n"));
+//// urls-only-read-in-the-code-of-a-module.ts
+// A URL or a URLSearchParams that is only read, held in a `const` of a block in the module's own code (a script that works in a loop at the top of its file). What a function of the module reads, what the file itself declares and what an await lies across come out the same.
+const lines: string[] = [];
+const texts = ["page=2&limit=10&sort=old", "", "a=1&a=2&b=%20x", "q=caf%C3%A9+au+lait&empty=&=novalue", "page=3"];
+const addresses = ["https://user:pass@example.com:8080/a/b.html?x=1&y=two#part", "http://example.com", "file:///tmp/x%20y", "https://example.com/?q=1"];
+
+for (const text of texts) {
+  const query = new URLSearchParams(text);
+  const found: Record<string, string> = Object.create(null);
+  for (const [name, value] of query) found[name] = value;
+  lines.push(JSON.stringify([query.size, query.toString(), query.get("a"), query.has("page"), found]));
+}
+
+for (let i = 0; i < addresses.length; i++) {
+  const url = new URL(addresses[i]!);
+  lines.push([url.protocol, url.host, url.pathname, url.search, url.hash, url.href].join(" | "));
+  const parameters = url.searchParams;
+  lines.push(String(parameters.get("x")) + " " + parameters.has("q") + " " + parameters.size);
+}
+
+block: {
+  const url = new URL("https://example.com/in/a/block?k=v");
+  if (url.pathname.length > 100) break block;
+  lines.push(url.pathname + url.search);
+}
+
+{
+  const captured = new URL("https://example.com/captured?c=1");
+  const later = () => captured.pathname + captured.search;
+  lines.push(later());
+  const changed = new URL("https://example.com/changed");
+  changed.pathname = "/other";
+  lines.push(changed.href);
+  const kept = new URLSearchParams("k=1");
+  const holder = { kept };
+  holder.kept.append("l", "2");
+  lines.push(kept.toString() + " " + kept.size);
+}
+
+for (const text of ["w=1&x=2", "y=3"]) {
+  const query = new URLSearchParams(text);
+  const before = query.size;
+  await Promise.resolve();
+  lines.push(before + " " + query.toString() + " " + query.get("x"));
+}
+
+try {
+  for (const address of ["https://example.com/fine", "not an address"]) {
+    const url = new URL(address);
+    lines.push(url.pathname);
+  }
+} catch (error) {
+  lines.push("throws " + (error as Error).constructor.name);
+}
+
+const ofTheFile = new URL("https://example.com/of/the/file?f=1");
+function readsIt() {
+  return ofTheFile.pathname;
+}
+lines.push(readsIt() + ofTheFile.search);
+export const exported = new URLSearchParams("e=1");
+lines.push(exported.toString());
+
+console.log(lines.join("\n"));
+//// web-streams-are-written-transformed-read-and-fail.ts
+const chunks: string[] = [];
+const writable = new WritableStream<string>({
+  write(chunk, controller) {
+    chunks.push(chunk);
+    if (chunk === "stop") controller.error(new Error("stopped"));
+  },
+});
+const writer = writable.getWriter();
+console.log(writable.locked, writer.desiredSize);
+await writer.ready;
+await writer.write("a");
+await writer.write("b");
+console.log(await writer.write("stop").then(() => "written", error => error.message));
+console.log(await writer.closed.then(() => "closed", error => error.message), chunks.join());
+writer.releaseLock();
+console.log(writable.locked);
+const transform = new TransformStream<string, string>({
+  transform(chunk, controller) {
+    controller.enqueue(chunk.toUpperCase());
+    if (chunk === "z") controller.terminate();
+  },
+});
+const input = transform.writable.getWriter();
+const output = transform.readable.getReader();
+input.write("x");
+input.write("z");
+console.log((await output.read()).value, (await output.read()).value, (await output.read()).done);
+console.log(await (output.read as Function).call({}).then(() => "read", (error: Error) => error.name));
+try {
+  (ReadableStream.prototype.getReader as Function).call({});
+} catch (error) {
+  console.log((error as Error).name);
+}
+const failing = new ReadableStream<number>({
+  pull(controller) {
+    console.log(controller.desiredSize);
+    controller.error(new RangeError("no more"));
+  },
+});
+const failingReader = failing.getReader();
+console.log(await failingReader.read().then(() => "read", error => error.message));
+console.log(await failingReader.cancel("x").then(() => "cancelled", error => error.message));
+//// what-a-script-declares-in-a-context-is-on-the-sandbox-object.js
+// node:vm: a `var` or a function that a script declares at its top is a property of the object that was made the context. Programs read their results there.
+const vm = require("node:vm");
+const texts = ["var made = 42", "var made = seed * 21", "var made = 42; other = 1", "var made = 42; seed = 3", "var made = 42; var more = 43", "var made; made = 42", "function made() {}", "var made = 42; made", "this.made = 42", "let made = 42", "var made = seed"];
+for (const text of texts) {
+  const sandbox = { seed: 2 };
+  vm.createContext(sandbox);
+  vm.runInContext(process.argv.length > 5 ? "" : text, sandbox);
+  console.log(JSON.stringify(text), typeof sandbox.made, Object.keys(sandbox).join());
+}
+const written = { seed: 2 };
+vm.createContext(written);
+vm.runInContext("var made = seed * 21", written);
+console.log("written in place:", typeof written.made, Object.keys(written).join());
+const empty = {};
+vm.createContext(empty);
+vm.runInContext("var made = 1", empty);
+console.log("an empty sandbox:", typeof empty.made, Object.keys(empty).join());

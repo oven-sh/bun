@@ -1,0 +1,45 @@
+------------------
+{ printWidth: 80 }
+------------------
+type A = null | Invalid<"Library imports are not serializable; they are injected for installed dependencies">;
+type B =
+  | string
+  | Invalid<"Library imports are not serializable; they are injected for installed dependencies">;
+type C = Invalid<"Library imports are not serializable; they are injected for installed dependencies"> | null;
+type D =
+  | aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  | cccccccccccccccccccccccccc;
+type E =
+  | a
+  | b
+  | Invalid<"Library imports are not serializable; they are injected for installed dependencies">;
+type F =
+  | null
+  | "Library imports are not serializable; they are injected for installed dependencies here";
+type G = null | Invalid<"Library imports are not serializable; they are injected for">;
+let h: null | Invalid<"Library imports are not serializable; they are injected for installed dependencies">;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type A = null | Invalid<"Library imports are not serializable; they are injected for installed dependencies">;
+type B =
+  | string
+  | Invalid<"Library imports are not serializable; they are injected for installed dependencies">;
+type C = Invalid<"Library imports are not serializable; they are injected for installed dependencies"> | null;
+type D =
+  | aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  | cccccccccccccccccccccccccc;
+type E =
+  | a
+  | b
+  | Invalid<"Library imports are not serializable; they are injected for installed dependencies">;
+type F =
+  | null
+  | "Library imports are not serializable; they are injected for installed dependencies here";
+type G = null | Invalid<"Library imports are not serializable; they are injected for">;
+let h: null | Invalid<"Library imports are not serializable; they are injected for installed dependencies">;
+
+===================== End =====================

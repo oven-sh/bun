@@ -1,0 +1,103 @@
+The page map covers the arenas where address space is kept aside.
+
+The page map has a part of 64 KiB for every 512 MiB of addresses, taken from
+the system when a page in that range is first registered. An arena is reserved
+wherever the system puts it, so it can lie across the end of such a range.
+When the address space has run out by then, no page beyond that end can be
+registered, and what the arena holds there cannot be handed out. It all becomes
+available the moment one request gets the 64 KiB.
+
+Where an embedder keeps address space aside
+(ask-who-may-take-address-space.patch), the parts of the page map for the
+arenas are made ahead: for the arenas that are there when the keeper is
+registered, and for each later one when it is reserved. Not for exclusive
+arenas, which can be far larger than what is ever used of them.
+
+--- a/include/mimalloc/internal.h
++++ b/include/mimalloc/internal.h
+@@ -301,6 +301,8 @@
+ mi_decl_nodiscard bool _mi_page_map_register(mi_page_t* page);
+ void          _mi_page_map_unregister(mi_page_t* page);
+ void          _mi_page_map_unregister_range(void* start, size_t size);
++mi_decl_nodiscard bool _mi_page_map_ensure_range(void* start, size_t size);   // pages in the range can be registered without memory from the system
++void          _mi_arenas_ensure_page_map(mi_subproc_t* subproc);              // "arena.c"
+ mi_page_t*    _mi_safe_ptr_page(const void* p);
+ void          _mi_page_map_unsafe_destroy(void);
+ 
+--- a/src/arena.c
++++ b/src/arena.c
+@@ -2141,6 +2141,24 @@
+   return arena;
+ }
+ 
++// Where an embedder keeps address space aside there may be none left when a page of an arena is first used. The part of the
++// page map for it is made ahead, or what the arena holds beyond that part's end could not be handed out.
++// Not for an exclusive arena, which can be far larger than what is ever used of it.
++static void mi_arena_ensure_page_map(mi_arena_t* arena) {
++  if (arena->is_exclusive) return;
++  if (!_mi_page_map_ensure_range(mi_arena_start(arena), mi_arena_size(arena))) {
++    _mi_warning_message("unable to extend the page map for an arena\n");
++  }
++}
++
++void _mi_arenas_ensure_page_map(mi_subproc_t* subproc) {
++  const size_t count = mi_arenas_get_count(subproc);
++  for (size_t i = 0; i < count; i++) {
++    mi_arena_t* const arena = mi_arena_from_index(subproc, i);
++    if (arena != NULL) { mi_arena_ensure_page_map(arena); }
++  }
++}
++
+ static bool mi_manage_os_memory_ex2(mi_subproc_t* subproc, void* start, size_t size, int numa_node, bool exclusive,
+   mi_memid_t memid, mi_commit_fun_t* commit_fun, void* commit_fun_arg, mi_arena_id_t* arena_id) mi_attr_noexcept
+ {
+@@ -2197,6 +2215,7 @@
+     }
+ 
+     // success
++    if (_mi_address_space_keeper() != NULL) { mi_arena_ensure_page_map(arena); }
+     if (parent==NULL) {
+       parent = arena;
+       memid.memkind = MI_MEM_NONE;
+--- a/src/os.c
++++ b/src/os.c
+@@ -324,6 +324,7 @@
+ 
+ void mi_register_address_space_keeper(const mi_address_space_keeper_t* keeper) mi_attr_noexcept {
+   mi_atomic_store_ptr_release(mi_address_space_keeper_t, &address_space_keeper, (mi_address_space_keeper_t*)keeper);
++  if (keeper != NULL) { _mi_arenas_ensure_page_map(_mi_subproc_main()); }
+ }
+ 
+ const mi_address_space_keeper_t* _mi_address_space_keeper(void) {
+--- a/src/page-map.c
++++ b/src/page-map.c
+@@ -193,6 +193,11 @@
+     return;
+   }
+   _mi_memzero(&page_map[index], slice_count);
++}
++
++bool _mi_page_map_ensure_range(void* start, size_t size) {
++  if (mi_atomic_load_ptr_relaxed(uint8_t,&_mi_page_map) == NULL) return false;
++  return mi_page_map_ensure_committed(_mi_page_map_index(start), _mi_divide_up(size, MI_ARENA_SLICE_SIZE));
+ }
+ 
+ 
+@@ -507,6 +512,17 @@
+   size_t sub_idx;
+   const uintptr_t idx = _mi_page_map_index(start, &sub_idx);
+   mi_page_map_set_range(pmap, NULL, idx, sub_idx, slice_count);  // todo: avoid committing if not already committed?
++}
++
++bool _mi_page_map_ensure_range(void* start, size_t size) {
++  mi_page_map_t* const pmap = _mi_page_map();
++  if mi_unlikely(pmap == NULL || size == 0) return false;
++  const size_t last = _mi_page_map_index((uint8_t*)start + size - 1, NULL);
++  for (size_t idx = _mi_page_map_index(start, NULL); idx <= last; idx++) {
++    mi_submap_t sub = NULL;
++    if (!mi_page_map_ensure_submap_at(pmap, idx, &sub)) return false;
++  }
++  return true;
+ }
+ 
+ // Return NULL for invalid pointers

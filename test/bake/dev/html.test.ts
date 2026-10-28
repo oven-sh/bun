@@ -1,5 +1,6 @@
 // HTML tests are tests relating to HTML files themselves.
 import { expect } from "bun:test";
+import { basename } from "node:path";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("html file is watched", {
@@ -461,6 +462,92 @@ devTest("error report endpoint blanks stray non-text bytes in reported frames", 
     expect(res.status).toBe(200);
 
     await dev.fetch("/").expect.toInclude("<h1>Frame Bytes</h1>");
+  },
+});
+
+devTest("error report endpoint remaps a frame in every file of the client bundle", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["/index.ts"],
+      body: "<h1>Remap</h1>",
+    }),
+    "index.ts": `
+      import { other } from "./other";
+      console.log("index-frame-marker", other());
+    `,
+    "other.ts": `
+      // The marker is on line 3.
+      export function other() {
+        return "other-frame-marker";
+      }
+    `,
+  },
+  async test(dev) {
+    function u32(n: number) {
+      const b = Buffer.alloc(4);
+      b.writeUInt32LE(n >>> 0, 0);
+      return b;
+    }
+    function i32(n: number) {
+      const b = Buffer.alloc(4);
+      b.writeInt32LE(n, 0);
+      return b;
+    }
+    function str32(s: string) {
+      const bytes = Buffer.from(s, "utf8");
+      return Buffer.concat([u32(bytes.length), bytes]);
+    }
+
+    const page = await dev.fetch("/").text();
+    const [scriptPath] = page.match(/\/_bun\/client\/index-[0-9a-f]{16}\.js/) ?? [];
+    const script = await dev.fetch(scriptPath).text();
+
+    // A frame at the one-based line and column of `marker` in the served bundle.
+    function frameAt(marker: string, functionName: string) {
+      const offset = script.indexOf(marker);
+      expect(offset).toBeGreaterThan(0);
+      const lineStart = script.lastIndexOf("\n", offset) + 1;
+      const line = script.slice(0, lineStart).split("\n").length;
+      return Buffer.concat([
+        i32(line),
+        i32(offset - lineStart + 1),
+        str32(functionName),
+        str32(dev.baseUrl + scriptPath),
+      ]);
+    }
+
+    const body = Buffer.concat([
+      str32("Error"),
+      str32("remap-message"),
+      str32(dev.baseUrl + "/"),
+      u32(2),
+      frameAt("index-frame-marker", "inIndex"),
+      frameAt("other-frame-marker", "inOther"),
+    ]);
+
+    const res = await dev.fetch("/_bun/report_error", { method: "POST", body });
+    const reply = Buffer.from(await res.arrayBuffer());
+
+    // Reply: u32 frame count, then per frame: i32 line, i32 column,
+    // string32 function name, string32 file name. The file name is relative
+    // to the project root, or absolute on Windows.
+    let at = 0;
+    const readInt = () => ((at += 4), reply.readInt32LE(at - 4));
+    const readString = () => {
+      const length = readInt();
+      return reply.toString("utf8", at, (at += length));
+    };
+    const frames = Array.from({ length: readInt() }, () => ({
+      line: readInt(),
+      column: readInt(),
+      functionName: readString(),
+      file: basename(readString()),
+    }));
+    expect(frames).toEqual([
+      { line: 2, column: 'console.log("'.length, functionName: "inIndex", file: "index.ts" },
+      { line: 3, column: '  return "'.length, functionName: "inOther", file: "other.ts" },
+    ]);
+    expect(res.status).toBe(200);
   },
 });
 devTest("client script route returns 404 when the route bundle index is out of range", {

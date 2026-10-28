@@ -674,7 +674,8 @@ impl SourceMapStore {
         match source_map::mapping::parse(
             &vlq_bytes,
             None,
-            i32::try_from(entry.paths.len()).expect("int cast"),
+            // Source 0 is the HMR runtime, so `paths[i]` is source `i + 1`.
+            i32::try_from(entry.paths.len() + 1).expect("int cast"),
             Default::default(),
         ) {
             Err(fail) => {

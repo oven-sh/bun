@@ -907,18 +907,15 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
         return Err(crate::Error::InvalidSourceMap);
     };
 
-    // `sourcesContent` is optional per the source-map v3 spec. Absent or `null`
-    // is treated as no-content-available; a present non-array/non-null is
-    // rejected. A present array may be shorter than `sources` (the per-index
-    // bounds check below covers that).
-    let sources_content = match json.get(b"sourcesContent") {
-        None => None,
-        Some(expr) => match expr.data {
-            bun_ast::ExprData::EArrayJSON(arr) => Some(arr),
-            bun_ast::ExprData::ENull(_) => None,
-            _ => return Err(crate::Error::InvalidSourceMap),
-        },
+    let sources_content = match json.get(b"sourcesContent").map(|contents| contents.data) {
+        Some(bun_ast::ExprData::EArrayJSON(arr)) => Some(arr),
+        Some(bun_ast::ExprData::ENull(_)) | None => None,
+        Some(_) => return Err(crate::Error::InvalidSourceMap),
     };
+    let sources_content = sources_content
+        .as_ref()
+        .map(|arr| arr.get().items())
+        .unwrap_or_default();
 
     let sources_paths = match json
         .get(b"sources")
@@ -950,7 +947,7 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
         let mut map_data = match mapping::parse(
             mappings_vlq,
             None,
-            i32::MAX,
+            i32::try_from(sources_paths.items().len()).unwrap_or(i32::MAX),
             mapping::ParseOptions {
                 allow_names: matches!(
                     hint,
@@ -1024,12 +1021,12 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
         ParseUrlResultHint::MappingsOnly => (None, None),
     };
 
-    let content_slice: Option<Box<[u8]>> = match (source_index, sources_content) {
-        (Some(idx), Some(sources_content))
+    let content_slice: Option<Box<[u8]>> = match source_index {
+        Some(idx)
             if !matches!(hint, ParseUrlResultHint::MappingsOnly)
-                && (idx as usize) < sources_content.get().items().len() =>
+                && (idx as usize) < sources_content.len() =>
         'content: {
-            let item = &sources_content.get().items()[idx as usize];
+            let item = &sources_content[idx as usize];
             let Some(str) = item.as_str() else {
                 break 'content None;
             };

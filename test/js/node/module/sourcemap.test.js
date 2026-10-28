@@ -1,4 +1,4 @@
-const { test, expect } = require("bun:test");
+const { describe, test, expect } = require("bun:test");
 const { SourceMap } = require("node:module");
 const { bunEnv, bunExe, tempDir } = require("harness");
 
@@ -247,53 +247,135 @@ test("error.stack of // @bun code with a truncated VLQ in sourceMappingURL warns
   expect(exitCode).toBe(1);
 });
 
-// `sourcesContent` is optional per the source-map v3 spec. The runtime decoder
-// must accept maps where it is absent, `null`, or shorter than `sources`, and
-// still remap error.stack via `mappings` + `sources`.
-test.concurrent.each([
-  ["absent", undefined],
-  ["null", null],
-  ["empty array", []],
-  ["[null]", [null]],
-])("error.stack of // @bun code remaps with sourcesContent %s", async (label, sourcesContent) => {
-  // Generated line 3 col 2 -> original.ts line 5 col 3 (all 0-based in VLQ).
-  const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  const vlq = v => {
-    let out = "";
-    let x = v < 0 ? (-v << 1) | 1 : v << 1;
-    do {
-      let d = x & 31;
-      x >>>= 5;
-      if (x) d |= 32;
-      out += B64[d];
-    } while (x);
-    return out;
-  };
-  const seg = vlq(2) + vlq(0) + vlq(4) + vlq(2);
-  const map = { version: 3, sources: ["original.ts"], names: [], mappings: ";;" + seg + ";" };
-  if (sourcesContent !== undefined) map.sourcesContent = sourcesContent;
+// A `// @bun` file is not transpiled again: bun reads the map beside it, or the
+// inline one, as it is. ";;EAIE" maps generated 3:3 to original 5:3 of source
+// 0. ";;ECIE" maps it to source 1.
+describe.concurrent("// @bun code with a source map that has no sourcesContent", () => {
+  const map = { version: 3, sources: ["original.ts"], names: [], mappings: ";;EAIE" };
+  const throwsOnLine3 = `// @bun\nexport function t() {\n  throw new Error("SC");\n}\n`;
+  const printFirstFrames = `
+    for (const file of process.argv.slice(2)) {
+      const { t } = await import("./" + file);
+      try {
+        t();
+      } catch (e) {
+        console.log(file + ": " + e.stack.split("\\n")[1].trim());
+      }
+    }
+  `;
 
-  using dir = tempDir("sourcemap-optional-sourcescontent", {
-    "entry.js":
-      `// @bun\n` +
-      `function t() {\n` +
-      `  throw new Error("SC");\n` +
-      `}\n` +
-      `try { t(); } catch (e) { console.log(String(e.stack).split("\\n")[1].trim()); }\n` +
-      `//# sourceMappingURL=entry.js.map\n`,
-    "entry.js.map": JSON.stringify(map),
+  // `<name>.js` has the map beside it. `<name>.inline.js` has it inline.
+  function builtFiles(name, map) {
+    const json = JSON.stringify(map);
+    return {
+      [`${name}.js`]: throwsOnLine3 + `//# sourceMappingURL=${name}.js.map\n`,
+      [`${name}.js.map`]: json,
+      [`${name}.inline.js`]: throwsOnLine3 + `//# sourceMappingURL=data:application/json;base64,${btoa(json)}\n`,
+    };
+  }
+
+  async function run(dir, ...args) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const clean = text => text.replaceAll(String(dir), "<dir>").replaceAll("\\", "/");
+    return { stdout: clean(stdout), stderr: clean(stderr), exitCode };
+  }
+
+  test("error.stack is remapped when sourcesContent is absent, null, shorter or longer than sources", async () => {
+    using dir = tempDir("sourcemap-sources-content", {
+      "main.js": printFirstFrames,
+      ...builtFiles("absent", map),
+      ...builtFiles("null", { ...map, sourcesContent: null }),
+      ...builtFiles("empty", { ...map, sourcesContent: [] }),
+      ...builtFiles("shorter", {
+        ...map,
+        sources: ["other.ts", "original.ts"],
+        sourcesContent: ["x"],
+        mappings: ";;ECIE",
+      }),
+      ...builtFiles("longer", { ...map, sourcesContent: ["x", "y"] }),
+    });
+    const files = ["absent", "null", "empty", "shorter", "longer"].flatMap(name => [`${name}.js`, `${name}.inline.js`]);
+
+    const { stdout, stderr, exitCode } = await run(dir, "main.js", ...files);
+    expect({ stdout, stderr }).toEqual({
+      stdout: files.map(file => `${file}: at t (<dir>/original.ts:5:3)\n`).join(""),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", "entry.js"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
+  test("a sourcesContent that is not an array or null is refused", async () => {
+    using dir = tempDir("sourcemap-sources-content-refused", {
+      "main.js": printFirstFrames,
+      ...builtFiles("string", { ...map, sourcesContent: "x" }),
+      ...builtFiles("object", { ...map, sourcesContent: {} }),
+    });
+    const files = ["string.js", "string.inline.js", "object.js", "object.inline.js"];
+
+    const { stdout, stderr, exitCode } = await run(dir, "main.js", ...files);
+    expect({ stdout, stderr }).toEqual({
+      stdout: files.map(file => `${file}: at t (<dir>/${file}:3:18)\n`).join(""),
+      stderr: files.map(file => `warn: Could not decode sourcemap in '<dir>/${file}': InvalidSourceMap\n`).join(""),
+    });
+    expect(exitCode).toBe(0);
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("Could not decode sourcemap");
-  expect(stdout.trim()).toContain("original.ts:5:3");
-  expect(exitCode).toBe(0);
+  test("an inline map without sourcesContent is used, not the .map file beside it", async () => {
+    using dir = tempDir("sourcemap-sources-content-inline-first", {
+      "main.js": printFirstFrames,
+      "both.js": builtFiles("both", { ...map, sources: ["inline.ts"] })["both.inline.js"],
+      "both.js.map": JSON.stringify({ ...map, sources: ["beside.ts"], sourcesContent: ["x"] }),
+    });
+
+    const { stdout, stderr, exitCode } = await run(dir, "main.js", "both.js");
+    expect({ stdout, stderr }).toEqual({ stdout: "both.js: at t (<dir>/inline.ts:5:3)\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("CallSite positions and the printed error are remapped, with the source text read from disk", async () => {
+    using dir = tempDir("sourcemap-sources-content-printer", {
+      ...builtFiles("absent", map),
+      "original.ts": `// 1\n// 2\n// 3\nexport function t() {\n  throw new Error("SC");\n}\n`,
+      "main.js": `
+        import { t } from "./absent.js";
+        Error.prepareStackTrace = (_, [site]) => [site.getFileName(), site.getLineNumber(), site.getColumnNumber()].join(":");
+        try {
+          t();
+        } catch (e) {
+          console.log(e.stack);
+        }
+        Error.prepareStackTrace = undefined;
+        try {
+          t();
+        } catch (e) {
+          console.log(Bun.inspect(e).split("\\n").slice(0, 8).join("\\n"));
+        }
+      `,
+    });
+
+    const { stdout, stderr, exitCode } = await run(dir, "main.js");
+    expect({ stdout, stderr }).toEqual({
+      stdout: [
+        "<dir>/original.ts:5:3",
+        "1 | // 1",
+        "2 | // 2",
+        "3 | // 3",
+        "4 | export function t() {",
+        '5 |   throw new Error("SC");',
+        "      ^",
+        "error: SC",
+        "      at t (<dir>/original.ts:5:3)",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });

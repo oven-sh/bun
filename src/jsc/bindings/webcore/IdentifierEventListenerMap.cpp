@@ -17,13 +17,32 @@ bool IdentifierEventListenerMap::containsActive(const JSC::Identifier& eventType
     return false;
 }
 
+void IdentifierEventListenerMap::keepAliveUntilEmitReturns(SimpleRegisteredEventListener& registration)
+{
+    m_removedWhileFiring.append(&registration);
+}
+
+void IdentifierEventListenerMap::releaseListenersRemovedWhileFiringSlow()
+{
+    Locker locker { m_lock };
+
+    // The emit that returned dropped its copy of the vector. A registration with one reference left has only this list.
+    m_removedWhileFiring.removeAllMatching([](auto& registration) {
+        return registration->hasOneRef();
+    });
+    if (m_removedWhileFiring.isEmpty())
+        m_removedWhileFiring.clear();
+}
+
 void IdentifierEventListenerMap::clear()
 {
     Locker locker { m_lock };
 
     for (auto& entry : m_entries) {
-        for (auto& listener : entry.second)
+        for (auto& listener : entry.second) {
             listener->markAsRemoved();
+            keepAliveIfHeldByEmit(*listener);
+        }
     }
 
     m_entries.clear();
@@ -60,8 +79,8 @@ void IdentifierEventListenerMap::prepend(const JSC::Identifier& eventType, Ref<E
     m_entries.append({ eventType, SimpleEventListenerVector { SimpleRegisteredEventListener::create(WTF::move(listener), once) } });
 }
 
-template<typename Matches>
-static bool removeLastMatching(EntriesVector& entries, const JSC::Identifier& eventType, const Matches& matches)
+template<typename Matches, typename WillRemove>
+static bool removeLastMatching(EntriesVector& entries, const JSC::Identifier& eventType, const Matches& matches, const WillRemove& willRemove)
 {
     for (unsigned i = 0; i < entries.size(); ++i) {
         if (entries[i].first == eventType) {
@@ -70,6 +89,7 @@ static bool removeLastMatching(EntriesVector& entries, const JSC::Identifier& ev
                 if (!matches(*listeners[j - 1]))
                     continue;
                 listeners[j - 1]->markAsRemoved();
+                willRemove(*listeners[j - 1]);
                 listeners.removeAt(j - 1);
                 if (listeners.isEmpty())
                     entries.removeAt(i);
@@ -86,18 +106,26 @@ bool IdentifierEventListenerMap::remove(const JSC::Identifier& eventType, EventL
 {
     Locker locker { m_lock };
 
-    return removeLastMatching(m_entries, eventType, [&](SimpleRegisteredEventListener& registeredListener) {
-        return registeredListener.callback() == listener;
-    });
+    return removeLastMatching(
+        m_entries, eventType,
+        [&](SimpleRegisteredEventListener& registeredListener) {
+            return registeredListener.callback() == listener;
+        },
+        [&](SimpleRegisteredEventListener& registeredListener) {
+            keepAliveIfHeldByEmit(registeredListener);
+        });
 }
 
 bool IdentifierEventListenerMap::remove(const JSC::Identifier& eventType, SimpleRegisteredEventListener& registration)
 {
     Locker locker { m_lock };
 
-    return removeLastMatching(m_entries, eventType, [&](SimpleRegisteredEventListener& registeredListener) {
-        return &registeredListener == &registration;
-    });
+    return removeLastMatching(
+        m_entries, eventType,
+        [&](SimpleRegisteredEventListener& registeredListener) {
+            return &registeredListener == &registration;
+        },
+        [](SimpleRegisteredEventListener&) {});
 }
 
 bool IdentifierEventListenerMap::removeAll(const JSC::Identifier& eventType)
@@ -106,6 +134,8 @@ bool IdentifierEventListenerMap::removeAll(const JSC::Identifier& eventType)
 
     for (unsigned i = 0; i < m_entries.size(); ++i) {
         if (m_entries[i].first == eventType) {
+            for (auto& listener : m_entries[i].second)
+                keepAliveIfHeldByEmit(*listener);
             m_entries.removeAt(i);
             return true;
         }

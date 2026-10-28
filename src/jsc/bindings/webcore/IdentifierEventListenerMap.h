@@ -69,6 +69,12 @@ public:
     // Removes exactly this registration.
     bool remove(const JSC::Identifier& eventType, SimpleRegisteredEventListener&);
     bool removeAll(const JSC::Identifier& eventType);
+    // Call this when an emit returns: it drops the removed registrations that no emit holds any more.
+    void releaseListenersRemovedWhileFiring()
+    {
+        if (!m_removedWhileFiring.isEmpty()) [[unlikely]]
+            releaseListenersRemovedWhileFiringSlow();
+    }
     WEBCORE_EXPORT SimpleEventListenerVector* find(const JSC::Identifier& eventType);
     const SimpleEventListenerVector* find(const JSC::Identifier& eventType) const { return const_cast<IdentifierEventListenerMap*>(this)->find(eventType); }
     Vector<JSC::Identifier> eventTypes() const;
@@ -77,7 +83,17 @@ public:
     Lock& lock() { return m_lock; }
 
 private:
+    // An emit still calls a removed registration that its copy of the vector holds, so the function stays visited until that emit returns.
+    void keepAliveIfHeldByEmit(SimpleRegisteredEventListener& registration)
+    {
+        if (!registration.hasOneRef()) [[unlikely]]
+            keepAliveUntilEmitReturns(registration);
+    }
+    NEVER_INLINE void keepAliveUntilEmitReturns(SimpleRegisteredEventListener&);
+    NEVER_INLINE void releaseListenersRemovedWhileFiringSlow();
+
     EntriesVector m_entries;
+    SimpleEventListenerVector m_removedWhileFiring;
     Lock m_lock;
 };
 
@@ -89,6 +105,8 @@ void IdentifierEventListenerMap::visitJSEventListeners(Visitor& visitor)
         for (auto& eventListener : entry.second)
             eventListener->callback().visitJSFunction(visitor);
     }
+    for (auto& eventListener : m_removedWhileFiring)
+        eventListener->callback().visitJSFunction(visitor);
 }
 
 } // namespace WebCore

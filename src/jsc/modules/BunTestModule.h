@@ -31,7 +31,8 @@ static void exportTestModuleObject(
     }
 }
 
-void generateNativeModule_BunTest(
+// --trim cuts the test runner at this call, so it can't be inlined.
+NEVER_INLINE void generateNativeModule_BunTest(
     JSC::JSGlobalObject* lexicalGlobalObject,
     JSC::Identifier moduleKey,
     Vector<JSC::Identifier, 4>& exportNames,

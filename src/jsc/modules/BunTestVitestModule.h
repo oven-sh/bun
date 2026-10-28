@@ -2,8 +2,8 @@
 extern "C" JSC::EncodedJSValue Bun__Jest__vitestModuleObject(Zig::GlobalObject*);
 
 namespace Zig {
-// `import "vitest"` resolves to this under `bun test`.
-void generateNativeModule_BunTestVitest(
+// `import "vitest"` resolves to this under `bun test`. Not inlined for the same reason as generateNativeModule_BunTest().
+NEVER_INLINE void generateNativeModule_BunTestVitest(
     JSC::JSGlobalObject* lexicalGlobalObject,
     JSC::Identifier moduleKey,
     Vector<JSC::Identifier, 4>& exportNames,

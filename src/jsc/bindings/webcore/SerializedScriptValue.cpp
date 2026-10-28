@@ -4497,6 +4497,18 @@ static ExceptionOr<std::unique_ptr<ArrayBufferContentsArray>> transferArrayBuffe
     auto contents = makeUnique<ArrayBufferContentsArray>(arrayBuffers.size());
 
     HashSet<JSC::ArrayBuffer*> visited;
+    // transferTo() moves the contents of a detachable buffer and copies a pinned one
+    // (see bindings.cpp JSC__JSValue__pinArrayBuffer). Only the copy can fail, so the
+    // copies come first: a failed transfer then leaves every listed buffer attached.
+    if (arrayBuffers.size() > 1) {
+        for (size_t arrayBufferIndex = 0; arrayBufferIndex < arrayBuffers.size(); arrayBufferIndex++) {
+            auto* arrayBuffer = arrayBuffers[arrayBufferIndex].get();
+            if (arrayBuffer->isDetachable() || !visited.add(arrayBuffer).isNewEntry)
+                continue;
+            if (!arrayBuffer->transferTo(vm, contents->at(arrayBufferIndex)))
+                return Exception { OutOfMemoryError };
+        }
+    }
     for (size_t arrayBufferIndex = 0; arrayBufferIndex < arrayBuffers.size(); arrayBufferIndex++) {
         if (visited.contains(arrayBuffers[arrayBufferIndex].get()))
             continue;
@@ -4504,7 +4516,7 @@ static ExceptionOr<std::unique_ptr<ArrayBufferContentsArray>> transferArrayBuffe
 
         bool result = arrayBuffers[arrayBufferIndex]->transferTo(vm, contents->at(arrayBufferIndex));
         if (!result)
-            return Exception { TypeError };
+            return Exception { OutOfMemoryError };
     }
 
     return contents;

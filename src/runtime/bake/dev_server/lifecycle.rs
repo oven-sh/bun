@@ -3,7 +3,9 @@
 use super::*;
 
 /// DevServer is stored on the heap, storing its allocator.
+#[inline(never)]
 pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
+    bun_removable_features::removable_definition!(Bundler, init);
     // Note: `Features.dev_server +|= 1` (saturating add). AtomicUsize has
     // no `saturating_inc`; on a 64-bit counter overflow is unreachable, so a
     // relaxed `fetch_add(1)` is equivalent in practice.

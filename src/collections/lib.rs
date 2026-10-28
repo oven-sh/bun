@@ -390,10 +390,6 @@ impl<T, const N: usize> SmallList<T, N> {
         self.0.pop()
     }
     #[inline]
-    pub fn ordered_remove(&mut self, idx: u32) -> T {
-        self.0.remove(idx as usize)
-    }
-    #[inline]
     pub fn swap_remove(&mut self, idx: u32) -> T {
         self.0.swap_remove(idx as usize)
     }

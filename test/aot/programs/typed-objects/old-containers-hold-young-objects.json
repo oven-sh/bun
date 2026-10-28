@@ -1,0 +1,6 @@
+{
+  "env": {
+    "JSC_scribbleFreeCells": "1",
+    "JSC_sweepSynchronously": "1"
+  }
+}

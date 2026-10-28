@@ -186,7 +186,7 @@ impl Shared {
     unsafe fn deliver(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) {
         // SAFETY: fn contract.
         let el = unsafe { self.loop_of(kind) };
-        el.concurrent_tasks.push(task);
+        el.post(task);
         if self.state() >= State::Draining {
             self.notify();
         } else {
@@ -986,7 +986,7 @@ impl IsolatedPosterInner {
         if open {
             // SAFETY: gate held and open ⇒ `close` has not returned (`new`'s contract).
             let el = unsafe { &*self.event_loop };
-            el.concurrent_tasks.push(task);
+            el.post(task);
             el.wakeup();
         }
         self.active.fetch_sub(1, Ordering::SeqCst);

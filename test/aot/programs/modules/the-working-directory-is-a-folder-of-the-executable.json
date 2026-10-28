@@ -1,0 +1,1 @@
+{ "build": ["--asset", "./data"], "entryPoints": ["./worker.cjs", "./data/module.cjs"], "skipInShell": "it needs node:fs" }

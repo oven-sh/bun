@@ -1000,6 +1000,19 @@ impl JSGlobalObject {
         })
     }
 
+    /// What [`Self::bun_vm`] asserts: this global object names `vm`, the calling
+    /// thread's VM. Not asked once teardown has gone on to destroy the JSC VM:
+    /// finalizers still come here, and the global object goes in no particular
+    /// order with them.
+    #[cfg(debug_assertions)]
+    fn names_bun_vm(&self, vm: &VirtualMachine) -> bool {
+        vm.regular_event_loop.global_is_going()
+            || core::ptr::eq(
+                JSC__JSGlobalObject__bunVM(self).cast::<VirtualMachine>(),
+                vm,
+            )
+    }
+
     /// The Bun `VirtualMachine` that owns this global: its thread's.
     ///
     /// Reads the thread-local directly (one `mov fs:[OFF]`) instead of calling
@@ -1017,10 +1030,7 @@ impl JSGlobalObject {
             //   make clean-jsc-bindings
             //   make bindings -j10
             if let Some(vm_) = VirtualMachine::get_or_null() {
-                debug_assert!(core::ptr::eq(
-                    JSC__JSGlobalObject__bunVM(self).cast::<VirtualMachine>(),
-                    vm_
-                ));
+                debug_assert!(self.names_bun_vm(vm_));
             } else {
                 panic!("This thread lacks a Bun VM");
             }
@@ -1052,6 +1062,12 @@ impl JSGlobalObject {
 
     pub fn readable_stream_to_json(&self, value: JSValue) -> JsResult<JSValue> {
         crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToJSON(self, value))
+    }
+
+    pub fn readable_stream_to_json_source(&self, value: JSValue) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || {
+            ZigGlobalObject__readableStreamToJSONSource(self, value)
+        })
     }
 
     pub fn readable_stream_to_blob(&self, value: JSValue) -> JsResult<JSValue> {
@@ -1163,7 +1179,7 @@ impl JSGlobalObject {
             return Err(self.throw_invalid_property_type_value(field_name, b"integer", value));
         }
         // @floatFromInt — i128→f64 (rounds beyond 2^53; bounds are already clamped to safe-integer range).
-        if f64_val < (min_t as f64) || f64_val > (max_t as f64) {
+        if f64_val < (min_t as i64 as f64) || f64_val > (max_t as i64 as f64) {
             return Err(self.throw_range_error(
                 f64_val,
                 bun_fmt::OutOfRangeOptions {
@@ -1406,6 +1422,10 @@ unsafe extern "C" {
     -> JSValue;
     safe fn ZigGlobalObject__readableStreamToJSON(this: &JSGlobalObject, value: JSValue)
     -> JSValue;
+    safe fn ZigGlobalObject__readableStreamToJSONSource(
+        this: &JSGlobalObject,
+        value: JSValue,
+    ) -> JSValue;
     safe fn ZigGlobalObject__readableStreamToFormData(
         this: &JSGlobalObject,
         value: JSValue,

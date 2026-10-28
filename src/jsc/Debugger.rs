@@ -186,6 +186,16 @@ impl Debugger {
     /// `start()` (debugger thread) signals, then run the wait-loop until a
     /// frontend connects (`Debugger__didConnect`) or the deadline elapses.
     pub fn wait_for_debugger_if_necessary(this: &VirtualMachine) {
+        bun_removable_features::call_removable!(
+            Inspector,
+            ReturnDefault,
+            Debugger::wait_for_debugger,
+            this
+        )
+    }
+
+    #[inline(never)]
+    fn wait_for_debugger(this: &VirtualMachine) {
         debug_assert!(core::ptr::eq(this, VirtualMachine::get()));
         let Some(dbg) = this.debugger.get() else {
             return;
@@ -330,6 +340,22 @@ impl Debugger {
     /// become) the debugger of: create the JSC inspector context, spawn the
     /// debugger VM thread, and arm the keep-alive on the parent loop.
     pub fn create(
+        &self,
+        vm: &VirtualMachine,
+        global_object: &JSGlobalObject,
+    ) -> crate::CrateResult<()> {
+        bun_removable_features::call_removable!(
+            Inspector,
+            Abort,
+            Debugger::create_debugger,
+            self,
+            vm,
+            global_object
+        )
+    }
+
+    #[inline(never)]
+    fn create_debugger(
         &self,
         vm: &VirtualMachine,
         global_object: &JSGlobalObject,
@@ -912,6 +938,17 @@ unsafe extern "C" {
 
 impl LifecycleHandle {
     pub(crate) fn report_error(&self, exception: &mut ZigException<'_>) {
+        bun_removable_features::call_removable!(
+            Inspector,
+            ReturnDefault,
+            LifecycleHandle::report_error_to_agent,
+            self,
+            exception
+        )
+    }
+
+    #[inline(never)]
+    fn report_error_to_agent(&self, exception: &mut ZigException<'_>) {
         bun_core::scoped_log!(LifecycleAgent, "reportError");
         Bun__LifecycleAgentReportError(self, exception)
     }

@@ -1,0 +1,13 @@
+strict: false
+direct eval aStoreToEval threw TypeError
+direct eval aStoreToEval once more threw TypeError
+direct eval aStoreThroughTheGlobalObject threw TypeError
+direct eval aStoreThroughTheGlobalObject once more threw TypeError
+indirect eval aStoreToEval threw TypeError
+indirect eval aStoreToEval once more threw TypeError
+indirect eval aStoreThroughTheGlobalObject threw TypeError
+indirect eval aStoreThroughTheGlobalObject once more threw TypeError
+new Function aStoreToEval threw TypeError
+new Function aStoreToEval once more threw TypeError
+new Function aStoreThroughTheGlobalObject threw TypeError
+new Function aStoreThroughTheGlobalObject once more threw TypeError

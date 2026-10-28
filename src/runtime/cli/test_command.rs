@@ -1,6 +1,7 @@
 use bun_io::Write as _;
 
 use crate::cli::Command;
+use crate::cli::run_compiled;
 use crate::cli::test::changed_files_filter as ChangedFilesFilter;
 use crate::cli::test::parallel_runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
@@ -1762,7 +1763,7 @@ impl TestCommand {
             core::sync::atomic::Ordering::Relaxed,
         );
 
-        if !ctx.test_options.test_worker {
+        if !ctx.test_options.test_worker && !run_compiled::is_second_process() {
             // print the version so you know its doing stuff if it takes a sec
             let w = Output::writer();
             let colors = Output::enable_ansi_colors_stdout();
@@ -1797,10 +1798,14 @@ impl TestCommand {
         // `exec()` never returns before process exit, so the heap allocation
         // outlives all observers.
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
+        crate::cli::startup_options::refuse_code_the_compiler_did_not_see();
         jsc::initialize(jsc::InitializeOptions {
             short_lived_globals: ctx.test_options.isolate,
+            runs_compiled_code: run_compiled::runs_compiled_code(),
+            locks_builtins: run_compiled::is_checked(),
             ..Default::default()
         });
+        run_compiled::list_refused_changes();
         bun_http::http_thread::init(&Default::default());
 
         let enable_random = ctx.test_options.randomize;
@@ -1951,6 +1956,7 @@ impl TestCommand {
                 env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
                 smol: ctx.runtime_options.smol,
                 is_main_thread: true,
+                graph: run_compiled::graph(),
                 argv: core::mem::take(&mut ctx.passthrough),
                 // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
                 preload: ctx.preloads.clone(),
@@ -2246,7 +2252,7 @@ impl TestCommand {
                         if result.changed_count == 1 { "" } else { "s" }
                     );
                     pass_with_no_tests_from_filter = true;
-                } else {
+                } else if !run_compiled::is_second_process() {
                     pretty_error!(
                         "<r><d>--changed:<r> {} changed file{}, running {}/{} test file{}\n",
                         result.changed_count,
@@ -2290,14 +2296,16 @@ impl TestCommand {
                     }
                 }
 
-                pretty_error!(
-                    "<r><d>--shard={}/{}:<r> running {}/{} test file{}\n",
-                    shard.index,
-                    shard.count,
-                    write,
-                    test_files.len(),
-                    if test_files.len() == 1 { "" } else { "s" }
-                );
+                if !run_compiled::is_second_process() {
+                    pretty_error!(
+                        "<r><d>--shard={}/{}:<r> running {}/{} test file{}\n",
+                        shard.index,
+                        shard.count,
+                        write,
+                        test_files.len(),
+                        if test_files.len() == 1 { "" } else { "s" }
+                    );
+                }
                 Output::flush();
 
                 if write == 0 {
@@ -2337,9 +2345,21 @@ impl TestCommand {
                 }
                 jsc::virtual_machine::HotReload::Watch => {
                     jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(vm, None);
+                    run_compiled::watch_files_of_check(vm);
                 }
                 _ => {}
             }
+        }
+
+        if run_compiled::is_requested(ctx) && !test_files.is_empty() {
+            let mut entry_points: Vec<Box<[u8]>> =
+                test_files.iter().map(|path| Box::from(&**path)).collect();
+            entry_points.extend(ctx.preloads.iter().cloned());
+            let independent_count = match ctx.test_options.parallel {
+                0 => test_files.len(),
+                _ => 0,
+            };
+            run_compiled::start(ctx, entry_points, independent_count);
         }
 
         // After the file watcher is enabled: see `watching`.
@@ -2681,6 +2701,17 @@ impl TestCommand {
         }
 
         pretty_error!("\n");
+        let refused = run_compiled::refused_changes();
+        if !refused.is_empty() {
+            pretty_error!(
+                "<yellow>{} write{} to read-only built-ins<r> failed during this run, caught or not. Code that continued after one may have left its work half done:\n",
+                refused.len(),
+                if refused.len() == 1 { "" } else { "s" }
+            );
+            for refusal in &refused {
+                pretty_error!("  {}\n", bstr::BStr::new(refusal));
+            }
+        }
         Output::flush();
 
         reporter.write_junit_report_if_needed();
@@ -2862,6 +2893,10 @@ impl TestCommand {
             .filename_store
             .append_slice(resolution.path_pair.primary.text)
             .expect("oom");
+        run_compiled::will_run_test_file(resolve_path::relative(
+            FileSystem::instance().top_level_dir(),
+            file_path,
+        ));
         let file_id = jest::Jest::runner()
             .unwrap()
             .get_or_put_file(file_path)
@@ -2938,18 +2973,29 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            let promise = vm.load_entry_point_for_test_runner(file_path)?;
+            let promise = match run_compiled::is_refused(file_path) {
+                true => None,
+                false => Some(vm.load_entry_point_for_test_runner(file_path)?),
+            };
             // Only count the file once, not once per repeat
             if repeat_index == 0 {
                 reporter.summary().files += 1;
             }
 
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-            match jsc::JSInternalPromise::opaque_mut(promise).status() {
-                jsc::js_promise::Status::Rejected => {
-                    let p = jsc::JSInternalPromise::opaque_mut(promise);
-                    let (result, promise_js) = (p.result(global.vm()), p.to_js());
-                    vm.unhandled_rejection(global, result, promise_js);
+            match promise.map(|promise| jsc::JSInternalPromise::opaque_mut(promise).status()) {
+                None | Some(jsc::js_promise::Status::Rejected) => {
+                    if let Some(promise) = promise {
+                        let p = jsc::JSInternalPromise::opaque_mut(promise);
+                        let (result, promise_js) = (p.result(global.vm()), p.to_js());
+                        vm.unhandled_rejection(global, result, promise_js);
+                    } else {
+                        reporter.jest.current_file.print_if_needed();
+                        pretty_error!(
+                            "<r><red>error<r>: bun test --aot does not run this file: it has a type error, or it imports a file that has one (see above)\n"
+                        );
+                        Output::flush();
+                    }
                     reporter.summary().fail += 1;
 
                     if reporter.jest.bail == reporter.summary().fail {

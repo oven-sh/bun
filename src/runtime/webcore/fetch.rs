@@ -131,6 +131,17 @@ pub(crate) fn s3_credentials_from_env(
     )
 }
 
+#[inline(never)]
+fn s3_credentials_for_fetch(global_this: &JSGlobalObject) -> bun_s3_signing::S3Credentials {
+    s3_credentials_from_env(
+        global_this
+            .bun_vm()
+            .transpiler()
+            .env_mut()
+            .get_s3_credentials(),
+    )
+}
+
 /// `Blob.Any` accessor shim.
 trait AnyBlobExt {
     fn blob(&self) -> &Blob;
@@ -1669,12 +1680,17 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if url.is_s3() {
         // get ENV config — `Transpiler::env_mut` is the safe accessor for the
         // process-singleton dotenv loader (set during init).
-        let env_creds = s3_credentials_from_env(
+        let env_creds = bun_removable_features::call_removable_or!(
+            S3Client,
+            Throw,
+            {
+                return Err(crate::removed_feature::throw_for_removed_feature(
+                    global_this,
+                    bun_removable_features::Feature::S3Client,
+                ));
+            },
+            s3_credentials_for_fetch,
             global_this
-                .bun_vm()
-                .transpiler()
-                .env_mut()
-                .get_s3_credentials(),
         );
         let mut credentials_with_options = s3::S3CredentialsWithOptions {
             credentials: env_creds,

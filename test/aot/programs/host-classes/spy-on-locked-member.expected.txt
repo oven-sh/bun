@@ -1,0 +1,15 @@
+Math.toString: [object Math], throws TypeError
+Math.toString afterwards: [object Math]
+Object.prototype.notThere: undefined, throws TypeError
+Object.prototype.notThere afterwards: undefined
+Array.prototype.notThere: undefined, spied: 1, calls 1
+Array.prototype.notThere afterwards: undefined
+Map.prototype.size: 1, throws TypeError
+Map.prototype.size afterwards: 1
+Math.PI: 3.141592653589793, throws TypeError
+Math.PI afterwards: 3.141592653589793
+Math.added: real, spied: spied, calls 1
+Math.added afterwards: real
+Math.fixed: real, throws TypeError
+Math.fixed afterwards: real
+console.warn: calls 1

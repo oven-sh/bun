@@ -34,6 +34,7 @@ use bun_jsc::{
 };
 use bun_paths as paths;
 use bun_ptr::{AsCtxPtr, RefPtr};
+use bun_removable_features::{Feature, is_removed};
 use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph;
 use bun_sys as sys;
@@ -830,6 +831,11 @@ impl AnyRoute {
                     return Ok(Some(AnyRoute::Directory(route)));
                 }
 
+                if init_ctx.may_start_development_server && is_removed(Feature::Bundler) {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "style: the bundler and the dev server were removed by --trim because your code never calls Bun.build or imports an HTML file"
+                    )));
+                }
                 let style: FrameworkRouter::Style =
                     FrameworkRouter::Style::from_js(style_js.unwrap(), global)?;
                 // Style impls Drop; `?` drops it on the error path.
@@ -891,6 +897,7 @@ pub(crate) struct ServerInitContext<'a> {
     pub global: &'a JSGlobalObject,
     pub(crate) framework_router_list: Vec<bake::FileSystemRouterType>,
     pub(crate) user_routes: &'a mut Vec<server_config::StaticRouteEntry>,
+    pub(crate) may_start_development_server: bool,
 }
 
 // ─── ServePlugins ────────────────────────────────────────────────────────────
@@ -1090,7 +1097,9 @@ impl ServePlugins {
         Ok(())
     }
 
+    #[inline(never)]
     pub(crate) fn handle_on_resolve(&mut self) {
+        bun_removable_features::removable_definition!(Bundler, Self::handle_on_resolve);
         debug_assert!(matches!(self.state, ServePluginsState::Pending { .. }));
         let ServePluginsState::Pending {
             plugin,
@@ -1124,7 +1133,9 @@ impl ServePlugins {
         }
     }
 
+    #[inline(never)]
     pub(crate) fn handle_on_reject(&mut self, global: &JSGlobalObject, err: JSValue) {
+        bun_removable_features::removable_definition!(Bundler, Self::handle_on_reject);
         debug_assert!(matches!(self.state, ServePluginsState::Pending { .. }));
         let ServePluginsState::Pending {
             plugin,
@@ -1955,6 +1966,7 @@ where
             options.to_js(),
             server_config::FromJSOptions {
                 allow_bake_config: false,
+                may_start_development_server: false,
                 is_fetch_required: true,
                 previous_fetch: !self.config.get().on_request.is_empty_or_undefined_or_null(),
                 previous_routes: !self.user_routes.get().is_empty(),
@@ -2352,11 +2364,13 @@ where
         this_value
     }
 
+    #[inline(never)]
     pub(crate) fn on_bun_info_request(
         &self,
         req: &mut uws::Request,
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
+        bun_removable_features::removable_definition!(BunInfo, Self::on_bun_info_request);
         jsc::mark_binding!();
         if !self.config.get().address.is_unix()
             && (!bake::is_allowed_host_header(req, Some(&self.config.get().address))

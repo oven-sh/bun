@@ -1,0 +1,4 @@
+{
+  "env": { "BUN_JSC_evacuateAuxiliaryBlocksAfterEveryFullCollection": "1" },
+  "skipInShell": "it calls Bun.gc, and the jsc shell does not read BUN_JSC_ options"
+}

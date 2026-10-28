@@ -1,0 +1,3 @@
+{
+  "skipInShell": "it needs node:async_hooks, process and timers, which the jsc shell does not have"
+}

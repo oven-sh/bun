@@ -1,0 +1,6 @@
+{
+  "env": {
+    "BUN_JSC_maxRegExpStackSize": "65536"
+  },
+  "skipInShell": "CustomEvent is not in the shell"
+}

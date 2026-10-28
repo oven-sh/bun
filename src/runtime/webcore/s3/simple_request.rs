@@ -585,6 +585,7 @@ pub(crate) const NOTHING_NEW_LEAVES: S3Error<'static> = S3Error {
     message: b"The JavaScript VM that owns this request is shutting down",
 };
 
+#[inline(never)]
 pub(crate) fn execute_simple_s3_request(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -592,6 +593,7 @@ pub(crate) fn execute_simple_s3_request(
     callback: Callback,
     callback_context: *mut c_void,
 ) -> bun_jsc::JsResult<()> {
+    bun_removable_features::removable_definition!(S3Client, execute_simple_s3_request);
     // A multipart/retry continuation can reach here from teardown's queue
     // release; nothing new leaves a VM that is stopping. Nor for a context
     // that has stopped (a disposed `Bun.ModuleGraph`'s leftover script): the

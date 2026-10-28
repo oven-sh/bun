@@ -1,0 +1,39 @@
+// The first entry point of an executable that holds many programs. The other entry points are ./group-<n>.<extension>, which run-batch.ts writes: each imports the one
+// program of its group that BATCH_PROGRAM names. This file runs the programs whose indexes it is given, each in a Worker, one after the other. Behind what a program
+// printed it prints a line with BATCH_MARK, the index and how the program ended, to both streams. `bun run` of this file does the same with the files on disk.
+//
+//   <programs in a group> <extension> <index> ..
+const [programsInGroup, extension, ...indexes] = process.argv.slice(2);
+const mark = process.env.BATCH_MARK ?? "=== ended";
+const maxMilliseconds = Number(process.env.BATCH_MILLISECONDS ?? 2000);
+const maxBytes = Number(process.env.BATCH_MEGABYTES ?? 512) * 2 ** 20;
+
+for (const index of indexes) {
+  const bytesBefore = process.memoryUsage.rss();
+  const group = new URL(`./group-${Math.floor(Number(index) / Number(programsInGroup))}.${extension}`, import.meta.url)
+    .href;
+  const worker = new Worker(group, { env: { ...process.env, BATCH_PROGRAM: index } });
+  let stoppedBy = "";
+  const stop = (reason: string) => {
+    stoppedBy ||= reason;
+    worker.terminate();
+  };
+  const clock = setTimeout(stop, maxMilliseconds, "time");
+  const meter = setInterval(() => {
+    if (process.memoryUsage.rss() - bytesBefore > maxBytes) stop("memory");
+  }, 10);
+  // After an "error" event the exit code says nothing more: a Worker that imports a module which leaves a rejection unhandled closes with 0 or with 1.
+  let failed = false;
+  worker.addEventListener("error", event => {
+    failed = true;
+    console.error(String((event as ErrorEvent).message));
+  });
+  const exitCode = await new Promise<number>(resolve =>
+    worker.addEventListener("close", event => resolve((event as Event & { code: number }).code)),
+  );
+  clearTimeout(clock);
+  clearInterval(meter);
+  const end = stoppedBy || (failed ? "error" : exitCode);
+  console.log(`\n${mark} ${index} ${end}`);
+  console.error(`\n${mark} ${index} ${end}`);
+}

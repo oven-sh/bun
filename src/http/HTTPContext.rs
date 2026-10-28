@@ -321,6 +321,11 @@ struct ExistingSocket<const SSL: bool> {
     verification: PeerVerification,
 }
 
+#[inline(never)]
+fn need_socket_handlers() {
+    core::hint::black_box(uws::SocketKind::HttpClient);
+}
+
 impl<const SSL: bool> HTTPContext<SSL> {
     const KIND: uws::SocketKind = if SSL {
         uws::SocketKind::HttpClientTls
@@ -1020,6 +1025,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             }
         }
 
+        bun_removable_features::call_removable!(HttpClient, Abort, need_socket_handlers);
         let socket = HTTPSocket::<SSL>::connect_unix_group(
             &self.group,
             Self::KIND,
@@ -1181,6 +1187,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             }
         }
 
+        bun_removable_features::call_removable!(HttpClient, Abort, need_socket_handlers);
         let socket = HTTPSocket::<SSL>::connect_group(
             &self.group,
             Self::KIND,

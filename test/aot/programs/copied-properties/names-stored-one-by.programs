@@ -1,0 +1,1300 @@
+////: Settings
+type Settings = {
+  setting0?: number;
+  setting1?: string;
+  setting2?: boolean;
+  setting3?: string[];
+  setting4?: number;
+  setting5?: string;
+  setting6?: boolean;
+  setting7?: string[];
+  setting8?: number;
+  setting9?: string;
+  setting10?: boolean;
+  setting11?: string[];
+  setting12?: number;
+  setting13?: string;
+  setting14?: boolean;
+  setting15?: string[];
+  setting16?: number;
+  setting17?: string;
+  setting18?: boolean;
+  setting19?: string[];
+  setting20?: number;
+  setting21?: string;
+  setting22?: boolean;
+  setting23?: string[];
+  setting24?: number;
+  setting25?: string;
+  setting26?: boolean;
+  setting27?: string[];
+  setting28?: number;
+  setting29?: string;
+  setting30?: boolean;
+  setting31?: string[];
+  setting32?: number;
+  setting33?: string;
+  setting34?: boolean;
+  setting35?: string[];
+  setting36?: number;
+  setting37?: string;
+  setting38?: boolean;
+  setting39?: string[];
+  setting40?: number;
+  setting41?: string;
+  setting42?: boolean;
+  setting43?: string[];
+  setting44?: number;
+  setting45?: string;
+  setting46?: boolean;
+  setting47?: string[];
+  setting48?: number;
+  setting49?: string;
+  setting50?: boolean;
+  setting51?: string[];
+  setting52?: number;
+  setting53?: string;
+  setting54?: boolean;
+  setting55?: string[];
+  setting56?: number;
+  setting57?: string;
+  setting58?: boolean;
+  setting59?: string[];
+  setting60?: number;
+  setting61?: string;
+  setting62?: boolean;
+  setting63?: string[];
+  setting64?: number;
+  setting65?: string;
+  setting66?: boolean;
+  setting67?: string[];
+  setting68?: number;
+  setting69?: string;
+  setting70?: boolean;
+  setting71?: string[];
+  setting72?: number;
+  setting73?: string;
+  setting74?: boolean;
+  setting75?: string[];
+  setting76?: number;
+  setting77?: string;
+  setting78?: boolean;
+  setting79?: string[];
+};
+////: for-2
+for (let i = 0; i < 6; i++) {
+  const a = makeA(i);
+  if (i >= 3) poke(a);
+  const b = widen(a, i);
+  out.push(read(b) + " | " + look(b));
+}
+////: for-5
+for (let round = 0; round < rounds; round++) {
+  for (let seed = 0; seed < 4; seed++) {
+    const a = merged(read(seed, (seed & 1) === 1«1»);
+    sum += Object.keys(d).length + (typeof d.setting8 === "number" ? d.setting8 : 1);
+    if (round < 2) console.log(round, seed, describe(a), "|", describe(b), "|", describe(c), "|", describe(d));
+  }
+}
+////: lines
+const «1» = {
+  run() {
+    return «2»;
+  },
+  stop() {
+    return «3»;
+  },
+};
+////: lines-2
+«1».prototype.«2» = function () {
+  return «3»;
+};
+//// names-stored-one-by-one-reach-what-a-literal-made-at-once.ts
+// A literal gives its object all its names at once. A loop that stores the same names one by one into an empty object ends, with the last of them, in the state that the literal made.
+// That last store repeats like the others, so it is remembered like the others. What is remembered must not outlive what it rests on: another order of the names, a name more or less,
+// a setter or a read-only property that appears above the target, a target that takes no more names, and more names than an object holds in its cell.
+type Dictionary = Record<string, number>;
+const lines: string[] = [];
+// Under --aot-validate what the caches remember is compared with the objects' state at the end of each collection.
+function show(title: string, object: object) {
+    Bun.gc(true);
+    lines.push(title + ": " + JSON.stringify(object) + " | " + Object.keys(object).join());
+}
+
+function copyByForIn(source: Dictionary): Dictionary {
+    const out: Dictionary = {};
+    for (const name in source) out[name] = source[name];
+    return out;
+}
+function copyByKeys(source: Dictionary, names: string[]): Dictionary {
+    const out: Dictionary = {};
+    for (const name of names) out[name] = source[name];
+    return out;
+}
+function copyOnto(target: Dictionary, source: Dictionary, names: string[]): Dictionary {
+    for (const name of names) {
+        try {
+            target[name] = source[name];
+        } catch (error) {
+            lines.push("refused " + name + ": " + (error as Error).constructor.name);
+        }
+    }
+    return target;
+}
+
+const four: Dictionary = { alpha: 1, bravo: 2, charlie: 3, delta: 4 };
+let last: Dictionary = {};
+for (let round = 0; round < 300; round++) last = copyByForIn(four);
+show("the same names in the same order", last);
+four.delta = 40;
+show("the copy is an object of its own", last);
+show("and its source too", four);
+
+for (let round = 0; round < 300; round++) last = copyByKeys(four, ["alpha", "bravo", "charlie", "delta"]);
+show("by a list of names", last);
+for (let round = 0; round < 300; round++) last = copyByKeys(four, ["delta", "charlie", "bravo", "alpha"]);
+show("in the opposite order", last);
+for (let round = 0; round < 300; round++) last = copyByKeys(four, ["alpha", "bravo", "delta", "charlie"]);
+show("the last two the other way round", last);
+for (let round = 0; round < 300; round++) last = copyByKeys(four, ["alpha", "bravo", "charlie"]);
+show("one name fewer", last);
+for (let round = 0; round < 300; round++) last = copyByKeys({ ...four, echo: 5 }, ["alpha", "bravo", "charlie", "delta", "echo"]);
+show("one name more", last);
+for (let round = 0; round < 300; round++) last = copyByKeys(four, ["alpha", "bravo", "charlie", "delta", "delta", "alpha"]);
+show("names that come twice", last);
+
+const many: Dictionary = { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10, k: 11, l: 12, m: 13, n: 14, o: 15, p: 16, q: 17, r: 18, s: 19, t: 20 };
+for (let round = 0; round < 300; round++) last = copyByForIn(many);
+show("more names than a cell holds", last);
+let sum = 0;
+for (const name in last) sum += last[name];
+lines.push("their sum: " + sum);
+
+const seven: Dictionary = { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7 };
+for (let round = 0; round < 300; round++) last = copyByForIn(seven);
+show("seven names", last);
+
+// The target is not empty, or not ordinary.
+for (let round = 0; round < 300; round++) last = copyOnto({ zulu: 0 }, four, ["alpha", "bravo", "charlie", "delta"]);
+show("behind a name of its own", last);
+for (let round = 0; round < 300; round++) last = copyOnto(Object.create(null) as Dictionary, four, ["alpha", "bravo", "charlie", "delta"]);
+show("without a prototype", last);
+lines.push("its prototype: " + Object.getPrototypeOf(last));
+
+const closedAfterThree = () => Object.preventExtensions(copyByKeys(four, ["alpha", "bravo", "charlie"]));
+show("takes no more names", copyOnto(closedAfterThree(), four, ["delta"]));
+show("frozen", copyOnto(Object.freeze(copyByKeys(four, ["alpha", "bravo", "charlie"])), four, ["charlie", "delta"]));
+
+// What lies above the target changes while the stores are remembered.
+const above: Record<string, unknown> = {};
+const below = () => Object.create(above) as Dictionary;
+for (let round = 0; round < 300; round++) last = copyOnto(below(), four, ["alpha", "bravo", "charlie", "delta"]);
+show("below an empty object", last);
+const seen: number[] = [];
+Object.defineProperty(above, "delta", { set(value: number) { seen.push(value); }, get() { return -1; }, configurable: true });
+for (let round = 0; round < 3; round++) last = copyOnto(below(), four, ["alpha", "bravo", "charlie", "delta"]);
+show("below a setter for the last name", last);
+lines.push("the setter saw " + seen.join() + "; read through the copy: " + last.delta);
+Object.defineProperty(above, "delta", { value: 7, writable: false, configurable: true });
+for (let round = 0; round < 2; round++) last = copyOnto(below(), four, ["alpha", "bravo", "charlie", "delta"]);
+show("below a read-only property", last);
+delete above.delta;
+for (let round = 0; round < 300; round++) last = copyOnto(below(), four, ["alpha", "bravo", "charlie", "delta"]);
+show("below an empty object again", last);
+
+for (let round = 0; round < 300; round++) last = copyByForIn(four);
+
+// The copies and the literal's own objects are told apart by nothing.
+const literal = (): Dictionary => ({ alpha: 1, bravo: 2, charlie: 3, delta: 40 });
+lines.push("as the literal: " + (JSON.stringify(last) === JSON.stringify(literal())) + " " + (Object.keys(last).join() === Object.keys(literal()).join()));
+last.echo = 5;
+const other = literal();
+other.echo = 6;
+show("each goes on by itself", last);
+show("each goes on by itself", other);
+delete last.bravo;
+show("a name is taken out", last);
+last.bravo = 22;
+show("and put back", last);
+
+console.log(lines.join("\n"));
+//// object-assign-onto-a-list-writes-its-elements.ts
+const a: number[] = [1, 2, 3];
+Object.assign(a, { 0: "text" });
+console.log(a.map(n => n + 1).join());
+
+const b: number[] = [1, 2, 3];
+const between: Record<number, unknown> = {};
+Object.assign(between, { 1: "mid" });
+Object.assign(b, between);
+console.log(b.map(n => n + 1).join(), b.reduce((sum, n) => sum + n, 0));
+
+const c: number[] = [1, 2, 3];
+Object.assign(c, { 5: 9 });
+let seen = 0;
+c.forEach(() => { seen++; });
+console.log(c.length, seen, 4 in c, c.indexOf(9), c.join());
+
+const d: number[] = [1, 2, 3];
+Object.assign(d, "xy");
+console.log(d.map(n => n + 1).join());
+
+const e: number[] = [1, 2, 3];
+Object.assign(e, { length: 1 });
+console.log(e.length, e.join(), e[2]);
+
+const f: number[] = [1, 2, 3];
+const g = { ...f, 1: "spread" };
+console.log(Object.keys(g).join(), g[1], f.join());
+
+const h: number[] = [1.5, 2.5];
+Object.assign(h, [true]);
+for (const n of h) console.log(typeof n, n);
+export {};
+//// object-assign-puts-undefined-and-null-into-numbers-that-a-constructor-fills.ts
+// Object.assign stores undefined and null over numbers and booleans that a constructor has filled; typed code that reads them afterwards sees what plain Bun sees. Each copy repeats, so that every way of a plan is taken.
+const unseen: any = JSON.parse('{"nothing":null,"seven":7,"half":0.5,"yes":true,"text":"t"}');
+
+class Limiter {
+  max = 10;
+  windowMs = 1000.5;
+  strict = false;
+  label = "none";
+  constructor(options: object) {
+    Object.assign(this, options);
+  }
+}
+function read(limiter: Limiter): string {
+  const sum = limiter.max + limiter.windowMs;
+  return [limiter.max, limiter.windowMs, limiter.strict, typeof limiter.max, typeof limiter.windowMs, typeof limiter.strict, sum, limiter.max === undefined, limiter.windowMs === null, limiter.strict ? "on" : "off", limiter.max > 5, JSON.stringify(limiter)].join(" ");
+}
+class Counter {
+  count = 0;
+  step = 1;
+  done = false;
+}
+function readCounter(counter: Counter): string {
+  return [counter.count, counter.step, counter.done, counter.count + counter.step, typeof counter.count, !counter.done].join(" ");
+}
+type Options = { max?: number | null; windowMs?: number | null; strict?: boolean | null };
+function optionsFor(turn: number): Options {
+  switch (turn % 6) {
+    case 0:
+      return { max: turn, windowMs: turn + 0.25, strict: true };
+    case 1:
+      return { max: undefined, windowMs: turn, strict: false };
+    case 2:
+      return { max: turn, windowMs: null, strict: undefined };
+    case 3:
+      return { max: null, windowMs: undefined, strict: null };
+    case 4:
+      return { max: unseen.missing, windowMs: unseen.half, strict: unseen.nothing };
+    default:
+      return { max: unseen.seven, windowMs: unseen.nothing, strict: unseen.yes };
+  }
+}
+
+const lines: string[] = [];
+for (let turn = 0; turn < 36; turn++) {
+  // Out of a record.
+  lines.push(read(new Limiter(optionsFor(turn))));
+  // Out of an ordinary object.
+  lines.push(read(new Limiter(JSON.parse(turn % 3 === 0 ? '{"max":null,"strict":true}' : turn % 3 === 1 ? '{"max":3,"strict":null,"windowMs":2}' : '{"max":4,"strict":false,"windowMs":1.5}'))));
+  // Out of an object of the same class, whose slots hold the markers themselves.
+  const source = new Limiter(optionsFor(turn + 1));
+  const target = new Limiter({});
+  lines.push(read(Object.assign(target, source)));
+  // A number over a marker, and a marker over that.
+  lines.push(read(Object.assign(target, { max: turn, windowMs: turn, strict: true })));
+  lines.push(read(Object.assign(target, optionsFor(turn + 3))));
+  // A value that no slot of the kind takes, among markers.
+  lines.push(read(Object.assign(new Limiter({}), { max: turn % 2 ? unseen.text : undefined, windowMs: null, strict: turn % 2 ? 1 : null })));
+  const counter = new Counter();
+  lines.push(readCounter(Object.assign(counter, { count: turn % 4 === 3 ? unseen.nothing : turn, done: turn % 5 === 4 ? undefined : turn > 10 })));
+  lines.push(readCounter(Object.assign(counter, { count: counter.count + counter.step })));
+}
+console.log(lines.join("\n"));
+//// object-created-under-a-prototype-as-a-record.ts
+// `Object.create(proto) as Record<string, unknown>`: an ordinary object under a known prototype: names stored under computed keys go into it alone, and the methods of the prototype are found.
+const proto = {
+  describe(this: Record<string, unknown>) {
+    return Object.keys(this).length;
+  },
+};
+const counters = { made: 0, read: 0 };
+function make(names: string[]) {
+  const record = Object.create(proto) as Record<string, unknown>;
+  for (const name of names) record[name] = name.length;
+  counters.made++;
+  return record;
+}
+let total = 0;
+for (let i = 0; i < 300000; i++) {
+  const record = make(i & 1 ? ["a", "bb"] : ["ccc"]);
+  counters.read++;
+  total += (record as any).describe() + ((record.bb as number) ?? 0);
+}
+console.log(total, counters.made, counters.read);
+//// one-key-of-an-earlier-round-moves-each-value-on-by-one-name.js
+// The value was read in the round before, under the key of that round: each value lands under the next name.
+const lines = [];
+const source = { first: () => "first", second: () => 2, third: () => [3] };
+const target = {};
+let held;
+for (const key of Object.keys(source)) {
+  if (held) target[key] = held;
+  held = source[key];
+}
+lines.push(Object.keys(target).join(), target.second(), target.third(), target.first === undefined);
+console.log(lines.join("\n"));
+//// one-key-onto-targets-and-out-of-sources-of-every-kind.js
+// Indexes, strings, arrays, frozen targets, proxies, built-in prototypes, a target that is its own source, one of two sources.
+"use strict";
+const lines = [];
+const list = [10, "b", () => "c"];
+const copyOfList = [];
+for (let i = 0; i < list.length; i++) copyOfList[i] = list[i];
+lines.push(copyOfList[0] + 1, copyOfList[1].length, copyOfList[2](), copyOfList.length);
+
+const letters = {};
+const text = "xyz";
+for (const key of Object.keys(text)) letters[key] = text[key];
+letters["length"] = text["length"];
+lines.push(JSON.stringify(letters));
+
+const frozen = Object.freeze({ kept: () => "kept" });
+const replacement = { kept: () => "replaced" };
+for (const key of Object.keys(replacement)) {
+  try {
+    frozen[key] = replacement[key];
+  } catch (error) {
+    lines.push(error.constructor.name);
+  }
+}
+lines.push(frozen.kept());
+
+const seen = [];
+const watchedSource = new Proxy(
+  { a: () => 1 },
+  {
+    get(object, key) {
+      seen.push("get " + String(key));
+      return () => "from the trap";
+    },
+  },
+);
+const fromProxy = {};
+for (const key of ["a", "b"]) fromProxy[key] = watchedSource[key];
+lines.push(fromProxy.a(), fromProxy.b(), seen.join());
+const stored = {};
+const watchedTarget = new Proxy(
+  {},
+  {
+    set(object, key, value) {
+      stored["moved_" + key] = value;
+      return true;
+    },
+  },
+);
+const plain = { a: () => "a", b: () => "b" };
+for (const key of Object.keys(plain)) watchedTarget[key] = plain[key];
+lines.push(Object.keys(stored).join(), stored.moved_a(), stored.moved_b(), watchedTarget.a === undefined);
+
+const mixin = {
+  lastOne() {
+    return this[this.length - 1];
+  },
+  firstOne() {
+    return this[0];
+  },
+};
+for (const key of Object.keys(mixin)) Array.prototype[key] = mixin[key];
+lines.push([1, 2, 3].lastOne(), ["p", "q"].firstOne());
+for (const key of Object.keys(mixin)) delete Array.prototype[key];
+lines.push(typeof [].lastOne);
+
+const self = { a: () => "self a", n: 4 };
+for (const key of Object.keys(self)) self[key] = self[key];
+lines.push(self.a(), self.n + 1);
+
+const left = { pick: () => "left", only: 1 };
+const right = { pick: () => "right", other: "2" };
+for (const flag of [true, false]) {
+  const picked = {};
+  for (const key of ["pick", "only", "other"]) picked[key] = (flag ? left : right)[key];
+  lines.push(picked.pick(), String(picked.only), String(picked.other));
+}
+console.log(lines.join("\n"));
+//// one-key-read-and-stored-keeps-each-name.js
+// `target[key] = source[key]` in loops over the names of the source: each name of the target holds what the source held under it, and nothing else.
+const lines = [];
+function Writer() {}
+Writer.prototype.write = function (text) {
+  return "write " + text;
+};
+////= lines-2	Writer	end	"end"
+Writer.prototype.limit = 16;
+Writer.prototype.label = "writer";
+function Reader() {}
+////= lines-2	Reader	read	"read"
+////= lines-2	Reader	end	"the reader's own end"
+const names = Object.keys(Writer.prototype);
+for (let i = 0; i < names.length; i++) {
+  const name = names[i];
+  if (!Reader.prototype[name]) Reader.prototype[name] = Writer.prototype[name];
+}
+const both = new Reader();
+lines.push(both.read(), both.write("a"), both.end(), both.limit + 1, both.label.length);
+
+class Base {
+  inherited() {
+    return "inherited";
+  }
+}
+class Settings extends Base {
+  constructor() {
+    super();
+    this.depth = 3;
+    this.name = "settings";
+    this.run = () => "run";
+  }
+}
+const byForIn = {};
+const settings = new Settings();
+for (const key in settings) byForIn[key] = settings[key];
+lines.push(byForIn.depth * 2, byForIn.name.toUpperCase(), byForIn.run(), typeof byForIn.inherited);
+
+const byOwnNames = {};
+for (const key of Object.getOwnPropertyNames(Base.prototype)) byOwnNames[key] = Base.prototype[key];
+lines.push(byOwnNames.inherited(), byOwnNames.constructor === Base);
+
+const mark = Symbol("mark");
+const marked = { [mark]: () => "marked", plain: () => "plain" };
+const byOwnKeys = {};
+for (const key of Reflect.ownKeys(marked)) byOwnKeys[key] = marked[key];
+lines.push(byOwnKeys[mark](), byOwnKeys.plain());
+
+// What is done to the source afterwards stays with the source.
+////= lines-2	Writer	write	"another write"
+settings.depth = "deep";
+lines.push(both.write("b"), byForIn.depth + 1);
+console.log(lines.join("\n"));
+//// one-key-runs-getters-of-the-source-and-setters-of-the-target.js
+// The read runs a getter of the source, or of what lies above it, with the source as `this`; the store runs a setter of the target or of what lies above it.
+const lines = [];
+const aboveSource = {
+  get computed() {
+    return this.base * 2;
+  },
+};
+const source = Object.create(aboveSource);
+source.base = 21;
+Object.defineProperty(source, "own", {
+  get() {
+    lines.push("own is read");
+    return () => "own";
+  },
+  enumerable: true,
+});
+const aboveTarget = {
+  set base(value) {
+    lines.push("base is set to " + value);
+    this.kept = value + 1;
+  },
+};
+const target = Object.create(aboveTarget);
+for (const key in source) target[key] = source[key];
+lines.push(Object.keys(target).sort().join(), target.kept, target.computed, target.own(), target.base);
+source.base = 1;
+lines.push(target.computed);
+
+// "__proto__" as a name of the source: the store goes through the setter of Object.prototype.
+const parsed = JSON.parse('{"__proto__": {"injected": 5}, "plain": 6}');
+const victim = {};
+for (const key of Object.keys(parsed)) victim[key] = parsed[key];
+lines.push(Object.keys(victim).join(), victim.injected, victim.plain, Object.getPrototypeOf(victim) === parsed["__proto__"]);
+console.log(lines.join("\n"));
+//// one-key-that-is-converted-twice-moves-a-value-to-another-name.js
+// Each access converts the key. An object that answers another text each time reads under one name and stores under another.
+const lines = [];
+let count = 0;
+const key = {
+  toString() {
+    return count++ % 2 ? "stop" : "run";
+  },
+};
+////= lines	source	"run"	7
+const target = {};
+target[key] = source[key];
+lines.push(Object.keys(target).join(), target.run === undefined ? "no run" : target.run(), target.stop === undefined ? "no stop" : target.stop());
+const byPrimitive = {};
+const other = {
+  [Symbol.toPrimitive]() {
+    return count++ % 2 ? "stop" : "run";
+  },
+};
+byPrimitive[other] = source[other];
+lines.push(Object.keys(byPrimitive).join(), typeof byPrimitive.stop, typeof byPrimitive.run);
+console.log(lines.join("\n"));
+//// one-key-that-the-source-lacks-hides-what-the-target-inherits.js
+// The names come from somewhere else, and the source lacks some: undefined is stored, and it hides what the target inherits.
+const lines = [];
+////= lines	above	"inherited run"	"inherited stop"
+const source = {
+  run() {
+    return "the source's run";
+  },
+};
+const target = Object.create(above);
+for (const key of Object.keys(above)) target[key] = source[key];
+lines.push(target.run());
+try {
+  lines.push(target.stop());
+} catch (error) {
+  lines.push(error.constructor.name);
+}
+lines.push("stop" in target, Object.hasOwn(target, "stop"), target.stop === undefined, above.stop());
+console.log(lines.join("\n"));
+//// plans-of-copies-across-young-collections.ts
+// What is remembered of a copy names the shapes of its source and its target and keeps neither alive. Shapes that are made for a few copies die young, shapes that are used all the time grow old,
+// and new shapes may come to lie where dead ones lay: each copy has to come out right whichever collection ran in between.
+type Message = { kind: string; size: number; note?: string };
+type Anything = Record<string, unknown>;
+let garbage: unknown[] = [];
+function churn(round: number) {
+  for (let i = 0; i < 1500; i++) garbage.push({ round, i, text: "x".repeat(i & 31), list: [i, round, i, round, i, round] });
+  if (garbage.length > 6000) garbage = [];
+}
+function stamped<T extends object>(value: T, round: number) { return { ...value, stamp: round, last: true }; }
+function merged(message: Message, extra: Anything): Anything { return { first: 0, ...message, ...extra }; }
+function ofParsed(text: string, round: number): Anything { return { ...(JSON.parse(text) as Anything), round }; }
+function rest(value: Anything) { const { kind, ...others } = value; return [kind, others] as const; }
+
+let sum = 0;
+const lines: string[] = [];
+const old: Message = { kind: "old", size: 1 };
+for (let round = 0; round < 300; round++) {
+  const young: Anything = {};
+  for (let i = 0; i < 1 + (round % 7); i++) young["name" + round + "_" + i] = round + i;
+  const holder: Anything = { inner: { ["only" + round]: round }, list: [round] };
+  for (let again = 0; again < 3; again++) {
+    const a = stamped(young, round) as Anything;
+    const b = merged(old, young);
+    const c = merged({ kind: "k" + (round & 3), size: round, note: round & 1 ? "n" : undefined }, holder);
+    const d = ofParsed('{"p' + (round % 11) + '":' + round + ',"kind":"parsed","q":[1,2]}', round);
+    const [kind, others] = rest({ ...d, ...young });
+    const e = stamped(old, round);
+    sum += Object.keys(a).length * 3 + Object.keys(b).length * 5 + Object.keys(c).length * 7 + Object.keys(d).length * 11 + Object.keys(others).length * 13 + e.size + e.stamp;
+    sum += (a["name" + round + "_0"] as number) + (b["name" + round + "_0"] as number) + ((c.inner as Anything)["only" + round] as number) + (d["p" + (round % 11)] as number) + (kind === "parsed" ? 1 : 0);
+    if (round % 60 === 59 && !again) lines.push(JSON.stringify([a, b, c, d, others, e]));
+    churn(round);
+  }
+  if (round === 149) Bun.gc(true);
+}
+lines.push(String(sum));
+console.log(lines.join("\n"));
+//// records-of-one-type-are-copied-into-records-of-another.ts
+// A record is spread into a literal of another type, or taken apart by a rest pattern: whichever members the source has, in whichever order it got them, whatever the target holds already.
+// Each form runs several times over the same kinds of source, so the first copy of a kind and the copies after it are both seen.
+const lines: string[] = [];
+function show(label: string, value: object): void {
+  lines.push(label + ": " + Object.keys(value).join(",") + " | " + JSON.stringify(value) + " | " + Reflect.ownKeys(value).length);
+}
+
+interface Options { a?: number; b?: string; c?: boolean; d?: number | string; e?: { x: number }; f?: number[]; g?: null | number; h?: undefined | string; i?: () => number; j?: bigint | number }
+interface Wider extends Options { first: number; last?: string; k?: number; l?: string }
+interface Numbers { a?: number; d?: number; g?: number; j?: number; k?: number }
+interface Loose { a?: unknown; b?: unknown; c?: unknown; d?: unknown; e?: unknown; f?: unknown; g?: unknown; h?: unknown; i?: unknown; j?: unknown }
+
+const inner = { x: 1 };
+const list = [1, 2];
+const answer = () => 42;
+function make(bits: number): Options {
+  const made: Options = {};
+  if (bits & 1) made.a = bits;
+  if (bits & 2) made.b = "b" + bits;
+  if (bits & 4) made.c = (bits & 8) !== 0;
+  if (bits & 8) made.d = bits & 16 ? "text" : bits + 0.5;
+  if (bits & 16) made.e = inner;
+  if (bits & 32) made.f = list;
+  if (bits & 64) made.g = bits & 1 ? null : 7;
+  if (bits & 128) made.h = bits & 2 ? undefined : "h";
+  if (bits & 256) made.i = answer;
+  if (bits & 512) made.j = bits & 4 ? 10 : 1.25;
+  return made;
+}
+function makeBackwards(bits: number): Options {
+  const made: Options = {};
+  if (bits & 512) made.j = 3;
+  if (bits & 128) made.h = "h";
+  if (bits & 32) made.f = list;
+  if (bits & 8) made.d = 8;
+  if (bits & 2) made.b = "b";
+  if (bits & 1) made.a = 1;
+  return made;
+}
+
+function behindAMember(source: Options, n: number): Wider { return { first: n, ...source }; }
+function inFrontOfAMember(source: Options, n: number): Wider { return { ...source, first: n }; }
+function between(source: Options, n: number): Wider { return { first: n, ...source, last: "last" }; }
+function overMembers(source: Options, n: number): Wider { return { a: -1, first: n, d: "before", k: 5, ...source }; }
+function underMembers(source: Options, n: number): Wider { return { first: n, ...source, a: -1, d: "after" }; }
+function two(one: Options, other: Options, n: number): Wider { return { first: n, ...one, ...other }; }
+function intoLoose(source: Options): Loose { return { ...source }; }
+function numbersInto(source: Numbers, n: number): Wider { return { first: n, ...source }; }
+function withoutTwo(source: Options): Omit<Options, "a" | "e"> { const { a, e, ...rest } = source; return rest; }
+function withoutOne(source: Wider): Options { const { first, ...rest } = source; return rest; }
+
+const kinds = [0, 1, 2, 3, 5, 8, 24, 31, 64, 65, 128, 130, 256, 512, 516, 341, 682, 1023, 1022, 511];
+for (let round = 0; round < 3; round++) {
+  for (const bits of kinds) {
+    const label = round + " " + bits + " ";
+    const source = make(bits);
+    show(label + "behind a member", behindAMember(source, bits));
+    show(label + "in front of a member", inFrontOfAMember(source, bits));
+    show(label + "between", between(source, bits));
+    show(label + "over members", overMembers(source, bits));
+    show(label + "under members", underMembers(source, bits));
+    show(label + "two", two(source, makeBackwards(bits ^ 1023), bits));
+    show(label + "two of one kind", two(source, make(bits), bits));
+    show(label + "backwards", behindAMember(makeBackwards(bits), bits));
+    show(label + "into loose", intoLoose(source));
+    show(label + "without two", withoutTwo(source));
+    show(label + "without one", withoutOne(behindAMember(source, bits)));
+    show(label + "the source afterwards", source);
+  }
+}
+
+const numbers: Numbers[] = [{ a: 1 }, { a: 1.5, d: 2 }, { k: 3, j: 4, g: 5 }, { d: -0, a: 2147483647, g: -2147483648 }, { a: NaN, d: Infinity }, { j: 1e21, k: 0.1 }];
+for (let round = 0; round < 3; round++)
+  for (const source of numbers) show(round + " numbers", numbersInto(source, round));
+
+// What a copy holds is what the source holds, and a store to the one does not reach the other.
+for (let round = 0; round < 3; round++) {
+  const source = make(1023);
+  const copy = behindAMember(source, round);
+  lines.push(round + " the same objects: " + (copy.e === source.e) + " " + (copy.f === source.f) + " " + (copy.i === source.i) + " " + copy.i!());
+  copy.a = -5; copy.b = "changed"; delete copy.c;
+  source.d = "changed too"; delete source.g;
+  show(round + " the copy", copy);
+  show(round + " the source", source);
+}
+
+// Sources that are more than their fields.
+for (let round = 0; round < 3; round++) {
+  const frozen = Object.freeze(make(7));
+  const sealed = Object.seal(make(7));
+  const grown = make(7) as Options & Record<string, unknown>; grown.extra = round; grown["x" + round] = 1;
+  const cut = make(15); delete cut.b;
+  const cutAndBack = make(15); delete cut.a; cutAndBack.a = 9;
+  const redefined = make(7); Object.defineProperty(redefined, "b", { enumerable: false });
+  const withGetter = make(7); Object.defineProperty(withGetter, "a", { get() { return "got"; }, enumerable: true, configurable: true });
+  const marked = make(7) as Options & { [key: symbol]: number }; marked[Symbol.for("mark")] = round;
+  for (const [name, source] of Object.entries({ frozen, sealed, grown, cut, cutAndBack, redefined, withGetter, marked })) {
+    const copy = behindAMember(source, round);
+    show(round + " " + name, copy);
+    copy.a = 100; copy.last = "stored";
+    show(round + " " + name + ", stored to", copy);
+    lines.push(round + " " + name + ": " + Object.isFrozen(copy) + " " + Object.isSealed(copy) + " " + Object.isExtensible(copy) + " " + Object.getOwnPropertySymbols(copy).length);
+  }
+}
+console.log(lines.join("\n"));
+//// records-of-one-type-copied-whatever-their-state.ts
+interface Pair { left: number; right: number }
+interface Triple { first: number; second: string; third: Pair | null }
+interface Wide {
+  a0: number; a1: number; a2: number; a3: number; a4: number; a5: number; a6: number; a7: number; a8: number; a9: number;
+  b0: string; b1: string; b2: string; b3: string; b4: string; b5: string; b6: string; b7: string; b8: string; b9: string;
+  c0?: number; c1?: string; c2?: Pair;
+}
+interface Optional { x?: number; y?: number; z?: number }
+
+function copyPair(pair: Pair): Pair { return { ...pair }; }
+function copyTriple(triple: Triple): Triple { return { ...triple }; }
+function copyWide(wide: Wide): Wide { return { ...wide }; }
+function copyOptional(optional: Optional): Optional { return { ...optional }; }
+function copyThenSet(triple: Triple, first: number): Triple { return { ...triple, first }; }
+function copyInner(triple: Triple, left: number): Triple { return { ...triple, third: { ...triple.third!, left } }; }
+
+function describe(label: string, value: object): void {
+  console.log(label, JSON.stringify(value), Object.keys(value).join(), Object.isFrozen(value), Object.isSealed(value), Object.isExtensible(value), Object.getOwnPropertySymbols(value).length);
+}
+
+function makeWide(seed: number): Wide {
+  return {
+    a0: seed, a1: seed + 1, a2: seed + 2, a3: seed + 3, a4: seed + 4, a5: seed + 5.5, a6: seed + 6, a7: seed + 7, a8: seed + 8, a9: 2 ** 40 + seed,
+    b0: "b0", b1: "b1" + seed, b2: "b2", b3: "b3", b4: "b4", b5: "b5", b6: "b6", b7: "b7", b8: "b8", b9: "b9" + seed,
+  };
+}
+
+const pair: Pair = { left: 1, right: 2 };
+const triple: Triple = { first: 1, second: "two", third: pair };
+describe("pair", copyPair(pair));
+describe("triple", copyTriple(triple));
+describe("set behind the copy", copyThenSet(triple, 7));
+describe("inner copy", copyInner(triple, 9));
+console.log(copyTriple(triple).third === pair, copyInner(triple, 9).third === pair, copyPair(pair) === pair);
+
+const wide = makeWide(10);
+describe("wide", copyWide(wide));
+wide.c1 = "late";
+describe("wide with one optional member", copyWide(wide));
+wide.c0 = 5;
+wide.c2 = pair;
+describe("wide with its optional members out of order", copyWide(wide));
+delete wide.c1;
+describe("wide without one again", copyWide(wide));
+
+describe("frozen", copyPair(Object.freeze({ left: 3, right: 4 })));
+describe("sealed", copyPair(Object.seal({ left: 5, right: 6 })));
+describe("not extensible", copyPair(Object.preventExtensions({ left: 7, right: 8 })));
+
+const withMore: Pair = { left: 9, right: 10 };
+(withMore as Pair & { more: string }).more = "more";
+describe("with a property outside its type", copyPair(withMore));
+const withSymbol: Pair = { left: 11, right: 12 };
+(withSymbol as unknown as Record<symbol, number>)[Symbol.for("mark")] = 1;
+describe("with a symbol", copyPair(withSymbol));
+const withGetter: Pair = { left: 13, right: 14 };
+let reads = 0;
+Object.defineProperty(withGetter, "right", { get() { return ++reads; }, enumerable: true, configurable: true });
+describe("with a getter", copyPair(withGetter));
+describe("with a getter, again", copyPair(withGetter));
+const withHidden: Pair = { left: 15, right: 16 };
+Object.defineProperty(withHidden, "left", { value: 17, enumerable: false, writable: true, configurable: true });
+describe("with a member that is not enumerable", copyPair(withHidden));
+const withText: Pair = { left: 18, right: 19 };
+(withText as unknown as { left: string }).left = "text";
+describe("with a value outside its type", copyPair(withText));
+const asPrototype: Pair = { left: 20, right: 21 };
+const heir = Object.create(asPrototype) as Pair;
+describe("a prototype", copyPair(asPrototype));
+describe("its heir", copyPair(heir));
+console.log(heir.left, Object.getPrototypeOf(copyPair(asPrototype)) === Object.prototype);
+
+const orders: Optional[] = [{}, { x: 1 }, { y: 2 }, { z: 3, x: 1 }, { y: 2, x: 1, z: 3 }, { z: 3, y: 2, x: 1 }];
+for (const optional of orders) describe("optional", copyOptional(optional));
+const emptied: Optional = { x: 1, y: 2, z: 3 };
+delete emptied.y;
+describe("one deleted", copyOptional(emptied));
+emptied.y = 4;
+describe("and put back", copyOptional(emptied));
+
+const kept: Triple[] = [];
+for (let round = 0; round < 20000; round++) kept.push(copyInner(kept.length ? kept[round >> 1] : triple, round));
+let sum = 0;
+for (const each of kept) sum += each.third!.left + each.third!.right + each.first + each.second.length;
+console.log(sum, kept.length);
+//// sources-that-once-had-getters.ts
+// A spread, a rest pattern and Object.assign read the own enumerable properties of a source in order. An object that has had a getter, or a value that the host makes at the first read,
+// is read as any other once its enumerable properties are plain; one that still has an enumerable getter runs it at its place, and sees what the getters in front of it did.
+const lines: string[] = [];
+const log = (line: string) => void lines.push(line);
+const show = (name: string, value: object) => log(name + " | " + JSON.stringify(value) + " | " + Reflect.ownKeys(value).map(String).join(","));
+type Anything = Record<string | symbol, unknown>;
+
+function sameAsEnvironment(name: string, copy: Record<string, string | undefined>) {
+  const keys = Object.keys(process.env);
+  const copied = Object.keys(copy);
+  log(name + " | keys " + (keys.length === copied.length && keys.every((key, index) => key === copied[index])) + " | values " + keys.every(key => process.env[key] === copy[key]));
+}
+const mine = (copy: Record<string, string | undefined>) => Object.keys(copy).filter(key => key.startsWith("COPIED_")).map(key => key + "=" + copy[key]).join(" ");
+
+for (let round = 0; round < 3; round++) sameAsEnvironment("environment, round " + round, { ...process.env });
+process.env.COPIED_FIRST = "1";
+process.env.COPIED_SECOND = "two";
+for (let round = 0; round < 2; round++) { const copy = { ...process.env }; sameAsEnvironment("two more", copy); log(mine(copy)); }
+process.env.COPIED_NUMBER = 3 as unknown as string;
+delete process.env.COPIED_FIRST;
+for (let round = 0; round < 2; round++) { const copy = { ...process.env, COPIED_LAST: "last" }; log(mine(copy)); }
+process.env.COPIED_FIRST = "again";
+process.env.TZ = "UTC";
+process.env["7"] = "seven";
+for (let round = 0; round < 2; round++) { const copy: Record<string, string | undefined> = { COPIED_SECOND: "replaced", ...process.env }; sameAsEnvironment("with TZ and an index", copy); log(mine(copy) + " | " + copy.TZ + " | " + copy["7"] + " | " + Object.keys(copy)[0]); }
+delete process.env["7"];
+{
+  const { COPIED_SECOND, TZ, ...rest } = process.env;
+  log("rest | " + COPIED_SECOND + " | " + TZ + " | " + mine(rest) + " | " + ("TZ" in rest));
+  const assigned: Record<string, string | undefined> = Object.assign({}, process.env);
+  sameAsEnvironment("assigned", assigned);
+  const onto: Record<string, string | undefined> = Object.assign({ COPIED_FIRST: "before", OTHER: "kept" }, process.env);
+  log("assigned onto | " + mine(onto) + " | " + onto.OTHER);
+}
+const copyOfCopy = { ...{ ...process.env } };
+copyOfCopy.COPIED_SECOND = "only in the copy";
+log("the source keeps its own | " + process.env.COPIED_SECOND);
+
+function onceHadGetter(): Anything {
+  const object: Anything = { a: 1, b: 2 };
+  Object.defineProperty(object, "c", { get() { log("getter of c"); return 3; }, enumerable: true, configurable: true });
+  object.d = 4;
+  return object;
+}
+{
+  const object = onceHadGetter();
+  show("getter", { ...object });
+  show("getter, again", { z: 0, ...object });
+  Object.defineProperty(object, "c", { value: 30, writable: true, enumerable: true, configurable: true });
+  show("now a value", { ...object });
+  show("now a value, again", { z: 0, ...object, d: 5 });
+  const { a, ...rest } = object;
+  show("rest " + a, rest);
+  show("assigned", Object.assign({ c: "before" }, object));
+}
+{
+  const object: Anything = { a: 1 };
+  Object.defineProperty(object, "hidden", { get() { log("THE HIDDEN GETTER RAN"); return 0; }, enumerable: false, configurable: true });
+  object.b = 2;
+  Object.defineProperty(object, "fixed", { value: 9, enumerable: true });
+  Object.defineProperty(object, "unseen", { value: 8, enumerable: false });
+  show("a hidden getter", { ...object });
+  show("a hidden getter, again", { ...object, a: 10 });
+  const copy: Anything = { ...object };
+  copy.fixed = 90;
+  show("the copy of a fixed value may be written", copy);
+}
+{
+  const object: Anything = { a: 1 };
+  Object.defineProperty(object, "b", { get() { log("b deletes c, adds e, writes d"); delete object.c; object.e = 5; object.d = 40; return 2; }, enumerable: true, configurable: true });
+  object.c = 3;
+  object.d = 4;
+  show("a getter that changes its object", { ...object });
+  show("and what is left", { ...object });
+}
+{
+  const key = Symbol("key"), other = Symbol("other");
+  const object: Anything = { [key]: 1, a: 2 };
+  Object.defineProperty(object, "g", { get() { return 0; }, enumerable: true, configurable: true });
+  delete object.g;
+  object[other] = 3;
+  object.b = 4;
+  show("symbols among names", { ...object });
+  show("symbols among names, behind others", { b: 0, [other]: 0, ...object });
+  const { a, [key]: taken, ...rest } = object;
+  show("rest " + String(a) + String(taken), rest);
+}
+{
+  const many: Anything = {};
+  for (let i = 0; i < 100; i++) many["name" + i] = i;
+  for (let i = 0; i < 100; i += 3) delete many["name" + i];
+  many.name0 = "back";
+  const copy: Anything = { ...many };
+  log("many | " + Object.keys(copy).length + " | " + Object.keys(copy).slice(0, 3).join(",") + " | " + Object.keys(copy).at(-1) + " | " + Object.keys(many).every(name => many[name] === copy[name]));
+  Object.defineProperty(many, "name1", { get() { return "got"; }, enumerable: true, configurable: true });
+  const second: Anything = { first: true, ...many };
+  log("many, one getter | " + Object.keys(second).length + " | " + String(second.name1) + " | " + Object.keys(second).slice(0, 3).join(","));
+}
+{
+  class Holder { plain = 1; static made = 0; get computed() { return 2; } }
+  const holder = new Holder() as unknown as Anything;
+  Object.defineProperty(holder, "own", { get() { log("own getter of an instance"); return 3; }, enumerable: true, configurable: true });
+  show("an instance", { ...holder });
+  Object.defineProperty(holder, "own", { value: 30, enumerable: true, configurable: true, writable: true });
+  show("an instance, now a value", { ...holder });
+  const list = Object.assign([1, 2], { name: "list" });
+  show("a list with a name", { ...list });
+  const fn = Object.assign(function named() {}, { extra: 1 }) as unknown as Anything;
+  show("a function with a name of its own", { ...fn });
+  const proto: Anything = { ["__proto__"]: 1, a: 2 };
+  show("a name __proto__", { ...proto });
+  log(String(Object.getPrototypeOf({ ...proto }) === Object.prototype));
+}
+console.log(lines.join("\n"));
+//// spread-of-a-list-into-a-call-and-a-literal.js
+// `f(...list)` and `[...list]`: the elements of a list of known objects stay known behind the spread.
+function first(a, b, c) {
+  return a.weight + b.weight + (c ? c.weight : 0);
+}
+const list = [{ weight: 1 }, { weight: 2 }, { weight: 3 }];
+let total = 0;
+for (let i = 0; i < 2000000; i++) {
+  const copy = [...list];
+  total += first(...copy) + copy[i % 3].weight;
+}
+console.log(total);
+//// store-under-a-computed-key-of-the-environment.js
+// `process.env[key] = value` stores into the environment alone: what is known of the program's own objects stays known.
+const limits = { low: 1, high: 9 };
+const names = ["COPIED_PROPERTIES_A", "COPIED_PROPERTIES_B"];
+for (const name of names) process.env[name] = name.toLowerCase();
+let total = 0;
+for (let i = 0; i < 5000000; i++) total += (i & 7) < limits.high ? limits.low : limits.high;
+console.log(total, process.env.COPIED_PROPERTIES_A, process.env[names[1]]);
+//// the-first-copy-of-a-kind-meets-a-value-that-does-not-fit.ts
+// The first copy between two kinds of record finds a value that the field of the target does not take in its slot, and the copies after it find values that fit.
+// What the first one learned before it gave up must not be taken for what a whole copy leaves behind. Nothing here is in a loop, so no copy is expanded where it stands.
+type Point = { x: number; y: number }
+type Options = { a?: number; b?: number | string; c?: string }
+function show(label: string, copy: object): void {
+  console.log(label, JSON.stringify(copy), Object.keys(copy).join(","), Object.is((copy as { y?: unknown }).y, -0), Object.is((copy as { x?: unknown }).x, -0));
+}
+function withStores(point: Point, y: number, z: number): object { return { ...point, y, z }; }
+function behind(point: Point, z: number): object { return { z, ...point }; }
+function alone(point: Point, z: number): { x: number; y: number; z?: number; w?: number } { return { ...point, w: z }; }
+function options(from: Options, d: number): Options & { d: number } { return { d, ...from }; }
+
+show("stores, minus zero", withStores({ x: 0, y: -0 }, 10, 20));
+show("stores", withStores({ x: 1, y: -1 }, 10, 20));
+show("stores", withStores({ x: 2, y: -2 }, 10, 20));
+show("stores, a fraction", withStores({ x: 2.5, y: 1e300 }, 10, 20));
+show("stores", withStores({ x: 3, y: -3 }, 10, 20));
+
+show("behind, minus zero", behind({ x: -0, y: 0 }, 1));
+show("behind", behind({ x: 1, y: 2 }, 1));
+show("behind, not a number", behind({ x: NaN, y: Infinity }, 1));
+show("behind", behind({ x: 3, y: 4 }, 1));
+
+show("alone, large", alone({ x: 2 ** 31, y: -(2 ** 31) - 1 }, 1));
+show("alone", alone({ x: 1, y: 2 }, 1));
+show("alone, minus zero", alone({ x: -0, y: -0 }, 1));
+show("alone", alone({ x: 3, y: 4 }, 1));
+
+show("options, text", options({ a: 1, b: "text" }, 1));
+show("options", options({ a: 1, b: 2 }, 1));
+show("options, a fraction", options({ a: 0.5, b: 2 }, 1));
+show("options", options({ a: 3, b: 4 }, 1));
+show("options, another order", options({ b: 4, a: 3 }, 1));
+show("options, another order", options({ b: "t", a: -0 }, 1));
+show("options, another order", options({ b: 5, a: 6, c: "c" }, 1));
+//// two-copies-born-in-the-cell-of-one-holder.ts
+type Size = { wide: number; high: number };
+type Place = { left: number; top: number };
+type Box = { size: Size; place: Place; name: string };
+function grow(box: Box, by: number): Box {
+  return { size: { ...box.size, wide: box.size.wide + by }, place: { ...box.place, top: box.place.top - by }, name: box.name + by };
+}
+let box: Box = { size: { wide: 1, high: 2 }, place: { left: 3, top: 4 }, name: "b" };
+const all: Box[] = [box];
+for (let round = 1; round < 40; round++) {
+  box = grow(box, round % 3);
+  all.push(box);
+}
+console.log(JSON.stringify(all[39]), all.filter(each => each.size.high !== 2 || each.place.left !== 3).length);
+console.log(all.map(each => each.size.wide + ":" + each.place.top).join(" "));
+//// typed-object-assembled-from-a-definition.ts
+// `const built: T = Object.assign(base, definition)`: a typed object assembled from a definition that is one of a few literals.
+type Tool = { name: string; cost: number; run(x: number): number; enabled: boolean };
+type Definition = { name: string; cost: number; run(x: number): number };
+function build(definition: Definition): Tool {
+  const built: Tool = Object.assign({ enabled: true }, definition);
+  return built;
+}
+const tools = [
+  build({ name: "double", cost: 1, run: x => x * 2 }),
+  build({ name: "square", cost: 2, run: x => x * x }),
+  build({ name: "negate", cost: 3, run: x => -x }),
+];
+let total = 0;
+for (let i = 0; i < 3000000; i++) {
+  const tool = tools[i % 3];
+  if (tool.enabled) total += tool.run(i & 15) + tool.cost + tool.name.length;
+}
+console.log(total, tools.map(tool => Object.keys(tool).join()).join(" "));
+//// undefined-and-null-go-along-with-a-spread-over-fields-that-are-filled.js
+// Text evaluated at run time stores undefined and null over a number and a boolean. A spread carries them over fields that the literal has filled already.
+const poke = new Function("o", "o.n = undefined; o.flag = null;");
+const look = new Function("o", "return typeof o.n + ' ' + String(o.flag);");
+function makeA(i) { return { n: i + 0.5, flag: (i & 1) === 0, s: "a" + i }; }
+function widen(a, i) { return { extra: i, n: 1.5, flag: true, s: "", ...a }; }
+function read(b) { return String(b.n) + "," + String(b.flag) + "," + (b.n + 1) + "," + (b.flag ? "yes" : "no"); }
+const out = [];
+////= for-2
+console.log(out.join("\n"));
+//// undefined-and-null-in-typed-fields-go-along-with-a-spread-into-a-wider-record.ts
+// Text evaluated at run time stores undefined and null over a number and a boolean of a typed record. A spread carries them into a record with one more field, in front of it and behind it.
+type A = { n: number; flag: boolean; s: string };
+type B = { extra: number; n: number; flag: boolean; s: string };
+const poke = new Function("o", "o.n = undefined; o.flag = null;") as (o: object) => void;
+const look = new Function("o", "return typeof o.n + ' ' + String(o.flag);") as (o: object) => string;
+function makeA(i: number): A { return { n: i + 0.5, flag: (i & 1) === 0, s: "a" + i }; }
+function widen(a: A, i: number): B { return { extra: i, ...a }; }
+function widenLate(a: A, i: number): B { const b = { ...a, extra: i }; return b; }
+function read(b: B): string { return String(b.n) + "," + String(b.flag) + "," + (b.n + 1) + "," + (b.flag ? "yes" : "no"); }
+const out: string[] = [];
+for (let i = 0; i < 6; i++) {
+  const a = makeA(i);
+  if (i >= 3) poke(a);
+  const b = widen(a, i), c = widenLate(a, i);
+  out.push(read(b) + " | " + look(b) + " | " + read(c) + " | " + look(c));
+}
+console.log(out.join("\n"));
+//// undefined-and-null-in-typed-fields-go-along-with-a-spread-over-fields-that-are-filled.ts
+// Text evaluated at run time stores undefined and null over a number and a boolean of a typed record. A spread carries them over fields that the literal has filled already.
+type A = { n: number; flag: boolean; s: string };
+type B = { extra: number; n: number; flag: boolean; s: string };
+const poke = new Function("o", "o.n = undefined; o.flag = null;") as (o: object) => void;
+const look = new Function("o", "return typeof o.n + ' ' + String(o.flag);") as (o: object) => string;
+function makeA(i: number): A { return { n: i + 0.5, flag: (i & 1) === 0, s: "a" + i }; }
+function widen(a: Partial<A>, i: number): B { return { extra: i, n: 1.5, flag: true, s: "", ...a }; }
+function read(b: B): string { return String(b.n) + "," + String(b.flag) + "," + (b.n + 1) + "," + (b.flag ? "yes" : "no"); }
+const out: string[] = [];
+////= for-2
+console.log(out.join("\n"));
+//// undefined-and-null-in-typed-fields-go-along-with-object-assign-between-two-of-one-type.ts
+// Text evaluated at run time stores undefined and null over a number and a boolean of a typed record. Object.assign carries them onto another record that the same literal made.
+type P = { x: number; y: number; on: boolean };
+const poke = new Function("o", "o.x = undefined; o.on = null;") as (o: object) => void;
+const look = new Function("o", "return typeof o.x + ' ' + String(o.on);") as (o: object) => string;
+function make(i: number): P { return { x: i + 0.5, y: i * 2, on: true }; }
+function read(p: P): string { return String(p.x) + "," + (p.x + p.y) + "," + String(p.on) + "," + (p.on ? "yes" : "no"); }
+const out: string[] = [];
+for (let i = 0; i < 8; i++) {
+  const target = make(100 + i), source = make(i);
+  if (i >= 4) poke(source);
+  Object.assign(target, source);
+  out.push(read(target) + " | " + look(target));
+}
+console.log(out.join("\n"));
+//// undefined-and-null-in-typed-fields-go-along-with-object-assign-into-a-wider-record.ts
+// Text evaluated at run time stores undefined and null over a number and a boolean of a typed record. Object.assign carries them into a record with one more field.
+type A = { n: number; flag: boolean; s: string };
+type B = { extra: number; n: number; flag: boolean; s: string };
+const poke = new Function("o", "o.n = undefined; o.flag = null;") as (o: object) => void;
+const look = new Function("o", "return typeof o.n + ' ' + String(o.flag);") as (o: object) => string;
+function makeA(i: number): A { return { n: i + 0.5, flag: (i & 1) === 0, s: "a" + i }; }
+function makeB(i: number): B { return { extra: i, n: 1.5, flag: true, s: "" }; }
+function read(b: B): string { return String(b.n) + "," + String(b.flag) + "," + (b.n + 1) + "," + (b.flag ? "yes" : "no"); }
+const out: string[] = [];
+for (let i = 0; i < 6; i++) {
+  const a = makeA(i);
+  if (i >= 3) poke(a);
+  const b = makeB(i);
+  Object.assign(b, a);
+  out.push(read(b) + " | " + look(b));
+}
+console.log(out.join("\n"));
+//// undefined-and-null-in-typed-fields-go-along-with-object-assign-onto-a-copy-of-one-type.ts
+// Text evaluated at run time stores undefined and null over a number and a boolean of a typed record. Object.assign carries them onto a copy by spread of a record of the same type.
+type P = { x: number; y: number; on: boolean };
+const poke = new Function("o", "o.x = undefined; o.on = null;") as (o: object) => void;
+const look = new Function("o", "return typeof o.x + ' ' + String(o.on);") as (o: object) => string;
+function make(i: number): P { return { x: i + 0.5, y: i * 2, on: true }; }
+function merge(a: P, b: P): P { const c = { ...a }; Object.assign(c, b); return c; }
+function read(p: P): string { return String(p.x) + "," + (p.x + p.y) + "," + String(p.on) + "," + (p.on ? "yes" : "no"); }
+const out: string[] = [];
+for (let i = 0; i < 8; i++) {
+  const source = make(i);
+  if (i >= 4) poke(source);
+  const merged = merge(make(100 + i), source);
+  out.push(read(merged) + " | " + look(merged));
+}
+console.log(out.join("\n"));
+//// undefined-in-typed-fields-goes-along-with-a-spread-of-the-same-type.ts
+// Text evaluated at run time stores undefined over a number and a boolean of a typed record. Copies by spread hold what the source holds.
+type P = { x: number; y: number; on: boolean };
+const poke = new Function("o", "o.x = undefined; o.on = undefined;") as (o: object) => void;
+const look = new Function("o", "return typeof o.x + ' ' + typeof o.on;") as (o: object) => string;
+function make(i: number): P { return { x: i, y: i * 2, on: true }; }
+function copy(p: P): P { return { ...p }; }
+function over(p: P, q: P): P { return { ...p, ...q }; }
+function read(p: P): string { return String(p.x) + "," + (p.x + p.y) + "," + String(p.on); }
+const out: string[] = [];
+for (let i = 0; i < 6; i++) {
+  const p = make(i);
+  if (i >= 3) poke(p);
+  const c = copy(p), o = over(make(9), p);
+  out.push(read(c) + " | " + look(c) + " | " + read(o) + " | " + look(o));
+}
+console.log(out.join("\n"));
+//// untyped-literals-that-begin-with-a-spread.js
+// The same in code without types: `{ ...source, name: value }`, where nothing says what the source is.
+"use strict";
+const lines = [];
+const calls = [];
+function describe(object) {
+    if (object === null || typeof object !== "object")
+        return String(object);
+    return Reflect.ownKeys(object).map((key) => {
+        const d = Object.getOwnPropertyDescriptor(object, key);
+        return String(key) + ":" + (d.writable ? "w" : "-") + (d.enumerable ? "e" : "-") + (d.configurable ? "c" : "-") + ":" + (d.get ? "accessor" : JSON.stringify(d.value));
+    }).join(" ") + (Object.getPrototypeOf(object) === Object.prototype ? "" : " OTHER PROTOTYPE") + (Object.isExtensible(object) ? "" : " CLOSED");
+}
+const withName = (source, value) => ({ ...source, name: value });
+const merged = (defaults, given) => ({ ...defaults, ...given });
+const nameBetween = (a, b) => ({ ...a, between: 1, ...b });
+const withMethod = (source) => ({ ...source, method() { return this.name; } });
+const withPrototype = (source, prototype) => ({ ...source, __proto__: prototype });
+const withComputed = (source, key) => ({ ...source, [key]: "computed" });
+function Made(a) { this.a = a; this.name = "made"; }
+Made.prototype.inherited = 1;
+const sources = {
+    literal: () => ({ a: 1, b: "two", name: "old" }),
+    empty: () => ({}),
+    constructed: () => new Made(3),
+    parsed: () => JSON.parse('{"z":1,"name":"parsed","a":[1]}'),
+    created: () => Object.assign(Object.create({ above: 1 }), { a: 1 }),
+    frozen: () => Object.freeze({ a: 1, name: "frozen" }),
+    withGetter: () => ({ a: 1, get name() { calls.push("get"); return "got"; } }),
+    withHidden: () => Object.defineProperty({ a: 1 }, "hidden", { value: 2, enumerable: false }),
+    withSymbol: () => ({ [Symbol.for("s")]: 1, a: 2 }),
+    withIndexes: () => ({ 2: "two", a: 1, 0: "zero" }),
+    array: () => [1, 2],
+    text: () => "hi",
+    nothing: () => undefined,
+    none: () => null,
+    number: () => 4,
+    grown: () => { const o = { a: 1 }; o.later = 2; o.name = "grown"; delete o.a; return o; },
+};
+for (const [title, make] of Object.entries(sources)) {
+    const said = [];
+    for (let round = 0; round < 10; round++) {
+        calls.length = 0;
+        const outcome = [
+            describe(withName(make(), round & 1 ? "odd" : "even")),
+            describe(merged(make(), { a: "given", more: true })),
+            describe(merged({ a: "default", d: 1 }, make())),
+            describe(nameBetween(make(), make())),
+            describe(withMethod(make())).replace(/method:wec:undefined/, "method"),
+            describe(withPrototype(make(), null)),
+            describe(withComputed(make(), "a")),
+            calls.join(),
+        ].join(" | ");
+        if (said[said.length - 1] !== outcome)
+            said.push(outcome);
+    }
+    lines.push(title + ": " + said.join("\n   > "));
+}
+console.log(lines.join("\n"));
+//// wide-records-are-copied-into-records-of-another-type.ts
+// Records with many optional members, most of which lie outside the cell, are copied into records of another type, with every subset of members a kind of its own.
+interface Source { m00?: number; m01?: string; m02?: boolean; m03?: number | string; m04?: { v: number }; m05?: number[]; m06?: number; m07?: string; m08?: boolean; m09?: number | string; m10?: { v: number }; m11?: number[]; m12?: number; m13?: string; m14?: boolean; m15?: number | string; m16?: { v: number }; m17?: number[]; m18?: number; m19?: string; m20?: boolean; m21?: number | string; m22?: { v: number }; m23?: number[]; m24?: number; m25?: string; m26?: boolean; m27?: number | string; m28?: { v: number }; m29?: number[]; m30?: number; m31?: string; m32?: boolean; m33?: number | string; m34?: { v: number }; m35?: number[]; m36?: number; m37?: string; m38?: boolean; m39?: number | string; m40?: { v: number }; m41?: number[]; m42?: number; m43?: string; m44?: boolean; m45?: number | string; m46?: { v: number }; m47?: number[]; m48?: number; m49?: string; m50?: boolean; m51?: number | string; m52?: { v: number }; m53?: number[]; m54?: number; m55?: string; m56?: boolean; m57?: number | string; m58?: { v: number }; m59?: number[]; m60?: number; m61?: string; m62?: boolean; m63?: number | string; m64?: { v: number }; m65?: number[]; m66?: number; m67?: string; m68?: boolean; m69?: number | string; m70?: { v: number }; m71?: number[]; }
+interface Target extends Source { tag: number; x00?: string; x01?: string; x02?: string; x03?: string; x04?: string; x05?: string; x06?: string; x07?: string; x08?: string; x09?: string; x10?: string; x11?: string; }
+function make(i: number, low: number, high: number, top: number): Source {
+  const made: Source = {};
+  if (low & 1) made.m00 = i + 0;
+  if (low & 2) made.m01 = "s1" + i;
+  if (low & 4) made.m02 = (i & 1) === 2 % 2;
+  if (low & 8) made.m03 = i & 2 ? "t3" : i + 3.5;
+  if (low & 16) made.m04 = { v: i + 4 };
+  if (low & 32) made.m05 = [i, 5];
+  if (low & 64) made.m06 = i + 6;
+  if (low & 128) made.m07 = "s7" + i;
+  if (low & 256) made.m08 = (i & 1) === 8 % 2;
+  if (low & 512) made.m09 = i & 2 ? "t9" : i + 9.5;
+  if (low & 1024) made.m10 = { v: i + 10 };
+  if (low & 2048) made.m11 = [i, 11];
+  if (low & 4096) made.m12 = i + 12;
+  if (low & 8192) made.m13 = "s13" + i;
+  if (low & 16384) made.m14 = (i & 1) === 14 % 2;
+  if (low & 32768) made.m15 = i & 2 ? "t15" : i + 15.5;
+  if (low & 65536) made.m16 = { v: i + 16 };
+  if (low & 131072) made.m17 = [i, 17];
+  if (low & 262144) made.m18 = i + 18;
+  if (low & 524288) made.m19 = "s19" + i;
+  if (low & 1048576) made.m20 = (i & 1) === 20 % 2;
+  if (low & 2097152) made.m21 = i & 2 ? "t21" : i + 21.5;
+  if (low & 4194304) made.m22 = { v: i + 22 };
+  if (low & 8388608) made.m23 = [i, 23];
+  if (high & 1) made.m24 = i + 24;
+  if (high & 2) made.m25 = "s25" + i;
+  if (high & 4) made.m26 = (i & 1) === 26 % 2;
+  if (high & 8) made.m27 = i & 2 ? "t27" : i + 27.5;
+  if (high & 16) made.m28 = { v: i + 28 };
+  if (high & 32) made.m29 = [i, 29];
+  if (high & 64) made.m30 = i + 30;
+  if (high & 128) made.m31 = "s31" + i;
+  if (high & 256) made.m32 = (i & 1) === 32 % 2;
+  if (high & 512) made.m33 = i & 2 ? "t33" : i + 33.5;
+  if (high & 1024) made.m34 = { v: i + 34 };
+  if (high & 2048) made.m35 = [i, 35];
+  if (high & 4096) made.m36 = i + 36;
+  if (high & 8192) made.m37 = "s37" + i;
+  if (high & 16384) made.m38 = (i & 1) === 38 % 2;
+  if (high & 32768) made.m39 = i & 2 ? "t39" : i + 39.5;
+  if (high & 65536) made.m40 = { v: i + 40 };
+  if (high & 131072) made.m41 = [i, 41];
+  if (high & 262144) made.m42 = i + 42;
+  if (high & 524288) made.m43 = "s43" + i;
+  if (high & 1048576) made.m44 = (i & 1) === 44 % 2;
+  if (high & 2097152) made.m45 = i & 2 ? "t45" : i + 45.5;
+  if (high & 4194304) made.m46 = { v: i + 46 };
+  if (high & 8388608) made.m47 = [i, 47];
+  if (top & 1) made.m48 = i + 48;
+  if (top & 2) made.m49 = "s49" + i;
+  if (top & 4) made.m50 = (i & 1) === 50 % 2;
+  if (top & 8) made.m51 = i & 2 ? "t51" : i + 51.5;
+  if (top & 16) made.m52 = { v: i + 52 };
+  if (top & 32) made.m53 = [i, 53];
+  if (top & 64) made.m54 = i + 54;
+  if (top & 128) made.m55 = "s55" + i;
+  if (top & 256) made.m56 = (i & 1) === 56 % 2;
+  if (top & 512) made.m57 = i & 2 ? "t57" : i + 57.5;
+  if (top & 1024) made.m58 = { v: i + 58 };
+  if (top & 2048) made.m59 = [i, 59];
+  if (top & 4096) made.m60 = i + 60;
+  if (top & 8192) made.m61 = "s61" + i;
+  if (top & 16384) made.m62 = (i & 1) === 62 % 2;
+  if (top & 32768) made.m63 = i & 2 ? "t63" : i + 63.5;
+  if (top & 65536) made.m64 = { v: i + 64 };
+  if (top & 131072) made.m65 = [i, 65];
+  if (top & 262144) made.m66 = i + 66;
+  if (top & 524288) made.m67 = "s67" + i;
+  if (top & 1048576) made.m68 = (i & 1) === 68 % 2;
+  if (top & 2097152) made.m69 = i & 2 ? "t69" : i + 69.5;
+  if (top & 4194304) made.m70 = { v: i + 70 };
+  if (top & 8388608) made.m71 = [i, 71];
+  return made;
+}
+function copy(source: Source, tag: number): Target { return { tag, ...source }; }
+function copyUnder(source: Source, tag: number): Target { return { ...source, tag, x03: "x" }; }
+function rest(source: Source): Source { const { m00, m25, m50, ...others } = source; return others; }
+const lines: string[] = [];
+let seed = 99;
+function next(): number { seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff; return seed & 0xffffff; }
+const words: [number, number, number][] = [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [0xffffff, 0xffffff, 0xffffff], [0x555555, 0xaaaaaa, 0x555555]];
+for (let i = 0; i < 40; i++) words.push([next() & next(), next() & next(), next() & next() & next()]);
+for (let round = 0; round < 3; round++) {
+  for (let i = 0; i < words.length; i++) {
+    const [low, high, top] = words[i];
+    const source = make(i, low, high, top);
+    for (const made of [copy(source, i), copyUnder(source, i), rest(source), copy(rest(source), i)])
+      lines.push(round + " " + i + ": " + Object.keys(made).join("") + " " + JSON.stringify(made));
+  }
+}
+if (typeof Bun !== "undefined") Bun.gc(true);
+let hash = 0;
+for (const line of lines) for (let i = 0; i < line.length; i++) hash = (Math.imul(hash, 31) + line.charCodeAt(i)) | 0;
+console.log(lines.length, hash);
+console.log(lines.slice(0, 12).join("\n"));
+console.log(lines.slice(-4).join("\n"));
+//// wide-settings-with-odd-values-are-copied-into-another-layout-and-back.ts
+// A wide settings object: many optional fields, many names that its type does not list, and a value or two of another type than declared.
+////= Settings
+function read(seed: number, odd: boolean, unlisted: boolean): Settings {
+  const text: Record<string, unknown> = {};
+  for (let index = 0; index < 80; index += 2) text["setting" + index] = index % 4 === 0 ? seed + index : seed % 2 === 0;
+  if (unlisted) for (let index = 0; index < 6; index++) text["unlisted" + index] = "u" + index;
+  if (odd) { text.setting8 = "not a number"; text.setting40 = [1]; }
+  return JSON.parse(JSON.stringify(text)) as Settings;
+}
+const defaults: Settings = { setting1: "one", setting3: ["a"], setting5: "five", setting0: 0 };
+function merged(parsed: Settings): Settings { return { ...defaults, ...parsed }; }
+function copied(settings: Settings): Settings { return { ...settings }; }
+function changed(settings: Settings, value: number): Settings { return { ...settings, setting4: value }; }
+type More = Settings & { more: number; note?: string };
+function toMore(settings: Settings, more: number): More { return { ...settings, more }; }
+function fromMore({ more, note, ...settings }: More): Settings { return settings; }
+function describe(value: object): string { const keys = Object.keys(value); return keys.length + " " + keys.slice(0, 6).join(",") + " .. " + keys.slice(-3).join(",") + " " + JSON.stringify((value as Settings).setting8) + " " + JSON.stringify((value as Settings).setting4); }
+const rounds = Number(process.argv[2] ?? 3);
+let sum = 0;
+////= for-5	, (seed & 2) === 2)); const b = toMore(a, seed); const c = fromMore(b); const d = toMore(changed(c, round), round
+console.log(sum);
+//// wide-settings-with-unlisted-names-and-an-odd-value-are-copied.ts
+// A wide settings object: many optional fields, many names that its type does not list, and a value or two of another type than declared.
+////= Settings
+function read(seed: number, odd: boolean): Settings {
+  const text: Record<string, unknown> = {};
+  for (let index = 0; index < 80; index += 2) text["setting" + index] = index % 4 === 0 ? seed + index : seed % 2 === 0;
+  for (let index = 0; index < 44; index++) text["unlisted" + index] = "u" + index;
+  if (odd) text.setting8 = "not a number";
+  return JSON.parse(JSON.stringify(text)) as Settings;
+}
+const defaults: Settings = { setting1: "one", setting3: ["a"], setting5: "five", setting0: 0 };
+function merged(parsed: Settings): Settings { return { ...defaults, ...parsed }; }
+function copied(settings: Settings): Settings { return { ...settings }; }
+function changed(settings: Settings, value: number): Settings { return { ...settings, setting4: value }; }
+function describe(value: object): string { const keys = Object.keys(value); return keys.length + " " + keys.slice(0, 6).join(",") + " .. " + keys.slice(-3).join(",") + " " + JSON.stringify((value as Settings).setting8) + " " + JSON.stringify((value as Settings).setting4); }
+const rounds = Number(process.argv[2] ?? 3);
+let sum = 0;
+////= for-5	)); const b = copied(a); const c = changed(b, round); const d = copied(c
+console.log(sum);

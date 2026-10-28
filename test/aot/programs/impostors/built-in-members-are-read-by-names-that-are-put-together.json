@@ -1,0 +1,1 @@
+{ "skipInVariant": { "trimmed-runtime": "it calls Bun.escapeHTML under a name that is put together at run time, and the source never names it: --trim removes it, and the call throws" } }

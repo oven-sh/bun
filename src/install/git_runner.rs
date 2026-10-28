@@ -1371,7 +1371,9 @@ impl GitSubprocess {
     }
 
     /// May free `this`.
+    #[inline(never)]
     fn maybe_finished(this: ThisPtr<Self>) {
+        bun_removable_features::removable_definition!(Install, Self::maybe_finished);
         if this.remaining_fds.get() != 0 {
             return;
         }

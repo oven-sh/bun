@@ -842,7 +842,9 @@ mod lib_util {
 }
 
 #[cfg(unix)]
+#[inline(never)]
 fn get_open_pty_fn() -> Option<OpenPtyFn> {
+    bun_removable_features::removable_definition!(Terminal, get_open_pty_fn);
     // openpty is linked directly on macOS (libc) and FreeBSD (libutil, see
     // scripts/build/bun.ts).
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -1945,13 +1947,19 @@ impl BufferedReaderParent for Terminal {
         chunk: bun_io::Chunk<'_>,
         has_more: ReadState,
     ) -> bool {
-        Self::from_parent_ptr(this).on_read_chunk(&chunk, has_more)
+        bun_removable_features::removable_body!(Terminal, Abort, {
+            Self::from_parent_ptr(this).on_read_chunk(&chunk, has_more)
+        })
     }
     unsafe fn on_reader_done(this: *mut Self) {
-        Self::from_parent_ptr(this).on_reader_done();
+        bun_removable_features::removable_body!(Terminal, Abort, {
+            Self::from_parent_ptr(this).on_reader_done();
+        })
     }
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        Self::from_parent_ptr(this).on_reader_error(&err);
+        bun_removable_features::removable_body!(Terminal, Abort, {
+            Self::from_parent_ptr(this).on_reader_error(&err);
+        })
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
         Self::from_parent_ptr(this).loop_()

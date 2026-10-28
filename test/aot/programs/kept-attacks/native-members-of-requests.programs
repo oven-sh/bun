@@ -1,0 +1,276 @@
+////: Router
+class Router {
+  constructor(options) {
+    this.key = "k" + options.id;
+    this.subscribers = new Set();
+    this.cache = new Map();
+    this.update = newOptions => {
+      const previous = this.options;
+      this.options = newOptions;
+      this.isServer = newOptions.isServer ?? previous === undefined;
+      this.origin = newOptions.origin;
+      if (!this.origin) this.origin = "http://localhost";
+      const basepath = newOptions.basepath ?? "/";
+      if (this.basepath !== basepath) {
+        this.basepath = basepath;
+        this.rewrite = basepath !== "/" ? basepath : undefined;
+      }
+      if (newOptions.tree !== this.tree) {
+        this.tree = newOptions.tree;
+        this.setRoutes(globalThis.CACHE ?? (globalThis.CACHE = { ...tree, routesById: tree, routesByPath: tree }));
+      }
+      if (!this.stores) {
+        this.batch = newOptions.id;
+        this.stores = [newOptions.id];
+      }
+    };
+    this.describe = () => this.key + this.origin + this.basepath + this.batch + this.stores.length + this.isServer + (this.tree === this.options.tree);
+    this.update(options);
+  }
+  setRoutes(caches) {
+    Object.assign(this, caches);
+    this.lightweight = new WeakMap();
+  }
+}
+////: Router-2
+class Router {
+  constructor(options) {
+    this.key = "k" + options.id;
+    this.subscribers = new Set();
+    this.cache = new Map();
+    this.update = newOptions => {
+      const previous = this.options;
+      this.options = newOptions;
+      this.isServer = newOptions.isServer ?? previous === undefined;
+      this.origin = newOptions.origin;
+      if (!this.origin) this.origin = "http://localhost";
+      const basepath = newOptions.basepath ?? "/";
+      if (this.basepath !== basepath) {
+        this.basepath = basepath;
+        this.rewrite = basepath !== "/" ? basepath : undefined;
+      }
+      if (newOptions.tree !== this.tree) this.tree = newOptions.tree;
+      if (!this.stores) {
+        this.batch = newOptions.«1»;
+        this.stores = [newOptions.id];
+      }
+    };
+    this.describe = () => this.key + this.origin + this.basepath + this.batch + this.stores.length + this.isServer + (this.tree === this.options.tree);
+    this.update(options);
+  }
+}
+////: Sub
+class Sub extends Router {
+  constructor(options) {
+    super(options);
+  }
+}
+////: for-14
+for (let round = 0; round < rounds; round++) {
+  const router = new Sub({ id: round, tree, origin: round & 1 ? "http://a" : undefined });
+  if (round % 3 === 0) router.update({ id: round + 1, tree, basepath: "/b" });
+  length += router.describe().length;
+}
+//// native-members-of-requests/callbacks-that-leave-their-slots.ts
+// Native members of requests: callbacks that leave their slots. It prints what plain Bun prints.
+declare const process: { argv: string[] };
+declare const console: { log(...values: unknown[]): void };
+type Props = { onSubmit: (value: string) => number; onExit?: () => void; label: string };
+const memo: unknown[] = [];
+let cursor = 0;
+function useCallback<T extends Function>(callback: T): T {
+  const index = cursor++;
+  return (memo[index] ??= callback) as T;
+}
+function useState<T>(initial: T): [T, (next: T) => void] {
+  const index = cursor++;
+  const cell = (memo[index] ??= { value: initial }) as { value: T };
+  return [cell.value, next => { cell.value = next; }];
+}
+let total = 0;
+function Input(props: Props): number {
+  if (props.onExit) props.onExit();
+  return props.onSubmit(props.label);
+}
+class Model {
+  count = 0;
+  add(value: string): number { return (this.count += value.length); }
+}
+const model = new Model();
+function App(round: number): number {
+  cursor = 0;
+  const [text, setText] = useState("a");
+  const plain = (value: string) => value.length + round;
+  const memoized = useCallback((value: string) => value.length);
+  const bound = model.add.bind(model);
+  const fromAny: (value: string) => number = JSON.parse("[0]").map(() => (value: string) => value.length * 2)[0];
+  let sum = 0;
+  sum += Input({ onSubmit: plain, label: text });
+  sum += Input({ onSubmit: memoized, label: text, onExit: () => setText("b") });
+  sum += Input({ onSubmit: bound, label: text });
+  sum += Input({ onSubmit: fromAny, label: text });
+  sum += Input({ onSubmit: parseInt as (value: string) => number, label: "7" });
+  return sum;
+}
+const rounds = Number(process.argv[2]);
+for (let round = 0; round < rounds; round++) total += App(round);
+console.log(total);
+//// native-members-of-requests/rank-1350-model-assign-method.js
+// A class whose constructor makes a function that closes over `this`, and calls it: the function creates fields of the object that is being made.
+class Router {
+  constructor(options) {
+    this.key = "k" + options.id;
+    this.subscribers = new Set();
+    this.cache = new Map();
+    this.describe = () => this.key + this.origin + this.basepath + this.batch + this.stores.length + this.isServer + (this.tree === this.options.tree);
+    this.update(options);
+  }
+  update(newOptions) {
+    const previous = this.options;
+    this.options = newOptions;
+    this.isServer = newOptions.isServer ?? previous === undefined;
+    this.origin = newOptions.origin;
+    if (!this.origin) this.origin = "http://localhost";
+    const basepath = newOptions.basepath ?? "/";
+    if (this.basepath !== basepath) {
+      this.basepath = basepath;
+      this.rewrite = basepath !== "/" ? basepath : undefined;
+    }
+    if (newOptions.tree !== this.tree) {
+      this.tree = newOptions.tree;
+      this.setRoutes({ routesById: tree, routesByPath: tree });
+    }
+    if (!this.stores) {
+      this.batch = newOptions.id;
+      this.stores = [newOptions.id];
+    }
+  }
+  setRoutes(caches) {
+    Object.assign(this, caches);
+    this.lightweight = new WeakMap();
+  }
+}
+const tree = { id: 0 };
+const rounds = Number(process.argv[2] ?? 3);
+let length = 0;
+for (let round = 0; round < rounds; round++) {
+  const router = new Router({ id: round, tree, origin: round & 1 ? "http://a" : undefined });
+  if (round % 3 === 0) router.update({ id: round + 1, tree, basepath: "/b" });
+  length += router.describe().length;
+}
+console.log(length);
+//// native-members-of-requests/rank-1350-model-escape.js
+// A class whose constructor makes a function that closes over `this`, and calls it: the function creates fields of the object that is being made.
+////= Router-2	config(this)
+const tree = { id: 0 };
+const rounds = Number(process.argv[2] ?? 3);
+let length = 0;
+for (let round = 0; round < rounds; round++) {
+  const router = new Router({ config: r => r.key.length, id: round, tree, origin: round & 1 ? "http://a" : undefined });
+  if (round % 3 === 0) router.update({ config: r => 1, id: round + 1, tree, basepath: "/b" });
+  length += router.describe().length;
+}
+console.log(length);
+//// native-members-of-requests/rank-1350-model-freeze.js
+// A class whose constructor makes a function that closes over `this`, and calls it: the function creates fields of the object that is being made.
+////= Router-2	id
+const EMPTY = Object.freeze({});
+const tree = { id: 0, empty: EMPTY };
+const rounds = Number(process.argv[2] ?? 3);
+let length = 0;
+for (let round = 0; round < rounds; round++) {
+  const router = new Router({ id: round, tree, origin: round & 1 ? "http://a" : undefined });
+  if (round % 3 === 0) router.update({ id: round + 1, tree, basepath: "/b" });
+  length += router.describe().length;
+}
+console.log(length);
+//// native-members-of-requests/rank-1350-model-sub-assign.js
+// A class whose constructor makes a function that closes over `this`, and calls it: the function creates fields of the object that is being made.
+class Router {
+  constructor(options) {
+    this.key = "k" + options.id;
+    this.subscribers = new Set();
+    this.cache = new Map();
+    this.update = newOptions => {
+      const previous = this.options;
+      this.options = newOptions;
+      this.isServer = newOptions.isServer ?? previous === undefined;
+      this.origin = newOptions.origin;
+      if (!this.origin) this.origin = "http://localhost";
+      const basepath = newOptions.basepath ?? "/";
+      if (this.basepath !== basepath) {
+        this.basepath = basepath;
+        this.rewrite = basepath !== "/" ? basepath : undefined;
+      }
+      if (newOptions.tree !== this.tree) {
+        this.tree = newOptions.tree;
+        this.setRoutes({ routesById: tree, routesByPath: tree });
+      }
+      if (!this.stores) {
+        this.batch = newOptions.id;
+        this.stores = [newOptions.id];
+      }
+    };
+    this.describe = () => this.key + this.origin + this.basepath + this.batch + this.stores.length + this.isServer + (this.tree === this.options.tree);
+    this.update(options);
+  }
+  setRoutes(caches) {
+    Object.assign(this, caches);
+    this.lightweight = new WeakMap();
+  }
+}
+////= Sub
+const tree = { id: 0 };
+const rounds = Number(process.argv[2] ?? 3);
+let length = 0;
+////= for-14
+console.log(length);
+//// native-members-of-requests/rank-1350-model-sub-assign-unknown.js
+// A class whose constructor makes a function that closes over `this`, and calls it: the function creates fields of the object that is being made.
+////= Router
+////= Sub
+const tree = { id: 0 };
+const rounds = Number(process.argv[2] ?? 3);
+let length = 0;
+////= for-14
+console.log(length);
+//// native-members-of-requests/rank-1350-model-sub-assign-unknown-freeze.js
+// A class whose constructor makes a function that closes over `this`, and calls it: the function creates fields of the object that is being made.
+////= Router
+const EMPTY = Object.freeze({});
+////= Sub
+const tree = { id: 0 };
+const rounds = Number(process.argv[2] ?? 3);
+let length = 0;
+////= for-14
+console.log(length);
+//// native-members-of-requests/stores-by-name-into-fields-typed-as-string-literals.ts
+// Native members of requests: stores by name into fields typed as string literals. It prints what plain Bun prints.
+declare const process: { argv: string[] };
+declare const console: { log(...values: unknown[]): void };
+type Styles = {
+  overflowX?: "visible" | "hidden" | "scroll";
+  overflowY?: "visible" | "hidden" | "scroll";
+  flexWrap?: "nowrap" | "wrap" | "wrap-reverse";
+  flexDirection?: "row" | "column" | "row-reverse" | "column-reverse";
+  width?: number;
+};
+const unseen = new Function("x", "return x") as <T>(value: T) => any;
+function fill(target: any, source: any): void {
+  target.overflowX = source.overflowX;
+  target.overflowY = source.overflowY;
+  target.flexWrap = source.flexWrap;
+  target.flexDirection = source.flexDirection;
+}
+function describe(styles: Styles): number {
+  return (styles.overflowX === "hidden" ? 1 : 0) + (styles.overflowY === "scroll" ? 2 : 0) + (styles.flexWrap === "wrap" ? 4 : 0) + (styles.flexDirection === "column" ? 8 : 0);
+}
+const rounds = Number(process.argv[2]);
+const source = unseen({ overflowX: "hidden", overflowY: "scroll", flexWrap: "wrap", flexDirection: "column" });
+let total = 0;
+for (let round = 0; round < rounds; round++) {
+  const styles: Styles = { width: round };
+  fill(unseen(styles), source);
+  total += describe(styles);
+}
+console.log(total);

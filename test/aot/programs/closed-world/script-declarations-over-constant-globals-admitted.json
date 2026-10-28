@@ -1,0 +1,1 @@
+{"build": ["--compile-inspector"], "skipInShell": "it uses node:vm, which the jsc shell does not have"}

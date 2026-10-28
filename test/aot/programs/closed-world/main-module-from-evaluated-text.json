@@ -1,0 +1,1 @@
+{"skipInShell": "it uses Buffer, process and require(), which the jsc shell does not have", "skipInVariants": "its output is what an executable hides that the flow analysis found closed, and a variant without the results of the analysis hides nothing"}

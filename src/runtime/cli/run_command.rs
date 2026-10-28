@@ -624,7 +624,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     #[inline(never)]
     #[cfg_attr(
         any(target_os = "linux", target_os = "android"),
-        unsafe(link_section = ".text.unlikely")
+        unsafe(link_section = ".text.unlikely.configure_run_transpiler_linker")
     )]
     fn configure_run_transpiler_linker(this_transpiler: &mut Transpiler<'static>) {
         this_transpiler.resolver.opts.load_tsconfig_json = true;
@@ -787,6 +787,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
     /// `--check`: whether the main module at `path` and what it imports have no type errors.
     /// `loader`: that of `boot`. `arguments`: those of the program.
+    #[inline(never)]
     fn check_main(
         ctx: &ContextData,
         path: &[u8],
@@ -794,6 +795,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         arguments: &[Box<[u8]>],
         before_read: Option<bun_sema_driver::host::BeforeRead>,
     ) -> bool {
+        bun_removable_features::removable_definition!(Check, Self::check_main);
         use crate::cli::check_command::{EntryPoint, check_before};
         let main = EntryPoint {
             path,
@@ -887,49 +889,52 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if preconnect.is_empty() {
             return;
         }
-        bun_http::http_thread::init(&Default::default());
+        // `--fetch-preconnect` is refused at start where `--trim` removed `fetch`.
+        bun_removable_features::removable_body!(Fetch, Abort, {
+            bun_http::http_thread::init(&Default::default());
 
-        for url_str in preconnect {
-            // SAFETY: `ctx.runtime_options.preconnect` is process-lifetime
-            // (CLI argv-derived, never freed); erase the borrow lifetime so
-            // `URL<'static>` (which `AsyncHTTP::preconnect` requires) can hold
-            // a backref into it.
-            let url_str: &'static [u8] =
-                unsafe { ::core::slice::from_raw_parts(url_str.as_ptr(), url_str.len()) };
-            let url = bun_url::URL::parse(url_str);
+            for url_str in preconnect {
+                // SAFETY: `ctx.runtime_options.preconnect` is process-lifetime
+                // (CLI argv-derived, never freed); erase the borrow lifetime so
+                // `URL<'static>` (which `AsyncHTTP::preconnect` requires) can hold
+                // a backref into it.
+                let url_str: &'static [u8] =
+                    unsafe { ::core::slice::from_raw_parts(url_str.as_ptr(), url_str.len()) };
+                let url = bun_url::URL::parse(url_str);
 
-            if !url.is_http() && !url.is_https() {
-                bun_core::err_generic!(
-                    "preconnect URL must be HTTP or HTTPS: {}",
-                    bun_core::fmt::quote(url_str),
-                );
-                Global::exit(1);
-            }
-            if url.hostname.is_empty() {
-                bun_core::err_generic!(
-                    "preconnect URL must have a hostname: {}",
-                    bun_core::fmt::quote(url_str),
-                );
-                Global::exit(1);
-            }
-            if !url.has_valid_port() {
-                bun_core::err_generic!(
-                    "preconnect URL must have a valid port: {}",
-                    bun_core::fmt::quote(url_str),
-                );
-                Global::exit(1);
-            }
+                if !url.is_http() && !url.is_https() {
+                    bun_core::err_generic!(
+                        "preconnect URL must be HTTP or HTTPS: {}",
+                        bun_core::fmt::quote(url_str),
+                    );
+                    Global::exit(1);
+                }
+                if url.hostname.is_empty() {
+                    bun_core::err_generic!(
+                        "preconnect URL must have a hostname: {}",
+                        bun_core::fmt::quote(url_str),
+                    );
+                    Global::exit(1);
+                }
+                if !url.has_valid_port() {
+                    bun_core::err_generic!(
+                        "preconnect URL must have a valid port: {}",
+                        bun_core::fmt::quote(url_str),
+                    );
+                    Global::exit(1);
+                }
 
-            // A request to an origin the environment proxies never dials it.
-            if VirtualMachine::get()
-                .env_loader()
-                .get_http_proxy_for(&url)
-                .is_some()
-            {
-                continue;
+                // A request to an origin the environment proxies never dials it.
+                if VirtualMachine::get()
+                    .env_loader()
+                    .get_http_proxy_for(&url)
+                    .is_some()
+                {
+                    continue;
+                }
+                bun_http::async_http::preconnect(url, false);
             }
-            bun_http::async_http::preconnect(url, false);
-        }
+        })
     }
 
     /// Run a `.sh`
@@ -939,7 +944,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     #[inline(never)]
     #[cfg_attr(
         any(target_os = "linux", target_os = "android"),
-        unsafe(link_section = ".text.unlikely")
+        unsafe(link_section = ".text.unlikely.boot_bun_shell")
     )]
     fn boot_bun_shell(
         ctx: &mut ContextData,
@@ -998,6 +1003,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         } = &main
             && strings::has_suffix_comptime(entry_path, b".sh")
         {
+            crate::cli::run_compiled::reject(
+                ctx,
+                crate::cli::run_compiled::NonFileTarget::ShellScript(entry_path),
+            );
             // It has no entry point to start from, like a script of a package.json.
             if ctx.runtime_options.check && !crate::cli::check_command::check_project_before(None) {
                 Global::exit(1);
@@ -1022,14 +1031,30 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
         }
 
+        if crate::cli::run_compiled::is_requested(ctx) {
+            let BootMain::File { path, .. } = main else {
+                Output::err_generic(
+                    "--aot does not apply to bun bake. It compiles a JavaScript or TypeScript file",
+                    (),
+                );
+                Global::exit(1);
+            };
+            let mut entry_points = vec![path];
+            entry_points.extend(ctx.preloads.iter().cloned());
+            crate::cli::run_compiled::start(ctx, entry_points, 0);
+        }
+
         // `bun_jsc::initialize`
         // is real (calls `JSCInitialize` over `bun_sys::environ()`); the
         // dispatch hooks (`jsc_hooks::install_jsc_hooks`) are installed by
         // `main.rs` before `Cli::start`, so `VirtualMachine::init` already sees
         // a populated `RuntimeHooks` table.
+        crate::cli::startup_options::refuse_code_the_compiler_did_not_see();
         bun_jsc::initialize(bun_jsc::InitializeOptions {
             eval_mode: ctx.runtime_options.eval.eval_and_print,
             one_shot: bun_jsc::is_one_shot_eval_invocation(),
+            runs_compiled_code: crate::cli::run_compiled::runs_compiled_code(),
+            locks_builtins: crate::cli::run_compiled::is_checked(),
             ..Default::default()
         });
         bun_ast::initialize_store();
@@ -1048,6 +1073,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 mini_mode: ctx.runtime_options.smol,
                 eval_mode: ctx.runtime_options.eval.eval_and_print,
                 is_main_thread: true,
+                graph: crate::cli::run_compiled::graph(),
                 // Hand the CLI's vectors over wholesale (process-lifetime, never freed).
                 argv: std::mem::take(&mut ctx.passthrough),
                 preload: std::mem::take(&mut ctx.preloads),
@@ -1063,6 +1089,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 defines_loaded = b.configure_defines().is_ok();
             },
         )?;
+        crate::cli::run_compiled::decode_requested_crash_report();
 
         // `vm.dns_result_order` is a `u8` until the b2-cycle widens
         // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
@@ -1146,17 +1173,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             crate::run_main::fail_with_build_error(vm);
         }
 
-        // Allow setting a custom timezone. Without `$TZ`, JSC/ICU lazily
-        // auto-detects the host zone the first time a `Date` is constructed —
-        // matching upstream Bun. `.env` files are loaded by
-        // `configure_defines`, so `$TZ` set in one is honored.
-        if let Some(tz) = vm.env_loader().get(b"TZ") {
-            if !tz.is_empty() {
-                let _ = vm
-                    .global()
-                    .set_time_zone(&bun_core::EncodedSlice::from_bytes(tz));
-            }
-        }
+        Self::set_time_zone_from_env(vm);
 
         // SAFETY: nothing else borrows the log: no script has run yet.
         let log = unsafe { vm.log_mut() }.unwrap();
@@ -1206,6 +1223,20 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         .start()
     }
 
+    /// Allow setting a custom timezone. Without `$TZ`, JSC/ICU lazily
+    /// auto-detects the host zone the first time a `Date` is constructed —
+    /// matching upstream Bun. `.env` files are loaded by
+    /// `configure_defines`, so `$TZ` set in one is honored.
+    fn set_time_zone_from_env(vm: &VirtualMachine) {
+        if let Some(tz) = vm.env_loader().get(b"TZ") {
+            if !tz.is_empty() {
+                let _ = vm
+                    .global()
+                    .set_time_zone(&bun_core::EncodedSlice::from_bytes(tz));
+            }
+        }
+    }
+
     /// Entry point for
     /// `bun build --compile` executables. Mirrors [`boot`] but routes through
     /// `VirtualMachine::init_with_module_graph` and applies the standalone
@@ -1217,8 +1248,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     ) -> crate::Result<()> {
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
+        crate::cli::startup_options::refuse_code_the_compiler_did_not_see();
+        let runs_compiled_code =
+            bun_resolver::StandaloneModuleGraph::compiled_program(&*graph).is_some();
         // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
-        bun_jsc::initialize(bun_jsc::InitializeOptions::default());
+        bun_jsc::initialize(bun_jsc::InitializeOptions {
+            runs_compiled_code,
+            ..Default::default()
+        });
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
         if graph.flags.contains(GraphFlags::CROSS_COMPILED_BYTECODE) {
             bun_analytics::features::cross_compiled_bytecode.fetch_add(1, Ordering::Relaxed);
@@ -1234,6 +1271,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 bun_core::zstr!("bunfig.toml"),
                 ctx,
             )?;
+            crate::cli::startup_options::reject_unusable_bunfig_settings(ctx);
         }
 
         // layering — `Options::graph` is the resolver's trait object
@@ -1278,6 +1316,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 defines_loaded = b.configure_defines().is_ok();
             },
         )?;
+        crate::cli::run_compiled::decode_requested_crash_report();
         if !defines_loaded {
             crate::run_main::fail_with_build_error(vm);
         }
@@ -1289,6 +1328,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // The runner never returns, so the allocation is process-lifetime by construction.
         let entry: &'static [u8] = Box::leak(entry_path);
         vm.set_main(Some(entry));
+
+        if runs_compiled_code {
+            Self::set_time_zone_from_env(vm);
+        }
 
         // SAFETY: nothing else borrows the log: no script has run yet.
         let log = unsafe { vm.log_mut() }.unwrap();
@@ -1447,21 +1490,24 @@ impl Run<'_> {
             // Go through the global object's getter because `Bun.redis` is a
             // PropertyCallback (no direct WriteBarrier handle to read).
             let global = vm.global();
+            // `--redis-preconnect` is refused at start where `--trim` removed `Bun.redis`.
             let preconnect = || -> bun_jsc::JsResult<()> {
-                let Some(bun_object) = global.to_js_value().get(global, "Bun")? else {
-                    return Ok(());
-                };
-                let Some(redis) = bun_object.get(global, "redis")? else {
-                    return Ok(());
-                };
-                let Some(client) = redis.as_::<crate::valkey_jsc::js_valkey::JSValkeyClient>()
-                else {
-                    return Ok(());
-                };
-                // SAFETY: `as_` returns a live payload pointer owned by the JS
-                // wrapper; accessed here under the API lock.
-                unsafe { &*client }.do_connect(global, redis)?;
-                Ok(())
+                bun_removable_features::removable_body!(Valkey, Abort, {
+                    let Some(bun_object) = global.to_js_value().get(global, "Bun")? else {
+                        return Ok(());
+                    };
+                    let Some(redis) = bun_object.get(global, "redis")? else {
+                        return Ok(());
+                    };
+                    let Some(client) = redis.as_::<crate::valkey_jsc::js_valkey::JSValkeyClient>()
+                    else {
+                        return Ok(());
+                    };
+                    // SAFETY: `as_` returns a live payload pointer owned by the JS
+                    // wrapper; accessed here under the API lock.
+                    unsafe { &*client }.do_connect(global, redis)?;
+                    Ok(())
+                })
             };
             // The process entry is the outermost frame: a preconnect that threw
             // is reported here, before the entry point loads.
@@ -1493,22 +1539,27 @@ impl Run<'_> {
         }
 
         // ── hot-reloader enable ─────────────────────────────────────────────
+        // `--hot` and `--watch` are refused at start where `--trim` removed reloading.
         match ctx.debug.hot_reload {
             cli::command::HotReload::Hot => {
-                bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(vm, entry);
-                // `bun bake` (no entry module) starts again when `bake.config.ts` changes: the
-                // kill signal's JS handlers run first, as in watch mode.
-                if entry.is_none() {
-                    bun_jsc::posix_signal_handle::set_watch_kill_signal(
-                        ctx.debug.watch_kill_signal,
-                    );
-                }
+                bun_removable_features::removable_body!(HotReload, Abort, {
+                    bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(vm, entry);
+                    // `bun bake` (no entry module) starts again when `bake.config.ts` changes: the kill signal's JS handlers run first, as in watch mode.
+                    if entry.is_none() {
+                        bun_jsc::posix_signal_handle::set_watch_kill_signal(
+                            ctx.debug.watch_kill_signal,
+                        );
+                    }
+                })
             }
             cli::command::HotReload::Watch => {
-                bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(vm, entry);
-                bun_jsc::posix_signal_handle::enable_watch_mode_signals(
-                    ctx.debug.watch_kill_signal,
-                );
+                bun_removable_features::removable_body!(HotReload, Abort, {
+                    bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(vm, entry);
+                    bun_jsc::posix_signal_handle::enable_watch_mode_signals(
+                        ctx.debug.watch_kill_signal,
+                    );
+                    crate::cli::run_compiled::watch_files_of_check(vm);
+                })
             }
             _ => {}
         }
@@ -1549,7 +1600,7 @@ impl Run<'_> {
                     // A CJS entry runs synchronously in Node, so its top-level
                     // throw is an uncaughtException; only an ESM entry
                     // rejection reports origin "unhandledRejection".
-                    let is_rejection = !vm.entry_point_result.evaluated_as_cjs.get();
+                    let is_rejection = !vm.entry_point_is_commonjs();
                     let handled = vm.uncaught_exception(vm.global(), result, is_rejection);
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at
@@ -1693,7 +1744,11 @@ impl Run<'_> {
         // `undefined symbol: uv_*` instead of the friendly crash message.
         // (Rust-defined `#[no_mangle]` exports don't need this; the imported
         // C symbols do.)
-        crate::napi::fix_dead_code_elimination();
+        bun_removable_features::call_removable!(
+            NativeAddons,
+            ReturnDefault,
+            crate::napi::fix_dead_code_elimination
+        );
         bun_crash_handler::fix_dead_code_elimination();
         vm.global_exit();
     }
@@ -1716,7 +1771,7 @@ fn log_clear_msgs(vm: &VirtualMachine) {
 #[inline(never)]
 #[cfg_attr(
     any(target_os = "linux", target_os = "android"),
-    unsafe(link_section = ".text.unlikely")
+    unsafe(link_section = ".text.unlikely.dump_build_error")
 )]
 fn dump_build_error(vm: &VirtualMachine) {
     Output::flush();
@@ -1737,7 +1792,7 @@ fn dump_build_error(vm: &VirtualMachine) {
 #[inline(never)]
 #[cfg_attr(
     any(target_os = "linux", target_os = "android"),
-    unsafe(link_section = ".text.unlikely")
+    unsafe(link_section = ".text.unlikely.exit_with_unhandled_note")
 )]
 fn exit_with_unhandled_note(vm: &VirtualMachine) -> ! {
     vm.exit_handler.exit_code.set(1);
@@ -1755,7 +1810,7 @@ fn exit_with_unhandled_note(vm: &VirtualMachine) -> ! {
 #[inline(never)]
 #[cfg_attr(
     any(target_os = "linux", target_os = "android"),
-    unsafe(link_section = ".text.unlikely")
+    unsafe(link_section = ".text.unlikely.entry_point_load_failed")
 )]
 fn entry_point_load_failed(vm: &VirtualMachine, err: &crate::Error) -> ! {
     if log_has_msgs(vm) {
@@ -1777,7 +1832,7 @@ fn entry_point_load_failed(vm: &VirtualMachine, err: &crate::Error) -> ! {
 #[inline(never)]
 #[cfg_attr(
     any(target_os = "linux", target_os = "android"),
-    unsafe(link_section = ".text.unlikely")
+    unsafe(link_section = ".text.unlikely.print_unhandled_version_note")
 )]
 fn print_unhandled_version_note(vm: &VirtualMachine) {
     vm.exit_handler.exit_code.set(1);
@@ -1820,7 +1875,7 @@ impl RunCommand {
     #[inline(never)]
     #[cfg_attr(
         any(target_os = "linux", target_os = "android"),
-        unsafe(link_section = ".text.unlikely")
+        unsafe(link_section = ".text.unlikely.boot_failed_exit")
     )]
     fn boot_failed_exit(ctx: &mut ContextData, display_name: &[u8], err: &crate::Error) -> ! {
         // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded
@@ -2515,6 +2570,10 @@ impl RunCommand {
                         let silent = ctx.debug.silent;
                         let use_system_shell = ctx.debug.use_system_shell;
 
+                        crate::cli::run_compiled::reject(
+                            ctx,
+                            crate::cli::run_compiled::NonFileTarget::PackageScript(target_name),
+                        );
                         // A script has no entry point to start from: the project is checked, as by `bun check`.
                         if ctx.runtime_options.check
                             && !crate::cli::check_command::check_project_before(None)
@@ -2670,7 +2729,10 @@ impl RunCommand {
         // ── Windows .bunx fast-path ──────────────────────────────────────────
         // With `--check` the way below is taken, on which the project is checked.
         #[cfg(windows)]
-        if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH && !ctx.runtime_options.check {
+        if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH
+            && !ctx.runtime_options.check
+            && !crate::cli::run_compiled::is_requested(ctx)
+        {
             // SAFETY: process-lifetime static, single-threaded CLI dispatch.
             let buf = unsafe { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
             // NT object-manager prefix (`\??\`), NOT the Win32 long-path
@@ -2727,6 +2789,10 @@ impl RunCommand {
                 if let Some(destination) =
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
                 {
+                    crate::cli::run_compiled::reject(
+                        ctx,
+                        crate::cli::run_compiled::NonFileTarget::Executable(destination.as_bytes()),
+                    );
                     // It has no entry point to start from, like a script of a package.json.
                     if ctx.runtime_options.check
                         && !crate::cli::check_command::check_project_before(None)
@@ -3169,7 +3235,7 @@ impl RunCommand {
     #[inline(never)]
     #[cfg_attr(
         any(target_os = "linux", target_os = "android"),
-        unsafe(link_section = ".text.unlikely")
+        unsafe(link_section = ".text.unlikely.exec_as_if_node_missing_script")
     )]
     fn exec_as_if_node_missing_script() -> ! {
         Output::err_generic(
@@ -3183,7 +3249,7 @@ impl RunCommand {
     #[inline(never)]
     #[cfg_attr(
         any(target_os = "linux", target_os = "android"),
-        unsafe(link_section = ".text.unlikely")
+        unsafe(link_section = ".text.unlikely.exec_as_if_node_boot_failed")
     )]
     fn exec_as_if_node_boot_failed(ctx: &mut ContextData, basename: &[u8], err: crate::Error) -> ! {
         // SAFETY: `ctx.log` set in `create_context_data` (single-threaded

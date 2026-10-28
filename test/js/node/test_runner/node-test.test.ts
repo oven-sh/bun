@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
@@ -121,6 +121,150 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  // Each test of fixture 30 holds a failure that Node counts, below a test that
+  // is skipped or todo. Each test of fixture 31 holds none. Both fixtures give
+  // the same verdicts under Node v26.3.0, where they exit 1 and 0.
+  test.concurrent(
+    "should fail a test when a subtest below a runtime t.skip()/t.todo() failed",
+    async () => {
+      const { exitCode, stderr } = await runTests(["30-runtime-directive-failed-subtest.js"]);
+      expect(mislabelled(stderr)).toEqual([]);
+      expect(stderr).toContain("error: leaf error");
+      expect(stderr).toContain("0 pass");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining("19 fail"),
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should keep that failure when bun:test retries the test",
+    async () => {
+      // The retry runs the body again on the same node:test node, and the
+      // subtests do not run a second time.
+      const { exitCode, stderr } = await runTests(["30-runtime-directive-failed-subtest.js"], {}, ["--retry=1"]);
+      expect(mislabelled(stderr)).toEqual([]);
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining("19 fail"),
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should keep that failure under --concurrent",
+    async () => {
+      const { exitCode, stderr } = await runTests(["30-runtime-directive-failed-subtest.js"], {}, ["--concurrent"]);
+      // bun:test reports the failure of a concurrent node:test test as an error
+      // between tests, so only a skip or todo label shows a lost failure.
+      expect(verdicts(stderr).filter(line => /^\((skip|todo)\) /.test(line))).toEqual([]);
+      expect(stderr).toMatch(/ 19 (fail|errors)\n/);
+      expect(exitCode).toBe(1);
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should keep a runtime t.skip()/t.todo() when node counts no failure below it",
+    async () => {
+      const { exitCode, stderr } = await runTests(["31-runtime-directive-green.js"]);
+      expect(mislabelled(stderr)).toEqual([]);
+      expect(stderr).toContain("3 pass");
+      expect(stderr).toContain("8 skip");
+      expect(stderr).toContain("9 todo");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("0 fail"),
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should hand a declared todo the failure of its todo subtests under --todo",
+    async () => {
+      const { exitCode, stderr } = await runTests(["31-runtime-directive-green.js"], {}, ["--todo"]);
+      // Under --todo the test.todo() body runs, and its t.skip() wins as in Node.
+      expect(mislabelled(stderr)).toEqual(["(skip) [todo] test.todo() with a failed subtest and t.skip()"]);
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("0 fail"),
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should report the same verdicts through run()",
+    async () => {
+      using dir = tempDir("node-test-run-verdicts", {
+        "skipped-subtest.test.js": `
+          const { test } = require("node:test");
+          test("top", async t => {
+            await t.test("mid", async t2 => {
+              await t2.test("leaf", () => {
+                throw new Error("leaf error");
+              });
+              t2.skip();
+            });
+          });
+        `,
+        // The suite is the only failure, and Node counts a failed suite as a
+        // suite, not as a failed test.
+        "failed-suite.test.js": `
+          const { describe, test } = require("node:test");
+          test("top", t => {
+            describe("inner", () => {
+              throw new Error("suite error");
+            });
+            t.skip();
+          });
+        `,
+        "driver.js": `
+          const { basename } = require("node:path");
+          const { run } = require("node:test");
+          const events = [];
+          const record = verdict => event => {
+            const directive = event.skip !== undefined ? " # SKIP" : event.todo !== undefined ? " # TODO" : "";
+            events.push(verdict + " " + event.name + directive);
+          };
+          const stream = run({ files: process.argv.slice(2) });
+          stream.on("test:pass", record("pass"));
+          stream.on("test:fail", record("fail"));
+          stream.on("test:summary", event => {
+            events.push("success " + (event.file === undefined ? "run" : basename(event.file)) + " " + event.success);
+          });
+          stream.on("end", () => console.log(events.join("\\n")));
+          stream.resume();
+        `,
+      });
+      await using proc = spawn({
+        cmd: [bunExe(), "driver.js", "skipped-subtest.test.js", "failed-suite.test.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ events: stdout.trim().split("\n"), stderr, exitCode }).toMatchObject({
+        events: [
+          "fail leaf",
+          "fail mid # SKIP",
+          "fail top",
+          "success skipped-subtest.test.js false",
+          "fail inner",
+          "fail top # SKIP",
+          "success failed-suite.test.js false",
+          "success run false",
+        ],
+        exitCode: 0,
+      });
+    },
+    30_000,
+  );
 
   test("should run todo bodies under --todo instead of registering an empty function", async () => {
     const { exitCode, stderr } = await runTests(["13-todo-bodies.js"], {}, ["--todo"]);
@@ -342,6 +486,19 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
     new Response(stderrStream).text(),
   ]);
   return { exitCode, stdout, stderr };
+}
+
+// The `(label) name` line of each top-level test, without its duration.
+function verdicts(stderr: string) {
+  return stderr
+    .split("\n")
+    .filter(line => /^\((pass|fail|skip|todo)\) /.test(line))
+    .map(line => line.replace(/ \[[\d.]+m?s\]$/, ""));
+}
+
+// Fixtures 30 and 31 tag each test name with the label it must get: `[fail]`.
+function mislabelled(stderr: string) {
+  return verdicts(stderr).filter(line => !/^\((\w+)\) (?:.* > )?\[\1\] /.test(line));
 }
 
 describe("node:test mock", () => {

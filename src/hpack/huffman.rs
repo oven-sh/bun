@@ -111,7 +111,7 @@ const GROUP_MAX_BITS: u32 = 57;
 /// Under this many bytes, groups do not pay: huffman_simd.md.
 const GROUPS_MIN_LEN: usize = 64;
 
-/// The low `count` bits of `bits` are not written yet: under 8 between calls.
+/// The low `count` bits of `bits` are not written yet: under 8 after [`Pending::write`].
 #[derive(Clone, Copy)]
 struct Pending {
     bits: u64,
@@ -119,20 +119,31 @@ struct Pending {
 }
 
 impl Pending {
-    /// Adds `len` bits, 1 to [`GROUP_MAX_BITS`], and writes the whole bytes. No branch depends on `len`.
     #[inline(always)]
-    fn put(&mut self, codes: u64, len: u32, out: &mut Vec<u8>) {
+    fn add(&mut self, codes: u64, len: u32) {
         self.bits = self.bits << len | codes;
         self.count += len;
-        out.extend_from_slice(&(self.bits << (64 - self.count)).to_be_bytes());
+    }
+
+    /// Writes the whole bytes, of 64 bits at most. No branch depends on how many there are.
+    #[inline(always)]
+    fn write(&mut self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.bits.rotate_right(self.count).to_be_bytes());
         out.truncate(out.len() - 8 + self.count as usize / 8);
         self.count %= 8;
     }
 
+    /// `len` is [`GROUP_MAX_BITS`] at most.
+    #[inline(always)]
+    fn put(&mut self, codes: u64, len: u32, out: &mut Vec<u8>) {
+        self.add(codes, len);
+        self.write(out);
+    }
+
     #[cold]
     #[inline(never)]
-    fn put_each(mut self, group: [u8; GROUP_LEN], out: &mut Vec<u8>) -> Self {
-        for byte in group {
+    fn put_each(mut self, group: &[u8], out: &mut Vec<u8>) -> Self {
+        for &byte in group {
             let (code, len) = code(byte);
             self.put(code.into(), len.into(), out);
         }
@@ -165,38 +176,36 @@ fn encode_groups<'a>(src: &'a [u8], out: &mut Vec<u8>) -> (Pending, &'a [u8]) {
             pending.put(abcd, abcd_len, out);
             pending.put(efg, efg_len, out);
         } else {
-            pending = pending.put_each(*group, out);
+            pending = pending.put_each(group, out);
         }
     }
     (pending, rest)
 }
 
 pub(crate) fn encode(mut src: &[u8], out: &mut Vec<u8>) {
-    // The low `pending` bits are not written yet: under 32 here, and a code has at most 30.
-    let mut bits: u64 = 0;
-    let mut pending: u32 = 0;
+    let mut pending = Pending { bits: 0, count: 0 };
     if src.len() >= GROUPS_MIN_LEN {
-        let groups;
-        (groups, src) = encode_groups(src, out);
-        (bits, pending) = (groups.bits, groups.count);
+        (pending, src) = encode_groups(src, out);
     }
-    for &byte in src {
-        let (code, len) = code(byte);
-        bits = (bits << len) | u64::from(code);
-        pending += u32::from(len);
-        if pending >= 32 {
-            pending -= 32;
-            out.extend_from_slice(&((bits >> pending) as u32).to_be_bytes());
+    // Written every `GROUP_LEN` bytes and not when there are enough bits, which would depend on the text.
+    let (mut before, mut start) = (pending, 0);
+    for (i, &byte) in src.iter().enumerate() {
+        if i == start + GROUP_LEN {
+            if pending.count > u64::BITS {
+                pending = before.put_each(src.get(start..i).unwrap_or_default(), out);
+            }
+            pending.write(out);
+            (before, start) = (pending, i);
         }
+        let (code, len) = code(byte);
+        pending.add(code.into(), len.into());
+    }
+    if pending.count > u64::BITS {
+        pending = before.put_each(src.get(start..).unwrap_or_default(), out);
     }
     // The last byte is filled up with the start of EOS, which is all ones.
-    let padding = pending.wrapping_neg() & 7;
-    bits = (bits << padding) | ((1 << padding) - 1);
-    pending += padding;
-    while pending > 0 {
-        pending -= 8;
-        out.push((bits >> pending) as u8);
-    }
+    let padding = pending.count.wrapping_neg() & 7;
+    pending.put((1 << padding) - 1, padding, out);
 }
 
 /// Most header text has codes of 5 to 7 bits, so this is two symbols per lookup.

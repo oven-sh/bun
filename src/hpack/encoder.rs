@@ -8,14 +8,14 @@ use crate::{
     static_table,
 };
 
-/// How a field that is not in the tables yet is sent (§6.2).
+/// What the encoder may do with a field (§6.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Indexing {
-    /// Added to the dynamic table.
+    /// Enters the dynamic table if it fits and the history, if there is one, admits it.
     Add,
     /// Left out of the table.
     Skip,
-    /// Left out of the table, here and by whoever forwards it. For secrets (§7.1.3).
+    /// Spelled out and left out of the table, here and by whoever forwards it. For secrets (§7.1.3).
     Never,
 }
 
@@ -124,7 +124,7 @@ impl Encoder {
         }
     }
 
-    /// One-off fields stay out of the dynamic table. See [`History`].
+    /// One-off fields stay out of the dynamic table: after the first few dozen, only a field sent lately enters.
     pub fn with_history() -> Self {
         Self {
             history: Some(History::new(DEFAULT_TABLE_CAPACITY)),
@@ -144,7 +144,7 @@ impl Encoder {
             + self.buckets.capacity() * size_of::<Bucket>()
     }
 
-    /// Takes the peer's SETTINGS_HEADER_TABLE_SIZE. The next block tells its decoder what was made of it.
+    /// Takes the peer's SETTINGS_HEADER_TABLE_SIZE, between blocks. The next field follows what its decoder has to hear.
     pub fn set_max_capacity(&mut self, max_capacity: u32) {
         // A peer that allows for more does not get to decide how much memory this side spends.
         let capacity = max_capacity.min(DEFAULT_TABLE_CAPACITY);
@@ -180,7 +180,7 @@ impl Encoder {
         }
     }
 
-    /// Appends the field to the header block in `out`.
+    /// Appends the field to the header block in `out`. `TooLarge` is the one error, and leaves `out` and the table alone.
     pub fn encode(
         &mut self,
         out: &mut Vec<u8>,

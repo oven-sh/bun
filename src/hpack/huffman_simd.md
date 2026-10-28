@@ -51,8 +51,15 @@ A call costs about 15 ns before the first symbol, which pays off from about a do
 - once its calls on this string have yielded under 12 symbols on average, which is what happens in
   text that is dense in such codes, like JSON.
 
-That leaves one call wasted on such text. It shows most on a short string: 5 to 8 bytes that start
-with a short code and go on with codes of 10 to 13 bits take 40 to 53 ns instead of 30 to 41.
+That leaves one call wasted on such text, and never a second one: a call that yields under 12
+symbols is the last one on that string. It costs 10 to 19 ns whatever the length. On Emerald Rapids,
+a string that starts with a short code and goes on with codes of 10 to 13 bits takes 40 ns instead of
+29 at 5 bytes, 60 instead of 44 at 12 and 127 instead of 108 at 40.
+
+Looking ahead before the call does not pay. One lookup ahead finds a long code that is the second or
+third symbol (`W/"5F3C..."` takes 47 ns instead of 59) and costs text 1.5%, a user agent 7%. Not
+calling where the next 57 bits have 7 ones in a row costs text 14 to 22%. Not calling for under 10
+bytes saves 1 to 10 ns at 5, 6, 8 and 9 bytes and costs 5 at 7, which is one block of the kernel.
 
 ## Which CPUs
 
@@ -68,8 +75,8 @@ Highway has no operation for. It has not been tried.
 
 Xeon (Sapphire Rapids) at 2.1 GHz, compiled like a release build (`-march=nehalem`, LTO). One field
 with a name from the static table and a Huffman coded value, 512 different values per row, in ns.
-"Before" is the decoder this replaced: 32 bits at a time, the same 13-bit table, long codes bit by
-bit.
+"Before" is the decoder this replaced: 32 bits at a time, long codes bit by bit. Both looked up 13
+bits at a time then: see "The table of the scalar decoder".
 
 | value                                    | before | scalar | kernel |
 | ---------------------------------------- | ------ | ------ | ------ |
@@ -164,6 +171,17 @@ One field with a name from the static table, without the kernel, in ns. "13" is 
 | 100 characters, 8 MB touched in between     | 4654         | 3978 | 5951  | 8833 | 5473           | 5329 | 6347  | 10457 |
 | the values in hpack-test-case, 8 MB touched | 2655         | 1987 | 2691  | 3207 | 2960           | 2994 | 3160  | 3994  |
 
+A lookup takes more instructions than it did: 23 to 27 instead of 17 on x64, 19 to 25 instead of 15
+on arm64. They are not what the loop waits for, so they cost nothing where strings differ from call
+to call, as above. With one string decoded over and over, which the branch predictor learns, on
+Sapphire Rapids: text 1.00 to 1.04 of the time, a URL 1.10, digits 1.02 to 1.11, base64 0.87 to 0.90,
+upper case 0.58 to 0.63.
+
+arm64 has not been timed. Counted under qemu, text takes 13.3 instructions a symbol instead of 9.8,
+upper case 13.3 instead of 17.6, codes of 14 bits 26 instead of 54. llvm-mca gives a window of four
+lookups the same number of cycles as before on Neoverse N1, V1 and V2, Ampere-1 and Apple M1, 4% more
+on Cortex-A76, and 19% more on Cortex-A55, which runs instructions in order.
+
 What did not work, each on text with 1 code in 5 of more than 8 bits or on codes of 5 bits only,
 against the table of 13 bits.
 
@@ -177,28 +195,61 @@ against the table of 13 bits.
 ## The coder
 
 No SIMD here, but the same problem: where a code goes depends on the lengths of all the codes before
-it. `encode` takes one byte at a time and writes 32 bits whenever it has that many. Whether it has
-depends on the text, so that branch is mispredicted, and without BMI2, which no x64 build of Bun
-assumes, each code costs a shift by a variable count: three micro-operations on Intel up to Ice Lake.
+it. The plain loop takes one byte at a time and writes 32 bits whenever it has that many, which is
+about every 5 bytes. When exactly depends on the text, so that branch is mispredicted, and so is the
+loop that writes the last 1 to 4 bytes.
 
-From 64 bytes on, `encode_groups` takes 7 bytes at a time.
+`encode` takes one byte at a time too, but writes after every 7 bytes, whatever they are: 8 bytes, of
+which as many count as are full. 7 codes of 8 bits, the longest in plain text, and the 7 bits that
+may be left from before are 63 bits. If the lengths add up to more than 64 bits, the 7 bytes are
+coded again from what was left before them and written byte by byte. The last bytes go out the same
+way, with the padding. So its branches depend on the length of the text and not on the text.
+
+What is left is one shift by a variable count per code, which waits for the one before it. Without
+BMI2, which no x64 build of Bun assumes, that is three micro-operations on Intel up to Ice Lake. From
+64 bytes on, `encode_groups` takes 7 bytes at a time.
 
 1. Neighbours are joined by a multiplication: `code(a) * (1 << len(b)) + code(b)`. `1 << len` comes
    from `SHIFTS`, 1 KB, the only table this adds.
 2. The pairs are joined by shifts, by lengths that are added up on the side.
-3. 8 bytes are written, of which as many count as are full. No branch depends on the text.
+3. They are written as above.
 
-7 codes of 8 bits, the longest in plain text, and the 7 bits that may be left from the group before
-are 63 bits. A group of more than 57 bits is written in two halves, of 4 and 3 bytes, if each has
-57 bits at most: `{"a":1,` has 60, and one group in three of random printable characters has too
-many. Otherwise, which takes bytes that are not ASCII or several `\`, it is written byte by byte.
+A group of more than 57 bits is written in two halves, of 4 and 3 bytes, if each has 57 bits at most:
+`{"a":1,` has 60, and one group in three of random printable characters has too many. Otherwise,
+which takes bytes that are not ASCII or several `\`, it is written byte by byte.
 
 The length is still counted in a pass of its own, so a string that is sent as it is costs what it
-did. Under 64 bytes nothing changes but for one comparison.
+did.
+
+One string literal of characters with codes of up to 8 bits, on Emerald Rapids, in ns. Every row has
+16,384 different strings: the branch predictor learns 512 of them, and then the plain loop and the C
+code look up to 25% faster than they are. Each coder was compiled at four alignments, of which this
+is the middle. "C" is ls-hpack 2.3.5 with its table of 65,536 pairs, which is what Bun used before
+this crate. The last two rows are `encode` against the plain loop, other strings every time.
+
+| characters                | 1    | 2    | 3    | 4    | 6    | 8    | 12   | 16   | 24   | 32   | 48   | 63   |
+| ------------------------- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- |
+| the plain loop            | 6.3  | 7.8  | 10.4 | 13.6 | 18.1 | 19.4 | 26.2 | 33.4 | 44.2 | 58.0 | 85.7 | 110  |
+| `encode`                  | 6.9  | 7.7  | 8.5  | 9.1  | 11.1 | 13.5 | 16.8 | 21.2 | 30.0 | 39.4 | 63.5 | 81.2 |
+| C                         | 6.0  | 6.7  | 8.1  | 12.6 | 13.4 | 13.7 | 21.6 | 26.2 | 33.5 | 41.2 | 49.4 | 63.4 |
+| 512 KB touched in between | 1.02 | 1.01 | 1.00 | 0.96 | 0.95 | 0.94 | 0.92 | 0.90 | 0.84 | 0.79 | 0.76 | 0.77 |
+| 8 MB touched in between   | 1.01 | 1.01 | 1.02 | 0.96 | 0.96 | 1.00 | 0.95 | 0.96 | 0.97 | 0.97 | 1.00 | 0.98 |
+
+The last row is good to 4%. One character takes 0.6 ns longer than it did, for the wider write.
+`Encoder::encode` of a field with such a value takes 17 ns for 1 character as before, 36 instead of
+42 for 8, 65 instead of 85 for 32 and 104 instead of 138 for 63. `encode` is 250 bytes more code than
+the plain loop.
+
+What else was tried for short strings, against the plain loop.
+
+| what                                                          | result                                     |
+| ------------------------------------------------------------- | ------------------------------------------ |
+| the plain loop, only its last bytes written at once           | 0.65 to 0.9 up to 4 characters, 0.95 above |
+| 7 codes joined on the side, then added to what is left        | as now, but 1.11 to 1.27 for 1 character   |
+| a function that takes the 7 bytes and checks whether they fit | 1.03 of now: the slice is made every time  |
 
 `Encoder::encode` of one field with a name from the static table and a value that is not in the
-dynamic table, in ns. "Before" is the loop alone, "C" is ls-hpack 2.3.5 with its table of 65,536
-pairs, which is what Bun used before this crate.
+dynamic table, in ns. "Before" is the plain loop alone.
 
 |                               | Cascade Lake |      |      | Emerald Rapids |      |      |
 | ----------------------------- | ------------ | ---- | ---- | -------------- | ---- | ---- |
@@ -213,9 +264,8 @@ pairs, which is what Bun used before this crate.
 | 1000 printable, at random     | 3308         | 2066 | 2081 | 2383           | 1480 | 1560 |
 | 1000 bytes, sent as they are  | 457          | 456  | 1998 | 340            | 339  | 1601 |
 
-Why 64: groups are faster from 21 bytes on if everything is in the cache, by 5 to 15% up to 48 and
-by 30% at 64. They are more code and 6 more cache lines of table. One string literal, other strings
-every time, against the loop alone:
+Why 64: groups are more code and 6 more cache lines of table. One string literal, other strings every
+time, against the plain loop alone:
 
 | characters                                        | 64   | 100  | 200  | 500  | 1000 | 4000 |
 | ------------------------------------------------- | ---- | ---- | ---- | ---- | ---- | ---- |
@@ -229,7 +279,16 @@ every time, against the loop alone:
 The last row is 140 to 200 ns, once per string. The C code takes two to four times as long as the
 loop there, up to 2000 characters: it has a cache miss for every other character.
 
-What else was tried for long strings, 1000 characters, against the loop alone, on Emerald Rapids.
+And against the loop of `encode` alone, on Emerald Rapids:
+
+| characters                | 28   | 40   | 63   | 64   | 100  | 200  | 500  | 1000 | 4000 |
+| ------------------------- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- |
+| in a loop                 | 0.92 | 0.87 | 0.78 | 0.78 | 0.78 | 0.84 | 0.83 | 0.82 | 0.82 |
+| 512 KB touched in between | 1.08 | 1.05 | 0.95 | 1.00 | 0.95 | 0.91 | 0.85 | 0.83 | 0.82 |
+| 8 MB touched in between   | 1.17 | 1.21 | 1.15 | 1.23 | 1.14 | 1.14 | 1.05 | 0.99 | 0.90 |
+
+What else was tried for long strings, 1000 characters, against the plain loop alone, on Emerald
+Rapids.
 
 | what                                                              | in a loop                                                              | 8 MB touched |
 | ----------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------ |

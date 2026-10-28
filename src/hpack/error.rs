@@ -8,4 +8,4 @@ pub enum Error {
     TooLarge,
 }
 
-pub(crate) type Result<T> = core::result::Result<T, Error>;
+pub(crate) type Result<T, E = Error> = core::result::Result<T, E>;

@@ -26,7 +26,7 @@ pub(crate) use error::Result;
 /// The dynamic table capacity both sides start from (RFC 9113 §6.5.2).
 const DEFAULT_TABLE_CAPACITY: u32 = 4096;
 
-/// The longest name and value together that a field may have, sent or received.
+/// The longest name and value together that [`Encoder::encode`] takes and the decoder accepts.
 const MAX_FIELD_LEN: usize = 65536;
 
 /// What an entry counts towards the table size beside its name and value (§4.1).
@@ -511,7 +511,18 @@ mod tests {
             string.extend_from_slice(*group);
             string.extend_from_slice(&b"z".repeat(56 + sixes));
             check_huffman(&string);
+            // Under 64 bytes, as the last 7 bytes and not.
+            check_huffman(&string[..14]);
+            check_huffman(&string[..17]);
         }
+        // 90 bits are all that is left, after 7 bytes and after 9 groups.
+        for (sixes, len) in (0..8).flat_map(|sixes| [(sixes, 7), (sixes, 63)]) {
+            let start = [b"-".repeat(sixes), b"a".repeat(len - sixes)].concat();
+            check_huffman(&[&start, &b"\n\n\n"[..]].concat());
+        }
+        // Every byte in a place where room is made for its code by a multiplication.
+        let every_byte = (0..128).flat_map(|byte| [b'a', byte, b'a', b'a', b'a', byte + 128, b'a']);
+        check_huffman(&every_byte.collect::<Vec<_>>());
     }
 
     #[test]
@@ -1113,7 +1124,7 @@ mod tests {
         for len in 0..24 {
             check_huffman(&b"a".repeat(len));
         }
-        // The length takes two bytes, of the code and of a string that is sent as it is.
+        // The length takes three bytes, of the code and of a string that is sent as it is.
         for value in [[b'A'; 435], [200; 435]] {
             let (mut encoder, mut block) = (Encoder::new(), Vec::new());
             let encoded = encoder.encode(&mut block, b"header", &value, Indexing::Add);
@@ -1163,7 +1174,7 @@ mod tests {
         }
     }
 
-    /// 1b7a5c3: an entry was added without making room, so the table was over its capacity until the next one.
+    /// 1b7a5c3: an entry was added without making room, so the table grew until the next size update.
     #[test]
     fn ls_hpack_the_table_stays_within_its_capacity() {
         let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());

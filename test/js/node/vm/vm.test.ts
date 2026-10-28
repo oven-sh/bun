@@ -2667,6 +2667,501 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
   });
 });
 
+// instantiate() checks that every request of a module that is not linked yet has a module, and stops at a linked
+// module, as the Link() of JavaScriptCore does. Link() reads a request that has no module through a pointer that is
+// not there. test/internal/source-lints/node-vm-instantiate-walk.test.ts holds the stop: only time shows it.
+describe.concurrent("node:vm SourceTextModule instantiate() with modules that are linked already", () => {
+  test("links a new importer, and reports a request that has no module", async () => {
+    const fixture = `
+      import vm from "node:vm";
+
+      const context = vm.createContext({});
+      const mk = (identifier, source) => new vm.SourceTextModule(source, { identifier, context });
+      // The native module. Node has none, and prints every line but the four that need it.
+      const native = m => m[Object.getOwnPropertySymbols(m).find(s => s.description === "kNative")];
+      const linked = (identifier, source) => {
+        const m = mk(identifier, source);
+        m.linkRequests([]);
+        m.instantiate();
+        return m;
+      };
+      const out = [];
+      const attempt = async (label, fn) => {
+        try {
+          const result = await fn();
+          out.push(label + ": " + (result === undefined ? "ok" : result));
+        } catch (e) {
+          out.push(label + ": " + (e.code ?? e.name) + " " + e.message);
+        }
+      };
+      // A new importer of modules that are past "unlinked": link it, evaluate it, read its export r.
+      const importer = async (label, source, dependencies) => {
+        const root = mk("root", source);
+        root.linkRequests(dependencies);
+        await attempt(label + ", instantiate", () => root.instantiate());
+        out.push(label + ", status: " + root.status);
+        await attempt(label + ", evaluate", async () => {
+          await root.evaluate();
+          return root.namespace.r;
+        });
+      };
+
+      {
+        const leaf = mk("leaf", "export const v = 1;");
+        const mid = mk("mid", 'export { v } from "leaf"; export const w = 2;');
+        leaf.linkRequests([]);
+        mid.linkRequests([leaf]);
+        mid.instantiate();
+        await importer("linked chain", 'import { v, w } from "mid"; export const r = v + w;', [mid]);
+      }
+      {
+        const a = mk("a", 'import { b } from "b"; export const a = "A"; export const readB = () => b;');
+        const b = mk("b", 'import { a } from "a"; export const b = "B"; export const readA = () => a;');
+        a.linkRequests([b]);
+        b.linkRequests([a]);
+        a.instantiate();
+        const source = 'import { readB } from "a"; import { readA } from "b"; export const r = readA() + readB();';
+        await importer("linked cycle", source, [a, b]);
+      }
+      {
+        const evaluated = linked("evaluated", "export const e = 1;");
+        await evaluated.evaluate();
+        await importer("evaluated", 'import { e } from "evaluated"; export const r = e;', [evaluated]);
+      }
+      {
+        let release;
+        context.gate = new Promise(resolve => (release = resolve));
+        const waiting = linked("waiting", "await gate; export const p = 2;");
+        const done = waiting.evaluate();
+        const root = mk("root", 'import { p } from "waiting"; export const r = p;');
+        root.linkRequests([waiting]);
+        await attempt("waits at a top-level await, instantiate", () => root.instantiate());
+        out.push("waits at a top-level await, status: " + root.status);
+        release();
+        await done;
+        await attempt("waits at a top-level await, evaluate", async () => {
+          await root.evaluate();
+          return root.namespace.r;
+        });
+      }
+      {
+        const errored = linked("errored", 'throw new Error("boom");');
+        await errored.evaluate().catch(() => {});
+        await importer("errored", 'import "errored"; export const r = 1;', [errored]);
+      }
+      {
+        // The body of "running" links a new importer of "running".
+        context.hook = () => {
+          const root = mk("root", 'import "running"; export const r = 1;');
+          root.linkRequests([running]);
+          try {
+            root.instantiate();
+            out.push("evaluating, instantiate: ok");
+          } catch (e) {
+            out.push("evaluating, instantiate: " + (e.code ?? e.name) + " " + e.message);
+          }
+          out.push("evaluating, status: " + root.status);
+        };
+        const running = linked("running", "hook(); export const x = 1;");
+        await running.evaluate();
+      }
+      {
+        const synthetic = new vm.SyntheticModule(["s"], function () { this.setExport("s", 5); }, { context });
+        await importer("SyntheticModule", 'import { s } from "synthetic"; export const r = s;', [synthetic]);
+      }
+      {
+        // The link of "bad" fails after "good" linked.
+        const good = mk("good", "export const g = 1;");
+        good.linkRequests([]);
+        const bad = mk("bad", 'import { g, nope } from "good";');
+        bad.linkRequests([good]);
+        await attempt("linked by a link that failed, the failed link", () => bad.instantiate());
+        await importer("linked by a link that failed", 'import { g } from "good"; export const r = g;', [good]);
+      }
+      {
+        const dependency = linked("dependency", "export const d = 7;");
+        const root = mk("root", 'import { d } from "dependency"; export const r = d;');
+        await attempt("link(linker)", () => root.link(() => dependency));
+        out.push("link(linker), status: " + root.status);
+        if (native(root)) {
+          await attempt("native instantiate() of a linked module", () => native(root).instantiate());
+          out.push("native instantiate() of a linked module, status: " + root.status);
+        }
+        await attempt("link(linker), evaluate", async () => {
+          await root.evaluate();
+          return root.namespace.r;
+        });
+      }
+
+      // From here on one module has a request with no module. It is beside or below modules that are linked.
+      const unwired = () => mk("unwired", 'import "missing"; export const u = 1;');
+      const beside = async (other, make) => {
+        for (const names of [[other, "unwired"], ["unwired", other]]) {
+          const modules = { [other]: make(), unwired: unwired() };
+          const root = mk("root", names.map(name => 'import "' + name + '";').join(" "));
+          root.linkRequests(names.map(name => modules[name]));
+          const label = "[" + names.join(", ") + "]";
+          await attempt(label + ", instantiate", () => root.instantiate());
+          out.push(label + ", statuses: " + root.status + " " + modules.unwired.status);
+        }
+      };
+      await beside("linked", () => linked("linked", "export const a = 1;"));
+      await beside("synthetic", () => new vm.SyntheticModule([], () => {}, { context }));
+      {
+        const dependency = linked("dependency", "export const a = 1;");
+        const deep = unwired();
+        const mid = mk("mid", 'import "dependency"; import "deep"; export const m = 3;');
+        mid.linkRequests([dependency, deep]);
+        const root = mk("root", 'import "dependency"; import "mid"; export const r = 1;');
+        root.linkRequests([dependency, mid]);
+        const statuses = () => out.push("two levels down, statuses: " + [root, mid, deep].map(m => m.status).join(" "));
+        await attempt("two levels down, instantiate", () => root.instantiate());
+        statuses();
+        deep.linkRequests([linked("missing", "export {};")]);
+        await attempt("two levels down, instantiate again", () => root.instantiate());
+        statuses();
+      }
+      {
+        const leaf = linked("leaf", "export {};");
+        const c = mk("c", 'import "d"; export const c = 1;');
+        const d = mk("d", 'import "c"; import "leaf"; export const d = 2;');
+        c.linkRequests([d]);
+        const root = mk("root", 'import "leaf"; import "c";');
+        root.linkRequests([leaf, c]);
+        const statuses = () => out.push("unlinked cycle, statuses: " + [root, c, d].map(m => m.status).join(" "));
+        await attempt("unlinked cycle, instantiate", () => root.instantiate());
+        statuses();
+        d.linkRequests([c, leaf]);
+        await attempt("unlinked cycle, instantiate again", () => root.instantiate());
+        statuses();
+      }
+      {
+        const shared = mk("shared", 'import "leaf"; export const s = 4;');
+        shared.linkRequests([linked("leaf", "export {};")]);
+        for (const name of ["first", "second"]) {
+          const root = mk(name, 'import { s } from "shared"; export const r = s;');
+          root.linkRequests([shared]);
+          await attempt(name + " importer of an unlinked module, instantiate", () => root.instantiate());
+          out.push(name + " importer of an unlinked module, statuses: " + root.status + " " + shared.status);
+        }
+      }
+      {
+        const root = mk("root", 'import "x";');
+        if (native(root)) {
+          native(root).link([], [], 0);
+          await attempt("native link() with no modules, instantiate", () => native(root).instantiate());
+          out.push("native link() with no modules, status: " + root.status);
+        }
+      }
+
+      console.log(out.join("\\n"));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const missing = "ERR_VM_MODULE_LINK_FAILURE request for 'missing' is not in cache";
+    expect({ stdout: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
+      stdout: [
+        "linked chain, instantiate: ok",
+        "linked chain, status: linked",
+        "linked chain, evaluate: 3",
+        "linked cycle, instantiate: ok",
+        "linked cycle, status: linked",
+        "linked cycle, evaluate: AB",
+        "evaluated, instantiate: ok",
+        "evaluated, status: linked",
+        "evaluated, evaluate: 1",
+        "waits at a top-level await, instantiate: ok",
+        "waits at a top-level await, status: linked",
+        "waits at a top-level await, evaluate: 2",
+        "errored, instantiate: ok",
+        "errored, status: linked",
+        "errored, evaluate: Error boom",
+        "evaluating, instantiate: ok",
+        "evaluating, status: linked",
+        "SyntheticModule, instantiate: ok",
+        "SyntheticModule, status: linked",
+        "SyntheticModule, evaluate: 5",
+        "linked by a link that failed, the failed link: SyntaxError Export named 'nope' not found in module 'good'.",
+        "linked by a link that failed, instantiate: ok",
+        "linked by a link that failed, status: linked",
+        "linked by a link that failed, evaluate: 1",
+        "link(linker): ok",
+        "link(linker), status: linked",
+        "native instantiate() of a linked module: ok",
+        "native instantiate() of a linked module, status: linked",
+        "link(linker), evaluate: 7",
+        "[linked, unwired], instantiate: " + missing,
+        "[linked, unwired], statuses: unlinked unlinked",
+        "[unwired, linked], instantiate: " + missing,
+        "[unwired, linked], statuses: unlinked unlinked",
+        "[synthetic, unwired], instantiate: " + missing,
+        "[synthetic, unwired], statuses: unlinked unlinked",
+        "[unwired, synthetic], instantiate: " + missing,
+        "[unwired, synthetic], statuses: unlinked unlinked",
+        "two levels down, instantiate: " + missing,
+        "two levels down, statuses: unlinked unlinked unlinked",
+        "two levels down, instantiate again: ok",
+        "two levels down, statuses: linked linked linked",
+        "unlinked cycle, instantiate: ERR_VM_MODULE_LINK_FAILURE request for 'c' is not in cache",
+        "unlinked cycle, statuses: unlinked unlinked unlinked",
+        "unlinked cycle, instantiate again: ok",
+        "unlinked cycle, statuses: linked linked linked",
+        "first importer of an unlinked module, instantiate: ok",
+        "first importer of an unlinked module, statuses: linked linked",
+        "second importer of an unlinked module, instantiate: ok",
+        "second importer of an unlinked module, statuses: linked linked",
+        "native link() with no modules, instantiate: ERR_VM_MODULE_LINK_FAILURE request for 'x' is not in cache",
+        "native link() with no modules, status: unlinked",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The native link() reads its two arrays with getters allowed, and a getter can link the module. link() must stop
+  // there: neither instantiate() nor the Evaluate() of JavaScriptCore looks again at the modules of a linked record.
+  const unchanged = ": returned undefined, read specifiers[0] moduleNatives[0], importer sees AB, ran AB";
+
+  test("link() leaves a record alone that a getter of its arguments linked", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const native = m => m[Object.getOwnPropertySymbols(m).find(s => s.description === "kNative")];
+      const context = vm.createContext({ ran: [] });
+      const mk = (identifier, source) => new vm.SourceTextModule(source, { identifier, context });
+      const withGetter = (array, index, get) => Object.defineProperty(array, index, { get, enumerable: true });
+      const linked = (identifier, source) => {
+        const m = mk(identifier, source);
+        m.linkRequests([]);
+        m.instantiate();
+        return m;
+      };
+
+      (async () => {
+        // A getter of element 0 links X with A and B. The link() call that reads the getter has V for both requests.
+        // V is linked, so a link() that goes on shows as the wrong module, not as a crash.
+        for (const then of ["links X", "links and evaluates X", "links X and leaves it at a top-level await"]) {
+          for (const where of ["moduleNatives", "specifiers"]) {
+            const A = linked("A", 'ran.push("A"); export const a = "A";');
+            const B = linked("B", 'ran.push("B"); export const b = "B";');
+            const V = linked("V", 'ran.push("V"); export const a = "V", b = "V";');
+            const X = mk("X", 'export * from "a"; export * from "b";' + (then.endsWith("await") ? " await 0;" : ""));
+            const read = [];
+            let evaluation;
+            const values = { specifiers: ["a", "b"], moduleNatives: [native(V), native(V)] };
+            const arrays = { specifiers: [], moduleNatives: [] };
+            for (const name in arrays) {
+              for (const index of [0, 1]) {
+                withGetter(arrays[name], index, () => {
+                  read.push(name + "[" + index + "]");
+                  if (name === where && index === 0) {
+                    X.linkRequests([A, B]);
+                    X.instantiate();
+                    if (then !== "links X") evaluation = X.evaluate();
+                  }
+                  return values[name][index];
+                });
+              }
+            }
+            const returned = native(X).link(arrays.specifiers, arrays.moduleNatives, 0);
+            const importer = mk("importer", 'import { a, b } from "X"; export const r = a + b;');
+            importer.linkRequests([X]);
+            importer.instantiate();
+            await importer.evaluate();
+            await evaluation;
+            const call = ": returned " + returned + ", read " + read.join(" ");
+            const seen = ", importer sees " + importer.namespace.r + ", ran " + context.ran.splice(0).join("");
+            console.log("getter of " + where + "[0] " + then + call + seen);
+          }
+        }
+
+        // From here on the link() call has U, and the import of U has no module.
+        const setup = () => ({
+          A: linked("A", 'export const a = "A";'),
+          U: mk("U", 'import "zz"; export const a = "U", b = "U";'),
+          X: mk("X", 'import { a } from "a"; export const x = a;'),
+        });
+        {
+          const { A, U, X } = setup();
+          native(X).link(["a"], withGetter([], 0, () => (X.linkRequests([A]), X.instantiate(), native(U))), 0);
+          const importer = mk("importer", 'import { x } from "X"; export const r = x;');
+          importer.linkRequests([X]);
+          importer.instantiate();
+          await importer.evaluate();
+          console.log("new importer:", importer.namespace.r);
+        }
+        {
+          // The getter is element 1: link() gave X the module U for "a" before the getter ran.
+          const { A, U } = setup();
+          const B = linked("B", 'export const b = "B";');
+          const X = mk("X", 'import { a } from "a"; import { b } from "b"; export const x = a + b;');
+          const link = () => (X.linkRequests([A, B]), X.instantiate(), native(U));
+          native(X).link(["a", "b"], withGetter([native(U)], 1, link), 0);
+          await X.evaluate();
+          console.log("getter of element 1:", X.namespace.x);
+        }
+        {
+          // The link of "root" fails at "bad", which gives X a new record. "importer" has the first record of X and
+          // links it.
+          const { U, X } = setup();
+          const A = mk("A", 'export const a = "A";');
+          const C = mk("C", "export const c = 1;");
+          const bad = mk("bad", 'import { nope } from "C";');
+          const root = mk("root", 'import "bad"; import "X";');
+          const importer = mk("importer", 'import { x } from "X"; export const r = x;');
+          A.linkRequests([]);
+          C.linkRequests([]);
+          X.linkRequests([A]);
+          bad.linkRequests([C]);
+          root.linkRequests([bad, X]);
+          importer.linkRequests([X]);
+          const link = () => {
+            try {
+              root.instantiate();
+            } catch (e) {
+              console.log("failed link:", e.name);
+            }
+            importer.instantiate();
+            return native(U);
+          };
+          native(X).link(["a"], withGetter([], 0, link), 0);
+          await importer.evaluate();
+          console.log("first record of a module that got a new one:", importer.namespace.r);
+        }
+        {
+          // An importer links X from the getter, and this link() is the only one of X. instantiate() takes a module
+          // that link() was called on.
+          const { A, X } = setup();
+          const importer = mk("importer", 'import { x } from "X"; export const r = x;');
+          importer.linkRequests([X]);
+          native(X).link(["a", "extra"], withGetter([native(A)], 1, () => (importer.instantiate(), native(A))), 0);
+          console.log("instantiate() after the only link():", native(X).instantiate());
+        }
+      })();
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
+      stdout: [
+        "getter of moduleNatives[0] links X" + unchanged,
+        "getter of specifiers[0] links X" + unchanged,
+        "getter of moduleNatives[0] links and evaluates X" + unchanged,
+        "getter of specifiers[0] links and evaluates X" + unchanged,
+        "getter of moduleNatives[0] links X and leaves it at a top-level await" + unchanged,
+        "getter of specifiers[0] links X and leaves it at a top-level await" + unchanged,
+        "new importer: A",
+        "getter of element 1: AB",
+        "failed link: SyntaxError",
+        "first record of a module that got a new one: A",
+        "instantiate() after the only link(): undefined",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("linkRequests() and link() leave a linked record alone when Array.prototype has an index setter", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const mk = (identifier, source) => new vm.SourceTextModule(source, { identifier });
+      const linked = (identifier, source) => {
+        const m = mk(identifier, source);
+        m.linkRequests([]);
+        m.instantiate();
+        return m;
+      };
+      // linkRequests() and link() fill the arrays for the native link() by assignment. A setter for index 0 on
+      // Array.prototype gets that assignment, and makes element 0 of the array a getter that runs "then" once.
+      const plant = (wanted, then) => {
+        Object.defineProperty(Array.prototype, 0, {
+          configurable: true,
+          set(value) {
+            if (!then || !wanted(value)) {
+              Object.defineProperty(this, 0, { value, writable: true, enumerable: true, configurable: true });
+              return;
+            }
+            let run = then;
+            then = undefined;
+            const get = () => {
+              if (run) {
+                const once = run;
+                run = undefined;
+                once();
+              }
+              return value;
+            };
+            Object.defineProperty(this, 0, { get, enumerable: true, configurable: true });
+          },
+        });
+      };
+
+      (async () => {
+        // X gets A and is linked while link() reads its arguments. The same call has U for X, and the import of U has
+        // no module.
+        {
+          const A = linked("A", 'export const a = "A";');
+          const U = mk("U", 'import "zz"; export const a = "U";');
+          const X = mk("X", 'import { a } from "a"; export const x = a;');
+          plant(value => typeof value === "object", () => (X.linkRequests([A]), X.instantiate()));
+          try {
+            X.linkRequests([U]);
+          } finally {
+            delete Array.prototype[0];
+          }
+          await X.evaluate();
+          console.log("linkRequests():", X.namespace.x);
+        }
+        {
+          const A = linked("A", 'export const a = "A";');
+          const U = mk("U", 'import "zz"; export const a = "U";');
+          const X = mk("X", 'import { a } from "a"; export const x = a;');
+          const importer = mk("importer", 'import { x } from "X"; export const r = x;');
+          X.linkRequests([A]);
+          importer.linkRequests([X]);
+          plant(value => value === "a", () => importer.instantiate());
+          try {
+            await X.link(() => U);
+          } finally {
+            delete Array.prototype[0];
+          }
+          await importer.evaluate();
+          console.log("link(linker):", importer.namespace.r);
+        }
+      })();
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
+      stdout: ["linkRequests(): A", "link(linker): A"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 test("node:vm SourceTextModule link() with other modules after a link() that failed", async () => {
   const fixture = `
     import vm from "node:vm";

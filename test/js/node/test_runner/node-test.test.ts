@@ -360,6 +360,288 @@ describe("node:test", () => {
     },
     30_000,
   );
+
+  test.concurrent(
+    "should fail a test for a failure that a run-time t.skip() or t.todo() does not cover",
+    async () => {
+      // Each test of the fixture makes `node --test` (v26.3.0) exit 1 by itself.
+      // bun:test has one entry for a test and its subtests, so that entry fails
+      // with the failure that Node counts.
+      const { exitCode, stderr } = await runTests(["44-runtime-directive-lost-failures.js"]);
+      expect(errorsAndVerdicts(stderr)).toEqual([
+        "error: subtest",
+        "(fail) a subtest fails, then its parent calls t.skip()",
+        "error: subtest",
+        "(fail) a subtest fails, then its parent calls t.todo()",
+        "error: subtest",
+        "(fail) a subtest fails, then its parent calls t.skip() and throws",
+        "error: subtest",
+        "(fail) a subtest calls the t.skip() of its parent and then fails",
+        "error: first",
+        "(fail) two subtests fail, then their parent calls t.skip()",
+        "error: subtest",
+        "(fail) a subtest that is not awaited fails after its parent called t.skip()",
+        "error: subtest",
+        "(fail) in a suite > a subtest fails, then its parent calls t.skip()",
+        "error: 1 subtest failed",
+        "error: 1 subtest failed",
+        "error: sub-subtest",
+        "error: sub-subtest",
+        "(fail) a subtest fails below a subtest that calls t.skip()",
+        "error: sub-subtest",
+        "(fail) a subtest fails below a subtest that calls t.todo()",
+        "error: sub-subtest",
+        "(fail) a subtest fails below a subtest that calls t.todo(), and the top test calls t.skip()",
+        "error: own",
+        "(fail) a subtest fails below a subtest that calls t.todo(), and the top test throws",
+        "error: suite hook",
+        "(fail) an inline suite fails in its before hook, then the test calls t.skip()",
+        "error: test hook",
+        "(fail) a before hook of a test fails, then the test calls t.skip()",
+        "error: 1 subtest failed",
+        "error: subtest",
+        "(fail) a subtest calls t.skip() and then throws",
+        "error: 1 subtest failed",
+        "error: plan expected 2 assertions but received 0",
+        "(fail) a subtest calls t.skip() with an unmet plan",
+        "error: 1 subtest failed",
+        "error: after hook",
+        "(fail) a subtest calls t.skip() and its after hook throws",
+        "error: suite test",
+        "(fail) a test of an inline suite calls t.skip() and then throws, and the top test calls t.skip()",
+        "error: 1 subtest failed",
+        "error: subtest",
+        "(fail) a subtest calls t.skip() and throws, and the after hook of its parent reads t.passed",
+        "error: test was expected to fail but passed",
+        "(fail) a subtest that expects a failure passes, then its parent calls t.skip()",
+        "error: test was expected to fail but passed",
+        "(fail) test level expectFailure with subtests",
+      ]);
+      expect(exitCode).toBe(1);
+    },
+    30_000,
+  );
+
+  test.concurrent.each([
+    ["by default", []],
+    ["under --concurrent", ["--concurrent"]],
+  ])(
+    "should not fail a test for a failure that Node does not count, %s",
+    async (_, args) => {
+      // `node --test` (v26.3.0) exits 0 for the fixture. No error is printed.
+      const { exitCode, stderr } = await runTests(["45-runtime-directive-suppressed-failures.js"], {}, args);
+      expect(errorsAndVerdicts(stderr).sort()).toEqual(
+        [
+          "(pass) a subtest calls t.todo() and then throws",
+          "(pass) a subtest calls t.todo() with an unmet plan",
+          "(pass) a subtest calls t.todo() and its after hook throws",
+          "(pass) an after hook of a subtest calls t.todo(), and the next one throws",
+          "(todo) an after hook of a test calls t.todo(), and the next one throws",
+          "(todo) an afterEach hook throws > and an after hook of the test calls t.todo()",
+          "(pass) a subtest calls t.todo(), then its own subtest fails",
+          "(pass) a test of an inline suite calls t.todo() and then throws",
+          "(pass) an inline todo suite fails in its before hook",
+          "(pass) a test of an inline describe.todo() suite fails",
+          "(pass) test.todo() fails inside a test",
+          "(pass) it.todo() fails inside an inline suite",
+          "(todo) a test calls t.todo(), then its subtest fails",
+          "(skip) a test calls t.skip() and throws after its subtest called t.skip() and threw",
+          "(skip) a todo subtest fails, then its parent calls t.skip()",
+          "(skip) a subtest that expects a failure throws, then its parent calls t.skip()",
+          "(skip) an inline suite that expects a failure throws, then the test calls t.skip()",
+          "(pass) a test that expects a failure throws after its inline suite threw",
+          "(pass) a skipped subtest expects a failure, and its own subtest calls t.skip() and throws",
+          "(pass) a test throws its expected failure after its subtest called t.skip() and threw",
+          "(pass) a subtest calls t.skip() and throws, then its parent calls todo() on it",
+          "(todo) a subtest calls t.skip() and throws, and the after hook of its parent calls t.todo()",
+          "(todo) a test calls t.todo() and throws while its subtest never settles",
+          "(skip) a test calls t.skip() and throws while its todo subtest never settles",
+          "(skip) a test calls t.skip() and throws while a test of its inline todo suite never settles",
+          "(todo) a test calls t.todo() and throws, and its after hook closes what its subtest reads",
+          "(skip) a suite > whose test calls t.todo() and t.skip() and then throws",
+          "(todo) a suite > whose test calls t.todo() and then throws",
+        ].sort(),
+      );
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should report a todo test as todo under --todo for any failure below it",
+    async () => {
+      const { exitCode, stderr } = await runTests(["46-todo-scope-failures.js"], {}, ["--todo"]);
+      expect(errorsAndVerdicts(stderr)).toEqual([
+        "error: subtest",
+        "(todo) a todo test whose subtest fails",
+        "error: sub-subtest",
+        "(todo) a test.todo() whose sub-subtest fails",
+        "(skip) a test.todo() that calls t.skip() after its subtest failed",
+        "error: subtest",
+        "(todo) a todo test whose todo subtest fails",
+        "error: subtest",
+        "(todo) a todo test whose subtest calls t.todo() and throws",
+        "error: subtest",
+        "(todo) a todo test whose subtest calls t.skip() and throws",
+        "error: subtest",
+        "(todo) a todo suite > whose test has a failing subtest",
+        "error: own",
+        "(todo) a test.todo() that throws while its subtest never settles",
+        // bun:test fails a todo test that has nothing left to fix.
+        "(fail) a todo test whose subtests all pass",
+      ]);
+      expect(exitCode).toBe(1);
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should keep a failed subtest, and a pass on the second attempt, under --retry",
+    async () => {
+      const { exitCode, stderr } = await runTests(["47-retry-subtest-failures.js"], {}, ["--retry=1"]);
+      // bun:test prints the error of each attempt.
+      expect(errorsAndVerdicts(stderr)).toEqual([
+        "error: subtest",
+        "error: subtest",
+        "(fail) a subtest fails, then its parent calls t.skip() (attempt 2)",
+        "error: 1 subtest failed",
+        "error: subtest",
+        "error: 1 subtest failed",
+        "error: subtest",
+        "(fail) a subtest calls t.skip() and then throws (attempt 2)",
+        "error: first attempt",
+        "(pass) a test with a passing subtest throws on its first attempt only (attempt 2)",
+      ]);
+      expect(exitCode).toBe(1);
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should count a subtest that was not awaited when its parent hides its own failure",
+    async () => {
+      // Each test of the fixture makes `node --test` (v26.3.0) exit 1 by itself.
+      const { exitCode, stderr } = await runTests(["48-queued-subtests.js"]);
+      expect(errorsAndVerdicts(stderr)).toEqual([
+        "error: subtest",
+        "(fail) a test starts a failing subtest, calls t.skip() and throws",
+        "error: subtest",
+        "(fail) a test starts a failing subtest, calls t.todo() and throws",
+        "error: sub-subtest",
+        "(fail) a subtest starts a failing subtest, calls t.todo() and throws",
+        "error: test was expected to fail but passed",
+        "(fail) a test that expects a failure starts a subtest and throws",
+        "error: subtest",
+        "(fail) a test starts a subtest that fails on a later turn, calls t.skip() and throws",
+        "error: sub-subtest",
+        "(fail) a subtest starts a subtest that fails on a later turn, calls t.todo() and throws",
+        "error: sub-subtest",
+        "(fail) a subtest starts a subtest that fails on a later turn and throws, and its after hook calls t.todo()",
+        "error: subtest",
+        "(fail) a test throws, and the subtest that it started calls the t.skip() of the test and fails",
+        "error: subtest",
+        "(fail) an async test throws, and the subtest that it started calls the t.todo() of the test and fails",
+        "error: third subtest",
+        "(fail) subtests that were not awaited start more subtests on their parent, and the last one fails",
+        "error: own",
+        "(fail) a test throws while its subtest never settles",
+      ]);
+      expect(exitCode).toBe(1);
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should report each subtest and inline suite through run() as Node does",
+    async () => {
+      const { events, counts, success } = await runEvents("49-run-events.js");
+      // The same events, in the same order, that node v26.3.0 reports for this fixture.
+      // `rollup` marks a failure that is "N subtests failed" and not the test's own.
+      const rows = events.map(({ type, name, kind, skip, todo, failureType }) => {
+        return { type, name, kind, skip, todo, rollup: failureType === "subtestsFailed" || undefined };
+      });
+      expect(rows).toEqual([
+        { type: "test:fail", name: "fails", kind: "test" },
+        {
+          type: "test:fail",
+          name: "a subtest fails, then its parent calls t.skip()",
+          kind: "test",
+          skip: true,
+          rollup: true,
+        },
+        { type: "test:fail", name: "skips then throws", kind: "test", skip: true },
+        { type: "test:fail", name: "a subtest calls t.skip() and then throws", kind: "test", rollup: true },
+        { type: "test:fail", name: "todo then throws", kind: "test", todo: true },
+        { type: "test:pass", name: "a subtest calls t.todo() and then throws", kind: "test" },
+        { type: "test:fail", name: "fails below", kind: "test" },
+        { type: "test:fail", name: "marks itself todo", kind: "test", todo: true, rollup: true },
+        { type: "test:pass", name: "a subtest fails below a subtest that calls t.todo()", kind: "test" },
+        { type: "test:fail", name: "never runs", kind: "test" },
+        { type: "test:pass", name: "never runs, expects a failure", kind: "test" },
+        { type: "test:fail", name: "a before hook of a test fails", kind: "test" },
+        { type: "test:fail", name: "member fails", kind: "test" },
+        { type: "test:fail", name: "inline, member", kind: "suite", rollup: true },
+        { type: "test:fail", name: "a test of an inline suite fails", kind: "test", rollup: true },
+        { type: "test:pass", name: "member passes", kind: "test" },
+        { type: "test:fail", name: "inline, after hook", kind: "suite" },
+        { type: "test:fail", name: "an inline suite fails in its after hook", kind: "test", rollup: true },
+        { type: "test:fail", name: "member fails first", kind: "test" },
+        { type: "test:fail", name: "inline, after hook and member", kind: "suite" },
+        {
+          type: "test:fail",
+          name: "an inline suite fails in its after hook and has a failing member",
+          kind: "test",
+          rollup: true,
+        },
+        { type: "test:fail", name: "todo member fails", kind: "test", todo: true },
+        { type: "test:pass", name: "inline todo", kind: "suite", todo: true },
+        {
+          type: "test:pass",
+          name: "an inline todo suite has a failing member, and the test calls t.skip()",
+          kind: "test",
+          skip: true,
+        },
+        { type: "test:fail", name: "inherits todo and fails", kind: "test", todo: true },
+        { type: "test:pass", name: "a todo test whose subtest fails", kind: "test", todo: true },
+        { type: "test:fail", name: "inherits todo and fails too", kind: "test", todo: true },
+        { type: "test:pass", name: "a test.todo() whose subtest fails", kind: "test", todo: true },
+        { type: "test:fail", name: "queued, fails", kind: "test" },
+        {
+          type: "test:fail",
+          name: "a test starts a failing subtest, calls t.skip() and throws",
+          kind: "test",
+          skip: true,
+        },
+      ]);
+      // The counts of node v26.3.0 too.
+      const { tests, suites, passed, failed, cancelled, skipped, todo } = counts;
+      expect({ tests, suites, passed, failed, cancelled, skipped, todo, success }).toEqual({
+        tests: 26,
+        suites: 4,
+        passed: 4,
+        failed: 11,
+        cancelled: 0,
+        skipped: 4,
+        todo: 7,
+        success: false,
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should report a passing run() for todo tests whose subtests fail",
+    async () => {
+      // A run() child has no bun:test todo scope, so a failure that Node does not count must not fail the file.
+      const { counts, success } = await runEvents("46-todo-scope-failures.js");
+      expect({ failed: counts.failed, cancelled: counts.cancelled, success }).toEqual({
+        failed: 0,
+        cancelled: 0,
+        success: true,
+      });
+    },
+    30_000,
+  );
 });
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {
@@ -379,6 +661,24 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
     new Response(stderrStream).text(),
   ]);
   return { exitCode, stdout, stderr };
+}
+
+type RunEvent = { type: string; name: string; kind: string; failureType?: string; skip?: unknown; todo?: unknown };
+
+// Runs one fixture through node:test's run() (fixtures/run-events.js) and
+// returns its pass/fail events and the run-level summary.
+async function runEvents(filename: string) {
+  const fixture = (name: string) => join(import.meta.dirname, "fixtures", name);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), fixture("run-events.js"), fixture(filename)],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  return JSON.parse(stdout.trim()) as { events: RunEvent[]; counts: Record<string, number>; success: boolean };
 }
 
 // The `error: ...` lines and the per-test verdict lines of a `bun test` report, in order.

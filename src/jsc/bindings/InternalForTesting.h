@@ -22,5 +22,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunction_lowercaseHeaderNameSIMD);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_emitMemoryPressure);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_isMemoryPressureWatcherInstalled);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_spawnThreadsForTesting);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_startContextLookupsForTesting);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_stopContextLookupsForTesting);
 
 }

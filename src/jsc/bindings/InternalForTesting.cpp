@@ -11,6 +11,7 @@
 #include "webcore/WebSocket.h"
 #include "node/JSNodeHTTPServerSocket.h"
 #include <wtf/StackTrace.h>
+#include <wtf/Threading.h>
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringImpl.h>
@@ -445,6 +446,53 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_spawnThreadsForTesting, (JSC::JSGlobalObject
     }
     return JSValue::encode(jsNumber(firstError));
 #endif
+}
+
+// A thread that looks one context identifier up without pause, as a thread that posts to it does.
+struct ContextLookupsForTesting {
+    std::atomic<bool> stop { false };
+    // The thread's own until it is joined.
+    uint64_t lookups { 0 };
+    uint64_t misses { 0 };
+    RefPtr<WTF::Thread> thread;
+};
+static std::atomic<ContextLookupsForTesting*> contextLookupsForTesting { nullptr };
+
+static void joinContextLookupsForTesting(ContextLookupsForTesting& lookups)
+{
+    lookups.stop.store(true);
+    lookups.thread->waitForCompletion();
+}
+
+// Starts the lookups of the calling global's context identifier.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_startContextLookupsForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto identifier = defaultGlobalObject(globalObject)->scriptExecutionContext()->identifier();
+    auto* lookups = new ContextLookupsForTesting;
+    lookups->thread = WTF::Thread::create("ContextLookupsForTesting"_s, [lookups, identifier] {
+        while (!lookups->stop.load()) {
+            lookups->lookups++;
+            if (!WebCore::ScriptExecutionContext::getScriptExecutionContext(identifier))
+                lookups->misses++;
+        }
+    });
+    if (std::unique_ptr<ContextLookupsForTesting> previous { contextLookupsForTesting.exchange(lookups) })
+        joinContextLookupsForTesting(*previous);
+    return JSValue::encode(jsUndefined());
+}
+
+// Stops them: { lookups, misses }, where a miss is a lookup that found no context.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_stopContextLookupsForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    std::unique_ptr<ContextLookupsForTesting> lookups { contextLookupsForTesting.exchange(nullptr) };
+    if (!lookups)
+        return JSValue::encode(jsUndefined());
+    joinContextLookupsForTesting(*lookups);
+    auto& vm = globalObject->vm();
+    auto* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, Identifier::fromString(vm, "lookups"_s), jsNumber(static_cast<double>(lookups->lookups)));
+    result->putDirect(vm, Identifier::fromString(vm, "misses"_s), jsNumber(static_cast<double>(lookups->misses)));
+    return JSValue::encode(result);
 }
 
 }

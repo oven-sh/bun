@@ -2055,3 +2055,46 @@ test.concurrent("--isolate: require(esm) caches a BunTranspiledModule SourceProv
     expect(exitCode, `run ${run}`).toBe(0);
   }
 });
+
+// Other threads reach the main context by its identifier, and a post that finds no context is
+// destroyed (ScriptExecutionContext::postTaskTo). So a thread that only looks the identifier up
+// must find a context every time, also while the global is swapped. Not concurrent: the lookup
+// thread needs its CPU during the swaps.
+test.each(["--isolate", "--parallel=2"])(
+  "%s: the main context identifier names a context throughout every swap",
+  async flag => {
+    // A swap leaves the identifier unregistered for longest when it sweeps a dead global. Not every swap does.
+    const swaps = isDebug ? 8 : 64;
+    const files: Record<string, string> = {
+      "a-start.test.js": `
+        import { test } from "bun:test";
+        import { startContextLookups } from "bun:internal-for-testing";
+        test("start", () => startContextLookups());
+      `,
+      "z-stop.test.js": `
+        import { test } from "bun:test";
+        import { stopContextLookups } from "bun:internal-for-testing";
+        test("stop", () => console.log("CONTEXT_LOOKUPS=" + JSON.stringify(stopContextLookups() ?? null)));
+      `,
+    };
+    for (let i = 1; i < swaps; i++) {
+      files[`m-${i}.test.js`] = `import { test } from "bun:test"; test("swap", () => {});`;
+    }
+    using dir = tempDir("isolate-context-lookups", files);
+    const { stdout, stderr, exitCode } = await runTests(
+      String(dir),
+      [flag],
+      Object.keys(files)
+        .sort()
+        .map(name => "./" + name),
+      // One --parallel worker takes every file.
+      { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
+    );
+    // --parallel prints what a file writes to stdout on its own stderr.
+    const lookups = JSON.parse((stdout + stderr).match(/CONTEXT_LOOKUPS=(.*)/)?.[1] ?? "null");
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(lookups).toEqual({ lookups: expect.any(Number), misses: 0 });
+    expect(lookups.lookups).toBeGreaterThan(0);
+    expect(exitCode).toBe(0);
+  },
+);

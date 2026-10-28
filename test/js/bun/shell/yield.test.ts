@@ -902,14 +902,14 @@ describe("yield", async () => {
         });
 
         // Here the pool work is under way when the script fails. The last
-        // member throws once the process before it in its subshell is gone,
-        // and that process waits for a file the child makes when the builtin
-        // has visibly begun. The child counts the entries when the promise
-        // rejects, and the test counts them again when the child is gone. In
-        // between, each of the two pool threads can finish what it had in
-        // hand, and nothing more. A child that is stuck says where, and
-        // exits. Not run on Windows. Not concurrent: each fixture is a few
-        // thousand files.
+        // member throws once its command substitution is back: a `cat` of the
+        // child's stdin, which the test ends when the child says that the
+        // builtin has visibly begun. The child counts the entries when the
+        // promise rejects, and the test counts them again when the child is
+        // gone. In between, each of the two pool threads can finish what it
+        // had in hand, and nothing more. A child that is stuck says where, and
+        // exits. Windows cannot take a started read of stdin back. Not
+        // concurrent: each fixture is a few thousand files.
         describe.skipIf(isWindows)("pool work that is under way stops changing the disk", () => {
           const dirs = 40;
           const filesPerDir = 50;
@@ -932,8 +932,6 @@ describe("yield", async () => {
               return 0;
             }
           };
-          /** A process that is gone once the file `go` is there. */
-          const gate = `while (!require("fs").existsSync("go")) Bun.sleepSync(5)`;
           /** A writable directory that `rename()` cannot reach from the temporary directory. */
           const otherDevice = (() => {
             if (!isPosix) return undefined;
@@ -999,7 +997,6 @@ describe("yield", async () => {
               try {
                 await using proc = Bun.spawn({
                   cmd: child(`
-                    import { writeFileSync } from "node:fs";
                     const count = () => {
                       try {
                         return readdirSync(${JSON.stringify(shape.counted)}, { recursive: true }).length;
@@ -1015,7 +1012,7 @@ describe("yield", async () => {
                     }, 30_000);
                     let atRejection = null;
                     const settled = settle(
-                      $\`${shape.member(elsewhere)} | (\${bun} -e ${js(gate)}; ${failing})\`.quiet().then(
+                      $\`${shape.member(elsewhere)} | echo $(cat) > \${new Blob(["x"])}\`.quiet().then(
                         result => result,
                         error => {
                           atRejection = count();
@@ -1026,23 +1023,24 @@ describe("yield", async () => {
                     // The pool work is under way once the count moves. Then the member throws.
                     while (count() === before) await new Promise(resolve => setImmediate(resolve));
                     waitingFor = "the script to settle";
-                    writeFileSync("go", "");
+                    console.log("begun");
                     const result = { settled: await settled, atRejection };
                     clearTimeout(stuck);
                     console.log(JSON.stringify(result));
                   `),
                   env: { ...env, UV_THREADPOOL_SIZE: "2" },
                   cwd: String(dir),
+                  stdin: "pipe",
                   stdout: "pipe",
                   stderr: "pipe",
                 });
 
-                const [stdout, stderr, exitCode] = await Promise.all([
-                  proc.stdout.text(),
-                  proc.stderr.text(),
-                  proc.exited,
-                ]);
-                const { settled, atRejection, stuck } = JSON.parse(stdout || "{}");
+                const stdout = await firstLine(proc.stdout);
+                await proc.stdin.end();
+                const [rest, stderr, exitCode] = await Promise.all([stdout.rest(), proc.stderr.text(), proc.exited]);
+                // The last line is the report of the child, also when it was stuck before it had begun.
+                const report = [stdout.line, ...rest.split("\n")].filter(line => line.startsWith("{")).at(-1);
+                const { settled, atRejection, stuck } = JSON.parse(report ?? "{}");
                 const changed = Math.abs(entries(join(String(dir), shape.counted)) - atRejection);
 
                 // `rm` reads the stop every fourth entry, so a thread can have four in hand.

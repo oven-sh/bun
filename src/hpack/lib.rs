@@ -468,6 +468,35 @@ mod tests {
         }
     }
 
+    /// Every way the coder writes 7 bytes at once, after every number of pending bits, and every rest.
+    #[test]
+    fn huffman_codes_in_groups() {
+        let groups: [&[u8; 7]; 12] = [
+            b"aaaaaaa",      // 35 bits
+            b"&&&&&&&",      // 56, the most that plain text has
+            b"!&&&&&:",      // 57, the most that is written at once
+            b"!&&&&&&",      // 58, so 34 and 24
+            b"{{{#aaa",      // 57 and 15
+            b"{{{~aaa",      // 58 and 15, so one by one
+            b"aaaa\\\\\\",   // 20 and 57
+            b"aaaa\\\\\x80", // 20 and 58, so one by one
+            b"\n\n\n\naaa",  // 120, which does not fit 64 bits, and 15
+            b"aaaa\n\n\n",   // 20 and 90
+            b"a\naaaa\x80",  // 45 and 30, the long codes second
+            b"aaa\na\xffa",  // 45 and 36
+        ];
+        for (group, sixes) in groups
+            .iter()
+            .flat_map(|group| (0..8).map(move |n| (group, n)))
+        {
+            // 35 to 42 bits, the group, and what it takes for groups to be used at all.
+            let mut string = [b"-".repeat(sixes), b"a".repeat(7 - sixes)].concat();
+            string.extend_from_slice(*group);
+            string.extend_from_slice(&b"z".repeat(56 + sixes));
+            check_huffman(&string);
+        }
+    }
+
     #[test]
     fn a_huffman_string_that_is_too_long_and_malformed_is_too_long() {
         for (coded, symbols) in [

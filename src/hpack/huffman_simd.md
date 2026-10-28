@@ -122,3 +122,73 @@ The scalar decoder's loop writes a short code and a long code in two places. Wit
 the `if` for both, the compiler loads the four bytes of a table entry one by one and puts the two
 symbols together again: 23 instructions a lookup instead of 17. Sapphire Rapids hides most of that.
 On Cascade Lake text took 10 to 25% longer.
+
+## The coder
+
+No SIMD here, but the same problem: where a code goes depends on the lengths of all the codes before
+it. `encode` takes one byte at a time and writes 32 bits whenever it has that many. Whether it has
+depends on the text, so that branch is mispredicted, and without BMI2, which no x64 build of Bun
+assumes, each code costs a shift by a variable count: three micro-operations on Intel up to Ice Lake.
+
+From 64 bytes on, `encode_groups` takes 7 bytes at a time.
+
+1. Neighbours are joined by a multiplication: `code(a) * (1 << len(b)) + code(b)`. `1 << len` comes
+   from `SHIFTS`, 1 KB, the only table this adds.
+2. The pairs are joined by shifts, by lengths that are added up on the side.
+3. 8 bytes are written, of which as many count as are full. No branch depends on the text.
+
+7 codes of 8 bits, the longest in plain text, and the 7 bits that may be left from the group before
+are 63 bits. A group of more than 57 bits is written in two halves, of 4 and 3 bytes, if each has
+57 bits at most: `{"a":1,` has 60, and one group in three of random printable characters has too
+many. Otherwise, which takes bytes that are not ASCII or several `\`, it is written byte by byte.
+
+The length is still counted in a pass of its own, so a string that is sent as it is costs what it
+did. Under 64 bytes nothing changes but for one comparison.
+
+`Encoder::encode` of one field with a name from the static table and a value that is not in the
+dynamic table, in ns. "Before" is the loop alone, "C" is ls-hpack 2.3.5 with its table of 65,536
+pairs, which is what Bun used before this crate.
+
+|                               | Cascade Lake |      |      | Emerald Rapids |      |      |
+| ----------------------------- | ------------ | ---- | ---- | -------------- | ---- | ---- |
+| value                         | before       | now  | C    | before         | now  | C    |
+| 64 characters of up to 8 bits | 197          | 134  | 180  | 123            | 86   | 132  |
+| 100                           | 283          | 187  | 222  | 184            | 128  | 162  |
+| 200                           | 502          | 313  | 351  | 333            | 215  | 250  |
+| 500                           | 1179         | 709  | 698  | 766            | 473  | 514  |
+| 1000                          | 2361         | 1336 | 1287 | 1500           | 926  | 998  |
+| 4000                          | 9213         | 5118 | 4924 | 5916           | 3553 | 3530 |
+| 300, 1 in 20 of 10 to 15 bits | 780          | 440  | 467  | 538            | 314  | 377  |
+| 1000 printable, at random     | 3292         | 2039 | 2011 | 2383           | 1480 | 1560 |
+| 1000 bytes, sent as they are  | 462          | 467  | 2098 | 340            | 339  | 1601 |
+
+Why 64: groups are faster from 21 bytes on if everything is in the cache, by 5 to 15% up to 48 and
+by 30% at 64. They are more code and 6 more cache lines of table. One string literal on Emerald
+Rapids, other strings every time, against the loop alone:
+
+| characters                               | 64   | 100  | 200  | 500  | 1000 | 4000 |
+| ---------------------------------------- | ---- | ---- | ---- | ---- | ---- | ---- |
+| in a loop                                | 0.69 | 0.62 | 0.63 | 0.59 | 0.59 | 0.58 |
+| 512 KB touched in between (L1 is cold)   | 0.89 | 0.84 | 0.76 | 0.66 | 0.63 | 0.58 |
+| 8 MB touched in between (L2 is cold too) | 1.28 | 1.22 | 1.16 | 1.01 | 0.84 | 0.65 |
+
+The last row is 140 to 200 ns, once per string. The C code takes twice as long as the loop there, up
+to 2000 characters: it has a cache miss for every other character.
+
+What else was tried for long strings, 1000 characters, against the loop alone, on Emerald Rapids.
+
+| what                                                              | in a loop                                                              | 8 MB touched |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------ |
+| the structure of the C code: table of pairs, 64 bits, split write | 0.77                                                                   |              |
+| table of pairs, 3 pairs joined by shifts, write without a branch  | 0.64                                                                   | 1.38         |
+| 4, 6, 7 or 8 codes joined by shifts alone                         | 0.74 to 0.86                                                           |              |
+| groups of 8: upper case and printable text do not fit 57 bits     | 1.02 to 1.16 there                                                     |              |
+| code, length and shift in arrays of their own, for all lengths    | 0.55, but 1.01 to 1.05 at 8 to 24 characters                           |              |
+| the three in one entry of 8 bytes                                 | 0.77: loaded as one word and taken apart                               |              |
+| no pass for the length until a group could make the code longer   | 0.56, but 2.9 if such groups come last and the string is sent as it is |              |
+| lengths added up 8 at a time, or 8 bytes per load                 | 0.57; 1.08 to 1.21 for the pass on Cascade Lake                        |              |
+
+How the loop is compiled matters as much as what it does. What cost 4 to 35% each: the byte by byte
+case inlined into the loop (it is `#[cold]` and takes its state by value now), the halves computed
+in each arm of the `if` instead of before it, `as_chunks`, which divides by 7 even for 3 bytes, and
+lengths added up as `u32` instead of `u8`.

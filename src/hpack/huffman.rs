@@ -88,10 +88,98 @@ pub(crate) fn encoded_len(src: &[u8]) -> usize {
     bits.div_ceil(8)
 }
 
-pub(crate) fn encode(src: &[u8], out: &mut Vec<u8>) {
+/// `1 << len` of each byte: multiplying by it makes room for the code of that byte.
+static SHIFTS: [u32; 256] = build_shifts();
+
+#[allow(clippy::indexing_slicing, reason = "evaluated at compile time")]
+const fn build_shifts() -> [u32; 256] {
+    let mut shifts = [0; 256];
+    let mut byte = 0;
+    while byte < CODES.len() {
+        shifts[byte] = 1 << CODES[byte].1;
+        byte += 1;
+    }
+    shifts
+}
+
+/// How many bytes are coded at once. That many codes of 8 bits, the longest in plain text, fit [`GROUP_MAX_BITS`].
+const GROUP_LEN: usize = 7;
+
+/// How many bits fit 64 beside the 7 that may be pending.
+const GROUP_MAX_BITS: u32 = 57;
+
+/// Under this many bytes, groups do not pay: huffman_simd.md.
+const GROUPS_MIN_LEN: usize = 64;
+
+/// The low `count` bits of `bits` are not written yet: under 8 between calls.
+#[derive(Clone, Copy)]
+struct Pending {
+    bits: u64,
+    count: u32,
+}
+
+impl Pending {
+    /// Adds `len` bits, 1 to [`GROUP_MAX_BITS`], and writes the whole bytes. No branch depends on `len`.
+    #[inline(always)]
+    fn put(&mut self, codes: u64, len: u32, out: &mut Vec<u8>) {
+        self.bits = self.bits << len | codes;
+        self.count += len;
+        out.extend_from_slice(&(self.bits << (64 - self.count)).to_be_bytes());
+        out.truncate(out.len() - 8 + self.count as usize / 8);
+        self.count %= 8;
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn put_each(mut self, group: [u8; GROUP_LEN], out: &mut Vec<u8>) -> Self {
+        for byte in group {
+            let (code, len) = code(byte);
+            self.put(code.into(), len.into(), out);
+        }
+        self
+    }
+}
+
+/// The whole groups of `src`. Returns what is pending and the rest of `src`.
+#[inline(never)]
+fn encode_groups<'a>(src: &'a [u8], out: &mut Vec<u8>) -> (Pending, &'a [u8]) {
+    let len = |byte| code(byte).1;
+    let first = |byte| u64::from(code(byte).0);
+    // Wraps if the codes do not fit 64 bits. Then they are not used.
+    let join = |codes: u64, byte: u8| {
+        let shift = SHIFTS.get(usize::from(byte)).copied().unwrap_or_default();
+        codes.wrapping_mul(shift.into()).wrapping_add(first(byte))
+    };
+    let (mut pending, mut rest) = (Pending { bits: 0, count: 0 }, src);
+    while let Some((group, after)) = rest.split_first_chunk() {
+        rest = after;
+        let [a, b, c, d, e, f, g] = *group;
+        let cd_len = len(c) + len(d);
+        let abcd = join(first(a), b) << cd_len | join(first(c), d);
+        let abcd_len = u32::from(len(a) + len(b) + cd_len);
+        let efg = join(join(first(e), f), g);
+        let efg_len = u32::from(len(e) + len(f) + len(g));
+        if abcd_len + efg_len <= GROUP_MAX_BITS {
+            pending.put(abcd << efg_len | efg, abcd_len + efg_len, out);
+        } else if abcd_len.max(efg_len) <= GROUP_MAX_BITS {
+            pending.put(abcd, abcd_len, out);
+            pending.put(efg, efg_len, out);
+        } else {
+            pending = pending.put_each(*group, out);
+        }
+    }
+    (pending, rest)
+}
+
+pub(crate) fn encode(mut src: &[u8], out: &mut Vec<u8>) {
     // The low `pending` bits are not written yet: under 32 here, and a code has at most 30.
     let mut bits: u64 = 0;
     let mut pending: u32 = 0;
+    if src.len() >= GROUPS_MIN_LEN {
+        let groups;
+        (groups, src) = encode_groups(src, out);
+        (bits, pending) = (groups.bits, groups.count);
+    }
     for &byte in src {
         let (code, len) = code(byte);
         bits = (bits << len) | u64::from(code);

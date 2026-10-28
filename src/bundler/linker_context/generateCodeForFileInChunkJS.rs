@@ -22,11 +22,11 @@ use super::convert_stmts_for_chunk::convert_stmts_for_chunk;
 use super::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
 
 #[allow(clippy::too_many_arguments)]
-pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
-    c: &mut LinkerContext,
+pub fn generate_code_for_file_in_chunk_js(
+    c: &LinkerContext,
     writer: &mut js_printer::BufferWriter,
-    r: renamer::Renamer<'r, 'src>,
-    chunk: &mut Chunk,
+    r: renamer::Renamer,
+    chunk: &Chunk,
     part_range: PartRange,
     to_common_js_ref: Ref,
     to_esm_ref: Ref,
@@ -37,21 +37,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     module_info: Option<&mut ModuleInfo>,
 ) -> js_printer::PrintResult {
     let source_index = part_range.source_index.get() as usize;
-    // SAFETY: `parse_graph` is a sibling of `*c` in the `BundleV2`, so this does not alias
-    // the `&mut *c` uses below, none of which writes to the graph.
-    let source_ref = unsafe { &(*c.parse_graph).input_files.items_source()[source_index] };
-
-    // Grab raw pointers to the SoA columns up front so
-    // subsequent `&mut c` borrows (convert_stmts_for_chunk) don't conflict.
-    // SAFETY: the underlying MultiArrayList storage is not resized for the duration of this
-    // function (linking has already sized everything).
-    let parts: *mut [Part] = {
-        let list = &mut c.graph.ast.items_parts_mut()[source_index];
-        core::ptr::addr_of_mut!(
-            list.as_mut_slice()
-                [part_range.part_index_begin as usize..part_range.part_index_end as usize]
-        )
-    };
+    let source_ref = &c.parse_graph().input_files.items_source()[source_index];
+    let parts: &[Part] = &c.graph.ast.items_parts()[source_index].as_slice()
+        [part_range.part_index_begin as usize..part_range.part_index_end as usize];
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index];
     let wrapper_part_index = if flags.wrap != WrapKind::None {
         c.graph.meta.items_wrapper_part_index()[source_index]
@@ -80,8 +68,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             let hmr_api_ref = ast.wrapper_ref;
 
-            // SAFETY: see `parts` raw-pointer note above.
-            for part in unsafe { (*parts).iter() } {
+            for part in parts {
                 let part_stmts: &[Stmt] = part.stmts.slice();
                 if let Err(err) =
                     convert_stmts_for_chunk_for_dev_server(c, stmts, part_stmts, arena, &mut ast)
@@ -267,20 +254,14 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             .expect("unreachable");
     }
 
-    // `convert_stmts_for_chunk` takes `&mut c` inside the loop body, so capture
-    // the per-file bitset as a BackRef once. The `parts_live` Vec doesn't
-    // reallocate after `tree_shaking_and_code_splitting` initializes it.
-    let parts_live: bun_ptr::BackRef<bun_collections::AutoBitSet> =
-        bun_ptr::BackRef::new(&c.graph.parts_live[source_index]);
+    let parts_live = &c.graph.parts_live[source_index];
 
     // TODO: handle directive
     if namespace_export_part_index >= part_range.part_index_begin
         && namespace_export_part_index < part_range.part_index_end
         && parts_live.is_set(namespace_export_part_index as usize)
     {
-        // SAFETY: see `parts` raw-pointer note above; index bounded by the range check just above.
-        let mut ns_part_stmts: &[Stmt] =
-            unsafe { (*parts)[namespace_export_part_index as usize].stmts }.slice();
+        let mut ns_part_stmts: &[Stmt] = parts[namespace_export_part_index as usize].stmts.slice();
         // Step 5 ends this part of a CommonJS entry point with
         // `module.exports = __toCommonJS(exports)`. Only the chunk of that entry point runs it.
         if output_format == OutputFormat::Cjs
@@ -325,16 +306,12 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     }
 
     // Add all other parts in this chunk
-    // SAFETY: see `parts` raw-pointer note above.
-    let parts_len = unsafe { (&*parts).len() };
-    for index_ in 0..parts_len {
+    for (index_, part) in parts.iter().enumerate() {
         let index = part_range.part_index_begin + (index_ as u32);
         if !parts_live.is_set(index as usize) {
             // Skip the part if it's not in this chunk
             continue;
         }
-        // SAFETY: index in bounds.
-        let part: &Part = unsafe { &(*parts)[index_] };
 
         if index == namespace_export_part_index {
             // Skip the namespace export part because we already handled it above

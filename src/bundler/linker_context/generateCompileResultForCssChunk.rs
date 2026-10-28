@@ -15,9 +15,9 @@ use crate::{Chunk, CompileResult, Index};
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // `PendingPartRange`. Writes: `chunk.compile_results_for_chunk[i]` (disjoint
 // by per-task `i`). Reads `c.graph.ast.css` / `c.options` shared. Never forms
-// `&mut LinkerContext` — `c_ptr` stays raw; the CSS printer takes
-// `&LinkerContext`. See `generate_compile_result_for_js_chunk` for the
-// `PendingPartRange: Send` justification.
+// `&mut LinkerContext`; the CSS printer takes `&LinkerContext`. See
+// `generate_compile_result_for_js_chunk` for the `PendingPartRange: Send`
+// justification.
 //
 /// # Safety
 ///
@@ -29,23 +29,19 @@ use crate::{Chunk, CompileResult, Index};
 pub(crate) unsafe fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` is the intrusive `task` field of a `PendingPartRange`
     // scheduled by `generate_chunks_in_parallel`; see the helper's contract.
-    let (part_range, c_ptr, chunk_ptr, mut worker) =
+    let (part_range, chunk_ptr, mut worker) =
         unsafe { crate::linker_context_mod::pending_part_range_prologue(task) };
+    let ctx = part_range.ctx;
 
     // CONCURRENCY: the CSS impl is read-only over `c`/`chunk` (the
     // `bytesInOutput` bump goes through `&AtomicUsize`), so form `&` — never
     // `&mut` — to avoid aliased exclusive borrows across peer worker tasks.
-    // The `&` borrows are scoped to the impl call so they do not overlap the
-    // raw slot write that follows.
-    let result = {
-        // SAFETY: `c_ptr` is the live `LinkerContext` returned by
-        // `pending_part_range_prologue`; see its contract.
-        let c_ref: &LinkerContext = unsafe { &*c_ptr };
-        // SAFETY: `chunk_ptr` is the live `Chunk` from the same prologue; this
-        // `&` is scoped so it does not overlap the raw slot write below.
-        let chunk_ref: &Chunk = unsafe { &*chunk_ptr };
-        generate_compile_result_for_css_chunk_impl(&mut **worker, c_ref, chunk_ref, part_range.i)
-    };
+    let result = generate_compile_result_for_css_chunk_impl(
+        &mut **worker,
+        ctx.c.get(),
+        ctx.chunk.get(),
+        part_range.i,
+    );
 
     // SAFETY: per-task unique `i`; see `Chunk::write_compile_result_slot`.
     // The slot write is routed through raw `addr_of_mut!` + `UnsafeCell` so it
@@ -83,12 +79,7 @@ fn generate_compile_result_for_css_chunk_impl(
         .at(imports_in_chunk_index as usize);
     let css: &BundlerStyleSheet = &css_content.asts[imports_in_chunk_index as usize];
     // const symbols: []const Symbol.List = c.graph.ast.items(.symbols);
-    // SAFETY: `to_css_with_writer` takes `&bun_ast::symbol::Map`, but
-    // `c.graph.symbols` is `bun_ast::symbol::Map`. Both are
-    // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is `repr(transparent)`),
-    // so layouts match — bridge by pointer cast.
-    let symbols: &bun_ast::symbol::Map =
-        unsafe { &*(&raw const c.graph.symbols).cast::<bun_ast::symbol::Map>() };
+    let symbols = &c.graph.symbols;
     // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>` alias as
     // `bun_js_printer::MangledProps`; no cast needed.
     let local_names: &LocalsResultsMap = &c.mangled_props;

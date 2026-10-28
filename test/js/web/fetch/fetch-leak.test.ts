@@ -254,11 +254,11 @@ test("fetch(data:) with percent-encoding does not leak", async () => {
 test("fetch() compress option does not leak bodies or compressor state", async () => {
   // Exercises:
   //  - all four encodings
-  //  - the custom-level path (allocates a temporary libdeflate compressor that
-  //    must be freed each call)
-  //  - a small body (HTTP-thread LibdeflateState shared_buffer fast path)
-  //  - a ~700 KiB body (zlib-streaming slow path → per-request Vec, freed in
-  //    on_async_http_callback_raw)
+  //  - the custom-level path (swaps the per-thread cached libdeflate
+  //    compressor, which must free the old one)
+  //  - a small body (compressed inline on the JS thread)
+  //  - a ~700 KiB body (compressed on the work pool → per-request Vec that
+  //    becomes the request body)
   using server = Bun.serve({
     port: 0,
     idleTimeout: 0,
@@ -273,8 +273,8 @@ test("fetch() compress option does not leak bodies or compressor state", async (
   const script = /* js */ `
     const url = process.env.SERVER;
     const small = Buffer.alloc(32 * 1024, "abcdefghij");
-    // > 512 KiB shared buffer → slow path; large enough that the compressed
-    // output also spans multiple socket writes.
+    // > 64 KiB → work pool path; large enough that the compressed output
+    // also spans multiple socket writes.
     const big = Buffer.alloc(700 * 1024, "abcdefghij");
     const rss = process.memoryUsage.rss;
     const opts = [
@@ -282,7 +282,7 @@ test("fetch() compress option does not leak bodies or compressor state", async (
       { compress: "deflate" },
       { compress: "br" },
       { compress: "zstd" },
-      // custom level → temp libdeflate compressor alloc/free each call
+      // custom level → swaps the per-thread cached libdeflate compressor
       { compress: { encoding: "gzip", level: 1 } },
     ];
 
@@ -295,8 +295,8 @@ test("fetch() compress option does not leak bodies or compressor state", async (
       await Promise.all(promises);
     }
 
-    // Warm up: HTTP-thread LibdeflateState (lazy compressor + 512 KiB
-    // shared_buffer) is allocated once here and stays for the process.
+    // Warm up: each work pool thread caches one libdeflate compressor (668 KiB)
+    // on first use and keeps it for the process.
     for (let i = 0; i < 10; i++) await round();
     Bun.gc(true);
     const baseline = rss();

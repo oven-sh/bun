@@ -176,6 +176,7 @@ mod tests {
             runs_in_place,
             checks_only,
             runs_tests,
+            has_globals_of_vitest,
             before_read,
             preload,
             thread_count,
@@ -201,6 +202,7 @@ mod tests {
         assert!(!runs_in_place);
         assert!(!checks_only);
         assert!(!runs_tests);
+        assert!(!has_globals_of_vitest);
         assert!(before_read.is_none());
         assert!(preload.is_none());
         assert!(thread_count.is_none());

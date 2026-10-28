@@ -1955,6 +1955,41 @@ describe.concurrent("bun lint", () => {
       });
     });
 
+    // ESLint validates the options of every rule when it builds a file's config, whatever the config is for.
+    describe.concurrent("a config that ESLint would reject is an error", () => {
+      const invalid = config({ "no-unused-vars": ["error", { notAnOption: true }] });
+      const expected = {
+        raw: "",
+        stderr: ["error: Invalid config in eslint.config.js", 'Key "rules": Key "no-unused-vars":'],
+        exitCode: 2,
+      };
+      const ran = async (args: string[], files: Record<string, string>) => {
+        const { raw, stderr, exitCode } = await lint(files, args, { mayFail: true });
+        return { raw, stderr: stderr.split("\n").slice(0, 2), exitCode };
+      };
+
+      test("in --print-config", async () => {
+        expect(await ran(["--print-config", "a.js"], { "eslint.config.js": invalid, "a.js": "" })).toEqual(expected);
+      });
+
+      test("in --list-files", async () => {
+        expect(await ran(["--list-files", "."], { "eslint.config.js": invalid, "a.js": "" })).toEqual(expected);
+      });
+
+      // A lint run leaves the error to ESLint for a file it hands over. --print-config hands nothing over.
+      test("in --print-config for a file that ESLint would lint", async () => {
+        const files = {
+          "eslint.config.js": `export default [{
+            files: ["**/*.vue"],
+            languageOptions: { parser: { parse: () => ({ type: "Program", body: [] }) } },
+            rules: { "no-unused-vars": ["error", { notAnOption: true }] },
+          }];\n`,
+          "a.vue": "",
+        };
+        expect(await ran(["--print-config", "a.vue"], files)).toEqual(expected);
+      });
+    });
+
     test("applies categories, overrides and ignorePatterns from .oxlintrc.json, plus .gitignore and -D", async () => {
       const { stdout, exitCode } = await lint(
         {

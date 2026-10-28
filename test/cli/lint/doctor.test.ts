@@ -730,13 +730,14 @@ Also packages/a/eslint.config.js
     expect(exitCode).toBe(2);
   });
 
-  test("a config that ESLint would reject is an error", async () => {
+  // With no files, the rules a new file would get are reported, from the same config.
+  test.each([{ "a.js": "" }, {}])("a config that ESLint would reject is an error: %j", async files => {
     const { stdout, stderr, exitCode } = await doctor({
       "eslint.config.js": `export default [{ rules: { eqeqeq: ["error", "sometimes"] } }];`,
-      "a.js": "",
+      ...files,
     });
     expect(stdout).toBe("");
-    expect(stderr).toContain(`Key "rules": Key "eqeqeq"`);
+    expect(stderr).toStartWith(`error: Invalid config in eslint.config.js\nKey "rules": Key "eqeqeq"`);
     expect(exitCode).toBe(2);
   });
 

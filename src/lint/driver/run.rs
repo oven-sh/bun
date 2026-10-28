@@ -1,7 +1,7 @@
 //! `bun lint`: ESLint's `cli.execute`.
 
 use crate::cli::Options;
-use crate::configs::{self, Flavor, Loaded, Loader};
+use crate::configs::{self, Flavor, Handoff, Loader};
 use crate::discover::{self, Status, Target};
 use crate::doctor::{self, Modules};
 use crate::format::{self, Format};
@@ -139,17 +139,6 @@ fn is_agent_for_oxlint() -> bool {
             || has(b"PATH", b".pi\\agent")
             || has(b"EDITOR", b"devin")
             || has(b"TERM_PROGRAM", b"kiro"))
-}
-
-/// Error text for `error`, an invalid config found while resolving a file that uses `loaded`. With an oxlint config the
-/// message goes to stdout and has to match oxlint's, so it isn't changed.
-fn invalid_config(loader: &Loader, loaded: &Loaded, error: &[u8]) -> Vec<u8> {
-    match loaded.flavor {
-        Flavor::Eslint | Flavor::EslintRc => {
-            loader.prefix_with_source(loaded.file.as_deref(), error)
-        }
-        Flavor::Oxlint | Flavor::BuiltIn => error.to_vec(),
-    }
 }
 
 /// The message for an error that stops the whole run. ESLint throws and exits with 2.
@@ -539,9 +528,8 @@ impl Run<'_> {
             });
         };
         let route = loaded.routes(config, &path);
-        // For files that ESLint lints, it reports an invalid config itself.
-        if let Some(error) = config.error.as_ref().filter(|_| route != Route::Eslint) {
-            return Err(Fatal(invalid_config(loader, &loaded, error)));
+        if let Some(fatal) = loader.invalid(&loaded, config, Handoff::ToEslint, || route) {
+            return Err(fatal);
         }
         if route == Route::Unsupported && config.route_without_processor(&path) == Route::Eslint {
             context.needs_eslint.lock().push((path, loaded.flavor));
@@ -677,6 +665,14 @@ impl Run<'_> {
             }
         }
         phases.discovery = started.elapsed().as_secs_f64();
+        // ESLint only notices when it gets to the file. `--list-files` gets to none of them.
+        let handoff = match self.options.list_files {
+            true => Handoff::Never,
+            false => Handoff::ToEslint,
+        };
+        if let Some(fatal) = targets.iter().find_map(|it| it.invalid(loader, handoff)) {
+            return Err(fatal);
+        }
         if self.options.list_files {
             let listed = targets
                 .into_iter()
@@ -686,17 +682,6 @@ impl Run<'_> {
                 files: 0,
                 listed: Some(listed.map(|it| it.path).collect()),
             });
-        }
-        // ESLint only notices when it gets to the file.
-        let invalid = targets.iter().find_map(|target| match &target.status {
-            Status::Matched(config) if target.route() != Route::Eslint => {
-                let error = config.error.as_ref()?;
-                Some(invalid_config(loader, &target.loaded, error))
-            }
-            _ => None,
-        });
-        if let Some(error) = invalid {
-            return Err(Fatal(error));
         }
         let (supported, unsupported): (Vec<Target>, Vec<Target>) =
             targets
@@ -1103,7 +1088,7 @@ impl Run<'_> {
             };
             let path = paths::resolve(&environment.cwd, &paths::from_native(file_name));
             loader.name(paths::dirname(&path));
-            let config = match loader.for_directory(paths::dirname(&path)) {
+            let loaded = match loader.for_directory(paths::dirname(&path)) {
                 Ok(loaded) if loaded.flavor == Flavor::Oxlint => {
                     let printed = loaded.config.oxlint_print_config();
                     crate::print_config::write_indented(&mut self.out.stdout, &printed, 0);
@@ -1117,9 +1102,16 @@ impl Run<'_> {
                     let message = b"Value for 'print-config' of type 'path' required.";
                     return reject_command_line(message, environment);
                 }
-                Ok(loaded) => loader.config_of(&loaded, &path),
+                Ok(loaded) => loaded,
                 Err(Fatal(error)) => return self.fail(&error),
             };
+            let config = loader.config_of(&loaded, &path);
+            if let FileConfig::Matched(config) = &config
+                && let Some(Fatal(error)) =
+                    loader.invalid(&loaded, config, Handoff::Never, || loaded.routes(config, &path))
+            {
+                return self.fail(&error);
+            }
             self.out.stdout = crate::print_config::print(match &config {
                 FileConfig::Matched(config) => Some(config),
                 _ => None,

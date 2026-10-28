@@ -7,7 +7,7 @@
 mod packages;
 
 use crate::cli::Options;
-use crate::configs::{Flavor, Loaded, Loader, plugin_shorthand};
+use crate::configs::{Flavor, Handoff, Loaded, Loader, plugin_shorthand};
 use crate::discover::{self, Status};
 use crate::print_config::{object, text, write_indented};
 use crate::run::{Environment, Fatal, Pool, Script};
@@ -361,6 +361,9 @@ pub(crate) fn lint(
         let Status::Matched(config) = &target.status else {
             continue;
         };
+        if let Some(fatal) = target.invalid(loader, Handoff::Never) {
+            return Err(fatal);
+        }
         match target.route() {
             Route::Eslint => {
                 files += 1;
@@ -374,9 +377,6 @@ pub(crate) fn lint(
             Route::Native | Route::Language | Route::Processor => {
                 files += 1;
                 if seen.insert(Arc::as_ptr(config)) {
-                    if let Some(error) = &config.error {
-                        return Err(Fatal(error.clone()));
-                    }
                     rules.add(config, loader.wants_types(&target.loaded, config));
                 }
             }
@@ -390,7 +390,12 @@ pub(crate) fn lint(
         .iter()
         .filter(|_| targets.is_empty())
     {
-        if let FileConfig::Matched(config) = loader.config_of(&own, &paths::join(cwd, name)) {
+        let path = paths::join(cwd, name);
+        if let FileConfig::Matched(config) = loader.config_of(&own, &path) {
+            let route = || own.routes(&config, &path);
+            if let Some(fatal) = loader.invalid(&own, &config, Handoff::Never, route) {
+                return Err(fatal);
+            }
             rules.add(&config, loader.wants_types(&own, &config));
         }
     }

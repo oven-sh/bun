@@ -187,9 +187,11 @@ for (const ns of ["posix", "win32"]) {
   for (const fn of ["join", "resolve"]) {
     results[ns + "." + fn] = outcome(() => length(path[ns][fn](new String("a"), ...rest)));
   }
-  // Under the cap, so the copy is made.
+  // Under the cap, so the copy is made. The expected path comes from a Buffer,
+  // so that it needs no allocation of its own that the cap can fail.
+  const joined = "a" + Buffer.alloc(2 * underTheCap.length, path[ns].sep + "b").toString();
   results[ns + ".join, 20001 arguments, is the joined path"] = outcome(
-    () => path[ns].join(new String("a"), ...underTheCap) === ["a", ...underTheCap].join(path[ns].sep),
+    () => path[ns].join(new String("a"), ...underTheCap) === joined,
   );
 }
 // The copy fails before the last argument, so that argument is not converted.

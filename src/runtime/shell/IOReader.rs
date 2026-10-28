@@ -264,10 +264,10 @@ impl IOReader {
         self.start()
     }
 
-    /// Every listener still writes the chunks it got. Reading on would queue input without bound.
+    /// No listener can take more input: each one still writes the chunks it got, or none is left.
     fn nobody_ready(&self) -> bool {
         let s = self.state();
-        !s.readers.is_empty() && s.readers.iter().all(|r| awaits_write(*r, s.interp))
+        s.readers.iter().all(|r| awaits_write(*r, s.interp))
     }
 
     /// Only adds if not already present.
@@ -281,8 +281,15 @@ impl IOReader {
     /// Unregister a listener; no-op if it was never added.
     pub(crate) fn remove_reader(&self, reader: ChildPtr) {
         let s = self.state();
-        if let Some(idx) = s.readers.iter().position(|r| *r == reader) {
-            s.readers.swap_remove(idx);
+        let Some(idx) = s.readers.iter().position(|r| *r == reader) else {
+            return;
+        };
+        s.readers.swap_remove(idx);
+        // The last listener left: the input stays in the fd until `start()`. Windows pauses after the read that is out.
+        #[cfg(not(windows))]
+        if s.readers.is_empty() {
+            s.paused = true;
+            self.reader().pause();
         }
     }
 

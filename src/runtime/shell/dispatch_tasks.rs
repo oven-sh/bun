@@ -31,7 +31,7 @@ impl bun_event_loop::Taskable for ShellStopTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellStopTask;
     /// The VM is going and the finalizer tears the interpreter down: only the box is freed.
     unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box `queue_stop_task` made; nothing else frees an unrun one.
+        // SAFETY: fn contract. It is the box `queue_stop_task` made, and nothing else frees an unrun one.
         drop(unsafe { bun_core::heap::take(this) });
     }
     /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.

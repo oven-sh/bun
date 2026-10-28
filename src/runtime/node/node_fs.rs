@@ -2339,6 +2339,9 @@ mod _async_tasks {
             // Shared borrow only — once `cp_async_directory` spawns `CpSingleTask`s,
             // other workpool threads concurrently hold `&Self` to this same allocation.
             let this = unsafe { &**_done };
+            if this.stopped() {
+                return;
+            }
 
             let args = &this.args;
             let mut src_buf = bun_paths::os_path_buffer_pool::get();

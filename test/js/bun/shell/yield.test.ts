@@ -1,7 +1,20 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
-import { closeSync, constants, existsSync, openSync, readdirSync, statSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isPosix, isWindows, tempDir } from "harness";
+import {
+  accessSync,
+  closeSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -483,7 +496,7 @@ describe("yield", async () => {
           // the trampoline that is still starting the pipeline, and that one
           // names the pipeline again afterwards: a stop that reported the first
           // `cat` at once would free the pipeline under it.
-          test.concurrent.if(isLinux)("when the failure is handled under the start of the pipeline", async () => {
+          test.concurrent.if(isLinux)("when the failure comes while the pipeline still starts", async () => {
             const throws = `echo $(cat ${js(import.meta.path)}) > \${new Blob(["x"])}`;
             const shapes = {
               "after a cat": `$\`cat | ${throws}\`.quiet().nothrow()`,
@@ -746,6 +759,31 @@ describe("yield", async () => {
           });
         });
 
+        // The builtin has nothing out but the message about its own arguments,
+        // and the stop gives that chunk up. Nothing else would end the builtin,
+        // so only the exit of the child shows that the script finished. Not
+        // quiet: the message goes to the child's stderr, which is not compared,
+        // because a write that is already out on Windows still arrives. A
+        // child for each builtin, so that one that never exits names it.
+        test.each(["ls -j", "mkdir", "touch", "cp", "mv", "rm"])(
+          "%s that still prints its usage",
+          async builtinWithUsage => {
+            await using proc = Bun.spawn({
+              cmd: settleEach({ usage: `$\`${builtinWithUsage} | ${failing}\`.nothrow()` }),
+              env,
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+
+            const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+            expect({ result: JSON.parse(stdout || "null"), exitCode }).toEqual({
+              result: { usage: builtin },
+              exitCode: 0,
+            });
+          },
+        );
+
         // `mv` is still asking the thread pool what its target is when the
         // script fails. When the answer is back, nothing moves, and the
         // directory that the answer opened is closed again.
@@ -858,6 +896,162 @@ describe("yield", async () => {
           });
         });
 
+        // Here the pool work is under way when the script fails. The last
+        // member throws once its command substitution is back: a `cat` of a
+        // FIFO that the child holds open, and lets go of when the builtin has
+        // visibly begun. The child counts the entries when the promise
+        // rejects, and the test counts them again when the child is gone. In
+        // between, each of the two pool threads can finish what it had in
+        // hand, and nothing more. Windows has no FIFO to hold. Not concurrent:
+        // each fixture is a few thousand files.
+        describe.skipIf(isWindows)("pool work that is under way stops changing the disk", () => {
+          const dirs = 40;
+          const filesPerDir = 50;
+          /** `dirs` directories of `filesPerDir` files each. */
+          const tree = (root: string) => {
+            for (let d = 0; d < dirs; d++) {
+              mkdirSync(join(root, "d" + d), { recursive: true });
+              for (let f = 0; f < filesPerDir; f++) writeFileSync(join(root, "d" + d, "f" + f), "x");
+            }
+          };
+          /** As many files in one directory. */
+          const flat = (root: string) => {
+            mkdirSync(root, { recursive: true });
+            for (let f = 0; f < dirs * filesPerDir; f++) writeFileSync(join(root, "f" + f), "x");
+          };
+          const entries = (path: string) => {
+            try {
+              return readdirSync(path, { recursive: true }).length;
+            } catch {
+              return 0;
+            }
+          };
+          /** A writable directory that `rename()` cannot reach from the temporary directory. */
+          const otherDevice = (() => {
+            if (!isPosix) return undefined;
+            const device = statSync(tmpdir()).dev;
+            for (const candidate of ["/dev/shm", "/tmp"]) {
+              try {
+                if (statSync(candidate).dev === device) continue;
+                accessSync(candidate, constants.W_OK | constants.X_OK);
+                return candidate;
+              } catch {}
+            }
+          })();
+
+          type Shape = {
+            /** Builds the fixture in `dir`. Returns the directory it made on the other device, if any. */
+            setup(dir: string): string | undefined;
+            /** The member that runs the builtin, as the text of a template literal in the child. */
+            member(elsewhere: string | undefined): string;
+            /** The path, relative to the fixture, whose entries the builtin adds or removes. */
+            counted: string;
+          };
+          const shapes: Record<string, Shape> = {
+            "cp -R": {
+              setup: dir => (tree(join(dir, "src")), mkdirSync(join(dir, "dst")), undefined),
+              member: () => "cp -R src dst/d",
+              counted: "dst",
+            },
+            // The pool also hands over lists of what it removed, and some are still on their way at the stop.
+            "rm -rfv": {
+              setup: dir => (tree(join(dir, "tree")), undefined),
+              member: () => "rm -rfv tree",
+              counted: "tree",
+            },
+            // `mv` is moving its operands here, in batches on the pool.
+            "mv of files": {
+              setup: dir => (flat(join(dir, "src")), mkdirSync(join(dir, "dst")), undefined),
+              member: () => 'mv ${readdirSync("src").map(f => "src/" + f)} dst',
+              counted: "dst",
+            },
+            // Each operand is a task that hands its copy to a second task of the pool.
+            "cp of files": {
+              setup: dir => (flat(join(dir, "src")), mkdirSync(join(dir, "dst")), undefined),
+              member: () => 'cp ${readdirSync("src").map(f => "src/" + f)} dst',
+              counted: "dst",
+            },
+            // `rename()` fails with EXDEV, so `mv` walks the tree and copies it.
+            "mv of a directory from another device": {
+              setup: dir => {
+                const elsewhere = mkdtempSync(join(otherDevice!, "shell-stop-xdev-"));
+                tree(join(elsewhere, "tree"));
+                mkdirSync(join(dir, "dst"));
+                return elsewhere;
+              },
+              member: elsewhere => `mv ${js(join(elsewhere!, "tree"))} dst/tree`,
+              counted: "dst",
+            },
+          };
+
+          for (const [name, shape] of Object.entries(shapes)) {
+            test.skipIf(name.includes("another device") && !otherDevice)(name, async () => {
+              using dir = tempDir("shell-stop-disk", {});
+              const elsewhere = shape.setup(String(dir));
+              try {
+                await using mkfifo = Bun.spawn({ cmd: [Bun.which("mkfifo")!, "gate"], env: bunEnv, cwd: String(dir) });
+                expect(await mkfifo.exited).toBe(0);
+                await using proc = Bun.spawn({
+                  cmd: child(`
+                    import { closeSync, constants, openSync } from "node:fs";
+                    const count = () => {
+                      try {
+                        return readdirSync(${JSON.stringify(shape.counted)}, { recursive: true }).length;
+                      } catch {
+                        return 0;
+                      }
+                    };
+                    const before = count();
+                    // While this end is open the FIFO never reports EOF, so the \`cat\` in the substitution goes on.
+                    const gate = openSync("gate", constants.O_RDWR | constants.O_NONBLOCK);
+                    let atRejection = null;
+                    const settled = settle(
+                      $\`${shape.member(elsewhere)} | echo $(cat gate) > \${new Blob(["x"])}\`.quiet().then(
+                        result => result,
+                        error => {
+                          atRejection = count();
+                          throw error;
+                        },
+                      ),
+                    );
+                    // The pool work is under way once the count moves. Then the member throws.
+                    while (count() === before) await new Promise(resolve => setImmediate(resolve));
+                    closeSync(gate);
+                    console.log(JSON.stringify({ settled: await settled, atRejection }));
+                  `),
+                  env: { ...env, UV_THREADPOOL_SIZE: "2" },
+                  cwd: String(dir),
+                  stdout: "pipe",
+                  stderr: "pipe",
+                });
+
+                const [stdout, stderr, exitCode] = await Promise.all([
+                  proc.stdout.text(),
+                  proc.stderr.text(),
+                  proc.exited,
+                ]);
+                const { settled, atRejection } = JSON.parse(stdout || "{}");
+                const changed = Math.abs(entries(join(String(dir), shape.counted)) - atRejection);
+
+                // `rm` reads the stop every fourth entry, so a thread can have four in hand.
+                expect({
+                  settled,
+                  changedAfterRejection: changed <= 8 ? "in hand" : changed,
+                  stderr,
+                  exitCode,
+                }).toEqual({
+                  settled: builtin,
+                  changedAfterRejection: "in hand",
+                  stderr: "",
+                  exitCode: 0,
+                });
+              } finally {
+                if (elsewhere) rmSync(elsewhere, { recursive: true, force: true });
+              }
+            });
+          }
+        });
+
         // The child's stderr is a pipe that nobody reads until the child is
         // gone (`lazy`). The chunk the builtin has queued on it when the script
         // fails is given up: `yes` always has one more, and the one of `seq` is
@@ -917,6 +1111,55 @@ describe("yield", async () => {
             });
           },
         );
+
+        // The same on the reading side. The child's stdin has its input
+        // before the script starts, and the script outlives the stop until the
+        // exit of the member in the middle arrives. In that time the input
+        // reaches no `cat` (it was reported already), and nobody reads it: it
+        // stays for the process. Windows: a read that is out cannot be taken
+        // back there.
+        test.concurrent.skipIf(isWindows)("with input waiting while another member is still being killed", async () => {
+          await using proc = Bun.spawn({
+            cmd: child(`
+              const rejection = await settle($\`cat | ${sleeper} | ${failing}\`.quiet().nothrow());
+              console.log(JSON.stringify({ rejection, stdin: await Bun.stdin.text() }));
+            `),
+            env,
+            stdin: "pipe",
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          proc.stdin.write("waiting\n");
+          await proc.stdin.end();
+
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+          expect({ result: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+            result: { rejection: builtin, stdin: "waiting\n" },
+            stderr: "",
+            exitCode: 0,
+          });
+        });
+
+        // The chunk of `seq` is out on the script's stderr, and the message of
+        // the command that was not found is queued behind it on the same
+        // writer. On Windows the write of the first one cannot be taken back,
+        // and its completion still has to be counted for the chunk it belongs
+        // to. What reaches stderr differs there, so it is not compared.
+        test.concurrent("with the chunk of another command queued behind it", async () => {
+          await using proc = Bun.spawn({
+            cmd: settleEach({
+              seq: `$\`seq 1 1000 1>&2 | command-that-does-not-exist-xyz | ${failing}\`.nothrow()`,
+            }),
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+          expect({ result: JSON.parse(stdout || "null"), exitCode }).toEqual({ result: { seq: builtin }, exitCode: 0 });
+        });
 
         // `Bun.ModuleGraph#dispose()` stops a script from outside too: before,
         // only the subprocesses of the graph's scripts ended with it. It

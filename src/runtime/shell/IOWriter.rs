@@ -112,6 +112,9 @@ struct Writer {
     len: usize,
     written: usize,
     bytelist: Option<*mut Vec<u8>>,
+    /// Cancelled while libuv had it: the write cannot be taken back, so its bytes stay in the accounting and only the completion is dropped.
+    #[cfg(windows)]
+    detached: bool,
 }
 
 impl Writer {
@@ -127,6 +130,15 @@ impl Writer {
     #[inline]
     fn set_dead(&mut self) {
         self.ptr = ChildPtr::NULL;
+    }
+    /// The child still waits for the completion of this chunk.
+    #[inline]
+    fn has_child(&self) -> bool {
+        #[cfg(windows)]
+        if self.detached {
+            return false;
+        }
+        !self.is_dead()
     }
     /// Tee `chunk` into the optional capture buffer.
     ///
@@ -520,8 +532,15 @@ impl IOWriter {
         if idx >= s.writers.len() {
             return;
         }
+        // The write that libuv holds is the chunk at `idx`.
+        #[cfg(windows)]
+        if s.writer.has_inflight_stream_write() && s.writers[idx].ptr == ptr {
+            let w = &mut s.writers[idx];
+            w.detached = true;
+            w.bytelist = None;
+        }
         for w in &mut s.writers[idx..] {
-            if w.ptr == ptr {
+            if w.ptr == ptr && w.has_child() {
                 w.set_dead();
             }
         }
@@ -612,10 +631,10 @@ impl IOWriter {
         // NOTE: reshaped for borrowck — `skip_dead()` re-derives `state()`,
         // so we must drop `s` before calling it and re-derive after, otherwise
         // two `&mut State` are live simultaneously (UB under Stacked Borrows).
-        let (is_dead, written, child_ptr) = {
+        let (is_dead, has_child, written, child_ptr) = {
             let s = self.state();
             let w = &s.writers[current_idx];
-            (w.is_dead(), w.written, w.ptr)
+            (w.is_dead(), w.has_child(), w.written, w.ptr)
         };
 
         if is_dead {
@@ -643,7 +662,7 @@ impl IOWriter {
             }
         }
 
-        if !is_dead {
+        if has_child {
             return Yield::OnIoWriterChunk {
                 child: child_ptr,
                 written,
@@ -817,9 +836,9 @@ impl IOWriter {
         let mut withheld: Option<usize> = None;
         // Re-derived every iteration: a completion may `cancel_chunks` the entries behind it.
         while let Some(w) = self.state().writers.get(idx) {
-            let (dead, child) = (w.is_dead(), w.ptr);
+            let (has_child, child) = (w.has_child(), w.ptr);
             idx += 1;
-            if dead {
+            if !has_child {
                 continue;
             }
             if withheld.is_none() && withhold == Some(child) {
@@ -831,7 +850,7 @@ impl IOWriter {
         let s = self.state();
         let withheld = withheld
             .map(|i| &s.writers[i])
-            .filter(|w| !w.is_dead())
+            .filter(|w| w.has_child())
             .map(|w| completion(w.ptr));
         s.total_bytes_written = 0;
         s.writer_idx = 0;
@@ -974,6 +993,8 @@ impl IOWriter {
             len: buf.len(),
             written: 0,
             bytelist,
+            #[cfg(windows)]
+            detached: false,
         });
         self.enqueue_internal(child)
     }
@@ -1020,6 +1041,8 @@ impl IOWriter {
             len: end - start,
             written: 0,
             bytelist,
+            #[cfg(windows)]
+            detached: false,
         });
         self.enqueue_internal(child)
     }

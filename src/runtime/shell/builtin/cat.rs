@@ -55,6 +55,10 @@ impl Step {
         match self {
             Step::Suspend => Yield::suspended(),
             Step::Done(code) => Builtin::done(interp, cmd, code),
+            // A stopped `cat` opens nothing more and reads nothing more: the stop task reports it.
+            Step::Next | Step::ReadMore if Builtin::of(interp, cmd).is_stopped() => {
+                Yield::suspended()
+            }
             Step::Next => Cat::next(interp, cmd),
             Step::ReadMore => Cat::read_more(interp, cmd),
         }
@@ -391,6 +395,10 @@ impl Cat {
         remove: &mut bool,
     ) -> Yield {
         *remove = false;
+        debug_assert!(
+            !Builtin::of(interp, cmd).is_stopped(),
+            "input for a stopped cat"
+        );
         let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io();
         match &mut Self::state_mut(interp, cmd).state {
             CatState::ExecStdin { chunks_queued, .. }

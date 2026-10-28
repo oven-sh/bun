@@ -160,6 +160,10 @@ macro_rules! shell_builtins {
                 written: usize,
                 err: Option<bun_sys::SystemError>,
             ) -> Yield {
+                debug_assert!(
+                    !Self::of(interp, cmd).is_stopped(),
+                    "a chunk of a stopped builtin completed"
+                );
                 match Self::kind_of(interp, cmd) {
                     $( Kind::$UV => crate::shell::builtins::$u_mod::$UT::on_io_writer_chunk(interp, cmd, written, err), )*
                     $( Kind::$IV => crate::shell::builtins::$i_mod::$IT::on_io_writer_chunk(interp, cmd, written, err), )*
@@ -824,7 +828,7 @@ impl Builtin {
         self.stopped.load(core::sync::atomic::Ordering::Relaxed)
     }
 
-    /// The script is stopped while this runs (`Cmd::stop`): give up what names the node, free nothing. Safe to repeat.
+    /// The script is stopped while this runs (`Cmd::stop`): give up what names the node, free nothing. From here on no chunk and no input reaches the builtin.
     pub(crate) fn stop(interp: &Interpreter, cmd: NodeId) {
         let me = Self::of_mut(interp, cmd);
         me.stopped

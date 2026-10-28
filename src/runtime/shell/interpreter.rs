@@ -331,10 +331,11 @@ pub(crate) struct Interpreter {
 }
 
 bun_jsc::impl_abort_handle_owner!(Interpreter, abort_handle, |this, cause| {
-    // SAFETY: trait contract — `this` is live.
+    // SAFETY: trait contract, `this` is live.
     let this = unsafe { &*this };
+    // The script starts no command any more, and its glob walks end.
     this.halt(InterpreterFlags::set_context_stopped);
-    // VM teardown stops nothing here: the finalizer frees the interpreter.
+    // VM teardown stops nothing that runs: the finalizer frees the interpreter.
     let teardown = matches!(
         cause,
         bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::VmTeardown)
@@ -1376,7 +1377,7 @@ impl Interpreter {
             let id = NodeId(i as u32);
             match self.node(id).kind() {
                 StateKind::Cmd => stopped_builtin |= Cmd::stop(self, id, cause),
-                // These run nothing themselves: each ends when its children have reported.
+                // Nothing of these is stopped: each ends with its children, or with its own error message or `[[ ]]` stat.
                 StateKind::Script
                 | StateKind::Stmt
                 | StateKind::Binary
@@ -1459,7 +1460,8 @@ impl Interpreter {
             let parent = self
                 .node(failed)
                 .base()
-                .map_or(NodeId::INTERPRETER, |b| b.parent);
+                .expect("the failed node stays parked until its stop task reports it")
+                .parent;
             self.child_done(parent, failed, 1).run(self);
         }
         if let Some((reject, error)) = rejection {
@@ -2749,11 +2751,6 @@ impl<P: OutputTaskVTable> OutputTask<P> {
         // SAFETY: caller contract — see `start`.
         unsafe {
             let me = &mut *this;
-            if crate::shell::builtin::Builtin::of(interp, me.parent).is_stopped() {
-                // A completion that was on its way when `Builtin::stop` came: the rest is not written.
-                me.state = OutputTaskState::Done;
-                return Self::deinit(this, interp);
-            }
             match me.state {
                 OutputTaskState::WaitingWriteErr => {
                     P::on_write_err(interp, me.parent);

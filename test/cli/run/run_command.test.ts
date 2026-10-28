@@ -361,6 +361,8 @@ const afterKilledChild = [
   { name: "yes, bun exec", script: `bun child.js | yes 1>&2; ${nope}`, cmd: ["exec"] },
   { name: "cat, bun run --shell=bun", script: `bun child.js | cat; ${nope}`, cmd: ["run", "--shell=bun", "go"] },
   { name: "cat, a .sh file", script: `bun child.js | cat; ${nope}`, cmd: ["./go.sh"] },
+  // The stopped `cat` is in the command substitution of a `[[ ]]`, which then ends with no word to test.
+  { name: "cat in a [[ ]], bun exec", script: `bun child.js | [[ -z $(cat) ]]; ${nope}`, cmd: ["exec"] },
 ];
 test.concurrent.each(afterKilledChild)(
   "a builtin after the child that Ctrl+C kills ends the script ($name)",
@@ -438,11 +440,18 @@ test.concurrent.each(cutSubstitution)(
 
 // Only the builtins are stopped. A child that handles the Ctrl+C is left to
 // finish what it does with it: it writes its file only once `bun run` has
-// reaped the sibling that died.
-test.concurrent("a child that handles the Ctrl+C outlives the one it killed (--shell=bun)", async () => {
-  using dir = tempDir("run-ctrl-c-sibling", {
-    "package.json": JSON.stringify({ name: "t", scripts: { go: "bun handles.js | bun dies.js" } }),
-    "handles.js": `
+// reaped the sibling that died. With a builtin after the sibling, the builtin
+// is stopped and reported while the script still waits for that child.
+const handlesCtrlC = [
+  { name: "--shell=bun", script: "bun handles.js | bun dies.js" },
+  { name: "--shell=bun, before a builtin", script: "bun handles.js | bun dies.js | cat" },
+];
+test.concurrent.each(handlesCtrlC)(
+  "a child that handles the Ctrl+C outlives the one it killed ($name)",
+  async ({ script }) => {
+    using dir = tempDir("run-ctrl-c-sibling", {
+      "package.json": JSON.stringify({ name: "t", scripts: { go: script } }),
+      "handles.js": `
       const { readFileSync, writeFileSync } = require("fs");
       process.on("SIGINT", () => {
         const sibling = Number(readFileSync("dies.pid", "utf8"));
@@ -459,7 +468,7 @@ test.concurrent("a child that handles the Ctrl+C outlives the one it killed (--s
       setInterval(() => {}, 1000);
       writeFileSync("handles.ready", "");
     `,
-    "dies.js": `${raiseCtrlC}
+      "dies.js": `${raiseCtrlC}
       const { existsSync, writeFileSync } = require("fs");
       writeFileSync("dies.pid", String(process.pid));
       const timer = setInterval(() => {
@@ -468,16 +477,20 @@ test.concurrent("a child that handles the Ctrl+C outlives the one it killed (--s
         raiseCtrlC();
       }, 5);
     `,
-  });
+    });
 
-  const { exitCode, signalCode } = await runInTerminal([bunExe(), "run", "--shell=bun", "go"], String(dir));
-  expect(existsSync(join(String(dir), "handled"))).toBe(true);
-  if (isWindows) {
-    expect(exitCode).toBe(0x3a);
-  } else {
-    expect(signalCode).toBe("SIGINT");
-  }
-});
+    const { exitCode, signalCode } = await runInTerminal([bunExe(), "run", "--shell=bun", "go"], String(dir), {
+      ...bunEnv,
+      BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1",
+    });
+    expect(existsSync(join(String(dir), "handled"))).toBe(true);
+    if (isWindows) {
+      expect(exitCode).toBe(0x3a);
+    } else {
+      expect(signalCode).toBe("SIGINT");
+    }
+  },
+);
 
 describe.concurrent.each([
   ["ESC [ 2 K", "\x1b[2K", "\\x1b[2K"],

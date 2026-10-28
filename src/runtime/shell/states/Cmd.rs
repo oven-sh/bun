@@ -917,7 +917,7 @@ impl Cmd {
         }
     }
 
-    /// A stop task's turn: stop the builtin once more, then report it unless it still has work out.
+    /// A stop task's turn: report the stopped builtin unless it still has work out.
     pub(crate) fn finish_stopped(interp: &Interpreter, this: NodeId) {
         let me = interp.as_cmd(this);
         let stopped = matches!(me.state, CmdState::Exec)
@@ -925,7 +925,6 @@ impl Cmd {
         if !stopped {
             return;
         }
-        Builtin::stop(interp, this);
         if Builtin::after_stop(interp, this) {
             Builtin::done_stopped(interp, this).run(interp);
         }

@@ -499,6 +499,7 @@ impl ShellMvBatchedTask {
                 this.target.as_bytes(),
                 &this.sources[0],
                 this.no_clobber,
+                &this.task,
                 &mut buf,
             ) {
                 this.err = Some(e);
@@ -512,6 +513,7 @@ impl ShellMvBatchedTask {
             this.cwd,
             &this.target,
             this.no_clobber,
+            &this.task,
         ) {
             this.err = Some(if e.get_errno() == bun_sys::E::ENOTDIR {
                 e.with_path(this.target.as_bytes())
@@ -529,6 +531,7 @@ impl ShellMvBatchedTask {
         dst_dir: bun_sys::Fd,
         dst: &ZStr,
         no_clobber: bool,
+        task: &ShellTask,
     ) -> Result<(), bun_sys::Error> {
         use bun_sys::E;
 
@@ -555,7 +558,7 @@ impl ShellMvBatchedTask {
         }
         match bun_sys::renameat(src_dir, src, dst_dir, dst) {
             Err(e) if e.get_errno() == E::EXDEV => {
-                Self::move_across_devices(src_dir, src, dst_dir, dst, None).map_err(|e| {
+                Self::move_across_devices(src_dir, src, dst_dir, dst, None, task).map_err(|e| {
                     if e.path.is_empty() {
                         e.with_path(src.as_bytes())
                     } else {
@@ -571,12 +574,14 @@ impl ShellMvBatchedTask {
     ///
     /// `output` is `None` for `mv`'s operand. Below the operand, it's the `(st_dev, st_ino)` of the
     /// directory being copied into. The walk must not enter it, or it would copy its own output.
+    /// A stopped `mv` ends the walk with `ECANCELED`, so no level removes a source directory that still has entries.
     fn move_across_devices(
         src_dir: bun_sys::Fd,
         src: &ZStr,
         dst_dir: bun_sys::Fd,
         dst: &ZStr,
         output: Option<(u64, u64)>,
+        task: &ShellTask,
     ) -> Result<(), bun_sys::Error> {
         use bun_sys::{Dir, E, File, O, S, Tag};
 
@@ -658,6 +663,9 @@ impl ShellMvBatchedTask {
             let mut iter = Box::new(bun_sys::dir_iterator::iterate(sd.fd()));
             let mut nbuf = bun_paths::path_buffer_pool::get();
             while let Some(entry) = iter.next()? {
+                if task.stopped() {
+                    return Err(bun_sys::Error::from_code(E::ECANCELED, Tag::rename));
+                }
                 let name = entry.name.slice_u8();
                 if name.len() >= bun_paths::MAX_PATH_BYTES {
                     return Err(bun_sys::Error::from_code(E::ENAMETOOLONG, Tag::rename));
@@ -665,7 +673,7 @@ impl ShellMvBatchedTask {
                 nbuf[..name.len()].copy_from_slice(name);
                 nbuf[name.len()] = 0;
                 let name_z = ZStr::from_buf(&nbuf[..], name.len());
-                Self::move_across_devices(sd.fd(), name_z, dd.fd(), name_z, Some(output))?;
+                Self::move_across_devices(sd.fd(), name_z, dd.fd(), name_z, Some(output), task)?;
             }
             #[cfg(unix)]
             let _ = bun_sys::fchown(dd.fd(), st.st_uid as _, st.st_gid as _);
@@ -780,6 +788,7 @@ impl ShellMvBatchedTask {
         target: &[u8],
         src: &ZStr,
         no_clobber: bool,
+        task: &ShellTask,
         buf: &mut PathBuffer,
     ) -> Result<(), bun_sys::Error> {
         let base = resolve_path::basename(src.as_bytes());
@@ -793,7 +802,7 @@ impl ShellMvBatchedTask {
         } else {
             let path_in_dir =
                 resolve_path::normalize_buf_z::<bun_paths::platform::Auto>(base, &mut buf[..]);
-            Self::do_rename(cwd, src, target_fd, path_in_dir, no_clobber)
+            Self::do_rename(cwd, src, target_fd, path_in_dir, no_clobber, task)
         };
         result.map_err(|e| {
             // Surface `target/basename(src)` as the failing path.
@@ -826,6 +835,7 @@ impl ShellMvBatchedTask {
                 self.target.as_bytes(),
                 &self.sources[i],
                 self.no_clobber,
+                &self.task,
                 &mut buf,
             ) {
                 self.err = Some(e);

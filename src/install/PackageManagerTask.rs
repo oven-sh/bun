@@ -256,10 +256,7 @@ impl<'a> Task<'a> {
         // concurrently (and concurrently with the main thread), so binding a
         // long-lived `&mut PackageManager` here would be aliased-`&mut` UB.
         // Subfields touched cross-thread (`resolve_tasks`, `wake`) are reached
-        // through raw-ptr/shared accessors below; the few callees whose
-        // signatures still take `&mut PackageManager` (`get_cache_directory`,
-        // `get_package_metadata`) are dereferenced inline at the call boundary
-        // only.
+        // through raw-ptr/shared accessors below.
         let manager_ref = this.package_manager.expect("Task.package_manager unset");
         let manager: *mut PackageManager = manager_ref.as_mut_ptr();
 
@@ -322,25 +319,16 @@ impl<'a> Task<'a> {
                     let is_extended_manifest = *is_extended_manifest;
 
                     // Shared read of `manager.options` (never mutated by worker
-                    // threads) via the `ParentRef` safe `Deref`. Wrap as
-                    // `BackRef` so the `&PackageManager` autoref does not stay
-                    // live across the `&mut *manager` below.
-                    let scope = bun_ptr::BackRef::new(
-                        manager_ref.scope_for_package_name(manifest.name.slice()),
-                    );
+                    // threads) via the `ParentRef` safe `Deref`.
+                    let scope = manager_ref.scope_for_package_name(manifest.name.slice());
                     let package_manifest = match npm::Registry::get_package_metadata(
-                        // scope is borrowed from manager.options which is not
-                        // touched by get_package_metadata (only the cache-dir fields are).
-                        scope.get(),
+                        scope,
                         metadata.response,
                         body.slice(),
                         &mut this.log,
                         manifest.name.slice(),
                         loaded_manifest,
-                        // SAFETY: see `manager` decl — short-lived `&mut` at call
-                        // boundary only (callee touches `cache_directory` /
-                        // `get_temporary_directory` lazily).
-                        unsafe { &mut *manager },
+                        manifest.store,
                         is_extended_manifest,
                     ) {
                         Ok(v) => v,
@@ -554,6 +542,8 @@ pub union Request<'a> {
 }
 
 pub struct PackageManifestRequest<'a> {
+    /// Resolved by `enqueue_parse_npm_package` on the main thread.
+    pub(crate) store: Option<crate::package_manager::directories::ManifestStore>,
     pub(crate) name: StringOrTinyString,
     // BORROW_PARAM per LIFETIMES.tsv
     // TODO: lifetime — see note on `Task<'a>`; likely should demote to `*mut NetworkTask`.

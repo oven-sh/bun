@@ -61,6 +61,17 @@ impl PackageManager {
         get_temporary_directory(self)
     }
 
+    /// Called on the thread that runs `run_tasks`, so that no pool thread opens the directories.
+    pub(crate) fn manifest_store(&mut self) -> Option<ManifestStore> {
+        if !self.options.enable.manifest_cache_store() {
+            return None;
+        }
+        // If the cache cannot be written, the manifest is still used. It is just not saved.
+        let tmpdir = try_get_temporary_directory(self).ok()?.handle.fd;
+        let cache_dir = try_get_cache_directory(self).ok()?;
+        Some(ManifestStore { tmpdir, cache_dir })
+    }
+
     /// Prints `why` and exits. Auto-install only logs `why`, and the import that needed the
     /// directory then throws it.
     pub(crate) fn exit_or_log(&mut self, why: &DirectoryError) {
@@ -201,6 +212,13 @@ pub struct TemporaryDirectory {
     #[cfg(windows)]
     pub(crate) path: ZBox,
     pub(crate) name: &'static [u8],
+}
+
+/// The open directories that a manifest cache file is written through.
+#[derive(Clone, Copy)]
+pub struct ManifestStore {
+    pub(crate) tmpdir: Fd,
+    pub(crate) cache_dir: Fd,
 }
 
 // `TemporaryDirectory` is auto-`Send + Sync`: `Dir` wraps `Fd` (an integer),

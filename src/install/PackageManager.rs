@@ -2871,10 +2871,7 @@ pub fn init(
         {
             manager.options.offline = options::OfflineMode::PreferOffline;
             // the manifest cache is the data source in this mode (see Options::load)
-            manager
-                .options
-                .enable
-                .set(options::Enable::MANIFEST_CACHE, true);
+            manager.options.enable.set_manifest_cache(true);
         }
 
         if let Some(network_concurrency) = cli.network_concurrency {

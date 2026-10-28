@@ -706,10 +706,8 @@ impl Options {
     ) -> crate::Result<()> {
         let bunfigs = [runtime_bunfigs[0], bun_install_ref, runtime_bunfigs[1]];
         if let Some(manifest_cache) = env.get(b"BUN_MANIFEST_CACHE") {
-            self.enable.set(
-                Enable::MANIFEST_CACHE,
-                matches!(manifest_cache, b"1" | b"2"),
-            );
+            self.enable
+                .set_manifest_cache(matches!(manifest_cache, b"1" | b"2"));
             self.enable
                 .set(Enable::MANIFEST_CACHE_CONTROL, manifest_cache == b"2");
         }
@@ -816,11 +814,11 @@ impl Options {
 
             if config.disable_cache.unwrap_or(false) {
                 self.enable.set(Enable::CACHE, false);
-                self.enable.set(Enable::MANIFEST_CACHE, false);
+                self.enable.set_manifest_cache(false);
             }
 
             if config.disable_manifest_cache.unwrap_or(false) {
-                self.enable.set(Enable::MANIFEST_CACHE, false);
+                self.enable.set_manifest_cache(false);
             }
 
             if config.force.unwrap_or(false) {
@@ -1076,7 +1074,7 @@ impl Options {
         self.json_output = cli.json_output;
 
         if cli.no_cache {
-            self.enable.set(Enable::MANIFEST_CACHE, false);
+            self.enable.set_manifest_cache(false);
             self.enable.set(Enable::MANIFEST_CACHE_CONTROL, false);
         }
 
@@ -1277,7 +1275,7 @@ impl Options {
         // The manifest cache is the data source for --prefer-offline/--offline; keep it on
         // even where it is otherwise bypassed (`bun update`, `--no-cache`, `--force`).
         if self.offline != OfflineMode::Online {
-            self.enable.set(Enable::MANIFEST_CACHE, true);
+            self.enable.set_manifest_cache(true);
         }
         // Prefetching resolved tarballs is a latency optimisation for downloads; under
         // --offline there is nothing to download and the install phase reports misses.
@@ -1331,6 +1329,7 @@ impl Default for Do {
 bitflags::bitflags! {
     #[derive(Copy, Clone, PartialEq, Eq)]
     pub struct Enable: u16 {
+        /// Lookups read the manifests in the cache.
         const MANIFEST_CACHE         = 1 << 0;
         const MANIFEST_CACHE_CONTROL = 1 << 1;
         const CACHE                  = 1 << 2;
@@ -1353,13 +1352,18 @@ bitflags::bitflags! {
         const GLOBAL_VIRTUAL_STORE   = 1 << 9;
         /// `bun add` was given a group, so an entry that's in another group moves into it.
         const MOVE_TO_GROUP          = 1 << 10;
-        // _: u5 padding
+        /// Fetched manifests are stored. `bun update` clears `MANIFEST_CACHE` and keeps this.
+        const MANIFEST_CACHE_STORE   = 1 << 11;
+        // _: u4 padding
     }
 }
 
 impl Default for Enable {
     fn default() -> Self {
-        Enable::MANIFEST_CACHE | Enable::MANIFEST_CACHE_CONTROL | Enable::CACHE
+        Enable::MANIFEST_CACHE
+            | Enable::MANIFEST_CACHE_CONTROL
+            | Enable::MANIFEST_CACHE_STORE
+            | Enable::CACHE
     }
 }
 
@@ -1421,6 +1425,15 @@ impl Enable {
     #[inline]
     pub(crate) fn manifest_cache_control(self) -> bool {
         self.contains(Enable::MANIFEST_CACHE_CONTROL)
+    }
+    #[inline]
+    pub(crate) fn manifest_cache_store(self) -> bool {
+        self.contains(Enable::MANIFEST_CACHE_STORE)
+    }
+    /// The settings that name the manifest cache turn reading and storing on or off together.
+    #[inline]
+    pub(crate) fn set_manifest_cache(&mut self, on: bool) {
+        self.set(Enable::MANIFEST_CACHE | Enable::MANIFEST_CACHE_STORE, on);
     }
     #[inline]
     pub(crate) fn fail_early(self) -> bool {

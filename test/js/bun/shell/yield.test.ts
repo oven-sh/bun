@@ -902,13 +902,14 @@ describe("yield", async () => {
         });
 
         // Here the pool work is under way when the script fails. The last
-        // member throws once its command substitution is back: a `cat` of a
-        // FIFO that the child holds open, and lets go of when the builtin has
-        // visibly begun. The child counts the entries when the promise
+        // member throws once the process before it in its subshell is gone,
+        // and that process waits for a file the child makes when the builtin
+        // has visibly begun. The child counts the entries when the promise
         // rejects, and the test counts them again when the child is gone. In
         // between, each of the two pool threads can finish what it had in
-        // hand, and nothing more. Windows has no FIFO to hold. Not concurrent:
-        // each fixture is a few thousand files.
+        // hand, and nothing more. A child that is stuck says where, and
+        // exits. Not run on Windows. Not concurrent: each fixture is a few
+        // thousand files.
         describe.skipIf(isWindows)("pool work that is under way stops changing the disk", () => {
           const dirs = 40;
           const filesPerDir = 50;
@@ -931,6 +932,8 @@ describe("yield", async () => {
               return 0;
             }
           };
+          /** A process that is gone once the file `go` is there. */
+          const gate = `while (!require("fs").existsSync("go")) Bun.sleepSync(5)`;
           /** A writable directory that `rename()` cannot reach from the temporary directory. */
           const otherDevice = (() => {
             if (!isPosix) return undefined;
@@ -994,11 +997,9 @@ describe("yield", async () => {
               using dir = tempDir("shell-stop-disk", {});
               const elsewhere = shape.setup(String(dir));
               try {
-                await using mkfifo = Bun.spawn({ cmd: [Bun.which("mkfifo")!, "gate"], env: bunEnv, cwd: String(dir) });
-                expect(await mkfifo.exited).toBe(0);
                 await using proc = Bun.spawn({
                   cmd: child(`
-                    import { closeSync, constants, openSync } from "node:fs";
+                    import { writeFileSync } from "node:fs";
                     const count = () => {
                       try {
                         return readdirSync(${JSON.stringify(shape.counted)}, { recursive: true }).length;
@@ -1007,11 +1008,14 @@ describe("yield", async () => {
                       }
                     };
                     const before = count();
-                    // While this end is open the FIFO never reports EOF, so the \`cat\` in the substitution goes on.
-                    const gate = openSync("gate", constants.O_RDWR | constants.O_NONBLOCK);
+                    let waitingFor = "the builtin to begin";
+                    const stuck = setTimeout(() => {
+                      console.log(JSON.stringify({ stuck: waitingFor }));
+                      process.exit(1);
+                    }, 30_000);
                     let atRejection = null;
                     const settled = settle(
-                      $\`${shape.member(elsewhere)} | echo $(cat gate) > \${new Blob(["x"])}\`.quiet().then(
+                      $\`${shape.member(elsewhere)} | (\${bun} -e ${js(gate)}; ${failing})\`.quiet().then(
                         result => result,
                         error => {
                           atRejection = count();
@@ -1021,8 +1025,11 @@ describe("yield", async () => {
                     );
                     // The pool work is under way once the count moves. Then the member throws.
                     while (count() === before) await new Promise(resolve => setImmediate(resolve));
-                    closeSync(gate);
-                    console.log(JSON.stringify({ settled: await settled, atRejection }));
+                    waitingFor = "the script to settle";
+                    writeFileSync("go", "");
+                    const result = { settled: await settled, atRejection };
+                    clearTimeout(stuck);
+                    console.log(JSON.stringify(result));
                   `),
                   env: { ...env, UV_THREADPOOL_SIZE: "2" },
                   cwd: String(dir),
@@ -1035,16 +1042,18 @@ describe("yield", async () => {
                   proc.stderr.text(),
                   proc.exited,
                 ]);
-                const { settled, atRejection } = JSON.parse(stdout || "{}");
+                const { settled, atRejection, stuck } = JSON.parse(stdout || "{}");
                 const changed = Math.abs(entries(join(String(dir), shape.counted)) - atRejection);
 
                 // `rm` reads the stop every fourth entry, so a thread can have four in hand.
                 expect({
+                  stuck,
                   settled,
                   changedAfterRejection: changed <= 8 ? "in hand" : changed,
                   stderr,
                   exitCode,
                 }).toEqual({
+                  stuck: undefined,
                   settled: builtin,
                   changedAfterRejection: "in hand",
                   stderr: "",
@@ -1213,23 +1222,21 @@ describe("yield", async () => {
         // nobody reads, so what the shell queues on it is never written: the
         // error message of a command or of a `[[ ]]`, and the output of a
         // process that the shell passes on. The failed script has to finish
-        // all the same. The child runs five scripts and exits with 1 when
-        // they are not collected afterwards: a script that did not finish
-        // never is. Windows has no FIFO to make such a pipe with.
+        // all the same: the child exits only when it has. Windows has no FIFO
+        // to make such a pipe with.
         describe.skipIf(isWindows)("with a stderr that takes nothing", () => {
-          const prints = (i: string) =>
-            `console.error("teed"); require("fs").writeFileSync("printed${i}", ""); setInterval(() => {}, 100_000)`;
-          const waits = (i: string) => `while (!require("fs").existsSync("printed${i}")) Bun.sleepSync(5)`;
+          const prints = `console.error("teed"); require("fs").writeFileSync("printed", ""); setInterval(() => {}, 100_000)`;
+          const waits = `while (!require("fs").existsSync("printed")) Bun.sleepSync(5)`;
 
           test.concurrent.each([
-            ["the error message of a command", () => `command-that-does-not-exist-xyz | ${failing}`],
-            ["the error message of a [[ ]]", () => `[[ -f ${Buffer.alloc(17 * 5, "{a,b}")} ]] | ${failing}`],
+            ["the error message of a command", `command-that-does-not-exist-xyz | ${failing}`],
+            ["the error message of a [[ ]]", `[[ -f ${Buffer.alloc(17 * 5, "{a,b}")} ]] | ${failing}`],
             [
               // The failing member waits until the process has printed, so the shell has its output to pass on.
               "the output of a process that is killed",
-              (i: string) => `\${bun} -e ${js(prints(i))} | (\${bun} -e ${js(waits(i))}; ${failing})`,
+              `\${bun} -e ${js(prints)} | (\${bun} -e ${js(waits)}; ${failing})`,
             ],
-          ])("%s", async (_, script) => {
+          ])("%s", async (name, script) => {
             using dir = tempDir("shell-stop-full-stderr", {});
             const fifo = join(String(dir), "fifo");
             await using mkfifo = Bun.spawn({ cmd: [Bun.which("mkfifo")!, fifo], env: bunEnv });
@@ -1248,19 +1255,7 @@ describe("yield", async () => {
                 }
               }
               await using proc = Bun.spawn({
-                cmd: child(`
-                  let rejected = 0;
-                  await Promise.all([0, 1, 2, 3, 4].map(i => $\`${script("${i}")}\`.then(() => {}, () => rejected++)));
-                  let live;
-                  for (let i = 0; i < 400; i++) {
-                    Bun.gc(true);
-                    live = heapStats().objectTypeCounts.ShellInterpreter ?? 0;
-                    if (live <= 3) break;
-                    await Bun.sleep(5);
-                  }
-                  console.log(JSON.stringify({ rejected, collected: live <= 3 ? true : live }));
-                  if (live > 3) process.exit(1);
-                `),
+                cmd: settleEach({ [name]: `$\`${script}\`.nothrow()` }),
                 env: bunEnv,
                 cwd: String(dir),
                 stdout: "pipe",
@@ -1278,7 +1273,7 @@ describe("yield", async () => {
                 expect(e).toMatchObject({ code: "EAGAIN" });
               }
               expect({ result: JSON.parse(stdout || "null"), exitCode, written: inPipe - filled }).toEqual({
-                result: { rejected: 5, collected: true },
+                result: { [name]: builtin },
                 exitCode: 0,
                 written: 0,
               });

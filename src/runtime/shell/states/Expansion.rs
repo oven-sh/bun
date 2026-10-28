@@ -6,8 +6,7 @@
 
 use crate::shell::ast;
 use crate::shell::interpreter::{
-    EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind,
-    StopCause, log,
+    EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind, log,
 };
 use crate::shell::io::{IO, OutKind};
 use crate::shell::states::base::Base;
@@ -675,14 +674,6 @@ impl Expansion {
         Yield::Next(this)
     }
 
-    /// `Interpreter::stop`: a Ctrl+C ends a foreground word whose glob is still being walked, as it kills the subshell that expands the word in bash.
-    pub(crate) fn stop(interp: &Interpreter, this: NodeId, cause: StopCause) {
-        let walking = matches!(interp.as_expansion(this).state, ExpansionState::Glob);
-        if walking && cause == StopCause::Interrupted && !interp.in_background(this) {
-            interp.as_expansion_mut(this).base.interrupted = true;
-        }
-    }
-
     /// Main-thread re-entry for the
     /// off-thread glob walker — splice each match as a separate word into
     /// `out` then resume the atom-walk trampoline.
@@ -694,11 +685,10 @@ impl Expansion {
     ) {
         use crate::shell::dispatch_tasks::ShellGlobErr;
         log!("Expansion {} onGlobWalkDone", this);
-        if interp.interrupted(this) {
-            // The script is halted or a Ctrl+C cut the word short (`stop`): no word, no error, and the command does not start.
+        if interp.halted() {
+            // The walk was cut short (`ShellTask::for_glob`) and the command will not start: no word, no error.
             interp.as_expansion_mut(this).state = ExpansionState::Done;
-            let parent = interp.as_expansion(this).base.parent;
-            interp.child_done(parent, this, 1).run(interp);
+            Yield::Next(this).run(interp);
             return;
         }
         let walk_err = match err {

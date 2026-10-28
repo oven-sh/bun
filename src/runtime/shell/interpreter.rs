@@ -1386,8 +1386,7 @@ impl Interpreter {
                 StateKind::Cmd => Cmd::stop(self, id, cause),
                 StateKind::Pipeline => Pipeline::stop(self, id),
                 StateKind::Condexpr => CondExpr::stop(self, id),
-                StateKind::Expansion => Expansion::stop(self, id, cause),
-                // These wait for their children only.
+                // These wait for their children only. (A glob walk reads `halt_signal`.)
                 StateKind::Script
                 | StateKind::Stmt
                 | StateKind::Binary
@@ -1395,6 +1394,7 @@ impl Interpreter {
                 | StateKind::IfClause
                 | StateKind::Async
                 | StateKind::Assign
+                | StateKind::Expansion
                 | StateKind::Free => {}
             }
         }

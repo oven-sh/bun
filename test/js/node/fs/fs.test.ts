@@ -505,6 +505,49 @@ describe("FileHandle", () => {
       });
     },
   );
+
+  // open() returns the lowest free descriptor, which is 0 once stdin is closed.
+  it.concurrent.skipIf(isWindows)("FileHandle whose descriptor is 0 reads and closes", async () => {
+    const fixture = /* js */ `
+      const fs = require("node:fs");
+      async function openReadClose() {
+        const handle = await fs.promises.open(process.execPath);
+        const result = { fd: handle.fd };
+        try {
+          result.bytesRead = (await handle.read(Buffer.alloc(4), 0, 4, 0)).bytesRead;
+        } catch (e) {
+          result.bytesRead = e.code;
+        }
+        await handle.close();
+        return result;
+      }
+      // A debug build reads builtin modules from disk on first use. Run the operation once first, so
+      // that no such file is opened while fd 0 is free.
+      await openReadClose();
+
+      fs.closeSync(0);
+      const result = await openReadClose();
+      try {
+        fs.fstatSync(0);
+        result.afterClose = "open";
+      } catch (e) {
+        result.afterClose = e.code;
+      }
+      console.log(JSON.stringify(result));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ fd: 0, bytesRead: 4, afterClose: "EBADF" }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 it("fdatasyncSync", () => {

@@ -89,7 +89,9 @@ public:
     void decapsulateKey(JSC::JSGlobalObject&, AlgorithmIdentifier&&, CryptoKey& decapsulationKey, BufferSource&& ciphertext, AlgorithmIdentifier&& sharedKeyAlgorithm, bool extractable, Vector<CryptoKeyUsage>&&, Ref<DeferredPromise>&&);
 
     // https://wicg.github.io/webcrypto-modern-algos/#SubtleCrypto-method-supports
-    static bool supports(JSC::JSGlobalObject&, const String& operation, AlgorithmIdentifier&&, JSC::JSValue lengthOrAdditionalAlgorithm);
+    // The third argument: the length of the first overload, or the additionalAlgorithm of the second.
+    using LengthOrAdditionalAlgorithm = std::variant<std::optional<unsigned>, AlgorithmIdentifier>;
+    static bool supports(JSC::JSGlobalObject&, const String& operation, AlgorithmIdentifier&&, LengthOrAdditionalAlgorithm&&);
 
     // KeyObject.prototype.toCryptoKey needs Node's "importKey" normalization
     // from outside this file.

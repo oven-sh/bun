@@ -52,5 +52,6 @@ typedef (object or DOMString) AlgorithmIdentifier;
     [CallWith=CurrentGlobalObject] Promise<any> encapsulateKey(AlgorithmIdentifier encapsulationAlgorithm, CryptoKey encapsulationKey, AlgorithmIdentifier sharedKeyAlgorithm, boolean extractable, sequence<CryptoKeyUsage> usages);
     [CallWith=CurrentGlobalObject] Promise<ArrayBuffer> decapsulateBits(AlgorithmIdentifier decapsulationAlgorithm, CryptoKey decapsulationKey, BufferSource ciphertext);
     [CallWith=CurrentGlobalObject] Promise<CryptoKey> decapsulateKey(AlgorithmIdentifier decapsulationAlgorithm, CryptoKey decapsulationKey, BufferSource ciphertext, AlgorithmIdentifier sharedKeyAlgorithm, boolean extractable, sequence<CryptoKeyUsage> usages);
-    [CallWith=CurrentGlobalObject] static boolean supports(DOMString operation, AlgorithmIdentifier algorithm, optional any lengthOrAdditionalAlgorithm = null);
+    [CallWith=CurrentGlobalObject] static boolean supports(DOMString operation, AlgorithmIdentifier algorithm, optional [EnforceRange] unsigned long? length = null);
+    [CallWith=CurrentGlobalObject] static boolean supports(DOMString operation, AlgorithmIdentifier algorithm, AlgorithmIdentifier additionalAlgorithm);
 };

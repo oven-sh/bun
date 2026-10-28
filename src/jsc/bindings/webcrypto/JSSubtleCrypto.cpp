@@ -790,9 +790,22 @@ JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoConstructorFunction_supports, (JSGlobalOb
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto algorithm = convert<IDLUnion<IDLObject, IDLDOMString>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    JSValue lengthOrAdditionalAlgorithm = callFrame->argumentCount() > 2 ? callFrame->uncheckedArgument(2) : jsNull();
 
-    bool result = SubtleCrypto::supports(*lexicalGlobalObject, operation, WTF::move(algorithm), lengthOrAdditionalAlgorithm);
+    // https://webidl.spec.whatwg.org/#dfn-overload-resolution-algorithm: undefined, null and a Number select the length.
+    JSValue argument2 = callFrame->argument(2);
+    SubtleCrypto::LengthOrAdditionalAlgorithm lengthOrAdditionalAlgorithm;
+    if (argument2.isNumber()) {
+        lengthOrAdditionalAlgorithm = std::optional<unsigned> { convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument2) };
+        RETURN_IF_EXCEPTION(throwScope, {});
+    } else if (argument2.isObject())
+        lengthOrAdditionalAlgorithm.emplace<SubtleCrypto::AlgorithmIdentifier>(std::in_place_type<JSC::Strong<JSC::JSObject>>, vm, asObject(argument2));
+    else if (!argument2.isUndefinedOrNull()) {
+        auto name = argument2.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        lengthOrAdditionalAlgorithm.emplace<SubtleCrypto::AlgorithmIdentifier>(WTF::move(name));
+    }
+
+    bool result = SubtleCrypto::supports(*lexicalGlobalObject, operation, WTF::move(algorithm), WTF::move(lengthOrAdditionalAlgorithm));
     RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsBoolean(result));
 }

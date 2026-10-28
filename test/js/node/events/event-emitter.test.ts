@@ -883,6 +883,36 @@ describe("EventEmitter captureRejections", () => {
 
     expect(errors).toEqual([123, 234]);
   });
+  test("it captures the rejection of an error monitor listener", async () => {
+    const myEmitter = new EventEmitter({ captureRejections: true });
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const errors: unknown[] = [];
+    let monitored = 0;
+    myEmitter.on(EventEmitter.errorMonitor, async () => {
+      if (++monitored === 1) throw 234;
+    });
+    myEmitter.on("error", error => {
+      if (errors.push(error) === 2) resolve();
+    });
+
+    myEmitter.emit("error", 123);
+    await promise;
+
+    expect({ errors, monitored }).toEqual({ errors: [123, 234], monitored: 2 });
+  });
+  test("it gives the rejection of an error monitor listener to the rejection handler", async () => {
+    const myEmitter = new EventEmitter({ captureRejections: true });
+    const { promise, resolve } = Promise.withResolvers<unknown[]>();
+    myEmitter[captureRejectionSymbol] = (...args: unknown[]) => resolve(args);
+    myEmitter.on(EventEmitter.errorMonitor, async () => {
+      throw 234;
+    });
+    myEmitter.on("error", () => {});
+
+    myEmitter.emit("error", 123, "extra");
+
+    expect(await promise).toEqual([234, EventEmitter.errorMonitor, 123, "extra"]);
+  });
   test("EventEmitter.captureRejections reaches an emitter whose constructor never ran", async () => {
     function NoConstructor() {}
     Object.setPrototypeOf(NoConstructor.prototype, EventEmitter.prototype);

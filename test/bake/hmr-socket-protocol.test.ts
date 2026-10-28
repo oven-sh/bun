@@ -22,7 +22,16 @@
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isMacOS, isWindows, tempDir, waitUntil } from "harness";
-import { closeSync, existsSync, openSync, readFileSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { join } from "node:path";
 
 const indexHtml = /* html */ `<!DOCTYPE html>
@@ -702,6 +711,77 @@ test.concurrent("a hold that ends while a testing batch is open puts its files i
   hmr.ws.send("H");
   await until("the bundle of the batch", () => frames.includes("r3") || frames.includes("r4"));
 });
+
+// During a testing batch a file event starts no look at the held files. So the `stat` of that file event is the
+// only one that sees the text of a file that a second save empties again.
+test.concurrent.skipIf(isMacOS)(
+  // kqueue does not report a truncation.
+  "a held file that gets its text and loses it again during a testing batch has a new deadline",
+  async () => {
+    using dir = tempDir("hmr-hold-text-in-batch", {
+      "index.html": indexHtml,
+      "entry.ts": `import "./module.ts";\nimport "./empty.ts";`,
+      "module.ts": `console.log("m0");\nimport.meta.hot.accept();`,
+      "empty.ts": `console.log("e0");\nimport.meta.hot.accept();`,
+      "two.html": /* html */ `<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body><script type="module" src="./two.ts"></script></body></html>`,
+      "two.ts": `console.log("two");`,
+      "server.ts": /* ts */ `
+        import one from "./index.html";
+        import two from "./two.html";
+        const server = Bun.serve({
+          port: 0,
+          development: { hmr: true, console: false },
+          routes: { "/": one, "/two": two },
+          fetch() { return new Response("fallback"); },
+        });
+        console.log("PORT=" + server.port);
+      `,
+    });
+    // Two holds end at their deadline here. The steps of the second one take a third of this time.
+    const holdMs = 800;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: { ...bunEnv, BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS: String(holdMs) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const dev = await openPage(proc);
+    using hmr = dev.hmr;
+    const { frames, until } = dev;
+    const count = (frame: string) => frames.filter(each => each === frame).length;
+
+    // A hold leaves empty.ts empty. While the dev server knows of such a file, it looks at the files of a file event during a batch too.
+    closeSync(openSync(join(String(dir), "empty.ts"), "w"));
+    await until("the end of the first hold", () => frames.includes("r6"));
+    await until("the bundle of the empty file", () => frames.includes("r3") || frames.includes("r4"));
+
+    const module = join(String(dir), "module.ts");
+    closeSync(openSync(module, "w"));
+    await until("the second hold", () => count("r5") === 2);
+    const heldAt = performance.now();
+    hmr.ws.send("H");
+    await until("the batch", () => frames.includes("r0"));
+    let seen = count("r1");
+    appendFileSync(module, `console.log("m1");\nimport.meta.hot.accept();`);
+    await until("the file event of the text", () => count("r1") > seen);
+    seen = count("r1");
+    closeSync(openSync(module, "w"));
+    await until("the file event of the second save", () => count("r1") > seen);
+
+    // Late in the time that module.ts has from its first save.
+    await Bun.sleep(Math.max(0, heldAt + 0.3 * holdMs - performance.now()));
+    expect(count("r6"), "the second hold ended before the request").toBe(1);
+    // The first request for a page starts a bundle, and the dev server looks at the held files when a bundle ends.
+    const requested = performance.now();
+    expect((await fetch(dev.origin + "/two")).status).toBe(200);
+    await until("the end of the second hold", () => count("r6") === 2);
+    // module.ts holds the reload for one wait from the look that finds its text gone, not from its first save.
+    expect(performance.now() - requested).toBeGreaterThanOrEqual(holdMs);
+  },
+);
 
 test.concurrent("a file event that waited behind a bundle does not take a hold out of a testing batch", async () => {
   // The first request for `/two` parks a bundle in the plugin until this server answers.

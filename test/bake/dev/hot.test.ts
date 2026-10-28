@@ -1,6 +1,6 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
-import { isDebug, isWindows, waitUntil } from "harness";
+import { isASAN, isDebug, isWindows, waitUntil } from "harness";
 import {
   appendFileSync,
   closeSync,
@@ -938,37 +938,91 @@ devTest("a file that a later file event finds half-saved has a deadline of its o
     expect(performance.now() - emptiedB).toBeGreaterThanOrEqual(400);
   },
 });
-// A debug build takes longer to handle a file event, and three of them must come inside one wait here.
-const secondSaveWait = isDebug ? 1200 : 400;
-devTest("a held file that a second save empties has a new deadline", {
-  skip: ["darwin"],
-  env: holdFor(secondSaveWait),
-  files: twoFiles,
-  async test(dev) {
-    // The files stay empty, so the page gets empty modules when the hold ends.
-    await using c = await dev.client("/", { allowUnlimitedReloads: true });
-    await c.expectElemText("#b", "b1");
+// A debug or ASAN build takes longer to handle a file event, and three of them must come inside one wait here.
+const secondSaveWait = isDebug || isASAN ? 1200 : 400;
+for (const textOfFirstSave of ["seen", "not seen"] as const) {
+  devTest(`a held file that a second save empties has a new deadline (text of the first save ${textOfFirstSave})`, {
+    skip: ["darwin"],
+    env: holdFor(secondSaveWait),
+    files: twoFiles,
+    async test(dev) {
+      // The files stay empty, so the page gets empty modules when the hold ends.
+      await using c = await dev.client("/", { allowUnlimitedReloads: true });
+      await c.expectElemText("#b", "b1");
 
-    // b.ts keeps the hold open after a.ts has its text.
-    for (const name of ["a", "b"]) {
+      // b.ts keeps the hold open after a.ts has its text.
+      for (const name of ["a", "b"]) {
+        const held = dev.heldEvents();
+        emptyFile(dev.join(name + ".ts"));
+        await held;
+      }
+      const emptiedB = performance.now();
+      if (textOfFirstSave === "seen") {
+        const held = dev.heldEvents();
+        appendFileSync(dev.join("a.ts"), setsText("a", "a2"));
+        await held;
+      }
+      // The second save of a.ts comes early in the time that b.ts has, so the dev server takes its file event in that time.
+      await Bun.sleep(Math.max(0, emptiedB + 0.2 * secondSaveWait - performance.now()));
+      expect(dev.holdsEnded, "the hold ended before the second save").toBe(0);
       const held = dev.heldEvents();
-      emptyFile(dev.join(name + ".ts"));
+      // A dev server that is busy looks at the file only after the second save has emptied it again.
+      if (textOfFirstSave === "not seen") appendFileSync(dev.join("a.ts"), setsText("a", "a2"));
+      const emptiedA = performance.now();
+      emptyFile(dev.join("a.ts"));
       await held;
-    }
-    const emptiedB = performance.now();
-    let held = dev.heldEvents();
-    appendFileSync(dev.join("a.ts"), setsText("a", "a2"));
+      await until("the end of the hold", () => dev.holdsEnded > 0);
+      // a.ts holds the reload for one wait from its second save, not from its first.
+      expect(performance.now() - emptiedA).toBeGreaterThanOrEqual(secondSaveWait);
+    },
+  });
+}
+// After a rename, a watcher does not always name the file until a bundle reads it again. Then only a look finds that a second save took it away.
+devTest("a held file that a second save renames away has a new deadline", {
+  // The text holds the reload until the deadline of the file, so the second save comes while the hold is open.
+  env: { ...holdFor(secondSaveWait), BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_SETTLE_MS: String(secondSaveWait) },
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<p id="a"></p>`,
+    }),
+    "index.ts": `
+      import "./a";
+    `,
+    "a.ts": setsText("a", "a1"),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectElemText("#a", "a1");
+    const a = dev.join("a.ts");
+    // The dev server reports each file event that it takes during a hold: 5 if the hold takes files of it, 1 if it names no file of the page.
+    let taken = 0;
+    dev.on("watch_synchronization", (kind: number) => {
+      if (kind === 1 || kind === 5) taken++;
+    });
+
+    const held = dev.heldEvents();
+    renameSync(a, a + "~");
     await held;
-    // The second save of a.ts comes late in the time that the first saves have.
-    await Bun.sleep(Math.max(0, emptiedB + 0.6 * secondSaveWait - performance.now()));
-    held = dev.heldEvents();
-    const emptiedA = performance.now();
-    emptyFile(dev.join("a.ts"));
-    await held;
-    const ended = dev.holdsEnded;
-    await until("the end of the hold", () => dev.holdsEnded > ended);
-    // a.ts holds the reload for one wait from its second save, not from its first.
-    expect(performance.now() - emptiedA).toBeGreaterThanOrEqual(secondSaveWait);
+    const renamed = performance.now();
+    const takenBefore = taken;
+    writeFileSync(a, setsText("a", "a2"));
+    unlinkSync(a + "~");
+    // A file event after the write: its look sees the text.
+    await until("the dev server to take a file event of the first save", () => taken > takenBefore);
+    // The second save comes early in the time that a.ts has, so the dev server looks at the file in that time.
+    await Bun.sleep(Math.max(0, renamed + 0.2 * secondSaveWait - performance.now()));
+    expect(dev.holdsEnded, "the hold ended before the second save").toBe(0);
+    const heldBefore = dev.eventsHeld;
+    const renamedAgain = performance.now();
+    // Another name: on Windows the name of the first backup can stay for as long as the dev server has that file open.
+    renameSync(a, a + "~2");
+    await until("the end of the hold", () => dev.holdsEnded > 0);
+    // a.ts holds the reload for one wait from the look that finds it gone, not from its first save.
+    expect(performance.now() - renamedAgain).toBeGreaterThanOrEqual(secondSaveWait);
+    // No file event named a.ts after the second rename: the hold would have taken it.
+    expect(dev.eventsHeld).toBe(heldBefore);
+    await c.expectErrorOverlay(['index.ts:1:8: error: Could not resolve: "./a"']);
   },
 });
 // A debug build takes longer to handle a file event, and each event of a chain must come well inside one wait.

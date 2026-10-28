@@ -5,7 +5,7 @@ use core::cell::RefCell;
 use core::ptr::NonNull;
 use std::time::Duration;
 
-/// One half-saved file holds a reload for this long.
+/// A half-saved file holds a reload for this long from the last file event that finds it so, or the look that finds its text gone.
 const WAIT_MS: u64 = 100;
 /// A held file has its text when no look saw its size change for this long: a writer can use more than one write.
 const SETTLE_MS: u64 = 5;
@@ -16,15 +16,25 @@ const MAX_WAITS: u32 = 10;
 pub(crate) type HoldingDevServers = RefCell<Vec<NonNull<DevServer>>>;
 
 struct HeldFile {
-    /// At the last look. 0: empty or missing.
+    /// At the last `stat`: of a look, or of a file event that names the file. 0: empty or missing.
     size: u64,
-    /// The time of the look that first saw `size`.
+    /// The time of the `stat` that first saw `size`.
     size_since: Instant,
     /// This file does not hold the reload after this time.
     deadline: Instant,
 }
 
 impl HeldFile {
+    /// Takes the size that a `stat` found at `now`. Returns true if the file lost its text.
+    fn saw(&mut self, size: u64, now: Instant) -> bool {
+        if size == self.size {
+            return false;
+        }
+        self.size = size;
+        self.size_since = now;
+        size == 0
+    }
+
     /// The time at which this file stops to hold the reload, if its size stays the same.
     fn holds_until(&self) -> Instant {
         if self.size == 0 {
@@ -47,6 +57,11 @@ pub(crate) struct HalfSavedHold {
 }
 
 impl HalfSavedHold {
+    /// The deadline of a file that is found without its text at `now`.
+    fn deadline_from(&self, now: Instant) -> Instant {
+        (now + wait()).min(self.last_deadline)
+    }
+
     pub(crate) fn memory_cost(&self) -> usize {
         super::memory_cost::memory_cost_array_hash_map(&self.entry_points.set)
             + super::memory_cost::memory_cost_array_hash_map(&self.files)
@@ -116,10 +131,19 @@ impl DevServer {
             let Ok(size) = size_of_file(path) else {
                 continue;
             };
-            if size.unwrap_or(0) != 0 {
-                self.files_left_empty.swap_remove(path);
-            } else if !batching && !self.files_left_empty.contains(path) {
-                half_saved.push(path.clone());
+            let size = size.unwrap_or(0);
+            if size == 0 {
+                if !batching && !self.files_left_empty.contains(path) {
+                    half_saved.push(path.clone());
+                }
+                continue;
+            }
+            self.files_left_empty.swap_remove(path);
+            // The look of this event can find a held file without this text already.
+            if let Some(hold) = &mut self.half_saved_hold
+                && let Some(i) = hold.files.get_index(path)
+            {
+                hold.files.values_mut()[i].saw(size, Instant::now());
             }
         }
     }
@@ -163,7 +187,7 @@ impl DevServer {
         let mut joined = !entry_points.set.is_empty();
         // A bundle of these files now would read the half-saved files that they import.
         bun_core::handle_oom(hold.entry_points.append_list(entry_points));
-        let deadline = (now + wait()).min(hold.last_deadline);
+        let deadline = hold.deadline_from(now);
         for path in half_saved {
             let file = HeldFile {
                 size: 0,
@@ -175,12 +199,11 @@ impl DevServer {
                     bun_core::handle_oom(hold.files.put(&path, file));
                     joined = true;
                 }
-                // A look saw the text of this file, and a later save emptied it again.
-                Some(i) if hold.files.values()[i].size != 0 => {
+                // The save of this file is not at its end, or a second save has emptied it again.
+                Some(i) => {
                     hold.files.values_mut()[i] = file;
                     hold.first_with_time_left = hold.first_with_time_left.min(i);
                 }
-                Some(_) => {}
             }
         }
         if joined {
@@ -205,6 +228,7 @@ impl DevServer {
             return false;
         };
         let now = Instant::now();
+        let deadline = hold.deadline_from(now);
         let mut wait_until: Option<Instant> = None;
         for i in hold.first_with_time_left..hold.files.count() {
             if now >= hold.files.values()[i].deadline {
@@ -217,11 +241,10 @@ impl DevServer {
             let Ok(size) = size_of_file(&hold.files.keys()[i]) else {
                 continue;
             };
-            let size = size.unwrap_or(0);
             let file = &mut hold.files.values_mut()[i];
-            if size != file.size {
-                file.size = size;
-                file.size_since = now;
+            // A second save has taken the text away. After a rename, a watcher does not always name the file until a bundle reads it again.
+            if file.saw(size.unwrap_or(0), now) {
+                file.deadline = deadline;
             }
             let until = file.holds_until();
             if now < until {

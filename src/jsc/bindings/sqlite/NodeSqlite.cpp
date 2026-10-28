@@ -2506,16 +2506,24 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncColumns, (JSGlobalObject * globalObject,
     for (int i = 0; i < numCols; ++i) {
         JSObject* col = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
         RETURN_IF_EXCEPTION(scope, {});
+        // False with an exception pending.
         auto putStr = [&](ASCIILiteral key, const char* val) {
-            col->putDirect(vm, Identifier::fromString(vm, key), val ? jsString(vm, sqliteText(val)) : jsNull(), 0);
+            JSValue value = jsNull();
+            if (val) {
+                value = sqliteTextToJS(globalObject, scope, val, strlen(val));
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+            col->putDirect(vm, Identifier::fromString(vm, key), value, 0);
+            return true;
         };
         // On the dlopen path these are stubbed to return nullptr when the
         // loaded library was built without SQLITE_ENABLE_COLUMN_METADATA.
-        putStr("column"_s, sqlite3_column_origin_name(self->statement(), i));
-        putStr("database"_s, sqlite3_column_database_name(self->statement(), i));
-        putStr("name"_s, sqlite3_column_name(self->statement(), i));
-        putStr("table"_s, sqlite3_column_table_name(self->statement(), i));
-        putStr("type"_s, sqlite3_column_decltype(self->statement(), i));
+        if (!putStr("column"_s, sqlite3_column_origin_name(self->statement(), i))
+            || !putStr("database"_s, sqlite3_column_database_name(self->statement(), i))
+            || !putStr("name"_s, sqlite3_column_name(self->statement(), i))
+            || !putStr("table"_s, sqlite3_column_table_name(self->statement(), i))
+            || !putStr("type"_s, sqlite3_column_decltype(self->statement(), i)))
+            return {};
         out->putDirectIndex(globalObject, i, col);
         RETURN_IF_EXCEPTION(scope, {});
     }

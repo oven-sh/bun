@@ -2429,7 +2429,10 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnNames, (JSGlobalObject * lexical
     JSC::JSArray* array = JSC::constructEmptyArray(lexicalGlobalObject, static_cast<ArrayAllocationProfile*>(nullptr), count);
     RETURN_IF_EXCEPTION(scope, {});
     for (int i = 0; i < count; i++) {
-        array->putDirectIndex(lexicalGlobalObject, i, jsString(vm, Bun::sqliteText(sqlite3_column_name(stmt, i))));
+        const char* name = sqlite3_column_name(stmt, i);
+        JSC::JSString* string = name ? Bun::sqliteTextToJS(lexicalGlobalObject, scope, name, strlen(name)) : jsEmptyString(vm);
+        RETURN_IF_EXCEPTION(scope, {});
+        array->putDirectIndex(lexicalGlobalObject, i, string);
         RETURN_IF_EXCEPTION(scope, {});
     }
     return JSC::JSValue::encode(array);
@@ -2544,7 +2547,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnDeclaredTypes, (JSGlobalObject *
     for (int i = 0; i < count; i++) {
         // Null for an expression. jsString, not jsNontrivialString: CREATE TABLE t (a "X") declares one character.
         const char* declType = sqlite3_column_decltype(castedThis->stmt, i);
-        array->putDirectIndex(lexicalGlobalObject, i, declType ? JSValue(jsString(vm, Bun::sqliteText(declType))) : jsNull());
+        JSValue type = jsNull();
+        if (declType) {
+            type = Bun::sqliteTextToJS(lexicalGlobalObject, scope, declType, strlen(declType));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        array->putDirectIndex(lexicalGlobalObject, i, type);
         RETURN_IF_EXCEPTION(scope, {});
     }
 

@@ -211,9 +211,8 @@ JSObject* ServerRouteList::paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject
         if (!param.empty()) {
             const std::span<const uint8_t> paramBytes(reinterpret_cast<const uint8_t*>(param.data()), param.size());
             WTF::String decoded = decodeURIComponentSIMD(paramBytes);
-            // Null is a failed allocation. Nothing owns the request yet, so the process ends.
             if (decoded.isNull()) [[unlikely]]
-                Bun__outOfMemory();
+                return nullptr;
             args.append(jsString(vm, WTF::move(decoded)));
         } else {
             args.append(jsEmptyString(vm));
@@ -245,11 +244,17 @@ JSValue ServerRouteList::callRoute(Zig::GlobalObject* globalObject, uint32_t ind
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* structure = globalObject->m_JSBunRequestStructure.get(globalObject);
 
+    // Null when the string of a parameter cannot be allocated.
     auto* params = paramsObjectForRoute(vm, globalObject, index, req);
 
     JSBunRequest* request = JSBunRequest::create(vm, structure, requestPtr, params);
     RETURN_IF_EXCEPTION(scope, {});
     *requestObject = JSValue::encode(request);
+    // The request owns `requestPtr` now, so the caller handles this as an exception from the route.
+    if (!params) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
 
     JSValue callback = m_routes.at(index).get();
     ASSERT(callback);

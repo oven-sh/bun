@@ -17,18 +17,19 @@ const allocationFailed = {
 const outOfMemory = { name: "RangeError", message: "Out of memory" };
 
 // Runs `script` in a child whose allocations fail above a cap (`env` sets the
-// cap up, or the command that `wrap` puts in front of the child's). The script
-// calls `run(label, fn)` per case; the child prints the collected results as
-// JSON.
+// cap up, or the command that `wrap` puts in front of the child's). `flags`
+// are for the child's bun. The script calls `run(label, fn)` per case; the
+// child prints the collected results as JSON.
 async function resultsUnderCap(
   env: Record<string, string | undefined>,
   script: string,
-  { wrap = [] }: { wrap?: string[] } = {},
+  { wrap = [], flags = [] }: { wrap?: string[]; flags?: string[] } = {},
 ) {
   await using proc = Bun.spawn({
     cmd: [
       ...wrap,
       bunExe(),
+      ...flags,
       "-e",
       `
       import { StringDecoder } from "node:string_decoder";
@@ -129,6 +130,46 @@ describe.skipIf(!isDebug)("a WTF string whose allocation fails is reported as a 
     );
     expect(results).toEqual({ "6 MiB": outOfMemory, "1 MiB": MiB });
   });
+
+  // The route throws, as for an exception from its handler, and the server
+  // answers the next request. This cap does not reach the buffer that holds the
+  // request, which the ASAN cap does. fetch() escapes the bytes of a path, so
+  // the child writes each request to a socket.
+  test("a Bun.serve route parameter", async () => {
+    const results = await resultsUnderCap(
+      { ...bunEnv, BUN_JSC_maxSingleAllocationSize: String(4 * MiB) },
+      `
+      import { connect } from "node:net";
+      ${utf8Inputs}
+      using server = Bun.serve({
+        port: 0,
+        routes: { "/:name": request => new Response("length " + request.params.name.length) },
+        error: error => new Response(error.name + ": " + error.message, { status: 500 }),
+      });
+      const get = parameter => {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        let response = "";
+        const socket = connect(server.port, "127.0.0.1", () =>
+          socket.write(join("GET /", parameter, " HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n")),
+        );
+        socket.on("data", chunk => (response += chunk));
+        socket.on("error", reject);
+        socket.on("close", () => resolve(response.slice(0, 12) + ", " + response.slice(response.indexOf("\\r\\n\\r\\n") + 4)));
+        return promise;
+      };
+      results["6 MiB of ASCII"] = await get(bytesOf(${6 * MiB}));
+      // The conversion of ill-formed bytes starts with a buffer of twice their size.
+      results["3 MiB, ill-formed"] = await get(bytesOf(${3 * MiB}, ${illFormed}));
+      results["8 bytes"] = await get(bytesOf(8, ${illFormed}));
+      `,
+      { flags: ["--max-http-header-size=" + 16 * MiB] },
+    );
+    expect(results).toEqual({
+      "6 MiB of ASCII": "HTTP/1.1 500, RangeError: Out of memory",
+      "3 MiB, ill-formed": "HTTP/1.1 500, RangeError: Out of memory",
+      "8 bytes": "HTTP/1.1 200, length 8",
+    });
+  });
 });
 
 // A UTF-8 input with a non-ASCII character is transcoded into a Rust-owned
@@ -208,7 +249,8 @@ describe.skipIf(!isASAN)("a Rust-allocated string whose allocation fails is repo
 // makes a buffer of two bytes for each input byte, and then a 16-bit string:
 // 5 MiB are under this cap and their buffer is not. It ended the process when
 // one of the two could not be allocated. `Malloc=1` makes WTF allocate with the
-// system allocator, which the cap reaches.
+// system allocator, which the cap reaches. One child at a time: five at once
+// take twice as long each on a debug build, and as long in total.
 describe.skipIf(!isASAN)("UTF-8 bytes whose string cannot be allocated", () => {
   const env = {
     ...bunEnv,
@@ -221,7 +263,7 @@ describe.skipIf(!isASAN)("UTF-8 bytes whose string cannot be allocated", () => {
 
   // Node 26 ends the process when the text of a stream is not ASCII and its
   // decoder cannot allocate.
-  test.concurrent("the text of a stream", async () => {
+  test("the text of a stream", async () => {
     const results = await resultsUnderCap(
       env,
       `
@@ -251,7 +293,7 @@ describe.skipIf(!isASAN)("UTF-8 bytes whose string cannot be allocated", () => {
   });
 
   // Node 26 ends the process when `buffer.transcode` cannot allocate.
-  test.concurrent("Bun.JSONL, CString, buffer.transcode and the name of a File", async () => {
+  test("Bun.JSONL, CString, buffer.transcode and the name of a File", async () => {
     const results = await resultsUnderCap(
       env,
       `
@@ -284,7 +326,7 @@ describe.skipIf(!isASAN)("UTF-8 bytes whose string cannot be allocated", () => {
   // buffer as long as the input. The child maps a file for these: the cap does
   // not reach a mapping, so the ASCII bytes can be longer than it. For valid
   // bytes that are not ASCII it gave "", or dropped them after a "%".
-  test.concurrent("decodeURIComponentSIMD", async () => {
+  test("decodeURIComponentSIMD", async () => {
     using dir = tempDir("buffer-oom-decode", {});
     const file = join(String(dir), "ascii.txt");
     await Bun.write(file, Buffer.concat([Buffer.alloc(10 * MiB, "a"), Buffer.from("%41")]));
@@ -318,10 +360,10 @@ describe.skipIf(!isASAN)("UTF-8 bytes whose string cannot be allocated", () => {
     });
   });
 
-  // The text of a cell (5 MiB), and the SQL of a statement (4.4 MiB of UTF-8).
-  // These called WTF's converter with no helper, which ended the process for
-  // valid UTF-8 too.
-  test.concurrent("SQLite text", async () => {
+  // The text of a cell (5 MiB), the SQL of a statement (4.4 MiB of UTF-8), and
+  // the name and the declared type of a column (4.4 MiB each). These called
+  // WTF's converter with no helper, which ended the process for valid UTF-8 too.
+  test("SQLite text", async () => {
     const results = await resultsUnderCap(
       env,
       `
@@ -331,11 +373,18 @@ describe.skipIf(!isASAN)("UTF-8 bytes whose string cannot be allocated", () => {
       const db = new DatabaseSync(":memory:");
       const text = bytesOf(${5 * MiB}, ${notASCII});
       await run("node:sqlite TEXT", () => db.prepare("SELECT CAST(? AS TEXT) AS text").get(text).text);
-      const sql = "SELECT '" + Buffer.alloc(${2.2 * MiB}, 0xe9).toString("latin1") + "'";
+      const long = Buffer.alloc(${2.2 * MiB}, 0xe9).toString("latin1");
+      // The name of the column is the text of its expression.
+      const sql = "SELECT '" + long + "'";
       const statement = db.prepare(sql);
       await run("node:sqlite sourceSQL", () => statement.sourceSQL);
       await run("node:sqlite expandedSQL", () => statement.expandedSQL);
-      await run("bun:sqlite toString", () => new Database(":memory:").prepare(sql).toString());
+      await run("node:sqlite columns", () => statement.columns());
+      const bunDb = new Database(":memory:");
+      await run("bun:sqlite toString", () => bunDb.prepare(sql).toString());
+      await run("bun:sqlite columnNames", () => bunDb.prepare(sql).columnNames);
+      bunDb.run('CREATE TABLE t(x "' + long + '")');
+      await run("bun:sqlite declaredTypes", () => bunDb.prepare("SELECT x FROM t").declaredTypes);
       // Under the cap, so the string is created.
       results["1 MiB"] = db.prepare("SELECT CAST(? AS TEXT) AS text").get(text.subarray(0, ${MiB})).text.length;
       `,
@@ -344,7 +393,10 @@ describe.skipIf(!isASAN)("UTF-8 bytes whose string cannot be allocated", () => {
       "node:sqlite TEXT": outOfMemory,
       "node:sqlite sourceSQL": outOfMemory,
       "node:sqlite expandedSQL": outOfMemory,
+      "node:sqlite columns": outOfMemory,
       "bun:sqlite toString": outOfMemory,
+      "bun:sqlite columnNames": outOfMemory,
+      "bun:sqlite declaredTypes": outOfMemory,
       "1 MiB": MiB - 1,
     });
   });
@@ -352,7 +404,7 @@ describe.skipIf(!isASAN)("UTF-8 bytes whose string cannot be allocated", () => {
   // A caller with no error path ends the process with the out-of-memory
   // report: here the name of a column (4.5 MiB of UTF-8), which becomes a
   // property key.
-  test.concurrent("a caller that cannot throw reports out of memory", async () => {
+  test("a caller that cannot throw reports out of memory", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

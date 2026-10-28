@@ -1,0 +1,596 @@
+////: crowded
+function crowded(flags: number, other: Late | undefined) {
+  const one = new Late(flags);
+  if (!other) return one;
+  one.q00 = other;
+  one.q01 = other;
+  one.q02 = other;
+  one.q03 = other;
+  one.q04 = other;
+  one.q05 = other;
+  one.q06 = other;
+  one.q07 = other;
+  one.q08 = other;
+  one.q09 = other;
+  one.q10 = other;
+  one.q11 = other;
+  one.q12 = other;
+  one.q13 = other;
+  one.q14 = other;
+  one.q15 = other;
+  one.q16 = other;
+  one.q17 = other;
+  one.q18 = other;
+  one.q19 = other;
+  one.q20 = other;
+  one.q21 = other;
+  one.q22 = other;
+  one.q23 = other;
+  one.q24 = other;
+  one.q25 = other;
+  one.q26 = other;
+  one.q27 = other;
+  one.q28 = other;
+  one.q29 = other;
+  one.q30 = other;
+  one.q31 = other;
+  one.q32 = other;
+  one.q33 = other;
+  one.q34 = other;
+  one.q35 = other;
+  one.q36 = other;
+  one.q37 = other;
+  one.q38 = other;
+  one.q39 = other;
+  one.q40 = other;
+  one.q41 = other;
+  one.q42 = other;
+  one.q43 = other;
+  one.q44 = other;
+  one.q45 = other;
+  one.q46 = other;
+  one.q47 = other;
+  one.q48 = other;
+  one.q49 = other;
+  one.q50 = other;
+  one.q51 = other;
+  one.q52 = other;
+  one.q53 = other;
+  one.q54 = other;
+  one.q55 = other;
+  one.q56 = other;
+  one.q57 = other;
+  one.q58 = other;
+  one.q59 = other;
+  return one;
+}
+////: reference
+function reference(target: «1», mapper: ((n: number) => number) | undefined, aliasSymbol: string | undefined, aliasTypeArguments: «1»[] | undefined, origin: «1» | undefined) {
+  const made = «2»(4);
+  made.target = target;
+  made.mapper = mapper;
+  made.aliasSymbol = aliasSymbol;
+  made.aliasTypeArguments = aliasTypeArguments;
+  made.origin = origin;
+  return made;
+}
+//// objects-with-fixed-fields/absent-chain.ts
+// An optional reference read and followed.
+declare const process: { argv: string[] }; declare const console: { log(...values: unknown[]): void };
+class Item { id: number; next?: Item; other?: Item; constructor(id: number) { this.id = id; } }
+function follow(item: Item): number {
+  const next = item.next;
+  if (next) return next.id;
+  return -1;
+}
+function followTwo(item: Item): number {
+  const a = item.next, b = item.other;
+  let t = 0;
+  if (a !== undefined) t += a.id;
+  if (b) t += b.id;
+  return t;
+}
+const items: Item[] = [];
+for (let i = 0; i < 64; i++) { const item = new Item(i); if (i % 8) item.next = items[i - 1]; if (i % 3) item.other = items[i >> 1]; items.push(item); }
+const rounds = Number(process.argv[2] ?? 0);
+let t = 0;
+for (let r = 0; r < rounds; r++) { const item = items[r & 63]; t += follow(item) + followTwo(item); }
+console.log(t);
+//// objects-with-fixed-fields/attacks-forms-references-outside-the-cell-read-by-name.ts
+// References that lie outside the cell of their object, read by code that knows nothing of the object: through `any` and through computed names.
+// Objects that hold them, that hold undefined or null there, that never got them, that lost them.
+
+const lines: string[] = [];
+function say(label: string, value: unknown) {
+  lines.push(label + ": " + (typeof value === "string" ? value : JSON.stringify(value, (_, v) => v === undefined ? "#undefined" : typeof v === "function" ? "#function" : v)));
+}
+
+interface Late {
+  flags: number;
+  target?: Late | null; mapper?: (n: number) => number; alias?: string; list?: number[]; origin?: Late; table?: Map<string, number>; text?: string | null; when?: Date;
+  // Sixty more, stored right behind the birth: they take the room in the cell.
+  q00?: Late; q01?: Late; q02?: Late; q03?: Late; q04?: Late; q05?: Late; q06?: Late; q07?: Late; q08?: Late; q09?: Late; q10?: Late; q11?: Late; q12?: Late; q13?: Late; q14?: Late; q15?: Late; q16?: Late; q17?: Late; q18?: Late; q19?: Late; q20?: Late; q21?: Late; q22?: Late; q23?: Late; q24?: Late; q25?: Late; q26?: Late; q27?: Late; q28?: Late; q29?: Late; q30?: Late; q31?: Late; q32?: Late; q33?: Late; q34?: Late; q35?: Late; q36?: Late; q37?: Late; q38?: Late; q39?: Late; q40?: Late; q41?: Late; q42?: Late; q43?: Late; q44?: Late; q45?: Late; q46?: Late; q47?: Late; q48?: Late; q49?: Late; q50?: Late; q51?: Late; q52?: Late; q53?: Late; q54?: Late; q55?: Late; q56?: Late; q57?: Late; q58?: Late; q59?: Late;
+}
+const Late = function (this: Late, flags: number) { this.flags = flags; } as unknown as new (flags: number) => Late;
+////= crowded
+const root = crowded(1, undefined);
+{
+  let same = 0;
+  for (let i = 0; i < 2000; i++) { const one = crowded(i, root); if (one.q00 === one.q59) same++; }
+  say("crowd", same);
+}
+const pool: Late[] = [];
+function fromPool(flags: number) { pool.push(new Late(flags)); return pool[pool.length - 1]; }
+const twice = (n: number) => n * 2;
+function fill(i: number) {
+  const one = fromPool(i);
+  if (i % 2 === 0) one.target = i % 4 === 0 ? root : null;
+  if (i % 3 === 0) one.mapper = twice;
+  if (i % 5 === 0) one.alias = "a" + i;
+  if (i % 7 === 0) one.list = [i, i + 1];
+  if (i % 11 === 0) one.origin = one;
+  if (i % 13 === 0) one.table = new Map([["k", i]]);
+  if (i % 4 === 1) one.text = i % 8 === 1 ? null : "t" + i;
+  if (i % 17 === 0) one.when = new Date(i * 1000);
+  if (i % 19 === 0) one.alias = undefined;
+  return one;
+}
+// Nothing here says what `o` is.
+function show(v: any): unknown { return v === root ? "root" : v instanceof Map ? "map" + v.get("k") : v instanceof Date ? v.getTime() : v && typeof v === "object" && !Array.isArray(v) ? "late" + v.flags : v; }
+function readAll(o: any) { return [o.target, o.mapper, o.alias, o.list, o.origin, o.table, o.text, o.when, o.q07, o.missing].map(show); }
+function readByKey(o: any, key: string) { return show(o[key]); }
+function tally(list: any[]) {
+  let n = 0;
+  for (const o of list) { if (o.target === root) n++; if (o.target === null) n += 10; if (o.mapper) n += o.mapper(100); if (o.alias !== undefined) n += o.alias.length * 1000; if (o.list) n += o.list[1]; if (o.origin === o) n += 7; if (o.text === null) n += 3; }
+  return n;
+}
+const all: any[] = [];
+for (let i = 0; i < 800; i++) all.push(i % 9 === 8 ? { target: "plain", alias: i, list: "no" } : fill(i));
+say("tally", tally(all));
+for (const i of [0, 1, 2, 3, 4, 5, 7, 8, 9, 11, 12, 13, 17, 19, 20, 21, 35, 38, 57, 60, 95, 143, 420, 799]) say("read " + i, readAll(all[i]));
+say("by key", ["target", "mapper", "alias", "list", "origin", "table", "text", "when"].map(key => [readByKey(all[0], key), readByKey(all[1], key), readByKey(all[9], key), readByKey(all[195], key)]));
+{
+  const one: any = fill(0);
+  delete one.target; delete one.alias;
+  say("deleted", [readAll(one), "target" in one, Object.keys(one).join()]);
+  one.target = root; say("again", [readAll(one), Object.keys(one).join()]);
+  one.mapper = 5; one.list = "text"; one.origin = 1.5; one.table = true; say("other values", readAll(one));
+  let reads = 0;
+  Object.defineProperty(one, "when", { get() { reads++; return "got"; }, configurable: true, enumerable: true });
+  say("accessor", [readAll(one), reads]);
+  const frozen: any = Object.freeze(fill(0)); say("frozen", readAll(frozen));
+  const below: any = Object.create(fill(0)); say("from above", [readAll(below), Object.keys(below).length]);
+}
+{
+  let n = 0;
+  for (let round = 0; round < 40; round++) { const fresh: any[] = []; for (let i = 0; i < 400; i++) fresh.push(fill(i + round)); n += tally(fresh); pool.length = 0; }
+  say("rounds", n);
+}
+
+console.log(lines.join("\n"));
+//// objects-with-fixed-fields/attacks-keyed-fields-read-by-a-computed-key.ts
+// o[key] with a key that is only known when the program runs, on objects whose fields lie packed in their cells: every kind of value, empty fields, fields that left their slots, names above the object.
+
+const lines: string[] = [];
+function say(label: string, value: unknown) {
+  lines.push(label + ": " + (typeof value === "string" ? value : JSON.stringify(value, (_, v) => v === undefined ? "#undefined" : typeof v === "function" ? "#function" : typeof v === "symbol" ? "#symbol" : typeof v === "number" && (!Number.isFinite(v) || Object.is(v, -0)) ? "#" + (Object.is(v, -0) ? "-0" : v) : v)));
+}
+class Item {
+  id: number; big: number; ratio: number; label: string; next: Item | null; maybe?: Item; list: number[]; flag: boolean; any: unknown; opt?: number; text?: string | null; run: () => number;
+  constructor(i: number, next: Item | null) {
+    this.id = i; this.big = i * 1e10; this.ratio = i / 3; this.label = "l" + i; this.next = next; if (i % 3 === 0 && next) this.maybe = next; this.list = [i]; this.flag = i % 2 === 0;
+    this.any = i % 4 === 0 ? i : i % 4 === 1 ? "s" + i : i % 4 === 2 ? null : undefined; if (i % 5 === 0) this.opt = -i; if (i % 7 === 0) this.text = i % 14 === 0 ? null : "t"; this.run = () => i;
+  }
+  method() { return "m" + this.id; }
+  get twice() { return this.id * 2; }
+}
+const keys = ["id", "big", "ratio", "label", "next", "maybe", "list", "flag", "any", "opt", "text", "run", "method", "twice", "missing", "constructor", "toString", "0", "length", "__proto__"];
+function read(o: any, key: PropertyKey) { return o[key]; }
+function show(v: any): unknown { return v instanceof Item ? "item" + v.id : v === Item.prototype ? "proto" : v === Item ? "Item" : v; }
+
+const items: Item[] = [];
+for (let i = 0; i < 300; i++) items.push(new Item(i, i ? items[i - 1] : null));
+for (const i of [0, 1, 2, 3, 4, 5, 6, 7, 14, 15, 21, 30, 105, 299]) say("item " + i, keys.map(key => show(read(items[i], key))));
+{
+  let t = 0;
+  for (let round = 0; round < 50; round++) for (const item of items) for (let k = 0; k < 12; k++) { const v = read(item, keys[k]); if (typeof v === "number") t += v % 1000; else if (v instanceof Item) t += v.id; else if (v === null) t += 3; else if (v === undefined) t += 5; else if (v === true) t += 7; }
+  say("total", t);
+}
+// Integers at the edges of what a narrow slot holds.
+{
+  const edges = [0, -0, 1, -1, 2147483647, -2147483648, -2147483647, -2147483646, -2147483645, -2147483644, -2147483643, 2147483648, 4294967295, 0.5, NaN, Infinity];
+  const made = edges.map(v => { const item = new Item(1, null); item.id = v; item.opt = v; return item; });
+  say("edges", made.map(item => [read(item, "id"), read(item, "opt")]));
+  say("the same", made.map((item, i) => Object.is(read(item, "id"), edges[i]) && Object.is(read(item, "opt"), edges[i])));
+}
+// Other values than the types allow, deletion, redefinition, freezing, objects below, other objects with the same names.
+{
+  const o: any = new Item(6, items[2]);
+  o.id = "text"; o.next = 5; o.label = null; o.list = undefined; o.flag = items[1]; o.maybe = 1.5;
+  say("other values", keys.slice(0, 12).map(key => show(read(o, key))));
+  o.id = 9; o.next = items[3]; say("back", keys.slice(0, 12).map(key => show(read(o, key))));
+  const d: any = new Item(15, items[4]);
+  delete d.id; delete d.next; delete d.any; say("deleted", [keys.slice(0, 12).map(key => show(read(d, key))), Object.keys(d).join()]);
+  d.next = null; d.id = 4; say("again", [keys.slice(0, 12).map(key => show(read(d, key))), Object.keys(d).join()]);
+  const r: any = new Item(20, items[5]); let reads = 0;
+  Object.defineProperty(r, "id", { get() { return ++reads; }, configurable: true });
+  Object.defineProperty(r, "next", { value: "fixed", writable: false });
+  say("redefined", [read(r, "id"), read(r, "id"), read(r, "next"), reads]);
+  say("frozen", keys.slice(0, 8).map(key => show(read(Object.freeze(new Item(3, items[1])), key))));
+  const below = Object.create(items[9]); say("from above", keys.slice(0, 8).map(key => show(read(below, key))));
+  below.id = "own"; say("shadowed", [read(below, "id"), read(items[9], "id")]);
+  const mixed: any[] = [items[1], { id: "plain", next: 1 }, [1, 2], "string", 5, new Map([["id", 1]]), function id() {}, items[2], Object.create(null), new Proxy(items[3], {})];
+  say("mixed", mixed.map(v => [show(read(v, "id")), show(read(v, "next")), show(read(v, "length"))]));
+  const sym = Symbol("id"); (items[0] as any)[sym] = "by symbol"; say("symbols", [read(items[0], sym), read(items[1], sym), read(items[0], Symbol.iterator), typeof read([], Symbol.iterator)]);
+  const built = ["i" + "d", "ne".concat("xt"), String(["label"]), `${"li"}st`]; say("keys that are made", built.map(key => show(read(items[7], key))));
+  let threw = ""; try { read(null, "id"); } catch (error) { threw = (error as Error).constructor.name; } say("null", threw);
+}
+
+console.log(lines.join("\n"));
+//// objects-with-fixed-fields/attacks-undefined-keys-that-come-into-being-with-a-store-of-undefined.ts
+// The same for fields that no declaration creates: a constructor function stores one field, and every other key comes into being with its first store, in the order of the stores,
+// be the value undefined or not.
+
+const lines: string[] = [];
+function say(label: string, value: unknown) {
+  lines.push(label + ": " + (typeof value === "string" ? value : JSON.stringify(value)));
+}
+function look(o: object) {
+  const own: string[] = [];
+  for (const key in o) own.push(key);
+  return Object.keys(o).join() + " | " + own.join() + " | " + JSON.stringify(o) + " | " + Object.entries(o).map(([k, v]) => k + "=" + String(v && typeof v === "object" ? "o" : v)).join();
+}
+
+interface Late {
+  flags: number;
+  target?: Late; mapper?: (n: number) => number; aliasSymbol?: string; aliasTypeArguments?: Late[]; origin?: Late; count?: number; done?: boolean; wide?: number; value?: number | string;
+  // Sixty more, which take the room in the cell: see crowd().
+  q00?: Late; q01?: Late; q02?: Late; q03?: Late; q04?: Late; q05?: Late; q06?: Late; q07?: Late; q08?: Late; q09?: Late; q10?: Late; q11?: Late; q12?: Late; q13?: Late; q14?: Late; q15?: Late; q16?: Late; q17?: Late; q18?: Late; q19?: Late; q20?: Late; q21?: Late; q22?: Late; q23?: Late; q24?: Late; q25?: Late; q26?: Late; q27?: Late; q28?: Late; q29?: Late; q30?: Late; q31?: Late; q32?: Late; q33?: Late; q34?: Late; q35?: Late; q36?: Late; q37?: Late; q38?: Late; q39?: Late; q40?: Late; q41?: Late; q42?: Late; q43?: Late; q44?: Late; q45?: Late; q46?: Late; q47?: Late; q48?: Late; q49?: Late; q50?: Late; q51?: Late; q52?: Late; q53?: Late; q54?: Late; q55?: Late; q56?: Late; q57?: Late; q58?: Late; q59?: Late;
+}
+const Late = function (this: Late, flags: number) { this.flags = flags; } as unknown as new (flags: number) => Late;
+
+////= crowded
+const root = crowded(1, undefined);
+{
+  let same = 0;
+  for (let i = 0; i < 2000; i++) { const one = crowded(i, root); if (one.q00 === one.q59) same++; }
+  say("crowd", same);
+}
+// What comes out of an array is no object that was just made, as far as anybody can see.
+const pool: Late[] = [];
+function fromPool(flags: number) {
+  pool.push(new Late(flags));
+  return pool[pool.length - 1];
+}
+
+function withAlias(flags: number, aliasSymbol: string | undefined, aliasTypeArguments: Late[] | undefined) {
+  const made = fromPool(flags);
+  made.aliasSymbol = aliasSymbol;
+  made.aliasTypeArguments = aliasTypeArguments;
+  return made;
+}
+////= reference	Late	fromPool
+function backwards(origin: Late | undefined, aliasSymbol: string | undefined, count: number | undefined, target: Late | undefined) {
+  const made = fromPool(5);
+  made.origin = origin;
+  made.count = count;
+  made.aliasSymbol = aliasSymbol;
+  made.target = target;
+  return made;
+}
+{
+  const all: Late[] = [];
+  for (let i = 0; i < 400; i++) all.push(withAlias(i, i % 6 ? undefined : "a" + i, i % 9 ? undefined : [root]));
+  for (const i of [0, 1, 6, 9, 18]) say("alias " + i, look(all[i]));
+  say("in", ["aliasSymbol" in all[1], "aliasTypeArguments" in all[1], "origin" in all[1], Object.hasOwn(all[1], "aliasSymbol"), all[1].hasOwnProperty("origin")]);
+  say("descriptor", [Object.getOwnPropertyDescriptor(all[1], "aliasSymbol"), Object.getOwnPropertyDescriptor(all[1], "origin") ?? "none"]);
+  all[1].aliasSymbol = "late"; say("late value", look(all[1]));
+  all[1].aliasSymbol = undefined; say("undefined again", look(all[1]));
+  delete all[3].aliasSymbol; say("deleted", look(all[3]));
+  all[3].aliasSymbol = undefined; say("added behind the others", look(all[3]));
+  all[5].origin = undefined; all[5].target = root; say("two more", look(all[5]));
+}
+{
+  const twice = (n: number) => n * 2;
+  const all: Late[] = [];
+  for (let i = 0; i < 400; i++) all.push(reference(root, i % 3 ? twice : undefined, i % 7 ? undefined : "s", i % 7 ? undefined : [], i % 11 ? undefined : root));
+  for (const i of [0, 1, 3, 7, 11, 21, 77]) say("reference " + i, look(all[i]));
+  const other: Late[] = [];
+  for (let i = 0; i < 300; i++) other.push(backwards(i % 2 ? undefined : root, i % 3 ? undefined : "b", i % 5 ? undefined : i, i % 7 ? undefined : root));
+  for (const i of [0, 1, 2, 3, 5, 6, 7, 30, 210]) say("backwards " + i, look(other[i]));
+  say("spread", look({ ...other[1] }));
+  say("own keys", Reflect.ownKeys(other[1]).join());
+}
+// One store alone, of a value that nobody knows before it is read.
+{
+  const origins: (Late | undefined)[] = [undefined, root, undefined, undefined];
+  const names: (string | undefined)[] = [undefined, undefined, "n"];
+  const widths: (number | undefined)[] = [undefined, 1.5, undefined, 7];
+  const flags: (boolean | undefined)[] = [undefined, false, undefined, true, undefined];
+  const all: Late[] = [];
+  for (let i = 0; i < 240; i++) {
+    const made = fromPool(i);
+    made.origin = origins[i % 4];
+    all.push(made);
+  }
+  for (let i = 0; i < 240; i += 2) all[i].aliasSymbol = names[i % 3];
+  for (let i = 0; i < 240; i += 3) all[i].wide = widths[i % 4];
+  for (let i = 0; i < 240; i += 4) all[i].done = flags[i % 5];
+  for (let i = 0; i < 240; i += 5) all[i].origin = origins[(i + 1) % 4];
+  for (const i of [0, 1, 2, 3, 4, 5, 6, 9, 10, 12, 15, 20, 30, 60, 239]) say("one store " + i, look(all[i]));
+  let listed = 0;
+  for (const one of all) listed += Object.keys(one).length * 10 + ("wide" in one ? 1 : 0) + (one.done === undefined ? 0 : 100);
+  say("listed", listed);
+}
+{
+  const frozen = Object.freeze(withAlias(1, undefined, undefined));
+  let threw = "no";
+  try { (frozen as Late).aliasSymbol = "x"; } catch (error) { threw = (error as Error).constructor.name; }
+  say("frozen", [threw, look(frozen)]);
+  const closed = Object.preventExtensions(withAlias(3, undefined, undefined));
+  closed.aliasTypeArguments = [root]; threw = "no";
+  try { closed.origin = undefined; } catch (error) { threw = (error as Error).constructor.name; }
+  say("not extensible", [threw, look(closed)]);
+  const hidden = withAlias(5, undefined, undefined);
+  Object.defineProperty(hidden, "aliasSymbol", { enumerable: false });
+  say("not enumerable", [look(hidden), Object.getOwnPropertyNames(hidden).join()]);
+}
+
+console.log(lines.join("\n"));
+//// objects-with-fixed-fields/attacks-undefined-stores-that-turn-out-to-store-undefined.ts
+// A field that few objects fill lies outside the cell. `made.alias = alias` with an argument that is mostly undefined must leave an object that is the same to every look as one that holds undefined:
+// the key is there, in its place, the value reads undefined, and a later value, deletion, redefinition or freeze finds what it should.
+
+const lines: string[] = [];
+function say(label: string, value: unknown) {
+  lines.push(label + ": " + (typeof value === "string" ? value : JSON.stringify(value)));
+}
+function look(o: object) {
+  const own: string[] = [];
+  for (const key in o) own.push(key);
+  return Object.keys(o).join() + " | " + own.join() + " | " + JSON.stringify(o) + " | " + Object.entries(o).map(([k, v]) => k + "=" + String(v && typeof v === "object" ? "o" : v)).join();
+}
+
+class Kind {
+  flags: number;
+  id: number;
+  // Many fields, so that most of them lie outside the cell.
+  symbol?: string; target?: Kind; mapper?: (n: number) => number; types?: Kind[]; members?: Map<string, number>; properties?: string[];
+  callSignatures?: string[]; constructSignatures?: string[]; indexInfos?: string[]; aliasSymbol?: string; aliasTypeArguments?: Kind[]; origin?: Kind;
+  value?: number | string; regular?: Kind; fresh?: Kind; constraint?: Kind; node?: object; pattern?: object; count?: number; done?: boolean; wide?: number;
+  // Sixty more, which take the room in the cell: see crowd().
+  p00?: Kind; p01?: Kind; p02?: Kind; p03?: Kind; p04?: Kind; p05?: Kind; p06?: Kind; p07?: Kind; p08?: Kind; p09?: Kind; p10?: Kind; p11?: Kind; p12?: Kind; p13?: Kind; p14?: Kind; p15?: Kind; p16?: Kind; p17?: Kind; p18?: Kind; p19?: Kind; p20?: Kind; p21?: Kind; p22?: Kind; p23?: Kind; p24?: Kind; p25?: Kind; p26?: Kind; p27?: Kind; p28?: Kind; p29?: Kind; p30?: Kind; p31?: Kind; p32?: Kind; p33?: Kind; p34?: Kind; p35?: Kind; p36?: Kind; p37?: Kind; p38?: Kind; p39?: Kind; p40?: Kind; p41?: Kind; p42?: Kind; p43?: Kind; p44?: Kind; p45?: Kind; p46?: Kind; p47?: Kind; p48?: Kind; p49?: Kind; p50?: Kind; p51?: Kind; p52?: Kind; p53?: Kind; p54?: Kind; p55?: Kind; p56?: Kind; p57?: Kind; p58?: Kind; p59?: Kind;
+  constructor(flags: number) { this.flags = flags; this.id = ++ids; }
+}
+let ids = 0;
+
+// Reads and stores of the sixty, often, so that they are worth more than the fields under test.
+function crowd(one: Kind, other: Kind) {
+  if (one.p00 === undefined) one.p00 = other;
+  if (one.p01 === undefined) one.p01 = other;
+  if (one.p02 === undefined) one.p02 = other;
+  if (one.p03 === undefined) one.p03 = other;
+  if (one.p04 === undefined) one.p04 = other;
+  if (one.p05 === undefined) one.p05 = other;
+  if (one.p06 === undefined) one.p06 = other;
+  if (one.p07 === undefined) one.p07 = other;
+  if (one.p08 === undefined) one.p08 = other;
+  if (one.p09 === undefined) one.p09 = other;
+  if (one.p10 === undefined) one.p10 = other;
+  if (one.p11 === undefined) one.p11 = other;
+  if (one.p12 === undefined) one.p12 = other;
+  if (one.p13 === undefined) one.p13 = other;
+  if (one.p14 === undefined) one.p14 = other;
+  if (one.p15 === undefined) one.p15 = other;
+  if (one.p16 === undefined) one.p16 = other;
+  if (one.p17 === undefined) one.p17 = other;
+  if (one.p18 === undefined) one.p18 = other;
+  if (one.p19 === undefined) one.p19 = other;
+  if (one.p20 === undefined) one.p20 = other;
+  if (one.p21 === undefined) one.p21 = other;
+  if (one.p22 === undefined) one.p22 = other;
+  if (one.p23 === undefined) one.p23 = other;
+  if (one.p24 === undefined) one.p24 = other;
+  if (one.p25 === undefined) one.p25 = other;
+  if (one.p26 === undefined) one.p26 = other;
+  if (one.p27 === undefined) one.p27 = other;
+  if (one.p28 === undefined) one.p28 = other;
+  if (one.p29 === undefined) one.p29 = other;
+  if (one.p30 === undefined) one.p30 = other;
+  if (one.p31 === undefined) one.p31 = other;
+  if (one.p32 === undefined) one.p32 = other;
+  if (one.p33 === undefined) one.p33 = other;
+  if (one.p34 === undefined) one.p34 = other;
+  if (one.p35 === undefined) one.p35 = other;
+  if (one.p36 === undefined) one.p36 = other;
+  if (one.p37 === undefined) one.p37 = other;
+  if (one.p38 === undefined) one.p38 = other;
+  if (one.p39 === undefined) one.p39 = other;
+  if (one.p40 === undefined) one.p40 = other;
+  if (one.p41 === undefined) one.p41 = other;
+  if (one.p42 === undefined) one.p42 = other;
+  if (one.p43 === undefined) one.p43 = other;
+  if (one.p44 === undefined) one.p44 = other;
+  if (one.p45 === undefined) one.p45 = other;
+  if (one.p46 === undefined) one.p46 = other;
+  if (one.p47 === undefined) one.p47 = other;
+  if (one.p48 === undefined) one.p48 = other;
+  if (one.p49 === undefined) one.p49 = other;
+  if (one.p50 === undefined) one.p50 = other;
+  if (one.p51 === undefined) one.p51 = other;
+  if (one.p52 === undefined) one.p52 = other;
+  if (one.p53 === undefined) one.p53 = other;
+  if (one.p54 === undefined) one.p54 = other;
+  if (one.p55 === undefined) one.p55 = other;
+  if (one.p56 === undefined) one.p56 = other;
+  if (one.p57 === undefined) one.p57 = other;
+  if (one.p58 === undefined) one.p58 = other;
+  if (one.p59 === undefined) one.p59 = other;
+  return one.p00 === one.p59;
+}
+
+function withAlias(flags: number, aliasSymbol: string | undefined, aliasTypeArguments: Kind[] | undefined) {
+  const made = new Kind(flags);
+  made.aliasSymbol = aliasSymbol;
+  made.aliasTypeArguments = aliasTypeArguments;
+  return made;
+}
+////= reference	Kind	new Kind
+function numbers(count: number | undefined, done: boolean | undefined, wide: number | undefined, value: number | string | undefined) {
+  const made = new Kind(8);
+  made.count = count;
+  made.done = done;
+  made.wide = wide;
+  made.value = value;
+  return made;
+}
+
+const root = new Kind(1);
+{
+  let same = 0;
+  for (let i = 0; i < 2000; i++) if (crowd(new Kind(i), root)) same++;
+  say("crowd", same);
+}
+{
+  const all: Kind[] = [];
+  for (let i = 0; i < 400; i++) all.push(withAlias(i, i % 6 ? undefined : "a" + i, i % 9 ? undefined : [root]));
+  say("none", look(all[1]));
+  say("both", look(all[0]));
+  say("first", look(all[6]));
+  say("second", look(all[9]));
+  say("in", ["aliasSymbol" in all[1], "aliasTypeArguments" in all[1], "origin" in all[1], Object.hasOwn(all[1], "aliasSymbol"), all[1].hasOwnProperty("origin")]);
+  say("descriptor", [Object.getOwnPropertyDescriptor(all[1], "aliasSymbol"), Object.getOwnPropertyDescriptor(all[1], "origin") ?? "none"]);
+  let have = 0, listed = 0;
+  for (const one of all) { if (one.aliasSymbol !== undefined) have++; if ("aliasSymbol" in one) listed++; }
+  say("counts", [have, listed]);
+  // A value comes later, then undefined again.
+  all[1].aliasSymbol = "late"; say("late value", look(all[1]));
+  all[1].aliasSymbol = undefined; say("undefined again", look(all[1]));
+  all[2].aliasTypeArguments = [root, root]; say("the second alone", look(all[2]));
+  delete all[3].aliasSymbol; say("deleted", look(all[3]));
+  all[3].aliasSymbol = undefined; say("added behind the others", look(all[3]));
+  delete all[4].aliasSymbol; all[4].aliasSymbol = "x"; say("deleted, then a value", look(all[4]));
+}
+{
+  const all: Kind[] = [];
+  const twice = (n: number) => n * 2;
+  for (let i = 0; i < 400; i++) all.push(reference(root, i % 3 ? twice : undefined, i % 7 ? undefined : "s", i % 7 ? undefined : [], i % 11 ? undefined : root));
+  for (const i of [0, 1, 3, 7, 11, 21, 77]) say("reference " + i, look(all[i]));
+  let sum = 0;
+  for (const one of all) sum += (one.mapper ? one.mapper(one.id) : 1) + (one.origin ? 1000 : 0) + (one.aliasTypeArguments ? 100000 : 0);
+  say("sum", sum);
+  say("spread", look({ ...all[1] }));
+  say("assign", look(Object.assign(new Kind(0), all[1], { id: 0 })));
+  say("keys of a copy by hand", Reflect.ownKeys(all[5]).join());
+}
+{
+  const all: Kind[] = [];
+  for (let i = 0; i < 300; i++) all.push(numbers(i % 4 ? undefined : i, i % 5 ? undefined : i % 2 === 0, i % 6 ? undefined : i + 0.5, i % 7 ? undefined : i % 14 ? "s" + i : i));
+  for (const i of [0, 1, 4, 5, 6, 7, 14, 60, 210]) say("numbers " + i, look(all[i]));
+  let total = 0;
+  for (const one of all) total += (one.count ?? -1) + (one.done === undefined ? 0 : one.done ? 10 : 20) + (one.wide ?? 0.25) + (typeof one.value === "number" ? one.value : 0);
+  say("total", total);
+}
+// One store alone, of a value that nobody knows before it is read.
+{
+  const origins: (Kind | undefined)[] = [undefined, root, undefined, undefined];
+  const names: (string | undefined)[] = [undefined, undefined, "n"];
+  const widths: (number | undefined)[] = [undefined, 1.5, undefined, 7];
+  const all: Kind[] = [];
+  for (let i = 0; i < 240; i++) {
+    const made = new Kind(i);
+    made.origin = origins[i % 4];
+    all.push(made);
+  }
+  for (let i = 0; i < 240; i += 2) all[i].aliasSymbol = names[i % 3];
+  for (let i = 0; i < 240; i += 3) all[i].wide = widths[i % 4];
+  for (let i = 0; i < 240; i += 5) all[i].origin = origins[(i + 1) % 4];
+  for (const i of [0, 1, 2, 3, 4, 5, 6, 9, 10, 12, 15, 30, 60, 239]) say("one store " + i, look(all[i]));
+  let listed = 0;
+  for (const one of all) listed += Object.keys(one).length * 10 + ("wide" in one ? 1 : 0);
+  say("listed", listed);
+}
+// Frozen, sealed, not extensible, redefined: with the field listed and nothing stored for it.
+{
+  const frozen = Object.freeze(withAlias(1, undefined, undefined));
+  let threw = "no";
+  try { (frozen as Kind).aliasSymbol = "x"; } catch (error) { threw = (error as Error).constructor.name; }
+  say("frozen", [threw, look(frozen), Object.isFrozen(frozen)]);
+  const sealed = Object.seal(withAlias(2, undefined, undefined));
+  sealed.aliasSymbol = "stored"; threw = "no";
+  try { sealed.origin = root; } catch (error) { threw = (error as Error).constructor.name; }
+  say("sealed", [threw, look(sealed)]);
+  const closed = Object.preventExtensions(withAlias(3, undefined, undefined));
+  closed.aliasTypeArguments = [root]; threw = "no";
+  try { closed.pattern = {}; } catch (error) { threw = (error as Error).constructor.name; }
+  say("not extensible", [threw, look(closed)]);
+  const redefined = withAlias(4, undefined, undefined);
+  let reads = 0;
+  Object.defineProperty(redefined, "aliasSymbol", { get() { return "got" + ++reads; }, enumerable: true, configurable: true });
+  say("accessor", [redefined.aliasSymbol, redefined.aliasSymbol, look(redefined)]);
+  const hidden = withAlias(5, undefined, undefined);
+  Object.defineProperty(hidden, "aliasSymbol", { enumerable: false });
+  say("not enumerable", [look(hidden), Object.getOwnPropertyNames(hidden).join(), Object.getOwnPropertyDescriptor(hidden, "aliasSymbol")]);
+  const fixed = withAlias(6, undefined, undefined);
+  Object.defineProperty(fixed, "aliasTypeArguments", { writable: false }); threw = "no";
+  try { fixed.aliasTypeArguments = []; } catch (error) { threw = (error as Error).constructor.name; }
+  say("read-only", [threw, look(fixed)]);
+}
+// By a name that is computed, by Reflect, and kept over collections.
+{
+  const names = ["aliasSymbol", "origin", "aliasTypeArguments", "node"] as const;
+  const kept: Kind[] = [];
+  for (let i = 0; i < 3000; i++) {
+    const made = withAlias(i, i % 50 ? undefined : "k" + i, undefined);
+    const name = names[i % 4];
+    if (i % 3 === 0) (made as unknown as Record<string, unknown>)[name] = i % 6 ? undefined : { i };
+    if (i % 5 === 0) Reflect.set(made, names[(i + 1) % 4], undefined);
+    if (i % 10 === 0) kept.push(made);
+  }
+  let text = 0;
+  for (const one of kept) text += look(one).length;
+  say("kept", [kept.length, text, look(kept[3]), look(kept[30]), look(kept[299])]);
+}
+
+console.log(lines.join("\n"));
+//// objects-with-fixed-fields/keyed-diff.ts
+// Two records compared key by key, as a renderer compares styles: for-in over one, reads by the key in both.
+type Style = { [key: string]: string | number | boolean | undefined };
+function diff(before: Style | undefined, after: Style | undefined): Style | undefined {
+  if (before === after) return undefined;
+  if (!before) return after;
+  const changed: Style = {};
+  let isChanged = false;
+  for (const key of Object.keys(before)) { const isDeleted = after ? !Object.hasOwn(after, key) : true; if (isDeleted) { changed[key] = undefined; isChanged = true; } }
+  if (after) for (const key of Object.keys(after)) { if (after[key] !== before[key]) { changed[key] = after[key]; isChanged = true; } }
+  return isChanged ? changed : undefined;
+}
+const rounds = Number(process.argv[2] ?? 0);
+let n = 0;
+const a = { flexDirection: "row", flexGrow: 1, width: 80, paddingLeft: 1, marginTop: 0, color: "red" };
+const b = { flexDirection: "row", flexGrow: 1, width: 80, paddingLeft: 1, marginTop: 0, color: "red" };
+const c = { flexDirection: "column", flexGrow: 0, width: 81, paddingLeft: 1, marginTop: 0, color: "red" };
+for (let r = 0; r < rounds; r++) { if (diff(a, b)) n++; if (r % 16 === 0 && diff(a, c)) n++; }
+console.log(n);
+//// objects-with-fixed-fields/keyed-env.ts
+// process.env[name], name given by the caller: what one read costs.
+function isTruthy(name: string) { const v = process.env[name]; return v === "1" || v === "true"; }
+const names = ["HOME", "PATH", "STRUCTS_A", "STRUCTS_B", "TERM", "NO_COLOR", "STRUCTS_C", "USER"];
+const rounds = Number(process.argv[2] ?? 0);
+let n = 0;
+for (let r = 0; r < rounds; r++) for (let i = 0; i < 8; i++) if (isTruthy(names[i])) n++;
+console.log(n);
+//// objects-with-fixed-fields/keyed-keyed.ts
+// obj[key] with a key out of a short list, on records of one shape and of four shapes.
+type R = { [key: string]: number };
+const keys = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"];
+function read(o: R, key: string) { return o[key]; }
+const one: R[] = []; const four: R[] = [];
+for (let i = 0; i < 16; i++) {
+  one.push({ alpha: i, beta: 1, gamma: 2, delta: 3, epsilon: 4, zeta: 5 });
+  four.push(i % 4 === 0 ? { alpha: i, beta: 1, gamma: 2, delta: 3, epsilon: 4, zeta: 5 } : i % 4 === 1 ? { zeta: 1, epsilon: 2, delta: 3, gamma: 4, beta: 5, alpha: 6 } : i % 4 === 2 ? { alpha: 1, gamma: 2, epsilon: 3, beta: 4, delta: 5, zeta: 6, eta: 7 } : { beta: 1, alpha: 2, delta: 3, gamma: 4, zeta: 5, epsilon: 6, theta: 8 });
+}
+const rounds = Number(process.argv[2] ?? 0); const which = process.argv[3] === "four" ? four : one;
+let t = 0;
+for (let r = 0; r < rounds; r++) { const o = which[r & 15]; for (let k = 0; k < 6; k++) t += read(o, keys[k]); }
+console.log(t);

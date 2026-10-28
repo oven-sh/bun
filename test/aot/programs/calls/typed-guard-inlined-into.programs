@@ -1,0 +1,2187 @@
+////: lines-29
+«1»(n) {
+  depth++;
+  try {
+    if (n < 0) return 0;
+    return «2»;
+  } finally {
+    depth--;
+  }
+}
+////: throughA
+function throughA«1») {
+  depth++;
+  try {
+    return «2»;
+  } finally {
+    depth--;
+  }
+}
+//// typed-guard-inlined-into-untyped-code/a-typed-getter-lib.ts
+export class Item { constructor(public next: Item | null, public v: number, public w: number) {} }
+let sink = 0
+let turn = 0
+let kept: Item | null | undefined = undefined
+let keptNumber: number | undefined = undefined
+let keptText: string | undefined = undefined
+let keptItem: Item | undefined = undefined
+function work(a: number, b: number): number { sink = (sink + a * 31 + b) & 1023; return sink }
+function much(k: number): number {
+    const a = work(1, k), b = work(a, 2), c = work(b, a), d = work(c, b), e = work(d, c), f = work(e, d), g = work(f, e), h = work(g, f)
+    return work(h, g) + work(a, c) + work(b, d) + work(c, e) + work(d, f) + work(e, g) + work(f, h) + work(g, a) + work(h, b)
+}
+export function current(): Item | null | undefined {
+    if (kept !== undefined) return kept
+    const k = turn++
+    const a = work(1, k), b = work(a, 2), c = work(b, a), d = work(c, b), e = work(d, c), f = work(e, d), g = work(f, e), h = work(g, f)
+    const p = work(h, g) + work(a, c) + work(b, d) + work(c, e) + work(d, f) + work(e, g) + work(f, h) + work(g, a) + work(h, b)
+    const q = work(p, a) + work(p, b) + work(p, c) + work(p, d) + work(p, e) + work(p, f) + work(p, g) + work(p, h)
+    if ((k & 3) === 1) { kept = null; return kept }
+    if ((k & 3) === 2) return undefined
+    kept = new Item(new Item(null, p & 15, 4), q & 15, 2)
+    return kept
+}
+export function currentNumber(): number {
+    if (keptNumber !== undefined) return keptNumber
+    const k = turn++
+    const a = work(1, k), b = work(a, 2), c = work(b, a), d = work(c, b), e = work(d, c), f = work(e, d), g = work(f, e), h = work(g, f)
+    const p = work(h, g) + work(a, c) + work(b, d) + work(c, e) + work(d, f) + work(e, g) + work(f, h) + work(g, a) + work(h, b)
+    const q = work(p, a) + work(p, b) + work(p, c) + work(p, d) + work(p, e) + work(p, f) + work(p, g) + work(p, h)
+    keptNumber = (k & 1) ? p + 0.5 : q
+    return keptNumber
+}
+export function currentText(): string {
+    if (keptText !== undefined) return keptText
+    const k = turn++
+    const a = work(1, k), b = work(a, 2), c = work(b, a), d = work(c, b), e = work(d, c), f = work(e, d), g = work(f, e), h = work(g, f)
+    const p = work(h, g) + work(a, c) + work(b, d) + work(c, e) + work(d, f) + work(e, g) + work(f, h) + work(g, a) + work(h, b)
+    const q = work(p, a) + work(p, b) + work(p, c) + work(p, d) + work(p, e) + work(p, f) + work(p, g) + work(p, h)
+    keptText = "t" + (p & 7) + "-" + (q & 7)
+    return keptText
+}
+export function currentItem(): Item {
+    if (keptItem !== undefined) return keptItem
+    const k = turn++
+    const a = work(1, k), b = work(a, 2), c = work(b, a), d = work(c, b), e = work(d, c), f = work(e, d), g = work(f, e), h = work(g, f)
+    const p = work(h, g) + work(a, c) + work(b, d) + work(c, e) + work(d, f) + work(e, g) + work(f, h) + work(g, a) + work(h, b)
+    const q = work(p, a) + work(p, b) + work(p, c) + work(p, d) + work(p, e) + work(p, f) + work(p, g) + work(p, h)
+    keptItem = new Item(null, p & 31, (q + much(k)) & 31)
+    return keptItem
+}
+export function forget(): void { kept = undefined; keptNumber = undefined; keptText = undefined; keptItem = undefined }
+//// typed-guard-inlined-into-untyped-code/main.ts
+// The first test of a large typed function is inlined into untyped JavaScript callers.
+import { items, numbers, texts, whole, caught } from "./untyped-text-calls-typed-getters.js"
+declare const console: { log(...args: unknown[]): void }
+console.log("an object, null or undefined:", items(1000))
+console.log("a number:", numbers(1000))
+console.log("a text:", texts(40))
+console.log("an object:", whole(1000))
+console.log("under a handler, where null and undefined throw:", caught(1000))
+//// typed-guard-inlined-into-untyped-code/untyped-text-calls-typed-getters.js
+import { current, currentNumber, currentText, currentItem, forget } from "./a-typed-getter-lib";
+export function items(n) { let seen = 0; for (let i = 0; i < n; i++) { const a = current(), b = current(), c = current(), d = current(), e = current(); if (a) seen += a.v; if (b === null) seen += 1; if (c === undefined) seen += 2; if (d) seen += d.w; if (e && e.next) seen += e.next.v; if ((i & 7) === 7) forget(); } return seen; }
+export function numbers(n) { let seen = 0; for (let i = 0; i < n; i++) { const a = currentNumber(), b = currentNumber(), c = currentNumber(), d = currentNumber(), e = currentNumber(); seen += a + b * 2 + c - d + e; if ((i & 3) === 3) forget(); } return seen; }
+export function texts(n) { let seen = ""; for (let i = 0; i < n; i++) { const a = currentText(), b = currentText(), c = currentText(), d = currentText(), e = currentText(); if (i < 6) seen += a + b.length + (c === d) + e.charAt(1) + " "; if ((i & 1) === 1) forget(); } return seen; }
+export function whole(n) { let seen = 0; for (let i = 0; i < n; i++) { const a = currentItem(), b = currentItem(), c = currentItem(), d = currentItem(), e = currentItem(); seen += a.v + b.w + (c === d ? 1 : 0) + (e.next === null ? 2 : 0); if ((i & 3) === 1) forget(); } return seen; }
+export function caught(n) { let seen = 0; for (let i = 0; i < n; i++) { try { const a = current(), b = current(), c = current(), d = current(), e = current(); seen += a.v + (b ? 1 : 0) + (c ? 1 : 0) + (d ? 1 : 0) + (e ? 1 : 0); } catch (x) { seen += 1000; forget(); } if ((i & 7) === 5) forget(); } return seen; }
+//// typed-helpers-called-with-values-from-outside-do-the-work-of-their-erased-twins.ts
+// Values that no analysis can see through.
+const outside: any = JSON.parse(process.argv[3] ?? '{"numbers":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],"one":1,"rounds":200000}');
+const section: string = process.argv[2] ?? "all";
+
+// 2a: an awaited call of a typed async function with an argument that the caller has not proven.
+async function load(id: number): Promise<number> {
+  if (id < 0) await null;
+  return id + 1;
+}
+async function run(x: any): Promise<number> {
+  return await load(x);
+}
+async function awaits(): Promise<number> {
+  let result = 0;
+  for (let round = 0; round < outside.rounds; round++) result += await run(outside.one);
+  return result;
+}
+
+// 2b: a typed helper that calls its callback, too large to inline, called with a list that the caller has not proven.
+function each(xs: number[], f: (x: number) => void): void {
+  let i = 0;
+  for (; i + 7 < xs.length; i += 8) {
+    f(xs[i]); f(xs[i + 1]); f(xs[i + 2]); f(xs[i + 3]); f(xs[i + 4]); f(xs[i + 5]); f(xs[i + 6]); f(xs[i + 7]);
+  }
+  for (; i + 3 < xs.length; i += 4) {
+    f(xs[i]); f(xs[i + 1]); f(xs[i + 2]); f(xs[i + 3]);
+  }
+  for (; i < xs.length; i++) f(xs[i]);
+  for (let j = xs.length - 1; j >= 0; j--) f(-xs[j]);
+  for (let j = xs.length - 1; j >= 0; j -= 2) f(xs[j] * 2);
+}
+function sumOf(list: any): number {
+  let sum = 0;
+  each(list, x => { sum += x; });
+  return sum;
+}
+function maxOf(list: any): number {
+  let max = -1000;
+  each(list, x => { if (x > max) max = x; });
+  return max;
+}
+function countOf(list: any): number {
+  let count = 0;
+  each(list, () => { count++; });
+  return count;
+}
+function callbacks(): number {
+  let result = 0;
+  for (let round = 0; round < outside.rounds; round++) result += sumOf(outside.numbers) + maxOf(outside.numbers) + countOf(outside.numbers);
+  return result;
+}
+
+// 6: tests of `kind` in front of a use as one member of the union.
+interface Id { kind: 80; text: string }
+interface Num { kind: 9; value: number }
+interface Str { kind: 11; text: string; quoted: boolean }
+type Piece = Id | Num | Str;
+function isId(n: Piece): n is Id {
+  return n.kind === 80;
+}
+function isIdOrNothing(n: Piece | undefined): n is Id {
+  return n !== undefined && n.kind === 80;
+}
+function guardBehindTest(n: Piece | undefined): string | undefined {
+  if (n !== undefined && isId(n)) return n.text;
+  return undefined;
+}
+function guardThatTests(n: Piece | undefined): string | undefined {
+  if (isIdOrNothing(n)) return n.text;
+  return undefined;
+}
+function optionalChain(n: Piece | undefined): string | undefined {
+  if (n?.kind === 80) return n.text;
+  return undefined;
+}
+function kindInVariable(n: Piece | null): string | undefined {
+  if (!n) return undefined;
+  const kind = n.kind;
+  if (kind === 80) return (n as Id).text;
+  if (kind === 11) return (n as Str).text;
+  return undefined;
+}
+function throughAny(value: any): string | undefined {
+  const n: Piece | undefined = value;
+  if (n && n.kind === 80) return n.text;
+  return undefined;
+}
+class Holder { piece: Piece | undefined = undefined; }
+function fieldOfHolder(h: Holder): string | undefined {
+  const n = h.piece;
+  if (n !== undefined && isId(n)) return n.text;
+  return undefined;
+}
+const pieces: (Piece | undefined)[] = [{ kind: 80, text: "a" }, { kind: 9, value: 3 }, { kind: 11, text: "s", quoted: true }, undefined];
+function guards(): number {
+  let result = 0;
+  const holder = new Holder();
+  for (let round = 0; round < 1000; round++) {
+    for (let i = 0; i < pieces.length; i++) {
+      const piece = pieces[i];
+      holder.piece = piece;
+      result += (guardBehindTest(piece) ?? "").length + (guardThatTests(piece) ?? "").length + (optionalChain(piece) ?? "").length
+        + (kindInVariable(piece ?? null) ?? "").length + (throughAny(piece) ?? "").length + (fieldOfHolder(holder) ?? "").length;
+    }
+  }
+  return result;
+}
+
+// 7: an object created below a prototype that gets an accessor: returned at once, or from a variable.
+function createdTail(p: object | null): any {
+  return Object.create(p);
+}
+function createdLocal(p: object | null): any {
+  const o = Object.create(p);
+  return o;
+}
+function accessors(): number {
+  let result = 0;
+  const proto = { base: 1 };
+  for (let round = 0; round < 1000; round++) {
+    const t = createdTail(proto);
+    Object.defineProperty(t, "size", { get() { return 3; }, enumerable: true, configurable: true });
+    const l = createdLocal(proto);
+    Object.defineProperty(l, "width", { get() { return 4; }, enumerable: true, configurable: true });
+    result += t.size + t.base + l.width + l.base;
+  }
+  return result;
+}
+
+async function main() {
+  if (section === "awaits" || section === "all") console.log("awaits", await awaits());
+  if (section === "callbacks" || section === "all") console.log("callbacks", callbacks());
+  if (section === "rest" || section === "all") console.log("rest", guards(), accessors());
+}
+main();
+//// typed-helpers-take-callbacks-and-values-from-outside.ts
+// A typed helper that calls its callback is called with a function that the caller knows and a list of which the caller has proven nothing: the tests of the list stand between the two.
+// The helper does what it does under `bun run` for a list that fits its type and for whatever else arrives.
+const outside: any = JSON.parse('{"numbers":[1,2,3,4,5,6,7,8,9],"mixed":[1,"two",null,4.5],"text":"abc","like":{"length":2,"0":7,"1":8},"empty":[]}');
+
+function each(xs: number[], f: (x: number, index: number) => void): void {
+  let i = 0;
+  for (; i + 3 < xs.length; i += 4) {
+    f(xs[i], i); f(xs[i + 1], i + 1); f(xs[i + 2], i + 2); f(xs[i + 3], i + 3);
+  }
+  for (; i < xs.length; i++) f(xs[i], i);
+  for (let j = xs.length - 1; j >= 0; j -= 2) f(xs[j], -j);
+  for (let j = 0; j < xs.length; j += 3) f(xs[j], j * 10);
+  for (let j = xs.length - 1; j >= 0; j -= 4) f(xs[j], -j * 10);
+}
+function sumOf(list: any): unknown {
+  let sum: any = 0;
+  each(list, x => { sum += x; });
+  return sum;
+}
+function positionsOf(list: any): string {
+  const seen: number[] = [];
+  each(list, (_, index) => { seen.push(index); });
+  return seen.join();
+}
+function stopsAt(list: any, limit: number): string {
+  let count = 0;
+  try {
+    each(list, x => { if (++count === limit) throw new RangeError("stopped at " + String(x)); });
+  } catch (error) {
+    return (error as Error).message;
+  }
+  return "went through " + count;
+}
+function growsTheList(list: any): number {
+  let calls = 0;
+  each(list, () => { if (++calls < 4) list.push(calls); });
+  return calls;
+}
+function passesWhatItWasGiven(list: any, f: any): string {
+  try { each(list, f); return "returned"; } catch (error) { return (error as Error).constructor.name; }
+}
+
+for (let round = 0; round < 3; round++) {
+  for (const name of ["numbers", "mixed", "text", "like", "empty"]) {
+    const list = outside[name];
+    console.log(round, name, String(sumOf(list)), positionsOf(list), stopsAt(list, 3));
+  }
+}
+console.log(growsTheList([1, 2]), growsTheList(JSON.parse("[5]")));
+console.log(passesWhatItWasGiven(outside.numbers, undefined), passesWhatItWasGiven(outside.empty, undefined), passesWhatItWasGiven(outside.numbers, Math.abs), passesWhatItWasGiven(null, () => {}));
+//// typed-results-with-method-tail-calls.ts
+// Methods and functions with a declared result type that return values of their own on some paths and end in a tail call of a method
+// on others: a method that subclasses override, a function kept in a field, a method of an interface. Chains of any length run in constant space.
+const lines: string[] = [];
+////= say
+const deep = 300000;
+let sink: unknown;
+
+class Walker {
+  bias = 0.5;
+  step(n: number, acc: number): number {
+    if (n === 0) return acc + this.bias;
+    return this.next(n - 1, acc + 1);
+  }
+  next(n: number, acc: number): number {
+    if (n === 0) return acc - this.bias;
+    return this.step(n - 1, acc + 2);
+  }
+  pass(n: number, acc: number): number {
+    return this.step(n, acc);
+  }
+  label(n: number, acc: string): string {
+    if (n === 0) return acc + "!";
+    return this.relabel(n - 1, acc);
+  }
+  relabel(n: number, acc: string): string {
+    if (n === 0) return acc + "?";
+    return this.label(n - 1, n % 100000 === 1 ? acc + "w" : acc);
+  }
+}
+class Strider extends Walker {
+  next(n: number, acc: number): number {
+    if (n === 0) return acc;
+    return this.step(n - 1, acc + 3);
+  }
+  relabel(n: number, acc: string): string {
+    if (n === 0) return acc + ".";
+    return this.label(n - 1, n % 100000 === 1 ? acc + "s" : acc);
+  }
+}
+class Idler extends Walker {
+  step(n: number, acc: number): number {
+    if (n === 0) return acc | 0;
+    return this.pass(n - 1, acc);
+  }
+}
+const walkers: Walker[] = [new Walker(), new Strider(), new Idler()];
+for (const walker of walkers) say(walker.step(deep, 0) + 1, walker.step(deep + 1, 0) + 1, walker.next(deep, 0), walker.pass(deep, 0), walker.label(deep, ""), walker.label(deep + 1, "").length);
+for (const walker of walkers) say(walker.step(0, 1), walker.next(0, 1), walker.pass(0, 1), walker.label(0, "a"), walker.relabel(0, "b"));
+say(walkers.map(walker => [walker.step, walker.next, walker.pass].map(method => method.call(walker, deep, 0))));
+
+interface Mapper {
+  kind: number;
+  func: (n: number, acc: number, mapper: Mapper) => number;
+}
+function viaField(n: number, acc: number, mapper: Mapper): number {
+  if (n === 0) return acc + 0.5;
+  return mapper.func(n - 1, acc + mapper.kind, mapper);
+}
+function viaOtherField(n: number, acc: number, mapper: Mapper): number {
+  if (n === 0) return acc - 0.5;
+  return mapper.func(n - 1, acc + 2 * mapper.kind, mapper);
+}
+const mappers: Mapper[] = [
+  { kind: 1, func: viaField },
+  { kind: 2, func: viaOtherField },
+  { kind: 3, func: (n, acc, mapper) => (n === 0 ? acc : viaField(n - 1, acc + 1, mapper)) },
+];
+say(mappers.map(mapper => viaField(deep, 0, mapper) + 1), mappers.map(mapper => mapper.func(deep + 1, 0, mapper)), mappers.map(mapper => viaOtherField(0, 1, mapper)));
+
+interface Host {
+  resolve(n: number, acc: number, host: Host): number;
+}
+function throughHost(n: number, acc: number, host: Host): number {
+  if (n === 0) return acc + 0.25;
+  return host.resolve(n - 1, acc + 1, host);
+}
+const plainHost: Host = { resolve: throughHost };
+const inheritingHost: Host = Object.create({ resolve(n: number, acc: number, host: Host) { return n === 0 ? acc : throughHost(n - 1, acc + 2, host); } });
+class ClassHost implements Host {
+  resolve(n: number, acc: number, host: Host): number {
+    if (n === 0) return acc - 0.25;
+    return throughHost(n - 1, acc + 3, host);
+  }
+}
+sink = [throughHost, viaField, viaOtherField];
+say([plainHost, inheritingHost, new ClassHost()].map(host => throughHost(deep, 0, host) * 2), [plainHost, inheritingHost, new ClassHost()].map(host => host.resolve(deep + 1, 0, host)));
+
+class Chain {
+  hop(n: number, acc: number, f: (n: number, acc: number, f: any) => number): number {
+    if (n === 0) return acc + 0.5;
+    return f(n - 1, acc + 1, f);
+  }
+  forward(n: number, acc: number, f: (n: number, acc: number, f: any) => number): number {
+    return this.hop(n, acc, f);
+  }
+}
+class LongChain extends Chain {
+  hop(n: number, acc: number, f: (n: number, acc: number, f: any) => number): number {
+    if (n === 0) return acc - 0.5;
+    return f(n - 1, acc + 2, f);
+  }
+}
+for (const chain of [new Chain(), new LongChain()] as Chain[]) {
+  const loop = (n: number, acc: number, f: any): number => chain.forward(n, acc, f);
+  say(chain.forward(deep, 0, loop) + 1, chain.hop(deep, 0, loop) + 1, loop(deep, 0, loop), [loop].map(f => f(deep + 1, 0, f)));
+}
+
+let total = 0;
+for (let i = 0; i < 20000; i++) {
+  const walker = walkers[i % 3];
+  total += walker.step(i & 3, i) + walker.pass(i & 1, i) + walker.label(i & 1, "a").length + viaField(i & 3, i, mappers[i % 3]) + throughHost(i & 1, i, plainHost);
+}
+say(total);
+console.log(lines.join("\n"));
+//// unknown-callees.js
+// One call site and one construct site see every kind of callee. Values thrown through catch, finally, async functions and generators arrive unchanged, and endless recursion ends in a RangeError.
+"use strict";
+Error.stackTraceLimit = 10;
+const lines = [];
+const events = [];
+
+function callIt(callee, a, b) { const result = callee(a, b); return result; }
+function constructIt(callee, a, b) { const result = new callee(a, b); return result; }
+
+function render(value) {
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) return typeof value + " " + String(value);
+  const name = value.constructor === undefined ? "none" : value.constructor.name;
+  return Object.prototype.toString.call(value) + " " + name + " " + JSON.stringify(value);
+}
+function outcome(run) {
+  try {
+    return render(run());
+  } catch (error) {
+    return "threw " + (error instanceof Error ? error.constructor.name : render(error));
+  }
+}
+function takeEvents() { return events.length ? " [" + events.splice(0).join(", ") + "]" : ""; }
+
+let captured = 10;
+function closure(a, b) {
+  if (new.target) {
+    this.sum = a + b + captured;
+    return;
+  }
+  return "closure " + (a + b + captured) + " " + typeof this;
+}
+const arrow = (a, b) => "arrow " + (a * b + captured);
+class Point { constructor(a, b) { this.a = a; this.b = b; } }
+class Point3 extends Point { constructor(a, b) { super(a, b); this.isNewTarget = new.target === Point3; } }
+class ReturnsOther { constructor(a, b) { return { other: a + b }; } }
+const holder = { method(a, b) { return "method " + (a - b) + " " + typeof this; }, get getter() { return "getter " + typeof this; } };
+async function asyncFunction(a, b) { return a + b; }
+function* generatorFunction(a, b) { yield a; yield b; }
+const revocable = Proxy.revocable(closure, {});
+revocable.revoke();
+
+const callees = [
+  ["closure", closure],
+  ["arrow function", arrow],
+  ["class", Point],
+  ["derived class", Point3],
+  ["class that returns an object", ReturnsOther],
+  ["method", holder.method],
+  ["getter", Object.getOwnPropertyDescriptor(holder, "getter").get],
+  ["async function", asyncFunction],
+  ["generator function", generatorFunction],
+  ["bound closure", closure.bind({ tag: 1 }, 100)],
+  ["bound arrow function", arrow.bind(null, 100)],
+  ["bound class", Point.bind(null, 100)],
+  ["bound function bound again", closure.bind(null, 100).bind(null, 200)],
+  ["bound host function", Math.max.bind(null, 100)],
+  ["Math.max", Math.max],
+  ["parseInt", parseInt],
+  ["JSON.stringify", JSON.stringify],
+  ["Array", Array],
+  ["Object", Object],
+  ["String", String],
+  ["Symbol", Symbol],
+  ["BigInt", BigInt],
+  ["Map", Map],
+  ["Promise", Promise],
+  ["Error", Error],
+  ["Function.prototype", Function.prototype],
+  ["Function.prototype.call", Function.prototype.call],
+  ["proxy without traps", new Proxy(closure, {})],
+  ["proxy with traps", new Proxy(closure, { apply(target, receiver, list) { return "applied " + list.join(); }, construct(target, list) { return { constructed: list }; } })],
+  ["proxy of a class", new Proxy(Point, {})],
+  ["proxy of an arrow function", new Proxy(arrow, {})],
+  ["proxy of a proxy", new Proxy(new Proxy(closure, {}), {})],
+  ["proxy of an object", new Proxy({}, {})],
+  ["revoked proxy", revocable.proxy],
+  ["new Function", new Function("a", "b", "return 'text ' + (a + b) + ' ' + typeof this")],
+  ["function from eval", (0, eval)("(function (a, b) { if (new.target) this.sum = a + b; else return 'evaluated ' + (a + b); })")],
+  ["arrow function from eval", (0, eval)("(a, b) => 'evaluated arrow ' + (a + b)")],
+  ["class from eval", (0, eval)("(class Evaluated { constructor(a, b) { this.sum = a + b; } })")],
+  ["undefined", undefined],
+  ["null", null],
+  ["number", 7],
+  ["string", "text"],
+  ["object", {}],
+  ["array", []],
+  ["symbol", Symbol("s")],
+  ["bigint", 10n],
+];
+function tryAll(list) {
+  return list.map(([name, callee]) => name + ": call " + outcome(() => callIt(callee, 1, 2)) + ", new " + outcome(() => constructIt(callee, 1, 2)));
+}
+const forward = tryAll(callees);
+const backward = tryAll(callees.slice().reverse()).reverse();
+lines.push(...forward, "the same in reverse order: " + (forward.join("\n") === backward.join("\n")));
+captured = 20;
+lines.push("after a store to the captured variable: " + callIt(closure, 1, 2) + ", " + callIt(arrow, 1, 2) + ", " + constructIt(closure, 1, 2).sum);
+
+const thrownValues = [7, 1.5, "text", true, undefined, null, Symbol("thrown"), 10n, { tag: "object" }, [1, 2], closure, new Error("created earlier"), new TypeError("typed")];
+const same = (found, value) => (Object.is(found, value) ? "same" : "different " + render(found));
+function summarize(name, results) { lines.push(name + ": " + results.filter((result, index) => results.indexOf(result) === index).join(" | ")); }
+
+function thrower(value) { throw value; }
+function passThrough(value) { const result = thrower(value); return result + 1; }
+function catches(value) { try { return passThrough(value); } catch (error) { return error; } }
+function rethrows(value) { try { return passThrough(value); } catch (error) { events.push("rethrow"); throw error; } }
+function rethrowsTwice(value) { try { return rethrows(value); } catch (error) { events.push("again"); throw error; } }
+function hasFinally(value) { try { return passThrough(value); } finally { events.push("finally"); } }
+function hasNestedFinally(value) { try { try { return hasFinally(value); } finally { events.push("inner"); } } finally { events.push("outer"); } }
+function catchesAfterFinally(value) { try { return hasNestedFinally(value); } catch (error) { return error; } }
+function finallyReturns(value) { try { return passThrough("another"); } finally { return value; } }
+function catchThrowsAnother(value) { try { return passThrough("another"); } catch (error) { throw value; } }
+function finallyThrowsAnother(value) { try { return passThrough("another"); } finally { throw value; } }
+class ThrowsInConstructor { constructor(value) { this.result = passThrough(value); } }
+const boundPassThrough = passThrough.bind(null);
+const proxiedPassThrough = new Proxy(passThrough, {});
+const textCalls = new Function("callee", "value", "var result = callee(value); return result + 1;");
+const textCatches = new Function("callee", "value", "try { return callee(value); } catch (error) { return error; }");
+const textHasFinally = new Function("callee", "value", "events", "try { return callee(value); } finally { events.push('text finally'); }");
+const textThrows = new Function("value", "throw value;");
+const paths = [
+  ["no handler", passThrough],
+  ["catch", catches],
+  ["catch and rethrow", rethrows],
+  ["rethrown twice", rethrowsTwice],
+  ["finally", hasFinally],
+  ["nested finally", hasNestedFinally],
+  ["catch above finally", catchesAfterFinally],
+  ["finally that returns", finallyReturns],
+  ["catch that throws another value", catchThrowsAnother],
+  ["finally that throws another value", finallyThrowsAnother],
+  ["through the call site", value => callIt(passThrough, value, 0) + 1],
+  ["through the construct site", value => constructIt(ThrowsInConstructor, value, 0)],
+  ["through Array.prototype.map", value => [value].map(hasFinally)[0]],
+  ["through Reflect.apply", value => Reflect.apply(hasFinally, undefined, [value])],
+  ["through a bound function", value => boundPassThrough(value) + 1],
+  ["through a proxy", value => proxiedPassThrough(value) + 1],
+  ["through a getter", value => ({ get property() { return passThrough(value); } }).property],
+  ["through evaluated text", value => textCalls(hasFinally, value)],
+  ["caught by evaluated text", value => textCatches(hasFinally, value)],
+  ["finally in evaluated text", value => textHasFinally(rethrows, value, events)],
+  ["thrown by evaluated text", value => { try { return textThrows(value); } catch (error) { return error; } }],
+  ["thrown by evaluated text through finally", value => { try { return textThrows(value); } finally { events.push("finally"); } }],
+];
+for (const [name, path] of paths) {
+  summarize(name, thrownValues.map(value => {
+    try {
+      return "returned " + same(path(value), value) + takeEvents();
+    } catch (error) {
+      return "threw " + same(error, value) + takeEvents();
+    }
+  }));
+}
+
+function names(error) {
+  return String(error.stack).split("\n").map(line => /^(?:\s*at (?:async )?)?([A-Za-z]\w*)[ @(]/.exec(line)?.[1]).filter(Boolean).slice(0, 3).join(" < ");
+}
+function fail(message) { throw new Error(message); }
+function failThrough(message) { const result = fail(message); return result + 1; }
+function catchesError(message, readsStack) { try { return failThrough(message); } catch (error) { if (readsStack) events.push(names(error)); return error; } }
+function rethrowsError(message, readsStack) { try { return failThrough(message); } catch (error) { if (readsStack) events.push(names(error)); throw error; } }
+function finallyAroundError(message) { try { return failThrough(message); } finally { events.push("finally"); } }
+function rethrowsAboveFinally(message, readsStack) { try { return finallyAroundError(message); } catch (error) { if (readsStack) events.push(names(error)); throw error; } }
+for (const [name, path] of [["error caught", catchesError], ["error rethrown", rethrowsError], ["error through finally", finallyAroundError], ["error rethrown above finally", rethrowsAboveFinally]]) {
+  for (const readsStack of [false, true]) {
+    let error;
+    try {
+      error = path(name, readsStack);
+    } catch (thrown) {
+      error = thrown;
+    }
+    lines.push(name + ": " + error.constructor.name + " " + error.message + takeEvents() + (readsStack ? " " + names(error) + " " + typeof error.stack : " stack not read") + " " + Object.keys(error).length);
+  }
+}
+
+function* generatorThrows(value) { yield "first"; passThrough(value); yield "unreachable"; }
+function* generatorHasFinally(value) { try { yield "first"; passThrough(value); } finally { events.push("generator finally"); } }
+function* generatorCatches(value) { try { yield "first"; passThrough(value); } catch (error) { yield error; } }
+function* generatorRethrows(value) { try { yield "first"; hasFinally(value); } catch (error) { events.push("rethrow"); throw error; } }
+function* generatorDelegates(value) { yield* generatorHasFinally(value); }
+function* generatorWaits() { try { yield "first"; } catch (error) { yield error; } }
+function* generatorWaitsInFinally() { try { yield "first"; } finally { events.push("generator finally"); } }
+function stepThrough(generator, value, resume) {
+  const steps = [generator.next().value];
+  try {
+    steps.push("yielded " + same(resume(generator).value, value));
+  } catch (error) {
+    steps.push("threw " + same(error, value));
+  }
+  steps.push("done " + generator.next().done);
+  return steps.join(", ") + takeEvents();
+}
+for (const [name, create] of [["generator throws", generatorThrows], ["generator with finally", generatorHasFinally], ["generator catches", generatorCatches], ["generator rethrows", generatorRethrows], ["generator delegates", generatorDelegates]])
+  summarize(name, thrownValues.map(value => stepThrough(create(value), value, generator => generator.next())));
+for (const [name, create] of [["throw into a generator that catches", generatorWaits], ["throw into a generator with finally", generatorWaitsInFinally]])
+  summarize(name, thrownValues.map(value => stepThrough(create(), value, generator => generator.throw(value))));
+
+async function asyncThrowsAtOnce(value) { return passThrough(value); }
+async function asyncThrowsLater(value) { await null; return passThrough(value); }
+async function asyncCatches(value) { try { return await asyncThrowsLater(value); } catch (error) { return error; } }
+async function asyncRethrows(value) { try { return await asyncThrowsAtOnce(value); } catch (error) { events.push("rethrow"); throw error; } }
+async function asyncHasFinally(value) { try { return await asyncThrowsLater(value); } finally { events.push("async finally"); } }
+async function asyncCallsFinally(value) { await null; return hasNestedFinally(value); }
+async function asyncAwaitsRejection(value) { return await Promise.reject(value); }
+async function* asyncGeneratorThrows(value) { yield "first"; await null; passThrough(value); }
+async function asyncIterates(value) { for await (const step of asyncGeneratorThrows(value)) events.push(step); }
+const asyncPaths = [
+  ["async function throws at once", asyncThrowsAtOnce],
+  ["async function throws after await", asyncThrowsLater],
+  ["async function catches", asyncCatches],
+  ["async function rethrows", asyncRethrows],
+  ["async function with finally", asyncHasFinally],
+  ["finally under a resumed async function", asyncCallsFinally],
+  ["await of a rejected promise", asyncAwaitsRejection],
+  ["async generator throws", asyncIterates],
+];
+
+let deepest = 0, unwound = 0;
+function recurse(n) { deepest = n; return recurse(n + 1) + 1; }
+function recurseThroughCallSite(n) { deepest = n; return callIt(recurseThroughCallSite, n + 1, 0) + 1; }
+function RecurseThroughConstructSite(n) { deepest = n; this.child = constructIt(RecurseThroughConstructSite, n + 1, 0); }
+function recurseThroughBoundFunction(n) { deepest = n; return boundRecursion(n + 1) + 1; }
+const boundRecursion = recurseThroughBoundFunction.bind(null);
+function recurseThroughProxy(n) { deepest = n; return proxiedRecursion(n + 1) + 1; }
+const proxiedRecursion = new Proxy(recurseThroughProxy, {});
+function recurseThroughHostFunction(n) { deepest = n; return [n + 1].map(recurseThroughHostFunction)[0] + 1; }
+function recurseThroughText(n) { deepest = n; return textCalls(recurseThroughText, n + 1) + 1; }
+function recurseWithFinally(n) { deepest = n; try { return recurseWithFinally(n + 1) + 1; } finally { unwound++; } }
+function countDown(n) { return n === 0 ? 0 : countDown(n - 1) + 1; }
+const recursions = [
+  ["direct recursion", () => recurse(0)],
+  ["recursion through the call site", () => recurseThroughCallSite(0)],
+  ["recursion through the construct site", () => new RecurseThroughConstructSite(0)],
+  ["recursion through a bound function", () => recurseThroughBoundFunction(0)],
+  ["recursion through a proxy", () => recurseThroughProxy(0)],
+  ["recursion through a host function", () => recurseThroughHostFunction(0)],
+  ["recursion through evaluated text", () => recurseThroughText(0)],
+  ["recursion with finally", () => recurseWithFinally(0)],
+];
+
+async function main() {
+  for (const [name, path] of asyncPaths) {
+    const results = [];
+    for (const value of thrownValues) {
+      try {
+        results.push("resolved " + same(await path(value), value) + takeEvents());
+      } catch (error) {
+        results.push("rejected " + same(error, value) + takeEvents());
+      }
+    }
+    summarize(name, results);
+  }
+  for (let round = 0; round < 2; round++) {
+    for (const [name, run] of recursions) {
+      deepest = 0;
+      lines.push(name + ": " + outcome(run) + ", went deep: " + (deepest > 100));
+    }
+    lines.push("every finally ran: " + (unwound === deepest + 1) + ", recursion that ends: " + countDown(1000));
+    unwound = 0;
+  }
+  console.log(lines.join("\n"));
+}
+main();
+//// unwind-across-vm-entries.ts
+// An exception crosses compiled code, eval code, a function created from text and a native function on one stack: the right handler gets it, every finally block runs once and in order, locals survive, async functions reject and generators finish.
+const lines: string[] = [];
+const nativeNames = ["replace", "parse", "from", "stringify"];
+let log: string[] = [];
+let catcher = "";
+let overriding = "";
+let replacing = "";
+let raise: () => unknown = () => undefined;
+let thrown: { value: unknown } | undefined;
+let bomb = "none";
+function describe(value: unknown): string {
+  if (value instanceof Error) return value.constructor.name + (value.message.startsWith("own ") ? ":" + value.message : "");
+  if (value === undefined || value === null || typeof value === "symbol") return String(value);
+  if (Object.is(value, -0)) return "-0";
+  return typeof value + ":" + String(value);
+}
+function describeArrival(value: unknown): string {
+  if (!thrown) return describe(value);
+  return describe(value) + (Object.is(value, thrown.value) ? " (what was thrown)" : " (not what was thrown)");
+}
+const hooks = { log: (text: string) => { log.push(text); }, describe, catcher: () => catcher };
+
+function leaf(seed: number): number {
+  const a = seed + 1, b = seed * 3 + 2, c = seed * 0.5 + 0.25, d = "leaf" + seed, e = { v: seed * 7 }, f = [seed, a];
+  try { const result: any = raise(); return result + a; }
+  catch (error) {
+    log.push("leaf catch " + describe(error));
+    if (replacing === "leaf") throw new RangeError("own replaced in leaf");
+    if (catcher !== "leaf") throw error;
+    return a + b;
+  } finally {
+    log.push("leaf finally " + [a, b, c, d, e.v, f.join("+")].join(" "));
+    if (overriding === "leaf") return -a;
+  }
+}
+const evalLevel = "try { leaf(seed + 1) + 1 } catch (error) { log.push('eval catch ' + describe(error)); if (catcher !== 'eval') throw error; -1 } finally { log.push('eval finally ' + seed) }";
+function inner(seed: number): number {
+  const a = seed + 1, b = seed * 3 + 2, c = seed * 0.5 + 0.25, d = "inner" + seed, e = { v: seed * 7 }, f = [seed, a];
+  try { const result = eval(evalLevel); return result + a; }
+  catch (error) {
+    log.push("inner catch " + describe(error));
+    if (replacing === "inner") throw new RangeError("own replaced in inner");
+    if (catcher !== "inner") throw error;
+    return a + b;
+  } finally {
+    log.push("inner finally " + [a, b, c, d, e.v, f.join("+")].join(" "));
+    if (overriding === "inner") return -a;
+  }
+}
+const textMiddle = new Function("hooks", `return function textMiddle(callee, seed) {
+  var saved = seed * 11;
+  try { var result = callee(seed + 1); return result + 1; }
+  catch (error) { hooks.log("text catch " + hooks.describe(error)); if (hooks.catcher() !== "text") throw error; return saved; }
+  finally { hooks.log("text finally " + saved); }
+};`)(hooks);
+function middle(seed: number): number {
+  const a = seed + 1, b = seed * 3 + 2, c = seed * 0.5 + 0.25, d = "middle" + seed, e = { v: seed * 7 }, f = [seed, a];
+  try { const result = textMiddle(inner, seed + 1); return result + a; }
+  catch (error) {
+    log.push("middle catch " + describe(error));
+    if (replacing === "middle") throw new RangeError("own replaced in middle");
+    if (catcher !== "middle") throw error;
+    return a + b;
+  } finally {
+    log.push("middle finally " + [a, b, c, d, e.v, f.join("+")].join(" "));
+    if (overriding === "middle") return -a;
+  }
+}
+function viaNative(digits: string): string {
+  const seed = Number(digits);
+  const a = seed + 1, b = seed * 3 + 2, c = seed * 0.5 + 0.25, d = "viaNative" + seed, e = { v: seed * 7 }, f = [seed, a];
+  try { const result = middle(seed + 1); return String(result + a); }
+  catch (error) {
+    log.push("viaNative catch " + describe(error));
+    if (replacing === "viaNative") throw new RangeError("own replaced in viaNative");
+    if (catcher !== "viaNative") throw error;
+    return String(a + b);
+  } finally {
+    log.push("viaNative finally " + [a, b, c, d, e.v, f.join("+")].join(" "));
+    if (overriding === "viaNative") return String(-a);
+  }
+}
+function outermost(seed: number): string {
+  const a = seed + 1, b = seed * 3 + 2, c = seed * 0.5 + 0.25, d = "outermost" + seed, e = { v: seed * 7 }, f = [seed, a];
+  try { const subject: any = String(seed + 1); const result = subject[nativeNames[0]](/\d+/g, viaNative); return String(result + a); }
+  catch (error) {
+    log.push("outermost catch " + describe(error));
+    if (replacing === "outermost") throw new RangeError("own replaced in outermost");
+    if (catcher !== "outermost") throw error;
+    return String(a + b);
+  } finally {
+    log.push("outermost finally " + [a, b, c, d, e.v, f.join("+")].join(" "));
+    if (overriding === "outermost") return String(-a);
+  }
+}
+function ground(seed: number): string {
+  const a = seed + 1, b = seed * 3 + 2, c = seed * 0.5 + 0.25, d = "ground" + seed, e = { v: seed * 7 }, f = [seed, a];
+  try { const result = outermost(seed + 1); return String(result + a); }
+  catch (error) {
+    log.push("ground catch " + describe(error));
+    if (replacing === "ground") throw new RangeError("own replaced in ground");
+    if (catcher !== "ground") throw error;
+    return String(a + b);
+  } finally {
+    log.push("ground finally " + [a, b, c, d, e.v, f.join("+")].join(" "));
+    if (overriding === "ground") return String(-a);
+  }
+}
+
+function throwOwn(create: () => unknown): () => unknown {
+  return () => {
+    const value = create();
+    thrown = { value };
+    throw value;
+  };
+}
+const raiseError = throwOwn(() => new RangeError("own compiled"));
+const raiseFromNative = (): unknown => { const result = (JSON as any)[nativeNames[1]]("{"); return result; };
+const ownValues: unknown[] = [undefined, null, 0, -0, "", "text", 12n, Symbol.for("thrown"), Object.freeze({ frozen: true })];
+const otherRaisers: [string, () => unknown][] = [
+  ...ownValues.map((value): [string, () => unknown] => [describe(value), throwOwn(() => value)]),
+  ["an error thrown by a native function", raiseFromNative],
+  ["a property read on undefined", () => { const result = (undefined as any).missing; return result; }],
+  ["an error thrown by text", new Function("throw new EvalError('own text');") as () => unknown],
+  ["an error thrown by a getter under a native function", () => { const result = JSON.stringify({ get bad() { throw new RangeError("own getter"); } }); return result; }],
+];
+const caughtBy = (level: string): string => ", caught by " + (level || "nobody");
+function start(): void {
+  log = [];
+  thrown = undefined;
+}
+function finish(label: string, outcome: string): string {
+  return label + ": " + outcome + (log.length ? " | " + log.join(" ; ") : "");
+}
+function attempt(label: string): string {
+  start();
+  let outcome: string;
+  try {
+    outcome = "returned " + ground(1);
+  } catch (error) {
+    outcome = "escaped " + describeArrival(error);
+  }
+  return finish(label, outcome);
+}
+function record(label: string, run: () => unknown): void {
+  start();
+  let outcome: string;
+  try {
+    const result = run();
+    outcome = typeof result === "string" ? result : JSON.stringify(result);
+  } catch (error) {
+    outcome = "caught " + describeArrival(error);
+  }
+  lines.push(finish(label, outcome));
+}
+function runMatrix(): void {
+  const compiledLevels = ["leaf", "inner", "middle", "viaNative", "outermost", "ground"];
+  raise = raiseError;
+  for (const level of ["leaf", "eval", "inner", "text", "middle", "viaNative", "outermost", "ground", ""]) {
+    catcher = level;
+    const label = "a RangeError" + caughtBy(level);
+    const first = attempt(label), second = attempt(label), third = attempt(label);
+    lines.push(first, second === first && third === first ? "  three times the same" : "  then " + second + "\n  then " + third);
+  }
+  for (const [label, raiser] of otherRaisers) {
+    raise = raiser;
+    for (const level of ["leaf", "text", "outermost", ""]) {
+      catcher = level;
+      lines.push(attempt(label + caughtBy(level)));
+    }
+  }
+  raise = raiseError;
+  catcher = "";
+  for (const level of compiledLevels) {
+    overriding = level;
+    lines.push(attempt("return in the finally block of " + level));
+  }
+  overriding = "";
+  catcher = "ground";
+  for (const level of compiledLevels) {
+    replacing = level;
+    lines.push(attempt("replaced in " + level));
+  }
+  replacing = "";
+  catcher = "";
+}
+
+async function asyncLeaf(when: string): Promise<number> {
+  if (when === "before") raise();
+  await null;
+  raise();
+  return 1;
+}
+const textAsync = new Function("hooks", "return async function textAsync(callee, when) { try { return (await callee(when)) + 1; } finally { hooks.log('textAsync finally'); } };")(hooks);
+async function asyncMiddle(when: string): Promise<number> {
+  const seed = when.length;
+  const a = seed + 1, b = seed * 3 + 2, c = seed * 0.5 + 0.25, d = "asyncMiddle" + seed, e = { v: seed * 7 }, f = [seed, a];
+  try { const result = await textAsync(asyncLeaf, when); return result + a; }
+  catch (error) {
+    log.push("asyncMiddle catch " + describe(error));
+    if (replacing === "asyncMiddle") throw new RangeError("own replaced in asyncMiddle");
+    if (catcher !== "asyncMiddle") throw error;
+    return a + b;
+  } finally {
+    log.push("asyncMiddle finally " + [a, b, c, d, e.v, f.join("+")].join(" "));
+    if (overriding === "asyncMiddle") return -a;
+  }
+}
+async function asyncOverChain(): Promise<string> {
+  const result = ground(1);
+  return result;
+}
+let stored: Promise<unknown> | undefined;
+function storePromise(when: string): string {
+  stored = asyncLeaf(when);
+  return "";
+}
+const callFromText = new Function("f", "try { return ['returned', f('before')]; } catch (error) { return ['threw']; }");
+const earlyCallers: [string, () => any[]][] = [
+  ["compiled code", () => { try { const promise = asyncLeaf("before"); return ["returned", promise]; } catch { return ["threw"]; } }],
+  ["text", () => { const answer = callFromText(asyncLeaf); return answer; }],
+  ["a callback of a native function", () => { const subject: any = "before"; try { subject[nativeNames[0]](/before/g, storePromise); return ["returned", stored]; } catch { return ["threw"]; } }],
+  ["Array.from", () => { try { const list = (Array as any)[nativeNames[2]](["before"], asyncLeaf); return ["returned", list[0]]; } catch { return ["threw"]; } }],
+];
+function settle(label: string, promise: Promise<unknown>): Promise<void> {
+  return promise.then(
+    value => { lines.push(finish(label, "fulfilled " + describe(value))); },
+    error => { lines.push(finish(label, "rejected " + describeArrival(error))); },
+  );
+}
+async function runAsyncFunctions(): Promise<void> {
+  const raisers: [string, () => unknown][] = [["a RangeError", raiseError], ["undefined", throwOwn(() => undefined)], ["an error thrown by a native function", raiseFromNative]];
+  for (const [label, raiser] of raisers) {
+    raise = raiser;
+    for (const when of ["before", "after"]) {
+      for (const level of ["asyncMiddle", ""]) {
+        catcher = level;
+        start();
+        await settle(label + " " + when + " the first await" + caughtBy(level), asyncMiddle(when));
+      }
+    }
+  }
+  raise = raiseError;
+  overriding = "asyncMiddle";
+  start();
+  await settle("return in the finally block of asyncMiddle", asyncMiddle("after"));
+  overriding = "";
+  replacing = "asyncMiddle";
+  start();
+  await settle("replaced in asyncMiddle", asyncMiddle("after"));
+  replacing = "";
+  for (const [label, call] of earlyCallers) {
+    start();
+    const [said, promise] = call();
+    await settle("a throw before the first await, called by " + label + " (the call " + said + ")", Promise.resolve(promise));
+  }
+  start();
+  await settle("an async function over the chain", asyncOverChain());
+}
+
+function* steps(seed: number): Generator<any> {
+  log.push("steps start");
+  try {
+    yield seed;
+    yield ground(seed);
+    yield -1;
+  } finally {
+    log.push("steps finally");
+  }
+}
+function* bareSteps(seed: number): Generator<any> {
+  log.push("bareSteps start");
+  yield seed;
+  yield ground(seed);
+  yield -1;
+}
+const textSteps = new Function("hooks", "return function* textSteps() { try { yield 1; yield 2; } finally { hooks.log('textSteps finally'); } };")(hooks);
+let running: Generator<any>;
+function* resumesItself(): Generator<any> {
+  yield running.next();
+}
+function driveByHand(it: Generator<any>): string {
+  const seen = [JSON.stringify(it.next())];
+  try {
+    seen.push(JSON.stringify(it.next()));
+  } catch (error) {
+    seen.push("caught " + describeArrival(error));
+  }
+  seen.push(JSON.stringify(it.next()), JSON.stringify(it.next()));
+  return seen.join(" ");
+}
+const driveFromText = new Function("it", "var seen = []; try { for (var v of it) seen.push(v); } catch (error) { seen.push('caught'); } seen.push(JSON.stringify(it.next())); return seen;");
+function driveFromNative(it: Generator<any>, consume: (it: Generator<any>) => void): string {
+  let outcome = "finished";
+  try {
+    consume(it);
+  } catch (error) {
+    outcome = "caught " + describeArrival(error);
+  }
+  return outcome + " " + JSON.stringify(it.next());
+}
+function throwInLoop(items: Iterable<any>): string {
+  try {
+    for (const value of items) throw new RangeError("own loop " + value);
+  } catch (error) {
+    log.push("loop catch " + describe(error));
+  }
+  return "left the loop";
+}
+function runGenerators(): void {
+  raise = raiseError;
+  catcher = "";
+  for (const create of [steps, bareSteps]) {
+    record(create.name + " by hand", () => driveByHand(create(1)));
+    record(create.name + " from text", () => driveFromText(create(1)).join(" "));
+    record(create.name + " under new Set", () => driveFromNative(create(1), it => { Reflect.construct(Set, [it]); }));
+    record(create.name + " under Array.from", () => driveFromNative(create(1), it => { (Array as any)[nativeNames[2]](it); }));
+  }
+  const resumers: [string, any][] = [
+    ["throw from compiled code", (it: Generator<any>) => { const result = it.throw(new RangeError("own injected")); return result; }],
+    ["return from compiled code", (it: Generator<any>) => { const result = it.return(9); return result; }],
+    ["throw from text", new Function("it", "var result = it.throw(new RangeError('own injected')); return result;")],
+    ["return from text", new Function("it", "var result = it.return(9); return result;")],
+  ];
+  for (const [label, resume] of resumers) {
+    const it = steps(1);
+    it.next();
+    record(label + " into steps at its first yield", () => { const result = resume(it); return result; });
+    lines.push("  then " + JSON.stringify(it.next()));
+  }
+  record("a throw in a loop over steps", () => throwInLoop(steps(1)));
+  record("a throw in a loop over textSteps", () => throwInLoop(textSteps()));
+  running = resumesItself();
+  record("a generator that resumes itself", () => { const result = running.next(); return result; });
+  lines.push("  then " + JSON.stringify(running.next()));
+}
+
+class Tree {
+  constructor(public name: string, public child: unknown) {}
+  toJSON(): unknown {
+    if (this.name === bomb) raise();
+    return { name: this.name, child: this.child };
+  }
+}
+function revive(key: string, value: unknown): unknown {
+  if (key === bomb) raise();
+  return value;
+}
+function runJSON(): void {
+  const tree = new Tree("a", new Tree("b", new Tree("c", null)));
+  const text = '{"a":{"b":{"c":1}}}';
+  const calls: [string, () => unknown][] = [
+    ["JSON.stringify", () => { const result = JSON.stringify(tree); return result; }],
+    ["stringify by name", () => { const result = (JSON as any)[nativeNames[3]](tree); return result; }],
+    ["JSON.parse", () => { const result = JSON.parse(text, revive); return result; }],
+    ["parse by name", () => { const result = (JSON as any)[nativeNames[1]](text, revive); return result; }],
+  ];
+  raise = raiseError;
+  for (const [label, call] of calls) {
+    for (const target of ["c", "none", "none"]) {
+      bomb = target;
+      record(label + ", bomb at " + target, call);
+    }
+  }
+}
+
+async function main(): Promise<void> {
+  runMatrix();
+  await runAsyncFunctions();
+  runGenerators();
+  runJSON();
+  console.log(lines.join("\n"));
+}
+main();
+export {};
+//// unwind-alternating-eval-frames.ts
+// Compiled functions and functions created from text at run time call each other, so one unwind leaves and enters compiled code once per pair of frames, however deep the stack is.
+type Step = (depth: number) => number;
+
+const lines: string[] = [];
+
+let deepest = 0;
+function descend(depth: number): number {
+  deepest = depth;
+  const result = evaluatedDescend(depth + 1);
+  return result + 1;
+}
+const evaluatedDescend = new Function(
+  "descend",
+  "return function (depth) { var result = descend(depth + 1); return result + 1; };",
+)(descend) as Step;
+
+function overflow(round: number): string {
+  const scaled = round * 1.5;
+  const label = "round " + round;
+  let outcome: string;
+  try {
+    outcome = "returned " + descend(0);
+  } catch (error) {
+    outcome = error instanceof RangeError ? "RangeError" : "another error: " + String(error);
+  }
+  return label + ": " + outcome + ", went deep: " + (deepest > 100) + ", " + scaled;
+}
+for (let round = 1; round <= 3; round++) {
+  deepest = 0;
+  lines.push(overflow(round));
+}
+
+const state = { bottom: 99, throws: true };
+const counts = { compiled: 0, evaluated: 0 };
+let step: Step = depth => depth;
+
+function withFinally(depth: number): number {
+  try {
+    const result = step(depth + 1);
+    return result + 1;
+  } finally {
+    counts.compiled++;
+  }
+}
+function withoutHandler(depth: number): number {
+  const result = step(depth + 1);
+  return result + 1;
+}
+
+function createStep(compiled: Step, body: string): Step {
+  return new Function("compiled", "state", "counts", "return function (depth) { " + body + " };")(compiled, state, counts) as Step;
+}
+const reachBottom = "if (depth === state.bottom) { if (state.throws) throw new Error('bottom ' + depth); return 0; }";
+const bodies: Array<[string, string]> = [
+  ["no handler", reachBottom + " var result = compiled(depth + 1); return result + 1;"],
+  ["finally", "try { " + reachBottom + " var result = compiled(depth + 1); return result + 1; } finally { counts.evaluated++; }"],
+  ["catch and rethrow", "try { " + reachBottom + " var result = compiled(depth + 1); return result + 1; } catch (error) { counts.evaluated++; throw error; }"],
+];
+const compiledFunctions: Array<[string, Step]> = [
+  ["finally", withFinally],
+  ["no handler", withoutHandler],
+];
+
+for (const [compiledName, compiled] of compiledFunctions) {
+  for (const [evaluatedName, body] of bodies) {
+    for (const throws of [true, false]) {
+      state.throws = throws;
+      counts.compiled = 0;
+      counts.evaluated = 0;
+      step = createStep(compiled, body);
+      const before = compiledName.length * 0.25;
+      let outcome: string;
+      try {
+        outcome = "returned " + compiled(0);
+      } catch (error) {
+        outcome = "caught " + (error as Error).message;
+      }
+      lines.push("compiled " + compiledName + ", evaluated " + evaluatedName + ": " + outcome + ", compiled " + counts.compiled + ", evaluated " + counts.evaluated + ", " + before);
+    }
+  }
+}
+
+console.log(lines.join("\n"));
+export {};
+//// unwind-hidden-builtin-frame.ts
+// Array.from is written in JavaScript and hidden from stack traces: when JSON.parse, a host function, throws into its frame, its own handler closes the iterator before the caller's catch runs.
+const lines: string[] = [];
+
+function texts(name: string, values: string[], closeThrows: boolean): Iterable<string> {
+  return {
+    [Symbol.iterator](): Iterator<string> {
+      let index = 0;
+      return {
+        next(): IteratorResult<string> {
+          lines.push(name + ": next " + index);
+          if (index === values.length) return { done: true, value: undefined };
+          return { done: false, value: values[index++] };
+        },
+        return(): IteratorResult<string> {
+          lines.push(name + ": return");
+          if (closeThrows) throw new RangeError("thrown by return");
+          return { done: true, value: undefined };
+        },
+      };
+    },
+  };
+}
+
+function parseAll(name: string, values: string[], closeThrows = false): void {
+  const count = values.length;
+  const half = count / 2;
+  const label = name.toUpperCase();
+  try {
+    const parsed = Array.from(texts(name, values, closeThrows), JSON.parse as (text: string) => unknown);
+    lines.push(name + ": parsed " + JSON.stringify(parsed));
+  } catch (error) {
+    lines.push(name + ": caught " + (error as Error).name);
+  }
+  lines.push(name + ": locals " + count + " " + half + " " + label);
+}
+
+parseAll("first text is malformed", ["{", "1"]);
+parseAll("second text is malformed", ["1", "{", "2"]);
+parseAll("return throws too", ["{"], true);
+parseAll("every text is valid", ["1", "[2]", '{"a":3}']);
+parseAll("no text", []);
+
+const evaluatedCaller = new Function(
+  "iterable",
+  "parse",
+  "var before = 20 + 1; try { return 'parsed ' + JSON.stringify(Array.from(iterable, parse)); } catch (error) { return 'caught ' + error.name + ' ' + before * 2; }",
+) as (iterable: Iterable<string>, parse: (text: string) => unknown) => string;
+lines.push("evaluated caller: " + evaluatedCaller(texts("evaluated caller, malformed", ["[", "1"], false), JSON.parse));
+lines.push("evaluated caller: " + evaluatedCaller(texts("evaluated caller, valid", ["[1]"], false), JSON.parse));
+
+let closed = 0;
+let caught = 0;
+let parsedLength = 0;
+function repeated(text: string, limit: number): Iterable<string> {
+  return {
+    [Symbol.iterator](): Iterator<string> {
+      let produced = 0;
+      return {
+        next: (): IteratorResult<string> => (produced++ < limit ? { done: false, value: text } : { done: true, value: undefined }),
+        return: (): IteratorResult<string> => {
+          closed++;
+          return { done: true, value: undefined };
+        },
+      };
+    },
+  };
+}
+for (let round = 0; round < 2000; round++) {
+  try {
+    parsedLength += Array.from(repeated(round & 1 ? "{" : "7", 3), JSON.parse as (text: string) => unknown).length;
+  } catch {
+    caught += round;
+  }
+}
+lines.push("2000 rounds: closed " + closed + ", caught " + caught + ", parsed " + parsedLength);
+
+console.log(lines.join("\n"));
+export {};
+//// unwind-tail-call-into-eval-code.ts
+// A strict compiled function tail-calls a function created from text at run time, so no compiled frame is left between that function and the code that entered compiled code when it throws or returns.
+type Callee = (...values: number[]) => unknown;
+
+const lines: string[] = [];
+
+const throwing = new Function("value", "throw new RangeError('thrown ' + value);") as Callee;
+const throwingDeeper = new Function("value", "function inner() { return null.property; } var result = inner(); return result + value;") as Callee;
+const returning = new Function("value", "return 'returned ' + value;") as Callee;
+let callee: Callee = returning;
+
+function direct(value: number): unknown {
+  return callee(value);
+}
+function conditional(value: number): unknown {
+  return value > 2 ? callee(value) : callee(-value);
+}
+function throughAnotherTailCall(value: number): unknown {
+  return direct(value + 1);
+}
+function withStackArguments(value: number): unknown {
+  return callee(value, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12);
+}
+function byCall(value: number): unknown {
+  return callee.call(undefined, value);
+}
+function afterLocals(value: number): unknown {
+  const squares = [value * value, value + 0.5];
+  const total = squares[0] + squares[1];
+  return callee(total);
+}
+function notInTailPosition(value: number): unknown {
+  const result = callee(value);
+  return result;
+}
+
+const evaluatedCaller = new Function(
+  "f",
+  "value",
+  "var doubled = value * 2, text = 'text' + value, list = [value, doubled], record = { sum: doubled + value }, half = value / 2, outcome;" +
+    " try { outcome = f(value); } catch (error) { outcome = 'caught ' + error.name; }" +
+    " return [outcome, doubled, text, list.join('+'), record.sum, half].join(' | ');",
+) as (f: Callee, value: number) => string;
+
+const evaluatedWithoutHandler = new Function(
+  "f",
+  "value",
+  "var next = value + 1; var result = f(value); return result + ' | ' + next;",
+) as (f: Callee, value: number) => string;
+
+function compiledCaller(f: Callee, value: number): string {
+  const tripled = value * 3;
+  const label = "label" + value;
+  const half = value / 2;
+  let outcome: string;
+  try {
+    outcome = evaluatedWithoutHandler(f, value);
+  } catch (error) {
+    outcome = "caught " + (error as Error).name;
+  }
+  return [outcome, tripled, label, half].join(" | ");
+}
+
+const callees: Array<[string, Callee]> = [
+  ["throwing", throwing],
+  ["throwing deeper", throwingDeeper],
+  ["returning", returning],
+];
+const forms: Array<[string, Callee]> = [
+  ["direct", direct],
+  ["conditional", conditional],
+  ["through another tail call", throughAnotherTailCall],
+  ["with stack arguments", withStackArguments],
+  ["by call", byCall],
+  ["after locals", afterLocals],
+  ["not in tail position", notInTailPosition],
+];
+
+for (const [calleeName, nextCallee] of callees) {
+  callee = nextCallee;
+  for (const [formName, form] of forms) {
+    lines.push(calleeName + ", " + formName + ", evaluated caller: " + evaluatedCaller(form, 3));
+    lines.push(calleeName + ", " + formName + ", compiled caller: " + compiledCaller(form, 5));
+  }
+}
+
+let caught = 0;
+let returned = 0;
+for (let round = 0; round < 3000; round++) {
+  callee = round % 3 ? throwing : returning;
+  if (evaluatedCaller(forms[round % forms.length][1], round).startsWith("caught RangeError | " + round * 2)) caught++;
+  else returned++;
+}
+lines.push("3000 rounds: caught " + caught + ", returned " + returned);
+
+console.log(lines.join("\n"));
+export {};
+//// unwinding-through-builtin-callbacks.ts
+// Exceptions that unwind through callbacks of built-ins, `Reflect.apply`, `call`, `apply`, bound functions and promise reactions.
+declare const console: any;
+const lines: Array<Promise<string>> = [];
+function row(n: string, f: () => unknown): void {
+    let p: unknown;
+    try { p = f(); } catch (e: any) { lines.push(Promise.resolve(n + ": THREW TO THE CALLER " + e.constructor.name)); return; }
+    if (!(p instanceof Promise)) { lines.push(Promise.resolve(n + ": returned what is no promise: " + JSON.stringify(p))); return; }
+    lines.push(p.then(v => n + ": returned; fulfilled " + JSON.stringify(v), e => n + ": returned; rejected " + e.constructor.name));
+}
+interface Point { x: number; y: number }
+async function takesArray(a: number[]): Promise<number> { return a.length; }
+async function takesPoint(p: Point): Promise<number> { return p.x + p.y; }
+async function takesPattern([z]: number[]): Promise<number> { return z; }
+async function takesPoints(ps: Point[]): Promise<number> { return ps.length; }
+async function takesNested(o: { name: string; at: Point }): Promise<number> { return o.at.x; }
+async function takesLists(ls: number[][]): Promise<number> { return ls.length; }
+async function sinks(f: any, n: number): Promise<number> { return f(f, n + 1); }
+const table: any[] = [takesArray, takesPoint, takesPattern, takesPoints, takesNested, takesLists, sinks];
+// What is handed over throws when the body reads it: a getter, a trap of a proxy. What is no array is refused on entry where an array is declared, before its iterator is asked.
+row("a getter that throws on what is handed over", () => table[1]({ get x(): number { throw new RangeError("x"); }, y: 2 }));
+row("a proxy whose get trap throws", () => table[1](new Proxy({ x: 1, y: 2 }, { get(): never { throw new SyntaxError("get"); } })));
+row("a proxy that is revoked", () => { const r = Proxy.revocable({ x: 1, y: 2 }, {}); r.revoke(); return table[1](r.proxy); });
+row("an iterator that throws", () => table[2]({ [Symbol.iterator](): never { throw new EvalError("iterator"); } }));
+row("an iterator whose next throws", () => table[2]({ [Symbol.iterator]() { return { next(): never { throw new URIError("next"); } }; } }));
+// Only the value itself is tested on entry: an array passes whatever its elements are, an object whatever its fields are. The bodies read none of the elements and fields that do not fit.
+row("a list of records, the second is a number", () => table[3]([{ x: 1, y: 2 }, 5]));
+row("a list of records, the last of 300 lacks a field", () => table[3](Array.from({ length: 300 }, (_, i) => i < 299 ? { x: i, y: i } : { x: i })));
+row("a list of records, right", () => table[3]([{ x: 1, y: 2 }, { x: 3, y: 4 }]));
+row("a record in a record, wrong", () => table[4]({ name: "n", at: { x: 1, y: "two" } }));
+row("a record in a record, right", () => table[4]({ name: "n", at: { x: 1, y: 2 } }));
+row("a list of lists, one of them a string", () => table[5]([[1], [2, 3], "four"]));
+// The entry's frame is the last before a host frame.
+row("map", () => ([5] as any[]).map(table[0])[0]);
+row("Array.from", () => Array.from({ length: 1 }, table[0] as any)[0]);
+row("forEach, kept", () => { let kept: unknown; const f = table[0]; ([5] as any[]).forEach(x => { kept = f(x); }); return kept; });
+row("Reflect.apply", () => Reflect.apply(table[0], null, [5]));
+row("call", () => table[0].call(null, 5));
+row("apply", () => table[0].apply(null, [5]));
+row("bound by the engine", () => Function.prototype.bind.call(table[0], null, 5)());
+row("then", () => Promise.resolve(5).then(table[0]));
+row("then, twice", () => Promise.resolve(5).then(table[0]).catch(() => 6).then(table[0]));
+row("a replacer of String.prototype.replace", () => { let kept: unknown; const f = table[0]; "a".replace(/a/, ((m: string) => { kept = f(m); return ""; }) as any); return kept; });
+row("a comparator of sort", () => { let kept: unknown; const f = table[0]; [2, 1].sort((a, b) => { kept = f(a); return a - b; }); return kept; });
+row("a getter of a property, by Reflect.get", () => Reflect.get(Object.defineProperty({}, "p", { get: table[0] }), "p"));
+// The caller's live values after a call that is rejected.
+function manyLive(f: any, n: number): string {
+    let a = 1, b = 2.5, c = 3, d = 4.5, e = 5, g = 6.5, h = 7, i = 8.5, s = "s", o = { v: 9 }, l = [10], refused = 0;
+    for (let k = 0; k < n; k++) {
+        const p = f(k & 1 ? [k] : k);
+        p.catch(() => { refused++; });
+        a += k; b += a * 0.5; c ^= k; d -= 0.25; e += c & 3; g *= 1.0001; h += l.length; i += o.v; s = s.length < 8 ? s + "x" : "s"; o.v = (o.v + 1) % 11; l[0] = k;
+    }
+    return [a, b, c, d, e, g.toFixed(6), h, i, s, o.v, l[0]].join(" ");
+}
+row("twelve things in the caller's hands over 2000 calls, half of them refused", () => Promise.resolve(manyLive(table[0], 2000)));
+// The innermost.
+async function outer(f: any, x: unknown): Promise<string> { const p = f(x); return p.then(() => "inner fulfilled", (e: any) => "inner rejected " + e.constructor.name); }
+row("an async function calls one that refuses: the inner promise, not the outer", () => outer(table[0], 5));
+row("under a try of the caller", () => { const f = table[0]; try { return f(5); } catch { return Promise.resolve("CAUGHT AT THE CALL"); } });
+row("deep: refused under 200 frames", () => { const f = table[0]; function down(n: number): unknown { return n ? down(n - 1) : f(5); } return down(200); });
+row("too deep, through a value", () => table[6](table[6], 0));
+row("and the program goes on behind it", () => table[0]([1, 2, 3]));
+Promise.all(lines).then(all => { for (const line of all) console.log(line); console.log("the end"); });
+export {};
+//// values-only-forwarded.ts
+////= lines-16	Item	id	name	string
+
+let log = "";
+
+function note(item: Item, tag: string): number {
+  log += tag + item.id + ";";
+  return item.id;
+}
+
+function noteTwo(a: Item, b: Item, tag: string): number {
+  log += tag + a.name + b.name + ";";
+  return a.id + b.id;
+}
+
+function handsOn(a: Item, b: Item, c: Item, d: string): number {
+  const first = note(a, d);
+  const second = note(b, d);
+  const third = note(c, d);
+  return first + second * 10 + third * 100;
+}
+
+function handsOnTwice(a: Item, b: Item, c: Item, d: string): number {
+  return noteTwo(a, b, d) + noteTwo(b, c, d) * 3 + noteTwo(c, a, d) * 5 + noteTwo(a, c, d) * 7;
+}
+
+function readsBetweenCalls(a: Item, b: Item, c: Item, d: string): string {
+  let out = a.name;
+  note(a, d);
+  out += b.name + a.id;
+  note(b, d);
+  out += c.name + b.id + a.name;
+  note(c, d);
+  return out + c.id + b.name + a.id + d;
+}
+
+function handsOnInALoop(items: Item[], extra: Item, tag: string, rounds: number): number {
+  let total = 0;
+  for (let round = 0; round < rounds; round++) {
+    for (let i = 0; i < items.length; i++) total += noteTwo(items[i], extra, tag) + round;
+  }
+  return total;
+}
+
+function returnsEarly(a: Item | undefined, b: Item, tag: string): number {
+  if (!a) return -1;
+  if (a.id > 100) return a.id;
+  return note(a, tag) + note(b, tag);
+}
+
+function numbersHandedOn(a: number, b: number, c: number, d: number): number {
+  return sum3(a, b, c) + sum3(b, c, d) * 2 + sum3(c, d, a) * 3 + sum3(d, a, b) * 4;
+}
+
+function sum3(x: number, y: number, z: number): number {
+  log += ".";
+  return x + y * 0.5 + z * 0.25;
+}
+
+const one: Item = { id: 1, name: "one" };
+const two: Item = { id: 2, name: "two" };
+const three: Item = { id: 3, name: "three" };
+const big: Item = { id: 500, name: "big" };
+
+console.log(handsOn(one, two, three, "h"), handsOnTwice(one, two, three, "t"));
+console.log(readsBetweenCalls(one, two, three, "r"));
+console.log(handsOnInALoop([one, two, three], big, "l", 3));
+console.log(returnsEarly(undefined, one, "e"), returnsEarly(big, one, "e"), returnsEarly(two, three, "e"));
+console.log(numbersHandedOn(1, 2.5, -3, 4e3), numbersHandedOn(0.1, 0.2, 0.3, 0.4));
+console.log(log.length, log.slice(0, 80));
+//// values-used-on-arrival.ts
+interface Point {
+  x: number;
+  y: number;
+  label: string;
+}
+
+function pick(flag: boolean, a: Point, b: Point): Point {
+  return flag ? a : b;
+}
+
+function first(a: any): any {
+  if (typeof a === "object" && a !== null) return a;
+  return a;
+}
+
+function eight(a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number): number {
+  return ((a << (b & 7)) + (c >> (d & 7)) + ((e | 0) % ((f | 0) || 1)) + Math.imul(g, h)) | 0;
+}
+
+function tenMixed(a: Point, b: number, c: string, d: Point, e: number, f: boolean, g: any, h: Point, i: number, j: string): string {
+  return a.label + b + c + d.x + e + f + String(g) + h.y + i + j;
+}
+
+function shifts(value: number, count: number, other: number, mask: number): number {
+  let total = 0;
+  for (let i = 0; i < 5; i++) total = (total + ((value << count) ^ (other >>> (count + i)) ^ (mask >> i))) | 0;
+  return total;
+}
+
+function divides(a: number, b: number, c: number, d: number): number {
+  const q = ((a | 0) / ((b | 0) || 1)) | 0;
+  const r = (c | 0) % ((d | 0) || 1);
+  return q * 31 + r + a - d;
+}
+
+function doubles(a: number, b: number, c: number, d: number): number {
+  return a * 1.5 + b / 2.5 - c * d + Math.sqrt(a * a + b * b);
+}
+
+function usedBeforeAndAfter(a: Point, b: Point, c: number): string {
+  const before = a.x + b.y + c;
+  const made = pick(c > 2, a, b);
+  return before + made.label + a.label + b.label + c;
+}
+
+function usedOnlyBefore(a: Point, b: Point, c: number): string {
+  const sum = a.x * b.y + c;
+  return describe(sum);
+}
+
+function describe(value: number): string {
+  return "<" + value + ">";
+}
+
+function resultUsedAtOnce(a: Point, b: Point): number {
+  const p = pick(a.x > b.x, a, b);
+  if (p.x > 10) return p.y;
+  return p.x + p.y;
+}
+
+function resultKept(a: Point, b: Point): string {
+  const p = pick(a.x > b.x, a, b);
+  const q = pick(a.y > b.y, a, b);
+  return p.label + q.label + p.x + q.y;
+}
+
+function inALoop(points: Point[], scale: number, offset: number, label: string): string {
+  let out = label;
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    out += (p.x * scale + offset) + ",";
+    if (p.y > 4) out += describe(p.y);
+  }
+  return out + scale + offset + label;
+}
+
+function loopWithoutCalls(a: number, b: number, c: number, d: number): number {
+  let total = 0;
+  for (let i = 0; i < 100; i++) total = (total + a * i + (b ^ i) - (c & i) + d) | 0;
+  return total;
+}
+
+function passedOnInPlace(a: Point, b: Point, c: number): string {
+  return usedBeforeAndAfter(a, b, c);
+}
+
+function passedOnSwapped(a: Point, b: Point, c: number): string {
+  return usedBeforeAndAfter(b, a, c + 1);
+}
+
+function throwsLate(a: Point | undefined, b: Point): number {
+  const base = b.x;
+  return base + a!.y;
+}
+
+function manyBranches(a: any, b: any, c: any): string {
+  if (a === undefined) return "u" + b;
+  if (a === null) return "n" + c;
+  if (typeof a === "number") return a > 0 ? "p" + b : "m" + c;
+  if (typeof a === "string") return a + b + c;
+  return String(first(a) === a) + b + c;
+}
+
+const p1: Point = { x: 1, y: 2, label: "one" };
+const p2: Point = { x: 30, y: 4.5, label: "two" };
+const p3: Point = { x: -5, y: 60, label: "three" };
+
+console.log(pick(true, p1, p2).label, pick(false, p1, p2).label);
+console.log(first(p1) === p1, first(5), first("s"), first(null), first(undefined), first(2.5));
+console.log(eight(1, 2, 300, 4, 50, 6, 7, 8), eight(-1, 31, -300, 33, -50, 0, 70000, 80000));
+console.log(tenMixed(p1, 2, "c", p2, 5.5, true, null, p3, 9, "j"));
+console.log(shifts(5, 3, -77, 1 << 20), shifts(-5, 33, 77, -1));
+console.log(divides(100, 7, 55, 9), divides(-100, 0, -55, 0), divides(2 ** 31, 3, 2 ** 32 + 5, 4));
+console.log(doubles(1, 2, 3, 4), doubles(0.5, -0.25, 1e10, 1e-10));
+console.log(usedBeforeAndAfter(p1, p2, 3), usedBeforeAndAfter(p3, p1, 1));
+console.log(usedOnlyBefore(p1, p2, 3), usedOnlyBefore(p3, p2, 0.5));
+console.log(resultUsedAtOnce(p1, p2), resultUsedAtOnce(p3, p1), resultKept(p1, p2), resultKept(p3, p2));
+console.log(inALoop([p1, p2, p3], 2, 0.5, "L"), loopWithoutCalls(3, 5, 7, 11));
+console.log(passedOnInPlace(p1, p3, 2), passedOnSwapped(p1, p3, 2));
+try {
+  console.log(throwsLate(p1, p2));
+  console.log(throwsLate(undefined, p2));
+} catch (error) {
+  console.log((error as Error).constructor.name);
+}
+for (const a of [undefined, null, 1, -1, "s", p1, [1]]) console.log(manyBranches(a, "b", 3));
+//// vm-error-header-marks-the-throw.js
+// The header that node:vm puts in front of the stack of an error that leaves a script marks where the script threw it, wherever the error was made: in the script, in compiled code, long before the script ran, or in a host function that the script called.
+const vm = require("node:vm");
+
+function make(message) {
+  return new Error(message);
+}
+function makeDeeper(depth, message) {
+  return depth ? makeDeeper(depth - 1, message) : make(message);
+}
+const kept = makeDeeper(3, "made before the script ran");
+const seen = [];
+
+function headerOf(text) {
+  try {
+    vm.runInNewContext(text, { make, makeDeeper, kept, seen }, { filename: "text.js" });
+    return "did not throw";
+  } catch (error) {
+    const stack = String(error.stack);
+    const start = stack.indexOf(error.name + ": " + error.message);
+    return start < 0 ? "the stack does not hold the message" : JSON.stringify(stack.slice(0, start));
+  }
+}
+function headerUnderFrames(depth, text) {
+  const header = depth ? headerUnderFrames(depth - 1, text) : headerOf(text);
+  seen.push(depth);
+  return header;
+}
+
+const texts = [
+  `throw new Error("made where it is thrown")`,
+  `  \n    throw new Error("further down and to the right")`,
+  `function create() { return new Error("made by a function of the script") }\nconst error = create();\n\nthrow error;`,
+  `throw make("made by compiled code")`,
+  `const error = makeDeeper(4, "made under several compiled frames");\n  throw error;`,
+  `\nthrow kept;`,
+  `JSON.parse("{")`,
+  `function parse() { return JSON.parse("{") }\ntry { parse() } finally { seen.push("finally") }`,
+  `try { JSON.parse("{") } catch (error) { seen.push(typeof error.stack);\n  throw error }`,
+  `const error = make("read before it is thrown"); seen.push(typeof error.stack);\nthrow error;`,
+  `null.property`,
+];
+for (const text of texts) {
+  console.log(headerOf(text));
+  console.log(headerUnderFrames(5, text === texts[5] ? `\nthrow make("in place of the error that has its header")` : text));
+}
+console.log(seen.join());
+//// void-function-result.js
+const log = [];
+let counter = 0;
+
+function bump() {
+  counter++;
+}
+function bumpTwice() {
+  bump();
+  bump();
+}
+function bumpInTailPosition() {
+  return bump();
+}
+function bumpOrNumber(flag) {
+  if (flag) return bump();
+  return 7;
+}
+function earlyReturn(flag) {
+  if (flag) return;
+  counter += 10;
+}
+function neverReturns() {
+  throw new Error("thrown");
+}
+const arrow = () => {
+  counter++;
+};
+const holder = {
+  method() {
+    counter++;
+  },
+  forward() {
+    return this.method();
+  },
+};
+class Counter {
+  static reset() {
+    counter = 0;
+  }
+  step() {
+    counter++;
+  }
+}
+
+const show = value => (value === undefined ? "undefined" : typeof value + " " + String(value));
+const indirect = [bump, bumpTwice, bumpInTailPosition, earlyReturn, arrow, holder.method, holder.forward.bind(holder), Counter.reset, Counter.prototype.step];
+
+for (let round = 0; round < 3; round++) {
+  log.push("direct " + [bump(), bumpTwice(), bumpInTailPosition(), bumpOrNumber(true), bumpOrNumber(false), earlyReturn(true), earlyReturn(false), arrow(), holder.method(), holder.forward(), Counter.reset(), new Counter().step()].map(show).join(","));
+  log.push("indirect " + indirect.map(f => show(f())).join(","));
+  log.push("call " + indirect.map(f => show(f.call(holder))).join(","));
+  log.push("apply " + indirect.map(f => show(f.apply(holder, [false]))).join(","));
+  log.push("reflect " + indirect.map(f => show(Reflect.apply(f, holder, []))).join(","));
+  log.push("bound " + indirect.map(f => show(f.bind(holder)())).join(","));
+  log.push("callbacks " + show([1, 2, 3].forEach(bump)) + " " + [1, 2].map(bump).map(show).join(",") + " " + [1, 2].filter(bump).length + " " + show([1].find(bump)) + " " + [3, 1, 2].sort(bump).join(""));
+  log.push("operators " + (bump() ?? "nullish") + " " + (bump() || "falsy") + " " + String(bump() && "truthy") + " " + (bump() === undefined) + " " + typeof bump() + " " + `${bump()}` + " " + (bump() + 1) + " " + JSON.stringify({ a: bump(), b: [bump()] }));
+  log.push("default " + ((value = "defaulted") => value)(bump()));
+  log.push("spread " + [...[bump(), bump()]].map(show).join(","));
+  log.push("new " + typeof new bump() + " " + (new bumpInTailPosition() instanceof bumpInTailPosition));
+  try {
+    neverReturns();
+  } catch (error) {
+    log.push("throws " + error.message);
+  }
+  try {
+    indirect.concat(neverReturns).forEach(f => f());
+  } catch (error) {
+    log.push("throws indirectly " + error.message);
+  }
+}
+
+async function asyncVoid() {
+  counter++;
+}
+function* generatorVoid() {
+  counter++;
+}
+function thenable() {
+  return Promise.resolve().then(bump);
+}
+Promise.all([asyncVoid(), thenable(), Promise.resolve(1).then(bumpInTailPosition), new Promise(resolve => resolve(bump()))]).then(values => {
+  log.push("promises " + values.map(show).join(","));
+  log.push("generator " + JSON.stringify(generatorVoid().next()));
+  log.push("counter " + counter);
+  console.log(log.join("\n"));
+});
+//// what-a-function-did-before-the-stack-ended-is-undone-by-its-finally.js
+// A function counts itself in, calls on inside a try and counts itself out in the finally. It also has a way out that calls nothing. When the stack ends, every frame that has counted
+// itself in counts itself out: the error belongs to the try of the deepest frame that has begun, not to its caller.
+let depth = 0;
+let caught = 0;
+function report(label, run) {
+  depth = 0;
+  caught = 0;
+  let outcome;
+  try {
+    outcome = "answers " + run();
+  } catch (error) {
+    outcome = error instanceof RangeError ? "RangeError" : String(error);
+  }
+  console.log(label + ":", outcome, "| depth", depth, "| caught", caught);
+}
+
+////= lines-29	function withAnEarlyExit	withAnEarlyExit(n + 1) + 1
+
+function withACatch(n) {
+  depth++;
+  try {
+    if (n < 0) return 0;
+    const result = withACatch(n + 1) + 1;
+    depth--;
+    return result;
+  } catch (error) {
+    depth--;
+    throw error;
+  }
+}
+
+function catchesAtTheEnd(n) {
+  depth++;
+  try {
+    if (n < 0) return 0;
+    const result = catchesAtTheEnd(n + 1);
+    depth--;
+    return result;
+  } catch (error) {
+    depth--;
+    caught++;
+    return "caught";
+  }
+}
+
+const chain = { get next() { return throughAGetter(); } };
+const other = { get next() { return 1; } };
+////= throughA	Getter(	chain.next
+
+const walkers = [{ walk(n) { return throughAMethod(n + 1); } }, { walk(n) { return n; } }];
+////= throughA	Method(n	walkers[n < 0 ? 1 : 0].walk(n)
+
+function inALoop(n) {
+  depth++;
+  try {
+    for (let i = 0; i < 1; i++) {
+      if (n < 0) continue;
+      inALoop(n + 1);
+    }
+  } finally {
+    depth--;
+  }
+}
+
+function twoFinallys(n) {
+  depth += 2;
+  try {
+    try {
+      if (n < 0) return 0;
+      return twoFinallys(n + 1) + 1;
+    } finally {
+      depth--;
+    }
+  } finally {
+    depth--;
+  }
+}
+
+////= lines-29	async function asynchronous	asynchronous(n + 1)
+
+////= lines-29	function* stepped	stepped(n + 1).next().value
+
+class Counted {
+  constructor(n) {
+    depth++;
+    try {
+      if (n < 0) return;
+      this.next = new Counted(n + 1);
+    } finally {
+      depth--;
+    }
+  }
+}
+
+console.log(other.next, walkers[1].walk(2));
+for (let round = 0; round < 3; round++) {
+  report("an early exit", () => withAnEarlyExit(0));
+  report("a catch that throws again", () => withACatch(0));
+  report("a catch that answers", () => catchesAtTheEnd(0));
+  report("a getter", () => throughAGetter());
+  report("a method", () => throughAMethod(0));
+  report("a loop", () => inALoop(0));
+  report("two finallys", () => twoFinallys(0));
+  report("a generator", () => stepped(0).next().value);
+  report("a constructor", () => typeof new Counted(0));
+}
+depth = 0;
+try {
+  console.log("an async function: answers", await asynchronous(0));
+} catch (error) {
+  console.log("an async function:", error instanceof RangeError ? "RangeError" : String(error), "| depth", depth);
+}
+//// what-an-early-return-hands-back-skips-the-test-of-the-result.ts
+// A function that leaves early hands back what it was handed. Its caller tests the result of the call for its declared type: what the early return hands back has that type already,
+// what the whole function hands back may be anything.
+class Shape {
+  flags: number;
+  next: Shape | undefined;
+  constructor(flags: number, next?: Shape) {
+    this.flags = flags;
+    this.next = next;
+  }
+}
+
+const answers: unknown[] = [];
+let turn = 0;
+
+function reduceSlowly(shape: Shape): Shape {
+  const answer = answers[turn++ % answers.length];
+  return answer as Shape;
+}
+
+function reduce(shape: Shape): Shape {
+  if (shape.flags & 1) return reduceSlowly(shape);
+  return shape;
+}
+
+function flagsOf(shape: Shape): unknown {
+  return shape === undefined || shape === null ? "none" : shape.flags;
+}
+
+function describe(shape: Shape): unknown {
+  return flagsOf(reduce(shape));
+}
+
+function nextOrSelf(shape: Shape): Shape | undefined {
+  if (shape.flags & 2) return shape.next;
+  return shape;
+}
+
+function describeNext(shape: Shape): unknown {
+  const next = nextOrSelf(shape);
+  return next ? flagsOf(next) : "nothing";
+}
+
+const plain = new Shape(4);
+const slow = new Shape(5);
+const linked = new Shape(2, plain);
+const unlinked = new Shape(2);
+answers.push(plain, "a text", 7, undefined, null, { flags: "of a stranger" }, slow, [1, 2], () => 1);
+
+const seen = new Map<string, number>();
+for (let round = 0; round < 20000; round++) {
+  for (const shape of [plain, slow, linked, unlinked]) {
+    const line = String(describe(shape)) + " | " + String(describeNext(shape));
+    seen.set(line, (seen.get(line) ?? 0) + 1);
+  }
+}
+for (const [line, count] of [...seen].sort()) console.log(line, count);
+
+delete (plain as any).flags;
+console.log(describe(plain), describeNext(plain), describeNext(linked));
+Object.defineProperty(slow, "flags", { get() { return 4; } });
+console.log(describe(slow), describeNext(slow));
+//// what-an-early-return-reads-is-read-once-a-call.ts
+class Item {
+    kind: number;
+    weight: number = 0.5;
+    owner: Item | undefined = undefined;
+    constructor(kind: number) {
+        this.kind = kind;
+    }
+}
+const seen: number[] = [];
+const words: string[] = [];
+function note(item: Item, word: string): boolean {
+    seen.push(item.kind);
+    if (words.length < 8)
+        words.push(word + ":" + String(item.weight) + ":" + (item.owner === undefined ? "none" : typeof item.owner.weight));
+    for (let owner = item.owner, depth = 0; owner !== undefined && depth < 3; owner = owner.owner, depth++) {
+        if (owner.weight > 1)
+            seen.push(-depth);
+    }
+    return true;
+}
+function isSpecial(item: Item): boolean {
+    if (item.kind !== 7)
+        return false;
+    if (words.length > 100)
+        words.length = 0;
+    const first = note(item, "first");
+    const second = seen.length % 1000003 === 1000002 ? note(item, "again") : first;
+    return first && second;
+}
+function ownerIsSpecial(item: Item): boolean {
+    const owner = item.owner;
+    if (owner === undefined)
+        return false;
+    if (owner.kind !== 7)
+        return false;
+    if (words.length > 100)
+        words.length = 0;
+    const first = note(owner, "owner");
+    const second = seen.length % 1000003 === 1000002 ? note(owner, "again") : first;
+    return first && second;
+}
+function count(items: Item[], rounds: number): number {
+    let special = 0;
+    for (let round = 0; round < rounds; round++) {
+        for (let i = 0; i < items.length; i++) {
+            if (isSpecial(items[i]))
+                special++;
+            if (ownerIsSpecial(items[i]))
+                special += 10;
+        }
+    }
+    return special;
+}
+function report(label: string, items: Item[], rounds: number): void {
+    seen.length = 0;
+    const special = count(items, rounds);
+    console.log(label, special, seen.length, seen.slice(0, 6).join(","), words.join(" "));
+    words.length = 0;
+}
+const items: Item[] = [];
+for (let i = 0; i < 16; i++) {
+    items.push(new Item(i % 9));
+    if (i)
+        items[i].owner = items[i - 1];
+}
+report("plain", items, 20000);
+
+let reads = 0;
+Object.defineProperty(items[3], "kind", {
+    get() {
+        reads++;
+        return reads % 2 ? 7 : 1;
+    },
+    configurable: true,
+    enumerable: true,
+});
+report("a getter whose answers take turns", items, 5);
+console.log("reads", reads);
+
+let traps = 0;
+const behindProxy = new Proxy(new Item(7), {
+    get(target, key, receiver) {
+        traps++;
+        return Reflect.get(target, key, receiver);
+    },
+});
+items[5] = behindProxy as Item;
+report("a proxy", items, 5);
+console.log("traps", traps);
+
+let inherited = 0;
+Object.defineProperty(Item.prototype, "kind", {
+    get() {
+        inherited++;
+        return 7;
+    },
+    configurable: true,
+});
+delete (items[8] as { kind?: number }).kind;
+report("deleted, and a getter on the prototype", items, 5);
+console.log("inherited", inherited);
+
+items[9].kind = 7.5;
+items[10].kind = -0;
+items[11].kind = NaN;
+(items[12] as { kind: unknown }).kind = "7";
+(items[13] as { kind: unknown }).kind = undefined;
+report("what is no int32", items, 5);
+items[9].kind = 7;
+report("and back", items, 5);
+//// what-call-reaches-through-another-function-makes-what-it-declares-anew-at-each-entry.mjs
+// call, apply and Reflect.apply reach a function through a bound function, through call itself, through a built-in that runs it for each element, and from two places.
+const counters = list => list.map(one => one()).join() + " " + list.map(one => one()).join();
+
+const throughBind = [];
+const bound = function (item) {
+  let count = item * 10;
+  throughBind.push(() => ++count);
+}.bind(null);
+bound.call(null, 1);
+bound.call(null, 2);
+console.log(counters(throughBind), new Set(throughBind).size);
+
+const boundEach = [];
+[1, 2, 3].forEach.bind([1, 2, 3]).call(null, function (item) {
+  let count = item * 10;
+  boundEach.push(() => ++count);
+});
+console.log(counters(boundEach), new Set(boundEach).size);
+
+const throughCallOfCall = [];
+Function.prototype.call.call(Array.prototype.forEach, [1, 2, 3], function (item) {
+  let count = item * 10;
+  throughCallOfCall.push(() => ++count);
+});
+console.log(counters(throughCallOfCall), new Set(throughCallOfCall).size);
+
+const throughApplyOfCall = [];
+Function.prototype.call.apply(Array.prototype.map, [
+  [1, 2, 3],
+  function (item) {
+    class Made {
+      static value = item;
+    }
+    throughApplyOfCall.push(Made);
+  },
+]);
+console.log(throughApplyOfCall.map(one => one.value).join(), throughApplyOfCall[0] === throughApplyOfCall[2]);
+
+const throughReflectOfApply = [];
+Reflect.apply(Function.prototype.apply, Array.prototype.filter, [
+  [1, 2, 3],
+  [
+    function (item) {
+      function named() {
+        return item;
+      }
+      throughReflectOfApply.push(named);
+    },
+  ],
+]);
+console.log(throughReflectOfApply.map(one => one()).join(), throughReflectOfApply[0] === throughReflectOfApply[1]);
+
+const eitherOne = [];
+const callback = function (item) {
+  let count = (item ?? 0) * 10;
+  eitherOne.push(() => ++count);
+};
+(eitherOne.length ? callback : Array.prototype.forEach).call([1, 2, 3], callback);
+console.log(counters(eitherOne), new Set(eitherOne).size);
+
+const receiverAndArgument = [];
+const itself = function (other) {
+  let count = receiverAndArgument.length * 10;
+  receiverAndArgument.push(() => ++count);
+  if (other) [1, 2].forEach(() => other.call(null));
+};
+itself.call(null, itself);
+console.log(counters(receiverAndArgument), new Set(receiverAndArgument).size);
+
+const fromTwoPlaces = [];
+const reached = function (item) {
+  let count = item * 10;
+  fromTwoPlaces.push(() => ++count);
+};
+reached.call(null, 1);
+Reflect.apply(reached, null, [2]);
+reached.apply(null, [3]);
+console.log(counters(fromTwoPlaces), new Set(fromTwoPlaces).size);
+
+const throughSort = [];
+Array.prototype.sort.call([3, 1, 2], function (a, b) {
+  throughSort.push(() => a - b);
+  return a - b;
+});
+console.log(
+  throughSort.length > 1,
+  new Set(throughSort).size === throughSort.length,
+  throughSort.every(one => typeof one() === "number"),
+);
+
+const later = [];
+const timer = function (item) {
+  let count = item * 10;
+  later.push(() => ++count);
+};
+queueMicrotask.call(null, () => timer.call(null, 1));
+queueMicrotask.call(null, () => timer.call(null, 2));
+await null;
+console.log(counters(later), new Set(later).size);
+
+const once = [];
+(function () {
+  let count = 0;
+  function Kept() {}
+  Kept.prototype.next = () => ++count;
+  once.push(new Kept(), new Kept());
+}).call(globalThis);
+(function (tag) {
+  let count = 100;
+  once.push({ next: () => tag + ++count });
+}).apply(null, ["a"]);
+Reflect.apply(
+  function (tag) {
+    let count = 200;
+    once.push({ next: () => tag + ++count });
+  },
+  null,
+  ["b"],
+);
+console.log(once.map(one => one.next()).join(), Object.getPrototypeOf(once[0]) === Object.getPrototypeOf(once[1]));
+//// what-is-not-callable-is-called-and-called-in-tail-position.js
+// A call of a value that is no function throws a TypeError in the caller, whatever the value is, whether the callee has a name in the source, however many arguments are passed, and in tail position too, where the frame of the caller is still there when the error is made. Every kind of function is called the same ways and answers
+"use strict";
+const lines = [];
+function plain(a, b) { return "plain " + a + " " + b; }
+class Class { static method(a) { return "static " + a; } }
+const withProperty = a => "with a property " + a;
+withProperty.extra = 1;
+const callables = [plain, a => "arrow " + a, withProperty, plain.bind(null, "bound"), Math.abs, String, new Proxy(plain, {}), Class.method, function () { return "this is " + typeof this; }, async a => a, function* () {}];
+const others = [undefined, null, 0, 1.5, NaN, "text", "", true, 10n, Symbol.iterator, {}, [], /x/, new Proxy({}, {}), Object.create(plain), Class.prototype];
+
+function call0(callee) { const result = callee(); return [result]; }
+function call1(callee, a) { const result = callee(a); return [result]; }
+function call2(callee, a, b) { const result = callee(a, b); return [result]; }
+function call9(callee, a) { const result = callee(a, a, a, a, a, a, a, a, a); return [result]; }
+function callOn(callee, a) { const result = callee.call(a, a); return [result]; }
+function callMember(holder, a) { const result = holder.member(a); return [result]; }
+function callElement(list, a) { const result = list[0](a); return [result]; }
+function callResult(make, a) { const result = make()(a); return [result]; }
+function callSpread(callee, list) { const result = callee(...list); return [result]; }
+function tail0(callee) { return callee(); }
+function tail1(callee, a) { return callee(a); }
+function tail2(callee, a, b) { return callee(a, b); }
+function tail9(callee, a) { return callee(a, a, a, a, a, a, a, a, a); }
+function tailMember(holder, a) { return holder.member(a); }
+function tailElement(list, a) { return list[0](a); }
+function tailResult(make, a) { return make()(a); }
+function tailSpread(callee, list) { return callee(...list); }
+function tailArguments(callee) { arguments[0] = -4; return callee.apply(undefined, arguments); }
+const tailArrow = callee => callee();
+
+const ways = {
+  call0, call1: c => call1(c, -4), call2: c => call2(c, -4, 5), call9: c => call9(c, -4), callOn: c => callOn(c, -4),
+  callMember: c => callMember({ member: c }, -4), callElement: c => callElement([c], -4), callResult: c => callResult(() => c, -4), callSpread: c => callSpread(c, [-4, 5]),
+  tail0, tail1: c => tail1(c, -4), tail2: c => tail2(c, -4, 5), tail9: c => tail9(c, -4),
+  tailMember: c => tailMember({ member: c }, -4), tailElement: c => tailElement([c], -4), tailResult: c => tailResult(() => c, -4), tailSpread: c => tailSpread(c, [-4, 5]),
+  tailArguments, tailArrow,
+};
+
+function show(value) {
+  if (Array.isArray(value)) return "[" + value.map(show).join() + "]";
+  if (typeof value === "object" && value !== null) return Object.prototype.toString.call(value);
+  return typeof value === "function" ? "function" : String(value);
+}
+
+for (const [name, way] of Object.entries(ways)) {
+  callables.forEach((callee, number) => {
+    try {
+      lines.push(`${name} ${number}: ${show(way(callee))}`);
+    } catch (error) {
+      lines.push(`${name} ${number} throws ${error.constructor.name}`);
+    }
+  });
+  others.forEach((callee, number) => {
+    try {
+      lines.push(`${name} other ${number}: ${show(way(callee))}`);
+    } catch (error) {
+      // The function that made the call is on the stack of the error.
+      const frame = name.startsWith("call") || name.startsWith("tail") ? error.stack.split("\n").some(line => line.includes(name)) : false;
+      lines.push(`${name} other ${number} throws ${error.constructor.name} ${error instanceof TypeError} ${frame}`);
+    }
+  });
+}
+
+// A class is a function and is not to be called.
+for (const way of [call0, tail0, tailArrow]) {
+  try {
+    way(Class);
+    lines.push("no error");
+  } catch (error) {
+    lines.push(error.constructor.name);
+  }
+}
+
+// The arguments are evaluated before the callee is found wanting.
+function argumentsFirst(callee) { return callee(lines.push("the argument was evaluated")); }
+try {
+  argumentsFirst(undefined);
+} catch (error) {
+  lines.push(error.constructor.name);
+}
+
+// A handler in the caller catches the error of its own call.
+function catchesOwn(callee) {
+  try {
+    return callee(1);
+  } catch (error) {
+    return "caught " + error.constructor.name;
+  } finally {
+    lines.push("finally");
+  }
+}
+lines.push(catchesOwn(undefined), catchesOwn({}), catchesOwn(a => a + 1));
+console.log(lines.join("\n"));

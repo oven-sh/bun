@@ -1,0 +1,7 @@
+{
+  "skipInShell": "it asks for the console of Bun, which the jsc shell does not provide",
+  "skipInVariant": {
+    "no-flow-results": "a build without the results of the analysis takes no member of console for a constant, so the stores go through"
+  },
+  "alone": "what it prints hangs on what else the executable holds: a member of console that another entry point assigns can be assigned here too"
+}

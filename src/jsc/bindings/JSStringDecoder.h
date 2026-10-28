@@ -6,6 +6,10 @@
 namespace WebCore {
 using namespace JSC;
 
+JSC_DECLARE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_write);
+JSC_DECLARE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_end);
+JSC_DECLARE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_text);
+
 class JSStringDecoder : public JSC::JSDestructibleObject {
     using Base = JSC::JSDestructibleObject;
 

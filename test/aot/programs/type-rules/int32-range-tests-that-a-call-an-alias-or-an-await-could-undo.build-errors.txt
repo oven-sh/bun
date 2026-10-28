@@ -1,0 +1,11 @@
+error: TS100031: 'i' is declared 'int32', but 'i++' might not be an int32: it can be anything from -2147483647 to 2147483648. Write 'i = (i + 1) | 0'.
+error: TS100031: Property 'n' of 'Cell' is declared 'int32', but 'this.n++' might not be an int32: it can be anything from -2147483647 to 2147483648. Write 'this.n = (this.n + 1) | 0'.
+error: TS100031: Property 'n' of 'Cell' is declared 'int32', but 'a.n++' might not be an int32: it can be anything from -2147483647 to 2147483648. Write 'a.n = (a.n + 1) | 0'.
+error: TS100031: 'shared' is declared 'int32', but 'shared++' might not be an int32: it can be anything from -2147483647 to 2147483648. Write 'shared = (shared + 1) | 0'.
+error: TS100031: Parameter 'i' of 'inACatch' is declared 'int32', but 'i++' might not be an int32: it can be anything from -2147483647 to 2147483648. Write 'i = (i + 1) | 0'.
+error: TS100031: Parameter 'i' of 'atMostTheLargest' is declared 'int32', but 'i++' might not be an int32: it can be anything from -2147483647 to 2147483648. Write 'i = (i + 1) | 0'.
+error: TS100031: Parameter 'i' of 'notTheLargest' is declared 'int32', but 'i++' might not be an int32: it can be anything from -2147483647 to 2147483648. Write 'i = (i + 1) | 0'.
+error: TS100031: Parameter 'i' of 'belowAFraction' is declared 'int32', but 'i++' might not be an int32: it can be anything from -2147483647 to 2147483648. Write 'i = (i + 1) | 0'.
+error: TS100031: Parameter 'i' of 'belowANumber' is declared 'int32', but 'i++' might not be an int32: it can be anything from -2147483647 to 2147483648. Write 'i = (i + 1) | 0'.
+error: TS100031: Parameter 'i' of 'oneOfTwoTests' is declared 'int32', but 'i++' might not be an int32: it can be anything from -2147483647 to 2147483648. Write 'i = (i + 1) | 0'.
+error: TS100031: Parameter 'i' of 'aTestKeptInAConstant' is declared 'int32', but 'i++' might not be an int32: it can be anything from -2147483647 to 2147483648. Write 'i = (i + 1) | 0'.

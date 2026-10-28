@@ -1,0 +1,7 @@
+---
+import Layout from "../layouts/Layout.astro";
+export const prerender = true;
+---
+<Layout title="smoke">
+  <main><h1>a static page</h1><ul>{[1, 2, 3].map(n => <li>{n * n}</li>)}</ul></main>
+</Layout>

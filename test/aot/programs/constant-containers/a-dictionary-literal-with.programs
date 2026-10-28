@@ -1,0 +1,2901 @@
+////: lines
+const «1»: Record<string, number> = {
+  "sreltp-0": 0,
+  cta_pirhgwpr: «2»,
+  pmuehueqmxa: «3»,
+  "fysb-3": «4»,
+  ya_iptx: «5»,
+};
+////: say
+function say(name: string, f: () => unknown) {
+  let text: string;
+  try {
+    text = JSON.stringify(f()) ?? "undefined";
+  } catch (error) {
+    text = "throws " + (error as Error).constructor.name;
+  }
+  console.log(name + ": " + text);
+}
+//// a-dictionary-literal-with-odd-keys.ts
+// Names that look like numbers, indexes, an own `__proto__`, the empty name and names of Object.prototype in a literal whose type names no keys.
+const table: Record<string, string | number | null | undefined | boolean> = {
+  "-1": "minus", "+1": "plus", "100": "hundred", "1234": "digits", 5: "five", 1.5: "half", "007": "bond", "4294967295": "big", "4294967294": "max index",
+  plain: "p", "with space": 1, "ünï": 2.5, dup: "first", other: null, nothing: undefined, yes: true, ["__proto__"]: "own", "": "empty", "constructor": "c", "toString": "t",
+};
+function find(key: string) { return table[key]; }
+console.log(JSON.stringify(Object.keys(table)), JSON.stringify(table), find(process.argv[2] ?? "dup"), Object.getPrototypeOf(table) === Object.prototype);
+//// a-literal-with-odd-keys-and-a-name-twice.js
+// The same names in a literal without a type, one of them twice: it keeps its first place and its last value.
+const table = {
+  "-1": "minus", "+1": "plus", "100": "hundred", "1234": "digits", 5: "five", 1.5: "half", "007": "bond", "4294967295": "big", "4294967294": "max index",
+  plain: "p", "with space": 1, "ünï": 2.5, dup: "first", other: null, dup: "second", nothing: undefined, yes: true, ["__proto__"]: "own", "": "empty", "constructor": "c", "toString": "t",
+};
+function find(key) { return table[key]; }
+console.log(JSON.stringify(Object.keys(table)), JSON.stringify(table), find(process.argv[2] ?? "dup"), Object.getPrototypeOf(table) === Object.prototype);
+//// an-iterator-stands-in-a-set-of-constants-that-is-written-and-cleared.js
+// An iterator that has taken an entry of a Set or a Map made of constants stands behind that entry. The first write moves the entries; clear() then deletes them all,
+// and what is added next lies in front of the iterator, the first of it too.
+function show(label, ...values) {
+  console.log(label, values.map(value => JSON.stringify(value)).join(" "));
+}
+
+{
+  const set = new Set(["a", "b", "c"]);
+  const iterator = set.values();
+  show("set, first", iterator.next().value);
+  set.add("d");
+  set.clear();
+  set.add("x");
+  set.add("y");
+  show("set, behind clear", iterator.next().value, iterator.next().value, iterator.next().done);
+}
+
+{
+  const map = new Map([["a", 1], ["b", 2], ["c", 3]]);
+  const iterator = map.entries();
+  show("map, first", iterator.next().value);
+  map.set("d", 4);
+  map.clear();
+  map.set("x", 5);
+  map.set("y", 6);
+  show("map, behind clear", iterator.next().value, iterator.next().value, iterator.next().done);
+}
+
+{
+  const set = new Set(["a", "b", "c"]);
+  const iterator = set.keys();
+  show("two taken", iterator.next().value, iterator.next().value);
+  set.delete("a");
+  set.clear();
+  set.add("x");
+  show("behind delete and clear", iterator.next().value, iterator.next().done);
+}
+
+{
+  const map = new Map([["a", 1], ["b", 2]]);
+  const iterator = map.keys();
+  show("cleared at once", iterator.next().value);
+  map.clear();
+  map.set("x", 1);
+  show("behind clear", iterator.next().value, iterator.next().done);
+}
+
+{
+  const set = new Set(["a", "b", "c"]);
+  const untouched = set.values();
+  set.add("d");
+  set.clear();
+  set.add("x");
+  show("nothing taken before", untouched.next().value, untouched.next().done);
+}
+
+{
+  const set = new Set(["a", "b", "c"]);
+  const seen = [];
+  for (const value of set) {
+    seen.push(value);
+    if (value === "a") {
+      set.add("d");
+      set.clear();
+      set.add("x");
+      set.add("y");
+    }
+  }
+  show("in a loop", seen);
+}
+//// arrays-of-constant-numbers-are-written-after-they-were-made.ts
+// Each evaluation of a literal is a new array. Whatever is done to one shows in no other.
+function small(): number[] { return [1, 2, 3]; }
+function fractions(): number[] { return [1.5, 2.5, 3.25]; }
+function mixed(): (number | null | boolean | undefined)[] { return [1, null, true, undefined, 2.5, false]; }
+function long(): number[] { return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]; }
+function longFractions(): number[] { return [0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5]; }
+function unwritten(): number[] { return [7, 8, 9]; }
+function unwrittenFractions(): number[] { return [0.25, 0.75]; }
+
+const makers: [string, () => any[]][] = [["small", small], ["fractions", fractions], ["mixed", mixed], ["long", long], ["longFractions", longFractions]];
+const changes: [string, (a: any[]) => unknown][] = [
+  ["store", a => { a[0] = 99; }],
+  ["store a string", a => { a[1] = "x"; }],
+  ["store a fraction", a => { a[1] = 0.125; }],
+  ["store NaN", a => { a[2] = NaN; }],
+  ["store behind the end", a => { a[a.length + 3] = 5; }],
+  ["push", a => a.push(4)],
+  ["pop", a => a.pop()],
+  ["shift", a => a.shift()],
+  ["unshift", a => a.unshift(-1)],
+  ["splice", a => a.splice(1, 1, 70, 71)],
+  ["sort", a => a.sort((x, y) => (y ?? 0) - (x ?? 0))],
+  ["reverse", a => a.reverse()],
+  ["fill", a => a.fill(6, 1)],
+  ["copyWithin", a => a.copyWithin(0, 1)],
+  ["shorter", a => { a.length = 1; }],
+  ["longer", a => { a.length = a.length + 2; }],
+  ["delete", a => delete a[1]],
+  ["define", a => Object.defineProperty(a, 0, { value: 5, writable: true, enumerable: true, configurable: true })],
+  ["define a getter", a => Object.defineProperty(a, 0, { get() { return 12; }, enumerable: true, configurable: true })],
+  ["Reflect.set", a => Reflect.set(a, 2, 8)],
+  ["a name", a => { (a as any).name = "n"; }],
+  ["swap", a => { [a[0], a[1]] = [a[1], a[0]]; }],
+  ["increment", a => { a[0]++; a[1] += 2; }],
+  ["assign", a => Object.assign(a, [9, 9])],
+  ["call of push", a => Array.prototype.push.call(a, 1, 2)],
+  ["evaluated text", new Function("a", "a[0] = 'text'; a.push(1)") as (a: any[]) => unknown],
+];
+const show = (a: any[]) => JSON.stringify(a) + " " + a.length + " " + Object.keys(a).join();
+for (const [name, make] of makers) {
+  const before = show(make());
+  for (const [what, change] of changes) {
+    const kept = make(), changed = make();
+    const result = change(changed);
+    const after = make();
+    console.log(name, what, show(changed), JSON.stringify(result) ?? "undefined", show(kept) === before, show(after) === before, kept !== after);
+  }
+}
+let sum = 0;
+for (let i = 0; i < 1000; i++) { const a = unwritten(), b = unwrittenFractions(); sum += a[i % 3] + b[i & 1] + a.length; }
+console.log(sum, unwritten() === unwritten(), show(unwritten()), show(unwrittenFractions()));
+const hidden = new Function("a", "a[1] = -1; return a");
+console.log(show(hidden(unwritten())), show(unwritten()), show(hidden(unwrittenFractions())), show(unwrittenFractions()));
+//// arrays-of-constants-and-the-collector.ts
+import { heapStats } from "bun:jsc";
+function numbers(): number[] { return [1, 2, 3, 4, 5]; }
+function fractions(): number[] { return [0.5, 1.5, 2.5]; }
+function long(): number[] { return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]; }
+function nested(): number[][] { return [[1, 2], [3, 4], [5, 6]]; }
+function table(): { id: number; at: number[]; more: { w: number[] } }[] {
+  return [{ id: 1, at: [1, 2], more: { w: [0.5] } }, { id: 2, at: [3, 4], more: { w: [1.5] } }, { id: 3, at: [5, 6], more: { w: [2.5] } }, { id: 4, at: [7, 8], more: { w: [3.5] } }, { id: 5, at: [9, 10], more: { w: [4.5] } }, { id: 6, at: [11, 12], more: { w: [5.5] } }];
+}
+const kept: any[] = [];
+for (let round = 0; round < 6; round++) {
+  for (let i = 0; i < 20000; i++) {
+    const a = numbers(), b = fractions(), c = long(), d = nested(), e = table();
+    if (i % 1000 === 0) kept.push(a, b, c, d, e);
+    if (i % 1500 === 0) { a[0] = i; b.push(i); c.length = 3; d[1][0] = i; e[2].at.push(i); e[3].more.w[0] = i; kept.push({ a, b, c, d, e }); }
+  }
+  Bun.gc(true);
+}
+for (let i = 0; i < kept.length; i += 7) { const k = kept[i]; if (Array.isArray(k) && typeof k[0] === "number") k[0] = -1; }
+Bun.gc(true);
+let text = JSON.stringify(kept); let hash = 0; for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) | 0;
+console.log(kept.length, text.length, hash, JSON.stringify([numbers(), fractions(), nested(), table()[2]]));
+const snapshot = Bun.generateHeapSnapshot(); console.log(typeof snapshot, heapStats().objectCount > 0);
+const weak = new WeakRef(numbers()); const registry = new WeakMap<object, number>(); const key = long(); registry.set(key, 1); Bun.gc(true); console.log(registry.get(key), weak.deref() === undefined || weak.deref()!.join() === "1,2,3,4,5");
+//// arrays-of-constants-are-read-where-they-are-made.ts
+// The function that makes the array reads it too, and keeps it: what the reads know of a literal they know of the array that stands in its place.
+const kept: unknown[] = [];
+let total = 0;
+function byIndex(i: number): number[] { const a = [10, 20, 30]; total += a[i % 3] + a[0] + a.length; kept[0] = a; return a; }
+function fractions(i: number): number[] { const a = [0.5, 1.5, 2.5, 3.5]; total += a[i & 3] * 2; kept[1] = a; return a; }
+function words(i: number): string[] { const a = ["zero", "one", "two"]; total += a[i % 3].length; kept[2] = a; return a; }
+function mixed(i: number): (number | null | boolean)[] { const a = [1, null, true, 4]; const v = a[i & 3]; total += typeof v === "number" ? v : v === null ? 7 : 9; kept[3] = a; return a; }
+function walked(): number[] { const a = [1, 2, 3, 4, 5]; for (const v of a) total += v; for (let i = 0; i < a.length; i++) total += a[i]; kept[4] = a; return a; }
+function asked(v: number): number[] { const a = [3, 5, 7]; if (a.includes(v)) total++; total += a.indexOf(v) + a.lastIndexOf(v); kept[5] = a; return a; }
+function outside(i: number): number[] { const a = [1, 2]; const v = a[i]; total += v === undefined ? 100 : v; kept[6] = a; return a; }
+function taken(): number[] { const a = [6, 7, 8]; const [x, , z] = a; total += x + z + Math.max(...a); kept[7] = a; return a; }
+function branch(c: boolean, i: number): number[] { const a = c ? [1, 2, 3] : [4, 5, 6]; total += a[i % 3]; kept[8] = a; return a; }
+function handed(i: number): number[] { const a = [9, 8, 7]; total += reads(a, i); kept[9] = a; return a; }
+function reads(a: number[], i: number): number { return a[i % a.length] + a.length; }
+function inLoop(n: number): number[][] { const all: number[][] = []; for (let i = 0; i < n; i++) { const a = [i & 0, 1, 2]; const b = [5, 6]; total += a[i % 3] + b[i & 1]; all.push(b); } return all; }
+for (let i = 0; i < 3000; i++) { byIndex(i); fractions(i); words(i); mixed(i); walked(); asked(i % 9); outside(i % 4); taken(); branch((i & 1) === 0, i); handed(i); }
+const many = inLoop(50);
+console.log(total, JSON.stringify(kept), many.length, new Set(many).size, byIndex(1) !== byIndex(1));
+(kept[0] as number[])[0] = -1; (kept[2] as string[]).push("three"); many[0][0] = -5;
+console.log(JSON.stringify([kept[0], kept[2], many[0], many[1], byIndex(0), words(0), inLoop(1)]));
+//// arrays-of-constants-with-holes.ts
+function few(): (number | undefined)[] { return [1, , 3]; }
+function fractions(): (number | undefined)[] { return [1.5, , , 4.5]; }
+function only(): undefined[] { return [, , ,]; }
+function mixed(): unknown[] { return [null, , true, , 2]; }
+function many(): (number | undefined)[] { return [0, 1, , 3, 4, 5, , 7, 8, 9, 10, , 12, 13, 14, 15, 16, , 18, 19, 20, 21, , 23]; }
+function manyFractions(): (number | undefined)[] { return [0.5, , 2.5, 3.5, 4.5, 5.5, 6.5, , 8.5, 9.5, 10.5, 11.5, 12.5, 13.5, , 15.5, 16.5, 17.5, 18.5, 19.5]; }
+function withText(): unknown[] { return ["a", , "b", , "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q"]; }
+for (const [name, make] of [["few", few], ["fractions", fractions], ["only", only], ["mixed", mixed], ["many", many], ["manyFractions", manyFractions], ["withText", withText]] as [string, () => any[]][]) {
+  const a = make();
+  const seen: string[] = []; a.forEach((v, i) => seen.push(i + ":" + v));
+  let walked = ""; for (const v of a) walked += v + ",";
+  let byIndex = ""; for (let i = 0; i < a.length; i++) byIndex += (i in a ? "+" : "-") + a[i] + ",";
+  console.log(name, a.length, Object.keys(a).join(), JSON.stringify(a), seen.join(), walked, byIndex);
+  console.log(name, a.indexOf(undefined), a.includes(undefined), a.lastIndexOf(undefined), a.findIndex(v => v === undefined), [...a].length, Object.keys([...a]).length, a.flat().length, a.join("|"), a.hasOwnProperty(1), Object.getOwnPropertyDescriptor(a, 1) === undefined);
+  console.log(name, JSON.stringify(a.map(v => v)), Object.keys(a.map(v => v)).join(), JSON.stringify(a.filter(() => true)), a.reduce((n: number) => n + 1, 0), JSON.stringify(a.slice(1)), Object.keys(a.slice(1)).join(), JSON.stringify(a.concat([1])), Object.keys(a.concat([1])).join());
+  const b = make(); b[1] = 5; const c = make();
+  console.log(name, 1 in b, 1 in c, JSON.stringify(b), JSON.stringify(c), JSON.stringify(make().sort()), JSON.stringify(make().reverse()), Object.keys(make().reverse()).join());
+  const d = structuredClone(make()); console.log(name, Object.keys(d).join(), d.length);
+}
+//// constant-objects-that-name-a-member-twice.js
+function repeated() { return { a: 1, b: 2, a: 3, c: { x: 1, x: 2 }, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10, k: 11, l: 12, m: 13, n: 14, o: 15, b: "last", 1: "x", 1: "y" }; }
+function untyped() { return [{ id: 1, name: "a", at: [1, 2] }, { id: 2, name: "b", at: [3, 4] }, { id: "three", name: 3, at: null }, { name: "d", id: 4 }, { id: 5 }, { id: 6, name: "f", at: [5, 6], more: true }]; }
+for (const make of [repeated, untyped]) {
+  const a = make(), b = make();
+  console.log(JSON.stringify(a), a !== b, Object.keys(a).join());
+  if (Array.isArray(a)) { for (const r of a) console.log(Object.keys(r).join(), typeof r.id, typeof r.name); a[0].id = "changed"; a[1].at[0] = 9; a[4].name = "new"; delete a[5].more; }
+  else { a.a = 0; a.c.x = 0; delete a.d; }
+  console.log(JSON.stringify(a), JSON.stringify(b) === JSON.stringify(make()));
+}
+//// constant-objects-with-every-kind-of-member.ts
+function record() {
+  return {
+    whole: 1, negative: -1, zero: 0, minusZero: -0, fraction: 0.1, huge: 1e21, tiny: 5e-324, beyondInt32: 4294967296, notANumber: NaN, endless: Infinity,
+    yes: true, no: false, nothing: null, missing: undefined, empty: "", letter: "a", word: "word", long: "a rather long text that is no identifier, with spaces", unicode: "héllo 世界 😀",
+    big: 123456789012345678901234567890n, smallBig: 0n, list: [1, 2, 3], fractions: [0.5, 1.5], words: ["x", "y"], mixed: [1, "a", null, undefined, true, 2n, [], {}], holes: [1, , 3], none: [], inner: { a: 1, b: { c: 2, d: { e: [3, { f: 4 }] } } }, blank: {},
+  };
+}
+function odd(): Record<string, unknown> {
+  return { 0: "zero", 1: "one", 10: "ten", "2": "two", "-1": "minus", "1.5": "fraction", "a b": "space", "": "empty", constructor: "c", toString: "t", valueOf: 1, hasOwnProperty: 2, length: 3, name: "n", prototype: "p", a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7 };
+}
+function withProto(): any { return { __proto__: null, a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10, k: 11, l: 12, m: 13, n: 14, o: 15, p: 16, q: 17 }; }
+function quotedProto(): any { return { "__proto__": { up: 1 }, a: 1, b: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17] }; }
+function computedProto(): any { return { ["__proto__"]: 5, a: 1, b: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17] }; }
+const show = (v: unknown): string => typeof v === "bigint" ? v + "n" : v === undefined ? "undefined" : Object.is(v, -0) ? "-0" : typeof v === "number" ? String(v) : typeof v === "string" ? JSON.stringify(v) : v === null ? "null" : typeof v === "boolean" ? String(v) :
+  Array.isArray(v) ? "[" + Array.from({ length: v.length }, (_, i) => i in v ? show(v[i]) : "<hole>").join() + "]" : "{" + Reflect.ownKeys(v as object).map(k => String(k) + ":" + show((v as any)[k])).join() + "}";
+for (const make of [record, odd, withProto, quotedProto, computedProto]) {
+  const a: any = make(), b: any = make();
+  console.log(make.name, show(a)); console.log(make.name, a !== b, show(a) === show(b), Object.getPrototypeOf(a) === Object.prototype, Object.getPrototypeOf(a) === null, Object.keys(a).length);
+  for (const k of Object.keys(a)) { if (typeof a[k] === "object" && a[k] !== null) console.log(make.name, k, a[k] !== b[k]); a[k] = "overwritten"; }
+  console.log(make.name, show(b) === show(make()), show(a) !== show(b));
+}
+console.log(quotedProto().up, computedProto().up, Object.keys(computedProto()).join(), typeof record().big, record().big === record().big, record().big * 2n);
+//// constant-tables-at-the-top-of-a-module.ts
+const codes = [200, 201, 204, 301, 302, 304, 400, 401, 403, 404, 405, 409, 410, 418, 422, 429, 500, 501, 502, 503, 504];
+const names = ["OK", "Created", "No Content", "Moved Permanently", "Found", "Not Modified", "Bad Request", "Unauthorized", "Forbidden", "Not Found", "Method Not Allowed", "Conflict", "Gone", "I'm a teapot", "Unprocessable Entity", "Too Many Requests", "Internal Server Error", "Not Implemented", "Bad Gateway", "Service Unavailable", "Gateway Timeout"];
+const weights = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9];
+const matrix = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [2, 2, 2, 2]];
+const colors = { red: [255, 0, 0], green: [0, 255, 0], blue: [0, 0, 255], white: [255, 255, 255], black: [0, 0, 0], gray: [128, 128, 128] } as Record<string, number[]>;
+const table = [{ code: 200, text: "OK", retry: false }, { code: 404, text: "Not Found", retry: false }, { code: 429, text: "Too Many Requests", retry: true }, { code: 500, text: "Internal Server Error", retry: true }, { code: 503, text: "Service Unavailable", retry: true }, { code: 504, text: "Gateway Timeout", retry: true }];
+export const exported = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+const small = [1, 2, 3], pair = [0.5, 1.5];
+function lookup(code: number): string { const i = codes.indexOf(code); return i < 0 ? "?" : names[i]; }
+let sum = 0; for (let i = 0; i < codes.length; i++) sum += codes[i]; for (const w of weights) sum += w; for (const row of matrix) for (const v of row) sum += v;
+console.log(lookup(404), lookup(418), lookup(1), sum.toFixed(2), colors.gray.join(), table.filter(r => r.retry).map(r => r.text).join(), small.length + pair.length);
+matrix[1][1] = 5; matrix[4].push(9); colors.red[0] = 1; codes.push(599); names.sort(); weights.reverse(); table[0].code = 1; exported[0] = -1; small[1] = 20; pair.pop();
+console.log(JSON.stringify([matrix, colors, codes, names.slice(0, 3), weights.slice(0, 2), table[0], exported, small, pair]));
+//// constant-tables-changed-later.ts
+const makeSetOf1 = () => new Set(["only"]);
+const makeSetOf8 = () => new Set(["long-key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "key-1", "key-2", "key-3", "key-4", "key-5", "key-6", "key-7"]);
+const makeSetOf9 = () => new Set(["long-key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "key-1", "key-2", "key-3", "key-4", "key-5", "key-6", "key-7", "key-8"]);
+const makeSetOf255 = () => new Set(["long-key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "key-1", "key-2", "key-3", "key-4", "key-5", "key-6", "key-7", "key-8", "key-9", "key-10", "key-11", "key-12", "key-13", "key-14", "key-15", "key-16", "key-17", "key-18", "key-19", "key-20", "key-21", "key-22", "key-23", "key-24", "key-25", "key-26", "key-27", "key-28", "key-29", "key-30", "key-31", "key-32", "key-33", "key-34", "key-35", "key-36", "key-37", "key-38", "key-39", "key-40", "key-41", "key-42", "key-43", "key-44", "key-45", "key-46", "key-47", "key-48", "key-49", "key-50", "key-51", "key-52", "key-53", "key-54", "key-55", "key-56", "key-57", "key-58", "key-59", "key-60", "key-61", "key-62", "key-63", "key-64", "key-65", "key-66", "key-67", "key-68", "key-69", "key-70", "key-71", "key-72", "key-73", "key-74", "key-75", "key-76", "key-77", "key-78", "key-79", "key-80", "key-81", "key-82", "key-83", "key-84", "key-85", "key-86", "key-87", "key-88", "key-89", "key-90", "key-91", "key-92", "key-93", "key-94", "key-95", "key-96", "key-97", "key-98", "key-99", "key-100", "key-101", "key-102", "key-103", "key-104", "key-105", "key-106", "key-107", "key-108", "key-109", "key-110", "key-111", "key-112", "key-113", "key-114", "key-115", "key-116", "key-117", "key-118", "key-119", "key-120", "key-121", "key-122", "key-123", "key-124", "key-125", "key-126", "key-127", "key-128", "key-129", "key-130", "key-131", "key-132", "key-133", "key-134", "key-135", "key-136", "key-137", "key-138", "key-139", "key-140", "key-141", "key-142", "key-143", "key-144", "key-145", "key-146", "key-147", "key-148", "key-149", "key-150", "key-151", "key-152", "key-153", "key-154", "key-155", "key-156", "key-157", "key-158", "key-159", "key-160", "key-161", "key-162", "key-163", "key-164", "key-165", "key-166", "key-167", "key-168", "key-169", "key-170", "key-171", "key-172", "key-173", "key-174", "key-175", "key-176", "key-177", "key-178", "key-179", "key-180", "key-181", "key-182", "key-183", "key-184", "key-185", "key-186", "key-187", "key-188", "key-189", "key-190", "key-191", "key-192", "key-193", "key-194", "key-195", "key-196", "key-197", "key-198", "key-199", "key-200", "key-201", "key-202", "key-203", "key-204", "key-205", "key-206", "key-207", "key-208", "key-209", "key-210", "key-211", "key-212", "key-213", "key-214", "key-215", "key-216", "key-217", "key-218", "key-219", "key-220", "key-221", "key-222", "key-223", "key-224", "key-225", "key-226", "key-227", "key-228", "key-229", "key-230", "key-231", "key-232", "key-233", "key-234", "key-235", "key-236", "key-237", "key-238", "key-239", "key-240", "key-241", "key-242", "key-243", "key-244", "key-245", "key-246", "key-247", "key-248", "key-249", "key-250", "key-251", "key-252", "key-253", "key-254"]);
+const makeSetOf300 = () => new Set(["long-key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "key-1", "key-2", "key-3", "key-4", "key-5", "key-6", "key-7", "key-8", "key-9", "key-10", "key-11", "key-12", "key-13", "key-14", "key-15", "key-16", "key-17", "key-18", "key-19", "key-20", "key-21", "key-22", "key-23", "key-24", "key-25", "key-26", "key-27", "key-28", "key-29", "key-30", "key-31", "key-32", "key-33", "key-34", "key-35", "key-36", "key-37", "key-38", "key-39", "key-40", "key-41", "key-42", "key-43", "key-44", "key-45", "key-46", "key-47", "key-48", "key-49", "key-50", "key-51", "key-52", "key-53", "key-54", "key-55", "key-56", "key-57", "key-58", "key-59", "key-60", "key-61", "key-62", "key-63", "key-64", "key-65", "key-66", "key-67", "key-68", "key-69", "key-70", "key-71", "key-72", "key-73", "key-74", "key-75", "key-76", "key-77", "key-78", "key-79", "key-80", "key-81", "key-82", "key-83", "key-84", "key-85", "key-86", "key-87", "key-88", "key-89", "key-90", "key-91", "key-92", "key-93", "key-94", "key-95", "key-96", "key-97", "key-98", "key-99", "key-100", "key-101", "key-102", "key-103", "key-104", "key-105", "key-106", "key-107", "key-108", "key-109", "key-110", "key-111", "key-112", "key-113", "key-114", "key-115", "key-116", "key-117", "key-118", "key-119", "key-120", "key-121", "key-122", "key-123", "key-124", "key-125", "key-126", "key-127", "key-128", "key-129", "key-130", "key-131", "key-132", "key-133", "key-134", "key-135", "key-136", "key-137", "key-138", "key-139", "key-140", "key-141", "key-142", "key-143", "key-144", "key-145", "key-146", "key-147", "key-148", "key-149", "key-150", "key-151", "key-152", "key-153", "key-154", "key-155", "key-156", "key-157", "key-158", "key-159", "key-160", "key-161", "key-162", "key-163", "key-164", "key-165", "key-166", "key-167", "key-168", "key-169", "key-170", "key-171", "key-172", "key-173", "key-174", "key-175", "key-176", "key-177", "key-178", "key-179", "key-180", "key-181", "key-182", "key-183", "key-184", "key-185", "key-186", "key-187", "key-188", "key-189", "key-190", "key-191", "key-192", "key-193", "key-194", "key-195", "key-196", "key-197", "key-198", "key-199", "key-200", "key-201", "key-202", "key-203", "key-204", "key-205", "key-206", "key-207", "key-208", "key-209", "key-210", "key-211", "key-212", "key-213", "key-214", "key-215", "key-216", "key-217", "key-218", "key-219", "key-220", "key-221", "key-222", "key-223", "key-224", "key-225", "key-226", "key-227", "key-228", "key-229", "key-230", "key-231", "key-232", "key-233", "key-234", "key-235", "key-236", "key-237", "key-238", "key-239", "key-240", "key-241", "key-242", "key-243", "key-244", "key-245", "key-246", "key-247", "key-248", "key-249", "key-250", "key-251", "key-252", "key-253", "key-254", "key-255", "key-256", "key-257", "key-258", "key-259", "key-260", "key-261", "key-262", "key-263", "key-264", "key-265", "key-266", "key-267", "key-268", "key-269", "key-270", "key-271", "key-272", "key-273", "key-274", "key-275", "key-276", "key-277", "key-278", "key-279", "key-280", "key-281", "key-282", "key-283", "key-284", "key-285", "key-286", "key-287", "key-288", "key-289", "key-290", "key-291", "key-292", "key-293", "key-294", "key-295", "key-296", "key-297", "key-298", "key-299"]);
+const makeMapOf1 = () => new Map<string, unknown>([["only", "v"]]);
+const makeMapOf8 = () => new Map<string, unknown>([["long-key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", undefined], ["key-1", null], ["key-2", true], ["key-3", false], ["key-4", ""], ["key-5", "a"], ["key-6", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-7", 7]]);
+const makeMapOf9 = () => new Map<string, unknown>([["long-key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", undefined], ["key-1", null], ["key-2", true], ["key-3", false], ["key-4", -0], ["key-5", NaN], ["key-6", 1e300], ["key-7", ""], ["key-8", "a"]]);
+const makeMapOf255 = () => new Map<string, unknown>([["long-key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", undefined], ["key-1", null], ["key-2", true], ["key-3", false], ["key-4", -0], ["key-5", NaN], ["key-6", 1e300], ["key-7", ""], ["key-8", "a"], ["key-9", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-10", 7], ["key-11", undefined], ["key-12", null], ["key-13", true], ["key-14", false], ["key-15", -0], ["key-16", NaN], ["key-17", 1e300], ["key-18", ""], ["key-19", "a"], ["key-20", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-21", 7], ["key-22", undefined], ["key-23", null], ["key-24", true], ["key-25", false], ["key-26", -0], ["key-27", NaN], ["key-28", 1e300], ["key-29", ""], ["key-30", "a"], ["key-31", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-32", 7], ["key-33", undefined], ["key-34", null], ["key-35", true], ["key-36", false], ["key-37", -0], ["key-38", NaN], ["key-39", 1e300], ["key-40", ""], ["key-41", "a"], ["key-42", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-43", 7], ["key-44", undefined], ["key-45", null], ["key-46", true], ["key-47", false], ["key-48", -0], ["key-49", NaN], ["key-50", 1e300], ["key-51", ""], ["key-52", "a"], ["key-53", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-54", 7], ["key-55", undefined], ["key-56", null], ["key-57", true], ["key-58", false], ["key-59", -0], ["key-60", NaN], ["key-61", 1e300], ["key-62", ""], ["key-63", "a"], ["key-64", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-65", 7], ["key-66", undefined], ["key-67", null], ["key-68", true], ["key-69", false], ["key-70", -0], ["key-71", NaN], ["key-72", 1e300], ["key-73", ""], ["key-74", "a"], ["key-75", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-76", 7], ["key-77", undefined], ["key-78", null], ["key-79", true], ["key-80", false], ["key-81", -0], ["key-82", NaN], ["key-83", 1e300], ["key-84", ""], ["key-85", "a"], ["key-86", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-87", 7], ["key-88", undefined], ["key-89", null], ["key-90", true], ["key-91", false], ["key-92", -0], ["key-93", NaN], ["key-94", 1e300], ["key-95", ""], ["key-96", "a"], ["key-97", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-98", 7], ["key-99", undefined], ["key-100", null], ["key-101", true], ["key-102", false], ["key-103", -0], ["key-104", NaN], ["key-105", 1e300], ["key-106", ""], ["key-107", "a"], ["key-108", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-109", 7], ["key-110", undefined], ["key-111", null], ["key-112", true], ["key-113", false], ["key-114", -0], ["key-115", NaN], ["key-116", 1e300], ["key-117", ""], ["key-118", "a"], ["key-119", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-120", 7], ["key-121", undefined], ["key-122", null], ["key-123", true], ["key-124", false], ["key-125", -0], ["key-126", NaN], ["key-127", 1e300], ["key-128", ""], ["key-129", "a"], ["key-130", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-131", 7], ["key-132", undefined], ["key-133", null], ["key-134", true], ["key-135", false], ["key-136", -0], ["key-137", NaN], ["key-138", 1e300], ["key-139", ""], ["key-140", "a"], ["key-141", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-142", 7], ["key-143", undefined], ["key-144", null], ["key-145", true], ["key-146", false], ["key-147", -0], ["key-148", NaN], ["key-149", 1e300], ["key-150", ""], ["key-151", "a"], ["key-152", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-153", 7], ["key-154", undefined], ["key-155", null], ["key-156", true], ["key-157", false], ["key-158", -0], ["key-159", NaN], ["key-160", 1e300], ["key-161", ""], ["key-162", "a"], ["key-163", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-164", 7], ["key-165", undefined], ["key-166", null], ["key-167", true], ["key-168", false], ["key-169", -0], ["key-170", NaN], ["key-171", 1e300], ["key-172", ""], ["key-173", "a"], ["key-174", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-175", 7], ["key-176", undefined], ["key-177", null], ["key-178", true], ["key-179", false], ["key-180", -0], ["key-181", NaN], ["key-182", 1e300], ["key-183", ""], ["key-184", "a"], ["key-185", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-186", 7], ["key-187", undefined], ["key-188", null], ["key-189", true], ["key-190", false], ["key-191", -0], ["key-192", NaN], ["key-193", 1e300], ["key-194", ""], ["key-195", "a"], ["key-196", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-197", 7], ["key-198", undefined], ["key-199", null], ["key-200", true], ["key-201", false], ["key-202", -0], ["key-203", NaN], ["key-204", 1e300], ["key-205", ""], ["key-206", "a"], ["key-207", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-208", 7], ["key-209", undefined], ["key-210", null], ["key-211", true], ["key-212", false], ["key-213", -0], ["key-214", NaN], ["key-215", 1e300], ["key-216", ""], ["key-217", "a"], ["key-218", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-219", 7], ["key-220", undefined], ["key-221", null], ["key-222", true], ["key-223", false], ["key-224", -0], ["key-225", NaN], ["key-226", 1e300], ["key-227", ""], ["key-228", "a"], ["key-229", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-230", 7], ["key-231", undefined], ["key-232", null], ["key-233", true], ["key-234", false], ["key-235", -0], ["key-236", NaN], ["key-237", 1e300], ["key-238", ""], ["key-239", "a"], ["key-240", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-241", 7], ["key-242", undefined], ["key-243", null], ["key-244", true], ["key-245", false], ["key-246", -0], ["key-247", NaN], ["key-248", 1e300], ["key-249", ""], ["key-250", "a"], ["key-251", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-252", 7], ["key-253", undefined], ["key-254", null]]);
+const makeMapOf300 = () => new Map<string, unknown>([["long-key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "a"], ["key-1", ""], ["key-2", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-3", "b"], ["key-4", "a"], ["key-5", ""], ["key-6", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-7", "b"], ["key-8", "a"], ["key-9", ""], ["key-10", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-11", "b"], ["key-12", "a"], ["key-13", ""], ["key-14", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-15", "b"], ["key-16", "a"], ["key-17", ""], ["key-18", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-19", "b"], ["key-20", "a"], ["key-21", ""], ["key-22", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-23", "b"], ["key-24", "a"], ["key-25", ""], ["key-26", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-27", "b"], ["key-28", "a"], ["key-29", ""], ["key-30", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-31", "b"], ["key-32", "a"], ["key-33", ""], ["key-34", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-35", "b"], ["key-36", "a"], ["key-37", ""], ["key-38", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-39", "b"], ["key-40", "a"], ["key-41", ""], ["key-42", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-43", "b"], ["key-44", "a"], ["key-45", ""], ["key-46", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-47", "b"], ["key-48", "a"], ["key-49", ""], ["key-50", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-51", "b"], ["key-52", "a"], ["key-53", ""], ["key-54", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-55", "b"], ["key-56", "a"], ["key-57", ""], ["key-58", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-59", "b"], ["key-60", "a"], ["key-61", ""], ["key-62", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-63", "b"], ["key-64", "a"], ["key-65", ""], ["key-66", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-67", "b"], ["key-68", "a"], ["key-69", ""], ["key-70", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-71", "b"], ["key-72", "a"], ["key-73", ""], ["key-74", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-75", "b"], ["key-76", "a"], ["key-77", ""], ["key-78", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-79", "b"], ["key-80", "a"], ["key-81", ""], ["key-82", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-83", "b"], ["key-84", "a"], ["key-85", ""], ["key-86", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-87", "b"], ["key-88", "a"], ["key-89", ""], ["key-90", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-91", "b"], ["key-92", "a"], ["key-93", ""], ["key-94", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-95", "b"], ["key-96", "a"], ["key-97", ""], ["key-98", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-99", "b"], ["key-100", "a"], ["key-101", ""], ["key-102", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-103", "b"], ["key-104", "a"], ["key-105", ""], ["key-106", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-107", "b"], ["key-108", "a"], ["key-109", ""], ["key-110", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-111", "b"], ["key-112", "a"], ["key-113", ""], ["key-114", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-115", "b"], ["key-116", "a"], ["key-117", ""], ["key-118", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-119", "b"], ["key-120", "a"], ["key-121", ""], ["key-122", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-123", "b"], ["key-124", "a"], ["key-125", ""], ["key-126", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-127", "b"], ["key-128", "a"], ["key-129", ""], ["key-130", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-131", "b"], ["key-132", "a"], ["key-133", ""], ["key-134", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-135", "b"], ["key-136", "a"], ["key-137", ""], ["key-138", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-139", "b"], ["key-140", "a"], ["key-141", ""], ["key-142", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-143", "b"], ["key-144", "a"], ["key-145", ""], ["key-146", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-147", "b"], ["key-148", "a"], ["key-149", ""], ["key-150", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-151", "b"], ["key-152", "a"], ["key-153", ""], ["key-154", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-155", "b"], ["key-156", "a"], ["key-157", ""], ["key-158", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-159", "b"], ["key-160", "a"], ["key-161", ""], ["key-162", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-163", "b"], ["key-164", "a"], ["key-165", ""], ["key-166", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-167", "b"], ["key-168", "a"], ["key-169", ""], ["key-170", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-171", "b"], ["key-172", "a"], ["key-173", ""], ["key-174", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-175", "b"], ["key-176", "a"], ["key-177", ""], ["key-178", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-179", "b"], ["key-180", "a"], ["key-181", ""], ["key-182", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-183", "b"], ["key-184", "a"], ["key-185", ""], ["key-186", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-187", "b"], ["key-188", "a"], ["key-189", ""], ["key-190", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-191", "b"], ["key-192", "a"], ["key-193", ""], ["key-194", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-195", "b"], ["key-196", "a"], ["key-197", ""], ["key-198", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-199", "b"], ["key-200", "a"], ["key-201", ""], ["key-202", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-203", "b"], ["key-204", "a"], ["key-205", ""], ["key-206", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-207", "b"], ["key-208", "a"], ["key-209", ""], ["key-210", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-211", "b"], ["key-212", "a"], ["key-213", ""], ["key-214", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-215", "b"], ["key-216", "a"], ["key-217", ""], ["key-218", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-219", "b"], ["key-220", "a"], ["key-221", ""], ["key-222", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-223", "b"], ["key-224", "a"], ["key-225", ""], ["key-226", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-227", "b"], ["key-228", "a"], ["key-229", ""], ["key-230", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-231", "b"], ["key-232", "a"], ["key-233", ""], ["key-234", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-235", "b"], ["key-236", "a"], ["key-237", ""], ["key-238", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-239", "b"], ["key-240", "a"], ["key-241", ""], ["key-242", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-243", "b"], ["key-244", "a"], ["key-245", ""], ["key-246", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-247", "b"], ["key-248", "a"], ["key-249", ""], ["key-250", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-251", "b"], ["key-252", "a"], ["key-253", ""], ["key-254", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-255", "b"], ["key-256", "a"], ["key-257", ""], ["key-258", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-259", "b"], ["key-260", "a"], ["key-261", ""], ["key-262", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-263", "b"], ["key-264", "a"], ["key-265", ""], ["key-266", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-267", "b"], ["key-268", "a"], ["key-269", ""], ["key-270", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-271", "b"], ["key-272", "a"], ["key-273", ""], ["key-274", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-275", "b"], ["key-276", "a"], ["key-277", ""], ["key-278", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-279", "b"], ["key-280", "a"], ["key-281", ""], ["key-282", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-283", "b"], ["key-284", "a"], ["key-285", ""], ["key-286", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-287", "b"], ["key-288", "a"], ["key-289", ""], ["key-290", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-291", "b"], ["key-292", "a"], ["key-293", ""], ["key-294", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-295", "b"], ["key-296", "a"], ["key-297", ""], ["key-298", "long-value-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"], ["key-299", "b"]]);
+const makeSetNotAscii = () => new Set(["plain", "\u00e9", "other"]);
+const makeMapNotAscii = () => new Map<string, unknown>([["plain", 1], ["\u00e9", "a"], ["other", null]]);
+const makeSetComputed = () => new Set(["plain", "computed-" + Number("2"), "other"]);
+const makeMapComputed = () => new Map<string, unknown>([["plain", 1], ["computed-" + Number("2"), "a"], ["other", null]]);
+
+const LONG_KEY = "long-key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+const out: string[] = [];
+
+function show(value: unknown): string {
+  if (typeof value === "string") return JSON.stringify(value.length > 30 ? value.slice(0, 30) + "~" + value.length : value);
+  if (Object.is(value, -0)) return "-0";
+  if (typeof value === "object" && value !== null) return "object";
+  return String(value);
+}
+
+function say(...parts: unknown[]) {
+  out.push(parts.map(show).join(" "));
+}
+
+function digest(list: unknown[]): string {
+  let hash = 17;
+  const text = list.map(show).join(",");
+  for (let i = 0; i < text.length; i++) hash = (Math.imul(hash, 31) + text.charCodeAt(i)) | 0;
+  return list.length + ":" + hash;
+}
+
+function pairs(map: Map<string, unknown>): unknown[] {
+  const list: unknown[] = [];
+  for (const [key, value] of map) list.push(key, value);
+  return list;
+}
+
+function joined(a: string, b: string): string {
+  return a + b;
+}
+
+function lookupKeys(first: string, other: string): [string, string][] {
+  const half = first.length >> 1;
+  const wide = "中" + other;
+  return [
+    ["flat", other],
+    ["rope", joined(first.slice(0, half), first.slice(half))],
+    ["substring", ("<<" + other + ">>").slice(2, -2)],
+    ["two-byte equal", wide.slice(1)],
+    ["two-byte absent", wide],
+    ["absent", other + "!"],
+    ["empty", ""],
+  ];
+}
+
+function checkSet(name: string, make: () => Set<string>, first: string, other: string) {
+  const original = make();
+  say(name, "size", original.size, digest([...original]));
+  for (const [kind, key] of lookupKeys(first, other)) say(name, kind, original.has(key));
+
+  const kept = make();
+  const changed = make();
+  say(name, "distinct objects", kept !== changed);
+  say(name, "add present", changed.add(first) === changed, changed.size, digest([...changed]));
+  changed.add("added");
+  say(name, "add", changed.size, changed.has("added"), [...changed].at(-1), kept.size, kept.has("added"));
+
+  const removed = make();
+  say(name, "delete absent", removed.delete("no such key"), removed.size);
+  say(name, "delete", removed.delete(first), removed.has(first), removed.size, digest([...removed]));
+  removed.add(first);
+  say(name, "add again", removed.size, [...removed].at(-1));
+
+  const cleared = make();
+  cleared.clear();
+  say(name, "clear", cleared.size, cleared.has(first), [...cleared].length);
+  cleared.add("after clear");
+  say(name, "add after clear", digest([...cleared]));
+
+  const grown = make();
+  let seen = 0;
+  for (const key of grown) {
+    if (seen === 0) {
+      grown.add("during");
+      grown.delete(other);
+    }
+    seen++;
+    if (key === "during") say(name, "reached added key", seen);
+  }
+  say(name, "changed during for-of", seen, grown.size, grown.has(other));
+
+  const emptied = make();
+  let steps = 0;
+  for (const key of emptied) {
+    steps++;
+    emptied.clear();
+    if (steps === 1) emptied.add(key + "-next");
+  }
+  say(name, "cleared during for-of", steps, digest([...emptied]));
+  say(name, "kept", digest([...kept]), digest([...make()]));
+}
+
+function checkMap(name: string, make: () => Map<string, unknown>, first: string, other: string) {
+  const original = make();
+  say(name, "size", original.size, digest(pairs(original)));
+  for (const [kind, key] of lookupKeys(first, other)) say(name, kind, original.has(key), original.get(key));
+
+  const kept = make();
+  const changed = make();
+  say(name, "distinct objects", kept !== changed);
+  const before = changed.get(other);
+  say(name, "set present", changed.set(other, before) === changed, changed.size, digest(pairs(changed)));
+  changed.set(other, 1.5);
+  say(name, "set double", changed.get(other), kept.get(other), changed.size);
+  changed.set(first, { changed: true });
+  say(name, "set object", changed.get(first), kept.get(first));
+  changed.set("added", "value");
+  say(name, "set new", changed.size, changed.get("added"), [...changed.keys()].at(-1), kept.size, kept.has("added"));
+
+  const removed = make();
+  say(name, "delete absent", removed.delete("no such key"), removed.size);
+  say(name, "delete", removed.delete(first), removed.has(first), removed.get(first), removed.size, digest(pairs(removed)));
+  removed.set(first, null);
+  say(name, "set again", removed.size, [...removed.keys()].at(-1));
+
+  const cleared = make();
+  cleared.clear();
+  say(name, "clear", cleared.size, cleared.get(first), [...cleared].length);
+  cleared.set("after clear", -0);
+  say(name, "set after clear", digest(pairs(cleared)));
+
+  const grown = make();
+  let seen = 0;
+  for (const [key, value] of grown) {
+    if (seen === 0) {
+      say(name, "first pair", key, value);
+      grown.set("during", 2);
+      grown.set(first, "replaced");
+      grown.delete(other);
+    }
+    seen++;
+    if (key === "during") say(name, "reached added key", seen, value);
+  }
+  say(name, "changed during for-of", seen, grown.size, grown.get(first), grown.has(other));
+
+  const emptied = make();
+  let steps = 0;
+  for (const [key] of emptied) {
+    steps++;
+    emptied.clear();
+    if (steps === 1) emptied.set(key + "-next", steps);
+  }
+  say(name, "cleared during for-of", steps, digest(pairs(emptied)));
+  say(name, "kept", digest(pairs(kept)), digest(pairs(make())));
+}
+
+checkSet("set 1", makeSetOf1, "only", "only");
+checkSet("set 8", makeSetOf8, LONG_KEY, "key-7");
+checkSet("set 9", makeSetOf9, LONG_KEY, "key-8");
+checkSet("set 255", makeSetOf255, LONG_KEY, "key-200");
+checkSet("set 300", makeSetOf300, LONG_KEY, "key-299");
+checkMap("map 1", makeMapOf1, "only", "only");
+checkMap("map 8", makeMapOf8, LONG_KEY, "key-7");
+checkMap("map 9", makeMapOf9, LONG_KEY, "key-8");
+checkMap("map 255", makeMapOf255, LONG_KEY, "key-200");
+checkMap("map 300", makeMapOf300, LONG_KEY, "key-299");
+checkSet("set not ASCII", makeSetNotAscii, "plain", "é");
+checkMap("map not ASCII", makeMapNotAscii, "plain", "é");
+checkSet("set computed", makeSetComputed, "plain", "computed-2");
+checkMap("map computed", makeMapComputed, "plain", "computed-2");
+
+const values = makeMapOf9();
+for (const [key, value] of values) say("value", key, value, typeof value);
+console.log(out.join("\n"));
+//// copies-of-arrays-of-constants-share-until-written.ts
+function source(): number[] { return [1, 2, 3, 4]; }
+function longSource(): number[] { return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]; }
+function fractions(): number[] { return [0.5, 1.5, 2.5]; }
+for (const make of [source, longSource, fractions]) {
+  const a = make();
+  const copies: [string, number[]][] = [["slice", a.slice()], ["slice 0", a.slice(0)], ["concat", a.concat()], ["concat empty", a.concat([])], ["empty concat", ([] as number[]).concat(a)], ["spread", [...a]], ["from", Array.from(a)], ["toSorted", a.toSorted()], ["toReversed", a.toReversed()], ["with", a.with(0, 1)], ["toSpliced", a.toSpliced(0, 0)], ["map", a.map(v => v)], ["clone", structuredClone(a)], ["of", Array.of(...a)], ["values", [...a.values()]]];
+  for (const [how, copy] of copies) {
+    const before = copy.join();
+    copy[0] = -5; copy.push(100);
+    console.log(make.name, how, before, copy.join(), a.join(), make().join(), copy !== a);
+  }
+  const b = make(), c = b.slice(); b[1] = 77; console.log(make.name, b.join(), c.join(), make().join());
+  const d = make(), e = d.slice(), f = e.slice(); e.reverse(); console.log(make.name, d.join(), e.join(), f.join());
+}
+function take(a: number, b: number, c: number, d?: number): number { return a * 1000 + b * 100 + c * 10 + (d ?? 0); }
+console.log(take(...(source() as [number, number, number, number])), take.apply(null, source() as [number, number, number, number]), Math.max(...longSource()), Reflect.apply(take, null, fractions()));
+const [p, q, ...rest] = longSource(); rest[0] = -1; console.log(p, q, rest.join(), longSource().join());
+console.log(new Set(source()).size, new Map(source().map(v => [v, v])).size, Buffer.from(source()).toString("hex"), new Uint8Array(longSource()).join(), String(source()), source().toString(), `${fractions()}`, source() + "", JSON.stringify({ a: source(), b: fractions() }));
+console.log(source().toString(), source().toString(), longSource().join("-"), longSource().join("-"));
+//// dictionary-literals-of-constants-small-and-large.ts
+// Dictionary literals of constants at the top of a module, below and above the number of names at which the engine makes an object a dictionary.
+// What is done to one afterwards: reads of names that are there and that are not, stores, new names, deletes, definitions with other attributes, freezing, a use as a prototype.
+////= lines	few	3	6	9	12
+////= lines	sameFew	7	14	21	28
+const atTheLimit: Record<string, string> = {
+  "sreltp-0": "v0",
+  cta_pirhgwpr: "v1",
+  pmuehueqmxa: "v2",
+  "fysb-3": "v3",
+  ya_iptx: "v4",
+  wznmxzsoe: "v5",
+  "dbepgivn-6": "v6",
+  nq_mslr: "v7",
+  nshkvaitvwfw: "v8",
+  "rssdwugu-9": "v9",
+  ijdcpupclzcn: "v10",
+  ajnyn: "v11",
+  "btty-12": "v12",
+  mws: "v13",
+  riqhbjac: "v14",
+  "trbg-15": "v15",
+  jtiewbkkl: "v16",
+  mmoqm: "v17",
+  "vrdtzqinuxwh-18": "v18",
+  niqjrka: "v19",
+  skamtsueb: "v20",
+  "olvltwix-21": "v21",
+  asbvaliuoj: "v22",
+  tkflfkyltijz: "v23",
+  "dy_asvxej-24": "v24",
+  huzihkfvnuw: "v25",
+  dtkk: "v26",
+  "ozfckx-27": "v27",
+  soihzd: "v28",
+  qgk: "v29",
+  "fikz_ucztlse-30": "v30",
+  jqziolunj: "v31",
+  snbnegap_: "v32",
+  "qnrwhbxo_yvx-33": "v33",
+  jrkhcsjdzhb: "v34",
+  zwq: "v35",
+  "nsbapx-36": "v36",
+  fqjh: "v37",
+  qrn: "v38",
+  "tdk-39": "v39",
+  irpzz: "v40",
+  lhg: "v41",
+  "r_df-42": "v42",
+  zize_a: "v43",
+  usmbyihitq: "v44",
+  "nbpky_abyeb-45": "v45",
+  bcpb: "v46",
+  qqpk: "v47",
+  "kclmu-48": "v48",
+  sjligknde: "v49",
+  awxmzcsfblo: "v50",
+  "uzrmuzbtnblu-51": "v51",
+  ywknwnoahg: "v52",
+  iwscznhneak: "v53",
+  "rzidowd_-54": "v54",
+  zmvdxksrdzs: "v55",
+  peh: "v56",
+  "bqcsdvmf_-57": "v57",
+  k_d: "v58",
+  dvp: "v59",
+  "sjzcbys-60": "v60",
+  qwhdrxdrbrk: "v61",
+  f_chfuhotwym: "v62",
+  "ltmlrnc-63": "v63",
+  qhn_xfnws: "v64",
+  vqvpeumefdpx: "v65",
+  "wqosxfeiyg-66": "v66",
+  sqkhw: "v67",
+  yjvwntssigj: "v68",
+  "ipz-69": "v69",
+  gfslhkpye: "v70",
+  wpwtgos__: "v71",
+  "apxcmzxbohh-72": "v72",
+  gihg: "v73",
+  eftwvbi: "v74",
+  "bkfnc-75": "v75",
+  dci_: "v76",
+  blosxvk: "v77",
+  "akk-78": "v78",
+  mpcgusxpm: "v79",
+  rkdic: "v80",
+  "doqidqwlv-81": "v81",
+  yojvvvuz: "v82",
+  dykvsrq: "v83",
+  "vpql-84": "v84",
+  wjv: "v85",
+  xfuuxuefluod: "v86",
+  "reku-87": "v87",
+  nrjufopjzfwc: "v88",
+  wfyr: "v89",
+  "sxmldiimbeb-90": "v90",
+  qihwyqlkmo: "v91",
+  zyclpdeisdv: "v92",
+  "syxd-93": "v93",
+  wgsnv: "v94",
+  _xestemzg: "v95",
+  "qfsfgilzja_-96": "v96",
+  n_mkrsjupq: "v97",
+  vpatgxu: "v98",
+  "dyy-99": "v99",
+  pfquog: "v100",
+  zqgb_q: "v101",
+  "dsjveeozct-102": "v102",
+  alt: "v103",
+  qcprak: "v104",
+  "klwwec_t-105": "v105",
+  wcx: "v106",
+  zgcgnwyh: "v107",
+  "kdzbncgwfm-108": "v108",
+  pwcrngupja: "v109",
+  oywmofobxi: "v110",
+  "loqltmha-111": "v111",
+  izleor: "v112",
+  fgafsm: "v113",
+  "fuaedtfopfb-114": "v114",
+  mok: "v115",
+  bwwbhmbmp: "v116",
+  "hhd-117": "v117",
+  pgfktdldt: "v118",
+  zxj: "v119",
+  "zozjphr-120": "v120",
+  a_kulkc: "v121",
+  vnc: "v122",
+  "tadavcafqbpb-123": "v123",
+  uqkgyp: "v124",
+  zplvbmjy: "v125",
+  "umcjfndqmrkr-126": "v126",
+  f_xxm_rlf: "v127",
+};
+const aboveTheLimit: Record<string, string> = {
+  "sreltp-0": "w0",
+  cta_pirhgwpr: "w1",
+  pmuehueqmxa: "w2",
+  "fysb-3": "w3",
+  ya_iptx: "w4",
+  wznmxzsoe: "w5",
+  "dbepgivn-6": "w6",
+  nq_mslr: "w7",
+  nshkvaitvwfw: "w8",
+  "rssdwugu-9": "w9",
+  ijdcpupclzcn: "w10",
+  ajnyn: "w11",
+  "btty-12": "w12",
+  mws: "w13",
+  riqhbjac: "w14",
+  "trbg-15": "w15",
+  jtiewbkkl: "w16",
+  mmoqm: "w17",
+  "vrdtzqinuxwh-18": "w18",
+  niqjrka: "w19",
+  skamtsueb: "w20",
+  "olvltwix-21": "w21",
+  asbvaliuoj: "w22",
+  tkflfkyltijz: "w23",
+  "dy_asvxej-24": "w24",
+  huzihkfvnuw: "w25",
+  dtkk: "w26",
+  "ozfckx-27": "w27",
+  soihzd: "w28",
+  qgk: "w29",
+  "fikz_ucztlse-30": "w30",
+  jqziolunj: "w31",
+  snbnegap_: "w32",
+  "qnrwhbxo_yvx-33": "w33",
+  jrkhcsjdzhb: "w34",
+  zwq: "w35",
+  "nsbapx-36": "w36",
+  fqjh: "w37",
+  qrn: "w38",
+  "tdk-39": "w39",
+  irpzz: "w40",
+  lhg: "w41",
+  "r_df-42": "w42",
+  zize_a: "w43",
+  usmbyihitq: "w44",
+  "nbpky_abyeb-45": "w45",
+  bcpb: "w46",
+  qqpk: "w47",
+  "kclmu-48": "w48",
+  sjligknde: "w49",
+  awxmzcsfblo: "w50",
+  "uzrmuzbtnblu-51": "w51",
+  ywknwnoahg: "w52",
+  iwscznhneak: "w53",
+  "rzidowd_-54": "w54",
+  zmvdxksrdzs: "w55",
+  peh: "w56",
+  "bqcsdvmf_-57": "w57",
+  k_d: "w58",
+  dvp: "w59",
+  "sjzcbys-60": "w60",
+  qwhdrxdrbrk: "w61",
+  f_chfuhotwym: "w62",
+  "ltmlrnc-63": "w63",
+  qhn_xfnws: "w64",
+  vqvpeumefdpx: "w65",
+  "wqosxfeiyg-66": "w66",
+  sqkhw: "w67",
+  yjvwntssigj: "w68",
+  "ipz-69": "w69",
+  gfslhkpye: "w70",
+  wpwtgos__: "w71",
+  "apxcmzxbohh-72": "w72",
+  gihg: "w73",
+  eftwvbi: "w74",
+  "bkfnc-75": "w75",
+  dci_: "w76",
+  blosxvk: "w77",
+  "akk-78": "w78",
+  mpcgusxpm: "w79",
+  rkdic: "w80",
+  "doqidqwlv-81": "w81",
+  yojvvvuz: "w82",
+  dykvsrq: "w83",
+  "vpql-84": "w84",
+  wjv: "w85",
+  xfuuxuefluod: "w86",
+  "reku-87": "w87",
+  nrjufopjzfwc: "w88",
+  wfyr: "w89",
+  "sxmldiimbeb-90": "w90",
+  qihwyqlkmo: "w91",
+  zyclpdeisdv: "w92",
+  "syxd-93": "w93",
+  wgsnv: "w94",
+  _xestemzg: "w95",
+  "qfsfgilzja_-96": "w96",
+  n_mkrsjupq: "w97",
+  vpatgxu: "w98",
+  "dyy-99": "w99",
+  pfquog: "w100",
+  zqgb_q: "w101",
+  "dsjveeozct-102": "w102",
+  alt: "w103",
+  qcprak: "w104",
+  "klwwec_t-105": "w105",
+  wcx: "w106",
+  zgcgnwyh: "w107",
+  "kdzbncgwfm-108": "w108",
+  pwcrngupja: "w109",
+  oywmofobxi: "w110",
+  "loqltmha-111": "w111",
+  izleor: "w112",
+  fgafsm: "w113",
+  "fuaedtfopfb-114": "w114",
+  mok: "w115",
+  bwwbhmbmp: "w116",
+  "hhd-117": "w117",
+  pgfktdldt: "w118",
+  zxj: "w119",
+  "zozjphr-120": "w120",
+  a_kulkc: "w121",
+  vnc: "w122",
+  "tadavcafqbpb-123": "w123",
+  uqkgyp: "w124",
+  zplvbmjy: "w125",
+  "umcjfndqmrkr-126": "w126",
+  f_xxm_rlf: "w127",
+  znohoywp: "w128",
+};
+const many: Record<string, number | string | null | boolean | undefined> = {
+  "sreltp-0": 0,
+  cta_pirhgwpr: "s1",
+  pmuehueqmxa: null,
+  "fysb-3": true,
+  ya_iptx: 4.5,
+  wznmxzsoe: undefined,
+  "dbepgivn-6": 6,
+  nq_mslr: "s7",
+  nshkvaitvwfw: null,
+  "rssdwugu-9": true,
+  ijdcpupclzcn: 10.5,
+  ajnyn: undefined,
+  "btty-12": 12,
+  mws: "s13",
+  riqhbjac: null,
+  "trbg-15": true,
+  jtiewbkkl: 16.5,
+  mmoqm: undefined,
+  "vrdtzqinuxwh-18": 18,
+  niqjrka: "s19",
+  skamtsueb: null,
+  "olvltwix-21": true,
+  asbvaliuoj: 22.5,
+  tkflfkyltijz: undefined,
+  "dy_asvxej-24": 24,
+  huzihkfvnuw: "s25",
+  dtkk: null,
+  "ozfckx-27": true,
+  soihzd: 28.5,
+  qgk: undefined,
+  "fikz_ucztlse-30": 30,
+  jqziolunj: "s31",
+  snbnegap_: null,
+  "qnrwhbxo_yvx-33": true,
+  jrkhcsjdzhb: 34.5,
+  zwq: undefined,
+  "nsbapx-36": 36,
+  fqjh: "s37",
+  qrn: null,
+  "tdk-39": true,
+  irpzz: 40.5,
+  lhg: undefined,
+  "r_df-42": 42,
+  zize_a: "s43",
+  usmbyihitq: null,
+  "nbpky_abyeb-45": true,
+  bcpb: 46.5,
+  qqpk: undefined,
+  "kclmu-48": 48,
+  sjligknde: "s49",
+  awxmzcsfblo: null,
+  "uzrmuzbtnblu-51": true,
+  ywknwnoahg: 52.5,
+  iwscznhneak: undefined,
+  "rzidowd_-54": 54,
+  zmvdxksrdzs: "s55",
+  peh: null,
+  "bqcsdvmf_-57": true,
+  k_d: 58.5,
+  dvp: undefined,
+  "sjzcbys-60": 60,
+  qwhdrxdrbrk: "s61",
+  f_chfuhotwym: null,
+  "ltmlrnc-63": true,
+  qhn_xfnws: 64.5,
+  vqvpeumefdpx: undefined,
+  "wqosxfeiyg-66": 66,
+  sqkhw: "s67",
+  yjvwntssigj: null,
+  "ipz-69": true,
+  gfslhkpye: 70.5,
+  wpwtgos__: undefined,
+  "apxcmzxbohh-72": 72,
+  gihg: "s73",
+  eftwvbi: null,
+  "bkfnc-75": true,
+  dci_: 76.5,
+  blosxvk: undefined,
+  "akk-78": 78,
+  mpcgusxpm: "s79",
+  rkdic: null,
+  "doqidqwlv-81": true,
+  yojvvvuz: 82.5,
+  dykvsrq: undefined,
+  "vpql-84": 84,
+  wjv: "s85",
+  xfuuxuefluod: null,
+  "reku-87": true,
+  nrjufopjzfwc: 88.5,
+  wfyr: undefined,
+  "sxmldiimbeb-90": 90,
+  qihwyqlkmo: "s91",
+  zyclpdeisdv: null,
+  "syxd-93": true,
+  wgsnv: 94.5,
+  _xestemzg: undefined,
+  "qfsfgilzja_-96": 96,
+  n_mkrsjupq: "s97",
+  vpatgxu: null,
+  "dyy-99": true,
+  pfquog: 100.5,
+  zqgb_q: undefined,
+  "dsjveeozct-102": 102,
+  alt: "s103",
+  qcprak: null,
+  "klwwec_t-105": true,
+  wcx: 106.5,
+  zgcgnwyh: undefined,
+  "kdzbncgwfm-108": 108,
+  pwcrngupja: "s109",
+  oywmofobxi: null,
+  "loqltmha-111": true,
+  izleor: 112.5,
+  fgafsm: undefined,
+  "fuaedtfopfb-114": 114,
+  mok: "s115",
+  bwwbhmbmp: null,
+  "hhd-117": true,
+  pgfktdldt: 118.5,
+  zxj: undefined,
+  "zozjphr-120": 120,
+  a_kulkc: "s121",
+  vnc: null,
+  "tadavcafqbpb-123": true,
+  uqkgyp: 124.5,
+  zplvbmjy: undefined,
+  "umcjfndqmrkr-126": 126,
+  f_xxm_rlf: "s127",
+  znohoywp: null,
+  "i_fqxytw-129": true,
+  pbefwya_o: 130.5,
+  ywvv: undefined,
+  "kht_-132": 132,
+  tbo: "s133",
+  xuklacgmzd: null,
+  "sjdoc_ug-135": true,
+  wbeues: 136.5,
+  dhj: undefined,
+  "hrqnqy-138": 138,
+  kzrzgoftcb_z: "s139",
+  tadg: null,
+  "cdomh__-141": true,
+  dupyvwlmtvoy: 142.5,
+  j_to: undefined,
+  "gdraojxuc-144": 144,
+  lgpycrvx: "s145",
+  nzuctqgh: null,
+  "_bkhnoci-147": true,
+  kfxgxg: 148.5,
+  owrnlgtnpynp: undefined,
+  "bjafdaxejqqb-150": 150,
+  bgxgipnblo: "s151",
+  xzjedo: null,
+  "nocgepy-153": true,
+  mzulfnj: 154.5,
+  pqrhljjaol: undefined,
+  "z_jxhzqa-156": 156,
+  euq: "s157",
+  rafba: null,
+  "yzolzl-159": true,
+  bpfhaink_bt: 160.5,
+  zdojihvzpnx: undefined,
+  "kbanbuv-162": 162,
+  yzshe: "s163",
+  qy_kreiaf: null,
+  "apu-165": true,
+  _oo: 166.5,
+  vy_tqnlqufj: undefined,
+  "cve_r-168": 168,
+  nylo: "s169",
+  iziojqeske: null,
+  "bnph_ostiak-171": true,
+  trdpeizwyidn: 172.5,
+  lbqp: undefined,
+  "gjlfum_mkb-174": 174,
+  gbkktmr: "s175",
+  benincp: null,
+  "gxcwqd-177": true,
+  u__a: 178.5,
+  wcnipoi: undefined,
+  "rrbfhpf-180": 180,
+  ewfwo: "s181",
+  uaembfyuf: null,
+  "gu_eebq-183": true,
+  rgmyd: 184.5,
+  mfaidedej: undefined,
+  "mltcg-186": 186,
+  lep: "s187",
+  clrpdw: null,
+  "paxlqxzo-189": true,
+  norrjoero_mg: 190.5,
+  jxxfj_fki_ge: undefined,
+  "tbn-192": 192,
+  fdsafdzmsvlq: "s193",
+  corsoke: null,
+  "tgkoqslukslw-195": true,
+  yxlw_kjjifdt: 196.5,
+  hxkxuhjnioe: undefined,
+  "krzftqqotb-198": 198,
+  nnrt: "s199",
+  bhmmgcl: null,
+  "gbrpdnxmwrl-201": true,
+  jlq: 202.5,
+  moluvdsp: undefined,
+  "khalc-204": 204,
+  aecgknjgaarx: "s205",
+  roxl_x_z: null,
+  "okvsdq-207": true,
+  hpejjrgd_: 208.5,
+  tcnaz: undefined,
+  "map_fpie-210": 210,
+  gqunsuvjn: "s211",
+  duxwcco: null,
+  "cakpnud_-213": true,
+  unshkgum: 214.5,
+  buqa: undefined,
+  "qhs_cfh_p_r-216": 216,
+  jlovqhgsj: "s217",
+  sesrltql: null,
+  "ysxxqgob-219": true,
+  jugpgf_do: 220.5,
+  qm_g: undefined,
+  "fybkphmv-222": 222,
+  hml: "s223",
+  hfjilibwk: null,
+  "ghjo-225": true,
+  sfhpw: 226.5,
+  gzvlth: undefined,
+  "vyqmt-228": 228,
+  ntfujolbczr: "s229",
+  pasfiqnvph: null,
+  "_qplmtpyf-231": true,
+  wnkx: 232.5,
+  skdlq: undefined,
+  "jpure-234": 234,
+  lpbsl_ugtc: "s235",
+  sjsvjrkn_xu: null,
+  "anvrxyl-237": true,
+  plsfhjwgs: 238.5,
+  wdkrfkxpf: undefined,
+  "mognrsldxbt-240": 240,
+  wgfqvfddrr: "s241",
+  mrqk: null,
+  "icpivkhid-243": true,
+  dplnei: 244.5,
+  vfisyqgv: undefined,
+  "hizlxk-246": 246,
+  dwey: "s247",
+  hokd: null,
+  "_yefbvpi-249": true,
+  eloxnqsvsnz: 250.5,
+  ijrismebb: undefined,
+  "nuagz-252": 252,
+  qxgwx: "s253",
+  ibursxlg: null,
+  "fgxc-255": true,
+  nxjedrkv_t: 256.5,
+  iectc: undefined,
+  "dawcu-258": 258,
+  mworvtoifw_: "s259",
+  cjv: null,
+  "fabkqxk_l-261": true,
+  bzgm: 262.5,
+  zro: undefined,
+  "uhoohzal-264": 264,
+  hfnmdm: "s265",
+  sdrvthjd: null,
+  "mas-267": true,
+  hgosqiuy: 268.5,
+  mvxgqsnujzcf: undefined,
+  "qqdjsteoqe-270": 270,
+  qfhlqjd: "s271",
+  pcpz: null,
+  "xynaaa-273": true,
+  tabwqpablv: 274.5,
+  j_ppjyj: undefined,
+  "juscm-276": 276,
+  dvg: "s277",
+  cfxmqx: null,
+  "eufcvjqqapc-279": true,
+  vpcnvwkr: 280.5,
+  noktakjpx: undefined,
+  "zpxigld-282": 282,
+  xpnpygx: "s283",
+  tbvhsbtm: null,
+  "mfkduf-285": true,
+  oinnsskmn_b: 286.5,
+  x_ymlxmi: undefined,
+  "hehgytaunxd-288": 288,
+  ymppmqqrntgp: "s289",
+  burwfagsv: null,
+  "_emy-291": true,
+  dddtgjrenne: 292.5,
+  gw_un: undefined,
+  "kuoqairask-294": 294,
+  rmgdjgcg: "s295",
+  hhkhxckrj: null,
+  "_rgrxm-297": true,
+  quj: 298.5,
+  eyi_sc: undefined,
+};
+const lists: Record<string, string[]> = {
+  "sreltp-0": [],
+  cta_pirhgwpr: ["t1_0"],
+  pmuehueqmxa: ["t2_0", "t2_1"],
+  "fysb-3": ["t3_0", "t3_1", "t3_2"],
+  ya_iptx: [],
+  wznmxzsoe: ["t5_0"],
+  "dbepgivn-6": ["t6_0", "t6_1"],
+  nq_mslr: ["t7_0", "t7_1", "t7_2"],
+  nshkvaitvwfw: [],
+  "rssdwugu-9": ["t9_0"],
+  ijdcpupclzcn: ["t10_0", "t10_1"],
+  ajnyn: ["t11_0", "t11_1", "t11_2"],
+  "btty-12": [],
+  mws: ["t13_0"],
+  riqhbjac: ["t14_0", "t14_1"],
+  "trbg-15": ["t15_0", "t15_1", "t15_2"],
+  jtiewbkkl: [],
+  mmoqm: ["t17_0"],
+  "vrdtzqinuxwh-18": ["t18_0", "t18_1"],
+  niqjrka: ["t19_0", "t19_1", "t19_2"],
+  skamtsueb: [],
+  "olvltwix-21": ["t21_0"],
+  asbvaliuoj: ["t22_0", "t22_1"],
+  tkflfkyltijz: ["t23_0", "t23_1", "t23_2"],
+  "dy_asvxej-24": [],
+  huzihkfvnuw: ["t25_0"],
+  dtkk: ["t26_0", "t26_1"],
+  "ozfckx-27": ["t27_0", "t27_1", "t27_2"],
+  soihzd: [],
+  qgk: ["t29_0"],
+  "fikz_ucztlse-30": ["t30_0", "t30_1"],
+  jqziolunj: ["t31_0", "t31_1", "t31_2"],
+  snbnegap_: [],
+  "qnrwhbxo_yvx-33": ["t33_0"],
+  jrkhcsjdzhb: ["t34_0", "t34_1"],
+  zwq: ["t35_0", "t35_1", "t35_2"],
+  "nsbapx-36": [],
+  fqjh: ["t37_0"],
+  qrn: ["t38_0", "t38_1"],
+  "tdk-39": ["t39_0", "t39_1", "t39_2"],
+  irpzz: [],
+  lhg: ["t41_0"],
+  "r_df-42": ["t42_0", "t42_1"],
+  zize_a: ["t43_0", "t43_1", "t43_2"],
+  usmbyihitq: [],
+  "nbpky_abyeb-45": ["t45_0"],
+  bcpb: ["t46_0", "t46_1"],
+  qqpk: ["t47_0", "t47_1", "t47_2"],
+  "kclmu-48": [],
+  sjligknde: ["t49_0"],
+  awxmzcsfblo: ["t50_0", "t50_1"],
+  "uzrmuzbtnblu-51": ["t51_0", "t51_1", "t51_2"],
+  ywknwnoahg: [],
+  iwscznhneak: ["t53_0"],
+  "rzidowd_-54": ["t54_0", "t54_1"],
+  zmvdxksrdzs: ["t55_0", "t55_1", "t55_2"],
+  peh: [],
+  "bqcsdvmf_-57": ["t57_0"],
+  k_d: ["t58_0", "t58_1"],
+  dvp: ["t59_0", "t59_1", "t59_2"],
+  "sjzcbys-60": [],
+  qwhdrxdrbrk: ["t61_0"],
+  f_chfuhotwym: ["t62_0", "t62_1"],
+  "ltmlrnc-63": ["t63_0", "t63_1", "t63_2"],
+  qhn_xfnws: [],
+  vqvpeumefdpx: ["t65_0"],
+  "wqosxfeiyg-66": ["t66_0", "t66_1"],
+  sqkhw: ["t67_0", "t67_1", "t67_2"],
+  yjvwntssigj: [],
+  "ipz-69": ["t69_0"],
+  gfslhkpye: ["t70_0", "t70_1"],
+  wpwtgos__: ["t71_0", "t71_1", "t71_2"],
+  "apxcmzxbohh-72": [],
+  gihg: ["t73_0"],
+  eftwvbi: ["t74_0", "t74_1"],
+  "bkfnc-75": ["t75_0", "t75_1", "t75_2"],
+  dci_: [],
+  blosxvk: ["t77_0"],
+  "akk-78": ["t78_0", "t78_1"],
+  mpcgusxpm: ["t79_0", "t79_1", "t79_2"],
+  rkdic: [],
+  "doqidqwlv-81": ["t81_0"],
+  yojvvvuz: ["t82_0", "t82_1"],
+  dykvsrq: ["t83_0", "t83_1", "t83_2"],
+  "vpql-84": [],
+  wjv: ["t85_0"],
+  xfuuxuefluod: ["t86_0", "t86_1"],
+  "reku-87": ["t87_0", "t87_1", "t87_2"],
+  nrjufopjzfwc: [],
+  wfyr: ["t89_0"],
+  "sxmldiimbeb-90": ["t90_0", "t90_1"],
+  qihwyqlkmo: ["t91_0", "t91_1", "t91_2"],
+  zyclpdeisdv: [],
+  "syxd-93": ["t93_0"],
+  wgsnv: ["t94_0", "t94_1"],
+  _xestemzg: ["t95_0", "t95_1", "t95_2"],
+  "qfsfgilzja_-96": [],
+  n_mkrsjupq: ["t97_0"],
+  vpatgxu: ["t98_0", "t98_1"],
+  "dyy-99": ["t99_0", "t99_1", "t99_2"],
+  pfquog: [],
+  zqgb_q: ["t101_0"],
+  "dsjveeozct-102": ["t102_0", "t102_1"],
+  alt: ["t103_0", "t103_1", "t103_2"],
+  qcprak: [],
+  "klwwec_t-105": ["t105_0"],
+  wcx: ["t106_0", "t106_1"],
+  zgcgnwyh: ["t107_0", "t107_1", "t107_2"],
+  "kdzbncgwfm-108": [],
+  pwcrngupja: ["t109_0"],
+  oywmofobxi: ["t110_0", "t110_1"],
+  "loqltmha-111": ["t111_0", "t111_1", "t111_2"],
+  izleor: [],
+  fgafsm: ["t113_0"],
+  "fuaedtfopfb-114": ["t114_0", "t114_1"],
+  mok: ["t115_0", "t115_1", "t115_2"],
+  bwwbhmbmp: [],
+  "hhd-117": ["t117_0"],
+  pgfktdldt: ["t118_0", "t118_1"],
+  zxj: ["t119_0", "t119_1", "t119_2"],
+  "zozjphr-120": [],
+  a_kulkc: ["t121_0"],
+  vnc: ["t122_0", "t122_1"],
+  "tadavcafqbpb-123": ["t123_0", "t123_1", "t123_2"],
+  uqkgyp: [],
+  zplvbmjy: ["t125_0"],
+  "umcjfndqmrkr-126": ["t126_0", "t126_1"],
+  f_xxm_rlf: ["t127_0", "t127_1", "t127_2"],
+  znohoywp: [],
+  "i_fqxytw-129": ["t129_0"],
+  pbefwya_o: ["t130_0", "t130_1"],
+  ywvv: ["t131_0", "t131_1", "t131_2"],
+  "kht_-132": [],
+  tbo: ["t133_0"],
+  xuklacgmzd: ["t134_0", "t134_1"],
+  "sjdoc_ug-135": ["t135_0", "t135_1", "t135_2"],
+  wbeues: [],
+  dhj: ["t137_0"],
+  "hrqnqy-138": ["t138_0", "t138_1"],
+  kzrzgoftcb_z: ["t139_0", "t139_1", "t139_2"],
+};
+const numberLists: Record<string, number[]> = {
+  "sreltp-0": [0],
+  cta_pirhgwpr: [10, 11],
+  pmuehueqmxa: [20, 21, 22],
+  "fysb-3": [30],
+  ya_iptx: [40, 41],
+  wznmxzsoe: [50, 51, 52],
+  "dbepgivn-6": [60],
+  nq_mslr: [70, 71],
+  nshkvaitvwfw: [80, 81, 82],
+  "rssdwugu-9": [90],
+  ijdcpupclzcn: [100, 101],
+  ajnyn: [110, 111, 112],
+  "btty-12": [120],
+  mws: [130, 131],
+  riqhbjac: [140, 141, 142],
+  "trbg-15": [150],
+  jtiewbkkl: [160, 161],
+  mmoqm: [170, 171, 172],
+  "vrdtzqinuxwh-18": [180],
+  niqjrka: [190, 191],
+  skamtsueb: [200, 201, 202],
+  "olvltwix-21": [210],
+  asbvaliuoj: [220, 221],
+  tkflfkyltijz: [230, 231, 232],
+  "dy_asvxej-24": [240],
+  huzihkfvnuw: [250, 251],
+  dtkk: [260, 261, 262],
+  "ozfckx-27": [270],
+  soihzd: [280, 281],
+  qgk: [290, 291, 292],
+  "fikz_ucztlse-30": [300],
+  jqziolunj: [310, 311],
+  snbnegap_: [320, 321, 322],
+  "qnrwhbxo_yvx-33": [330],
+  jrkhcsjdzhb: [340, 341],
+  zwq: [350, 351, 352],
+  "nsbapx-36": [360],
+  fqjh: [370, 371],
+  qrn: [380, 381, 382],
+  "tdk-39": [390],
+  irpzz: [400, 401],
+  lhg: [410, 411, 412],
+  "r_df-42": [420],
+  zize_a: [430, 431],
+  usmbyihitq: [440, 441, 442],
+  "nbpky_abyeb-45": [450],
+  bcpb: [460, 461],
+  qqpk: [470, 471, 472],
+  "kclmu-48": [480],
+  sjligknde: [490, 491],
+  awxmzcsfblo: [500, 501, 502],
+  "uzrmuzbtnblu-51": [510],
+  ywknwnoahg: [520, 521],
+  iwscznhneak: [530, 531, 532],
+  "rzidowd_-54": [540],
+  zmvdxksrdzs: [550, 551],
+  peh: [560, 561, 562],
+  "bqcsdvmf_-57": [570],
+  k_d: [580, 581],
+  dvp: [590, 591, 592],
+  "sjzcbys-60": [600],
+  qwhdrxdrbrk: [610, 611],
+  f_chfuhotwym: [620, 621, 622],
+  "ltmlrnc-63": [630],
+  qhn_xfnws: [640, 641],
+  vqvpeumefdpx: [650, 651, 652],
+  "wqosxfeiyg-66": [660],
+  sqkhw: [670, 671],
+  yjvwntssigj: [680, 681, 682],
+  "ipz-69": [690],
+  gfslhkpye: [700, 701],
+  wpwtgos__: [710, 711, 712],
+  "apxcmzxbohh-72": [720],
+  gihg: [730, 731],
+  eftwvbi: [740, 741, 742],
+  "bkfnc-75": [750],
+  dci_: [760, 761],
+  blosxvk: [770, 771, 772],
+  "akk-78": [780],
+  mpcgusxpm: [790, 791],
+  rkdic: [800, 801, 802],
+  "doqidqwlv-81": [810],
+  yojvvvuz: [820, 821],
+  dykvsrq: [830, 831, 832],
+  "vpql-84": [840],
+  wjv: [850, 851],
+  xfuuxuefluod: [860, 861, 862],
+  "reku-87": [870],
+  nrjufopjzfwc: [880, 881],
+  wfyr: [890, 891, 892],
+  "sxmldiimbeb-90": [900],
+  qihwyqlkmo: [910, 911],
+  zyclpdeisdv: [920, 921, 922],
+  "syxd-93": [930],
+  wgsnv: [940, 941],
+  _xestemzg: [950, 951, 952],
+  "qfsfgilzja_-96": [960],
+  n_mkrsjupq: [970, 971],
+  vpatgxu: [980, 981, 982],
+  "dyy-99": [990],
+  pfquog: [1000, 1001],
+  zqgb_q: [1010, 1011, 1012],
+  "dsjveeozct-102": [1020],
+  alt: [1030, 1031],
+  qcprak: [1040, 1041, 1042],
+  "klwwec_t-105": [1050],
+  wcx: [1060, 1061],
+  zgcgnwyh: [1070, 1071, 1072],
+  "kdzbncgwfm-108": [1080],
+  pwcrngupja: [1090, 1091],
+  oywmofobxi: [1100, 1101, 1102],
+  "loqltmha-111": [1110],
+  izleor: [1120, 1121],
+  fgafsm: [1130, 1131, 1132],
+  "fuaedtfopfb-114": [1140],
+  mok: [1150, 1151],
+  bwwbhmbmp: [1160, 1161, 1162],
+  "hhd-117": [1170],
+  pgfktdldt: [1180, 1181],
+  zxj: [1190, 1191, 1192],
+  "zozjphr-120": [1200],
+  a_kulkc: [1210, 1211],
+  vnc: [1220, 1221, 1222],
+  "tadavcafqbpb-123": [1230],
+  uqkgyp: [1240, 1241],
+  zplvbmjy: [1250, 1251, 1252],
+  "umcjfndqmrkr-126": [1260],
+  f_xxm_rlf: [1270, 1271],
+  znohoywp: [1280, 1281, 1282],
+  "i_fqxytw-129": [1290],
+  pbefwya_o: [1300, 1301],
+  ywvv: [1310, 1311, 1312],
+  "kht_-132": [1320],
+  tbo: [1330, 1331],
+  xuklacgmzd: [1340, 1341, 1342],
+};
+
+function describe(table: Record<string, unknown>): string {
+  const keys = Object.keys(table);
+  let inOrder = "";
+  for (const key in table) inOrder += key.length;
+  return [keys.length, keys[0], keys[keys.length - 1], inOrder.length, JSON.stringify(table).length, Object.getPrototypeOf(table) === Object.prototype, Object.isExtensible(table)].join(" ");
+}
+const all: Record<string, Record<string, unknown>> = { few, sameFew, atTheLimit, aboveTheLimit, many, lists, numberLists };
+for (const name of Object.keys(all)) console.log(name, describe(all[name]));
+
+for (const name of Object.keys(all)) {
+  const table = all[name];
+  const keys = Object.keys(table);
+  const first = keys[0], middle = keys[keys.length >> 1], last = keys[keys.length - 1];
+  console.log(name, JSON.stringify([table[first], table[middle], table[last], table["not there"], table["toString"] === Object.prototype.toString, "constructor" in table, Object.hasOwn(table, "constructor"), Object.hasOwn(table, middle)]));
+  table[middle] = "stored";
+  table["added later"] = 1;
+  table[12] = "index";
+  delete table[first];
+  Object.defineProperty(table, last, { value: "hidden", enumerable: false, writable: false, configurable: true });
+  Object.defineProperty(table, "computed", { get() { return keys.length; }, enumerable: true, configurable: true });
+  console.log(name, describe(table), table[middle], table[last], table.computed, JSON.stringify(Object.getOwnPropertyDescriptor(table, last)), Object.keys(table).slice(0, 2).join(), Object.keys(table).slice(-2).join());
+}
+
+// Lists that a table holds are lists of their own: a store into one shows in no other, and the numbers of one are not the numbers of the next evaluation.
+const listKeys = Object.keys(numberLists).filter(key => Array.isArray(numberLists[key]));
+numberLists[listKeys[1]].push(-1);
+numberLists[listKeys[2]][0] = -2;
+lists[Object.keys(lists).filter(key => Array.isArray(lists[key]))[3]].push("pushed");
+console.log(JSON.stringify(listKeys.slice(0, 4).map(key => numberLists[key])), JSON.stringify(Object.values(lists).filter(Array.isArray).slice(0, 5)));
+
+const heir = Object.create(many);
+heir.own = 1;
+const inherited = Object.keys(many)[3];
+console.log(heir[inherited], inherited in heir, Object.keys(heir).join(), (() => { let count = 0; for (const _ in heir) count++; return count; })());
+many[inherited] = "changed above";
+console.log(heir[inherited]);
+
+Object.freeze(aboveTheLimit);
+Object.seal(atTheLimit);
+function tryTo(change: () => void): string { "use strict"; try { change(); return "done"; } catch (error) { return (error as Error).constructor.name; } }
+console.log(tryTo(() => { aboveTheLimit.more = "x"; }), tryTo(() => { aboveTheLimit[Object.keys(aboveTheLimit)[2]] = "x"; }), tryTo(() => { atTheLimit.more = "x"; }), tryTo(() => { atTheLimit[Object.keys(atTheLimit)[2]] = "x"; }), Object.isFrozen(aboveTheLimit), Object.isSealed(atTheLimit));
+console.log(JSON.stringify({ ...few }), JSON.stringify(Object.entries(sameFew)), JSON.stringify(Object.assign({}, few, sameFew)).length, structuredClone(many)[Object.keys(many)[5]]);
+//// dictionary-typed-constant-literals.ts
+// Constant object literals whose declared type is a dictionary, made once at module level and again and again in functions: key order, odd keys, attributes, identity, and what later changes do.
+const out: string[] = [];
+function say(what: string, ...parts: unknown[]): void { out.push(what + ": " + parts.join(" ")); }
+function show(o: object): string { return Object.keys(o).join(",") + " | " + JSON.stringify(o); }
+
+const small: Readonly<Record<string, string>> = { "content-type": "text", accept: "all" };
+say("small", show(small), small["content-type"], small.accept, small.missing, "accept" in small, Object.hasOwn(small, "toString"));
+
+const large: Record<string, string> = {
+    "key 0": "value 0",
+    "key 1": "value 1",
+    "key 2": "value 2",
+    "key 3": "value 3",
+    "key 4": "value 4",
+    "key 5": "value 5",
+    "key 6": "value 6",
+    "key 7": "value 7",
+    "key 8": "value 8",
+    "key 9": "value 9",
+    "key 10": "value 10",
+    "key 11": "value 11",
+    "key 12": "value 12",
+    "key 13": "value 13",
+    "key 14": "value 14",
+    "key 15": "value 15",
+    "key 16": "value 16",
+    "key 17": "value 17",
+    "key 18": "value 18",
+    "key 19": "value 19",
+    "key 20": "value 20",
+    "key 21": "value 21",
+    "key 22": "value 22",
+    "key 23": "value 23",
+    "key 24": "value 24",
+    "key 25": "value 25",
+    "key 26": "value 26",
+    "key 27": "value 27",
+    "key 28": "value 28",
+    "key 29": "value 29",
+    "key 30": "value 30",
+    "key 31": "value 31",
+    "key 32": "value 32",
+    "key 33": "value 33",
+    "key 34": "value 34",
+    "key 35": "value 35",
+    "key 36": "value 36",
+    "key 37": "value 37",
+    "key 38": "value 38",
+    "key 39": "value 39",
+    "key 40": "value 40",
+    "key 41": "value 41",
+    "key 42": "value 42",
+    "key 43": "value 43",
+    "key 44": "value 44",
+    "key 45": "value 45",
+    "key 46": "value 46",
+    "key 47": "value 47",
+    "key 48": "value 48",
+    "key 49": "value 49",
+    "key 50": "value 50",
+    "key 51": "value 51",
+    "key 52": "value 52",
+    "key 53": "value 53",
+    "key 54": "value 54",
+    "key 55": "value 55",
+    "key 56": "value 56",
+    "key 57": "value 57",
+    "key 58": "value 58",
+    "key 59": "value 59",
+    "key 60": "value 60",
+    "key 61": "value 61",
+    "key 62": "value 62",
+    "key 63": "value 63",
+    "key 64": "value 64",
+    "key 65": "value 65",
+    "key 66": "value 66",
+    "key 67": "value 67",
+    "key 68": "value 68",
+    "key 69": "value 69",
+    "key 70": "value 70",
+    "key 71": "value 71",
+    "key 72": "value 72",
+    "key 73": "value 73",
+    "key 74": "value 74",
+    "key 75": "value 75",
+    "key 76": "value 76",
+    "key 77": "value 77",
+    "key 78": "value 78",
+    "key 79": "value 79",
+    "key 80": "value 80",
+    "key 81": "value 81",
+    "key 82": "value 82",
+    "key 83": "value 83",
+    "key 84": "value 84",
+    "key 85": "value 85",
+    "key 86": "value 86",
+    "key 87": "value 87",
+    "key 88": "value 88",
+    "key 89": "value 89",
+    "key 90": "value 90",
+    "key 91": "value 91",
+    "key 92": "value 92",
+    "key 93": "value 93",
+    "key 94": "value 94",
+    "key 95": "value 95",
+    "key 96": "value 96",
+    "key 97": "value 97",
+    "key 98": "value 98",
+    "key 99": "value 99",
+    "key 100": "value 100",
+    "key 101": "value 101",
+    "key 102": "value 102",
+    "key 103": "value 103",
+    "key 104": "value 104",
+    "key 105": "value 105",
+    "key 106": "value 106",
+    "key 107": "value 107",
+    "key 108": "value 108",
+    "key 109": "value 109",
+    "key 110": "value 110",
+    "key 111": "value 111",
+    "key 112": "value 112",
+    "key 113": "value 113",
+    "key 114": "value 114",
+    "key 115": "value 115",
+    "key 116": "value 116",
+    "key 117": "value 117",
+    "key 118": "value 118",
+    "key 119": "value 119",
+    "key 120": "value 120",
+    "key 121": "value 121",
+    "key 122": "value 122",
+    "key 123": "value 123",
+    "key 124": "value 124",
+    "key 125": "value 125",
+    "key 126": "value 126",
+    "key 127": "value 127",
+    "key 128": "value 128",
+    "key 129": "value 129",
+    "key 130": "value 130",
+    "key 131": "value 131",
+    "key 132": "value 132",
+    "key 133": "value 133",
+    "key 134": "value 134",
+    "key 135": "value 135",
+    "key 136": "value 136",
+    "key 137": "value 137",
+    "key 138": "value 138",
+    "key 139": "value 139",
+    "key 140": "value 140",
+    "key 141": "value 141",
+    "key 142": "value 142",
+    "key 143": "value 143",
+    "key 144": "value 144",
+    "key 145": "value 145",
+    "key 146": "value 146",
+    "key 147": "value 147",
+    "key 148": "value 148",
+    "key 149": "value 149",
+};
+say("large", Object.keys(large).length, Object.keys(large)[0], Object.keys(large)[149], large["key 77"], large["key " + (100 + 49)], large["key 150"]);
+{
+    let text = 0;
+    for (const key in large) text += large[key]!.length;
+    say("large, for in", text, Object.values(large)[75], Object.entries(large)[149]!.join("="));
+}
+
+const statuses: Record<number, string> = { 404: "Not Found", 200: "OK", 500: "Server Error", 301: "Moved", 100: "Continue", 204: "No Content", 302: "Found", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 409: "Conflict", 410: "Gone", 418: "Teapot", 429: "Too Many", 502: "Bad Gateway", 503: "Unavailable", 504: "Timeout", 4294967294: "last index", 4294967295: "no index" };
+say("array indexes come first, in their own order", show(statuses), statuses[404], statuses[Number("200")], statuses[4294967295]);
+
+const mixed: Record<string, unknown> = { b: 1, 2: "two", a: null, "-1": -1, 1: "one", "1.5": 1.5, "01": "not an index", "": "empty", "a b": undefined, length: 3, constructor: "own", toString: "own too", valueOf: 0, then: false, toJSON: 7n === 7n, hasOwnProperty: -0, name: NaN, prototype: [1, [2, { deep: { deeper: "x" } }]] };
+say("odd keys", Object.keys(mixed).join("|"), mixed[""], mixed["a b"], "a b" in mixed, mixed.constructor, mixed.toString, Object.is(mixed.hasOwnProperty, -0), Object.is(mixed.name, NaN), JSON.stringify(mixed.prototype));
+
+const keyA: string = "a", keyB: string = "b";
+const repeated: Record<string, number> = { a: 1, b: 2, [keyA]: 3, c: 4, [keyB]: 5, d: 6, e: 7, f: 8, g: 9, h: 10, i: 11, j: 12, k: 13, l: 14, m: 15, n: 16, o: 17, p: 18, [keyA]: 19 };
+say("a repeated key keeps its first place and its last value", show(repeated));
+
+const ownProto: Record<string, unknown> = { a: 1, ["__proto__"]: 2, b: 3, c: 4, d: 5, e: 6, f: 7, g: 8, h: 9, i: 10, j: 11, k: 12, l: 13, m: 14, n: 15, o: 16, p: 17 };
+say("a computed __proto__ is an own property", Object.keys(ownProto).join(","), Object.getPrototypeOf(ownProto) === Object.prototype, Object.getOwnPropertyDescriptor(ownProto, "__proto__")!.value);
+const nullProto = { __proto__: null, a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10, k: 11, l: 12, m: 13, n: 14, o: 15, p: 16, q: 17 } as unknown as Record<string, number>;
+say("a written __proto__ sets the prototype", Object.keys(nullProto).length, Object.getPrototypeOf(nullProto), "toString" in nullProto);
+
+type Named = { name: string; size: number; [extra: string]: unknown };
+const fieldsFirst: Named = { name: "fig", size: 3, x1: 1, x2: 2, x3: 3, x4: 4, x5: 5, x6: 6, x7: 7, x8: 8, x9: 9, x10: 10, x11: 11, x12: 12, x13: 13, x14: 14, x15: 15 };
+const fieldsLast: Named = { x1: 1, x2: 2, x3: 3, x4: 4, x5: 5, x6: 6, x7: 7, x8: 8, x9: 9, x10: 10, x11: 11, x12: 12, x13: 13, x14: 14, x15: 15, name: "plum", size: 4 };
+const fieldsBetween: Named = { x1: 1, name: "pear", 7: "seven", x2: 2, size: 5, x3: 3, x4: 4, x5: 5, x6: 6, x7: 7, x8: 8, x9: 9, x10: 10, x11: 11, x12: 12, x13: 13, x14: 14, x15: 15 };
+say("declared members and others", show(fieldsFirst), show(fieldsLast), show(fieldsBetween), fieldsFirst.name, fieldsLast.size, fieldsBetween.x15);
+
+const config: { flags: Record<string, "on" | "off">; nested: Record<string, Record<string, number[]>> }[] = [
+    { flags: { "-a": "on", "-b": "off", "--long": "on" }, nested: { first: { x: [1, 2], y: [] }, second: {} } },
+    { flags: {}, nested: { third: { z: [3] } } },
+];
+say("dictionaries inside records inside arrays", JSON.stringify(config), Object.keys(config[0]!.flags).join(","), config[1]!.nested.third!.z![0]);
+
+function headers(): Record<string, string> { return { "content-type": "json", "x-one": "1", "x-two": "2" }; }
+function table(): Record<string, number> { return { a0: 0, a1: 1, a2: 2, a3: 3, a4: 4, a5: 5, a6: 6, a7: 7, a8: 8, a9: 9, a10: 10, a11: 11, a12: 12, a13: 13, a14: 14, a15: 15, a16: 16, a17: 17, a18: 18, a19: 19 }; }
+{
+    const first = table(), second = table();
+    first.a3 = 33; delete first.a0; first.added = 1; first[5] = 5;
+    say("each evaluation makes its own object", first !== second, show(first), show(second), show(table()));
+    let sum = 0;
+    for (let i = 0; i < 3000; i++) { const t = table(), h = headers(); t["a" + (i % 20)]! += i; h["x-" + i] = "n"; sum += t.a7! + t.a19! + Object.keys(h).length + Object.keys(t).length; }
+    say("made again and again", sum);
+}
+
+{
+    const d = Object.getOwnPropertyDescriptor(large, "key 3")!;
+    say("attributes", d.writable, d.enumerable, d.configurable, Object.isExtensible(large), Object.isFrozen(large), Object.getPrototypeOf(large) === Object.prototype);
+    large["key 3"] = "changed"; delete large["key 0"]; large["key 0"] = "back"; large.more = "more";
+    const keys = Object.keys(large);
+    say("changes", keys.length, keys[0], keys[148], keys[149], keys[150], large["key 3"]);
+    Object.freeze(large);
+    let thrown = "";
+    try { large["key 4"] = "no"; } catch (e) { thrown = (e as Error).constructor.name; }
+    say("frozen", thrown, large["key 4"], Object.isFrozen(large));
+    say("copies", Object.keys({ ...large }).length, Object.keys(Object.assign({}, statuses, small)).join(","), typeof structuredClone !== "function" || structuredClone(mixed.prototype) !== mixed.prototype);
+}
+console.log(out.join("\n"));
+//// frozen-and-sealed-arrays-of-constants.ts
+"use strict";
+function numbers(): number[] { return [1, 2, 3]; }
+function fractions(): number[] { return [0.5, 1.5]; }
+function long(): number[] { return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]; }
+function frozenAtOnce(): readonly number[] { return Object.freeze([4, 5, 6]); }
+const attempt = (f: () => unknown) => { try { return JSON.stringify(f()) ?? "undefined"; } catch (e) { return (e as Error).constructor.name; } };
+for (const make of [numbers, fractions, long]) {
+  for (const [how, lock] of [["freeze", Object.freeze], ["seal", Object.seal], ["preventExtensions", Object.preventExtensions]] as [string, (a: number[]) => number[]][]) {
+    const a = lock(make());
+    console.log(make.name, how, Object.isFrozen(a), Object.isSealed(a), Object.isExtensible(a), attempt(() => { a[0] = 9; return a; }), attempt(() => a.push(1)), attempt(() => a.pop()), attempt(() => { a.length = 0; return a; }), attempt(() => delete (a as any)[0]), attempt(() => a.sort((x, y) => y - x)), attempt(() => a.reverse()), attempt(() => a.fill(0)), a.join(), make().join(), Object.isFrozen(make()));
+    const b = a.slice(); b[0] = 42; b.push(1); console.log(make.name, how, b.join(), a.join(), Object.isFrozen(b), JSON.stringify(Object.getOwnPropertyDescriptor(a, 0)));
+  }
+}
+const f = frozenAtOnce(), g = frozenAtOnce();
+console.log(f !== g, Object.isFrozen(f), attempt(() => { (f as number[])[0] = 1; }), f.join(), g.join(), [...f].join(), f.slice().concat(g).join());
+//// json-nested-past-the-limit/deep.json
+[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]
+//// json-nested-past-the-limit/main.js
+// JSON nested one level deeper than code may be nested is a build error, not an internal compiler error.
+import deep from "./deep.json";
+let depth = 0;
+for (let at = deep; Array.isArray(at); at = at[0]) depth++;
+console.log(depth);
+//// json-nested-to-the-limit/deep.json
+[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]
+//// json-nested-to-the-limit/main.js
+// JSON nested as deep as code may be nested is compiled.
+import deep from "./deep.json";
+let depth = 0;
+for (let at = deep; Array.isArray(at); at = at[0]) depth++;
+console.log(depth);
+//// keys-named-nowhere-else.ts
+// Keys and values of constant Sets and Maps whose text is also the name of a variable, a field or a regular expression and stands nowhere else as a string.
+const onlyAVariableName = 1;
+let anotherVariableName = 2;
+const pattern = /onlyAPattern/u;
+const NAMES = new Set(["onlyAVariableName", "anotherVariableName", "onlyAPattern", "u", "NAMES"]);
+const VALUES = new Map([["first", "VALUES"], ["second", "holder"], ["third", "onlyAFieldName"]]);
+const holder: { onlyAFieldName: "onlyALiteralType" | "other" } = { onlyAFieldName: Date.now() > 0 ? "other" : "onlyALiteralType" };
+const TYPES = new Set(["onlyALiteralType"]);
+anotherVariableName += onlyAVariableName;
+function ask(text: string) {
+    return NAMES.has(text) + " " + TYPES.has(text) + " " + VALUES.get(text);
+}
+console.log(ask("only" + "AVariableName".slice(0)), ask("first"), ask("third"), ask("onlyALiteralType".slice(0)), anotherVariableName, pattern.test("x"), holder.onlyAFieldName);
+console.log([...NAMES].join(), [...TYPES].join(), [...VALUES].join(";"));
+//// large-string-keyed-tables.ts
+interface Box {
+  value: number;
+}
+
+////= checksum
+
+function createKey(index: number): string {
+  return "large-key-" + index.toString(36);
+}
+
+function createBoxMap(count: number): Map<string, Box> {
+  const map = new Map<string, Box>();
+  for (let index = 0; index < count; index++) map.set(createKey(index), { value: index });
+  return map;
+}
+
+function createNumberMap(count: number): Map<string, number> {
+  const map = new Map<string, number>();
+  for (let index = 0; index < count; index++) map.set(createKey(index), index + 0.5);
+  return map;
+}
+
+function createSet(count: number): Set<string> {
+  const set = new Set<string>();
+  for (let index = 0; index < count; index++) set.add(createKey(index));
+  return set;
+}
+
+function readBoxMap(map: Map<string, Box>, count: number): number {
+  let sum = 0;
+  for (let index = 0; index < count; index += 13) sum += map.get(createKey(index))?.value ?? -1;
+  return sum;
+}
+
+function exercise(count: number): void {
+  const boxes = createBoxMap(count);
+  const numbers = createNumberMap(count);
+  const keys = createSet(count);
+  Bun.gc(true);
+  console.log("after collection", count, boxes.size, numbers.size, keys.size);
+  console.log("lookups", count, readBoxMap(boxes, count), numbers.get(createKey(count - 1)), keys.has(createKey(count >> 1)));
+  console.log("absent", count, boxes.has(createKey(count)), numbers.get("absent"), keys.has("absent"));
+
+  const spread = [...keys];
+  const entries = [...boxes].map(([key, box]) => key + "=" + box.value);
+  console.log("spread", count, spread.length, spread[0], spread[count - 1], checksum(spread), checksum(entries));
+
+  for (let index = 0; index < count; index += 2) {
+    boxes.delete(createKey(index));
+    keys.delete(createKey(index));
+  }
+  Bun.gc(true);
+  for (let index = count; index < count + 100; index++) {
+    boxes.set(createKey(index), { value: index });
+    keys.add(createKey(index));
+  }
+  Bun.gc(true);
+  console.log("changed", count, boxes.size, keys.size, readBoxMap(boxes, count + 100), checksum([...keys]));
+
+  let visited = 0;
+  for (const [key, box] of boxes) {
+    if (key !== createKey(box.value)) console.log("wrong entry", key, box.value);
+    if (visited === 10) {
+      boxes.set(createKey(count + 200), { value: count + 200 });
+      Bun.gc(true);
+    }
+    visited++;
+  }
+  console.log("iterated", count, visited, boxes.get(createKey(count + 200))?.value);
+
+  boxes.clear();
+  numbers.clear();
+  keys.clear();
+  Bun.gc(true);
+  console.log("cleared", count, boxes.size, numbers.size, keys.size, boxes.has(createKey(1)));
+}
+
+exercise(100);
+exercise(20000);
+//// literals-that-go-on-behind-constants.ts
+// `[1, 2, ...rest]`: the constants in front are no whole literal: what follows is appended to the same array.
+function spreadBehind(rest: number[]): number[] { return [1, 2, ...rest]; }
+function spreadBetween(rest: number[]): number[] { return [1, 2, ...rest, 3, 4]; }
+function spreadOfStrings(rest: string[]): string[] { return ["a", "b", ...rest, "c"]; }
+function spreadOfIterable(rest: Iterable<number>): number[] { return [0.5, 1.5, ...rest]; }
+function twoSpreads(a: number[], b: number[]): number[] { return [7, ...a, 8, ...b]; }
+function spreadOfConstants(): number[] { return [1, 2, ...[3, 4], ...[5, 6]]; }
+function holeBehind(rest: number[]): (number | undefined)[] { return [1, 2, ...rest, , 5]; }
+function* numbers(n: number) { for (let i = 0; i < n; i++) yield i * 10; }
+const show = (a: unknown[]) => JSON.stringify(a) + a.length;
+for (let round = 0; round < 3; round++) {
+  console.log(show(spreadBehind([])), show(spreadBehind([9])), show(spreadBehind([9, 8, 7, 6, 5, 4, 3, 2, 1])), show(spreadBetween([round])), show(spreadOfStrings(["x", "y"])), show(spreadOfIterable(numbers(round + 1))), show(spreadOfIterable(new Set([1, 2]))));
+  console.log(show(twoSpreads([1], [2, 3])), show(spreadOfConstants()), show(holeBehind([round])), 3 in holeBehind([round]), spreadBehind([]) !== spreadBehind([]));
+}
+let sum = 0; for (let i = 0; i < 20000; i++) { const a = spreadBehind([i]), b = spreadOfStrings([String(i & 3)]); sum += a[2] + a.length + b[2].length + spreadOfConstants()[5]; } console.log(sum);
+//// map-set-stores-and-weak-tables.ts
+// Map.prototype.set and Set.prototype.add on present and absent keys, lookups in weak tables, new Map() in a loop.
+const out: string[] = [];
+function show(value: unknown): string {
+    if (typeof value === "string") return JSON.stringify(value);
+    if (Object.is(value, -0)) return "-0";
+    if (Array.isArray(value)) return "array of " + value.length;
+    if (typeof value === "object" && value !== null) return "object";
+    return String(value);
+}
+function say(...parts: unknown[]) {
+    out.push(parts.map(show).join(" "));
+}
+
+function hugeArray(): number[] {
+    const values: number[] = [];
+    for (let i = 0; i < 100000; i++) values.push(i);
+    return values;
+}
+const REPLACEMENTS: unknown[] = [null, true, "text", 1.5, hugeArray(), false, undefined, 7, -0, NaN];
+
+function replaceTyped(name: string, map: Map<string, unknown>, key: string) {
+    for (const value of REPLACEMENTS) {
+        const returned = map.set(key, value);
+        say(name, returned === map, show(map.get(key)), map.has(key), map.size);
+    }
+}
+function replaceUntyped(name: string, map: any, key: any) {
+    for (const value of REPLACEMENTS) {
+        const returned = map.set(key, value);
+        say(name, returned === map, show(map.get(key)), map.has(key), map.size);
+    }
+}
+function smallStringMap(): Map<string, unknown> {
+    const map = new Map<string, unknown>();
+    map.set("key", null);
+    map.set("other", false);
+    return map;
+}
+function storesOfStringKeys() {
+    replaceTyped("typed", smallStringMap(), "key");
+    replaceUntyped("untyped", smallStringMap(), "key");
+    replaceTyped("built key", smallStringMap(), ["k", "e", "y"].join(""));
+    const constants = new Map<string, unknown>([["key", 1], ["other", 2], ["third", 3]]);
+    replaceTyped("constant table", constants, "key");
+    say("neighbors", show(constants.get("other")), show(constants.get("third")));
+    const many = smallStringMap();
+    for (let i = 0; i < 300; i++) many.set("key" + i, i);
+    replaceTyped("many keys", many, "key200");
+    say("order", [...many.keys()].slice(0, 4).join(","), many.size);
+}
+
+function storesOfOtherKeys() {
+    const object = { name: "object" };
+    const symbol = Symbol("symbol");
+    const numbers = new Map<number, unknown>([[1, "one"], [2.5, "two and a half"]]);
+    for (const value of REPLACEMENTS) {
+        numbers.set(1, value);
+        numbers.set(2.5, value);
+        say("number keys", show(numbers.get(1)), show(numbers.get(2.5)), numbers.size);
+    }
+    const objects = new Map<object, unknown>([[object, 0]]);
+    const symbols = new Map<symbol, unknown>([[symbol, 0]]);
+    const anything: Map<unknown, unknown> = new Map<unknown, unknown>([[object, 0], [symbol, 0], ["text", 0], [1, 0]]);
+    for (const value of REPLACEMENTS) {
+        objects.set(object, value);
+        symbols.set(symbol, value);
+        anything.set(object, value).set(symbol, value).set("text", value).set(1, value);
+        say("other keys", show(objects.get(object)), show(symbols.get(symbol)), show(anything.get("text")), anything.size);
+    }
+}
+
+function returnedReceivers() {
+    const a = { name: "a" };
+    const b = { name: "b" };
+    const map = new Map<object, number>();
+    say("chained set", map.set(a, 1).set(b, 2) === map, map.get(a), map.get(b), map.size);
+    const strings = new Map<string, number>();
+    say("chained string set", strings.set("a", 1).set("b", 2).set("a", 3) === strings, strings.get("a"), strings.size);
+    const set = new Set<string>();
+    say("add absent", set.add("z") === set, "add present", set.add("z") === set, set.size);
+    const anySet: any = new Set();
+    say("untyped add", anySet.add(1).add("1").add(1).add(a).add(a) === anySet, anySet.size);
+}
+
+function orderOfAdds() {
+    const strings = new Set<string>(["c", "a"]);
+    strings.add("b").add("a").add("d").add("c");
+    say("string order", [...strings].join(","));
+    const numbers = new Set<number>([3, 1]);
+    numbers.add(2).add(1).add(4).add(3).add(1.5).add(1.5);
+    say("number order", [...numbers].join(","));
+    const mixed = new Set<unknown>();
+    mixed.add("1").add(1).add(null).add(undefined).add("1").add(null).add(1n).add(1n).add(true);
+    say("mixed order", [...mixed].map(show).join(","));
+}
+
+interface Labeled {
+    label: string;
+}
+function fresh(number: number): Labeled {
+    return { label: "fresh " + number };
+}
+function makeGarbage() {
+    const garbage: Labeled[] = [];
+    for (let i = 0; i < 20000; i++) garbage.push(fresh(i));
+    return garbage.length;
+}
+function storesIntoOldMaps() {
+    const byString = new Map<string, Labeled>();
+    const byNumber = new Map<number, Labeled>();
+    const untyped: any = new Map();
+    for (let i = 0; i < 64; i++) {
+        byString.set("key" + i, fresh(i));
+        byNumber.set(i, fresh(i));
+        untyped.set("key" + i, fresh(i));
+    }
+    Bun.gc(true);
+    Bun.gc(true);
+    for (let round = 0; round < 3; round++) {
+        byString.set("key7", fresh(1000 + round));
+        byNumber.set(7, fresh(2000 + round));
+        untyped.set("key7", fresh(3000 + round));
+        makeGarbage();
+        Bun.gc(true);
+        say("old maps", byString.get("key7")!.label, byNumber.get(7)!.label, untyped.get("key7").label);
+    }
+}
+
+function weakGet(table: WeakMap<any, number>, key: any) {
+    return table.get(key);
+}
+function weakHas(table: WeakMap<any, number>, key: any) {
+    return table.has(key);
+}
+function weakSetHas(table: WeakSet<any>, key: any) {
+    return table.has(key);
+}
+function fillWeakTables(map: WeakMap<object, number>, set: WeakSet<object>, retained: object[]) {
+    for (let i = 0; i < 1000; i++) {
+        const key = { number: i };
+        map.set(key, i);
+        set.add(key);
+        if (i % 2) retained.push(key);
+    }
+}
+function weakTables() {
+    const map = new WeakMap<object, number>();
+    const set = new WeakSet<object>();
+    const keys: object[] = [];
+    for (let i = 0; i < 1000; i++) {
+        const key = { number: i };
+        keys.push(key);
+        map.set(key, i * 2);
+        set.add(key);
+    }
+    const count = () => {
+        let sum = 0;
+        let inMap = 0;
+        let inSet = 0;
+        for (const key of keys) {
+            sum += weakGet(map, key) ?? 0;
+            if (weakHas(map, key)) inMap++;
+            if (weakSetHas(set, key)) inSet++;
+        }
+        return [sum, inMap, inSet].join(" ");
+    };
+    say("weak tables", count());
+    for (let i = 0; i < 1000; i += 2) {
+        map.delete(keys[i]);
+        set.delete(keys[i]);
+    }
+    say("after delete", count());
+
+    const retained: object[] = [];
+    const collectedMap = new WeakMap<object, number>();
+    const collectedSet = new WeakSet<object>();
+    fillWeakTables(collectedMap, collectedSet, retained);
+    makeGarbage();
+    Bun.gc(true);
+    Bun.gc(true);
+    let sum = 0;
+    let found = 0;
+    for (const key of retained) {
+        sum += weakGet(collectedMap, key) ?? 0;
+        if (weakSetHas(collectedSet, key)) found++;
+    }
+    say("after collection", retained.length, sum, found);
+    say("never added", weakGet(collectedMap, {}), weakHas(collectedMap, {}), weakSetHas(collectedSet, {}));
+    say("not objects", weakGet(map, 1), weakHas(map, "a"), weakSetHas(set, undefined), weakGet(map, null), weakSetHas(set, 1.5), weakHas(map, true));
+}
+
+function newMapsInLoop() {
+    let sum = 0;
+    let last = new Map<number, number>();
+    for (let i = 0; i < 100000; i++) {
+        const map = new Map<number, number>();
+        map.set(i, i + 1);
+        sum += map.get(i)! + map.size;
+        last = map;
+    }
+    say("new maps", sum, last.size, last.get(99999));
+}
+
+function absentKeys() {
+    const strings = new Map<string, number>([["present", 1]]);
+    const numbers = new Map<number, number>([[1, 1]]);
+    const empty = new Map<unknown, number>();
+    const stringSet = new Set<string>(["present"]);
+    const numberSet = new Set<number>([1]);
+    const emptySet = new Set<unknown>();
+    say("absent get", strings.get("absent"), numbers.get(2), empty.get("x"), empty.get(1), empty.get({}));
+    say("absent has", strings.has("absent"), numbers.has(2), empty.has("x"), stringSet.has("absent"), numberSet.has(2), emptySet.has(null));
+    say("absent stores", strings.set("absent", 2).get("absent"), numbers.set(2, 2).get(2), empty.set("x", 3).get("x"), stringSet.add("absent").size, numberSet.add(2).size, emptySet.add(null).size);
+}
+
+function keyIdentity(map: Map<unknown, string>, set: Set<unknown>) {
+    const zero = 0;
+    map.set(-0, "zero");
+    set.add(-0);
+    say("zeros", map.get(zero), map.has(-0), set.has(zero), Object.is([...map.keys()][0], 0), map.set(0, "again").size, set.add(0).size);
+    map.set(NaN, "not a number");
+    set.add(NaN);
+    say("NaN", map.get(0 / zero), set.has(0 / zero), map.set(NaN, "again").get(NaN));
+    map.set(1, "number");
+    map.set("1", "string");
+    set.add(1);
+    say("one", map.get(1), map.get("1"), set.has("1"), set.has(1), map.size);
+    map.set(1n, "bigint");
+    map.set(10n ** 20n, "big");
+    set.add(10n ** 20n);
+    say("bigints", map.get(BigInt(1)), map.get(1), map.get(10n ** 19n * 10n), set.has(10n ** 19n * 10n), set.has(10n ** 19n), map.has(2n));
+}
+
+storesOfStringKeys();
+storesOfOtherKeys();
+returnedReceivers();
+orderOfAdds();
+storesIntoOldMaps();
+weakTables();
+newMapsInLoop();
+absentKeys();
+keyIdentity(new Map<unknown, string>(), new Set<unknown>());
+console.log(out.join("\n"));
+//// maps-and-sets-changed-while-cloned.ts
+// structuredClone and postMessage of Maps and Sets that getters change during the clone: entries, order, identity and errors are plain Bun's.
+import { MessageChannel, receiveMessageOnPort } from "node:worker_threads";
+
+type Key = string | number | bigint | boolean | object | null | undefined;
+type Copier = (value: unknown) => any;
+
+let count = 0;
+function text(value: unknown): string {
+  return Bun.inspect(value, { depth: 6, sorted: false }).replace(/\s+/g, " ");
+}
+function show(name: string, make: () => unknown) {
+  let out: string;
+  try {
+    out = text(make());
+  } catch (e) {
+    out = "THROWN " + (e as Error).name + ": " + (e as Error).message;
+  }
+  console.log(String(++count).padStart(3, "0"), name + ":", out);
+}
+function post(value: unknown): any {
+  const { port1, port2 } = new MessageChannel();
+  try {
+    port1.postMessage(value);
+    return receiveMessageOnPort(port2)?.message;
+  } finally {
+    port1.close();
+    port2.close();
+  }
+}
+const copiers: [string, Copier][] = [
+  ["structuredClone", value => structuredClone(value)],
+  ["postMessage", post],
+];
+
+function summarize(entries: unknown[]): string {
+  const parts = entries.map(text);
+  if (parts.length <= 12) return parts.join(" ");
+  return `${parts.slice(0, 6).join(" ")} .. ${parts.slice(-4).join(" ")} (${parts.length})`;
+}
+
+function runOnce(action: () => void) {
+  let hasRun = false;
+  return {
+    get ran() {
+      if (!hasRun) {
+        hasRun = true;
+        action();
+      }
+      return true;
+    },
+  };
+}
+
+const sizes = [1, 3, 8, 9, 64];
+const sharedKey = { label: "shared" };
+const otherKeys: Key[] = [1.5, NaN, -0, 10n, sharedKey, undefined, null, true, 2147483648, ""];
+
+function positions(size: number): number[] {
+  return [...new Set([0, size >> 1, size])];
+}
+
+function createMap(size: number, position: number, trigger: unknown): Map<Key, unknown> {
+  const map = new Map<Key, unknown>();
+  for (let index = 0; index <= size; index++) {
+    if (index === position) map.set("trigger", trigger);
+    if (index < size) map.set("key-" + index, index);
+  }
+  return map;
+}
+
+function createSet(size: number, position: number, trigger: object): Set<Key> {
+  const set = new Set<Key>();
+  for (let index = 0; index <= size; index++) {
+    if (index === position) set.add(trigger);
+    if (index < size) set.add("key-" + index);
+  }
+  return set;
+}
+
+const mapChanges: [string, (map: Map<Key, unknown>, size: number) => void][] = [
+  ["adds one entry", map => void map.set("late", 1)],
+  [
+    "adds 500 entries",
+    map => {
+      for (let index = 0; index < 500; index++) map.set("late-" + index, index);
+    },
+  ],
+  [
+    "adds keys of other kinds",
+    map => {
+      for (const key of otherKeys) map.set(key, typeof key);
+    },
+  ],
+  ["deletes the first entry", map => void map.delete("key-0")],
+  ["deletes the last entry", (map, size) => void map.delete("key-" + (size - 1))],
+  [
+    "deletes every other entry",
+    (map, size) => {
+      for (let index = 0; index < size; index += 2) map.delete("key-" + index);
+    },
+  ],
+  ["deletes its own entry", map => void map.delete("trigger")],
+  ["replaces the last value", (map, size) => void map.set("key-" + (size - 1), "replaced")],
+  [
+    "deletes the first entry and adds it again",
+    map => {
+      map.delete("key-0");
+      map.set("key-0", "again");
+    },
+  ],
+  ["clears", map => map.clear()],
+  [
+    "clears and adds two entries",
+    map => {
+      map.clear();
+      map.set("after", 1);
+      map.set("after-2", 2);
+    },
+  ],
+];
+
+const setChanges: [string, (set: Set<Key>, size: number, trigger: object) => void][] = [
+  ["adds one key", set => void set.add("late")],
+  [
+    "adds 500 keys",
+    set => {
+      for (let index = 0; index < 500; index++) set.add("late-" + index);
+    },
+  ],
+  [
+    "adds keys of other kinds",
+    set => {
+      for (const key of otherKeys) set.add(key);
+    },
+  ],
+  ["deletes the first key", set => void set.delete("key-0")],
+  ["deletes the last key", (set, size) => void set.delete("key-" + (size - 1))],
+  [
+    "deletes every other key",
+    (set, size) => {
+      for (let index = 0; index < size; index += 2) set.delete("key-" + index);
+    },
+  ],
+  ["deletes its own key", (set, size, trigger) => void set.delete(trigger)],
+  [
+    "deletes the first key and adds it again",
+    set => {
+      set.delete("key-0");
+      set.add("key-0");
+    },
+  ],
+  ["clears", set => set.clear()],
+  [
+    "clears and adds two keys",
+    set => {
+      set.clear();
+      set.add("after");
+      set.add("after-2");
+    },
+  ],
+];
+
+class Registry extends Map<string, number> {
+  label = "registry";
+  total() {
+    let sum = 0;
+    for (const value of this.values()) sum += value;
+    return sum;
+  }
+}
+class Tags extends Set<string> {
+  label = "tags";
+}
+
+for (const [via, copy] of copiers) {
+  for (const size of [0, ...sizes, 300]) {
+    show(`${via}, map of ${size}`, () => {
+      const clone = copy(createMap(size, -1, null));
+      return [summarize([...clone]), clone.size, clone instanceof Map];
+    });
+    show(`${via}, set of ${size}`, () => {
+      const clone = copy(createSet(size, -1, sharedKey));
+      return [summarize([...clone]), clone.size, clone instanceof Set];
+    });
+  }
+
+  for (const size of sizes) {
+    for (const position of positions(size)) {
+      for (const [change, apply] of mapChanges) {
+        show(`${via}, map of ${size}, entry ${position} ${change}`, () => {
+          const map: Map<Key, unknown> = createMap(
+            size,
+            position,
+            runOnce(() => apply(map, size)),
+          );
+          const clone = copy(map);
+          return [summarize([...clone]), clone.size, map.size];
+        });
+      }
+      for (const [change, apply] of setChanges) {
+        show(`${via}, set of ${size}, key ${position} ${change}`, () => {
+          const trigger: object = runOnce(() => apply(set, size, trigger));
+          const set: Set<Key> = createSet(size, position, trigger);
+          const clone = copy(set);
+          return [summarize([...clone]), clone.size, set.size];
+        });
+      }
+    }
+  }
+
+  show(`${via}, keys of every kind`, () => {
+    const map = new Map<Key, unknown>();
+    for (const key of otherKeys) map.set(key, typeof key);
+    const clone = copy([map, new Set(otherKeys)]);
+    return [clone, Object.is([...clone[0].keys()][2], 0), clone[0].get(NaN), clone[1].has(sharedKey)];
+  });
+  show(`${via}, nested`, () =>
+    copy(
+      new Map<Key, unknown>([
+        ["map", new Map([[1, new Set<unknown>([2, new Map([[3, 4]])])]])],
+        [new Set(["key"]), new Map()],
+        ["list", [new Set(), new Map([["a", { b: new Set([1]) }]])]],
+      ]),
+    ),
+  );
+  show(`${via}, one map three times`, () => {
+    const inner = new Map([[1, 2]]);
+    const clone = copy(
+      new Map<Key, unknown>([
+        ["a", inner],
+        ["b", inner],
+        [inner, inner],
+      ]),
+    );
+    return [clone.get("a") === clone.get("b"), [...clone.keys()][2] === clone.get("a"), clone.get("a") === inner];
+  });
+  show(`${via}, a map that holds itself`, () => {
+    const map = new Map<Key, unknown>();
+    map.set("self", map);
+    map.set(map, 1);
+    const clone = copy(map);
+    return [clone.get("self") === clone, clone.get(clone), clone === map, clone.size];
+  });
+  show(`${via}, a set that holds itself`, () => {
+    const set = new Set<Key>(["first"]);
+    set.add(set);
+    const clone = copy(set);
+    return [clone.has(clone), clone.has(set), clone.size];
+  });
+  show(`${via}, own properties`, () => {
+    const map: any = new Map([[1, 2]]);
+    map.extra = { deep: [1] };
+    const set: any = new Set([1]);
+    set.extra = "text";
+    const clones = [copy(map), copy(set)];
+    return [clones[0].extra, [...clones[0]], clones[1].extra, [...clones[1]]];
+  });
+  show(`${via}, subclasses`, () => {
+    const registry = new Registry([
+      ["a", 1],
+      ["b", 2],
+    ]);
+    const clones = [copy(registry), copy(new Tags(["x", "y"]))];
+    return [
+      registry.total(),
+      clones[0] instanceof Registry,
+      clones[0] instanceof Map,
+      clones[0].label,
+      [...clones[0]],
+      clones[1] instanceof Tags,
+      clones[1] instanceof Set,
+      clones[1].label,
+      [...clones[1]],
+    ];
+  });
+  show(`${via}, an inner map changes the outer one`, () => {
+    const outer = new Map<Key, unknown>();
+    const inner = new Map<Key, unknown>([
+      ["before", 1],
+      [
+        "trigger",
+        runOnce(() => {
+          outer.set("late", 2);
+          outer.delete("doomed");
+          for (let index = 0; index < 40; index++) outer.set(index, index);
+        }),
+      ],
+      ["after", 3],
+    ]);
+    outer.set("inner", inner);
+    outer.set("doomed", 0);
+    outer.set("kept", 1);
+    const clone = copy(outer);
+    return [summarize([...clone]), clone.size];
+  });
+  show(`${via}, an outer set changes an inner map it has passed`, () => {
+    const inner = new Map<Key, unknown>([["a", 1]]);
+    const outer = new Set<Key>([inner, runOnce(() => inner.set("late", 2)), inner]);
+    return [copy(outer), inner.size];
+  });
+  show(`${via}, the program's own iterators keep their place`, () => {
+    const map = createMap(4, -1, null);
+    const set = createSet(4, -1, sharedKey);
+    const entries = map.entries();
+    const keys = set.values();
+    entries.next();
+    keys.next();
+    copy([map, set]);
+    return [entries.next().value, keys.next().value, [...entries].length, [...keys].length];
+  });
+  show(`${via}, a function among the values`, () =>
+    copy(
+      new Map<Key, unknown>([
+        ["a", 1],
+        ["b", () => 1],
+        ["c", 3],
+      ]),
+    ),
+  );
+  show(`${via}, a symbol among the keys`, () => copy(new Set<unknown>([1, Symbol("s"), 3])));
+  show(`${via}, a getter that throws`, () => {
+    const map = createMap(
+      5,
+      2,
+      runOnce(() => {
+        throw new RangeError("stop");
+      }),
+    );
+    try {
+      copy(map);
+    } catch (e) {
+      return [(e as Error).name, (e as Error).message, [...map.keys()], summarize([...copy(map)])];
+    }
+    return "no error";
+  });
+}
+//// odd-numbers-in-arrays-of-constants.ts
+function zeros(): number[] { return [0, -0, 0]; }
+function notNumbers(): number[] { return [1.5, NaN, 2.5]; }
+function onlyNaN(): number[] { return [NaN, NaN]; }
+function endless(): number[] { return [Infinity, -Infinity, 1]; }
+function wide(): number[] { return [2147483647, 2147483648, -2147483648, -2147483649, 4294967296, 9007199254740991, -9007199254740991, 1e21, 5e-324, 1.7976931348623157e308]; }
+function whole(): number[] { return [1.0, 2.0, 3.0]; }
+function longOdd(): number[] { return [0, -0, NaN, Infinity, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 2147483648, 0.1]; }
+function anyNumbers(): any[] { return [1, 2, 3]; }
+function numbersOrText(): (number | string)[] { return [1, 2, 3]; }
+const show = (a: number[]) => a.map(v => Object.is(v, -0) ? "-0" : String(v)).join();
+for (const make of [zeros, notNumbers, onlyNaN, endless, wide, whole, longOdd, anyNumbers, numbersOrText] as (() => number[])[]) {
+  const a = make();
+  let sum = 0; for (let i = 0; i < a.length; i++) sum += a[i];
+  console.log(make.name, show(a), sum, a.includes(NaN), a.indexOf(NaN), a.indexOf(0), a.includes(-0), Math.max(...a), Math.min(...a), JSON.stringify(a), show(a.slice().sort()), show(Array.from(new Float64Array(a))), show(Array.from(new Int32Array(a))));
+  const b = make(); b[0] = 0.5; console.log(make.name, show(b), show(make()));
+}
+const t = numbersOrText(); t.push("x"); console.log(t.join(), numbersOrText().join());
+//// sets-in-workers/main.ts
+// Several threads use the same Sets of constant strings; each changes its own and none sees another's change. start.ts is the program; this file is what each Worker runs.
+import { parentPort, workerData } from "node:worker_threads";
+import { change, describe } from "./names";
+
+const before = describe("worker " + workerData + " before");
+change(workerData);
+parentPort!.postMessage([before, describe("worker " + workerData + " after")]);
+//// sets-in-workers/names.ts
+export const COLORS = new Set(["red", "green", "blue", "cyan", "magenta", "yellow", "black", "white", "orange", "purple"]);
+export const UNTOUCHED = new Set(["north", "east", "south", "west"]);
+
+export function describe(who: string): string {
+  return who + ": " + COLORS.size + " " + [...COLORS].join() + " | " + ["red", "pink", "gray", "teal", "blue"].map(name => COLORS.has(name)).join() + " | " + UNTOUCHED.has("east") + " " + UNTOUCHED.has("up") + " " + UNTOUCHED.size;
+}
+
+export function change(number: number) {
+  if (number === 0) COLORS.add("pink");
+  if (number === 1) COLORS.delete("red");
+  if (number === 2) COLORS.clear();
+  if (number === 2) COLORS.add("teal");
+}
+//// sets-in-workers/start.ts
+import { Worker } from "node:worker_threads";
+import { COLORS, describe } from "./names";
+
+console.log(describe("main"));
+const answers: string[][] = [];
+let waiting = 4;
+for (let number = 0; number < 4; number++) {
+  const worker = new Worker("./main.ts", { workerData: number });
+  worker.on("message", (message: string[]) => {
+    answers[number] = message;
+    if (--waiting) return;
+    for (const answer of answers) console.log(answer.join("\n"));
+    console.log(describe("main afterwards"));
+    COLORS.add("gray");
+    console.log(describe("main changed"));
+  });
+}
+//// sets-made-from-arrays-of-many-strings.ts
+////= say
+
+function make(list: string[]): Set<string> {
+  return new Set(list);
+}
+
+function joined(a: string, b: string): string {
+  return a + b;
+}
+
+let seed = 12345;
+function random(below: number): number {
+  seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+  return (seed >>> 8) % below;
+}
+
+function distinct(list: string[]): string[] {
+  const seen: Record<string, boolean> = Object.create(null);
+  const kept: string[] = [];
+  for (const item of list) {
+    if (seen[item]) continue;
+    seen[item] = true;
+    kept.push(item);
+  }
+  return kept;
+}
+
+function sum(text: string): number {
+  let total = 0;
+  for (let i = 0; i < text.length; i++) total = (Math.imul(total, 31) + text.charCodeAt(i)) | 0;
+  return total;
+}
+
+for (const length of [9, 10, 11, 16, 17, 63, 64, 65, 190, 191, 253, 254, 255, 256, 257, 1000, 5000]) {
+  say("of " + length, () => {
+    const list: string[] = [];
+    for (let i = 0; i < length; i++) list.push("key" + i);
+    const set = make(list);
+    return [set.size, sum([...set].join()), set.has("key0"), set.has("key" + (length - 1)), set.has("key" + length), set.has("")];
+  });
+}
+say("few names drawn many times", () => {
+  let agreed = 0;
+  let total = 0;
+  for (let round = 0; round < 400; round++) {
+    const length = 1 + random(40);
+    const names = 1 + random(30);
+    const list: string[] = [];
+    for (let i = 0; i < length; i++) list.push("n" + random(names));
+    const set = make(list);
+    if ([...set].join() === distinct(list).join()) agreed++;
+    total += set.size;
+  }
+  return [agreed, total];
+});
+say("eight of many names, so that some share the start of their hashes", () => {
+  let agreed = 0;
+  let found = 0;
+  for (let round = 0; round < 3000; round++) {
+    const list: string[] = [];
+    for (let i = 0; i < 8; i++) list.push("name" + random(100000));
+    const set = make(list);
+    if ([...set].join() === distinct(list).join()) agreed++;
+    for (const item of list) if (set.has(item)) found++;
+    if (set.has("name")) found = -1000000;
+  }
+  return [agreed, found];
+});
+say("the same text in other cells, far apart", () => {
+  const list: string[] = [];
+  for (let i = 0; i < 50; i++) list.push("k" + i);
+  for (let i = 0; i < 50; i++) list.push(joined("k", String(i)));
+  const set = make(list);
+  return [set.size, sum([...set].join())];
+});
+say("a rope among many", () => {
+  const long = "a long text that is surely kept as a rope until somebody asks for its characters";
+  const list: string[] = [];
+  for (let i = 0; i < 20; i++) list.push("k" + i);
+  list.push(joined(long, "1"), joined(long, "2"), joined(long, "1"));
+  const set = make(list);
+  return [set.size, set.has(long + "1"), set.has(long + "3"), [...set].length];
+});
+say("parts of a text", () => {
+  const words: string[] = [];
+  for (let i = 0; i < 300; i++) words.push("w" + (i % 120));
+  const set = make(words.join(" ").split(" "));
+  return [set.size, sum([...set].join()), set.has("w119"), set.has("w120")];
+});
+say("wide ones among many", () => {
+  const list: string[] = [];
+  for (let i = 0; i < 30; i++) list.push(i % 3 ? "é" + (i % 7) : "日本" + (i % 5));
+  list.push("", "", "\u{1F600}");
+  const set = make(list);
+  return [set.size, [...set], set.has("日本0"), set.has("日本")];
+});
+say("it grows afterwards", () => {
+  const list: string[] = [];
+  for (let i = 0; i < 12; i++) list.push("a" + i);
+  const set = make(list);
+  for (let i = 0; i < 600; i++) set.add("k" + (i % 300));
+  return [set.size, sum([...set].join()), set.has("k299"), set.has("k300"), set.has("a11")];
+});
+say("eight, then a ninth", () => {
+  const set = make(["a", "b", "c", "d", "e", "f", "g", "h"]);
+  set.add("i");
+  set.add("a");
+  return [set.size, [...set].join("")];
+});
+say("five that are two, then more", () => {
+  const set = make(["a", "b", "a", "b", "a"]);
+  const before = [...set].join("");
+  for (const more of ["c", "d", "e", "f"]) set.add(more);
+  return [before, set.size, [...set].join("")];
+});
+say("deleted, added again, cleared", () => {
+  const list: string[] = [];
+  for (let i = 0; i < 20; i++) list.push("a" + i);
+  const set = make(list);
+  const first = [set.delete("a7"), set.delete("a7"), set.size, sum([...set].join())];
+  set.add("a7");
+  const second = [...set].join();
+  set.clear();
+  set.add("z");
+  return [first, second, [...set]];
+});
+say("changed while it is walked", () => {
+  const list: string[] = [];
+  for (let i = 0; i < 10; i++) list.push("a" + i);
+  const set = make(list);
+  const seen: string[] = [];
+  for (const key of set) {
+    seen.push(key);
+    if (key === "a0") set.delete("a1");
+    if (key === "a9" && seen.length < 14) set.add("x" + seen.length);
+  }
+  return seen;
+});
+say("the array is not touched, and changes to it do not reach the set", () => {
+  const list: string[] = [];
+  for (let i = 0; i < 10; i++) list.push("a" + i);
+  const set = make(list);
+  list.push("c");
+  list[0] = "z";
+  return [list.join(), [...set].join()];
+});
+say("a frozen array, and one written in the program", () => {
+  const frozen = Object.freeze(["a", "b", "c", "a"]) as string[];
+  const written = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "one"];
+  return [[...make(frozen)], [...make(written)]];
+});
+say("other values among many take the other way", () => {
+  const mixed: any[] = [];
+  for (let i = 0; i < 12; i++) mixed.push("a" + i);
+  mixed.push(1, "1", null, undefined, 1, true);
+  const holes: any[] = [];
+  for (let i = 0; i < 12; i++) holes[i * 2] = "a" + i;
+  const last: any[] = ["a", "b", "c", 4];
+  return [[...make(mixed)], make(holes).size, make(holes).has(undefined as any), [...make(last)]];
+});
+say("an array with an iterator of its own", () => {
+  const own = ["a", "b", "c"];
+  (own as any)[Symbol.iterator] = function* () {
+    yield "z";
+    yield "y";
+  };
+  const many: string[] = [];
+  for (let i = 0; i < 12; i++) many.push("a" + i);
+  (many as any)[Symbol.iterator] = function* () {
+    yield "only";
+  };
+  return [[...make(own)], [...make(many)]];
+});
+say("an heir of Array with an iterator of its own", () => {
+  class Backwards extends Array<string> {
+    *[Symbol.iterator](): ArrayIterator<string> {
+      for (let i = this.length - 1; i >= 0; i--) yield this[i];
+    }
+  }
+  const list = new Backwards();
+  list.push("a", "b", "c");
+  class Plain extends Array<string> {}
+  const plain = new Plain();
+  plain.push("p", "q", "p");
+  return [[...make(list)], [...make(plain)]];
+});
+say("an array with another prototype", () => {
+  const list = ["a", "b"];
+  Object.setPrototypeOf(list, {
+    *[Symbol.iterator]() {
+      yield "from the prototype";
+    },
+  });
+  return [...make(list)];
+});
+say("many, kept", () => {
+  const kept: Set<string>[] = [];
+  let total = 0;
+  for (let i = 0; i < 20000; i++) {
+    const list: string[] = [];
+    for (let k = 0; k < 10; k++) list.push("k" + ((i + k * 7) & 15));
+    const set = make(list);
+    total += set.size;
+    if (i % 2000 === 0) kept.push(set);
+  }
+  return [total, kept.map((set) => [...set].join("|"))];
+});
+//// sets-made-from-arrays-of-strings.ts
+////= say
+
+function make(list: string[]): Set<string> {
+  return new Set(list);
+}
+
+function joined(a: string, b: string): string {
+  return a + b;
+}
+
+const letters = "abcdefghijklmnopqrstuvwxyz";
+
+for (let length = 0; length <= 12; length++) {
+  say("of " + length, () => {
+    const list: string[] = [];
+    for (let i = 0; i < length; i++) list.push(letters[i] + ":");
+    const set = make(list);
+    return [set.size, [...set], set.has("a:"), set.has(letters[length] + ":"), set.has("")];
+  });
+}
+say("the same cell twice", () => {
+  const one = "http:";
+  return [...make([one, "https:", one, "tel:", one])];
+});
+say("the same text in other cells", () => [...make([joined("ht", "tp:"), "http:", joined("h", "ttp:"), joined("te", "l:"), "tel:"])]);
+say("all the same", () => [...make(["x", "x", "x", "x", "x", "x", "x", "x"])]);
+say("ropes", () => {
+  const long = "a long text that is surely kept as a rope until somebody asks for its characters";
+  const set = make([joined(long, "1"), joined(long, "2"), joined(long, "1")]);
+  return [set.size, set.has(long + "1"), set.has(long + "3")];
+});
+say("parts of a text", () => {
+  const text = "alpha,beta,gamma,alpha,delta";
+  const set = make(text.split(","));
+  return [[...set], set.has("gamma"), set.has("alph")];
+});
+say("the empty text, and wide ones", () => {
+  const set = make(["", "é", "日本", "", "日本", "\u{1F600}"]);
+  return [set.size, [...set], set.has(""), set.has("日本"), set.has("日")];
+});
+say("it grows afterwards", () => {
+  const set = make(["a", "b", "c", "d"]);
+  for (let i = 0; i < 40; i++) set.add("k" + (i % 20));
+  return [set.size, [...set].join(), set.has("k19"), set.has("k20")];
+});
+say("deleted, added again, cleared", () => {
+  const set = make(["a", "b", "c", "d"]);
+  const first = [set.delete("b"), set.delete("b"), set.size, [...set]];
+  set.add("b");
+  const second = [...set];
+  set.clear();
+  set.add("z");
+  return [first, second, [...set]];
+});
+say("changed while it is walked", () => {
+  const set = make(["a", "b", "c"]);
+  const seen: string[] = [];
+  for (const key of set) {
+    seen.push(key);
+    if (key === "a") set.delete("b");
+    if (key === "c" && seen.length < 6) set.add("x" + seen.length);
+  }
+  return seen;
+});
+say("the array is not touched, and changes to it do not reach the set", () => {
+  const list = ["a", "b"];
+  const set = make(list);
+  list.push("c");
+  list[0] = "z";
+  return [list, [...set]];
+});
+say("other values take the other way", () => {
+  const mixed: any[] = ["a", 1, "a", 1, null, undefined, "1"];
+  const holes: any[] = ["a", , "b"];
+  return [[...new Set(mixed)], [...new Set(holes)], [...new Set<string>([])], [...new Set("aab")]];
+});
+say("many, kept", () => {
+  const kept: Set<string>[] = [];
+  let total = 0;
+  for (let i = 0; i < 20000; i++) {
+    const set = make(["k" + (i & 3), "k" + (i & 1), "http:", "k" + (i & 7)]);
+    total += set.size;
+    if (i % 1000 === 0) kept.push(set);
+  }
+  return [total, kept.map((set) => [...set].join("|"))];
+});
+//// sets-made-from-changed-arrays.js
+function make(list) {
+  return new Set(list);
+}
+
+function joined(a, b) {
+  return a + b;
+}
+
+function strings(count) {
+  const list = [];
+  for (let i = 0; i < count; i++) list.push("s" + i);
+  return list;
+}
+
+function say(name, list) {
+  const set = make(list);
+  const members = [...set].map(member => typeof member + ":" + String(member));
+  console.log(name, set.size, members.join(","), set.has("s0"), set.has(undefined), set.has(1));
+  set.add("added");
+  set.delete("s1");
+  console.log(name, "changed", set.size, [...set].length, list.length);
+}
+
+for (const count of [3, 8, 9, 12]) {
+  const trailing = strings(count);
+  trailing[count + 1] = "after-hole";
+  say("hole past end " + count, trailing);
+
+  const inner = strings(count);
+  delete inner[1];
+  say("hole inside " + count, inner);
+
+  const long = "a text long enough that joining it stays a rope until the characters are read";
+  const ropes = strings(count);
+  ropes[count - 1] = joined(long, "1");
+  ropes[0] = joined(long, "1");
+  say("rope " + count, ropes);
+
+  const numbers = strings(count);
+  numbers[count - 1] = 1;
+  numbers[0] = "1";
+  say("number " + count, numbers);
+
+  const named = strings(count);
+  named.foo = "own property";
+  say("own property " + count, named);
+
+  const otherPrototype = strings(count);
+  Object.setPrototypeOf(otherPrototype, Object.create(Array.prototype));
+  say("prototype between " + count, otherPrototype);
+
+  const iterablePrototype = strings(count);
+  Object.setPrototypeOf(iterablePrototype, {
+    *[Symbol.iterator]() {
+      yield "from prototype";
+      yield this.length;
+    },
+  });
+  say("iterator on prototype " + count, iterablePrototype);
+
+  const ownIterator = strings(count);
+  ownIterator[Symbol.iterator] = function* () {
+    yield "own iterator";
+  };
+  say("own iterator " + count, ownIterator);
+
+  class Reversed extends Array {
+    *[Symbol.iterator]() {
+      for (let i = this.length - 1; i >= 0; i--) yield this[i];
+    }
+  }
+  const reversed = new Reversed();
+  for (const text of strings(count)) reversed.push(text);
+  say("subclass with iterator " + count, reversed);
+
+  class Plain extends Array {}
+  const plain = new Plain();
+  for (const text of strings(count)) plain.push(text);
+  say("subclass " + count, plain);
+}
+
+for (const count of [1, 5, 8, 9, 12, 300]) {
+  const list = strings(count);
+  for (const text of strings(count)) list.push(text);
+  say("duplicates " + count, list);
+  console.log("list unchanged", list.length, list[0]);
+}
+console.log(make([]).size);
+//// string-keyed-tables-changed-while-iterated.ts
+type MapValue = number | string | object | null | undefined;
+type TableKey = string | number;
+
+const maxSteps = 600;
+const sizes = [3, 4, 8, 9, 64, 254];
+const sharedValue = { label: "shared" };
+
+function valueText(value: MapValue): string {
+  return value === sharedValue ? "shared" : String(value);
+}
+
+function createMap(count: number): Map<TableKey, MapValue> {
+  const map = new Map<TableKey, MapValue>();
+  for (let index = 0; index < count; index++) map.set("key-" + index, index);
+  return map;
+}
+
+function createSet(count: number): Set<TableKey> {
+  const set = new Set<TableKey>();
+  for (let index = 0; index < count; index++) set.add("key-" + index);
+  return set;
+}
+
+function summary(parts: string[]): string {
+  if (parts.length <= 16) return parts.join(" ");
+  return `${parts.slice(0, 8).join(" ")} .. ${parts.slice(-6).join(" ")} (${parts.length})`;
+}
+
+function iterateMap(name: string, count: number, body: (map: Map<TableKey, MapValue>, step: number, count: number) => void): void {
+  const map = createMap(count);
+  const seen: string[] = [];
+  for (const [key, value] of map) {
+    seen.push(key + "=" + valueText(value));
+    if (seen.length >= maxSteps) break;
+    body(map, seen.length - 1, count);
+  }
+  const after: string[] = [];
+  for (const [key, value] of map) after.push(key + "=" + valueText(value));
+  console.log("map", name, count, "saw", summary(seen));
+  console.log("map", name, count, "then", map.size, summary(after));
+}
+
+function iterateSet(name: string, count: number, body: (set: Set<TableKey>, step: number, count: number) => void): void {
+  const set = createSet(count);
+  const seen: string[] = [];
+  for (const key of set) {
+    seen.push(String(key));
+    if (seen.length >= maxSteps) break;
+    body(set, seen.length - 1, count);
+  }
+  console.log("set", name, count, "saw", summary(seen));
+  console.log("set", name, count, "then", set.size, summary([...set].map(String)));
+}
+
+function nestedMapIteration(count: number): void {
+  const map = createMap(count);
+  const seen: string[] = [];
+  for (const [outer] of map) {
+    for (const [inner] of map) {
+      seen.push(outer + "/" + inner);
+      if (seen.length === 5) map.delete("key-1");
+      if (seen.length === 7) map.set("added-inner", 1.5);
+      if (seen.length >= 40) break;
+    }
+    if (seen.length >= 40) break;
+    if (seen.length === 2 * map.size) map.set("added-outer", sharedValue);
+  }
+  console.log("nested map", count, map.size, summary(seen));
+}
+
+function nestedSetIteration(count: number): void {
+  const set = createSet(count);
+  const seen: string[] = [];
+  for (const outer of set) {
+    for (const inner of set) {
+      seen.push(outer + "/" + inner);
+      if (seen.length === 3) set.add("added-inner");
+      if (seen.length === 6) set.delete("key-0");
+      if (seen.length >= 40) break;
+    }
+    if (seen.length >= 40) break;
+  }
+  console.log("nested set", count, set.size, summary(seen));
+}
+
+function twoIteratorsOverClearedMap(count: number): void {
+  const map = createMap(count);
+  const first = map.keys();
+  const second = map.entries();
+  const seen = [first.next().value, second.next().value];
+  map.clear();
+  map.set("after-clear", 1);
+  seen.push(first.next().value, second.next().value);
+  console.log("two iterators", count, JSON.stringify(seen), first.next().done, second.next().done);
+}
+
+for (const count of sizes) {
+  iterateMap("unchanged", count, () => {});
+  iterateSet("unchanged", count, () => {});
+  iterateMap("adds", count, (map, step) => {
+    if (step < 300) map.set("added-" + step, step);
+  });
+  iterateSet("adds", count, (set, step) => {
+    if (step < 300) set.add("added-" + step);
+  });
+  iterateMap("deletes the next key", count, (map, step) => {
+    map.delete("key-" + (step + 1));
+  });
+  iterateSet("deletes the next key", count, (set, step) => {
+    set.delete("key-" + (step + 1));
+  });
+  iterateMap("deletes the current key", count, (map, step) => {
+    map.delete("key-" + step);
+  });
+  iterateSet("deletes earlier keys, then grows", count, (set, step) => {
+    if (step % 3 === 2) set.delete("key-" + (step - 2));
+    if (step < 20) set.add("grown-" + step);
+  });
+  iterateMap("deletes earlier keys, then grows", count, (map, step) => {
+    if (step % 3 === 2) map.delete("key-" + (step - 2));
+    if (step < 20) map.set("grown-" + step, step);
+  });
+  iterateMap("clears", count, (map, step) => {
+    if (step !== 1) return;
+    map.clear();
+    map.set("after-clear", 1);
+  });
+  iterateSet("clears", count, (set, step) => {
+    if (step !== 1) return;
+    set.clear();
+    set.add("after-clear");
+  });
+  iterateMap("stores a double", count, (map, step, size) => {
+    if (step === 1) map.set("key-" + (size - 1), 1.5);
+  });
+  iterateMap("stores a double, then an object", count, (map, step, size) => {
+    if (step === 0) map.set("key-" + (size - 1), 1.5);
+    if (step === 1) map.set("key-" + (size - 2), sharedValue);
+    if (step === 2) map.set("new-wide", 2.5);
+  });
+  iterateMap("deletes, then stores a double", count, (map, step, size) => {
+    if (step === 1) map.delete("key-0");
+    if (step === 1) map.set("key-" + (size - 1), 1.5);
+  });
+  iterateMap("stores a number key", count, (map, step) => {
+    if (step === 1) map.set(step, "number key");
+  });
+  iterateSet("stores a number key", count, (set, step) => {
+    if (step === 1) set.add(step);
+  });
+  nestedMapIteration(count);
+  nestedSetIteration(count);
+  twoIteratorsOverClearedMap(count);
+}

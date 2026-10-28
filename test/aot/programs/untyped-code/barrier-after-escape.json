@@ -1,0 +1,7 @@
+{
+  "env": {
+    "BUN_JSC_collectContinuously": "1",
+    "BUN_JSC_useGenerationalGC": "0",
+    "BUN_JSC_verifyGC": "1"
+  }
+}

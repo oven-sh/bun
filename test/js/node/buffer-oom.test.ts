@@ -112,6 +112,23 @@ describe.skipIf(!isDebug)("a WTF string whose allocation fails is reported as a 
       "1 MiB toString(hex)": 2 * MiB,
     });
   });
+
+  // The 8-bit copy that the converter of UTF-8 bytes makes of ASCII bytes. A
+  // node:sqlite TEXT cell is the caller that can throw for it.
+  test("an ASCII node:sqlite TEXT cell", async () => {
+    const results = await resultsUnderCap(
+      { ...bunEnv, BUN_JSC_maxSingleAllocationSize: String(4 * MiB) },
+      `
+      import { DatabaseSync } from "node:sqlite";
+      const db = new DatabaseSync(":memory:");
+      const cell = length => db.prepare("SELECT CAST(? AS TEXT) AS text").get(Buffer.alloc(length, "a")).text;
+      await run("6 MiB", () => cell(${6 * MiB}));
+      // Under the cap, so the string is created.
+      results["1 MiB"] = cell(${MiB}).length;
+      `,
+    );
+    expect(results).toEqual({ "6 MiB": outOfMemory, "1 MiB": MiB });
+  });
 });
 
 // A UTF-8 input with a non-ASCII character is transcoded into a Rust-owned
@@ -265,7 +282,8 @@ describe.skipIf(!isASAN)("UTF-8 bytes whose string cannot be allocated", () => {
 
   // decodeURIComponentSIMD copies ASCII bytes with no "%". With a "%" it makes a
   // buffer as long as the input. The child maps a file for these: the cap does
-  // not reach a mapping, so the ASCII bytes can be longer than it.
+  // not reach a mapping, so the ASCII bytes can be longer than it. For valid
+  // bytes that are not ASCII it gave "", or dropped them after a "%".
   test.concurrent("decodeURIComponentSIMD", async () => {
     using dir = tempDir("buffer-oom-decode", {});
     const file = join(String(dir), "ascii.txt");
@@ -277,17 +295,26 @@ describe.skipIf(!isASAN)("UTF-8 bytes whose string cannot be allocated", () => {
       ${utf8Inputs}
       ${illFormedInput}
       const mapped = Bun.mmap(${JSON.stringify(file)});
+      const valid = bytesOf(${5 * MiB}, ${notASCII});
       await run("ill-formed", () => decodeURIComponentSIMD(illFormed));
       await run("ill-formed, after %41", () => decodeURIComponentSIMD(join("%41", illFormed)));
+      await run("valid", () => decodeURIComponentSIMD(valid));
+      await run("valid, after %41", () => decodeURIComponentSIMD(join("%41", valid)));
       await run("ASCII", () => decodeURIComponentSIMD(mapped.subarray(0, ${10 * MiB})));
       await run("ASCII, before %41", () => decodeURIComponentSIMD(mapped));
+      // The escape is "€", so the 5 MiB before it need a 16-bit buffer of 10 MiB.
+      const cookie = "a=" + Buffer.alloc(${5 * MiB}, "a") + "%E2%82%AC";
+      await run("Bun.CookieMap, ASCII before an escape", () => new Bun.CookieMap(cookie).size);
       `,
     );
     expect(results).toEqual({
       "ill-formed": outOfMemory,
       "ill-formed, after %41": outOfMemory,
+      "valid": outOfMemory,
+      "valid, after %41": outOfMemory,
       "ASCII": outOfMemory,
       "ASCII, before %41": outOfMemory,
+      "Bun.CookieMap, ASCII before an escape": outOfMemory,
     });
   });
 
@@ -321,6 +348,38 @@ describe.skipIf(!isASAN)("UTF-8 bytes whose string cannot be allocated", () => {
       "1 MiB": MiB - 1,
     });
   });
+
+  // A caller with no error path ends the process with the out-of-memory
+  // report: here the name of a column (4.5 MiB of UTF-8), which becomes a
+  // property key.
+  test.concurrent("a caller that cannot throw reports out of memory", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { DatabaseSync } from "node:sqlite";
+        const name = Buffer.alloc(${4.5 * MiB}, "\u20ac").toString();
+        console.log(Object.keys(new DatabaseSync(":memory:").prepare('SELECT 1 AS "' + name + '"').get()).length);
+        `,
+        "--debug-crash-handler-use-trace-string",
+      ],
+      // The crash is deliberate, so it must not be uploaded as a crash report.
+      env: { ...env, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const outOfMemory = stderr.includes("Bun has run out of memory");
+    expect({
+      stdout,
+      outOfMemory,
+      // Only populated when the assertion is about to fail, so the diff shows why.
+      stderr: outOfMemory ? "" : stderr,
+      signalCode: proc.signalCode,
+    }).toEqual({ stdout: "", outOfMemory: true, stderr: "", signalCode: "SIGABRT" });
+    expect(exitCode).not.toBe(0);
+  });
 });
 
 // A release build has neither cap, but an address-space limit makes its
@@ -353,11 +412,6 @@ test.concurrent.skipIf(isASAN || !isGlibc)(
       import { decodeURIComponentSIMD } from "bun:internal-for-testing";
       ${utf8Inputs}
       const input = new Uint8Array(partOfFree(0.6));
-      // Takes what is left in blocks of that size, until none fits.
-      const hold = [];
-      try {
-        for (;;) hold.push(new Uint8Array(input.length));
-      } catch {}
 
       // NUL bytes are ASCII, so the string is as long as the input.
       await run("decodeURIComponentSIMD, ASCII", () => decodeURIComponentSIMD(input));
@@ -384,10 +438,12 @@ test.concurrent.skipIf(isASAN || !isGlibc)(
   },
 );
 
-// The ASAN cap cannot fail a copy that is as long as its source. These copies
-// are: the text of a SQLite cell, of which SQLite keeps a copy too, and the
-// name and the value of a cookie with no "%", which stay 8-bit. Each child
-// keeps its input alive, so the copy cannot fit.
+// The ASAN cap cannot fail a copy that is as long as its source: the name and
+// the value of a cookie with no "%", which stay 8-bit. Each cookie child keeps
+// its input alive, so the copy cannot fit. The SQLite child reads a cell that
+// is not ASCII with the allocator of a release build. The text takes a quarter
+// of the address space that is left and SQLite copies it, so the converter's
+// buffer of twice its size cannot fit.
 test.concurrent.skipIf(isASAN || !isGlibc)("node:sqlite and Bun.CookieMap under an address-space limit", async () => {
   const cookie = (write: string) => `
     const bytes = Buffer.alloc(partOfFree(0.4), "x");
@@ -398,12 +454,10 @@ test.concurrent.skipIf(isASAN || !isGlibc)("node:sqlite and Bun.CookieMap under 
   const results = await Promise.all([
     underAddressSpaceLimit(`
       import { DatabaseSync } from "node:sqlite";
-      const text = new Uint8Array(partOfFree(0.22)).fill(0x61);
+      const text = new Uint8Array(partOfFree(0.25)).fill(0x61);
       text.set(${notASCII});
       const db = new DatabaseSync(":memory:");
-      db.exec("CREATE TABLE t(x TEXT)");
-      db.prepare("INSERT INTO t VALUES (CAST(? AS TEXT))").run(text);
-      await run("node:sqlite TEXT", () => db.prepare("SELECT x FROM t").get().x + text.length);
+      await run("node:sqlite TEXT", () => db.prepare("SELECT CAST(? AS TEXT) AS text").get(text).text + text.length);
     `),
     // A value, in a header with no "%".
     underAddressSpaceLimit(cookie(`bytes.write("a=")`)),

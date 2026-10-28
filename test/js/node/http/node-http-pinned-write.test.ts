@@ -499,6 +499,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     let detachedWhilePending: boolean | undefined;
     let detachedAfterSecondWrite: boolean | undefined;
     const total = CHUNK_SIZE + 1024;
+    const serverReady = Promise.withResolvers<void>();
 
     await using server = http.createServer((req, res) => {
       const first = makeArrayBufferBackedPayload(CHUNK_SIZE);
@@ -517,12 +518,27 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
       if (!detachedWhilePending) first.buffer.transfer();
       detachedAfterSecondWrite = first.buffer.detached;
       res.end();
+      serverReady.resolve();
     });
     await once(server.listen(0), "listening");
     const port = (server.address() as AddressInfo).port;
 
-    const body = await fetch(`http://localhost:${port}/`).then(r => r.arrayBuffer());
-    expect(body.byteLength).toBe(total);
+    // A paused net.Socket reads nothing while the handler runs, so the first
+    // write leaves a tail on every run. fetch() reads on another thread.
+    const socket = net.connect(port, "127.0.0.1");
+    await once(socket, "connect");
+    socket.pause();
+    socket.write(`GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    await serverReady.promise;
+    const chunks: Buffer[] = [];
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+    const closed = once(socket, "close");
+    socket.resume();
+    await closed;
+    const received = Buffer.concat(chunks);
+
+    const body = received.subarray(received.indexOf("\r\n\r\n") + 4);
+    expect(body.length).toBe(total);
     expect({ detachedWhilePending, detachedAfterSecondWrite }).toEqual({
       detachedWhilePending: false,
       detachedAfterSecondWrite: true,

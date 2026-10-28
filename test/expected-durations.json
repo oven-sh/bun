@@ -10588,12 +10588,19 @@
     "windows": 585,
     "windows-aarch64": 747
   },
+  "cli/lint/js-plugin-api.test.ts": {
+    "default": 2422,
+    "asan": 152209,
+    "musl": 2661,
+    "windows": 3498,
+    "windows-aarch64": 4012
+  },
   "cli/lint/js-plugins.test.ts": {
-    "default": 4325,
-    "asan": 271801,
-    "musl": 4752,
-    "windows": 6247,
-    "windows-aarch64": 7165
+    "default": 1903,
+    "asan": 119592,
+    "musl": 2091,
+    "windows": 2749,
+    "windows-aarch64": 3153
   },
   "cli/lint/react-compiler.test.ts": {
     "default": 496,

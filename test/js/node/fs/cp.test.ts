@@ -290,10 +290,8 @@ for (const [name, copy] of impls) {
             readOnlyDest: { result: "copied", dest: contentOf(at(size)), mode: sourceMode },
             // node unlinks before it opens the source, so there the destination is gone.
             unreadableSource: { result: "EACCES", dest: "original" },
-            readOnlyDirectory: {
-              result: { code: "EACCES", syscall: "unlink", path: join("locked", size) },
-              dest: "original",
-            },
+            // node fails with EACCES from unlink. Here a file that cannot be unlinked is written in place.
+            readOnlyDirectory: { result: "copied", dest: contentOf(at(size)) },
           });
           expect(JSON.parse(stdout)).toEqual({ small: expected("small"), large: expected("large") });
           expect(exitCode).toBe(0);

@@ -8642,22 +8642,24 @@ impl NodeFS {
 
             // 64 KB is about the break-even point for clonefile() to be worth it
             // at least, on an M1 with an NVME SSD.
+            let mut removals: u8 = match existing {
+                args::CpExisting::InPlace => 0,
+                args::CpExisting::Replace { .. } => 2,
+            };
             if stat_.st_size > 128 * 1024 {
-                let mut removals: u8 = match existing {
+                match existing {
                     args::CpExisting::InPlace => {
                         if !mode.shouldnt_overwrite() {
                             // clonefile() will fail if it already exists
                             let _ = Syscall::unlink(dest);
                         }
-                        0
                     }
                     args::CpExisting::Replace { dest_seen } => {
-                        if dest_seen {
-                            Self::cp_unlink_dest_once_src_opens(src, dest)?;
+                        if dest_seen && !Self::cp_unlink_dest_once_src_opens(src, dest)? {
+                            removals = 0;
                         }
-                        2
                     }
-                };
+                }
                 loop {
                     let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
                         bun_sys::c::clonefile_rc(src, dest, 0),
@@ -8671,7 +8673,9 @@ impl NodeFS {
                         break;
                     }
                     removals -= 1;
-                    Self::cp_unlink_dest_once_src_opens(src, dest)?;
+                    if !Self::cp_unlink_dest_once_src_opens(src, dest)? {
+                        removals = 0;
+                    }
                 }
             } else {
                 let src_fd = match Syscall::open(src, sys::O::RDONLY, 0o644) {
@@ -8726,10 +8730,6 @@ impl NodeFS {
                 mode_ |= bun_sys::c::COPYFILE_EXCL;
             }
 
-            let mut removals: u8 = match existing {
-                args::CpExisting::InPlace => 0,
-                args::CpExisting::Replace { .. } => 2,
-            };
             let mut made_parents = false;
             loop {
                 let exclusive = if removals > 0 {
@@ -8755,7 +8755,9 @@ impl NodeFS {
                     }
                     E::EEXIST if removals > 0 => {
                         removals -= 1;
-                        Self::cp_unlink_dest_once_src_opens(src, dest)?;
+                        if !Self::cp_unlink_dest_once_src_opens(src, dest)? {
+                            removals = 0;
+                        }
                     }
                     _ => return err,
                 }
@@ -9097,7 +9099,7 @@ impl NodeFS {
                 };
                 let mut made_parents = false;
                 loop {
-                    let exclusive = unlinks_left > 0;
+                    let mut exclusive = unlinks_left > 0;
                     if unlink_next {
                         unlink_next = false;
                         unlinks_left -= 1;
@@ -9111,7 +9113,8 @@ impl NodeFS {
                             Syscall::unlink(strings::from_wpath(&mut dest8[..], dest.as_slice()));
                         if let Err(err) = unlinked {
                             if err.get_errno() != E::ENOENT {
-                                return Err(err);
+                                unlinks_left = 0;
+                                exclusive = false;
                             }
                         }
                     }
@@ -9223,7 +9226,7 @@ impl NodeFS {
     /// Tries `open(dest, flags, mode)`; on ENOENT creates the
     /// parent directory and retries once. Any other error is annotated with
     /// `dest` copied into `sync_error_buf`.
-    /// `Replace` creates the file exclusively and unlinks the one in its way, at most twice.
+    /// `Replace` unlinks the file in the way and creates a new one. It writes in place when it cannot.
     #[cfg(not(windows))]
     fn cp_open_dest_with_mkdir(
         &mut self,
@@ -9238,14 +9241,16 @@ impl NodeFS {
         };
         let mut made_parents = false;
         loop {
-            let exclusive = unlinks_left > 0;
+            let mut exclusive = unlinks_left > 0;
             if unlink_next {
                 unlink_next = false;
                 unlinks_left -= 1;
                 // node unlinks before it opens the source. Here the source is open, so a copy that cannot start keeps `dest`.
                 if let Err(err) = Syscall::unlink(dest) {
                     if err.get_errno() != E::ENOENT {
-                        return Err(err);
+                        // node fails with this error. A file that cannot be unlinked is written in place instead.
+                        unlinks_left = 0;
+                        exclusive = false;
                     }
                 }
             }
@@ -9283,14 +9288,14 @@ impl NodeFS {
         }
     }
 
-    /// `Replace` for the macOS calls that take paths: unlink `dest` only when `src` opens.
+    /// `Replace` for the macOS calls that take paths: unlink `dest` once `src` opens. False: it cannot be unlinked.
     #[cfg(target_os = "macos")]
-    fn cp_unlink_dest_once_src_opens(src: &ZStr, dest: &ZStr) -> Maybe<()> {
+    fn cp_unlink_dest_once_src_opens(src: &ZStr, dest: &ZStr) -> Maybe<bool> {
         Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0)?.close();
-        match Syscall::unlink(dest) {
-            Err(err) if err.get_errno() != E::ENOENT => Err(err),
-            _ => Ok(()),
-        }
+        Ok(match Syscall::unlink(dest) {
+            Ok(()) => true,
+            Err(err) => err.get_errno() == E::ENOENT,
+        })
     }
 
     /// Const-generic dispatch from `NodeFSFunctionEnum` to the matching

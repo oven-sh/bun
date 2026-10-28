@@ -101,7 +101,12 @@ impl<'a> Dubt<'a> {
     fn update(&mut self, curr: u32) -> Result<()> {
         let near = self.input.near;
         let next_to_update = *self.next_to_update;
-        if curr.saturating_sub(next_to_update) >= LONG_UPDATE {
+        let long_update = if self.input.far {
+            LONG_UPDATE_FAR
+        } else {
+            LONG_UPDATE
+        };
+        if curr.saturating_sub(next_to_update) >= long_update {
             let first = next_to_update..curr;
             let dict_limit = self.input.dict_limit;
             return update_many(
@@ -304,11 +309,12 @@ impl Dubt<'_> {
     }
 }
 
-/// From that many positions on, [`Dubt::update`] leaves them to [`update_many`].
-const LONG_UPDATE: u32 = 32;
+/// From that many positions on, [`Dubt::update`] leaves them to [`update_many`], whose loop is tighter.
+const LONG_UPDATE: u32 = 8;
+/// The same where `update` gives hints at what is about to be read, which `update_many` does not.
+const LONG_UPDATE_FAR: u32 = 32;
 
-/// `ZSTD_updateDUBT` of the indices `indices`, which are in `near`, whose first index is `dict_limit`. There are enough
-/// of them not to wait for memory.
+/// `ZSTD_updateDUBT` of the indices `indices`, which are in `near`, whose first index is `dict_limit`.
 #[cold]
 #[inline(never)]
 fn update_many(

@@ -163,9 +163,8 @@ impl<'a> Chunks<'a> {
         self.palette_is_final |= match self.header.color_type {
             ColorType::Grayscale | ColorType::GrayscaleAlpha => data.len() == 2,
             ColorType::Truecolor | ColorType::TruecolorAlpha => data.len() == 6,
-            ColorType::Indexed => {
-                matches!(data, &[index] if usize::from(index) < self.palette.len())
-            }
+            // Its PLTE is final as soon as it is there, and before that no index is valid.
+            ColorType::Indexed => false,
         };
     }
 
@@ -205,7 +204,7 @@ impl<'a> Chunks<'a> {
             // Compression method 0 and at least a byte.
             (chunk::ZTXT, [0, text @ ..]) if !text.is_empty() => text.len(),
             // Compressed, compression method 0, a language tag, a translated keyword.
-            (chunk::ITXT, [1, 0, after_method @ ..]) if after_method.len() >= 2 => {
+            (chunk::ITXT, [1, 0, after_method @ ..]) => {
                 let after_language = split_once_char(after_method, 0).map(|(_, after)| after);
                 let Some((_, text)) = after_language.and_then(|after| split_once_char(after, 0))
                 else {

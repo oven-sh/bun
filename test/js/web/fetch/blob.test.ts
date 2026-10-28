@@ -1,5 +1,5 @@
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
-import { afterAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, isASAN, isLinux, tempDir } from "harness";
 import type { BlobPropertyBag } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
@@ -164,46 +164,71 @@ test("Bun.file().slice rounds offsets before the size of the file is known", asy
   expect(await file.slice(1.5, 4.5).text()).toBe("nF");
 });
 
-// `[Clamp]` stops an offset at 2^53 - 1, which shows only on a Blob of 2^53 bytes or more. The one
-// way to have such a Blob is a sparse file, and of the common Linux filesystems only tmpfs takes a
-// write at that offset.
-const fileOf2Pow53Bytes = (() => {
-  if (!isLinux) return undefined;
-  const file = `/dev/shm/bun-blob-slice-${Bun.randomUUIDv7()}`;
-  try {
-    const fd = openSync(file, "wx");
-    try {
-      writeSync(fd, new Uint8Array(1), 0, 1, 2 ** 53 - 1);
-    } finally {
-      closeSync(fd);
-    }
-    return file;
-  } catch {
-    rmSync(file, { force: true });
-    return undefined;
-  }
-})();
-afterAll(() => {
-  if (fileOf2Pow53Bytes) rmSync(fileOf2Pow53Bytes, { force: true });
+test("BuildArtifact.slice rounds offsets as Blob.slice does", async () => {
+  using dir = tempDir("blob-slice-build-artifact", { "index.js": `console.log("BunFoo");` });
+  const build = await Bun.build({ entrypoints: [path.join(String(dir), "index.js")] });
+  const [artifact] = build.outputs;
+  const bytes = Buffer.from(await artifact.arrayBuffer());
+  expect(bytes.length).toBeGreaterThan(4);
+  expect({
+    "1.5": await artifact.slice(1.5).text(),
+    "0, 3.5": await artifact.slice(0, 3.5).text(),
+  }).toEqual({
+    "1.5": bytes.subarray(2).toString(),
+    "0, 3.5": bytes.subarray(0, 4).toString(),
+  });
 });
 
-test.skipIf(!fileOf2Pow53Bytes)("Bun.file().slice clamps an offset to 2^53 - 1", () => {
-  const file = Bun.file(fileOf2Pow53Bytes!);
-  expect({
-    "size": file.size,
-    "2 ** 53": file.slice(2 ** 53).size,
-    "Infinity": file.slice(Infinity).size,
-    "-(2 ** 53)": file.slice(-(2 ** 53)).size,
-    "-Infinity": file.slice(-Infinity).size,
-    "0, 2 ** 53": file.slice(0, 2 ** 53).size,
-  }).toEqual({
-    "size": 2 ** 53,
-    "2 ** 53": 1,
-    "Infinity": 1,
-    "-(2 ** 53)": 2 ** 53 - 1,
-    "-Infinity": 2 ** 53 - 1,
-    "0, 2 ** 53": 2 ** 53 - 1,
-  });
+// `[Clamp]` stops an offset at 2^53 - 1, which shows only on a Blob of 2^53 bytes or more. The one
+// way to have such a Blob is a sparse file, and of the common Linux filesystems only tmpfs takes a
+// write at that offset. The file is unlinked before the write, so it is gone when the fd closes.
+function openFileOf2Pow53Bytes(): number | undefined {
+  if (!isLinux) return undefined;
+  const file = `/dev/shm/bun-blob-slice-${Bun.randomUUIDv7()}`;
+  let fd: number;
+  try {
+    fd = openSync(file, "wx+");
+  } catch {
+    return undefined;
+  }
+  try {
+    rmSync(file);
+    writeSync(fd, new Uint8Array(1), 0, 1, 2 ** 53 - 1);
+    return fd;
+  } catch {
+    closeSync(fd);
+    return undefined;
+  }
+}
+const canOpenFileOf2Pow53Bytes = (() => {
+  const fd = openFileOf2Pow53Bytes();
+  if (fd === undefined) return false;
+  closeSync(fd);
+  return true;
+})();
+
+test.skipIf(!canOpenFileOf2Pow53Bytes)("Bun.file().slice clamps an offset to 2^53 - 1", () => {
+  const fd = openFileOf2Pow53Bytes()!;
+  try {
+    const file = Bun.file(fd);
+    expect({
+      "size": file.size,
+      "2 ** 53": file.slice(2 ** 53).size,
+      "Infinity": file.slice(Infinity).size,
+      "-(2 ** 53)": file.slice(-(2 ** 53)).size,
+      "-Infinity": file.slice(-Infinity).size,
+      "0, 2 ** 53": file.slice(0, 2 ** 53).size,
+    }).toEqual({
+      "size": 2 ** 53,
+      "2 ** 53": 1,
+      "Infinity": 1,
+      "-(2 ** 53)": 2 ** 53 - 1,
+      "-Infinity": 2 ** 53 - 1,
+      "0, 2 ** 53": 2 ** 53 - 1,
+    });
+  } finally {
+    closeSync(fd);
+  }
 });
 
 test("new Blob", () => {

@@ -805,22 +805,6 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
-  test("BuildArtifact.slice rounds a fractional offset as Blob.slice does", async () => {
-    const build = await Bun.build({
-      entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
-    });
-    const [artifact] = build.outputs;
-    const bytes = Buffer.from(await artifact.arrayBuffer());
-    expect(bytes.length).toBeGreaterThan(4);
-    expect({
-      "1.5": await artifact.slice(1.5).text(),
-      "0, 3.5": await artifact.slice(0, 3.5).text(),
-    }).toEqual({
-      "1.5": bytes.subarray(2).toString(),
-      "0, 3.5": bytes.subarray(0, 4).toString(),
-    });
-  });
-
   // [hash] is 8 characters (40 bits of the content hash); with a few thousand
   // `--splitting` chunks two of them print the same name about once per
   // million builds and the build fails with "Multiple files share the same

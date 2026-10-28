@@ -90,8 +90,17 @@ jobs:
         uses: ./.github/actions/setup-bun
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - name: Fetch the engine's code generators
+        # A lint that loads a schema loads the code generators, which import TypeScript of the engine. A release of WebKit
+        # has it as an asset of its own; an older one only inside its tarballs.
+        run: |
+          version=$(sed -n 's/^export const WEBKIT_VERSION = "\(.*\)";$/\1/p' scripts/build/deps/webkit.ts)
+          release="https://github.com/oven-sh/WebKit/releases/download/autobuild-${version#autobuild-}"
+          mkdir -p vendor/WebKit
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/engine.tar.gz" "$release/bun-webkit-aot-sources.tar.gz" ||
+            curl -fsSL --retry 3 -o "$RUNNER_TEMP/engine.tar.gz" "$release/bun-webkit-linux-amd64-lto.tar.gz"
+          tar -xzf "$RUNNER_TEMP/engine.tar.gz" -C vendor/WebKit --strip-components=1 --exclude=bun-webkit/Source/JavaScriptCore/aot/tests bun-webkit/Source/JavaScriptCore/aot
       # No `bun install`: every test here imports only built-ins, relative
-      # paths, or `harness` (resolved via test/tsconfig.json `paths`), so a
-      # bare checkout is sufficient.
+      # paths, or `harness` (resolved via test/tsconfig.json `paths`).
       - name: Run source lints
         run: bun test test/internal/source-lints/

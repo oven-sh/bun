@@ -5165,12 +5165,64 @@ describe("bundler", () => {
     format: "esm",
     run: { stdout: "page sees store: undefined" },
   });
-  // The barrel four waits for seven, and seven calls `import()` on three before
-  // its await. three starts inside that call, when four has not run its body
-  // yet: `undefined`. node starts three later and prints `set`. main's bundle
-  // prints `set` too, because its barrel does not wait for seven. With an
-  // `import` in the place of the `export *`, main's bundle prints `undefined`.
-  itBundled("edgecase/ImportCallInExportStarDependencyRunsBeforeBarrelBody", {
+  // The next two cases also pin output that is not node's and not main's. A
+  // CommonJS import that the source lists before the first async dependency
+  // runs before the `await`. On main it runs after the `await`, and only an ES
+  // import runs before it. With an ES module in the place of legacy.cjs, main's
+  // bundle prints `undefined` in both cases.
+  // app calls `import()` on page in its first part. page starts inside the
+  // call, and legacy.cjs runs there. node starts page after app's synchronous
+  // code: `true`. 1.2.22 and esbuild print `undefined`.
+  itBundled("edgecase/CommonJSImportBeforeAsyncImportRunsInsideImportCall", {
+    files: {
+      "/entry.js": /* js */ `import "./app.js";`,
+      "/app.js": /* js */ `
+        import("./page.js");
+        globalThis.appReady = true;
+        await 0;
+      `,
+      "/page.js": /* js */ `
+        import "./legacy.cjs";
+        import "./app.js";
+      `,
+      "/legacy.cjs": /* js */ `console.log("legacy sees appReady:", globalThis.appReady);`,
+    },
+    format: "esm",
+    run: { stdout: "legacy sees appReady: undefined" },
+  });
+  // a waits for b and c, and both import a. a is running, so b continues one
+  // job after its call. c runs legacy.cjs inside its call, before the body of
+  // b. node runs the first part of b before c: `b started`.
+  itBundled("edgecase/CommonJSImportBeforeAsyncImportRunsBeforeWaitingImportCycleMember", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./a.js";
+        setTimeout(() => import("./a.js"));
+      `,
+      "/a.js": /* js */ `
+        import "./b.js";
+        import "./c.js";
+      `,
+      "/b.js": /* js */ `
+        import "./a.js";
+        globalThis.state = "b started";
+        await 0;
+      `,
+      "/c.js": /* js */ `
+        import "./legacy.cjs";
+        import "./a.js";
+      `,
+      "/legacy.cjs": /* js */ `console.log("legacy sees state:", globalThis.state);`,
+    },
+    format: "esm",
+    run: { stdout: "legacy sees state: undefined" },
+  });
+  // The next four cases: an `export *` of an async module is not awaited, and
+  // the prefix has main's layout from that statement on. All four are main's
+  // output.
+  // four does not wait for seven, so the body of four runs before three
+  // continues. node waits: `seven`, `four`, `entry`, `three sees v = set`.
+  itBundled("edgecase/ImportCallInExportStarDependencyRunsAfterBarrelBody", {
     files: {
       "/entry.js": /* js */ `
         import "./four.js";
@@ -5193,7 +5245,82 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
-    run: { stdout: "three sees v = undefined\nseven\nfour\nentry" },
+    run: { stdout: "four\nthree sees v = set\nseven\nentry" },
+  });
+  // ui.js does not wait for components, which imports the entry. The entry is
+  // past its first await when it awaits the `import()` of ui.js. node leaves
+  // the source unsettled. `bun` on the source settles it (#32437).
+  itBundled("edgecase/ExportStarBehindAwaitedImportCallOfImporterSettles", {
+    files: {
+      "/entry.js": /* js */ `
+        export const store = { user: null };
+        console.log("entry start");
+        store.user = await Promise.resolve("ada");
+        const { render } = await import("./ui.js");
+        render();
+      `,
+      "/ui.js": /* js */ `export * from "./components.js";`,
+      "/components.js": /* js */ `
+        import { store } from "./entry.js";
+        export function render() {
+          console.log("render for", store.user);
+        }
+      `,
+    },
+    format: "esm",
+    run: { stdout: "entry start\nrender for ada" },
+  });
+  // setup has one `await`, of config, like feature. It continues before
+  // feature, as in node.
+  itBundled("edgecase/ImporterWithAsyncExportStarContinuesBeforeSiblingImporter", {
+    files: {
+      "/entry.js": /* js */ `await import("./app.js");`,
+      "/app.js": /* js */ `
+        import "./setup.js";
+        import "./feature.js";
+      `,
+      "/setup.js": /* js */ `
+        export * from "./flags.js";
+        import "./config.js";
+        globalThis.services = [];
+      `,
+      "/feature.js": /* js */ `
+        import "./config.js";
+        console.log("feature sees services:", typeof globalThis.services);
+      `,
+      "/flags.js": /* js */ `export const flags = await Promise.resolve({ beta: false });`,
+      "/config.js": /* js */ `await 0;`,
+    },
+    format: "esm",
+    run: { stdout: "feature sees services: object" },
+  });
+  // barrel calls `init_b()` after the `await` of a. With the call before that
+  // `await`, as in the source, a and b wait for each other. node leaves the
+  // source unsettled for that reason.
+  itBundled("edgecase/ExportStarOfAsyncModuleRunsAfterAwaitOfLaterImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./barrel.js";
+        console.log("entry");
+      `,
+      "/barrel.js": /* js */ `
+        export * from "./b.js";
+        import "./a.js";
+        console.log("barrel");
+      `,
+      "/a.js": /* js */ `
+        console.log("a start");
+        await import("./b.js");
+        console.log("a end");
+      `,
+      "/b.js": /* js */ `
+        import "./a.js";
+        import "./barrel.js";
+        console.log("b");
+      `,
+    },
+    format: "esm",
+    run: { stdout: "a start\nb\na end\nbarrel\nentry" },
   });
   // With `--splitting`, a file has a wrapper only when CommonJS reaches it.
   // load.cjs makes the `import()`, so both modes wrap x and its dependencies.

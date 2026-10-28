@@ -5123,10 +5123,11 @@ pub struct StmtList {
 /// The statements a wrapper runs before its body. They keep source order up to the first async dependency.
 pub struct InsideWrapperPrefix {
     pub(crate) stmts: Vec<Stmt>,
-    /// `init_x` of each async dependency. Every call returns the same promise.
+    /// `init_x` of each async dependency that an `import` names. Every call returns the same promise.
     awaited: Vec<(Ref, Loc)>,
-    /// Statements after the first async dependency that are not an `init_x()` of an `import`.
+    /// Statements from the first async dependency on that are not an `init_x()` of an `import`.
     after_await: Vec<Stmt>,
+    past_first_async: bool,
 }
 
 fn init_call(wrapper_ref: Ref, loc: Loc) -> Expr {
@@ -5145,6 +5146,7 @@ impl InsideWrapperPrefix {
             stmts: Vec::new(),
             awaited: Vec::new(),
             after_await: Vec::new(),
+            past_first_async: false,
         }
     }
 
@@ -5152,13 +5154,19 @@ impl InsideWrapperPrefix {
         self.stmts.clear();
         self.awaited.clear();
         self.after_await.clear();
+        self.past_first_async = false;
+    }
+
+    /// The next statement is for an async dependency. An `export *` of one has an `init_x()` that nothing awaits.
+    pub(crate) fn reach_async_dependency(&mut self) {
+        self.past_first_async = true;
     }
 
     pub(crate) fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
-        if self.awaited.is_empty() {
-            self.stmts.push(stmt);
-        } else {
+        if self.past_first_async {
             self.after_await.push(stmt);
+        } else {
+            self.stmts.push(stmt);
         }
         Ok(())
     }
@@ -5180,8 +5188,11 @@ impl InsideWrapperPrefix {
                 },
                 loc,
             ));
-        } else if !self.awaited.iter().any(|(seen, _)| *seen == wrapper_ref) {
-            // A second `import` of one async module adds no second call.
+            return;
+        }
+        self.past_first_async = true;
+        // A second `import` of one async module adds no second call.
+        if !self.awaited.iter().any(|(seen, _)| *seen == wrapper_ref) {
             self.awaited.push((wrapper_ref, loc));
         }
     }
@@ -5189,7 +5200,9 @@ impl InsideWrapperPrefix {
     /// Moves the statements to the end of `out`. Returns true if it printed an `await`.
     pub(crate) fn finish(&mut self, promise_ref: Ref, out: &mut Vec<Stmt>) -> bool {
         out.append(&mut self.stmts);
+        self.past_first_async = false;
         if self.awaited.is_empty() {
+            out.append(&mut self.after_await);
             return false;
         }
 

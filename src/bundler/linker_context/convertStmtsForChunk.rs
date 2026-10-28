@@ -274,6 +274,9 @@ pub(crate) fn convert_stmts_for_chunk(
                             let flag = c.graph.meta.items_flags()[other_source_index];
                             let wrapper_ref = c.graph.ast.items_wrapper_ref()[other_source_index];
                             if flag.wrap == WrapKind::Esm && wrapper_ref.is_valid() {
+                                if flag.is_async_or_has_async_dependency {
+                                    stmts.inside_wrapper_prefix.reach_async_dependency();
+                                }
                                 stmts
                                     .inside_wrapper_prefix
                                     .append_non_dependency(Stmt::alloc(

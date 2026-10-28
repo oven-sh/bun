@@ -1,5 +1,4 @@
-//! `fetch({ compress })`: parse the option, compress the buffered body before
-//! the HTTP thread sees it (inline when small, else on the work pool).
+//! `fetch({ compress })`: parse the option and compress the body off the HTTP thread.
 
 use core::cell::RefCell;
 use core::ptr::NonNull;

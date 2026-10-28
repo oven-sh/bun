@@ -5221,6 +5221,34 @@ describe("bundler", () => {
     format: "esm",
     run: { stdout: "page sees store: ready" },
   });
+  // root and leaf import each other, and both have a top-level await. importer
+  // waits for leaf only, so it runs before the body of root. node waits for
+  // the whole import cycle.
+  itBundled("edgecase/ImporterOfAsyncImportCycleMemberRunsAfterCycleRoot", {
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `await import("./main.js");`,
+      "/main.js": /* js */ `
+        import "./root.js";
+        import "./importer.js";
+      `,
+      "/root.js": /* js */ `
+        import "./leaf.js";
+        await 1;
+        globalThis.rootReady = true;
+      `,
+      "/leaf.js": /* js */ `
+        import "./root.js";
+        await 1;
+      `,
+      "/importer.js": /* js */ `
+        import "./leaf.js";
+        console.log("importer sees rootReady:", globalThis.rootReady);
+      `,
+    },
+    format: "esm",
+    run: { stdout: "importer sees rootReady: true" },
+  });
   // The next three cases pin output that is not node's and not main's.
   // router.cjs calls `import()` on page, and page starts inside the call, before
   // store. node starts page later: `ready`. main's bundle runs store before
@@ -5335,9 +5363,9 @@ describe("bundler", () => {
   }
 
   // Random graphs, each run unbundled and as a bundle without code splitting (splitting-fuzz.ts). The bundle reads
-  // every value and keeps every order of top-level effects that the source has. 7 has a CommonJS file before an ES
-  // import that needs it, 32 and 176 call `import()` on a module that is running, and the others have an `export *`
-  // of a module that is async.
+  // every value and keeps every order of top-level effects that the source has. 7, 54 and 139 have a CommonJS file
+  // before an ES import that needs it, 32 and 176 call `import()` on a module that is running, and 299 has an
+  // `export *` of an async module.
   for (const seed of [7, 32, 54, 139, 176, 299]) {
     test.concurrent(`edgecase/UnsplitBundleRunsLikeItsSource: graph ${seed}`, async () => {
       expect(await checkUnsplit(bunExe(), seed)).toEqual({ seed, status: "ok", problems: [] });
